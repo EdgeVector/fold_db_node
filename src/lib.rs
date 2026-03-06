@@ -4,7 +4,7 @@
 // pub mod ingestion;
 // pub mod server;
 // pub mod schema_service;
-// pub mod utils;
+pub mod utils;
 
 // Re-export core library for convenience
 pub use fold_db;
