@@ -1,0 +1,15 @@
+{
+  "database": {
+    "type": "local",
+    "path": "data"
+  },
+  "storage_path": "data",
+  "default_trust_distance": 1,
+  "network_listen_address": "/ip4/0.0.0.0/tcp/0",
+  "security_config": {
+    "require_tls": false,
+    "require_signatures": false,
+    "encrypt_at_rest": false
+  },
+  "schema_service_url": "https://y0q3m6vk75.execute-api.us-west-2.amazonaws.com"
+}
