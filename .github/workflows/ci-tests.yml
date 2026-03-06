@@ -25,15 +25,28 @@ jobs:
         with:
           lfs: true
 
+      - name: Check if Rust project exists
+        id: check-rust
+        run: |
+          if [ -f Cargo.toml ]; then
+            echo "exists=true" >> $GITHUB_OUTPUT
+          else
+            echo "exists=false" >> $GITHUB_OUTPUT
+            echo "⏭️ **Rust Tests** — skipped (no Cargo.toml)" >> $GITHUB_STEP_SUMMARY
+          fi
+
       - name: Install Rust
+        if: steps.check-rust.outputs.exists == 'true'
         uses: dtolnay/rust-toolchain@stable
         with:
           components: clippy
 
       - name: Cache Rust artifacts
+        if: steps.check-rust.outputs.exists == 'true'
         uses: Swatinem/rust-cache@v2
 
       - name: Setup Node.js
+        if: steps.check-rust.outputs.exists == 'true' && hashFiles('src/server/static-react/package-lock.json') != ''
         uses: actions/setup-node@v4
         with:
           node-version: "20"
@@ -41,39 +54,43 @@ jobs:
           cache-dependency-path: src/server/static-react/package-lock.json
 
       - name: Build frontend (required for rust_embed)
+        if: steps.check-rust.outputs.exists == 'true' && hashFiles('src/server/static-react/package-lock.json') != ''
         run: cd src/server/static-react && npm ci && npm run build
 
       - name: Run clippy
         id: clippy
+        if: steps.check-rust.outputs.exists == 'true'
         continue-on-error: true
         run: cargo clippy --workspace --all-targets -- -D warnings
 
       - name: Check AWS backend compiles
         id: check-aws
+        if: steps.check-rust.outputs.exists == 'true'
         continue-on-error: true
         run: cargo check --workspace --features aws-backend
 
       - name: Run cargo test
         id: cargo-test
+        if: steps.check-rust.outputs.exists == 'true'
         continue-on-error: true
         run: cargo test --workspace --all-targets
 
       - name: Run tweets ingestion integration test
         id: ingestion-test
+        if: steps.check-rust.outputs.exists == 'true' && env.FOLD_OPENROUTER_API_KEY != ''
         continue-on-error: true
-        if: env.FOLD_OPENROUTER_API_KEY != ''
         run: cargo test --test ingest_tweets_test -- --ignored
         timeout-minutes: 5
 
       - name: Run Twitter export scan integration test
         id: twitter-scan-test
+        if: steps.check-rust.outputs.exists == 'true' && env.FOLD_OPENROUTER_API_KEY != ''
         continue-on-error: true
-        if: env.FOLD_OPENROUTER_API_KEY != ''
         run: cargo test --test twitter_export_scan_test -- --ignored --nocapture
         timeout-minutes: 10
 
       - name: Rust test summary
-        if: always()
+        if: always() && steps.check-rust.outputs.exists == 'true'
         run: |
           for step_name in clippy check-aws cargo-test ingestion-test twitter-scan-test; do
             case "$step_name" in
@@ -99,26 +116,35 @@ jobs:
 
       - name: Fail if clippy or tests failed
         if: |
-          steps.clippy.outcome == 'failure' ||
-          steps.check-aws.outcome == 'failure' ||
-          steps.cargo-test.outcome == 'failure' ||
-          steps.ingestion-test.outcome == 'failure' ||
-          steps.twitter-scan-test.outcome == 'failure'
+          steps.check-rust.outputs.exists == 'true' && (
+            steps.clippy.outcome == 'failure' ||
+            steps.check-aws.outcome == 'failure' ||
+            steps.cargo-test.outcome == 'failure' ||
+            steps.ingestion-test.outcome == 'failure' ||
+            steps.twitter-scan-test.outcome == 'failure'
+          )
         run: exit 1
 
   frontend-tests:
     name: Frontend Tests
     runs-on: ubuntu-latest
 
-    defaults:
-      run:
-        working-directory: src/server/static-react
-
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
 
+      - name: Check if frontend exists
+        id: check-frontend
+        run: |
+          if [ -f src/server/static-react/package.json ]; then
+            echo "exists=true" >> $GITHUB_OUTPUT
+          else
+            echo "exists=false" >> $GITHUB_OUTPUT
+            echo "⏭️ **Frontend Tests** — skipped (no frontend code)" >> $GITHUB_STEP_SUMMARY
+          fi
+
       - name: Setup Node.js
+        if: steps.check-frontend.outputs.exists == 'true'
         uses: actions/setup-node@v4
         with:
           node-version: "20"
@@ -126,15 +152,19 @@ jobs:
           cache-dependency-path: src/server/static-react/package-lock.json
 
       - name: Install dependencies
+        if: steps.check-frontend.outputs.exists == 'true'
+        working-directory: src/server/static-react
         run: npm ci
 
       - name: Run npm test
         id: npm-test
+        if: steps.check-frontend.outputs.exists == 'true'
         continue-on-error: true
+        working-directory: src/server/static-react
         run: npm test
 
       - name: Frontend test summary
-        if: always()
+        if: always() && steps.check-frontend.outputs.exists == 'true'
         run: |
           status="${{ steps.npm-test.outcome }}"
           if [ "$status" = "success" ]; then
@@ -144,22 +174,29 @@ jobs:
           fi
 
       - name: Fail if npm tests failed
-        if: steps.npm-test.outcome == 'failure'
+        if: steps.check-frontend.outputs.exists == 'true' && steps.npm-test.outcome == 'failure'
         run: exit 1
 
   e2e-tests:
     name: E2E UI Tests
     runs-on: ubuntu-latest
 
-    defaults:
-      run:
-        working-directory: src/server/static-react
-
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
 
+      - name: Check if E2E tests exist
+        id: check-e2e
+        run: |
+          if [ -d src/server/static-react/e2e ]; then
+            echo "exists=true" >> $GITHUB_OUTPUT
+          else
+            echo "exists=false" >> $GITHUB_OUTPUT
+            echo "⏭️ **E2E UI Tests** — skipped (no e2e/ directory)" >> $GITHUB_STEP_SUMMARY
+          fi
+
       - name: Setup Node.js
+        if: steps.check-e2e.outputs.exists == 'true'
         uses: actions/setup-node@v4
         with:
           node-version: "20"
@@ -167,18 +204,24 @@ jobs:
           cache-dependency-path: src/server/static-react/package-lock.json
 
       - name: Install dependencies
+        if: steps.check-e2e.outputs.exists == 'true'
+        working-directory: src/server/static-react
         run: npm ci
 
       - name: Install Playwright browsers
+        if: steps.check-e2e.outputs.exists == 'true'
+        working-directory: src/server/static-react
         run: npx playwright install chromium --with-deps
 
       - name: Run E2E smoke tests
         id: e2e-test
+        if: steps.check-e2e.outputs.exists == 'true'
         continue-on-error: true
+        working-directory: src/server/static-react
         run: npx playwright test
 
       - name: Upload test artifacts
-        if: failure()
+        if: failure() && steps.check-e2e.outputs.exists == 'true'
         uses: actions/upload-artifact@v4
         with:
           name: playwright-report
@@ -186,7 +229,7 @@ jobs:
           retention-days: 7
 
       - name: E2E test summary
-        if: always()
+        if: always() && steps.check-e2e.outputs.exists == 'true'
         run: |
           status="${{ steps.e2e-test.outcome }}"
           if [ "$status" = "success" ]; then
@@ -196,5 +239,5 @@ jobs:
           fi
 
       - name: Fail if E2E tests failed
-        if: steps.e2e-test.outcome == 'failure'
+        if: steps.check-e2e.outputs.exists == 'true' && steps.e2e-test.outcome == 'failure'
         run: exit 1
