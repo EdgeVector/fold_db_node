@@ -21,7 +21,7 @@ impl StructureAnalyzer {
     ///
     /// ```rust
     /// use serde_json::json;
-    /// use fold_db::ingestion::structure_analyzer::StructureAnalyzer;
+    /// use fold_db_node::ingestion::structure_analyzer::StructureAnalyzer;
     ///
     /// let data = json!([
     ///     {"name": "Alice", "profile": {"age": 30}},

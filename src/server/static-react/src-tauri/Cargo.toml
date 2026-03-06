@@ -18,8 +18,9 @@ crate-type = ["staticlib", "cdylib", "rlib"]
 tauri-build = { version = "2.5.5", features = [] }
 
 [dependencies]
-# Fold core library (local dependency)
-fold_db = { path = "../../../../" }
+# Fold libraries
+fold_db = { path = "../../../../../fold_db" }
+fold_db_node = { path = "../../../../../fold_db_node" }
 
 # Tauri dependencies
 tauri = { version = "2.10.2", features = ["devtools"] }

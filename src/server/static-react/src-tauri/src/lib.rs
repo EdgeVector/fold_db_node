@@ -1,9 +1,9 @@
 use std::sync::Arc;
 use tokio::sync::Mutex;
-use fold_db::load_node_config;
 use fold_db::security::Ed25519KeyPair;
-use fold_db::server::{start_embedded_server_lazy, EmbeddedServerHandle, NodeManagerConfig};
-use fold_db::DatabaseConfig;
+use fold_db_node::fold_node::config::{load_node_config, DatabaseConfig};
+use fold_db_node::server::{start_embedded_server_lazy, EmbeddedServerHandle};
+use fold_db_node::server::node_manager::NodeManagerConfig;
 use tauri::{Manager, State, WebviewUrl, WebviewWindowBuilder};
 use tauri_plugin_dialog::{DialogExt, MessageDialogKind};
 use serde::{Serialize, Deserialize};

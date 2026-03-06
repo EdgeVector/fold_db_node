@@ -99,8 +99,8 @@ pub async fn start_embedded_server_lazy(
 ///
 /// ```no_run
 /// use std::path::PathBuf;
-/// use fold_db::fold_node::{FoldNode, start_embedded_server};
-/// use fold_db::fold_node::config::NodeConfig;
+/// use fold_db_node::fold_node::{FoldNode, start_embedded_server};
+/// use fold_db_node::fold_node::config::NodeConfig;
 ///
 /// #[tokio::main]
 /// async fn main() -> Result<(), Box<dyn std::error::Error>> {
