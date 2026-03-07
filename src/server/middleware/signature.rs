@@ -22,6 +22,7 @@ use base64::{engine::general_purpose, Engine as _};
 /// Exempt entries appear first so they win over any overlapping protected entry.
 /// GET requests are excluded by the method check, so only POST/PUT/PATCH paths
 /// that should be exempt need exempt entries here.
+#[allow(dead_code)] // Used when signature enforcement is re-enabled (see is_protected_write TODO)
 const PREFIX_RULES: &[(&str, bool)] = &[
     // Exempt (not protected)
     ("/api/system/auto-identity", false),
