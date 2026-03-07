@@ -1,0 +1,78 @@
+# Rust specific
+/target/
+**/*.rs.bk
+Cargo.lock
+
+# Node/Frontend
+node_modules/
+dist/
+.vite/
+
+# IDE
+.vscode/
+.idea/
+*.iml
+
+# OS specific
+.DS_Store
+**/.DS_Store
+Thumbs.db
+
+# Project specific
+/data/
+/config/
+*.log
+*.env
+*.bak
+
+# Database and state files
+*.sled
+schema_registry/
+
+# Test data directories
+/test_db/
+/test_data/
+/tests/test_data/
+
+# Example generated files
+examples/*/db/
+examples/*/*/db/
+
+# NPM specific
+npm-debug.log
+yarn-debug.log
+yarn-error.log
+.npm/
+.yarn/
+
+# Temporary files
+/tmp/
+*.swp
+*.swo
+*~
+
+# Debug files
+*.pdb
+*_output.txt
+*_output_*.txt
+
+# Rust analyzer
+rust-project.json
+
+# Coverage reports
+coverage/
+target/llvm-cov/
+*.profraw
+*.profdata
+vendor/
+
+# Runtime generated files
+*.pid
+*.lock
+.env.local
+.env.development
+.env.test
+.env.production
+
+# ML cache
+.fastembed_cache/
