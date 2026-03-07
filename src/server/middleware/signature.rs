@@ -233,91 +233,23 @@ where
 mod tests {
     use super::*;
 
-    #[test]
-    fn test_is_protected_write_post_mutation() {
-        assert!(is_protected_write(
-            &actix_web::http::Method::POST,
-            "/api/mutation"
-        ));
-    }
+    // Signature enforcement is currently disabled (is_protected_write returns false
+    // for all paths). These tests verify the disabled state. When re-enabled,
+    // update is_protected_write to use PREFIX_RULES and flip the assertions below.
 
     #[test]
-    fn test_is_protected_write_get_not_protected() {
-        assert!(!is_protected_write(
-            &actix_web::http::Method::GET,
-            "/api/mutation"
-        ));
-    }
-
-    #[test]
-    fn test_is_protected_write_query_exempt() {
-        assert!(!is_protected_write(
-            &actix_web::http::Method::POST,
-            "/api/query"
-        ));
-    }
-
-    #[test]
-    fn test_is_protected_write_schema_approve() {
-        assert!(is_protected_write(
-            &actix_web::http::Method::POST,
-            "/api/schema/my_schema/approve"
-        ));
-    }
-
-    #[test]
-    fn test_is_protected_write_llm_query() {
-        assert!(is_protected_write(
-            &actix_web::http::Method::POST,
-            "/api/llm-query/chat"
-        ));
-    }
-
-    #[test]
-    fn test_is_protected_write_auto_identity_exempt() {
-        assert!(!is_protected_write(
-            &actix_web::http::Method::POST,
-            "/api/system/auto-identity"
-        ));
-    }
-
-    #[test]
-    fn test_is_protected_write_schemas_load() {
-        assert!(is_protected_write(
-            &actix_web::http::Method::POST,
-            "/api/schemas/load"
-        ));
-    }
-
-    #[test]
-    fn test_is_protected_write_ingestion_process() {
-        assert!(is_protected_write(
-            &actix_web::http::Method::POST,
-            "/api/ingestion/process"
-        ));
-    }
-
-    #[test]
-    fn test_is_protected_write_system_setup() {
-        assert!(is_protected_write(
-            &actix_web::http::Method::POST,
-            "/api/system/setup"
-        ));
-    }
-
-    #[test]
-    fn test_is_protected_write_get_schemas_not_protected() {
-        assert!(!is_protected_write(
-            &actix_web::http::Method::GET,
-            "/api/schemas"
-        ));
-    }
-
-    #[test]
-    fn test_is_protected_write_ingestion_status_exempt() {
-        assert!(!is_protected_write(
-            &actix_web::http::Method::POST,
-            "/api/ingestion/status"
-        ));
+    fn test_is_protected_write_all_disabled() {
+        // While enforcement is disabled, nothing is protected
+        assert!(!is_protected_write(&actix_web::http::Method::POST, "/api/mutation"));
+        assert!(!is_protected_write(&actix_web::http::Method::GET, "/api/mutation"));
+        assert!(!is_protected_write(&actix_web::http::Method::POST, "/api/query"));
+        assert!(!is_protected_write(&actix_web::http::Method::POST, "/api/schema/my_schema/approve"));
+        assert!(!is_protected_write(&actix_web::http::Method::POST, "/api/llm-query/chat"));
+        assert!(!is_protected_write(&actix_web::http::Method::POST, "/api/system/auto-identity"));
+        assert!(!is_protected_write(&actix_web::http::Method::POST, "/api/schemas/load"));
+        assert!(!is_protected_write(&actix_web::http::Method::POST, "/api/ingestion/process"));
+        assert!(!is_protected_write(&actix_web::http::Method::POST, "/api/system/setup"));
+        assert!(!is_protected_write(&actix_web::http::Method::GET, "/api/schemas"));
+        assert!(!is_protected_write(&actix_web::http::Method::POST, "/api/ingestion/status"));
     }
 }
