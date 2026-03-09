@@ -19,7 +19,7 @@ describe("Constants Integration Tests", () => {
   describe("Configuration Constants", () => {
     test("APP_CONFIG should contain all required properties", () => {
       expect(APP_CONFIG).toBeDefined();
-      expect(APP_CONFIG.DEFAULT_TAB).toBe("smart-folder");
+      expect(APP_CONFIG.DEFAULT_TAB).toBe("agent");
       expect(APP_CONFIG.AUTHENTICATION).toBeDefined();
       expect(APP_CONFIG.CACHE).toBeDefined();
       expect(APP_CONFIG.PERFORMANCE).toBeDefined();
@@ -27,7 +27,7 @@ describe("Constants Integration Tests", () => {
     });
 
     test("DEFAULT_TAB should be exported directly", () => {
-      expect(DEFAULT_TAB).toBe("smart-folder");
+      expect(DEFAULT_TAB).toBe("agent");
       expect(DEFAULT_TAB).toBe(APP_CONFIG.DEFAULT_TAB);
     });
   });
@@ -116,7 +116,7 @@ describe("Constants Integration Tests", () => {
 
       // These should be the same across all imports
       expect(schemaApprovedValue).toBe("approved");
-      expect(defaultTabValue).toBe("smart-folder");
+      expect(defaultTabValue).toBe("agent");
     });
   });
 

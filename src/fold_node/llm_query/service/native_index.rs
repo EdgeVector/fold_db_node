@@ -216,6 +216,91 @@ impl LlmQueryService {
                     .map_err(|e| format!("Failed to serialize search results: {}", e))
             }
 
+            "scan_folder" => {
+                let path = params
+                    .get("path")
+                    .and_then(|p| p.as_str())
+                    .ok_or("scan_folder tool requires 'path' parameter")?;
+                let max_files = params
+                    .get("max_files")
+                    .and_then(|m| m.as_u64())
+                    .unwrap_or(100) as usize;
+
+                // Expand ~ to the user's home directory
+                let expanded = if path.starts_with("~/") {
+                    dirs::home_dir()
+                        .map(|h| h.join(&path[2..]))
+                        .unwrap_or_else(|| std::path::PathBuf::from(path))
+                } else if path == "~" {
+                    dirs::home_dir().unwrap_or_else(|| std::path::PathBuf::from(path))
+                } else {
+                    std::path::PathBuf::from(path)
+                };
+                let folder_path = expanded.as_path();
+                let scan_result = processor
+                    .smart_folder_scan(folder_path, 10, max_files)
+                    .await
+                    .map_err(|e| format!("Folder scan failed: {}", e))?;
+
+                serde_json::to_value(&scan_result)
+                    .map_err(|e| format!("Failed to serialize scan results: {}", e))
+            }
+
+            "ingest_files" => {
+                let folder_path_raw = params
+                    .get("folder_path")
+                    .and_then(|p| p.as_str())
+                    .ok_or("ingest_files tool requires 'folder_path' parameter")?;
+                let files = params
+                    .get("files")
+                    .and_then(|f| f.as_array())
+                    .ok_or("ingest_files tool requires 'files' parameter (array of relative paths)")?;
+
+                // Expand ~ to the user's home directory
+                let base_expanded = if folder_path_raw.starts_with("~/") {
+                    dirs::home_dir()
+                        .map(|h| h.join(&folder_path_raw[2..]))
+                        .unwrap_or_else(|| std::path::PathBuf::from(folder_path_raw))
+                } else if folder_path_raw == "~" {
+                    dirs::home_dir().unwrap_or_else(|| std::path::PathBuf::from(folder_path_raw))
+                } else {
+                    std::path::PathBuf::from(folder_path_raw)
+                };
+                let base = base_expanded.as_path();
+                let mut results = Vec::new();
+                for file_val in files {
+                    let relative = file_val.as_str().unwrap_or_default();
+                    if relative.is_empty() { continue; }
+                    let full_path = base.join(relative);
+                    match processor.ingest_single_file(&full_path, true).await {
+                        Ok(response) => {
+                            results.push(serde_json::json!({
+                                "file": relative,
+                                "success": response.success,
+                                "schema_used": response.schema_used,
+                                "new_schema_created": response.new_schema_created,
+                                "mutations_generated": response.mutations_generated,
+                                "mutations_executed": response.mutations_executed,
+                            }));
+                        }
+                        Err(e) => {
+                            results.push(serde_json::json!({
+                                "file": relative,
+                                "success": false,
+                                "error": e.to_string(),
+                            }));
+                        }
+                    }
+                }
+                let succeeded = results.iter().filter(|r| r["success"] == true).count();
+                Ok(serde_json::json!({
+                    "total": results.len(),
+                    "succeeded": succeeded,
+                    "failed": results.len() - succeeded,
+                    "results": results,
+                }))
+            }
+
             _ => Err(format!("Unknown tool: {}", tool)),
         }
     }
@@ -234,17 +319,31 @@ impl LlmQueryService {
         node: &crate::fold_node::node::FoldNode,
         _user_hash: &str,
         max_iterations: usize,
+        prior_history: &[super::super::types::Message],
     ) -> Result<(String, Vec<ToolCallRecord>), String> {
         let mut tool_calls: Vec<ToolCallRecord> = Vec::new();
+
+        // Build prior conversation history into a context string
         let mut conversation_context = String::new();
+        if !prior_history.is_empty() {
+            conversation_context.push_str("## Previous Conversation\n");
+            for msg in prior_history {
+                conversation_context.push_str(&format!(
+                    "\n{}: {}\n",
+                    msg.role, msg.content
+                ));
+            }
+            conversation_context.push_str("\n## Current Turn\n");
+        }
 
         // Build the initial system prompt with tool definitions
         let system_prompt = self.build_agent_system_prompt(schemas);
         let today = chrono::Local::now().format("%A, %B %-d, %Y").to_string();
 
         log::info!(
-            "Agent: Starting query with max {} iterations: {}",
+            "Agent: Starting query with max {} iterations, {} prior messages: {}",
             max_iterations,
+            prior_history.len(),
             user_query
         );
 

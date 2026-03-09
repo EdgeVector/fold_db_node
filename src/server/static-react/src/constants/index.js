@@ -113,4 +113,4 @@ export {
 // CONVENIENCE EXPORTS - FREQUENTLY USED CONSTANTS
 // ============================================================================
 
-export const DEFAULT_TAB = "smart-folder";
+export const DEFAULT_TAB = "agent";

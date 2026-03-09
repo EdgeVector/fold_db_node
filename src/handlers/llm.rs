@@ -313,17 +313,73 @@ pub async fn agent_query(
     // Default max iterations
     let max_iterations = request.max_iterations.unwrap_or(10);
 
-    // Run the agent
+    // Get prior conversation history from session
+    let mut prior_history = session_manager
+        .get_session(&session_id)
+        .ok()
+        .flatten()
+        .map(|ctx| ctx.conversation_history)
+        .unwrap_or_default();
+
+    // Inject structured context (e.g. scan results from the frontend) so the LLM can reference it
+    if let Some(context) = &request.context {
+        use crate::fold_node::llm_query::types::Message;
+        prior_history.push(Message {
+            role: "context".to_string(),
+            content: format!(
+                "Attached data from previous tool results:\n{}",
+                serde_json::to_string_pretty(context).unwrap_or_default()
+            ),
+            timestamp: std::time::SystemTime::now(),
+        });
+    }
+
+    // Run the agent with prior conversation context
     let (answer, tool_calls) = service
-        .run_agent_query(&request.query, &schemas, node, user_hash, max_iterations)
+        .run_agent_query(
+            &request.query,
+            &schemas,
+            node,
+            user_hash,
+            max_iterations,
+            &prior_history,
+        )
         .await
         .handler_err("run agent query")?;
 
-    // Store conversation in session
+    // Store conversation in session (user message + tool call summary + assistant answer)
     if let Err(e) =
         session_manager.add_message(&session_id, "user".to_string(), request.query.clone())
     {
         log::warn!("Failed to add user message to session: {}", e);
+    }
+
+    // Store a summary of tool calls so future turns know what happened
+    if !tool_calls.is_empty() {
+        let tool_summary: Vec<String> = tool_calls
+            .iter()
+            .map(|tc| {
+                let result_preview = tc.result.to_string();
+                let result_short = if result_preview.len() > 500 {
+                    format!("{}...[truncated]", &result_preview[..500])
+                } else {
+                    result_preview
+                };
+                format!(
+                    "Tool: {}\nParams: {}\nResult: {}",
+                    tc.tool,
+                    serde_json::to_string(&tc.params).unwrap_or_default(),
+                    result_short
+                )
+            })
+            .collect();
+        if let Err(e) = session_manager.add_message(
+            &session_id,
+            "tool_calls".to_string(),
+            tool_summary.join("\n---\n"),
+        ) {
+            log::warn!("Failed to add tool calls to session: {}", e);
+        }
     }
 
     if let Err(e) =

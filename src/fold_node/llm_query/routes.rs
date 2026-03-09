@@ -262,6 +262,7 @@ pub async fn agent_query(
         query: request.query.clone(),
         session_id: request.session_id.clone(),
         max_iterations: request.max_iterations,
+        context: request.context.clone(),
     };
 
     match shared_handlers::agent_query(

@@ -31,6 +31,7 @@ pub struct AgentQueryHandlerRequest {
     pub query: String,
     pub session_id: Option<String>,
     pub max_iterations: Option<usize>,
+    pub context: Option<Value>,
 }
 
 /// Response for agent query

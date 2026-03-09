@@ -15,8 +15,9 @@ import NativeIndexTab from './components/tabs/NativeIndexTab'
 import SmartFolderTab from './components/tabs/SmartFolderTab'
 import DataBrowserTab from './components/tabs/DataBrowserTab'
 import WordGraphTab from './components/tabs/WordGraphTab'
+import AgentTab from './components/tabs/AgentTab'
 import SettingsModal from './components/SettingsModal'
-import OnboardingWizard from './components/OnboardingWizard'
+
 import LogSidebar from './components/LogSidebar'
 import ErrorBoundary from './components/ErrorBoundary'
 import { useApprovedSchemas } from './hooks/useApprovedSchemas.js'
@@ -37,6 +38,7 @@ function isIngestionResult(results) {
 
 // Single lookup for URL hash → tab ID (prevents duplication)
 const HASH_TO_TAB = {
+  agent: 'agent',
   schemas: 'schemas', schema: 'schemas',
   query: 'query', mutation: 'mutation',
   ingestion: 'ingestion', 'file-upload': 'file-upload',
@@ -62,9 +64,6 @@ export function AppContent() {
   const [setupDismissed, setSetupDismissed] = useState(
     () => localStorage.getItem('folddb_setup_dismissed') === '1'
   )
-  const [isOnboardingOpen, setIsOnboardingOpen] = useState(false)
-  const userHash = useAppSelector(state => state.auth.user?.hash)
-  const [onboardingCompleted, setOnboardingCompleted] = useState(false)
   const [dbStatus, setDbStatus] = useState(null) // { initialized, has_saved_config }
   const [dbStatusLoading, setDbStatusLoading] = useState(true)
 
@@ -136,31 +135,6 @@ export function AppContent() {
 
 
 
-  // Check per-user onboarding status when user hash becomes available
-  useEffect(() => {
-    if (userHash) {
-      const key = `${BROWSER_CONFIG.STORAGE_KEYS.ONBOARDING_COMPLETED}_${userHash}`
-      setOnboardingCompleted(localStorage.getItem(key) === '1')
-    }
-  }, [userHash])
-
-  // Show onboarding wizard for first-time users
-  useEffect(() => {
-    if (isAuthenticated && userHash && !onboardingCompleted) {
-      const timer = setTimeout(() => setIsOnboardingOpen(true), 500)
-      return () => clearTimeout(timer)
-    }
-  }, [isAuthenticated, userHash, onboardingCompleted])
-
-  const handleOnboardingClose = () => {
-    setIsOnboardingOpen(false)
-    setOnboardingCompleted(true)
-    if (userHash) {
-      localStorage.setItem(`${BROWSER_CONFIG.STORAGE_KEYS.ONBOARDING_COMPLETED}_${userHash}`, '1')
-    }
-    dispatch(fetchIngestionConfig())
-  }
-
   // Only fetch schemas when authenticated
   const {
     error: schemasError,
@@ -178,7 +152,7 @@ export function AppContent() {
   const ingestionConfig = useAppSelector(selectIngestionConfig)
   const aiConfigured = useAppSelector(selectIsAiConfigured)
   const aiProvider = useAppSelector(selectAiProvider)
-  const showSetupBanner = isAuthenticated && ingestionConfig !== null && !aiConfigured && !setupDismissed && !isOnboardingOpen && onboardingCompleted
+  const showSetupBanner = isAuthenticated && ingestionConfig !== null && !aiConfigured && !setupDismissed
 
   const handleTabChange = (tab) => {
     setActiveTab(tab)
@@ -199,6 +173,8 @@ export function AppContent() {
 
   const renderActiveTab = () => {
     switch (activeTab) {
+      case 'agent':
+        return <AgentTab />
       case 'schemas':
         return (
           <SchemaTab
@@ -277,7 +253,6 @@ export function AppContent() {
         onCloudSettingsClick={() => { setSettingsInitialTab('upgrade-cloud'); setIsSettingsOpen(true) }}
       />
       <SettingsModal isOpen={isSettingsOpen} onClose={() => setIsSettingsOpen(false)} initialTab={settingsInitialTab} />
-      <OnboardingWizard isOpen={isOnboardingOpen} onClose={handleOnboardingClose} userHash={userHash} />
 
       {showSetupBanner && (
         <div className="bg-gruvbox-elevated border-b border-border px-8 py-3 flex items-center justify-between">

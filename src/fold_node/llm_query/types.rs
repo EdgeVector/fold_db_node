@@ -75,6 +75,9 @@ pub struct AgentQueryRequest {
     pub session_id: Option<String>,
     /// Maximum number of iterations before stopping (default: 10)
     pub max_iterations: Option<usize>,
+    /// Optional structured context from previous tool results (e.g. scan results)
+    #[serde(default)]
+    pub context: Option<Value>,
 }
 
 /// Response from agent query

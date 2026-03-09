@@ -11,7 +11,7 @@
  */
 export const APP_CONFIG = {
   // Default tab when application loads
-  DEFAULT_TAB: 'smart-folder',
+  DEFAULT_TAB: 'agent',
   
   // Authentication configuration
   AUTHENTICATION: {
@@ -96,7 +96,6 @@ export const BROWSER_CONFIG = {
   STORAGE_KEYS: {
     USER_ID: 'fold_user_id',
     USER_HASH: 'fold_user_hash',
-    ONBOARDING_COMPLETED: 'folddb_onboarding_completed',
   },
   
   // Viewport and responsive settings

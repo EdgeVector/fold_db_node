@@ -14,6 +14,7 @@ export const FORM_FIELD_DEBOUNCE_MS = 300;
 // Tab Definitions
 export const DEFAULT_TABS = [
   // Main features
+  { id: "agent", label: "Agent", icon: "💬", group: "main" },
   { id: "smart-folder", label: "Smart Folder", icon: "📂", group: "main" },
   { id: "file-upload", label: "File Upload", icon: "📄", group: "main" },
   { id: "llm-query", label: "AI Query", icon: "🤖", group: "main" },

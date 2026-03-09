@@ -33,6 +33,7 @@ export interface AgentQueryRequest {
   query: string;
   session_id?: string;
   max_iterations?: number;
+  context?: Record<string, unknown>;
 }
 
 export interface ToolCallRecord {

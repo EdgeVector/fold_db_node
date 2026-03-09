@@ -70,6 +70,13 @@ vi.mock('../../components/TabNavigation', () => ({
   default: ({ activeTab, onTabChange }) => (
     <div data-testid="tab-navigation">
       <button
+        data-testid="tab-agent"
+        onClick={() => onTabChange('agent')}
+        className={activeTab === 'agent' ? 'active' : ''}
+      >
+        Agent
+      </button>
+      <button
         data-testid="tab-smart-folder"
         onClick={() => onTabChange('smart-folder')}
         className={activeTab === 'smart-folder' ? 'active' : ''}
@@ -204,6 +211,14 @@ vi.mock('../../components/tabs/SmartFolderTab', () => ({
   )
 }));
 
+vi.mock('../../components/tabs/AgentTab', () => ({
+  default: ({ onTabChange }) => (
+    <div data-testid="agent-tab">
+      Agent Tab
+    </div>
+  )
+}));
+
 // Create stable mock functions
 const mockApprovedSchemas = {
   approvedSchemas: [],
@@ -268,7 +283,7 @@ describe('App Component', () => {
         expect(screen.getByTestId('log-sidebar')).toBeInTheDocument();
       });
 
-      it('initializes with default tab (smart-folder)', async () => {
+      it('initializes with default tab (agent)', async () => {
         const store = createTestStore({
           auth: {
             isAuthenticated: true,
@@ -287,7 +302,7 @@ describe('App Component', () => {
         renderWithRedux(<AppContent />, { store });
 
         await waitFor(() => {
-          expect(screen.getByTestId('smart-folder-tab')).toBeInTheDocument();
+          expect(screen.getByTestId('agent-tab')).toBeInTheDocument();
         });
         expect(screen.queryByTestId('schema-tab')).not.toBeInTheDocument();
       });
@@ -338,9 +353,9 @@ describe('App Component', () => {
 
         renderWithRedux(<AppContent />, { store });
 
-        // Default should be smart-folder tab (wait for DB status to resolve)
+        // Default should be agent tab (wait for DB status to resolve)
         await waitFor(() => {
-          expect(screen.getByTestId('smart-folder-tab')).toBeInTheDocument();
+          expect(screen.getByTestId('agent-tab')).toBeInTheDocument();
         });
 
         // Switch to schemas tab

@@ -155,6 +155,26 @@ impl LlmQueryService {
         prompt.push_str("After getting results, use the **query** tool with the returned schema_name and key to fetch full records.\n");
         prompt.push_str("Example: {\"tool\": \"search\", \"params\": {\"terms\": \"lake\"}}\n\n");
 
+        prompt.push_str("### scan_folder\n");
+        prompt.push_str("Scan a filesystem folder to discover files suitable for ingestion. Uses AI to classify files as personal data, media, config, etc.\n");
+        prompt.push_str("Automatically skips config files, binaries, code projects, and other non-personal data.\n");
+        prompt.push_str("Use this when the user wants to add/import/ingest data from a folder.\n");
+        prompt.push_str("Parameters:\n");
+        prompt.push_str("- path (string, required): Folder path to scan (e.g. \"sample_data\", \"/Users/tom/Documents\", \"~/Documents\")\n");
+        prompt.push_str("- max_files (number, optional): Maximum files to scan (default: 100)\n");
+        prompt.push_str("Returns: recommended_files (files to ingest), skipped_files, summary by category, total_estimated_cost.\n");
+        prompt.push_str("After scanning, show the user what was found and ask if they want to proceed with ingestion.\n");
+        prompt.push_str("Example: {\"tool\": \"scan_folder\", \"params\": {\"path\": \"sample_data\"}}\n\n");
+
+        prompt.push_str("### ingest_files\n");
+        prompt.push_str("Ingest files from a previously scanned folder into the database. Each file is processed by AI to extract schema and data.\n");
+        prompt.push_str("Only call this AFTER scan_folder and AFTER the user confirms they want to proceed.\n");
+        prompt.push_str("Parameters:\n");
+        prompt.push_str("- folder_path (string, required): The same folder path used in scan_folder\n");
+        prompt.push_str("- files (array of strings, required): Relative file paths from the scan results (use the 'path' field from recommended_files)\n");
+        prompt.push_str("Returns: total files processed, succeeded count, failed count, per-file results with schema_used.\n");
+        prompt.push_str("Example: {\"tool\": \"ingest_files\", \"params\": {\"folder_path\": \"sample_data\", \"files\": [\"contacts/address_book.json\", \"journal/2025-01-15.txt\"]}}\n\n");
+
         prompt.push_str("## Available Schemas\n\n");
         for schema in schemas {
             prompt.push_str(&format!(
