@@ -13,6 +13,10 @@ function useAiConfig({ configSaveStatus, setConfigSaveStatus, onClose }) {
   const [openrouterBaseUrl, setOpenrouterBaseUrl] = useState('https://openrouter.ai/api/v1')
   const [ollamaModel, setOllamaModel] = useState('')
   const [ollamaBaseUrl, setOllamaBaseUrl] = useState('http://localhost:11434')
+  const [anthropicApiKey, setAnthropicApiKey] = useState('')
+  const [hasAnthropicEnvKey, setHasAnthropicEnvKey] = useState(false)
+  const [anthropicModel, setAnthropicModel] = useState('claude-sonnet-4-20250514')
+  const [anthropicBaseUrl, setAnthropicBaseUrl] = useState('https://api.anthropic.com')
   const [ollamaModels, setOllamaModels] = useState([])
   const [ollamaModelsLoading, setOllamaModelsLoading] = useState(false)
   const [ollamaModelsError, setOllamaModelsError] = useState(null)
@@ -81,6 +85,16 @@ function useAiConfig({ configSaveStatus, setConfigSaveStatus, onClose }) {
       setOpenrouterBaseUrl(savedConfig.openrouter?.base_url || 'https://openrouter.ai/api/v1')
       setOllamaModel(savedConfig.ollama?.model || 'llama3.3')
       setOllamaBaseUrl(savedConfig.ollama?.base_url || 'http://localhost:11434')
+      const anthropicKey = savedConfig.anthropic?.api_key || ''
+      if (anthropicKey === '***configured***') {
+        setHasAnthropicEnvKey(true)
+        setAnthropicApiKey('')
+      } else {
+        setHasAnthropicEnvKey(false)
+        setAnthropicApiKey(anthropicKey)
+      }
+      setAnthropicModel(savedConfig.anthropic?.model || 'claude-sonnet-4-20250514')
+      setAnthropicBaseUrl(savedConfig.anthropic?.base_url || 'https://api.anthropic.com')
       setAiProvider(savedConfig.provider || 'OpenRouter')
     }
   }, [savedConfig])
@@ -91,6 +105,7 @@ function useAiConfig({ configSaveStatus, setConfigSaveStatus, onClose }) {
         provider: aiProvider,
         openrouter: { api_key: openrouterApiKey, model: openrouterModel, base_url: openrouterBaseUrl },
         ollama: { model: ollamaModel, base_url: ollamaBaseUrl },
+        anthropic: { api_key: anthropicApiKey, model: anthropicModel, base_url: anthropicBaseUrl },
       }
       await dispatch(saveIngestionConfig(config)).unwrap()
       setConfigSaveStatus({ success: true, message: 'Configuration saved successfully' })
@@ -113,6 +128,7 @@ function useAiConfig({ configSaveStatus, setConfigSaveStatus, onClose }) {
             <label className="label">Provider</label>
             <select value={aiProvider} onChange={(e) => setAiProvider(e.target.value)} className="select">
               <option value="OpenRouter">OpenRouter</option>
+              <option value="Anthropic">Anthropic</option>
               <option value="Ollama">Ollama</option>
             </select>
           </div>
@@ -126,6 +142,11 @@ function useAiConfig({ configSaveStatus, setConfigSaveStatus, onClose }) {
                 <option value="openai/gpt-4.1-mini">GPT-4.1 Mini</option>
                 <option value="openai/gpt-4.1">GPT-4.1</option>
                 <option value="deepseek/deepseek-chat-v3-0324">DeepSeek V3</option>
+              </select>
+            ) : aiProvider === 'Anthropic' ? (
+              <select value={anthropicModel} onChange={(e) => setAnthropicModel(e.target.value)} className="select">
+                <option value="claude-sonnet-4-20250514">Claude Sonnet 4</option>
+                <option value="claude-haiku-4-5-20251001">Claude Haiku 4.5</option>
               </select>
             ) : (
               <>
@@ -160,14 +181,20 @@ function useAiConfig({ configSaveStatus, setConfigSaveStatus, onClose }) {
         {aiProvider === 'OpenRouter' && (
           <div>
             <label className="label">API Key <span className="text-xs text-secondary">(<a href="https://openrouter.ai/keys" target="_blank" rel="noopener noreferrer" className="text-gruvbox-blue hover:underline">get key</a>)</span></label>
-            {hasEnvKey && !openrouterApiKey ? (
-              <>
-                <div className="input flex items-center text-sm text-gruvbox-green">Configured via environment variable</div>
-                <p className="text-xs text-secondary mt-1">Enter a new key below to override, or leave as-is to use the environment variable.</p>
-              </>
-            ) : (
-              <input type="password" value={openrouterApiKey} onChange={(e) => setOpenrouterApiKey(e.target.value)} placeholder="sk-or-..." className="input" />
+            {hasEnvKey && !openrouterApiKey && (
+              <p className="text-xs text-gruvbox-green mb-1">API key configured</p>
             )}
+            <input type="password" value={openrouterApiKey} onChange={(e) => setOpenrouterApiKey(e.target.value)} placeholder={hasEnvKey ? 'Enter new key to replace...' : 'sk-or-...'} className="input" />
+          </div>
+        )}
+
+        {aiProvider === 'Anthropic' && (
+          <div>
+            <label className="label">API Key <span className="text-xs text-secondary">(<a href="https://console.anthropic.com/settings/keys" target="_blank" rel="noopener noreferrer" className="text-gruvbox-blue hover:underline">get key</a>)</span></label>
+            {hasAnthropicEnvKey && !anthropicApiKey && (
+              <p className="text-xs text-gruvbox-green mb-1">API key configured</p>
+            )}
+            <input type="password" value={anthropicApiKey} onChange={(e) => setAnthropicApiKey(e.target.value)} placeholder={hasAnthropicEnvKey ? 'Enter new key to replace...' : 'sk-ant-...'} className="input" />
           </div>
         )}
 
@@ -198,6 +225,17 @@ function useAiConfig({ configSaveStatus, setConfigSaveStatus, onClose }) {
                     type="text"
                     value={openrouterBaseUrl}
                     onChange={(e) => setOpenrouterBaseUrl(e.target.value)}
+                    className="input"
+                  />
+                </div>
+              )}
+              {aiProvider === 'Anthropic' && (
+                <div>
+                  <label className="label">Base URL</label>
+                  <input
+                    type="text"
+                    value={anthropicBaseUrl}
+                    onChange={(e) => setAnthropicBaseUrl(e.target.value)}
                     className="input"
                   />
                 </div>

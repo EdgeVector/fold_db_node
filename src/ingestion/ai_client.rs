@@ -1,6 +1,6 @@
 //! Unified AI backend abstraction for OpenRouter and Ollama.
 
-use crate::ingestion::config::{AIProvider, IngestionConfig, OllamaConfig, OpenRouterConfig};
+use crate::ingestion::config::{AIProvider, AnthropicConfig, IngestionConfig, OllamaConfig, OpenRouterConfig};
 use crate::ingestion::{IngestionError, IngestionResult};
 use fold_db::log_feature;
 use fold_db::logging::features::LogFeature;
@@ -194,6 +194,109 @@ impl AiBackend for OllamaBackend {
     }
 }
 
+// ---- Anthropic ----
+
+#[derive(Debug, Serialize)]
+struct AnthropicRequest {
+    model: String,
+    messages: Vec<AnthropicMessage>,
+    max_tokens: u32,
+    temperature: Option<f32>,
+}
+
+#[derive(Debug, Serialize)]
+struct AnthropicMessage {
+    role: String,
+    content: String,
+}
+
+#[derive(Debug, Deserialize)]
+struct AnthropicResponse {
+    content: Vec<AnthropicContent>,
+    usage: Option<AnthropicUsage>,
+}
+
+#[derive(Debug, Deserialize)]
+struct AnthropicContent {
+    text: String,
+}
+
+#[derive(Debug, Deserialize)]
+struct AnthropicUsage {
+    input_tokens: Option<u32>,
+    output_tokens: Option<u32>,
+}
+
+pub struct AnthropicBackend {
+    client: Client,
+    config: AnthropicConfig,
+    max_retries: u32,
+}
+
+impl AnthropicBackend {
+    pub fn new(config: AnthropicConfig, timeout_seconds: u64, max_retries: u32) -> IngestionResult<Self> {
+        config.validate()?;
+        let client = Client::builder()
+            .timeout(Duration::from_secs(timeout_seconds))
+            .no_proxy()
+            .build()
+            .map_err(|e| IngestionError::configuration_error(format!("Failed to create HTTP client: {}", e)))?;
+        Ok(Self { client, config, max_retries })
+    }
+
+    async fn make_request(&self, request: &AnthropicRequest) -> IngestionResult<String> {
+        let url = format!("{}/v1/messages", self.config.base_url);
+        let response = self.client.post(&url)
+            .header("x-api-key", &self.config.api_key)
+            .header("anthropic-version", "2023-06-01")
+            .header("Content-Type", "application/json")
+            .json(request)
+            .send()
+            .await
+            .map_err(|e| crate::ingestion::error::classify_transport_error("Anthropic", &e))?;
+
+        if !response.status().is_success() {
+            let status = response.status().as_u16();
+            let error_text = response.text().await.unwrap_or_else(|e| {
+                log::warn!("Failed to read Anthropic error response body: {}", e);
+                "Unknown error (response body unreadable)".to_string()
+            });
+            return Err(crate::ingestion::error::classify_llm_error("Anthropic", status, &error_text));
+        }
+
+        let resp: AnthropicResponse = response.json().await?;
+        if let Some(usage) = &resp.usage {
+            log_feature!(
+                LogFeature::Ingestion, info,
+                "Anthropic usage - input: {:?}, output: {:?}",
+                usage.input_tokens, usage.output_tokens
+            );
+        }
+        if resp.content.is_empty() {
+            return Err(IngestionError::configuration_error("No content in Anthropic API response"));
+        }
+        Ok(resp.content[0].text.clone())
+    }
+}
+
+#[async_trait]
+impl AiBackend for AnthropicBackend {
+    async fn call(&self, prompt: &str) -> IngestionResult<String> {
+        let request = AnthropicRequest {
+            model: self.config.model.clone(),
+            messages: vec![AnthropicMessage { role: "user".to_string(), content: prompt.to_string() }],
+            max_tokens: 16000,
+            temperature: Some(0.1),
+        };
+        super::ai_helpers::call_with_retries(
+            "Anthropic API",
+            self.max_retries,
+            || IngestionError::configuration_error("All Anthropic API attempts failed"),
+            || self.make_request(&request),
+        ).await
+    }
+}
+
 // ---- Factory ----
 
 /// Build the correct backend from an `IngestionConfig`.
@@ -218,6 +321,16 @@ pub fn build_backend(config: &IngestionConfig) -> (Option<Arc<dyn AiBackend>>, O
             Ok(b) => (Some(Arc::new(b)), None),
             Err(e) => {
                 let msg = format!("Ollama init failed: {}", e);
+                log::warn!("{}", msg);
+                (None, Some(msg))
+            }
+        },
+        AIProvider::Anthropic => match AnthropicBackend::new(
+            config.anthropic.clone(), config.timeout_seconds, config.max_retries,
+        ) {
+            Ok(b) => (Some(Arc::new(b)), None),
+            Err(e) => {
+                let msg = format!("Anthropic init failed: {}", e);
                 log::warn!("{}", msg);
                 (None, Some(msg))
             }

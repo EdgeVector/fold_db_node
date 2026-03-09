@@ -88,6 +88,7 @@ export type {
   IngestionResults,
   OpenRouterConfig,
   OllamaConfig,
+  AnthropicConfig,
   IngestionConfig,
   ValidationRequest,
   ValidationResponse,

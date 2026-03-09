@@ -22,6 +22,11 @@ export default defineConfig({
         changeOrigin: true,
         secure: false,
       },
+      "/ingestion": {
+        target: "http://localhost:9001",
+        changeOrigin: true,
+        secure: false,
+      },
     },
     watch: {
       ignored: ["**/node_modules/**"],

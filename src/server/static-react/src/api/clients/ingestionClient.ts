@@ -7,7 +7,7 @@ import type { EnhancedApiResponse } from "../core/types";
 export interface IngestionStatus {
   enabled: boolean;
   configured: boolean;
-  provider: "OpenRouter" | "Ollama";
+  provider: "OpenRouter" | "Ollama" | "Anthropic";
   model: string;
   auto_execute_mutations: boolean;
 }
@@ -23,10 +23,17 @@ export interface OllamaConfig {
   base_url: string;
 }
 
+export interface AnthropicConfig {
+  api_key: string;
+  model: string;
+  base_url: string;
+}
+
 export interface IngestionConfig {
-  provider: "OpenRouter" | "Ollama";
+  provider: "OpenRouter" | "Ollama" | "Anthropic";
   openrouter: OpenRouterConfig;
   ollama: OllamaConfig;
+  anthropic: AnthropicConfig;
 }
 
 export interface ValidationRequest {

@@ -96,21 +96,24 @@ export const selectIngestionConfig = (state: RootState) =>
 export const selectAiProvider = (state: RootState) =>
   state.ingestion.config?.provider ?? null;
 
-export const selectActiveModel = (state: RootState) => {
-  const config = state.ingestion.config;
+/** Get the active provider's config object based on the selected provider. */
+const getActiveProviderConfig = (config: IngestionConfig | null) => {
   if (!config) return null;
-  return config.provider === "OpenRouter"
-    ? config.openrouter?.model
-    : config.ollama?.model;
+  const key = config.provider.toLowerCase() as keyof Pick<IngestionConfig, "openrouter" | "ollama" | "anthropic">;
+  return config[key] ?? null;
+};
+
+export const selectActiveModel = (state: RootState) => {
+  const providerConfig = getActiveProviderConfig(state.ingestion.config);
+  return providerConfig?.model ?? null;
 };
 
 export const selectIsAiConfigured = (state: RootState) => {
-  const config = state.ingestion.config;
-  if (!config) return false;
-  if (config.provider === "OpenRouter") {
-    return !!config.openrouter?.api_key;
-  }
-  return !!config.ollama?.model;
+  const providerConfig = getActiveProviderConfig(state.ingestion.config);
+  if (!providerConfig) return false;
+  // Cloud providers need an API key; Ollama just needs a model
+  if ("api_key" in providerConfig) return !!providerConfig.api_key;
+  return !!providerConfig.model;
 };
 
 export const selectIsAiReady = (state: RootState) =>

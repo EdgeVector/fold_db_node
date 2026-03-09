@@ -282,7 +282,7 @@ export function AppContent() {
       {showSetupBanner && (
         <div className="bg-gruvbox-elevated border-b border-border px-8 py-3 flex items-center justify-between">
           <span className="text-gruvbox-blue text-sm">
-            Configure AI to get started — FoldDB needs OpenRouter or local Ollama for ingestion and search.
+            Configure AI to get started — FoldDB needs OpenRouter, Anthropic, or local Ollama for ingestion and search.
           </span>
           <div className="flex items-center gap-3">
             <button

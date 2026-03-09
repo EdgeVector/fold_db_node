@@ -1,6 +1,6 @@
 //! JSON conversion and processing for file uploads
 
-use file_to_json::{Converter, FallbackStrategy, OpenRouterConfig};
+use file_to_json::{AnthropicConfig, Converter, FallbackStrategy, OpenRouterConfig};
 use serde_json::{json, Value};
 use std::io::Write;
 use std::path::PathBuf;
@@ -49,6 +49,43 @@ pub async fn convert_file_to_json(file_path: &PathBuf) -> Result<Value, Ingestio
                 max_image_bytes: 5 * 1024 * 1024,
                 base_url: Some(base_url),
             }
+        }
+        AIProvider::Anthropic => {
+            let anthropic_config = AnthropicConfig {
+                api_key: ingestion_config.anthropic.api_key.clone(),
+                model: ingestion_config.anthropic.model.clone(),
+                timeout: Duration::from_secs(ingestion_config.timeout_seconds),
+                fallback_strategy: FallbackStrategy::Chunked,
+                vision_model: Some(ingestion_config.anthropic.model.clone()),
+                max_image_bytes: 5 * 1024 * 1024,
+                base_url: Some(ingestion_config.anthropic.base_url.clone()),
+            };
+
+            let file_path_str = file_path.to_string_lossy().to_string();
+
+            return tokio::task::spawn_blocking(move || {
+                let converter = Converter::new(anthropic_config)
+                    .map_err(|e| IngestionError::FileConversionFailed(format!("Converter init: {}", e)))?;
+                converter.convert_path(&file_path_str).map_err(|e| {
+                    log_feature!(
+                        LogFeature::Ingestion,
+                        error,
+                        "Failed to convert file to JSON: {}",
+                        e
+                    );
+                    IngestionError::FileConversionFailed(e.to_string())
+                })
+            })
+            .await
+            .map_err(|e| {
+                log_feature!(
+                    LogFeature::Ingestion,
+                    error,
+                    "Failed to spawn blocking task: {}",
+                    e
+                );
+                IngestionError::FileConversionFailed(format!("Task join: {}", e))
+            })?;
         }
     };
 

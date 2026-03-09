@@ -12,6 +12,11 @@ const OPENROUTER_MODELS = [
   { value: 'deepseek/deepseek-chat-v3-0324', label: 'DeepSeek V3' },
 ]
 
+const ANTHROPIC_MODELS = [
+  { value: 'claude-sonnet-4-20250514', label: 'Claude Sonnet 4' },
+  { value: 'claude-haiku-4-5-20251001', label: 'Claude Haiku 4.5' },
+]
+
 export default function ConfigureAiStep({ onNext, onSkip }) {
   const dispatch = useAppDispatch()
   const [provider, setProvider] = useState('OpenRouter')
@@ -19,6 +24,8 @@ export default function ConfigureAiStep({ onNext, onSkip }) {
   const [apiKey, setApiKey] = useState('')
   const [ollamaModel, setOllamaModel] = useState('')
   const [ollamaUrl, setOllamaUrl] = useState('http://localhost:11434')
+  const [anthropicApiKey, setAnthropicApiKey] = useState('')
+  const [anthropicModel, setAnthropicModel] = useState('claude-sonnet-4-20250514')
   const [ollamaModels, setOllamaModels] = useState([])
   const [ollamaModelsLoading, setOllamaModelsLoading] = useState(false)
   const [ollamaModelsError, setOllamaModelsError] = useState(null)
@@ -81,6 +88,10 @@ export default function ConfigureAiStep({ onNext, onSkip }) {
         if (cfg.openrouter?.model) setModel(cfg.openrouter.model)
         if (cfg.ollama?.model) setOllamaModel(cfg.ollama.model)
         if (cfg.ollama?.base_url) setOllamaUrl(cfg.ollama.base_url)
+        if (cfg.anthropic?.model) setAnthropicModel(cfg.anthropic.model)
+        if (cfg.anthropic?.api_key && cfg.anthropic.api_key.includes('configured')) {
+          setAlreadyConfigured(true)
+        }
         if (cfg.openrouter?.api_key && cfg.openrouter.api_key.includes('configured')) {
           setAlreadyConfigured(true)
         }
@@ -106,6 +117,11 @@ export default function ConfigureAiStep({ onNext, onSkip }) {
         model: provider === 'Ollama' ? (ollamaModel || (ollamaModels[0]?.name ?? '')) : '',
         base_url: ollamaUrl,
       },
+      anthropic: {
+        api_key: provider === 'Anthropic' ? anthropicApiKey : '',
+        model: provider === 'Anthropic' ? anthropicModel : '',
+        base_url: 'https://api.anthropic.com',
+      },
     }
     try {
       const response = await ingestionClient.saveConfig(config)
@@ -126,8 +142,13 @@ export default function ConfigureAiStep({ onNext, onSkip }) {
     return <p className="text-secondary text-center py-6">Loading configuration...</p>
   }
 
-  const currentModel = provider === 'OpenRouter' ? (model || OPENROUTER_MODELS[0].value) : ollamaModel
+  const currentModel = provider === 'OpenRouter'
+    ? (model || OPENROUTER_MODELS[0].value)
+    : provider === 'Anthropic'
+      ? anthropicModel
+      : ollamaModel
   const canSave = saving || (provider === 'OpenRouter' && !apiKey && !alreadyConfigured)
+    || (provider === 'Anthropic' && !anthropicApiKey && !alreadyConfigured)
 
   return (
     <div>
@@ -153,6 +174,7 @@ export default function ConfigureAiStep({ onNext, onSkip }) {
           data-testid="provider-select"
         >
           <option value="OpenRouter">OpenRouter (Cloud)</option>
+          <option value="Anthropic">Anthropic (Cloud)</option>
           <option value="Ollama">Ollama (Local)</option>
         </select>
       </div>
@@ -167,6 +189,15 @@ export default function ConfigureAiStep({ onNext, onSkip }) {
             data-testid="model-select"
           >
             {OPENROUTER_MODELS.map(m => <option key={m.value} value={m.value}>{m.label}</option>)}
+          </select>
+        ) : provider === 'Anthropic' ? (
+          <select
+            value={anthropicModel}
+            onChange={e => setAnthropicModel(e.target.value)}
+            className="select"
+            data-testid="model-select"
+          >
+            {ANTHROPIC_MODELS.map(m => <option key={m.value} value={m.value}>{m.label}</option>)}
           </select>
         ) : ollamaModelsLoading ? (
           <div className="input flex items-center text-secondary">Loading models...</div>
@@ -215,6 +246,30 @@ export default function ConfigureAiStep({ onNext, onSkip }) {
               className="text-gruvbox-link text-xs hover:underline"
             >
               Get API key from OpenRouter
+            </a>
+          </p>
+        </div>
+      )}
+
+      {provider === 'Anthropic' && (
+        <div className="mt-3">
+          <p className="label">API Key</p>
+          <input
+            type="password"
+            value={anthropicApiKey}
+            onChange={e => setAnthropicApiKey(e.target.value)}
+            placeholder={alreadyConfigured ? '***configured***' : 'sk-ant-...'}
+            className="input"
+            data-testid="api-key-input"
+          />
+          <p className="mt-1">
+            <a
+              href="https://console.anthropic.com/settings/keys"
+              target="_blank"
+              rel="noopener noreferrer"
+              className="text-gruvbox-link text-xs hover:underline"
+            >
+              Get API key from Anthropic
             </a>
           </p>
         </div>

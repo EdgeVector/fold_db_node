@@ -11,6 +11,7 @@ pub enum AIProvider {
     #[default]
     OpenRouter,
     Ollama,
+    Anthropic,
 }
 
 /// Configuration for the OpenRouter AI provider.
@@ -84,12 +85,53 @@ impl OllamaConfig {
     }
 }
 
+/// Configuration for the Anthropic AI provider.
+#[derive(Debug, Clone, Serialize, Deserialize, utoipa::ToSchema)]
+pub struct AnthropicConfig {
+    pub api_key: String,
+    pub model: String,
+    pub base_url: String,
+}
+
+impl Default for AnthropicConfig {
+    fn default() -> Self {
+        Self {
+            api_key: String::new(),
+            model: "claude-sonnet-4-20250514".to_string(),
+            base_url: "https://api.anthropic.com".to_string(),
+        }
+    }
+}
+
+impl AnthropicConfig {
+    pub fn validate(&self) -> Result<(), crate::ingestion::IngestionError> {
+        if self.api_key.is_empty() {
+            return Err(crate::ingestion::IngestionError::configuration_error(
+                "Anthropic API key is required",
+            ));
+        }
+        if self.model.is_empty() {
+            return Err(crate::ingestion::IngestionError::configuration_error(
+                "Anthropic model is required",
+            ));
+        }
+        if self.base_url.is_empty() {
+            return Err(crate::ingestion::IngestionError::configuration_error(
+                "Anthropic base URL is required",
+            ));
+        }
+        Ok(())
+    }
+}
+
 /// Configuration for the ingestion module.
 #[derive(Debug, Clone, Serialize, Deserialize, utoipa::ToSchema)]
 pub struct IngestionConfig {
     pub provider: AIProvider,
     pub openrouter: OpenRouterConfig,
     pub ollama: OllamaConfig,
+    #[serde(default)]
+    pub anthropic: AnthropicConfig,
     pub enabled: bool,
     pub max_retries: u32,
     pub timeout_seconds: u64,
@@ -102,6 +144,7 @@ impl Default for IngestionConfig {
             provider: AIProvider::default(),
             openrouter: OpenRouterConfig::default(),
             ollama: OllamaConfig::default(),
+            anthropic: AnthropicConfig::default(),
             enabled: false,
             max_retries: 3,
             timeout_seconds: 300,
@@ -116,6 +159,9 @@ impl IngestionConfig {
         let mut copy = self.clone();
         if !copy.openrouter.api_key.is_empty() {
             copy.openrouter.api_key = "***configured***".to_string();
+        }
+        if !copy.anthropic.api_key.is_empty() {
+            copy.anthropic.api_key = "***configured***".to_string();
         }
         copy
     }
@@ -162,34 +208,41 @@ impl IngestionConfig {
                     match saved.provider {
                         AIProvider::Ollama => &saved.ollama.model,
                         AIProvider::OpenRouter => &saved.openrouter.model,
+                        AIProvider::Anthropic => &saved.anthropic.model,
                     }
                 );
                 config.provider = saved.provider;
                 config.openrouter = saved.openrouter;
                 config.ollama = saved.ollama;
+                config.anthropic = saved.anthropic;
                 true
             }
         };
 
-        // API key: env var always wins — secrets shouldn't live in config files
+        // API keys: env vars always win — secrets shouldn't live in config files
         if let Ok(key) = env::var("FOLD_OPENROUTER_API_KEY") {
             config.openrouter.api_key = key;
+        }
+        if let Ok(key) = env::var("ANTHROPIC_API_KEY") {
+            config.anthropic.api_key = key;
         }
 
         // Provider selection and non-secret model settings only apply when
         // there's no saved config (saved config already has these)
         if !has_saved {
             if let Ok(p) = env::var("AI_PROVIDER") {
-                config.provider = if p.to_lowercase() == "ollama" {
-                    AIProvider::Ollama
-                } else {
-                    AIProvider::OpenRouter
+                config.provider = match p.to_lowercase().as_str() {
+                    "ollama" => AIProvider::Ollama,
+                    "anthropic" => AIProvider::Anthropic,
+                    _ => AIProvider::OpenRouter,
                 };
             }
             if let Ok(v) = env::var("OPENROUTER_MODEL") { config.openrouter.model = v; }
             if let Ok(v) = env::var("OPENROUTER_BASE_URL") { config.openrouter.base_url = v; }
             if let Ok(v) = env::var("OLLAMA_MODEL") { config.ollama.model = v; }
             if let Ok(v) = env::var("OLLAMA_BASE_URL") { config.ollama.base_url = v; }
+            if let Ok(v) = env::var("ANTHROPIC_MODEL") { config.anthropic.model = v; }
+            if let Ok(v) = env::var("ANTHROPIC_BASE_URL") { config.anthropic.base_url = v; }
         }
 
         // Runtime settings: env vars override defaults; ingestion is enabled by default
@@ -207,6 +260,7 @@ impl IngestionConfig {
         match self.provider {
             AIProvider::OpenRouter => self.openrouter.validate(),
             AIProvider::Ollama => self.ollama.validate(),
+            AIProvider::Anthropic => self.anthropic.validate(),
         }
     }
 
@@ -224,14 +278,19 @@ impl IngestionConfig {
         let config_path = Self::config_file_path().ok_or("FOLD_CONFIG_DIR is not set; cannot save ingestion config")?;
 
         let mut to_save = config.clone();
+        // Preserve API keys if not explicitly set (redacted or empty)
+        let existing = if config_path.exists() {
+            Self::load_from_file(&config_path)
+                .map_err(|e| format!("Failed to read existing config to preserve API key: {e}"))
+                .ok()
+        } else {
+            None
+        };
         if to_save.openrouter.api_key.is_empty() || to_save.openrouter.api_key == "***configured***" {
-            if config_path.exists() {
-                let existing = Self::load_from_file(&config_path)
-                    .map_err(|e| format!("Failed to read existing config to preserve API key: {e}"))?;
-                to_save.openrouter.api_key = existing.openrouter.api_key;
-            } else {
-                to_save.openrouter.api_key = String::new();
-            }
+            to_save.openrouter.api_key = existing.as_ref().map(|e| e.openrouter.api_key.clone()).unwrap_or_default();
+        }
+        if to_save.anthropic.api_key.is_empty() || to_save.anthropic.api_key == "***configured***" {
+            to_save.anthropic.api_key = existing.as_ref().map(|e| e.anthropic.api_key.clone()).unwrap_or_default();
         }
 
         if let Some(parent) = config_path.parent() {
@@ -273,6 +332,9 @@ impl IngestionConfig {
         if saved.openrouter.api_key == "***configured***" {
             saved.openrouter.api_key = String::new();
         }
+        if saved.anthropic.api_key == "***configured***" {
+            saved.anthropic.api_key = String::new();
+        }
         Ok(saved)
     }
 
@@ -293,6 +355,8 @@ pub struct SavedConfig {
     pub provider: AIProvider,
     pub openrouter: OpenRouterConfig,
     pub ollama: OllamaConfig,
+    #[serde(default)]
+    pub anthropic: AnthropicConfig,
 }
 
 // ---- env var helpers ----
