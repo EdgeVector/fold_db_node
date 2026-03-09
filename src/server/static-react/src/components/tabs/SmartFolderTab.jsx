@@ -238,6 +238,10 @@ function SmartFolderTab({ onResult: onResultProp }) {
       {scanResult && !batchId && (
         <ScanResultsView
           scanResult={scanResult}
+          onScanResultUpdate={(updated) => {
+            setScanResult(updated)
+            setSpendLimit(updated.total_estimated_cost?.toFixed(2) || '')
+          }}
           spendLimit={spendLimit}
           onSpendLimitChange={setSpendLimit}
           includeAlreadyIngested={includeAlreadyIngested}

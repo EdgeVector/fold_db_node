@@ -409,6 +409,10 @@ impl FoldHttpServer {
             web::post().to(ingestion_routes::cancel_batch),
         )
         .route(
+            "/ingestion/smart-folder/adjust",
+            web::post().to(ingestion_routes::adjust_scan_results),
+        )
+        .route(
             "/file/{hash}",
             web::get().to(crate::ingestion::file_upload::serve_file),
         )

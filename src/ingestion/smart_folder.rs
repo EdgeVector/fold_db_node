@@ -587,6 +587,103 @@ fn parse_image_directory_response(
         .collect()
 }
 
+// ---- Scan result adjustment via natural language ----
+
+/// Build an LLM prompt for adjusting scan results based on a user instruction.
+pub fn create_adjust_prompt(
+    instruction: &str,
+    recommended: &[FileRecommendation],
+    skipped: &[FileRecommendation],
+) -> String {
+    let mut rec_lines = Vec::new();
+    for f in recommended {
+        rec_lines.push(format!(
+            "  {{\"path\": \"{}\", \"should_ingest\": true, \"category\": \"{}\", \"reason\": \"{}\"}}",
+            f.path, f.category, f.reason
+        ));
+    }
+    let mut skip_lines = Vec::new();
+    for f in skipped {
+        if !f.already_ingested {
+            skip_lines.push(format!(
+                "  {{\"path\": \"{}\", \"should_ingest\": false, \"category\": \"{}\", \"reason\": \"{}\"}}",
+                f.path, f.category, f.reason
+            ));
+        }
+    }
+
+    format!(
+        r#"You are adjusting file ingestion recommendations based on the user's instruction.
+
+USER INSTRUCTION: "{instruction}"
+
+CURRENT FILES TO INGEST:
+[
+{rec_list}
+]
+
+CURRENT SKIPPED FILES:
+[
+{skip_list}
+]
+
+Apply the user's instruction to reclassify files. For example:
+- "include all work files" → move work-category files from skipped to should_ingest=true
+- "skip all images" → move image files from recommended to should_ingest=false
+- "include everything" → set all files to should_ingest=true
+
+CATEGORIES:
+- personal_data: Personal documents, notes, journals, financial records, health data, creative work
+- media: Images, videos, audio that are user-created content
+- config: Application configs, settings files
+- website_scaffolding: HTML templates, CSS, JS bundles, emoji assets
+- work: Work/corporate files, professional documents
+- unknown: Cannot determine
+
+Respond with a JSON array of ALL files (both recommended and skipped) with updated classifications:
+```json
+[
+  {{"path": "file/path.ext", "should_ingest": true, "category": "personal_data", "reason": "Brief reason"}},
+  ...
+]
+```
+
+Only return the JSON array, no other text."#,
+        rec_list = rec_lines.join(",\n"),
+        skip_list = skip_lines.join(",\n"),
+    )
+}
+
+/// Merge LLM adjustment results with existing file metadata (sizes, costs, etc.).
+/// Returns the full list of files with updated should_ingest/category/reason
+/// but preserving file_size_bytes, estimated_cost, and already_ingested from originals.
+pub fn merge_adjust_results(
+    originals: &[FileRecommendation],
+    llm_updates: &[FileRecommendation],
+) -> Vec<FileRecommendation> {
+    let update_map: HashMap<&str, &FileRecommendation> =
+        llm_updates.iter().map(|f| (f.path.as_str(), f)).collect();
+
+    originals
+        .iter()
+        .map(|orig| {
+            if let Some(updated) = update_map.get(orig.path.as_str()) {
+                FileRecommendation {
+                    path: orig.path.clone(),
+                    should_ingest: updated.should_ingest,
+                    category: updated.category.clone(),
+                    reason: updated.reason.clone(),
+                    file_size_bytes: orig.file_size_bytes,
+                    estimated_cost: orig.estimated_cost,
+                    already_ingested: orig.already_ingested,
+                }
+            } else {
+                orig.clone()
+            }
+        })
+        .collect()
+}
+
 // ---- LLM-based file classification and heuristic fallback ----
 
 /// Create the LLM prompt for file analysis with directory tree context.

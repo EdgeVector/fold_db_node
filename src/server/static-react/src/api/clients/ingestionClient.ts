@@ -438,6 +438,34 @@ export class UnifiedIngestionClient {
     );
   }
 
+  /** Adjust scan results using a natural language instruction */
+  async adjustScanResults(
+    instruction: string,
+    recommendedFiles: FileRecommendation[],
+    skippedFiles: FileRecommendation[],
+  ): Promise<EnhancedApiResponse<{
+    success: boolean;
+    message: string;
+    recommended_files: FileRecommendation[];
+    skipped_files: FileRecommendation[];
+    summary: Record<string, number>;
+    total_estimated_cost: number;
+  }>> {
+    return this.client.post(
+      "/ingestion/smart-folder/adjust",
+      {
+        instruction,
+        recommended_files: recommendedFiles,
+        skipped_files: skippedFiles,
+      },
+      {
+        timeout: API_TIMEOUTS.AI_PROCESSING,
+        retries: API_RETRIES.NONE,
+        cacheable: false,
+      },
+    );
+  }
+
   /** Complete a partial filesystem path with matching directories */
   async completePath(
     partialPath: string,

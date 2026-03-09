@@ -35,6 +35,33 @@ pub struct SmartFolderScanRequest {
     pub max_files: Option<usize>,
 }
 
+/// Request for adjusting scan results via natural language
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct AdjustScanRequest {
+    /// The user's natural language instruction (e.g. "include all work files")
+    pub instruction: String,
+    /// Current recommended files
+    pub recommended_files: Vec<smart_folder::FileRecommendation>,
+    /// Current skipped files
+    pub skipped_files: Vec<smart_folder::FileRecommendation>,
+}
+
+/// Response from adjusting scan results
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct AdjustScanResponse {
+    pub success: bool,
+    /// AI explanation of what changed
+    pub message: String,
+    /// Updated recommended files
+    pub recommended_files: Vec<smart_folder::FileRecommendation>,
+    /// Updated skipped files
+    pub skipped_files: Vec<smart_folder::FileRecommendation>,
+    /// Updated summary
+    pub summary: std::collections::HashMap<String, usize>,
+    /// Updated total estimated cost
+    pub total_estimated_cost: f64,
+}
+
 /// Request for smart folder ingestion (after user approval)
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct SmartFolderIngestRequest {
@@ -592,4 +619,116 @@ fn spawn_batch_coordinator(
         })
         .await
     });
+}
+
+/// Adjust scan results using a natural language instruction.
+/// The LLM re-classifies files based on the user's instruction and returns
+/// an updated set of recommended/skipped files.
+#[utoipa::path(
+    post,
+    path = "/api/ingestion/smart-folder/adjust",
+    tag = "ingestion",
+    request_body = AdjustScanRequest,
+    responses(
+        (status = 200, description = "Adjusted scan results", body = AdjustScanResponse),
+        (status = 400, description = "Invalid request"),
+        (status = 500, description = "LLM error"),
+    )
+)]
+pub async fn adjust_scan_results(
+    request: web::Json<AdjustScanRequest>,
+    ingestion_service: web::Data<IngestionServiceState>,
+) -> impl Responder {
+    log_feature!(
+        LogFeature::Ingestion,
+        info,
+        "Adjust scan results: instruction='{}', {} recommended, {} skipped",
+        request.instruction,
+        request.recommended_files.len(),
+        request.skipped_files.len(),
+    );
+
+    let service = match get_ingestion_service(&ingestion_service).await {
+        Some(s) => s,
+        None => {
+            return HttpResponse::InternalServerError().json(json!({
+                "success": false,
+                "message": "AI service not configured"
+            }));
+        }
+    };
+
+    // Build the adjustment prompt
+    let prompt = smart_folder::create_adjust_prompt(
+        &request.instruction,
+        &request.recommended_files,
+        &request.skipped_files,
+    );
+
+    // Call the LLM
+    let llm_response = match smart_folder::call_llm_for_file_analysis(&prompt, &service).await {
+        Ok(r) => r,
+        Err(e) => {
+            log::error!("LLM error during scan adjustment: {}", e);
+            return HttpResponse::InternalServerError().json(json!({
+                "success": false,
+                "message": format!("AI error: {}", e)
+            }));
+        }
+    };
+
+    // Parse the LLM response into path → should_ingest decisions
+    let all_files: Vec<smart_folder::FileRecommendation> = request
+        .recommended_files
+        .iter()
+        .chain(request.skipped_files.iter())
+        .cloned()
+        .collect();
+
+    let all_paths: Vec<String> = all_files.iter().map(|f| f.path.clone()).collect();
+
+    match smart_folder::parse_llm_file_recommendations(&llm_response, &all_paths) {
+        Ok(updated_recs) => {
+            // Merge LLM decisions with existing file metadata
+            let updated = smart_folder::merge_adjust_results(&all_files, &updated_recs);
+
+            let mut recommended = Vec::new();
+            let mut skipped = Vec::new();
+            let mut summary: std::collections::HashMap<String, usize> = std::collections::HashMap::new();
+            let mut total_cost = 0.0;
+
+            for file in updated {
+                *summary.entry(file.category.clone()).or_insert(0) += 1;
+                if file.should_ingest {
+                    total_cost += file.estimated_cost;
+                    recommended.push(file);
+                } else {
+                    skipped.push(file);
+                }
+            }
+
+            // Extract LLM explanation (try to parse it from between the JSON)
+            let message = format!(
+                "Updated: {} files to ingest, {} skipped.",
+                recommended.len(),
+                skipped.len()
+            );
+
+            HttpResponse::Ok().json(AdjustScanResponse {
+                success: true,
+                message,
+                recommended_files: recommended,
+                skipped_files: skipped,
+                summary,
+                total_estimated_cost: total_cost,
+            })
+        }
+        Err(e) => {
+            log::error!("Failed to parse LLM adjustment response: {}", e);
+            HttpResponse::InternalServerError().json(json!({
+                "success": false,
+                "message": format!("Failed to parse AI response: {}", e)
+            }))
+        }
+    }
 }

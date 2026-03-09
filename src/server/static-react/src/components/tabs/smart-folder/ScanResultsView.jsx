@@ -1,12 +1,14 @@
 import { useRef } from 'react'
 import FolderTreeView from '../FolderTreeView'
+import ScanAdjustChat from './ScanAdjustChat'
 import { fmtCost } from '../../../utils/formatCost'
 
 /**
- * Displays scan results: file counts, cost estimate, folder tree, and action buttons.
+ * Displays scan results: file counts, cost estimate, folder tree, AI chat panel, and action buttons.
  *
  * @param {Object} props
  * @param {Object} props.scanResult
+ * @param {Function} props.onScanResultUpdate - Called when AI chat adjusts the scan result
  * @param {string} props.spendLimit
  * @param {Function} props.onSpendLimitChange
  * @param {boolean} props.includeAlreadyIngested
@@ -19,6 +21,7 @@ import { fmtCost } from '../../../utils/formatCost'
  */
 export default function ScanResultsView({
   scanResult,
+  onScanResultUpdate,
   spendLimit,
   onSpendLimitChange,
   includeAlreadyIngested,
@@ -92,19 +95,30 @@ export default function ScanResultsView({
         </div>
       )}
 
-      {/* Folder tree controls */}
-      <div className="flex items-center gap-2 text-xs text-secondary">
-        <button onClick={() => treeRef.current?.expandAll()} className="hover:text-primary underline">Expand all</button>
-        <span>·</span>
-        <button onClick={() => treeRef.current?.collapseAll()} className="hover:text-primary underline">Collapse all</button>
-      </div>
+      {/* Two-column layout: folder tree + AI chat */}
+      <div className="grid grid-cols-1 lg:grid-cols-2 gap-4" style={{ minHeight: '400px' }}>
+        {/* Left: Folder tree */}
+        <div className="flex flex-col min-h-0">
+          <div className="flex items-center gap-2 text-xs text-secondary mb-1">
+            <button onClick={() => treeRef.current?.expandAll()} className="hover:text-primary underline">Expand all</button>
+            <span>·</span>
+            <button onClick={() => treeRef.current?.collapseAll()} className="hover:text-primary underline">Collapse all</button>
+          </div>
+          <FolderTreeView
+            ref={treeRef}
+            recommendedFiles={scanResult.recommended_files}
+            skippedFiles={scanResult.skipped_files}
+          />
+        </div>
 
-      {/* Folder tree */}
-      <FolderTreeView
-        ref={treeRef}
-        recommendedFiles={scanResult.recommended_files}
-        skippedFiles={scanResult.skipped_files}
-      />
+        {/* Right: AI chat panel */}
+        <div className="flex flex-col min-h-0" style={{ height: '424px' }}>
+          <ScanAdjustChat
+            scanResult={scanResult}
+            onScanResultUpdate={onScanResultUpdate}
+          />
+        </div>
+      </div>
 
       <div className="flex items-center justify-between">
         <button onClick={onBack} className="btn-secondary" disabled={isIngesting}>Back</button>
