@@ -2,12 +2,11 @@
 //!
 //! Two tests:
 //!
-//! 1. `test_twitter_export_scanner_excludes_media` — always runs, no API key.
-//!    Builds a synthetic Twitter-export directory (data/*.js + hundreds of media
-//!    files + fonts) and calls `scan_directory_tree_with_context` directly.
-//!    Verifies that only files with whitelisted (ingestible) extensions are
-//!    discovered, and that non-ingestible files (images, video, audio, fonts)
-//!    never appear — even when the total file count exceeds `max_files`.
+//! 1. `test_twitter_export_scanner_includes_all_ingestible` — always runs, no API key.
+//!    Builds a synthetic Twitter-export directory (data/*.js + media files + fonts)
+//!    and calls `scan_directory_tree_with_context` directly.
+//!    Verifies that all ingestible files (including images) are discovered,
+//!    and that non-ingestible files (video, audio, fonts) are in skipped_files.
 //!
 //! 2. `test_twitter_export_llm_scan` — ignored (requires FOLD_OPENROUTER_API_KEY).
 //!    Scans a realistic Twitter export with AI classification and asserts that
@@ -72,22 +71,17 @@ fn build_twitter_fixture(root: &Path) -> Vec<String> {
     // README is a text file — should appear in the scan
     write_fixture(root, "data/README.txt", b"This is your Twitter data archive.\n");
 
-    // ── Files that must be silently excluded ────────────────────────────────
+    // ── Image files (now ingestible) ────────────────────────────────────────
 
-    // tweets_media/ (jpg, mp4) — many of them, to stress-test the quota
+    // tweets_media/ (jpg) — ingestible images
     for i in 0..50 {
         write_fixture(root, &format!("data/tweets_media/photo_{}.jpg", i), b"\xff\xd8\xff");
     }
-    write_fixture(root, "data/direct_messages_media/video.mp4", b"\x00\x00\x00");
 
     // profile_media/
     write_fixture(root, "data/profile_media/avatar.jpg", b"\xff\xd8\xff");
 
-    // assets/fonts/
-    write_fixture(root, "assets/fonts/chirp-regular.woff2", b"\x00wOF2");
-    write_fixture(root, "assets/fonts/chirp-bold.ttf",      b"\x00\x01\x00\x00");
-
-    // assets/images/ — twemoji SVGs (hundreds in a real export)
+    // assets/images/ — twemoji SVGs (ingestible)
     for i in 0..100 {
         write_fixture(
             root,
@@ -95,10 +89,16 @@ fn build_twitter_fixture(root: &Path) -> Vec<String> {
             b"<svg/>",
         );
     }
-    write_fixture(root, "assets/images/favicon.ico", b"\x00\x00\x01\x00");
     write_fixture(root, "assets/images/groupAvatar.svg", b"<svg/>");
 
-    // Return the names of files that SHOULD appear in scan results
+    // ── Non-ingestible files (video, audio, fonts, ico) ──────────────────
+
+    write_fixture(root, "data/direct_messages_media/video.mp4", b"\x00\x00\x00");
+    write_fixture(root, "assets/fonts/chirp-regular.woff2", b"\x00wOF2");
+    write_fixture(root, "assets/fonts/chirp-bold.ttf",      b"\x00\x01\x00\x00");
+    write_fixture(root, "assets/images/favicon.ico", b"\x00\x00\x01\x00");
+
+    // Return the names of JS/TXT data files that SHOULD appear in scan results
     let mut expected: Vec<String> = js_files
         .iter()
         .map(|(rel, _, _)| rel.to_string())
@@ -111,52 +111,71 @@ fn build_twitter_fixture(root: &Path) -> Vec<String> {
 // ── Test 1: scanner-level, no API key ────────────────────────────────────────
 
 #[test]
-fn test_twitter_export_scanner_excludes_media() {
+fn test_twitter_export_scanner_includes_all_ingestible() {
     let tmp = TempDir::new().unwrap();
     let root = tmp.path();
-    let expected_files = build_twitter_fixture(root);
+    let expected_data_files = build_twitter_fixture(root);
 
-    // Use max_files=30 — less than the 160+ total files but more than the 12
-    // ingestible files.  Before the fix, media files would exhaust this budget
-    // and the .js data files would never be found.
-    let result = scan_directory_tree_with_context(root, 10, 30).unwrap();
+    // max_files large enough for all ingestible files (data + images)
+    let result = scan_directory_tree_with_context(root, 10, 500).unwrap();
 
-    eprintln!("Found {} files (max_files=30):", result.file_paths.len());
+    eprintln!("Found {} ingestible, {} skipped:", result.file_paths.len(), result.skipped_files.len());
     for f in &result.file_paths {
         eprintln!("  {}", f);
     }
 
-    // Every ingestible file must appear — the budget must NOT be exhausted by
-    // media files.
-    for expected in &expected_files {
+    // Every data file must appear in scan results.
+    for expected in &expected_data_files {
         assert!(
             result.file_paths.contains(expected),
-            "Expected '{}' in scan results but it was missing.\n\
-             This means media files are still consuming the max_files budget.",
+            "Expected '{}' in scan results but it was missing.",
             expected
         );
     }
 
-    // All results must have whitelisted (ingestible) extensions.
+    // Images (jpg, svg) should also be in file_paths (now ingestible).
+    assert!(
+        result.file_paths.iter().any(|f| f.ends_with(".jpg")),
+        "JPG files should be ingestible"
+    );
+    assert!(
+        result.file_paths.iter().any(|f| f.ends_with(".svg")),
+        "SVG files should be ingestible"
+    );
+
+    // Non-ingestible files (mp4, woff2, ttf, ico) should be in skipped_files.
+    assert!(
+        result.skipped_files.iter().any(|f| f.ends_with(".mp4")),
+        "MP4 should be skipped"
+    );
+    assert!(
+        result.skipped_files.iter().any(|f| f.ends_with(".woff2")),
+        "WOFF2 should be skipped"
+    );
+    assert!(
+        result.skipped_files.iter().any(|f| f.ends_with(".ico")),
+        "ICO should be skipped"
+    );
+
+    // All file_paths must have ingestible extensions.
     for path in &result.file_paths {
         assert!(
             is_ingestible_file(path),
-            "File '{}' is not in the ingestible whitelist — \
-             only whitelisted extensions should appear in scan results.",
+            "File '{}' is not ingestible but appeared in file_paths.",
             path
         );
     }
 
-    // Scan must not be truncated: all ingestible files fit within max_files=30.
+    // Skipped files should appear in tree display with [skipped] marker.
     assert!(
-        !result.truncated,
-        "Scan was truncated at 30 files. The {} ingestible .js/.txt files should all fit.",
-        expected_files.len()
+        result.tree_display.contains("[skipped]"),
+        "Tree display should show skipped files"
     );
 
     eprintln!(
-        "PASS: {} ingestible files found, 0 media/font files leaked through.",
-        result.file_paths.len()
+        "PASS: {} ingestible files found, {} skipped.",
+        result.file_paths.len(),
+        result.skipped_files.len()
     );
 }
 

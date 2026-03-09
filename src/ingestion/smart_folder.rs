@@ -187,6 +187,16 @@ pub async fn perform_smart_folder_scan_with_progress(
     // paths here are candidates for LLM classification.
     let mut llm_candidates: Vec<String> = scan.file_paths.clone();
 
+    // --- Image directory classification: filter non-personal image directories ---
+    // Group image files by parent directory, then use LLM to classify which
+    // directories contain personal images vs. asset/scaffolding images.
+    let image_dir_skipped = classify_image_directories(
+        &mut llm_candidates,
+        folder_path,
+        service,
+        &report,
+    ).await?;
+
     log_feature!(
         LogFeature::Ingestion,
         info,
@@ -319,6 +329,12 @@ pub async fn perform_smart_folder_scan_with_progress(
         skipped_files.extend(already_ingested_recs);
     }
 
+    // Add image-directory-skipped files to skipped list and summary
+    if !image_dir_skipped.is_empty() {
+        *summary.entry("non_personal_media".to_string()).or_insert(0) += image_dir_skipped.len();
+        skipped_files.extend(image_dir_skipped);
+    }
+
     let rec_count = recommendations.len();
     for (idx, mut rec) in recommendations.into_iter().enumerate() {
         // Report incremental progress every 5 files (80% → 95%)
@@ -367,6 +383,208 @@ pub async fn perform_smart_folder_scan_with_progress(
         max_depth_used: max_depth,
         max_files_used: max_files,
     })
+}
+
+// ---- Image directory classification ----
+
+/// Group image files by parent directory and use the LLM to classify
+/// which directories contain personal images vs. asset/scaffolding images.
+///
+/// Returns a list of `FileRecommendation`s for image files that were removed
+/// from `llm_candidates` (non-personal image directories). The caller should
+/// add these to the skipped files list.
+///
+/// If no LLM service is available, returns an empty vec (all images stay as candidates).
+async fn classify_image_directories(
+    llm_candidates: &mut Vec<String>,
+    folder_path: &Path,
+    service: Option<&crate::ingestion::ingestion_service::IngestionService>,
+    report: &(dyn Fn(u8, String) + Send + Sync),
+) -> IngestionResult<Vec<FileRecommendation>> {
+    let image_exts: HashSet<&str> = IMAGE_EXTS.iter().copied().collect();
+
+    // Group image files by parent directory
+    let mut image_dirs: HashMap<String, Vec<String>> = HashMap::new();
+    for path in llm_candidates.iter() {
+        let ext = Path::new(path)
+            .extension()
+            .and_then(|e| e.to_str())
+            .unwrap_or("")
+            .to_lowercase();
+        if image_exts.contains(ext.as_str()) {
+            let parent = Path::new(path)
+                .parent()
+                .map(|p| p.to_string_lossy().to_string())
+                .unwrap_or_default();
+            image_dirs.entry(parent).or_default().push(path.clone());
+        }
+    }
+
+    if image_dirs.is_empty() {
+        return Ok(Vec::new());
+    }
+
+    report(16, format!(
+        "Found {} image directories with {} total images — classifying...",
+        image_dirs.len(),
+        image_dirs.values().map(|v| v.len()).sum::<usize>(),
+    ));
+
+    // Try LLM classification; fall back to keeping all images if unavailable
+    let svc = match service {
+        Some(s) => s,
+        None => {
+            match crate::ingestion::ingestion_service::IngestionService::from_env() {
+                Ok(_) => {
+                    // We can't hold an owned service across await, just skip classification
+                    log::info!("No ingestion service provided for image classification, keeping all images");
+                    return Ok(Vec::new());
+                }
+                Err(_) => {
+                    log::info!("No LLM available for image directory classification, keeping all images");
+                    return Ok(Vec::new());
+                }
+            }
+        }
+    };
+
+    // Build a prompt listing each image directory with file count and sample filenames
+    let prompt = create_image_directory_prompt(&image_dirs, folder_path);
+
+    let llm_response = match call_llm_for_file_analysis(&prompt, svc).await {
+        Ok(r) => r,
+        Err(e) => {
+            log::warn!("LLM unavailable for image directory classification: {}. Keeping all images.", e);
+            return Ok(Vec::new());
+        }
+    };
+
+    // Parse response: expect JSON object mapping directory → "personal" or "asset"
+    let non_personal_dirs = parse_image_directory_response(&llm_response, &image_dirs);
+
+    // Remove non-personal image files from llm_candidates and build skip records
+    let mut skipped_recs = Vec::new();
+    let mut remove_set: HashSet<String> = HashSet::new();
+
+    for dir in &non_personal_dirs {
+        if let Some(files) = image_dirs.get(dir) {
+            for f in files {
+                remove_set.insert(f.clone());
+                skipped_recs.push(FileRecommendation {
+                    path: f.clone(),
+                    should_ingest: false,
+                    category: "non_personal_media".to_string(),
+                    reason: format!("Image directory '{}' classified as non-personal assets", dir),
+                    file_size_bytes: file_size_bytes(Path::new(f), folder_path),
+                    estimated_cost: 0.0,
+                    already_ingested: false,
+                });
+            }
+        }
+    }
+
+    if !skipped_recs.is_empty() {
+        llm_candidates.retain(|p| !remove_set.contains(p));
+        log_feature!(
+            LogFeature::Ingestion,
+            info,
+            "Image directory classification: {} images in {} non-personal dirs removed",
+            skipped_recs.len(),
+            non_personal_dirs.len(),
+        );
+    }
+
+    Ok(skipped_recs)
+}
+
+/// Build an LLM prompt to classify image directories as personal or asset.
+fn create_image_directory_prompt(
+    image_dirs: &HashMap<String, Vec<String>>,
+    _folder_path: &Path,
+) -> String {
+    let mut dir_lines = Vec::new();
+    let mut sorted_dirs: Vec<_> = image_dirs.iter().collect();
+    sorted_dirs.sort_by_key(|(dir, _)| (*dir).clone());
+
+    for (dir, files) in &sorted_dirs {
+        let display_dir = if dir.is_empty() { "(root)" } else { dir.as_str() };
+        // Show up to 5 sample filenames
+        let samples: Vec<&str> = files.iter().take(5).map(|f| {
+            Path::new(f.as_str())
+                .file_name()
+                .and_then(|n| n.to_str())
+                .unwrap_or(f.as_str())
+        }).collect();
+        let sample_str = samples.join(", ");
+        let more = if files.len() > 5 {
+            format!(" (+{} more)", files.len() - 5)
+        } else {
+            String::new()
+        };
+        dir_lines.push(format!("- {}: {} files [{}{}]", display_dir, files.len(), sample_str, more));
+    }
+
+    format!(
+        r#"You are classifying IMAGE DIRECTORIES to determine if they contain personal images or non-personal asset images.
+
+IMAGE DIRECTORIES (with file counts and sample filenames):
+{}
+
+For each directory, classify it as either:
+- "personal" — user photos, screenshots, personal artwork, scanned documents, camera images
+- "asset" — UI assets, emoji/icon collections, website graphics, app resources, stock images, thumbnails
+
+GUIDELINES:
+- Directories named like "tweets_media", "profile_media", "photos", "camera", "screenshots" → personal
+- Directories named like "twemoji", "emoji", "icons", "assets/images", "thumbnails", "sprites" → asset
+- Directories with few large files (photos) → likely personal
+- Directories with many small files (icons, emoji) → likely asset
+- When in doubt, classify as "personal" (better to include than exclude)
+
+Respond with a JSON object mapping each directory path to "personal" or "asset":
+```json
+{{
+  "directory/path": "personal",
+  "assets/images/twemoji": "asset"
+}}
+```
+
+Only return the JSON object, no other text."#,
+        dir_lines.join("\n")
+    )
+}
+
+/// Parse the LLM response for image directory classification.
+/// Returns the set of directory paths classified as non-personal (asset).
+fn parse_image_directory_response(
+    response: &str,
+    image_dirs: &HashMap<String, Vec<String>>,
+) -> Vec<String> {
+    let json_str = match crate::ingestion::ai_helpers::extract_json_from_response(response) {
+        Ok(s) => s,
+        Err(e) => {
+            log::warn!("Failed to extract JSON from image directory response: {}", e);
+            return Vec::new();
+        }
+    };
+
+    let parsed: HashMap<String, String> = match serde_json::from_str(&json_str) {
+        Ok(m) => m,
+        Err(e) => {
+            log::warn!("Failed to parse image directory JSON: {}", e);
+            return Vec::new();
+        }
+    };
+
+    let valid_dirs: HashSet<&String> = image_dirs.keys().collect();
+
+    parsed
+        .into_iter()
+        .filter(|(dir, classification)| {
+            valid_dirs.contains(dir) && classification.to_lowercase() == "asset"
+        })
+        .map(|(dir, _)| dir)
+        .collect()
 }
 
 // ---- LLM-based file classification and heuristic fallback ----
@@ -511,8 +729,7 @@ pub fn apply_heuristic_filtering(file_tree: &[String]) -> Vec<FileRecommendation
             } else if is_data_export {
                 (true, "personal_data", "Data export file")
             } else if is_media {
-                // Without LLM context, we can't tell if media is personal or scaffolding
-                (false, "media", "Media file (needs review)")
+                (true, "media", "Media file")
             } else {
                 (false, "unknown", "Could not classify without AI")
             };
@@ -615,11 +832,10 @@ mod tests {
 
     #[test]
     fn test_heuristic_filtering_media_without_context() {
-        // Without LLM, media files default to should_ingest=false (conservative)
         let files = vec!["photos/vacation.jpg".to_string()];
         let recs = apply_heuristic_filtering(&files);
         assert_eq!(recs.len(), 1);
-        assert!(!recs[0].should_ingest);
+        assert!(recs[0].should_ingest);
         assert_eq!(recs[0].category, "media");
     }
 
@@ -925,8 +1141,8 @@ mod tests {
         assert!(recs[0].should_ingest);
         assert_eq!(recs[0].category, "personal_data");
 
-        // JPG without export context → media, should_ingest = false
-        assert!(!recs[1].should_ingest);
+        // JPG → media, should_ingest
+        assert!(recs[1].should_ingest);
         assert_eq!(recs[1].category, "media");
 
         // .py → unknown, should_ingest = false
@@ -957,8 +1173,61 @@ mod tests {
         assert!(recs[1].should_ingest);
         assert_eq!(recs[1].category, "personal_data");
 
-        // .JPG without export → media, not ingested
-        assert!(!recs[2].should_ingest);
+        // .JPG → media, should_ingest
+        assert!(recs[2].should_ingest);
         assert_eq!(recs[2].category, "media");
+    }
+
+    // ---- image directory classification tests ----
+
+    #[test]
+    fn test_parse_image_directory_response_valid() {
+        let response = r#"{"photos/vacation": "personal", "assets/images/twemoji/v/latest/svg": "asset", "data/tweets_media": "personal"}"#;
+        let mut image_dirs = HashMap::new();
+        image_dirs.insert("photos/vacation".to_string(), vec!["photos/vacation/img1.jpg".to_string()]);
+        image_dirs.insert("assets/images/twemoji/v/latest/svg".to_string(), vec!["assets/images/twemoji/v/latest/svg/emoji_0.svg".to_string()]);
+        image_dirs.insert("data/tweets_media".to_string(), vec!["data/tweets_media/photo_0.jpg".to_string()]);
+
+        let non_personal = parse_image_directory_response(response, &image_dirs);
+        assert_eq!(non_personal.len(), 1);
+        assert!(non_personal.contains(&"assets/images/twemoji/v/latest/svg".to_string()));
+    }
+
+    #[test]
+    fn test_parse_image_directory_response_ignores_unknown_dirs() {
+        let response = r#"{"unknown/dir": "asset", "photos": "personal"}"#;
+        let mut image_dirs = HashMap::new();
+        image_dirs.insert("photos".to_string(), vec!["photos/img.jpg".to_string()]);
+
+        let non_personal = parse_image_directory_response(response, &image_dirs);
+        assert!(non_personal.is_empty());
+    }
+
+    #[test]
+    fn test_parse_image_directory_response_malformed() {
+        let response = "not json at all";
+        let image_dirs = HashMap::new();
+        let non_personal = parse_image_directory_response(response, &image_dirs);
+        assert!(non_personal.is_empty());
+    }
+
+    #[test]
+    fn test_create_image_directory_prompt_contains_dirs() {
+        let mut image_dirs = HashMap::new();
+        image_dirs.insert("photos/vacation".to_string(), vec![
+            "photos/vacation/img1.jpg".to_string(),
+            "photos/vacation/img2.jpg".to_string(),
+        ]);
+        image_dirs.insert("assets/icons".to_string(), vec![
+            "assets/icons/icon1.svg".to_string(),
+        ]);
+
+        let prompt = create_image_directory_prompt(&image_dirs, Path::new("/tmp"));
+        assert!(prompt.contains("photos/vacation"));
+        assert!(prompt.contains("2 files"));
+        assert!(prompt.contains("assets/icons"));
+        assert!(prompt.contains("1 files"));
+        assert!(prompt.contains("personal"));
+        assert!(prompt.contains("asset"));
     }
 }

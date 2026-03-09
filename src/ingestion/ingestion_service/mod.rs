@@ -746,11 +746,14 @@ impl IngestionService {
     }
 }
 
-/// Build a `Vec<SchemaWriteRecord>` from a mutations slice.
+/// Build a `Vec<SchemaWriteRecord>` from a mutations slice, deduplicating keys.
 fn schemas_written_from(mutations: &[Mutation]) -> Vec<SchemaWriteRecord> {
     let mut map: HashMap<String, Vec<KeyValue>> = HashMap::new();
     for m in mutations {
-        map.entry(m.schema_name.clone()).or_default().push(m.key_value.clone());
+        let keys = map.entry(m.schema_name.clone()).or_default();
+        if !keys.contains(&m.key_value) {
+            keys.push(m.key_value.clone());
+        }
     }
     schemas_written_from_map(map)
 }
