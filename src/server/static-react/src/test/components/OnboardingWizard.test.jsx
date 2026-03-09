@@ -10,8 +10,8 @@ vi.mock('../../api/clients', () => ({
     getConfig: vi.fn().mockResolvedValue({
       success: true,
       data: {
-        provider: 'OpenRouter',
-        openrouter: { api_key: '', model: 'google/gemini-2.5-flash', base_url: '' },
+        provider: 'Anthropic',
+        anthropic: { api_key: '', model: 'claude-sonnet-4-20250514' },
         ollama: { model: 'llama3.1:8b', base_url: '' },
       },
     }),

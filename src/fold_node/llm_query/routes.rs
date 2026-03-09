@@ -67,7 +67,7 @@ async fn require_service(llm_state: &LlmQueryState) -> Result<Arc<LlmQueryServic
     guard.clone().ok_or_else(|| {
         HttpResponse::ServiceUnavailable().json(json!({
             "error": "LLM Query service not configured",
-            "message": "Please configure AI_PROVIDER and FOLD_OPENROUTER_API_KEY or OLLAMA_BASE_URL environment variables to use this feature"
+            "message": "Please configure AI_PROVIDER and ANTHROPIC_API_KEY or OLLAMA_BASE_URL environment variables to use this feature"
         }))
     })
 }

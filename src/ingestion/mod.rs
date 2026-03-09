@@ -153,7 +153,7 @@ pub struct IngestionStatus {
     pub enabled: bool,
     /// Whether ingestion is properly configured and ready
     pub configured: bool,
-    /// AI provider being used (OpenRouter or Ollama)
+    /// AI provider being used (Anthropic or Ollama)
     pub provider: String,
     /// Model name being used
     pub model: String,

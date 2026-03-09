@@ -29,21 +29,21 @@ function stateWith(config: IngestionConfig | null): Pick<RootState, "ingestion">
   return { ingestion: { config, loading: false, error: null, saving: false, saveError: null } } as Pick<RootState, "ingestion">;
 }
 
-const openrouterConfig: IngestionConfig = {
-  provider: "OpenRouter",
-  openrouter: { api_key: "sk-or-test", model: "google/gemini-2.5-flash", base_url: "https://openrouter.ai/api/v1" },
+const anthropicConfig: IngestionConfig = {
+  provider: "Anthropic",
+  anthropic: { api_key: "sk-ant-test", model: "claude-sonnet-4-20250514" },
   ollama: { model: "", base_url: "http://localhost:11434" },
 };
 
 const ollamaConfig: IngestionConfig = {
   provider: "Ollama",
-  openrouter: { api_key: "", model: "", base_url: "https://openrouter.ai/api/v1" },
+  anthropic: { api_key: "", model: "" },
   ollama: { model: "llama3.3", base_url: "http://localhost:11434" },
 };
 
 const envKeyConfig: IngestionConfig = {
-  provider: "OpenRouter",
-  openrouter: { api_key: "***configured***", model: "anthropic/claude-sonnet-4.6", base_url: "https://openrouter.ai/api/v1" },
+  provider: "Anthropic",
+  anthropic: { api_key: "***configured***", model: "claude-sonnet-4-20250514" },
   ollama: { model: "", base_url: "http://localhost:11434" },
 };
 
@@ -66,7 +66,7 @@ describe("ingestionSlice", () => {
 
   describe("fetchIngestionConfig", () => {
     it("sets loading while pending then stores config on success", async () => {
-      mockGetConfig.mockResolvedValue({ success: true, data: openrouterConfig } as any);
+      mockGetConfig.mockResolvedValue({ success: true, data: anthropicConfig } as any);
       const store = createStore();
 
       const promise = store.dispatch(fetchIngestionConfig());
@@ -75,7 +75,7 @@ describe("ingestionSlice", () => {
       await promise;
       const state = store.getState().ingestion;
       expect(state.loading).toBe(false);
-      expect(state.config).toEqual(openrouterConfig);
+      expect(state.config).toEqual(anthropicConfig);
       expect(state.error).toBeNull();
     });
 
@@ -124,7 +124,7 @@ describe("ingestionSlice", () => {
       mockSaveConfig.mockResolvedValue({ success: false } as any);
       const store = createStore();
 
-      await store.dispatch(saveIngestionConfig(openrouterConfig));
+      await store.dispatch(saveIngestionConfig(anthropicConfig));
       const state = store.getState().ingestion;
       expect(state.saving).toBe(false);
       expect(state.saveError).toBe("Failed to save ingestion config");
@@ -134,7 +134,7 @@ describe("ingestionSlice", () => {
       mockSaveConfig.mockRejectedValue(new Error("Save failed"));
       const store = createStore();
 
-      await store.dispatch(saveIngestionConfig(openrouterConfig));
+      await store.dispatch(saveIngestionConfig(anthropicConfig));
       const state = store.getState().ingestion;
       expect(state.saving).toBe(false);
       expect(state.saveError).toBe("Save failed");
@@ -148,7 +148,7 @@ describe("ingestionSlice", () => {
       });
 
       it("returns the config object", () => {
-        expect(selectIngestionConfig(stateWith(openrouterConfig) as RootState)).toEqual(openrouterConfig);
+        expect(selectIngestionConfig(stateWith(anthropicConfig) as RootState)).toEqual(anthropicConfig);
       });
     });
 
@@ -157,8 +157,8 @@ describe("ingestionSlice", () => {
         expect(selectAiProvider(stateWith(null) as RootState)).toBeNull();
       });
 
-      it("returns OpenRouter", () => {
-        expect(selectAiProvider(stateWith(openrouterConfig) as RootState)).toBe("OpenRouter");
+      it("returns Anthropic", () => {
+        expect(selectAiProvider(stateWith(anthropicConfig) as RootState)).toBe("Anthropic");
       });
 
       it("returns Ollama", () => {
@@ -171,8 +171,8 @@ describe("ingestionSlice", () => {
         expect(selectActiveModel(stateWith(null) as RootState)).toBeNull();
       });
 
-      it("returns OpenRouter model when provider is OpenRouter", () => {
-        expect(selectActiveModel(stateWith(openrouterConfig) as RootState)).toBe("google/gemini-2.5-flash");
+      it("returns Anthropic model when provider is Anthropic", () => {
+        expect(selectActiveModel(stateWith(anthropicConfig) as RootState)).toBe("claude-sonnet-4-20250514");
       });
 
       it("returns Ollama model when provider is Ollama", () => {
@@ -185,18 +185,18 @@ describe("ingestionSlice", () => {
         expect(selectIsAiConfigured(stateWith(null) as RootState)).toBe(false);
       });
 
-      it("returns true for OpenRouter with api_key", () => {
-        expect(selectIsAiConfigured(stateWith(openrouterConfig) as RootState)).toBe(true);
+      it("returns true for Anthropic with api_key", () => {
+        expect(selectIsAiConfigured(stateWith(anthropicConfig) as RootState)).toBe(true);
       });
 
-      it("returns true for OpenRouter with redacted env key", () => {
+      it("returns true for Anthropic with redacted env key", () => {
         expect(selectIsAiConfigured(stateWith(envKeyConfig) as RootState)).toBe(true);
       });
 
-      it("returns false for OpenRouter without api_key", () => {
+      it("returns false for Anthropic without api_key", () => {
         const noKey: IngestionConfig = {
-          ...openrouterConfig,
-          openrouter: { ...openrouterConfig.openrouter, api_key: "" },
+          ...anthropicConfig,
+          anthropic: { ...anthropicConfig.anthropic, api_key: "" },
         };
         expect(selectIsAiConfigured(stateWith(noKey) as RootState)).toBe(false);
       });
@@ -220,13 +220,13 @@ describe("ingestionSlice", () => {
       });
 
       it("returns true when config exists and is configured", () => {
-        expect(selectIsAiReady(stateWith(openrouterConfig) as RootState)).toBe(true);
+        expect(selectIsAiReady(stateWith(anthropicConfig) as RootState)).toBe(true);
       });
 
       it("returns false when config exists but not configured", () => {
         const unconfigured: IngestionConfig = {
-          ...openrouterConfig,
-          openrouter: { ...openrouterConfig.openrouter, api_key: "" },
+          ...anthropicConfig,
+          anthropic: { ...anthropicConfig.anthropic, api_key: "" },
         };
         expect(selectIsAiReady(stateWith(unconfigured) as RootState)).toBe(false);
       });

@@ -471,7 +471,7 @@ export interface components {
          * @description Specifies the AI provider to use for ingestion.
          * @enum {string}
          */
-        AIProvider: "OpenRouter" | "Ollama";
+        AIProvider: "Anthropic" | "Ollama";
         /** @description Declarative schema definition used by declarative transforms. */
         DeclarativeSchemaDefinition: {
             fields?: string[] | null;
@@ -524,7 +524,6 @@ export interface components {
              */
             max_retries: number;
             ollama: components["schemas"]["OllamaConfig"];
-            openrouter: components["schemas"]["OpenRouterConfig"];
             provider: components["schemas"]["AIProvider"];
             /**
              * Format: int64
@@ -639,12 +638,6 @@ export interface components {
             base_url: string;
             model: string;
         };
-        /** @description Configuration for the OpenRouter AI provider. */
-        OpenRouterConfig: {
-            api_key: string;
-            base_url: string;
-            model: string;
-        };
         /** @description Field storing a range of values. */
         RangeField: {
             inner: components["schemas"]["FieldCommon"];
@@ -662,7 +655,6 @@ export interface components {
         /** @description Structure for saving AI provider configuration. */
         SavedConfig: {
             ollama: components["schemas"]["OllamaConfig"];
-            openrouter: components["schemas"]["OpenRouterConfig"];
             provider: components["schemas"]["AIProvider"];
         };
         /** @description Defines the structure, permissions, and payment requirements for a data collection.

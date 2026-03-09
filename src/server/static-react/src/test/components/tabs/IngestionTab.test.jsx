@@ -29,18 +29,14 @@ vi.mock('../../../api/clients/ingestionClient', () => ({
   }
 }))
 
-// Mock OpenRouter configuration
-vi.mock('../../../config/openRouter', () => ({
-  openRouterConfig: {
+// Mock Anthropic configuration
+vi.mock('../../../config/anthropic', () => ({
+  anthropicConfig: {
     apiKey: 'test-api-key',
-    baseUrl: 'https://openrouter.ai/api/v1',
-    models: {
-      'gpt-4': { name: 'GPT-4', contextWindow: 8192 },
-      'claude-3-sonnet': { name: 'Claude 3 Sonnet', contextWindow: 200000 }
-    }
+    model: 'claude-sonnet-4-20250514',
   },
-  validateOpenRouterConfig: vi.fn(() => ({ isValid: true })),
-  updateOpenRouterConfig: vi.fn()
+  validateAnthropicConfig: vi.fn(() => ({ isValid: true })),
+  updateAnthropicConfig: vi.fn()
 }))
 
 // Mock Redux hooks
@@ -55,13 +51,13 @@ vi.mock('react-redux', async (importOriginal) => {
 
 
 
-// Mock localStorage for OpenRouter config
+// Mock localStorage for Anthropic config
 const mockLocalStorage = {
   getItem: vi.fn((key) => {
-    if (key === 'openrouter_config') {
+    if (key === 'anthropic_config') {
       return JSON.stringify({
         apiKey: 'stored-api-key',
-        selectedModel: 'gpt-4'
+        model: 'claude-sonnet-4-20250514'
       })
     }
     return null

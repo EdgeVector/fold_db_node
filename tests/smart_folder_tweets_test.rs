@@ -10,7 +10,7 @@
 //!   3. Ingests via the library API (matching the HTTP route's internal path)
 //!   4. Runs an AI agent query to verify the tweet records are queryable
 //!
-//! Requires: FOLD_OPENROUTER_API_KEY (or OPENROUTER_API_KEY)
+//! Requires: ANTHROPIC_API_KEY
 //! Run with: `cargo test --test smart_folder_tweets_test -- --ignored --nocapture`
 
 use fold_db_node::fold_node::llm_query::LlmQueryService;
@@ -157,12 +157,11 @@ async fn spawn_local_schema_service() -> (String, actix_web::dev::ServerHandle, 
 // ── Integration test ─────────────────────────────────────────────────────────
 
 #[actix_web::test]
-#[ignore] // Requires FOLD_OPENROUTER_API_KEY and AI calls
+#[ignore] // Requires ANTHROPIC_API_KEY and AI calls
 async fn test_smart_folder_tweets_ingest_and_query() {
     // Guard: fail loudly if no API key (test is #[ignore] — must be opted in explicitly)
-    std::env::var("FOLD_OPENROUTER_API_KEY")
-        .or_else(|_| std::env::var("OPENROUTER_API_KEY"))
-        .expect("FOLD_OPENROUTER_API_KEY or OPENROUTER_API_KEY must be set to run this test");
+    std::env::var("ANTHROPIC_API_KEY")
+        .expect("ANTHROPIC_API_KEY must be set to run this test");
 
     // Verify the tweets.js fixture is present
     let tweets_fixture =

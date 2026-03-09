@@ -7,7 +7,7 @@
 //! 4. Mutation generation and execution
 //!
 //! Requires:
-//! - `FOLD_OPENROUTER_API_KEY` environment variable set
+//! - `ANTHROPIC_API_KEY` environment variable set
 //! - tests/fixtures/tweets.js file present
 //!
 //! Run with: `cargo test --test ingest_tweets_test -- --ignored --nocapture`
@@ -154,13 +154,11 @@ async fn spawn_local_schema_service() -> (String, actix_web::dev::ServerHandle, 
 // -- Integration test --------------------------------------------------------
 
 #[actix_web::test]
-#[ignore] // Requires FOLD_OPENROUTER_API_KEY and AI calls
+#[ignore] // Requires ANTHROPIC_API_KEY and AI calls
 async fn test_ingest_tweets_js() {
     // Skip if no API key
-    if std::env::var("FOLD_OPENROUTER_API_KEY").is_err()
-        && std::env::var("OPENROUTER_API_KEY").is_err()
-    {
-        eprintln!("Skipping: FOLD_OPENROUTER_API_KEY not set");
+    if std::env::var("ANTHROPIC_API_KEY").is_err() {
+        eprintln!("Skipping: ANTHROPIC_API_KEY not set");
         return;
     }
 

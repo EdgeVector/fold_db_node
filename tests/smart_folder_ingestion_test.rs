@@ -7,7 +7,7 @@
 //! 4. Run AI agent queries against the ingested data
 //!
 //! Requires:
-//! - `FOLD_OPENROUTER_API_KEY` environment variable set
+//! - `ANTHROPIC_API_KEY` environment variable set
 //!
 //! Run with: `cargo test --test smart_folder_ingestion_test -- --ignored --nocapture`
 
@@ -166,15 +166,13 @@ fn is_text_file(path: &str) -> bool {
 // -- Integration test --------------------------------------------------------
 
 #[actix_web::test]
-#[ignore] // Requires FOLD_OPENROUTER_API_KEY and AI calls
+#[ignore] // Requires ANTHROPIC_API_KEY and AI calls
 async fn test_smart_folder_ingest_and_query() {
     // ── Phase 1: Setup ──────────────────────────────────────────────────
 
     // Guard: skip if no API key
-    if std::env::var("FOLD_OPENROUTER_API_KEY").is_err()
-        && std::env::var("OPENROUTER_API_KEY").is_err()
-    {
-        eprintln!("Skipping: FOLD_OPENROUTER_API_KEY not set");
+    if std::env::var("ANTHROPIC_API_KEY").is_err() {
+        eprintln!("Skipping: ANTHROPIC_API_KEY not set");
         return;
     }
 

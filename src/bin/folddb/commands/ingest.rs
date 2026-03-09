@@ -54,7 +54,7 @@ pub async fn run(
             // Pre-validate ingestion config before processing any files
             IngestionConfig::from_env().map_err(|e| {
                 CliError::new(format!(
-                    "Ingestion not configured: {}. Set FOLD_OPENROUTER_API_KEY or configure via the UI.",
+                    "Ingestion not configured: {}. Set ANTHROPIC_API_KEY or configure via the UI.",
                     e
                 ))
             })?;

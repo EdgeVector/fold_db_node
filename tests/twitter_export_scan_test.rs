@@ -8,7 +8,7 @@
 //!    Verifies that all ingestible files (including images) are discovered,
 //!    and that non-ingestible files (video, audio, fonts) are in skipped_files.
 //!
-//! 2. `test_twitter_export_llm_scan` — ignored (requires FOLD_OPENROUTER_API_KEY).
+//! 2. `test_twitter_export_llm_scan` — ignored (requires ANTHROPIC_API_KEY).
 //!    Scans a realistic Twitter export with AI classification and asserts that
 //!    all personal-data .js files are recommended for ingestion.  Accepts either
 //!    a real archive via `TWITTER_EXPORT_PATH` env var, or a self-contained
@@ -194,11 +194,10 @@ const MUST_INGEST: &[&str] = &[
 ];
 
 #[actix_web::test]
-#[ignore] // Requires FOLD_OPENROUTER_API_KEY
+#[ignore] // Requires ANTHROPIC_API_KEY
 async fn test_twitter_export_llm_scan() {
-    std::env::var("FOLD_OPENROUTER_API_KEY")
-        .or_else(|_| std::env::var("OPENROUTER_API_KEY"))
-        .expect("FOLD_OPENROUTER_API_KEY or OPENROUTER_API_KEY must be set to run this test");
+    std::env::var("ANTHROPIC_API_KEY")
+        .expect("ANTHROPIC_API_KEY must be set to run this test");
 
     // ── Resolve scan directory ────────────────────────────────────────────────
 

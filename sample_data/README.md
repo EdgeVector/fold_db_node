@@ -4,12 +4,12 @@ This folder simulates a real user's Documents folder with a mix of personal data
 
 ## Quick Start
 
-### 1. Set your OpenRouter API key
+### 1. Set your Anthropic API key
 
-An [OpenRouter](https://openrouter.ai) API key is the only external requirement. Set it before starting the server:
+An [Anthropic](https://console.anthropic.com/settings/keys) API key is the only external requirement. Set it before starting the server:
 
 ```bash
-export FOLD_OPENROUTER_API_KEY=your_key_here
+export ANTHROPIC_API_KEY=your_key_here
 ```
 
 ### 2. Start the server
@@ -152,4 +152,4 @@ All dependencies are included in the fold_db repo:
 - **Local schema service** — built from `src/bin/schema_service.rs` (use `--local-schema` flag)
 - **Sample files** — all images are valid 64x64 JPEG/PNG, all PDFs contain readable text
 
-The only external requirement is an **OpenRouter API key** for AI-powered classification and ingestion.
+The only external requirement is an **Anthropic API key** for AI-powered classification and ingestion.

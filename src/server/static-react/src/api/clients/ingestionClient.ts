@@ -7,15 +7,9 @@ import type { EnhancedApiResponse } from "../core/types";
 export interface IngestionStatus {
   enabled: boolean;
   configured: boolean;
-  provider: "OpenRouter" | "Ollama" | "Anthropic";
+  provider: "Anthropic" | "Ollama";
   model: string;
   auto_execute_mutations: boolean;
-}
-
-export interface OpenRouterConfig {
-  api_key: string;
-  model: string;
-  base_url: string;
 }
 
 export interface OllamaConfig {
@@ -30,8 +24,7 @@ export interface AnthropicConfig {
 }
 
 export interface IngestionConfig {
-  provider: "OpenRouter" | "Ollama" | "Anthropic";
-  openrouter: OpenRouterConfig;
+  provider: "Anthropic" | "Ollama";
   ollama: OllamaConfig;
   anthropic: AnthropicConfig;
 }

@@ -1,6 +1,6 @@
-//! Unified AI backend abstraction for OpenRouter and Ollama.
+//! Unified AI backend abstraction for Anthropic and Ollama.
 
-use crate::ingestion::config::{AIProvider, AnthropicConfig, IngestionConfig, OllamaConfig, OpenRouterConfig};
+use crate::ingestion::config::{AIProvider, AnthropicConfig, IngestionConfig, OllamaConfig};
 use crate::ingestion::{IngestionError, IngestionResult};
 use fold_db::log_feature;
 use fold_db::logging::features::LogFeature;
@@ -14,116 +14,6 @@ use std::time::Duration;
 #[async_trait]
 pub trait AiBackend: Send + Sync {
     async fn call(&self, prompt: &str) -> IngestionResult<String>;
-}
-
-// ---- OpenRouter ----
-
-#[derive(Debug, Serialize)]
-struct OpenRouterRequest {
-    model: String,
-    messages: Vec<OpenRouterMessage>,
-    max_tokens: Option<u32>,
-    temperature: Option<f32>,
-}
-
-#[derive(Debug, Serialize)]
-struct OpenRouterMessage {
-    role: String,
-    content: String,
-}
-
-#[derive(Debug, Deserialize)]
-struct OpenRouterResponse {
-    choices: Vec<OpenRouterChoice>,
-    usage: Option<OpenRouterUsage>,
-}
-
-#[derive(Debug, Deserialize)]
-struct OpenRouterChoice {
-    message: OpenRouterResponseMessage,
-}
-
-#[derive(Debug, Deserialize)]
-struct OpenRouterResponseMessage {
-    content: String,
-}
-
-#[derive(Debug, Deserialize)]
-struct OpenRouterUsage {
-    prompt_tokens: Option<u32>,
-    completion_tokens: Option<u32>,
-    total_tokens: Option<u32>,
-}
-
-pub struct OpenRouterBackend {
-    client: Client,
-    config: OpenRouterConfig,
-    max_retries: u32,
-}
-
-impl OpenRouterBackend {
-    pub fn new(config: OpenRouterConfig, timeout_seconds: u64, max_retries: u32) -> IngestionResult<Self> {
-        config.validate()?;
-        let client = Client::builder()
-            .timeout(Duration::from_secs(timeout_seconds))
-            .no_proxy()
-            .build()
-            .map_err(|e| IngestionError::openrouter_error(format!("Failed to create HTTP client: {}", e)))?;
-        Ok(Self { client, config, max_retries })
-    }
-
-    async fn make_request(&self, request: &OpenRouterRequest) -> IngestionResult<String> {
-        let url = format!("{}/chat/completions", self.config.base_url);
-        let response = self.client.post(&url)
-            .header("Authorization", format!("Bearer {}", self.config.api_key))
-            .header("Content-Type", "application/json")
-            .header("HTTP-Referer", "https://github.com/shiba4life/fold_db")
-            .header("X-Title", "FoldDB Ingestion")
-            .json(request)
-            .send()
-            .await
-            .map_err(|e| crate::ingestion::error::classify_transport_error("OpenRouter", &e))?;
-
-        if !response.status().is_success() {
-            let status = response.status().as_u16();
-            let error_text = response.text().await.unwrap_or_else(|e| {
-                log::warn!("Failed to read OpenRouter error response body: {}", e);
-                "Unknown error (response body unreadable)".to_string()
-            });
-            return Err(crate::ingestion::error::classify_llm_error("OpenRouter", status, &error_text));
-        }
-
-        let resp: OpenRouterResponse = response.json().await?;
-        if let Some(usage) = &resp.usage {
-            log_feature!(
-                LogFeature::Ingestion, info,
-                "OpenRouter usage - prompt: {:?}, completion: {:?}, total: {:?}",
-                usage.prompt_tokens, usage.completion_tokens, usage.total_tokens
-            );
-        }
-        if resp.choices.is_empty() {
-            return Err(IngestionError::openrouter_error("No choices in API response"));
-        }
-        Ok(resp.choices[0].message.content.clone())
-    }
-}
-
-#[async_trait]
-impl AiBackend for OpenRouterBackend {
-    async fn call(&self, prompt: &str) -> IngestionResult<String> {
-        let request = OpenRouterRequest {
-            model: self.config.model.clone(),
-            messages: vec![OpenRouterMessage { role: "user".to_string(), content: prompt.to_string() }],
-            max_tokens: Some(16000),
-            temperature: Some(0.1),
-        };
-        super::ai_helpers::call_with_retries(
-            "OpenRouter API",
-            self.max_retries,
-            || IngestionError::openrouter_error("All API attempts failed"),
-            || self.make_request(&request),
-        ).await
-    }
 }
 
 // ---- Ollama ----
@@ -305,16 +195,6 @@ impl AiBackend for AnthropicBackend {
 /// `IngestionService` can still be constructed and report status.
 pub fn build_backend(config: &IngestionConfig) -> (Option<Arc<dyn AiBackend>>, Option<String>) {
     match config.provider {
-        AIProvider::OpenRouter => match OpenRouterBackend::new(
-            config.openrouter.clone(), config.timeout_seconds, config.max_retries,
-        ) {
-            Ok(b) => (Some(Arc::new(b)), None),
-            Err(e) => {
-                let msg = format!("OpenRouter init failed: {}", e);
-                log::warn!("{}", msg);
-                (None, Some(msg))
-            }
-        },
         AIProvider::Ollama => match OllamaBackend::new(
             config.ollama.clone(), config.timeout_seconds, config.max_retries,
         ) {
@@ -354,13 +234,13 @@ mod tests {
             }
         });
 
-        let config = OpenRouterConfig {
+        let config = AnthropicConfig {
             api_key: "test-key".to_string(),
             base_url,
             ..Default::default()
         };
 
-        let backend = OpenRouterBackend::new(config, 1, 1).unwrap();
+        let backend = AnthropicBackend::new(config, 1, 1).unwrap();
         let result = backend.call("test").await;
 
         assert!(result.is_err());

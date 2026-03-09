@@ -16,7 +16,7 @@ jobs:
 
     env:
       AI_PROVIDER: ${{ secrets.AI_PROVIDER }}
-      FOLD_OPENROUTER_API_KEY: ${{ secrets.FOLD_OPENROUTER_API_KEY }}
+      ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
       OLLAMA_BASE_URL: ${{ secrets.OLLAMA_BASE_URL }}
 
     steps:
@@ -75,14 +75,14 @@ jobs:
 
       - name: Run tweets ingestion integration test
         id: ingestion-test
-        if: steps.check-rust.outputs.exists == 'true' && env.FOLD_OPENROUTER_API_KEY != ''
+        if: steps.check-rust.outputs.exists == 'true' && env.ANTHROPIC_API_KEY != ''
         continue-on-error: true
         run: cargo test --test ingest_tweets_test -- --ignored
         timeout-minutes: 5
 
       - name: Run Twitter export scan integration test
         id: twitter-scan-test
-        if: steps.check-rust.outputs.exists == 'true' && env.FOLD_OPENROUTER_API_KEY != ''
+        if: steps.check-rust.outputs.exists == 'true' && env.ANTHROPIC_API_KEY != ''
         continue-on-error: true
         run: cargo test --test twitter_export_scan_test -- --ignored --nocapture
         timeout-minutes: 10

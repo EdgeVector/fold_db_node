@@ -1,4 +1,4 @@
-//! Shared helper functions for AI service implementations (OpenRouter, Ollama).
+//! Shared helper functions for AI service implementations (Anthropic, Ollama).
 
 use super::prompts::{PROMPT_ACTIONS, PROMPT_HEADER};
 use super::{IngestionError, IngestionResult, StructureAnalyzer};
@@ -24,7 +24,7 @@ pub struct AISchemaResponse {
 /// Call an async function with retries and exponential backoff.
 ///
 /// Logs each attempt and backs off exponentially (1s, 2s, 4s, ...) on failure.
-/// `label` is used in log messages (e.g. "OpenRouter API" or "Ollama API").
+/// `label` is used in log messages (e.g. "Anthropic API" or "Ollama API").
 /// `fallback_error` is called if all attempts fail without producing an error.
 pub async fn call_with_retries<F, Fut>(
     label: &str,
@@ -110,7 +110,7 @@ pub fn create_prompt(sample_json: &Value, is_array_input: bool) -> String {
 
 /// Analyze JSON data and build the AI prompt for schema recommendation.
 ///
-/// Shared between OpenRouter and Ollama services.  Returns the prompt string
+/// Shared between Anthropic and Ollama services.  Returns the prompt string
 /// ready to be sent to the AI backend.
 pub fn analyze_and_build_prompt(sample_json: &Value) -> IngestionResult<String> {
     let superset_structure = StructureAnalyzer::extract_structure_skeleton(sample_json);

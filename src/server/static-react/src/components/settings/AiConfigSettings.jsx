@@ -6,11 +6,7 @@ import { selectIngestionConfig, saveIngestionConfig } from '../../store/ingestio
 function useAiConfig({ configSaveStatus, setConfigSaveStatus, onClose }) {
   const dispatch = useAppDispatch()
   const savedConfig = useAppSelector(selectIngestionConfig)
-  const [aiProvider, setAiProvider] = useState('OpenRouter')
-  const [openrouterApiKey, setOpenrouterApiKey] = useState('')
-  const [hasEnvKey, setHasEnvKey] = useState(false)
-  const [openrouterModel, setOpenrouterModel] = useState('google/gemini-2.5-flash')
-  const [openrouterBaseUrl, setOpenrouterBaseUrl] = useState('https://openrouter.ai/api/v1')
+  const [aiProvider, setAiProvider] = useState('Anthropic')
   const [ollamaModel, setOllamaModel] = useState('')
   const [ollamaBaseUrl, setOllamaBaseUrl] = useState('http://localhost:11434')
   const [anthropicApiKey, setAnthropicApiKey] = useState('')
@@ -73,16 +69,6 @@ function useAiConfig({ configSaveStatus, setConfigSaveStatus, onClose }) {
   // Initialize form state from Redux store
   useEffect(() => {
     if (savedConfig) {
-      const apiKey = savedConfig.openrouter?.api_key || ''
-      if (apiKey === '***configured***') {
-        setHasEnvKey(true)
-        setOpenrouterApiKey('')
-      } else {
-        setHasEnvKey(false)
-        setOpenrouterApiKey(apiKey)
-      }
-      setOpenrouterModel(savedConfig.openrouter?.model || 'google/gemini-2.5-flash')
-      setOpenrouterBaseUrl(savedConfig.openrouter?.base_url || 'https://openrouter.ai/api/v1')
       setOllamaModel(savedConfig.ollama?.model || 'llama3.3')
       setOllamaBaseUrl(savedConfig.ollama?.base_url || 'http://localhost:11434')
       const anthropicKey = savedConfig.anthropic?.api_key || ''
@@ -95,7 +81,7 @@ function useAiConfig({ configSaveStatus, setConfigSaveStatus, onClose }) {
       }
       setAnthropicModel(savedConfig.anthropic?.model || 'claude-sonnet-4-20250514')
       setAnthropicBaseUrl(savedConfig.anthropic?.base_url || 'https://api.anthropic.com')
-      setAiProvider(savedConfig.provider || 'OpenRouter')
+      setAiProvider(savedConfig.provider || 'Anthropic')
     }
   }, [savedConfig])
 
@@ -103,7 +89,6 @@ function useAiConfig({ configSaveStatus, setConfigSaveStatus, onClose }) {
     try {
       const config = {
         provider: aiProvider,
-        openrouter: { api_key: openrouterApiKey, model: openrouterModel, base_url: openrouterBaseUrl },
         ollama: { model: ollamaModel, base_url: ollamaBaseUrl },
         anthropic: { api_key: anthropicApiKey, model: anthropicModel, base_url: anthropicBaseUrl },
       }
@@ -127,23 +112,13 @@ function useAiConfig({ configSaveStatus, setConfigSaveStatus, onClose }) {
           <div>
             <label className="label">Provider</label>
             <select value={aiProvider} onChange={(e) => setAiProvider(e.target.value)} className="select">
-              <option value="OpenRouter">OpenRouter</option>
               <option value="Anthropic">Anthropic</option>
               <option value="Ollama">Ollama</option>
             </select>
           </div>
           <div>
             <label className="label">Model</label>
-            {aiProvider === 'OpenRouter' ? (
-              <select value={openrouterModel} onChange={(e) => setOpenrouterModel(e.target.value)} className="select">
-                <option value="google/gemini-2.5-flash">Gemini 2.5 Flash</option>
-                <option value="anthropic/claude-sonnet-4.6">Claude Sonnet 4.6</option>
-                <option value="google/gemini-3.1-pro">Gemini 3.1 Pro</option>
-                <option value="openai/gpt-4.1-mini">GPT-4.1 Mini</option>
-                <option value="openai/gpt-4.1">GPT-4.1</option>
-                <option value="deepseek/deepseek-chat-v3-0324">DeepSeek V3</option>
-              </select>
-            ) : aiProvider === 'Anthropic' ? (
+            {aiProvider === 'Anthropic' ? (
               <select value={anthropicModel} onChange={(e) => setAnthropicModel(e.target.value)} className="select">
                 <option value="claude-sonnet-4-20250514">Claude Sonnet 4</option>
                 <option value="claude-haiku-4-5-20251001">Claude Haiku 4.5</option>
@@ -178,16 +153,6 @@ function useAiConfig({ configSaveStatus, setConfigSaveStatus, onClose }) {
           </div>
         </div>
 
-        {aiProvider === 'OpenRouter' && (
-          <div>
-            <label className="label">API Key <span className="text-xs text-secondary">(<a href="https://openrouter.ai/keys" target="_blank" rel="noopener noreferrer" className="text-gruvbox-blue hover:underline">get key</a>)</span></label>
-            {hasEnvKey && !openrouterApiKey && (
-              <p className="text-xs text-gruvbox-green mb-1">API key configured</p>
-            )}
-            <input type="password" value={openrouterApiKey} onChange={(e) => setOpenrouterApiKey(e.target.value)} placeholder={hasEnvKey ? 'Enter new key to replace...' : 'sk-or-...'} className="input" />
-          </div>
-        )}
-
         {aiProvider === 'Anthropic' && (
           <div>
             <label className="label">API Key <span className="text-xs text-secondary">(<a href="https://console.anthropic.com/settings/keys" target="_blank" rel="noopener noreferrer" className="text-gruvbox-blue hover:underline">get key</a>)</span></label>
@@ -218,17 +183,6 @@ function useAiConfig({ configSaveStatus, setConfigSaveStatus, onClose }) {
           </button>
           {showAdvanced && (
             <div className="mt-3 space-y-3 pl-4 border-l-2 border-border">
-              {aiProvider === 'OpenRouter' && (
-                <div>
-                  <label className="label">Base URL</label>
-                  <input
-                    type="text"
-                    value={openrouterBaseUrl}
-                    onChange={(e) => setOpenrouterBaseUrl(e.target.value)}
-                    className="input"
-                  />
-                </div>
-              )}
               {aiProvider === 'Anthropic' && (
                 <div>
                   <label className="label">Base URL</label>

@@ -99,7 +99,7 @@ export const selectAiProvider = (state: RootState) =>
 /** Get the active provider's config object based on the selected provider. */
 const getActiveProviderConfig = (config: IngestionConfig | null) => {
   if (!config) return null;
-  const key = config.provider.toLowerCase() as keyof Pick<IngestionConfig, "openrouter" | "ollama" | "anthropic">;
+  const key = config.provider.toLowerCase() as keyof Pick<IngestionConfig, "ollama" | "anthropic">;
   return config[key] ?? null;
 };
 

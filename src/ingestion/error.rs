@@ -5,10 +5,6 @@ use thiserror::Error;
 /// Errors that can occur during the ingestion process
 #[derive(Error, Debug)]
 pub enum IngestionError {
-    /// OpenRouter API communication errors
-    #[error("OpenRouter API error: {0}")]
-    OpenRouterError(String),
-
     /// Ollama API communication errors
     #[error("Ollama API error: {0}")]
     OllamaError(String),
@@ -75,11 +71,6 @@ pub enum IngestionError {
 }
 
 impl IngestionError {
-    /// Create a new OpenRouter API error
-    pub fn openrouter_error(msg: impl Into<String>) -> Self {
-        Self::OpenRouterError(msg.into())
-    }
-
     /// Create a new Ollama API error
     pub fn ollama_error(msg: impl Into<String>) -> Self {
         Self::OllamaError(msg.into())
@@ -152,8 +143,8 @@ pub fn classify_llm_error(provider: &str, status_code: u16, body: &str) -> Inges
             provider: provider.to_string(),
             message: format!("Server error (HTTP {}). Try again later.", status_code),
         },
-        _ => IngestionError::OpenRouterError(
-            format!("API request failed with status {}: {}", status_code, truncate_body(body)),
+        _ => IngestionError::ConfigurationError(
+            format!("{}: API request failed with status {}: {}", provider, status_code, truncate_body(body)),
         ),
     }
 }
@@ -196,35 +187,35 @@ mod tests {
 
     #[test]
     fn test_classify_llm_error_401() {
-        let err = classify_llm_error("OpenRouter", 401, "Unauthorized");
+        let err = classify_llm_error("Anthropic", 401, "Unauthorized");
         assert!(matches!(err, IngestionError::AuthenticationError { .. }));
         assert!(err.user_message().contains("invalid or expired"));
     }
 
     #[test]
     fn test_classify_llm_error_402() {
-        let err = classify_llm_error("OpenRouter", 402, "Payment required");
+        let err = classify_llm_error("Anthropic", 402, "Payment required");
         assert!(matches!(err, IngestionError::ConfigurationError(_)));
         assert!(err.user_message().contains("insufficient credits"));
     }
 
     #[test]
     fn test_classify_llm_error_404() {
-        let err = classify_llm_error("OpenRouter", 404, "Not found");
+        let err = classify_llm_error("Anthropic", 404, "Not found");
         assert!(matches!(err, IngestionError::ConfigurationError(_)));
         assert!(err.user_message().contains("model not found"));
     }
 
     #[test]
     fn test_classify_llm_error_429() {
-        let err = classify_llm_error("OpenRouter", 429, "Rate limited");
+        let err = classify_llm_error("Anthropic", 429, "Rate limited");
         assert!(matches!(err, IngestionError::RateLimitError { .. }));
         assert!(err.user_message().contains("rate limit"));
     }
 
     #[test]
     fn test_classify_llm_error_500() {
-        let err = classify_llm_error("OpenRouter", 500, "Internal server error");
+        let err = classify_llm_error("Anthropic", 500, "Internal server error");
         assert!(matches!(err, IngestionError::ConnectionError { .. }));
         assert!(err.user_message().contains("Cannot connect"));
     }
@@ -237,8 +228,8 @@ mod tests {
 
     #[test]
     fn test_classify_llm_error_unknown_status() {
-        let err = classify_llm_error("OpenRouter", 418, "I'm a teapot");
-        assert!(matches!(err, IngestionError::OpenRouterError(_)));
+        let err = classify_llm_error("Anthropic", 418, "I'm a teapot");
+        assert!(matches!(err, IngestionError::ConfigurationError(_)));
     }
 
     #[test]

@@ -83,19 +83,11 @@ load_api_keys() {
     # Load shell profile to get API keys
     source ~/.zshrc 2>/dev/null || source ~/.bashrc 2>/dev/null || true
 
-    # Ensure FOLD_OPENROUTER_API_KEY is set
-    if [ -z "$FOLD_OPENROUTER_API_KEY" ]; then
-        if [ -n "$OPENROUTER_API_KEY" ]; then
-            export FOLD_OPENROUTER_API_KEY="$OPENROUTER_API_KEY"
-        fi
-    fi
-
-    if [ -z "$FOLD_OPENROUTER_API_KEY" ]; then
-        echo "WARNING: FOLD_OPENROUTER_API_KEY not set. AI ingestion will not work."
-        echo "         Set it in your shell profile: export FOLD_OPENROUTER_API_KEY=your_key"
+    if [ -n "$ANTHROPIC_API_KEY" ]; then
+        export ANTHROPIC_API_KEY
+        echo "Anthropic API key configured"
     else
-        export FOLD_OPENROUTER_API_KEY
-        echo "OpenRouter API key configured"
+        echo "NOTE: ANTHROPIC_API_KEY not set. Configure AI provider in the UI or set it in your shell profile."
     fi
 }
 

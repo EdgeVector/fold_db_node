@@ -86,7 +86,6 @@ export type {
   IngestionStatus,
   IngestionProgress,
   IngestionResults,
-  OpenRouterConfig,
   OllamaConfig,
   AnthropicConfig,
   IngestionConfig,

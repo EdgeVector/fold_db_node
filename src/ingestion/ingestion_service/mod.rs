@@ -522,7 +522,6 @@ impl IngestionService {
     /// Returns the provider name as a string.
     pub fn provider_name(&self) -> &str {
         match self.config.provider {
-            AIProvider::OpenRouter => "OpenRouter",
             AIProvider::Ollama => "Ollama",
             AIProvider::Anthropic => "Anthropic",
         }
@@ -531,10 +530,6 @@ impl IngestionService {
     /// Get status information
     pub fn get_status(&self) -> IngestionResult<IngestionStatus> {
         let (provider_name, model) = match self.config.provider {
-            AIProvider::OpenRouter => (
-                "OpenRouter".to_string(),
-                self.config.openrouter.model.clone(),
-            ),
             AIProvider::Ollama => ("Ollama".to_string(), self.config.ollama.model.clone()),
             AIProvider::Anthropic => ("Anthropic".to_string(), self.config.anthropic.model.clone()),
         };

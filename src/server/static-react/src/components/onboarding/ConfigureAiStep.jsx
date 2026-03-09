@@ -3,15 +3,6 @@ import { ingestionClient } from '../../api/clients'
 import { useAppDispatch } from '../../store/hooks'
 import { fetchIngestionConfig } from '../../store/ingestionSlice'
 
-const OPENROUTER_MODELS = [
-  { value: 'google/gemini-2.5-flash', label: 'Gemini 2.5 Flash' },
-  { value: 'anthropic/claude-sonnet-4.6', label: 'Claude Sonnet 4.6' },
-  { value: 'google/gemini-3.1-pro', label: 'Gemini 3.1 Pro' },
-  { value: 'openai/gpt-4.1-mini', label: 'GPT-4.1 Mini' },
-  { value: 'openai/gpt-4.1', label: 'GPT-4.1' },
-  { value: 'deepseek/deepseek-chat-v3-0324', label: 'DeepSeek V3' },
-]
-
 const ANTHROPIC_MODELS = [
   { value: 'claude-sonnet-4-20250514', label: 'Claude Sonnet 4' },
   { value: 'claude-haiku-4-5-20251001', label: 'Claude Haiku 4.5' },
@@ -19,9 +10,7 @@ const ANTHROPIC_MODELS = [
 
 export default function ConfigureAiStep({ onNext, onSkip }) {
   const dispatch = useAppDispatch()
-  const [provider, setProvider] = useState('OpenRouter')
-  const [model, setModel] = useState('')
-  const [apiKey, setApiKey] = useState('')
+  const [provider, setProvider] = useState('Anthropic')
   const [ollamaModel, setOllamaModel] = useState('')
   const [ollamaUrl, setOllamaUrl] = useState('http://localhost:11434')
   const [anthropicApiKey, setAnthropicApiKey] = useState('')
@@ -84,15 +73,11 @@ export default function ConfigureAiStep({ onNext, onSkip }) {
       if (cancelled) return
       if (response.success && response.data) {
         const cfg = response.data
-        setProvider(cfg.provider || 'OpenRouter')
-        if (cfg.openrouter?.model) setModel(cfg.openrouter.model)
+        setProvider(cfg.provider || 'Anthropic')
         if (cfg.ollama?.model) setOllamaModel(cfg.ollama.model)
         if (cfg.ollama?.base_url) setOllamaUrl(cfg.ollama.base_url)
         if (cfg.anthropic?.model) setAnthropicModel(cfg.anthropic.model)
         if (cfg.anthropic?.api_key && cfg.anthropic.api_key.includes('configured')) {
-          setAlreadyConfigured(true)
-        }
-        if (cfg.openrouter?.api_key && cfg.openrouter.api_key.includes('configured')) {
           setAlreadyConfigured(true)
         }
       }
@@ -108,11 +93,6 @@ export default function ConfigureAiStep({ onNext, onSkip }) {
     setSaveResult(null)
     const config = {
       provider,
-      openrouter: {
-        api_key: provider === 'OpenRouter' ? apiKey : '',
-        model: provider === 'OpenRouter' ? (model || OPENROUTER_MODELS[0].value) : '',
-        base_url: 'https://openrouter.ai/api/v1',
-      },
       ollama: {
         model: provider === 'Ollama' ? (ollamaModel || (ollamaModels[0]?.name ?? '')) : '',
         base_url: ollamaUrl,
@@ -142,12 +122,10 @@ export default function ConfigureAiStep({ onNext, onSkip }) {
     return <p className="text-secondary text-center py-6">Loading configuration...</p>
   }
 
-  const currentModel = provider === 'OpenRouter'
-    ? (model || OPENROUTER_MODELS[0].value)
-    : provider === 'Anthropic'
-      ? anthropicModel
-      : ollamaModel
-  const canSave = saving || (provider === 'OpenRouter' && !apiKey && !alreadyConfigured)
+  const currentModel = provider === 'Anthropic'
+    ? anthropicModel
+    : ollamaModel
+  const canSave = saving
     || (provider === 'Anthropic' && !anthropicApiKey && !alreadyConfigured)
 
   return (
@@ -173,7 +151,6 @@ export default function ConfigureAiStep({ onNext, onSkip }) {
           className="select"
           data-testid="provider-select"
         >
-          <option value="OpenRouter">OpenRouter (Cloud)</option>
           <option value="Anthropic">Anthropic (Cloud)</option>
           <option value="Ollama">Ollama (Local)</option>
         </select>
@@ -181,16 +158,7 @@ export default function ConfigureAiStep({ onNext, onSkip }) {
 
       <div className="mt-3">
         <p className="label">Model</p>
-        {provider === 'OpenRouter' ? (
-          <select
-            value={currentModel}
-            onChange={e => setModel(e.target.value)}
-            className="select"
-            data-testid="model-select"
-          >
-            {OPENROUTER_MODELS.map(m => <option key={m.value} value={m.value}>{m.label}</option>)}
-          </select>
-        ) : provider === 'Anthropic' ? (
+        {provider === 'Anthropic' ? (
           <select
             value={anthropicModel}
             onChange={e => setAnthropicModel(e.target.value)}
@@ -226,30 +194,6 @@ export default function ConfigureAiStep({ onNext, onSkip }) {
           <p className="text-gruvbox-red text-xs mt-1">{ollamaModelsError}</p>
         )}
       </div>
-
-      {provider === 'OpenRouter' && (
-        <div className="mt-3">
-          <p className="label">API Key</p>
-          <input
-            type="password"
-            value={apiKey}
-            onChange={e => setApiKey(e.target.value)}
-            placeholder={alreadyConfigured ? '***configured***' : 'sk-or-...'}
-            className="input"
-            data-testid="api-key-input"
-          />
-          <p className="mt-1">
-            <a
-              href="https://openrouter.ai/keys"
-              target="_blank"
-              rel="noopener noreferrer"
-              className="text-gruvbox-link text-xs hover:underline"
-            >
-              Get API key from OpenRouter
-            </a>
-          </p>
-        </div>
-      )}
 
       {provider === 'Anthropic' && (
         <div className="mt-3">

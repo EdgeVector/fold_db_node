@@ -1,6 +1,6 @@
 //! JSON conversion and processing for file uploads
 
-use file_to_json::{AnthropicConfig, Converter, FallbackStrategy, OpenRouterConfig};
+use file_to_json::{AnthropicConfig, Converter, FallbackStrategy, OpenRouterConfig as OpenAiCompatConfig};
 use serde_json::{json, Value};
 use std::io::Write;
 use std::path::PathBuf;
@@ -25,22 +25,15 @@ pub async fn convert_file_to_json(file_path: &PathBuf) -> Result<Value, Ingestio
     let ingestion_config = crate::ingestion::IngestionConfig::from_env()?;
 
     // Build file_to_json config based on the selected provider
-    let file_to_json_config = match ingestion_config.provider {
-        AIProvider::OpenRouter => OpenRouterConfig {
-            api_key: ingestion_config.openrouter.api_key.clone(),
-            model: ingestion_config.openrouter.model.clone(),
-            timeout: Duration::from_secs(ingestion_config.timeout_seconds),
-            fallback_strategy: FallbackStrategy::Chunked,
-            vision_model: Some(ingestion_config.openrouter.model.clone()),
-            max_image_bytes: 5 * 1024 * 1024,
-            base_url: None,
-        },
+    let file_path_str = file_path.to_string_lossy().to_string();
+
+    match ingestion_config.provider {
         AIProvider::Ollama => {
             let base_url = format!(
                 "{}/v1/chat/completions",
                 ingestion_config.ollama.base_url.trim_end_matches('/')
             );
-            OpenRouterConfig {
+            let ollama_config = OpenAiCompatConfig {
                 api_key: String::new(),
                 model: ingestion_config.ollama.model.clone(),
                 timeout: Duration::from_secs(ingestion_config.timeout_seconds),
@@ -48,7 +41,31 @@ pub async fn convert_file_to_json(file_path: &PathBuf) -> Result<Value, Ingestio
                 vision_model: Some(ingestion_config.ollama.model.clone()),
                 max_image_bytes: 5 * 1024 * 1024,
                 base_url: Some(base_url),
-            }
+            };
+
+            tokio::task::spawn_blocking(move || {
+                let converter = Converter::new(ollama_config)
+                    .map_err(|e| IngestionError::FileConversionFailed(format!("Converter init: {}", e)))?;
+                converter.convert_path(&file_path_str).map_err(|e| {
+                    log_feature!(
+                        LogFeature::Ingestion,
+                        error,
+                        "Failed to convert file to JSON: {}",
+                        e
+                    );
+                    IngestionError::FileConversionFailed(e.to_string())
+                })
+            })
+            .await
+            .map_err(|e| {
+                log_feature!(
+                    LogFeature::Ingestion,
+                    error,
+                    "Failed to spawn blocking task: {}",
+                    e
+                );
+                IngestionError::FileConversionFailed(format!("Task join: {}", e))
+            })?
         }
         AIProvider::Anthropic => {
             let anthropic_config = AnthropicConfig {
@@ -61,9 +78,7 @@ pub async fn convert_file_to_json(file_path: &PathBuf) -> Result<Value, Ingestio
                 base_url: Some(ingestion_config.anthropic.base_url.clone()),
             };
 
-            let file_path_str = file_path.to_string_lossy().to_string();
-
-            return tokio::task::spawn_blocking(move || {
+            tokio::task::spawn_blocking(move || {
                 let converter = Converter::new(anthropic_config)
                     .map_err(|e| IngestionError::FileConversionFailed(format!("Converter init: {}", e)))?;
                 converter.convert_path(&file_path_str).map_err(|e| {
@@ -85,36 +100,9 @@ pub async fn convert_file_to_json(file_path: &PathBuf) -> Result<Value, Ingestio
                     e
                 );
                 IngestionError::FileConversionFailed(format!("Task join: {}", e))
-            })?;
+            })?
         }
-    };
-
-    let file_path_str = file_path.to_string_lossy().to_string();
-
-    // Run conversion in blocking task
-    tokio::task::spawn_blocking(move || {
-        let converter = Converter::new(file_to_json_config)
-            .map_err(|e| IngestionError::FileConversionFailed(format!("Converter init: {}", e)))?;
-        converter.convert_path(&file_path_str).map_err(|e| {
-            log_feature!(
-                LogFeature::Ingestion,
-                error,
-                "Failed to convert file to JSON: {}",
-                e
-            );
-            IngestionError::FileConversionFailed(e.to_string())
-        })
-    })
-    .await
-    .map_err(|e| {
-        log_feature!(
-            LogFeature::Ingestion,
-            error,
-            "Failed to spawn blocking task: {}",
-            e
-        );
-        IngestionError::FileConversionFailed(format!("Task join: {}", e))
-    })?
+    }
 }
 
 /// Convert a file to JSON using file_to_json library (actix-web wrapper)
