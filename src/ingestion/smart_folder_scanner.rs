@@ -10,7 +10,9 @@ use std::path::Path;
 pub struct DirectoryScanResult {
     /// Flat list of relative file paths for processing
     pub file_paths: Vec<String>,
-    /// Indented tree display for LLM context
+    /// Files found but skipped (non-ingestible extensions)
+    pub skipped_files: Vec<String>,
+    /// Indented tree display for LLM context (includes skipped files marked as such)
     pub tree_display: String,
     /// Whether the scan was truncated due to reaching max_files
     pub truncated: bool,
@@ -24,11 +26,13 @@ pub fn scan_directory_tree_with_context(
     max_files: usize,
 ) -> IngestionResult<DirectoryScanResult> {
     let mut files = Vec::new();
-    scan_directory_recursive(root, root, 0, max_depth, max_files, &mut files)?;
+    let mut skipped = Vec::new();
+    scan_directory_recursive(root, root, 0, max_depth, max_files, &mut files, &mut skipped)?;
     let truncated = files.len() >= max_files;
-    let tree_display = build_directory_tree_string(&files);
+    let tree_display = build_directory_tree_string_with_skipped(&files, &skipped);
     Ok(DirectoryScanResult {
         file_paths: files,
+        skipped_files: skipped,
         tree_display,
         truncated,
     })
@@ -41,7 +45,8 @@ pub fn scan_directory_tree(
     max_files: usize,
 ) -> IngestionResult<Vec<String>> {
     let mut files = Vec::new();
-    scan_directory_recursive(root, root, 0, max_depth, max_files, &mut files)?;
+    let mut skipped = Vec::new();
+    scan_directory_recursive(root, root, 0, max_depth, max_files, &mut files, &mut skipped)?;
     Ok(files)
 }
 
@@ -52,6 +57,7 @@ fn scan_directory_recursive(
     max_depth: usize,
     max_files: usize,
     files: &mut Vec<String>,
+    skipped: &mut Vec<String>,
 ) -> IngestionResult<()> {
     if depth > max_depth || files.len() >= max_files {
         return Ok(());
@@ -73,63 +79,21 @@ fn scan_directory_recursive(
         let path = entry.path();
         let file_name = path.file_name().and_then(|n| n.to_str()).unwrap_or("");
 
-        // Skip hidden files and common skip patterns
+        // Skip hidden files
         if file_name.starts_with('.') {
             continue;
         }
 
-        // Skip common non-data directories
-        let skip_dirs = [
-            "node_modules",
-            "__pycache__",
-            ".git",
-            ".svn",
-            "target",
-            "build",
-            "dist",
-            ".cache",
-            "venv",
-            ".venv",
-            ".idea",
-            ".vscode",
-            "Pods",
-            ".gradle",
-            "vendor",
-            "cmake-build-debug",
-            "cmake-build-release",
-            ".terraform",
-            ".next",
-            ".nuxt",
-            "__MACOSX",
-            ".tox",
-            ".eggs",
-            ".mypy_cache",
-            ".pytest_cache",
-            ".cargo",
-            "bower_components",
-            ".bundle",
-            "DerivedData",
-            "_build",
-            "deps",
-            "artifacts",
-            "cache",
-        ];
-        if path.is_dir() && skip_dirs.contains(&file_name) {
-            continue;
-        }
-
         if path.is_dir() {
-            scan_directory_recursive(root, &path, depth + 1, max_depth, max_files, files)?;
+            scan_directory_recursive(root, &path, depth + 1, max_depth, max_files, files, skipped)?;
         } else if path.is_file() {
-            // Get relative path from root
             if let Ok(relative) = path.strip_prefix(root) {
                 let rel_str = relative.to_string_lossy().to_string();
-                // Only collect files with ingestible extensions so non-ingestible
-                // files don't consume the max_files budget.
-                if !is_ingestible_file(&rel_str) {
-                    continue;
+                if is_ingestible_file(&rel_str) {
+                    files.push(rel_str);
+                } else {
+                    skipped.push(rel_str);
                 }
-                files.push(rel_str);
             }
         }
     }
@@ -139,11 +103,16 @@ fn scan_directory_recursive(
 
 /// Build an indented directory tree string from a list of relative file paths.
 pub fn build_directory_tree_string(file_paths: &[String]) -> String {
-    // Collect all directory prefixes and files in sorted order
+    build_directory_tree_string_with_skipped(file_paths, &[])
+}
+
+/// Build an indented directory tree string including skipped files marked as [skipped].
+pub fn build_directory_tree_string_with_skipped(file_paths: &[String], skipped_paths: &[String]) -> String {
     let mut dirs: BTreeSet<String> = BTreeSet::new();
     let mut all_paths: BTreeSet<String> = BTreeSet::new();
+    let skipped_set: HashSet<&String> = skipped_paths.iter().collect();
 
-    for path in file_paths {
+    for path in file_paths.iter().chain(skipped_paths.iter()) {
         all_paths.insert(path.clone());
         let p = Path::new(path);
         let mut ancestor = p.parent();
@@ -158,6 +127,7 @@ pub fn build_directory_tree_string(file_paths: &[String]) -> String {
     }
 
     let mut lines = Vec::new();
+    // entries: (path, is_dir)
     let mut entries: Vec<(String, bool)> = Vec::new();
     for d in &dirs {
         entries.push((d.clone(), true));
@@ -186,7 +156,11 @@ pub fn build_directory_tree_string(file_paths: &[String]) -> String {
                 .file_name()
                 .and_then(|n| n.to_str())
                 .unwrap_or(path);
-            lines.push(format!("{}{}", indent, name));
+            if skipped_set.contains(path) {
+                lines.push(format!("{}{} [skipped]", indent, name));
+            } else {
+                lines.push(format!("{}{}", indent, name));
+            }
         }
     }
 

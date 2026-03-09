@@ -688,14 +688,20 @@ mod tests {
 
         std::fs::create_dir_all(root.join("docs")).unwrap();
         std::fs::write(root.join("docs/notes.txt"), "hello").unwrap();
-        // photo.jpg is filtered during collection — it must NOT consume max_files budget
         std::fs::write(root.join("photo.jpg"), "fake jpg").unwrap();
+        std::fs::write(root.join("program.exe"), "fake exe").unwrap();
 
         let result = scan_directory_tree_with_context(root, 10, 50000).unwrap();
 
-        // Only the ingestible file appears in file_paths; the jpg is silently excluded
-        assert_eq!(result.file_paths.len(), 1);
+        // Both ingestible files appear in file_paths
+        assert_eq!(result.file_paths.len(), 2);
         assert!(result.file_paths.contains(&"docs/notes.txt".to_string()));
+        assert!(result.file_paths.contains(&"photo.jpg".to_string()));
+        // Non-ingestible file is in skipped_files
+        assert_eq!(result.skipped_files.len(), 1);
+        assert!(result.skipped_files.contains(&"program.exe".to_string()));
+        // Skipped file appears in tree display with [skipped] marker
+        assert!(result.tree_display.contains("program.exe [skipped]"));
         assert!(!result.truncated);
         assert!(!result.tree_display.is_empty());
         assert!(result.tree_display.contains("docs/"));
@@ -719,7 +725,7 @@ mod tests {
     // ---- scan_directory_recursive tests ----
 
     #[test]
-    fn test_scan_skips_git_repo_subdirectory() {
+    fn test_scan_includes_git_repo_subdirectory() {
         let tmp = tempfile::tempdir().unwrap();
         let root = tmp.path();
 
@@ -733,24 +739,9 @@ mod tests {
 
         let files = scan_directory_tree(root, 10, 50000).unwrap();
 
-        // Should find notes.txt but NOT my_project/main.rs
+        // Should find both files — git repos are not excluded
         assert!(files.contains(&"notes.txt".to_string()));
-        assert!(!files.iter().any(|f| f.contains("main.rs")));
-    }
-
-    #[test]
-    fn test_scan_does_not_skip_root_git_repo() {
-        let tmp = tempfile::tempdir().unwrap();
-        let root = tmp.path();
-
-        // The root itself is a git repo
-        std::fs::create_dir_all(root.join(".git")).unwrap();
-        std::fs::write(root.join("readme.md"), "# Hello").unwrap();
-
-        let files = scan_directory_tree(root, 10, 50000).unwrap();
-
-        // Should still find files in the root even though it has .git
-        assert!(files.contains(&"readme.md".to_string()));
+        assert!(files.contains(&"my_project/main.rs".to_string()));
     }
 
     #[test]
@@ -792,24 +783,32 @@ mod tests {
     }
 
     #[test]
-    fn test_scan_skips_expanded_skip_dirs() {
+    fn test_scan_skips_hidden_dirs() {
         let tmp = tempfile::tempdir().unwrap();
         let root = tmp.path();
 
-        // Create directories from the expanded skip list
-        for dir_name in &[".idea", ".vscode", "Pods", "DerivedData", "vendor", ".next"] {
+        // Hidden directories (dotfiles) are still skipped
+        for dir_name in &[".idea", ".vscode", ".next"] {
             let dir = root.join(dir_name);
             std::fs::create_dir_all(&dir).unwrap();
             std::fs::write(dir.join("junk.txt"), "junk").unwrap();
         }
+
+        // Non-hidden directories are included
+        let visible_dir = root.join("vendor");
+        std::fs::create_dir_all(&visible_dir).unwrap();
+        std::fs::write(visible_dir.join("lib.rs"), "// vendor code").unwrap();
 
         // Create a normal file
         std::fs::write(root.join("personal.txt"), "my data").unwrap();
 
         let files = scan_directory_tree(root, 10, 50000).unwrap();
 
-        // Should only find the normal file
-        assert_eq!(files, vec!["personal.txt".to_string()]);
+        // Should find personal.txt and vendor/lib.rs but NOT hidden dir files
+        assert!(files.contains(&"personal.txt".to_string()));
+        assert!(files.contains(&"vendor/lib.rs".to_string()));
+        assert!(!files.iter().any(|f| f.contains(".idea")));
+        assert!(!files.iter().any(|f| f.contains(".vscode")));
     }
 
     // ---- parse_llm_file_recommendations tests ----
