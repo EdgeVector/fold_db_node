@@ -272,7 +272,7 @@ impl OperationProcessor {
         let schemas = self.list_schemas().await?;
 
         service
-            .run_agent_query(user_query, &schemas, &self.node, user_hash, max_iterations, &[])
+            .run_agent_query(user_query, &schemas, &self.node, user_hash, max_iterations, &[], None)
             .await
             .map_err(FoldDbError::Other)
     }

@@ -327,6 +327,8 @@ async fn test_smart_folder_tweets_ingest_and_query() {
             &node,
             &user_id,
             10,
+            &[],
+            None,
         )
         .await
         .expect("AI query should succeed");

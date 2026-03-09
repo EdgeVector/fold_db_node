@@ -20,6 +20,7 @@ import {
 } from '../../store/ingestionSlice';
 import { selectApprovedSchemas, fetchSchemas } from '../../store/schemaSlice';
 import { llmQueryClient } from '../../api/clients/llmQueryClient';
+import { ingestionClient } from '../../api/clients/ingestionClient';
 import { extractImagesFromToolCalls } from '../../utils/imageUtils';
 import ImageThumbnail from './llm-query/ImageThumbnail';
 import useAiConfig from '../settings/AiConfigSettings';
@@ -81,6 +82,51 @@ function AgentTab() {
     setConfigSaveStatus,
     onClose: () => dispatch(fetchIngestionConfig()),
   });
+
+  // Progress polling state — tracks active ingestion during agent processing
+  const [activeProgress, setActiveProgress] = useState(null);
+  const progressPollRef = useRef(null);
+
+  // Poll ingestion progress while the agent is processing
+  useEffect(() => {
+    if (!isProcessing) {
+      if (progressPollRef.current) {
+        clearInterval(progressPollRef.current);
+        progressPollRef.current = null;
+      }
+      setActiveProgress(null);
+      return;
+    }
+
+    const poll = async () => {
+      try {
+        const resp = await ingestionClient.getAllProgress();
+        if (resp.success && Array.isArray(resp.data) && resp.data.length > 0) {
+          // Find the most recently started non-complete agent job, or any active job
+          const active = resp.data.find(j => !j.is_complete && !j.is_failed) || null;
+          setActiveProgress(active);
+        } else {
+          setActiveProgress(null);
+        }
+      } catch {
+        // ignore polling errors
+      }
+    };
+
+    // Start polling after a short delay (agent needs time to begin ingestion)
+    const timeout = setTimeout(() => {
+      poll();
+      progressPollRef.current = setInterval(poll, 2000);
+    }, 1000);
+
+    return () => {
+      clearTimeout(timeout);
+      if (progressPollRef.current) {
+        clearInterval(progressPollRef.current);
+        progressPollRef.current = null;
+      }
+    };
+  }, [isProcessing]);
 
   const configLoaded = ingestionConfig !== null;
   const phase = derivePhase(configLoaded, aiConfigured, schemas);
@@ -307,10 +353,26 @@ function AgentTab() {
 
         {isProcessing && (
           <div className="flex justify-start mb-3">
-            <div className="px-4 py-3 bg-surface-secondary border border-border rounded-lg flex items-center gap-1">
-              <span className="w-2 h-2 rounded-full bg-tertiary animate-bounce" style={{ animationDelay: '0ms' }} />
-              <span className="w-2 h-2 rounded-full bg-tertiary animate-bounce" style={{ animationDelay: '150ms' }} />
-              <span className="w-2 h-2 rounded-full bg-tertiary animate-bounce" style={{ animationDelay: '300ms' }} />
+            <div className="px-4 py-3 bg-surface-secondary border border-border rounded-lg min-w-[200px]">
+              {activeProgress ? (
+                <div>
+                  <p className="text-xs text-tertiary mb-1">{activeProgress.current_step || 'Processing'}</p>
+                  <p className="text-sm text-primary mb-2">{activeProgress.status_message || 'Working...'}</p>
+                  <div className="w-full bg-surface rounded-full h-2 overflow-hidden">
+                    <div
+                      className="h-full bg-gruvbox-green rounded-full transition-all duration-300"
+                      style={{ width: `${activeProgress.progress_percentage || 0}%` }}
+                    />
+                  </div>
+                  <p className="text-xs text-tertiary mt-1">{activeProgress.progress_percentage || 0}%</p>
+                </div>
+              ) : (
+                <div className="flex items-center gap-1">
+                  <span className="w-2 h-2 rounded-full bg-tertiary animate-bounce" style={{ animationDelay: '0ms' }} />
+                  <span className="w-2 h-2 rounded-full bg-tertiary animate-bounce" style={{ animationDelay: '150ms' }} />
+                  <span className="w-2 h-2 rounded-full bg-tertiary animate-bounce" style={{ animationDelay: '300ms' }} />
+                </div>
+              )}
             </div>
           </div>
         )}

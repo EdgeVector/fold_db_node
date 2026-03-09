@@ -296,6 +296,7 @@ pub async fn agent_query(
     service: &LlmQueryService,
     session_manager: &SessionManager,
     node: &FoldNode,
+    progress_tracker: Option<&crate::ingestion::ProgressTracker>,
 ) -> HandlerResult<AgentQueryHandlerResponse> {
     log::info!(
         "Agent Query: received for user: {}, query: {}",
@@ -343,6 +344,7 @@ pub async fn agent_query(
             user_hash,
             max_iterations,
             &prior_history,
+            progress_tracker,
         )
         .await
         .handler_err("run agent query")?;

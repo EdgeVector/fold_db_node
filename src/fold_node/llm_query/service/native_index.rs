@@ -126,6 +126,7 @@ impl LlmQueryService {
         tool: &str,
         params: &Value,
         node: &crate::fold_node::node::FoldNode,
+        progress_tracker: Option<&crate::ingestion::ProgressTracker>,
     ) -> Result<Value, String> {
         let processor = crate::fold_node::OperationProcessor::new(node.clone());
 
@@ -267,12 +268,63 @@ impl LlmQueryService {
                     std::path::PathBuf::from(folder_path_raw)
                 };
                 let base = base_expanded.as_path();
+                let file_list: Vec<&str> = files
+                    .iter()
+                    .filter_map(|v| v.as_str())
+                    .filter(|s| !s.is_empty())
+                    .collect();
+                let total = file_list.len();
+
+                // Create a batch-level progress entry so the frontend can poll it
+                let batch_progress_id = format!("agent-ingest-{}", uuid::Uuid::new_v4());
+                if let Some(tracker) = progress_tracker {
+                    let progress_service =
+                        crate::ingestion::progress::ProgressService::new(tracker.clone());
+                    progress_service
+                        .start_progress(batch_progress_id.clone(), "agent".to_string())
+                        .await;
+                    progress_service
+                        .update_progress_with_percentage(
+                            &batch_progress_id,
+                            crate::ingestion::progress::IngestionStep::ExecutingMutations,
+                            format!("Ingesting 0/{} files...", total),
+                            5,
+                        )
+                        .await;
+                }
+
                 let mut results = Vec::new();
-                for file_val in files {
-                    let relative = file_val.as_str().unwrap_or_default();
-                    if relative.is_empty() { continue; }
+                for (idx, relative) in file_list.iter().enumerate() {
                     let full_path = base.join(relative);
-                    match processor.ingest_single_file(&full_path, true).await {
+
+                    // Update batch progress
+                    if let Some(tracker) = progress_tracker {
+                        let pct = ((idx as f64 / total as f64) * 90.0 + 5.0) as u8;
+                        let progress_service =
+                            crate::ingestion::progress::ProgressService::new(tracker.clone());
+                        progress_service
+                            .update_progress_with_percentage(
+                                &batch_progress_id,
+                                crate::ingestion::progress::IngestionStep::ExecutingMutations,
+                                format!(
+                                    "Ingesting {}/{} files: {}",
+                                    idx + 1,
+                                    total,
+                                    relative
+                                ),
+                                pct,
+                            )
+                            .await;
+                    }
+
+                    match processor
+                        .ingest_single_file_with_tracker(
+                            &full_path,
+                            true,
+                            progress_tracker.cloned(),
+                        )
+                        .await
+                    {
                         Ok(response) => {
                             results.push(serde_json::json!({
                                 "file": relative,
@@ -292,6 +344,26 @@ impl LlmQueryService {
                         }
                     }
                 }
+
+                // Mark batch progress as complete
+                if let Some(tracker) = progress_tracker {
+                    let progress_service =
+                        crate::ingestion::progress::ProgressService::new(tracker.clone());
+                    let succeeded = results.iter().filter(|r| r["success"] == true).count();
+                    progress_service
+                        .complete_progress(
+                            &batch_progress_id,
+                            crate::ingestion::progress::IngestionResults {
+                                schema_name: String::new(),
+                                new_schema_created: false,
+                                mutations_generated: total,
+                                mutations_executed: succeeded,
+                                schemas_written: vec![],
+                            },
+                        )
+                        .await;
+                }
+
                 let succeeded = results.iter().filter(|r| r["success"] == true).count();
                 Ok(serde_json::json!({
                     "total": results.len(),
@@ -312,6 +384,7 @@ impl LlmQueryService {
     /// 2. Parse the response for tool calls or final answer
     /// 3. Execute tool calls and add results to conversation
     /// 4. Repeat until a final answer is given or max_iterations reached
+    #[allow(clippy::too_many_arguments)]
     pub async fn run_agent_query(
         &self,
         user_query: &str,
@@ -320,6 +393,7 @@ impl LlmQueryService {
         _user_hash: &str,
         max_iterations: usize,
         prior_history: &[super::super::types::Message],
+        progress_tracker: Option<&crate::ingestion::ProgressTracker>,
     ) -> Result<(String, Vec<ToolCallRecord>), String> {
         let mut tool_calls: Vec<ToolCallRecord> = Vec::new();
 
@@ -380,7 +454,7 @@ impl LlmQueryService {
                     log::info!("Agent: Calling tool '{}' with params: {}", tool, params);
 
                     // Execute the tool, capturing errors as results so the agent can retry
-                    let result = match self.execute_tool(&tool, &params, node).await {
+                    let result = match self.execute_tool(&tool, &params, node, progress_tracker).await {
                         Ok(val) => val,
                         Err(e) => {
                             log::warn!("Agent: Tool '{}' failed: {}", tool, e);

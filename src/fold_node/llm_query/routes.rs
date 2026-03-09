@@ -245,6 +245,7 @@ pub async fn agent_query(
     request: web::Json<AgentQueryRequest>,
     app_state: web::Data<AppState>,
     llm_state: web::Data<LlmQueryState>,
+    progress_tracker: web::Data<crate::ingestion::ProgressTracker>,
 ) -> impl Responder {
     let service = match require_service(&llm_state).await {
         Ok(svc) => svc,
@@ -271,6 +272,7 @@ pub async fn agent_query(
         service.as_ref(),
         llm_state.session_manager.as_ref(),
         &node,
+        Some(progress_tracker.get_ref()),
     )
     .await
     {

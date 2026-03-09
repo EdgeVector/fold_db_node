@@ -353,7 +353,7 @@ async fn test_agent_scan_ingest_and_query() {
         eprintln!("\nAgent Query: \"{}\"", query_text);
 
         let result = query_service
-            .run_agent_query(query_text, &schemas, &node, &user_id, 10, &[])
+            .run_agent_query(query_text, &schemas, &node, &user_id, 10, &[], None)
             .await;
 
         match result {
@@ -466,6 +466,7 @@ async fn test_agent_scan_ingest_and_query() {
             &user_id,
             10,
             &prior_history,
+            None,
         )
         .await;
 
