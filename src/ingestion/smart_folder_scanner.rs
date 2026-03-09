@@ -57,11 +57,6 @@ fn scan_directory_recursive(
         return Ok(());
     }
 
-    // Skip non-root directories that are git repos (code repositories)
-    if current != root && current.join(".git").exists() {
-        return Ok(());
-    }
-
     let entries = std::fs::read_dir(current).map_err(|e| {
         IngestionError::InvalidInput(format!(
             "Failed to read directory {}: {}",
@@ -228,7 +223,12 @@ pub const CODE_EXTS: &[&str] = &[
 /// Config file extensions wrapped as text content.
 pub const CONFIG_EXTS: &[&str] = &["yaml", "yml", "toml", "xml"];
 
-/// Returns true if the file has an extension we can ingest (data, code, or config).
+/// Image file extensions (photos, paintings, diagrams).
+pub const IMAGE_EXTS: &[&str] = &[
+    "jpg", "jpeg", "png", "gif", "bmp", "webp", "tiff", "tif", "svg", "heic", "heif",
+];
+
+/// Returns true if the file has an extension we can ingest.
 pub fn is_ingestible_file(path: &str) -> bool {
     let ext = Path::new(path)
         .extension()
@@ -236,7 +236,7 @@ pub fn is_ingestible_file(path: &str) -> bool {
         .unwrap_or("")
         .to_lowercase();
     let e = ext.as_str();
-    DATA_EXTS.contains(&e) || DOC_EXTS.contains(&e) || CODE_EXTS.contains(&e) || CONFIG_EXTS.contains(&e)
+    DATA_EXTS.contains(&e) || DOC_EXTS.contains(&e) || CODE_EXTS.contains(&e) || CONFIG_EXTS.contains(&e) || IMAGE_EXTS.contains(&e)
 }
 
 #[cfg(test)]
@@ -331,12 +331,18 @@ mod tests {
     }
 
     #[test]
-    fn test_media_files_not_ingestible() {
-        assert!(!is_ingestible_file("photo.jpg"));
-        assert!(!is_ingestible_file("photo.jpeg"));
-        assert!(!is_ingestible_file("image.png"));
-        assert!(!is_ingestible_file("image.gif"));
-        assert!(!is_ingestible_file("icon.svg"));
+    fn test_image_files_are_ingestible() {
+        assert!(is_ingestible_file("photo.jpg"));
+        assert!(is_ingestible_file("photo.jpeg"));
+        assert!(is_ingestible_file("image.png"));
+        assert!(is_ingestible_file("image.gif"));
+        assert!(is_ingestible_file("icon.svg"));
+        assert!(is_ingestible_file("image.webp"));
+        assert!(is_ingestible_file("photo.heic"));
+    }
+
+    #[test]
+    fn test_audio_video_files_not_ingestible() {
         assert!(!is_ingestible_file("video.mp4"));
         assert!(!is_ingestible_file("song.mp3"));
         assert!(!is_ingestible_file("audio.wav"));
