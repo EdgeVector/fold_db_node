@@ -138,7 +138,8 @@ impl OperationProcessor {
                     )));
                 }
             }
-            DatabaseConfig::Local { .. } => {
+            // Both Local and Exemem use local Sled storage
+            DatabaseConfig::Local { .. } | DatabaseConfig::Exemem { .. } => {
                 if db_path.exists() {
                     if let Err(e) = std::fs::remove_dir_all(&db_path) {
                         log::error!("Failed to delete database folder: {}", e);
@@ -149,11 +150,6 @@ impl OperationProcessor {
                     log::error!("Failed to recreate database folder: {}", e);
                     return Err(FoldDbError::Io(e));
                 }
-            }
-            DatabaseConfig::Exemem { .. } => {
-                return Err(FoldDbError::Other(
-                    "Database reset is not supported for Exemem backend".to_string(),
-                ));
             }
         }
 
@@ -279,123 +275,111 @@ impl OperationProcessor {
 
     // --- Cloud Migration Operations ---
 
-    /// Migrate local database to cloud.
+    /// Migrate local database to Exemem cloud (S3 sync).
+    ///
+    /// With E2E encryption, "migration" means enabling S3 sync on the existing
+    /// local Sled database. The data is already encrypted locally — we just need
+    /// to force an initial sync to upload everything to S3.
+    ///
+    /// The caller should update the config to `DatabaseConfig::Exemem` and
+    /// restart the node after this completes.
     pub async fn migrate_to_cloud(&self, api_url: &str, api_key: &str) -> FoldDbResult<()> {
-        log::info!("🚀 Starting migration to cloud: {}", api_url);
+        log::info!("Starting cloud sync setup: {}", api_url);
 
-        let client = reqwest::Client::builder()
-            .timeout(std::time::Duration::from_secs(60))
-            .build()
-            .unwrap_or_else(|_| reqwest::Client::new());
+        // Create a temporary SyncEngine to perform the initial upload.
+        // The existing Sled data is already encrypted — we just need to snapshot
+        // it and upload to S3.
+        let home = std::env::var("HOME")
+            .map(std::path::PathBuf::from)
+            .map_err(|e| FoldDbError::Config(format!("HOME not set: {e}")))?;
+        let e2e_key_path = home.join(".fold_db/e2e.key");
+        let e2e_keys = fold_db::crypto::E2eKeys::load_or_generate(&e2e_key_path)
+            .await
+            .map_err(|e| FoldDbError::Config(format!("Failed to load E2E keys: {e}")))?;
 
-        let schemas_with_state = self.list_schemas().await?;
-        log::info!("📦 Found {} schemas to migrate", schemas_with_state.len());
+        let sync_setup = fold_db::sync::SyncSetup::from_exemem(api_url, api_key);
+        let sync_crypto: std::sync::Arc<dyn fold_db::crypto::CryptoProvider> =
+            std::sync::Arc::new(fold_db::crypto::LocalCryptoProvider::from_key(
+                e2e_keys.encryption_key(),
+            ));
 
-        let mut all_mutations: Vec<serde_json::Value> = Vec::new();
-
-        for schema_state in schemas_with_state {
-            let schema = schema_state.schema;
-            let schema_name = schema.name.clone();
-
-            log::info!("⬆️ Syncing schema: {}", schema_name);
-
-            let schema_url = format!("{}/api/schemas", api_url.trim_end_matches('/'));
-            let request = serde_json::json!({
-                "schema": schema,
-                "mutation_mappers": {}
-            });
-
-            let res = client
-                .post(&schema_url)
-                .header("X-API-Key", api_key)
-                .json(&request)
-                .send()
-                .await
-                .map_err(|e| {
-                    FoldDbError::Other(format!("Failed to upload schema '{}': {}", schema_name, e))
-                })?;
-
-            if !res.status().is_success() && res.status() != reqwest::StatusCode::CONFLICT {
-                return Err(FoldDbError::Other(format!(
-                    "Schema '{}' upload failed: {}",
-                    schema_name,
-                    res.status()
-                )));
-            }
-
-            let queryable_fields = schema.fields.unwrap_or_default();
-            let query = fold_db::schema::types::Query::new(schema_name.clone(), queryable_fields);
-
-            let records = self.execute_query_json(query).await?;
-            log::info!(
-                "📄 Found {} records for schema: {}",
-                records.len(),
-                schema_name
-            );
-
-            let pub_key = self.get_node_public_key();
-
-            for record in records {
-                let fields = record
-                    .get("fields")
-                    .and_then(|f| f.as_object())
-                    .cloned()
-                    .unwrap_or_default();
-
-                let fields_map: std::collections::HashMap<String, serde_json::Value> =
-                    fields.into_iter().collect();
-
-                let key_value = crate::fold_node::OperationProcessor::parse_ref_key(&record)
-                    .unwrap_or_else(|| fold_db::schema::types::KeyValue::new(None, None));
-
-                let mutation = serde_json::json!({
-                    "type": "Mutation",
-                    "schema": schema_name,
-                    "fields_and_values": fields_map,
-                    "key_value": key_value,
-                    "mutation_type": "Create",
-                    "server_hash": "",
-                    "source_file_name": null,
-                    "client_pub_key": pub_key,
-                });
-                all_mutations.push(mutation);
-            }
-        }
-
-        let total_mutations = all_mutations.len();
-        log::info!(
-            "🚀 Starting data upload of {} total mutations",
-            total_mutations
+        let http = std::sync::Arc::new(reqwest::Client::new());
+        let s3 = fold_db::sync::s3::S3Client::new(http.clone());
+        let auth = fold_db::sync::auth::AuthClient::new(
+            http,
+            sync_setup.auth_url,
+            sync_setup.auth,
         );
-        let mutation_url = format!("{}/api/mutations/batch", api_url.trim_end_matches('/'));
 
-        for (i, chunk) in all_mutations.chunks(100).enumerate() {
-            let chunk_vec: Vec<serde_json::Value> = chunk.to_vec();
-            log::info!(
-                "🔄 Uploading data batch {}/{}",
-                i + 1,
-                total_mutations.div_ceil(100)
-            );
+        // Open the existing Sled database to snapshot it
+        let config = self.node.config.clone();
+        let db_path = config.get_storage_path();
+        let db = sled::open(&db_path)
+            .map_err(|e| FoldDbError::Config(format!("Failed to open sled for sync: {e}")))?;
+        let base_store: std::sync::Arc<dyn fold_db::storage::traits::NamespacedStore> =
+            std::sync::Arc::new(fold_db::storage::SledNamespacedStore::new(db));
 
-            let res = client
-                .post(&mutation_url)
-                .header("X-API-Key", api_key)
-                .json(&chunk_vec)
-                .send()
+        let engine = std::sync::Arc::new(fold_db::sync::SyncEngine::new(
+            sync_setup.device_id,
+            sync_crypto.clone(),
+            s3,
+            auth,
+            base_store.clone(),
+            fold_db::sync::SyncConfig::default(),
+        ));
+
+        // Acquire the device lock
+        engine
+            .acquire_lock()
+            .await
+            .map_err(|e| FoldDbError::Other(format!("Failed to acquire sync lock: {e}")))?;
+
+        // Create and upload a full snapshot
+        let snapshot =
+            fold_db::sync::snapshot::Snapshot::create(base_store.as_ref(), engine.device_id(), 0)
                 .await
-                .map_err(|e| FoldDbError::Other(format!("Batch upload failed: {}", e)))?;
+                .map_err(|e| FoldDbError::Other(format!("Failed to create snapshot: {e}")))?;
 
-            if !res.status().is_success() {
-                let status = res.status();
-                let err_text = res.text().await.unwrap_or_default();
-                return Err(FoldDbError::Other(format!(
-                    "Batch upload returned {}: {}",
-                    status, err_text
-                )));
-            }
-        }
+        let ns_count = snapshot.namespaces.len();
+        let entry_count: usize = snapshot.namespaces.iter().map(|n| n.entries.len()).sum();
+        log::info!(
+            "Created snapshot: {} namespaces, {} entries",
+            ns_count,
+            entry_count
+        );
 
-        log::info!("✅ Cloud migration completed successfully");
+        let sealed = snapshot
+            .seal(&sync_crypto)
+            .await
+            .map_err(|e| FoldDbError::Other(format!("Failed to seal snapshot: {e}")))?;
+
+        // Upload as latest.enc
+        let auth_client = fold_db::sync::auth::AuthClient::new(
+            std::sync::Arc::new(reqwest::Client::new()),
+            api_url.to_string(),
+            fold_db::sync::auth::SyncAuth::ApiKey(api_key.to_string()),
+        );
+
+        let url = auth_client
+            .presign_snapshot_upload("latest.enc")
+            .await
+            .map_err(|e| FoldDbError::Other(format!("Failed to get presigned URL: {e}")))?;
+
+        let s3_client =
+            fold_db::sync::s3::S3Client::new(std::sync::Arc::new(reqwest::Client::new()));
+        s3_client
+            .upload(&url, sealed)
+            .await
+            .map_err(|e| FoldDbError::Other(format!("Failed to upload snapshot: {e}")))?;
+
+        // Release lock
+        let _ = engine.release_lock().await;
+
+        log::info!(
+            "Cloud sync setup complete: uploaded {} namespaces ({} entries)",
+            ns_count,
+            entry_count
+        );
         Ok(())
     }
 }

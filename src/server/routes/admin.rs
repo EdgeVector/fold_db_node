@@ -192,11 +192,11 @@ pub struct MigrateToCloudResponse {
     pub job_id: Option<String>,
 }
 
-/// Migrate data to Cloud (async background job)
+/// Migrate data to Exemem Cloud (async background job)
 ///
-/// This endpoint initiates a migration of all schemas and data to a remote XMEM cloud instance:
+/// This endpoint initiates S3 sync setup for the local Sled database:
 /// 1. Returns immediately with a job ID for progress tracking
-/// 2. The background job reads local data and pushes it to the remote API
+/// 2. The background job snapshots local data and uploads encrypted blobs to S3
 /// 3. Progress can be monitored via /api/ingestion/progress/{job_id}
 #[utoipa::path(
     post,

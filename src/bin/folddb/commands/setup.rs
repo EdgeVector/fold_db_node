@@ -30,7 +30,7 @@ pub fn run_setup_wizard() -> Result<NodeConfig, CliError> {
     eprintln!();
 
     // --- Backend selection ---
-    let backends = &["Local (Sled - embedded, runs on this machine)", "Exemem Cloud (remote API-backed storage)"];
+    let backends = &["Local (Sled - embedded, runs on this machine)", "Exemem Cloud (local Sled + encrypted S3 sync)"];
     let backend_idx = Select::new()
         .with_prompt("Storage backend")
         .items(backends)

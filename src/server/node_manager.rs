@@ -66,7 +66,11 @@ pub struct NodeManager {
 impl NodeManager {
     /// Create a new NodeManager
     pub fn new(config: NodeManagerConfig) -> Self {
-        let is_local_mode = matches!(config.base_config.database, DatabaseConfig::Local { .. });
+        // Both Local and Exemem use local Sled storage (Exemem adds S3 sync on top)
+        let is_local_mode = matches!(
+            config.base_config.database,
+            DatabaseConfig::Local { .. } | DatabaseConfig::Exemem { .. }
+        );
         Self {
             config: RwLock::new(config),
             nodes: Arc::new(Mutex::new(HashMap::new())),
@@ -286,7 +290,10 @@ impl NodeManager {
     /// Update the configuration and invalidate all cached nodes
     /// The next request will create fresh nodes with the new config
     pub async fn update_config(&self, new_config: NodeManagerConfig) {
-        let new_is_local = matches!(new_config.base_config.database, DatabaseConfig::Local { .. });
+        let new_is_local = matches!(
+            new_config.base_config.database,
+            DatabaseConfig::Local { .. } | DatabaseConfig::Exemem { .. }
+        );
 
         {
             let mut config = self.config.write().await;

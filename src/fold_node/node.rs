@@ -9,7 +9,7 @@ use crate::fold_node::config::NodeConfig;
 use fold_db::error::{FoldDbError, FoldDbResult};
 use fold_db::fold_db_core::FoldDB;
 use fold_db::constants::SINGLE_PUBLIC_KEY_ID;
-use fold_db::security::{EncryptionManager, PublicKeyInfo, SecurityConfig, SecurityManager};
+use fold_db::security::{PublicKeyInfo, SecurityConfig, SecurityManager};
 
 /// A node in the Fold distributed database system.
 ///
@@ -255,12 +255,7 @@ impl FoldNode {
         };
 
         // Initialize security manager with node configuration
-        let mut security_config = config.security_config.clone();
-
-        // Generate master key if encryption is enabled but no key is set
-        if security_config.encrypt_at_rest && security_config.master_key.is_none() {
-            security_config.master_key = Some(EncryptionManager::generate_master_key());
-        }
+        let security_config = config.security_config.clone();
 
         let security_manager = {
             let guard = db.lock().await;

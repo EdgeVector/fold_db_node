@@ -196,7 +196,7 @@ pub enum StorageSetup {
     /// Local Sled storage
     #[serde(rename = "local")]
     Local { path: String },
-    /// Exemem cloud storage
+    /// Exemem cloud storage (local Sled + encrypted S3 sync)
     #[serde(rename = "exemem")]
     Exemem { api_url: String, api_key: String },
 }

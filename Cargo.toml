@@ -11,7 +11,7 @@ aws-backend = ["fold_db/aws-backend", "dep:aws-config", "dep:aws-sdk-dynamodb"]
 
 [dependencies]
 # Core database library
-fold_db = { git = "https://github.com/shiba4life/fold_db.git", rev = "a333a8d9", features = ["cli"] }
+fold_db = { path = "../fold_db", features = ["cli"] }
 
 # HTTP Server
 actix-web = "4.3"
