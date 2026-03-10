@@ -45,6 +45,8 @@ function LlmQueryTab({ onResult }) {
 
   const viewMode = useAppSelector(selectViewMode);
   const [isLoadingConversation, setIsLoadingConversation] = useState(false);
+  const [thinkingSeconds, setThinkingSeconds] = useState(0);
+  const thinkingTimerRef = useRef(null);
 
   const conversationEndRef = useRef(null);
 
@@ -52,6 +54,26 @@ function LlmQueryTab({ onResult }) {
   useEffect(() => {
     conversationEndRef.current?.scrollIntoView({ behavior: 'smooth' });
   }, [conversationLog]);
+
+  // Thinking timer
+  useEffect(() => {
+    if (isProcessing) {
+      setThinkingSeconds(0);
+      thinkingTimerRef.current = setInterval(() => {
+        setThinkingSeconds(s => s + 1);
+      }, 1000);
+    } else {
+      if (thinkingTimerRef.current) {
+        clearInterval(thinkingTimerRef.current);
+        thinkingTimerRef.current = null;
+      }
+    }
+    return () => {
+      if (thinkingTimerRef.current) {
+        clearInterval(thinkingTimerRef.current);
+      }
+    };
+  }, [isProcessing]);
 
   const addToLog = useCallback((type, content, data = null) => {
     dispatch(addMessage({ type, content, data }));
@@ -385,10 +407,10 @@ function LlmQueryTab({ onResult }) {
         )}
         {isProcessing && (
           <div className="flex justify-start mb-3">
-            <div className="px-4 py-3 bg-surface-secondary border border-border rounded-lg flex items-center gap-1">
-              <span className="w-2 h-2 rounded-full bg-tertiary animate-bounce" style={{ animationDelay: '0ms' }} />
-              <span className="w-2 h-2 rounded-full bg-tertiary animate-bounce" style={{ animationDelay: '150ms' }} />
-              <span className="w-2 h-2 rounded-full bg-tertiary animate-bounce" style={{ animationDelay: '300ms' }} />
+            <div className="px-4 py-3 bg-surface-secondary border border-border rounded-lg">
+              <p className="text-sm text-tertiary">
+                Thinking for {thinkingSeconds < 60 ? `${thinkingSeconds}s` : `${Math.floor(thinkingSeconds / 60)}m ${thinkingSeconds % 60}s`}
+              </p>
             </div>
           </div>
         )}

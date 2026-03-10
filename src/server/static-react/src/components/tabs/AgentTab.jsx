@@ -72,6 +72,8 @@ function AgentTab() {
   const [inputText, setInputText] = useState('');
   const [isProcessing, setIsProcessing] = useState(false);
   const [sessionId, setSessionId] = useState(null);
+  const [thinkingSeconds, setThinkingSeconds] = useState(0);
+  const thinkingTimerRef = useRef(null);
   const conversationEndRef = useRef(null);
   const lastToolContextRef = useRef(null); // last scan/query result for attaching to next request
 
@@ -124,6 +126,26 @@ function AgentTab() {
       if (progressPollRef.current) {
         clearInterval(progressPollRef.current);
         progressPollRef.current = null;
+      }
+    };
+  }, [isProcessing]);
+
+  // Thinking timer — counts seconds while agent is processing
+  useEffect(() => {
+    if (isProcessing) {
+      setThinkingSeconds(0);
+      thinkingTimerRef.current = setInterval(() => {
+        setThinkingSeconds(s => s + 1);
+      }, 1000);
+    } else {
+      if (thinkingTimerRef.current) {
+        clearInterval(thinkingTimerRef.current);
+        thinkingTimerRef.current = null;
+      }
+    }
+    return () => {
+      if (thinkingTimerRef.current) {
+        clearInterval(thinkingTimerRef.current);
       }
     };
   }, [isProcessing]);
@@ -367,11 +389,9 @@ function AgentTab() {
                   <p className="text-xs text-tertiary mt-1">{activeProgress.progress_percentage || 0}%</p>
                 </div>
               ) : (
-                <div className="flex items-center gap-1">
-                  <span className="w-2 h-2 rounded-full bg-tertiary animate-bounce" style={{ animationDelay: '0ms' }} />
-                  <span className="w-2 h-2 rounded-full bg-tertiary animate-bounce" style={{ animationDelay: '150ms' }} />
-                  <span className="w-2 h-2 rounded-full bg-tertiary animate-bounce" style={{ animationDelay: '300ms' }} />
-                </div>
+                <p className="text-sm text-tertiary">
+                  Thinking for {thinkingSeconds < 60 ? `${thinkingSeconds}s` : `${Math.floor(thinkingSeconds / 60)}m ${thinkingSeconds % 60}s`}
+                </p>
               )}
             </div>
           </div>
