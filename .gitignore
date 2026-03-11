@@ -1,3 +1,6 @@
+# Local cargo config (patches git deps to local paths for development)
+.cargo/
+
 # Rust specific
 /target/
 **/*.rs.bk
