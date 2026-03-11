@@ -30,6 +30,17 @@ npm test
 npm run test:e2e
 ```
 
+## Binaries
+
+### `schema_service`
+Standalone HTTP server for schema registry. Single source of truth for schema creation across FoldDB nodes.
+
+- Source: `src/bin/schema_service.rs`, implementation in `src/schema_service/`
+- Default port: 9002 (`DEFAULT_SCHEMA_SERVICE_PORT`)
+- Storage: Sled at `--db-path` (default: `schema_registry`)
+- Run: `cargo run --bin schema_service -- --port 9002 --db-path schema_registry`
+- Used by `fold_db_node` HTTP server via `schema_service_url` config (use `test://mock` in integration tests)
+
 ## Coding Standards
 
 Follow the same standards as fold_db:
