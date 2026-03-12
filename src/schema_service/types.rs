@@ -25,6 +25,8 @@ pub struct SchemaSimilarityResponse {
 pub enum SchemaAddOutcome {
     Added(Schema, HashMap<String, String>), // Schema and mutation_mappers
     AlreadyExists(Schema),                  // Exact same identity hash
+    /// Existing schema was expanded with new fields (old schema name, expanded schema, mappers)
+    Expanded(String, Schema, HashMap<String, String>),
     TooSimilar(SchemaSimilarityResponse),
 }
 
@@ -46,6 +48,10 @@ pub struct AddSchemaRequest {
 pub struct AddSchemaResponse {
     pub schema: Schema,
     pub mutation_mappers: HashMap<String, String>,
+    /// When a schema expansion occurred, this contains the old schema name
+    /// that was replaced. The node should remove the old schema and load the new one.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub replaced_schema: Option<String>,
 }
 
 /// Reload response structure

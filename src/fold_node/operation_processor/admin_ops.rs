@@ -297,7 +297,8 @@ impl OperationProcessor {
             .await
             .map_err(|e| FoldDbError::Config(format!("Failed to load E2E keys: {e}")))?;
 
-        let sync_setup = fold_db::sync::SyncSetup::from_exemem(api_url, api_key);
+        let data_dir = std::env::var("FOLD_STORAGE_PATH").unwrap_or_else(|_| "data".to_string());
+        let sync_setup = fold_db::sync::SyncSetup::from_exemem(api_url, api_key, &data_dir);
         let sync_crypto: std::sync::Arc<dyn fold_db::crypto::CryptoProvider> =
             std::sync::Arc::new(fold_db::crypto::LocalCryptoProvider::from_key(
                 e2e_keys.encryption_key(),

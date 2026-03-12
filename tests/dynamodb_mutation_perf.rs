@@ -16,9 +16,9 @@ fn get_test_schema() -> (String, String) {
         "name": "PerformanceTestSchema",
         "schema_type": "Single",
         "fields": ["id", "content"],
-        "field_topologies": {
-            "id": {"root": {"type": "Primitive", "value": "String", "classifications": ["word"]}},
-            "content": {"root": {"type": "Primitive", "value": "String", "classifications": ["word"]}}
+        "field_classifications": {
+            "id": ["word"],
+            "content": ["word"]
         },
         "key": { "hash_field": "id" }
     }"#.to_string();

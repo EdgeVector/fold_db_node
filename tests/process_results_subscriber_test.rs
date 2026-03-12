@@ -32,18 +32,7 @@ async fn load_test_schema(node: &FoldNode) {
         "key": {
             "hash_field": "email"
         },
-        "fields": ["email", "name", "phone"],
-        "field_topologies": {
-            "email": {
-                "root": { "type": "Primitive", "value": "String" }
-            },
-            "name": {
-                "root": { "type": "Primitive", "value": "String" }
-            },
-            "phone": {
-                "root": { "type": "Primitive", "value": "String" }
-            }
-        }
+        "fields": ["email", "name", "phone"]
     }"#;
 
     let mut db = node.get_fold_db().await.unwrap();
@@ -59,18 +48,7 @@ async fn load_range_schema(node: &FoldNode) {
         "key": {
             "range_field": "timestamp"
         },
-        "fields": ["timestamp", "message", "level"],
-        "field_topologies": {
-            "timestamp": {
-                "root": { "type": "Primitive", "value": "String" }
-            },
-            "message": {
-                "root": { "type": "Primitive", "value": "String" }
-            },
-            "level": {
-                "root": { "type": "Primitive", "value": "String" }
-            }
-        }
+        "fields": ["timestamp", "message", "level"]
     }"#;
 
     let mut db = node.get_fold_db().await.unwrap();

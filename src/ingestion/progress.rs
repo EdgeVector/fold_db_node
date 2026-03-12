@@ -178,7 +178,7 @@ impl ProgressService {
             .into_iter()
             .filter(|j| {
                 matches!(j.job_type, JobType::Ingestion | JobType::Indexing)
-                    || matches!(&j.job_type, JobType::Other(s) if s == "database_reset")
+                    || matches!(&j.job_type, JobType::Other(s) if s == "database_reset" || s == "agent")
             })
             .map(|j| j.into())
             .collect()

@@ -3,20 +3,7 @@ use serde_json::json;
 use std::collections::HashMap;
 use tempfile::tempdir;
 
-/// Helper function to add field_topologies to a schema JSON value
-fn add_string_topologies(mut schema_json: serde_json::Value, fields: &[&str]) -> serde_json::Value {
-    let mut topologies = serde_json::Map::new();
-    for field in fields {
-        topologies.insert(
-            field.to_string(),
-            json!({"root": {"type": "Primitive", "value": "String"}}),
-        );
-    }
-    schema_json["field_topologies"] = json!(topologies);
-    schema_json
-}
-
-/// Helper function to convert object-style fields to array with topologies
+/// Helper function to convert object-style fields to array format
 fn convert_object_fields_to_array(mut schema_json: serde_json::Value) -> serde_json::Value {
     if let Some(fields_obj) = schema_json
         .get("fields")
@@ -24,17 +11,7 @@ fn convert_object_fields_to_array(mut schema_json: serde_json::Value) -> serde_j
         .cloned()
     {
         let field_names: Vec<String> = fields_obj.keys().cloned().collect();
-        let mut topologies = serde_json::Map::new();
-
-        for field_name in &field_names {
-            topologies.insert(
-                field_name.clone(),
-                json!({"root": {"type": "Primitive", "value": "String"}}),
-            );
-        }
-
         schema_json["fields"] = json!(field_names);
-        schema_json["field_topologies"] = json!(topologies);
     }
     schema_json
 }
@@ -59,6 +36,13 @@ fn verify_outcome_has_schema(outcome: &SchemaAddOutcome) {
             assert!(
                 schema.fields.is_some(),
                 "existing schema must have fields defined"
+            );
+        }
+        SchemaAddOutcome::Expanded(_, schema, _) => {
+            assert!(!schema.name.is_empty(), "expanded schema must have a name");
+            assert!(
+                schema.fields.is_some(),
+                "expanded schema must have fields defined"
             );
         }
         SchemaAddOutcome::TooSimilar(conflict) => {
@@ -90,26 +74,20 @@ async fn closeness_rejects_identical_schema_with_different_name() {
     let state = SchemaServiceState::new(db_path.clone())
         .expect("failed to initialize schema service state");
 
-    let existing_schema = json_to_schema(add_string_topologies(
-        json!({
+    let existing_schema = json_to_schema(json!({
             "name": "UserProfile",
             "fields": ["user_id", "email", "created_at"]
-        }),
-        &["user_id", "email", "created_at"],
-    ));
+        }));
 
     state
         .add_schema(existing_schema, HashMap::new())
         .await
         .expect("failed to add existing schema");
 
-    let duplicate_schema = json_to_schema(add_string_topologies(
-        json!({
+    let duplicate_schema = json_to_schema(json!({
             "name": "UserAccount",
             "fields": ["user_id", "email", "created_at"]
-        }),
-        &["user_id", "email", "created_at"],
-    ));
+        }));
 
     let outcome = state
         .add_schema(duplicate_schema, HashMap::new())
@@ -138,13 +116,10 @@ async fn closeness_always_returns_schema_on_success() {
     let state = SchemaServiceState::new(db_path.clone())
         .expect("failed to initialize schema service state");
 
-    let new_schema = json_to_schema(add_string_topologies(
-        json!({
+    let new_schema = json_to_schema(json!({
             "name": "TestSchema",
             "fields": ["id"]
-        }),
-        &["id"],
-    ));
+        }));
 
     let outcome = state
         .add_schema(new_schema, HashMap::new())
@@ -177,32 +152,26 @@ async fn closeness_always_returns_schema_on_rejection() {
     let state = SchemaServiceState::new(db_path.clone())
         .expect("failed to initialize schema service state");
 
-    let existing_schema = json_to_schema(add_string_topologies(
-        json!({
+    let existing_schema = json_to_schema(json!({
             "name": "Original",
             "fields": [
                 "field1",
                 "field2"
             ]
-        }),
-        &["field1", "field2"],
-    ));
+        }));
 
     state
         .add_schema(existing_schema, HashMap::new())
         .await
         .expect("failed to add existing schema");
 
-    let duplicate_schema = json_to_schema(add_string_topologies(
-        json!({
+    let duplicate_schema = json_to_schema(json!({
             "name": "Duplicate",
             "fields": [
                 "field1",
                 "field2"
             ]
-        }),
-        &["field1", "field2"],
-    ));
+        }));
 
     let outcome = state
         .add_schema(duplicate_schema, HashMap::new())
@@ -234,24 +203,20 @@ async fn closeness_allows_dissimilar_schemas() {
     let state = SchemaServiceState::new(db_path.clone())
         .expect("failed to initialize schema service state");
 
-    let existing_schema = json_to_schema(add_string_topologies(
-        json!({
+    let existing_schema = json_to_schema(json!({
             "name": "UserProfile",
             "fields": [
                 "user_id",
                 "email"
             ]
-        }),
-        &["user_id", "email"],
-    ));
+        }));
 
     state
         .add_schema(existing_schema, HashMap::new())
         .await
         .expect("failed to add existing schema");
 
-    let different_schema = json_to_schema(add_string_topologies(
-        json!({
+    let different_schema = json_to_schema(json!({
             "name": "ProductCatalog",
             "fields": [
                 "product_id",
@@ -259,9 +224,7 @@ async fn closeness_allows_dissimilar_schemas() {
                 "price",
                 "inventory_count"
             ]
-        }),
-        &["product_id", "product_name", "price", "inventory_count"],
-    ));
+        }));
 
     let outcome = state
         .add_schema(different_schema, HashMap::new())
@@ -290,25 +253,21 @@ async fn closeness_handles_similar_but_slightly_different_schemas() {
     let state = SchemaServiceState::new(db_path.clone())
         .expect("failed to initialize schema service state");
 
-    let existing_schema = json_to_schema(add_string_topologies(
-        json!({
+    let existing_schema = json_to_schema(json!({
             "name": "User",
             "fields": [
                 "id",
                 "name",
                 "email"
             ]
-        }),
-        &["id", "name", "email"],
-    ));
+        }));
 
     state
         .add_schema(existing_schema, HashMap::new())
         .await
         .expect("failed to add existing schema");
 
-    let similar_schema_with_extra_field = json_to_schema(add_string_topologies(
-        json!({
+    let similar_schema_with_extra_field = json_to_schema(json!({
             "name": "UserExtended",
             "fields": [
                 "id",
@@ -316,9 +275,7 @@ async fn closeness_handles_similar_but_slightly_different_schemas() {
                 "email",
                 "phone"
             ]
-        }),
-        &["id", "name", "email", "phone"],
-    ));
+        }));
 
     let outcome = state
         .add_schema(similar_schema_with_extra_field, HashMap::new())
@@ -330,11 +287,13 @@ async fn closeness_handles_similar_but_slightly_different_schemas() {
     match outcome {
         SchemaAddOutcome::Added(response, _) => {
             assert!(!response.name.is_empty(), "schema must have a name");
-            // Note: field_mappers are no longer automatically created by the schema service
-            // They must be provided explicitly when adding the schema
+        }
+        SchemaAddOutcome::Expanded(_, expanded, _) => {
+            // With >50% field overlap fallback, overlapping schemas get expanded
+            assert!(!expanded.name.is_empty(), "expanded schema must have a name");
         }
         other => {
-            panic!("schema with extra field should have been accepted, got {:?}", other)
+            panic!("schema with extra field should have been accepted or expanded, got {:?}", other)
         }
     }
 }
@@ -351,34 +310,28 @@ async fn closeness_uses_normalized_comparison_for_properties() {
     let state = SchemaServiceState::new(db_path.clone())
         .expect("failed to initialize schema service state");
 
-    let existing_schema = json_to_schema(add_string_topologies(
-        json!({
+    let existing_schema = json_to_schema(json!({
             "name": "First",
             "type": "object",
             "description": "test schema",
             "fields": [
                 "field_a"
             ]
-        }),
-        &["field_a"],
-    ));
+        }));
 
     state
         .add_schema(existing_schema, HashMap::new())
         .await
         .expect("failed to add existing schema");
 
-    let reordered_properties_schema = json_to_schema(add_string_topologies(
-        json!({
+    let reordered_properties_schema = json_to_schema(json!({
             "description": "test schema",
             "name": "Second",
             "fields": [
                 "field_a"
             ],
             "type": "object"
-        }),
-        &["field_a"],
-    ));
+        }));
 
     let outcome = state
         .add_schema(reordered_properties_schema, HashMap::new())
@@ -407,30 +360,24 @@ async fn closeness_ignores_schema_name_in_comparison() {
     let state = SchemaServiceState::new(db_path.clone())
         .expect("failed to initialize schema service state");
 
-    let existing_schema = json_to_schema(add_string_topologies(
-        json!({
+    let existing_schema = json_to_schema(json!({
             "name": "VeryLongDescriptiveSchemaName",
             "fields": [
                 "field1"
             ]
-        }),
-        &["field1"],
-    ));
+        }));
 
     state
         .add_schema(existing_schema, HashMap::new())
         .await
         .expect("failed to add existing schema");
 
-    let same_content_different_name = json_to_schema(add_string_topologies(
-        json!({
+    let same_content_different_name = json_to_schema(json!({
             "name": "X",
             "fields": [
                 "field1"
             ]
-        }),
-        &["field1"],
-    ));
+        }));
 
     let outcome = state
         .add_schema(same_content_different_name, HashMap::new())
@@ -546,11 +493,13 @@ async fn closeness_creates_field_mappers_for_high_field_overlap() {
     match outcome {
         SchemaAddOutcome::Added(response, _) => {
             assert!(!response.name.is_empty(), "schema must have a name");
-            // Note: field_mappers are no longer automatically created by the schema service
-            // Schemas with different fields/topologies are treated as distinct schemas
+        }
+        SchemaAddOutcome::Expanded(_, expanded, _) => {
+            // With >50% field overlap fallback, overlapping schemas get expanded
+            assert!(!expanded.name.is_empty(), "expanded schema must have a name");
         }
         other => {
-            panic!("schema with extra fields should be accepted, got {:?}", other)
+            panic!("schema with extra fields should be accepted or expanded, got {:?}", other)
         }
     }
 }
@@ -567,38 +516,29 @@ async fn closeness_with_multiple_existing_schemas_finds_closest() {
     let state = SchemaServiceState::new(db_path.clone())
         .expect("failed to initialize schema service state");
 
-    let schema1 = json_to_schema(add_string_topologies(
-        json!({
+    let schema1 = json_to_schema(json!({
             "name": "Schema1",
             "fields": [
                 "a"
             ]
-        }),
-        &["a"],
-    ));
+        }));
 
-    let schema2 = json_to_schema(add_string_topologies(
-        json!({
+    let schema2 = json_to_schema(json!({
             "name": "Schema2",
             "fields": [
                 "x",
                 "y"
             ]
-        }),
-        &["x", "y"],
-    ));
+        }));
 
-    let schema3 = json_to_schema(add_string_topologies(
-        json!({
+    let schema3 = json_to_schema(json!({
             "name": "Schema3",
             "fields": [
                 "x",
                 "y",
                 "z"
             ]
-        }),
-        &["x", "y", "z"],
-    ));
+        }));
 
     state
         .add_schema(schema1, HashMap::new())
@@ -613,16 +553,13 @@ async fn closeness_with_multiple_existing_schemas_finds_closest() {
         .await
         .expect("failed to add schema3");
 
-    let new_schema = json_to_schema(add_string_topologies(
-        json!({
+    let new_schema = json_to_schema(json!({
             "name": "NewSchema",
             "fields": [
                 "x",
                 "y"
             ]
-        }),
-        &["x", "y"],
-    ));
+        }));
 
     let outcome = state
         .add_schema(new_schema, HashMap::new())
@@ -651,26 +588,20 @@ async fn closeness_with_nested_objects() {
     let state = SchemaServiceState::new(db_path.clone())
         .expect("failed to initialize schema service state");
 
-    let existing_schema = json_to_schema(add_string_topologies(
-        json!({
+    let existing_schema = json_to_schema(json!({
             "name": "NestedSchema",
             "fields": ["user_id", "user_name", "metadata"]
-        }),
-        &["user_id", "user_name", "metadata"],
-    ));
+        }));
 
     state
         .add_schema(existing_schema, HashMap::new())
         .await
         .expect("failed to add existing schema");
 
-    let duplicate_nested = json_to_schema(add_string_topologies(
-        json!({
+    let duplicate_nested = json_to_schema(json!({
             "name": "NestedSchemaCopy",
             "fields": ["user_id", "user_name", "metadata"]
-        }),
-        &["user_id", "user_name", "metadata"],
-    ));
+        }));
 
     let outcome = state
         .add_schema(duplicate_nested, HashMap::new())
@@ -800,8 +731,21 @@ async fn closeness_respects_field_mapper_preservation() {
                 "explicitly provided email mapper should be preserved"
             );
         }
+        SchemaAddOutcome::Expanded(_, expanded, _) => {
+            // With >50% field overlap fallback, overlapping schemas get expanded
+            assert!(!expanded.name.is_empty(), "expanded schema must have a name");
+            // Verify that explicitly provided field_mappers are preserved in expansion
+            let mappers = expanded
+                .field_mappers
+                .as_ref()
+                .expect("field mappers should be preserved in expansion");
+            assert!(
+                mappers.contains_key("email"),
+                "explicitly provided email mapper should be preserved"
+            );
+        }
         other => {
-            panic!("schema with extra field should be accepted, got {:?}", other)
+            panic!("schema with extra field should be accepted or expanded, got {:?}", other)
         }
     }
 }

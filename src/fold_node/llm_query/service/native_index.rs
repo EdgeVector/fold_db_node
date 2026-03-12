@@ -293,6 +293,7 @@ impl LlmQueryService {
                         .await;
                 }
 
+                let pub_key = node.get_node_public_key().to_string();
                 let mut results = Vec::new();
                 for (idx, relative) in file_list.iter().enumerate() {
                     let full_path = base.join(relative);
@@ -315,6 +316,20 @@ impl LlmQueryService {
                                 pct,
                             )
                             .await;
+                    }
+
+                    // Skip files that have already been ingested (dedup by content hash)
+                    if let Ok(hash) = crate::ingestion::smart_folder_scanner::compute_file_hash(&full_path) {
+                        if node.is_file_ingested(&pub_key, &hash).await.is_some() {
+                            log::info!("Agent ingest_files: skipping already-ingested file: {}", relative);
+                            results.push(serde_json::json!({
+                                "file": relative,
+                                "success": true,
+                                "skipped": true,
+                                "reason": "already ingested",
+                            }));
+                            continue;
+                        }
                     }
 
                     match processor
@@ -421,6 +436,20 @@ impl LlmQueryService {
             user_query
         );
 
+        // Create an agent progress job so the frontend can track what's happening
+        let agent_job_id = format!("agent-{}", uuid::Uuid::new_v4());
+        if let Some(tracker) = progress_tracker {
+            let user_id = fold_db::logging::core::get_current_user_id()
+                .unwrap_or_else(|| "unknown".to_string());
+            let mut job = fold_db::progress::Job::new(
+                agent_job_id.clone(),
+                fold_db::progress::JobType::Other("agent".to_string()),
+            )
+            .with_user(user_id);
+            job.update_progress(5, "Thinking...".to_string());
+            let _ = tracker.save(&job).await;
+        }
+
         for iteration in 0..max_iterations {
             // Build the full prompt with conversation history
             // Repeat the current date at the end so it's fresh context when generating the answer
@@ -433,6 +462,15 @@ impl LlmQueryService {
             );
 
             log::debug!("Agent: Iteration {} - calling LLM", iteration + 1);
+
+            // Update progress: LLM thinking
+            if let Some(tracker) = progress_tracker {
+                if let Ok(Some(mut job)) = tracker.load(&agent_job_id).await {
+                    let pct = 5 + ((iteration as u8) * 90 / max_iterations as u8).min(90);
+                    job.update_progress(pct, format!("Thinking... (step {})", iteration + 1));
+                    let _ = tracker.save(&job).await;
+                }
+            }
 
             let response = self.call_llm(&full_prompt).await?;
 
@@ -448,10 +486,33 @@ impl LlmQueryService {
                         iteration + 1,
                         tool_calls.len()
                     );
+                    // Mark agent job complete
+                    if let Some(tracker) = progress_tracker {
+                        if let Ok(Some(mut job)) = tracker.load(&agent_job_id).await {
+                            job.complete(None);
+                            let _ = tracker.save(&job).await;
+                        }
+                    }
                     return Ok((answer, tool_calls));
                 }
                 super::super::types::AgentAction::ToolCall { tool, params } => {
                     log::info!("Agent: Calling tool '{}' with params: {}", tool, params);
+
+                    // Update progress: executing tool
+                    if let Some(tracker) = progress_tracker {
+                        if let Ok(Some(mut job)) = tracker.load(&agent_job_id).await {
+                            let pct = 10 + ((iteration as u8) * 90 / max_iterations as u8).min(85);
+                            let tool_label = match tool.as_str() {
+                                "ingest_files" => "Ingesting files...",
+                                "query" => "Querying database...",
+                                "scan_folder" => "Scanning folder...",
+                                "list_schemas" => "Listing schemas...",
+                                _ => "Executing tool...",
+                            };
+                            job.update_progress(pct, format!("{} ({})", tool_label, tool));
+                            let _ = tracker.save(&job).await;
+                        }
+                    }
 
                     // Execute the tool, capturing errors as results so the agent can retry
                     let result = match self.execute_tool(&tool, &params, node, progress_tracker).await {
@@ -479,6 +540,14 @@ impl LlmQueryService {
                         serde_json::to_string_pretty(&result).unwrap_or_default()
                     ));
                 }
+            }
+        }
+
+        // Mark agent job as failed on max iterations
+        if let Some(tracker) = progress_tracker {
+            if let Ok(Some(mut job)) = tracker.load(&agent_job_id).await {
+                job.fail("Reached maximum iterations without a final answer".to_string());
+                let _ = tracker.save(&job).await;
             }
         }
 

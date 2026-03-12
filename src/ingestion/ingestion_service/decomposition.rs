@@ -38,6 +38,7 @@ impl IngestionService {
         schema_cache: &mut HashMap<String, CachedSchema>,
         node: &crate::fold_node::FoldNode,
         depth: usize,
+        source_file_name: Option<&str>,
     ) -> IngestionResult<String> {
         // Return cached result if available
         if let Some(cached) = schema_cache.get(structure_hash) {
@@ -58,6 +59,7 @@ impl IngestionService {
             );
         } else {
             // Recursively resolve schemas for the representative's children (depth-first)
+            // Children are never images themselves, so pass None for source_file_name
             for child_group in &rep_decomp.children {
                 Box::pin(self.resolve_schema_for_structure(
                     &child_group.structure_hash,
@@ -65,13 +67,52 @@ impl IngestionService {
                     schema_cache,
                     node,
                     depth + 1,
+                    None,
                 ))
                 .await?;
             }
         }
 
         // Get AI recommendation for the flat parent (no array-of-object fields)
-        let ai_response = self.get_ai_recommendation(&rep_decomp.parent).await?;
+        let mut ai_response = self.get_ai_recommendation(&rep_decomp.parent).await?;
+
+        // Apply image override at depth 0 (top-level parent is the image schema)
+        let is_image = depth == 0
+            && source_file_name
+                .map(crate::ingestion::is_image_file)
+                .unwrap_or(false);
+        if is_image {
+            if let Some(ref mut schema_def) = ai_response.new_schemas {
+                schema_def["schema_type"] = serde_json::json!("HashRange");
+                schema_def["key"] = serde_json::json!({
+                    "hash_field": "source_file_name",
+                    "range_field": "created_at"
+                });
+                if let Some(fields) = schema_def.get_mut("fields").and_then(|f| f.as_array_mut()) {
+                    let sfn = serde_json::json!("source_file_name");
+                    if !fields.contains(&sfn) {
+                        fields.push(sfn);
+                    }
+                } else {
+                    let mut field_names: Vec<String> = schema_def
+                        .get("field_classifications")
+                        .and_then(|fc| fc.as_object())
+                        .map(|obj| obj.keys().cloned().collect())
+                        .unwrap_or_default();
+                    if !field_names.contains(&"source_file_name".to_string()) {
+                        field_names.push("source_file_name".to_string());
+                    }
+                    schema_def["fields"] = serde_json::json!(field_names);
+                }
+                if let Some(fc) = schema_def.get_mut("field_classifications").and_then(|f| f.as_object_mut()) {
+                    fc.entry("source_file_name").or_insert_with(|| serde_json::json!(["word"]));
+                }
+            }
+            ai_response
+                .mutation_mappers
+                .entry("source_file_name".to_string())
+                .or_insert_with(|| "source_file_name".to_string());
+        }
 
         // Create the schema via the standard path
         let schema_name = self
@@ -271,6 +312,23 @@ impl IngestionService {
             }
         }
 
+        // Enrich image data at depth 0 (top-level parent is the image)
+        let is_image = depth == 0
+            && source_file_name
+                .as_deref()
+                .map(crate::ingestion::is_image_file)
+                .unwrap_or(false);
+        if is_image {
+            if let Some(ref sfn) = source_file_name {
+                let dummy_path = std::path::PathBuf::from(sfn);
+                crate::ingestion::json_processor::enrich_image_json(
+                    &mut parent,
+                    &dummy_path,
+                    Some(sfn.as_str()),
+                );
+            }
+        }
+
         let mut own_key_value: Option<KeyValue> = None;
 
         if let Some(parent_obj) = parent.as_object() {
@@ -288,6 +346,7 @@ impl IngestionService {
                     schema_cache,
                     node,
                     depth,
+                    source_file_name.as_deref(),
                 ))
                 .await?;
             }

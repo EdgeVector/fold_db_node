@@ -176,10 +176,9 @@ for entry in schemas_list:
     if not name:
         continue
     names.append(name)
-    topos = s.get('field_topologies', {})
-    for fname, topo in topos.items():
-        root = topo.get('root', topo)
-        if root.get('type') == 'Reference' and not parent:
+    ref_fields = s.get('ref_fields', {})
+    for fname, ref_target in ref_fields.items():
+        if ref_target and not parent:
             parent = name
             parent_fields = json.dumps(s.get('fields', []))
 all_names = ' '.join(names) if names else ''

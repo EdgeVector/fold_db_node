@@ -233,6 +233,12 @@ pub fn enrich_image_json(json: &mut Value, file_path: &std::path::PathBuf, sourc
             Value::String(s) => Some(s),
             _ => None,
         });
+        // source_file_name — used as hash key for unique record identity
+        if !map.contains_key("source_file_name") {
+            if let Some(sfn) = source_file_name {
+                map.insert("source_file_name".to_string(), Value::String(sfn.to_string()));
+            }
+        }
         // image_type — keep if already set
         if !map.contains_key("image_type") {
             let image_type = classify_image_type(source_file_name.unwrap_or(""));

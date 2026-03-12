@@ -208,11 +208,11 @@ impl FoldNode {
     }
 
     /// Add a new schema to the schema service.
-    /// Returns an error if the schema service URL is not configured or if the operation fails.
+    /// Returns the full response including any replaced schema info (for expansion).
     pub async fn add_schema_to_service(
         &self,
         schema: &fold_db::schema::types::Schema,
-    ) -> FoldDbResult<fold_db::schema::types::Schema> {
+    ) -> FoldDbResult<crate::fold_node::schema_client::AddSchemaResponse> {
         let schema_service_url = self.schema_service_url().ok_or_else(|| {
             FoldDbError::Config("Schema service URL is not configured".to_string())
         })?;
@@ -227,7 +227,6 @@ impl FoldNode {
         client
             .add_schema(schema, std::collections::HashMap::new())
             .await
-            .map(|response| response.schema)
     }
 
     /// Execute a batch of mutations.

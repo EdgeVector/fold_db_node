@@ -115,7 +115,11 @@ pub(crate) fn validate_folder(path: &Path) -> Result<(), HttpResponse> {
     Ok(())
 }
 
-/// Spawn background ingestion tasks for a list of files, each tracked by its progress ID.
+/// Spawn a single background task that processes files sequentially.
+///
+/// Files are ingested one at a time so that schema expansion works correctly:
+/// each file sees the schema established by previous files, avoiding redundant
+/// expansion chains and scattered data across schema versions.
 #[allow(clippy::too_many_arguments)]
 pub(crate) fn spawn_file_ingestion_tasks(
     files_with_progress: impl IntoIterator<Item = (std::path::PathBuf, String)>,
@@ -128,17 +132,15 @@ pub(crate) fn spawn_file_ingestion_tasks(
     encryption_key: [u8; 32],
     force_reingest: bool,
 ) {
-    for (file_path, progress_id) in files_with_progress {
-        let progress_tracker_clone = progress_tracker.clone();
-        let node_arc_clone = node_arc.clone();
-        let user_id_clone = user_id.to_string();
-        let service_clone = ingestion_service.clone();
-        let upload_storage_clone = upload_storage.clone();
-        let enc_key = encryption_key;
+    let files: Vec<_> = files_with_progress.into_iter().collect();
+    let progress_tracker_clone = progress_tracker.clone();
+    let node_arc_clone = node_arc.clone();
+    let user_id_clone = user_id.to_string();
 
-        tokio::spawn(async move {
-            fold_db::logging::core::run_with_user(&user_id_clone, async move {
-                let progress_service = ProgressService::new(progress_tracker_clone);
+    tokio::spawn(async move {
+        fold_db::logging::core::run_with_user(&user_id_clone, async move {
+            for (file_path, progress_id) in files {
+                let progress_service = ProgressService::new(progress_tracker_clone.clone());
 
                 if let Err(e) = process_single_file_via_smart_folder(
                     &file_path,
@@ -146,9 +148,9 @@ pub(crate) fn spawn_file_ingestion_tasks(
                     &progress_service,
                     &node_arc_clone,
                     auto_execute,
-                    &service_clone,
-                    &upload_storage_clone,
-                    &enc_key,
+                    &ingestion_service,
+                    &upload_storage,
+                    &encryption_key,
                     force_reingest,
                 )
                 .await
@@ -164,10 +166,10 @@ pub(crate) fn spawn_file_ingestion_tasks(
                         .fail_progress(&progress_id, format!("Processing failed: {}", e))
                         .await;
                 }
-            })
-            .await
-        });
-    }
+            }
+        })
+        .await
+    });
 }
 
 /// Response for batch folder ingestion

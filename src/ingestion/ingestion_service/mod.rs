@@ -48,6 +48,10 @@ pub struct IngestionService {
     backend: Option<Arc<dyn AiBackend>>,
     /// Stores the reason if the configured provider failed to initialise.
     init_error: Option<String>,
+    /// Serializes schema creation to prevent race conditions when multiple
+    /// files are ingested concurrently. The AI call (slow) happens outside
+    /// the lock; only the schema-service call + local load + block is locked.
+    schema_creation_lock: tokio::sync::Mutex<()>,
 }
 
 impl IngestionService {
@@ -64,7 +68,7 @@ impl IngestionService {
     /// ingestion calls will fail at runtime with a clear error.
     pub fn new(config: IngestionConfig) -> IngestionResult<Self> {
         let (backend, init_error) = build_backend(&config);
-        Ok(Self { config, backend, init_error })
+        Ok(Self { config, backend, init_error, schema_creation_lock: tokio::sync::Mutex::new(()) })
     }
 
     /// Process JSON ingestion using a FoldNode with progress tracking
@@ -202,6 +206,7 @@ impl IngestionService {
             &mut schema_cache,
             node,
             0,
+            request.source_file_name.as_deref(),
         )
         .await?;
 
@@ -263,18 +268,51 @@ impl IngestionService {
             "Analyzing data with AI to determine schema...".to_string()).await;
         let mut ai_response = self.get_ai_recommendation(flattened_data).await?;
 
-        // CRITICAL: Images MUST use HashRange(image_type, created_at).
+        // CRITICAL: Images MUST use HashRange(source_file_name, created_at).
+        // Using source_file_name as hash ensures each image file gets a unique key.
+        // (image_type is too coarse — all photos share the same value.)
         if is_image {
             if let Some(ref mut schema_def) = ai_response.new_schemas {
                 schema_def["schema_type"] = serde_json::json!("HashRange");
                 schema_def["key"] = serde_json::json!({
-                    "hash_field": "image_type",
+                    "hash_field": "source_file_name",
                     "range_field": "created_at"
                 });
+                // Ensure source_file_name is in the schema fields.
+                // The AI may provide fields as an array OR only in field_classifications.
+                // Handle both cases.
+                if let Some(fields) = schema_def.get_mut("fields").and_then(|f| f.as_array_mut()) {
+                    let sfn = serde_json::json!("source_file_name");
+                    if !fields.contains(&sfn) {
+                        fields.push(sfn);
+                    }
+                } else {
+                    // fields key doesn't exist or isn't an array — create it from
+                    // field_classifications keys + source_file_name
+                    let mut field_names: Vec<String> = schema_def
+                        .get("field_classifications")
+                        .and_then(|fc| fc.as_object())
+                        .map(|obj| obj.keys().cloned().collect())
+                        .unwrap_or_default();
+                    if !field_names.contains(&"source_file_name".to_string()) {
+                        field_names.push("source_file_name".to_string());
+                    }
+                    schema_def["fields"] = serde_json::json!(field_names);
+                }
+                // Also ensure source_file_name has a classification
+                if let Some(fc) = schema_def.get_mut("field_classifications").and_then(|f| f.as_object_mut()) {
+                    fc.entry("source_file_name").or_insert_with(|| serde_json::json!(["word"]));
+                }
                 if let Some(ref desc) = request.image_descriptive_name {
                     schema_def["descriptive_name"] = serde_json::json!(desc);
                 }
             }
+            // Ensure mutation_mappers include source_file_name so it gets written
+            // during mutation execution (the enriched JSON has this field).
+            ai_response
+                .mutation_mappers
+                .entry("source_file_name".to_string())
+                .or_insert_with(|| "source_file_name".to_string());
         }
 
         // Step 4: Determine schema to use
@@ -285,12 +323,30 @@ impl IngestionService {
             .await?;
         let new_schema_created = ai_response.new_schemas.is_some();
 
+        // Enrich image data with source_file_name, created_at, image_type so
+        // mutations include these key fields. The HTTP routes do this before
+        // calling us, but direct callers (integration tests, admin_ops) may not.
+        let enriched_data = if is_image {
+            let mut data = flattened_data.clone();
+            if let Some(ref sfn) = request.source_file_name {
+                let dummy_path = std::path::PathBuf::from(sfn);
+                crate::ingestion::json_processor::enrich_image_json(
+                    &mut data,
+                    &dummy_path,
+                    Some(sfn.as_str()),
+                );
+            }
+            data
+        } else {
+            flattened_data.clone()
+        };
+
         // Step 5: Generate mutations
         progress_service.update_progress(progress_id, IngestionStep::GeneratingMutations,
             "Generating database mutations...".to_string()).await;
         let (mutations, schemas_written) = self
             .generate_flat_mutations(
-                flattened_data,
+                &enriched_data,
                 &schema_name,
                 &ai_response,
                 request,
@@ -658,8 +714,13 @@ impl IngestionService {
 
         schema.name = identity_hash.clone();
 
+        // Serialize schema creation: the schema service call, local load, and
+        // block_and_supersede must happen atomically so concurrent ingestions
+        // don't race on creating/expanding the same schema.
+        let _lock = self.schema_creation_lock.lock().await;
+
         // Add schema to the schema service via the node
-        let schema_response = {
+        let add_response = {
             node.add_schema_to_service(&schema).await.map_err(|error| {
                 IngestionError::SchemaCreationError(format!(
                     "Failed to create schema via schema service: {}",
@@ -668,7 +729,9 @@ impl IngestionService {
             })?
         };
 
-        let json_str = serde_json::to_string(&schema_response).map_err(|error| {
+        let schema_response = &add_response.schema;
+
+        let json_str = serde_json::to_string(schema_response).map_err(|error| {
             IngestionError::schema_parsing_error(format!(
                 "Failed to serialize schema definition: {}",
                 error
@@ -681,10 +744,42 @@ impl IngestionService {
         // Re-loading from the schema service JSON would overwrite the cached schema's
         // molecule state (field_molecule_uuids, runtime_fields), causing subsequent
         // mutations to create new molecules instead of appending to existing ones.
-        let already_loaded = schema_manager
-            .get_schema_metadata(&schema_response.name)
-            .map(|opt| opt.is_some())
-            .unwrap_or(false);
+        // Exception: if expansion happened, always reload since the schema name changed.
+        let already_loaded = add_response.replaced_schema.is_none()
+            && schema_manager
+                .get_schema_metadata(&schema_response.name)
+                .map(|opt| opt.is_some())
+                .unwrap_or(false);
+
+        // If expansion happened, ensure the old schema is loaded locally BEFORE
+        // loading the new one. apply_field_mappers (triggered by approve) needs
+        // the old schema's molecule UUIDs. In a fresh DB the old schema only
+        // exists on the remote schema service.
+        if let Some(ref old_name) = add_response.replaced_schema {
+            let old_loaded = schema_manager
+                .get_schema_metadata(old_name)
+                .map(|opt| opt.is_some())
+                .unwrap_or(false);
+            if !old_loaded {
+                if let Some(url) = node.schema_service_url() {
+                    if !url.starts_with("test://") && !url.starts_with("mock://") {
+                        let client = crate::fold_node::SchemaServiceClient::new(&url);
+                        match client.get_schema(old_name).await {
+                            Ok(old_schema) => {
+                                let old_json = serde_json::to_string(&old_schema)
+                                    .map_err(schema_err)?;
+                                if let Err(e) = schema_manager.load_schema_from_json(&old_json).await {
+                                    log::warn!("Failed to load old schema '{}' from service: {}", old_name, e);
+                                }
+                            }
+                            Err(e) => {
+                                log::warn!("Failed to fetch old schema '{}' from service: {}", old_name, e);
+                            }
+                        }
+                    }
+                }
+            }
+        }
 
         if !already_loaded {
             match schema_manager.load_schema_from_json(&json_str).await {
@@ -693,13 +788,30 @@ impl IngestionService {
             };
         }
 
-        // Auto-approve the new schema (idempotent - only approves if not already approved)
+        // Approve BEFORE blocking old schema — approval triggers apply_field_mappers
+        // which needs to read the old schema's molecule UUIDs. If we block first,
+        // the superseded_by redirect could cause circular resolution.
         schema_manager
             .approve(&schema_response.name)
             .await
             .map_err(schema_err)?;
 
-        Ok(schema_response.name)
+        // Block the old schema AFTER approval, so field_mappers are already resolved.
+        if let Some(ref old_name) = add_response.replaced_schema {
+            log::info!(
+                "Schema expansion: blocking old schema '{}', loaded expanded '{}'",
+                old_name,
+                schema_response.name
+            );
+            if let Err(e) = schema_manager.block_and_supersede(old_name, &schema_response.name).await {
+                log::warn!("Failed to block old schema '{}' during expansion: {}", old_name, e);
+            }
+        }
+
+        let schema_name = schema_response.name.clone();
+        drop(_lock);
+
+        Ok(schema_name)
     }
 
     /// Execute mutations with progress tracking

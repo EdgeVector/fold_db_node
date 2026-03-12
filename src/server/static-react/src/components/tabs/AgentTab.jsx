@@ -104,8 +104,10 @@ function AgentTab() {
       try {
         const resp = await ingestionClient.getAllProgress();
         if (resp.success && Array.isArray(resp.data) && resp.data.length > 0) {
-          // Find the most recently started non-complete agent job, or any active job
-          const active = resp.data.find(j => !j.is_complete && !j.is_failed) || null;
+          // Prefer active agent-type jobs (shows tool execution status), then any active job
+          const activeJobs = resp.data.filter(j => !j.is_complete && !j.is_failed);
+          const agentJob = activeJobs.find(j => j.job_type === 'agent');
+          const active = agentJob || activeJobs[0] || null;
           setActiveProgress(active);
         } else {
           setActiveProgress(null);

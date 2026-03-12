@@ -25,20 +25,8 @@ async fn test_indexing_progress_tracking() {
             "primary": true
         },
         "fields": ["id", "content"],
-        "field_topologies": {
-            "id": {
-                "root": {
-                    "type": "Primitive",
-                    "value": "String"
-                }
-            },
-            "content": {
-                "root": {
-                    "type": "Primitive",
-                    "value": "String",
-                    "classifications": ["word"]
-                }
-            }
+        "field_classifications": {
+            "content": ["word"]
         }
     }"#;
 

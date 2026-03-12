@@ -23,6 +23,9 @@ struct AddSchemaRequest {
 pub struct AddSchemaResponse {
     pub schema: Schema,
     pub mutation_mappers: HashMap<String, String>,
+    /// When a schema expansion occurred, this contains the old schema name that was replaced.
+    #[serde(default)]
+    pub replaced_schema: Option<String>,
 }
 
 impl SchemaServiceClient {
@@ -93,6 +96,7 @@ impl SchemaServiceClient {
             return Ok(AddSchemaResponse {
                 schema: conflict_body.closest_schema,
                 mutation_mappers: HashMap::new(),
+                replaced_schema: None,
             });
         }
 
@@ -249,12 +253,21 @@ mod tests {
                                     HttpResponse::Created().json(AddSchemaResponse {
                                         schema,
                                         mutation_mappers,
+                                        replaced_schema: None,
                                     })
                                 }
                                 Ok(SchemaAddOutcome::AlreadyExists(schema)) => {
                                     HttpResponse::Ok().json(AddSchemaResponse {
                                         schema,
                                         mutation_mappers: HashMap::new(),
+                                        replaced_schema: None,
+                                    })
+                                }
+                                Ok(SchemaAddOutcome::Expanded(old_name, schema, mutation_mappers)) => {
+                                    HttpResponse::Created().json(AddSchemaResponse {
+                                        schema,
+                                        mutation_mappers,
+                                        replaced_schema: Some(old_name),
                                     })
                                 }
                                 Ok(SchemaAddOutcome::TooSimilar(conflict)) => {

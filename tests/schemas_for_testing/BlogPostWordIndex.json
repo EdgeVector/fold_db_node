@@ -13,50 +13,11 @@
     "title": "BlogPost.map().title",
     "tags": "BlogPost.map().tags"
   },
-  "field_topologies": {
-    "word": {
-      "root": {
-        "type": "Primitive",
-        "value": "String",
-        "classifications": ["word"]
-      }
-    },
-    "publish_date": {
-      "root": {
-        "type": "Primitive",
-        "value": "String"
-      }
-    },
-    "content": {
-      "root": {
-        "type": "Primitive",
-        "value": "String",
-        "classifications": ["word"]
-      }
-    },
-    "author": {
-      "root": {
-        "type": "Primitive",
-        "value": "String",
-        "classifications": ["name:person", "word"]
-      }
-    },
-    "title": {
-      "root": {
-        "type": "Primitive",
-        "value": "String",
-        "classifications": ["word"]
-      }
-    },
-    "tags": {
-      "root": {
-        "type": "Array",
-        "value": {
-          "type": "Primitive",
-          "value": "String",
-          "classifications": ["hashtag", "word"]
-        }
-      }
-    }
+  "field_classifications": {
+    "word": ["word"],
+    "content": ["word"],
+    "author": ["name:person", "word"],
+    "title": ["word"],
+    "tags": ["hashtag", "word"]
   }
 }

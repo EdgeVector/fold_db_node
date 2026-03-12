@@ -131,7 +131,7 @@ mod tests {
 
         let added_schema = match outcome {
             SchemaAddOutcome::Added(schema, _mutation_mappers) => schema,
-            SchemaAddOutcome::AlreadyExists(_) | SchemaAddOutcome::TooSimilar(_) => {
+            SchemaAddOutcome::AlreadyExists(_) | SchemaAddOutcome::TooSimilar(_) | SchemaAddOutcome::Expanded(..) => {
                 panic!("schema should have been added")
             }
         };
@@ -220,7 +220,7 @@ mod tests {
                 assert_eq!(schema.name.len(), 64);
                 schema.name
             }
-            SchemaAddOutcome::AlreadyExists(_) | SchemaAddOutcome::TooSimilar(_) => {
+            SchemaAddOutcome::AlreadyExists(_) | SchemaAddOutcome::TooSimilar(_) | SchemaAddOutcome::Expanded(..) => {
                 panic!("first schema should be added")
             }
         };
@@ -239,7 +239,7 @@ mod tests {
                     existing_schema.field_classifications
                 );
             }
-            SchemaAddOutcome::Added(_, _) | SchemaAddOutcome::TooSimilar(_) => {
+            SchemaAddOutcome::Added(_, _) | SchemaAddOutcome::TooSimilar(_) | SchemaAddOutcome::Expanded(..) => {
                 panic!("schema with same fields should return AlreadyExists")
             }
         }
@@ -279,22 +279,24 @@ mod tests {
             other => panic!("expected schema addition, got {:?}", other),
         };
 
-        // Second schema: 3 fields (different field set)
+        // Second schema: 4 fields with <50% overlap so it stays separate
         let mut schema2 = Schema::new(
-            "UserExtended".to_string(),
+            "ProductCatalog".to_string(),
             fold_db::schema::types::SchemaType::Single,
             None,
             Some(vec![
-                "id".to_string(),
-                "name".to_string(),
-                "email".to_string(),
+                "sku".to_string(),
+                "price".to_string(),
+                "category".to_string(),
+                "description".to_string(),
             ]),
             None,
             None,
         );
-        schema2.field_classifications.insert("id".to_string(), vec!["word".to_string()]);
-        schema2.field_classifications.insert("name".to_string(), vec!["name:person".to_string(), "word".to_string()]);
-        schema2.field_classifications.insert("email".to_string(), vec!["email".to_string()]);
+        schema2.field_classifications.insert("sku".to_string(), vec!["word".to_string()]);
+        schema2.field_classifications.insert("price".to_string(), vec!["number".to_string()]);
+        schema2.field_classifications.insert("category".to_string(), vec!["word".to_string()]);
+        schema2.field_classifications.insert("description".to_string(), vec!["word".to_string()]);
 
         let outcome2 = state
             .add_schema(schema2.clone(), HashMap::new())
@@ -417,7 +419,7 @@ mod tests {
             .await
             .expect("failed to add test schema");
         match outcome {
-            SchemaAddOutcome::Added(s, _) => s.name,
+            SchemaAddOutcome::Added(s, _) | SchemaAddOutcome::Expanded(_, s, _) => s.name,
             SchemaAddOutcome::AlreadyExists(s) => s.name,
             SchemaAddOutcome::TooSimilar(c) => c.closest_schema.name,
         }
@@ -438,31 +440,33 @@ mod tests {
     #[tokio::test]
     async fn find_similar_identical_fields_returns_similarity_1() {
         let state = make_test_state();
-        // Two schemas with identical fields produce the same identity_hash,
-        // so only one gets stored. We need schemas with different topologies
-        // but same field names. Instead, test with overlapping but not identical schemas.
-        // Schema A: {a, b}  Schema B: {a, b, c}  → Jaccard = 2/3
-        let name_a = add_test_schema(&state, "SchemaA", vec!["a", "b"]).await;
-        let _name_b = add_test_schema(&state, "SchemaB", vec!["a", "b", "c"]).await;
+        // Use schemas with low overlap to avoid triggering the expansion fallback.
+        // A: {a, b, c, d}, B: {a, e, f, g} → overlap=1, min_size=4, 1*2=2 ≤ 4
+        // Jaccard({a,b,c,d}, {a,e,f,g}) = 1/7
+        let name_a = add_test_schema(&state, "IdentA", vec!["a", "b", "c", "d"]).await;
+        let _name_b = add_test_schema(&state, "IdentB", vec!["a", "e", "f", "g"]).await;
 
         let result = state.find_similar_schemas(&name_a, 0.0).unwrap();
         assert_eq!(result.similar_schemas.len(), 1);
         let entry = &result.similar_schemas[0];
-        // Jaccard({a,b}, {a,b,c}) = 2/3
-        let expected = 2.0 / 3.0;
+        let expected = 1.0 / 7.0;
         assert!((entry.similarity - expected).abs() < 1e-10);
     }
 
     #[tokio::test]
     async fn find_similar_partial_overlap() {
         let state = make_test_state();
-        // A: {x, y, z}, B: {y, z, w} → Jaccard = 2/4 = 0.5
-        let name_a = add_test_schema(&state, "A", vec!["x", "y", "z"]).await;
-        let _name_b = add_test_schema(&state, "B", vec!["y", "z", "w"]).await;
+        // A: {v, w, x, y}, B: {w, x, y, z} → Jaccard = 3/5 = 0.6
+        // Overlap = 3 out of min_size 4 → 3*2=6 > 4 triggers expansion.
+        // Use lower overlap: A: {a, b, c, d}, B: {c, e, f, g} → Jaccard = 1/7
+        // Overlap = 1 out of min_size 4 → 1*2=2 ≤ 4, no expansion.
+        let name_a = add_test_schema(&state, "PartialA", vec!["a", "b", "c", "d"]).await;
+        let _name_b = add_test_schema(&state, "PartialB", vec!["c", "e", "f", "g"]).await;
 
         let result = state.find_similar_schemas(&name_a, 0.0).unwrap();
         assert_eq!(result.similar_schemas.len(), 1);
-        assert!((result.similar_schemas[0].similarity - 0.5).abs() < 1e-10);
+        let expected = 1.0 / 7.0;
+        assert!((result.similar_schemas[0].similarity - expected).abs() < 1e-10);
     }
 
     #[tokio::test]
@@ -480,16 +484,18 @@ mod tests {
     #[tokio::test]
     async fn find_similar_threshold_filters() {
         let state = make_test_state();
-        // A: {a, b, c}, B: {a, b, d} → Jaccard = 2/4 = 0.5
-        let name_a = add_test_schema(&state, "A", vec!["a", "b", "c"]).await;
-        let _name_b = add_test_schema(&state, "B", vec!["a", "b", "d"]).await;
+        // Use low-overlap schemas that won't trigger expansion.
+        // A: {a, b, c, d, e}, B: {a, f, g, h, i} → overlap=1, min_size=5, 1*2=2 ≤ 5
+        // Jaccard = 1/9 ≈ 0.111
+        let name_a = add_test_schema(&state, "FilterA", vec!["a", "b", "c", "d", "e"]).await;
+        let _name_b = add_test_schema(&state, "FilterB", vec!["a", "f", "g", "h", "i"]).await;
 
-        // Threshold 0.6 should filter out B (similarity = 0.5)
-        let result = state.find_similar_schemas(&name_a, 0.6).unwrap();
+        // Threshold 0.2 should filter out B (similarity ≈ 0.111)
+        let result = state.find_similar_schemas(&name_a, 0.2).unwrap();
         assert!(result.similar_schemas.is_empty());
 
-        // Threshold 0.5 should include B
-        let result = state.find_similar_schemas(&name_a, 0.5).unwrap();
+        // Threshold 0.1 should include B
+        let result = state.find_similar_schemas(&name_a, 0.1).unwrap();
         assert_eq!(result.similar_schemas.len(), 1);
     }
 
@@ -505,12 +511,13 @@ mod tests {
     #[tokio::test]
     async fn find_similar_sorted_by_similarity_descending() {
         let state = make_test_state();
-        // A: {a, b, c, d}
-        // B: {a, b, c, e}       → Jaccard = 3/5 = 0.6
-        // C: {a, e, f, g}       → Jaccard = 1/7 ≈ 0.143
-        let name_a = add_test_schema(&state, "A", vec!["a", "b", "c", "d"]).await;
-        let _name_b = add_test_schema(&state, "B", vec!["a", "b", "c", "e"]).await;
-        let _name_c = add_test_schema(&state, "C", vec!["a", "e", "f", "g"]).await;
+        // Use schemas with ≤50% overlap to avoid expansion.
+        // A: {a, b, c, d, e, f}
+        // B: {a, b, g, h, i, j}  → overlap=2, min_size=6, 2*2=4 ≤ 6, Jaccard = 2/10 = 0.2
+        // C: {a, k, l, m, n, o}  → overlap=1, min_size=6, 1*2=2 ≤ 6, Jaccard = 1/11 ≈ 0.091
+        let name_a = add_test_schema(&state, "SortA", vec!["a", "b", "c", "d", "e", "f"]).await;
+        let _name_b = add_test_schema(&state, "SortB", vec!["a", "b", "g", "h", "i", "j"]).await;
+        let _name_c = add_test_schema(&state, "SortC", vec!["a", "k", "l", "m", "n", "o"]).await;
 
         let result = state.find_similar_schemas(&name_a, 0.0).unwrap();
         assert_eq!(result.similar_schemas.len(), 2);
@@ -553,7 +560,7 @@ mod tests {
             .expect("failed to add first schema");
         let first_name = match outcome1 {
             SchemaAddOutcome::Added(schema, _) => schema.name,
-            SchemaAddOutcome::AlreadyExists(_) | SchemaAddOutcome::TooSimilar(_) => {
+            SchemaAddOutcome::AlreadyExists(_) | SchemaAddOutcome::TooSimilar(_) | SchemaAddOutcome::Expanded(..) => {
                 panic!("first schema should be added")
             }
         };

@@ -211,12 +211,21 @@ pub(super) async fn add_schema(
             HttpResponse::Created().json(AddSchemaResponse {
                 schema,
                 mutation_mappers,
+                replaced_schema: None,
             })
         }
         Ok(SchemaAddOutcome::AlreadyExists(schema)) => {
             HttpResponse::Ok().json(AddSchemaResponse {
                 schema,
                 mutation_mappers: HashMap::new(),
+                replaced_schema: None,
+            })
+        }
+        Ok(SchemaAddOutcome::Expanded(old_name, schema, mutation_mappers)) => {
+            HttpResponse::Created().json(AddSchemaResponse {
+                schema,
+                mutation_mappers,
+                replaced_schema: Some(old_name),
             })
         }
         Ok(SchemaAddOutcome::TooSimilar(conflict)) => {

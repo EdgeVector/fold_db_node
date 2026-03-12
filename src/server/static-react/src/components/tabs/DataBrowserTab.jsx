@@ -36,7 +36,11 @@ export default function DataBrowserTab() {
 
   const schemaList = useMemo(() => {
     if (!Array.isArray(schemas)) return []
-    return [...schemas].sort((a, b) => (a.name || '').localeCompare(b.name || ''))
+    return [...schemas]
+      .filter((s) => s.state !== 'Blocked')
+      .sort((a, b) =>
+        (a.descriptive_name || a.name || '').localeCompare(b.descriptive_name || b.name || '')
+      )
   }, [schemas])
 
   const fieldCount = useCallback((schema) => getFieldNames(schema).length, [])
