@@ -299,6 +299,7 @@ async fn test_smart_folder_ingest_and_query() {
             file_hash: Some(file_hash),
             source_folder: Some(sample_data_path.to_string_lossy().to_string()),
             image_descriptive_name: None,
+            file_markdown: None,
         };
 
         // Run ingestion
