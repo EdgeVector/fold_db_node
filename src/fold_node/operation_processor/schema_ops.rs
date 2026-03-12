@@ -4,7 +4,7 @@ use fold_db::schema::SchemaWithState;
 use super::OperationProcessor;
 
 impl OperationProcessor {
-    /// List all schemas with their states.
+    /// List active schemas with their states (excludes Blocked/superseded schemas).
     pub async fn list_schemas(&self) -> FoldDbResult<Vec<SchemaWithState>> {
         let db = self
             .node
@@ -12,7 +12,7 @@ impl OperationProcessor {
             .await?;
 
         Ok(db.schema_manager
-            .get_schemas_with_states()?)
+            .get_active_schemas_with_states()?)
     }
 
     /// Get a specific schema by name with its state.

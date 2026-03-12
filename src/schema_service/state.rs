@@ -862,7 +862,36 @@ impl SchemaServiceState {
             }
         };
 
-        if let Some((old_name, existing)) = overlap_match {
+        if let Some((mut old_name, mut existing)) = overlap_match {
+            // Follow the supersession chain: if the matched schema has been
+            // superseded, walk up to the current active schema so expansions
+            // always chain off the latest version.
+            {
+                let desc_index = self.descriptive_name_index.read().map_err(|_| {
+                    FoldDbError::Config("Failed to acquire descriptive_name_index read lock".to_string())
+                })?;
+                if let Some(ref dn) = existing.descriptive_name {
+                    if let Some(active_hash) = desc_index.get(dn) {
+                        if *active_hash != old_name {
+                            let schemas = self.schemas.read().map_err(|_| {
+                                FoldDbError::Config("Failed to acquire schemas read lock".to_string())
+                            })?;
+                            if let Some(active_schema) = schemas.get(active_hash) {
+                                log_feature!(
+                                    LogFeature::Schema,
+                                    info,
+                                    "Overlap matched superseded schema '{}', following chain to active '{}'",
+                                    &old_name[..old_name.len().min(16)],
+                                    &active_hash[..active_hash.len().min(16)]
+                                );
+                                old_name = active_hash.clone();
+                                existing = active_schema.clone();
+                            }
+                        }
+                    }
+                }
+            }
+
             let existing_fields = existing.fields.clone().unwrap_or_default();
 
             log_feature!(
