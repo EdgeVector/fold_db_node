@@ -400,12 +400,19 @@ impl SchemaServiceState {
     }
 
     /// Build a description for a field from its schema context.
-    /// Uses field_classifications and descriptive_name to create a meaningful description.
+    /// Prefers AI-generated field_descriptions, falls back to field_classifications + descriptive_name.
     fn build_field_description(
         field_name: &str,
         schema: &Schema,
     ) -> String {
         let desc_name = schema.descriptive_name.as_deref().unwrap_or("unknown");
+
+        // Prefer the AI-generated natural language description
+        if let Some(desc) = schema.field_descriptions.get(field_name) {
+            return format!("{} in {}", desc, desc_name);
+        }
+
+        // Fall back to classifications
         let classifications = schema
             .field_classifications
             .get(field_name)

@@ -34,6 +34,12 @@ IMPORTANT - Schema Name and Descriptive Name:
 - ALWAYS include "descriptive_name": a clear, human-readable description of what this schema stores
 - Example: "descriptive_name": "User Profile Information" or "Customer Order Records"
 
+IMPORTANT - Field Descriptions:
+- EVERY field MUST have a "field_descriptions" entry
+- Each entry is a short natural language description of what the field represents
+- Descriptions should be specific enough to distinguish semantically similar fields across different domains
+- Example: "field_descriptions": {"artist": "the person who created the artwork", "title": "the name of the artwork"}
+
 IMPORTANT - Field Classifications:
 - EVERY field MUST have a "field_classifications" entry
 - Analyze field semantic meaning and assign appropriate classification types
@@ -59,6 +65,11 @@ Example Range schema with date range_field (PREFERRED when data has timestamps):
   "descriptive_name": "Social Media Posts",
   "key": {"range_field": "created_at"},
   "fields": ["created_at", "author", "content"],
+  "field_descriptions": {
+    "created_at": "when the post was published",
+    "author": "the person who wrote the post",
+    "content": "the text body of the post"
+  },
   "field_classifications": {
     "created_at": ["date"],
     "author": ["name:person", "word"],
@@ -72,6 +83,11 @@ Example Range schema with ID range_field (only when NO date/timestamp field exis
   "descriptive_name": "User Profile Information",
   "key": {"range_field": "id"},
   "fields": ["id", "name", "age"],
+  "field_descriptions": {
+    "id": "unique identifier for the user",
+    "name": "the user's full name",
+    "age": "the user's age in years"
+  },
   "field_classifications": {
     "id": ["word"],
     "name": ["name:person", "word"],
@@ -84,6 +100,10 @@ Example Single schema (for one global value):
   "name": "Schema",
   "descriptive_name": "Global Counter Statistics",
   "fields": ["count", "total"],
+  "field_descriptions": {
+    "count": "the current count value",
+    "total": "the cumulative total"
+  },
   "field_classifications": {
     "count": ["number"],
     "total": ["number"]
@@ -96,6 +116,12 @@ Example with Arrays and Objects (note: date field used as range_field):
   "descriptive_name": "Social Media Post",
   "key": {"range_field": "posted_at"},
   "fields": ["posted_at", "content", "hashtags", "media"],
+  "field_descriptions": {
+    "posted_at": "when the post was published",
+    "content": "the text body of the post",
+    "hashtags": "tags or topics associated with the post",
+    "media": "URLs to attached images or videos"
+  },
   "field_classifications": {
     "posted_at": ["date"],
     "content": ["word"],
@@ -126,6 +152,6 @@ CRITICAL RULES:
 - PREFER a date/timestamp field as range_field (e.g., "created_at", "date", "timestamp") — this enables time-based queries. Only use an ID field if no date/timestamp exists.
 - NEVER create a Single-type schema for array inputs - they will overwrite data
 - AVOID Single schemas unless the data is truly a one-off global config. If any field looks like a date, timestamp, or unique ID, use Range instead.
-- ALWAYS provide field_classifications for every field
+- ALWAYS provide field_descriptions and field_classifications for every field
 
 The response must be valid JSON."#;
