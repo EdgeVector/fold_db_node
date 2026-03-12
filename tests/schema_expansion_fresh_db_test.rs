@@ -351,43 +351,44 @@ async fn test_schema_expansion_on_fresh_db() {
     } // drop db_2 guard before using processor
 
     let processor_2 = OperationProcessor::new(node_2.clone());
-    let all_schemas = processor_2.list_schemas().await.unwrap();
+    // list_schemas returns only active (non-blocked) schemas
+    let active_schemas = processor_2.list_schemas().await.unwrap();
 
-    let active: Vec<_> = all_schemas
-        .iter()
-        .filter(|s| s.state != SchemaState::Blocked)
-        .collect();
-    let blocked: Vec<_> = all_schemas
-        .iter()
-        .filter(|s| s.state == SchemaState::Blocked)
-        .collect();
-
-    eprintln!("Active schemas: {}", active.len());
-    eprintln!("Blocked schemas: {}", blocked.len());
-    for s in &active {
+    eprintln!("Active schemas: {}", active_schemas.len());
+    for s in &active_schemas {
         eprintln!("  Active: {} fields={:?}", &s.schema.name[..16], s.schema.fields);
     }
     eprintln!("add_resp_b fields: {:?}", add_resp_b.schema.fields);
 
-    assert_eq!(active.len(), 1, "Should have exactly 1 active schema");
+    assert_eq!(active_schemas.len(), 1, "Should have exactly 1 active schema");
     assert_eq!(
-        active[0].schema.name, add_resp_b.schema.name,
+        active_schemas[0].schema.name, add_resp_b.schema.name,
         "Active schema should be Schema B"
     );
-    assert_eq!(blocked.len(), 1, "Should have exactly 1 blocked schema");
-    assert_eq!(
-        blocked[0].schema.name, schema_a_name,
-        "Blocked schema should be Schema A"
-    );
+
+    // Verify Schema A is blocked by checking all schemas (including blocked)
+    {
+        let db_2 = node_2.get_fold_db().await.unwrap();
+        let all_schemas = db_2.schema_manager.get_schemas_with_states().unwrap();
+        let blocked: Vec<_> = all_schemas
+            .iter()
+            .filter(|s| s.state == SchemaState::Blocked)
+            .collect();
+        assert_eq!(blocked.len(), 1, "Should have exactly 1 blocked schema");
+        assert_eq!(
+            blocked[0].schema.name, schema_a_name,
+            "Blocked schema should be Schema A"
+        );
+    }
 
     // Verify Schema B has the new fields
-    let b_fields = active[0].schema.fields.as_ref().unwrap();
+    let b_fields = active_schemas[0].schema.fields.as_ref().unwrap();
     assert!(b_fields.contains(&"medium".to_string()), "Should have new field 'medium'");
     assert!(b_fields.contains(&"dimensions".to_string()), "Should have new field 'dimensions'");
     assert!(b_fields.contains(&"title".to_string()), "Should have shared field 'title'");
 
     // Verify field_mappers exist for shared fields
-    let b_field_mappers = &active[0].schema.field_mappers;
+    let b_field_mappers = &active_schemas[0].schema.field_mappers;
     eprintln!("Schema B field_mappers: {:?}", b_field_mappers);
     assert!(
         b_field_mappers.as_ref().map(|m| !m.is_empty()).unwrap_or(false),
