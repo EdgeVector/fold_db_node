@@ -321,7 +321,8 @@ impl SchemaServiceState {
             let desc = String::from_utf8(value.to_vec()).map_err(|e| {
                 FoldDbError::Config(format!("Invalid canonical field description: {}", e))
             })?;
-            if let Ok(vec) = self.embedder.embed_text(&name) {
+            let embed_text = Self::build_embedding_text(&name, &desc);
+            if let Ok(vec) = self.embedder.embed_text(&embed_text) {
                 embeddings.insert(name.clone(), vec);
             }
             fields.insert(name, desc);
@@ -356,11 +357,11 @@ impl SchemaServiceState {
         embeddings.clear();
 
         for schema in schemas.values() {
-            let desc_name = schema.descriptive_name.as_deref().unwrap_or("unknown");
             for field_name in schema.fields.as_deref().unwrap_or(&[]) {
                 if !fields.contains_key(field_name) {
-                    let desc = format!("{} (from {})", field_name, desc_name);
-                    if let Ok(vec) = self.embedder.embed_text(field_name) {
+                    let desc = Self::build_field_description(field_name, schema);
+                    let embed_text = Self::build_embedding_text(field_name, &desc);
+                    if let Ok(vec) = self.embedder.embed_text(&embed_text) {
                         embeddings.insert(field_name.clone(), vec);
                     }
                     fields.insert(field_name.clone(), desc);
@@ -392,10 +393,35 @@ impl SchemaServiceState {
         }
     }
 
+    /// Build embedding text from a field name and its description.
+    /// Embeds "field_name: description" for richer semantic context than bare names.
+    fn build_embedding_text(field_name: &str, description: &str) -> String {
+        format!("{}: {}", field_name, description)
+    }
+
+    /// Build a description for a field from its schema context.
+    /// Uses field_classifications and descriptive_name to create a meaningful description.
+    fn build_field_description(
+        field_name: &str,
+        schema: &Schema,
+    ) -> String {
+        let desc_name = schema.descriptive_name.as_deref().unwrap_or("unknown");
+        let classifications = schema
+            .field_classifications
+            .get(field_name)
+            .map(|c| c.join(", "))
+            .unwrap_or_default();
+
+        if classifications.is_empty() {
+            format!("field in {}", desc_name)
+        } else {
+            format!("{} field in {}", classifications, desc_name)
+        }
+    }
+
     /// Register new fields from a schema as canonical.
     /// Only adds fields that don't already exist in the registry.
     fn register_canonical_fields(&self, schema: &Schema) {
-        let desc_name = schema.descriptive_name.as_deref().unwrap_or("unknown");
         let field_names = schema.fields.as_deref().unwrap_or(&[]);
 
         let mut fields = match self.canonical_fields.write() {
@@ -411,8 +437,9 @@ impl SchemaServiceState {
             if fields.contains_key(field_name) {
                 continue;
             }
-            let desc = format!("{} (from {})", field_name, desc_name);
-            if let Ok(vec) = self.embedder.embed_text(field_name) {
+            let desc = Self::build_field_description(field_name, schema);
+            let embed_text = Self::build_embedding_text(field_name, &desc);
+            if let Ok(vec) = self.embedder.embed_text(&embed_text) {
                 embeddings.insert(field_name.clone(), vec);
             }
             fields.insert(field_name.clone(), desc.clone());
@@ -425,9 +452,11 @@ impl SchemaServiceState {
     /// Canonicalize incoming field names against the global canonical field registry.
     /// Returns a rename map: incoming_field -> canonical_field.
     /// Uses the same bidirectional best-match + threshold approach as semantic_field_rename_map.
+    /// Embeds "field_name: description" for richer semantic matching.
     fn canonicalize_fields(
         &self,
         incoming_fields: &[String],
+        schema: &Schema,
         mutation_mappers: &mut HashMap<String, String>,
     ) -> HashMap<String, String> {
         let canonical = match self.canonical_fields.read() {
@@ -452,7 +481,9 @@ impl SchemaServiceState {
                 continue;
             }
 
-            let incoming_embedding = match self.embedder.embed_text(incoming_field) {
+            let incoming_desc = Self::build_field_description(incoming_field, schema);
+            let incoming_embed_text = Self::build_embedding_text(incoming_field, &incoming_desc);
+            let incoming_embedding = match self.embedder.embed_text(&incoming_embed_text) {
                 Ok(vec) => vec,
                 Err(_) => continue,
             };
@@ -480,7 +511,9 @@ impl SchemaServiceState {
             };
             let mut reverse_best: Option<(&str, f32)> = None;
             for candidate in incoming_fields {
-                if let Ok(cand_vec) = self.embedder.embed_text(candidate) {
+                let cand_desc = Self::build_field_description(candidate, schema);
+                let cand_embed_text = Self::build_embedding_text(candidate, &cand_desc);
+                if let Ok(cand_vec) = self.embedder.embed_text(&cand_embed_text) {
                     let sim = cosine_similarity(canon_vec, &cand_vec);
                     if reverse_best.is_none_or(|(_, best_sim)| sim > best_sim) {
                         reverse_best = Some((candidate.as_str(), sim));
@@ -930,7 +963,7 @@ impl SchemaServiceState {
         // Canonicalize field names against the global canonical field registry
         // before any dedup or identity hash computation.
         if let Some(ref fields) = schema.fields {
-            let rename_map = self.canonicalize_fields(fields, &mut mutation_mappers);
+            let rename_map = self.canonicalize_fields(fields, &schema, &mut mutation_mappers);
             if !rename_map.is_empty() {
                 Self::apply_field_renames(&mut schema, &rename_map, &mut mutation_mappers);
             }
