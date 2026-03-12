@@ -419,9 +419,6 @@ impl OperationProcessor {
                 FoldDbError::Database(format!("Schema '{}' not found", schema_name))
             })?;
 
-        // Try each runtime field until one returns keys.
-        // HashMap iteration order is non-deterministic, and some fields may
-        // fail to load their molecule, so we try all of them.
         if schema.runtime_fields.is_empty() {
             return Err(FoldDbError::Database(format!(
                 "Schema '{}' has no fields",
@@ -429,12 +426,33 @@ impl OperationProcessor {
             )));
         }
 
+        // Use the schema's key field (hash_field or range_field) to enumerate keys,
+        // since that field's molecule is guaranteed to have all records.
+        // Falling back to trying all fields if no key config is set.
+        let key_field_name = schema
+            .key
+            .as_ref()
+            .and_then(|k| k.hash_field.as_ref().or(k.range_field.as_ref()))
+            .cloned();
+
         let mut all_keys = Vec::new();
-        for field in schema.runtime_fields.values_mut() {
-            field.refresh_from_db(&db.db_ops).await;
-            all_keys = field.get_all_keys();
-            if !all_keys.is_empty() {
-                break;
+
+        if let Some(ref kf) = key_field_name {
+            if let Some(field) = schema.runtime_fields.get_mut(kf) {
+                field.refresh_from_db(&db.db_ops).await;
+                all_keys = field.get_all_keys();
+            }
+        }
+
+        // Fallback: if key field didn't work, try all fields and keep the one
+        // with the most keys (the key field may not be loaded yet after expansion).
+        if all_keys.is_empty() {
+            for field in schema.runtime_fields.values_mut() {
+                field.refresh_from_db(&db.db_ops).await;
+                let keys = field.get_all_keys();
+                if keys.len() > all_keys.len() {
+                    all_keys = keys;
+                }
             }
         }
 
