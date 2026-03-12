@@ -1,6 +1,6 @@
 #![cfg(feature = "test-utils")]
 
-use fold_db::db_operations::native_index::MockEmbeddingModel;
+use fold_db::db_operations::native_index::{MockEmbeddingModel, ScriptedEmbeddingModel};
 use fold_db_node::schema_service::server::{SchemaAddOutcome, SchemaServiceState};
 use serde_json::json;
 use std::collections::HashMap;
@@ -244,10 +244,11 @@ async fn no_descriptive_name_skips_semantic_matching() {
         .await
         .expect("failed to add first schema");
 
-    // Schema without descriptive_name — should be added independently
+    // Schema without descriptive_name and non-overlapping fields
+    // should be added independently (no descriptive_name match, no field overlap)
     let schema2 = json_to_schema(json!({
             "name": "Schema2",
-            "fields": ["tweet_id", "content", "likes"]
+            "fields": ["user_id", "bio", "avatar"]
         }));
 
     let outcome = state
@@ -455,5 +456,275 @@ async fn low_field_overlap_with_same_name_still_expands() {
             assert_eq!(fields.len(), 9, "superset should have all 9 unique fields");
         }
         other => panic!("same descriptive_name should always expand, got {:?}", other),
+    }
+}
+
+// ===========================================================================
+// Scripted embedding tests — deterministic control over similarity values.
+// These test the bidirectional matching and threshold logic that prevents
+// false positives like "medium" matching "artist" in artwork schemas.
+// ===========================================================================
+
+fn create_scripted_state(responses: HashMap<String, Vec<f32>>) -> SchemaServiceState {
+    let temp_dir = tempdir().expect("failed to create temp directory");
+    let db_path = temp_dir
+        .path()
+        .join("test_schema_db")
+        .to_string_lossy()
+        .to_string();
+    std::mem::forget(temp_dir);
+
+    let embedder = ScriptedEmbeddingModel::new(responses);
+    SchemaServiceState::new_with_embedder(db_path, Arc::new(embedder))
+        .expect("failed to initialize schema service state")
+}
+
+/// Reproduces the exact failure: "creator" should match "artist", but "medium"
+/// should NOT be matched to anything. Uses scripted embeddings to deterministically
+/// control similarity values matching the real AllMiniLML6V2 behavior.
+///
+/// Real model values (for reference):
+///   artist ↔ creator = 0.93  (true synonym)
+///   medium ↔ artist  = 0.85  (false positive — below 0.88 threshold)
+///   medium ↔ creator = 0.81  (below threshold)
+#[tokio::test]
+async fn scripted_creator_matches_artist_but_medium_does_not() {
+    // Direction 0 = "artist" concept, direction 1 = "medium" concept
+    // creator is very close to artist (high similarity), medium is its own thing
+    let artist_vec = ScriptedEmbeddingModel::blended_vec(0, 1, 0.0);    // pure dir 0
+    let creator_vec = ScriptedEmbeddingModel::blended_vec(0, 1, 0.05);  // ~0.997 sim to artist
+    let medium_vec = ScriptedEmbeddingModel::blended_vec(0, 1, 0.5);    // ~0.707 sim to artist
+
+    // The schema service embeds "the {field} of the {descriptive_name}"
+    let desc = "Artwork Collection";
+    let mut responses = HashMap::new();
+    // Descriptive name embeddings (need to be similar for match)
+    responses.insert(desc.to_string(), ScriptedEmbeddingModel::unit_vec(10));
+    // Field embeddings in context
+    responses.insert(format!("the artist of the {}", desc), artist_vec);
+    responses.insert(format!("the creator of the {}", desc), creator_vec);
+    responses.insert(format!("the medium of the {}", desc), medium_vec);
+    responses.insert(format!("the title of the {}", desc), ScriptedEmbeddingModel::unit_vec(2));
+    responses.insert(format!("the year of the {}", desc), ScriptedEmbeddingModel::unit_vec(3));
+
+    let state = create_scripted_state(responses);
+
+    // Schema A: ["artist", "title", "year"]
+    let schema_a = json_to_schema(json!({
+        "name": "SchemaA",
+        "descriptive_name": desc,
+        "fields": ["artist", "title", "year"]
+    }));
+    state.add_schema(schema_a, HashMap::new()).await.unwrap();
+
+    // Schema B: ["creator", "title", "year", "medium"]
+    let schema_b = json_to_schema(json!({
+        "name": "SchemaB",
+        "descriptive_name": desc,
+        "fields": ["creator", "title", "year", "medium"]
+    }));
+    let outcome = state.add_schema(schema_b, HashMap::new()).await.unwrap();
+
+    match outcome {
+        SchemaAddOutcome::Expanded(_, schema, mappers) => {
+            let fields = schema.fields.as_ref().expect("must have fields");
+
+            // "creator" renamed to "artist"
+            assert!(
+                fields.contains(&"artist".to_string()),
+                "should have 'artist' (canonical)"
+            );
+            assert!(
+                !fields.contains(&"creator".to_string()),
+                "'creator' should be renamed to 'artist'"
+            );
+
+            // "medium" preserved as new field
+            assert!(
+                fields.contains(&"medium".to_string()),
+                "'medium' must NOT be falsely matched — it should be a new field"
+            );
+
+            assert!(fields.contains(&"title".to_string()));
+            assert!(fields.contains(&"year".to_string()));
+            assert_eq!(fields.len(), 4, "artist + title + year + medium = 4 fields");
+
+            // mutation_mappers should map creator→artist
+            assert_eq!(
+                mappers.get("creator").map(|s| s.as_str()),
+                Some("artist"),
+                "mutation_mappers must map 'creator' → 'artist'"
+            );
+            // "medium" should NOT appear in mutation_mappers
+            assert!(
+                !mappers.contains_key("medium"),
+                "'medium' should not be in mutation_mappers"
+            );
+        }
+        other => panic!("expected Expanded, got {:?}", other),
+    }
+}
+
+/// Test that bidirectional matching rejects a non-mutual match even when
+/// the forward similarity is above threshold.
+///
+/// Setup: incoming=[X, Y], existing=[A]
+/// X→A = 0.95, Y→A = 0.99  (both above threshold, but Y is the mutual best match)
+/// Only Y should match A; X should be treated as a new field.
+#[tokio::test]
+async fn bidirectional_rejects_non_mutual_best_match() {
+    let desc = "Test Domain";
+    let a_vec = ScriptedEmbeddingModel::unit_vec(0);
+    let x_vec = ScriptedEmbeddingModel::blended_vec(0, 1, 0.1);  // high sim to A but not best
+    let y_vec = ScriptedEmbeddingModel::blended_vec(0, 1, 0.02); // very high sim to A, is best
+
+    let mut responses = HashMap::new();
+    responses.insert(desc.to_string(), ScriptedEmbeddingModel::unit_vec(10));
+    responses.insert(format!("the field_a of the {}", desc), a_vec);
+    responses.insert(format!("the field_x of the {}", desc), x_vec);
+    responses.insert(format!("the field_y of the {}", desc), y_vec);
+    responses.insert(format!("the shared of the {}", desc), ScriptedEmbeddingModel::unit_vec(5));
+
+    let state = create_scripted_state(responses);
+
+    let schema_a = json_to_schema(json!({
+        "name": "A",
+        "descriptive_name": desc,
+        "fields": ["field_a", "shared"]
+    }));
+    state.add_schema(schema_a, HashMap::new()).await.unwrap();
+
+    let schema_b = json_to_schema(json!({
+        "name": "B",
+        "descriptive_name": desc,
+        "fields": ["field_x", "field_y", "shared"]
+    }));
+    let outcome = state.add_schema(schema_b, HashMap::new()).await.unwrap();
+
+    match outcome {
+        SchemaAddOutcome::Expanded(_, schema, mappers) => {
+            let fields = schema.fields.as_ref().unwrap();
+
+            // field_y should match field_a (mutual best match)
+            assert!(
+                !fields.contains(&"field_y".to_string()),
+                "field_y should be renamed to field_a"
+            );
+            assert!(
+                fields.contains(&"field_a".to_string()),
+                "field_a should be in expanded schema"
+            );
+            assert_eq!(mappers.get("field_y").map(|s| s.as_str()), Some("field_a"));
+
+            // field_x should NOT match field_a (non-mutual: A's best match is Y, not X)
+            assert!(
+                fields.contains(&"field_x".to_string()),
+                "field_x should be kept as a new field (non-mutual match)"
+            );
+            assert!(!mappers.contains_key("field_x"));
+
+            // shared is a literal match
+            assert!(fields.contains(&"shared".to_string()));
+        }
+        other => panic!("expected Expanded, got {:?}", other),
+    }
+}
+
+/// Test that fields below the similarity threshold are never matched,
+/// even if they're the best available match.
+#[tokio::test]
+async fn below_threshold_fields_are_not_matched() {
+    let desc = "Test Domain";
+    // Make field_a and field_b somewhat similar but below 0.88 threshold
+    // cosine_similarity of blended(0,1,0.3) and unit(0) ≈ 0.7/norm — well below 0.88
+    let a_vec = ScriptedEmbeddingModel::unit_vec(0);
+    let b_vec = ScriptedEmbeddingModel::blended_vec(0, 1, 0.4); // ~0.83 sim — below 0.88
+
+    let mut responses = HashMap::new();
+    responses.insert(desc.to_string(), ScriptedEmbeddingModel::unit_vec(10));
+    responses.insert(format!("the field_a of the {}", desc), a_vec);
+    responses.insert(format!("the field_b of the {}", desc), b_vec);
+
+    let state = create_scripted_state(responses);
+
+    let schema_a = json_to_schema(json!({
+        "name": "A",
+        "descriptive_name": desc,
+        "fields": ["field_a"]
+    }));
+    state.add_schema(schema_a, HashMap::new()).await.unwrap();
+
+    let schema_b = json_to_schema(json!({
+        "name": "B",
+        "descriptive_name": desc,
+        "fields": ["field_b"]
+    }));
+    let outcome = state.add_schema(schema_b, HashMap::new()).await.unwrap();
+
+    match outcome {
+        SchemaAddOutcome::Expanded(_, schema, mappers) => {
+            let fields = schema.fields.as_ref().unwrap();
+            // Both fields should exist — no renaming
+            assert!(fields.contains(&"field_a".to_string()));
+            assert!(fields.contains(&"field_b".to_string()));
+            assert_eq!(fields.len(), 2);
+            assert!(mappers.is_empty(), "no mutation_mappers when below threshold");
+        }
+        other => panic!("expected Expanded, got {:?}", other),
+    }
+}
+
+/// Test that two incoming fields cannot both map to the same existing field
+/// (many-to-one prevention via claimed set).
+#[tokio::test]
+async fn many_to_one_mapping_prevented() {
+    let desc = "Test Domain";
+    let a_vec = ScriptedEmbeddingModel::unit_vec(0);
+    // Both synonyms are very close to field_a
+    let syn1_vec = ScriptedEmbeddingModel::blended_vec(0, 1, 0.01);  // ~0.9999 sim
+    let syn2_vec = ScriptedEmbeddingModel::blended_vec(0, 2, 0.02);  // ~0.9998 sim
+
+    let mut responses = HashMap::new();
+    responses.insert(desc.to_string(), ScriptedEmbeddingModel::unit_vec(10));
+    responses.insert(format!("the field_a of the {}", desc), a_vec);
+    responses.insert(format!("the synonym1 of the {}", desc), syn1_vec);
+    responses.insert(format!("the synonym2 of the {}", desc), syn2_vec);
+
+    let state = create_scripted_state(responses);
+
+    let schema_a = json_to_schema(json!({
+        "name": "A",
+        "descriptive_name": desc,
+        "fields": ["field_a"]
+    }));
+    state.add_schema(schema_a, HashMap::new()).await.unwrap();
+
+    let schema_b = json_to_schema(json!({
+        "name": "B",
+        "descriptive_name": desc,
+        "fields": ["synonym1", "synonym2"]
+    }));
+    let outcome = state.add_schema(schema_b, HashMap::new()).await.unwrap();
+
+    match outcome {
+        SchemaAddOutcome::Expanded(_, schema, mappers) => {
+            let fields = schema.fields.as_ref().unwrap();
+            // At most ONE of synonym1/synonym2 should be renamed to field_a
+            let renamed_count = [!fields.contains(&"synonym1".to_string()),
+                                 !fields.contains(&"synonym2".to_string())]
+                .iter()
+                .filter(|&&x| x)
+                .count();
+            assert!(
+                renamed_count <= 1,
+                "at most one synonym should be renamed to field_a, but {} were renamed",
+                renamed_count
+            );
+            // field_a must exist
+            assert!(fields.contains(&"field_a".to_string()));
+            // At most one mutation_mapper
+            assert!(mappers.len() <= 1, "at most one mutation_mapper expected");
+        }
+        other => panic!("expected Expanded, got {:?}", other),
     }
 }
