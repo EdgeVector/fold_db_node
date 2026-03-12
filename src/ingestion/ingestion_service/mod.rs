@@ -318,9 +318,15 @@ impl IngestionService {
         // Step 4: Determine schema to use
         progress_service.update_progress(progress_id, IngestionStep::SettingUpSchema,
             "Setting up schema and preparing for data storage...".to_string()).await;
-        let schema_name = self
+        let (schema_name, service_mappers) = self
             .determine_schema_to_use(&ai_response, &request.data, node)
             .await?;
+        // Merge schema service's semantic field renames into AI's mutation_mappers.
+        // Service mappers (e.g., "creator" → "artist") take precedence since they
+        // reflect the canonical field names on the actual expanded schema.
+        for (from, to) in &service_mappers {
+            ai_response.mutation_mappers.insert(from.clone(), to.clone());
+        }
         let new_schema_created = ai_response.new_schemas.is_some();
 
         // Enrich image data with source_file_name, created_at, image_type so
@@ -599,19 +605,22 @@ impl IngestionService {
         })
     }
 
-    /// Determine which schema to use based on AI response
+    /// Determine which schema to use based on AI response.
+    /// Returns (schema_name, service_mutation_mappers) — the service mappers include
+    /// any semantic field renames (e.g., "creator" → "artist") that must be merged
+    /// with the AI's original mutation_mappers before generating mutations.
     pub(super) async fn determine_schema_to_use(
         &self,
         ai_response: &AISchemaResponse,
         sample_data: &Value,
         node: &FoldNode,
-    ) -> IngestionResult<String> {
+    ) -> IngestionResult<(String, HashMap<String, String>)> {
         // Always create a new schema from the AI definition
         if let Some(new_schema_def) = &ai_response.new_schemas {
-            let schema_name = self
+            let (schema_name, service_mappers) = self
                 .create_new_schema_with_node(new_schema_def, sample_data, node)
                 .await?;
-            return Ok(schema_name);
+            return Ok((schema_name, service_mappers));
         }
 
         Err(IngestionError::ai_response_validation_error(
@@ -619,13 +628,15 @@ impl IngestionService {
         ))
     }
 
-    /// Create a new schema using the FoldNode
+    /// Create a new schema using the FoldNode.
+    /// Returns (schema_name, service_mutation_mappers) — service mappers include
+    /// any semantic field renames from schema expansion.
     async fn create_new_schema_with_node(
         &self,
         schema_def: &Value,
         sample_data: &Value,
         node: &FoldNode,
-    ) -> IngestionResult<String> {
+    ) -> IngestionResult<(String, HashMap<String, String>)> {
         // Deserialize Value to Schema
         let mut schema: fold_db::schema::types::Schema = serde_json::from_value(schema_def.clone())
             .map_err(|error| {
@@ -809,9 +820,10 @@ impl IngestionService {
         }
 
         let schema_name = schema_response.name.clone();
+        let service_mappers = add_response.mutation_mappers.clone();
         drop(_lock);
 
-        Ok(schema_name)
+        Ok((schema_name, service_mappers))
     }
 
     /// Execute mutations with progress tracking

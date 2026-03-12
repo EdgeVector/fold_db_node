@@ -115,9 +115,15 @@ impl IngestionService {
         }
 
         // Create the schema via the standard path
-        let schema_name = self
+        let (schema_name, service_mappers) = self
             .determine_schema_to_use(&ai_response, &rep_decomp.parent, node)
             .await?;
+
+        // Merge schema service's semantic field renames into AI's mutation_mappers
+        let mut merged_mappers = ai_response.mutation_mappers;
+        for (from, to) in service_mappers {
+            merged_mappers.insert(from, to);
+        }
 
         log_feature!(
             LogFeature::Ingestion,
@@ -131,7 +137,7 @@ impl IngestionService {
             structure_hash.to_string(),
             CachedSchema {
                 schema_name: schema_name.clone(),
-                mutation_mappers: ai_response.mutation_mappers,
+                mutation_mappers: merged_mappers,
             },
         );
 
