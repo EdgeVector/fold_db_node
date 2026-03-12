@@ -503,7 +503,7 @@ impl IngestionService {
             .iter()
             .map(|&f| (f.to_string(), f.to_string()))
             .collect();
-        let ai_response = AISchemaResponse {
+        let mut ai_response = AISchemaResponse {
             new_schemas: Some(schema_def),
             mutation_mappers,
         };
@@ -511,9 +511,12 @@ impl IngestionService {
         // Step 4: Determine schema (creates/loads it)
         progress_service.update_progress(progress_id, IngestionStep::SettingUpSchema,
             "Setting up file document schema...".to_string()).await;
-        let schema_name = self
+        let (schema_name, service_mappers) = self
             .determine_schema_to_use(&ai_response, data, node)
             .await?;
+        for (from, to) in &service_mappers {
+            ai_response.mutation_mappers.insert(from.clone(), to.clone());
+        }
         let new_schema_created = true;
 
         // Step 5: Generate mutations
