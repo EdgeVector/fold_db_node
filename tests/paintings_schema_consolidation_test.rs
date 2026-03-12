@@ -228,7 +228,7 @@ async fn test_paintings_use_single_schema() {
         );
 
         // Convert image to markdown using file_to_markdown (same as the real server)
-        let fm = match convert_file_to_markdown(&painting_path).await {
+        let fm = match convert_file_to_markdown(painting_path).await {
             Ok(fm) => fm,
             Err(e) => {
                 eprintln!("  Failed to convert file: {}", e);
