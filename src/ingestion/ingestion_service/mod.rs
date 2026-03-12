@@ -99,33 +99,45 @@ impl IngestionService {
             ]));
         }
 
-        // Step 1: Validate input
-        progress_service.update_progress(&progress_id, IngestionStep::ValidatingConfig,
-            "Validating input data...".to_string()).await;
-        self.validate_input(&request.data)?;
-
-        // Step 2: Flatten data structure for AI analysis
-        progress_service.update_progress(&progress_id, IngestionStep::FlatteningData,
-            "Processing and flattening data structure...".to_string()).await;
-        let flattened_data = crate::ingestion::json_processor::flatten_root_layers(request.data.clone());
-
-        // Step 2.5: Decompose nested structures and decide code path
-        let has_nested_children = self.check_has_nested_children(&flattened_data);
-
+        // FileMarkdown path: hardcoded schema, skip AI recommendation entirely
         let (schema_name, new_schema_created, mutations_generated, mutations_executed, schemas_written) =
-            if has_nested_children {
-                progress_service.update_progress(&progress_id, IngestionStep::GettingAIRecommendation,
-                    "Decomposing nested data structures...".to_string()).await;
-                self.process_decomposed_path(&flattened_data, &request, node, &progress_id).await?
-            } else {
-                self.process_flat_path(
-                    &flattened_data,
+            if request.file_markdown.is_some() {
+                self.process_file_markdown_path(
                     &request,
                     node,
                     progress_service,
                     &progress_id,
                 )
                 .await?
+            } else {
+                // Standard JSON path: validate, flatten, check for nested children
+                // Step 1: Validate input
+                progress_service.update_progress(&progress_id, IngestionStep::ValidatingConfig,
+                    "Validating input data...".to_string()).await;
+                self.validate_input(&request.data)?;
+
+                // Step 2: Flatten data structure for AI analysis
+                progress_service.update_progress(&progress_id, IngestionStep::FlatteningData,
+                    "Processing and flattening data structure...".to_string()).await;
+                let flattened_data = crate::ingestion::json_processor::flatten_root_layers(request.data.clone());
+
+                // Step 2.5: Decompose nested structures and decide code path
+                let has_nested_children = self.check_has_nested_children(&flattened_data);
+
+                if has_nested_children {
+                    progress_service.update_progress(&progress_id, IngestionStep::GettingAIRecommendation,
+                        "Decomposing nested data structures...".to_string()).await;
+                    self.process_decomposed_path(&flattened_data, &request, node, &progress_id).await?
+                } else {
+                    self.process_flat_path(
+                        &flattened_data,
+                        &request,
+                        node,
+                        progress_service,
+                        &progress_id,
+                    )
+                    .await?
+                }
             };
 
         // Shared finalization: record file dedup + complete progress
@@ -259,9 +271,8 @@ impl IngestionService {
         let pub_key = request.pub_key.clone();
 
         // Step 3: Get AI recommendation (with image override)
-        let is_image = request
-            .source_file_name
-            .as_ref()
+        // Note: file_markdown is always None here (FileMarkdown path is handled separately)
+        let is_image = request.source_file_name.as_ref()
             .map(|name| crate::ingestion::is_image_file(name))
             .unwrap_or(false);
         progress_service.update_progress(progress_id, IngestionStep::GettingAIRecommendation,
@@ -376,6 +387,165 @@ impl IngestionService {
 
         let mutations_len = mutations.len();
 
+        let mutations_executed = if request.auto_execute {
+            self.execute_mutations_with_node_and_progress(
+                mutations,
+                node,
+                progress_service,
+                progress_id,
+            )
+            .await?
+        } else {
+            0
+        };
+
+        Ok((schema_name, new_schema_created, mutations_len, mutations_executed, schemas_written))
+    }
+
+    /// Hardcoded schema fields for FileMarkdown documents.
+    /// Every field from the FileMarkdown struct is preserved — no AI guessing.
+    const FILE_MARKDOWN_FIELDS: &'static [&'static str] = &[
+        "source",
+        "file_type",
+        "size_bytes",
+        "mime_type",
+        "extraction_method",
+        "markdown",
+        "title",
+        "author",
+        "created",
+        "page_count",
+        "rows",
+        "columns",
+        "duration_seconds",
+        "sample_rate_hz",
+        "channels",
+        "image_format",
+        "language",
+        "line_count",
+        "sheet_count",
+        "slide_count",
+        "entry_count",
+        "archive_format",
+        "word_count",
+    ];
+
+    /// Handles the FileMarkdown ingestion path with a hardcoded schema.
+    ///
+    /// Bypasses the AI schema recommendation entirely — the schema is always the
+    /// same for every file processed by file_to_markdown, preserving all fields
+    /// (especially the `markdown` content field that the AI was dropping).
+    async fn process_file_markdown_path(
+        &self,
+        request: &IngestionRequest,
+        node: &FoldNode,
+        progress_service: &ProgressService,
+        progress_id: &str,
+    ) -> IngestionResult<(String, bool, usize, usize, Vec<SchemaWriteRecord>)> {
+        let fm = request.file_markdown.as_ref()
+            .expect("process_file_markdown_path called without file_markdown");
+        let pub_key = request.pub_key.clone();
+
+        progress_service.update_progress(progress_id, IngestionStep::FlatteningData,
+            "Processing file markdown data...".to_string()).await;
+
+        // Use the pre-converted Value from the request (already set by the entry point)
+        let data = &request.data;
+
+        // Build field classifications — markdown is "word" (text content),
+        // numeric fields are "number", everything else is "word"
+        let mut field_classifications: HashMap<String, Vec<String>> = HashMap::new();
+        let number_fields = [
+            "size_bytes", "page_count", "rows", "columns",
+            "duration_seconds", "sample_rate_hz", "channels",
+            "line_count", "sheet_count", "slide_count", "entry_count", "word_count",
+        ];
+        for &field in Self::FILE_MARKDOWN_FIELDS {
+            let classification = if number_fields.contains(&field) {
+                vec!["number".to_string()]
+            } else {
+                vec!["word".to_string()]
+            };
+            field_classifications.insert(field.to_string(), classification);
+        }
+
+        // Build the schema definition — use source as hash key
+        let is_image = fm.image_format.is_some();
+        let schema_def = if is_image {
+            let mut def = serde_json::json!({
+                "name": "FileMarkdownDocument",
+                "schema_type": "HashRange",
+                "key": {
+                    "hash_field": "image_format",
+                    "range_field": "source"
+                },
+                "fields": Self::FILE_MARKDOWN_FIELDS,
+                "field_classifications": field_classifications,
+            });
+            if let Some(ref desc) = request.image_descriptive_name {
+                def["descriptive_name"] = serde_json::json!(desc);
+            }
+            def
+        } else {
+            serde_json::json!({
+                "name": "FileMarkdownDocument",
+                "schema_type": "Single",
+                "key": {
+                    "hash_field": "source"
+                },
+                "fields": Self::FILE_MARKDOWN_FIELDS,
+                "field_classifications": field_classifications,
+            })
+        };
+
+        // Build an AISchemaResponse with identity mutation mappers (field → field)
+        let mutation_mappers: HashMap<String, String> = Self::FILE_MARKDOWN_FIELDS
+            .iter()
+            .map(|&f| (f.to_string(), f.to_string()))
+            .collect();
+        let mut ai_response = AISchemaResponse {
+            new_schemas: Some(schema_def),
+            mutation_mappers,
+        };
+
+        // Step 4: Determine schema (creates/loads it)
+        progress_service.update_progress(progress_id, IngestionStep::SettingUpSchema,
+            "Setting up file document schema...".to_string()).await;
+        let (schema_name, service_mappers) = self
+            .determine_schema_to_use(&ai_response, data, node)
+            .await?;
+        for (from, to) in &service_mappers {
+            ai_response.mutation_mappers.insert(from.clone(), to.clone());
+        }
+        let new_schema_created = true;
+
+        // Step 5: Generate mutations
+        progress_service.update_progress(progress_id, IngestionStep::GeneratingMutations,
+            "Generating database mutations...".to_string()).await;
+        let (mutations, schemas_written) = self
+            .generate_flat_mutations(
+                data,
+                &schema_name,
+                &ai_response,
+                request,
+                &pub_key,
+                node,
+                progress_service,
+                progress_id,
+            )
+            .await?;
+
+        log_feature!(
+            LogFeature::Ingestion,
+            info,
+            "Generated {} mutations for FileMarkdown document",
+            mutations.len()
+        );
+
+        // Step 6: Execute mutations
+        progress_service.update_progress(progress_id, IngestionStep::ExecutingMutations,
+            "Executing mutations to store data...".to_string()).await;
+        let mutations_len = mutations.len();
         let mutations_executed = if request.auto_execute {
             self.execute_mutations_with_node_and_progress(
                 mutations,
@@ -892,4 +1062,137 @@ fn schemas_written_from_map(map: HashMap<String, Vec<KeyValue>>) -> Vec<SchemaWr
     map.into_iter()
         .map(|(name, keys)| SchemaWriteRecord { schema_name: name, keys_written: keys })
         .collect()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use file_to_markdown::FileMarkdown;
+    use serde_json::json;
+
+    /// Verify FILE_MARKDOWN_FIELDS matches every field in FileMarkdown.
+    #[test]
+    fn test_file_markdown_fields_covers_all_struct_fields() {
+        let fm = FileMarkdown::new(
+            "test.pdf".into(), "pdf".into(), 1024,
+            Some("application/pdf".into()), "pdf-text".into(), "# Content".into(),
+        );
+        let value = serde_json::to_value(&fm).unwrap();
+        let obj = value.as_object().unwrap();
+
+        for key in obj.keys() {
+            assert!(
+                IngestionService::FILE_MARKDOWN_FIELDS.contains(&key.as_str()),
+                "FileMarkdown field '{}' is missing from FILE_MARKDOWN_FIELDS constant",
+                key
+            );
+        }
+        for &field in IngestionService::FILE_MARKDOWN_FIELDS {
+            assert!(
+                obj.contains_key(field),
+                "FILE_MARKDOWN_FIELDS contains '{}' but FileMarkdown struct does not serialize it",
+                field
+            );
+        }
+    }
+
+    /// Verify the hardcoded schema definition for non-image documents.
+    #[test]
+    fn test_file_markdown_schema_def_document() {
+        let fields = IngestionService::FILE_MARKDOWN_FIELDS;
+
+        let schema_def = json!({
+            "name": "FileMarkdownDocument",
+            "schema_type": "Single",
+            "key": { "hash_field": "source" },
+            "fields": fields,
+            "field_classifications": {},
+        });
+
+        assert_eq!(schema_def["schema_type"], "Single");
+        assert_eq!(schema_def["key"]["hash_field"], "source");
+        let schema_fields = schema_def["fields"].as_array().unwrap();
+        assert!(schema_fields.iter().any(|f| f == "markdown"), "schema must include 'markdown' field");
+        assert!(schema_fields.iter().any(|f| f == "source"), "schema must include 'source' field");
+        assert!(schema_fields.iter().any(|f| f == "title"), "schema must include 'title' field");
+    }
+
+    /// Verify the hardcoded schema definition for images uses HashRange.
+    #[test]
+    fn test_file_markdown_schema_def_image() {
+        let fields = IngestionService::FILE_MARKDOWN_FIELDS;
+
+        let schema_def = json!({
+            "name": "FileMarkdownDocument",
+            "schema_type": "HashRange",
+            "key": {
+                "hash_field": "image_format",
+                "range_field": "source"
+            },
+            "fields": fields,
+            "field_classifications": {},
+        });
+
+        assert_eq!(schema_def["schema_type"], "HashRange");
+        assert_eq!(schema_def["key"]["hash_field"], "image_format");
+        assert_eq!(schema_def["key"]["range_field"], "source");
+    }
+
+    /// Verify identity mutation mappers map every field to itself.
+    #[test]
+    fn test_file_markdown_identity_mappers() {
+        let mappers: HashMap<String, String> = IngestionService::FILE_MARKDOWN_FIELDS
+            .iter()
+            .map(|&f| (f.to_string(), f.to_string()))
+            .collect();
+
+        assert_eq!(mappers.len(), IngestionService::FILE_MARKDOWN_FIELDS.len());
+        for &field in IngestionService::FILE_MARKDOWN_FIELDS {
+            assert_eq!(
+                mappers.get(field).map(|s| s.as_str()),
+                Some(field),
+                "Mapper for '{}' should be identity",
+                field
+            );
+        }
+    }
+
+    /// Verify field classifications assign correct types.
+    #[test]
+    fn test_file_markdown_field_classifications() {
+        let number_fields = [
+            "size_bytes", "page_count", "rows", "columns",
+            "duration_seconds", "sample_rate_hz", "channels",
+            "line_count", "sheet_count", "slide_count", "entry_count", "word_count",
+        ];
+
+        let mut classifications: HashMap<String, Vec<String>> = HashMap::new();
+        for &field in IngestionService::FILE_MARKDOWN_FIELDS {
+            let class = if number_fields.contains(&field) {
+                vec!["number".to_string()]
+            } else {
+                vec!["word".to_string()]
+            };
+            classifications.insert(field.to_string(), class);
+        }
+
+        assert_eq!(classifications["markdown"], vec!["word"]);
+        assert_eq!(classifications["source"], vec!["word"]);
+        assert_eq!(classifications["size_bytes"], vec!["number"]);
+        assert_eq!(classifications["page_count"], vec!["number"]);
+        assert_eq!(classifications["word_count"], vec!["number"]);
+        assert_eq!(classifications["title"], vec!["word"]);
+    }
+
+    /// Verify that file_markdown_to_value preserves the markdown content field.
+    #[test]
+    fn test_file_markdown_to_value_preserves_markdown() {
+        let long_content = "# Chapter 1\n\nThis is a long document with lots of content.\n".repeat(100);
+        let fm = FileMarkdown::new(
+            "book.pdf".into(), "pdf".into(), 50000,
+            Some("application/pdf".into()), "pdf-text".into(), long_content.clone(),
+        );
+        let value = crate::ingestion::json_processor::file_markdown_to_value(&fm);
+        assert_eq!(value["markdown"].as_str().unwrap(), long_content);
+    }
 }

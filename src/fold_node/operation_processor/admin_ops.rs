@@ -193,16 +193,25 @@ impl OperationProcessor {
         auto_execute: bool,
         external_tracker: Option<crate::ingestion::ProgressTracker>,
     ) -> FoldDbResult<crate::ingestion::IngestionResponse> {
-        use crate::ingestion::json_processor::convert_file_to_json;
+        use crate::ingestion::json_processor::{convert_file_to_markdown, file_markdown_to_value};
         use crate::ingestion::progress::ProgressService;
         use crate::ingestion::smart_folder;
         use crate::ingestion::IngestionRequest;
 
-        let data = match smart_folder::read_file_as_json(file_path) {
-            Ok(json) => json,
-            Err(_) => convert_file_to_json(&file_path.to_path_buf())
-                .await
-                .map_err(|e| FoldDbError::Other(e.to_string()))?,
+        let (data, image_descriptive_name, file_markdown) = match smart_folder::read_file_as_json(file_path) {
+            Ok(json) => (json, None, None),
+            Err(_) => {
+                let fm = convert_file_to_markdown(file_path)
+                    .await
+                    .map_err(|e| FoldDbError::Other(e.to_string()))?;
+                let desc_name = if fm.image_format.is_some() {
+                    fm.title.clone()
+                } else {
+                    None
+                };
+                let data = file_markdown_to_value(&fm);
+                (data, desc_name, Some(fm))
+            }
         };
 
         let progress_id = uuid::Uuid::new_v4().to_string();
@@ -219,7 +228,8 @@ impl OperationProcessor {
             progress_id: Some(progress_id.clone()),
             file_hash: None,
             source_folder: file_path.parent().map(|p| p.to_string_lossy().to_string()),
-            image_descriptive_name: None,
+            image_descriptive_name,
+            file_markdown,
         };
 
         let service =

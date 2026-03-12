@@ -1,6 +1,6 @@
 //! File upload and conversion module for ingestion
 
-use crate::ingestion::json_processor::{convert_file_to_json_http, save_json_to_temp_file};
+use crate::ingestion::json_processor::{convert_file_to_markdown_http, file_markdown_to_value, save_json_to_temp_file};
 use crate::ingestion::routes::{get_ingestion_service, IngestionServiceState};
 use crate::ingestion::{IngestionRequest, ProgressTracker};
 use fold_db::log_feature;
@@ -232,7 +232,7 @@ async fn save_uploaded_file(
         return Ok((process_path, unique_filename, true, hash_hex));
     }
 
-    // Storage has encrypted data; file_to_json needs unencrypted data on a local path
+    // Storage has encrypted data; file conversion needs unencrypted data on a local path
     let filepath = write_unencrypted_for_processing(&unique_filename, &file_data, upload_storage).await?;
 
     log_feature!(
@@ -246,7 +246,7 @@ async fn save_uploaded_file(
     Ok((filepath, unique_filename, false, hash_hex))
 }
 
-/// Write unencrypted file data to a temp path for processing by file_to_json.
+/// Write unencrypted file data to a temp path for processing by file_to_markdown.
 /// Storage holds encrypted data; this provides the plaintext for conversion.
 async fn write_unencrypted_for_processing(
     filename: &str,
@@ -360,7 +360,7 @@ async fn handle_s3_file_path(
         }
     };
 
-    // Save to /tmp for processing (file_to_json needs local file)
+    // Save to /tmp for processing (file conversion needs local file)
     // Use folddb_ prefix for easy identification and cleanup
     let temp_path = std::env::temp_dir().join(format!("folddb_s3_{}", filename));
     if let Err(e) = fs::write(&temp_path, &file_data).await {
@@ -467,22 +467,20 @@ pub async fn upload_file(
         }
     }
 
-    // Convert file to JSON using file_to_json
-    let mut json_value = match convert_file_to_json_http(&form_data.file_path).await {
-        Ok(json) => json,
+    // Convert file to markdown using file_to_markdown (fully local)
+    let fm = match convert_file_to_markdown_http(&form_data.file_path).await {
+        Ok(fm) => fm,
         Err(response) => return response,
     };
 
-    // Enrich image JSON with image_type and created_at for HashRange schema support
-    let image_descriptive_name = if crate::ingestion::is_image_file(&form_data.original_filename) {
-        crate::ingestion::json_processor::enrich_image_json(
-            &mut json_value,
-            &form_data.file_path,
-            Some(&form_data.original_filename),
-        )
+    // For images, use the title from FileMarkdown as the descriptive name
+    let image_descriptive_name = if fm.image_format.is_some() {
+        fm.title.clone()
     } else {
         None
     };
+
+    let json_value = file_markdown_to_value(&fm);
 
     // Clean up the unencrypted temp file now that conversion is complete.
     // The encrypted copy is already stored; leaving plaintext on disk is a data leak.
@@ -499,7 +497,7 @@ pub async fn upload_file(
     log_feature!(
         LogFeature::Ingestion,
         info,
-        "File converted to JSON successfully, starting ingestion"
+        "File converted to markdown successfully, starting ingestion"
     );
 
     // Save JSON to a temporary file for testing/debugging
@@ -537,6 +535,7 @@ pub async fn upload_file(
         file_hash: Some(form_data.file_hash.clone()),
         source_folder: None,
         image_descriptive_name,
+        file_markdown: Some(fm),
     };
 
     // Extract ingestion service
