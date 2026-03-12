@@ -469,17 +469,34 @@ impl IngestionService {
             field_classifications.insert(field.to_string(), classification);
         }
 
+        // Only include fields that have non-null values in the data to avoid
+        // bloating the schema with irrelevant metadata (e.g., audio fields for a PDF).
+        let present_fields: Vec<&str> = Self::FILE_MARKDOWN_FIELDS
+            .iter()
+            .copied()
+            .filter(|&f| {
+                data.get(f).is_some_and(|v| !v.is_null())
+            })
+            .collect();
+
+        // Rebuild field_classifications with only present fields
+        let field_classifications: HashMap<String, Vec<String>> = field_classifications
+            .into_iter()
+            .filter(|(k, _)| present_fields.contains(&k.as_str()))
+            .collect();
+
         // Build the schema definition — use source as hash key
         let is_image = fm.image_format.is_some();
         let schema_def = if is_image {
             let mut def = serde_json::json!({
                 "name": "FileMarkdownDocument",
+                "descriptive_name": "File Content Records",
                 "schema_type": "HashRange",
                 "key": {
                     "hash_field": "image_format",
                     "range_field": "source"
                 },
-                "fields": Self::FILE_MARKDOWN_FIELDS,
+                "fields": present_fields,
                 "field_classifications": field_classifications,
             });
             if let Some(ref desc) = request.image_descriptive_name {
@@ -489,17 +506,18 @@ impl IngestionService {
         } else {
             serde_json::json!({
                 "name": "FileMarkdownDocument",
+                "descriptive_name": "File Content Records",
                 "schema_type": "Single",
                 "key": {
                     "hash_field": "source"
                 },
-                "fields": Self::FILE_MARKDOWN_FIELDS,
+                "fields": present_fields,
                 "field_classifications": field_classifications,
             })
         };
 
         // Build an AISchemaResponse with identity mutation mappers (field → field)
-        let mutation_mappers: HashMap<String, String> = Self::FILE_MARKDOWN_FIELDS
+        let mutation_mappers: HashMap<String, String> = present_fields
             .iter()
             .map(|&f| (f.to_string(), f.to_string()))
             .collect();
