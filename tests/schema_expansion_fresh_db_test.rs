@@ -364,6 +364,10 @@ async fn test_schema_expansion_on_fresh_db() {
 
     eprintln!("Active schemas: {}", active.len());
     eprintln!("Blocked schemas: {}", blocked.len());
+    for s in &active {
+        eprintln!("  Active: {} fields={:?}", &s.schema.name[..16], s.schema.fields);
+    }
+    eprintln!("add_resp_b fields: {:?}", add_resp_b.schema.fields);
 
     assert_eq!(active.len(), 1, "Should have exactly 1 active schema");
     assert_eq!(

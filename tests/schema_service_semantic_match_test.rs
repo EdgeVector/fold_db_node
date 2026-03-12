@@ -340,6 +340,88 @@ async fn high_field_overlap_with_similar_name_creates_superset() {
     }
 }
 
+/// Test that semantic field matching with real embeddings correctly identifies
+/// "creator" as a synonym for "artist" while keeping "medium" as a distinct field.
+/// Requires the FastEmbedModel (downloads on first run), so marked #[ignore].
+#[tokio::test]
+#[ignore]
+async fn semantic_field_rename_real_embeddings() {
+    use fold_db::db_operations::native_index::FastEmbedModel;
+
+    let temp_dir = tempdir().expect("failed to create temp directory");
+    let db_path = temp_dir
+        .path()
+        .join("test_schema_db")
+        .to_string_lossy()
+        .to_string();
+    std::mem::forget(temp_dir);
+
+    let state =
+        SchemaServiceState::new_with_embedder(db_path, Arc::new(FastEmbedModel::new()))
+            .expect("failed to init state");
+
+    // Schema A: artwork with "artist"
+    let schema_a = json_to_schema(json!({
+        "name": "SchemaA",
+        "descriptive_name": "Artwork Collection",
+        "fields": ["artist", "title", "year"]
+    }));
+
+    state
+        .add_schema(schema_a, HashMap::new())
+        .await
+        .expect("failed to add schema A");
+
+    // Schema B: same concept, uses "creator" instead of "artist", adds "medium"
+    let schema_b = json_to_schema(json!({
+        "name": "SchemaB",
+        "descriptive_name": "Artwork Collection",
+        "fields": ["creator", "title", "year", "medium"]
+    }));
+
+    let outcome = state
+        .add_schema(schema_b, HashMap::new())
+        .await
+        .expect("failed to add schema B");
+
+    match outcome {
+        SchemaAddOutcome::Expanded(_, schema, returned_mappers) => {
+            let fields = schema.fields.as_ref().expect("must have fields");
+
+            // "creator" should have been renamed to "artist" (semantic match)
+            assert!(
+                fields.contains(&"artist".to_string()),
+                "should have 'artist' (canonical name)"
+            );
+            assert!(
+                !fields.contains(&"creator".to_string()),
+                "'creator' should have been renamed to 'artist'"
+            );
+
+            // "medium" must be preserved as a new field (NOT renamed to anything)
+            assert!(
+                fields.contains(&"medium".to_string()),
+                "'medium' must be kept as a distinct new field, not falsely matched"
+            );
+
+            // All original fields present
+            assert!(fields.contains(&"title".to_string()));
+            assert!(fields.contains(&"year".to_string()));
+
+            // Should have 4 fields total: artist, title, year, medium
+            assert_eq!(fields.len(), 4, "superset should have exactly 4 fields");
+
+            // mutation_mappers should map creator→artist
+            assert_eq!(
+                returned_mappers.get("creator").map(|s| s.as_str()),
+                Some("artist"),
+                "mutation_mappers should map 'creator' to 'artist'"
+            );
+        }
+        other => panic!("expected Expanded, got {:?}", other),
+    }
+}
+
 #[tokio::test]
 async fn low_field_overlap_with_same_name_still_expands() {
     let state = create_test_state();
