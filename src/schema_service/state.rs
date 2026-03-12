@@ -47,6 +47,12 @@ pub struct SchemaServiceState {
     descriptive_name_embeddings: Arc<RwLock<HashMap<String, Vec<f32>>>>,
     /// Cached embeddings for context-enriched field names: "desc_name:field_name" -> embedding
     field_embeddings: Arc<RwLock<HashMap<String, Vec<f32>>>>,
+    /// Global canonical field registry: canonical_name -> description.
+    /// New schema proposals have their field names matched against this list
+    /// so that semantically equivalent fields use consistent names across all schemas.
+    canonical_fields: Arc<RwLock<HashMap<String, String>>>,
+    /// Cached embeddings for canonical field names
+    canonical_field_embeddings: Arc<RwLock<HashMap<String, Vec<f32>>>>,
     /// Text embedding model for semantic descriptive name matching
     embedder: Arc<dyn Embedder>,
     pub(super) storage: SchemaStorage,
@@ -66,11 +72,17 @@ impl SchemaServiceState {
             .open_tree("schemas")
             .map_err(|e| FoldDbError::Config(format!("Failed to open schemas tree: {}", e)))?;
 
+        let canonical_fields_tree = db
+            .open_tree("canonical_fields")
+            .map_err(|e| FoldDbError::Config(format!("Failed to open canonical_fields tree: {}", e)))?;
+
         let state = Self {
             schemas: Arc::new(RwLock::new(HashMap::new())),
             descriptive_name_index: Arc::new(RwLock::new(HashMap::new())),
             descriptive_name_embeddings: Arc::new(RwLock::new(HashMap::new())),
             field_embeddings: Arc::new(RwLock::new(HashMap::new())),
+            canonical_fields: Arc::new(RwLock::new(HashMap::new())),
+            canonical_field_embeddings: Arc::new(RwLock::new(HashMap::new())),
             embedder: Arc::new(FastEmbedModel::new()),
             storage: SchemaStorage::Sled { db, schemas_tree },
         };
@@ -78,6 +90,7 @@ impl SchemaServiceState {
         // Load schemas synchronously for sled
         state.load_schemas_sync()?;
         state.rebuild_descriptive_name_index();
+        state.load_canonical_fields_from_tree(&canonical_fields_tree)?;
 
         Ok(state)
     }
@@ -150,6 +163,8 @@ impl SchemaServiceState {
             descriptive_name_index: Arc::new(RwLock::new(HashMap::new())),
             descriptive_name_embeddings: Arc::new(RwLock::new(HashMap::new())),
             field_embeddings: Arc::new(RwLock::new(HashMap::new())),
+            canonical_fields: Arc::new(RwLock::new(HashMap::new())),
+            canonical_field_embeddings: Arc::new(RwLock::new(HashMap::new())),
             embedder: Arc::new(FastEmbedModel::new()),
             storage: SchemaStorage::Cloud {
                 store: Arc::new(store),
@@ -159,6 +174,7 @@ impl SchemaServiceState {
         // Load schemas on initialization
         state.load_schemas().await?;
         state.rebuild_descriptive_name_index();
+        state.rebuild_canonical_fields_from_schemas();
 
         log_feature!(
             LogFeature::Schema,
@@ -282,6 +298,220 @@ impl SchemaServiceState {
         }
     }
 
+    // --- Canonical field registry ---
+
+    /// Load canonical fields from a sled tree.
+    fn load_canonical_fields_from_tree(&self, tree: &sled::Tree) -> FoldDbResult<()> {
+        let mut fields = self.canonical_fields.write().map_err(|_| {
+            FoldDbError::Config("Failed to acquire canonical_fields write lock".to_string())
+        })?;
+        let mut embeddings = self.canonical_field_embeddings.write().map_err(|_| {
+            FoldDbError::Config("Failed to acquire canonical_field_embeddings write lock".to_string())
+        })?;
+        fields.clear();
+        embeddings.clear();
+
+        for result in tree.iter() {
+            let (key, value) = result.map_err(|e| {
+                FoldDbError::Config(format!("Failed to iterate canonical_fields: {}", e))
+            })?;
+            let name = String::from_utf8(key.to_vec()).map_err(|e| {
+                FoldDbError::Config(format!("Invalid canonical field key: {}", e))
+            })?;
+            let desc = String::from_utf8(value.to_vec()).map_err(|e| {
+                FoldDbError::Config(format!("Invalid canonical field description: {}", e))
+            })?;
+            if let Ok(vec) = self.embedder.embed_text(&name) {
+                embeddings.insert(name.clone(), vec);
+            }
+            fields.insert(name, desc);
+        }
+
+        log_feature!(
+            LogFeature::Schema,
+            info,
+            "Loaded {} canonical fields from sled",
+            fields.len()
+        );
+        Ok(())
+    }
+
+    /// Rebuild canonical fields from existing schemas (for cloud storage where
+    /// there's no separate canonical_fields tree).
+    #[cfg(feature = "aws-backend")]
+    fn rebuild_canonical_fields_from_schemas(&self) {
+        let schemas = match self.schemas.read() {
+            Ok(s) => s,
+            Err(_) => return,
+        };
+        let mut fields = match self.canonical_fields.write() {
+            Ok(f) => f,
+            Err(_) => return,
+        };
+        let mut embeddings = match self.canonical_field_embeddings.write() {
+            Ok(e) => e,
+            Err(_) => return,
+        };
+        fields.clear();
+        embeddings.clear();
+
+        for schema in schemas.values() {
+            let desc_name = schema.descriptive_name.as_deref().unwrap_or("unknown");
+            for field_name in schema.fields.as_deref().unwrap_or(&[]) {
+                if !fields.contains_key(field_name) {
+                    let desc = format!("{} (from {})", field_name, desc_name);
+                    if let Ok(vec) = self.embedder.embed_text(field_name) {
+                        embeddings.insert(field_name.clone(), vec);
+                    }
+                    fields.insert(field_name.clone(), desc);
+                }
+            }
+        }
+
+        log_feature!(
+            LogFeature::Schema,
+            info,
+            "Rebuilt {} canonical fields from schemas",
+            fields.len()
+        );
+    }
+
+    /// Persist a canonical field to sled storage.
+    fn persist_canonical_field(&self, name: &str, description: &str) {
+        match &self.storage {
+            SchemaStorage::Sled { db, .. } => {
+                if let Ok(tree) = db.open_tree("canonical_fields") {
+                    let _ = tree.insert(name.as_bytes(), description.as_bytes());
+                }
+            }
+            #[cfg(feature = "aws-backend")]
+            SchemaStorage::Cloud { .. } => {
+                // Cloud storage doesn't have a separate canonical_fields table;
+                // canonical fields are rebuilt from schemas on startup.
+            }
+        }
+    }
+
+    /// Register new fields from a schema as canonical.
+    /// Only adds fields that don't already exist in the registry.
+    fn register_canonical_fields(&self, schema: &Schema) {
+        let desc_name = schema.descriptive_name.as_deref().unwrap_or("unknown");
+        let field_names = schema.fields.as_deref().unwrap_or(&[]);
+
+        let mut fields = match self.canonical_fields.write() {
+            Ok(f) => f,
+            Err(_) => return,
+        };
+        let mut embeddings = match self.canonical_field_embeddings.write() {
+            Ok(e) => e,
+            Err(_) => return,
+        };
+
+        for field_name in field_names {
+            if fields.contains_key(field_name) {
+                continue;
+            }
+            let desc = format!("{} (from {})", field_name, desc_name);
+            if let Ok(vec) = self.embedder.embed_text(field_name) {
+                embeddings.insert(field_name.clone(), vec);
+            }
+            fields.insert(field_name.clone(), desc.clone());
+            // Persist outside lock scope would be cleaner but we hold a write lock
+            // on fields — persist uses a separate sled tree so no deadlock risk.
+            self.persist_canonical_field(field_name, &desc);
+        }
+    }
+
+    /// Canonicalize incoming field names against the global canonical field registry.
+    /// Returns a rename map: incoming_field -> canonical_field.
+    /// Uses the same bidirectional best-match + threshold approach as semantic_field_rename_map.
+    fn canonicalize_fields(
+        &self,
+        incoming_fields: &[String],
+        mutation_mappers: &mut HashMap<String, String>,
+    ) -> HashMap<String, String> {
+        let canonical = match self.canonical_fields.read() {
+            Ok(c) => c,
+            Err(_) => return HashMap::new(),
+        };
+        let embeddings = match self.canonical_field_embeddings.read() {
+            Ok(e) => e,
+            Err(_) => return HashMap::new(),
+        };
+
+        if canonical.is_empty() {
+            return HashMap::new();
+        }
+
+        let mut rename_map: HashMap<String, String> = HashMap::new();
+        let mut claimed: HashSet<String> = HashSet::new();
+
+        for incoming_field in incoming_fields {
+            // Don't rename if it already IS a canonical field
+            if canonical.contains_key(incoming_field) {
+                continue;
+            }
+
+            let incoming_embedding = match self.embedder.embed_text(incoming_field) {
+                Ok(vec) => vec,
+                Err(_) => continue,
+            };
+
+            // Find best canonical match
+            let mut best: Option<(&str, f32)> = None;
+            for (canon_name, canon_vec) in embeddings.iter() {
+                let sim = cosine_similarity(&incoming_embedding, canon_vec);
+                if sim >= FIELD_SIMILARITY_THRESHOLD
+                    && best.is_none_or(|(_, best_sim)| sim > best_sim)
+                {
+                    best = Some((canon_name.as_str(), sim));
+                }
+            }
+
+            let Some((matched_canonical, _)) = best else {
+                continue;
+            };
+
+            // Bidirectional check: is this incoming field the best match
+            // for the canonical field too?
+            let canon_vec = match embeddings.get(matched_canonical) {
+                Some(v) => v,
+                None => continue,
+            };
+            let mut reverse_best: Option<(&str, f32)> = None;
+            for candidate in incoming_fields {
+                if let Ok(cand_vec) = self.embedder.embed_text(candidate) {
+                    let sim = cosine_similarity(canon_vec, &cand_vec);
+                    if reverse_best.is_none_or(|(_, best_sim)| sim > best_sim) {
+                        reverse_best = Some((candidate.as_str(), sim));
+                    }
+                }
+            }
+
+            let is_mutual = reverse_best.is_some_and(|(best_incoming, _)| best_incoming == incoming_field);
+            if is_mutual && !claimed.contains(matched_canonical) {
+                log_feature!(
+                    LogFeature::Schema,
+                    info,
+                    "Canonical field rename: '{}' -> '{}'",
+                    incoming_field,
+                    matched_canonical
+                );
+                rename_map.insert(incoming_field.clone(), matched_canonical.to_string());
+                claimed.insert(matched_canonical.to_string());
+
+                // Update mutation_mappers: incoming data key -> canonical field name
+                if let Some(data_key) = mutation_mappers.remove(incoming_field) {
+                    mutation_mappers.insert(data_key, matched_canonical.to_string());
+                } else {
+                    mutation_mappers.insert(incoming_field.clone(), matched_canonical.to_string());
+                }
+            }
+        }
+
+        rename_map
+    }
+
     /// Create a schema service state with a custom embedder (for testing).
     #[cfg(any(test, feature = "test-utils"))]
     pub fn new_with_embedder(db_path: String, embedder: Arc<dyn Embedder>) -> FoldDbResult<Self> {
@@ -295,18 +525,24 @@ impl SchemaServiceState {
         let schemas_tree = db
             .open_tree("schemas")
             .map_err(|e| FoldDbError::Config(format!("Failed to open schemas tree: {}", e)))?;
+        let canonical_fields_tree = db
+            .open_tree("canonical_fields")
+            .map_err(|e| FoldDbError::Config(format!("Failed to open canonical_fields tree: {}", e)))?;
 
         let state = Self {
             schemas: Arc::new(RwLock::new(HashMap::new())),
             descriptive_name_index: Arc::new(RwLock::new(HashMap::new())),
             descriptive_name_embeddings: Arc::new(RwLock::new(HashMap::new())),
             field_embeddings: Arc::new(RwLock::new(HashMap::new())),
+            canonical_fields: Arc::new(RwLock::new(HashMap::new())),
+            canonical_field_embeddings: Arc::new(RwLock::new(HashMap::new())),
             embedder,
             storage: SchemaStorage::Sled { db, schemas_tree },
         };
 
         state.load_schemas_sync()?;
         state.rebuild_descriptive_name_index();
+        state.load_canonical_fields_from_tree(&canonical_fields_tree)?;
 
         Ok(state)
     }
@@ -667,6 +903,9 @@ impl SchemaServiceState {
             index.insert(desc_name.to_string(), new_hash);
         }
 
+        // Register new fields as canonical for future schema proposals
+        self.register_canonical_fields(schema);
+
         log_feature!(
             LogFeature::Schema,
             info,
@@ -688,6 +927,15 @@ impl SchemaServiceState {
         mut schema: Schema,
         mut mutation_mappers: HashMap<String, String>,
     ) -> FoldDbResult<SchemaAddOutcome> {
+        // Canonicalize field names against the global canonical field registry
+        // before any dedup or identity hash computation.
+        if let Some(ref fields) = schema.fields {
+            let rename_map = self.canonicalize_fields(fields, &mut mutation_mappers);
+            if !rename_map.is_empty() {
+                Self::apply_field_renames(&mut schema, &rename_map, &mut mutation_mappers);
+            }
+        }
+
         // Deduplicate fields before computing identity hash
         schema.dedup_fields();
 
@@ -955,6 +1203,9 @@ impl SchemaServiceState {
                 }
             }
         }
+
+        // Register new fields as canonical for future schema proposals
+        self.register_canonical_fields(&schema);
 
         log_feature!(
             LogFeature::Schema,
