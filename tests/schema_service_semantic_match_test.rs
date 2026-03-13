@@ -98,7 +98,7 @@ async fn exact_descriptive_name_subset_returns_already_exists() {
         .expect("failed to add second schema");
 
     assert!(
-        matches!(outcome, SchemaAddOutcome::AlreadyExists(_)),
+        matches!(outcome, SchemaAddOutcome::AlreadyExists(..)),
         "subset of same descriptive_name should return AlreadyExists, got {:?}",
         outcome
     );
@@ -291,7 +291,7 @@ async fn semantic_match_with_subset_fields_returns_already_exists() {
         .expect("failed to add second schema");
 
     assert!(
-        matches!(outcome, SchemaAddOutcome::AlreadyExists(_)),
+        matches!(outcome, SchemaAddOutcome::AlreadyExists(..)),
         "semantic match with subset fields should return AlreadyExists, got {:?}",
         outcome
     );

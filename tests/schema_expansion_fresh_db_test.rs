@@ -88,7 +88,7 @@ async fn handle_add_schema(
                 replaced_schema: None,
             })
         }
-        Ok(SchemaAddOutcome::AlreadyExists(schema)) => {
+        Ok(SchemaAddOutcome::AlreadyExists(schema, _)) => {
             HttpResponse::Ok().json(AddSchemaResponse {
                 schema,
                 mutation_mappers: HashMap::new(),
@@ -183,6 +183,9 @@ fn build_schema(
     );
     schema.descriptive_name = Some(descriptive_name.to_string());
     schema.field_classifications = field_classifications;
+    for f in schema.fields.clone().unwrap_or_default() {
+        schema.field_descriptions.insert(f.clone(), format!("{} field", f));
+    }
     schema.compute_identity_hash();
     schema.name = schema.get_identity_hash().unwrap().clone();
     schema

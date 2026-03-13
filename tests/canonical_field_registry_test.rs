@@ -4,7 +4,18 @@ use std::collections::HashMap;
 use tempfile::tempdir;
 
 fn json_to_schema(value: serde_json::Value) -> fold_db::schema::types::Schema {
-    serde_json::from_value(value).expect("failed to deserialize schema from JSON")
+    let mut schema: fold_db::schema::types::Schema =
+        serde_json::from_value(value).expect("failed to deserialize schema from JSON");
+    if schema.descriptive_name.is_none() {
+        schema.descriptive_name = Some(schema.name.clone());
+    }
+    if let Some(ref fields) = schema.fields {
+        for f in fields {
+            schema.field_descriptions.entry(f.clone())
+                .or_insert_with(|| format!("{} field", f));
+        }
+    }
+    schema
 }
 
 /// After adding a schema, its fields become canonical. A second schema using
@@ -77,7 +88,7 @@ async fn canonical_registry_renames_semantically_equivalent_fields() {
                 "'medium' should remain unchanged as it has no canonical match"
             );
         }
-        SchemaAddOutcome::AlreadyExists(_) => {
+        SchemaAddOutcome::AlreadyExists(..) => {
             // If the fields got canonicalized to identical set, AlreadyExists is also valid
         }
         SchemaAddOutcome::TooSimilar(_) => {

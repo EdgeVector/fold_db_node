@@ -89,7 +89,7 @@ async fn handle_add_schema(
                 replaced_schema: None,
             })
         }
-        Ok(SchemaAddOutcome::AlreadyExists(schema)) => {
+        Ok(SchemaAddOutcome::AlreadyExists(schema, _)) => {
             HttpResponse::Ok().json(AddSchemaResponse {
                 schema,
                 mutation_mappers: HashMap::new(),
