@@ -265,42 +265,41 @@ pub fn extract_json_from_response(response_text: &str) -> IngestionResult<String
     )))
 }
 
-/// Validate that a schema has field_descriptions for all its fields.
-/// Returns an error if any field is missing a description, which triggers
-/// a retry in the AI response loop.
-pub fn validate_schema_has_descriptions(schema_val: &Value) -> IngestionResult<()> {
-    let schema_obj = schema_val.as_object().ok_or_else(|| {
-        IngestionError::ai_response_validation_error("Schema must be a JSON object")
-    })?;
+/// Log a warning for each schema field missing a field_description entry.
+/// Missing descriptions are recoverable (filled by a second AI pass), so this
+/// warns instead of erroring to avoid blocking the retry loop.
+fn warn_missing_field_descriptions(schema_val: &Value) {
+    let schema_obj = match schema_val.as_object() {
+        Some(o) => o,
+        None => return,
+    };
 
     let fields = match schema_obj.get("fields").and_then(|v| v.as_array()) {
         Some(f) => f,
-        None => return Ok(()),
+        None => return,
     };
 
     let descriptions = schema_obj
         .get("field_descriptions")
         .and_then(|v| v.as_object());
 
-    let missing: Vec<&str> = fields
-        .iter()
-        .filter_map(|f| f.as_str())
-        .filter(|name| {
-            descriptions
-                .map(|d| !d.contains_key(*name))
-                .unwrap_or(true)
-        })
-        .collect();
+    let schema_name = schema_obj
+        .get("schema_name")
+        .and_then(|v| v.as_str())
+        .unwrap_or("<unnamed>");
 
-    if !missing.is_empty() {
-        return Err(IngestionError::ai_response_validation_error(format!(
-            "Schema fields missing field_descriptions (required for semantic matching): {:?}. \
-             EVERY field MUST have a field_descriptions entry.",
-            missing
-        )));
+    for field in fields.iter().filter_map(|f| f.as_str()) {
+        let has_desc = descriptions
+            .map(|d| d.contains_key(field))
+            .unwrap_or(false);
+        if !has_desc {
+            log_feature!(
+                LogFeature::Ingestion, warn,
+                "Schema '{}' field '{}' is missing a field_description entry; will attempt recovery via second AI pass",
+                schema_name, field
+            );
+        }
     }
-
-    Ok(())
 }
 
 /// Validate that a schema has a non-empty descriptive_name.
@@ -377,13 +376,13 @@ pub fn validate_and_convert_response(parsed: Value) -> IngestionResult<AISchemaR
                 for schema in schemas {
                     validate_schema_has_descriptive_name(schema)?;
                     validate_schema_has_classifications(schema)?;
-                    validate_schema_has_descriptions(schema)?;
+                    warn_missing_field_descriptions(schema);
                 }
             }
             Value::Object(_) => {
                 validate_schema_has_descriptive_name(schema_val)?;
                 validate_schema_has_classifications(schema_val)?;
-                validate_schema_has_descriptions(schema_val)?;
+                warn_missing_field_descriptions(schema_val);
             }
             _ => {
                 return Err(IngestionError::ai_response_validation_error(
