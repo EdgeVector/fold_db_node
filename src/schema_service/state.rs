@@ -1,4 +1,5 @@
 use std::collections::{HashMap, HashSet};
+use std::hash::{Hash, Hasher};
 use std::sync::{Arc, RwLock};
 
 use fold_db::db_operations::native_index::{cosine_similarity, Embedder, FastEmbedModel};
@@ -727,10 +728,17 @@ impl SchemaServiceState {
             Some(desc) => format!("the {} of the {}: {}", field_name, descriptive_name, desc),
             None => format!("the {} of the {}", field_name, descriptive_name),
         };
-        // Cache key includes a prefix of the context_text to differentiate entries
-        // with vs without descriptions for the same field.
-        let truncated_len = context_text.floor_char_boundary(60);
-        let cache_key = format!("{}:{}:{}", descriptive_name, field_name, &context_text[..truncated_len]);
+        // Cache key includes a hash of the description to correctly distinguish
+        // entries with different descriptions for the same field name.
+        let desc_hash = match field_description {
+            Some(desc) => {
+                let mut hasher = std::collections::hash_map::DefaultHasher::new();
+                desc.hash(&mut hasher);
+                hasher.finish()
+            }
+            None => 0,
+        };
+        let cache_key = format!("{}:{}:{}", descriptive_name, field_name, desc_hash);
 
         // Check cache first
         if let Ok(cache) = self.field_embeddings.read() {
