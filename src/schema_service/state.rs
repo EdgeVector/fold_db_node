@@ -1041,16 +1041,17 @@ impl SchemaServiceState {
             let rename_map = self.canonicalize_fields(fields, &schema, &mut mutation_mappers);
             if !rename_map.is_empty() {
                 Self::apply_field_renames(&mut schema, &rename_map, &mut mutation_mappers);
+                // Canonicalization changed field names, so any precomputed identity
+                // hash is stale — force recomputation below.
+                schema.identity_hash = None;
             }
         }
 
         // Deduplicate fields before computing identity hash
         schema.dedup_fields();
 
-        // Ensure identity_hash is computed
-        if schema.identity_hash.is_none() {
-            schema.compute_identity_hash();
-        }
+        // Compute (or recompute after canonicalization) the identity hash.
+        schema.compute_identity_hash();
 
         // Get the original schema name before we modify it
         let original_schema_name = schema.name.clone();
@@ -1159,16 +1160,20 @@ impl SchemaServiceState {
         if let Some(incoming_desc_name) = schema.descriptive_name.clone() {
             let (matched_desc, existing_schema_name, is_exact_match) = self.find_matching_descriptive_name(&incoming_desc_name)?;
 
-            // For semantic (non-exact) matches, also compare schema names.
+            // For semantic (non-exact) matches, use descriptive names as a second gate.
             // "holiday_illustrations" and "famous_paintings" have similar descriptive names
             // (both art-related) but are clearly different collections. Only merge when
-            // both the descriptive names AND the schema names are semantically close.
-            let should_merge = if let Some(ref old_name) = existing_schema_name {
+            // the descriptive names are semantically close enough.
+            // NOTE: schema names are now identity hashes, so we must compare the
+            // human-readable descriptive_name strings, not the hash-based schema names.
+            let should_merge = if let Some(ref _old_name) = existing_schema_name {
                 if is_exact_match {
                     true
+                } else if let Some(ref canonical_desc) = matched_desc {
+                    // Compare the human-readable descriptive names
+                    self.schema_names_are_similar(&incoming_desc_name, canonical_desc)
                 } else {
-                    // Compare schema names as a second gate
-                    self.schema_names_are_similar(&schema_name, old_name)
+                    false
                 }
             } else {
                 false
