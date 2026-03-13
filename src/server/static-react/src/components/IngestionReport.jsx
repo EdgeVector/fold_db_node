@@ -48,14 +48,17 @@ export default function IngestionReport({ ingestionResult, onDismiss }) {
     return map
   }, [allSchemas])
 
-  // Sort schemas alphabetically by human-readable name, matching DataBrowserTab
+  // Filter out removed schemas and sort alphabetically by human-readable name
   const schemasWritten = useMemo(() => {
-    return [...schemasWrittenRaw].sort((a, b) => {
+    const visible = schemasLoaded
+      ? schemasWrittenRaw.filter((sw) => !!schemaLookup[sw.schema_name])
+      : schemasWrittenRaw
+    return [...visible].sort((a, b) => {
       const nameA = getSchemaDisplayName(schemaLookup[a.schema_name]) || a.schema_name || ''
       const nameB = getSchemaDisplayName(schemaLookup[b.schema_name]) || b.schema_name || ''
       return nameA.localeCompare(nameB)
     })
-  }, [schemasWrittenRaw, schemaLookup])
+  }, [schemasWrittenRaw, schemaLookup, schemasLoaded])
 
   // Schema-level expand state
   const [expandedSchemas, setExpandedSchemas] = useState(() => new Set())
@@ -194,11 +197,6 @@ export default function IngestionReport({ ingestionResult, onDismiss }) {
                   <span className="text-xs text-tertiary">({fieldCount(name)} fields)</span>
                 )}
                 {schema && <StateBadge state={schema.state || 'available'} />}
-                {!schema && schemasLoaded && (
-                  <span className="inline-flex items-center px-1.5 py-0.5 text-[10px] font-semibold rounded bg-gruvbox-red/20 text-gruvbox-red">
-                    removed
-                  </span>
-                )}
               </button>
 
               {/* Keys list */}

@@ -252,7 +252,12 @@ export function RecordMetadata({ metadata }) {
       </button>
       {expanded && (
         <div className="pl-4 pt-1 space-y-1 text-xs text-secondary font-mono">
-          {sourceFile && <div>File: {sourceFile}</div>}
+          {sourceFile && fileUrl && !isImage && (
+            <div>File: <a href={fileUrl} target="_blank" rel="noopener noreferrer" className="text-gruvbox-blue hover:underline">{sourceFile}</a></div>
+          )}
+          {sourceFile && (!fileUrl || isImage) && (
+            <div>File: {sourceFile}</div>
+          )}
           {fileHash && <div>Hash: {fileHash.length > 16 ? fileHash.slice(0, 16) + '...' : fileHash}</div>}
           {isImage && blobUrl && (
             <div className="mt-2">
