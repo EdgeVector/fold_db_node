@@ -1,57 +1,118 @@
-//! File conversion and JSON processing for file uploads
+//! JSON conversion and processing for file uploads
 
-use file_to_markdown::{Config, Converter, FileMarkdown, OllamaConfig};
+use file_to_json::{AnthropicConfig, Converter, FallbackStrategy, OpenRouterConfig as OpenAiCompatConfig};
 use serde_json::{json, Value};
 use std::io::Write;
-use std::path::{Path, PathBuf};
+use std::path::PathBuf;
+use std::time::Duration;
 use tempfile::NamedTempFile;
 
+use crate::ingestion::config::AIProvider;
 use crate::ingestion::IngestionError;
 use fold_db::log_feature;
 use fold_db::logging::features::LogFeature;
 
-/// Build the file_to_markdown Config from the ingestion config's Ollama base_url.
-fn build_ftm_config() -> Result<Config, IngestionError> {
-    let ingestion_config = crate::ingestion::IngestionConfig::load()?;
-    let ollama = OllamaConfig {
-        base_url: ingestion_config.ollama.base_url.clone(),
-        ..OllamaConfig::default()
-    };
-    let whisper = std::env::var("WHISPER_MODEL_PATH").ok().map(PathBuf::from);
-    Config::from_home_dir(ollama, whisper)
-        .map_err(|e| IngestionError::FileConversionFailed(e.to_string()))
-}
-
-/// Convert a file to markdown using file_to_markdown (fully local, no external API calls)
-pub async fn convert_file_to_markdown(file_path: &Path) -> Result<FileMarkdown, IngestionError> {
+/// Convert a file to JSON using file_to_json library (public API for ingestion)
+pub async fn convert_file_to_json(file_path: &PathBuf) -> Result<Value, IngestionError> {
     log_feature!(
         LogFeature::Ingestion,
         info,
-        "Converting file to markdown: {:?}",
+        "Converting file to JSON: {:?}",
         file_path
     );
 
-    let config = build_ftm_config()?;
-    let converter = Converter::new(config);
-    converter.convert_path(file_path).await.map_err(|e| {
-        log_feature!(
-            LogFeature::Ingestion,
-            error,
-            "Failed to convert file to markdown: {}",
-            e
-        );
-        IngestionError::FileConversionFailed(e.to_string())
-    })
+    // Load fold_db ingestion config
+    let ingestion_config = crate::ingestion::IngestionConfig::from_env()?;
+
+    // Build file_to_json config based on the selected provider
+    let file_path_str = file_path.to_string_lossy().to_string();
+
+    match ingestion_config.provider {
+        AIProvider::Ollama => {
+            let base_url = format!(
+                "{}/v1/chat/completions",
+                ingestion_config.ollama.base_url.trim_end_matches('/')
+            );
+            let ollama_config = OpenAiCompatConfig {
+                api_key: String::new(),
+                model: ingestion_config.ollama.model.clone(),
+                timeout: Duration::from_secs(ingestion_config.timeout_seconds),
+                fallback_strategy: FallbackStrategy::Chunked,
+                vision_model: Some(ingestion_config.ollama.model.clone()),
+                max_image_bytes: 5 * 1024 * 1024,
+                base_url: Some(base_url),
+            };
+
+            tokio::task::spawn_blocking(move || {
+                let converter = Converter::new(ollama_config)
+                    .map_err(|e| IngestionError::FileConversionFailed(format!("Converter init: {}", e)))?;
+                converter.convert_path(&file_path_str).map_err(|e| {
+                    log_feature!(
+                        LogFeature::Ingestion,
+                        error,
+                        "Failed to convert file to JSON: {}",
+                        e
+                    );
+                    IngestionError::FileConversionFailed(e.to_string())
+                })
+            })
+            .await
+            .map_err(|e| {
+                log_feature!(
+                    LogFeature::Ingestion,
+                    error,
+                    "Failed to spawn blocking task: {}",
+                    e
+                );
+                IngestionError::FileConversionFailed(format!("Task join: {}", e))
+            })?
+        }
+        AIProvider::Anthropic => {
+            let anthropic_config = AnthropicConfig {
+                api_key: ingestion_config.anthropic.api_key.clone(),
+                model: ingestion_config.anthropic.model.clone(),
+                timeout: Duration::from_secs(ingestion_config.timeout_seconds),
+                fallback_strategy: FallbackStrategy::Chunked,
+                vision_model: Some(ingestion_config.anthropic.model.clone()),
+                max_image_bytes: 5 * 1024 * 1024,
+                base_url: Some(ingestion_config.anthropic.base_url.clone()),
+            };
+
+            tokio::task::spawn_blocking(move || {
+                let converter = Converter::new(anthropic_config)
+                    .map_err(|e| IngestionError::FileConversionFailed(format!("Converter init: {}", e)))?;
+                converter.convert_path(&file_path_str).map_err(|e| {
+                    log_feature!(
+                        LogFeature::Ingestion,
+                        error,
+                        "Failed to convert file to JSON: {}",
+                        e
+                    );
+                    IngestionError::FileConversionFailed(e.to_string())
+                })
+            })
+            .await
+            .map_err(|e| {
+                log_feature!(
+                    LogFeature::Ingestion,
+                    error,
+                    "Failed to spawn blocking task: {}",
+                    e
+                );
+                IngestionError::FileConversionFailed(format!("Task join: {}", e))
+            })?
+        }
+    }
 }
 
-/// Convert a file to markdown (actix-web wrapper returning HttpResponse on error)
-pub async fn convert_file_to_markdown_http(
-    file_path: &Path,
-) -> Result<FileMarkdown, actix_web::HttpResponse> {
+/// Convert a file to JSON using file_to_json library (actix-web wrapper)
+pub async fn convert_file_to_json_http(
+    file_path: &PathBuf,
+) -> Result<Value, actix_web::HttpResponse> {
     use actix_web::HttpResponse;
 
-    match convert_file_to_markdown(file_path).await {
-        Ok(fm) => Ok(fm),
+    match convert_file_to_json(file_path).await {
+        Ok(value) => Ok(value),
         Err(e) => {
             log_feature!(
                 LogFeature::Ingestion,
@@ -61,15 +122,10 @@ pub async fn convert_file_to_markdown_http(
             );
             Err(HttpResponse::InternalServerError().json(json!({
                 "success": false,
-                "error": format!("Failed to convert file: {}", e)
+                "error": format!("Failed to convert file to JSON: {}", e)
             })))
         }
     }
-}
-
-/// Convert a FileMarkdown to a serde_json::Value for the AI recommendation pipeline.
-pub fn file_markdown_to_value(fm: &FileMarkdown) -> Value {
-    serde_json::to_value(fm).unwrap_or(Value::Null)
 }
 
 /// Flatten JSON structures with unnecessary root layers
@@ -503,7 +559,7 @@ mod tests {
 
     #[test]
     fn test_flatten_direct_array_with_single_field_wrappers() {
-        // Test case for arrays with single-field wrappers
+        // Test case for arrays returned directly by file_to_json
         let input = json!([
             {"tweet": {"id": 1, "text": "Hello", "user": "alice"}},
             {"tweet": {"id": 2, "text": "World", "user": "bob"}}
@@ -581,22 +637,4 @@ mod tests {
         assert!(json.is_array());
     }
 
-    #[test]
-    fn test_file_markdown_to_value_roundtrip() {
-        let fm = FileMarkdown::new(
-            "test.txt".into(),
-            "txt".into(),
-            42,
-            Some("text/plain".into()),
-            "text".into(),
-            "# Hello\n".into(),
-        );
-        let value = file_markdown_to_value(&fm);
-        assert!(value.is_object());
-        assert_eq!(value["source"], "test.txt");
-        assert_eq!(value["file_type"], "txt");
-        assert_eq!(value["size_bytes"], 42);
-        assert_eq!(value["extraction_method"], "text");
-        assert_eq!(value["markdown"], "# Hello\n");
-    }
 }

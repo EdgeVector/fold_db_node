@@ -21,20 +21,34 @@ pub use super::smart_folder_scanner::*;
 
 /// Estimate the ingestion cost for a single file based on its size and type.
 ///
-/// File conversion is now handled locally by file_to_markdown ($0 API cost).
-/// The remaining cost is the AI schema recommendation call.
+/// The model accounts for multiple AI calls per file (classification, conversion,
+/// schema recommendation, child schema resolution) plus a base schema-service call.
 pub fn estimate_file_cost(path: &Path, root: &Path) -> f64 {
     let full_path = root.join(path);
     let file_size = std::fs::metadata(&full_path)
         .map(|m| m.len())
         .unwrap_or(0);
 
-    // Base cost for schema recommendation call (the only AI API call remaining)
+    let ext = path
+        .extension()
+        .and_then(|e| e.to_str())
+        .unwrap_or("")
+        .to_lowercase();
+
+    // Base cost for schema recommendation call
     let base_cost = 0.003;
 
-    // file_to_markdown conversion is local ($0), only the schema recommendation
-    // prompt size varies with content size
-    let content_cost = text_cost_by_size(file_size);
+    let content_cost = match ext.as_str() {
+        // PDF: text extraction + conversion
+        "pdf" => {
+            let text_cost = text_cost_by_size(file_size);
+            0.04 + text_cost
+        }
+        // Images: vision model call
+        "jpg" | "jpeg" | "png" | "gif" | "webp" | "heic" | "heif" | "bmp" | "tiff" => 0.02,
+        // Text-like files: cost scales with size
+        _ => text_cost_by_size(file_size),
+    };
 
     base_cost + content_cost
 }

@@ -99,45 +99,37 @@ impl IngestionService {
             ]));
         }
 
-        // FileMarkdown path: hardcoded schema, skip AI recommendation entirely
+        // Step 1: Validate input
+        progress_service.update_progress(&progress_id, IngestionStep::ValidatingConfig,
+            "Validating input data...".to_string()).await;
+        self.validate_input(&request.data)?;
+
+        // Step 2: Flatten data structure for AI analysis
+        progress_service.update_progress(&progress_id, IngestionStep::FlatteningData,
+            "Processing and flattening data structure...".to_string()).await;
+        let mut flattened_data = crate::ingestion::json_processor::flatten_root_layers(request.data.clone());
+
+        // Enrich text-file JSON with source path context so the AI can propose
+        // semantic schema names (e.g., "recipes" instead of "document_content").
+        enrich_with_source_context(&mut flattened_data, request.source_file_name.as_deref());
+
+        // Step 2.5: Decompose nested structures and decide code path
+        let has_nested_children = self.check_has_nested_children(&flattened_data);
+
         let (schema_name, new_schema_created, mutations_generated, mutations_executed, schemas_written) =
-            if request.file_markdown.is_some() {
-                self.process_file_markdown_path(
+            if has_nested_children {
+                progress_service.update_progress(&progress_id, IngestionStep::GettingAIRecommendation,
+                    "Decomposing nested data structures...".to_string()).await;
+                self.process_decomposed_path(&flattened_data, &request, node, &progress_id).await?
+            } else {
+                self.process_flat_path(
+                    &flattened_data,
                     &request,
                     node,
                     progress_service,
                     &progress_id,
                 )
                 .await?
-            } else {
-                // Standard JSON path: validate, flatten, check for nested children
-                // Step 1: Validate input
-                progress_service.update_progress(&progress_id, IngestionStep::ValidatingConfig,
-                    "Validating input data...".to_string()).await;
-                self.validate_input(&request.data)?;
-
-                // Step 2: Flatten data structure for AI analysis
-                progress_service.update_progress(&progress_id, IngestionStep::FlatteningData,
-                    "Processing and flattening data structure...".to_string()).await;
-                let flattened_data = crate::ingestion::json_processor::flatten_root_layers(request.data.clone());
-
-                // Step 2.5: Decompose nested structures and decide code path
-                let has_nested_children = self.check_has_nested_children(&flattened_data);
-
-                if has_nested_children {
-                    progress_service.update_progress(&progress_id, IngestionStep::GettingAIRecommendation,
-                        "Decomposing nested data structures...".to_string()).await;
-                    self.process_decomposed_path(&flattened_data, &request, node, &progress_id).await?
-                } else {
-                    self.process_flat_path(
-                        &flattened_data,
-                        &request,
-                        node,
-                        progress_service,
-                        &progress_id,
-                    )
-                    .await?
-                }
             };
 
         // Shared finalization: record file dedup + complete progress
@@ -271,13 +263,18 @@ impl IngestionService {
         let pub_key = request.pub_key.clone();
 
         // Step 3: Get AI recommendation (with image override)
-        // Note: file_markdown is always None here (FileMarkdown path is handled separately)
-        let is_image = request.source_file_name.as_ref()
+        let is_image = request
+            .source_file_name
+            .as_ref()
             .map(|name| crate::ingestion::is_image_file(name))
             .unwrap_or(false);
         progress_service.update_progress(progress_id, IngestionStep::GettingAIRecommendation,
             "Analyzing data with AI to determine schema...".to_string()).await;
         let mut ai_response = self.get_ai_recommendation(flattened_data).await?;
+
+        // If the AI didn't provide field_descriptions, do a second AI call
+        // focused just on generating descriptions from the JSON structure.
+        self.fill_missing_field_descriptions(&mut ai_response, flattened_data).await?;
 
         // CRITICAL: Images MUST use HashRange(source_file_name, created_at).
         // Using source_file_name as hash ensures each image file gets a unique key.
@@ -387,183 +384,6 @@ impl IngestionService {
 
         let mutations_len = mutations.len();
 
-        let mutations_executed = if request.auto_execute {
-            self.execute_mutations_with_node_and_progress(
-                mutations,
-                node,
-                progress_service,
-                progress_id,
-            )
-            .await?
-        } else {
-            0
-        };
-
-        Ok((schema_name, new_schema_created, mutations_len, mutations_executed, schemas_written))
-    }
-
-    /// Hardcoded schema fields for FileMarkdown documents.
-    /// Every field from the FileMarkdown struct is preserved — no AI guessing.
-    const FILE_MARKDOWN_FIELDS: &'static [&'static str] = &[
-        "source",
-        "file_type",
-        "size_bytes",
-        "mime_type",
-        "extraction_method",
-        "markdown",
-        "title",
-        "author",
-        "created",
-        "page_count",
-        "rows",
-        "columns",
-        "duration_seconds",
-        "sample_rate_hz",
-        "channels",
-        "image_format",
-        "language",
-        "line_count",
-        "sheet_count",
-        "slide_count",
-        "entry_count",
-        "archive_format",
-        "word_count",
-    ];
-
-    /// Handles the FileMarkdown ingestion path with a hardcoded schema.
-    ///
-    /// Bypasses the AI schema recommendation entirely — the schema is always the
-    /// same for every file processed by file_to_markdown, preserving all fields
-    /// (especially the `markdown` content field that the AI was dropping).
-    async fn process_file_markdown_path(
-        &self,
-        request: &IngestionRequest,
-        node: &FoldNode,
-        progress_service: &ProgressService,
-        progress_id: &str,
-    ) -> IngestionResult<(String, bool, usize, usize, Vec<SchemaWriteRecord>)> {
-        let fm = request.file_markdown.as_ref()
-            .expect("process_file_markdown_path called without file_markdown");
-        let pub_key = request.pub_key.clone();
-
-        progress_service.update_progress(progress_id, IngestionStep::FlatteningData,
-            "Processing file markdown data...".to_string()).await;
-
-        // Use the pre-converted Value from the request (already set by the entry point)
-        let data = &request.data;
-
-        // Build field classifications — markdown is "word" (text content),
-        // numeric fields are "number", everything else is "word"
-        let mut field_classifications: HashMap<String, Vec<String>> = HashMap::new();
-        let number_fields = [
-            "size_bytes", "page_count", "rows", "columns",
-            "duration_seconds", "sample_rate_hz", "channels",
-            "line_count", "sheet_count", "slide_count", "entry_count", "word_count",
-        ];
-        for &field in Self::FILE_MARKDOWN_FIELDS {
-            let classification = if number_fields.contains(&field) {
-                vec!["number".to_string()]
-            } else {
-                vec!["word".to_string()]
-            };
-            field_classifications.insert(field.to_string(), classification);
-        }
-
-        // Only include fields that have non-null values in the data to avoid
-        // bloating the schema with irrelevant metadata (e.g., audio fields for a PDF).
-        let present_fields: Vec<&str> = Self::FILE_MARKDOWN_FIELDS
-            .iter()
-            .copied()
-            .filter(|&f| {
-                data.get(f).is_some_and(|v| !v.is_null())
-            })
-            .collect();
-
-        // Rebuild field_classifications with only present fields
-        let field_classifications: HashMap<String, Vec<String>> = field_classifications
-            .into_iter()
-            .filter(|(k, _)| present_fields.contains(&k.as_str()))
-            .collect();
-
-        // Build the schema definition — use source as hash key
-        let is_image = fm.image_format.is_some();
-        let schema_def = if is_image {
-            let mut def = serde_json::json!({
-                "name": "FileMarkdownDocument",
-                "descriptive_name": "File Content Records",
-                "schema_type": "HashRange",
-                "key": {
-                    "hash_field": "image_format",
-                    "range_field": "source"
-                },
-                "fields": present_fields,
-                "field_classifications": field_classifications,
-            });
-            if let Some(ref desc) = request.image_descriptive_name {
-                def["descriptive_name"] = serde_json::json!(desc);
-            }
-            def
-        } else {
-            serde_json::json!({
-                "name": "FileMarkdownDocument",
-                "descriptive_name": "File Content Records",
-                "schema_type": "Single",
-                "key": {
-                    "hash_field": "source"
-                },
-                "fields": present_fields,
-                "field_classifications": field_classifications,
-            })
-        };
-
-        // Build an AISchemaResponse with identity mutation mappers (field → field)
-        let mutation_mappers: HashMap<String, String> = present_fields
-            .iter()
-            .map(|&f| (f.to_string(), f.to_string()))
-            .collect();
-        let mut ai_response = AISchemaResponse {
-            new_schemas: Some(schema_def),
-            mutation_mappers,
-        };
-
-        // Step 4: Determine schema (creates/loads it)
-        progress_service.update_progress(progress_id, IngestionStep::SettingUpSchema,
-            "Setting up file document schema...".to_string()).await;
-        let (schema_name, service_mappers) = self
-            .determine_schema_to_use(&ai_response, data, node)
-            .await?;
-        for (from, to) in &service_mappers {
-            ai_response.mutation_mappers.insert(from.clone(), to.clone());
-        }
-        let new_schema_created = true;
-
-        // Step 5: Generate mutations
-        progress_service.update_progress(progress_id, IngestionStep::GeneratingMutations,
-            "Generating database mutations...".to_string()).await;
-        let (mutations, schemas_written) = self
-            .generate_flat_mutations(
-                data,
-                &schema_name,
-                &ai_response,
-                request,
-                &pub_key,
-                node,
-                progress_service,
-                progress_id,
-            )
-            .await?;
-
-        log_feature!(
-            LogFeature::Ingestion,
-            info,
-            "Generated {} mutations for FileMarkdown document",
-            mutations.len()
-        );
-
-        // Step 6: Execute mutations
-        progress_service.update_progress(progress_id, IngestionStep::ExecutingMutations,
-            "Executing mutations to store data...".to_string()).await;
-        let mutations_len = mutations.len();
         let mutations_executed = if request.auto_execute {
             self.execute_mutations_with_node_and_progress(
                 mutations,
@@ -748,6 +568,112 @@ impl IngestionService {
         }))
     }
 
+    /// Second AI pass: fill in missing field_descriptions on the schema.
+    ///
+    /// If the initial schema proposal is missing field_descriptions, this method
+    /// calls the AI with a focused prompt that only asks for descriptions, given
+    /// the JSON data and field names. This is more reliable than expecting the
+    /// schema proposal prompt to always produce descriptions.
+    pub(super) async fn fill_missing_field_descriptions(
+        &self,
+        ai_response: &mut AISchemaResponse,
+        json_data: &Value,
+    ) -> IngestionResult<()> {
+        let schema_def = match ai_response.new_schemas.as_mut() {
+            Some(def) => def,
+            None => return Ok(()),
+        };
+
+        let fields: Vec<String> = schema_def
+            .get("fields")
+            .and_then(|f| f.as_array())
+            .map(|arr| arr.iter().filter_map(|v| v.as_str().map(String::from)).collect())
+            .unwrap_or_default();
+
+        if fields.is_empty() {
+            return Ok(());
+        }
+
+        let existing_descriptions = schema_def
+            .get("field_descriptions")
+            .and_then(|v| v.as_object())
+            .cloned()
+            .unwrap_or_default();
+
+        let missing: Vec<&String> = fields
+            .iter()
+            .filter(|f| !existing_descriptions.contains_key(f.as_str()))
+            .collect();
+
+        if missing.is_empty() {
+            return Ok(());
+        }
+
+        log_feature!(
+            LogFeature::Ingestion,
+            info,
+            "Schema missing field_descriptions for {:?}, calling AI for descriptions",
+            missing
+        );
+
+        // Build a compact sample for the prompt
+        let sample = if let Some(array) = json_data.as_array() {
+            serde_json::json!(array.iter().take(2).collect::<Vec<_>>())
+        } else {
+            json_data.clone()
+        };
+
+        let prompt = crate::ingestion::prompts::FIELD_DESCRIPTIONS_PROMPT
+            .replace("{sample}", &serde_json::to_string_pretty(&sample).unwrap_or_default())
+            .replace("{fields}", &format!("{:?}", missing));
+
+        match self.call_ai_raw(&prompt).await {
+            Ok(raw_response) => {
+                match crate::ingestion::ai_helpers::extract_json_from_response(&raw_response) {
+                    Ok(json_str) => {
+                        if let Ok(descriptions) = serde_json::from_str::<serde_json::Map<String, Value>>(&json_str) {
+                            let fd = schema_def
+                                .as_object_mut()
+                                .unwrap()
+                                .entry("field_descriptions")
+                                .or_insert_with(|| Value::Object(serde_json::Map::new()));
+                            if let Some(fd_obj) = fd.as_object_mut() {
+                                for (field, desc) in descriptions {
+                                    if desc.is_string() {
+                                        fd_obj.entry(&field).or_insert(desc);
+                                    }
+                                }
+                            }
+                            log_feature!(
+                                LogFeature::Ingestion,
+                                info,
+                                "AI provided field descriptions for missing fields"
+                            );
+                        }
+                    }
+                    Err(e) => {
+                        log_feature!(
+                            LogFeature::Ingestion,
+                            warn,
+                            "Failed to parse field descriptions AI response: {}",
+                            e
+                        );
+                    }
+                }
+            }
+            Err(e) => {
+                log_feature!(
+                    LogFeature::Ingestion,
+                    warn,
+                    "Failed to get field descriptions from AI: {}",
+                    e
+                );
+            }
+        }
+
+        Ok(())
+    }
+
     /// Validate JSON input
     pub fn validate_input(&self, data: &Value) -> IngestionResult<()> {
         if data.is_null() {
@@ -841,6 +767,25 @@ impl IngestionService {
             schema.field_classifications.len()
         );
 
+        // Safety net: generate default field_descriptions for any fields missing them.
+        // The AI prompt and validation retry loop should produce these, but if all
+        // retries failed to include them, we generate defaults here so the schema
+        // service doesn't reject the schema.
+        if let Some(fields) = &schema.fields {
+            for field_name in fields {
+                schema.field_descriptions.entry(field_name.clone())
+                    .or_insert_with(|| {
+                        log_feature!(
+                            LogFeature::Ingestion,
+                            warn,
+                            "AI did not provide field_description for '{}', using default",
+                            field_name
+                        );
+                        format!("{} field", field_name.replace('_', " "))
+                    });
+            }
+        }
+
         // Ensure default classifications for fields that are missing them
         if let Some(fields) = &schema.fields {
             let sample_for_defaults = if let Some(array) = sample_data.as_array() {
@@ -900,18 +845,20 @@ impl IngestionService {
             }
         }
 
-        // Use identity_hash as schema name for structure-based deduplication
+        // Compute identity_hash for structure-based deduplication (used by schema service)
         schema.compute_identity_hash();
-        let identity_hash = schema
-            .get_identity_hash()
-            .ok_or_else(|| {
-                IngestionError::SchemaCreationError(
-                    "Schema must have identity_hash computed".to_string(),
-                )
-            })?
-            .clone();
+        if schema.get_identity_hash().is_none() {
+            return Err(IngestionError::SchemaCreationError(
+                "Schema must have identity_hash computed".to_string(),
+            ));
+        }
 
-        schema.name = identity_hash.clone();
+        // Keep the AI-provided semantic name (e.g., "customer_orders").
+        // If the AI left it blank or used the placeholder "Schema", fall back to identity_hash.
+        let ai_name = schema.name.trim().to_string();
+        if ai_name.is_empty() || ai_name.eq_ignore_ascii_case("schema") {
+            schema.name = schema.get_identity_hash().unwrap().clone();
+        }
 
         // Serialize schema creation: the schema service call, local load, and
         // block_and_supersede must happen atomically so concurrent ingestions
@@ -1063,6 +1010,52 @@ impl IngestionService {
     }
 }
 
+/// Enrich text-file JSON with source path context so the AI sees the category
+/// and full source path instead of just the bare filename. This allows it to
+/// propose semantic schema names like "recipes" instead of "document_content".
+///
+/// For text files wrapped by `wrap_text_content`, the `source_file` field only
+/// has the filename (e.g., "grandmas_cookies.txt"). The `source_file_name` from
+/// the `IngestionRequest` has the full relative path (e.g., "recipes/grandmas_cookies.txt").
+fn enrich_with_source_context(data: &mut Value, source_file_name: Option<&str>) {
+    let source_path = match source_file_name {
+        Some(s) if !s.is_empty() => s,
+        _ => return,
+    };
+
+    // Derive category from parent directory (e.g., "recipes/cookies.txt" → "recipes")
+    let category = std::path::Path::new(source_path)
+        .parent()
+        .and_then(|p| p.file_name())
+        .map(|s| s.to_string_lossy().to_string())
+        .filter(|s| !s.is_empty() && s != "." && s != "..");
+
+    let enrich_obj = |obj: &mut serde_json::Map<String, Value>| {
+        // Only enrich objects that look like text-file wrappers (have "content" and "file_type")
+        if !obj.contains_key("content") || !obj.contains_key("file_type") {
+            return;
+        }
+        // Update source_file to include the full path
+        obj.insert("source_file".to_string(), Value::String(source_path.to_string()));
+        // Add category hint from the directory name
+        if let Some(ref cat) = category {
+            obj.entry("category").or_insert_with(|| Value::String(cat.clone()));
+        }
+    };
+
+    match data {
+        Value::Array(arr) => {
+            for item in arr.iter_mut() {
+                if let Some(obj) = item.as_object_mut() {
+                    enrich_obj(obj);
+                }
+            }
+        }
+        Value::Object(obj) => enrich_obj(obj),
+        _ => {}
+    }
+}
+
 /// Build a `Vec<SchemaWriteRecord>` from a mutations slice, deduplicating keys.
 fn schemas_written_from(mutations: &[Mutation]) -> Vec<SchemaWriteRecord> {
     let mut map: HashMap<String, Vec<KeyValue>> = HashMap::new();
@@ -1080,137 +1073,4 @@ fn schemas_written_from_map(map: HashMap<String, Vec<KeyValue>>) -> Vec<SchemaWr
     map.into_iter()
         .map(|(name, keys)| SchemaWriteRecord { schema_name: name, keys_written: keys })
         .collect()
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-    use file_to_markdown::FileMarkdown;
-    use serde_json::json;
-
-    /// Verify FILE_MARKDOWN_FIELDS matches every field in FileMarkdown.
-    #[test]
-    fn test_file_markdown_fields_covers_all_struct_fields() {
-        let fm = FileMarkdown::new(
-            "test.pdf".into(), "pdf".into(), 1024,
-            Some("application/pdf".into()), "pdf-text".into(), "# Content".into(),
-        );
-        let value = serde_json::to_value(&fm).unwrap();
-        let obj = value.as_object().unwrap();
-
-        for key in obj.keys() {
-            assert!(
-                IngestionService::FILE_MARKDOWN_FIELDS.contains(&key.as_str()),
-                "FileMarkdown field '{}' is missing from FILE_MARKDOWN_FIELDS constant",
-                key
-            );
-        }
-        for &field in IngestionService::FILE_MARKDOWN_FIELDS {
-            assert!(
-                obj.contains_key(field),
-                "FILE_MARKDOWN_FIELDS contains '{}' but FileMarkdown struct does not serialize it",
-                field
-            );
-        }
-    }
-
-    /// Verify the hardcoded schema definition for non-image documents.
-    #[test]
-    fn test_file_markdown_schema_def_document() {
-        let fields = IngestionService::FILE_MARKDOWN_FIELDS;
-
-        let schema_def = json!({
-            "name": "FileMarkdownDocument",
-            "schema_type": "Single",
-            "key": { "hash_field": "source" },
-            "fields": fields,
-            "field_classifications": {},
-        });
-
-        assert_eq!(schema_def["schema_type"], "Single");
-        assert_eq!(schema_def["key"]["hash_field"], "source");
-        let schema_fields = schema_def["fields"].as_array().unwrap();
-        assert!(schema_fields.iter().any(|f| f == "markdown"), "schema must include 'markdown' field");
-        assert!(schema_fields.iter().any(|f| f == "source"), "schema must include 'source' field");
-        assert!(schema_fields.iter().any(|f| f == "title"), "schema must include 'title' field");
-    }
-
-    /// Verify the hardcoded schema definition for images uses HashRange.
-    #[test]
-    fn test_file_markdown_schema_def_image() {
-        let fields = IngestionService::FILE_MARKDOWN_FIELDS;
-
-        let schema_def = json!({
-            "name": "FileMarkdownDocument",
-            "schema_type": "HashRange",
-            "key": {
-                "hash_field": "image_format",
-                "range_field": "source"
-            },
-            "fields": fields,
-            "field_classifications": {},
-        });
-
-        assert_eq!(schema_def["schema_type"], "HashRange");
-        assert_eq!(schema_def["key"]["hash_field"], "image_format");
-        assert_eq!(schema_def["key"]["range_field"], "source");
-    }
-
-    /// Verify identity mutation mappers map every field to itself.
-    #[test]
-    fn test_file_markdown_identity_mappers() {
-        let mappers: HashMap<String, String> = IngestionService::FILE_MARKDOWN_FIELDS
-            .iter()
-            .map(|&f| (f.to_string(), f.to_string()))
-            .collect();
-
-        assert_eq!(mappers.len(), IngestionService::FILE_MARKDOWN_FIELDS.len());
-        for &field in IngestionService::FILE_MARKDOWN_FIELDS {
-            assert_eq!(
-                mappers.get(field).map(|s| s.as_str()),
-                Some(field),
-                "Mapper for '{}' should be identity",
-                field
-            );
-        }
-    }
-
-    /// Verify field classifications assign correct types.
-    #[test]
-    fn test_file_markdown_field_classifications() {
-        let number_fields = [
-            "size_bytes", "page_count", "rows", "columns",
-            "duration_seconds", "sample_rate_hz", "channels",
-            "line_count", "sheet_count", "slide_count", "entry_count", "word_count",
-        ];
-
-        let mut classifications: HashMap<String, Vec<String>> = HashMap::new();
-        for &field in IngestionService::FILE_MARKDOWN_FIELDS {
-            let class = if number_fields.contains(&field) {
-                vec!["number".to_string()]
-            } else {
-                vec!["word".to_string()]
-            };
-            classifications.insert(field.to_string(), class);
-        }
-
-        assert_eq!(classifications["markdown"], vec!["word"]);
-        assert_eq!(classifications["source"], vec!["word"]);
-        assert_eq!(classifications["size_bytes"], vec!["number"]);
-        assert_eq!(classifications["page_count"], vec!["number"]);
-        assert_eq!(classifications["word_count"], vec!["number"]);
-        assert_eq!(classifications["title"], vec!["word"]);
-    }
-
-    /// Verify that file_markdown_to_value preserves the markdown content field.
-    #[test]
-    fn test_file_markdown_to_value_preserves_markdown() {
-        let long_content = "# Chapter 1\n\nThis is a long document with lots of content.\n".repeat(100);
-        let fm = FileMarkdown::new(
-            "book.pdf".into(), "pdf".into(), 50000,
-            Some("application/pdf".into()), "pdf-text".into(), long_content.clone(),
-        );
-        let value = crate::ingestion::json_processor::file_markdown_to_value(&fm);
-        assert_eq!(value["markdown"].as_str().unwrap(), long_content);
-    }
 }

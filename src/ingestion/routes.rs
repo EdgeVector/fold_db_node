@@ -450,33 +450,40 @@ pub(crate) async fn process_single_file_via_smart_folder(
     force_reingest: bool,
 ) -> Result<(), String> {
     // Try native parser first (handles json, js/Twitter, csv, txt, md),
-    // fall back to file_to_markdown for unsupported types (images, PDFs, etc.)
-    let (data, file_hash, raw_bytes, image_descriptive_name, file_markdown) =
-        match crate::ingestion::smart_folder::read_file_with_hash(file_path) {
-            Ok(result) => {
-                let (data, hash, bytes) = result;
-                (data, hash, bytes, None, None)
-            }
-            Err(_) => {
-                let raw_bytes = std::fs::read(file_path)
-                    .map_err(|e| format!("Failed to read file: {}", e))?;
-                let hash_hex = {
-                    use sha2::{Digest, Sha256};
-                    format!("{:x}", Sha256::digest(&raw_bytes))
-                };
-                let fm =
-                    crate::ingestion::json_processor::convert_file_to_markdown(file_path)
-                        .await
-                        .map_err(|e| e.to_string())?;
-                let image_descriptive_name = if fm.image_format.is_some() {
-                    fm.title.clone()
-                } else {
-                    None
-                };
-                let data = crate::ingestion::json_processor::file_markdown_to_value(&fm);
-                (data, hash_hex, raw_bytes, image_descriptive_name, Some(fm))
-            }
-        };
+    // fall back to file_to_json for unsupported types (images, PDFs, etc.)
+    let (data, file_hash, raw_bytes, image_descriptive_name) = match crate::ingestion::smart_folder::read_file_with_hash(
+        file_path,
+    ) {
+        Ok(result) => {
+            let (data, hash, bytes) = result;
+            (data, hash, bytes, None)
+        }
+        Err(_) => {
+            let raw_bytes = std::fs::read(file_path)
+                .map_err(|e| format!("Failed to read file: {}", e))?;
+            let hash_hex = {
+                use sha2::{Digest, Sha256};
+                format!("{:x}", Sha256::digest(&raw_bytes))
+            };
+            let mut data =
+                crate::ingestion::json_processor::convert_file_to_json(&file_path.to_path_buf())
+                    .await
+                    .map_err(|e| e.to_string())?;
+            // Enrich image JSON with image_type and created_at for HashRange schema support
+            let image_descriptive_name = file_path
+                .file_name()
+                .and_then(|n| n.to_str())
+                .filter(|name| crate::ingestion::is_image_file(name))
+                .and_then(|name| {
+                    crate::ingestion::json_processor::enrich_image_json(
+                        &mut data,
+                        &file_path.to_path_buf(),
+                        Some(name),
+                    )
+                });
+            (data, hash_hex, raw_bytes, image_descriptive_name)
+        }
+    };
 
     // Encrypt and store the raw file in upload storage (content-addressed)
     let encrypted_data = fold_db::crypto::envelope::encrypt_envelope(encryption_key, &raw_bytes)
@@ -525,7 +532,6 @@ pub(crate) async fn process_single_file_via_smart_folder(
             .parent()
             .map(|p| p.to_string_lossy().to_string()),
         image_descriptive_name,
-        file_markdown,
     };
 
     service
