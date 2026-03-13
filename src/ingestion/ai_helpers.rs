@@ -144,7 +144,7 @@ fn extract_content_hint(json: &Value) -> Option<String> {
 
     // Truncate content to first 500 chars for the preview
     let preview: String = content.chars().take(500).collect();
-    let truncated = if content.len() > 500 { "..." } else { "" };
+    let truncated = if content.chars().count() > 500 { "..." } else { "" };
 
     let mut hint = format!(
         "\n\nCONTENT PREVIEW (use this to determine the schema name topic):\n\"{}{}\"",
@@ -377,11 +377,13 @@ pub fn validate_and_convert_response(parsed: Value) -> IngestionResult<AISchemaR
                 for schema in schemas {
                     validate_schema_has_descriptive_name(schema)?;
                     validate_schema_has_classifications(schema)?;
+                    validate_schema_has_descriptions(schema)?;
                 }
             }
             Value::Object(_) => {
                 validate_schema_has_descriptive_name(schema_val)?;
                 validate_schema_has_classifications(schema_val)?;
+                validate_schema_has_descriptions(schema_val)?;
             }
             _ => {}
         }
