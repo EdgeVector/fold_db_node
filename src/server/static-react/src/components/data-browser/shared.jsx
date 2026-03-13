@@ -197,6 +197,12 @@ export function VersionHistory({ moleculeUuid }) {
 
 const IMAGE_EXTENSIONS = /\.(jpe?g|png|gif|webp|svg)$/i
 
+function authHeaders() {
+  const userHash = localStorage.getItem('fold_user_hash')
+  if (!userHash) return {}
+  return { 'x-user-hash': userHash, 'x-user-id': userHash }
+}
+
 export function RecordMetadata({ metadata }) {
   const [expanded, setExpanded] = useState(false)
   const [blobUrl, setBlobUrl] = useState(null)
@@ -213,13 +219,7 @@ export function RecordMetadata({ metadata }) {
   useEffect(() => {
     if (!expanded || !isImage || !fileUrl) return
     let revoked = false
-    const userHash = localStorage.getItem('fold_user_hash')
-    const headers = {}
-    if (userHash) {
-      headers['x-user-hash'] = userHash
-      headers['x-user-id'] = userHash
-    }
-    fetch(fileUrl, { headers })
+    fetch(fileUrl, { headers: authHeaders() })
       .then((res) => {
         if (!res.ok) throw new Error(res.statusText)
         return res.blob()
@@ -234,6 +234,20 @@ export function RecordMetadata({ metadata }) {
       setBlobUrl((prev) => { if (prev) URL.revokeObjectURL(prev); return null })
     }
   }, [expanded, isImage, fileUrl])
+
+  const openFile = useCallback(() => {
+    if (!fileUrl) return
+    fetch(fileUrl, { headers: authHeaders() })
+      .then((res) => {
+        if (!res.ok) throw new Error(res.statusText)
+        return res.blob()
+      })
+      .then((blob) => {
+        const url = URL.createObjectURL(blob)
+        window.open(url, '_blank')
+      })
+      .catch(() => {})
+  }, [fileUrl])
 
   if (!hasData) return null
 
@@ -253,7 +267,7 @@ export function RecordMetadata({ metadata }) {
       {expanded && (
         <div className="pl-4 pt-1 space-y-1 text-xs text-secondary font-mono">
           {sourceFile && fileUrl && !isImage && (
-            <div>File: <a href={fileUrl} target="_blank" rel="noopener noreferrer" className="text-gruvbox-blue hover:underline">{sourceFile}</a></div>
+            <div>File: <button type="button" onClick={openFile} className="text-gruvbox-blue hover:underline cursor-pointer">{sourceFile}</button></div>
           )}
           {sourceFile && (!fileUrl || isImage) && (
             <div>File: {sourceFile}</div>
