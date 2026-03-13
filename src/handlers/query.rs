@@ -45,22 +45,15 @@ pub async fn execute_query(
 ) -> HandlerResult<QueryResponse> {
     let processor = OperationProcessor::new(node.clone());
 
-    match processor.execute_query_json(query).await {
-        Ok(results) => {
-            // Convert Vec<Value> to Value::Array
-            let results_json = serde_json::Value::Array(results);
-            Ok(ApiResponse::success_with_user(
-                QueryResponse {
-                    results: results_json,
-                },
-                user_hash,
-            ))
-        }
-        Err(e) => Err(HandlerError::Internal(format!(
-            "Query execution failed: {}",
-            e
-        ))),
-    }
+    let results = processor.execute_query_json(query).await.handler_err("execute query")?;
+    let results_json = serde_json::Value::Array(results);
+
+    Ok(ApiResponse::success_with_user(
+        QueryResponse {
+            results: results_json,
+        },
+        user_hash,
+    ))
 }
 
 /// Execute a native index search
@@ -71,23 +64,16 @@ pub async fn native_index_search(
 ) -> HandlerResult<IndexSearchResponse> {
     let processor = OperationProcessor::new(node.clone());
 
-    match processor.native_index_search(query_string).await {
-        Ok(results) => {
-            // Convert results to JSON Value
-            let results_json =
-                serde_json::to_value(&results).unwrap_or_else(|_| serde_json::Value::Array(vec![]));
-            Ok(ApiResponse::success_with_user(
-                IndexSearchResponse {
-                    results: results_json,
-                },
-                user_hash,
-            ))
-        }
-        Err(e) => Err(HandlerError::Internal(format!(
-            "Index search failed: {}",
-            e
-        ))),
-    }
+    let results = processor.native_index_search(query_string).await.handler_err("search native index")?;
+    let results_json =
+        serde_json::to_value(&results).unwrap_or_else(|_| serde_json::Value::Array(vec![]));
+
+    Ok(ApiResponse::success_with_user(
+        IndexSearchResponse {
+            results: results_json,
+        },
+        user_hash,
+    ))
 }
 
 /// Summary of a single mutation event in a molecule's history
