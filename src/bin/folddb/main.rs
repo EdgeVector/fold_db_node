@@ -10,14 +10,7 @@ use fold_db::storage::DatabaseConfig;
 use fold_db_node::fold_node::{load_node_config, FoldNode, OperationProcessor};
 use output::OutputMode;
 
-fn user_hash_from_pubkey(pubkey: &str) -> String {
-    use sha2::Digest;
-    let digest = sha2::Sha256::digest(pubkey.as_bytes());
-    digest[..16]
-        .iter()
-        .map(|b| format!("{:02x}", b))
-        .collect()
-}
+use fold_db_node::utils::crypto::user_hash_from_pubkey;
 
 #[tokio::main]
 async fn main() {

@@ -7,7 +7,7 @@ use fold_db::storage::config::DatabaseConfig;
 use actix_web::{web, HttpResponse, Responder};
 use serde::{Deserialize, Serialize};
 use serde_json::json;
-use sha2::{Digest, Sha256};
+use crate::utils::crypto::user_hash_from_pubkey;
 use std::path::Path;
 
 /// Database configuration request/response types
@@ -135,12 +135,7 @@ pub async fn auto_identity(state: web::Data<AppState>) -> impl Responder {
     };
 
     // Derive user_hash = SHA256(public_key)[0:32] (same algorithm as frontend)
-    let hash = Sha256::digest(public_key.as_bytes());
-    let user_hash: String = hash
-        .iter()
-        .map(|b| format!("{:02x}", b))
-        .collect::<String>()[..32]
-        .to_string();
+    let user_hash = user_hash_from_pubkey(&public_key);
 
     HttpResponse::Ok().json(json!({
         "user_id": public_key,
@@ -369,9 +364,7 @@ pub async fn get_database_status(state: web::Data<AppState>) -> impl Responder {
                 });
             }
         };
-        let hash = sha2::Sha256::digest(public_key.as_bytes());
-        let user_hash: String =
-            hash.iter().map(|b| format!("{:02x}", b)).collect::<String>()[..32].to_string();
+        let user_hash = user_hash_from_pubkey(&public_key);
 
         // Try to initialize the node lazily
         match state.node_manager.get_node(&user_hash).await {
