@@ -1180,7 +1180,7 @@ impl SchemaServiceState {
             };
 
             if should_merge {
-            let old_name = existing_schema_name.unwrap();
+                let old_name = existing_schema_name.unwrap();
                 // If matched via semantic similarity, adopt the existing descriptive_name
                 // so the index stays consistent.
                 if let Some(ref canonical_desc) = matched_desc {

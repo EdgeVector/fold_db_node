@@ -91,9 +91,6 @@ async fn canonical_registry_renames_semantically_equivalent_fields() {
         SchemaAddOutcome::AlreadyExists(..) => {
             // If the fields got canonicalized to identical set, AlreadyExists is also valid
         }
-        SchemaAddOutcome::TooSimilar(_) => {
-            // Also acceptable depending on embedder similarity
-        }
     }
 }
 

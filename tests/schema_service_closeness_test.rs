@@ -58,20 +58,6 @@ fn verify_outcome_has_schema(outcome: &SchemaAddOutcome) {
                 "expanded schema must have fields defined"
             );
         }
-        SchemaAddOutcome::TooSimilar(conflict) => {
-            assert!(
-                !conflict.closest_schema.name.is_empty(),
-                "closest schema must have a name"
-            );
-            assert!(
-                conflict.closest_schema.fields.is_some(),
-                "closest schema must have fields defined"
-            );
-            assert!(
-                conflict.similarity > 0.0 && conflict.similarity <= 1.0,
-                "similarity must be between 0 and 1"
-            );
-        }
     }
 }
 

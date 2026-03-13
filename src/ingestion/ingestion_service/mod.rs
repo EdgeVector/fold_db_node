@@ -327,7 +327,7 @@ impl IngestionService {
         progress_service.update_progress(progress_id, IngestionStep::SettingUpSchema,
             "Setting up schema and preparing for data storage...".to_string()).await;
         let (schema_name, service_mappers) = self
-            .determine_schema_to_use(&ai_response, &request.data, node)
+            .determine_schema_to_use(&ai_response, flattened_data, node)
             .await?;
         // Merge schema service's semantic field renames into AI's mutation_mappers.
         // Service mappers (e.g., "creator" → "artist") take precedence since they

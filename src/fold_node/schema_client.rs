@@ -81,23 +81,18 @@ impl SchemaServiceClient {
         }
 
         if status == StatusCode::CONFLICT {
-            #[derive(Deserialize)]
-            struct ConflictBody {
-                closest_schema: Schema,
-            }
-
-            let conflict_body = response.json::<ConflictBody>().await.map_err(|error| {
-                FoldDbError::Config(format!(
-                    "Failed to parse schema conflict response: {}",
-                    error
-                ))
-            })?;
-
-            return Ok(AddSchemaResponse {
-                schema: conflict_body.closest_schema,
-                mutation_mappers: HashMap::new(),
-                replaced_schema: None,
-            });
+            // CONFLICT should never happen — the schema service always either
+            // returns an existing schema, expands, or creates new. If it does
+            // happen, treat it as an error so the caller can retry or report.
+            let body = response
+                .text()
+                .await
+                .unwrap_or_else(|_| "<empty>".to_string());
+            return Err(FoldDbError::Config(format!(
+                "Schema service returned unexpected CONFLICT (409): {}. \
+                 The schema service should always return Added, AlreadyExists, or Expanded.",
+                body
+            )));
         }
 
         let body = response
@@ -217,7 +212,7 @@ mod tests {
     use super::*;
     use fold_db::schema::types::SchemaType;
     use crate::schema_service::server::{
-        ConflictResponse, ErrorResponse, SchemaAddOutcome, SchemaServiceState,
+        ErrorResponse, SchemaAddOutcome, SchemaServiceState,
     };
     use actix_web::{rt::time::sleep, web, App, HttpResponse, HttpServer};
     use std::net::TcpListener;
@@ -267,13 +262,6 @@ mod tests {
                                         schema,
                                         mutation_mappers,
                                         replaced_schema: Some(old_name),
-                                    })
-                                }
-                                Ok(SchemaAddOutcome::TooSimilar(conflict)) => {
-                                    HttpResponse::Conflict().json(ConflictResponse {
-                                        error: "Schema too similar to existing schema".to_string(),
-                                        similarity: conflict.similarity,
-                                        closest_schema: conflict.closest_schema,
                                     })
                                 }
                                 Err(error) => HttpResponse::BadRequest().json(ErrorResponse {

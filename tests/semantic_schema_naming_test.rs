@@ -18,7 +18,7 @@ use fold_db_node::ingestion::ingestion_service::IngestionService;
 use fold_db_node::ingestion::smart_folder::read_file_with_hash;
 use fold_db_node::ingestion::{create_progress_tracker, IngestionRequest, ProgressService};
 use fold_db_node::schema_service::server::{
-    AddSchemaResponse, ConflictResponse, ErrorResponse, SchemaAddOutcome, SchemaServiceState,
+    AddSchemaResponse, ErrorResponse, SchemaAddOutcome, SchemaServiceState,
     SchemasListResponse,
 };
 mod common;
@@ -100,13 +100,6 @@ async fn handle_add_schema(
                 schema,
                 mutation_mappers,
                 replaced_schema: Some(old_name),
-            })
-        }
-        Ok(SchemaAddOutcome::TooSimilar(conflict)) => {
-            HttpResponse::Conflict().json(ConflictResponse {
-                error: "Schema too similar to existing schema".to_string(),
-                similarity: conflict.similarity,
-                closest_schema: conflict.closest_schema,
             })
         }
         Err(error) => HttpResponse::BadRequest().json(ErrorResponse {
