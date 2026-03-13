@@ -21,10 +21,18 @@ use super::types::{
 const DESCRIPTIVE_NAME_SIMILARITY_THRESHOLD: f32 = 0.8;
 
 /// Minimum cosine similarity between context-enriched field names to consider them synonyms.
-/// Uses "the {field} of the {descriptive_name}" format for embedding context.
-/// Set to 0.88 based on empirical testing: artist↔creator=0.93 (true synonym),
-/// medium↔artist=0.85 (false positive in "Artwork Collection" context).
+/// Threshold for canonicalize_fields: compares description-only embeddings against
+/// the canonical field registry. Set to 0.88 based on empirical testing with
+/// all-MiniLM-L6-v2: true synonyms score ≥0.88, false positives score ≤0.85.
 const FIELD_SIMILARITY_THRESHOLD: f32 = 0.88;
+
+/// Threshold for semantic_field_rename_map: compares hybrid embeddings
+/// ("the {name} of the {context}: {description}") during schema expansion.
+/// Lower than FIELD_SIMILARITY_THRESHOLD because the hybrid format includes
+/// field names and context that reduce absolute similarity, but the bidirectional
+/// best-match check provides strong false-positive protection.
+/// Empirical: start_date↔start_time=0.86, venue↔location=0.86, tags↔content=0.83 (reject).
+const SEMANTIC_RENAME_THRESHOLD: f32 = 0.84;
 
 
 /// Storage backend for the schema service
@@ -407,18 +415,23 @@ impl SchemaServiceState {
 
     /// Build a description for a field from its schema context.
     /// Prefers AI-generated field_descriptions, falls back to field_classifications + descriptive_name.
+    ///
+    /// For AI-generated descriptions, returns the description as-is without appending
+    /// the schema's descriptive_name. The "in {schema}" suffix is shared by ALL fields
+    /// in a schema and inflates cross-field similarity, causing false positive matches
+    /// (e.g. "subject" matching "calendar" because both end with "in Calendar Events").
+    /// Only the fallback paths use the suffix since their descriptions are generic.
     fn build_field_description(
         field_name: &str,
         schema: &Schema,
     ) -> String {
-        let desc_name = schema.descriptive_name.as_deref().unwrap_or("unknown");
-
-        // Prefer the AI-generated natural language description
+        // Prefer the AI-generated natural language description (already specific)
         if let Some(desc) = schema.field_descriptions.get(field_name) {
-            return format!("{} in {}", desc, desc_name);
+            return desc.clone();
         }
 
-        // Fall back to classifications
+        // Fall back to classifications + descriptive_name for context
+        let desc_name = schema.descriptive_name.as_deref().unwrap_or("unknown");
         let classifications = schema
             .field_classifications
             .get(field_name)
@@ -697,10 +710,27 @@ impl SchemaServiceState {
         sim >= 0.85
     }
 
-    /// Get or compute the embedding for a context-enriched field name.
-    /// Format: "the {field_name} of the {descriptive_name}"
-    fn get_field_embedding(&self, field_name: &str, descriptive_name: &str) -> Option<Vec<f32>> {
-        let cache_key = format!("{}:{}", descriptive_name, field_name);
+    /// Get or compute the embedding for a field, combining name-in-context with description.
+    ///
+    /// Embeds "the {field_name} of the {descriptive_name}: {description}" when a description
+    /// is available. The name-in-context prefix provides structural signal (fields with the
+    /// same role in the same domain cluster together), while the description adds semantic
+    /// specificity that prevents false positives (e.g. "subject" won't match "calendar"
+    /// because their descriptions are unrelated).
+    fn get_field_embedding(
+        &self,
+        field_name: &str,
+        descriptive_name: &str,
+        field_description: Option<&str>,
+    ) -> Option<Vec<f32>> {
+        let context_text = match field_description {
+            Some(desc) => format!("the {} of the {}: {}", field_name, descriptive_name, desc),
+            None => format!("the {} of the {}", field_name, descriptive_name),
+        };
+        // Cache key includes a prefix of the context_text to differentiate entries
+        // with vs without descriptions for the same field.
+        let truncated_len = context_text.floor_char_boundary(60);
+        let cache_key = format!("{}:{}:{}", descriptive_name, field_name, &context_text[..truncated_len]);
 
         // Check cache first
         if let Ok(cache) = self.field_embeddings.read() {
@@ -709,8 +739,6 @@ impl SchemaServiceState {
             }
         }
 
-        // Compute and cache
-        let context_text = format!("the {} of the {}", field_name, descriptive_name);
         match self.embedder.embed_text(&context_text) {
             Ok(vec) => {
                 if let Ok(mut cache) = self.field_embeddings.write() {
@@ -780,6 +808,8 @@ impl SchemaServiceState {
         incoming_fields: &[String],
         existing_fields: &[String],
         descriptive_name: &str,
+        incoming_descriptions: &HashMap<String, String>,
+        existing_descriptions: &HashMap<String, String>,
     ) -> HashMap<String, String> {
         let existing_set: HashSet<&String> = existing_fields.iter().collect();
         let mut rename_map: HashMap<String, String> = HashMap::new();
@@ -792,7 +822,10 @@ impl SchemaServiceState {
                 continue;
             }
 
-            let incoming_emb = match self.get_field_embedding(incoming_field, descriptive_name) {
+            let incoming_emb = match self.get_field_embedding(
+                incoming_field, descriptive_name,
+                incoming_descriptions.get(incoming_field.as_str()).map(|s| s.as_str()),
+            ) {
                 Some(v) => v,
                 None => continue,
             };
@@ -803,12 +836,15 @@ impl SchemaServiceState {
                     continue;
                 }
                 let existing_emb =
-                    match self.get_field_embedding(existing_field, descriptive_name) {
+                    match self.get_field_embedding(
+                        existing_field, descriptive_name,
+                        existing_descriptions.get(existing_field.as_str()).map(|s| s.as_str()),
+                    ) {
                         Some(v) => v,
                         None => continue,
                     };
                 let sim = cosine_similarity(&incoming_emb, &existing_emb);
-                if sim >= FIELD_SIMILARITY_THRESHOLD
+                if sim >= SEMANTIC_RENAME_THRESHOLD
                     && best.as_ref().is_none_or(|(_, s)| sim > *s)
                 {
                     best = Some((existing_field.as_str(), sim));
@@ -820,7 +856,10 @@ impl SchemaServiceState {
                 // all incoming fields is also this incoming field. This prevents false
                 // positives like "medium"→"artist" when "creator"→"artist" is stronger.
                 let existing_emb = self
-                    .get_field_embedding(matched_field, descriptive_name)
+                    .get_field_embedding(
+                        matched_field, descriptive_name,
+                        existing_descriptions.get(matched_field).map(|s| s.as_str()),
+                    )
                     .unwrap();
                 let mut reverse_best: Option<(&str, f32)> = None;
                 for candidate in incoming_fields {
@@ -828,7 +867,10 @@ impl SchemaServiceState {
                         continue; // skip literal matches
                     }
                     let candidate_emb =
-                        match self.get_field_embedding(candidate, descriptive_name) {
+                        match self.get_field_embedding(
+                            candidate, descriptive_name,
+                            incoming_descriptions.get(candidate.as_str()).map(|s| s.as_str()),
+                        ) {
                             Some(v) => v,
                             None => continue,
                         };
@@ -1234,6 +1276,8 @@ impl SchemaServiceState {
                         &incoming_fields,
                         &existing_fields,
                         &desc_name,
+                        &schema.field_descriptions,
+                        &existing.field_descriptions,
                     );
                     let mut mutation_mappers = mutation_mappers;
                     Self::apply_field_renames(&mut schema, &rename_map, &mut mutation_mappers);
@@ -1461,6 +1505,8 @@ impl SchemaServiceState {
                 &entry.fields,
                 &existing_fields,
                 &entry.descriptive_name,
+                &HashMap::new(),
+                &active_schema.field_descriptions,
             );
 
             // 5. Determine superset status and unmapped fields
