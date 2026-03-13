@@ -1,0 +1,16 @@
+[
+  {
+    "subject": "Sprint planning - 2026-03-10",
+    "notes_text": "## Discussed\n- Backlog grooming for Q2\n- Tom taking canonical fields integration\n- Sarah owning schema service deployment\n\n## Decisions\n- Move to 2-week sprints starting March 24\n- Deprecate old mutation API by end of Q2",
+    "date": "2026-03-10T10:00:00-08:00",
+    "attendees": ["Tom", "Sarah", "Mike", "Lisa"],
+    "action_items": ["Tom: write integration tests by Friday", "Sarah: deploy schema service to staging", "Mike: update API docs"]
+  },
+  {
+    "subject": "Architecture review - schema service",
+    "notes_text": "## Agenda\n- Review embedding model choice (all-MiniLM-L6-v2)\n- Discuss threshold tuning (0.88 for fields, 0.80 for schemas)\n- Plan for schema-infra deployment\n\n## Outcome\n- Keep current thresholds, add monitoring for false positive rate\n- Deploy to staging next week for load testing",
+    "date": "2026-03-11T14:00:00-08:00",
+    "attendees": ["Tom", "Sarah"],
+    "action_items": ["Tom: add embedding similarity logging", "Sarah: set up staging environment"]
+  }
+]

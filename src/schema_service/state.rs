@@ -396,10 +396,13 @@ impl SchemaServiceState {
         }
     }
 
-    /// Build embedding text from a field name and its description.
-    /// Embeds "field_name: description" for richer semantic context than bare names.
-    fn build_embedding_text(field_name: &str, description: &str) -> String {
-        format!("{}: {}", field_name, description)
+    /// Build embedding text from a field's description.
+    /// Embeds the description only — the field name is excluded because different
+    /// sources use different names for the same concept (e.g. "summary" vs "subject"),
+    /// and including the name adds noise that pushes cosine similarity below threshold.
+    /// The description captures the semantic meaning; field names are compared separately.
+    fn build_embedding_text(_field_name: &str, description: &str) -> String {
+        description.to_string()
     }
 
     /// Build a description for a field from its schema context.

@@ -1,0 +1,20 @@
+[
+  {
+    "title": "Grocery list",
+    "content": "- Eggs\n- Milk\n- Bread\n- Avocados\n- Chicken breast\n- Spinach",
+    "created_date": "2026-03-08T10:30:00-08:00",
+    "folder": "Shopping"
+  },
+  {
+    "title": "Book recommendations",
+    "content": "From podcast interview:\n- Designing Data-Intensive Applications by Martin Kleppmann\n- The Art of Doing Science and Engineering by Richard Hamming\n- Thinking in Systems by Donella Meadows",
+    "created_date": "2026-03-05T22:15:00-08:00",
+    "folder": "Reading"
+  },
+  {
+    "title": "Home repair TODO",
+    "content": "1. Fix leaky kitchen faucet (call plumber if needed)\n2. Replace smoke detector batteries\n3. Touch up paint in hallway\n4. Get quote for fence repair",
+    "created_date": "2026-03-01T08:00:00-08:00",
+    "folder": "Home"
+  }
+]
