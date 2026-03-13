@@ -38,7 +38,7 @@ export default function DataBrowserTab() {
   const schemaList = useMemo(() => {
     if (!Array.isArray(schemas)) return []
     return [...schemas]
-      .filter((s) => s.state !== 'Blocked')
+      .filter((s) => s.state !== 'Blocked' && s.state !== 'removed')
       .sort((a, b) =>
         (a.descriptive_name || a.name || '').localeCompare(b.descriptive_name || b.name || '')
       )

@@ -41,6 +41,20 @@ Standalone HTTP server for schema registry. Single source of truth for schema cr
 - Run: `cargo run --bin schema_service -- --port 9002 --db-path schema_registry`
 - Used by `fold_db_node` HTTP server via `schema_service_url` config (use `test://mock` in integration tests)
 
+## Local Development
+
+Always use `run.sh` to start the dev server — never start binaries manually:
+```bash
+./run.sh --local --local-schema    # Fully offline development (preferred)
+./run.sh --local                   # Local storage with prod schema service
+./run.sh --local --empty-db        # Local with fresh database
+```
+
+The script handles process cleanup, building, schema service startup, and frontend (Vite on :5173).
+- Backend: http://localhost:9001
+- Schema service: http://localhost:9002
+- UI: http://localhost:5173
+
 ## Coding Standards
 
 Follow the same standards as fold_db:

@@ -81,7 +81,11 @@ empty_db() {
 
 load_api_keys() {
     # Load shell profile to get API keys
+    # Temporarily disable set -e because shell profiles often have commands
+    # that return non-zero (completions, conda init, etc.)
+    set +e
     source ~/.zshrc 2>/dev/null || source ~/.bashrc 2>/dev/null || true
+    set -e
 
     if [ -n "$ANTHROPIC_API_KEY" ]; then
         export ANTHROPIC_API_KEY
