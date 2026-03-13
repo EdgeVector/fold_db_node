@@ -139,7 +139,7 @@ mod tests {
 
         let added_schema = match outcome {
             SchemaAddOutcome::Added(schema, _mutation_mappers) => schema,
-            SchemaAddOutcome::AlreadyExists(..) | SchemaAddOutcome::TooSimilar(_) | SchemaAddOutcome::Expanded(..) => {
+            SchemaAddOutcome::AlreadyExists(..) | SchemaAddOutcome::Expanded(..) => {
                 panic!("schema should have been added")
             }
         };
@@ -372,7 +372,6 @@ mod tests {
         match outcome {
             SchemaAddOutcome::Added(s, _) | SchemaAddOutcome::Expanded(_, s, _) => s.name,
             SchemaAddOutcome::AlreadyExists(s, _) => s.name,
-            SchemaAddOutcome::TooSimilar(c) => c.closest_schema.name,
         }
     }
 
@@ -493,7 +492,7 @@ mod tests {
             .expect("failed to add first schema");
         let first_name = match outcome1 {
             SchemaAddOutcome::Added(schema, _) => schema.name,
-            SchemaAddOutcome::AlreadyExists(..) | SchemaAddOutcome::TooSimilar(_) | SchemaAddOutcome::Expanded(..) => {
+            SchemaAddOutcome::AlreadyExists(..) | SchemaAddOutcome::Expanded(..) => {
                 panic!("first schema should be added")
             }
         };

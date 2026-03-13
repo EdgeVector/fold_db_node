@@ -16,18 +16,11 @@ pub struct AvailableSchemasResponse {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct SchemaSimilarityResponse {
-    pub similarity: f64,
-    pub closest_schema: Schema,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
 pub enum SchemaAddOutcome {
     Added(Schema, HashMap<String, String>), // Schema and mutation_mappers
     AlreadyExists(Schema, HashMap<String, String>), // Exact same identity hash + mappers from canonicalization
     /// Existing schema was expanded with new fields (old schema name, expanded schema, mappers)
     Expanded(String, Schema, HashMap<String, String>),
-    TooSimilar(SchemaSimilarityResponse),
 }
 
 /// Error response structure
@@ -65,14 +58,6 @@ pub struct ReloadResponse {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct HealthResponse {
     pub status: String,
-}
-
-/// Conflict response for similar schemas
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct ConflictResponse {
-    pub error: String,
-    pub similarity: f64,
-    pub closest_schema: Schema,
 }
 
 /// A schema entry with its similarity score

@@ -212,7 +212,7 @@ mod tests {
     use super::*;
     use fold_db::schema::types::SchemaType;
     use crate::schema_service::server::{
-        ConflictResponse, ErrorResponse, SchemaAddOutcome, SchemaServiceState,
+        ErrorResponse, SchemaAddOutcome, SchemaServiceState,
     };
     use actix_web::{rt::time::sleep, web, App, HttpResponse, HttpServer};
     use std::net::TcpListener;
@@ -262,13 +262,6 @@ mod tests {
                                         schema,
                                         mutation_mappers,
                                         replaced_schema: Some(old_name),
-                                    })
-                                }
-                                Ok(SchemaAddOutcome::TooSimilar(conflict)) => {
-                                    HttpResponse::Conflict().json(ConflictResponse {
-                                        error: "Schema too similar to existing schema".to_string(),
-                                        similarity: conflict.similarity,
-                                        closest_schema: conflict.closest_schema,
                                     })
                                 }
                                 Err(error) => HttpResponse::BadRequest().json(ErrorResponse {

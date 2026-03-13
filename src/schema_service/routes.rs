@@ -227,13 +227,6 @@ pub(super) async fn add_schema(
                 replaced_schema: Some(old_name),
             })
         }
-        Ok(SchemaAddOutcome::TooSimilar(conflict)) => {
-            HttpResponse::Conflict().json(ConflictResponse {
-                error: "Schema too similar to existing schema".to_string(),
-                similarity: conflict.similarity,
-                closest_schema: conflict.closest_schema,
-            })
-        }
         Err(error) => {
             log_feature!(
                 LogFeature::Schema,

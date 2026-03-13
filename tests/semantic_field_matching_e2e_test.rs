@@ -103,13 +103,6 @@ async fn handle_add_schema(
                 replaced_schema: Some(old_name),
             })
         }
-        Ok(SchemaAddOutcome::TooSimilar(conflict)) => HttpResponse::Conflict().json(
-            fold_db_node::schema_service::server::ConflictResponse {
-                error: "Schema too similar".to_string(),
-                similarity: conflict.similarity,
-                closest_schema: conflict.closest_schema,
-            },
-        ),
         Err(error) => HttpResponse::BadRequest().json(ErrorResponse {
             error: format!("Failed to add schema: {}", error),
         }),
