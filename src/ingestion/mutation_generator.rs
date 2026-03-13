@@ -6,6 +6,7 @@ use fold_db::logging::features::LogFeature;
 use fold_db::schema::types::{KeyValue, Mutation};
 use fold_db::MutationType;
 use serde_json::Value;
+use sha2::{Digest, Sha256};
 use std::collections::HashMap;
 
 /// Generate mutations from JSON data and mutation mappers
@@ -87,19 +88,32 @@ pub fn generate_mutations(
             keys_and_values.get("range_field").cloned(),
         );
 
-        // Key fields MUST be present in the data. If neither hash nor range key
-        // was extracted, the schema's key config doesn't match the actual data —
-        // this is a bug in the AI schema proposal or the key extraction logic.
-        // Fail hard instead of silently creating records with content hashes as keys.
-        if key_value.hash.is_none() && key_value.range.is_none() {
-            return Err(crate::ingestion::IngestionError::SchemaCreationError(format!(
-                "Key fields not found in data for schema '{}'. \
-                 The schema's key configuration does not match the ingested data. \
-                 Mapped fields: {:?}",
+        // If neither hash nor range key was extracted, the AI's key proposal
+        // didn't match the actual data (common with decomposed array items where
+        // the parent's key field isn't carried into each child record). Fall back
+        // to a deterministic content hash so the record is still ingested and
+        // deduplication works based on field values.
+        let key_value = if key_value.hash.is_none() && key_value.range.is_none() {
+            let mut sorted_keys: Vec<&String> = mapped_fields.keys().collect();
+            sorted_keys.sort();
+            let mut hasher = Sha256::new();
+            hasher.update(schema_name.as_bytes());
+            for k in &sorted_keys {
+                hasher.update(k.as_bytes());
+                hasher.update(mapped_fields[*k].to_string().as_bytes());
+            }
+            let content_hash = format!("{:x}", hasher.finalize());
+            log_feature!(
+                LogFeature::Ingestion,
+                warn,
+                "Key fields not found in data for schema '{}', using content hash '{}' as key",
                 schema_name,
-                mapped_fields.keys().collect::<Vec<_>>()
-            )));
-        }
+                &content_hash[..12]
+            );
+            KeyValue::new(Some(content_hash), None)
+        } else {
+            key_value
+        };
 
         let mut mutation = Mutation::new(
             schema_name.to_string(),
@@ -171,7 +185,7 @@ mod tests {
     }
 
     #[test]
-    fn test_generate_mutations_errors_when_keys_missing() {
+    fn test_generate_mutations_falls_back_to_content_hash_when_keys_missing() {
         // Empty keys_and_values simulates missing key fields in data
         let keys_and_values = HashMap::new();
 
@@ -191,17 +205,14 @@ mod tests {
             "test-key".to_string(),
             None,
             None,
-        );
+        )
+        .expect("should succeed with content hash fallback");
 
+        assert_eq!(result.len(), 1);
         assert!(
-            result.is_err(),
-            "Should error when key fields are missing from data"
+            result[0].key_value.hash.is_some(),
+            "Should have a content-hash key"
         );
-        let err = result.unwrap_err().to_string();
-        assert!(
-            err.contains("Key fields not found"),
-            "Error should mention missing key fields, got: {}",
-            err
-        );
+        assert_eq!(result[0].fields_and_values.len(), 2);
     }
 }
