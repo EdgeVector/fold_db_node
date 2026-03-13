@@ -244,7 +244,6 @@ mod tests {
                         |payload: web::Json<AddSchemaRequest>,
                          state: web::Data<SchemaServiceState>| async move {
                             let request = payload.into_inner();
-
                             match state
                                 .add_schema(request.schema, request.mutation_mappers)
                                 .await
@@ -256,10 +255,10 @@ mod tests {
                                         replaced_schema: None,
                                     })
                                 }
-                                Ok(SchemaAddOutcome::AlreadyExists(schema)) => {
+                                Ok(SchemaAddOutcome::AlreadyExists(schema, mutation_mappers)) => {
                                     HttpResponse::Ok().json(AddSchemaResponse {
                                         schema,
-                                        mutation_mappers: HashMap::new(),
+                                        mutation_mappers,
                                         replaced_schema: None,
                                     })
                                 }
@@ -320,17 +319,19 @@ mod tests {
             None,
             None,
         );
-
-        // Add classifications
+        schema.descriptive_name = Some("Test Schema".to_string());
         schema.field_classifications.insert("id".to_string(), vec!["word".to_string()]);
+        schema.field_descriptions.insert("id".to_string(), "unique identifier".to_string());
 
         let response = client
             .add_schema(&schema, HashMap::new())
             .await
             .expect("schema addition should succeed");
 
-        // Schema name should be the identity_hash (64 char hex string)
-        assert_eq!(response.schema.name.len(), 64);
+        // Schema name is now the identity hash (hash of descriptive_name + fields)
+        // The readable name lives in descriptive_name
+        assert_eq!(response.schema.descriptive_name, Some("Test Schema".to_string()));
+        assert!(!response.schema.name.is_empty(), "schema name should be set");
 
         handle.stop(true).await;
     }

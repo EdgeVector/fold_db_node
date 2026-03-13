@@ -88,18 +88,18 @@ async fn handle_add_schema(
                 replaced_schema: None,
             })
         }
-        Ok(SchemaAddOutcome::AlreadyExists(schema)) => {
+        Ok(SchemaAddOutcome::AlreadyExists(schema, _)) => {
             HttpResponse::Ok().json(AddSchemaResponse {
                 schema,
                 mutation_mappers: HashMap::new(),
                 replaced_schema: None,
             })
         }
-        Ok(SchemaAddOutcome::Expanded(_old_name, schema, mutation_mappers)) => {
+        Ok(SchemaAddOutcome::Expanded(old_name, schema, mutation_mappers)) => {
             HttpResponse::Created().json(AddSchemaResponse {
                 schema,
                 mutation_mappers,
-                replaced_schema: None,
+                replaced_schema: Some(old_name),
             })
         }
         Ok(SchemaAddOutcome::TooSimilar(conflict)) => {
@@ -219,7 +219,6 @@ async fn test_ingest_tweets_js() {
         file_hash: None,
         source_folder: None,
         image_descriptive_name: None,
-        file_markdown: None,
     };
 
     // 7. Run ingestion within user context

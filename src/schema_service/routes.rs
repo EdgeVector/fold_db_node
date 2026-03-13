@@ -1,6 +1,5 @@
 use actix_web::{web, HttpResponse, Responder};
 use serde::Deserialize;
-use std::collections::HashMap;
 
 use fold_db::log_feature;
 use fold_db::logging::features::LogFeature;
@@ -214,10 +213,10 @@ pub(super) async fn add_schema(
                 replaced_schema: None,
             })
         }
-        Ok(SchemaAddOutcome::AlreadyExists(schema)) => {
+        Ok(SchemaAddOutcome::AlreadyExists(schema, mutation_mappers)) => {
             HttpResponse::Ok().json(AddSchemaResponse {
                 schema,
-                mutation_mappers: HashMap::new(),
+                mutation_mappers,
                 replaced_schema: None,
             })
         }

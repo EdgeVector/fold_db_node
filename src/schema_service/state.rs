@@ -651,6 +651,46 @@ impl SchemaServiceState {
         Ok((None, None, false))
     }
 
+    /// Check whether two schema names are semantically similar enough to be
+    /// considered the same collection. Uses embedding similarity on the
+    /// human-readable form of the names (underscores → spaces).
+    ///
+    /// This acts as a second gate for descriptive_name matching: even if
+    /// "Holiday Illustration" ≈ "Famous Paintings" in embedding space, the
+    /// schema names `artwork_collection` vs `famous_paintings` should NOT merge.
+    fn schema_names_are_similar(&self, incoming: &str, existing: &str) -> bool {
+        // Exact match (case-insensitive)
+        if incoming.eq_ignore_ascii_case(existing) {
+            return true;
+        }
+
+        // Convert snake_case to readable form for embedding comparison
+        let readable_incoming = incoming.replace('_', " ");
+        let readable_existing = existing.replace('_', " ");
+
+        let incoming_emb = match self.embedder.embed_text(&readable_incoming) {
+            Ok(v) => v,
+            Err(_) => return false,
+        };
+        let existing_emb = match self.embedder.embed_text(&readable_existing) {
+            Ok(v) => v,
+            Err(_) => return false,
+        };
+
+        let sim = cosine_similarity(&incoming_emb, &existing_emb);
+        log_feature!(
+            LogFeature::Schema,
+            info,
+            "Schema name similarity: '{}' vs '{}' = {:.3}",
+            incoming,
+            existing,
+            sim
+        );
+        // Use a high threshold — schema names are short and precise, so only
+        // near-synonyms should match (e.g., "blog_posts" ≈ "blog_articles").
+        sim >= 0.85
+    }
+
     /// Get or compute the embedding for a context-enriched field name.
     /// Format: "the {field_name} of the {descriptive_name}"
     fn get_field_embedding(&self, field_name: &str, descriptive_name: &str) -> Option<Vec<f32>> {
@@ -864,7 +904,7 @@ impl SchemaServiceState {
                 old_name,
                 desc_name
             );
-            return Ok(SchemaAddOutcome::AlreadyExists(existing.clone()));
+            return Ok(SchemaAddOutcome::AlreadyExists(existing.clone(), mutation_mappers.clone()));
         }
 
         log_feature!(
@@ -914,7 +954,10 @@ impl SchemaServiceState {
                 .or_insert_with(|| target.clone());
         }
 
-        // Recompute identity hash with merged fields
+        // Recompute identity hash with merged fields.
+        // The expanded schema is a NEW schema — its name is the identity hash
+        // (derived from schema name + fields). The old schema keeps its name and
+        // gets blocked/superseded. Field mappers point back to the old schema.
         schema.compute_identity_hash();
         let new_hash = schema
             .get_identity_hash()
@@ -923,6 +966,7 @@ impl SchemaServiceState {
             })?
             .clone();
         schema.name = new_hash.clone();
+        let expanded_name = schema.name.clone();
 
         // Persist expanded schema
         self.persist_schema(schema, mutation_mappers).await?;
@@ -932,7 +976,7 @@ impl SchemaServiceState {
             let mut schemas = self.schemas.write().map_err(|_| {
                 FoldDbError::Config("Failed to acquire schemas write lock".to_string())
             })?;
-            schemas.insert(new_hash.clone(), schema.clone());
+            schemas.insert(expanded_name.clone(), schema.clone());
         }
 
         // Update descriptive_name index to point to expanded schema
@@ -940,7 +984,7 @@ impl SchemaServiceState {
             let mut index = self.descriptive_name_index.write().map_err(|_| {
                 FoldDbError::Config("Failed to acquire descriptive_name_index write lock".to_string())
             })?;
-            index.insert(desc_name.to_string(), new_hash);
+            index.insert(desc_name.to_string(), expanded_name);
         }
 
         // Register new fields as canonical for future schema proposals
@@ -967,6 +1011,30 @@ impl SchemaServiceState {
         mut schema: Schema,
         mut mutation_mappers: HashMap<String, String>,
     ) -> FoldDbResult<SchemaAddOutcome> {
+        // descriptive_name is required — it's how schemas are identified, displayed,
+        // and matched for expansion. A schema without one is a bug in the caller.
+        if schema.descriptive_name.as_ref().is_none_or(|dn| dn.trim().is_empty()) {
+            return Err(FoldDbError::Config(
+                "Schema must have a non-empty descriptive_name".to_string(),
+            ));
+        }
+
+        // field_descriptions is required — the schema service uses them for
+        // semantic field matching (embedding "field_name: description").
+        // Without descriptions, field matching degrades to bare name comparison.
+        if let Some(ref fields) = schema.fields {
+            let missing: Vec<&String> = fields
+                .iter()
+                .filter(|f| !schema.field_descriptions.contains_key(*f))
+                .collect();
+            if !missing.is_empty() {
+                return Err(FoldDbError::Config(format!(
+                    "Schema fields missing descriptions (required for semantic matching): {:?}",
+                    missing
+                )));
+            }
+        }
+
         // Canonicalize field names against the global canonical field registry
         // before any dedup or identity hash computation.
         if let Some(ref fields) = schema.fields {
@@ -1003,56 +1071,111 @@ impl SchemaServiceState {
             identity_hash
         );
 
-        // Use identity_hash as unique identifier (SHA256 of sorted field names)
+        // Schema name is ALWAYS the identity_hash (hash of semantic name + fields).
+        // This guarantees:
+        // - Same semantic name + same fields = same hash = dedup
+        // - Same semantic name + different fields = different hash = separate schemas
+        // - Different semantic name + same fields = different hash = separate schemas
+        // The human-readable name lives in descriptive_name (for display/search).
         let schema_name = identity_hash.clone();
 
-        // Check if this exact schema already exists (same identity hash = same fields)
+        // Check if this exact schema already exists (same name)
         {
             let schemas = self.schemas.read().map_err(|_| {
                 FoldDbError::Config("Failed to acquire schemas read lock".to_string())
             })?;
 
             if let Some(existing_schema) = schemas.get(&schema_name) {
-                // If this schema has been superseded by expansion, return the
-                // current active schema instead of the old superseded one.
-                if let Some(ref desc_name) = existing_schema.descriptive_name {
+                // If this schema has been superseded by expansion, redirect to the
+                // current active schema for the subset/expansion check.
+                let (check_schema, check_name) = if let Some(ref desc_name) = existing_schema.descriptive_name {
                     let index = self.descriptive_name_index.read().map_err(|_| {
                         FoldDbError::Config("Failed to acquire descriptive_name_index read lock".to_string())
                     })?;
                     if let Some(current_hash) = index.get(desc_name) {
                         if *current_hash != schema_name {
-                            // This schema was superseded — return the current active one
                             if let Some(active_schema) = schemas.get(current_hash) {
                                 log_feature!(
                                     LogFeature::Schema,
                                     info,
-                                    "Schema '{}' was superseded by '{}' — returning active schema",
+                                    "Schema '{}' was superseded by '{}' — checking active schema",
                                     schema_name,
                                     current_hash
                                 );
-                                return Ok(SchemaAddOutcome::AlreadyExists(active_schema.clone()));
+                                (active_schema.clone(), current_hash.clone())
+                            } else {
+                                (existing_schema.clone(), schema_name.clone())
                             }
+                        } else {
+                            (existing_schema.clone(), schema_name.clone())
                         }
+                    } else {
+                        (existing_schema.clone(), schema_name.clone())
                     }
+                } else {
+                    (existing_schema.clone(), schema_name.clone())
+                };
+
+                // Check if the incoming schema has new fields not in the target schema.
+                // If so, fall through to expansion instead of returning AlreadyExists.
+                let existing_fields: HashSet<String> = check_schema
+                    .fields
+                    .as_ref()
+                    .map(|f| f.iter().cloned().collect())
+                    .unwrap_or_default();
+                let incoming_fields: HashSet<String> = schema
+                    .fields
+                    .as_ref()
+                    .map(|f| f.iter().cloned().collect())
+                    .unwrap_or_default();
+                let has_new_fields = !incoming_fields.is_subset(&existing_fields);
+
+                if has_new_fields {
+                    log_feature!(
+                        LogFeature::Schema,
+                        info,
+                        "Schema '{}' (active='{}') has new fields {:?} — expanding",
+                        schema_name,
+                        check_name,
+                        incoming_fields.difference(&existing_fields).collect::<Vec<_>>()
+                    );
+                    // Fall through to expansion path below
+                } else {
+                    log_feature!(
+                        LogFeature::Schema,
+                        info,
+                        "Schema '{}' already exists with same fields (active='{}') - returning existing",
+                        schema_name,
+                        check_name
+                    );
+
+                    return Ok(SchemaAddOutcome::AlreadyExists(check_schema, mutation_mappers.clone()));
                 }
-
-                log_feature!(
-                    LogFeature::Schema,
-                    info,
-                    "Schema '{}' already exists - returning existing schema",
-                    schema_name
-                );
-
-                return Ok(SchemaAddOutcome::AlreadyExists(existing_schema.clone()));
             }
         }
 
         // Check for schema expansion: if the new schema has a descriptive_name that
         // matches an existing schema (exact or semantic), merge fields (expand, never shrink).
         if let Some(incoming_desc_name) = schema.descriptive_name.clone() {
-            let (matched_desc, existing_schema_name, _) = self.find_matching_descriptive_name(&incoming_desc_name)?;
+            let (matched_desc, existing_schema_name, is_exact_match) = self.find_matching_descriptive_name(&incoming_desc_name)?;
 
-            if let Some(old_name) = existing_schema_name {
+            // For semantic (non-exact) matches, also compare schema names.
+            // "holiday_illustrations" and "famous_paintings" have similar descriptive names
+            // (both art-related) but are clearly different collections. Only merge when
+            // both the descriptive names AND the schema names are semantically close.
+            let should_merge = if let Some(ref old_name) = existing_schema_name {
+                if is_exact_match {
+                    true
+                } else {
+                    // Compare schema names as a second gate
+                    self.schema_names_are_similar(&schema_name, old_name)
+                }
+            } else {
+                false
+            };
+
+            if should_merge {
+            let old_name = existing_schema_name.unwrap();
                 // If matched via semantic similarity, adopt the existing descriptive_name
                 // so the index stays consistent.
                 if let Some(ref canonical_desc) = matched_desc {
@@ -1103,118 +1226,8 @@ impl SchemaServiceState {
             }
         }
 
-        // Fallback: if descriptive_name matching didn't find a match, check for
-        // high field overlap with any existing schema. If >50% of fields overlap,
-        // treat it as the same concept and expand (the AI may generate inconsistent
-        // descriptive names for the same data type).
-        let overlap_match: Option<(String, Schema)> = {
-            let new_fields: HashSet<String> = schema
-                .fields
-                .as_ref()
-                .map(|f| f.iter().cloned().collect())
-                .unwrap_or_default();
-
-            if new_fields.is_empty() {
-                None
-            } else {
-                let schemas = self.schemas.read().map_err(|_| {
-                    FoldDbError::Config("Failed to acquire schemas read lock".to_string())
-                })?;
-
-                let mut best: Option<(String, usize, Schema)> = None;
-                for (existing_name, existing_schema) in schemas.iter() {
-                    let existing_fields: HashSet<String> = existing_schema
-                        .fields
-                        .as_ref()
-                        .map(|f| f.iter().cloned().collect())
-                        .unwrap_or_default();
-                    if existing_fields.is_empty() {
-                        continue;
-                    }
-                    let overlap = new_fields.intersection(&existing_fields).count();
-                    let min_size = new_fields.len().min(existing_fields.len());
-                    // >50% of the smaller schema's fields overlap
-                    if min_size > 0
-                        && overlap * 2 > min_size
-                        && best.as_ref().is_none_or(|(_, b, _)| overlap > *b)
-                    {
-                        best = Some((
-                            existing_name.clone(),
-                            overlap,
-                            existing_schema.clone(),
-                        ));
-                    }
-                }
-                // Lock is dropped here when `schemas` goes out of scope
-                best.map(|(name, _overlap, s)| (name, s))
-            }
-        };
-
-        if let Some((mut old_name, mut existing)) = overlap_match {
-            // Follow the supersession chain: if the matched schema has been
-            // superseded, walk up to the current active schema so expansions
-            // always chain off the latest version.
-            {
-                let desc_index = self.descriptive_name_index.read().map_err(|_| {
-                    FoldDbError::Config("Failed to acquire descriptive_name_index read lock".to_string())
-                })?;
-                if let Some(ref dn) = existing.descriptive_name {
-                    if let Some(active_hash) = desc_index.get(dn) {
-                        if *active_hash != old_name {
-                            let schemas = self.schemas.read().map_err(|_| {
-                                FoldDbError::Config("Failed to acquire schemas read lock".to_string())
-                            })?;
-                            if let Some(active_schema) = schemas.get(active_hash) {
-                                log_feature!(
-                                    LogFeature::Schema,
-                                    info,
-                                    "Overlap matched superseded schema '{}', following chain to active '{}'",
-                                    &old_name[..old_name.len().min(16)],
-                                    &active_hash[..active_hash.len().min(16)]
-                                );
-                                old_name = active_hash.clone();
-                                existing = active_schema.clone();
-                            }
-                        }
-                    }
-                }
-            }
-
-            let existing_fields = existing.fields.clone().unwrap_or_default();
-
-            log_feature!(
-                LogFeature::Schema,
-                info,
-                "Field overlap fallback: expanding with '{}'",
-                old_name
-            );
-
-            // Adopt the existing descriptive_name for consistency
-            if let Some(ref desc) = existing.descriptive_name {
-                schema.descriptive_name = Some(desc.clone());
-            }
-
-            let desc_name = schema
-                .descriptive_name
-                .clone()
-                .unwrap_or_default();
-
-            // Semantic field matching for the overlap fallback path too
-            let incoming_fields = schema.fields.clone().unwrap_or_default();
-            if !desc_name.is_empty() {
-                let rename_map = self.semantic_field_rename_map(
-                    &incoming_fields,
-                    &existing_fields,
-                    &desc_name,
-                );
-                Self::apply_field_renames(&mut schema, &rename_map, &mut mutation_mappers);
-                schema.dedup_fields();
-            }
-
-            return self
-                .expand_schema(&mut schema, &existing, &old_name, &desc_name, &mutation_mappers)
-                .await;
-        }
+        // No field-overlap fallback needed — descriptive_name is required (validated above),
+        // so descriptive_name matching handles all expansion cases.
 
         schema.name = schema_name.clone();
 
