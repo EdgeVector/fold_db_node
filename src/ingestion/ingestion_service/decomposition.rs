@@ -6,7 +6,8 @@
 use crate::ingestion::decomposer;
 use crate::ingestion::key_extraction::extract_key_values_from_data;
 use crate::ingestion::mutation_generator;
-use crate::ingestion::{IngestionError, IngestionResult};
+use crate::ingestion::{AISchemaResponse, IngestionError, IngestionResult};
+use crate::schema_service::types::BatchSchemaReuseResponse;
 use fold_db::log_feature;
 use fold_db::logging::features::LogFeature;
 use fold_db::schema::types::KeyValue;
@@ -22,6 +23,12 @@ const MAX_DECOMPOSITION_DEPTH: usize = 10;
 pub(super) struct CachedSchema {
     pub(super) schema_name: String,
     pub(super) mutation_mappers: HashMap<String, String>,
+}
+
+/// Pre-collected AI proposal for a structure hash (before schema creation).
+pub(super) struct AiProposal {
+    pub(super) ai_response: AISchemaResponse,
+    pub(super) parent_data: Value,
 }
 
 impl IngestionService {
@@ -197,6 +204,299 @@ impl IngestionService {
                 Ok(None) => {
                     return Err(IngestionError::SchemaCreationError(format!(
                         "Schema '{}' not found when updating ref_fields — child references cannot be linked",
+                        schema_name
+                    )));
+                }
+                Err(e) => {
+                    return Err(IngestionError::SchemaCreationError(format!(
+                        "Failed to get schema '{}' for ref_fields update: {}",
+                        schema_name, e
+                    )));
+                }
+            }
+        }
+
+        Ok(schema_name)
+    }
+
+    /// Pre-pass: recursively decompose and collect AI recommendations for all
+    /// unique structure hashes WITHOUT creating schemas.
+    ///
+    /// Skips AI calls for structure hashes already in the service-level cache.
+    pub(super) async fn collect_ai_proposals_recursive(
+        &self,
+        structure_hash: &str,
+        representative: &Value,
+        proposals: &mut HashMap<String, AiProposal>,
+        depth: usize,
+        source_file_name: Option<&str>,
+    ) -> IngestionResult<()> {
+        // Already collected or in service-level cache — skip
+        if proposals.contains_key(structure_hash) {
+            return Ok(());
+        }
+        if self.get_cached_schema(structure_hash).is_some() {
+            return Ok(());
+        }
+
+        let rep_decomp = decomposer::decompose(representative);
+
+        // Recursively collect children (depth-first)
+        if depth < MAX_DECOMPOSITION_DEPTH {
+            for child_group in &rep_decomp.children {
+                Box::pin(self.collect_ai_proposals_recursive(
+                    &child_group.structure_hash,
+                    &child_group.items[0],
+                    proposals,
+                    depth + 1,
+                    None,
+                ))
+                .await?;
+            }
+        }
+
+        // Get AI recommendation for the flat parent
+        let mut ai_response = self.get_ai_recommendation(&rep_decomp.parent).await?;
+        self.fill_missing_field_descriptions(&mut ai_response, &rep_decomp.parent)
+            .await?;
+
+        // Apply image override at depth 0
+        let is_image = depth == 0
+            && source_file_name
+                .map(crate::ingestion::is_image_file)
+                .unwrap_or(false);
+        if is_image {
+            if let Some(ref mut schema_def) = ai_response.new_schemas {
+                schema_def["schema_type"] = serde_json::json!("HashRange");
+                schema_def["key"] = serde_json::json!({
+                    "hash_field": "source_file_name",
+                    "range_field": "created_at"
+                });
+                if let Some(fields) = schema_def.get_mut("fields").and_then(|f| f.as_array_mut()) {
+                    let sfn = serde_json::json!("source_file_name");
+                    if !fields.contains(&sfn) {
+                        fields.push(sfn);
+                    }
+                } else {
+                    let mut field_names: Vec<String> = schema_def
+                        .get("field_classifications")
+                        .and_then(|fc| fc.as_object())
+                        .map(|obj| obj.keys().cloned().collect())
+                        .unwrap_or_default();
+                    if !field_names.contains(&"source_file_name".to_string()) {
+                        field_names.push("source_file_name".to_string());
+                    }
+                    schema_def["fields"] = serde_json::json!(field_names);
+                }
+                if let Some(fc) = schema_def
+                    .get_mut("field_classifications")
+                    .and_then(|f| f.as_object_mut())
+                {
+                    fc.entry("source_file_name")
+                        .or_insert_with(|| serde_json::json!(["word"]));
+                }
+            }
+            ai_response
+                .mutation_mappers
+                .entry("source_file_name".to_string())
+                .or_insert_with(|| "source_file_name".to_string());
+        }
+
+        proposals.insert(
+            structure_hash.to_string(),
+            AiProposal {
+                ai_response,
+                parent_data: rep_decomp.parent,
+            },
+        );
+
+        Ok(())
+    }
+
+    /// Resolve schemas using batch reuse results: for each structure hash, try
+    /// the service-level cache first, then batch reuse results, then fall back
+    /// to creating via `determine_schema_to_use`.
+    #[allow(clippy::too_many_arguments)]
+    pub(super) async fn resolve_schemas_with_reuse(
+        &self,
+        structure_hash: &str,
+        representative: &Value,
+        schema_cache: &mut HashMap<String, CachedSchema>,
+        proposals: &HashMap<String, AiProposal>,
+        batch_result: &BatchSchemaReuseResponse,
+        node: &crate::fold_node::FoldNode,
+        depth: usize,
+        _source_file_name: Option<&str>,
+    ) -> IngestionResult<String> {
+        // Return per-file cached result if available
+        if let Some(cached) = schema_cache.get(structure_hash) {
+            return Ok(cached.schema_name.clone());
+        }
+
+        // Check service-level cache (cross-file)
+        if let Some(cached) = self.get_cached_schema(structure_hash) {
+            let schema_name = cached.schema_name.clone();
+            schema_cache.insert(structure_hash.to_string(), cached);
+            return Ok(schema_name);
+        }
+
+        let rep_decomp = decomposer::decompose(representative);
+
+        // Recursively resolve children first (depth-first)
+        if depth < MAX_DECOMPOSITION_DEPTH {
+            for child_group in &rep_decomp.children {
+                Box::pin(self.resolve_schemas_with_reuse(
+                    &child_group.structure_hash,
+                    &child_group.items[0],
+                    schema_cache,
+                    proposals,
+                    batch_result,
+                    node,
+                    depth + 1,
+                    None,
+                ))
+                .await?;
+            }
+        }
+
+        // Get the AI proposal for this structure hash
+        let proposal = proposals.get(structure_hash).ok_or_else(|| {
+            IngestionError::SchemaCreationError(format!(
+                "No AI proposal for structure hash '{}'",
+                structure_hash
+            ))
+        })?;
+
+        // Try batch reuse: check if the descriptive name matched an existing schema
+        let batch_reuse_result = proposal
+            .ai_response
+            .new_schemas
+            .as_ref()
+            .and_then(|sd| sd.get("descriptive_name"))
+            .and_then(|v| v.as_str())
+            .and_then(|desc_name| batch_result.matches.get(desc_name));
+
+        let (schema_name, merged_mappers) = if let Some(reuse_match) = batch_reuse_result {
+            if reuse_match.is_superset {
+                log_feature!(
+                    LogFeature::Ingestion,
+                    info,
+                    "Batch reuse hit for structure hash '{}': reusing schema '{}' (superset match)",
+                    structure_hash,
+                    reuse_match.schema.name
+                );
+                // Reuse: load schema locally if needed, approve, build mappers
+                let schema_manager = super::get_schema_manager(node).await?;
+                let already_loaded = schema_manager
+                    .get_schema_metadata(&reuse_match.schema.name)
+                    .map(|opt| opt.is_some())
+                    .unwrap_or(false);
+                if !already_loaded {
+                    let json_str = serde_json::to_string(&reuse_match.schema)
+                        .map_err(super::schema_err)?;
+                    schema_manager
+                        .load_schema_from_json(&json_str)
+                        .await
+                        .map_err(super::schema_err)?;
+                    schema_manager
+                        .approve(&reuse_match.schema.name)
+                        .await
+                        .map_err(super::schema_err)?;
+                }
+                // Build mutation mappers: AI mappers + field renames from batch result
+                let mut mappers = proposal.ai_response.mutation_mappers.clone();
+                for (from, to) in &reuse_match.field_rename_map {
+                    mappers.insert(from.clone(), to.clone());
+                }
+                (reuse_match.schema.name.clone(), mappers)
+            } else {
+                // Not a superset — fall through to creation
+                let (name, service_mappers) = self
+                    .determine_schema_to_use(&proposal.ai_response, &proposal.parent_data, node)
+                    .await?;
+                let mut mappers = proposal.ai_response.mutation_mappers.clone();
+                for (from, to) in service_mappers {
+                    mappers.insert(from, to);
+                }
+                (name, mappers)
+            }
+        } else {
+            // No batch match — create via standard path
+            let (name, service_mappers) = self
+                .determine_schema_to_use(&proposal.ai_response, &proposal.parent_data, node)
+                .await?;
+            let mut mappers = proposal.ai_response.mutation_mappers.clone();
+            for (from, to) in service_mappers {
+                mappers.insert(from, to);
+            }
+            (name, mappers)
+        };
+
+        log_feature!(
+            LogFeature::Ingestion,
+            info,
+            "Resolved schema '{}' for structure hash {}",
+            schema_name,
+            structure_hash
+        );
+
+        schema_cache.insert(
+            structure_hash.to_string(),
+            CachedSchema {
+                schema_name: schema_name.clone(),
+                mutation_mappers: merged_mappers,
+            },
+        );
+
+        // Update parent schema with ref_fields for children
+        if !rep_decomp.children.is_empty() && depth < MAX_DECOMPOSITION_DEPTH {
+            let schema_manager = super::get_schema_manager(node).await?;
+
+            match schema_manager.get_schema_metadata(&schema_name) {
+                Ok(Some(mut schema)) => {
+                    for child_group in &rep_decomp.children {
+                        let child_schema_name = schema_cache
+                            .get(&child_group.structure_hash)
+                            .map(|c| c.schema_name.clone())
+                            .ok_or_else(|| {
+                                IngestionError::SchemaCreationError(format!(
+                                    "No cached schema for child structure hash '{}' (field '{}')",
+                                    child_group.structure_hash, child_group.field_name
+                                ))
+                            })?;
+                        schema
+                            .ref_fields
+                            .insert(child_group.field_name.clone(), child_schema_name);
+
+                        if let Some(ref mut fields) = schema.fields {
+                            if !fields.contains(&child_group.field_name) {
+                                fields.push(child_group.field_name.clone());
+                            }
+                        } else {
+                            schema.fields = Some(vec![child_group.field_name.clone()]);
+                        }
+                    }
+
+                    if let Err(e) = schema.populate_runtime_fields() {
+                        log_feature!(
+                            LogFeature::Ingestion,
+                            warn,
+                            "Failed to populate runtime fields for schema '{}': {}",
+                            schema_name,
+                            e
+                        );
+                    }
+
+                    schema_manager.update_schema(&schema).await.map_err(|e| {
+                        IngestionError::SchemaCreationError(format!(
+                            "Failed to update schema with ref_fields: {}",
+                            e
+                        ))
+                    })?;
+                }
+                Ok(None) => {
+                    return Err(IngestionError::SchemaCreationError(format!(
+                        "Schema '{}' not found when updating ref_fields",
                         schema_name
                     )));
                 }

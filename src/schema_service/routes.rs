@@ -242,6 +242,29 @@ pub(super) async fn add_schema(
     }
 }
 
+/// Batch check whether proposed schemas can reuse existing ones
+pub(super) async fn batch_check_reuse(
+    payload: web::Json<BatchSchemaReuseRequest>,
+    state: web::Data<SchemaServiceState>,
+) -> impl Responder {
+    let request = payload.into_inner();
+
+    match state.batch_check_schema_reuse(&request.schemas) {
+        Ok(matches) => HttpResponse::Ok().json(BatchSchemaReuseResponse { matches }),
+        Err(e) => {
+            log_feature!(
+                LogFeature::Schema,
+                error,
+                "Batch schema reuse check failed: {}",
+                e
+            );
+            HttpResponse::InternalServerError().json(ErrorResponse {
+                error: format!("Batch schema reuse check failed: {}", e),
+            })
+        }
+    }
+}
+
 /// Health check endpoint
 pub(super) async fn health_check() -> impl Responder {
     HttpResponse::Ok().json(HealthResponse {
