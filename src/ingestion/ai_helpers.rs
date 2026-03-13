@@ -347,7 +347,8 @@ pub fn validate_schema_has_classifications(schema_val: &Value) -> IngestionResul
         match classifications_val.as_array() {
             Some(arr) if !arr.is_empty() => {}
             _ => {
-                log::debug!(
+                log_feature!(
+                    LogFeature::Ingestion, debug,
                     "Schema '{}' field '{}' has empty or non-array classifications — defaults will be applied",
                     schema_name, field_name
                 );

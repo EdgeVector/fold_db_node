@@ -241,7 +241,7 @@ impl IngestionService {
             .get(&top_level_hash)
             .map(|c| c.schema_name.clone())
             .unwrap_or_else(|| {
-                log::warn!("Schema cache miss for top-level hash '{}' — returning empty schema name", top_level_hash);
+                log_feature!(LogFeature::Ingestion, warn, "Schema cache miss for top-level hash '{}' — returning empty schema name", top_level_hash);
                 String::new()
             });
 
@@ -503,7 +503,7 @@ impl IngestionService {
                 progress_id: request.progress_id.clone(),
             };
             if let Err(e) = node.mark_file_ingested(&request.pub_key, fh, record).await {
-                log::warn!("Failed to record file dedup entry: {}", e);
+                log_feature!(LogFeature::Ingestion, warn, "Failed to record file dedup entry: {}", e);
             }
         }
     }
@@ -915,11 +915,11 @@ impl IngestionService {
                                 let old_json = serde_json::to_string(&old_schema)
                                     .map_err(schema_err)?;
                                 if let Err(e) = schema_manager.load_schema_from_json(&old_json).await {
-                                    log::warn!("Failed to load old schema '{}' from service: {}", old_name, e);
+                                    log_feature!(LogFeature::Ingestion, warn, "Failed to load old schema '{}' from service: {}", old_name, e);
                                 }
                             }
                             Err(e) => {
-                                log::warn!("Failed to fetch old schema '{}' from service: {}", old_name, e);
+                                log_feature!(LogFeature::Ingestion, warn, "Failed to fetch old schema '{}' from service: {}", old_name, e);
                             }
                         }
                     }
@@ -944,13 +944,14 @@ impl IngestionService {
 
         // Block the old schema AFTER approval, so field_mappers are already resolved.
         if let Some(ref old_name) = add_response.replaced_schema {
-            log::info!(
+            log_feature!(
+                LogFeature::Ingestion, info,
                 "Schema expansion: blocking old schema '{}', loaded expanded '{}'",
                 old_name,
                 schema_response.name
             );
             if let Err(e) = schema_manager.block_and_supersede(old_name, &schema_response.name).await {
-                log::warn!("Failed to block old schema '{}' during expansion: {}", old_name, e);
+                log_feature!(LogFeature::Ingestion, warn, "Failed to block old schema '{}' during expansion: {}", old_name, e);
             }
         }
 
