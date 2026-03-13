@@ -229,6 +229,26 @@ impl FoldNode {
             .await
     }
 
+    /// Batch check whether proposed schemas can reuse existing ones.
+    /// Returns empty matches for test/mock schema service URLs.
+    pub async fn batch_check_schema_reuse(
+        &self,
+        entries: &[crate::schema_service::types::SchemaLookupEntry],
+    ) -> FoldDbResult<crate::schema_service::types::BatchSchemaReuseResponse> {
+        let schema_service_url = self.schema_service_url().ok_or_else(|| {
+            FoldDbError::Config("Schema service URL is not configured".to_string())
+        })?;
+
+        if schema_service_url.starts_with("test://") || schema_service_url.starts_with("mock://") {
+            return Ok(crate::schema_service::types::BatchSchemaReuseResponse {
+                matches: std::collections::HashMap::new(),
+            });
+        }
+
+        let client = crate::fold_node::SchemaServiceClient::new(&schema_service_url);
+        client.batch_check_schema_reuse(entries).await
+    }
+
     /// Execute a batch of mutations.
     pub async fn mutate_batch(
         &self,

@@ -12,7 +12,10 @@ use fold_db::storage::DynamoDbSchemaStore;
 #[cfg(feature = "aws-backend")]
 pub use fold_db::storage::CloudConfig;
 
-use super::types::{SchemaAddOutcome, SimilarSchemaEntry, SimilarSchemasResponse};
+use super::types::{
+    SchemaAddOutcome, SchemaLookupEntry, SchemaReuseMatch, SimilarSchemaEntry,
+    SimilarSchemasResponse,
+};
 
 /// Minimum cosine similarity between descriptive names to consider them a semantic match.
 const DESCRIPTIVE_NAME_SIMILARITY_THRESHOLD: f32 = 0.8;
@@ -1395,6 +1398,92 @@ impl SchemaServiceState {
             threshold,
             similar_schemas: similar,
         })
+    }
+
+    /// Batch check whether proposed schemas can reuse existing ones.
+    ///
+    /// For each entry, finds a matching descriptive name (exact or semantic),
+    /// resolves to the active (non-deprecated) schema, computes field rename
+    /// maps, and determines if the existing schema is a superset.
+    ///
+    /// Read-only operation — only acquires read locks.
+    pub fn batch_check_schema_reuse(
+        &self,
+        entries: &[SchemaLookupEntry],
+    ) -> FoldDbResult<HashMap<String, SchemaReuseMatch>> {
+        let mut results = HashMap::new();
+
+        let schemas = self.schemas.read().map_err(|_| {
+            FoldDbError::Config("Failed to acquire schemas_cache read lock".to_string())
+        })?;
+
+        for entry in entries {
+            // 1. Find matching descriptive name (exact or semantic)
+            let (matched_desc, matched_hash, is_exact) =
+                match self.find_matching_descriptive_name(&entry.descriptive_name) {
+                    Ok((Some(desc), Some(hash), exact)) => (desc, hash, exact),
+                    Ok(_) => continue,
+                    Err(e) => {
+                        log_feature!(
+                            LogFeature::Schema,
+                            warn,
+                            "batch_check_schema_reuse: error matching '{}': {}",
+                            entry.descriptive_name,
+                            e
+                        );
+                        continue;
+                    }
+                };
+
+            // 2. Resolve to active (non-deprecated) schema
+            let existing = match schemas.get(&matched_hash) {
+                Some(s) => s,
+                None => continue,
+            };
+            let (active_schema, _active_name) =
+                match self.resolve_active_schema(existing, &matched_hash, &schemas) {
+                    Some(pair) => pair,
+                    None => (existing.clone(), matched_hash.clone()),
+                };
+
+            // 3. Get the active schema's fields
+            let existing_fields: Vec<String> = active_schema
+                .fields
+                .as_ref()
+                .cloned()
+                .unwrap_or_default();
+
+            // 4. Compute semantic field rename map
+            let field_rename_map = self.semantic_field_rename_map(
+                &entry.fields,
+                &existing_fields,
+                &entry.descriptive_name,
+            );
+
+            // 5. Determine superset status and unmapped fields
+            let existing_set: HashSet<&String> = existing_fields.iter().collect();
+            let mut unmapped = Vec::new();
+            for f in &entry.fields {
+                if !existing_set.contains(f) && !field_rename_map.contains_key(f) {
+                    unmapped.push(f.clone());
+                }
+            }
+            let is_superset = unmapped.is_empty();
+
+            results.insert(
+                entry.descriptive_name.clone(),
+                SchemaReuseMatch {
+                    schema: active_schema,
+                    matched_descriptive_name: matched_desc,
+                    is_exact_match: is_exact,
+                    field_rename_map,
+                    is_superset,
+                    unmapped_fields: unmapped,
+                },
+            );
+        }
+
+        Ok(results)
     }
 }
 

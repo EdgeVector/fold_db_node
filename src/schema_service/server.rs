@@ -14,8 +14,8 @@ pub use super::state::CloudConfig;
 
 // Route handlers (pub(super) visibility — accessible from sibling modules)
 use super::routes::{
-    add_schema, find_similar, get_available_schemas, get_schema, health_check, list_schemas,
-    reload_schemas, reset_database,
+    add_schema, batch_check_reuse, find_similar, get_available_schemas, get_schema, health_check,
+    list_schemas, reload_schemas, reset_database,
 };
 
 /// Schema Service HTTP Server
@@ -72,6 +72,7 @@ impl SchemaServiceServer {
                             .route(web::get().to(list_schemas))
                             .route(web::post().to(add_schema)),
                     )
+                    .route("/schemas/batch-check-reuse", web::post().to(batch_check_reuse))
                     .route("/schemas/reload", web::post().to(reload_schemas))
                     .route("/schemas/available", web::get().to(get_available_schemas))
                     .route("/schemas/similar/{name}", web::get().to(find_similar))

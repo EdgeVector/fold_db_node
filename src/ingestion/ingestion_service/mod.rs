@@ -27,7 +27,8 @@ use serde_json::Value;
 use std::collections::HashMap;
 use std::sync::Arc;
 
-use decomposition::CachedSchema;
+use crate::schema_service::types::{BatchSchemaReuseResponse, SchemaLookupEntry};
+use decomposition::{AiProposal, CachedSchema};
 
 /// Shorthand to wrap any `Display` error as a `SchemaCreationError`.
 pub(super) fn schema_err(e: impl std::fmt::Display) -> IngestionError {
@@ -52,6 +53,9 @@ pub struct IngestionService {
     /// files are ingested concurrently. The AI call (slow) happens outside
     /// the lock; only the schema-service call + local load + block is locked.
     schema_creation_lock: tokio::sync::Mutex<()>,
+    /// Cross-file cache: structure hash → resolved schema. Persists across files
+    /// in a batch so the second file with the same JSON shape skips AI entirely.
+    structure_schema_cache: std::sync::RwLock<HashMap<String, CachedSchema>>,
 }
 
 impl IngestionService {
@@ -68,7 +72,44 @@ impl IngestionService {
     /// ingestion calls will fail at runtime with a clear error.
     pub fn new(config: IngestionConfig) -> IngestionResult<Self> {
         let (backend, init_error) = build_backend(&config);
-        Ok(Self { config, backend, init_error, schema_creation_lock: tokio::sync::Mutex::new(()) })
+        Ok(Self {
+            config,
+            backend,
+            init_error,
+            schema_creation_lock: tokio::sync::Mutex::new(()),
+            structure_schema_cache: std::sync::RwLock::new(HashMap::new()),
+        })
+    }
+
+    /// Look up a structure hash in the service-level cache.
+    fn get_cached_schema(&self, structure_hash: &str) -> Option<CachedSchema> {
+        self.structure_schema_cache
+            .read()
+            .ok()
+            .and_then(|cache| {
+                cache.get(structure_hash).map(|c| CachedSchema {
+                    schema_name: c.schema_name.clone(),
+                    mutation_mappers: c.mutation_mappers.clone(),
+                })
+            })
+    }
+
+    /// Store a resolved schema in the service-level cache for cross-file reuse.
+    fn cache_schema(
+        &self,
+        structure_hash: &str,
+        schema_name: &str,
+        mutation_mappers: &HashMap<String, String>,
+    ) {
+        if let Ok(mut cache) = self.structure_schema_cache.write() {
+            cache.insert(
+                structure_hash.to_string(),
+                CachedSchema {
+                    schema_name: schema_name.to_string(),
+                    mutation_mappers: mutation_mappers.clone(),
+                },
+            );
+        }
     }
 
     /// Process JSON ingestion using a FoldNode with progress tracking
@@ -204,15 +245,54 @@ impl IngestionService {
         let rep = representative.as_ref()
             .expect("representative is Some when has_nested_children is true");
         let top_level_hash = crate::ingestion::decomposer::compute_structure_hash(rep);
-        self.resolve_schema_for_structure(
+
+        // Phase 1: Collect all AI proposals recursively (no schema creation).
+        // Skips AI for structure hashes already in the service-level cache.
+        let mut proposals: HashMap<String, AiProposal> = HashMap::new();
+        self.collect_ai_proposals_recursive(
+            &top_level_hash,
+            rep,
+            &mut proposals,
+            0,
+            request.source_file_name.as_deref(),
+        )
+        .await?;
+
+        // Phase 2: Batch check reuse for ALL proposals at once
+        let entries: Vec<SchemaLookupEntry> = proposals
+            .values()
+            .filter_map(|p| extract_lookup_entry(&p.ai_response))
+            .collect();
+        let batch_result = node.batch_check_schema_reuse(&entries).await
+            .unwrap_or_else(|e| {
+                log_feature!(
+                    LogFeature::Ingestion,
+                    warn,
+                    "Batch schema reuse check failed, falling back to creation: {}",
+                    e
+                );
+                BatchSchemaReuseResponse {
+                    matches: HashMap::new(),
+                }
+            });
+
+        // Phase 3: Resolve schemas using batch results (reuse fast path or create slow path)
+        self.resolve_schemas_with_reuse(
             &top_level_hash,
             rep,
             &mut schema_cache,
+            &proposals,
+            &batch_result,
             node,
             0,
             request.source_file_name.as_deref(),
         )
         .await?;
+
+        // Cache all resolved schemas in the service-level cache for cross-file reuse
+        for (hash, cached) in &schema_cache {
+            self.cache_schema(hash, &cached.schema_name, &cached.mutation_mappers);
+        }
 
         let metadata = Self::build_ingestion_metadata(&request.file_hash, progress_id);
 
@@ -1055,6 +1135,29 @@ fn enrich_with_source_context(data: &mut Value, source_file_name: Option<&str>) 
         Value::Object(obj) => enrich_obj(obj),
         _ => {}
     }
+}
+
+/// Extract a `SchemaLookupEntry` from an AI response for batch reuse checking.
+fn extract_lookup_entry(ai_response: &AISchemaResponse) -> Option<SchemaLookupEntry> {
+    let schema_def = ai_response.new_schemas.as_ref()?;
+    let descriptive_name = schema_def
+        .get("descriptive_name")
+        .and_then(|v| v.as_str())
+        .map(|s| s.to_string())?;
+    let fields: Vec<String> = schema_def
+        .get("fields")
+        .and_then(|v| v.as_array())
+        .map(|arr| arr.iter().filter_map(|v| v.as_str().map(|s| s.to_string())).collect())
+        .or_else(|| {
+            schema_def
+                .get("field_classifications")
+                .and_then(|v| v.as_object())
+                .map(|obj| obj.keys().cloned().collect())
+        })?;
+    Some(SchemaLookupEntry {
+        descriptive_name,
+        fields,
+    })
 }
 
 /// Build a `Vec<SchemaWriteRecord>` from a mutations slice, deduplicating keys.

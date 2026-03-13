@@ -4,6 +4,10 @@ use reqwest::StatusCode;
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 
+use crate::schema_service::types::{
+    BatchSchemaReuseRequest, BatchSchemaReuseResponse, SchemaLookupEntry,
+};
+
 /// Client for communicating with the schema service
 #[derive(Clone)]
 pub struct SchemaServiceClient {
@@ -205,6 +209,48 @@ impl SchemaServiceClient {
         Ok(schema)
     }
 
+    /// Batch check whether proposed schemas can reuse existing ones.
+    pub async fn batch_check_schema_reuse(
+        &self,
+        entries: &[SchemaLookupEntry],
+    ) -> FoldDbResult<BatchSchemaReuseResponse> {
+        let url = format!("{}/api/schemas/batch-check-reuse", self.base_url);
+
+        let request = BatchSchemaReuseRequest {
+            schemas: entries.to_vec(),
+        };
+
+        let response = self
+            .client
+            .post(&url)
+            .json(&request)
+            .send()
+            .await
+            .map_err(|e| {
+                FoldDbError::Config(format!(
+                    "Failed to batch check schema reuse at {}: {}",
+                    url, e
+                ))
+            })?;
+
+        if !response.status().is_success() {
+            let body = response
+                .text()
+                .await
+                .unwrap_or_else(|_| "<empty>".to_string());
+            return Err(FoldDbError::Config(format!(
+                "Batch schema reuse check failed: {}",
+                body
+            )));
+        }
+
+        response.json::<BatchSchemaReuseResponse>().await.map_err(|e| {
+            FoldDbError::Config(format!(
+                "Failed to parse batch schema reuse response: {}",
+                e
+            ))
+        })
+    }
 }
 
 #[cfg(test)]
