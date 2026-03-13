@@ -15,7 +15,7 @@ use fold_db::logging::core::run_with_user;
 use fold_db_node::fold_node::node::FoldNode;
 use fold_db_node::fold_node::OperationProcessor;
 use fold_db_node::ingestion::ingestion_service::IngestionService;
-use fold_db_node::ingestion::json_processor::{convert_file_to_markdown, file_markdown_to_value};
+use fold_db_node::ingestion::json_processor::convert_file_to_json;
 use fold_db_node::ingestion::{create_progress_tracker, IngestionRequest, ProgressService};
 use fold_db_node::schema_service::server::{
     AddSchemaResponse, ConflictResponse, ErrorResponse, SchemaAddOutcome, SchemaServiceState,
@@ -89,7 +89,7 @@ async fn handle_add_schema(
                 replaced_schema: None,
             })
         }
-        Ok(SchemaAddOutcome::AlreadyExists(schema)) => {
+        Ok(SchemaAddOutcome::AlreadyExists(schema, _)) => {
             HttpResponse::Ok().json(AddSchemaResponse {
                 schema,
                 mutation_mappers: HashMap::new(),
@@ -227,15 +227,14 @@ async fn test_paintings_use_single_schema() {
             file_name
         );
 
-        // Convert image to markdown using file_to_markdown (same as the real server)
-        let fm = match convert_file_to_markdown(painting_path).await {
-            Ok(fm) => fm,
+        // Convert image to JSON using file_to_json (same as the real server)
+        let data = match convert_file_to_json(&painting_path.to_path_buf()).await {
+            Ok(json) => json,
             Err(e) => {
                 eprintln!("  Failed to convert file: {}", e);
                 continue;
             }
         };
-        let data = file_markdown_to_value(&fm);
 
         let progress_id = format!("painting-{}", i);
         let request = IngestionRequest {
@@ -247,7 +246,6 @@ async fn test_paintings_use_single_schema() {
             file_hash: None,
             source_folder: Some(paintings_dir.to_string_lossy().to_string()),
             image_descriptive_name: None,
-            file_markdown: Some(fm),
         };
 
         let svc = ingestion_service.clone();

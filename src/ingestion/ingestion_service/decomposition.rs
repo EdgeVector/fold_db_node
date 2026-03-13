@@ -76,6 +76,9 @@ impl IngestionService {
         // Get AI recommendation for the flat parent (no array-of-object fields)
         let mut ai_response = self.get_ai_recommendation(&rep_decomp.parent).await?;
 
+        // If the AI didn't provide field_descriptions, do a second AI call
+        self.fill_missing_field_descriptions(&mut ai_response, &rep_decomp.parent).await?;
+
         // Apply image override at depth 0 (top-level parent is the image schema)
         let is_image = depth == 0
             && source_file_name

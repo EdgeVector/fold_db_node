@@ -21,18 +21,36 @@ CRITICAL - Mutation Mappers:
 - Example: if JSON has {"user": {"id": 1, "name": "Tom"}}, mapper should be {"user": "user"}, NOT {"user.id": "id"}
 
 IMPORTANT - Schema Types:
-- STRONGLY PREFER Range schemas over Single schemas. Most data benefits from a range key.
-- For storing MULTIPLE entities/records, use "key": {"range_field": "field_name"}
-- Only use Single (no "key" field) when the data is truly a single global config/settings object with no records
-- If the user is providing an ARRAY of objects, you MUST use a Range schema with a "key"
-- Even for single objects, if the data has a date/timestamp field, use a Range schema so future records can be added
-- PREFER a date or timestamp field as the range_field (like "created_at", "date", "timestamp", "posted_at") so that data can be queried by time range
-- If NO date/timestamp field exists, fall back to a unique identifier field (like "id", "name", "email")
+- ALWAYS assume the data belongs to a COLLECTION/SET of similar items, even if only one item is provided now.
+- STRONGLY PREFER HashRange schemas. Most data benefits from both a hash key (for grouping) and a range key (for ordering).
+- Choose a meaningful hash_field that groups related records (e.g., "author", "category", "user_id", "type", "source").
+  If the data has a natural grouping dimension, use it. If not, pick the most useful field for filtering.
+- Choose a range_field based on a date/timestamp if one exists (e.g., "created_at", "date", "timestamp", "posted_at").
+  If no date field exists, use a unique identifier or sequential field (e.g., "id", "name").
+- hash_field and range_field can use dot-notation to reference nested values (e.g., "departure.date", "departure.airport").
+  The parent field (e.g., "departure") MUST still be included in "fields" and "mutation_mappers" as a top-level entry.
+- NEVER use "file_type" as a hash_field or range_field — it is metadata, not a semantic grouping dimension.
+  For text/document data, use "source_file" or "category" as hash_field if available, and derive the schema name from the content's topic (e.g., "recipes", "meeting_notes", "journal_entries"), not the file extension.
+- Use Range (range_field only, no hash_field) ONLY when there is genuinely no meaningful grouping dimension.
+- Use Single (no "key" field) ONLY for truly singleton global config/settings with no possibility of multiple records.
+- If the user provides an ARRAY of objects, you MUST use HashRange or Range with a "key".
 
 IMPORTANT - Schema Name and Descriptive Name:
-- You MUST include "name": use any simple name like "Schema" (it will be replaced automatically)
+- "name" MUST be a short, semantic, snake_case name describing the CONTENT TOPIC (e.g., "recipes", "journal_entries", "medical_records", "meeting_notes", "blog_posts").
+  Think of it as a database table name — concise, plural, descriptive of the data set.
+- READ THE ACTUAL CONTENT to determine the topic. A file containing a cookie recipe should produce "recipes", not "document_content".
+  A file containing a journal entry should produce "journal_entries". A file about doctor visits should produce "medical_records".
+- NEVER use generic names like "document_content", "text_content", "file_content", or "text_records". These are useless.
+  If the data has a "content" field with text, read that text to determine the domain/topic.
+- If a "category" field is present (e.g., "recipes", "journal", "health"), use it as a strong hint for the schema name.
 - ALWAYS include "descriptive_name": a clear, human-readable description of what this schema stores
-- Example: "descriptive_name": "User Profile Information" or "Customer Order Records"
+- Example: "name": "recipes", "descriptive_name": "Recipe Collection"
+
+IMPORTANT - Field Descriptions:
+- EVERY field MUST have a "field_descriptions" entry
+- Each entry is a short natural language description of what the field represents
+- Descriptions should be specific enough to distinguish semantically similar fields across different domains
+- Example: "field_descriptions": {"artist": "the person who created the artwork", "title": "the name of the artwork"}
 
 IMPORTANT - Field Classifications:
 - EVERY field MUST have a "field_classifications" entry
@@ -53,12 +71,17 @@ IMPORTANT - Field Classifications:
   * "number" - numeric values (amounts, counts, scores, percentages, quantities)
 - "field_classifications" is a flat map from field name to list of classification strings
 
-Example Range schema with date range_field (PREFERRED when data has timestamps):
+Example HashRange schema (PREFERRED — grouping + time ordering):
 {
-  "name": "Schema",
+  "name": "social_media_posts",
   "descriptive_name": "Social Media Posts",
-  "key": {"range_field": "created_at"},
+  "key": {"hash_field": "author", "range_field": "created_at"},
   "fields": ["created_at", "author", "content"],
+  "field_descriptions": {
+    "created_at": "when the post was published",
+    "author": "the person who wrote the post",
+    "content": "the text body of the post"
+  },
   "field_classifications": {
     "created_at": ["date"],
     "author": ["name:person", "word"],
@@ -66,38 +89,60 @@ Example Range schema with date range_field (PREFERRED when data has timestamps):
   }
 }
 
-Example Range schema with ID range_field (only when NO date/timestamp field exists):
+Example HashRange schema with non-date range (when no timestamp exists):
 {
-  "name": "Schema",
+  "name": "user_profiles",
   "descriptive_name": "User Profile Information",
-  "key": {"range_field": "id"},
-  "fields": ["id", "name", "age"],
+  "key": {"hash_field": "department", "range_field": "id"},
+  "fields": ["id", "department", "name", "age"],
+  "field_descriptions": {
+    "id": "unique identifier for the user",
+    "department": "the department the user belongs to",
+    "name": "the user's full name",
+    "age": "the user's age in years"
+  },
   "field_classifications": {
     "id": ["word"],
+    "department": ["word"],
     "name": ["name:person", "word"],
     "age": ["number"]
   }
 }
 
-Example Single schema (for one global value):
+Example Range schema (only when NO meaningful grouping dimension exists):
 {
-  "name": "Schema",
-  "descriptive_name": "Global Counter Statistics",
-  "fields": ["count", "total"],
+  "name": "global_metrics",
+  "descriptive_name": "Global System Metrics",
+  "key": {"range_field": "recorded_at"},
+  "fields": ["recorded_at", "cpu_usage", "memory_usage"],
+  "field_descriptions": {
+    "recorded_at": "when the metric was recorded",
+    "cpu_usage": "CPU utilization percentage",
+    "memory_usage": "memory utilization percentage"
+  },
   "field_classifications": {
-    "count": ["number"],
-    "total": ["number"]
+    "recorded_at": ["date"],
+    "cpu_usage": ["number"],
+    "memory_usage": ["number"]
   }
 }
 
-Example with Arrays and Objects (note: date field used as range_field):
+Example with Arrays and Objects (HashRange with date range):
 {
-  "name": "Schema",
-  "descriptive_name": "Social Media Post",
-  "key": {"range_field": "posted_at"},
-  "fields": ["posted_at", "content", "hashtags", "media"],
+  "name": "blog_posts",
+  "descriptive_name": "Blog Posts with Media",
+  "key": {"hash_field": "author", "range_field": "posted_at"},
+  "fields": ["posted_at", "author", "content", "hashtags", "media"],
+  "field_descriptions": {
+    "posted_at": "when the post was published",
+    "author": "the person who wrote the post",
+    "content": "the text body of the post",
+    "hashtags": "tags or topics associated with the post",
+    "media": "URLs to attached images or videos"
+  },
   "field_classifications": {
     "posted_at": ["date"],
+    "author": ["name:person", "word"],
     "content": ["word"],
     "hashtags": ["hashtag", "word"],
     "media": ["url", "word"]
@@ -122,10 +167,38 @@ IMPORTANT - Transform Fields (DSL):
 pub const PROMPT_ACTIONS: &str = r#"Please analyze the sample data and create a new schema definition in new_schemas with mutation_mappers.
 
 CRITICAL RULES:
-- If the original input was a JSON array (multiple objects), you MUST create a Range schema with "key": {"range_field": "field_name"}
+- ALWAYS assume data belongs to a collection. Use HashRange with a meaningful hash_field for grouping and range_field for ordering.
 - PREFER a date/timestamp field as range_field (e.g., "created_at", "date", "timestamp") — this enables time-based queries. Only use an ID field if no date/timestamp exists.
-- NEVER create a Single-type schema for array inputs - they will overwrite data
-- AVOID Single schemas unless the data is truly a one-off global config. If any field looks like a date, timestamp, or unique ID, use Range instead.
-- ALWAYS provide field_classifications for every field
+- Pick a hash_field that provides a useful grouping dimension (e.g., author, category, type, source, department).
+- hash_field and range_field can use dot-notation for nested values (e.g., "departure.date"). The parent must be in mutation_mappers.
+- Only fall back to Range (no hash_field) if there is genuinely no meaningful grouping. Never use Single for array inputs.
+- The schema "name" MUST describe the content topic, NOT the format. Read the actual text/data to determine the topic.
+  Good: "recipes", "journal_entries", "medical_records", "meeting_notes". Bad: "document_content", "text_records", "file_data".
+- If there is a "category" field, use it as a strong signal for the schema name.
+- ALWAYS provide field_descriptions and field_classifications for every field
 
 The response must be valid JSON."#;
+
+/// Prompt for a second AI pass that generates field_descriptions when the
+/// initial schema proposal omitted them.
+pub const FIELD_DESCRIPTIONS_PROMPT: &str = r#"Given the following JSON data structure and a list of field names, provide a short natural language description for each field.
+
+Return ONLY a JSON object mapping field names to descriptions. Example:
+{
+  "artist": "the person who created the artwork",
+  "title": "the name of the artwork",
+  "year": "the year the artwork was created"
+}
+
+Descriptions should be:
+- Specific enough to distinguish semantically similar fields across different domains
+- Short (one sentence max)
+- Focused on what the field represents, not its data type
+
+JSON data sample:
+{sample}
+
+Fields that need descriptions:
+{fields}
+
+Return ONLY the JSON object with field descriptions. No other text."#;

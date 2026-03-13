@@ -24,7 +24,7 @@ pub struct SchemaSimilarityResponse {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub enum SchemaAddOutcome {
     Added(Schema, HashMap<String, String>), // Schema and mutation_mappers
-    AlreadyExists(Schema),                  // Exact same identity hash
+    AlreadyExists(Schema, HashMap<String, String>), // Exact same identity hash + mappers from canonicalization
     /// Existing schema was expanded with new fields (old schema name, expanded schema, mappers)
     Expanded(String, Schema, HashMap<String, String>),
     TooSimilar(SchemaSimilarityResponse),

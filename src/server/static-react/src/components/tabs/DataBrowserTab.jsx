@@ -10,6 +10,7 @@ import {
   keyId,
   keyLabel,
   StateBadge,
+  SchemaTypeBadge,
   getMaxVersion,
   getFirstMoleculeUuid,
   VersionBadge,
@@ -37,7 +38,7 @@ export default function DataBrowserTab() {
   const schemaList = useMemo(() => {
     if (!Array.isArray(schemas)) return []
     return [...schemas]
-      .filter((s) => s.state !== 'Blocked')
+      .filter((s) => s.state !== 'Blocked' && s.state !== 'removed')
       .sort((a, b) =>
         (a.descriptive_name || a.name || '').localeCompare(b.descriptive_name || b.name || '')
       )
@@ -150,7 +151,9 @@ export default function DataBrowserTab() {
             >
               <span className="text-xs text-secondary">{isOpen ? '▾' : '▸'}</span>
               <SchemaName schema={schema} name={name} />
+              <SchemaTypeBadge schemaType={schema.schema_type} />
               <span className="text-xs text-tertiary">({fieldCount(schema)} fields)</span>
+              {data && <span className="text-xs text-tertiary">({data.total_count} {data.total_count === 1 ? 'record' : 'records'})</span>}
               <StateBadge state={schema.state || 'available'} />
             </button>
 

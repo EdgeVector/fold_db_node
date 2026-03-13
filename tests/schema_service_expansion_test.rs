@@ -399,7 +399,7 @@ async fn subset_fields_suggests_existing_schema() {
     let outcome = state.add_schema(schema_b, HashMap::new()).await.unwrap();
 
     match outcome {
-        SchemaAddOutcome::AlreadyExists(schema) => {
+        SchemaAddOutcome::AlreadyExists(schema, _) => {
             assert_eq!(
                 schema.name, hash_a,
                 "should return the existing superset schema"
@@ -541,7 +541,7 @@ async fn superseded_schema_returns_active_successor() {
     let outcome = state.add_schema(schema_a, HashMap::new()).await.unwrap();
 
     match outcome {
-        SchemaAddOutcome::AlreadyExists(schema) => {
+        SchemaAddOutcome::AlreadyExists(schema, _) => {
             assert_eq!(
                 schema.name, hash_b,
                 "should return the active successor schema, not the superseded one"

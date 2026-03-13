@@ -116,11 +116,32 @@ pub fn extract_code_metadata(content: &str, file_name: &str, ext: &str) -> Value
 
 /// Wrap plain-text content (`.txt`, `.md`, config files) as a `Value`.
 fn wrap_text_content(content: &str, file_name: &str, ext: &str) -> Value {
-    serde_json::json!({
+    // Derive a human-readable category hint from the file path so the AI
+    // can propose a semantic schema name (e.g., "recipes" instead of "txt").
+    let category_hint = derive_category_hint(file_name);
+    let mut obj = serde_json::json!({
         "content": content,
         "source_file": file_name,
         "file_type": ext
-    })
+    });
+    if let Some(hint) = category_hint {
+        obj["category"] = serde_json::json!(hint);
+    }
+    obj
+}
+
+/// Derive a category hint from the file path by looking at parent directory
+/// names and the filename itself. Returns None if no useful hint can be derived.
+fn derive_category_hint(file_path: &str) -> Option<String> {
+    let path = std::path::Path::new(file_path);
+    // Use the parent directory name if available (e.g., "recipes/cookies.txt" -> "recipes")
+    if let Some(parent) = path.parent().and_then(|p| p.file_name()) {
+        let dir = parent.to_string_lossy();
+        if !dir.is_empty() && dir != "." && dir != ".." {
+            return Some(dir.to_string());
+        }
+    }
+    None
 }
 
 /// Returns true if the content looks like a Twitter data export JS file.

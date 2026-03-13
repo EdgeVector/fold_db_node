@@ -129,7 +129,7 @@ pub(crate) async fn extract_key_values_from_data(
             if let Some(key_def) = &schema.key {
                 // Extract hash field value if present
                 if let Some(hash_field) = &key_def.hash_field {
-                    if let Some(hash_value) = fields_and_values.get(hash_field) {
+                    if let Some(hash_value) = extract_nested_field_value(fields_and_values, hash_field) {
                         if let Some(hash_str) = hash_value.as_str() {
                             keys_and_values.insert("hash_field".to_string(), hash_str.to_string());
                         } else if let Some(hash_num) = hash_value.as_f64() {
@@ -319,6 +319,38 @@ mod tests {
         assert_eq!(try_normalize_date("not-a-date"), "not-a-date");
         assert_eq!(try_normalize_date("12345"), "12345");
         assert_eq!(try_normalize_date("hello world"), "hello world");
+    }
+
+    #[test]
+    fn test_extract_nested_field_value_dot_notation() {
+        let mut fields = HashMap::new();
+        fields.insert(
+            "departure".to_string(),
+            serde_json::json!({"airport": "SFO", "date": "2025-03-15"}),
+        );
+        fields.insert("flight".to_string(), serde_json::json!("JL001"));
+
+        // Direct lookup
+        assert_eq!(
+            extract_nested_field_value(&fields, "flight"),
+            Some(&serde_json::json!("JL001"))
+        );
+
+        // Dot-notation lookup
+        assert_eq!(
+            extract_nested_field_value(&fields, "departure.airport"),
+            Some(&serde_json::json!("SFO"))
+        );
+        assert_eq!(
+            extract_nested_field_value(&fields, "departure.date"),
+            Some(&serde_json::json!("2025-03-15"))
+        );
+
+        // Missing nested field
+        assert_eq!(extract_nested_field_value(&fields, "departure.terminal"), None);
+
+        // Missing parent
+        assert_eq!(extract_nested_field_value(&fields, "arrival.airport"), None);
     }
 
     #[test]

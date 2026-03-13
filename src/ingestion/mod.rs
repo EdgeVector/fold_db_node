@@ -43,7 +43,6 @@ pub fn is_image_file(filename: &str) -> bool {
 // Public re-exports
 pub use ai_helpers::AISchemaResponse;
 pub use config::IngestionConfig;
-pub use file_to_markdown::FileMarkdown;
 pub use error::IngestionError;
 pub use progress::{
     create_progress_tracker, IngestionProgress, IngestionResults, IngestionStep, ProgressService,
@@ -96,9 +95,6 @@ pub struct IngestionRequest {
     /// Descriptive name from image vision model (schema metadata, not record data)
     #[serde(default)]
     pub image_descriptive_name: Option<String>,
-    /// Typed file conversion result from file_to_markdown (set internally, not via HTTP API)
-    #[serde(skip)]
-    pub file_markdown: Option<FileMarkdown>,
 }
 
 /// Response from the ingestion process
