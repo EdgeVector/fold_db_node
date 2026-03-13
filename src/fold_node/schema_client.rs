@@ -81,23 +81,18 @@ impl SchemaServiceClient {
         }
 
         if status == StatusCode::CONFLICT {
-            #[derive(Deserialize)]
-            struct ConflictBody {
-                closest_schema: Schema,
-            }
-
-            let conflict_body = response.json::<ConflictBody>().await.map_err(|error| {
-                FoldDbError::Config(format!(
-                    "Failed to parse schema conflict response: {}",
-                    error
-                ))
-            })?;
-
-            return Ok(AddSchemaResponse {
-                schema: conflict_body.closest_schema,
-                mutation_mappers: HashMap::new(),
-                replaced_schema: None,
-            });
+            // CONFLICT should never happen — the schema service always either
+            // returns an existing schema, expands, or creates new. If it does
+            // happen, treat it as an error so the caller can retry or report.
+            let body = response
+                .text()
+                .await
+                .unwrap_or_else(|_| "<empty>".to_string());
+            return Err(FoldDbError::Config(format!(
+                "Schema service returned unexpected CONFLICT (409): {}. \
+                 The schema service should always return Added, AlreadyExists, or Expanded.",
+                body
+            )));
         }
 
         let body = response

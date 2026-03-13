@@ -365,8 +365,8 @@ pub fn validate_and_convert_response(parsed: Value) -> IngestionResult<AISchemaR
         IngestionError::ai_response_validation_error("Response must be a JSON object")
     })?;
 
-    // Parse new_schemas
-    let new_schemas = obj.get("new_schemas").cloned();
+    // Parse new_schemas (treat JSON null as absent)
+    let new_schemas = obj.get("new_schemas").cloned().filter(|v| !v.is_null());
 
     // Validate that new schemas have required fields.
     // These checks run INSIDE the retry loop, so a validation failure here
@@ -385,7 +385,11 @@ pub fn validate_and_convert_response(parsed: Value) -> IngestionResult<AISchemaR
                 validate_schema_has_classifications(schema_val)?;
                 validate_schema_has_descriptions(schema_val)?;
             }
-            _ => {}
+            _ => {
+                return Err(IngestionError::ai_response_validation_error(
+                    format!("new_schemas must be an object or array, got: {}", schema_val),
+                ));
+            }
         }
     }
 

@@ -182,20 +182,16 @@ pub(crate) async fn extract_key_values_from_data(
             }
         }
         Ok(None) => {
-            log_feature!(
-                LogFeature::Ingestion,
-                warn,
-                "Schema '{}' not found — cannot extract key values",
+            return Err(crate::ingestion::IngestionError::SchemaCreationError(format!(
+                "Schema '{}' not found — cannot extract key values. Was the schema created successfully?",
                 schema_name
-            );
+            )));
         }
         Err(e) => {
-            log_feature!(
-                LogFeature::Ingestion,
-                error,
+            return Err(crate::ingestion::IngestionError::SchemaCreationError(format!(
                 "Failed to get schema '{}' for key extraction: {}",
                 schema_name, e
-            );
+            )));
         }
     }
 

@@ -195,21 +195,16 @@ impl IngestionService {
                     })?;
                 }
                 Ok(None) => {
-                    log_feature!(
-                        LogFeature::Ingestion,
-                        warn,
-                        "Schema '{}' not found when updating ref_fields — child references will not be linked",
+                    return Err(IngestionError::SchemaCreationError(format!(
+                        "Schema '{}' not found when updating ref_fields — child references cannot be linked",
                         schema_name
-                    );
+                    )));
                 }
                 Err(e) => {
-                    log_feature!(
-                        LogFeature::Ingestion,
-                        error,
+                    return Err(IngestionError::SchemaCreationError(format!(
                         "Failed to get schema '{}' for ref_fields update: {}",
-                        schema_name,
-                        e
-                    );
+                        schema_name, e
+                    )));
                 }
             }
         }
