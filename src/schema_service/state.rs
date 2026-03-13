@@ -735,7 +735,18 @@ impl SchemaServiceState {
         schemas: &HashMap<String, Schema>,
     ) -> Option<(Schema, String)> {
         let desc_name = existing_schema.descriptive_name.as_ref()?;
-        let index = self.descriptive_name_index.read().ok()?;
+        let index = match self.descriptive_name_index.read() {
+            Ok(idx) => idx,
+            Err(e) => {
+                log_feature!(
+                    LogFeature::Schema,
+                    warn,
+                    "Failed to acquire descriptive_name_index read lock: {} — falling back to original schema",
+                    e
+                );
+                return None;
+            }
+        };
         let current_hash = index.get(desc_name)?;
         if *current_hash == schema_name {
             return None;
