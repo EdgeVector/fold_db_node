@@ -726,6 +726,42 @@ impl SchemaServiceState {
         }
     }
 
+    /// If a schema has been superseded by an expanded version, resolve to the
+    /// active schema. Returns `None` if no redirection is needed.
+    fn resolve_active_schema(
+        &self,
+        existing_schema: &Schema,
+        schema_name: &str,
+        schemas: &HashMap<String, Schema>,
+    ) -> Option<(Schema, String)> {
+        let desc_name = existing_schema.descriptive_name.as_ref()?;
+        let index = match self.descriptive_name_index.read() {
+            Ok(idx) => idx,
+            Err(e) => {
+                log_feature!(
+                    LogFeature::Schema,
+                    warn,
+                    "Failed to acquire descriptive_name_index read lock: {} — falling back to original schema",
+                    e
+                );
+                return None;
+            }
+        };
+        let current_hash = index.get(desc_name)?;
+        if *current_hash == schema_name {
+            return None;
+        }
+        let active_schema = schemas.get(current_hash)?;
+        log_feature!(
+            LogFeature::Schema,
+            info,
+            "Schema '{}' was superseded by '{}' — checking active schema",
+            schema_name,
+            current_hash
+        );
+        Some((active_schema.clone(), current_hash.clone()))
+    }
+
     /// Find semantic field name matches between incoming and existing schemas.
     ///
     /// For fields in the incoming schema that don't have a literal match in the
@@ -1089,33 +1125,9 @@ impl SchemaServiceState {
             if let Some(existing_schema) = schemas.get(&schema_name) {
                 // If this schema has been superseded by expansion, redirect to the
                 // current active schema for the subset/expansion check.
-                let (check_schema, check_name) = if let Some(ref desc_name) = existing_schema.descriptive_name {
-                    let index = self.descriptive_name_index.read().map_err(|_| {
-                        FoldDbError::Config("Failed to acquire descriptive_name_index read lock".to_string())
-                    })?;
-                    if let Some(current_hash) = index.get(desc_name) {
-                        if *current_hash != schema_name {
-                            if let Some(active_schema) = schemas.get(current_hash) {
-                                log_feature!(
-                                    LogFeature::Schema,
-                                    info,
-                                    "Schema '{}' was superseded by '{}' — checking active schema",
-                                    schema_name,
-                                    current_hash
-                                );
-                                (active_schema.clone(), current_hash.clone())
-                            } else {
-                                (existing_schema.clone(), schema_name.clone())
-                            }
-                        } else {
-                            (existing_schema.clone(), schema_name.clone())
-                        }
-                    } else {
-                        (existing_schema.clone(), schema_name.clone())
-                    }
-                } else {
-                    (existing_schema.clone(), schema_name.clone())
-                };
+                let (check_schema, check_name) = self
+                    .resolve_active_schema(existing_schema, &schema_name, &schemas)
+                    .unwrap_or_else(|| (existing_schema.clone(), schema_name.clone()));
 
                 // Check if the incoming schema has new fields not in the target schema.
                 // If so, fall through to expansion instead of returning AlreadyExists.
