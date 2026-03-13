@@ -727,10 +727,11 @@ impl SchemaServiceState {
             Some(desc) => format!("the {} of the {}: {}", field_name, descriptive_name, desc),
             None => format!("the {} of the {}", field_name, descriptive_name),
         };
-        // Cache key includes a prefix of the context_text to differentiate entries
-        // with vs without descriptions for the same field.
-        let truncated_len = context_text.floor_char_boundary(60);
-        let cache_key = format!("{}:{}:{}", descriptive_name, field_name, &context_text[..truncated_len]);
+        // Cache key must distinguish "with description" from "without description"
+        // for the same field. A simple flag avoids truncation-based collisions that
+        // could occur with long descriptive names.
+        let desc_flag = if field_description.is_some() { "d" } else { "n" };
+        let cache_key = format!("{}:{}:{}", descriptive_name, field_name, desc_flag);
 
         // Check cache first
         if let Ok(cache) = self.field_embeddings.read() {
