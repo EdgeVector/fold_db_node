@@ -5,7 +5,7 @@
 
 use crate::fold_node::node::FoldNode;
 use crate::fold_node::OperationProcessor;
-use crate::handlers::response::{ApiResponse, HandlerError, HandlerResult};
+use crate::handlers::response::{ApiResponse, HandlerResult, IntoHandlerError};
 use fold_db::schema::types::key_value::KeyValue;
 use fold_db::schema::types::operations::{Mutation, MutationType};
 use serde::{Deserialize, Serialize};
@@ -67,19 +67,18 @@ pub async fn execute_mutation_from_components(
 ) -> HandlerResult<SingleMutationResponse> {
     let processor = OperationProcessor::new(node.clone());
 
-    match processor
+    let mutation_id = processor
         .execute_mutation(schema, fields_and_values, key_value, mutation_type)
         .await
-    {
-        Ok(mutation_id) => Ok(ApiResponse::success_with_user(
-            SingleMutationResponse {
-                mutation_id,
-                success: true,
-            },
-            user_hash,
-        )),
-        Err(e) => Err(HandlerError::Internal(format!("Mutation failed: {}", e))),
-    }
+        .handler_err("execute mutation")?;
+
+    Ok(ApiResponse::success_with_user(
+        SingleMutationResponse {
+            mutation_id,
+            success: true,
+        },
+        user_hash,
+    ))
 }
 
 /// Execute multiple mutations in a batch
@@ -90,22 +89,19 @@ pub async fn execute_mutations_batch(
 ) -> HandlerResult<MutationResponse> {
     let count = mutations.len();
 
-    match node.mutate_batch(mutations).await {
-        Ok(mutation_ids) => {
-            // Wait for background tasks (indexing) to complete
-            node.wait_for_background_tasks(DEFAULT_BACKGROUND_TASK_TIMEOUT)
-                .await;
+    let mutation_ids = node.mutate_batch(mutations).await.handler_err("execute mutations")?;
 
-            Ok(ApiResponse::success_with_user(
-                MutationResponse {
-                    mutation_ids,
-                    count,
-                },
-                user_hash,
-            ))
-        }
-        Err(e) => Err(HandlerError::Internal(format!("Mutation failed: {}", e))),
-    }
+    // Wait for background tasks (indexing) to complete
+    node.wait_for_background_tasks(DEFAULT_BACKGROUND_TASK_TIMEOUT)
+        .await;
+
+    Ok(ApiResponse::success_with_user(
+        MutationResponse {
+            mutation_ids,
+            count,
+        },
+        user_hash,
+    ))
 }
 
 /// Execute mutations batch from JSON values (used by HTTP server)
@@ -117,19 +113,18 @@ pub async fn execute_mutations_batch_from_json(
     let processor = OperationProcessor::new(node.clone());
     let count = mutations_data.len();
 
-    match processor.execute_mutations_batch(mutations_data).await {
-        Ok(mutation_ids) => Ok(ApiResponse::success_with_user(
-            MutationResponse {
-                mutation_ids,
-                count,
-            },
-            user_hash,
-        )),
-        Err(e) => Err(HandlerError::Internal(format!(
-            "Batch mutations failed: {}",
-            e
-        ))),
-    }
+    let mutation_ids = processor
+        .execute_mutations_batch(mutations_data)
+        .await
+        .handler_err("execute batch mutations")?;
+
+    Ok(ApiResponse::success_with_user(
+        MutationResponse {
+            mutation_ids,
+            count,
+        },
+        user_hash,
+    ))
 }
 
 #[cfg(test)]
