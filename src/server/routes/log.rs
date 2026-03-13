@@ -1,6 +1,6 @@
 use crate::server::http_server::AppState;
 use crate::server::routes::{handler_error_to_response, require_node_read};
-use actix_web::{web, HttpResponse, Responder, Result};
+use actix_web::{web, HttpResponse, Responder};
 use futures_util::stream::StreamExt;
 use serde::{Deserialize, Serialize};
 use serde_json::json;
@@ -43,11 +43,7 @@ pub async fn list_logs(
     };
 
     match crate::handlers::logs::list_logs(query.since, &user_hash, &node).await {
-        Ok(response) => HttpResponse::Ok().json(json!({
-             "logs": response.data.as_ref().map(|d| &d.logs).unwrap_or(&json!([])),
-             "count": response.data.as_ref().map(|d| d.count).unwrap_or(0),
-             "timestamp": response.data.as_ref().map(|d| d.timestamp).unwrap_or(0)
-        })),
+        Ok(response) => HttpResponse::Ok().json(response),
         Err(e) => handler_error_to_response(e),
     }
 }
@@ -89,17 +85,15 @@ pub async fn stream_logs() -> impl Responder {
     tag = "logs",
     responses((status = 200, description = "Logging configuration", body = LogConfigResponse))
 )]
-pub async fn get_config(state: web::Data<AppState>) -> Result<impl Responder> {
+pub async fn get_config(state: web::Data<AppState>) -> impl Responder {
     let (user_hash, node) = match require_node_read(&state).await {
         Ok(res) => res,
-        Err(response) => return Ok(response),
+        Err(response) => return response,
     };
 
     match crate::handlers::logs::get_log_config(&user_hash, &node).await {
-        Ok(response) => Ok(HttpResponse::Ok().json(json!({
-            "config": response.data.as_ref().map(|d| &d.config).unwrap_or(&json!(null))
-        }))),
-        Err(e) => Ok(handler_error_to_response(e)),
+        Ok(response) => HttpResponse::Ok().json(response),
+        Err(e) => handler_error_to_response(e),
     }
 }
 
@@ -118,17 +112,17 @@ pub async fn get_config(state: web::Data<AppState>) -> Result<impl Responder> {
 pub async fn update_feature_level(
     level_update: web::Json<LogLevelUpdate>,
     state: web::Data<AppState>,
-) -> Result<impl Responder> {
+) -> impl Responder {
     let valid_levels = ["TRACE", "DEBUG", "INFO", "WARN", "ERROR"];
     if !valid_levels.contains(&level_update.level.as_str()) {
-        return Ok(HttpResponse::BadRequest().json(serde_json::json!({
+        return HttpResponse::BadRequest().json(json!({
             "error": format!("Invalid log level: {}", level_update.level)
-        })));
+        }));
     }
 
     let (user_hash, node) = match require_node_read(&state).await {
         Ok(res) => res,
-        Err(response) => return Ok(response),
+        Err(response) => return response,
     };
 
     match crate::handlers::logs::update_log_feature_level(
@@ -139,11 +133,8 @@ pub async fn update_feature_level(
     )
     .await
     {
-        Ok(response) => Ok(HttpResponse::Ok().json(json!({
-            "success": response.data.as_ref().map(|d| d.success).unwrap_or(false),
-            "message": response.data.as_ref().map(|d| &d.message)
-        }))),
-        Err(e) => Ok(handler_error_to_response(e)),
+        Ok(response) => HttpResponse::Ok().json(response),
+        Err(e) => handler_error_to_response(e),
     }
 }
 
@@ -154,18 +145,15 @@ pub async fn update_feature_level(
     tag = "logs",
     responses((status = 200, description = "Reloaded"), (status = 400, description = "Bad request"))
 )]
-pub async fn reload_config(state: web::Data<AppState>) -> Result<impl Responder> {
+pub async fn reload_config(state: web::Data<AppState>) -> impl Responder {
     let (user_hash, node) = match require_node_read(&state).await {
         Ok(res) => res,
-        Err(response) => return Ok(response),
+        Err(response) => return response,
     };
 
     match crate::handlers::logs::reload_log_config("config/logging.toml", &user_hash, &node).await {
-        Ok(response) => Ok(HttpResponse::Ok().json(json!({
-            "success": response.data.as_ref().map(|d| d.success).unwrap_or(false),
-            "message": response.data.as_ref().map(|d| &d.message)
-        }))),
-        Err(e) => Ok(handler_error_to_response(e)),
+        Ok(response) => HttpResponse::Ok().json(response),
+        Err(e) => handler_error_to_response(e),
     }
 }
 
@@ -176,17 +164,14 @@ pub async fn reload_config(state: web::Data<AppState>) -> Result<impl Responder>
     tag = "logs",
     responses((status = 200, description = "Features", body = serde_json::Value))
 )]
-pub async fn get_features(state: web::Data<AppState>) -> Result<impl Responder> {
+pub async fn get_features(state: web::Data<AppState>) -> impl Responder {
     let (user_hash, node) = match require_node_read(&state).await {
         Ok(res) => res,
-        Err(response) => return Ok(response),
+        Err(response) => return response,
     };
 
     match crate::handlers::logs::get_log_features(&user_hash, &node).await {
-        Ok(response) => Ok(HttpResponse::Ok().json(json!({
-            "features": response.data.as_ref().map(|d| &d.features).unwrap_or(&json!(null)),
-            "available_levels": response.data.as_ref().map(|d| &d.available_levels).unwrap_or(&vec![])
-        }))),
-        Err(e) => Ok(handler_error_to_response(e)),
+        Ok(response) => HttpResponse::Ok().json(response),
+        Err(e) => handler_error_to_response(e),
     }
 }
