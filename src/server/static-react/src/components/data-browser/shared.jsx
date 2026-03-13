@@ -23,6 +23,22 @@ export function StateBadge({ state }) {
   return <span className={cls}>{state}</span>
 }
 
+export function SchemaTypeBadge({ schemaType }) {
+  if (!schemaType) return null
+  const type = typeof schemaType === 'string' ? schemaType : Object.keys(schemaType)[0]
+  if (!type) return null
+  const colors = {
+    Single: 'bg-gruvbox-blue/15 text-gruvbox-blue',
+    Range: 'bg-gruvbox-purple/15 text-gruvbox-purple',
+    HashRange: 'bg-gruvbox-orange/15 text-gruvbox-orange',
+  }
+  return (
+    <span className={`inline-flex items-center px-1.5 py-0.5 text-[10px] font-mono font-semibold rounded ${colors[type] || 'bg-surface-secondary text-secondary'}`}>
+      {type}
+    </span>
+  )
+}
+
 export function getMaxVersion(metadata) {
   if (!metadata || typeof metadata !== 'object') return 0
   let max = 0
