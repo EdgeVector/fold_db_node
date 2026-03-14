@@ -256,7 +256,7 @@ impl OperationProcessor {
         use crate::fold_node::llm_query::service::LlmQueryService;
         use crate::ingestion::config::IngestionConfig;
 
-        let config = IngestionConfig::from_env_allow_empty();
+        let config = IngestionConfig::load_or_default();
         let service = LlmQueryService::new(config).map_err(FoldDbError::Other)?;
 
         let schemas = self.list_schemas().await?;

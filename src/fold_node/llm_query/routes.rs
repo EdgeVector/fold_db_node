@@ -24,7 +24,7 @@ pub struct LlmQueryState {
 
 impl LlmQueryState {
     pub fn new() -> Self {
-        let config = IngestionConfig::from_env_allow_empty();
+        let config = IngestionConfig::load_or_default();
         let service = match LlmQueryService::new(config) {
             Ok(svc) => Some(Arc::new(svc)),
             Err(e) => {
@@ -41,7 +41,7 @@ impl LlmQueryState {
 
     /// Reload the LLM query service with fresh config
     pub async fn reload(&self) {
-        let config = IngestionConfig::from_env_allow_empty();
+        let config = IngestionConfig::load_or_default();
         match LlmQueryService::new(config) {
             Ok(svc) => {
                 let mut guard = self.service.write().await;
