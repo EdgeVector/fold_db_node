@@ -244,12 +244,6 @@ impl IngestionConfig {
         Ok(())
     }
 
-    /// Path to the ingestion config file, or `None` if `FOLD_CONFIG_DIR` is not set.
-    /// Saving config requires `FOLD_CONFIG_DIR`; loading without it silently uses defaults.
-    pub fn get_config_file_path() -> Option<std::path::PathBuf> {
-        Self::config_file_path()
-    }
-
     fn config_file_path() -> Option<std::path::PathBuf> {
         env::var("FOLD_CONFIG_DIR")
             .ok()

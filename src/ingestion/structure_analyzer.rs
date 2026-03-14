@@ -231,6 +231,7 @@ pub struct StructureStats {
 
 impl StructureStats {
     /// Get fields that appear in all elements (100% coverage)
+    #[cfg(test)]
     pub fn get_common_fields(&self) -> Vec<String> {
         self.field_counts
             .iter()
@@ -240,6 +241,7 @@ impl StructureStats {
     }
 
     /// Get fields that appear in some but not all elements (partial coverage)
+    #[cfg(test)]
     pub fn get_partial_fields(&self) -> Vec<String> {
         self.field_counts
             .iter()
@@ -247,7 +249,6 @@ impl StructureStats {
             .map(|(field, _)| field.clone())
             .collect()
     }
-
 }
 
 #[cfg(test)]
