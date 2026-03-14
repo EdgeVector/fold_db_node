@@ -18,11 +18,11 @@ use std::path::Path;
 use std::sync::Arc;
 use tokio::sync::Mutex;
 
-use super::routes::{
+use crate::ingestion::routes_helpers::{
     get_ingestion_service, resolve_folder_path,
     start_file_progress, validate_folder, BatchFolderResponse, IngestionServiceState,
 };
-use super::smart_folder_batch::spawn_batch_coordinator;
+use super::batch::spawn_batch_coordinator;
 
 /// Request for smart folder scanning
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -288,7 +288,7 @@ pub async fn smart_folder_ingest(
     let folder_path = resolve_folder_path(&request.folder_path);
 
     // Extract user, node, and ingestion service up front
-    let (user_id, node_arc, service) = match super::routes::require_ingestion_context(&state, &ingestion_service).await {
+    let (user_id, node_arc, service) = match crate::ingestion::routes_helpers::require_ingestion_context(&state, &ingestion_service).await {
         Ok(ctx) => ctx,
         Err(response) => return response,
     };

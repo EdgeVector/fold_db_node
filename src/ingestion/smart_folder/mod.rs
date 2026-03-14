@@ -3,6 +3,12 @@
 //! These functions are framework-agnostic and used by both
 //! HTTP handlers (`routes.rs`) and the CLI (`folddb`).
 
+pub mod batch;
+pub mod classify;
+pub mod routes;
+pub mod scanner;
+pub mod types;
+
 use crate::ingestion::IngestionResult;
 use fold_db::log_feature;
 use fold_db::logging::features::LogFeature;
@@ -13,21 +19,21 @@ use std::path::Path;
 // Re-export from sibling modules so external callers can still use
 // `smart_folder::read_file_as_json`, etc.
 pub use super::file_conversion::{csv_to_json, read_file_as_json, read_file_with_hash, twitter_js_to_json};
-pub use super::smart_folder_scanner::*;
+pub use scanner::*;
 
 // Re-export types and classification functions so callers using
 // `smart_folder::FileRecommendation`, `smart_folder::estimate_file_cost`, etc. still work.
-pub use super::smart_folder_types::{
+pub use types::{
     estimate_file_cost, FileRecommendation, ScanProgressFn,
     SmartFolderScanResponse, SmartFolderSummary,
 };
-pub(crate) use super::smart_folder_types::file_size_bytes;
-pub use super::smart_folder_classify::{
+pub(crate) use types::file_size_bytes;
+pub use classify::{
     apply_heuristic_filtering, call_llm_for_file_analysis, create_adjust_prompt,
     create_smart_folder_prompt, merge_adjust_results, parse_llm_file_recommendations,
 };
 
-use super::smart_folder_classify::classify_image_directories;
+use classify::classify_image_directories;
 
 // ---- Scan orchestration ----
 

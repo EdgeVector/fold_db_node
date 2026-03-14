@@ -329,7 +329,7 @@ impl LlmQueryService {
                     }
 
                     // Skip files that have already been ingested (dedup by content hash)
-                    if let Ok(hash) = crate::ingestion::smart_folder_scanner::compute_file_hash(&full_path) {
+                    if let Ok(hash) = crate::ingestion::smart_folder::scanner::compute_file_hash(&full_path) {
                         if node.is_file_ingested(&pub_key, &hash).await.is_some() {
                             log::info!("Agent ingest_files: skipping already-ingested file: {}", relative);
                             results.push(serde_json::json!({

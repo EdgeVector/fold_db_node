@@ -2,8 +2,8 @@
 
 use crate::ingestion::error::IngestionError;
 use crate::ingestion::IngestionResult;
-use super::smart_folder_scanner::IMAGE_EXTS;
-use super::smart_folder_types::{FileRecommendation, file_size_bytes};
+use super::scanner::IMAGE_EXTS;
+use super::types::{FileRecommendation, file_size_bytes};
 use std::collections::{HashMap, HashSet};
 use std::path::Path;
 

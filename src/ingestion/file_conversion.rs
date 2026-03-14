@@ -1,7 +1,7 @@
 //! File conversion utilities — CSV, Twitter JS, code metadata extraction, and unified file reading.
 
 use crate::ingestion::error::IngestionError;
-use crate::ingestion::smart_folder_scanner::{CODE_EXTS, CONFIG_EXTS};
+use crate::ingestion::smart_folder::scanner::{CODE_EXTS, CONFIG_EXTS};
 use crate::ingestion::IngestionResult;
 use regex::Regex;
 use serde_json::Value;

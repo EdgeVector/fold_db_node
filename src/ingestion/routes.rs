@@ -13,7 +13,7 @@ use std::sync::Arc;
 
 // Re-export from sibling modules so external callers (http_server.rs) can still
 // reference everything through `crate::ingestion::routes::*`.
-pub use super::smart_folder_routes::*;
+pub use super::smart_folder::routes::*;
 pub use super::routes_helpers::*;
 pub use super::routes_batch::*;
 
