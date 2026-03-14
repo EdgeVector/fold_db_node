@@ -315,52 +315,49 @@ fn ollama_models_error(msg: String) -> HttpResponse {
     HttpResponse::Ok().json(json!({ "models": [], "error": msg }))
 }
 
+/// Fetch and parse models from a remote Ollama instance.
+async fn fetch_ollama_models(base_url: &str) -> Result<Vec<OllamaModelInfo>, String> {
+    let url = format!("{}/api/tags", base_url);
+    let client = reqwest::Client::builder()
+        .timeout(std::time::Duration::from_secs(5))
+        .build()
+        .map_err(|e| format!("Failed to create HTTP client: {}", e))?;
+    let resp = client
+        .get(&url)
+        .send()
+        .await
+        .map_err(|e| format!("Failed to connect to Ollama at {}: {}", base_url, e))?;
+    if !resp.status().is_success() {
+        return Err(format!("Ollama returned status {}", resp.status()));
+    }
+    let body: serde_json::Value = resp
+        .json()
+        .await
+        .map_err(|e| format!("Failed to parse Ollama response: {}", e))?;
+    Ok(body
+        .get("models")
+        .and_then(|m| m.as_array())
+        .map(|arr| {
+            arr.iter()
+                .filter_map(|v| {
+                    let name = v.get("name")?.as_str()?.to_string();
+                    let size = v.get("size").and_then(|s| s.as_u64()).unwrap_or(0);
+                    Some(OllamaModelInfo { name, size })
+                })
+                .collect()
+        })
+        .unwrap_or_default())
+}
+
 /// List models available on a remote Ollama instance.
 ///
 /// Proxies `GET {base_url}/api/tags` and returns the model list.
 /// Short timeout (5 s) to avoid hanging on unreachable servers.
 pub async fn list_ollama_models(query: web::Query<OllamaModelsQuery>) -> impl Responder {
     let base_url = query.base_url.trim_end_matches('/');
-
-    let url = format!("{}/api/tags", base_url);
-
-    let client = match reqwest::Client::builder()
-        .timeout(std::time::Duration::from_secs(5))
-        .build()
-    {
-        Ok(c) => c,
-        Err(e) => return ollama_models_error(format!("Failed to create HTTP client: {}", e)),
-    };
-
-    match client.get(&url).send().await {
-        Ok(resp) => {
-            if !resp.status().is_success() {
-                return ollama_models_error(format!("Ollama returned status {}", resp.status()));
-            }
-            match resp.json::<serde_json::Value>().await {
-                Ok(body) => {
-                    let models: Vec<OllamaModelInfo> = body
-                        .get("models")
-                        .and_then(|m| m.as_array())
-                        .map(|arr| {
-                            arr.iter()
-                                .filter_map(|v| {
-                                    let name = v.get("name")?.as_str()?.to_string();
-                                    let size = v
-                                        .get("size")
-                                        .and_then(|s| s.as_u64())
-                                        .unwrap_or(0);
-                                    Some(OllamaModelInfo { name, size })
-                                })
-                                .collect()
-                        })
-                        .unwrap_or_default();
-                    HttpResponse::Ok().json(json!({ "models": models }))
-                }
-                Err(e) => ollama_models_error(format!("Failed to parse Ollama response: {}", e)),
-            }
-        }
-        Err(e) => ollama_models_error(format!("Failed to connect to Ollama at {}: {}", base_url, e)),
+    match fetch_ollama_models(base_url).await {
+        Ok(models) => HttpResponse::Ok().json(json!({ "models": models })),
+        Err(msg) => ollama_models_error(msg),
     }
 }
 
