@@ -182,7 +182,7 @@ fn parse_image_directory_response(
     response: &str,
     image_dirs: &HashMap<String, Vec<String>>,
 ) -> Vec<String> {
-    let json_str = match crate::ingestion::ai_helpers::extract_json_from_response(response) {
+    let json_str = match crate::ingestion::ai::helpers::extract_json_from_response(response) {
         Ok(s) => s,
         Err(e) => {
             log::warn!("Failed to extract JSON from image directory response: {}", e);
@@ -389,7 +389,7 @@ pub fn parse_llm_file_recommendations(
     response: &str,
     file_tree: &[String],
 ) -> IngestionResult<Vec<FileRecommendation>> {
-    let json_str = crate::ingestion::ai_helpers::extract_json_from_response(response)?;
+    let json_str = crate::ingestion::ai::helpers::extract_json_from_response(response)?;
 
     let parsed: Vec<FileRecommendation> = serde_json::from_str(&json_str)
         .map_err(|e| IngestionError::InvalidInput(format!("Failed to parse JSON: {}", e)))?;

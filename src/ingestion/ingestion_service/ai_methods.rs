@@ -31,7 +31,7 @@ impl IngestionService {
         &self,
         json_data: &Value,
     ) -> IngestionResult<AISchemaResponse> {
-        use crate::ingestion::ai_helpers::{analyze_and_build_prompt, parse_ai_response};
+        use crate::ingestion::ai::helpers::{analyze_and_build_prompt, parse_ai_response};
 
         let prompt = analyze_and_build_prompt(json_data)?;
         let max_validation_attempts = self.config.max_retries.clamp(1, 3);
@@ -122,13 +122,13 @@ impl IngestionService {
             json_data.clone()
         };
 
-        let prompt = crate::ingestion::prompts::FIELD_DESCRIPTIONS_PROMPT
+        let prompt = crate::ingestion::ai::prompts::FIELD_DESCRIPTIONS_PROMPT
             .replace("{sample}", &serde_json::to_string_pretty(&sample).unwrap_or_default())
             .replace("{fields}", &format!("{:?}", missing));
 
         match self.call_ai_raw(&prompt).await {
             Ok(raw_response) => {
-                match crate::ingestion::ai_helpers::extract_json_from_response(&raw_response) {
+                match crate::ingestion::ai::helpers::extract_json_from_response(&raw_response) {
                     Ok(json_str) => {
                         if let Ok(descriptions) = serde_json::from_str::<serde_json::Map<String, Value>>(&json_str) {
                             let fd = schema_def
