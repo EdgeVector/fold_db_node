@@ -66,6 +66,25 @@ pub async fn require_node(
     Ok((user_hash, node))
 }
 
+/// Macro that calls `require_node_read` and returns early on error.
+///
+/// Replaces the 4-line match boilerplate used in every route handler:
+/// ```ignore
+/// let (user_hash, node) = match require_node_read(&state).await {
+///     Ok(res) => res,
+///     Err(response) => return response,
+/// };
+/// ```
+macro_rules! node_or_return {
+    ($state:expr) => {
+        match $crate::server::routes::common::require_node_read(&$state).await {
+            Ok(res) => res,
+            Err(response) => return response,
+        }
+    };
+}
+pub(crate) use node_or_return;
+
 /// Combined helper: require_node + acquire read lock.
 ///
 /// Returns an owned read guard so the caller doesn't need `node_arc`.

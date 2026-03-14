@@ -2,7 +2,7 @@ use crate::handlers::schema as schema_handlers;
 use fold_db::log_feature;
 use fold_db::logging::features::LogFeature;
 use crate::server::http_server::AppState;
-use crate::server::routes::{handler_error_to_response, require_node_read};
+use crate::server::routes::{handler_error_to_response, node_or_return};
 use actix_web::{web, HttpResponse, Responder};
 use serde::Deserialize;
 
@@ -16,10 +16,7 @@ use serde::Deserialize;
     )
 )]
 pub async fn list_schemas(state: web::Data<AppState>) -> impl Responder {
-    let (user_hash, node) = match require_node_read(&state).await {
-        Ok(res) => res,
-        Err(response) => return response,
-    };
+    let (user_hash, node) = node_or_return!(state);
 
     // Use shared handler
     match schema_handlers::list_schemas(&user_hash, &node).await {
@@ -44,10 +41,7 @@ pub async fn list_schemas(state: web::Data<AppState>) -> impl Responder {
 )]
 pub async fn get_schema(path: web::Path<String>, state: web::Data<AppState>) -> impl Responder {
     let name = path.into_inner();
-    let (user_hash, node) = match require_node_read(&state).await {
-        Ok(res) => res,
-        Err(response) => return response,
-    };
+    let (user_hash, node) = node_or_return!(state);
 
     // Use shared handler
     match schema_handlers::get_schema(&name, &user_hash, &node).await {
@@ -71,10 +65,7 @@ pub async fn get_schema(path: web::Path<String>, state: web::Data<AppState>) -> 
 )]
 pub async fn approve_schema(path: web::Path<String>, state: web::Data<AppState>) -> impl Responder {
     let schema_name = path.into_inner();
-    let (user_hash, node) = match require_node_read(&state).await {
-        Ok(res) => res,
-        Err(response) => return response,
-    };
+    let (user_hash, node) = node_or_return!(state);
 
     // Use shared handler
     match schema_handlers::approve_schema(&schema_name, &user_hash, &node).await {
@@ -98,10 +89,7 @@ pub async fn approve_schema(path: web::Path<String>, state: web::Data<AppState>)
 )]
 pub async fn block_schema(path: web::Path<String>, state: web::Data<AppState>) -> impl Responder {
     let schema_name = path.into_inner();
-    let (user_hash, node) = match require_node_read(&state).await {
-        Ok(res) => res,
-        Err(response) => return response,
-    };
+    let (user_hash, node) = node_or_return!(state);
 
     // Use shared handler
     match schema_handlers::block_schema(&schema_name, &user_hash, &node).await {
@@ -143,10 +131,7 @@ pub async fn list_schema_keys(
     let offset = query.offset.unwrap_or(0);
     let limit = query.limit.unwrap_or(50);
 
-    let (user_hash, node) = match require_node_read(&state).await {
-        Ok(res) => res,
-        Err(response) => return response,
-    };
+    let (user_hash, node) = node_or_return!(state);
 
     match schema_handlers::list_schema_keys(&name, offset, limit, &user_hash, &node).await {
         Ok(response) => HttpResponse::Ok().json(response),
@@ -165,10 +150,7 @@ pub async fn list_schema_keys(
     )
 )]
 pub async fn load_schemas(state: web::Data<AppState>) -> impl Responder {
-    let (user_hash, node) = match require_node_read(&state).await {
-        Ok(res) => res,
-        Err(response) => return response,
-    };
+    let (user_hash, node) = node_or_return!(state);
 
     // Use shared handler
     match schema_handlers::load_schemas(&user_hash, &node).await {
