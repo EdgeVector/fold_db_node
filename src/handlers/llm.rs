@@ -112,6 +112,9 @@ pub async fn chat(
 
     warn_session_err(session_manager.add_message(session_id, "assistant".to_string(), assistant_message.clone()), "add assistant message");
 
+    // Persist chat turn to FoldDB
+    conversation_store::save_chat_turn(node, session_id.clone(), question.clone(), assistant_message.clone()).await;
+
     Ok(ApiResponse::success_with_user(
         ChatHandlerResponse {
             answer: assistant_message,
@@ -235,6 +238,9 @@ pub async fn ai_native_index_query(
 
     log_feature!(LogFeature::Query, info, "AI Native Index Query complete for session: {}", session_id);
 
+    // Persist native-index turn to FoldDB
+    conversation_store::save_chat_turn(node, session_id.clone(), request.query.clone(), ai_interpretation.clone()).await;
+
     Ok(ApiResponse::success_with_user(
         AiNativeIndexHandlerResponse {
             ai_interpretation,
@@ -346,25 +352,15 @@ pub async fn agent_query(
 
     log_feature!(LogFeature::Query, info, "Agent Query complete for session: {}. Made {} tool calls.", session_id, tool_calls.len());
 
-    // Persist conversation turn to FoldDB in the background
-    let save_node = node.clone();
-    let save_session = session_id.clone();
-    let save_query = request.query.clone();
-    let save_answer = answer.clone();
-    let save_tools = tool_calls.clone();
-    let save_user_hash = user_hash.to_string();
-    tokio::spawn(async move {
-        fold_db::logging::core::run_with_user(&save_user_hash, async move {
-            conversation_store::save_conversation_turn(
-                &save_node,
-                save_session,
-                save_query,
-                save_answer,
-                save_tools,
-            )
-            .await;
-        }).await
-    });
+    // Persist conversation turn to FoldDB synchronously so failures are visible
+    conversation_store::save_conversation_turn(
+        node,
+        session_id.clone(),
+        request.query.clone(),
+        answer.clone(),
+        tool_calls.clone(),
+    )
+    .await;
 
     Ok(ApiResponse::success_with_user(
         AgentQueryHandlerResponse {
