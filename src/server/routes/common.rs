@@ -9,6 +9,19 @@ use serde_json::json;
 use std::sync::Arc;
 use tokio::sync::RwLock;
 
+/// Convert a `HandlerResult<T>` directly to an `HttpResponse`.
+///
+/// Eliminates the 3-line `match { Ok => json, Err => error }` boilerplate
+/// repeated across route handlers.
+pub fn handler_result_to_response<T: serde::Serialize>(
+    result: Result<T, crate::handlers::HandlerError>,
+) -> HttpResponse {
+    match result {
+        Ok(response) => HttpResponse::Ok().json(response),
+        Err(e) => handler_error_to_response(e),
+    }
+}
+
 /// Convert a HandlerError to an appropriate HTTP response.
 ///
 /// This is the centralized conversion function used by all HTTP routes
@@ -94,4 +107,35 @@ pub async fn require_node_read(
     let (user_hash, node_arc) = require_node(state).await?;
     let node = node_arc.read_owned().await;
     Ok((user_hash, node))
+}
+
+#[cfg(test)]
+pub mod test_helpers {
+    use crate::fold_node::{FoldNode, NodeConfig};
+    use crate::server::http_server::AppState;
+    use crate::server::node_manager::{NodeManager, NodeManagerConfig};
+    use actix_web::web;
+    use std::sync::Arc;
+
+    /// Create a test `AppState` with a pre-populated node for "test_user".
+    ///
+    /// Shared across route test modules to avoid duplicating the same
+    /// 12-line setup in every file that needs an `AppState`.
+    pub async fn create_test_state(temp_dir: &tempfile::TempDir) -> web::Data<AppState> {
+        let keypair = fold_db::security::Ed25519KeyPair::generate().unwrap();
+        let config = NodeConfig::new(temp_dir.path().to_path_buf())
+            .with_schema_service_url("test://mock")
+            .with_identity(&keypair.public_key_base64(), &keypair.secret_key_base64());
+        let node = FoldNode::new(config.clone()).await.unwrap();
+
+        let node_manager_config = NodeManagerConfig {
+            base_config: config,
+        };
+        let node_manager = NodeManager::new(node_manager_config);
+        node_manager.set_node("test_user", node).await;
+
+        web::Data::new(AppState {
+            node_manager: Arc::new(node_manager),
+        })
+    }
 }
