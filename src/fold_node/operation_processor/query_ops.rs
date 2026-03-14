@@ -22,10 +22,7 @@ struct RefLocation {
 impl OperationProcessor {
     /// Executes a query and returns raw structured results, not JSON.
     pub async fn execute_query_map(&self, query: Query) -> FoldDbResult<QueryResultMap> {
-        let db = self
-            .node
-            .get_fold_db()
-            .await?;
+        let db = self.get_db().await?;
         let results = db.query_executor.query(query).await;
         Ok(results?)
     }
@@ -197,10 +194,7 @@ impl OperationProcessor {
         HashMap<String, Vec<String>>,
         HashMap<String, (Option<String>, Option<String>)>,
     )> {
-        let db = self
-            .node
-            .get_fold_db()
-            .await?;
+        let db = self.get_db().await?;
 
         let schema = match db
             .schema_manager
@@ -406,10 +400,7 @@ impl OperationProcessor {
         offset: usize,
         limit: usize,
     ) -> FoldDbResult<(Vec<KeyValue>, usize)> {
-        let db = self
-            .node
-            .get_fold_db()
-            .await?;
+        let db = self.get_db().await?;
 
         let mut schema = db
             .schema_manager
@@ -468,10 +459,7 @@ impl OperationProcessor {
             return Err(FoldDbError::Config("Term cannot be empty".to_string()));
         }
 
-        let db = self
-            .node
-            .get_fold_db()
-            .await?;
+        let db = self.get_db().await?;
 
         Ok(db.native_search_all_classifications(term)
             .await?)
