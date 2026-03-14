@@ -278,11 +278,12 @@ impl IngestionConfig {
         Ok(saved)
     }
 
-    // Keep old name as a hidden alias so existing callers compile without changes.
-    #[doc(hidden)]
-    pub fn from_env_allow_empty() -> Self {
+    /// Load config best-effort: returns a valid config or falls back to defaults.
+    /// Errors are logged but never propagated — use `load()` directly if you need
+    /// to handle failures.
+    pub fn load_or_default() -> Self {
         Self::load().unwrap_or_else(|e| {
-            log::error!("Failed to load ingestion config: {e}. Using defaults.");
+            log::warn!("Failed to load ingestion config: {e}. Using defaults.");
             IngestionConfig::default()
         })
     }

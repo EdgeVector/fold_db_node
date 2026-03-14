@@ -140,7 +140,7 @@ pub async fn get_ingestion_config() -> impl Responder {
         "Received ingestion config request"
     );
 
-    let config = crate::ingestion::config::IngestionConfig::from_env_allow_empty();
+    let config = crate::ingestion::config::IngestionConfig::load_or_default();
     HttpResponse::Ok().json(config.redacted())
 }
 
@@ -166,7 +166,7 @@ pub async fn save_ingestion_config(
     match crate::ingestion::config::IngestionConfig::save_to_file(&request.into_inner()) {
         Ok(()) => {
             // Reload the IngestionService so the new config takes effect immediately.
-            let reload_config = crate::ingestion::config::IngestionConfig::from_env_allow_empty();
+            let reload_config = crate::ingestion::config::IngestionConfig::load_or_default();
             match IngestionService::new(reload_config) {
                 Ok(new_service) => {
                     let mut guard = ingestion_service.write().await;
