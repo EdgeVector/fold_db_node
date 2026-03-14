@@ -94,7 +94,7 @@ impl AiBackend for OllamaBackend {
             prompt: prompt.to_string(),
             stream: false,
         };
-        super::ai_helpers::call_with_retries(
+        super::helpers::call_with_retries(
             "Ollama API",
             self.max_retries,
             || IngestionError::ollama_error("All API attempts failed"),
@@ -185,7 +185,7 @@ impl AiBackend for AnthropicBackend {
             max_tokens: 16000,
             temperature: Some(0.1),
         };
-        super::ai_helpers::call_with_retries(
+        super::helpers::call_with_retries(
             "Anthropic API",
             self.max_retries,
             || IngestionError::configuration_error("All Anthropic API attempts failed"),

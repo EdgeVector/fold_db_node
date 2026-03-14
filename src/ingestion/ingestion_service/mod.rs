@@ -9,7 +9,7 @@ mod flat_path;
 mod schema_creation;
 
 use crate::fold_node::{FileIngestionRecord, FoldNode};
-use crate::ingestion::ai_client::{build_backend, AiBackend};
+use crate::ingestion::ai::client::{build_backend, AiBackend};
 use crate::ingestion::config::AIProvider;
 use crate::ingestion::decomposer;
 use crate::ingestion::progress::{

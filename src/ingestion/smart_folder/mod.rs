@@ -342,14 +342,14 @@ mod tests {
     #[test]
     fn test_extract_json_direct_array() {
         let input = r#"[{"path":"a.json","should_ingest":true,"category":"personal_data","reason":"test"}]"#;
-        let result = crate::ingestion::ai_helpers::extract_json_from_response(input).unwrap();
+        let result = crate::ingestion::ai::helpers::extract_json_from_response(input).unwrap();
         assert!(result.starts_with('['));
     }
 
     #[test]
     fn test_extract_json_from_markdown() {
         let input = "Here is the result:\n```json\n[{\"path\":\"a.json\"}]\n```\nDone.";
-        let result = crate::ingestion::ai_helpers::extract_json_from_response(input).unwrap();
+        let result = crate::ingestion::ai::helpers::extract_json_from_response(input).unwrap();
         assert!(result.starts_with('['));
     }
 

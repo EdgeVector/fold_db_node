@@ -1,7 +1,7 @@
 //! Shared helper functions for AI service implementations (Anthropic, Ollama).
 
 use super::prompts::{PROMPT_ACTIONS, PROMPT_HEADER};
-use super::{IngestionError, IngestionResult, StructureAnalyzer};
+use crate::ingestion::{IngestionError, IngestionResult, StructureAnalyzer};
 use fold_db::log_feature;
 use fold_db::logging::features::LogFeature;
 use serde::{Deserialize, Serialize};
