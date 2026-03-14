@@ -168,7 +168,7 @@ impl IngestionService {
 
         // Phase 2: Flatten data structure for AI analysis
         tracker.enter_phase(IngestionPhase::Flattening, "Processing and flattening data structure...".to_string()).await;
-        let mut flattened_data = crate::ingestion::json_processor::flatten_root_layers(request.data.clone());
+        let mut flattened_data = crate::ingestion::file_handling::json_processor::flatten_root_layers(request.data.clone());
 
         // Enrich text-file JSON with source path context so the AI can propose
         // semantic schema names (e.g., "recipes" instead of "document_content").

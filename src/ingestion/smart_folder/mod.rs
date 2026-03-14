@@ -18,7 +18,7 @@ use std::path::Path;
 
 // Re-export from sibling modules so external callers can still use
 // `smart_folder::read_file_as_json`, etc.
-pub use super::file_conversion::{csv_to_json, read_file_as_json, read_file_with_hash, twitter_js_to_json};
+pub use super::file_handling::conversion::{csv_to_json, read_file_as_json, read_file_with_hash, twitter_js_to_json};
 pub use scanner::*;
 
 // Re-export types and classification functions so callers using

@@ -556,7 +556,7 @@ impl IngestionService {
         if is_image {
             if let Some(ref sfn) = source_file_name {
                 let dummy_path = std::path::PathBuf::from(sfn);
-                crate::ingestion::json_processor::enrich_image_json(
+                crate::ingestion::file_handling::json_processor::enrich_image_json(
                     &mut parent,
                     &dummy_path,
                     Some(sfn.as_str()),

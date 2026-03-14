@@ -216,7 +216,7 @@ pub(crate) async fn process_single_file_via_smart_folder(
                 format!("{:x}", Sha256::digest(&raw_bytes))
             };
             let mut data =
-                crate::ingestion::json_processor::convert_file_to_json(&file_path.to_path_buf())
+                crate::ingestion::file_handling::json_processor::convert_file_to_json(&file_path.to_path_buf())
                     .await
                     .map_err(|e| e.to_string())?;
             // Enrich image JSON with image_type and created_at for HashRange schema support
@@ -225,7 +225,7 @@ pub(crate) async fn process_single_file_via_smart_folder(
                 .and_then(|n| n.to_str())
                 .filter(|name| crate::ingestion::is_image_file(name))
                 .and_then(|name| {
-                    crate::ingestion::json_processor::enrich_image_json(
+                    crate::ingestion::file_handling::json_processor::enrich_image_json(
                         &mut data,
                         &file_path.to_path_buf(),
                         Some(name),

@@ -358,7 +358,7 @@ impl FoldHttpServer {
         )
         .route(
             "/ingestion/upload",
-            web::post().to(crate::ingestion::file_upload::upload_file),
+            web::post().to(crate::ingestion::file_handling::upload::upload_file),
         )
         .route(
             "/ingestion/status",
@@ -414,7 +414,7 @@ impl FoldHttpServer {
         )
         .route(
             "/file/{hash}",
-            web::get().to(crate::ingestion::file_upload::serve_file),
+            web::get().to(crate::ingestion::file_handling::upload::serve_file),
         )
         .route(
             "/ingestion/ollama/models",

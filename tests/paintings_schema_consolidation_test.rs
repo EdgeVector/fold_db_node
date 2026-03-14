@@ -15,7 +15,7 @@ use fold_db::logging::core::run_with_user;
 use fold_db_node::fold_node::node::FoldNode;
 use fold_db_node::fold_node::OperationProcessor;
 use fold_db_node::ingestion::ingestion_service::IngestionService;
-use fold_db_node::ingestion::json_processor::convert_file_to_json;
+use fold_db_node::ingestion::file_handling::json_processor::convert_file_to_json;
 use fold_db_node::ingestion::{create_progress_tracker, IngestionRequest, ProgressService};
 use fold_db_node::schema_service::server::{
     AddSchemaResponse, ErrorResponse, SchemaAddOutcome, SchemaServiceState,
