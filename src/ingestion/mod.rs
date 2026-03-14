@@ -19,8 +19,10 @@ pub mod progress;
 pub mod prompts;
 pub mod routes;
 pub mod smart_folder;
+pub mod smart_folder_classify;
 pub mod smart_folder_routes;
 pub mod smart_folder_scanner;
+pub mod smart_folder_types;
 pub mod structure_analyzer;
 
 use serde::{Deserialize, Serialize};
