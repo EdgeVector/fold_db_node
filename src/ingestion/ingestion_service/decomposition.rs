@@ -87,41 +87,8 @@ impl IngestionService {
         self.fill_missing_field_descriptions(&mut ai_response, &rep_decomp.parent).await?;
 
         // Apply image override at depth 0 (top-level parent is the image schema)
-        let is_image = depth == 0
-            && source_file_name
-                .map(crate::ingestion::is_image_file)
-                .unwrap_or(false);
-        if is_image {
-            if let Some(ref mut schema_def) = ai_response.new_schemas {
-                schema_def["schema_type"] = serde_json::json!("HashRange");
-                schema_def["key"] = serde_json::json!({
-                    "hash_field": "source_file_name",
-                    "range_field": "created_at"
-                });
-                if let Some(fields) = schema_def.get_mut("fields").and_then(|f| f.as_array_mut()) {
-                    let sfn = serde_json::json!("source_file_name");
-                    if !fields.contains(&sfn) {
-                        fields.push(sfn);
-                    }
-                } else {
-                    let mut field_names: Vec<String> = schema_def
-                        .get("field_classifications")
-                        .and_then(|fc| fc.as_object())
-                        .map(|obj| obj.keys().cloned().collect())
-                        .unwrap_or_default();
-                    if !field_names.contains(&"source_file_name".to_string()) {
-                        field_names.push("source_file_name".to_string());
-                    }
-                    schema_def["fields"] = serde_json::json!(field_names);
-                }
-                if let Some(fc) = schema_def.get_mut("field_classifications").and_then(|f| f.as_object_mut()) {
-                    fc.entry("source_file_name").or_insert_with(|| serde_json::json!(["word"]));
-                }
-            }
-            ai_response
-                .mutation_mappers
-                .entry("source_file_name".to_string())
-                .or_insert_with(|| "source_file_name".to_string());
+        if depth == 0 && source_file_name.map(crate::ingestion::is_image_file).unwrap_or(false) {
+            super::apply_image_schema_override(&mut ai_response, None);
         }
 
         // Create the schema via the standard path
@@ -261,45 +228,8 @@ impl IngestionService {
             .await?;
 
         // Apply image override at depth 0
-        let is_image = depth == 0
-            && source_file_name
-                .map(crate::ingestion::is_image_file)
-                .unwrap_or(false);
-        if is_image {
-            if let Some(ref mut schema_def) = ai_response.new_schemas {
-                schema_def["schema_type"] = serde_json::json!("HashRange");
-                schema_def["key"] = serde_json::json!({
-                    "hash_field": "source_file_name",
-                    "range_field": "created_at"
-                });
-                if let Some(fields) = schema_def.get_mut("fields").and_then(|f| f.as_array_mut()) {
-                    let sfn = serde_json::json!("source_file_name");
-                    if !fields.contains(&sfn) {
-                        fields.push(sfn);
-                    }
-                } else {
-                    let mut field_names: Vec<String> = schema_def
-                        .get("field_classifications")
-                        .and_then(|fc| fc.as_object())
-                        .map(|obj| obj.keys().cloned().collect())
-                        .unwrap_or_default();
-                    if !field_names.contains(&"source_file_name".to_string()) {
-                        field_names.push("source_file_name".to_string());
-                    }
-                    schema_def["fields"] = serde_json::json!(field_names);
-                }
-                if let Some(fc) = schema_def
-                    .get_mut("field_classifications")
-                    .and_then(|f| f.as_object_mut())
-                {
-                    fc.entry("source_file_name")
-                        .or_insert_with(|| serde_json::json!(["word"]));
-                }
-            }
-            ai_response
-                .mutation_mappers
-                .entry("source_file_name".to_string())
-                .or_insert_with(|| "source_file_name".to_string());
+        if depth == 0 && source_file_name.map(crate::ingestion::is_image_file).unwrap_or(false) {
+            super::apply_image_schema_override(&mut ai_response, None);
         }
 
         proposals.insert(

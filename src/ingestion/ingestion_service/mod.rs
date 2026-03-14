@@ -36,6 +36,54 @@ pub(crate) fn schema_err(e: impl std::fmt::Display) -> IngestionError {
     IngestionError::SchemaCreationError(e.to_string())
 }
 
+/// Apply image-specific overrides to an AI schema response.
+///
+/// Images must use `HashRange(source_file_name, created_at)` so each image file
+/// gets a unique key. This function:
+/// 1. Sets `schema_type` to `HashRange` and configures the key fields
+/// 2. Ensures `source_file_name` is in the schema's `fields` array and `field_classifications`
+/// 3. Optionally sets a custom `descriptive_name`
+/// 4. Adds `source_file_name` to `mutation_mappers` so the value gets written
+pub(crate) fn apply_image_schema_override(
+    ai_response: &mut AISchemaResponse,
+    descriptive_name: Option<&str>,
+) {
+    if let Some(ref mut schema_def) = ai_response.new_schemas {
+        schema_def["schema_type"] = serde_json::json!("HashRange");
+        schema_def["key"] = serde_json::json!({
+            "hash_field": "source_file_name",
+            "range_field": "created_at"
+        });
+        // Ensure source_file_name is in the fields list
+        if let Some(fields) = schema_def.get_mut("fields").and_then(|f| f.as_array_mut()) {
+            let sfn = serde_json::json!("source_file_name");
+            if !fields.contains(&sfn) {
+                fields.push(sfn);
+            }
+        } else {
+            let mut field_names: Vec<String> = schema_def
+                .get("field_classifications")
+                .and_then(|fc| fc.as_object())
+                .map(|obj| obj.keys().cloned().collect())
+                .unwrap_or_default();
+            if !field_names.contains(&"source_file_name".to_string()) {
+                field_names.push("source_file_name".to_string());
+            }
+            schema_def["fields"] = serde_json::json!(field_names);
+        }
+        if let Some(fc) = schema_def.get_mut("field_classifications").and_then(|f| f.as_object_mut()) {
+            fc.entry("source_file_name").or_insert_with(|| serde_json::json!(["word"]));
+        }
+        if let Some(desc) = descriptive_name {
+            schema_def["descriptive_name"] = serde_json::json!(desc);
+        }
+    }
+    ai_response
+        .mutation_mappers
+        .entry("source_file_name".to_string())
+        .or_insert_with(|| "source_file_name".to_string());
+}
+
 /// Acquire a clone of the SchemaCore from the node without holding the DB lock.
 pub(crate) async fn get_schema_manager(node: &FoldNode) -> IngestionResult<Arc<SchemaCore>> {
     let db_guard = node.get_fold_db().await.map_err(schema_err)?;
