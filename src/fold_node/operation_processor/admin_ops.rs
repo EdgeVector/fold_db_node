@@ -48,19 +48,13 @@ impl OperationProcessor {
     pub async fn get_event_statistics(
         &self,
     ) -> FoldDbResult<fold_db::fold_db_core::infrastructure::event_statistics::EventStatistics> {
-        let db = self
-            .node
-            .get_fold_db()
-            .await?;
+        let db = self.get_db().await?;
         Ok(db.get_event_statistics())
     }
 
     /// Get indexing status.
     pub async fn get_indexing_status(&self) -> FoldDbResult<IndexingStatus> {
-        let db = self
-            .node
-            .get_fold_db()
-            .await?;
+        let db = self.get_db().await?;
         Ok(db.get_indexing_status().await)
     }
 
@@ -97,7 +91,7 @@ impl OperationProcessor {
         let config = self.node.config.clone();
         let db_path = config.get_storage_path();
 
-        if let Ok(db) = self.node.get_fold_db().await {
+        if let Ok(db) = self.get_db().await {
             if let Err(e) = db.close() {
                 log::warn!("Failed to close database during reset: {}", e);
             }

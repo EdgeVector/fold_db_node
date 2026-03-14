@@ -12,10 +12,7 @@ impl OperationProcessor {
         let schema_name = mutation.schema_name.clone();
         log::info!("🔄 Starting mutation execution for schema: {}", schema_name);
 
-        let mut db = self
-            .node
-            .get_fold_db()
-            .await?;
+        let mut db = self.get_db().await?;
 
         let mut ids = db
             .mutation_manager
@@ -70,10 +67,7 @@ impl OperationProcessor {
         &self,
         mutations: Vec<Mutation>,
     ) -> FoldDbResult<Vec<String>> {
-        let mut db = self
-            .node
-            .get_fold_db()
-            .await?;
+        let mut db = self.get_db().await?;
         let mutation_ids = db
             .mutation_manager
             .write_mutations_batch_async(mutations)

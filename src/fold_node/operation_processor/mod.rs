@@ -1,3 +1,7 @@
+use fold_db::error::FoldDbResult;
+use fold_db::fold_db_core::FoldDB;
+use tokio::sync::OwnedMutexGuard;
+
 use super::FoldNode;
 
 mod admin_ops;
@@ -17,6 +21,11 @@ impl OperationProcessor {
     /// Creates a new operation processor with a FoldNode instance.
     pub fn new(node: FoldNode) -> Self {
         Self { node }
+    }
+
+    /// Acquire the FoldDB mutex guard. Shorthand for `self.node.get_fold_db().await`.
+    async fn get_db(&self) -> FoldDbResult<OwnedMutexGuard<FoldDB>> {
+        self.node.get_fold_db().await
     }
 }
 
