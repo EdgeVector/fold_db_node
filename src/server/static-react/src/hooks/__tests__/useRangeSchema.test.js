@@ -75,12 +75,9 @@ describe('useRangeSchema Hook', () => {
     
     const mixedSchema = {
       name: 'MixedSchema',
-      schema_type: { Range: { range_key: 'key' } },
-      fields: {
-        key: { field_type: 'Range' },
-        data: { field_type: 'Range' },
-        metadata: { field_type: 'String' } // Backend allows mixed types
-      }
+      schema_type: 'Range',
+      key: { range_field: 'key' },
+      fields: ['key', 'data', 'metadata']
     };
 
     // Backend schema_type is authoritative - if backend says Range, it's Range

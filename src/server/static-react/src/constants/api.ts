@@ -22,10 +22,7 @@ export const API_TIMEOUTS = {
   AI_PROCESSING: 120000, // Extended AI processing operations
   FOLDER_SCAN: 300000, // Smart folder scan (multiple sequential LLM calls)
 
-  // Legacy support
   DEFAULT: 8000,
-  CRYPTO_OPERATIONS: 8000,
-  STATE_CHANGES: 10000,
   DESTRUCTIVE_OPERATIONS: 30000,
 } as const;
 
@@ -36,11 +33,7 @@ export const API_RETRIES = {
   STANDARD: 2, // Most read operations, network issues
   CRITICAL: 3, // System status, critical system data
 
-  // Legacy support
   DEFAULT: 2,
-  STATE_CHANGING: 1,
-  NETWORK_RESILIENT: 2,
-  SYSTEM_CRITICAL: 3,
 } as const;
 
 // Cache TTL Configuration
@@ -188,29 +181,6 @@ export const CACHE_KEYS = {
   PARAMETERIZED_QUERY: "parameterized-query",
 } as const;
 
-// Default export for backwards compatibility
-export default {
-  API_REQUEST_TIMEOUT_MS,
-  API_RETRY_ATTEMPTS,
-  API_RETRY_DELAY_MS,
-  API_BATCH_REQUEST_LIMIT,
-  API_TIMEOUTS,
-  API_RETRIES,
-  API_CACHE_TTL,
-  API_BASE_URLS,
-  HTTP_STATUS_CODES,
-  CONTENT_TYPES,
-  REQUEST_HEADERS,
-  ERROR_MESSAGES,
-  CACHE_CONFIG,
-  RETRY_CONFIG,
-  API_CONFIG,
-  SCHEMA_STATES,
-  SCHEMA_OPERATIONS,
-  OPERATION_TYPES,
-  REQUEST_PRIORITIES,
-  CACHE_KEYS,
-};
 
 // Type definitions for better type safety
 export type SchemaState = (typeof SCHEMA_STATES)[keyof typeof SCHEMA_STATES];
