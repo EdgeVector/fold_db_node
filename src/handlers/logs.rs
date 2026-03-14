@@ -6,27 +6,30 @@
 use crate::fold_node::node::FoldNode;
 use crate::fold_node::OperationProcessor;
 use crate::handlers::response::{ApiResponse, HandlerError, HandlerResult, IntoHandlerError, SuccessResponse};
-use serde::{Deserialize, Serialize};
+use crate::handlers::handler_response;
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct LogListResponse {
-    pub logs: serde_json::Value,
-    pub count: usize,
-    pub timestamp: u64,
+handler_response! {
+    pub struct LogListResponse {
+        pub logs: serde_json::Value,
+        pub count: usize,
+        pub timestamp: u64,
+    }
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct LogConfigResponse {
-    pub config: serde_json::Value,
+handler_response! {
+    pub struct LogConfigResponse {
+        pub config: serde_json::Value,
+    }
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct LogFeaturesResponse {
-    pub features: serde_json::Value,
-    pub available_levels: Vec<String>,
+handler_response! {
+    pub struct LogFeaturesResponse {
+        pub features: serde_json::Value,
+        pub available_levels: Vec<String>,
+    }
 }
 
-const LOG_LEVELS: &[&str] = &["TRACE", "DEBUG", "INFO", "WARN", "ERROR"];
+pub const LOG_LEVELS: &[&str] = &["TRACE", "DEBUG", "INFO", "WARN", "ERROR"];
 
 pub async fn list_logs(
     since: Option<i64>,

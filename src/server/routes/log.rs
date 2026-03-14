@@ -107,8 +107,7 @@ pub async fn update_feature_level(
     level_update: web::Json<LogLevelUpdate>,
     state: web::Data<AppState>,
 ) -> impl Responder {
-    let valid_levels = ["TRACE", "DEBUG", "INFO", "WARN", "ERROR"];
-    if !valid_levels.contains(&level_update.level.as_str()) {
+    if !crate::handlers::logs::LOG_LEVELS.contains(&level_update.level.as_str()) {
         return HttpResponse::BadRequest().json(json!({
             "error": format!("Invalid log level: {}", level_update.level)
         }));
