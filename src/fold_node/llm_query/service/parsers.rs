@@ -6,19 +6,19 @@ use serde_json::Value;
 
 use super::LlmQueryService;
 
+/// Extract JSON from an LLM response by finding the outermost delimiters.
+/// For objects use `('{', '}')`, for arrays use `('[', ']')`.
+fn extract_json_delimited(response: &str, open: char, close: char) -> &str {
+    match (response.find(open), response.rfind(close)) {
+        (Some(start), Some(end)) if end >= start => &response[start..=end],
+        _ => response,
+    }
+}
+
 impl LlmQueryService {
     /// Parse the LLM response into a QueryPlan
     pub(super) fn parse_query_plan(&self, response: &str) -> Result<QueryPlan, String> {
-        // Try to extract JSON from the response
-        let json_str = if let Some(start) = response.find('{') {
-            if let Some(end) = response.rfind('}') {
-                &response[start..=end]
-            } else {
-                response
-            }
-        } else {
-            response
-        };
+        let json_str = extract_json_delimited(response, '{', '}');
 
         #[derive(serde::Deserialize)]
         struct LlmResponse {
@@ -27,10 +27,7 @@ impl LlmQueryService {
         }
 
         let parsed: LlmResponse = serde_json::from_str(json_str).map_err(|e| {
-            format!(
-                "Failed to parse LLM response: {}. Response: {}",
-                e, json_str
-            )
+            format!("Failed to parse LLM response: {}. Response: {}", e, json_str)
         })?;
 
         Ok(QueryPlan {
@@ -41,15 +38,7 @@ impl LlmQueryService {
 
     /// Parse the followup analysis response
     pub(super) fn parse_followup_analysis(&self, response: &str) -> Result<FollowupAnalysis, String> {
-        let json_str = if let Some(start) = response.find('{') {
-            if let Some(end) = response.rfind('}') {
-                &response[start..=end]
-            } else {
-                response
-            }
-        } else {
-            response
-        };
+        let json_str = extract_json_delimited(response, '{', '}');
 
         #[derive(serde::Deserialize)]
         struct LlmFollowupResponse {
@@ -59,10 +48,7 @@ impl LlmQueryService {
         }
 
         let parsed: LlmFollowupResponse = serde_json::from_str(json_str).map_err(|e| {
-            format!(
-                "Failed to parse followup analysis: {}. Response: {}",
-                e, json_str
-            )
+            format!("Failed to parse followup analysis: {}. Response: {}", e, json_str)
         })?;
 
         Ok(FollowupAnalysis {
@@ -74,16 +60,7 @@ impl LlmQueryService {
 
     /// Parse the query terms response
     pub(super) fn parse_query_terms_response(&self, response: &str) -> Result<Vec<String>, String> {
-        // Try to extract JSON array from the response
-        let json_str = if let Some(start) = response.find('[') {
-            if let Some(end) = response.rfind(']') {
-                &response[start..=end]
-            } else {
-                response
-            }
-        } else {
-            response
-        };
+        let json_str = extract_json_delimited(response, '[', ']');
 
         let terms: Vec<String> = serde_json::from_str(json_str)
             .map_err(|e| format!("Failed to parse query terms: {}. Response: {}", e, json_str))?;
@@ -97,15 +74,7 @@ impl LlmQueryService {
 
     /// Parse alternative query response
     pub(super) fn parse_alternative_query(&self, response: &str) -> Result<Option<QueryPlan>, String> {
-        let json_str = if let Some(start) = response.find('{') {
-            if let Some(end) = response.rfind('}') {
-                &response[start..=end]
-            } else {
-                response
-            }
-        } else {
-            response
-        };
+        let json_str = extract_json_delimited(response, '{', '}');
 
         #[derive(serde::Deserialize)]
         struct LlmAlternativeResponse {
@@ -115,10 +84,7 @@ impl LlmQueryService {
         }
 
         let parsed: LlmAlternativeResponse = serde_json::from_str(json_str).map_err(|e| {
-            format!(
-                "Failed to parse alternative query: {}. Response: {}",
-                e, json_str
-            )
+            format!("Failed to parse alternative query: {}. Response: {}", e, json_str)
         })?;
 
         if parsed.has_alternative {

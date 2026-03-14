@@ -109,104 +109,56 @@ impl SchemaServiceClient {
         )))
     }
 
-    /// List all available schemas from the schema service
-    pub async fn list_schemas(&self) -> FoldDbResult<Vec<String>> {
-        let url = format!("{}/api/schemas", self.base_url);
-
-        let response = self.client.get(&url).send().await.map_err(|e| {
-            FoldDbError::Config(format!("Failed to fetch schemas from service: {}", e))
+    /// Send a GET request and deserialize the JSON response.
+    async fn get_json<T: serde::de::DeserializeOwned>(&self, url: &str, context: &str) -> FoldDbResult<T> {
+        let response = self.client.get(url).send().await.map_err(|e| {
+            FoldDbError::Config(format!("Failed to fetch {}: {}", context, e))
         })?;
-
         if !response.status().is_success() {
             return Err(FoldDbError::Config(format!(
-                "Schema service returned error: {}",
-                response.status()
+                "Schema service returned error for {}: {}", context, response.status()
             )));
         }
+        response.json().await.map_err(|e| {
+            FoldDbError::Config(format!("Failed to parse {} response: {}", context, e))
+        })
+    }
 
+    /// Extract a schema name from a JSON value that may be a string, `{"name": ...}`, or `{"schema": {"name": ...}}`.
+    fn extract_schema_name(v: serde_json::Value) -> Option<String> {
+        v.as_str().map(|s| s.to_string()).or_else(|| {
+            let obj = v.as_object()?;
+            obj.get("name")
+                .and_then(|n| n.as_str())
+                .or_else(|| obj.get("schema").and_then(|s| s.get("name")).and_then(|n| n.as_str()))
+                .map(|s| s.to_string())
+        })
+    }
+
+    /// List all available schemas from the schema service
+    pub async fn list_schemas(&self) -> FoldDbResult<Vec<String>> {
         #[derive(Deserialize)]
-        struct SchemasListResponse {
-            schemas: Vec<serde_json::Value>,
-        }
+        struct SchemasListResponse { schemas: Vec<serde_json::Value> }
 
-        let schemas_response: SchemasListResponse = response.json().await.map_err(|e| {
-            FoldDbError::Config(format!("Failed to parse schema list response: {}", e))
-        })?;
-
-        let names: Vec<String> = schemas_response
-            .schemas
-            .into_iter()
-            .filter_map(|v| {
-                if let Some(s) = v.as_str() {
-                    Some(s.to_string())
-                } else if let Some(obj) = v.as_object() {
-                    // Try "name" or "schema.name"
-                    obj.get("name")
-                        .and_then(|n| n.as_str())
-                        .map(|s| s.to_string())
-                        .or_else(|| {
-                            obj.get("schema")
-                                .and_then(|s| s.get("name"))
-                                .and_then(|n| n.as_str())
-                                .map(|s| s.to_string())
-                        })
-                } else {
-                    None
-                }
-            })
-            .collect();
-
-        Ok(names)
+        let url = format!("{}/api/schemas", self.base_url);
+        let resp: SchemasListResponse = self.get_json(&url, "schemas").await?;
+        Ok(resp.schemas.into_iter().filter_map(Self::extract_schema_name).collect())
     }
 
     /// Get all available schemas with their full definitions from the schema service
     pub async fn get_available_schemas(&self) -> FoldDbResult<Vec<Schema>> {
-        let url = format!("{}/api/schemas/available", self.base_url);
-
-        let response = self.client.get(&url).send().await.map_err(|e| {
-            FoldDbError::Config(format!("Failed to fetch available schemas: {}", e))
-        })?;
-
-        if !response.status().is_success() {
-            return Err(FoldDbError::Config(format!(
-                "Schema service returned error: {}",
-                response.status()
-            )));
-        }
-
         #[derive(Deserialize)]
-        struct AvailableSchemasResponse {
-            schemas: Vec<Schema>,
-        }
+        struct AvailableSchemasResponse { schemas: Vec<Schema> }
 
-        let schemas_response: AvailableSchemasResponse = response.json().await.map_err(|e| {
-            FoldDbError::Config(format!("Failed to parse available schemas response: {}", e))
-        })?;
-
-        Ok(schemas_response.schemas)
+        let url = format!("{}/api/schemas/available", self.base_url);
+        let resp: AvailableSchemasResponse = self.get_json(&url, "available schemas").await?;
+        Ok(resp.schemas)
     }
 
     /// Get a specific schema definition from the schema service
     pub async fn get_schema(&self, name: &str) -> FoldDbResult<Schema> {
         let url = format!("{}/api/schema/{}", self.base_url, name);
-
-        let response = self.client.get(&url).send().await.map_err(|e| {
-            FoldDbError::Config(format!("Failed to fetch schema '{}': {}", name, e))
-        })?;
-
-        if !response.status().is_success() {
-            return Err(FoldDbError::Config(format!(
-                "Schema service returned error for '{}': {}",
-                name,
-                response.status()
-            )));
-        }
-
-        let schema: Schema = response.json().await.map_err(|e| {
-            FoldDbError::Config(format!("Failed to parse schema '{}' response: {}", name, e))
-        })?;
-
-        Ok(schema)
+        self.get_json(&url, &format!("schema '{}'", name)).await
     }
 
     /// Batch check whether proposed schemas can reuse existing ones.
