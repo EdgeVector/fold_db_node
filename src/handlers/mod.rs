@@ -32,11 +32,9 @@ pub mod ingestion;
 pub mod llm;
 pub mod llm_hydration;
 pub mod llm_types;
-pub mod logs;
 pub mod mutation;
 pub mod query;
 pub mod response;
-pub mod schema;
 pub mod system;
 
 // Re-export commonly used types
