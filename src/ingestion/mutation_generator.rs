@@ -46,11 +46,7 @@ pub fn generate_mutations(
         for (json_field, schema_field) in mutation_mappers {
             if let Some(value) = fields_and_values.get(json_field) {
                 // Extract just the field name from schema path (e.g., "UserSchema.name" -> "name")
-                let field_name = if schema_field.contains('.') {
-                    schema_field.rsplit('.').next().unwrap_or(schema_field)
-                } else {
-                    schema_field.as_str()
-                };
+                let field_name = schema_field.rsplit('.').next().unwrap_or(schema_field);
 
                 result.insert(field_name.to_string(), value.clone());
                 log_feature!(
