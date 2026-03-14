@@ -168,7 +168,7 @@ impl IngestionService {
         let schema_response = &add_response.schema;
 
         let json_str = serde_json::to_string(schema_response).map_err(|error| {
-            IngestionError::schema_parsing_error(format!(
+            IngestionError::ai_response_validation_error(format!(
                 "Failed to serialize schema definition: {}",
                 error
             ))
