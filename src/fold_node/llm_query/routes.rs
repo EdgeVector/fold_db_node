@@ -72,6 +72,30 @@ async fn require_service(llm_state: &LlmQueryState) -> Result<Arc<LlmQueryServic
     })
 }
 
+/// Common setup: require LLM service + authenticated node read guard.
+async fn require_llm_context(
+    app_state: &web::Data<AppState>,
+    llm_state: &LlmQueryState,
+) -> Result<(Arc<LlmQueryService>, String, tokio::sync::OwnedRwLockReadGuard<crate::fold_node::FoldNode>), HttpResponse> {
+    let service = require_service(llm_state).await?;
+    let (user_hash, node_arc) = require_node(app_state).await?;
+    let node = node_arc.read_owned().await;
+    Ok((service, user_hash, node))
+}
+
+/// Convert a HandlerResult with data into an HttpResponse, or 500 if data is missing.
+fn data_or_500<T: serde::Serialize>(
+    result: Result<crate::handlers::response::ApiResponse<T>, crate::handlers::HandlerError>,
+) -> HttpResponse {
+    match result {
+        Ok(response) => match response.data {
+            Some(data) => HttpResponse::Ok().json(data),
+            None => HttpResponse::InternalServerError().json(json!({"error": "Missing response data"})),
+        },
+        Err(e) => handler_error_to_response(e),
+    }
+}
+
 /// Analyze if a follow-up question can be answered from existing context
 #[utoipa::path(
     post,
@@ -89,39 +113,21 @@ pub async fn analyze_followup(
     app_state: web::Data<AppState>,
     llm_state: web::Data<LlmQueryState>,
 ) -> impl Responder {
-    let service = match require_service(&llm_state).await {
-        Ok(svc) => svc,
+    let (service, user_hash, node) = match require_llm_context(&app_state, &llm_state).await {
+        Ok(ctx) => ctx,
         Err(response) => return response,
     };
 
-    let (user_hash, node_arc) = match require_node(&app_state).await {
-        Ok(res) => res,
-        Err(response) => return response,
-    };
-    let node = node_arc.read().await;
-
-    match shared_handlers::analyze_followup(
-        request.into_inner(),
-        &user_hash,
-        service.as_ref(),
-        llm_state.session_manager.as_ref(),
-        &node,
+    data_or_500(
+        shared_handlers::analyze_followup(
+            request.into_inner(),
+            &user_hash,
+            service.as_ref(),
+            llm_state.session_manager.as_ref(),
+            &node,
+        )
+        .await,
     )
-    .await
-    {
-        Ok(response) => {
-            if let Some(data) = response.data {
-                HttpResponse::Ok().json(FollowupAnalysis {
-                    needs_query: data.needs_query,
-                    query: data.query,
-                    reasoning: data.reasoning,
-                })
-            } else {
-                HttpResponse::InternalServerError().json(json!({"error": "Missing response data"}))
-            }
-        }
-        Err(e) => handler_error_to_response(e),
-    }
 }
 
 /// Ask a follow-up question about query results
@@ -141,38 +147,21 @@ pub async fn chat(
     app_state: web::Data<AppState>,
     llm_state: web::Data<LlmQueryState>,
 ) -> impl Responder {
-    let service = match require_service(&llm_state).await {
-        Ok(svc) => svc,
+    let (service, user_hash, node) = match require_llm_context(&app_state, &llm_state).await {
+        Ok(ctx) => ctx,
         Err(response) => return response,
     };
 
-    let (user_hash, node_arc) = match require_node(&app_state).await {
-        Ok(res) => res,
-        Err(response) => return response,
-    };
-    let node = node_arc.read().await;
-
-    match shared_handlers::chat(
-        request.into_inner(),
-        &user_hash,
-        service.as_ref(),
-        llm_state.session_manager.as_ref(),
-        &node,
+    data_or_500(
+        shared_handlers::chat(
+            request.into_inner(),
+            &user_hash,
+            service.as_ref(),
+            llm_state.session_manager.as_ref(),
+            &node,
+        )
+        .await,
     )
-    .await
-    {
-        Ok(response) => {
-            if let Some(data) = response.data {
-                HttpResponse::Ok().json(ChatResponse {
-                    answer: data.answer,
-                    context_used: data.context_used,
-                })
-            } else {
-                HttpResponse::InternalServerError().json(json!({"error": "Missing response data"}))
-            }
-        }
-        Err(e) => handler_error_to_response(e),
-    }
 }
 
 
@@ -193,40 +182,21 @@ pub async fn ai_native_index_query(
     app_state: web::Data<AppState>,
     llm_state: web::Data<LlmQueryState>,
 ) -> impl Responder {
-    let service = match require_service(&llm_state).await {
-        Ok(svc) => svc,
+    let (service, user_hash, node) = match require_llm_context(&app_state, &llm_state).await {
+        Ok(ctx) => ctx,
         Err(response) => return response,
     };
 
-    let (user_hash, node_arc) = match require_node(&app_state).await {
-        Ok(res) => res,
-        Err(response) => return response,
-    };
-    let node = node_arc.read().await;
-
-    match shared_handlers::ai_native_index_query(
-        request.into_inner(),
-        &user_hash,
-        service.as_ref(),
-        llm_state.session_manager.as_ref(),
-        &node,
+    data_or_500(
+        shared_handlers::ai_native_index_query(
+            request.into_inner(),
+            &user_hash,
+            service.as_ref(),
+            llm_state.session_manager.as_ref(),
+            &node,
+        )
+        .await,
     )
-    .await
-    {
-        Ok(response) => {
-            if let Some(data) = response.data {
-                HttpResponse::Ok().json(json!({
-                    "ai_interpretation": data.ai_interpretation,
-                    "raw_results": data.raw_results,
-                    "query": data.query,
-                    "session_id": data.session_id
-                }))
-            } else {
-                HttpResponse::InternalServerError().json(json!({"error": "Missing response data"}))
-            }
-        }
-        Err(e) => handler_error_to_response(e),
-    }
 }
 
 /// Execute an agent query - an autonomous LLM agent that can use tools
@@ -247,18 +217,11 @@ pub async fn agent_query(
     llm_state: web::Data<LlmQueryState>,
     progress_tracker: web::Data<crate::ingestion::ProgressTracker>,
 ) -> impl Responder {
-    let service = match require_service(&llm_state).await {
-        Ok(svc) => svc,
+    let (service, user_hash, node) = match require_llm_context(&app_state, &llm_state).await {
+        Ok(ctx) => ctx,
         Err(response) => return response,
     };
 
-    let (user_hash, node_arc) = match require_node(&app_state).await {
-        Ok(res) => res,
-        Err(response) => return response,
-    };
-    let node = node_arc.read().await;
-
-    // Convert the request to handler request type
     let handler_request = AgentQueryHandlerRequest {
         query: request.query.clone(),
         session_id: request.session_id.clone(),
@@ -266,27 +229,15 @@ pub async fn agent_query(
         context: request.context.clone(),
     };
 
-    match shared_handlers::agent_query(
-        handler_request,
-        &user_hash,
-        service.as_ref(),
-        llm_state.session_manager.as_ref(),
-        &node,
-        Some(progress_tracker.get_ref()),
+    data_or_500(
+        shared_handlers::agent_query(
+            handler_request,
+            &user_hash,
+            service.as_ref(),
+            llm_state.session_manager.as_ref(),
+            &node,
+            Some(progress_tracker.get_ref()),
+        )
+        .await,
     )
-    .await
-    {
-        Ok(response) => {
-            if let Some(data) = response.data {
-                HttpResponse::Ok().json(AgentQueryResponse {
-                    answer: data.answer,
-                    tool_calls: data.tool_calls,
-                    session_id: data.session_id,
-                })
-            } else {
-                HttpResponse::InternalServerError().json(json!({"error": "Missing response data"}))
-            }
-        }
-        Err(e) => handler_error_to_response(e),
-    }
 }
