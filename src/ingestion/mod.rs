@@ -18,6 +18,8 @@ pub mod mutation_generator;
 pub mod progress;
 pub mod prompts;
 pub mod routes;
+pub mod routes_batch;
+pub mod routes_helpers;
 pub mod smart_folder;
 pub mod smart_folder_classify;
 pub mod smart_folder_routes;
