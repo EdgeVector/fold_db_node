@@ -173,28 +173,20 @@ pub async fn smart_folder_scan(
                 });
             });
 
-            let result = if let Some(ref arc) = node_arc {
-                let node_guard = arc.read().await;
-                smart_folder::perform_smart_folder_scan_with_progress(
-                    &folder_path,
-                    max_depth,
-                    max_files,
-                    service_opt.as_deref(),
-                    Some(&*node_guard),
-                    Some(&on_progress),
-                )
-                .await
-            } else {
-                smart_folder::perform_smart_folder_scan_with_progress(
-                    &folder_path,
-                    max_depth,
-                    max_files,
-                    service_opt.as_deref(),
-                    None,
-                    Some(&on_progress),
-                )
-                .await
+            let node_guard;
+            let node_ref = match node_arc {
+                Some(ref arc) => { node_guard = arc.read().await; Some(&*node_guard) }
+                None => None,
             };
+            let result = smart_folder::perform_smart_folder_scan_with_progress(
+                &folder_path,
+                max_depth,
+                max_files,
+                service_opt.as_deref(),
+                node_ref,
+                Some(&on_progress),
+            )
+            .await;
 
             // Let any in-flight spawned progress-update tasks drain before
             // writing the final Completed/Failed status.
