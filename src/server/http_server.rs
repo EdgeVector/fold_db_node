@@ -240,7 +240,7 @@ impl FoldHttpServer {
 
         if let Some(url) = schema_service_url {
             // Skip loading for mock/test schema services
-            if url.starts_with("test://") || url.starts_with("mock://") {
+            if crate::fold_node::node::FoldNode::is_test_schema_service(&url) {
                 log_feature!(
                     LogFeature::Database,
                     info,
