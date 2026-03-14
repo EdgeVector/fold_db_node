@@ -61,24 +61,30 @@ impl SessionManager {
         Ok(sessions.get(session_id).cloned())
     }
 
+    /// Acquire the write lock, find a session by ID, apply `f`, and update activity.
+    fn update_session<F>(&self, session_id: &str, f: F) -> Result<(), String>
+    where
+        F: FnOnce(&mut SessionContext),
+    {
+        let mut sessions = self
+            .sessions
+            .write()
+            .map_err(|e| format!("Failed to acquire write lock: {}", e))?;
+        let ctx = sessions
+            .get_mut(session_id)
+            .ok_or_else(|| format!("Session not found: {}", session_id))?;
+        f(ctx);
+        ctx.update_activity();
+        Ok(())
+    }
+
     /// Add results to a session
     pub fn add_results(
         &self,
         session_id: &str,
         results: Vec<serde_json::Value>,
     ) -> Result<(), String> {
-        let mut sessions = self
-            .sessions
-            .write()
-            .map_err(|e| format!("Failed to acquire write lock: {}", e))?;
-
-        if let Some(ctx) = sessions.get_mut(session_id) {
-            ctx.query_results = Some(results);
-            ctx.update_activity();
-            Ok(())
-        } else {
-            Err(format!("Session not found: {}", session_id))
-        }
+        self.update_session(session_id, |ctx| ctx.query_results = Some(results))
     }
 
     /// Add a message to session conversation history
@@ -88,34 +94,12 @@ impl SessionManager {
         role: String,
         content: String,
     ) -> Result<(), String> {
-        let mut sessions = self
-            .sessions
-            .write()
-            .map_err(|e| format!("Failed to acquire write lock: {}", e))?;
-
-        if let Some(ctx) = sessions.get_mut(session_id) {
-            ctx.add_message(role, content);
-            ctx.update_activity();
-            Ok(())
-        } else {
-            Err(format!("Session not found: {}", session_id))
-        }
+        self.update_session(session_id, |ctx| ctx.add_message(role, content))
     }
 
     /// Set the schema created for a session
     pub fn set_schema_created(&self, session_id: &str, schema_name: String) -> Result<(), String> {
-        let mut sessions = self
-            .sessions
-            .write()
-            .map_err(|e| format!("Failed to acquire write lock: {}", e))?;
-
-        if let Some(ctx) = sessions.get_mut(session_id) {
-            ctx.schema_created = Some(schema_name);
-            ctx.update_activity();
-            Ok(())
-        } else {
-            Err(format!("Session not found: {}", session_id))
-        }
+        self.update_session(session_id, |ctx| ctx.schema_created = Some(schema_name))
     }
 
 }
