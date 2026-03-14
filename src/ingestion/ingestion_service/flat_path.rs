@@ -1,7 +1,7 @@
 //! Flat (non-nested) ingestion path for IngestionService.
 
 use super::{get_schema_manager, IngestionService};
-use crate::ingestion::progress::{IngestionStep, ProgressService, SchemaWriteRecord};
+use crate::ingestion::progress::{IngestionPhase, PhaseTracker, SchemaWriteRecord};
 use crate::ingestion::{AISchemaResponse, IngestionRequest, IngestionResult};
 use crate::fold_node::FoldNode;
 use fold_db::log_feature;
@@ -17,18 +17,17 @@ impl IngestionService {
         flattened_data: &Value,
         request: &IngestionRequest,
         node: &FoldNode,
-        progress_service: &ProgressService,
-        progress_id: &str,
+        tracker: &mut PhaseTracker<'_>,
     ) -> IngestionResult<(String, bool, usize, usize, Vec<SchemaWriteRecord>)> {
         let pub_key = request.pub_key.clone();
 
-        // Step 3: Get AI recommendation (with image override)
+        // AI recommendation (with image override)
         let is_image = request
             .source_file_name
             .as_ref()
             .map(|name| crate::ingestion::is_image_file(name))
             .unwrap_or(false);
-        progress_service.update_progress(progress_id, IngestionStep::GettingAIRecommendation,
+        tracker.enter_phase(IngestionPhase::AIRecommendation,
             "Analyzing data with AI to determine schema...".to_string()).await;
         let mut ai_response = self.get_ai_recommendation(flattened_data).await?;
 
@@ -43,8 +42,8 @@ impl IngestionService {
             );
         }
 
-        // Step 4: Determine schema to use
-        progress_service.update_progress(progress_id, IngestionStep::SettingUpSchema,
+        // Schema resolution
+        tracker.enter_phase(IngestionPhase::SchemaResolution,
             "Setting up schema and preparing for data storage...".to_string()).await;
         let (schema_name, service_mappers) = self
             .determine_schema_to_use(&ai_response, flattened_data, node)
@@ -75,8 +74,8 @@ impl IngestionService {
             flattened_data.clone()
         };
 
-        // Step 5: Generate mutations
-        progress_service.update_progress(progress_id, IngestionStep::GeneratingMutations,
+        // Mutation generation
+        tracker.enter_phase(IngestionPhase::MutationGeneration,
             "Generating database mutations...".to_string()).await;
         let (mutations, schemas_written) = self
             .generate_flat_mutations(
@@ -86,8 +85,7 @@ impl IngestionService {
                 request,
                 &pub_key,
                 node,
-                progress_service,
-                progress_id,
+                tracker,
             )
             .await?;
 
@@ -98,20 +96,14 @@ impl IngestionService {
             mutations.len()
         );
 
-        // Step 6: Execute mutations if requested
-        progress_service.update_progress(progress_id, IngestionStep::ExecutingMutations,
+        // Mutation execution
+        tracker.enter_phase(IngestionPhase::MutationExecution,
             "Executing mutations to store data...".to_string()).await;
 
         let mutations_len = mutations.len();
 
         let mutations_executed = if request.auto_execute {
-            self.execute_mutations_with_node_and_progress(
-                mutations,
-                node,
-                progress_service,
-                progress_id,
-            )
-            .await?
+            self.execute_mutations_with_tracking(mutations, node, tracker).await?
         } else {
             0
         };
@@ -130,13 +122,12 @@ impl IngestionService {
         request: &IngestionRequest,
         pub_key: &str,
         node: &FoldNode,
-        progress_service: &ProgressService,
-        progress_id: &str,
+        tracker: &PhaseTracker<'_>,
     ) -> IngestionResult<(Vec<Mutation>, Vec<SchemaWriteRecord>)> {
         // Get schema manager for key extraction
         let schema_manager = get_schema_manager(node).await?;
 
-        let metadata = Self::build_ingestion_metadata(&request.file_hash, progress_id);
+        let metadata = Self::build_ingestion_metadata(&request.file_hash, tracker.progress_id());
 
         // Collect items to process — normalize single object to a one-element slice
         let items: Vec<&serde_json::Map<String, Value>> = if let Some(array) = flattened_data.as_array() {
@@ -168,14 +159,11 @@ impl IngestionService {
 
             // Update progress every 10 items (only meaningful for arrays)
             if total_items > 1 && ((idx + 1) % 10 == 0 || idx + 1 == total_items) {
-                let percent_of_step = ((idx + 1) as f32 / total_items as f32 * 15.0) as u8;
-                let progress_percent = 75 + percent_of_step;
-                progress_service
-                    .update_progress_with_percentage(
-                        progress_id,
-                        IngestionStep::GeneratingMutations,
+                let fraction = (idx + 1) as f32 / total_items as f32;
+                tracker
+                    .sub_progress(
+                        fraction,
                         format!("Generating mutations... ({}/{})", idx + 1, total_items),
-                        progress_percent,
                     )
                     .await;
             }
