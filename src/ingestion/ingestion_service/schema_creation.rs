@@ -198,7 +198,7 @@ impl IngestionService {
                 .unwrap_or(false);
             if !old_loaded {
                 if let Some(url) = node.schema_service_url() {
-                    if !url.starts_with("test://") && !url.starts_with("mock://") {
+                    if !crate::fold_node::node::FoldNode::is_test_schema_service(&url) {
                         let client = crate::fold_node::SchemaServiceClient::new(&url);
                         match client.get_schema(old_name).await {
                             Ok(old_schema) => {
