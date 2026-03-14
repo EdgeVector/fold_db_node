@@ -424,7 +424,14 @@ impl FoldHttpServer {
 
     fn configure_log_routes(cfg: &mut web::ServiceConfig) {
         cfg.route("/logs", web::get().to(log_routes::list_logs))
-            .route("/logs/stream", web::get().to(log_routes::stream_logs));
+            .route("/logs/stream", web::get().to(log_routes::stream_logs))
+            .route("/logs/config", web::get().to(log_routes::get_config))
+            .route(
+                "/logs/config/reload",
+                web::post().to(log_routes::reload_config),
+            )
+            .route("/logs/level", web::put().to(log_routes::update_feature_level))
+            .route("/logs/features", web::get().to(log_routes::get_features));
     }
 
     fn configure_system_routes(cfg: &mut web::ServiceConfig) {
