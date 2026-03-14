@@ -5,37 +5,31 @@
 use crate::fold_node::node::FoldNode;
 use crate::fold_node::OperationProcessor;
 use crate::handlers::response::{ApiResponse, HandlerResult, IntoHandlerError};
-use serde::{Deserialize, Serialize};
+use crate::handlers::handler_response;
 
-#[cfg(feature = "ts-bindings")]
-use ts_rs::TS;
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
-#[cfg_attr(feature = "ts-bindings", derive(TS))]
-#[cfg_attr(feature = "ts-bindings", ts(export, export_to = "src/fold_node/static-react/src/types/"))]
-pub struct SystemStatusResponse {
-    pub status: String,
-    pub uptime: u64,
-    pub version: String,
-    /// Schema service URL configured on the backend (None = local/embedded)
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub schema_service_url: Option<String>,
+handler_response! {
+    pub struct SystemStatusResponse {
+        pub status: String,
+        pub uptime: u64,
+        pub version: String,
+        /// Schema service URL configured on the backend (None = local/embedded)
+        #[serde(skip_serializing_if = "Option::is_none")]
+        pub schema_service_url: Option<String>,
+    }
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
-#[cfg_attr(feature = "ts-bindings", derive(TS))]
-#[cfg_attr(feature = "ts-bindings", ts(export, export_to = "src/fold_node/static-react/src/types/"))]
-pub struct NodeKeyResponse {
-    pub success: bool,
-    pub key: String,
-    pub message: String,
+handler_response! {
+    pub struct NodeKeyResponse {
+        pub success: bool,
+        pub key: String,
+        pub message: String,
+    }
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
-#[cfg_attr(feature = "ts-bindings", derive(TS))]
-#[cfg_attr(feature = "ts-bindings", ts(export, export_to = "src/fold_node/static-react/src/types/"))]
-pub struct IndexingStatusResponse {
-    pub status: serde_json::Value,
+handler_response! {
+    pub struct IndexingStatusResponse {
+        pub status: serde_json::Value,
+    }
 }
 
 pub async fn get_system_status(

@@ -6,45 +6,34 @@
 use crate::fold_node::node::FoldNode;
 use crate::fold_node::OperationProcessor;
 use crate::handlers::response::{ApiResponse, HandlerResult, IntoHandlerError};
+use crate::handlers::handler_response;
 use fold_db::schema::types::key_value::KeyValue;
 use fold_db::schema::types::operations::{Mutation, MutationType};
-use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use std::collections::HashMap;
 use std::time::Duration;
 
-#[cfg(feature = "ts-bindings")]
-use ts_rs::TS;
-
 /// Default timeout for waiting on background tasks after batch mutations.
 const DEFAULT_BACKGROUND_TASK_TIMEOUT: Duration = Duration::from_secs(5);
 
-/// Response for mutation execution
-#[derive(Debug, Clone, Serialize, Deserialize)]
-#[cfg_attr(feature = "ts-bindings", derive(TS))]
-#[cfg_attr(
-    feature = "ts-bindings",
-    ts(export, export_to = "src/fold_node/static-react/src/types/")
-)]
-pub struct MutationResponse {
-    /// The mutation IDs that were executed
-    pub mutation_ids: Vec<String>,
-    /// Number of mutations executed
-    pub count: usize,
+handler_response! {
+    /// Response for mutation execution
+    pub struct MutationResponse {
+        /// The mutation IDs that were executed
+        pub mutation_ids: Vec<String>,
+        /// Number of mutations executed
+        pub count: usize,
+    }
 }
 
-/// Single mutation response (for backward compatibility with existing API)
-#[derive(Debug, Clone, Serialize, Deserialize)]
-#[cfg_attr(feature = "ts-bindings", derive(TS))]
-#[cfg_attr(
-    feature = "ts-bindings",
-    ts(export, export_to = "src/fold_node/static-react/src/types/")
-)]
-pub struct SingleMutationResponse {
-    /// The mutation ID
-    pub mutation_id: String,
-    /// Success flag
-    pub success: bool,
+handler_response! {
+    /// Single mutation response (for backward compatibility with existing API)
+    pub struct SingleMutationResponse {
+        /// The mutation ID
+        pub mutation_id: String,
+        /// Success flag
+        pub success: bool,
+    }
 }
 
 /// Execute a single mutation

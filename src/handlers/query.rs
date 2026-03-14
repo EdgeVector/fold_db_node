@@ -6,35 +6,25 @@
 use crate::fold_node::node::FoldNode;
 use crate::fold_node::OperationProcessor;
 use crate::handlers::response::{get_db_guard, ApiResponse, HandlerError, HandlerResult, IntoHandlerError};
+use crate::handlers::handler_response;
 use fold_db::schema::types::operations::Query;
 use fold_db::storage::traits::TypedStore;
 use serde::{Deserialize, Serialize};
 
-#[cfg(feature = "ts-bindings")]
-use ts_rs::TS;
-
-/// Response for query execution
-#[derive(Debug, Clone, Serialize, Deserialize)]
-#[cfg_attr(feature = "ts-bindings", derive(TS))]
-#[cfg_attr(
-    feature = "ts-bindings",
-    ts(export, export_to = "src/fold_node/static-react/src/types/")
-)]
-pub struct QueryResponse {
-    /// Query results
-    pub results: serde_json::Value,
+handler_response! {
+    /// Response for query execution
+    pub struct QueryResponse {
+        /// Query results
+        pub results: serde_json::Value,
+    }
 }
 
-/// Response for native index search
-#[derive(Debug, Clone, Serialize, Deserialize)]
-#[cfg_attr(feature = "ts-bindings", derive(TS))]
-#[cfg_attr(
-    feature = "ts-bindings",
-    ts(export, export_to = "src/fold_node/static-react/src/types/")
-)]
-pub struct IndexSearchResponse {
-    /// Search results
-    pub results: serde_json::Value,
+handler_response! {
+    /// Response for native index search
+    pub struct IndexSearchResponse {
+        /// Search results
+        pub results: serde_json::Value,
+    }
 }
 
 /// Execute a query
