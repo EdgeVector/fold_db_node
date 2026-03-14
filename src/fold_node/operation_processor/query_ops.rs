@@ -284,6 +284,14 @@ impl OperationProcessor {
         (ref_locations, keys_by_schema)
     }
 
+    /// Extract a key component (hash or range) from a record's fields using the field name.
+    fn extract_key_component(fields_obj: Option<&Value>, field_name: &Option<String>) -> Option<String> {
+        field_name
+            .as_ref()
+            .and_then(|name| fields_obj?.get(name))
+            .and_then(Self::value_to_key_string)
+    }
+
     /// Builds a KeyValue -> Value index from child query results using the schema's key config.
     fn build_child_index(
         child_results: Vec<Value>,
@@ -292,22 +300,12 @@ impl OperationProcessor {
         let mut index: HashMap<KeyValue, Value> = HashMap::new();
         for record in child_results {
             let fields_obj = record.get("fields");
-            let hash = key_config
-                .and_then(|(h, _)| h.as_ref())
-                .and_then(|hash_field| {
-                    fields_obj
-                        .and_then(|f| f.get(hash_field))
-                        .and_then(Self::value_to_key_string)
-                });
-            let range = key_config
-                .and_then(|(_, r)| r.as_ref())
-                .and_then(|range_field| {
-                    fields_obj
-                        .and_then(|f| f.get(range_field))
-                        .and_then(Self::value_to_key_string)
-                });
-            let kv = KeyValue::new(hash, range);
-            index.insert(kv, record);
+            let (hash_field, range_field) = key_config
+                .map(|(h, r)| (h, r))
+                .unwrap_or((&None, &None));
+            let hash = Self::extract_key_component(fields_obj, hash_field);
+            let range = Self::extract_key_component(fields_obj, range_field);
+            index.insert(KeyValue::new(hash, range), record);
         }
         index
     }
