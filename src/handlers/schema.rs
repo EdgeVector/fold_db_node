@@ -6,50 +6,42 @@
 use crate::fold_node::node::FoldNode;
 use crate::fold_node::OperationProcessor;
 use crate::handlers::response::{ApiResponse, HandlerError, HandlerResult, IntoHandlerError, SuccessResponse};
-use serde::{Deserialize, Serialize};
+use crate::handlers::handler_response;
 
-#[cfg(feature = "ts-bindings")]
-use ts_rs::TS;
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
-#[cfg_attr(feature = "ts-bindings", derive(TS))]
-#[cfg_attr(feature = "ts-bindings", ts(export, export_to = "src/fold_node/static-react/src/types/"))]
-pub struct SchemaListResponse {
-    pub schemas: serde_json::Value,
-    pub count: usize,
+handler_response! {
+    pub struct SchemaListResponse {
+        pub schemas: serde_json::Value,
+        pub count: usize,
+    }
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
-#[cfg_attr(feature = "ts-bindings", derive(TS))]
-#[cfg_attr(feature = "ts-bindings", ts(export, export_to = "src/fold_node/static-react/src/types/"))]
-pub struct SchemaResponse {
-    pub schema: serde_json::Value,
+handler_response! {
+    pub struct SchemaResponse {
+        pub schema: serde_json::Value,
+    }
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
-#[cfg_attr(feature = "ts-bindings", derive(TS))]
-#[cfg_attr(feature = "ts-bindings", ts(export, export_to = "src/fold_node/static-react/src/types/"))]
-pub struct SchemaLoadResponse {
-    /// Number of available schemas found
-    pub available_schemas_loaded: usize,
-    /// Number successfully loaded to DB
-    pub schemas_loaded_to_db: usize,
-    pub failed_schemas: Vec<String>,
+handler_response! {
+    pub struct SchemaLoadResponse {
+        /// Number of available schemas found
+        pub available_schemas_loaded: usize,
+        /// Number successfully loaded to DB
+        pub schemas_loaded_to_db: usize,
+        pub failed_schemas: Vec<String>,
+    }
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
-#[cfg_attr(feature = "ts-bindings", derive(TS))]
-#[cfg_attr(feature = "ts-bindings", ts(export, export_to = "src/fold_node/static-react/src/types/"))]
-pub struct SchemaApproveResponse {
-    pub approved: bool,
+handler_response! {
+    pub struct SchemaApproveResponse {
+        pub approved: bool,
+    }
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
-#[cfg_attr(feature = "ts-bindings", derive(TS))]
-#[cfg_attr(feature = "ts-bindings", ts(export, export_to = "src/fold_node/static-react/src/types/"))]
-pub struct SchemaKeysResponse {
-    pub keys: Vec<fold_db::schema::types::KeyValue>,
-    pub total_count: usize,
+handler_response! {
+    pub struct SchemaKeysResponse {
+        pub keys: Vec<fold_db::schema::types::KeyValue>,
+        pub total_count: usize,
+    }
 }
 
 pub async fn list_schemas(user_hash: &str, node: &FoldNode) -> HandlerResult<SchemaListResponse> {

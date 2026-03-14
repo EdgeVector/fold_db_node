@@ -5,6 +5,7 @@
 
 use crate::fold_node::node::FoldNode;
 use crate::handlers::response::{ApiResponse, HandlerError, HandlerResult, IntoHandlerError};
+use crate::handlers::handler_response;
 use crate::ingestion::progress::{IngestionProgress, ProgressService, ProgressTracker};
 use crate::ingestion::ingestion_service::IngestionService;
 use crate::ingestion::IngestionRequest;
@@ -12,9 +13,6 @@ use fold_db::progress::JobType;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use std::sync::Arc;
-
-#[cfg(feature = "ts-bindings")]
-use ts_rs::TS;
 
 // ============================================================================
 // Request/Response Types
@@ -24,17 +22,13 @@ use ts_rs::TS;
 /// with Lambda handlers in exemem-infra.
 pub type ProcessJsonRequest = IngestionRequest;
 
-/// Response for process_json (immediate response)
-#[derive(Debug, Clone, Serialize, Deserialize)]
-#[cfg_attr(feature = "ts-bindings", derive(TS))]
-#[cfg_attr(
-    feature = "ts-bindings",
-    ts(export, export_to = "src/fold_node/static-react/src/types/")
-)]
-pub struct ProcessJsonResponse {
-    pub success: bool,
-    pub progress_id: String,
-    pub message: String,
+handler_response! {
+    /// Response for process_json (immediate response)
+    pub struct ProcessJsonResponse {
+        pub success: bool,
+        pub progress_id: String,
+        pub message: String,
+    }
 }
 
 /// Response type for get_all_progress
@@ -44,19 +38,15 @@ pub struct ProgressListResponse {
     pub progress: Vec<IngestionProgress>,
 }
 
-/// Response for ingestion status
-#[derive(Debug, Clone, Serialize, Deserialize)]
-#[cfg_attr(feature = "ts-bindings", derive(TS))]
-#[cfg_attr(
-    feature = "ts-bindings",
-    ts(export, export_to = "src/fold_node/static-react/src/types/")
-)]
-pub struct IngestionStatusResponse {
-    pub enabled: bool,
-    pub configured: bool,
-    pub provider: String,
-    pub model: String,
-    pub auto_execute_mutations: bool,
+handler_response! {
+    /// Response for ingestion status
+    pub struct IngestionStatusResponse {
+        pub enabled: bool,
+        pub configured: bool,
+        pub provider: String,
+        pub model: String,
+        pub auto_execute_mutations: bool,
+    }
 }
 
 // ============================================================================
