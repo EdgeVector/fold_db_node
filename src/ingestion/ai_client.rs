@@ -16,6 +16,25 @@ pub trait AiBackend: Send + Sync {
     async fn call(&self, prompt: &str) -> IngestionResult<String>;
 }
 
+/// Check an HTTP response for errors, returning the response if successful or
+/// a classified `IngestionError` if the status indicates failure.
+async fn check_error_response(
+    provider: &str,
+    response: reqwest::Response,
+) -> IngestionResult<reqwest::Response> {
+    if response.status().is_success() {
+        return Ok(response);
+    }
+    let status = response.status().as_u16();
+    let error_text = response
+        .text()
+        .await
+        .unwrap_or_else(|_| "Unknown error".to_string());
+    Err(crate::ingestion::error::classify_llm_error(
+        provider, status, &error_text,
+    ))
+}
+
 /// Build an HTTP client with standard settings (timeout, no proxy).
 fn build_http_client(timeout_seconds: u64) -> Result<Client, String> {
     Client::builder()
@@ -61,12 +80,7 @@ impl OllamaBackend {
             .await
             .map_err(|e| crate::ingestion::error::classify_transport_error("Ollama", &e))?;
 
-        if !response.status().is_success() {
-            let status = response.status().as_u16();
-            let error_text = response.text().await.unwrap_or_else(|_| "Unknown error".to_string());
-            return Err(crate::ingestion::error::classify_llm_error("Ollama", status, &error_text));
-        }
-
+        let response = check_error_response("Ollama", response).await?;
         let resp: OllamaResponse = response.json().await?;
         Ok(resp.response)
     }
@@ -146,15 +160,7 @@ impl AnthropicBackend {
             .await
             .map_err(|e| crate::ingestion::error::classify_transport_error("Anthropic", &e))?;
 
-        if !response.status().is_success() {
-            let status = response.status().as_u16();
-            let error_text = response.text().await.unwrap_or_else(|e| {
-                log::warn!("Failed to read Anthropic error response body: {}", e);
-                "Unknown error (response body unreadable)".to_string()
-            });
-            return Err(crate::ingestion::error::classify_llm_error("Anthropic", status, &error_text));
-        }
-
+        let response = check_error_response("Anthropic", response).await?;
         let resp: AnthropicResponse = response.json().await?;
         if let Some(usage) = &resp.usage {
             log_feature!(

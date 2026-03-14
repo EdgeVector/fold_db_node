@@ -72,38 +72,32 @@ pub fn twitter_js_to_json(content: &str) -> IngestionResult<String> {
     }
 }
 
+/// Collect all trimmed matches of a regex pattern from the given text.
+fn regex_matches(pattern: &str, text: &str) -> Vec<String> {
+    Regex::new(pattern)
+        .unwrap()
+        .find_iter(text)
+        .map(|m| m.as_str().trim().to_string())
+        .collect()
+}
+
 /// Extract structural metadata from a source code file using regex.
 ///
 /// Returns a `Value` with function/method declarations, class/struct
 /// declarations, and comments found in the source.
 pub fn extract_code_metadata(content: &str, file_name: &str, ext: &str) -> Value {
-    let fn_re = Regex::new(
+    let functions = regex_matches(
         r"(?m)^\s*(?:pub\s+)?(?:async\s+)?(?:fn|def|function|func|sub)\s+(?:\([^)]*\)\s*)?\w+",
-    )
-    .unwrap();
-    let class_re = Regex::new(
+        content,
+    );
+    let classes = regex_matches(
         r"(?m)^\s*(?:pub\s+)?(?:class|struct|trait|enum|interface|type)\s+\w+",
-    )
-    .unwrap();
-    let comment_re = Regex::new(
+        content,
+    );
+    let comments = regex_matches(
         r"(?m)^\s*(?://[/!]?.*|#(?:$|[^!\[].*))",
-    )
-    .unwrap();
-
-    let functions: Vec<String> = fn_re
-        .find_iter(content)
-        .map(|m| m.as_str().trim().to_string())
-        .collect();
-
-    let classes: Vec<String> = class_re
-        .find_iter(content)
-        .map(|m| m.as_str().trim().to_string())
-        .collect();
-
-    let comments: Vec<String> = comment_re
-        .find_iter(content)
-        .map(|m| m.as_str().trim().to_string())
-        .collect();
+        content,
+    );
 
     serde_json::json!({
         "source_file": file_name,
