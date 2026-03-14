@@ -63,7 +63,7 @@ impl IngestionService {
             let mut data = flattened_data.clone();
             if let Some(ref sfn) = request.source_file_name {
                 let dummy_path = std::path::PathBuf::from(sfn);
-                crate::ingestion::json_processor::enrich_image_json(
+                crate::ingestion::file_handling::json_processor::enrich_image_json(
                     &mut data,
                     &dummy_path,
                     Some(sfn.as_str()),

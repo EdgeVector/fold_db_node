@@ -187,7 +187,7 @@ impl OperationProcessor {
         auto_execute: bool,
         external_tracker: Option<crate::ingestion::ProgressTracker>,
     ) -> FoldDbResult<crate::ingestion::IngestionResponse> {
-        use crate::ingestion::json_processor::convert_file_to_json;
+        use crate::ingestion::file_handling::json_processor::convert_file_to_json;
         use crate::ingestion::progress::ProgressService;
         use crate::ingestion::smart_folder;
         use crate::ingestion::IngestionRequest;

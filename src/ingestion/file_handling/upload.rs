@@ -1,7 +1,7 @@
 //! File upload and conversion module for ingestion
 
-use crate::ingestion::json_processor::{convert_file_to_json_http, save_json_to_temp_file};
-use crate::ingestion::routes::{get_ingestion_service, IngestionServiceState};
+use crate::ingestion::file_handling::json_processor::{convert_file_to_json_http, save_json_to_temp_file};
+use crate::ingestion::routes_helpers::{get_ingestion_service, IngestionServiceState};
 use crate::ingestion::{IngestionRequest, ProgressTracker};
 use fold_db::log_feature;
 use fold_db::logging::features::LogFeature;
@@ -475,7 +475,7 @@ pub async fn upload_file(
 
     // Enrich image JSON with image_type and created_at for HashRange schema support
     let image_descriptive_name = if crate::ingestion::is_image_file(&form_data.original_filename) {
-        crate::ingestion::json_processor::enrich_image_json(
+        crate::ingestion::file_handling::json_processor::enrich_image_json(
             &mut json_value,
             &form_data.file_path,
             Some(&form_data.original_filename),
@@ -542,7 +542,7 @@ pub async fn upload_file(
     // Extract ingestion service
     let service = match get_ingestion_service(&ingestion_service).await {
         Some(s) => s,
-        None => return super::routes::ingestion_unavailable(),
+        None => return crate::ingestion::routes_helpers::ingestion_unavailable(),
     };
 
     // Lock briefly — the handler clones the node and spawns a background task
