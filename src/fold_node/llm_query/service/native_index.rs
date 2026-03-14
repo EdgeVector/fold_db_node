@@ -473,7 +473,7 @@ impl LlmQueryService {
 
             log::debug!("Agent: Iteration {} - calling LLM", iteration + 1);
 
-            let pct = 5 + ((iteration as u8) * 90 / max_iterations as u8).min(90);
+            let pct = 5 + (iteration * 90 / max_iterations.max(1)).min(90) as u8;
             update_agent_progress(progress_tracker, &agent_job_id, pct, format!("Thinking... (step {})", iteration + 1)).await;
 
             let response = self.call_llm(&full_prompt).await?;
@@ -503,7 +503,7 @@ impl LlmQueryService {
                     log::info!("Agent: Calling tool '{}' with params: {}", tool, params);
 
                     // Update progress: executing tool
-                    let tool_pct = 10 + ((iteration as u8) * 90 / max_iterations as u8).min(85);
+                    let tool_pct = 10 + (iteration * 90 / max_iterations.max(1)).min(85) as u8;
                     let tool_label = match tool.as_str() {
                         "ingest_files" => "Ingesting files...",
                         "query" => "Querying database...",
