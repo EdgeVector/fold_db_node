@@ -7,7 +7,7 @@ use crate::ingestion::batch_controller::{BatchControllerMap, BatchStatus, Pendin
 use crate::ingestion::ingestion_service::IngestionService;
 use crate::ingestion::progress::ProgressService;
 use crate::ingestion::ProgressTracker;
-use super::routes::process_single_file_via_smart_folder;
+use crate::ingestion::routes_helpers::process_single_file_via_smart_folder;
 use fold_db::log_feature;
 use fold_db::logging::features::LogFeature;
 use actix_web::web;

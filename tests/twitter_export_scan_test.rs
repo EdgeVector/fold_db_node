@@ -19,7 +19,7 @@
 
 use fold_db_node::ingestion::ingestion_service::IngestionService;
 use fold_db_node::ingestion::smart_folder::{perform_smart_folder_scan, read_file_with_hash};
-use fold_db_node::ingestion::smart_folder_scanner::{is_ingestible_file, scan_directory_tree_with_context};
+use fold_db_node::ingestion::smart_folder::scanner::{is_ingestible_file, scan_directory_tree_with_context};
 
 use std::path::Path;
 use tempfile::TempDir;
