@@ -58,16 +58,6 @@ export function getSchemaType(schema) {
     return 'HashRange';
   }
   
-  // Legacy: Handle old object types for backward compatibility
-  if (typeof schemaType === 'object' && schemaType !== null) {
-    if ('HashRange' in schemaType) {
-      return 'HashRange';
-    }
-    if ('Range' in schemaType) {
-      return 'Range';
-    }
-  }
-  
   return null;
 }
 
@@ -427,9 +417,6 @@ export function isValueEmpty(value) {
   return value === null || value === undefined;
 }
 
-
-// From useRangeSchema.js hook - alias exports
-export const isRange = isRangeSchema;
 
 /**
  * Gets HashRange schema display information

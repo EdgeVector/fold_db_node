@@ -50,35 +50,6 @@ handler_response! {
 }
 
 // ============================================================================
-// Helper Functions
-// ============================================================================
-
-/// Extract ingestion data from a payload
-///
-/// Handles both wrapped format { data: {...}, progress_id: "...", ... }
-/// and direct data format { field1: "...", field2: "..." }
-pub fn extract_ingestion_data(payload: &Value) -> Result<(Value, Option<String>), HandlerError> {
-    // Check if payload has a "data" field (wrapped format)
-    if let Some(data) = payload.get("data") {
-        let progress_id = payload
-            .get("progress_id")
-            .and_then(|v| v.as_str())
-            .map(|s| s.to_string());
-        return Ok((data.clone(), progress_id));
-    }
-
-    // Check if payload looks like a wrapper without data (error case)
-    if payload.get("progress_id").is_some() || payload.get("auto_execute").is_some() {
-        return Err(HandlerError::BadRequest(
-            "Payload must contain a 'data' field with the JSON to ingest".to_string(),
-        ));
-    }
-
-    // Treat the whole payload as data (direct format)
-    Ok((payload.clone(), None))
-}
-
-// ============================================================================
 // Handler Functions
 // ============================================================================
 
@@ -294,39 +265,4 @@ mod tests {
         assert!(json.contains("progress"));
     }
 
-    #[test]
-    fn test_extract_ingestion_data_wrapped() {
-        let payload = serde_json::json!({
-            "data": {"field": "value"},
-            "progress_id": "test-123",
-            "auto_execute": true
-        });
-
-        let (data, progress_id) = extract_ingestion_data(&payload).unwrap();
-        assert_eq!(data, serde_json::json!({"field": "value"}));
-        assert_eq!(progress_id, Some("test-123".to_string()));
-    }
-
-    #[test]
-    fn test_extract_ingestion_data_direct() {
-        let payload = serde_json::json!({
-            "field": "value",
-            "another": 123
-        });
-
-        let (data, progress_id) = extract_ingestion_data(&payload).unwrap();
-        assert_eq!(data, payload);
-        assert_eq!(progress_id, None);
-    }
-
-    #[test]
-    fn test_extract_ingestion_data_error() {
-        let payload = serde_json::json!({
-            "progress_id": "test-123",
-            "auto_execute": true
-        });
-
-        let result = extract_ingestion_data(&payload);
-        assert!(result.is_err());
-    }
 }
