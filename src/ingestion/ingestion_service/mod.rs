@@ -29,7 +29,7 @@ use std::collections::HashMap;
 use std::sync::Arc;
 
 use crate::schema_service::types::{BatchSchemaReuseResponse, SchemaLookupEntry};
-use decomposition::{AiProposal, CachedSchema};
+use decomposition::{AiProposal, CachedSchema, SchemaCache};
 
 /// Shorthand to wrap any `Display` error as a `SchemaCreationError`.
 pub(crate) fn schema_err(e: impl std::fmt::Display) -> IngestionError {
@@ -102,9 +102,9 @@ pub struct IngestionService {
     /// files are ingested concurrently. The AI call (slow) happens outside
     /// the lock; only the schema-service call + local load + block is locked.
     pub(super) schema_creation_lock: tokio::sync::Mutex<()>,
-    /// Cross-file cache: structure hash → resolved schema. Persists across files
-    /// in a batch so the second file with the same JSON shape skips AI entirely.
-    structure_schema_cache: std::sync::RwLock<HashMap<String, CachedSchema>>,
+    /// Shared cross-file cache backing store. Per-call `SchemaCache` instances
+    /// wrap this with a local scope and flush back on `commit()`.
+    shared_schema_cache: Arc<std::sync::RwLock<HashMap<String, CachedSchema>>>,
 }
 
 impl IngestionService {
@@ -126,39 +126,13 @@ impl IngestionService {
             backend,
             init_error,
             schema_creation_lock: tokio::sync::Mutex::new(()),
-            structure_schema_cache: std::sync::RwLock::new(HashMap::new()),
+            shared_schema_cache: Arc::new(std::sync::RwLock::new(HashMap::new())),
         })
     }
 
-    /// Look up a structure hash in the service-level cache.
-    fn get_cached_schema(&self, structure_hash: &str) -> Option<CachedSchema> {
-        self.structure_schema_cache
-            .read()
-            .ok()
-            .and_then(|cache| {
-                cache.get(structure_hash).map(|c| CachedSchema {
-                    schema_name: c.schema_name.clone(),
-                    mutation_mappers: c.mutation_mappers.clone(),
-                })
-            })
-    }
-
-    /// Store a resolved schema in the service-level cache for cross-file reuse.
-    fn cache_schema(
-        &self,
-        structure_hash: &str,
-        schema_name: &str,
-        mutation_mappers: &HashMap<String, String>,
-    ) {
-        if let Ok(mut cache) = self.structure_schema_cache.write() {
-            cache.insert(
-                structure_hash.to_string(),
-                CachedSchema {
-                    schema_name: schema_name.to_string(),
-                    mutation_mappers: mutation_mappers.clone(),
-                },
-            );
-        }
+    /// Create a new per-call `SchemaCache` backed by the shared cross-file store.
+    fn new_schema_cache(&self) -> SchemaCache {
+        SchemaCache::new(self.shared_schema_cache.clone())
     }
 
     /// Process JSON ingestion using a FoldNode with progress tracking
@@ -262,7 +236,7 @@ impl IngestionService {
         tracker: &PhaseTracker<'_>,
     ) -> IngestionResult<(String, bool, usize, usize, Vec<SchemaWriteRecord>)> {
         let pub_key = request.pub_key.clone();
-        let mut schema_cache: HashMap<String, CachedSchema> = HashMap::new();
+        let mut schema_cache = self.new_schema_cache();
         let mut total_mutations_generated: usize = 0;
         let mut total_mutations_executed: usize = 0;
         let mut schemas_written_map: HashMap<String, Vec<KeyValue>> = HashMap::new();
@@ -291,6 +265,7 @@ impl IngestionService {
             &top_level_hash,
             rep,
             &mut proposals,
+            &schema_cache,
             0,
             request.source_file_name.as_deref(),
         )
@@ -328,10 +303,8 @@ impl IngestionService {
         )
         .await?;
 
-        // Cache all resolved schemas in the service-level cache for cross-file reuse
-        for (hash, cached) in &schema_cache {
-            self.cache_schema(hash, &cached.schema_name, &cached.mutation_mappers);
-        }
+        // Flush resolved schemas to the shared cross-file cache
+        schema_cache.commit();
 
         // Mutation generation + execution for each item
         let metadata = Self::build_ingestion_metadata(&request.file_hash, tracker.progress_id());
@@ -365,7 +338,7 @@ impl IngestionService {
         // Determine the top-level schema name for the response
         let top_schema_name = schema_cache
             .get(&top_level_hash)
-            .map(|c| c.schema_name.clone())
+            .map(|c| c.schema_name)
             .unwrap_or_else(|| {
                 log_feature!(LogFeature::Ingestion, warn, "Schema cache miss for top-level hash '{}' — returning empty schema name", top_level_hash);
                 String::new()

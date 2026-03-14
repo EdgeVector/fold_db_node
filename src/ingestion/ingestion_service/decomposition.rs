@@ -18,9 +18,60 @@ use super::IngestionService;
 const MAX_DECOMPOSITION_DEPTH: usize = 10;
 
 /// Cached result of AI schema determination for a given structure.
+#[derive(Clone)]
 pub(super) struct CachedSchema {
     pub(super) schema_name: String,
     pub(super) mutation_mappers: HashMap<String, String>,
+}
+
+/// Unified schema cache with cross-file persistence and per-call scoping.
+///
+/// Consolidates the service-level `structure_schema_cache` and per-call
+/// `schema_cache` into a single type with clear lifecycle:
+/// 1. `get()` checks local scope first, then shared cross-file cache
+/// 2. `insert()` writes to local scope only (safe during partial resolution)
+/// 3. `commit()` flushes local scope to shared cache (call after successful resolution)
+pub(super) struct SchemaCache {
+    shared: std::sync::Arc<std::sync::RwLock<HashMap<String, CachedSchema>>>,
+    local: HashMap<String, CachedSchema>,
+}
+
+impl SchemaCache {
+    /// Create a new cache backed by a shared cross-file store.
+    pub(super) fn new(shared: std::sync::Arc<std::sync::RwLock<HashMap<String, CachedSchema>>>) -> Self {
+        Self { shared, local: HashMap::new() }
+    }
+
+    /// Look up a structure hash. Checks local first, then shared.
+    pub(super) fn get(&self, structure_hash: &str) -> Option<CachedSchema> {
+        if let Some(cached) = self.local.get(structure_hash) {
+            return Some(cached.clone());
+        }
+        self.shared.read().ok()
+            .and_then(|cache| cache.get(structure_hash).cloned())
+    }
+
+    /// Returns true if the structure hash is in either local or shared cache.
+    pub(super) fn contains_key(&self, structure_hash: &str) -> bool {
+        self.local.contains_key(structure_hash)
+            || self.shared.read().ok()
+                .map(|cache| cache.contains_key(structure_hash))
+                .unwrap_or(false)
+    }
+
+    /// Insert into local scope only (not yet visible to other ingestion calls).
+    pub(super) fn insert(&mut self, structure_hash: String, cached: CachedSchema) {
+        self.local.insert(structure_hash, cached);
+    }
+
+    /// Flush all local entries to the shared cross-file cache.
+    pub(super) fn commit(&self) {
+        if let Ok(mut shared) = self.shared.write() {
+            for (hash, cached) in &self.local {
+                shared.insert(hash.clone(), cached.clone());
+            }
+        }
+    }
 }
 
 /// Pre-collected AI proposal for a structure hash (before schema creation).
@@ -48,7 +99,7 @@ fn merge_mappers(
 async fn update_ref_fields(
     schema_name: &str,
     children: &[crate::ingestion::decomposer::ChildGroup],
-    schema_cache: &HashMap<String, CachedSchema>,
+    schema_cache: &SchemaCache,
     node: &crate::fold_node::FoldNode,
 ) -> IngestionResult<()> {
     let schema_manager = super::get_schema_manager(node).await?;
@@ -72,7 +123,7 @@ async fn update_ref_fields(
     for child_group in children {
         let child_schema_name = schema_cache
             .get(&child_group.structure_hash)
-            .map(|c| c.schema_name.clone())
+            .map(|c| c.schema_name)
             .ok_or_else(|| {
                 IngestionError::SchemaCreationError(format!(
                     "No cached schema for child structure hash '{}' (field '{}')",
@@ -126,14 +177,14 @@ impl IngestionService {
         &self,
         structure_hash: &str,
         representative: &Value,
-        schema_cache: &mut HashMap<String, CachedSchema>,
+        schema_cache: &mut SchemaCache,
         node: &crate::fold_node::FoldNode,
         depth: usize,
         source_file_name: Option<&str>,
     ) -> IngestionResult<String> {
-        // Return cached result if available
+        // Return cached result if available (checks both local and shared)
         if let Some(cached) = schema_cache.get(structure_hash) {
-            return Ok(cached.schema_name.clone());
+            return Ok(cached.schema_name);
         }
 
         // Decompose the representative to handle its own nested children
@@ -215,14 +266,15 @@ impl IngestionService {
         structure_hash: &str,
         representative: &Value,
         proposals: &mut HashMap<String, AiProposal>,
+        schema_cache: &SchemaCache,
         depth: usize,
         source_file_name: Option<&str>,
     ) -> IngestionResult<()> {
-        // Already collected or in service-level cache — skip
+        // Already collected or already cached (local or cross-file) — skip
         if proposals.contains_key(structure_hash) {
             return Ok(());
         }
-        if self.get_cached_schema(structure_hash).is_some() {
+        if schema_cache.get(structure_hash).is_some() {
             return Ok(());
         }
 
@@ -235,6 +287,7 @@ impl IngestionService {
                     &child_group.structure_hash,
                     &child_group.items[0],
                     proposals,
+                    schema_cache,
                     depth + 1,
                     None,
                 ))
@@ -271,23 +324,16 @@ impl IngestionService {
         &self,
         structure_hash: &str,
         representative: &Value,
-        schema_cache: &mut HashMap<String, CachedSchema>,
+        schema_cache: &mut SchemaCache,
         proposals: &HashMap<String, AiProposal>,
         batch_result: &BatchSchemaReuseResponse,
         node: &crate::fold_node::FoldNode,
         depth: usize,
         _source_file_name: Option<&str>,
     ) -> IngestionResult<String> {
-        // Return per-file cached result if available
+        // Return cached result if available (checks both local and shared)
         if let Some(cached) = schema_cache.get(structure_hash) {
-            return Ok(cached.schema_name.clone());
-        }
-
-        // Check service-level cache (cross-file)
-        if let Some(cached) = self.get_cached_schema(structure_hash) {
-            let schema_name = cached.schema_name.clone();
-            schema_cache.insert(structure_hash.to_string(), cached);
-            return Ok(schema_name);
+            return Ok(cached.schema_name);
         }
 
         let rep_decomp = decomposer::decompose(representative);
@@ -411,7 +457,7 @@ impl IngestionService {
         &self,
         item: &Value,
         structure_hash: &str,
-        schema_cache: &mut HashMap<String, CachedSchema>,
+        schema_cache: &mut SchemaCache,
         node: &crate::fold_node::FoldNode,
         pub_key: &str,
         source_file_name: Option<String>,
@@ -461,7 +507,7 @@ impl IngestionService {
                 if let Some(kv) = child_key_value {
                     let child_schema_name = schema_cache
                         .get(&child_group.structure_hash)
-                        .map(|c| c.schema_name.clone())
+                        .map(|c| c.schema_name)
                         .ok_or_else(|| {
                             IngestionError::SchemaCreationError(format!(
                                 "No cached schema for child structure hash '{}' (field '{}')",
@@ -547,8 +593,8 @@ impl IngestionService {
                 ))
             })?;
 
-            let schema_name = cached.schema_name.clone();
-            let mut mutation_mappers = cached.mutation_mappers.clone();
+            let schema_name = cached.schema_name;
+            let mut mutation_mappers = cached.mutation_mappers;
 
             // Add identity mappers for Reference fields so generate_mutations includes them
             for (field_name, refs) in &child_references {
