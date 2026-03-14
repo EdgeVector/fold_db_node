@@ -4,8 +4,6 @@
 //! decomposing, resolving schemas, and building parent-child references.
 
 use crate::ingestion::decomposer;
-use crate::ingestion::key_extraction::extract_key_values_from_data;
-use crate::ingestion::mutation_generator;
 use crate::ingestion::{AISchemaResponse, IngestionError, IngestionResult};
 use crate::schema_service::types::BatchSchemaReuseResponse;
 use fold_db::log_feature;
@@ -29,6 +27,92 @@ pub(super) struct CachedSchema {
 pub(super) struct AiProposal {
     pub(super) ai_response: AISchemaResponse,
     pub(super) parent_data: Value,
+}
+
+/// Merge service/batch field renames into AI's mutation mappers.
+/// Service mappers take precedence since they reflect canonical field names.
+fn merge_mappers(
+    ai_mappers: &HashMap<String, String>,
+    extra: impl IntoIterator<Item = (String, String)>,
+) -> HashMap<String, String> {
+    let mut merged = ai_mappers.clone();
+    for (from, to) in extra {
+        merged.insert(from, to);
+    }
+    merged
+}
+
+/// Update a parent schema's `ref_fields` and `fields` to include child references.
+///
+/// Shared by `resolve_schema_for_structure` and `resolve_schemas_with_reuse`.
+async fn update_ref_fields(
+    schema_name: &str,
+    children: &[crate::ingestion::decomposer::ChildGroup],
+    schema_cache: &HashMap<String, CachedSchema>,
+    node: &crate::fold_node::FoldNode,
+) -> IngestionResult<()> {
+    let schema_manager = super::get_schema_manager(node).await?;
+
+    let mut schema = match schema_manager.get_schema_metadata(schema_name) {
+        Ok(Some(s)) => s,
+        Ok(None) => {
+            return Err(IngestionError::SchemaCreationError(format!(
+                "Schema '{}' not found when updating ref_fields",
+                schema_name
+            )));
+        }
+        Err(e) => {
+            return Err(IngestionError::SchemaCreationError(format!(
+                "Failed to get schema '{}' for ref_fields update: {}",
+                schema_name, e
+            )));
+        }
+    };
+
+    for child_group in children {
+        let child_schema_name = schema_cache
+            .get(&child_group.structure_hash)
+            .map(|c| c.schema_name.clone())
+            .ok_or_else(|| {
+                IngestionError::SchemaCreationError(format!(
+                    "No cached schema for child structure hash '{}' (field '{}')",
+                    child_group.structure_hash, child_group.field_name
+                ))
+            })?;
+        schema
+            .ref_fields
+            .insert(child_group.field_name.clone(), child_schema_name);
+
+        if let Some(ref mut fields) = schema.fields {
+            if !fields.contains(&child_group.field_name) {
+                fields.push(child_group.field_name.clone());
+            }
+        } else {
+            schema.fields = Some(vec![child_group.field_name.clone()]);
+        }
+    }
+
+    if let Err(e) = schema.populate_runtime_fields() {
+        log_feature!(
+            LogFeature::Ingestion,
+            warn,
+            "Failed to populate runtime fields for schema '{}': {}",
+            schema_name,
+            e
+        );
+    }
+
+    schema_manager
+        .update_schema(&schema)
+        .await
+        .map_err(|e| {
+            IngestionError::SchemaCreationError(format!(
+                "Failed to update schema with ref_fields: {}",
+                e
+            ))
+        })?;
+
+    Ok(())
 }
 
 impl IngestionService {
@@ -96,11 +180,7 @@ impl IngestionService {
             .determine_schema_to_use(&ai_response, &rep_decomp.parent, node)
             .await?;
 
-        // Merge schema service's semantic field renames into AI's mutation_mappers
-        let mut merged_mappers = ai_response.mutation_mappers;
-        for (from, to) in service_mappers {
-            merged_mappers.insert(from, to);
-        }
+        let merged_mappers = merge_mappers(&ai_response.mutation_mappers, service_mappers);
 
         log_feature!(
             LogFeature::Ingestion,
@@ -119,68 +199,8 @@ impl IngestionService {
         );
 
         // Update the parent schema with ref_fields for each decomposed child field.
-        // Children are resolved depth-first above, so their schema names are already in the cache.
-        // Only do this when we actually resolved children (not at depth limit).
         if !rep_decomp.children.is_empty() && depth < MAX_DECOMPOSITION_DEPTH {
-            let schema_manager = super::get_schema_manager(node).await?;
-
-            match schema_manager.get_schema_metadata(&schema_name) {
-                Ok(Some(mut schema)) => {
-                    for child_group in &rep_decomp.children {
-                        let child_schema_name = schema_cache
-                            .get(&child_group.structure_hash)
-                            .map(|c| c.schema_name.clone())
-                            .ok_or_else(|| {
-                                IngestionError::SchemaCreationError(format!(
-                                    "No cached schema for child structure hash '{}' (field '{}')",
-                                    child_group.structure_hash, child_group.field_name
-                                ))
-                            })?;
-                        schema.ref_fields.insert(
-                            child_group.field_name.clone(),
-                            child_schema_name,
-                        );
-
-                        // Register the Reference field as a queryable schema field
-                        if let Some(ref mut fields) = schema.fields {
-                            if !fields.contains(&child_group.field_name) {
-                                fields.push(child_group.field_name.clone());
-                            }
-                        } else {
-                            schema.fields = Some(vec![child_group.field_name.clone()]);
-                        }
-                    }
-
-                    if let Err(e) = schema.populate_runtime_fields() {
-                        log_feature!(
-                            LogFeature::Ingestion,
-                            warn,
-                            "Failed to populate runtime fields for schema '{}': {}",
-                            schema_name,
-                            e
-                        );
-                    }
-
-                    schema_manager.update_schema(&schema).await.map_err(|e| {
-                        IngestionError::SchemaCreationError(format!(
-                            "Failed to update schema with ref_fields: {}",
-                            e
-                        ))
-                    })?;
-                }
-                Ok(None) => {
-                    return Err(IngestionError::SchemaCreationError(format!(
-                        "Schema '{}' not found when updating ref_fields — child references cannot be linked",
-                        schema_name
-                    )));
-                }
-                Err(e) => {
-                    return Err(IngestionError::SchemaCreationError(format!(
-                        "Failed to get schema '{}' for ref_fields update: {}",
-                        schema_name, e
-                    )));
-                }
-            }
+            update_ref_fields(&schema_name, &rep_decomp.children, schema_cache, node).await?;
         }
 
         Ok(schema_name)
@@ -333,33 +353,24 @@ impl IngestionService {
                         .await
                         .map_err(super::schema_err)?;
                 }
-                // Build mutation mappers: AI mappers + field renames from batch result
-                let mut mappers = proposal.ai_response.mutation_mappers.clone();
-                for (from, to) in &reuse_match.field_rename_map {
-                    mappers.insert(from.clone(), to.clone());
-                }
+                let mappers = merge_mappers(
+                    &proposal.ai_response.mutation_mappers,
+                    reuse_match.field_rename_map.iter().map(|(k, v)| (k.clone(), v.clone())),
+                );
                 (reuse_match.schema.name.clone(), mappers)
             } else {
                 // Not a superset — fall through to creation
                 let (name, service_mappers) = self
                     .determine_schema_to_use(&proposal.ai_response, &proposal.parent_data, node)
                     .await?;
-                let mut mappers = proposal.ai_response.mutation_mappers.clone();
-                for (from, to) in service_mappers {
-                    mappers.insert(from, to);
-                }
-                (name, mappers)
+                (name.clone(), merge_mappers(&proposal.ai_response.mutation_mappers, service_mappers))
             }
         } else {
             // No batch match — create via standard path
             let (name, service_mappers) = self
                 .determine_schema_to_use(&proposal.ai_response, &proposal.parent_data, node)
                 .await?;
-            let mut mappers = proposal.ai_response.mutation_mappers.clone();
-            for (from, to) in service_mappers {
-                mappers.insert(from, to);
-            }
-            (name, mappers)
+            (name.clone(), merge_mappers(&proposal.ai_response.mutation_mappers, service_mappers))
         };
 
         log_feature!(
@@ -380,63 +391,7 @@ impl IngestionService {
 
         // Update parent schema with ref_fields for children
         if !rep_decomp.children.is_empty() && depth < MAX_DECOMPOSITION_DEPTH {
-            let schema_manager = super::get_schema_manager(node).await?;
-
-            match schema_manager.get_schema_metadata(&schema_name) {
-                Ok(Some(mut schema)) => {
-                    for child_group in &rep_decomp.children {
-                        let child_schema_name = schema_cache
-                            .get(&child_group.structure_hash)
-                            .map(|c| c.schema_name.clone())
-                            .ok_or_else(|| {
-                                IngestionError::SchemaCreationError(format!(
-                                    "No cached schema for child structure hash '{}' (field '{}')",
-                                    child_group.structure_hash, child_group.field_name
-                                ))
-                            })?;
-                        schema
-                            .ref_fields
-                            .insert(child_group.field_name.clone(), child_schema_name);
-
-                        if let Some(ref mut fields) = schema.fields {
-                            if !fields.contains(&child_group.field_name) {
-                                fields.push(child_group.field_name.clone());
-                            }
-                        } else {
-                            schema.fields = Some(vec![child_group.field_name.clone()]);
-                        }
-                    }
-
-                    if let Err(e) = schema.populate_runtime_fields() {
-                        log_feature!(
-                            LogFeature::Ingestion,
-                            warn,
-                            "Failed to populate runtime fields for schema '{}': {}",
-                            schema_name,
-                            e
-                        );
-                    }
-
-                    schema_manager.update_schema(&schema).await.map_err(|e| {
-                        IngestionError::SchemaCreationError(format!(
-                            "Failed to update schema with ref_fields: {}",
-                            e
-                        ))
-                    })?;
-                }
-                Ok(None) => {
-                    return Err(IngestionError::SchemaCreationError(format!(
-                        "Schema '{}' not found when updating ref_fields",
-                        schema_name
-                    )));
-                }
-                Err(e) => {
-                    return Err(IngestionError::SchemaCreationError(format!(
-                        "Failed to get schema '{}' for ref_fields update: {}",
-                        schema_name, e
-                    )));
-                }
-            }
+            update_ref_fields(&schema_name, &rep_decomp.children, schema_cache, node).await?;
         }
 
         Ok(schema_name)
@@ -633,27 +588,17 @@ impl IngestionService {
                 }
             }
 
-            let fields_and_values: HashMap<String, Value> = parent_obj
-                .iter()
-                .map(|(k, v)| (k.clone(), v.clone()))
-                .collect();
-
-            // Get schema manager for key extraction
             let schema_manager = super::get_schema_manager(node).await?;
-
-            let keys_and_values =
-                extract_key_values_from_data(&fields_and_values, &schema_name, &schema_manager)
-                    .await?;
-
-            let mutations = mutation_generator::generate_mutations(
+            let mutations = super::generate_mutations_for_item(
+                parent_obj,
                 &schema_name,
-                &keys_and_values,
-                &fields_and_values,
                 &mutation_mappers,
-                pub_key.to_string(),
+                &schema_manager,
+                pub_key,
                 source_file_name,
                 metadata,
-            )?;
+            )
+            .await?;
 
             // Extract the key_value from the first mutation before execution
             own_key_value = mutations.first().map(|m| m.key_value.clone());

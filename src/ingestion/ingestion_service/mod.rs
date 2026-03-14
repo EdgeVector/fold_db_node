@@ -574,6 +574,38 @@ fn extract_lookup_entry(ai_response: &AISchemaResponse) -> Option<SchemaLookupEn
     })
 }
 
+/// Generate mutations for a single JSON object: extract keys then build mutations.
+///
+/// Shared by both the flat and decomposed ingestion paths.
+pub(crate) async fn generate_mutations_for_item(
+    obj: &serde_json::Map<String, Value>,
+    schema_name: &str,
+    mutation_mappers: &HashMap<String, String>,
+    schema_manager: &Arc<SchemaCore>,
+    pub_key: &str,
+    source_file_name: Option<String>,
+    metadata: Option<HashMap<String, String>>,
+) -> IngestionResult<Vec<Mutation>> {
+    use crate::ingestion::key_extraction::extract_key_values_from_data;
+    use crate::ingestion::mutation_generator;
+
+    let fields_and_values: HashMap<String, Value> =
+        obj.iter().map(|(k, v)| (k.clone(), v.clone())).collect();
+
+    let keys_and_values =
+        extract_key_values_from_data(&fields_and_values, schema_name, schema_manager).await?;
+
+    mutation_generator::generate_mutations(
+        schema_name,
+        &keys_and_values,
+        &fields_and_values,
+        mutation_mappers,
+        pub_key.to_string(),
+        source_file_name,
+        metadata,
+    )
+}
+
 /// Build a `Vec<SchemaWriteRecord>` from a mutations slice, deduplicating keys.
 fn schemas_written_from(mutations: &[Mutation]) -> Vec<SchemaWriteRecord> {
     let mut map: HashMap<String, Vec<KeyValue>> = HashMap::new();
