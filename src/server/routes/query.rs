@@ -3,7 +3,7 @@ use fold_db::log_feature;
 use fold_db::logging::features::LogFeature;
 use fold_db::schema::types::operations::{Operation, Query};
 use crate::server::http_server::AppState;
-use crate::server::routes::{handler_error_to_response, require_node_read};
+use crate::server::routes::{handler_error_to_response, node_or_return};
 use actix_web::{web, HttpResponse, Responder};
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
@@ -36,10 +36,7 @@ pub async fn execute_query(query: web::Json<Query>, state: web::Data<AppState>) 
         query_inner.filter
     );
 
-    let (user_hash, node) = match require_node_read(&state).await {
-        Ok(res) => res,
-        Err(response) => return response,
-    };
+    let (user_hash, node) = node_or_return!(state);
 
     match query_handlers::execute_query(query_inner, &user_hash, &node).await {
         Ok(response) => HttpResponse::Ok().json(response),
@@ -92,10 +89,7 @@ pub async fn execute_mutation(
             }
         };
 
-    let (user_hash, node) = match require_node_read(&state).await {
-        Ok(res) => res,
-        Err(response) => return response,
-    };
+    let (user_hash, node) = node_or_return!(state);
 
     match crate::handlers::mutation::execute_mutation_from_components(
         schema,
@@ -131,10 +125,7 @@ pub async fn execute_mutations_batch(
     mutations_data: web::Json<Vec<Value>>,
     state: web::Data<AppState>,
 ) -> impl Responder {
-    let (user_hash, node) = match require_node_read(&state).await {
-        Ok(res) => res,
-        Err(response) => return response,
-    };
+    let (user_hash, node) = node_or_return!(state);
 
     match crate::handlers::mutation::execute_mutations_batch_from_json(
         mutations_data.into_inner(),
@@ -175,10 +166,7 @@ pub async fn native_index_search(
         }
     };
 
-    let (user_hash, node) = match require_node_read(&state).await {
-        Ok(res) => res,
-        Err(response) => return response,
-    };
+    let (user_hash, node) = node_or_return!(state);
 
     log_feature!(
         LogFeature::HttpServer,
@@ -208,10 +196,7 @@ pub async fn native_index_search(
     )
 )]
 pub async fn get_indexing_status(state: web::Data<AppState>) -> impl Responder {
-    let (user_hash, node) = match require_node_read(&state).await {
-        Ok(res) => res,
-        Err(response) => return response,
-    };
+    let (user_hash, node) = node_or_return!(state);
 
     match crate::handlers::system::get_indexing_status(&user_hash, &node).await {
         Ok(response) => {
@@ -239,10 +224,7 @@ pub async fn get_molecule_history(
     state: web::Data<AppState>,
 ) -> impl Responder {
     let molecule_uuid = path.into_inner();
-    let (user_hash, node) = match require_node_read(&state).await {
-        Ok(res) => res,
-        Err(response) => return response,
-    };
+    let (user_hash, node) = node_or_return!(state);
 
     match query_handlers::get_molecule_history(&molecule_uuid, &user_hash, &node).await {
         Ok(response) => HttpResponse::Ok().json(response),
@@ -269,10 +251,7 @@ pub async fn get_atom_content(
     state: web::Data<AppState>,
 ) -> impl Responder {
     let atom_uuid = path.into_inner();
-    let (user_hash, node) = match require_node_read(&state).await {
-        Ok(res) => res,
-        Err(response) => return response,
-    };
+    let (user_hash, node) = node_or_return!(state);
 
     match query_handlers::get_atom_content(&atom_uuid, &user_hash, &node).await {
         Ok(response) => HttpResponse::Ok().json(response),
@@ -286,10 +265,7 @@ pub async fn get_process_results(
     state: web::Data<AppState>,
 ) -> impl Responder {
     let progress_id = path.into_inner();
-    let (user_hash, node) = match require_node_read(&state).await {
-        Ok(res) => res,
-        Err(response) => return response,
-    };
+    let (user_hash, node) = node_or_return!(state);
 
     match query_handlers::get_process_results(&progress_id, &user_hash, &node).await {
         Ok(response) => HttpResponse::Ok().json(response),
