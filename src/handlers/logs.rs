@@ -63,10 +63,9 @@ pub async fn get_log_config(
         .get_log_config()
         .await
         .ok_or_else(|| HandlerError::Internal("Log configuration not available".to_string()))?;
+    let config_json = serde_json::to_value(config).handler_err("serialize log config")?;
     Ok(ApiResponse::success_with_user(
-        LogConfigResponse {
-            config: serde_json::to_value(config).unwrap_or(serde_json::Value::Null),
-        },
+        LogConfigResponse { config: config_json },
         user_hash,
     ))
 }
@@ -79,9 +78,10 @@ pub async fn get_log_features(
         .get_log_features()
         .await
         .ok_or_else(|| HandlerError::Internal("Log features not available".to_string()))?;
+    let features_json = serde_json::to_value(features).handler_err("serialize log features")?;
     Ok(ApiResponse::success_with_user(
         LogFeaturesResponse {
-            features: serde_json::to_value(features).unwrap_or(serde_json::Value::Null),
+            features: features_json,
             available_levels: LOG_LEVELS.iter().map(|s| s.to_string()).collect(),
         },
         user_hash,

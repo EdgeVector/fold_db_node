@@ -58,7 +58,7 @@ pub async fn get_indexing_status(
         .get_indexing_status()
         .await
         .handler_err("get indexing status")?;
-    let status_json = serde_json::to_value(&status).unwrap_or(serde_json::Value::Null);
+    let status_json = serde_json::to_value(&status).handler_err("serialize indexing status")?;
     Ok(ApiResponse::success_with_user(
         IndexingStatusResponse { status: status_json },
         user_hash,

@@ -50,8 +50,7 @@ pub async fn list_schemas(user_hash: &str, node: &FoldNode) -> HandlerResult<Sch
         .await
         .handler_err("list schemas")?;
     let count = schemas.len();
-    let schemas_json =
-        serde_json::to_value(&schemas).unwrap_or_else(|_| serde_json::Value::Array(vec![]));
+    let schemas_json = serde_json::to_value(&schemas).handler_err("serialize schemas")?;
     Ok(ApiResponse::success_with_user(
         SchemaListResponse { schemas: schemas_json, count },
         user_hash,
@@ -68,7 +67,7 @@ pub async fn get_schema(
         .await
         .handler_err("get schema")?
         .ok_or_else(|| HandlerError::NotFound(format!("Schema not found: {}", schema_name)))?;
-    let schema_json = serde_json::to_value(&schema_with_state).unwrap_or(serde_json::Value::Null);
+    let schema_json = serde_json::to_value(&schema_with_state).handler_err("serialize schema")?;
     Ok(ApiResponse::success_with_user(SchemaResponse { schema: schema_json }, user_hash))
 }
 

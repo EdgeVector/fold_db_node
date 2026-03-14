@@ -55,13 +55,9 @@ pub async fn native_index_search(
     let processor = OperationProcessor::new(node.clone());
 
     let results = processor.native_index_search(query_string).await.handler_err("search native index")?;
-    let results_json =
-        serde_json::to_value(&results).unwrap_or_else(|_| serde_json::Value::Array(vec![]));
-
+    let results_json = serde_json::to_value(&results).handler_err("serialize search results")?;
     Ok(ApiResponse::success_with_user(
-        IndexSearchResponse {
-            results: results_json,
-        },
+        IndexSearchResponse { results: results_json },
         user_hash,
     ))
 }
