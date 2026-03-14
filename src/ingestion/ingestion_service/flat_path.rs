@@ -39,51 +39,11 @@ impl IngestionService {
         // focused just on generating descriptions from the JSON structure.
         self.fill_missing_field_descriptions(&mut ai_response, flattened_data).await?;
 
-        // CRITICAL: Images MUST use HashRange(source_file_name, created_at).
-        // Using source_file_name as hash ensures each image file gets a unique key.
-        // (image_type is too coarse — all photos share the same value.)
         if is_image {
-            if let Some(ref mut schema_def) = ai_response.new_schemas {
-                schema_def["schema_type"] = serde_json::json!("HashRange");
-                schema_def["key"] = serde_json::json!({
-                    "hash_field": "source_file_name",
-                    "range_field": "created_at"
-                });
-                // Ensure source_file_name is in the schema fields.
-                // The AI may provide fields as an array OR only in field_classifications.
-                // Handle both cases.
-                if let Some(fields) = schema_def.get_mut("fields").and_then(|f| f.as_array_mut()) {
-                    let sfn = serde_json::json!("source_file_name");
-                    if !fields.contains(&sfn) {
-                        fields.push(sfn);
-                    }
-                } else {
-                    // fields key doesn't exist or isn't an array — create it from
-                    // field_classifications keys + source_file_name
-                    let mut field_names: Vec<String> = schema_def
-                        .get("field_classifications")
-                        .and_then(|fc| fc.as_object())
-                        .map(|obj| obj.keys().cloned().collect())
-                        .unwrap_or_default();
-                    if !field_names.contains(&"source_file_name".to_string()) {
-                        field_names.push("source_file_name".to_string());
-                    }
-                    schema_def["fields"] = serde_json::json!(field_names);
-                }
-                // Also ensure source_file_name has a classification
-                if let Some(fc) = schema_def.get_mut("field_classifications").and_then(|f| f.as_object_mut()) {
-                    fc.entry("source_file_name").or_insert_with(|| serde_json::json!(["word"]));
-                }
-                if let Some(ref desc) = request.image_descriptive_name {
-                    schema_def["descriptive_name"] = serde_json::json!(desc);
-                }
-            }
-            // Ensure mutation_mappers include source_file_name so it gets written
-            // during mutation execution (the enriched JSON has this field).
-            ai_response
-                .mutation_mappers
-                .entry("source_file_name".to_string())
-                .or_insert_with(|| "source_file_name".to_string());
+            super::apply_image_schema_override(
+                &mut ai_response,
+                request.image_descriptive_name.as_deref(),
+            );
         }
 
         // Step 4: Determine schema to use
