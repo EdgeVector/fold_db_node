@@ -1,5 +1,5 @@
 use crate::server::http_server::AppState;
-use crate::server::routes::{handler_error_to_response, node_or_return};
+use crate::server::routes::{handler_result_to_response, node_or_return};
 use actix_web::{web, HttpResponse, Responder};
 use futures_util::stream::StreamExt;
 use serde::{Deserialize, Serialize};
@@ -38,11 +38,7 @@ pub async fn list_logs(
     state: web::Data<AppState>,
 ) -> impl Responder {
     let (user_hash, node) = node_or_return!(state);
-
-    match crate::handlers::logs::list_logs(query.since, &user_hash, &node).await {
-        Ok(response) => HttpResponse::Ok().json(response),
-        Err(e) => handler_error_to_response(e),
-    }
+    handler_result_to_response(crate::handlers::logs::list_logs(query.since, &user_hash, &node).await)
 }
 
 /// Stream logs via Server-Sent Events (backward compatibility)
@@ -84,11 +80,7 @@ pub async fn stream_logs() -> impl Responder {
 )]
 pub async fn get_config(state: web::Data<AppState>) -> impl Responder {
     let (user_hash, node) = node_or_return!(state);
-
-    match crate::handlers::logs::get_log_config(&user_hash, &node).await {
-        Ok(response) => HttpResponse::Ok().json(response),
-        Err(e) => handler_error_to_response(e),
-    }
+    handler_result_to_response(crate::handlers::logs::get_log_config(&user_hash, &node).await)
 }
 
 /// Update feature-specific log level at runtime
@@ -115,17 +107,15 @@ pub async fn update_feature_level(
 
     let (user_hash, node) = node_or_return!(state);
 
-    match crate::handlers::logs::update_log_feature_level(
-        &level_update.feature,
-        &level_update.level,
-        &user_hash,
-        &node,
+    handler_result_to_response(
+        crate::handlers::logs::update_log_feature_level(
+            &level_update.feature,
+            &level_update.level,
+            &user_hash,
+            &node,
+        )
+        .await,
     )
-    .await
-    {
-        Ok(response) => HttpResponse::Ok().json(response),
-        Err(e) => handler_error_to_response(e),
-    }
 }
 
 /// Reload logging configuration from file
@@ -137,11 +127,7 @@ pub async fn update_feature_level(
 )]
 pub async fn reload_config(state: web::Data<AppState>) -> impl Responder {
     let (user_hash, node) = node_or_return!(state);
-
-    match crate::handlers::logs::reload_log_config("config/logging.toml", &user_hash, &node).await {
-        Ok(response) => HttpResponse::Ok().json(response),
-        Err(e) => handler_error_to_response(e),
-    }
+    handler_result_to_response(crate::handlers::logs::reload_log_config("config/logging.toml", &user_hash, &node).await)
 }
 
 /// Get available log features and their current levels
@@ -153,9 +139,5 @@ pub async fn reload_config(state: web::Data<AppState>) -> impl Responder {
 )]
 pub async fn get_features(state: web::Data<AppState>) -> impl Responder {
     let (user_hash, node) = node_or_return!(state);
-
-    match crate::handlers::logs::get_log_features(&user_hash, &node).await {
-        Ok(response) => HttpResponse::Ok().json(response),
-        Err(e) => handler_error_to_response(e),
-    }
+    handler_result_to_response(crate::handlers::logs::get_log_features(&user_hash, &node).await)
 }

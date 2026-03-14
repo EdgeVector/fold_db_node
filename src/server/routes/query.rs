@@ -3,7 +3,7 @@ use fold_db::log_feature;
 use fold_db::logging::features::LogFeature;
 use fold_db::schema::types::operations::{Operation, Query};
 use crate::server::http_server::AppState;
-use crate::server::routes::{handler_error_to_response, node_or_return};
+use crate::server::routes::{handler_error_to_response, handler_result_to_response, node_or_return};
 use actix_web::{web, HttpResponse, Responder};
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
@@ -127,16 +127,14 @@ pub async fn execute_mutations_batch(
 ) -> impl Responder {
     let (user_hash, node) = node_or_return!(state);
 
-    match crate::handlers::mutation::execute_mutations_batch_from_json(
-        mutations_data.into_inner(),
-        &user_hash,
-        &node,
+    handler_result_to_response(
+        crate::handlers::mutation::execute_mutations_batch_from_json(
+            mutations_data.into_inner(),
+            &user_hash,
+            &node,
+        )
+        .await,
     )
-    .await
-    {
-        Ok(response) => HttpResponse::Ok().json(response),
-        Err(e) => handler_error_to_response(e),
-    }
 }
 
 /// Search the native word index for a term.
@@ -226,10 +224,7 @@ pub async fn get_molecule_history(
     let molecule_uuid = path.into_inner();
     let (user_hash, node) = node_or_return!(state);
 
-    match query_handlers::get_molecule_history(&molecule_uuid, &user_hash, &node).await {
-        Ok(response) => HttpResponse::Ok().json(response),
-        Err(e) => handler_error_to_response(e),
-    }
+    handler_result_to_response(query_handlers::get_molecule_history(&molecule_uuid, &user_hash, &node).await)
 }
 
 /// Get atom content by UUID.
@@ -253,10 +248,7 @@ pub async fn get_atom_content(
     let atom_uuid = path.into_inner();
     let (user_hash, node) = node_or_return!(state);
 
-    match query_handlers::get_atom_content(&atom_uuid, &user_hash, &node).await {
-        Ok(response) => HttpResponse::Ok().json(response),
-        Err(e) => handler_error_to_response(e),
-    }
+    handler_result_to_response(query_handlers::get_atom_content(&atom_uuid, &user_hash, &node).await)
 }
 
 /// Get process results for a progress_id (actual stored keys from ingestion mutations).
@@ -267,8 +259,5 @@ pub async fn get_process_results(
     let progress_id = path.into_inner();
     let (user_hash, node) = node_or_return!(state);
 
-    match query_handlers::get_process_results(&progress_id, &user_hash, &node).await {
-        Ok(response) => HttpResponse::Ok().json(response),
-        Err(e) => handler_error_to_response(e),
-    }
+    handler_result_to_response(query_handlers::get_process_results(&progress_id, &user_hash, &node).await)
 }

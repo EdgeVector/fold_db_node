@@ -288,29 +288,9 @@ pub async fn migrate_to_cloud(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::fold_node::{FoldNode, NodeConfig};
-    use crate::server::node_manager::{NodeManager, NodeManagerConfig};
+    use crate::server::routes::common::test_helpers::create_test_state;
     use actix_web::test;
-    use std::sync::Arc;
     use tempfile::tempdir;
-
-    async fn create_test_state(temp_dir: &tempfile::TempDir) -> web::Data<AppState> {
-        let keypair = fold_db::security::Ed25519KeyPair::generate().unwrap();
-        let config = NodeConfig::new(temp_dir.path().to_path_buf())
-            .with_schema_service_url("test://mock")
-            .with_identity(&keypair.public_key_base64(), &keypair.secret_key_base64());
-        let node = FoldNode::new(config.clone()).await.unwrap();
-
-        let node_manager_config = NodeManagerConfig {
-            base_config: config,
-        };
-        let node_manager = NodeManager::new(node_manager_config);
-        node_manager.set_node("test_user", node).await;
-
-        web::Data::new(AppState {
-            node_manager: Arc::new(node_manager),
-        })
-    }
 
     #[tokio::test]
     async fn test_reset_database_without_confirmation() {
