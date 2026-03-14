@@ -13,7 +13,7 @@ use crate::ingestion::ai_client::{build_backend, AiBackend};
 use crate::ingestion::config::AIProvider;
 use crate::ingestion::decomposer;
 use crate::ingestion::progress::{
-    IngestionResults, IngestionStep, ProgressService, SchemaWriteRecord,
+    IngestionPhase, IngestionResults, ProgressService, SchemaWriteRecord, PhaseTracker,
 };
 use crate::ingestion::IngestionRequest;
 use crate::ingestion::{
@@ -177,52 +177,43 @@ impl IngestionService {
             progress_id
         );
 
+        let mut tracker = PhaseTracker::new(progress_service, progress_id);
+
         if !self.config.is_ready() {
-            progress_service
-                .fail_progress(
-                    &progress_id,
-                    "Ingestion module is not properly configured or disabled".to_string(),
-                )
+            tracker
+                .fail("Ingestion module is not properly configured or disabled".to_string())
                 .await;
             return Ok(IngestionResponse::failure(vec![
                 "Ingestion module is not properly configured or disabled".to_string(),
             ]));
         }
 
-        // Step 1: Validate input
-        progress_service.update_progress(&progress_id, IngestionStep::ValidatingConfig,
-            "Validating input data...".to_string()).await;
+        // Phase 1: Validate input
+        tracker.enter_phase(IngestionPhase::Validating, "Validating input data...".to_string()).await;
         self.validate_input(&request.data)?;
 
-        // Step 2: Flatten data structure for AI analysis
-        progress_service.update_progress(&progress_id, IngestionStep::FlatteningData,
-            "Processing and flattening data structure...".to_string()).await;
+        // Phase 2: Flatten data structure for AI analysis
+        tracker.enter_phase(IngestionPhase::Flattening, "Processing and flattening data structure...".to_string()).await;
         let mut flattened_data = crate::ingestion::json_processor::flatten_root_layers(request.data.clone());
 
         // Enrich text-file JSON with source path context so the AI can propose
         // semantic schema names (e.g., "recipes" instead of "document_content").
         enrich_with_source_context(&mut flattened_data, request.source_file_name.as_deref());
 
-        // Step 2.5: Decompose nested structures and decide code path
+        // Decide code path based on data shape
         let has_nested_children = self.check_has_nested_children(&flattened_data);
 
+        // Phases 3-6: Delegate to path-specific handler
         let (schema_name, new_schema_created, mutations_generated, mutations_executed, schemas_written) =
             if has_nested_children {
-                progress_service.update_progress(&progress_id, IngestionStep::GettingAIRecommendation,
+                tracker.enter_phase(IngestionPhase::AIRecommendation,
                     "Decomposing nested data structures...".to_string()).await;
-                self.process_decomposed_path(&flattened_data, &request, node, &progress_id).await?
+                self.process_decomposed_path(&flattened_data, &request, node, &tracker).await?
             } else {
-                self.process_flat_path(
-                    &flattened_data,
-                    &request,
-                    node,
-                    progress_service,
-                    &progress_id,
-                )
-                .await?
+                self.process_flat_path(&flattened_data, &request, node, &mut tracker).await?
             };
 
-        // Shared finalization: record file dedup + complete progress
+        // Finalize: record file dedup + complete progress
         self.record_file_ingested(&request, node).await;
 
         let results = IngestionResults {
@@ -232,12 +223,10 @@ impl IngestionService {
             mutations_executed,
             schemas_written: schemas_written.clone(),
         };
-        progress_service
-            .complete_progress(&progress_id, results)
-            .await;
+        tracker.complete(results).await;
 
         Ok(IngestionResponse::success_with_progress(
-            progress_id,
+            tracker.progress_id().to_string(),
             schema_name,
             new_schema_created,
             mutations_generated,
@@ -270,7 +259,7 @@ impl IngestionService {
         flattened_data: &Value,
         request: &IngestionRequest,
         node: &FoldNode,
-        progress_id: &str,
+        tracker: &PhaseTracker<'_>,
     ) -> IngestionResult<(String, bool, usize, usize, Vec<SchemaWriteRecord>)> {
         let pub_key = request.pub_key.clone();
         let mut schema_cache: HashMap<String, CachedSchema> = HashMap::new();
@@ -295,8 +284,8 @@ impl IngestionService {
             .expect("representative is Some when has_nested_children is true");
         let top_level_hash = crate::ingestion::decomposer::compute_structure_hash(rep);
 
-        // Phase 1: Collect all AI proposals recursively (no schema creation).
-        // Skips AI for structure hashes already in the service-level cache.
+        // AI proposal collection (part of the AIRecommendation phase, already entered by caller)
+        tracker.sub_progress(0.5, "Collecting AI proposals for nested structures...".to_string()).await;
         let mut proposals: HashMap<String, AiProposal> = HashMap::new();
         self.collect_ai_proposals_recursive(
             &top_level_hash,
@@ -307,7 +296,8 @@ impl IngestionService {
         )
         .await?;
 
-        // Phase 2: Batch check reuse for ALL proposals at once
+        // Schema resolution phase: batch check reuse then resolve
+        tracker.sub_progress(1.0, "Batch-checking schema reuse...".to_string()).await;
         let entries: Vec<SchemaLookupEntry> = proposals
             .values()
             .filter_map(|p| extract_lookup_entry(&p.ai_response))
@@ -325,7 +315,7 @@ impl IngestionService {
                 }
             });
 
-        // Phase 3: Resolve schemas using batch results (reuse fast path or create slow path)
+        // Resolve schemas using batch results (reuse fast path or create slow path)
         self.resolve_schemas_with_reuse(
             &top_level_hash,
             rep,
@@ -343,10 +333,10 @@ impl IngestionService {
             self.cache_schema(hash, &cached.schema_name, &cached.mutation_mappers);
         }
 
-        let metadata = Self::build_ingestion_metadata(&request.file_hash, progress_id);
+        // Mutation generation + execution for each item
+        let metadata = Self::build_ingestion_metadata(&request.file_hash, tracker.progress_id());
 
-        // Process each item: recursively handle children, then generate parent mutation.
-        for item in &items {
+        for (idx, item) in items.iter().enumerate() {
             let (gen, exec, _key_value) = self
                 .ingest_decomposed_item(
                     item,
@@ -363,6 +353,13 @@ impl IngestionService {
                 .await?;
             total_mutations_generated += gen;
             total_mutations_executed += exec;
+
+            // Report progress at the item level
+            if items.len() > 1 {
+                let fraction = (idx + 1) as f32 / items.len() as f32;
+                tracker.sub_progress(fraction,
+                    format!("Processing item {}/{}", idx + 1, items.len())).await;
+            }
         }
 
         // Determine the top-level schema name for the response
@@ -456,32 +453,26 @@ impl IngestionService {
         })
     }
 
-    /// Execute mutations with progress tracking
-    async fn execute_mutations_with_node_and_progress(
+    /// Execute mutations with progress tracking via PhaseTracker.
+    async fn execute_mutations_with_tracking(
         &self,
         mutations: Vec<Mutation>,
         node: &FoldNode,
-        progress_service: &ProgressService,
-        progress_id: &str,
+        tracker: &PhaseTracker<'_>,
     ) -> IngestionResult<usize> {
         if mutations.is_empty() {
             return Ok(0);
         }
 
         let total_mutations = mutations.len();
-
-        progress_service
-            .update_progress_with_percentage(
-                progress_id,
-                IngestionStep::ExecutingMutations,
-                format!("Submitting {} mutations...", total_mutations),
-                90,
-            )
+        tracker
+            .sub_progress(0.0, format!("Submitting {} mutations...", total_mutations))
             .await;
 
         // Execute all mutations in a batch using FoldNode directly
         // mutate_batch runs the MutationPreprocessor (keyword extraction) then writes
-        let result = node.mutate_batch(mutations)
+        let result = node
+            .mutate_batch(mutations)
             .await
             .map(|mutation_ids| mutation_ids.len())
             .map_err(|e| {
@@ -491,13 +482,8 @@ impl IngestionService {
             });
 
         if let Ok(count) = &result {
-            progress_service
-                .update_progress_with_percentage(
-                    progress_id,
-                    IngestionStep::ExecutingMutations,
-                    format!("Completed {} mutations", count),
-                    95,
-                )
+            tracker
+                .sub_progress(1.0, format!("Completed {} mutations", count))
                 .await;
         }
 

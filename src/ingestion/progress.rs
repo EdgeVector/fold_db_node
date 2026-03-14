@@ -213,3 +213,100 @@ impl ProgressService {
         }
     }
 }
+
+/// Phases of the ingestion pipeline, in execution order.
+/// Each variant carries a fixed (start_pct, end_pct) range so callers
+/// never need to hardcode percentage values.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub enum IngestionPhase {
+    Validating,
+    Flattening,
+    AIRecommendation,
+    SchemaResolution,
+    MutationGeneration,
+    MutationExecution,
+}
+
+impl IngestionPhase {
+    /// Returns (start_percentage, end_percentage) for this phase.
+    fn percentage_range(self) -> (u8, u8) {
+        match self {
+            Self::Validating => (5, 10),
+            Self::Flattening => (10, 25),
+            Self::AIRecommendation => (25, 40),
+            Self::SchemaResolution => (40, 55),
+            Self::MutationGeneration => (55, 80),
+            Self::MutationExecution => (80, 95),
+        }
+    }
+
+    /// Maps to the existing IngestionStep for backward-compatible progress reporting.
+    fn to_step(self) -> IngestionStep {
+        match self {
+            Self::Validating => IngestionStep::ValidatingConfig,
+            Self::Flattening => IngestionStep::FlatteningData,
+            Self::AIRecommendation => IngestionStep::GettingAIRecommendation,
+            Self::SchemaResolution => IngestionStep::SettingUpSchema,
+            Self::MutationGeneration => IngestionStep::GeneratingMutations,
+            Self::MutationExecution => IngestionStep::ExecutingMutations,
+        }
+    }
+}
+
+/// Wraps a `ProgressService` + progress ID and computes percentages automatically
+/// from `IngestionPhase` ranges. Eliminates hardcoded percentage math from callers.
+pub struct PhaseTracker<'a> {
+    service: &'a ProgressService,
+    progress_id: String,
+    current_phase: Option<IngestionPhase>,
+}
+
+impl<'a> PhaseTracker<'a> {
+    pub fn new(service: &'a ProgressService, progress_id: String) -> Self {
+        Self {
+            service,
+            progress_id,
+            current_phase: None,
+        }
+    }
+
+    /// Enter a new phase. Reports the phase's start percentage.
+    pub async fn enter_phase(&mut self, phase: IngestionPhase, message: String) {
+        let (start, _) = phase.percentage_range();
+        self.current_phase = Some(phase);
+        self.service
+            .update_progress_with_percentage(&self.progress_id, phase.to_step(), message, start)
+            .await;
+    }
+
+    /// Report sub-progress within the current phase.
+    /// `fraction` is 0.0..=1.0 representing how far through the current phase.
+    pub async fn sub_progress(&self, fraction: f32, message: String) {
+        let Some(phase) = self.current_phase else {
+            return;
+        };
+        let (start, end) = phase.percentage_range();
+        let pct = start + ((end - start) as f32 * fraction.clamp(0.0, 1.0)) as u8;
+        self.service
+            .update_progress_with_percentage(&self.progress_id, phase.to_step(), message, pct)
+            .await;
+    }
+
+    /// Complete the ingestion with results.
+    pub async fn complete(&self, results: IngestionResults) {
+        self.service
+            .complete_progress(&self.progress_id, results)
+            .await;
+    }
+
+    /// Mark as failed.
+    pub async fn fail(&self, error: String) {
+        self.service
+            .fail_progress(&self.progress_id, error)
+            .await;
+    }
+
+    pub fn progress_id(&self) -> &str {
+        &self.progress_id
+    }
+}
