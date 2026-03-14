@@ -1,8 +1,6 @@
 //! Flat (non-nested) ingestion path for IngestionService.
 
 use super::{get_schema_manager, IngestionService};
-use crate::ingestion::key_extraction::extract_key_values_from_data;
-use crate::ingestion::mutation_generator;
 use crate::ingestion::progress::{IngestionStep, ProgressService, SchemaWriteRecord};
 use crate::ingestion::{AISchemaResponse, IngestionRequest, IngestionResult};
 use crate::fold_node::FoldNode;
@@ -10,7 +8,6 @@ use fold_db::log_feature;
 use fold_db::logging::features::LogFeature;
 use fold_db::schema::types::Mutation;
 use serde_json::Value;
-use std::collections::HashMap;
 
 impl IngestionService {
     /// Handles the flat (non-nested) ingestion path: AI recommendation, mutation generation, execution.
@@ -156,25 +153,16 @@ impl IngestionService {
         let total_items = items.len();
         let mut mutations = Vec::new();
         for (idx, obj) in items.into_iter().enumerate() {
-            let fields_and_values: HashMap<String, Value> =
-                obj.iter().map(|(k, v)| (k.clone(), v.clone())).collect();
-
-            let keys_and_values = extract_key_values_from_data(
-                &fields_and_values,
+            let item_mutations = super::generate_mutations_for_item(
+                obj,
                 schema_name,
-                &schema_manager,
-            )
-            .await?;
-
-            let item_mutations = mutation_generator::generate_mutations(
-                schema_name,
-                &keys_and_values,
-                &fields_and_values,
                 &ai_response.mutation_mappers,
-                pub_key.to_string(),
+                &schema_manager,
+                pub_key,
                 request.source_file_name.clone(),
                 metadata.clone(),
-            )?;
+            )
+            .await?;
 
             mutations.extend(item_mutations);
 
