@@ -409,6 +409,13 @@ impl OperationProcessor {
             })?;
 
         if schema.runtime_fields.is_empty() {
+            log::warn!(
+                "list_schema_keys: schema '{}' has no runtime_fields (schema_type={:?}, fields={:?}, field_molecule_uuids={:?})",
+                schema_name,
+                schema.schema_type,
+                schema.fields,
+                schema.field_molecule_uuids,
+            );
             return Err(FoldDbError::Database(format!(
                 "Schema '{}' has no fields",
                 schema_name
@@ -443,6 +450,14 @@ impl OperationProcessor {
                     all_keys = keys;
                 }
             }
+        }
+
+        if all_keys.is_empty() {
+            log::warn!(
+                "list_schema_keys: no keys found across any field for schema '{}' (field_molecule_uuids={:?})",
+                schema_name,
+                schema.field_molecule_uuids,
+            );
         }
 
         let total = all_keys.len();
