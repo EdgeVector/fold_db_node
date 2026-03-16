@@ -90,6 +90,35 @@ where
 
 // ---- Prompt building ----
 
+/// Maximum characters to keep from any single string field when building AI
+/// prompts.  Long fields (e.g. the full markdown body from file_to_markdown)
+/// would otherwise bloat the prompt and cause Ollama timeouts.
+const MAX_PROMPT_FIELD_CHARS: usize = 300;
+
+/// Maximum characters for the content preview hint in `extract_content_hint()`.
+/// Slightly larger than `MAX_PROMPT_FIELD_CHARS` because the hint is the only
+/// sample the AI sees for naming schemas by topic.
+const MAX_CONTENT_HINT_CHARS: usize = 500;
+
+/// Return a deep copy of `value` with every string field longer than
+/// [`MAX_PROMPT_FIELD_CHARS`] truncated to that limit plus an ellipsis.
+/// Objects and arrays are traversed recursively.
+pub fn truncate_long_strings(value: &Value) -> Value {
+    match value {
+        Value::String(s) if s.len() > MAX_PROMPT_FIELD_CHARS => {
+            let truncated: String = s.chars().take(MAX_PROMPT_FIELD_CHARS).collect();
+            Value::String(format!("{}...", truncated))
+        }
+        Value::Object(map) => {
+            Value::Object(map.iter().map(|(k, v)| (k.clone(), truncate_long_strings(v))).collect())
+        }
+        Value::Array(arr) => {
+            Value::Array(arr.iter().map(truncate_long_strings).collect())
+        }
+        other => other.clone(),
+    }
+}
+
 /// Pretty-print a JSON value.
 pub fn pretty_json(value: &Value) -> String {
     serde_json::to_string_pretty(value).unwrap_or_else(|_| "Invalid JSON".to_string())
@@ -137,18 +166,17 @@ fn extract_content_hint(json: &Value) -> Option<String> {
         json.as_object()?
     };
 
-    // Only for text-file wrappers that have content + file_type
-    if !obj.contains_key("content") || !obj.contains_key("file_type") {
+    // Match text-file wrappers: "content" + "file_type" (native parsers)
+    // or "markdown" + "file_type" (file_to_markdown output)
+    if !obj.contains_key("file_type") {
         return None;
     }
-
-    let content = obj.get("content")?.as_str()?;
+    let content = obj.get("content").or_else(|| obj.get("markdown")).and_then(|v| v.as_str())?;
     let category = obj.get("category").and_then(|v| v.as_str());
-    let source = obj.get("source_file").and_then(|v| v.as_str());
+    let source = obj.get("source_file").or_else(|| obj.get("source")).and_then(|v| v.as_str());
 
-    // Truncate content to first 500 chars for the preview
-    let preview: String = content.chars().take(500).collect();
-    let truncated = if content.chars().count() > 500 { "..." } else { "" };
+    let preview: String = content.chars().take(MAX_CONTENT_HINT_CHARS).collect();
+    let truncated = if content.chars().count() > MAX_CONTENT_HINT_CHARS { "..." } else { "" };
 
     let mut hint = format!(
         "\n\nCONTENT PREVIEW (use this to determine the schema name topic):\n\"{}{}\"",
@@ -188,7 +216,8 @@ pub fn analyze_and_build_prompt(sample_json: &Value) -> IngestionResult<String> 
     );
 
     let is_array_input = sample_json.is_array();
-    let prompt = create_prompt(&superset_structure, is_array_input, Some(sample_json));
+    let compact_json = truncate_long_strings(sample_json);
+    let prompt = create_prompt(&superset_structure, is_array_input, Some(&compact_json));
 
     log_feature!(
         LogFeature::Ingestion, debug,
@@ -590,5 +619,40 @@ Done."#;
         let result = extract_json_from_response(response).unwrap();
         let parsed: Value = serde_json::from_str(&result).unwrap();
         assert_eq!(parsed["a"], 1);
+    }
+
+    #[test]
+    fn test_truncate_long_strings_leaves_short_values() {
+        let input = serde_json::json!({"name": "Alice", "age": 30});
+        let result = truncate_long_strings(&input);
+        assert_eq!(result, input);
+    }
+
+    #[test]
+    fn test_truncate_long_strings_truncates_long_value() {
+        let long = "x".repeat(500);
+        let input = serde_json::json!({"markdown": long, "source": "test.pdf"});
+        let result = truncate_long_strings(&input);
+        let md = result["markdown"].as_str().unwrap();
+        assert!(md.len() <= MAX_PROMPT_FIELD_CHARS + 3); // +3 for "..."
+        assert!(md.ends_with("..."));
+        assert_eq!(result["source"], "test.pdf");
+    }
+
+    #[test]
+    fn test_truncate_long_strings_recurses_into_arrays() {
+        let long = "y".repeat(500);
+        let input = serde_json::json!([{"content": long}]);
+        let result = truncate_long_strings(&input);
+        let content = result[0]["content"].as_str().unwrap();
+        assert!(content.len() <= MAX_PROMPT_FIELD_CHARS + 3);
+        assert!(content.ends_with("..."));
+    }
+
+    #[test]
+    fn test_truncate_long_strings_preserves_non_strings() {
+        let input = serde_json::json!({"count": 42, "active": true, "data": null});
+        let result = truncate_long_strings(&input);
+        assert_eq!(result, input);
     }
 }

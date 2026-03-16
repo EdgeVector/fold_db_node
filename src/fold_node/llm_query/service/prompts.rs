@@ -49,6 +49,9 @@ impl LlmQueryService {
             - HashKey: {\"HashKey\": \"value\"} - filter on hash key field only, returns all records with this hash\n\
             - HashRangePrefix: {\"HashRangePrefix\": {\"hash\": \"value\", \"prefix\": \"prefix\"}} - filter on hash key field + range key field prefix\n\
             - HashPattern: {\"HashPattern\": \"*pattern*\"} - glob pattern matching on hash key field\n\n\
+            Filters for Hash schemas (have Hash Key only, no Range Key):\n\
+            - HashKey: {\"HashKey\": \"value\"} - exact match on hash key field\n\
+            - HashPattern: {\"HashPattern\": \"*pattern*\"} - glob pattern matching on hash key field\n\n\
             Filters for Range schemas (have Range Key only):\n\
             - RangePrefix: {\"RangePrefix\": \"prefix\"} - filter on range key field, returns records with range starting with prefix\n\
             - RangePattern: {\"RangePattern\": \"*pattern*\"} - glob pattern matching on range key field\n\
@@ -69,6 +72,7 @@ impl LlmQueryService {
                - Searching for date \"2025-09\" on a schema with range_field=publish_date → use {\"RangePrefix\": \"2025-09\"}\n\n\
             IMPORTANT NOTES:\n\
             - For HashRange schemas, HashKey filters operate on the hash_field, Range filters operate on the range_field\n\
+            - For Hash schemas, HashKey and HashPattern filters operate on the hash_field (no range filters available)\n\
             - For Range schemas, Range filters operate on the range_field\n\
             - SampleN returns RANDOM records, NOT sorted or ordered\n\
             - For \"most recent\" or \"latest\" queries, use null filter with sort_order \"desc\" to get results sorted newest-first by range key\n\
@@ -235,6 +239,9 @@ impl LlmQueryService {
             - HashRangeKey: {\"HashRangeKey\": {\"hash\": \"value\", \"range\": \"value\"}} - exact match on BOTH hash key field AND range key field\n\
             - HashKey: {\"HashKey\": \"value\"} - filter on hash key field only\n\
             - HashRangePrefix: {\"HashRangePrefix\": {\"hash\": \"value\", \"prefix\": \"prefix\"}} - filter on hash key field + range key field prefix\n\
+            - HashPattern: {\"HashPattern\": \"*pattern*\"} - glob pattern on hash key field\n\n\
+            Filters for Hash schemas (have Hash Key only, no Range Key):\n\
+            - HashKey: {\"HashKey\": \"value\"} - exact match on hash key field\n\
             - HashPattern: {\"HashPattern\": \"*pattern*\"} - glob pattern on hash key field\n\n\
             Filters for Range schemas (have Range Key only):\n\
             - RangePrefix: {\"RangePrefix\": \"prefix\"} - filter on range key field\n\
@@ -505,8 +512,10 @@ impl LlmQueryService {
 
         prompt.push_str(
             "FILTER TYPES:\n\
-            For HashRange schemas (check Hash Key field):\n\
+            For HashRange schemas (check Hash Key and Range Key fields):\n\
             - HashRangeKey, HashKey, HashRangePrefix, HashPattern\n\
+            For Hash schemas (check Hash Key field, no Range Key):\n\
+            - HashKey, HashPattern\n\
             For Range schemas (check Range Key field):\n\
             - RangePrefix, RangePattern, RangeRange\n\
             Universal filters:\n\
