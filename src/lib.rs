@@ -1,3 +1,4 @@
+pub mod discovery;
 pub mod fold_node;
 pub mod handlers;
 pub mod ingestion;

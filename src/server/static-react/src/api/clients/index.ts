@@ -61,6 +61,15 @@ export { nativeIndexClient, NativeIndexClient } from "./nativeIndexClient";
 // Indexing Status Client
 export { getIndexingStatus } from "./indexingClient";
 export type { IndexingStatus } from "./indexingClient";
+// Discovery Client
+export { discoveryClient, DiscoveryClient } from "./discoveryClient";
+export type {
+  DiscoveryOptIn,
+  OptInRequest,
+  PublishResult,
+  SearchResult,
+  ConnectionRequest,
+} from "./discoveryClient";
 
 // Type exports for convenience
 export type {
