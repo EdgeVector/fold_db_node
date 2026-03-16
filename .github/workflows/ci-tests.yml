@@ -39,6 +39,10 @@ jobs:
         with:
           components: clippy
 
+      - name: Configure git for private dependencies
+        if: steps.check-rust.outputs.exists == 'true'
+        run: git config --global url."https://x-access-token:${{ secrets.PRIVATE_DEPS_TOKEN }}@github.com/".insteadOf "https://github.com/"
+
       - name: Cache Rust artifacts
         if: steps.check-rust.outputs.exists == 'true'
         uses: Swatinem/rust-cache@v2
