@@ -12,9 +12,21 @@ export interface IngestionStatus {
   auto_execute_mutations: boolean;
 }
 
+export interface OllamaGenerationParams {
+  num_ctx: number;
+  temperature: number;
+  top_p: number;
+  top_k: number;
+  num_predict: number;
+  repeat_penalty: number;
+  presence_penalty: number;
+  min_p: number;
+}
+
 export interface OllamaConfig {
   model: string;
   base_url: string;
+  generation_params?: OllamaGenerationParams;
 }
 
 export interface AnthropicConfig {

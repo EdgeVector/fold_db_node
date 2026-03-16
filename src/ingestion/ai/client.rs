@@ -1,6 +1,6 @@
 //! Unified AI backend abstraction for Anthropic and Ollama.
 
-use crate::ingestion::config::{AIProvider, AnthropicConfig, IngestionConfig, OllamaConfig};
+use crate::ingestion::config::{AIProvider, AnthropicConfig, IngestionConfig, OllamaConfig, OllamaGenerationParams};
 use crate::ingestion::{IngestionError, IngestionResult};
 use fold_db::log_feature;
 use fold_db::logging::features::LogFeature;
@@ -51,6 +51,7 @@ struct OllamaRequest {
     model: String,
     prompt: String,
     stream: bool,
+    options: OllamaGenerationParams,
 }
 
 #[derive(Debug, Deserialize)]
@@ -93,6 +94,7 @@ impl AiBackend for OllamaBackend {
             model: self.config.model.clone(),
             prompt: prompt.to_string(),
             stream: false,
+            options: self.config.generation_params.clone(),
         };
         super::helpers::call_with_retries(
             "Ollama API",

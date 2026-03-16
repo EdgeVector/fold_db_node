@@ -13,11 +13,49 @@ pub enum AIProvider {
     Ollama,
 }
 
+/// Generation parameters for Ollama models.
+#[derive(Debug, Clone, Serialize, Deserialize, utoipa::ToSchema)]
+pub struct OllamaGenerationParams {
+    /// Context window size in tokens (2048..=250000).
+    pub num_ctx: u32,
+    /// Sampling temperature (0.0..=2.0).
+    pub temperature: f32,
+    /// Top-p (nucleus) sampling (0.0..=1.0).
+    pub top_p: f32,
+    /// Top-k sampling (0 = disabled).
+    pub top_k: u32,
+    /// Maximum tokens to generate (2048..=32000).
+    pub num_predict: u32,
+    /// Repeat penalty (0.0..=2.0).
+    pub repeat_penalty: f32,
+    /// Presence penalty (0.0..=2.0).
+    pub presence_penalty: f32,
+    /// Min-p sampling threshold (0.0..=1.0).
+    pub min_p: f32,
+}
+
+impl Default for OllamaGenerationParams {
+    fn default() -> Self {
+        Self {
+            num_ctx: 16384,
+            temperature: 0.8,
+            top_p: 0.95,
+            top_k: 0,
+            num_predict: 16384,
+            repeat_penalty: 1.0,
+            presence_penalty: 0.0,
+            min_p: 0.0,
+        }
+    }
+}
+
 /// Configuration for the Ollama AI provider.
 #[derive(Debug, Clone, Serialize, Deserialize, utoipa::ToSchema)]
 pub struct OllamaConfig {
     pub model: String,
     pub base_url: String,
+    #[serde(default)]
+    pub generation_params: OllamaGenerationParams,
 }
 
 impl Default for OllamaConfig {
@@ -25,6 +63,7 @@ impl Default for OllamaConfig {
         Self {
             model: "llama3.3".to_string(),
             base_url: "http://localhost:11434".to_string(),
+            generation_params: OllamaGenerationParams::default(),
         }
     }
 }
@@ -316,6 +355,14 @@ mod tests {
         assert_eq!(config.anthropic.base_url, "https://api.anthropic.com");
         assert_eq!(config.ollama.model, "llama3.3");
         assert_eq!(config.ollama.base_url, "http://localhost:11434");
+        assert_eq!(config.ollama.generation_params.num_ctx, 16384);
+        assert!((config.ollama.generation_params.temperature - 0.8).abs() < f32::EPSILON);
+        assert!((config.ollama.generation_params.top_p - 0.95).abs() < f32::EPSILON);
+        assert_eq!(config.ollama.generation_params.top_k, 0);
+        assert_eq!(config.ollama.generation_params.num_predict, 16384);
+        assert!((config.ollama.generation_params.repeat_penalty - 1.0).abs() < f32::EPSILON);
+        assert!((config.ollama.generation_params.presence_penalty - 0.0).abs() < f32::EPSILON);
+        assert!((config.ollama.generation_params.min_p - 0.0).abs() < f32::EPSILON);
         assert_eq!(config.max_retries, 3);
         assert_eq!(config.timeout_seconds, 300);
         assert!(config.auto_execute_mutations);

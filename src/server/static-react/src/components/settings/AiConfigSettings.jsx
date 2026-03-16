@@ -3,6 +3,30 @@ import { ingestionClient } from '../../api/clients'
 import { useAppSelector, useAppDispatch } from '../../store/hooks'
 import { selectIngestionConfig, saveIngestionConfig } from '../../store/ingestionSlice'
 
+// Ollama generation parameter defaults and bounds (single source of truth)
+const OLLAMA_PARAMS = {
+  num_ctx:           { default: 16384, min: 2048, max: 250000, step: 1024 },
+  num_predict:       { default: 16384, min: 2048, max: 32000,  step: 1024 },
+  temperature:       { default: 0.8,   min: 0,    max: 2,      step: 0.01 },
+  top_p:             { default: 0.95,  min: 0,    max: 1,      step: 0.01 },
+  top_k:             { default: 0,     min: 0,    max: 200,    step: 1 },
+  min_p:             { default: 0.0,   min: 0,    max: 1,      step: 0.01 },
+  repeat_penalty:    { default: 1.0,   min: 0,    max: 2,      step: 0.01 },
+  presence_penalty:  { default: 0.0,   min: 0,    max: 2,      step: 0.01 },
+}
+
+/** Parse a number input safely, returning `fallback` if the value is NaN. */
+const safeNumber = (value, fallback) => {
+  const n = Number(value)
+  return Number.isNaN(n) ? fallback : n
+}
+
+/** Clamp a number input value within a param's min/max, guarding against NaN. */
+const clampParam = (value, param) => {
+  const n = safeNumber(value, param.default)
+  return Math.max(param.min, Math.min(param.max, n))
+}
+
 function useAiConfig({ configSaveStatus, setConfigSaveStatus, onClose }) {
   const dispatch = useAppDispatch()
   const savedConfig = useAppSelector(selectIngestionConfig)
@@ -17,6 +41,15 @@ function useAiConfig({ configSaveStatus, setConfigSaveStatus, onClose }) {
   const [ollamaModelsLoading, setOllamaModelsLoading] = useState(false)
   const [ollamaModelsError, setOllamaModelsError] = useState(null)
   const [showAdvanced, setShowAdvanced] = useState(false)
+  // Ollama generation parameters
+  const [ollamaNumCtx, setOllamaNumCtx] = useState(OLLAMA_PARAMS.num_ctx.default)
+  const [ollamaTemperature, setOllamaTemperature] = useState(OLLAMA_PARAMS.temperature.default)
+  const [ollamaTopP, setOllamaTopP] = useState(OLLAMA_PARAMS.top_p.default)
+  const [ollamaTopK, setOllamaTopK] = useState(OLLAMA_PARAMS.top_k.default)
+  const [ollamaNumPredict, setOllamaNumPredict] = useState(OLLAMA_PARAMS.num_predict.default)
+  const [ollamaRepeatPenalty, setOllamaRepeatPenalty] = useState(OLLAMA_PARAMS.repeat_penalty.default)
+  const [ollamaPresencePenalty, setOllamaPresencePenalty] = useState(OLLAMA_PARAMS.presence_penalty.default)
+  const [ollamaMinP, setOllamaMinP] = useState(OLLAMA_PARAMS.min_p.default)
   const statusTimeoutRef = useRef(null)
   const ollamaFetchTimeoutRef = useRef(null)
 
@@ -71,6 +104,17 @@ function useAiConfig({ configSaveStatus, setConfigSaveStatus, onClose }) {
     if (savedConfig) {
       setOllamaModel(savedConfig.ollama?.model || 'llama3.3')
       setOllamaBaseUrl(savedConfig.ollama?.base_url || 'http://localhost:11434')
+      const gp = savedConfig.ollama?.generation_params
+      if (gp) {
+        setOllamaNumCtx(gp.num_ctx ?? OLLAMA_PARAMS.num_ctx.default)
+        setOllamaTemperature(gp.temperature ?? OLLAMA_PARAMS.temperature.default)
+        setOllamaTopP(gp.top_p ?? OLLAMA_PARAMS.top_p.default)
+        setOllamaTopK(gp.top_k ?? OLLAMA_PARAMS.top_k.default)
+        setOllamaNumPredict(gp.num_predict ?? OLLAMA_PARAMS.num_predict.default)
+        setOllamaRepeatPenalty(gp.repeat_penalty ?? OLLAMA_PARAMS.repeat_penalty.default)
+        setOllamaPresencePenalty(gp.presence_penalty ?? OLLAMA_PARAMS.presence_penalty.default)
+        setOllamaMinP(gp.min_p ?? OLLAMA_PARAMS.min_p.default)
+      }
       const anthropicKey = savedConfig.anthropic?.api_key || ''
       if (anthropicKey === '***configured***') {
         setHasAnthropicEnvKey(true)
@@ -89,7 +133,20 @@ function useAiConfig({ configSaveStatus, setConfigSaveStatus, onClose }) {
     try {
       const config = {
         provider: aiProvider,
-        ollama: { model: ollamaModel, base_url: ollamaBaseUrl },
+        ollama: {
+          model: ollamaModel,
+          base_url: ollamaBaseUrl,
+          generation_params: {
+            num_ctx: ollamaNumCtx,
+            temperature: ollamaTemperature,
+            top_p: ollamaTopP,
+            top_k: ollamaTopK,
+            num_predict: ollamaNumPredict,
+            repeat_penalty: ollamaRepeatPenalty,
+            presence_penalty: ollamaPresencePenalty,
+            min_p: ollamaMinP,
+          },
+        },
         anthropic: { api_key: anthropicApiKey, model: anthropicModel, base_url: anthropicBaseUrl },
       }
       await dispatch(saveIngestionConfig(config)).unwrap()
@@ -193,6 +250,53 @@ function useAiConfig({ configSaveStatus, setConfigSaveStatus, onClose }) {
                     className="input"
                   />
                 </div>
+              )}
+              {aiProvider === 'Ollama' && (
+                <>
+                  <p className="text-xs text-secondary">Generation parameters sent to Ollama with every request.</p>
+                  <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+                    <div>
+                      <label className="label">Context Window (num_ctx)</label>
+                      <input type="number" min={OLLAMA_PARAMS.num_ctx.min} max={OLLAMA_PARAMS.num_ctx.max} step={OLLAMA_PARAMS.num_ctx.step} value={ollamaNumCtx} onChange={(e) => setOllamaNumCtx(clampParam(e.target.value, OLLAMA_PARAMS.num_ctx))} className="input" />
+                      <p className="text-xs text-secondary mt-1">{OLLAMA_PARAMS.num_ctx.min.toLocaleString()} - {OLLAMA_PARAMS.num_ctx.max.toLocaleString()} tokens</p>
+                    </div>
+                    <div>
+                      <label className="label">Max Output (num_predict)</label>
+                      <input type="number" min={OLLAMA_PARAMS.num_predict.min} max={OLLAMA_PARAMS.num_predict.max} step={OLLAMA_PARAMS.num_predict.step} value={ollamaNumPredict} onChange={(e) => setOllamaNumPredict(clampParam(e.target.value, OLLAMA_PARAMS.num_predict))} className="input" />
+                      <p className="text-xs text-secondary mt-1">{OLLAMA_PARAMS.num_predict.min.toLocaleString()} - {OLLAMA_PARAMS.num_predict.max.toLocaleString()} tokens</p>
+                    </div>
+                    <div>
+                      <label className="label">Temperature <span className="text-secondary">({ollamaTemperature.toFixed(2)})</span></label>
+                      <input type="range" min={OLLAMA_PARAMS.temperature.min} max={OLLAMA_PARAMS.temperature.max} step={OLLAMA_PARAMS.temperature.step} value={ollamaTemperature} onChange={(e) => setOllamaTemperature(safeNumber(e.target.value, OLLAMA_PARAMS.temperature.default))} className="w-full" />
+                      <p className="text-xs text-secondary mt-1">0.0 (deterministic) - 2.0 (creative)</p>
+                    </div>
+                    <div>
+                      <label className="label">Top P <span className="text-secondary">({ollamaTopP.toFixed(2)})</span></label>
+                      <input type="range" min={OLLAMA_PARAMS.top_p.min} max={OLLAMA_PARAMS.top_p.max} step={OLLAMA_PARAMS.top_p.step} value={ollamaTopP} onChange={(e) => setOllamaTopP(safeNumber(e.target.value, OLLAMA_PARAMS.top_p.default))} className="w-full" />
+                      <p className="text-xs text-secondary mt-1">Nucleus sampling threshold</p>
+                    </div>
+                    <div>
+                      <label className="label">Top K <span className="text-secondary">({ollamaTopK})</span></label>
+                      <input type="range" min={OLLAMA_PARAMS.top_k.min} max={OLLAMA_PARAMS.top_k.max} step={OLLAMA_PARAMS.top_k.step} value={ollamaTopK} onChange={(e) => setOllamaTopK(safeNumber(e.target.value, OLLAMA_PARAMS.top_k.default))} className="w-full" />
+                      <p className="text-xs text-secondary mt-1">0 = disabled</p>
+                    </div>
+                    <div>
+                      <label className="label">Min P <span className="text-secondary">({ollamaMinP.toFixed(2)})</span></label>
+                      <input type="range" min={OLLAMA_PARAMS.min_p.min} max={OLLAMA_PARAMS.min_p.max} step={OLLAMA_PARAMS.min_p.step} value={ollamaMinP} onChange={(e) => setOllamaMinP(safeNumber(e.target.value, OLLAMA_PARAMS.min_p.default))} className="w-full" />
+                      <p className="text-xs text-secondary mt-1">Minimum probability threshold</p>
+                    </div>
+                    <div>
+                      <label className="label">Repeat Penalty <span className="text-secondary">({ollamaRepeatPenalty.toFixed(2)})</span></label>
+                      <input type="range" min={OLLAMA_PARAMS.repeat_penalty.min} max={OLLAMA_PARAMS.repeat_penalty.max} step={OLLAMA_PARAMS.repeat_penalty.step} value={ollamaRepeatPenalty} onChange={(e) => setOllamaRepeatPenalty(safeNumber(e.target.value, OLLAMA_PARAMS.repeat_penalty.default))} className="w-full" />
+                      <p className="text-xs text-secondary mt-1">1.0 = no penalty</p>
+                    </div>
+                    <div>
+                      <label className="label">Presence Penalty <span className="text-secondary">({ollamaPresencePenalty.toFixed(2)})</span></label>
+                      <input type="range" min={OLLAMA_PARAMS.presence_penalty.min} max={OLLAMA_PARAMS.presence_penalty.max} step={OLLAMA_PARAMS.presence_penalty.step} value={ollamaPresencePenalty} onChange={(e) => setOllamaPresencePenalty(safeNumber(e.target.value, OLLAMA_PARAMS.presence_penalty.default))} className="w-full" />
+                      <p className="text-xs text-secondary mt-1">0.0 = no penalty</p>
+                    </div>
+                  </div>
+                </>
               )}
             </div>
           )}
