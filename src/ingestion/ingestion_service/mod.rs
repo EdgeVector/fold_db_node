@@ -38,9 +38,9 @@ pub(crate) fn schema_err(e: impl std::fmt::Display) -> IngestionError {
 
 /// Apply image-specific overrides to an AI schema response.
 ///
-/// Images must use `HashRange(source_file_name, created_at)` so each image file
-/// gets a unique key. This function:
-/// 1. Sets `schema_type` to `HashRange` and configures the key fields
+/// Images use `Hash(source_file_name)` so each image file gets a unique key.
+/// This function:
+/// 1. Sets `schema_type` to `Hash` and configures the key field
 /// 2. Ensures `source_file_name` is in the schema's `fields` array and `field_classifications`
 /// 3. Optionally sets a custom `descriptive_name`
 /// 4. Adds `source_file_name` to `mutation_mappers` so the value gets written
@@ -49,10 +49,9 @@ pub(crate) fn apply_image_schema_override(
     descriptive_name: Option<&str>,
 ) {
     if let Some(ref mut schema_def) = ai_response.new_schemas {
-        schema_def["schema_type"] = serde_json::json!("HashRange");
+        schema_def["schema_type"] = serde_json::json!("Hash");
         schema_def["key"] = serde_json::json!({
-            "hash_field": "source_file_name",
-            "range_field": "created_at"
+            "hash_field": "source_file_name"
         });
         // Ensure source_file_name is in the fields list
         if let Some(fields) = schema_def.get_mut("fields").and_then(|f| f.as_array_mut()) {
