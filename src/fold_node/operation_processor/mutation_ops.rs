@@ -1,4 +1,6 @@
 use fold_db::error::{FoldDbError, FoldDbResult};
+use fold_db::log_feature;
+use fold_db::logging::features::LogFeature;
 use fold_db::schema::types::operations::{MutationType, Operation};
 use fold_db::schema::types::{KeyValue, Mutation};
 use serde_json::Value;
@@ -7,38 +9,26 @@ use std::collections::HashMap;
 use super::OperationProcessor;
 
 impl OperationProcessor {
+    /// Map a mutation write error to FoldDbError with logging.
+    fn mutation_write_error(e: impl std::fmt::Display) -> FoldDbError {
+        log_feature!(LogFeature::Mutation, error, "Mutation execution failed: {}", e);
+        FoldDbError::Config(format!("Mutation execution failed: {}", e))
+    }
+
     /// Executes a mutation operation from a Mutation struct.
     pub async fn execute_mutation_op(&self, mutation: Mutation) -> FoldDbResult<String> {
-        let schema_name = mutation.schema_name.clone();
-        log::info!("🔄 Starting mutation execution for schema: {}", schema_name);
+        log_feature!(LogFeature::Mutation, info, "Executing mutation for schema: {}", mutation.schema_name);
 
-        let mut db = self
-            .node
-            .get_fold_db()
-            .await?;
-
+        let mut db = self.get_db().await?;
         let mut ids = db
             .mutation_manager
             .write_mutations_batch_async(vec![mutation])
             .await
-            .map_err(|e| {
-                log::error!("❌ Mutation execution failed: {}", e);
-                FoldDbError::Config(format!("Mutation execution failed: {}", e))
-            })?;
+            .map_err(Self::mutation_write_error)?;
 
-        log::info!("📊 Mutation returned {} IDs", ids.len());
-        match ids.pop() {
-            Some(id) => {
-                log::info!("✅ Mutation succeeded with ID: {}", id);
-                Ok(id)
-            }
-            None => {
-                log::error!("❌ Batch mutation returned no IDs");
-                Err(FoldDbError::Config(
-                    "Batch mutation returned no IDs".to_string(),
-                ))
-            }
-        }
+        ids.pop().ok_or_else(|| {
+            Self::mutation_write_error("Batch mutation returned no IDs")
+        })
     }
 
     /// Executes a mutation operation (legacy wrapper).
@@ -70,16 +60,12 @@ impl OperationProcessor {
         &self,
         mutations: Vec<Mutation>,
     ) -> FoldDbResult<Vec<String>> {
-        let mut db = self
-            .node
-            .get_fold_db()
-            .await?;
+        let mut db = self.get_db().await?;
         let mutation_ids = db
             .mutation_manager
             .write_mutations_batch_async(mutations)
             .await
-            .map_err(|e| FoldDbError::Config(format!("Mutation execution failed: {}", e)))?;
-
+            .map_err(Self::mutation_write_error)?;
         Ok(mutation_ids)
     }
 

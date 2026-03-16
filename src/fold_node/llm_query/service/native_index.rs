@@ -6,6 +6,34 @@ use serde_json::Value;
 
 use super::LlmQueryService;
 
+/// Expand `~` or `~/...` to the user's home directory.
+fn expand_home_path(path: &str) -> std::path::PathBuf {
+    if path.starts_with("~/") {
+        dirs::home_dir()
+            .map(|h| h.join(&path[2..]))
+            .unwrap_or_else(|| std::path::PathBuf::from(path))
+    } else if path == "~" {
+        dirs::home_dir().unwrap_or_else(|| std::path::PathBuf::from(path))
+    } else {
+        std::path::PathBuf::from(path)
+    }
+}
+
+/// Update agent progress if a tracker is available. Best-effort — errors are silently ignored.
+async fn update_agent_progress(
+    tracker: Option<&crate::ingestion::ProgressTracker>,
+    job_id: &str,
+    pct: u8,
+    message: String,
+) {
+    if let Some(tracker) = tracker {
+        if let Ok(Some(mut job)) = tracker.load(job_id).await {
+            job.update_progress(pct, message);
+            let _ = tracker.save(&job).await;
+        }
+    }
+}
+
 impl LlmQueryService {
     /// Generate query terms for native index search based on a natural language query
     pub async fn generate_native_index_query_terms(
@@ -227,16 +255,7 @@ impl LlmQueryService {
                     .and_then(|m| m.as_u64())
                     .unwrap_or(100) as usize;
 
-                // Expand ~ to the user's home directory
-                let expanded = if path.starts_with("~/") {
-                    dirs::home_dir()
-                        .map(|h| h.join(&path[2..]))
-                        .unwrap_or_else(|| std::path::PathBuf::from(path))
-                } else if path == "~" {
-                    dirs::home_dir().unwrap_or_else(|| std::path::PathBuf::from(path))
-                } else {
-                    std::path::PathBuf::from(path)
-                };
+                let expanded = expand_home_path(path);
                 let folder_path = expanded.as_path();
                 let scan_result = processor
                     .smart_folder_scan(folder_path, 10, max_files)
@@ -257,16 +276,7 @@ impl LlmQueryService {
                     .and_then(|f| f.as_array())
                     .ok_or("ingest_files tool requires 'files' parameter (array of relative paths)")?;
 
-                // Expand ~ to the user's home directory
-                let base_expanded = if folder_path_raw.starts_with("~/") {
-                    dirs::home_dir()
-                        .map(|h| h.join(&folder_path_raw[2..]))
-                        .unwrap_or_else(|| std::path::PathBuf::from(folder_path_raw))
-                } else if folder_path_raw == "~" {
-                    dirs::home_dir().unwrap_or_else(|| std::path::PathBuf::from(folder_path_raw))
-                } else {
-                    std::path::PathBuf::from(folder_path_raw)
-                };
+                let base_expanded = expand_home_path(folder_path_raw);
                 let base = base_expanded.as_path();
                 let file_list: Vec<&str> = files
                     .iter()
@@ -293,6 +303,7 @@ impl LlmQueryService {
                         .await;
                 }
 
+                let pub_key = node.get_node_public_key().to_string();
                 let mut results = Vec::new();
                 for (idx, relative) in file_list.iter().enumerate() {
                     let full_path = base.join(relative);
@@ -315,6 +326,20 @@ impl LlmQueryService {
                                 pct,
                             )
                             .await;
+                    }
+
+                    // Skip files that have already been ingested (dedup by content hash)
+                    if let Ok(hash) = crate::ingestion::smart_folder::scanner::compute_file_hash(&full_path) {
+                        if node.is_file_ingested(&pub_key, &hash).await.is_some() {
+                            log::info!("Agent ingest_files: skipping already-ingested file: {}", relative);
+                            results.push(serde_json::json!({
+                                "file": relative,
+                                "success": true,
+                                "skipped": true,
+                                "reason": "already ingested",
+                            }));
+                            continue;
+                        }
                     }
 
                     match processor
@@ -421,6 +446,20 @@ impl LlmQueryService {
             user_query
         );
 
+        // Create an agent progress job so the frontend can track what's happening
+        let agent_job_id = format!("agent-{}", uuid::Uuid::new_v4());
+        if let Some(tracker) = progress_tracker {
+            let user_id = fold_db::logging::core::get_current_user_id()
+                .unwrap_or_else(|| "unknown".to_string());
+            let mut job = fold_db::progress::Job::new(
+                agent_job_id.clone(),
+                fold_db::progress::JobType::Other("agent".to_string()),
+            )
+            .with_user(user_id);
+            job.update_progress(5, "Thinking...".to_string());
+            let _ = tracker.save(&job).await;
+        }
+
         for iteration in 0..max_iterations {
             // Build the full prompt with conversation history
             // Repeat the current date at the end so it's fresh context when generating the answer
@@ -433,6 +472,9 @@ impl LlmQueryService {
             );
 
             log::debug!("Agent: Iteration {} - calling LLM", iteration + 1);
+
+            let pct = 5 + (iteration * 90 / max_iterations.max(1)).min(90) as u8;
+            update_agent_progress(progress_tracker, &agent_job_id, pct, format!("Thinking... (step {})", iteration + 1)).await;
 
             let response = self.call_llm(&full_prompt).await?;
 
@@ -448,10 +490,28 @@ impl LlmQueryService {
                         iteration + 1,
                         tool_calls.len()
                     );
+                    // Mark agent job complete
+                    if let Some(tracker) = progress_tracker {
+                        if let Ok(Some(mut job)) = tracker.load(&agent_job_id).await {
+                            job.complete(None);
+                            let _ = tracker.save(&job).await;
+                        }
+                    }
                     return Ok((answer, tool_calls));
                 }
                 super::super::types::AgentAction::ToolCall { tool, params } => {
                     log::info!("Agent: Calling tool '{}' with params: {}", tool, params);
+
+                    // Update progress: executing tool
+                    let tool_pct = 10 + (iteration * 90 / max_iterations.max(1)).min(85) as u8;
+                    let tool_label = match tool.as_str() {
+                        "ingest_files" => "Ingesting files...",
+                        "query" => "Querying database...",
+                        "scan_folder" => "Scanning folder...",
+                        "list_schemas" => "Listing schemas...",
+                        _ => "Executing tool...",
+                    };
+                    update_agent_progress(progress_tracker, &agent_job_id, tool_pct, format!("{} ({})", tool_label, tool)).await;
 
                     // Execute the tool, capturing errors as results so the agent can retry
                     let result = match self.execute_tool(&tool, &params, node, progress_tracker).await {
@@ -479,6 +539,14 @@ impl LlmQueryService {
                         serde_json::to_string_pretty(&result).unwrap_or_default()
                     ));
                 }
+            }
+        }
+
+        // Mark agent job as failed on max iterations
+        if let Some(tracker) = progress_tracker {
+            if let Ok(Some(mut job)) = tracker.load(&agent_job_id).await {
+                job.fail("Reached maximum iterations without a final answer".to_string());
+                let _ = tracker.save(&job).await;
             }
         }
 

@@ -3,24 +3,20 @@
 //! Accepts JSON data, uses an AI backend to recommend a schema, then generates
 //! and optionally executes mutations to persist the data.
 
-pub mod ai_client;
-pub mod ai_helpers;
+pub mod ai;
 pub mod batch_controller;
 pub mod config;
 pub mod decomposer;
 pub mod error;
-pub mod file_conversion;
-pub mod file_upload;
+pub mod file_handling;
 pub mod ingestion_service;
 pub mod key_extraction;
-pub mod json_processor;
 pub mod mutation_generator;
 pub mod progress;
-pub mod prompts;
 pub mod routes;
+pub mod routes_batch;
+pub mod routes_helpers;
 pub mod smart_folder;
-pub mod smart_folder_routes;
-pub mod smart_folder_scanner;
 pub mod structure_analyzer;
 
 use serde::{Deserialize, Serialize};
@@ -41,7 +37,7 @@ pub fn is_image_file(filename: &str) -> bool {
 }
 
 // Public re-exports
-pub use ai_helpers::AISchemaResponse;
+pub use ai::helpers::AISchemaResponse;
 pub use config::IngestionConfig;
 pub use error::IngestionError;
 pub use progress::{

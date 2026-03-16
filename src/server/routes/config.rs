@@ -7,7 +7,7 @@ use fold_db::storage::config::DatabaseConfig;
 use actix_web::{web, HttpResponse, Responder};
 use serde::{Deserialize, Serialize};
 use serde_json::json;
-use sha2::{Digest, Sha256};
+use crate::utils::crypto::user_hash_from_pubkey;
 use std::path::Path;
 
 /// Database configuration request/response types
@@ -135,12 +135,7 @@ pub async fn auto_identity(state: web::Data<AppState>) -> impl Responder {
     };
 
     // Derive user_hash = SHA256(public_key)[0:32] (same algorithm as frontend)
-    let hash = Sha256::digest(public_key.as_bytes());
-    let user_hash: String = hash
-        .iter()
-        .map(|b| format!("{:02x}", b))
-        .collect::<String>()[..32]
-        .to_string();
+    let user_hash = user_hash_from_pubkey(&public_key);
 
     HttpResponse::Ok().json(json!({
         "user_id": public_key,
@@ -341,64 +336,29 @@ pub struct DatabaseStatusResponse {
     )
 )]
 pub async fn get_database_status(state: web::Data<AppState>) -> impl Responder {
-    // Check if a saved config file exists on disk
     let config_path =
         std::env::var("NODE_CONFIG").unwrap_or_else(|_| "config/node_config.json".to_string());
     let has_saved_config = Path::new(&config_path).exists();
 
-    // Check if a node is already active
-    let already_initialized = state.node_manager.has_active_node().await;
-
-    if already_initialized {
-        return HttpResponse::Ok().json(DatabaseStatusResponse {
-            initialized: true,
-            has_saved_config,
-        });
-    }
-
-    // For returning users with a saved config, auto-initialize the node
-    if has_saved_config {
-        // Use the node's unique public key from config to derive user_hash
+    let initialized = if state.node_manager.has_active_node().await {
+        true
+    } else if has_saved_config {
+        // For returning users, try to auto-initialize from saved config
         let config = state.node_manager.get_base_config().await;
-        let public_key = match &config.public_key {
-            Some(pk) if !pk.is_empty() => pk.clone(),
-            _ => {
-                return HttpResponse::Ok().json(DatabaseStatusResponse {
-                    initialized: false,
-                    has_saved_config,
-                });
+        match &config.public_key {
+            Some(pk) if !pk.is_empty() => {
+                let user_hash = user_hash_from_pubkey(pk);
+                state.node_manager.get_node(&user_hash).await
+                    .inspect_err(|e| {
+                        log_feature!(LogFeature::HttpServer, warn, "Auto-initialization failed for returning user: {}", e);
+                    })
+                    .is_ok()
             }
-        };
-        let hash = sha2::Sha256::digest(public_key.as_bytes());
-        let user_hash: String =
-            hash.iter().map(|b| format!("{:02x}", b)).collect::<String>()[..32].to_string();
-
-        // Try to initialize the node lazily
-        match state.node_manager.get_node(&user_hash).await {
-            Ok(_) => {
-                return HttpResponse::Ok().json(DatabaseStatusResponse {
-                    initialized: true,
-                    has_saved_config,
-                });
-            }
-            Err(e) => {
-                log_feature!(
-                    LogFeature::HttpServer,
-                    warn,
-                    "Auto-initialization failed for returning user: {}",
-                    e
-                );
-                return HttpResponse::Ok().json(DatabaseStatusResponse {
-                    initialized: false,
-                    has_saved_config,
-                });
-            }
+            _ => false,
         }
-    }
+    } else {
+        false
+    };
 
-    // Fresh install — no config, no node
-    HttpResponse::Ok().json(DatabaseStatusResponse {
-        initialized: false,
-        has_saved_config,
-    })
+    HttpResponse::Ok().json(DatabaseStatusResponse { initialized, has_saved_config })
 }

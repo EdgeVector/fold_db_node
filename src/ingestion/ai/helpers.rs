@@ -1,7 +1,7 @@
-//! Shared helper functions for AI service implementations (Anthropic, Ollama).
+//! AI types, retry logic, prompt building, and response parsing for ingestion.
 
 use super::prompts::{PROMPT_ACTIONS, PROMPT_HEADER};
-use super::{IngestionError, IngestionResult, StructureAnalyzer};
+use crate::ingestion::{IngestionError, IngestionResult, StructureAnalyzer};
 use fold_db::log_feature;
 use fold_db::logging::features::LogFeature;
 use serde::{Deserialize, Serialize};
@@ -20,6 +20,8 @@ pub struct AISchemaResponse {
     /// Mapping from JSON field paths to schema field paths
     pub mutation_mappers: HashMap<String, String>,
 }
+
+// ---- Retry logic ----
 
 /// Call an async function with retries and exponential backoff.
 ///
@@ -86,26 +88,81 @@ where
     Err(last_error.unwrap_or_else(fallback_error))
 }
 
+// ---- Prompt building ----
+
 /// Pretty-print a JSON value.
 pub fn pretty_json(value: &Value) -> String {
     serde_json::to_string_pretty(value).unwrap_or_else(|_| "Invalid JSON".to_string())
 }
 
 /// Create the prompt for the AI from sample JSON and array context.
-pub fn create_prompt(sample_json: &Value, is_array_input: bool) -> String {
+///
+/// `original_json` is the un-skeletonized data. When the data looks like a
+/// text-file wrapper (`{content, source_file, file_type}`), we include a
+/// preview of the actual content so the AI can name the schema by topic.
+pub fn create_prompt(
+    sample_json: &Value,
+    is_array_input: bool,
+    original_json: Option<&Value>,
+) -> String {
     let array_note = if is_array_input {
         "\n\nIMPORTANT: The user provided a JSON ARRAY of multiple objects. You MUST create a Range schema with a range_key to store multiple entities."
     } else {
         ""
     };
 
+    // For text-file wrappers, include a preview of the actual content so the
+    // AI can determine the topic (e.g., "this is a recipe" → "recipes" schema).
+    let content_hint = original_json
+        .and_then(extract_content_hint)
+        .unwrap_or_default();
+
     format!(
-        "{header}\n\nSample JSON Data:\n{sample}{array_note}\n\n{actions}",
+        "{header}\n\nSample JSON Data:\n{sample}{array_note}{content_hint}\n\n{actions}",
         header = PROMPT_HEADER,
         sample = pretty_json(sample_json),
         array_note = array_note,
+        content_hint = content_hint,
         actions = PROMPT_ACTIONS
     )
+}
+
+/// Extract a content preview from text-file wrapper JSON for the AI prompt.
+/// Returns a formatted hint string or None if the data isn't a text-file wrapper.
+fn extract_content_hint(json: &Value) -> Option<String> {
+    // Handle both single objects and arrays of objects
+    let obj = if let Some(arr) = json.as_array() {
+        arr.first()?.as_object()?
+    } else {
+        json.as_object()?
+    };
+
+    // Only for text-file wrappers that have content + file_type
+    if !obj.contains_key("content") || !obj.contains_key("file_type") {
+        return None;
+    }
+
+    let content = obj.get("content")?.as_str()?;
+    let category = obj.get("category").and_then(|v| v.as_str());
+    let source = obj.get("source_file").and_then(|v| v.as_str());
+
+    // Truncate content to first 500 chars for the preview
+    let preview: String = content.chars().take(500).collect();
+    let truncated = if content.chars().count() > 500 { "..." } else { "" };
+
+    let mut hint = format!(
+        "\n\nCONTENT PREVIEW (use this to determine the schema name topic):\n\"{}{}\"",
+        preview, truncated
+    );
+    if let Some(cat) = category {
+        hint.push_str(&format!("\nCategory hint: \"{}\"", cat));
+    }
+    if let Some(src) = source {
+        hint.push_str(&format!("\nSource file: \"{}\"", src));
+    }
+    hint.push_str("\n\nName the schema based on the CONTENT TOPIC above (e.g., \"recipes\", \"journal_entries\", \"medical_records\"), NOT based on the data format.");
+
+    Some(hint)
 }
 
 /// Analyze JSON data and build the AI prompt for schema recommendation.
@@ -131,7 +188,7 @@ pub fn analyze_and_build_prompt(sample_json: &Value) -> IngestionResult<String> 
     );
 
     let is_array_input = sample_json.is_array();
-    let prompt = create_prompt(&superset_structure, is_array_input);
+    let prompt = create_prompt(&superset_structure, is_array_input, Some(sample_json));
 
     log_feature!(
         LogFeature::Ingestion, debug,
@@ -142,6 +199,8 @@ pub fn analyze_and_build_prompt(sample_json: &Value) -> IngestionResult<String> 
 
     Ok(prompt)
 }
+
+// ---- Response parsing ----
 
 /// Extract JSON from an AI response text that may contain markdown fences or extra text.
 ///
@@ -212,6 +271,65 @@ pub fn extract_json_from_response(response_text: &str) -> IngestionResult<String
     )))
 }
 
+/// Log a warning for each schema field missing a field_description entry.
+/// Missing descriptions are recoverable (filled by a second AI pass), so this
+/// warns instead of erroring to avoid blocking the retry loop.
+fn warn_missing_field_descriptions(schema_val: &Value) {
+    let schema_obj = match schema_val.as_object() {
+        Some(o) => o,
+        None => return,
+    };
+
+    let fields = match schema_obj.get("fields").and_then(|v| v.as_array()) {
+        Some(f) => f,
+        None => return,
+    };
+
+    let descriptions = schema_obj
+        .get("field_descriptions")
+        .and_then(|v| v.as_object());
+
+    let schema_name = schema_obj
+        .get("schema_name")
+        .and_then(|v| v.as_str())
+        .unwrap_or("<unnamed>");
+
+    for field in fields.iter().filter_map(|f| f.as_str()) {
+        let has_desc = descriptions
+            .map(|d| d.contains_key(field))
+            .unwrap_or(false);
+        if !has_desc {
+            log_feature!(
+                LogFeature::Ingestion, warn,
+                "Schema '{}' field '{}' is missing a field_description entry; will attempt recovery via second AI pass",
+                schema_name, field
+            );
+        }
+    }
+}
+
+/// Validate that a schema has a non-empty descriptive_name.
+pub fn validate_schema_has_descriptive_name(schema_val: &Value) -> IngestionResult<()> {
+    let schema_obj = schema_val.as_object().ok_or_else(|| {
+        IngestionError::ai_response_validation_error("Schema must be a JSON object")
+    })?;
+
+    let has_name = schema_obj
+        .get("descriptive_name")
+        .and_then(|v| v.as_str())
+        .map(|s| !s.trim().is_empty())
+        .unwrap_or(false);
+
+    if !has_name {
+        return Err(IngestionError::ai_response_validation_error(
+            "Schema must have a non-empty 'descriptive_name'. \
+             ALWAYS include \"descriptive_name\": a clear, human-readable description.",
+        ));
+    }
+
+    Ok(())
+}
+
 /// Validate that a schema has classifications for its fields.
 pub fn validate_schema_has_classifications(schema_val: &Value) -> IngestionResult<()> {
     let schema_obj = schema_val.as_object().ok_or_else(|| {
@@ -235,7 +353,8 @@ pub fn validate_schema_has_classifications(schema_val: &Value) -> IngestionResul
         match classifications_val.as_array() {
             Some(arr) if !arr.is_empty() => {}
             _ => {
-                log::debug!(
+                log_feature!(
+                    LogFeature::Ingestion, debug,
                     "Schema '{}' field '{}' has empty or non-array classifications — defaults will be applied",
                     schema_name, field_name
                 );
@@ -252,21 +371,31 @@ pub fn validate_and_convert_response(parsed: Value) -> IngestionResult<AISchemaR
         IngestionError::ai_response_validation_error("Response must be a JSON object")
     })?;
 
-    // Parse new_schemas
-    let new_schemas = obj.get("new_schemas").cloned();
+    // Parse new_schemas (treat JSON null as absent)
+    let new_schemas = obj.get("new_schemas").cloned().filter(|v| !v.is_null());
 
-    // Validate that new schemas have classifications on all primitive fields
+    // Validate that new schemas have required fields.
+    // These checks run INSIDE the retry loop, so a validation failure here
+    // triggers a fresh AI call with a new chance to produce correct output.
     if let Some(schema_val) = &new_schemas {
         match schema_val {
             Value::Array(schemas) => {
                 for schema in schemas {
+                    validate_schema_has_descriptive_name(schema)?;
                     validate_schema_has_classifications(schema)?;
+                    warn_missing_field_descriptions(schema);
                 }
             }
             Value::Object(_) => {
+                validate_schema_has_descriptive_name(schema_val)?;
                 validate_schema_has_classifications(schema_val)?;
+                warn_missing_field_descriptions(schema_val);
             }
-            _ => {}
+            _ => {
+                return Err(IngestionError::ai_response_validation_error(
+                    format!("new_schemas must be an object or array, got: {}", schema_val),
+                ));
+            }
         }
     }
 
@@ -322,6 +451,26 @@ mod tests {
     use super::*;
 
     #[test]
+    fn test_create_prompt_includes_sample() {
+        let sample = serde_json::json!({"a": 1});
+
+        let prompt = create_prompt(&sample, false, None);
+        assert!(prompt.contains("Sample JSON Data:"));
+        assert!(prompt.contains("\"a\": 1"));
+        assert!(!prompt.contains("Available Schemas:"));
+        assert!(prompt.contains(PROMPT_HEADER));
+        assert!(prompt.contains(PROMPT_ACTIONS));
+    }
+
+    #[test]
+    fn test_pretty_json_helpers() {
+        let value = serde_json::json!({"x": 1});
+        assert!(pretty_json(&value).contains("\"x\": 1"));
+    }
+
+    // ---- extract_json_from_response tests ----
+
+    #[test]
     fn test_extract_json_from_response() {
         // Test with JSON block markers
         let response_with_markers = r###"Here's the analysis:
@@ -373,26 +522,6 @@ That should work."###;
         let response = result.unwrap();
         assert_eq!(response.mutation_mappers.len(), 2);
     }
-
-    #[test]
-    fn test_create_prompt_includes_sample() {
-        let sample = serde_json::json!({"a": 1});
-
-        let prompt = create_prompt(&sample, false);
-        assert!(prompt.contains("Sample JSON Data:"));
-        assert!(prompt.contains("\"a\": 1"));
-        assert!(!prompt.contains("Available Schemas:"));
-        assert!(prompt.contains(PROMPT_HEADER));
-        assert!(prompt.contains(PROMPT_ACTIONS));
-    }
-
-    #[test]
-    fn test_pretty_json_helpers() {
-        let value = serde_json::json!({"x": 1});
-        assert!(pretty_json(&value).contains("\"x\": 1"));
-    }
-
-    // ---- extract_json_from_response edge cases ----
 
     #[test]
     fn test_extract_json_array_in_markdown_fence() {

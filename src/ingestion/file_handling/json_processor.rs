@@ -1,111 +1,120 @@
 //! JSON conversion and processing for file uploads
 
-use file_to_json::{AnthropicConfig, Converter, FallbackStrategy, OpenRouterConfig as OpenAiCompatConfig};
+use file_to_markdown::{Config as FtmConfig, Converter as FtmConverter, OllamaConfig as FtmOllamaConfig};
 use serde_json::{json, Value};
 use std::io::Write;
 use std::path::PathBuf;
-use std::time::Duration;
 use tempfile::NamedTempFile;
 
-use crate::ingestion::config::AIProvider;
 use crate::ingestion::IngestionError;
 use fold_db::log_feature;
 use fold_db::logging::features::LogFeature;
 
-/// Convert a file to JSON using file_to_json library (public API for ingestion)
+/// Convert a file to structured JSON using file_to_markdown (fully local, no external API calls).
+///
+/// Uses Ollama for vision/OCR on images and PDFs; all other file types (text, CSV,
+/// Office docs, archives) convert without any AI.
 pub async fn convert_file_to_json(file_path: &PathBuf) -> Result<Value, IngestionError> {
     log_feature!(
         LogFeature::Ingestion,
         info,
-        "Converting file to JSON: {:?}",
+        "Converting file to markdown: {:?}",
         file_path
     );
 
-    // Load fold_db ingestion config
-    let ingestion_config = crate::ingestion::IngestionConfig::from_env()?;
+    let ingestion_config = crate::ingestion::IngestionConfig::load()?;
 
-    // Build file_to_json config based on the selected provider
-    let file_path_str = file_path.to_string_lossy().to_string();
+    let ollama_config = FtmOllamaConfig {
+        base_url: ingestion_config.ollama.base_url.clone(),
+        ..FtmOllamaConfig::default()
+    };
 
-    match ingestion_config.provider {
-        AIProvider::Ollama => {
-            let base_url = format!(
-                "{}/v1/chat/completions",
-                ingestion_config.ollama.base_url.trim_end_matches('/')
-            );
-            let ollama_config = OpenAiCompatConfig {
-                api_key: String::new(),
-                model: ingestion_config.ollama.model.clone(),
-                timeout: Duration::from_secs(ingestion_config.timeout_seconds),
-                fallback_strategy: FallbackStrategy::Chunked,
-                vision_model: Some(ingestion_config.ollama.model.clone()),
-                max_image_bytes: 5 * 1024 * 1024,
-                base_url: Some(base_url),
-            };
+    let config = FtmConfig::from_home_dir(ollama_config, None)
+        .map_err(|e| IngestionError::FileConversionFailed(format!("Config init: {}", e)))?;
 
-            tokio::task::spawn_blocking(move || {
-                let converter = Converter::new(ollama_config)
-                    .map_err(|e| IngestionError::FileConversionFailed(format!("Converter init: {}", e)))?;
-                converter.convert_path(&file_path_str).map_err(|e| {
-                    log_feature!(
-                        LogFeature::Ingestion,
-                        error,
-                        "Failed to convert file to JSON: {}",
-                        e
-                    );
-                    IngestionError::FileConversionFailed(e.to_string())
-                })
-            })
-            .await
-            .map_err(|e| {
-                log_feature!(
-                    LogFeature::Ingestion,
-                    error,
-                    "Failed to spawn blocking task: {}",
-                    e
-                );
-                IngestionError::FileConversionFailed(format!("Task join: {}", e))
-            })?
+    let converter = FtmConverter::new(config);
+
+    let file_markdown = converter.convert_path(file_path.as_path()).await.map_err(|e| {
+        log_feature!(
+            LogFeature::Ingestion,
+            error,
+            "Failed to convert file: {}",
+            e
+        );
+        IngestionError::FileConversionFailed(e.to_string())
+    })?;
+
+    let mut value = serde_json::to_value(&file_markdown)
+        .map_err(|e| IngestionError::FileConversionFailed(format!("Serialization: {}", e)))?;
+
+    strip_null_fields(&mut value);
+
+    // For images, extract a short descriptive_name from the markdown body
+    // (the vision model's caption). enrich_image_json() will consume this later.
+    if let Value::Object(map) = &mut value {
+        if map.contains_key("image_format") {
+            // Prefer an explicit title if present; otherwise derive from markdown body
+            let desc = map
+                .remove("title")
+                .or_else(|| {
+                    map.get("markdown")
+                        .and_then(|v| v.as_str())
+                        .and_then(first_sentence)
+                        .map(Value::String)
+                });
+            if let Some(d) = desc {
+                map.insert("descriptive_name".to_string(), d);
+            }
         }
-        AIProvider::Anthropic => {
-            let anthropic_config = AnthropicConfig {
-                api_key: ingestion_config.anthropic.api_key.clone(),
-                model: ingestion_config.anthropic.model.clone(),
-                timeout: Duration::from_secs(ingestion_config.timeout_seconds),
-                fallback_strategy: FallbackStrategy::Chunked,
-                vision_model: Some(ingestion_config.anthropic.model.clone()),
-                max_image_bytes: 5 * 1024 * 1024,
-                base_url: Some(ingestion_config.anthropic.base_url.clone()),
-            };
+    }
 
-            tokio::task::spawn_blocking(move || {
-                let converter = Converter::new(anthropic_config)
-                    .map_err(|e| IngestionError::FileConversionFailed(format!("Converter init: {}", e)))?;
-                converter.convert_path(&file_path_str).map_err(|e| {
-                    log_feature!(
-                        LogFeature::Ingestion,
-                        error,
-                        "Failed to convert file to JSON: {}",
-                        e
-                    );
-                    IngestionError::FileConversionFailed(e.to_string())
-                })
-            })
-            .await
-            .map_err(|e| {
-                log_feature!(
-                    LogFeature::Ingestion,
-                    error,
-                    "Failed to spawn blocking task: {}",
-                    e
-                );
-                IngestionError::FileConversionFailed(format!("Task join: {}", e))
-            })?
-        }
+    Ok(value)
+}
+
+/// Maximum length for a derived descriptive_name (characters).
+const MAX_DESCRIPTIVE_NAME_LEN: usize = 120;
+
+/// Extract the first meaningful sentence from markdown text, skipping YAML frontmatter.
+/// Returns `None` if the body is empty after stripping.
+fn first_sentence(md: &str) -> Option<String> {
+    // Skip YAML frontmatter (--- ... ---)
+    let body = if md.starts_with("---") {
+        md.splitn(3, "---").nth(2).unwrap_or("")
+    } else {
+        md
+    };
+
+    let trimmed = body.trim();
+    if trimmed.is_empty() {
+        return None;
+    }
+
+    // Take the first line, truncate to MAX_DESCRIPTIVE_NAME_LEN
+    let first_line = trimmed.lines().next().unwrap_or("");
+    let sentence = first_line.trim_start_matches('#').trim();
+    if sentence.is_empty() {
+        return None;
+    }
+
+    if sentence.len() <= MAX_DESCRIPTIVE_NAME_LEN {
+        Some(sentence.to_string())
+    } else {
+        // Truncate at word boundary
+        let truncated = &sentence[..MAX_DESCRIPTIVE_NAME_LEN];
+        let end = truncated.rfind(' ').unwrap_or(MAX_DESCRIPTIVE_NAME_LEN);
+        Some(format!("{}...", &sentence[..end]))
     }
 }
 
-/// Convert a file to JSON using file_to_json library (actix-web wrapper)
+/// Remove null-valued entries from a JSON object.
+/// FileMarkdown has many Option<T> fields; nulls would clutter the AI schema prompt.
+fn strip_null_fields(value: &mut Value) {
+    if let Value::Object(map) = value {
+        map.retain(|_, v| !v.is_null());
+    }
+}
+
+/// Convert a file to JSON using file_to_markdown (actix-web wrapper)
 pub async fn convert_file_to_json_http(
     file_path: &PathBuf,
 ) -> Result<Value, actix_web::HttpResponse> {
@@ -233,6 +242,12 @@ pub fn enrich_image_json(json: &mut Value, file_path: &std::path::PathBuf, sourc
             Value::String(s) => Some(s),
             _ => None,
         });
+        // source_file_name — used as hash key for unique record identity
+        if !map.contains_key("source_file_name") {
+            if let Some(sfn) = source_file_name {
+                map.insert("source_file_name".to_string(), Value::String(sfn.to_string()));
+            }
+        }
         // image_type — keep if already set
         if !map.contains_key("image_type") {
             let image_type = classify_image_type(source_file_name.unwrap_or(""));
@@ -553,7 +568,7 @@ mod tests {
 
     #[test]
     fn test_flatten_direct_array_with_single_field_wrappers() {
-        // Test case for arrays returned directly by file_to_json
+        // Test case for arrays returned directly by file converter
         let input = json!([
             {"tweet": {"id": 1, "text": "Hello", "user": "alice"}},
             {"tweet": {"id": 2, "text": "World", "user": "bob"}}
@@ -629,6 +644,73 @@ mod tests {
         enrich_image_json(&mut json, &path, Some("test.jpg"));
         // Should remain unchanged
         assert!(json.is_array());
+    }
+
+    #[test]
+    fn test_strip_null_fields() {
+        let mut value = json!({
+            "source": "report.pdf",
+            "file_type": "pdf",
+            "title": null,
+            "author": null,
+            "page_count": 12,
+            "duration_seconds": null
+        });
+        strip_null_fields(&mut value);
+
+        let map = value.as_object().unwrap();
+        assert_eq!(map.len(), 3);
+        assert_eq!(map["source"], "report.pdf");
+        assert_eq!(map["file_type"], "pdf");
+        assert_eq!(map["page_count"], 12);
+        assert!(!map.contains_key("title"));
+        assert!(!map.contains_key("author"));
+        assert!(!map.contains_key("duration_seconds"));
+    }
+
+    #[test]
+    fn test_strip_null_fields_non_object() {
+        let mut value = json!([1, null, 3]);
+        strip_null_fields(&mut value);
+        // Arrays are not stripped — only object fields
+        assert!(value.is_array());
+        assert_eq!(value.as_array().unwrap().len(), 3);
+    }
+
+    #[test]
+    fn test_first_sentence_with_frontmatter() {
+        let md = "---\nsource: photo.jpg\n---\nA sunset over the ocean with warm orange tones.";
+        assert_eq!(
+            first_sentence(md).unwrap(),
+            "A sunset over the ocean with warm orange tones."
+        );
+    }
+
+    #[test]
+    fn test_first_sentence_no_frontmatter() {
+        let md = "A cat sitting on a keyboard.";
+        assert_eq!(first_sentence(md).unwrap(), "A cat sitting on a keyboard.");
+    }
+
+    #[test]
+    fn test_first_sentence_strips_heading() {
+        let md = "---\nfoo: bar\n---\n# Image Description\nA diagram of system architecture.";
+        assert_eq!(first_sentence(md).unwrap(), "Image Description");
+    }
+
+    #[test]
+    fn test_first_sentence_empty_body() {
+        assert!(first_sentence("---\nfoo: bar\n---\n").is_none());
+        assert!(first_sentence("").is_none());
+        assert!(first_sentence("   ").is_none());
+    }
+
+    #[test]
+    fn test_first_sentence_truncates_long_text() {
+        let long = format!("---\nk: v\n---\n{}", "word ".repeat(50));
+        let result = first_sentence(&long).unwrap();
+        assert!(result.len() <= MAX_DESCRIPTIVE_NAME_LEN + 3); // +3 for "..."
+        assert!(result.ends_with("..."));
     }
 
 }

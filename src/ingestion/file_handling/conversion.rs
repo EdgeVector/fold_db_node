@@ -1,7 +1,7 @@
 //! File conversion utilities — CSV, Twitter JS, code metadata extraction, and unified file reading.
 
 use crate::ingestion::error::IngestionError;
-use crate::ingestion::smart_folder_scanner::{CODE_EXTS, CONFIG_EXTS};
+use crate::ingestion::smart_folder::scanner::{CODE_EXTS, CONFIG_EXTS};
 use crate::ingestion::IngestionResult;
 use regex::Regex;
 use serde_json::Value;
@@ -72,38 +72,32 @@ pub fn twitter_js_to_json(content: &str) -> IngestionResult<String> {
     }
 }
 
+/// Collect all trimmed matches of a regex pattern from the given text.
+fn regex_matches(pattern: &str, text: &str) -> Vec<String> {
+    Regex::new(pattern)
+        .unwrap()
+        .find_iter(text)
+        .map(|m| m.as_str().trim().to_string())
+        .collect()
+}
+
 /// Extract structural metadata from a source code file using regex.
 ///
 /// Returns a `Value` with function/method declarations, class/struct
 /// declarations, and comments found in the source.
 pub fn extract_code_metadata(content: &str, file_name: &str, ext: &str) -> Value {
-    let fn_re = Regex::new(
+    let functions = regex_matches(
         r"(?m)^\s*(?:pub\s+)?(?:async\s+)?(?:fn|def|function|func|sub)\s+(?:\([^)]*\)\s*)?\w+",
-    )
-    .unwrap();
-    let class_re = Regex::new(
+        content,
+    );
+    let classes = regex_matches(
         r"(?m)^\s*(?:pub\s+)?(?:class|struct|trait|enum|interface|type)\s+\w+",
-    )
-    .unwrap();
-    let comment_re = Regex::new(
+        content,
+    );
+    let comments = regex_matches(
         r"(?m)^\s*(?://[/!]?.*|#(?:$|[^!\[].*))",
-    )
-    .unwrap();
-
-    let functions: Vec<String> = fn_re
-        .find_iter(content)
-        .map(|m| m.as_str().trim().to_string())
-        .collect();
-
-    let classes: Vec<String> = class_re
-        .find_iter(content)
-        .map(|m| m.as_str().trim().to_string())
-        .collect();
-
-    let comments: Vec<String> = comment_re
-        .find_iter(content)
-        .map(|m| m.as_str().trim().to_string())
-        .collect();
+        content,
+    );
 
     serde_json::json!({
         "source_file": file_name,
@@ -116,11 +110,32 @@ pub fn extract_code_metadata(content: &str, file_name: &str, ext: &str) -> Value
 
 /// Wrap plain-text content (`.txt`, `.md`, config files) as a `Value`.
 fn wrap_text_content(content: &str, file_name: &str, ext: &str) -> Value {
-    serde_json::json!({
+    // Derive a human-readable category hint from the file path so the AI
+    // can propose a semantic schema name (e.g., "recipes" instead of "txt").
+    let category_hint = derive_category_hint(file_name);
+    let mut obj = serde_json::json!({
         "content": content,
         "source_file": file_name,
         "file_type": ext
-    })
+    });
+    if let Some(hint) = category_hint {
+        obj["category"] = serde_json::json!(hint);
+    }
+    obj
+}
+
+/// Derive a category hint from the file path by looking at parent directory
+/// names and the filename itself. Returns None if no useful hint can be derived.
+fn derive_category_hint(file_path: &str) -> Option<String> {
+    let path = std::path::Path::new(file_path);
+    // Use the parent directory name if available (e.g., "recipes/cookies.txt" -> "recipes")
+    if let Some(parent) = path.parent().and_then(|p| p.file_name()) {
+        let dir = parent.to_string_lossy();
+        if !dir.is_empty() && dir != "." && dir != ".." {
+            return Some(dir.to_string());
+        }
+    }
+    None
 }
 
 /// Returns true if the content looks like a Twitter data export JS file.

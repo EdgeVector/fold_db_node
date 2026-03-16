@@ -9,6 +9,34 @@ use std::fmt;
 #[cfg(feature = "ts-bindings")]
 use ts_rs::TS;
 
+/// Defines a handler response struct with standard derives and ts-bindings export.
+///
+/// Eliminates the repeated 3-line attribute boilerplate on every response type:
+/// `#[derive(Debug, Clone, Serialize, Deserialize)]` + two `#[cfg_attr(feature = "ts-bindings", ...)]`.
+macro_rules! handler_response {
+    (
+        $(#[$outer:meta])*
+        $vis:vis struct $name:ident {
+            $(
+                $(#[$field_meta:meta])*
+                $field_vis:vis $field_name:ident : $field_type:ty
+            ),* $(,)?
+        }
+    ) => {
+        #[derive(Debug, Clone, ::serde::Serialize, ::serde::Deserialize)]
+        #[cfg_attr(feature = "ts-bindings", derive(::ts_rs::TS))]
+        #[cfg_attr(feature = "ts-bindings", ts(export, export_to = "src/fold_node/static-react/src/types/"))]
+        $(#[$outer])*
+        $vis struct $name {
+            $(
+                $(#[$field_meta])*
+                $field_vis $field_name : $field_type,
+            )*
+        }
+    };
+}
+pub(crate) use handler_response;
+
 /// Standard API response envelope
 ///
 /// For progress endpoints, the structure is:
@@ -151,19 +179,15 @@ impl HandlerError {
 /// Result type for handlers
 pub type HandlerResult<T> = Result<ApiResponse<T>, HandlerError>;
 
-/// Simple success/failure response used across handlers.
-///
-/// Defined once here to avoid duplicate definitions in schema, transform, and logs handlers.
-#[derive(Debug, Clone, Serialize, Deserialize)]
-#[cfg_attr(feature = "ts-bindings", derive(TS))]
-#[cfg_attr(
-    feature = "ts-bindings",
-    ts(export, export_to = "src/fold_node/static-react/src/types/")
-)]
-pub struct SuccessResponse {
-    pub success: bool,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub message: Option<String>,
+handler_response! {
+    /// Simple success/failure response used across handlers.
+    ///
+    /// Defined once here to avoid duplicate definitions in schema, transform, and logs handlers.
+    pub struct SuccessResponse {
+        pub success: bool,
+        #[serde(skip_serializing_if = "Option::is_none")]
+        pub message: Option<String>,
+    }
 }
 
 /// Extension trait to convert any error into a HandlerError with context.

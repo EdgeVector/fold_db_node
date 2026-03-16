@@ -6,7 +6,7 @@ mod prompts;
 
 use super::types::{FollowupAnalysis, Message, QueryPlan};
 use crate::ingestion::{
-    ai_client::{build_backend, AiBackend},
+    ai::client::{build_backend, AiBackend},
     config::IngestionConfig,
 };
 use fold_db::schema::SchemaWithState;

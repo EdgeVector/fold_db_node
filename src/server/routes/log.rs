@@ -1,21 +1,37 @@
+use crate::fold_node::OperationProcessor;
+use crate::handlers::{ApiResponse, HandlerError, IntoHandlerError};
 use crate::server::http_server::AppState;
-use crate::server::routes::{handler_error_to_response, require_node_read};
-use actix_web::{web, HttpResponse, Responder, Result};
+use crate::server::routes::{handler_result_to_response, node_or_return};
+use actix_web::{web, HttpResponse, Responder};
 use futures_util::stream::StreamExt;
 use serde::{Deserialize, Serialize};
 use serde_json::json;
-use tokio_stream::wrappers::BroadcastStream; // Keep for backward compatibility
+use tokio_stream::wrappers::BroadcastStream;
+
+const LOG_LEVELS: &[&str] = &["TRACE", "DEBUG", "INFO", "WARN", "ERROR"];
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct LogListResponse {
+    pub logs: serde_json::Value,
+    pub count: usize,
+    pub timestamp: u64,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, utoipa::ToSchema)]
+pub struct LogConfigResponse {
+    pub config: serde_json::Value,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct LogFeaturesResponse {
+    pub features: serde_json::Value,
+    pub available_levels: Vec<String>,
+}
 
 #[derive(Serialize, Deserialize, utoipa::ToSchema)]
 pub struct LogLevelUpdate {
     pub feature: String,
     pub level: String,
-}
-
-#[derive(Serialize, Deserialize, utoipa::ToSchema)]
-pub struct LogConfigResponse {
-    pub message: String,
-    pub current_level: String,
 }
 
 #[derive(Deserialize)]
@@ -37,19 +53,24 @@ pub async fn list_logs(
     query: web::Query<ListLogsQuery>,
     state: web::Data<AppState>,
 ) -> impl Responder {
-    let (user_hash, node) = match require_node_read(&state).await {
-        Ok(res) => res,
-        Err(response) => return response,
-    };
-
-    match crate::handlers::logs::list_logs(query.since, &user_hash, &node).await {
-        Ok(response) => HttpResponse::Ok().json(json!({
-             "logs": response.data.as_ref().map(|d| &d.logs).unwrap_or(&json!([])),
-             "count": response.data.as_ref().map(|d| d.count).unwrap_or(0),
-             "timestamp": response.data.as_ref().map(|d| d.timestamp).unwrap_or(0)
-        })),
-        Err(e) => handler_error_to_response(e),
-    }
+    let (user_hash, node) = node_or_return!(state);
+    let op = OperationProcessor::new(node.clone());
+    handler_result_to_response(async {
+        let logs = op.list_logs(query.since, Some(1000)).await;
+        let count = logs.len();
+        let logs_json = serde_json::to_value(&logs).handler_err("serialize logs")?;
+        Ok(ApiResponse::success_with_user(
+            LogListResponse {
+                logs: logs_json,
+                count,
+                timestamp: std::time::SystemTime::now()
+                    .duration_since(std::time::UNIX_EPOCH)
+                    .unwrap_or_default()
+                    .as_secs(),
+            },
+            user_hash,
+        ))
+    }.await)
 }
 
 /// Stream logs via Server-Sent Events (backward compatibility)
@@ -60,20 +81,17 @@ pub async fn list_logs(
     responses((status = 200, description = "Stream logs"))
 )]
 pub async fn stream_logs() -> impl Responder {
-    // Subscribe to new WebOutput via logging module
     let rx = match fold_db::logging::subscribe() {
         Some(r) => r,
         None => return HttpResponse::InternalServerError().finish(),
     };
 
-    // The WebOutput now broadcasts JSON strings (LogEntry serialized)
-    // We wrap them in SSE format: "data: {JSON}\n\n"
     let stream = BroadcastStream::new(rx).filter_map(|msg| async move {
         match msg {
             Ok(json_str) => Some(Ok::<web::Bytes, actix_web::Error>(web::Bytes::from(
                 format!("data: {}\n\n", json_str),
             ))),
-            Err(_) => None, // Broadcast error (lagging, etc)
+            Err(_) => None,
         }
     });
 
@@ -87,20 +105,17 @@ pub async fn stream_logs() -> impl Responder {
     get,
     path = "/api/logs/config",
     tag = "logs",
-    responses((status = 200, description = "Logging configuration", body = LogConfigResponse))
+    responses((status = 200, description = "Logging configuration"))
 )]
-pub async fn get_config(state: web::Data<AppState>) -> Result<impl Responder> {
-    let (user_hash, node) = match require_node_read(&state).await {
-        Ok(res) => res,
-        Err(response) => return Ok(response),
-    };
-
-    match crate::handlers::logs::get_log_config(&user_hash, &node).await {
-        Ok(response) => Ok(HttpResponse::Ok().json(json!({
-            "config": response.data.as_ref().map(|d| &d.config).unwrap_or(&json!(null))
-        }))),
-        Err(e) => Ok(handler_error_to_response(e)),
-    }
+pub async fn get_config(state: web::Data<AppState>) -> impl Responder {
+    let (user_hash, node) = node_or_return!(state);
+    let op = OperationProcessor::new(node.clone());
+    handler_result_to_response(async {
+        let config = op.get_log_config().await
+            .ok_or_else(|| HandlerError::Internal("Log configuration not available".to_string()))?;
+        let config_json = serde_json::to_value(config).handler_err("serialize log config")?;
+        Ok(ApiResponse::success_with_user(LogConfigResponse { config: config_json }, user_hash))
+    }.await)
 }
 
 /// Update feature-specific log level at runtime
@@ -118,33 +133,26 @@ pub async fn get_config(state: web::Data<AppState>) -> Result<impl Responder> {
 pub async fn update_feature_level(
     level_update: web::Json<LogLevelUpdate>,
     state: web::Data<AppState>,
-) -> Result<impl Responder> {
-    let valid_levels = ["TRACE", "DEBUG", "INFO", "WARN", "ERROR"];
-    if !valid_levels.contains(&level_update.level.as_str()) {
-        return Ok(HttpResponse::BadRequest().json(serde_json::json!({
+) -> impl Responder {
+    if !LOG_LEVELS.contains(&level_update.level.as_str()) {
+        return HttpResponse::BadRequest().json(json!({
             "error": format!("Invalid log level: {}", level_update.level)
-        })));
+        }));
     }
 
-    let (user_hash, node) = match require_node_read(&state).await {
-        Ok(res) => res,
-        Err(response) => return Ok(response),
-    };
-
-    match crate::handlers::logs::update_log_feature_level(
-        &level_update.feature,
-        &level_update.level,
-        &user_hash,
-        &node,
-    )
-    .await
-    {
-        Ok(response) => Ok(HttpResponse::Ok().json(json!({
-            "success": response.data.as_ref().map(|d| d.success).unwrap_or(false),
-            "message": response.data.as_ref().map(|d| &d.message)
-        }))),
-        Err(e) => Ok(handler_error_to_response(e)),
-    }
+    let (user_hash, node) = node_or_return!(state);
+    let op = OperationProcessor::new(node.clone());
+    handler_result_to_response(async {
+        op.update_log_feature_level(&level_update.feature, &level_update.level).await
+            .map_err(HandlerError::from)?;
+        Ok(ApiResponse::success_with_user(
+            crate::handlers::response::SuccessResponse {
+                success: true,
+                message: Some(format!("Updated {} log level to {}", level_update.feature, level_update.level)),
+            },
+            user_hash,
+        ))
+    }.await)
 }
 
 /// Reload logging configuration from file
@@ -154,19 +162,19 @@ pub async fn update_feature_level(
     tag = "logs",
     responses((status = 200, description = "Reloaded"), (status = 400, description = "Bad request"))
 )]
-pub async fn reload_config(state: web::Data<AppState>) -> Result<impl Responder> {
-    let (user_hash, node) = match require_node_read(&state).await {
-        Ok(res) => res,
-        Err(response) => return Ok(response),
-    };
-
-    match crate::handlers::logs::reload_log_config("config/logging.toml", &user_hash, &node).await {
-        Ok(response) => Ok(HttpResponse::Ok().json(json!({
-            "success": response.data.as_ref().map(|d| d.success).unwrap_or(false),
-            "message": response.data.as_ref().map(|d| &d.message)
-        }))),
-        Err(e) => Ok(handler_error_to_response(e)),
-    }
+pub async fn reload_config(state: web::Data<AppState>) -> impl Responder {
+    let (user_hash, node) = node_or_return!(state);
+    let op = OperationProcessor::new(node.clone());
+    handler_result_to_response(async {
+        op.reload_log_config("config/logging.toml").await.map_err(HandlerError::from)?;
+        Ok(ApiResponse::success_with_user(
+            crate::handlers::response::SuccessResponse {
+                success: true,
+                message: Some("Configuration reloaded successfully".to_string()),
+            },
+            user_hash,
+        ))
+    }.await)
 }
 
 /// Get available log features and their current levels
@@ -176,17 +184,19 @@ pub async fn reload_config(state: web::Data<AppState>) -> Result<impl Responder>
     tag = "logs",
     responses((status = 200, description = "Features", body = serde_json::Value))
 )]
-pub async fn get_features(state: web::Data<AppState>) -> Result<impl Responder> {
-    let (user_hash, node) = match require_node_read(&state).await {
-        Ok(res) => res,
-        Err(response) => return Ok(response),
-    };
-
-    match crate::handlers::logs::get_log_features(&user_hash, &node).await {
-        Ok(response) => Ok(HttpResponse::Ok().json(json!({
-            "features": response.data.as_ref().map(|d| &d.features).unwrap_or(&json!(null)),
-            "available_levels": response.data.as_ref().map(|d| &d.available_levels).unwrap_or(&vec![])
-        }))),
-        Err(e) => Ok(handler_error_to_response(e)),
-    }
+pub async fn get_features(state: web::Data<AppState>) -> impl Responder {
+    let (user_hash, node) = node_or_return!(state);
+    let op = OperationProcessor::new(node.clone());
+    handler_result_to_response(async {
+        let features = op.get_log_features().await
+            .ok_or_else(|| HandlerError::Internal("Log features not available".to_string()))?;
+        let features_json = serde_json::to_value(features).handler_err("serialize log features")?;
+        Ok(ApiResponse::success_with_user(
+            LogFeaturesResponse {
+                features: features_json,
+                available_levels: LOG_LEVELS.iter().map(|s| s.to_string()).collect(),
+            },
+            user_hash,
+        ))
+    }.await)
 }

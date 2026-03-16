@@ -17,10 +17,6 @@ pub enum IngestionError {
     #[error("JSON parsing error: {0}")]
     JsonError(#[from] serde_json::Error),
 
-    /// Schema parsing errors from AI responses
-    #[error("Schema parsing error: {0}")]
-    SchemaParsingError(String),
-
     /// Schema creation errors
     #[error("Schema creation error: {0}")]
     SchemaCreationError(String),
@@ -45,14 +41,6 @@ pub enum IngestionError {
     #[error("File conversion failed: {0}")]
     FileConversionFailed(String),
 
-    /// Storage errors (S3, file system, etc.)
-    #[error("Storage error: {0}")]
-    StorageError(String),
-
-    /// Security/Auth errors
-    #[error("Security error: {0}")]
-    SecurityError(String),
-
     /// Authentication errors (invalid or expired API key)
     #[error("{provider} authentication error: {message}")]
     AuthenticationError { provider: String, message: String },
@@ -74,11 +62,6 @@ impl IngestionError {
     /// Create a new Ollama API error
     pub fn ollama_error(msg: impl Into<String>) -> Self {
         Self::OllamaError(msg.into())
-    }
-
-    /// Create a new schema parsing error
-    pub fn schema_parsing_error(msg: impl Into<String>) -> Self {
-        Self::SchemaParsingError(msg.into())
     }
 
     /// Create a new configuration error
@@ -267,7 +250,7 @@ mod tests {
         assert!(input.user_message().contains("bad data"));
 
         // Other variants fall through to Display
-        let schema = IngestionError::SchemaParsingError("parse fail".to_string());
+        let schema = IngestionError::AIResponseValidationError("parse fail".to_string());
         assert!(schema.user_message().contains("parse fail"));
     }
 

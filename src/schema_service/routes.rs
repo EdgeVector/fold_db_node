@@ -1,6 +1,6 @@
 use actix_web::{web, HttpResponse, Responder};
 use serde::Deserialize;
-use std::collections::HashMap;
+use std::sync::RwLockReadGuard;
 
 use fold_db::log_feature;
 use fold_db::logging::features::LogFeature;
@@ -9,27 +9,27 @@ use fold_db::schema::types::Schema;
 use super::state::{SchemaServiceState, SchemaStorage};
 use super::types::*;
 
+/// Acquire a read lock on the schemas map, returning an HTTP 500 on poisoned lock.
+fn read_schemas(
+    state: &SchemaServiceState,
+) -> Result<RwLockReadGuard<'_, std::collections::HashMap<String, Schema>>, HttpResponse> {
+    state.schemas.read().map_err(|e| {
+        log_feature!(LogFeature::Schema, error, "Failed to acquire schemas read lock: {}", e);
+        HttpResponse::InternalServerError().json(ErrorResponse {
+            error: "Failed to acquire schemas read lock".to_string(),
+        })
+    })
+}
+
 /// List all available schemas
 pub(super) async fn list_schemas(state: web::Data<SchemaServiceState>) -> impl Responder {
-    let schemas = match state.schemas.read() {
+    let schemas = match read_schemas(&state) {
         Ok(s) => s,
-        Err(e) => {
-            log_feature!(
-                LogFeature::Schema,
-                error,
-                "Failed to acquire schemas read lock: {}",
-                e
-            );
-            return HttpResponse::InternalServerError().json(ErrorResponse {
-                error: "Failed to acquire schemas read lock".to_string(),
-            });
-        }
+        Err(r) => return r,
     };
 
-    let schema_names: Vec<String> = schemas.keys().cloned().collect();
-
     HttpResponse::Ok().json(SchemasListResponse {
-        schemas: schema_names,
+        schemas: schemas.keys().cloned().collect(),
     })
 }
 
@@ -37,25 +37,13 @@ pub(super) async fn list_schemas(state: web::Data<SchemaServiceState>) -> impl R
 pub(super) async fn get_available_schemas(
     state: web::Data<SchemaServiceState>,
 ) -> impl Responder {
-    let schemas = match state.schemas.read() {
+    let schemas = match read_schemas(&state) {
         Ok(s) => s,
-        Err(e) => {
-            log_feature!(
-                LogFeature::Schema,
-                error,
-                "Failed to acquire schemas read lock: {}",
-                e
-            );
-            return HttpResponse::InternalServerError().json(ErrorResponse {
-                error: "Failed to acquire schemas read lock".to_string(),
-            });
-        }
+        Err(r) => return r,
     };
 
-    let schema_list: Vec<Schema> = schemas.values().cloned().collect();
-
     HttpResponse::Ok().json(AvailableSchemasResponse {
-        schemas: schema_list,
+        schemas: schemas.values().cloned().collect(),
     })
 }
 
@@ -65,37 +53,17 @@ pub(super) async fn get_schema(
     state: web::Data<SchemaServiceState>,
 ) -> impl Responder {
     let schema_name = path.into_inner();
-    log_feature!(
-        LogFeature::Schema,
-        info,
-        "Schema service: getting schema '{}'",
-        schema_name
-    );
+    log_feature!(LogFeature::Schema, info, "Schema service: getting schema '{}'", schema_name);
 
-    let schemas = match state.schemas.read() {
+    let schemas = match read_schemas(&state) {
         Ok(s) => s,
-        Err(e) => {
-            log_feature!(
-                LogFeature::Schema,
-                error,
-                "Failed to acquire schemas read lock: {}",
-                e
-            );
-            return HttpResponse::InternalServerError().json(ErrorResponse {
-                error: "Failed to acquire schemas read lock".to_string(),
-            });
-        }
+        Err(r) => return r,
     };
 
     match schemas.get(&schema_name) {
         Some(schema) => HttpResponse::Ok().json(schema),
         None => {
-            log_feature!(
-                LogFeature::Schema,
-                warn,
-                "Schema '{}' not found",
-                schema_name
-            );
+            log_feature!(LogFeature::Schema, warn, "Schema '{}' not found", schema_name);
             HttpResponse::NotFound().json(ErrorResponse {
                 error: "Schema not found".to_string(),
             })
@@ -125,11 +93,9 @@ pub(super) async fn find_similar(
     }
 
     log_feature!(
-        LogFeature::Schema,
-        info,
+        LogFeature::Schema, info,
         "Schema service: finding schemas similar to '{}' with threshold {}",
-        schema_name,
-        threshold
+        schema_name, threshold
     );
 
     match state.find_similar_schemas(&schema_name, threshold) {
@@ -151,27 +117,13 @@ pub(super) async fn find_similar(
 
 /// Reload schemas from the directory
 pub(super) async fn reload_schemas(state: web::Data<SchemaServiceState>) -> impl Responder {
-    log_feature!(
-        LogFeature::Schema,
-        info,
-        "Schema service: reloading schemas"
-    );
+    log_feature!(LogFeature::Schema, info, "Schema service: reloading schemas");
 
     match state.load_schemas().await {
         Ok(_) => {
-            let schemas = match state.schemas.read() {
+            let schemas = match read_schemas(&state) {
                 Ok(s) => s,
-                Err(e) => {
-                    log_feature!(
-                        LogFeature::Schema,
-                        error,
-                        "Failed to acquire schemas read lock: {}",
-                        e
-                    );
-                    return HttpResponse::InternalServerError().json(ErrorResponse {
-                        error: "Failed to acquire schemas read lock".to_string(),
-                    });
-                }
+                Err(r) => return r,
             };
 
             HttpResponse::Ok().json(ReloadResponse {
@@ -196,11 +148,9 @@ pub(super) async fn add_schema(
     let schema_name = request.schema.name.clone();
 
     log_feature!(
-        LogFeature::Schema,
-        info,
+        LogFeature::Schema, info,
         "Schema service: adding schema '{}' with {} mutation mappers",
-        schema_name,
-        request.mutation_mappers.len()
+        schema_name, request.mutation_mappers.len()
     );
 
     match state
@@ -211,31 +161,45 @@ pub(super) async fn add_schema(
             HttpResponse::Created().json(AddSchemaResponse {
                 schema,
                 mutation_mappers,
+                replaced_schema: None,
             })
         }
-        Ok(SchemaAddOutcome::AlreadyExists(schema)) => {
+        Ok(SchemaAddOutcome::AlreadyExists(schema, mutation_mappers)) => {
             HttpResponse::Ok().json(AddSchemaResponse {
                 schema,
-                mutation_mappers: HashMap::new(),
+                mutation_mappers,
+                replaced_schema: None,
             })
         }
-        Ok(SchemaAddOutcome::TooSimilar(conflict)) => {
-            HttpResponse::Conflict().json(ConflictResponse {
-                error: "Schema too similar to existing schema".to_string(),
-                similarity: conflict.similarity,
-                closest_schema: conflict.closest_schema,
+        Ok(SchemaAddOutcome::Expanded(old_name, schema, mutation_mappers)) => {
+            HttpResponse::Created().json(AddSchemaResponse {
+                schema,
+                mutation_mappers,
+                replaced_schema: Some(old_name),
             })
         }
         Err(error) => {
-            log_feature!(
-                LogFeature::Schema,
-                error,
-                "Failed to add schema '{}': {}",
-                schema_name,
-                error
-            );
+            log_feature!(LogFeature::Schema, error, "Failed to add schema '{}': {}", schema_name, error);
             HttpResponse::BadRequest().json(ErrorResponse {
                 error: format!("Failed to add schema: {}", error),
+            })
+        }
+    }
+}
+
+/// Batch check whether proposed schemas can reuse existing ones
+pub(super) async fn batch_check_reuse(
+    payload: web::Json<BatchSchemaReuseRequest>,
+    state: web::Data<SchemaServiceState>,
+) -> impl Responder {
+    let request = payload.into_inner();
+
+    match state.batch_check_schema_reuse(&request.schemas) {
+        Ok(matches) => HttpResponse::Ok().json(BatchSchemaReuseResponse { matches }),
+        Err(e) => {
+            log_feature!(LogFeature::Schema, error, "Batch schema reuse check failed: {}", e);
+            HttpResponse::InternalServerError().json(ErrorResponse {
+                error: format!("Batch schema reuse check failed: {}", e),
             })
         }
     }
@@ -253,7 +217,6 @@ pub(super) async fn reset_database(
     state: web::Data<SchemaServiceState>,
     req: web::Json<ResetRequest>,
 ) -> impl Responder {
-    // Require explicit confirmation
     if !req.confirm {
         return HttpResponse::BadRequest().json(ResetResponse {
             success: false,
@@ -261,23 +224,14 @@ pub(super) async fn reset_database(
         });
     }
 
-    log_feature!(
-        LogFeature::Schema,
-        info,
-        "Resetting schema service database"
-    );
+    log_feature!(LogFeature::Schema, info, "Resetting schema service database");
 
     // Clear the in-memory schemas map
     {
         let mut schemas = match state.schemas.write() {
             Ok(s) => s,
             Err(e) => {
-                log_feature!(
-                    LogFeature::Schema,
-                    error,
-                    "Failed to acquire schemas write lock: {}",
-                    e
-                );
+                log_feature!(LogFeature::Schema, error, "Failed to acquire schemas write lock: {}", e);
                 return HttpResponse::InternalServerError().json(ResetResponse {
                     success: false,
                     message: "Failed to acquire schemas write lock".to_string(),
@@ -290,40 +244,22 @@ pub(super) async fn reset_database(
     // Clear storage backend
     match &state.storage {
         SchemaStorage::Sled { db, schemas_tree } => {
-            // Clear all entries from the schemas tree
             if let Err(e) = schemas_tree.clear() {
-                log_feature!(
-                    LogFeature::Schema,
-                    error,
-                    "Failed to clear schemas tree: {}",
-                    e
-                );
+                log_feature!(LogFeature::Schema, error, "Failed to clear schemas tree: {}", e);
                 return HttpResponse::InternalServerError().json(ResetResponse {
                     success: false,
                     message: format!("Failed to reset sled database: {}", e),
                 });
             }
 
-            // Flush to ensure changes are persisted
             if let Err(e) = db.flush() {
-                log_feature!(
-                    LogFeature::Schema,
-                    warn,
-                    "Failed to flush database after reset: {}",
-                    e
-                );
+                log_feature!(LogFeature::Schema, warn, "Failed to flush database after reset: {}", e);
             }
         }
         #[cfg(feature = "aws-backend")]
         SchemaStorage::Cloud { store } => {
-            // Clear all schemas from DynamoDB
             if let Err(e) = store.clear_all_schemas().await {
-                log_feature!(
-                    LogFeature::Schema,
-                    error,
-                    "Failed to clear DynamoDB schemas: {}",
-                    e
-                );
+                log_feature!(LogFeature::Schema, error, "Failed to clear DynamoDB schemas: {}", e);
                 return HttpResponse::InternalServerError().json(ResetResponse {
                     success: false,
                     message: format!("Failed to reset DynamoDB: {}", e),
@@ -332,11 +268,7 @@ pub(super) async fn reset_database(
         }
     }
 
-    log_feature!(
-        LogFeature::Schema,
-        info,
-        "Schema service database reset successfully"
-    );
+    log_feature!(LogFeature::Schema, info, "Schema service database reset successfully");
 
     HttpResponse::Ok().json(ResetResponse {
         success: true,

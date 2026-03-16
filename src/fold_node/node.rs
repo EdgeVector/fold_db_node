@@ -84,9 +84,7 @@ impl FoldNode {
     /// Log schema service configuration status.
     fn log_schema_service(config: &NodeConfig) {
         if let Some(schema_service_url) = &config.schema_service_url {
-            if schema_service_url.starts_with("test://")
-                || schema_service_url.starts_with("mock://")
-            {
+            if Self::is_test_schema_service(schema_service_url) {
                 log_feature!(
                     LogFeature::Database,
                     info,
@@ -190,44 +188,59 @@ impl FoldNode {
         self.config.schema_service_url.clone()
     }
 
-    /// Fetch available schemas from the schema service.
-    /// Returns an error if the schema service URL is not configured or if the fetch fails.
-    pub async fn fetch_available_schemas(&self) -> FoldDbResult<Vec<fold_db::schema::types::Schema>> {
-        let schema_service_url = self.schema_service_url().ok_or_else(|| {
+    /// Whether a schema service URL is a test/mock URL (not a real service).
+    pub fn is_test_schema_service(url: &str) -> bool {
+        url.starts_with("test://") || url.starts_with("mock://")
+    }
+
+    /// Get the real (non-test) schema service URL, or error.
+    fn require_real_schema_service(&self) -> FoldDbResult<String> {
+        let url = self.schema_service_url().ok_or_else(|| {
             FoldDbError::Config("Schema service URL is not configured".to_string())
         })?;
-
-        if schema_service_url.starts_with("test://") || schema_service_url.starts_with("mock://") {
+        if Self::is_test_schema_service(&url) {
             return Err(FoldDbError::Config(
-                "Cannot fetch schemas from test/mock schema service".to_string(),
+                "Cannot use test/mock schema service for this operation".to_string(),
             ));
         }
+        Ok(url)
+    }
 
-        let client = crate::fold_node::SchemaServiceClient::new(&schema_service_url);
-        client.get_available_schemas().await
+    /// Fetch available schemas from the schema service.
+    pub async fn fetch_available_schemas(&self) -> FoldDbResult<Vec<fold_db::schema::types::Schema>> {
+        let url = self.require_real_schema_service()?;
+        crate::fold_node::SchemaServiceClient::new(&url).get_available_schemas().await
     }
 
     /// Add a new schema to the schema service.
-    /// Returns an error if the schema service URL is not configured or if the operation fails.
     pub async fn add_schema_to_service(
         &self,
         schema: &fold_db::schema::types::Schema,
-    ) -> FoldDbResult<fold_db::schema::types::Schema> {
+    ) -> FoldDbResult<crate::fold_node::schema_client::AddSchemaResponse> {
+        let url = self.require_real_schema_service()?;
+        crate::fold_node::SchemaServiceClient::new(&url)
+            .add_schema(schema, std::collections::HashMap::new())
+            .await
+    }
+
+    /// Batch check whether proposed schemas can reuse existing ones.
+    /// Returns empty matches for test/mock schema service URLs.
+    pub async fn batch_check_schema_reuse(
+        &self,
+        entries: &[crate::schema_service::types::SchemaLookupEntry],
+    ) -> FoldDbResult<crate::schema_service::types::BatchSchemaReuseResponse> {
         let schema_service_url = self.schema_service_url().ok_or_else(|| {
             FoldDbError::Config("Schema service URL is not configured".to_string())
         })?;
 
-        if schema_service_url.starts_with("test://") || schema_service_url.starts_with("mock://") {
-            return Err(FoldDbError::Config(
-                "Cannot add schemas to test/mock schema service".to_string(),
-            ));
+        if Self::is_test_schema_service(&schema_service_url) {
+            return Ok(crate::schema_service::types::BatchSchemaReuseResponse {
+                matches: std::collections::HashMap::new(),
+            });
         }
 
-        let client = crate::fold_node::SchemaServiceClient::new(&schema_service_url);
-        client
-            .add_schema(schema, std::collections::HashMap::new())
-            .await
-            .map(|response| response.schema)
+        crate::fold_node::SchemaServiceClient::new(&schema_service_url)
+            .batch_check_schema_reuse(entries).await
     }
 
     /// Execute a batch of mutations.

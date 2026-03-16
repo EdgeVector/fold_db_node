@@ -22,10 +22,7 @@ struct RefLocation {
 impl OperationProcessor {
     /// Executes a query and returns raw structured results, not JSON.
     pub async fn execute_query_map(&self, query: Query) -> FoldDbResult<QueryResultMap> {
-        let db = self
-            .node
-            .get_fold_db()
-            .await?;
+        let db = self.get_db().await?;
         let results = db.query_executor.query(query).await;
         Ok(results?)
     }
@@ -197,10 +194,7 @@ impl OperationProcessor {
         HashMap<String, Vec<String>>,
         HashMap<String, (Option<String>, Option<String>)>,
     )> {
-        let db = self
-            .node
-            .get_fold_db()
-            .await?;
+        let db = self.get_db().await?;
 
         let schema = match db
             .schema_manager
@@ -290,6 +284,14 @@ impl OperationProcessor {
         (ref_locations, keys_by_schema)
     }
 
+    /// Extract a key component (hash or range) from a record's fields using the field name.
+    fn extract_key_component(fields_obj: Option<&Value>, field_name: &Option<String>) -> Option<String> {
+        field_name
+            .as_ref()
+            .and_then(|name| fields_obj?.get(name))
+            .and_then(Self::value_to_key_string)
+    }
+
     /// Builds a KeyValue -> Value index from child query results using the schema's key config.
     fn build_child_index(
         child_results: Vec<Value>,
@@ -298,22 +300,12 @@ impl OperationProcessor {
         let mut index: HashMap<KeyValue, Value> = HashMap::new();
         for record in child_results {
             let fields_obj = record.get("fields");
-            let hash = key_config
-                .and_then(|(h, _)| h.as_ref())
-                .and_then(|hash_field| {
-                    fields_obj
-                        .and_then(|f| f.get(hash_field))
-                        .and_then(Self::value_to_key_string)
-                });
-            let range = key_config
-                .and_then(|(_, r)| r.as_ref())
-                .and_then(|range_field| {
-                    fields_obj
-                        .and_then(|f| f.get(range_field))
-                        .and_then(Self::value_to_key_string)
-                });
-            let kv = KeyValue::new(hash, range);
-            index.insert(kv, record);
+            let (hash_field, range_field) = key_config
+                .map(|(h, r)| (h, r))
+                .unwrap_or((&None, &None));
+            let hash = Self::extract_key_component(fields_obj, hash_field);
+            let range = Self::extract_key_component(fields_obj, range_field);
+            index.insert(KeyValue::new(hash, range), record);
         }
         index
     }
@@ -406,10 +398,7 @@ impl OperationProcessor {
         offset: usize,
         limit: usize,
     ) -> FoldDbResult<(Vec<KeyValue>, usize)> {
-        let db = self
-            .node
-            .get_fold_db()
-            .await?;
+        let db = self.get_db().await?;
 
         let mut schema = db
             .schema_manager
@@ -419,23 +408,56 @@ impl OperationProcessor {
                 FoldDbError::Database(format!("Schema '{}' not found", schema_name))
             })?;
 
-        // Try each runtime field until one returns keys.
-        // HashMap iteration order is non-deterministic, and some fields may
-        // fail to load their molecule, so we try all of them.
         if schema.runtime_fields.is_empty() {
+            log::warn!(
+                "list_schema_keys: schema '{}' has no runtime_fields (schema_type={:?}, fields={:?}, field_molecule_uuids={:?})",
+                schema_name,
+                schema.schema_type,
+                schema.fields,
+                schema.field_molecule_uuids,
+            );
             return Err(FoldDbError::Database(format!(
                 "Schema '{}' has no fields",
                 schema_name
             )));
         }
 
+        // Use the schema's key field (hash_field or range_field) to enumerate keys,
+        // since that field's molecule is guaranteed to have all records.
+        // Falling back to trying all fields if no key config is set.
+        let key_field_name = schema
+            .key
+            .as_ref()
+            .and_then(|k| k.hash_field.as_ref().or(k.range_field.as_ref()))
+            .cloned();
+
         let mut all_keys = Vec::new();
-        for field in schema.runtime_fields.values_mut() {
-            field.refresh_from_db(&db.db_ops).await;
-            all_keys = field.get_all_keys();
-            if !all_keys.is_empty() {
-                break;
+
+        if let Some(ref kf) = key_field_name {
+            if let Some(field) = schema.runtime_fields.get_mut(kf) {
+                field.refresh_from_db(&db.db_ops).await;
+                all_keys = field.get_all_keys();
             }
+        }
+
+        // Fallback: if key field didn't work, try all fields and keep the one
+        // with the most keys (the key field may not be loaded yet after expansion).
+        if all_keys.is_empty() {
+            for field in schema.runtime_fields.values_mut() {
+                field.refresh_from_db(&db.db_ops).await;
+                let keys = field.get_all_keys();
+                if keys.len() > all_keys.len() {
+                    all_keys = keys;
+                }
+            }
+        }
+
+        if all_keys.is_empty() {
+            log::warn!(
+                "list_schema_keys: no keys found across any field for schema '{}' (field_molecule_uuids={:?})",
+                schema_name,
+                schema.field_molecule_uuids,
+            );
         }
 
         let total = all_keys.len();
@@ -450,10 +472,7 @@ impl OperationProcessor {
             return Err(FoldDbError::Config("Term cannot be empty".to_string()));
         }
 
-        let db = self
-            .node
-            .get_fold_db()
-            .await?;
+        let db = self.get_db().await?;
 
         Ok(db.native_search_all_classifications(term)
             .await?)

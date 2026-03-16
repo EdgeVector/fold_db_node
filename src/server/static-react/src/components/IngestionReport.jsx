@@ -5,7 +5,7 @@ import { mutationClient } from '../api/clients'
 import { schemaClient } from '../api/clients/schemaClient'
 import { FieldsTable } from './StructuredResults'
 import SchemaName from './shared/SchemaName'
-import { getFieldNames as getFieldNamesUtil, toggleSetItem } from '../utils/schemaUtils'
+import { getFieldNames as getFieldNamesUtil, getSchemaDisplayName, toggleSetItem } from '../utils/schemaUtils'
 import {
   keyId,
   keyLabel,
@@ -23,7 +23,7 @@ export default function IngestionReport({ ingestionResult, onDismiss }) {
   const allSchemas = useAppSelector(selectAllSchemas)
 
   const data = ingestionResult?.data || ingestionResult
-  const schemasWritten = data?.schemas_written || []
+  const schemasWrittenRaw = data?.schemas_written || []
   const mutationsGenerated = data?.mutations_generated ?? 0
   const mutationsExecuted = data?.mutations_executed ?? 0
   const newSchemaCreated = data?.new_schema_created ?? false
@@ -47,6 +47,18 @@ export default function IngestionReport({ ingestionResult, onDismiss }) {
     }
     return map
   }, [allSchemas])
+
+  // Filter out removed schemas and sort alphabetically by human-readable name
+  const schemasWritten = useMemo(() => {
+    const visible = schemasLoaded
+      ? schemasWrittenRaw.filter((sw) => !!schemaLookup[sw.schema_name])
+      : schemasWrittenRaw
+    return [...visible].sort((a, b) => {
+      const nameA = getSchemaDisplayName(schemaLookup[a.schema_name]) || a.schema_name || ''
+      const nameB = getSchemaDisplayName(schemaLookup[b.schema_name]) || b.schema_name || ''
+      return nameA.localeCompare(nameB)
+    })
+  }, [schemasWrittenRaw, schemaLookup, schemasLoaded])
 
   // Schema-level expand state
   const [expandedSchemas, setExpandedSchemas] = useState(() => new Set())
@@ -185,11 +197,6 @@ export default function IngestionReport({ ingestionResult, onDismiss }) {
                   <span className="text-xs text-tertiary">({fieldCount(name)} fields)</span>
                 )}
                 {schema && <StateBadge state={schema.state || 'available'} />}
-                {!schema && schemasLoaded && (
-                  <span className="inline-flex items-center px-1.5 py-0.5 text-[10px] font-semibold rounded bg-gruvbox-red/20 text-gruvbox-red">
-                    removed
-                  </span>
-                )}
               </button>
 
               {/* Keys list */}

@@ -48,19 +48,13 @@ impl OperationProcessor {
     pub async fn get_event_statistics(
         &self,
     ) -> FoldDbResult<fold_db::fold_db_core::infrastructure::event_statistics::EventStatistics> {
-        let db = self
-            .node
-            .get_fold_db()
-            .await?;
+        let db = self.get_db().await?;
         Ok(db.get_event_statistics())
     }
 
     /// Get indexing status.
     pub async fn get_indexing_status(&self) -> FoldDbResult<IndexingStatus> {
-        let db = self
-            .node
-            .get_fold_db()
-            .await?;
+        let db = self.get_db().await?;
         Ok(db.get_indexing_status().await)
     }
 
@@ -97,7 +91,7 @@ impl OperationProcessor {
         let config = self.node.config.clone();
         let db_path = config.get_storage_path();
 
-        if let Ok(db) = self.node.get_fold_db().await {
+        if let Ok(db) = self.get_db().await {
             if let Err(e) = db.close() {
                 log::warn!("Failed to close database during reset: {}", e);
             }
@@ -193,7 +187,7 @@ impl OperationProcessor {
         auto_execute: bool,
         external_tracker: Option<crate::ingestion::ProgressTracker>,
     ) -> FoldDbResult<crate::ingestion::IngestionResponse> {
-        use crate::ingestion::json_processor::convert_file_to_json;
+        use crate::ingestion::file_handling::json_processor::convert_file_to_json;
         use crate::ingestion::progress::ProgressService;
         use crate::ingestion::smart_folder;
         use crate::ingestion::IngestionRequest;
@@ -262,7 +256,7 @@ impl OperationProcessor {
         use crate::fold_node::llm_query::service::LlmQueryService;
         use crate::ingestion::config::IngestionConfig;
 
-        let config = IngestionConfig::from_env_allow_empty();
+        let config = IngestionConfig::load_or_default();
         let service = LlmQueryService::new(config).map_err(FoldDbError::Other)?;
 
         let schemas = self.list_schemas().await?;
@@ -297,7 +291,8 @@ impl OperationProcessor {
             .await
             .map_err(|e| FoldDbError::Config(format!("Failed to load E2E keys: {e}")))?;
 
-        let sync_setup = fold_db::sync::SyncSetup::from_exemem(api_url, api_key);
+        let data_dir = std::env::var("FOLD_STORAGE_PATH").unwrap_or_else(|_| "data".to_string());
+        let sync_setup = fold_db::sync::SyncSetup::from_exemem(api_url, api_key, &data_dir);
         let sync_crypto: std::sync::Arc<dyn fold_db::crypto::CryptoProvider> =
             std::sync::Arc::new(fold_db::crypto::LocalCryptoProvider::from_key(
                 e2e_keys.encryption_key(),

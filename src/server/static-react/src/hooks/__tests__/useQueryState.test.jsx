@@ -25,20 +25,20 @@ describe('useQueryState Hook', () => {
     {
       name: 'UserSchema',
       state: 'approved',
-      schema_type: { Range: { range_key: 'range_field' } },
+      schema_type: 'Range',
       key: { range_field: 'range_field' },
       fields: ['range_field', 'id', 'name', 'age']
     },
     {
       name: 'ProductSchema',
       state: 'approved',
-      schema_type: { Single: {} },
+      schema_type: 'Single',
       fields: ['product_id', 'price', 'category']
     },
     {
       name: 'BlockedSchema',
       state: 'blocked',
-      schema_type: { Single: {} },
+      schema_type: 'Single',
       fields: ['field1']
     }
   ];

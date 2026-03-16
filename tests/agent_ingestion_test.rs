@@ -17,7 +17,7 @@ use fold_db_node::fold_node::node::FoldNode;
 use fold_db_node::fold_node::OperationProcessor;
 use fold_db_node::ingestion::IngestionConfig;
 use fold_db_node::schema_service::server::{
-    AddSchemaResponse, ConflictResponse, ErrorResponse, SchemaAddOutcome, SchemaServiceState,
+    AddSchemaResponse, ErrorResponse, SchemaAddOutcome, SchemaServiceState,
     SchemasListResponse,
 };
 mod common;
@@ -84,19 +84,21 @@ async fn handle_add_schema(
             HttpResponse::Created().json(AddSchemaResponse {
                 schema,
                 mutation_mappers,
+                replaced_schema: None,
             })
         }
-        Ok(SchemaAddOutcome::AlreadyExists(schema)) => {
+        Ok(SchemaAddOutcome::AlreadyExists(schema, _)) => {
             HttpResponse::Ok().json(AddSchemaResponse {
                 schema,
                 mutation_mappers: HashMap::new(),
+                replaced_schema: None,
             })
         }
-        Ok(SchemaAddOutcome::TooSimilar(conflict)) => {
-            HttpResponse::Conflict().json(ConflictResponse {
-                error: "Schema too similar to existing schema".to_string(),
-                similarity: conflict.similarity,
-                closest_schema: conflict.closest_schema,
+        Ok(SchemaAddOutcome::Expanded(old_name, schema, mutation_mappers)) => {
+            HttpResponse::Created().json(AddSchemaResponse {
+                schema,
+                mutation_mappers,
+                replaced_schema: Some(old_name),
             })
         }
         Err(error) => HttpResponse::BadRequest().json(ErrorResponse {

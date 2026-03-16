@@ -16,16 +16,11 @@ pub struct AvailableSchemasResponse {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct SchemaSimilarityResponse {
-    pub similarity: f64,
-    pub closest_schema: Schema,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
 pub enum SchemaAddOutcome {
     Added(Schema, HashMap<String, String>), // Schema and mutation_mappers
-    AlreadyExists(Schema),                  // Exact same identity hash
-    TooSimilar(SchemaSimilarityResponse),
+    AlreadyExists(Schema, HashMap<String, String>), // Exact same identity hash + mappers from canonicalization
+    /// Existing schema was expanded with new fields (old schema name, expanded schema, mappers)
+    Expanded(String, Schema, HashMap<String, String>),
 }
 
 /// Error response structure
@@ -46,6 +41,10 @@ pub struct AddSchemaRequest {
 pub struct AddSchemaResponse {
     pub schema: Schema,
     pub mutation_mappers: HashMap<String, String>,
+    /// When a schema expansion occurred, this contains the old schema name
+    /// that was replaced. The node should remove the old schema and load the new one.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub replaced_schema: Option<String>,
 }
 
 /// Reload response structure
@@ -59,14 +58,6 @@ pub struct ReloadResponse {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct HealthResponse {
     pub status: String,
-}
-
-/// Conflict response for similar schemas
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct ConflictResponse {
-    pub error: String,
-    pub similarity: f64,
-    pub closest_schema: Schema,
 }
 
 /// A schema entry with its similarity score
@@ -95,4 +86,35 @@ pub struct ResetRequest {
 pub struct ResetResponse {
     pub success: bool,
     pub message: String,
+}
+
+/// A single schema lookup entry in a batch reuse request
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct SchemaLookupEntry {
+    pub descriptive_name: String,
+    pub fields: Vec<String>,
+}
+
+/// Batch request: multiple schema names to check at once
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct BatchSchemaReuseRequest {
+    pub schemas: Vec<SchemaLookupEntry>,
+}
+
+/// Result for a single matched schema in the batch reuse check
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct SchemaReuseMatch {
+    pub schema: Schema,
+    pub matched_descriptive_name: String,
+    pub is_exact_match: bool,
+    pub field_rename_map: HashMap<String, String>,
+    pub is_superset: bool,
+    pub unmapped_fields: Vec<String>,
+}
+
+/// Batch response: input descriptive_name -> match result.
+/// Only names with matches are included; missing keys = no match found.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct BatchSchemaReuseResponse {
+    pub matches: HashMap<String, SchemaReuseMatch>,
 }

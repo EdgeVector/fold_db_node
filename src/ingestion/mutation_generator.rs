@@ -1,6 +1,7 @@
 //! Mutation generator for creating mutations from AI responses and JSON data
 
 use crate::ingestion::IngestionResult;
+use chrono::Utc;
 use fold_db::log_feature;
 use fold_db::logging::features::LogFeature;
 use fold_db::schema::types::{KeyValue, Mutation};
@@ -8,6 +9,10 @@ use fold_db::MutationType;
 use serde_json::Value;
 use sha2::{Digest, Sha256};
 use std::collections::HashMap;
+
+/// Timestamp format for fallback range keys — matches the normalized date
+/// format used by `key_extraction::try_normalize_date`.
+const RANGE_KEY_TIMESTAMP_FMT: &str = "%Y-%m-%d %H:%M:%S";
 
 /// Generate mutations from JSON data and mutation mappers
 pub fn generate_mutations(
@@ -46,11 +51,7 @@ pub fn generate_mutations(
         for (json_field, schema_field) in mutation_mappers {
             if let Some(value) = fields_and_values.get(json_field) {
                 // Extract just the field name from schema path (e.g., "UserSchema.name" -> "name")
-                let field_name = if schema_field.contains('.') {
-                    schema_field.rsplit('.').next().unwrap_or(schema_field)
-                } else {
-                    schema_field.as_str()
-                };
+                let field_name = schema_field.rsplit('.').next().unwrap_or(schema_field);
 
                 result.insert(field_name.to_string(), value.clone());
                 log_feature!(
@@ -83,24 +84,57 @@ pub fn generate_mutations(
     // If we have fields to mutate, create a mutation
     if !mapped_fields.is_empty() {
         // Build KeyValue from keys
-        let mut key_value = KeyValue::new(
+        let key_value = KeyValue::new(
             keys_and_values.get("hash_field").cloned(),
             keys_and_values.get("range_field").cloned(),
         );
 
-        // When key fields are missing from the data (e.g., some array items lack the
-        // designated key field), generate a deterministic content-hash fallback so the
-        // mutation is still stored and retrievable.
-        if key_value.hash.is_none() && key_value.range.is_none() {
-            let fallback = content_hash_key(&mapped_fields);
+        // If neither hash nor range key was extracted, the AI's key proposal
+        // didn't match the actual data (common with decomposed array items where
+        // the parent's key field isn't carried into each child record). Fall back
+        // to a deterministic content hash so the record is still ingested and
+        // deduplication works based on field values.
+        let key_value = if key_value.hash.is_none() && key_value.range.is_none() {
+            let mut sorted_keys: Vec<&String> = mapped_fields.keys().collect();
+            sorted_keys.sort();
+            let mut hasher = Sha256::new();
+            hasher.update(schema_name.as_bytes());
+            for k in &sorted_keys {
+                hasher.update(k.as_bytes());
+                hasher.update(mapped_fields[*k].to_string().as_bytes());
+            }
+            let content_hash = format!("{:x}", hasher.finalize());
             log_feature!(
                 LogFeature::Ingestion,
                 warn,
-                "Key fields not found in data for schema '{}', using content hash '{}' as fallback",
-                schema_name, fallback
+                "Key fields not found in data for schema '{}', using content hash '{}' as key",
+                schema_name,
+                &content_hash[..12]
             );
-            key_value.hash = Some(fallback);
-        }
+            // HashRange schemas require both hash and range — use a timestamp so
+            // records written with the same content hash are still distinguishable.
+            KeyValue::new(
+                Some(content_hash),
+                Some(Utc::now().format(RANGE_KEY_TIMESTAMP_FMT).to_string()),
+            )
+        } else {
+            key_value
+        };
+
+        // If hash was extracted but range is missing (e.g., null range field),
+        // provide a timestamp fallback so HashRange mutations are still indexed.
+        let key_value = if key_value.hash.is_some() && key_value.range.is_none() {
+            let ts = Utc::now().format(RANGE_KEY_TIMESTAMP_FMT).to_string();
+            log_feature!(
+                LogFeature::Ingestion,
+                warn,
+                "Range key missing for schema '{}', using timestamp '{}' as fallback",
+                schema_name, ts
+            );
+            KeyValue::new(key_value.hash, Some(ts))
+        } else {
+            key_value
+        };
 
         let mut mutation = Mutation::new(
             schema_name.to_string(),
@@ -136,19 +170,6 @@ pub fn generate_mutations(
     Ok(mutations)
 }
 
-/// Compute a deterministic hash from field values to use as a fallback key
-/// when the schema's designated key fields are missing from the data.
-fn content_hash_key(fields: &HashMap<String, Value>) -> String {
-    let mut hasher = Sha256::new();
-    let mut sorted: Vec<_> = fields.iter().collect();
-    sorted.sort_by(|(a, _), (b, _)| a.cmp(b));
-    for (k, v) in sorted {
-        hasher.update(k.as_bytes());
-        hasher.update(v.to_string().as_bytes());
-    }
-    let digest = hasher.finalize();
-    format!("{:x}", digest)[..16].to_string()
-}
 
 #[cfg(test)]
 mod tests {
@@ -185,34 +206,7 @@ mod tests {
     }
 
     #[test]
-    fn test_content_hash_key_deterministic() {
-        let mut fields = HashMap::new();
-        fields.insert("name".to_string(), json!("Alice"));
-        fields.insert("age".to_string(), json!(30));
-
-        let hash1 = content_hash_key(&fields);
-        let hash2 = content_hash_key(&fields);
-        assert_eq!(hash1, hash2, "Same fields should produce same hash");
-        assert_eq!(hash1.len(), 16, "Hash should be 16 hex chars");
-    }
-
-    #[test]
-    fn test_content_hash_key_differs_for_different_data() {
-        let mut fields_a = HashMap::new();
-        fields_a.insert("name".to_string(), json!("Alice"));
-
-        let mut fields_b = HashMap::new();
-        fields_b.insert("name".to_string(), json!("Bob"));
-
-        assert_ne!(
-            content_hash_key(&fields_a),
-            content_hash_key(&fields_b),
-            "Different data should produce different hashes"
-        );
-    }
-
-    #[test]
-    fn test_generate_mutations_fallback_key_when_keys_missing() {
+    fn test_generate_mutations_falls_back_to_content_hash_when_keys_missing() {
         // Empty keys_and_values simulates missing key fields in data
         let keys_and_values = HashMap::new();
 
@@ -233,12 +227,59 @@ mod tests {
             None,
             None,
         )
-        .unwrap();
+        .expect("should succeed with content hash fallback");
 
         assert_eq!(result.len(), 1);
         assert!(
             result[0].key_value.hash.is_some(),
-            "Should have a fallback hash key when key fields are missing"
+            "Should have a content-hash key"
         );
+        assert!(
+            result[0].key_value.range.is_some(),
+            "Should have a timestamp range key when both keys are missing"
+        );
+        assert_eq!(result[0].fields_and_values.len(), 2);
+    }
+
+    #[test]
+    fn test_generate_mutations_provides_range_fallback_when_only_range_missing() {
+        // Simulates the PDF bug: hash extracted from data, but range field was null
+        let mut keys_and_values = HashMap::new();
+        keys_and_values.insert("hash_field".to_string(), "doc-title-hash".to_string());
+        // range_field intentionally absent — mimics null `created` date from PDF
+
+        let mut fields_and_values = HashMap::new();
+        fields_and_values.insert("title".to_string(), json!("My Document"));
+        fields_and_values.insert("content".to_string(), json!("Some content"));
+
+        let mut mappers = HashMap::new();
+        mappers.insert("title".to_string(), "DocSchema.title".to_string());
+        mappers.insert("content".to_string(), "DocSchema.content".to_string());
+
+        let result = generate_mutations(
+            "DocSchema",
+            &keys_and_values,
+            &fields_and_values,
+            &mappers,
+            "test-key".to_string(),
+            None,
+            None,
+        )
+        .expect("should succeed with range key fallback");
+
+        assert_eq!(result.len(), 1);
+        assert_eq!(
+            result[0].key_value.hash.as_deref(),
+            Some("doc-title-hash"),
+            "Hash key should be preserved from input"
+        );
+        assert!(
+            result[0].key_value.range.is_some(),
+            "Should have a timestamp fallback range key"
+        );
+        // Verify the fallback range is a valid timestamp in our expected format
+        let range = result[0].key_value.range.as_ref().unwrap();
+        chrono::NaiveDateTime::parse_from_str(range, RANGE_KEY_TIMESTAMP_FMT)
+            .expect("Fallback range key should be a valid timestamp");
     }
 }

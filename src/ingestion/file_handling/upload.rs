@@ -1,7 +1,7 @@
 //! File upload and conversion module for ingestion
 
-use crate::ingestion::json_processor::{convert_file_to_json_http, save_json_to_temp_file};
-use crate::ingestion::routes::{get_ingestion_service, IngestionServiceState};
+use crate::ingestion::file_handling::json_processor::{convert_file_to_json_http, save_json_to_temp_file};
+use crate::ingestion::routes_helpers::{get_ingestion_service, IngestionServiceState};
 use crate::ingestion::{IngestionRequest, ProgressTracker};
 use fold_db::log_feature;
 use fold_db::logging::features::LogFeature;
@@ -232,7 +232,7 @@ async fn save_uploaded_file(
         return Ok((process_path, unique_filename, true, hash_hex));
     }
 
-    // Storage has encrypted data; file_to_json needs unencrypted data on a local path
+    // Storage has encrypted data; file converter needs unencrypted data on a local path
     let filepath = write_unencrypted_for_processing(&unique_filename, &file_data, upload_storage).await?;
 
     log_feature!(
@@ -246,7 +246,7 @@ async fn save_uploaded_file(
     Ok((filepath, unique_filename, false, hash_hex))
 }
 
-/// Write unencrypted file data to a temp path for processing by file_to_json.
+/// Write unencrypted file data to a temp path for processing by file_to_markdown.
 /// Storage holds encrypted data; this provides the plaintext for conversion.
 async fn write_unencrypted_for_processing(
     filename: &str,
@@ -360,7 +360,7 @@ async fn handle_s3_file_path(
         }
     };
 
-    // Save to /tmp for processing (file_to_json needs local file)
+    // Save to /tmp for processing (file converter needs local file)
     // Use folddb_ prefix for easy identification and cleanup
     let temp_path = std::env::temp_dir().join(format!("folddb_s3_{}", filename));
     if let Err(e) = fs::write(&temp_path, &file_data).await {
@@ -467,7 +467,7 @@ pub async fn upload_file(
         }
     }
 
-    // Convert file to JSON using file_to_json
+    // Convert file to JSON using file_to_markdown
     let mut json_value = match convert_file_to_json_http(&form_data.file_path).await {
         Ok(json) => json,
         Err(response) => return response,
@@ -475,7 +475,7 @@ pub async fn upload_file(
 
     // Enrich image JSON with image_type and created_at for HashRange schema support
     let image_descriptive_name = if crate::ingestion::is_image_file(&form_data.original_filename) {
-        crate::ingestion::json_processor::enrich_image_json(
+        crate::ingestion::file_handling::json_processor::enrich_image_json(
             &mut json_value,
             &form_data.file_path,
             Some(&form_data.original_filename),
@@ -542,7 +542,7 @@ pub async fn upload_file(
     // Extract ingestion service
     let service = match get_ingestion_service(&ingestion_service).await {
         Some(s) => s,
-        None => return super::routes::ingestion_unavailable(),
+        None => return crate::ingestion::routes_helpers::ingestion_unavailable(),
     };
 
     // Lock briefly — the handler clones the node and spawns a background task

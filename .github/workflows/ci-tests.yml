@@ -18,6 +18,7 @@ jobs:
       AI_PROVIDER: ${{ secrets.AI_PROVIDER }}
       ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
       OLLAMA_BASE_URL: ${{ secrets.OLLAMA_BASE_URL }}
+      CARGO_BUILD_JOBS: 2
 
     steps:
       - name: Checkout repository
@@ -39,9 +40,15 @@ jobs:
         with:
           components: clippy
 
+      - name: Configure git for private dependencies
+        if: steps.check-rust.outputs.exists == 'true'
+        run: git config --global url."https://x-access-token:${{ secrets.PRIVATE_DEPS_TOKEN }}@github.com/".insteadOf "https://github.com/"
+
       - name: Cache Rust artifacts
         if: steps.check-rust.outputs.exists == 'true'
         uses: Swatinem/rust-cache@v2
+        with:
+          save-if: ${{ github.ref == 'refs/heads/main' }}
 
       - name: Setup Node.js
         if: steps.check-rust.outputs.exists == 'true' && hashFiles('src/server/static-react/package-lock.json') != ''

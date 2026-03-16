@@ -1,6 +1,6 @@
 //! Unified AI backend abstraction for Anthropic and Ollama.
 
-use crate::ingestion::config::{AIProvider, AnthropicConfig, IngestionConfig, OllamaConfig};
+use crate::ingestion::config::{AIProvider, AnthropicConfig, IngestionConfig, OllamaConfig, OllamaGenerationParams};
 use crate::ingestion::{IngestionError, IngestionResult};
 use fold_db::log_feature;
 use fold_db::logging::features::LogFeature;
@@ -16,6 +16,34 @@ pub trait AiBackend: Send + Sync {
     async fn call(&self, prompt: &str) -> IngestionResult<String>;
 }
 
+/// Check an HTTP response for errors, returning the response if successful or
+/// a classified `IngestionError` if the status indicates failure.
+async fn check_error_response(
+    provider: &str,
+    response: reqwest::Response,
+) -> IngestionResult<reqwest::Response> {
+    if response.status().is_success() {
+        return Ok(response);
+    }
+    let status = response.status().as_u16();
+    let error_text = response
+        .text()
+        .await
+        .unwrap_or_else(|_| "Unknown error".to_string());
+    Err(crate::ingestion::error::classify_llm_error(
+        provider, status, &error_text,
+    ))
+}
+
+/// Build an HTTP client with standard settings (timeout, no proxy).
+fn build_http_client(timeout_seconds: u64) -> Result<Client, String> {
+    Client::builder()
+        .timeout(Duration::from_secs(timeout_seconds))
+        .no_proxy()
+        .build()
+        .map_err(|e| format!("Failed to create HTTP client: {}", e))
+}
+
 // ---- Ollama ----
 
 #[derive(Debug, Serialize)]
@@ -23,6 +51,7 @@ struct OllamaRequest {
     model: String,
     prompt: String,
     stream: bool,
+    options: OllamaGenerationParams,
 }
 
 #[derive(Debug, Deserialize)]
@@ -39,11 +68,7 @@ pub struct OllamaBackend {
 impl OllamaBackend {
     pub fn new(config: OllamaConfig, timeout_seconds: u64, max_retries: u32) -> IngestionResult<Self> {
         config.validate()?;
-        let client = Client::builder()
-            .timeout(Duration::from_secs(timeout_seconds))
-            .no_proxy()
-            .build()
-            .map_err(|e| IngestionError::ollama_error(format!("Failed to create HTTP client: {}", e)))?;
+        let client = build_http_client(timeout_seconds).map_err(IngestionError::ollama_error)?;
         Ok(Self { client, config, max_retries })
     }
 
@@ -56,12 +81,7 @@ impl OllamaBackend {
             .await
             .map_err(|e| crate::ingestion::error::classify_transport_error("Ollama", &e))?;
 
-        if !response.status().is_success() {
-            let status = response.status().as_u16();
-            let error_text = response.text().await.unwrap_or_else(|_| "Unknown error".to_string());
-            return Err(crate::ingestion::error::classify_llm_error("Ollama", status, &error_text));
-        }
-
+        let response = check_error_response("Ollama", response).await?;
         let resp: OllamaResponse = response.json().await?;
         Ok(resp.response)
     }
@@ -74,8 +94,9 @@ impl AiBackend for OllamaBackend {
             model: self.config.model.clone(),
             prompt: prompt.to_string(),
             stream: false,
+            options: self.config.generation_params.clone(),
         };
-        super::ai_helpers::call_with_retries(
+        super::helpers::call_with_retries(
             "Ollama API",
             self.max_retries,
             || IngestionError::ollama_error("All API attempts failed"),
@@ -126,11 +147,7 @@ pub struct AnthropicBackend {
 impl AnthropicBackend {
     pub fn new(config: AnthropicConfig, timeout_seconds: u64, max_retries: u32) -> IngestionResult<Self> {
         config.validate()?;
-        let client = Client::builder()
-            .timeout(Duration::from_secs(timeout_seconds))
-            .no_proxy()
-            .build()
-            .map_err(|e| IngestionError::configuration_error(format!("Failed to create HTTP client: {}", e)))?;
+        let client = build_http_client(timeout_seconds).map_err(IngestionError::configuration_error)?;
         Ok(Self { client, config, max_retries })
     }
 
@@ -145,15 +162,7 @@ impl AnthropicBackend {
             .await
             .map_err(|e| crate::ingestion::error::classify_transport_error("Anthropic", &e))?;
 
-        if !response.status().is_success() {
-            let status = response.status().as_u16();
-            let error_text = response.text().await.unwrap_or_else(|e| {
-                log::warn!("Failed to read Anthropic error response body: {}", e);
-                "Unknown error (response body unreadable)".to_string()
-            });
-            return Err(crate::ingestion::error::classify_llm_error("Anthropic", status, &error_text));
-        }
-
+        let response = check_error_response("Anthropic", response).await?;
         let resp: AnthropicResponse = response.json().await?;
         if let Some(usage) = &resp.usage {
             log_feature!(
@@ -178,7 +187,7 @@ impl AiBackend for AnthropicBackend {
             max_tokens: 16000,
             temperature: Some(0.1),
         };
-        super::ai_helpers::call_with_retries(
+        super::helpers::call_with_retries(
             "Anthropic API",
             self.max_retries,
             || IngestionError::configuration_error("All Anthropic API attempts failed"),
@@ -194,27 +203,27 @@ impl AiBackend for AnthropicBackend {
 /// Returns `Ok(None)` when the configured provider fails validation so that
 /// `IngestionService` can still be constructed and report status.
 pub fn build_backend(config: &IngestionConfig) -> (Option<Arc<dyn AiBackend>>, Option<String>) {
+    fn try_init<B: AiBackend + 'static>(
+        name: &str,
+        result: IngestionResult<B>,
+    ) -> (Option<Arc<dyn AiBackend>>, Option<String>) {
+        match result {
+            Ok(b) => (Some(Arc::new(b)), None),
+            Err(e) => {
+                let msg = format!("{} init failed: {}", name, e);
+                log::warn!("{}", msg);
+                (None, Some(msg))
+            }
+        }
+    }
+
     match config.provider {
-        AIProvider::Ollama => match OllamaBackend::new(
+        AIProvider::Ollama => try_init("Ollama", OllamaBackend::new(
             config.ollama.clone(), config.timeout_seconds, config.max_retries,
-        ) {
-            Ok(b) => (Some(Arc::new(b)), None),
-            Err(e) => {
-                let msg = format!("Ollama init failed: {}", e);
-                log::warn!("{}", msg);
-                (None, Some(msg))
-            }
-        },
-        AIProvider::Anthropic => match AnthropicBackend::new(
+        )),
+        AIProvider::Anthropic => try_init("Anthropic", AnthropicBackend::new(
             config.anthropic.clone(), config.timeout_seconds, config.max_retries,
-        ) {
-            Ok(b) => (Some(Arc::new(b)), None),
-            Err(e) => {
-                let msg = format!("Anthropic init failed: {}", e);
-                log::warn!("{}", msg);
-                (None, Some(msg))
-            }
-        },
+        )),
     }
 }
 

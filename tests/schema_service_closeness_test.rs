@@ -3,20 +3,7 @@ use serde_json::json;
 use std::collections::HashMap;
 use tempfile::tempdir;
 
-/// Helper function to add field_topologies to a schema JSON value
-fn add_string_topologies(mut schema_json: serde_json::Value, fields: &[&str]) -> serde_json::Value {
-    let mut topologies = serde_json::Map::new();
-    for field in fields {
-        topologies.insert(
-            field.to_string(),
-            json!({"root": {"type": "Primitive", "value": "String"}}),
-        );
-    }
-    schema_json["field_topologies"] = json!(topologies);
-    schema_json
-}
-
-/// Helper function to convert object-style fields to array with topologies
+/// Helper function to convert object-style fields to array format
 fn convert_object_fields_to_array(mut schema_json: serde_json::Value) -> serde_json::Value {
     if let Some(fields_obj) = schema_json
         .get("fields")
@@ -24,24 +11,27 @@ fn convert_object_fields_to_array(mut schema_json: serde_json::Value) -> serde_j
         .cloned()
     {
         let field_names: Vec<String> = fields_obj.keys().cloned().collect();
-        let mut topologies = serde_json::Map::new();
-
-        for field_name in &field_names {
-            topologies.insert(
-                field_name.clone(),
-                json!({"root": {"type": "Primitive", "value": "String"}}),
-            );
-        }
-
         schema_json["fields"] = json!(field_names);
-        schema_json["field_topologies"] = json!(topologies);
     }
     schema_json
 }
 
 /// Helper function to convert JSON to Schema
 fn json_to_schema(value: serde_json::Value) -> fold_db::schema::types::Schema {
-    serde_json::from_value(value).expect("failed to deserialize schema from JSON")
+    let mut schema: fold_db::schema::types::Schema =
+        serde_json::from_value(value).expect("failed to deserialize schema from JSON");
+    // Ensure descriptive_name is set (required by schema service)
+    if schema.descriptive_name.is_none() {
+        schema.descriptive_name = Some(schema.name.clone());
+    }
+    // Ensure field_descriptions are set (required by schema service)
+    if let Some(ref fields) = schema.fields {
+        for f in fields {
+            schema.field_descriptions.entry(f.clone())
+                .or_insert_with(|| format!("{} field", f));
+        }
+    }
+    schema
 }
 
 /// Helper function to verify that every outcome returns a valid schema
@@ -54,32 +44,25 @@ fn verify_outcome_has_schema(outcome: &SchemaAddOutcome) {
                 "added schema must have fields defined"
             );
         }
-        SchemaAddOutcome::AlreadyExists(schema) => {
+        SchemaAddOutcome::AlreadyExists(schema, _) => {
             assert!(!schema.name.is_empty(), "existing schema must have a name");
             assert!(
                 schema.fields.is_some(),
                 "existing schema must have fields defined"
             );
         }
-        SchemaAddOutcome::TooSimilar(conflict) => {
+        SchemaAddOutcome::Expanded(_, schema, _) => {
+            assert!(!schema.name.is_empty(), "expanded schema must have a name");
             assert!(
-                !conflict.closest_schema.name.is_empty(),
-                "closest schema must have a name"
-            );
-            assert!(
-                conflict.closest_schema.fields.is_some(),
-                "closest schema must have fields defined"
-            );
-            assert!(
-                conflict.similarity > 0.0 && conflict.similarity <= 1.0,
-                "similarity must be between 0 and 1"
+                schema.fields.is_some(),
+                "expanded schema must have fields defined"
             );
         }
     }
 }
 
 #[tokio::test]
-async fn closeness_rejects_identical_schema_with_different_name() {
+async fn closeness_treats_different_names_as_distinct_schemas() {
     let temp_dir = tempdir().expect("failed to create temp directory");
     let db_path = temp_dir
         .path()
@@ -90,26 +73,65 @@ async fn closeness_rejects_identical_schema_with_different_name() {
     let state = SchemaServiceState::new(db_path.clone())
         .expect("failed to initialize schema service state");
 
-    let existing_schema = json_to_schema(add_string_topologies(
-        json!({
+    let existing_schema = json_to_schema(json!({
             "name": "UserProfile",
             "fields": ["user_id", "email", "created_at"]
-        }),
-        &["user_id", "email", "created_at"],
-    ));
+        }));
 
     state
         .add_schema(existing_schema, HashMap::new())
         .await
         .expect("failed to add existing schema");
 
-    let duplicate_schema = json_to_schema(add_string_topologies(
-        json!({
+    // Same fields but different name — identity hash now includes name,
+    // so these are distinct schemas.
+    let different_name_schema = json_to_schema(json!({
             "name": "UserAccount",
             "fields": ["user_id", "email", "created_at"]
-        }),
-        &["user_id", "email", "created_at"],
-    ));
+        }));
+
+    let outcome = state
+        .add_schema(different_name_schema, HashMap::new())
+        .await
+        .expect("failed to evaluate schema similarity");
+
+    verify_outcome_has_schema(&outcome);
+
+    match outcome {
+        SchemaAddOutcome::Added(response, _) => {
+            assert!(!response.name.is_empty(), "added schema must have a name");
+        }
+        other => panic!("schema with different name should be Added as distinct, got {:?}", other),
+    }
+}
+
+#[tokio::test]
+async fn closeness_rejects_identical_schema_with_same_name() {
+    let temp_dir = tempdir().expect("failed to create temp directory");
+    let db_path = temp_dir
+        .path()
+        .join("test_schema_db")
+        .to_string_lossy()
+        .to_string();
+
+    let state = SchemaServiceState::new(db_path.clone())
+        .expect("failed to initialize schema service state");
+
+    let existing_schema = json_to_schema(json!({
+            "name": "UserProfile",
+            "fields": ["user_id", "email", "created_at"]
+        }));
+
+    state
+        .add_schema(existing_schema, HashMap::new())
+        .await
+        .expect("failed to add existing schema");
+
+    // Same name AND same fields → same identity hash → AlreadyExists
+    let duplicate_schema = json_to_schema(json!({
+            "name": "UserProfile",
+            "fields": ["user_id", "email", "created_at"]
+        }));
 
     let outcome = state
         .add_schema(duplicate_schema, HashMap::new())
@@ -119,10 +141,10 @@ async fn closeness_rejects_identical_schema_with_different_name() {
     verify_outcome_has_schema(&outcome);
 
     match outcome {
-        SchemaAddOutcome::AlreadyExists(schema) => {
+        SchemaAddOutcome::AlreadyExists(schema, _) => {
             assert!(!schema.name.is_empty(), "existing schema must have a name");
         }
-        other => panic!("identical schema should return AlreadyExists, got {:?}", other),
+        other => panic!("identical schema (same name + fields) should return AlreadyExists, got {:?}", other),
     }
 }
 
@@ -138,13 +160,10 @@ async fn closeness_always_returns_schema_on_success() {
     let state = SchemaServiceState::new(db_path.clone())
         .expect("failed to initialize schema service state");
 
-    let new_schema = json_to_schema(add_string_topologies(
-        json!({
+    let new_schema = json_to_schema(json!({
             "name": "TestSchema",
             "fields": ["id"]
-        }),
-        &["id"],
-    ));
+        }));
 
     let outcome = state
         .add_schema(new_schema, HashMap::new())
@@ -177,32 +196,27 @@ async fn closeness_always_returns_schema_on_rejection() {
     let state = SchemaServiceState::new(db_path.clone())
         .expect("failed to initialize schema service state");
 
-    let existing_schema = json_to_schema(add_string_topologies(
-        json!({
+    let existing_schema = json_to_schema(json!({
             "name": "Original",
             "fields": [
                 "field1",
                 "field2"
             ]
-        }),
-        &["field1", "field2"],
-    ));
+        }));
 
     state
         .add_schema(existing_schema, HashMap::new())
         .await
         .expect("failed to add existing schema");
 
-    let duplicate_schema = json_to_schema(add_string_topologies(
-        json!({
-            "name": "Duplicate",
+    // Same name AND same fields → AlreadyExists (identity hash match)
+    let duplicate_schema = json_to_schema(json!({
+            "name": "Original",
             "fields": [
                 "field1",
                 "field2"
             ]
-        }),
-        &["field1", "field2"],
-    ));
+        }));
 
     let outcome = state
         .add_schema(duplicate_schema, HashMap::new())
@@ -212,12 +226,12 @@ async fn closeness_always_returns_schema_on_rejection() {
     verify_outcome_has_schema(&outcome);
 
     match outcome {
-        SchemaAddOutcome::AlreadyExists(schema) => {
+        SchemaAddOutcome::AlreadyExists(schema, _) => {
             assert!(!schema.name.is_empty(), "existing schema must have a name");
             assert!(schema.fields.is_some());
         }
         other => {
-            panic!("duplicate schema should return AlreadyExists, got {:?}", other)
+            panic!("duplicate schema (same name + fields) should return AlreadyExists, got {:?}", other)
         }
     }
 }
@@ -234,24 +248,20 @@ async fn closeness_allows_dissimilar_schemas() {
     let state = SchemaServiceState::new(db_path.clone())
         .expect("failed to initialize schema service state");
 
-    let existing_schema = json_to_schema(add_string_topologies(
-        json!({
+    let existing_schema = json_to_schema(json!({
             "name": "UserProfile",
             "fields": [
                 "user_id",
                 "email"
             ]
-        }),
-        &["user_id", "email"],
-    ));
+        }));
 
     state
         .add_schema(existing_schema, HashMap::new())
         .await
         .expect("failed to add existing schema");
 
-    let different_schema = json_to_schema(add_string_topologies(
-        json!({
+    let different_schema = json_to_schema(json!({
             "name": "ProductCatalog",
             "fields": [
                 "product_id",
@@ -259,9 +269,7 @@ async fn closeness_allows_dissimilar_schemas() {
                 "price",
                 "inventory_count"
             ]
-        }),
-        &["product_id", "product_name", "price", "inventory_count"],
-    ));
+        }));
 
     let outcome = state
         .add_schema(different_schema, HashMap::new())
@@ -290,25 +298,21 @@ async fn closeness_handles_similar_but_slightly_different_schemas() {
     let state = SchemaServiceState::new(db_path.clone())
         .expect("failed to initialize schema service state");
 
-    let existing_schema = json_to_schema(add_string_topologies(
-        json!({
+    let existing_schema = json_to_schema(json!({
             "name": "User",
             "fields": [
                 "id",
                 "name",
                 "email"
             ]
-        }),
-        &["id", "name", "email"],
-    ));
+        }));
 
     state
         .add_schema(existing_schema, HashMap::new())
         .await
         .expect("failed to add existing schema");
 
-    let similar_schema_with_extra_field = json_to_schema(add_string_topologies(
-        json!({
+    let similar_schema_with_extra_field = json_to_schema(json!({
             "name": "UserExtended",
             "fields": [
                 "id",
@@ -316,9 +320,7 @@ async fn closeness_handles_similar_but_slightly_different_schemas() {
                 "email",
                 "phone"
             ]
-        }),
-        &["id", "name", "email", "phone"],
-    ));
+        }));
 
     let outcome = state
         .add_schema(similar_schema_with_extra_field, HashMap::new())
@@ -330,11 +332,13 @@ async fn closeness_handles_similar_but_slightly_different_schemas() {
     match outcome {
         SchemaAddOutcome::Added(response, _) => {
             assert!(!response.name.is_empty(), "schema must have a name");
-            // Note: field_mappers are no longer automatically created by the schema service
-            // They must be provided explicitly when adding the schema
+        }
+        SchemaAddOutcome::Expanded(_, expanded, _) => {
+            // With >50% field overlap fallback, overlapping schemas get expanded
+            assert!(!expanded.name.is_empty(), "expanded schema must have a name");
         }
         other => {
-            panic!("schema with extra field should have been accepted, got {:?}", other)
+            panic!("schema with extra field should have been accepted or expanded, got {:?}", other)
         }
     }
 }
@@ -351,34 +355,30 @@ async fn closeness_uses_normalized_comparison_for_properties() {
     let state = SchemaServiceState::new(db_path.clone())
         .expect("failed to initialize schema service state");
 
-    let existing_schema = json_to_schema(add_string_topologies(
-        json!({
-            "name": "First",
+    let existing_schema = json_to_schema(json!({
+            "name": "TestSchema",
             "type": "object",
             "description": "test schema",
             "fields": [
                 "field_a"
             ]
-        }),
-        &["field_a"],
-    ));
+        }));
 
     state
         .add_schema(existing_schema, HashMap::new())
         .await
         .expect("failed to add existing schema");
 
-    let reordered_properties_schema = json_to_schema(add_string_topologies(
-        json!({
+    // Same name, same fields, but JSON properties in different order —
+    // should still match as AlreadyExists since identity hash is the same.
+    let reordered_properties_schema = json_to_schema(json!({
             "description": "test schema",
-            "name": "Second",
+            "name": "TestSchema",
             "fields": [
                 "field_a"
             ],
             "type": "object"
-        }),
-        &["field_a"],
-    ));
+        }));
 
     let outcome = state
         .add_schema(reordered_properties_schema, HashMap::new())
@@ -386,17 +386,17 @@ async fn closeness_uses_normalized_comparison_for_properties() {
         .expect("failed to evaluate schema similarity");
 
     match outcome {
-        SchemaAddOutcome::AlreadyExists(schema) => {
+        SchemaAddOutcome::AlreadyExists(schema, _) => {
             assert!(!schema.name.is_empty(), "existing schema must have a name");
         }
         other => {
-            panic!("schemas should return AlreadyExists despite property ordering, got {:?}", other)
+            panic!("schemas with same name+fields should return AlreadyExists despite property ordering, got {:?}", other)
         }
     }
 }
 
 #[tokio::test]
-async fn closeness_ignores_schema_name_in_comparison() {
+async fn closeness_includes_schema_name_in_identity() {
     let temp_dir = tempdir().expect("failed to create temp directory");
     let db_path = temp_dir
         .path()
@@ -407,30 +407,26 @@ async fn closeness_ignores_schema_name_in_comparison() {
     let state = SchemaServiceState::new(db_path.clone())
         .expect("failed to initialize schema service state");
 
-    let existing_schema = json_to_schema(add_string_topologies(
-        json!({
+    let existing_schema = json_to_schema(json!({
             "name": "VeryLongDescriptiveSchemaName",
             "fields": [
                 "field1"
             ]
-        }),
-        &["field1"],
-    ));
+        }));
 
     state
         .add_schema(existing_schema, HashMap::new())
         .await
         .expect("failed to add existing schema");
 
-    let same_content_different_name = json_to_schema(add_string_topologies(
-        json!({
+    // Different name with same fields — identity hash includes name,
+    // so these are distinct schemas and the new one should be Added.
+    let same_content_different_name = json_to_schema(json!({
             "name": "X",
             "fields": [
                 "field1"
             ]
-        }),
-        &["field1"],
-    ));
+        }));
 
     let outcome = state
         .add_schema(same_content_different_name, HashMap::new())
@@ -438,11 +434,11 @@ async fn closeness_ignores_schema_name_in_comparison() {
         .expect("failed to evaluate schema similarity");
 
     match outcome {
-        SchemaAddOutcome::AlreadyExists(schema) => {
-            assert!(!schema.name.is_empty(), "existing schema must have a name");
+        SchemaAddOutcome::Added(response, _) => {
+            assert!(!response.name.is_empty(), "added schema must have a name");
         }
         other => {
-            panic!("schemas should return AlreadyExists despite different names, got {:?}", other)
+            panic!("schemas with different names should be Added as distinct, got {:?}", other)
         }
     }
 }
@@ -473,8 +469,9 @@ async fn closeness_with_object_style_fields() {
         .await
         .expect("failed to add existing schema");
 
+    // Same descriptive_name + same fields → should dedup as AlreadyExists
     let similar_object_schema = json_to_schema(convert_object_fields_to_array(json!({
-        "name": "NewObject",
+        "name": "ExistingObject",
         "fields": {
             "field_a": {},
             "field_b": {},
@@ -488,7 +485,7 @@ async fn closeness_with_object_style_fields() {
         .expect("failed to evaluate schema similarity");
 
     match outcome {
-        SchemaAddOutcome::AlreadyExists(schema) => {
+        SchemaAddOutcome::AlreadyExists(schema, _) => {
             assert!(!schema.name.is_empty(), "existing schema must have a name");
         }
         other => {
@@ -546,17 +543,19 @@ async fn closeness_creates_field_mappers_for_high_field_overlap() {
     match outcome {
         SchemaAddOutcome::Added(response, _) => {
             assert!(!response.name.is_empty(), "schema must have a name");
-            // Note: field_mappers are no longer automatically created by the schema service
-            // Schemas with different fields/topologies are treated as distinct schemas
+        }
+        SchemaAddOutcome::Expanded(_, expanded, _) => {
+            // With >50% field overlap fallback, overlapping schemas get expanded
+            assert!(!expanded.name.is_empty(), "expanded schema must have a name");
         }
         other => {
-            panic!("schema with extra fields should be accepted, got {:?}", other)
+            panic!("schema with extra fields should be accepted or expanded, got {:?}", other)
         }
     }
 }
 
 #[tokio::test]
-async fn closeness_with_multiple_existing_schemas_finds_closest() {
+async fn closeness_with_multiple_existing_schemas_same_name_matches() {
     let temp_dir = tempdir().expect("failed to create temp directory");
     let db_path = temp_dir
         .path()
@@ -567,38 +566,33 @@ async fn closeness_with_multiple_existing_schemas_finds_closest() {
     let state = SchemaServiceState::new(db_path.clone())
         .expect("failed to initialize schema service state");
 
-    let schema1 = json_to_schema(add_string_topologies(
-        json!({
-            "name": "Schema1",
+    // Use semantically distinct names to avoid false embedding matches
+    let schema1 = json_to_schema(json!({
+            "name": "weather_stations",
+            "descriptive_name": "Weather Station Records",
             "fields": [
-                "a"
+                "temperature"
             ]
-        }),
-        &["a"],
-    ));
+        }));
 
-    let schema2 = json_to_schema(add_string_topologies(
-        json!({
-            "name": "Schema2",
+    let schema2 = json_to_schema(json!({
+            "name": "pet_records",
+            "descriptive_name": "Pet Health Records",
             "fields": [
-                "x",
-                "y"
+                "breed",
+                "weight"
             ]
-        }),
-        &["x", "y"],
-    ));
+        }));
 
-    let schema3 = json_to_schema(add_string_topologies(
-        json!({
-            "name": "Schema3",
+    let schema3 = json_to_schema(json!({
+            "name": "grocery_items",
+            "descriptive_name": "Grocery Inventory Items",
             "fields": [
-                "x",
-                "y",
-                "z"
+                "product",
+                "price",
+                "quantity"
             ]
-        }),
-        &["x", "y", "z"],
-    ));
+        }));
 
     state
         .add_schema(schema1, HashMap::new())
@@ -613,16 +607,15 @@ async fn closeness_with_multiple_existing_schemas_finds_closest() {
         .await
         .expect("failed to add schema3");
 
-    let new_schema = json_to_schema(add_string_topologies(
-        json!({
-            "name": "NewSchema",
+    // Same name AND same fields as pet_records → AlreadyExists
+    let new_schema = json_to_schema(json!({
+            "name": "pet_records",
+            "descriptive_name": "Pet Health Records",
             "fields": [
-                "x",
-                "y"
+                "breed",
+                "weight"
             ]
-        }),
-        &["x", "y"],
-    ));
+        }));
 
     let outcome = state
         .add_schema(new_schema, HashMap::new())
@@ -630,17 +623,17 @@ async fn closeness_with_multiple_existing_schemas_finds_closest() {
         .expect("failed to evaluate schema similarity");
 
     match outcome {
-        SchemaAddOutcome::AlreadyExists(schema) => {
+        SchemaAddOutcome::AlreadyExists(schema, _) => {
             assert!(!schema.name.is_empty(), "existing schema must have a name");
         }
         other => {
-            panic!("schema with same fields as Schema2 should return AlreadyExists, got {:?}", other)
+            panic!("schema with same name+fields as pet_records should return AlreadyExists, got {:?}", other)
         }
     }
 }
 
 #[tokio::test]
-async fn closeness_with_nested_objects() {
+async fn closeness_with_multiple_existing_schemas_different_name_is_distinct() {
     let temp_dir = tempdir().expect("failed to create temp directory");
     let db_path = temp_dir
         .path()
@@ -651,26 +644,73 @@ async fn closeness_with_nested_objects() {
     let state = SchemaServiceState::new(db_path.clone())
         .expect("failed to initialize schema service state");
 
-    let existing_schema = json_to_schema(add_string_topologies(
-        json!({
+    let schema1 = json_to_schema(json!({
+            "name": "Schema1",
+            "fields": ["a"]
+        }));
+
+    let schema2 = json_to_schema(json!({
+            "name": "Schema2",
+            "fields": ["x", "y"]
+        }));
+
+    state
+        .add_schema(schema1, HashMap::new())
+        .await
+        .expect("failed to add schema1");
+    state
+        .add_schema(schema2, HashMap::new())
+        .await
+        .expect("failed to add schema2");
+
+    // Same fields as Schema2 but different name → distinct schema, Added
+    let new_schema = json_to_schema(json!({
+            "name": "NewSchema",
+            "fields": ["x", "y"]
+        }));
+
+    let outcome = state
+        .add_schema(new_schema, HashMap::new())
+        .await
+        .expect("failed to evaluate schema similarity");
+
+    match outcome {
+        SchemaAddOutcome::Added(response, _) => {
+            assert!(!response.name.is_empty(), "added schema must have a name");
+        }
+        other => {
+            panic!("schema with different name should be Added as distinct, got {:?}", other)
+        }
+    }
+}
+
+#[tokio::test]
+async fn closeness_with_nested_objects_same_name() {
+    let temp_dir = tempdir().expect("failed to create temp directory");
+    let db_path = temp_dir
+        .path()
+        .join("test_schema_db")
+        .to_string_lossy()
+        .to_string();
+
+    let state = SchemaServiceState::new(db_path.clone())
+        .expect("failed to initialize schema service state");
+
+    let existing_schema = json_to_schema(json!({
             "name": "NestedSchema",
             "fields": ["user_id", "user_name", "metadata"]
-        }),
-        &["user_id", "user_name", "metadata"],
-    ));
+        }));
 
     state
         .add_schema(existing_schema, HashMap::new())
         .await
         .expect("failed to add existing schema");
 
-    let duplicate_nested = json_to_schema(add_string_topologies(
-        json!({
-            "name": "NestedSchemaCopy",
+    // Same name AND same fields → AlreadyExists
+    let duplicate_nested = json_to_schema(json!({
+            "name": "NestedSchema",
             "fields": ["user_id", "user_name", "metadata"]
-        }),
-        &["user_id", "user_name", "metadata"],
-    ));
+        }));
 
     let outcome = state
         .add_schema(duplicate_nested, HashMap::new())
@@ -678,11 +718,54 @@ async fn closeness_with_nested_objects() {
         .expect("failed to evaluate schema similarity");
 
     match outcome {
-        SchemaAddOutcome::AlreadyExists(schema) => {
+        SchemaAddOutcome::AlreadyExists(schema, _) => {
             assert!(!schema.name.is_empty(), "existing schema must have a name");
         }
         other => {
-            panic!("identical nested schemas should return AlreadyExists, got {:?}", other)
+            panic!("identical schemas (same name + fields) should return AlreadyExists, got {:?}", other)
+        }
+    }
+}
+
+#[tokio::test]
+async fn closeness_with_nested_objects_different_name_is_distinct() {
+    let temp_dir = tempdir().expect("failed to create temp directory");
+    let db_path = temp_dir
+        .path()
+        .join("test_schema_db")
+        .to_string_lossy()
+        .to_string();
+
+    let state = SchemaServiceState::new(db_path.clone())
+        .expect("failed to initialize schema service state");
+
+    let existing_schema = json_to_schema(json!({
+            "name": "NestedSchema",
+            "fields": ["user_id", "user_name", "metadata"]
+        }));
+
+    state
+        .add_schema(existing_schema, HashMap::new())
+        .await
+        .expect("failed to add existing schema");
+
+    // Same fields but different name → distinct schema
+    let different_name = json_to_schema(json!({
+            "name": "NestedSchemaCopy",
+            "fields": ["user_id", "user_name", "metadata"]
+        }));
+
+    let outcome = state
+        .add_schema(different_name, HashMap::new())
+        .await
+        .expect("failed to evaluate schema similarity");
+
+    match outcome {
+        SchemaAddOutcome::Added(response, _) => {
+            assert!(!response.name.is_empty(), "added schema must have a name");
+        }
+        other => {
+            panic!("schema with different name should be Added as distinct, got {:?}", other)
         }
     }
 }
@@ -800,8 +883,181 @@ async fn closeness_respects_field_mapper_preservation() {
                 "explicitly provided email mapper should be preserved"
             );
         }
+        SchemaAddOutcome::Expanded(_, expanded, _) => {
+            // With >50% field overlap fallback, overlapping schemas get expanded
+            assert!(!expanded.name.is_empty(), "expanded schema must have a name");
+            // Verify that explicitly provided field_mappers are preserved in expansion
+            let mappers = expanded
+                .field_mappers
+                .as_ref()
+                .expect("field mappers should be preserved in expansion");
+            assert!(
+                mappers.contains_key("email"),
+                "explicitly provided email mapper should be preserved"
+            );
+        }
         other => {
-            panic!("schema with extra field should be accepted, got {:?}", other)
+            panic!("schema with extra field should be accepted or expanded, got {:?}", other)
         }
     }
+}
+
+/// Schemas from the same broad domain (art/images) but with different schema
+/// names must NOT be merged. This tests the real scenario where "famous_paintings"
+/// and "holiday_illustrations" share the same image fields but are clearly
+/// different collections.
+#[tokio::test]
+async fn closeness_same_domain_different_names_stay_separate() {
+    let temp_dir = tempdir().expect("failed to create temp directory");
+    let db_path = temp_dir
+        .path()
+        .join("test_schema_db")
+        .to_string_lossy()
+        .to_string();
+
+    let state = SchemaServiceState::new(db_path)
+        .expect("failed to initialize schema service state");
+
+    // First schema: holiday illustrations (image-like fields)
+    let mut illustrations = json_to_schema(json!({
+        "name": "holiday_illustrations",
+        "descriptive_name": "Holiday Illustration Collection",
+        "fields": ["source_file_name", "created_at", "image_type", "description", "name"]
+    }));
+    illustrations.field_descriptions.insert("source_file_name".to_string(), "path to the image file".to_string());
+    illustrations.field_descriptions.insert("created_at".to_string(), "when the image was created".to_string());
+    illustrations.field_descriptions.insert("image_type".to_string(), "type of image".to_string());
+    illustrations.field_descriptions.insert("description".to_string(), "description of the image content".to_string());
+    illustrations.field_descriptions.insert("name".to_string(), "name of the artwork".to_string());
+
+    let outcome = state
+        .add_schema(illustrations, HashMap::new())
+        .await
+        .expect("failed to add illustrations schema");
+    assert!(
+        matches!(outcome, SchemaAddOutcome::Added(..)),
+        "first schema should be Added, got {:?}",
+        outcome
+    );
+
+    // Second schema: famous paintings (same fields, different name and descriptive name)
+    let mut paintings = json_to_schema(json!({
+        "name": "famous_paintings",
+        "descriptive_name": "Famous Paintings Collection",
+        "fields": ["source_file_name", "created_at", "image_type", "description", "name"]
+    }));
+    paintings.field_descriptions.insert("source_file_name".to_string(), "path to the image file".to_string());
+    paintings.field_descriptions.insert("created_at".to_string(), "when the painting was created".to_string());
+    paintings.field_descriptions.insert("image_type".to_string(), "type of image".to_string());
+    paintings.field_descriptions.insert("description".to_string(), "description of the painting".to_string());
+    paintings.field_descriptions.insert("name".to_string(), "name of the painting".to_string());
+
+    let outcome = state
+        .add_schema(paintings, HashMap::new())
+        .await
+        .expect("failed to add paintings schema");
+
+    // This MUST be Added (separate schema), NOT Expanded or AlreadyExists
+    assert!(
+        matches!(outcome, SchemaAddOutcome::Added(..)),
+        "famous_paintings should be a SEPARATE schema from holiday_illustrations, got {:?}",
+        outcome
+    );
+
+    // Verify both schemas exist independently (names are hashes now)
+    let names = state.get_schema_names().expect("failed to list schemas");
+    assert_eq!(names.len(), 2, "should have exactly 2 schemas, got: {:?}", names);
+}
+
+/// Near-synonymous schema names with the same fields should still be kept
+/// separate — it's safer to have two schemas than to wrongly merge different
+/// collections. Only exact-name matches should merge.
+#[tokio::test]
+async fn closeness_near_synonymous_names_stay_separate() {
+    let temp_dir = tempdir().expect("failed to create temp directory");
+    let db_path = temp_dir
+        .path()
+        .join("test_schema_db")
+        .to_string_lossy()
+        .to_string();
+
+    let state = SchemaServiceState::new(db_path)
+        .expect("failed to initialize schema service state");
+
+    let posts = json_to_schema(json!({
+        "name": "blog_posts",
+        "descriptive_name": "Blog Posts",
+        "fields": ["title", "author", "content", "published_at"]
+    }));
+
+    let outcome = state
+        .add_schema(posts, HashMap::new())
+        .await
+        .expect("failed to add blog_posts");
+    assert!(matches!(outcome, SchemaAddOutcome::Added(..)));
+
+    // "blog_articles" has a different name — stays separate even with same fields
+    let articles = json_to_schema(json!({
+        "name": "blog_articles",
+        "descriptive_name": "Blog Articles",
+        "fields": ["title", "author", "content", "published_at"]
+    }));
+
+    let outcome = state
+        .add_schema(articles, HashMap::new())
+        .await
+        .expect("failed to add blog_articles");
+
+    // Different schema names → separate schemas
+    assert!(
+        matches!(outcome, SchemaAddOutcome::Added(..)),
+        "blog_articles should be separate from blog_posts (different names), got {:?}",
+        outcome
+    );
+
+    let names = state.get_schema_names().expect("failed to list");
+    assert_eq!(names.len(), 2, "should have 2 separate schemas, got: {:?}", names);
+}
+
+/// Same schema name submitted twice with same fields → AlreadyExists.
+#[tokio::test]
+async fn closeness_exact_same_name_and_fields_merges() {
+    let temp_dir = tempdir().expect("failed to create temp directory");
+    let db_path = temp_dir
+        .path()
+        .join("test_schema_db")
+        .to_string_lossy()
+        .to_string();
+
+    let state = SchemaServiceState::new(db_path)
+        .expect("failed to initialize schema service state");
+
+    let schema1 = json_to_schema(json!({
+        "name": "blog_posts",
+        "descriptive_name": "Blog Posts",
+        "fields": ["title", "author", "content"]
+    }));
+
+    state
+        .add_schema(schema1, HashMap::new())
+        .await
+        .expect("failed to add first schema");
+
+    // Same name, same fields → should be AlreadyExists
+    let schema2 = json_to_schema(json!({
+        "name": "blog_posts",
+        "descriptive_name": "Blog Posts",
+        "fields": ["title", "author", "content"]
+    }));
+
+    let outcome = state
+        .add_schema(schema2, HashMap::new())
+        .await
+        .expect("failed to add second schema");
+
+    assert!(
+        matches!(outcome, SchemaAddOutcome::AlreadyExists(..)),
+        "same name + same fields should return AlreadyExists, got {:?}",
+        outcome
+    );
 }

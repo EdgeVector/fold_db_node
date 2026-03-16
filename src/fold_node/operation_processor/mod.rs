@@ -1,3 +1,7 @@
+use fold_db::error::FoldDbResult;
+use fold_db::fold_db_core::FoldDB;
+use tokio::sync::OwnedMutexGuard;
+
 use super::FoldNode;
 
 mod admin_ops;
@@ -17,6 +21,11 @@ impl OperationProcessor {
     /// Creates a new operation processor with a FoldNode instance.
     pub fn new(node: FoldNode) -> Self {
         Self { node }
+    }
+
+    /// Acquire the FoldDB mutex guard. Shorthand for `self.node.get_fold_db().await`.
+    async fn get_db(&self) -> FoldDbResult<OwnedMutexGuard<FoldDB>> {
+        self.node.get_fold_db().await
     }
 }
 
@@ -58,26 +67,6 @@ mod tests {
     async fn approve_schema(node: &FoldNode, name: &str) {
         let db = node.get_fold_db().await.unwrap();
         db.schema_manager.set_schema_state(name, SchemaState::Approved).await.unwrap();
-    }
-
-    #[tokio::test]
-    async fn test_operation_processor_creation() {
-        // This test would require a mock FoldNode
-        // For now, just test that the struct can be created
-        // In a real test, you'd create a test FoldNode instance
-    }
-
-    #[tokio::test]
-    async fn test_logging_methods_signature() {
-        // This test ensures the logging methods are available on OperationProcessor
-        // without needing to instantiate a full FoldNode (which is complex).
-        // It relies on the fact that if this compiles, the methods exist.
-        async fn check_methods(processor: &crate::fold_node::OperationProcessor) {
-            let _ = processor.list_logs(None, None).await;
-            let _ = processor.get_log_config().await;
-            let _ = processor.get_log_features().await;
-        }
-        let _ = check_methods;
     }
 
     /// Helper: create a child HashRange schema with hash+range keys and one data field.

@@ -1,0 +1,34 @@
+[
+  {
+    "summary": "Team standup",
+    "start_time": "2026-03-09T09:00:00-08:00",
+    "end_time": "2026-03-09T09:15:00-08:00",
+    "location": "Zoom - https://zoom.us/j/123456",
+    "description": "Daily sync with engineering team",
+    "calendar": "Work"
+  },
+  {
+    "summary": "Dentist appointment",
+    "start_time": "2026-03-10T14:00:00-08:00",
+    "end_time": "2026-03-10T15:00:00-08:00",
+    "location": "890 Dental Way, Suite 3, Palo Alto, CA 94301",
+    "description": "Regular 6-month cleaning",
+    "calendar": "Personal"
+  },
+  {
+    "summary": "Product review",
+    "start_time": "2026-03-11T11:00:00-08:00",
+    "end_time": "2026-03-11T12:00:00-08:00",
+    "location": "Conference Room B",
+    "description": "Review Q2 roadmap with stakeholders",
+    "calendar": "Work"
+  },
+  {
+    "summary": "Mom's birthday dinner",
+    "start_time": "2026-04-18T18:30:00-08:00",
+    "end_time": "2026-04-18T21:00:00-08:00",
+    "location": "Olive Garden, 500 Main St",
+    "description": "Reservation for 6 under Johnson",
+    "calendar": "Personal"
+  }
+]

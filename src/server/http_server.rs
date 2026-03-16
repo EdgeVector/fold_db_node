@@ -240,7 +240,7 @@ impl FoldHttpServer {
 
         if let Some(url) = schema_service_url {
             // Skip loading for mock/test schema services
-            if url.starts_with("test://") || url.starts_with("mock://") {
+            if crate::fold_node::node::FoldNode::is_test_schema_service(&url) {
                 log_feature!(
                     LogFeature::Database,
                     info,
@@ -359,7 +359,7 @@ impl FoldHttpServer {
         )
         .route(
             "/ingestion/upload",
-            web::post().to(crate::ingestion::file_upload::upload_file),
+            web::post().to(crate::ingestion::file_handling::upload::upload_file),
         )
         .route(
             "/ingestion/status",
@@ -415,7 +415,7 @@ impl FoldHttpServer {
         )
         .route(
             "/file/{hash}",
-            web::get().to(crate::ingestion::file_upload::serve_file),
+            web::get().to(crate::ingestion::file_handling::upload::serve_file),
         )
         .route(
             "/ingestion/ollama/models",
@@ -425,7 +425,14 @@ impl FoldHttpServer {
 
     fn configure_log_routes(cfg: &mut web::ServiceConfig) {
         cfg.route("/logs", web::get().to(log_routes::list_logs))
-            .route("/logs/stream", web::get().to(log_routes::stream_logs));
+            .route("/logs/stream", web::get().to(log_routes::stream_logs))
+            .route("/logs/config", web::get().to(log_routes::get_config))
+            .route(
+                "/logs/config/reload",
+                web::post().to(log_routes::reload_config),
+            )
+            .route("/logs/level", web::put().to(log_routes::update_feature_level))
+            .route("/logs/features", web::get().to(log_routes::get_features));
     }
 
     fn configure_system_routes(cfg: &mut web::ServiceConfig) {

@@ -3,7 +3,7 @@ use crate::handlers::{ApiResponse, HandlerError};
 use fold_db::log_feature;
 use fold_db::logging::features::LogFeature;
 use crate::server::http_server::AppState;
-use crate::server::routes::{handler_error_to_response, require_node_read};
+use crate::server::routes::{handler_error_to_response, handler_result_to_response, node_or_return};
 use actix_web::{web, HttpResponse, Responder};
 use serde_json::json;
 
@@ -17,15 +17,8 @@ use serde_json::json;
     )
 )]
 pub async fn get_system_status(state: web::Data<AppState>) -> impl Responder {
-    let (user_hash, node) = match require_node_read(&state).await {
-        Ok(res) => res,
-        Err(response) => return response,
-    };
-
-    match crate::handlers::system::get_system_status(&user_hash, &node).await {
-        Ok(response) => HttpResponse::Ok().json(response),
-        Err(e) => handler_error_to_response(e),
-    }
+    let (user_hash, node) = node_or_return!(state);
+    handler_result_to_response(crate::handlers::system::get_system_status(&user_hash, &node).await)
 }
 
 /// Shared helper for key retrieval endpoints.
@@ -60,10 +53,7 @@ fn key_response(
     )
 )]
 pub async fn get_node_private_key(state: web::Data<AppState>) -> impl Responder {
-    let (user_hash, node) = match require_node_read(&state).await {
-        Ok(res) => res,
-        Err(response) => return response,
-    };
+    let (user_hash, node) = node_or_return!(state);
     let result = crate::handlers::system::get_node_private_key(&user_hash, &node).await;
     key_response(result, "private_key", "Node private key retrieved successfully")
 }
@@ -81,10 +71,7 @@ pub async fn get_node_private_key(state: web::Data<AppState>) -> impl Responder 
     )
 )]
 pub async fn get_node_public_key(state: web::Data<AppState>) -> impl Responder {
-    let (user_hash, node) = match require_node_read(&state).await {
-        Ok(res) => res,
-        Err(response) => return response,
-    };
+    let (user_hash, node) = node_or_return!(state);
     let result = crate::handlers::system::get_node_public_key(&user_hash, &node).await;
     key_response(result, "public_key", "Node public key retrieved successfully")
 }
@@ -92,30 +79,9 @@ pub async fn get_node_public_key(state: web::Data<AppState>) -> impl Responder {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::fold_node::{FoldNode, NodeConfig};
-    use crate::server::node_manager::{NodeManager, NodeManagerConfig};
+    use crate::server::routes::common::test_helpers::create_test_state;
     use actix_web::test;
-    use std::sync::Arc;
     use tempfile::tempdir;
-
-    async fn create_test_state(temp_dir: &tempfile::TempDir) -> web::Data<AppState> {
-        let keypair = fold_db::security::Ed25519KeyPair::generate().unwrap();
-        let config = NodeConfig::new(temp_dir.path().to_path_buf())
-            .with_schema_service_url("test://mock")
-            .with_identity(&keypair.public_key_base64(), &keypair.secret_key_base64());
-        let node = FoldNode::new(config.clone()).await.unwrap();
-
-        // Create NodeManager and pre-populate with test node
-        let node_manager_config = NodeManagerConfig {
-            base_config: config,
-        };
-        let node_manager = NodeManager::new(node_manager_config);
-        node_manager.set_node("test_user", node).await;
-
-        web::Data::new(AppState {
-            node_manager: Arc::new(node_manager),
-        })
-    }
 
     #[tokio::test]
     async fn test_system_status() {

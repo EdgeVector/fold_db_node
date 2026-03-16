@@ -5,6 +5,7 @@
 
 use crate::fold_node::node::FoldNode;
 use crate::handlers::response::{ApiResponse, HandlerError, HandlerResult, IntoHandlerError};
+use crate::handlers::handler_response;
 use crate::ingestion::progress::{IngestionProgress, ProgressService, ProgressTracker};
 use crate::ingestion::ingestion_service::IngestionService;
 use crate::ingestion::IngestionRequest;
@@ -12,9 +13,6 @@ use fold_db::progress::JobType;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use std::sync::Arc;
-
-#[cfg(feature = "ts-bindings")]
-use ts_rs::TS;
 
 // ============================================================================
 // Request/Response Types
@@ -24,17 +22,13 @@ use ts_rs::TS;
 /// with Lambda handlers in exemem-infra.
 pub type ProcessJsonRequest = IngestionRequest;
 
-/// Response for process_json (immediate response)
-#[derive(Debug, Clone, Serialize, Deserialize)]
-#[cfg_attr(feature = "ts-bindings", derive(TS))]
-#[cfg_attr(
-    feature = "ts-bindings",
-    ts(export, export_to = "src/fold_node/static-react/src/types/")
-)]
-pub struct ProcessJsonResponse {
-    pub success: bool,
-    pub progress_id: String,
-    pub message: String,
+handler_response! {
+    /// Response for process_json (immediate response)
+    pub struct ProcessJsonResponse {
+        pub success: bool,
+        pub progress_id: String,
+        pub message: String,
+    }
 }
 
 /// Response type for get_all_progress
@@ -44,48 +38,15 @@ pub struct ProgressListResponse {
     pub progress: Vec<IngestionProgress>,
 }
 
-/// Response for ingestion status
-#[derive(Debug, Clone, Serialize, Deserialize)]
-#[cfg_attr(feature = "ts-bindings", derive(TS))]
-#[cfg_attr(
-    feature = "ts-bindings",
-    ts(export, export_to = "src/fold_node/static-react/src/types/")
-)]
-pub struct IngestionStatusResponse {
-    pub enabled: bool,
-    pub configured: bool,
-    pub provider: String,
-    pub model: String,
-    pub auto_execute_mutations: bool,
-}
-
-// ============================================================================
-// Helper Functions
-// ============================================================================
-
-/// Extract ingestion data from a payload
-///
-/// Handles both wrapped format { data: {...}, progress_id: "...", ... }
-/// and direct data format { field1: "...", field2: "..." }
-pub fn extract_ingestion_data(payload: &Value) -> Result<(Value, Option<String>), HandlerError> {
-    // Check if payload has a "data" field (wrapped format)
-    if let Some(data) = payload.get("data") {
-        let progress_id = payload
-            .get("progress_id")
-            .and_then(|v| v.as_str())
-            .map(|s| s.to_string());
-        return Ok((data.clone(), progress_id));
+handler_response! {
+    /// Response for ingestion status
+    pub struct IngestionStatusResponse {
+        pub enabled: bool,
+        pub configured: bool,
+        pub provider: String,
+        pub model: String,
+        pub auto_execute_mutations: bool,
     }
-
-    // Check if payload looks like a wrapper without data (error case)
-    if payload.get("progress_id").is_some() || payload.get("auto_execute").is_some() {
-        return Err(HandlerError::BadRequest(
-            "Payload must contain a 'data' field with the JSON to ingest".to_string(),
-        ));
-    }
-
-    // Treat the whole payload as data (direct format)
-    Ok((payload.clone(), None))
 }
 
 // ============================================================================
@@ -304,39 +265,4 @@ mod tests {
         assert!(json.contains("progress"));
     }
 
-    #[test]
-    fn test_extract_ingestion_data_wrapped() {
-        let payload = serde_json::json!({
-            "data": {"field": "value"},
-            "progress_id": "test-123",
-            "auto_execute": true
-        });
-
-        let (data, progress_id) = extract_ingestion_data(&payload).unwrap();
-        assert_eq!(data, serde_json::json!({"field": "value"}));
-        assert_eq!(progress_id, Some("test-123".to_string()));
-    }
-
-    #[test]
-    fn test_extract_ingestion_data_direct() {
-        let payload = serde_json::json!({
-            "field": "value",
-            "another": 123
-        });
-
-        let (data, progress_id) = extract_ingestion_data(&payload).unwrap();
-        assert_eq!(data, payload);
-        assert_eq!(progress_id, None);
-    }
-
-    #[test]
-    fn test_extract_ingestion_data_error() {
-        let payload = serde_json::json!({
-            "progress_id": "test-123",
-            "auto_execute": true
-        });
-
-        let result = extract_ingestion_data(&payload);
-        assert!(result.is_err());
-    }
 }

@@ -23,6 +23,22 @@ export function StateBadge({ state }) {
   return <span className={cls}>{state}</span>
 }
 
+export function SchemaTypeBadge({ schemaType }) {
+  if (!schemaType) return null
+  const type = typeof schemaType === 'string' ? schemaType : Object.keys(schemaType)[0]
+  if (!type) return null
+  const colors = {
+    Single: 'bg-gruvbox-blue/15 text-gruvbox-blue',
+    Range: 'bg-gruvbox-purple/15 text-gruvbox-purple',
+    HashRange: 'bg-gruvbox-orange/15 text-gruvbox-orange',
+  }
+  return (
+    <span className={`inline-flex items-center px-1.5 py-0.5 text-[10px] font-mono font-semibold rounded ${colors[type] || 'bg-surface-secondary text-secondary'}`}>
+      {type}
+    </span>
+  )
+}
+
 export function getMaxVersion(metadata) {
   if (!metadata || typeof metadata !== 'object') return 0
   let max = 0
@@ -181,6 +197,12 @@ export function VersionHistory({ moleculeUuid }) {
 
 const IMAGE_EXTENSIONS = /\.(jpe?g|png|gif|webp|svg)$/i
 
+function authHeaders() {
+  const userHash = localStorage.getItem('fold_user_hash')
+  if (!userHash) return {}
+  return { 'x-user-hash': userHash, 'x-user-id': userHash }
+}
+
 export function RecordMetadata({ metadata }) {
   const [expanded, setExpanded] = useState(false)
   const [blobUrl, setBlobUrl] = useState(null)
@@ -197,13 +219,7 @@ export function RecordMetadata({ metadata }) {
   useEffect(() => {
     if (!expanded || !isImage || !fileUrl) return
     let revoked = false
-    const userHash = localStorage.getItem('fold_user_hash')
-    const headers = {}
-    if (userHash) {
-      headers['x-user-hash'] = userHash
-      headers['x-user-id'] = userHash
-    }
-    fetch(fileUrl, { headers })
+    fetch(fileUrl, { headers: authHeaders() })
       .then((res) => {
         if (!res.ok) throw new Error(res.statusText)
         return res.blob()
@@ -218,6 +234,20 @@ export function RecordMetadata({ metadata }) {
       setBlobUrl((prev) => { if (prev) URL.revokeObjectURL(prev); return null })
     }
   }, [expanded, isImage, fileUrl])
+
+  const openFile = useCallback(() => {
+    if (!fileUrl) return
+    fetch(fileUrl, { headers: authHeaders() })
+      .then((res) => {
+        if (!res.ok) throw new Error(res.statusText)
+        return res.blob()
+      })
+      .then((blob) => {
+        const url = URL.createObjectURL(blob)
+        window.open(url, '_blank')
+      })
+      .catch(() => {})
+  }, [fileUrl])
 
   if (!hasData) return null
 
@@ -236,7 +266,12 @@ export function RecordMetadata({ metadata }) {
       </button>
       {expanded && (
         <div className="pl-4 pt-1 space-y-1 text-xs text-secondary font-mono">
-          {sourceFile && <div>File: {sourceFile}</div>}
+          {sourceFile && fileUrl && !isImage && (
+            <div>File: <button type="button" onClick={openFile} className="text-gruvbox-blue hover:underline cursor-pointer">{sourceFile}</button></div>
+          )}
+          {sourceFile && (!fileUrl || isImage) && (
+            <div>File: {sourceFile}</div>
+          )}
           {fileHash && <div>Hash: {fileHash.length > 16 ? fileHash.slice(0, 16) + '...' : fileHash}</div>}
           {isImage && blobUrl && (
             <div className="mt-2">

@@ -127,75 +127,53 @@ pub(crate) async fn extract_key_values_from_data(
     match schema_manager.get_schema_metadata(schema_name) {
         Ok(Some(schema)) => {
             if let Some(key_def) = &schema.key {
-                // Extract hash field value if present
-                if let Some(hash_field) = &key_def.hash_field {
-                    if let Some(hash_value) = fields_and_values.get(hash_field) {
-                        if let Some(hash_str) = hash_value.as_str() {
-                            keys_and_values.insert("hash_field".to_string(), hash_str.to_string());
-                        } else if let Some(hash_num) = hash_value.as_f64() {
-                            keys_and_values.insert("hash_field".to_string(), hash_num.to_string());
-                        } else {
+                // Extract hash and range field values using the same logic.
+                // Range fields get date normalization for chronological sorting.
+                for (key_name, field_name, normalize_date) in [
+                    ("hash_field", key_def.hash_field.as_deref(), false),
+                    ("range_field", key_def.range_field.as_deref(), true),
+                ] {
+                    let Some(field) = field_name else { continue };
+                    match extract_nested_field_value(fields_and_values, field) {
+                        Some(val) if val.is_string() => {
+                            let s = val.as_str().unwrap();
+                            let s = if normalize_date { try_normalize_date(s) } else { s.to_string() };
+                            keys_and_values.insert(key_name.to_string(), s);
+                        }
+                        Some(val) if val.is_f64() || val.is_i64() || val.is_u64() => {
+                            keys_and_values.insert(key_name.to_string(), val.to_string());
+                        }
+                        Some(val) => {
                             log_feature!(
                                 LogFeature::Ingestion,
                                 warn,
-                                "Hash field '{}' in schema '{}' has unsupported type (not string or number): {:?}",
-                                hash_field, schema_name, hash_value
+                                "{} '{}' in schema '{}' has unsupported type (not string or number): {:?}",
+                                key_name, field, schema_name, val
                             );
                         }
-                    } else {
-                        log_feature!(
-                            LogFeature::Ingestion,
-                            warn,
-                            "Hash field '{}' not found in data for schema '{}'",
-                            hash_field, schema_name
-                        );
-                    }
-                }
-
-                // Extract range field value if present, normalizing dates to
-                // YYYY-MM-DD HH:MM:SS so records sort chronologically.
-                if let Some(range_field) = &key_def.range_field {
-                    if let Some(range_value) =
-                        extract_nested_field_value(fields_and_values, range_field)
-                    {
-                        if let Some(range_str) = range_value.as_str() {
-                            keys_and_values.insert("range_field".to_string(), try_normalize_date(range_str));
-                        } else if let Some(range_num) = range_value.as_f64() {
-                            keys_and_values.insert("range_field".to_string(), range_num.to_string());
-                        } else {
+                        None => {
                             log_feature!(
                                 LogFeature::Ingestion,
                                 warn,
-                                "Range field '{}' in schema '{}' has unsupported type (not string or number): {:?}",
-                                range_field, schema_name, range_value
+                                "{} '{}' not found in data for schema '{}'",
+                                key_name, field, schema_name
                             );
                         }
-                    } else {
-                        log_feature!(
-                            LogFeature::Ingestion,
-                            warn,
-                            "Range field '{}' not found in data for schema '{}'",
-                            range_field, schema_name
-                        );
                     }
                 }
             }
         }
         Ok(None) => {
-            log_feature!(
-                LogFeature::Ingestion,
-                warn,
-                "Schema '{}' not found — cannot extract key values",
+            return Err(crate::ingestion::IngestionError::SchemaCreationError(format!(
+                "Schema '{}' not found — cannot extract key values. Was the schema created successfully?",
                 schema_name
-            );
+            )));
         }
         Err(e) => {
-            log_feature!(
-                LogFeature::Ingestion,
-                error,
+            return Err(crate::ingestion::IngestionError::SchemaCreationError(format!(
                 "Failed to get schema '{}' for key extraction: {}",
                 schema_name, e
-            );
+            )));
         }
     }
 
@@ -210,40 +188,34 @@ pub(crate) async fn extract_key_values_from_data(
     Ok(keys_and_values)
 }
 
-/// Extract nested field value from JSON data using dot notation.
+/// Extract a field value from JSON data, supporting dot-notation paths of
+/// arbitrary depth (e.g. "a.b.c"). Falls back to a shallow search through
+/// nested objects when the path doesn't match directly.
 pub(crate) fn extract_nested_field_value<'a>(
     fields_and_values: &'a HashMap<String, Value>,
     field_path: &str,
 ) -> Option<&'a Value> {
-    // First try direct field access
+    // Direct lookup (covers non-dotted paths and literal keys containing dots)
     if let Some(value) = fields_and_values.get(field_path) {
         return Some(value);
     }
 
-    // Then try nested field access (e.g., "like.tweetId")
+    // Walk dot-separated path to arbitrary depth: "a.b.c" → map["a"]["b"]["c"]
     if field_path.contains('.') {
         let parts: Vec<&str> = field_path.split('.').collect();
-        if parts.len() == 2 {
-            if let Some(parent_value) = fields_and_values.get(parts[0]) {
-                if let Some(parent_obj) = parent_value.as_object() {
-                    if let Some(result) = parent_obj.get(parts[1]) {
-                        return Some(result);
-                    }
-                }
+        if let Some(root) = fields_and_values.get(parts[0]) {
+            let mut current = root;
+            for part in &parts[1..] {
+                current = current.as_object()?.get(*part)?;
             }
+            return Some(current);
         }
     }
 
-    // Try to find the field in nested objects
-    for value in fields_and_values.values() {
-        if let Some(obj) = value.as_object() {
-            if let Some(nested_value) = obj.get(field_path) {
-                return Some(nested_value);
-            }
-        }
-    }
-
-    None
+    // Shallow fallback: search one level of nested objects by field name
+    fields_and_values.values()
+        .filter_map(|v| v.as_object())
+        .find_map(|obj| obj.get(field_path))
 }
 
 #[cfg(test)]
@@ -319,6 +291,38 @@ mod tests {
         assert_eq!(try_normalize_date("not-a-date"), "not-a-date");
         assert_eq!(try_normalize_date("12345"), "12345");
         assert_eq!(try_normalize_date("hello world"), "hello world");
+    }
+
+    #[test]
+    fn test_extract_nested_field_value_dot_notation() {
+        let mut fields = HashMap::new();
+        fields.insert(
+            "departure".to_string(),
+            serde_json::json!({"airport": "SFO", "date": "2025-03-15"}),
+        );
+        fields.insert("flight".to_string(), serde_json::json!("JL001"));
+
+        // Direct lookup
+        assert_eq!(
+            extract_nested_field_value(&fields, "flight"),
+            Some(&serde_json::json!("JL001"))
+        );
+
+        // Dot-notation lookup
+        assert_eq!(
+            extract_nested_field_value(&fields, "departure.airport"),
+            Some(&serde_json::json!("SFO"))
+        );
+        assert_eq!(
+            extract_nested_field_value(&fields, "departure.date"),
+            Some(&serde_json::json!("2025-03-15"))
+        );
+
+        // Missing nested field
+        assert_eq!(extract_nested_field_value(&fields, "departure.terminal"), None);
+
+        // Missing parent
+        assert_eq!(extract_nested_field_value(&fields, "arrival.airport"), None);
     }
 
     #[test]
