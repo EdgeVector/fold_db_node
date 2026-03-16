@@ -16,6 +16,7 @@ import SmartFolderTab from './components/tabs/SmartFolderTab'
 import DataBrowserTab from './components/tabs/DataBrowserTab'
 import WordGraphTab from './components/tabs/WordGraphTab'
 import AgentTab from './components/tabs/AgentTab'
+import DiscoveryTab from './components/tabs/DiscoveryTab'
 import SettingsModal from './components/SettingsModal'
 
 import LogSidebar from './components/LogSidebar'
@@ -47,6 +48,7 @@ const HASH_TO_TAB = {
   'smart-folder': 'smart-folder',
   'data-browser': 'data-browser',
   'word-graph': 'word-graph',
+  discovery: 'discovery',
 }
 
 function resolveTabFromHash() {
@@ -200,6 +202,8 @@ export function AppContent() {
         return <DataBrowserTab />
       case 'word-graph':
         return <WordGraphTab />
+      case 'discovery':
+        return <DiscoveryTab onResult={handleOperationResult} />
       default:
         return null
     }

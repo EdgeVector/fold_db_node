@@ -3,9 +3,9 @@ use super::middleware::signature::SignatureVerificationMiddleware;
 use super::node_manager::NodeManager;
 use super::routes::log as log_routes;
 use super::routes::{
-    admin as admin_routes, config as config_routes, filesystem as filesystem_routes,
-    query as query_routes, schema as schema_routes, security as security_routes,
-    system as system_routes,
+    admin as admin_routes, config as config_routes, discovery as discovery_routes,
+    filesystem as filesystem_routes, query as query_routes, schema as schema_routes,
+    security as security_routes, system as system_routes,
 };
 use super::static_assets::Asset;
 use fold_db::error::{FoldDbError, FoldDbResult};
@@ -292,7 +292,8 @@ impl FoldHttpServer {
                 .configure(Self::configure_log_routes)
                 .configure(Self::configure_system_routes)
                 .configure(Self::configure_llm_query_routes)
-                .configure(Self::configure_security_routes),
+                .configure(Self::configure_security_routes)
+                .configure(Self::configure_discovery_routes),
         );
     }
 
@@ -494,6 +495,19 @@ impl FoldHttpServer {
                 web::resource("/system-key")
                     .route(web::get().to(security_routes::get_system_public_key)),
             ),
+        );
+    }
+
+    fn configure_discovery_routes(cfg: &mut web::ServiceConfig) {
+        cfg.service(
+            web::scope("/discovery")
+                .route("/opt-ins", web::get().to(discovery_routes::list_opt_ins))
+                .route("/opt-in", web::post().to(discovery_routes::opt_in))
+                .route("/opt-out", web::post().to(discovery_routes::opt_out))
+                .route("/publish", web::post().to(discovery_routes::publish))
+                .route("/search", web::post().to(discovery_routes::search))
+                .route("/connect", web::post().to(discovery_routes::connect))
+                .route("/requests", web::get().to(discovery_routes::poll_requests)),
         );
     }
 }

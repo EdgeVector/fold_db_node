@@ -28,6 +28,7 @@
 //! }
 //! ```
 
+pub mod discovery;
 pub mod ingestion;
 pub mod llm;
 pub mod llm_hydration;
