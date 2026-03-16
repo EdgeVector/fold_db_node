@@ -20,7 +20,7 @@ CRITICAL - Mutation Mappers:
 - Nested objects and arrays will be stored as-is in their top-level field
 - Example: if JSON has {"user": {"id": 1, "name": "Tom"}}, mapper should be {"user": "user"}, NOT {"user.id": "id"}
 
-IMPORTANT - Schema Types:
+IMPORTANT - Schema Types (4 types: Single, Hash, Range, HashRange):
 - ALWAYS assume the data belongs to a COLLECTION/SET of similar items, even if only one item is provided now.
 - STRONGLY PREFER HashRange schemas. Most data benefits from both a hash key (for grouping) and a range key (for ordering).
 - Choose a meaningful hash_field that groups related records (e.g., "author", "category", "user_id", "type", "source").
@@ -31,9 +31,11 @@ IMPORTANT - Schema Types:
   The parent field (e.g., "departure") MUST still be included in "fields" and "mutation_mappers" as a top-level entry.
 - NEVER use "file_type" as a hash_field or range_field — it is metadata, not a semantic grouping dimension.
   For text/document data, use "source_file" or "category" as hash_field if available, and derive the schema name from the content's topic (e.g., "recipes", "meeting_notes", "journal_entries"), not the file extension.
+- Use Hash (hash_field only, no range_field) when items are uniquely keyed but have no meaningful ordering dimension.
+  Good for: images (keyed by filename), user profiles (keyed by user_id), config entries (keyed by name).
 - Use Range (range_field only, no hash_field) ONLY when there is genuinely no meaningful grouping dimension.
 - Use Single (no "key" field) ONLY for truly singleton global config/settings with no possibility of multiple records.
-- If the user provides an ARRAY of objects, you MUST use HashRange or Range with a "key".
+- If the user provides an ARRAY of objects, you MUST use HashRange, Hash, or Range with a "key".
 
 IMPORTANT - Schema Name and Descriptive Name:
 - "name" MUST be a short, semantic, snake_case name describing the CONTENT TOPIC (e.g., "recipes", "journal_entries", "medical_records", "meeting_notes", "blog_posts").
@@ -106,6 +108,26 @@ Example HashRange schema with non-date range (when no timestamp exists):
     "department": ["word"],
     "name": ["name:person", "word"],
     "age": ["number"]
+  }
+}
+
+Example Hash schema (unique key, no ordering needed):
+{
+  "name": "image_collection",
+  "descriptive_name": "Image Collection",
+  "key": {"hash_field": "source_file_name"},
+  "fields": ["source_file_name", "image_type", "subjects", "description"],
+  "field_descriptions": {
+    "source_file_name": "the filename of the image",
+    "image_type": "the type or category of the image",
+    "subjects": "the subjects depicted in the image",
+    "description": "a description of what the image shows"
+  },
+  "field_classifications": {
+    "source_file_name": ["word"],
+    "image_type": ["word"],
+    "subjects": ["word"],
+    "description": ["word"]
   }
 }
 
