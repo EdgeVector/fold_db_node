@@ -47,6 +47,8 @@ jobs:
       - name: Cache Rust artifacts
         if: steps.check-rust.outputs.exists == 'true'
         uses: Swatinem/rust-cache@v2
+        with:
+          save-if: ${{ github.ref == 'refs/heads/main' }}
 
       - name: Setup Node.js
         if: steps.check-rust.outputs.exists == 'true' && hashFiles('src/server/static-react/package-lock.json') != ''
