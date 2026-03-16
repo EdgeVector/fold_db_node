@@ -232,7 +232,7 @@ async fn save_uploaded_file(
         return Ok((process_path, unique_filename, true, hash_hex));
     }
 
-    // Storage has encrypted data; file_to_json needs unencrypted data on a local path
+    // Storage has encrypted data; file converter needs unencrypted data on a local path
     let filepath = write_unencrypted_for_processing(&unique_filename, &file_data, upload_storage).await?;
 
     log_feature!(
@@ -246,7 +246,7 @@ async fn save_uploaded_file(
     Ok((filepath, unique_filename, false, hash_hex))
 }
 
-/// Write unencrypted file data to a temp path for processing by file_to_json.
+/// Write unencrypted file data to a temp path for processing by file_to_markdown.
 /// Storage holds encrypted data; this provides the plaintext for conversion.
 async fn write_unencrypted_for_processing(
     filename: &str,
@@ -360,7 +360,7 @@ async fn handle_s3_file_path(
         }
     };
 
-    // Save to /tmp for processing (file_to_json needs local file)
+    // Save to /tmp for processing (file converter needs local file)
     // Use folddb_ prefix for easy identification and cleanup
     let temp_path = std::env::temp_dir().join(format!("folddb_s3_{}", filename));
     if let Err(e) = fs::write(&temp_path, &file_data).await {
@@ -467,7 +467,7 @@ pub async fn upload_file(
         }
     }
 
-    // Convert file to JSON using file_to_json
+    // Convert file to JSON using file_to_markdown
     let mut json_value = match convert_file_to_json_http(&form_data.file_path).await {
         Ok(json) => json,
         Err(response) => return response,

@@ -200,7 +200,7 @@ pub(crate) async fn process_single_file_via_smart_folder(
     force_reingest: bool,
 ) -> Result<(), String> {
     // Try native parser first (handles json, js/Twitter, csv, txt, md),
-    // fall back to file_to_json for unsupported types (images, PDFs, etc.)
+    // fall back to file_to_markdown for unsupported types (images, PDFs, etc.)
     let (data, file_hash, raw_bytes, image_descriptive_name) = match crate::ingestion::smart_folder::read_file_with_hash(
         file_path,
     ) {
