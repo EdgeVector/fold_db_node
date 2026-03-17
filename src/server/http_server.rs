@@ -287,6 +287,7 @@ impl FoldHttpServer {
             web::scope("/api")
                 .configure(Self::configure_openapi_routes)
                 .configure(Self::configure_schema_routes)
+                .configure(Self::configure_view_routes)
                 .configure(Self::configure_query_routes)
                 .configure(Self::configure_ingestion_routes)
                 .configure(Self::configure_log_routes)
@@ -324,6 +325,22 @@ impl FoldHttpServer {
             .route(
                 "/schema/{name}/block",
                 web::post().to(schema_routes::block_schema),
+            );
+    }
+
+    fn configure_view_routes(cfg: &mut web::ServiceConfig) {
+        use crate::server::routes::views as view_routes;
+
+        cfg.route("/views", web::get().to(view_routes::list_views))
+            .route("/view", web::post().to(view_routes::create_view))
+            .route("/view/{name}", web::get().to(view_routes::get_view))
+            .route(
+                "/view/{name}/approve",
+                web::post().to(view_routes::approve_view),
+            )
+            .route(
+                "/view/{name}/block",
+                web::post().to(view_routes::block_view),
             );
     }
 

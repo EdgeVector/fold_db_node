@@ -8,6 +8,7 @@ mod admin_ops;
 mod mutation_ops;
 mod query_ops;
 mod schema_ops;
+mod view_ops;
 
 /// Centralized operation processor that handles all operation types consistently.
 ///
