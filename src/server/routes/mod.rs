@@ -8,6 +8,7 @@ pub mod query;
 pub mod schema;
 pub mod security;
 pub mod system;
+pub mod views;
 
 // Re-export common utilities for convenience
 pub use common::{
