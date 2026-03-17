@@ -14,6 +14,9 @@ jobs:
     name: Rust Tests
     runs-on: ubuntu-latest
 
+    env:
+      CARGO_BUILD_JOBS: 2
+
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
