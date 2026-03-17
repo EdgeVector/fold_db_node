@@ -1,7 +1,16 @@
+use fold_db::schema::types::field_value_type::FieldValueType;
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 
 use fold_db::schema::types::Schema;
+
+/// A canonical field entry in the global field registry.
+/// Carries description (for semantic matching) and type (for enforcement).
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct CanonicalField {
+    pub description: String,
+    pub field_type: FieldValueType,
+}
 
 /// Response containing a list of available schema names
 #[derive(Debug, Clone, Serialize, Deserialize)]
