@@ -4,9 +4,11 @@ use crate::server::http_server::AppState;
 use crate::server::routes::{handler_result_to_response, node_or_return};
 use actix_web::{web, Responder};
 use base64::Engine;
+use fold_db::schema::types::field_value_type::FieldValueType;
 use fold_db::schema::types::key_config::KeyConfig;
+use fold_db::schema::types::operations::Query;
 use fold_db::schema::types::schema::DeclarativeSchemaType as SchemaType;
-use fold_db::view::types::{FieldRef, TransformFieldDef, TransformView};
+use fold_db::view::types::TransformView;
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 
@@ -32,48 +34,35 @@ pub struct CreateViewRequest {
     pub name: String,
     /// Schema type: "Single", "Hash", "Range", or "HashRange"
     pub schema_type: SchemaType,
-    /// Key configuration — which fields serve as hash/range keys
+    /// Key configuration — which fields serve as hash/range keys in output
     #[serde(default)]
-    pub key: Option<KeyConfig>,
-    pub fields: HashMap<String, CreateViewFieldRequest>,
-}
-
-#[derive(Debug, Clone, Deserialize)]
-pub struct CreateViewFieldRequest {
-    /// Source in "Schema.field" format
-    pub source: String,
-    /// Base64-encoded forward WASM bytes
-    pub wasm_forward: Option<String>,
-    /// Base64-encoded inverse WASM bytes
-    pub wasm_inverse: Option<String>,
+    pub key_config: Option<KeyConfig>,
+    /// Input queries to execute against source schemas.
+    pub input_queries: Vec<Query>,
+    /// Base64-encoded WASM module bytes (None = identity pass-through).
+    #[serde(default)]
+    pub wasm_transform: Option<String>,
+    /// Typed output schema: field_name → type.
+    pub output_fields: HashMap<String, FieldValueType>,
 }
 
 impl CreateViewRequest {
     fn into_transform_view(self) -> Result<TransformView, String> {
         let b64_engine = base64::engine::general_purpose::STANDARD;
-        let mut fields = HashMap::new();
-        for (field_name, field_req) in self.fields {
-            let source = FieldRef::try_from(field_req.source)?;
-            let wasm_forward = field_req
-                .wasm_forward
-                .map(|b64| b64_engine.decode(&b64))
-                .transpose()
-                .map_err(|e| format!("Invalid base64 for wasm_forward: {}", e))?;
-            let wasm_inverse = field_req
-                .wasm_inverse
-                .map(|b64| b64_engine.decode(&b64))
-                .transpose()
-                .map_err(|e| format!("Invalid base64 for wasm_inverse: {}", e))?;
-            fields.insert(
-                field_name,
-                TransformFieldDef {
-                    source,
-                    wasm_forward,
-                    wasm_inverse,
-                },
-            );
-        }
-        Ok(TransformView::new(self.name, self.schema_type, self.key, fields))
+        let wasm_transform = self
+            .wasm_transform
+            .map(|b64| b64_engine.decode(&b64))
+            .transpose()
+            .map_err(|e| format!("Invalid base64 for wasm_transform: {}", e))?;
+
+        Ok(TransformView::new(
+            self.name,
+            self.schema_type,
+            self.key_config,
+            self.input_queries,
+            wasm_transform,
+            self.output_fields,
+        ))
     }
 }
 
@@ -182,6 +171,29 @@ pub async fn block_view(
     handler_result_to_response(
         async {
             op.block_view(&name).await.handler_err("block view")?;
+            Ok(ApiResponse::success_with_user(
+                crate::handlers::response::SuccessResponse {
+                    success: true,
+                    message: None,
+                },
+                user_hash,
+            ))
+        }
+        .await,
+    )
+}
+
+/// Delete (remove) a view.
+pub async fn delete_view(
+    path: web::Path<String>,
+    state: web::Data<AppState>,
+) -> impl Responder {
+    let name = path.into_inner();
+    let (user_hash, node) = node_or_return!(state);
+    let op = OperationProcessor::new(node.clone());
+    handler_result_to_response(
+        async {
+            op.delete_view(&name).await.handler_err("delete view")?;
             Ok(ApiResponse::success_with_user(
                 crate::handlers::response::SuccessResponse {
                     success: true,

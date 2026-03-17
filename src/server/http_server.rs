@@ -335,6 +335,10 @@ impl FoldHttpServer {
             .route("/view", web::post().to(view_routes::create_view))
             .route("/view/{name}", web::get().to(view_routes::get_view))
             .route(
+                "/view/{name}",
+                web::delete().to(view_routes::delete_view),
+            )
+            .route(
                 "/view/{name}/approve",
                 web::post().to(view_routes::approve_view),
             )

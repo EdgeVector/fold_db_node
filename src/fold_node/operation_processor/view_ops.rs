@@ -34,4 +34,10 @@ impl OperationProcessor {
         let db = self.get_db().await?;
         Ok(db.schema_manager.block_view(name).await?)
     }
+
+    /// Delete (remove) a view and clean up storage.
+    pub async fn delete_view(&self, name: &str) -> FoldDbResult<()> {
+        let db = self.get_db().await?;
+        Ok(db.schema_manager.remove_view(name).await?)
+    }
 }
