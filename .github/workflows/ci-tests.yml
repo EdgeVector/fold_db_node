@@ -13,6 +13,7 @@ jobs:
   rust-tests:
     name: Rust Tests
     runs-on: ubuntu-latest
+    timeout-minutes: 20
 
     env:
       RUSTFLAGS: -C linker=clang -C link-arg=-fuse-ld=mold
@@ -38,14 +39,19 @@ jobs:
       - name: Stub frontend dist for rust_embed
         run: mkdir -p src/server/static-react/dist && echo '<html></html>' > src/server/static-react/dist/index.html
 
+      # Build test binaries first — this is the slowest step (compiles fold_db from git).
+      # Clippy and check then run incrementally against the cached artifacts.
+      - name: Build test binaries
+        run: cargo test --workspace --all-targets --no-run
+
       - name: Run clippy
         run: cargo clippy --workspace --all-targets -- -D warnings
 
       - name: Check AWS backend compiles
         run: cargo check --workspace --features aws-backend
 
-      - name: Run cargo test
-        run: cargo test --workspace --all-targets
+      - name: Run tests
+        run: cargo test --workspace --all-targets -- --test-threads=2
 
   integration-tests:
     name: Integration Tests

@@ -31,6 +31,7 @@ export const DEFAULT_TABS = [
   },
   { id: "data-browser", label: "Data Browser", icon: "🗄️", group: "advanced" },
   { id: "word-graph", label: "Word Graph", icon: "🕸️", group: "advanced" },
+  { id: "views", label: "Views", icon: "👁️", group: "advanced" },
   { id: "discovery", label: "Discovery", icon: "🌐", group: "advanced" },
 ];
 
