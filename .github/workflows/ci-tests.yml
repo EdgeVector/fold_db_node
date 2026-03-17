@@ -51,7 +51,7 @@ jobs:
         run: cargo check --workspace --features aws-backend
 
       - name: Run tests
-        run: cargo test --workspace --all-targets
+        run: cargo test --workspace --all-targets -- --test-threads=2
 
   integration-tests:
     name: Integration Tests
