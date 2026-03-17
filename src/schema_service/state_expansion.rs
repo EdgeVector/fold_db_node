@@ -325,6 +325,9 @@ impl SchemaServiceState {
         // Register new fields as canonical for future schema proposals
         self.register_canonical_fields(schema);
 
+        // Propagate canonical field types to the expanded schema
+        self.apply_canonical_types(schema);
+
         log_feature!(
             LogFeature::Schema,
             info,

@@ -4,10 +4,12 @@ use fold_db::db_operations::native_index::cosine_similarity;
 use fold_db::error::{FoldDbError, FoldDbResult};
 use fold_db::log_feature;
 use fold_db::logging::features::LogFeature;
+use fold_db::schema::types::field_value_type::FieldValueType;
 use fold_db::schema::types::Schema;
 
 use super::state::SchemaServiceState;
 use super::state_matching::FIELD_SIMILARITY_THRESHOLD;
+use super::types::CanonicalField;
 
 impl SchemaServiceState {
     /// Build embedding text from a field's description.
@@ -51,6 +53,24 @@ impl SchemaServiceState {
         }
     }
 
+    /// Infer the FieldValueType for a field from schema metadata.
+    /// Uses ref_fields for schema references, field_types if declared,
+    /// and falls back to Any.
+    fn infer_field_type(field_name: &str, schema: &Schema) -> FieldValueType {
+        // If the schema already has a declared type, use it
+        if let Some(ft) = schema.field_types.get(field_name) {
+            return ft.clone();
+        }
+
+        // If it's a ref_field, type is SchemaRef
+        if let Some(ref_schema) = schema.ref_fields.get(field_name) {
+            return FieldValueType::SchemaRef(ref_schema.clone());
+        }
+
+        // No type info available
+        FieldValueType::Any
+    }
+
     /// Register new fields from a schema as canonical.
     /// Only adds fields that don't already exist in the registry.
     pub(super) fn register_canonical_fields(&self, schema: &Schema) {
@@ -70,14 +90,17 @@ impl SchemaServiceState {
                 continue;
             }
             let desc = Self::build_field_description(field_name, schema);
+            let field_type = Self::infer_field_type(field_name, schema);
             let embed_text = Self::build_embedding_text(field_name, &desc);
             if let Ok(vec) = self.embedder.embed_text(&embed_text) {
                 embeddings.insert(field_name.clone(), vec);
             }
-            fields.insert(field_name.clone(), desc.clone());
-            // Persist outside lock scope would be cleaner but we hold a write lock
-            // on fields — persist uses a separate sled tree so no deadlock risk.
-            self.persist_canonical_field(field_name, &desc);
+            let canonical = CanonicalField {
+                description: desc,
+                field_type,
+            };
+            self.persist_canonical_field(field_name, &canonical);
+            fields.insert(field_name.clone(), canonical);
         }
     }
 
@@ -195,14 +218,28 @@ impl SchemaServiceState {
             let name = String::from_utf8(key.to_vec()).map_err(|e| {
                 FoldDbError::Config(format!("Invalid canonical field key: {}", e))
             })?;
-            let desc = String::from_utf8(value.to_vec()).map_err(|e| {
-                FoldDbError::Config(format!("Invalid canonical field description: {}", e))
-            })?;
-            let embed_text = Self::build_embedding_text(&name, &desc);
+            let value_bytes = value.to_vec();
+
+            // Try to deserialize as CanonicalField (new format); fall back to plain description string (legacy)
+            let canonical: CanonicalField =
+                if let Ok(cf) = serde_json::from_slice::<CanonicalField>(&value_bytes) {
+                    cf
+                } else {
+                    // Legacy format: value is just the description as UTF-8 string
+                    let desc = String::from_utf8(value_bytes).map_err(|e| {
+                        FoldDbError::Config(format!("Invalid canonical field description: {}", e))
+                    })?;
+                    CanonicalField {
+                        description: desc,
+                        field_type: FieldValueType::Any,
+                    }
+                };
+
+            let embed_text = Self::build_embedding_text(&name, &canonical.description);
             if let Ok(vec) = self.embedder.embed_text(&embed_text) {
                 embeddings.insert(name.clone(), vec);
             }
-            fields.insert(name, desc);
+            fields.insert(name, canonical);
         }
 
         log_feature!(
@@ -237,11 +274,18 @@ impl SchemaServiceState {
             for field_name in schema.fields.as_deref().unwrap_or(&[]) {
                 if !fields.contains_key(field_name) {
                     let desc = Self::build_field_description(field_name, schema);
+                    let field_type = Self::infer_field_type(field_name, schema);
                     let embed_text = Self::build_embedding_text(field_name, &desc);
                     if let Ok(vec) = self.embedder.embed_text(&embed_text) {
                         embeddings.insert(field_name.clone(), vec);
                     }
-                    fields.insert(field_name.clone(), desc);
+                    fields.insert(
+                        field_name.clone(),
+                        CanonicalField {
+                            description: desc,
+                            field_type,
+                        },
+                    );
                 }
             }
         }
@@ -255,17 +299,42 @@ impl SchemaServiceState {
     }
 
     /// Persist a canonical field to sled storage.
-    pub(super) fn persist_canonical_field(&self, name: &str, description: &str) {
+    pub(super) fn persist_canonical_field(&self, name: &str, canonical: &CanonicalField) {
         match &self.storage {
             super::state::SchemaStorage::Sled { db, .. } => {
                 if let Ok(tree) = db.open_tree("canonical_fields") {
-                    let _ = tree.insert(name.as_bytes(), description.as_bytes());
+                    if let Ok(bytes) = serde_json::to_vec(canonical) {
+                        let _ = tree.insert(name.as_bytes(), bytes);
+                    }
                 }
             }
             #[cfg(feature = "aws-backend")]
             super::state::SchemaStorage::Cloud { .. } => {
                 // Cloud storage doesn't have a separate canonical_fields table;
                 // canonical fields are rebuilt from schemas on startup.
+            }
+        }
+    }
+
+    /// Populate a schema's `field_types` map from the canonical field registry.
+    /// Called after canonicalization to propagate types from the registry to the schema.
+    pub(super) fn apply_canonical_types(&self, schema: &mut Schema) {
+        let fields = match self.canonical_fields.read() {
+            Ok(f) => f,
+            Err(_) => return,
+        };
+
+        for field_name in schema.fields.as_deref().unwrap_or(&[]) {
+            // Skip if the schema already has a declared type for this field
+            if schema.field_types.contains_key(field_name) {
+                continue;
+            }
+            if let Some(canonical) = fields.get(field_name) {
+                if canonical.field_type != FieldValueType::Any {
+                    schema
+                        .field_types
+                        .insert(field_name.clone(), canonical.field_type.clone());
+                }
             }
         }
     }
