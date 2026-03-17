@@ -13,6 +13,7 @@ jobs:
   rust-tests:
     name: Rust Tests
     runs-on: ubuntu-latest
+    timeout-minutes: 20
 
     env:
       RUSTFLAGS: -C linker=clang -C link-arg=-fuse-ld=mold
