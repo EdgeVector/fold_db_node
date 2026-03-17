@@ -115,12 +115,14 @@ impl IngestionService {
             missing
         );
 
-        // Build a compact sample for the prompt
-        let sample = if let Some(array) = json_data.as_array() {
+        // Build a compact sample for the prompt — truncate long string fields
+        // (e.g. full markdown bodies) to avoid Ollama timeouts.
+        let raw_sample = if let Some(array) = json_data.as_array() {
             serde_json::json!(array.iter().take(2).collect::<Vec<_>>())
         } else {
             json_data.clone()
         };
+        let sample = crate::ingestion::ai::helpers::truncate_long_strings(&raw_sample);
 
         let prompt = crate::ingestion::ai::prompts::FIELD_DESCRIPTIONS_PROMPT
             .replace("{sample}", &serde_json::to_string_pretty(&sample).unwrap_or_default())

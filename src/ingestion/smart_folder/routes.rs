@@ -363,7 +363,10 @@ pub async fn smart_folder_ingest(
         node.get_encryption_key()
     };
 
-    let max_concurrent = request.max_concurrent.unwrap_or(100).clamp(1, 100);
+    // Default to 2 concurrent files.  Each file triggers an Ollama inference
+    // call for schema recommendation, and Ollama processes requests serially.
+    // Higher concurrency just queues requests that eventually timeout (300s).
+    let max_concurrent = request.max_concurrent.unwrap_or(2).clamp(1, 100);
 
     // Spawn the concurrent coordinator
     spawn_batch_coordinator(

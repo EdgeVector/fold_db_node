@@ -161,59 +161,48 @@ pub async fn perform_smart_folder_scan_with_progress(
     }
 
     report(25, format!(
-        "Classifying {} files with AI ({} already ingested)...",
+        "Classifying {} files ({} already ingested)...",
         llm_candidates.len(),
         already_ingested_recs.len(),
     ));
 
-    // Send remaining non-ingested files to LLM in batches (with tree context)
+    // Two-pass classification: heuristics first (instant), LLM only for ambiguous files.
+    // This avoids sending hundreds of obviously-classifiable files to a slow Ollama call.
     let llm_recs = if llm_candidates.is_empty() {
         Vec::new()
     } else {
-        // Create service from env if not provided
-        let owned_service;
-        let svc = match service {
-            Some(s) => s,
-            None => {
-                owned_service = crate::ingestion::ingestion_service::IngestionService::from_env()?;
-                &owned_service
+        let heuristic_results = apply_heuristic_filtering(&llm_candidates);
+
+        // Files the heuristic couldn't classify (category == "unknown") need LLM help
+        let mut resolved: Vec<FileRecommendation> = Vec::new();
+        let mut ambiguous: Vec<String> = Vec::new();
+        for rec in heuristic_results {
+            if rec.category == "unknown" {
+                ambiguous.push(rec.path);
+            } else {
+                resolved.push(rec);
             }
-        };
-
-        let batch_size = 100;
-        let chunks: Vec<Vec<String>> = llm_candidates.chunks(batch_size).map(|c| c.to_vec()).collect();
-        let total_batches = chunks.len();
-
-        if total_batches > 1 {
-            report(25, format!(
-                "Classifying files with AI ({} batches, up to 4 concurrent)...",
-                total_batches,
-            ));
         }
 
-        // Run LLM classification batches concurrently — up to 4 at a time (API rate limits)
-        let tree_display = &scan.tree_display;
-        let batch_results: Vec<IngestionResult<Vec<FileRecommendation>>> = stream::iter(chunks.into_iter().enumerate())
-            .map(|(i, chunk_vec)| async move {
-                let prompt = create_smart_folder_prompt(tree_display, &chunk_vec);
-                let llm_response = call_llm_for_file_analysis(&prompt, svc).await
-                    .map_err(|e| {
-                        log::error!("LLM unavailable for batch {}: {}", i, e);
-                        e
-                    })?;
-                Ok(parse_llm_file_recommendations(&llm_response, &chunk_vec)
-                    .unwrap_or_else(|e| {
-                        log::warn!("Failed to parse LLM response for batch {}: {}", i, e);
-                        apply_heuristic_filtering(&chunk_vec)
-                    }))
-            })
-            .buffer_unordered(4)
-            .collect()
-            .await;
+        log_feature!(
+            LogFeature::Ingestion,
+            info,
+            "Heuristic pass: {} classified, {} ambiguous files need LLM",
+            resolved.len(),
+            ambiguous.len(),
+        );
 
-        // Propagate the first LLM error — if the AI is unreachable, stop the scan.
-        batch_results.into_iter().collect::<IngestionResult<Vec<Vec<FileRecommendation>>>>()?
-            .into_iter().flatten().collect()
+        if !ambiguous.is_empty() {
+            // TODO: Re-enable LLM classification once Ollama concurrency is sorted out.
+            // For now, use heuristic filtering which is instant and doesn't hit Ollama.
+            report(30, format!(
+                "Classifying {} ambiguous files with heuristics...",
+                ambiguous.len(),
+            ));
+            resolved.extend(apply_heuristic_filtering(&ambiguous));
+        }
+
+        resolved
     };
 
     report(80, "Computing costs and finalizing...".into());
