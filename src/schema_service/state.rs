@@ -43,10 +43,10 @@ pub struct SchemaServiceState {
     pub(super) descriptive_name_embeddings: Arc<RwLock<HashMap<String, Vec<f32>>>>,
     /// Cached embeddings for context-enriched field names: "desc_name:field_name" -> embedding
     pub(super) field_embeddings: Arc<RwLock<HashMap<String, Vec<f32>>>>,
-    /// Global canonical field registry: canonical_name -> description.
+    /// Global canonical field registry: canonical_name -> CanonicalField (description + type).
     /// New schema proposals have their field names matched against this list
     /// so that semantically equivalent fields use consistent names across all schemas.
-    pub(super) canonical_fields: Arc<RwLock<HashMap<String, String>>>,
+    pub(super) canonical_fields: Arc<RwLock<HashMap<String, super::types::CanonicalField>>>,
     /// Cached embeddings for canonical field names
     pub(super) canonical_field_embeddings: Arc<RwLock<HashMap<String, Vec<f32>>>>,
     /// Text embedding model for semantic descriptive name matching
@@ -565,6 +565,9 @@ impl SchemaServiceState {
 
         // Register new fields as canonical for future schema proposals
         self.register_canonical_fields(&schema);
+
+        // Propagate canonical field types to the schema
+        self.apply_canonical_types(&mut schema);
 
         log_feature!(
             LogFeature::Schema,
