@@ -10,8 +10,8 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
-  rust-lint:
-    name: Rust Lint
+  rust-tests:
+    name: Rust Tests
     runs-on: ubuntu-latest
 
     steps:
@@ -37,26 +37,6 @@ jobs:
 
       - name: Check AWS backend compiles
         run: cargo check --workspace --features aws-backend
-
-  rust-tests:
-    name: Rust Tests
-    runs-on: ubuntu-latest
-
-    steps:
-      - name: Checkout repository
-        uses: actions/checkout@v4
-
-      - name: Install Rust
-        uses: dtolnay/rust-toolchain@stable
-
-      - name: Configure git for private dependencies
-        run: git config --global url."https://x-access-token:${{ secrets.PRIVATE_DEPS_TOKEN }}@github.com/".insteadOf "https://github.com/"
-
-      - name: Cache Rust artifacts
-        uses: Swatinem/rust-cache@v2
-
-      - name: Stub frontend dist for rust_embed
-        run: mkdir -p src/server/static-react/dist && echo '<html></html>' > src/server/static-react/dist/index.html
 
       - name: Run cargo test
         run: cargo test --workspace --all-targets
