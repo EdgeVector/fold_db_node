@@ -878,6 +878,7 @@ impl SchemaServiceState {
         output_schema.descriptive_name = Some(request.descriptive_name.clone());
         output_schema.field_descriptions = request.field_descriptions.clone();
         output_schema.field_classifications = request.field_classifications.clone();
+        output_schema.field_data_classifications = request.field_data_classifications.clone();
         output_schema.schema_type = request.schema_type.clone();
 
         // Run through the full schema pipeline (similarity, canonicalization, dedup, expansion)

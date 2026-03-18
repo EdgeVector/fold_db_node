@@ -171,6 +171,9 @@ pub struct AddViewRequest {
     /// Classifications for each output field
     #[serde(default)]
     pub field_classifications: HashMap<String, Vec<String>>,
+    /// Data classifications for each output field (sensitivity + domain)
+    #[serde(default)]
+    pub field_data_classifications: HashMap<String, DataClassification>,
     /// Optional WASM transform bytes
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub wasm_bytes: Option<Vec<u8>>,
