@@ -466,14 +466,11 @@ async fn legacy_canonical_field_loads_without_classification() {
         .await
         .expect("should add schema with legacy canonical field");
 
-    match outcome {
-        SchemaAddOutcome::Added(schema, _) => {
-            assert!(
-                schema.fields.as_ref().unwrap().contains(&"author".to_string()),
-                "'author' should be in fields"
-            );
-        }
-        _ => {} // other outcomes acceptable
+    if let SchemaAddOutcome::Added(schema, _) = outcome {
+        assert!(
+            schema.fields.as_ref().unwrap().contains(&"author".to_string()),
+            "'author' should be in fields"
+        );
     }
 }
 
