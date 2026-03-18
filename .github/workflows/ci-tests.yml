@@ -35,12 +35,13 @@ jobs:
 
       # Add swap space — test binaries are large (64-134MB each) and can exhaust
       # the 7GB RAM on ubuntu-latest when running with compilation artifacts in memory.
-      - name: Create swap
+      - name: Add swap space
         run: |
-          sudo fallocate -l 4G /swapfile
-          sudo chmod 600 /swapfile
-          sudo mkswap /swapfile
-          sudo swapon /swapfile
+          sudo fallocate -l 4G /swap2
+          sudo chmod 600 /swap2
+          sudo mkswap /swap2
+          sudo swapon /swap2
+          free -h
 
       - name: Run clippy
         run: cargo clippy --workspace --all-targets -- -D warnings
