@@ -49,7 +49,12 @@ jobs:
       - name: Check AWS backend compiles
         run: cargo check --workspace --features aws-backend
 
-      - name: Run cargo test
+      # Build test binaries separately — linking 64-134MB binaries needs
+      # the swap space above. Then running them is fast.
+      - name: Build test binaries
+        run: cargo test --workspace --all-targets --no-run
+
+      - name: Run tests
         run: cargo test --workspace --all-targets
 
   integration-tests:
