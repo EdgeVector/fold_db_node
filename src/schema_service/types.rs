@@ -3,6 +3,8 @@ use fold_db::schema::types::field_value_type::FieldValueType;
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 
+use fold_db::schema::types::operations::Query;
+use fold_db::schema::types::schema::DeclarativeSchemaType;
 use fold_db::schema::types::Schema;
 
 /// A canonical field entry in the global field registry.
@@ -132,4 +134,84 @@ pub struct SchemaReuseMatch {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct BatchSchemaReuseResponse {
     pub matches: HashMap<String, SchemaReuseMatch>,
+}
+
+// ============== View Types ==============
+
+/// A stored view definition in the global registry.
+/// Views are computed lenses: input queries + optional WASM transform → output schema.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct StoredView {
+    /// View name (human-readable)
+    pub name: String,
+    /// Queries that feed data into this view
+    pub input_queries: Vec<Query>,
+    /// Optional WASM transform bytes (base64-encoded in JSON)
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub wasm_bytes: Option<Vec<u8>>,
+    /// Identity hash of the output schema (registered via add_schema)
+    pub output_schema_name: String,
+    /// Schema type for the view output
+    pub schema_type: DeclarativeSchemaType,
+}
+
+/// Request to register a new view
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct AddViewRequest {
+    /// Human-readable view name
+    pub name: String,
+    /// Descriptive name for the output schema (used in similarity matching)
+    pub descriptive_name: String,
+    /// Queries that feed data into this view
+    pub input_queries: Vec<Query>,
+    /// Output field names
+    pub output_fields: Vec<String>,
+    /// Descriptions for each output field (required for semantic matching)
+    pub field_descriptions: HashMap<String, String>,
+    /// Classifications for each output field
+    #[serde(default)]
+    pub field_classifications: HashMap<String, Vec<String>>,
+    /// Optional WASM transform bytes
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub wasm_bytes: Option<Vec<u8>>,
+    /// Schema type for the view output
+    #[serde(default = "default_schema_type")]
+    pub schema_type: DeclarativeSchemaType,
+}
+
+fn default_schema_type() -> DeclarativeSchemaType {
+    DeclarativeSchemaType::Single
+}
+
+/// Outcome of registering a view
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub enum ViewAddOutcome {
+    /// View registered, output schema was newly added
+    Added(StoredView, Schema),
+    /// View registered, output schema already existed
+    AddedWithExistingSchema(StoredView, Schema),
+    /// View registered, output schema was expanded from an existing one
+    Expanded(StoredView, Schema, String), // view, schema, old_schema_name
+}
+
+/// Response for adding a view
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct AddViewResponse {
+    pub view: StoredView,
+    pub output_schema: Schema,
+    /// If the output schema expanded an existing one, the old schema name
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub replaced_schema: Option<String>,
+}
+
+/// Response containing a list of view names
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ViewsListResponse {
+    pub views: Vec<String>,
+}
+
+/// Response containing all views with their definitions
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct AvailableViewsResponse {
+    pub views: Vec<StoredView>,
 }
