@@ -1,4 +1,4 @@
-//! Schema Service
+//! Schema Service HTTP Layer
 //!
 //! A standalone HTTP service that provides schema discovery and management.
 //! The schema service loads schemas from a sled database on startup and
