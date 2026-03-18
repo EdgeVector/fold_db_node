@@ -373,23 +373,6 @@ impl SchemaServiceState {
             }
         }
 
-        // Auto-populate missing field_data_classifications with a default of
-        // (0, "general") = Public/General. The schema service is the authority
-        // on classification — callers CAN provide explicit classifications but
-        // are not required to. Canonical field propagation (apply_canonical_classifications)
-        // will override defaults with known classifications later in the pipeline.
-        if let Some(ref fields) = schema.fields {
-            for field in fields {
-                schema
-                    .field_data_classifications
-                    .entry(field.clone())
-                    .or_insert_with(|| {
-                        fold_db::schema::types::DataClassification::new(0, "general")
-                            .expect("default classification is always valid")
-                    });
-            }
-        }
-
         // Canonicalize field names against the global canonical field registry
         // before any dedup or identity hash computation.
         if let Some(ref fields) = schema.fields {

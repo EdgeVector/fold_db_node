@@ -49,9 +49,11 @@ fn json_to_schema_with_classifications(
     schema
 }
 
-// T1: add_schema auto-populates missing field_data_classifications with default (0, "general")
+// T1: Schema service assigns default classification (0, "general") to new canonical
+// fields when the caller does not provide field_data_classifications.
+// The classification lives on the canonical field and propagates to the schema.
 #[tokio::test]
-async fn auto_populates_missing_field_data_classifications() {
+async fn schema_service_assigns_default_classification_for_new_fields() {
     let temp_dir = tempdir().expect("failed to create temp directory");
     let db_path = temp_dir
         .path()
@@ -76,22 +78,23 @@ async fn auto_populates_missing_field_data_classifications() {
     let outcome = state
         .add_schema(schema, HashMap::new())
         .await
-        .expect("should accept schema without classifications and auto-populate defaults");
+        .expect("should accept schema without classifications — schema service assigns defaults");
 
     match outcome {
         SchemaAddOutcome::Added(schema, _) => {
-            // Both fields should have been auto-populated with (0, "general")
+            // Classifications should be propagated from canonical fields
+            // (which default to (0, "general") for new fields)
             let class_a = schema
                 .field_data_classifications
                 .get("field_a")
-                .expect("field_a should have auto-populated classification");
+                .expect("field_a should have classification from canonical field");
             assert_eq!(class_a.sensitivity_level, 0);
             assert_eq!(class_a.data_domain, "general");
 
             let class_b = schema
                 .field_data_classifications
                 .get("field_b")
-                .expect("field_b should have auto-populated classification");
+                .expect("field_b should have classification from canonical field");
             assert_eq!(class_b.sensitivity_level, 0);
             assert_eq!(class_b.data_domain, "general");
         }

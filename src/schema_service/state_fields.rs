@@ -73,6 +73,8 @@ impl SchemaServiceState {
 
     /// Register new fields from a schema as canonical.
     /// Only adds fields that don't already exist in the registry.
+    /// The schema service is the authority on classification: if the caller
+    /// provides a classification it is used, otherwise defaults to (0, "general").
     pub(super) fn register_canonical_fields(&self, schema: &Schema) {
         let field_names = schema.fields.as_deref().unwrap_or(&[]);
 
@@ -85,13 +87,23 @@ impl SchemaServiceState {
             Err(_) => return,
         };
 
+        let default_classification = fold_db::schema::types::DataClassification::new(0, "general")
+            .expect("default classification is always valid");
+
         for field_name in field_names {
             if fields.contains_key(field_name) {
                 continue;
             }
             let desc = Self::build_field_description(field_name, schema);
             let field_type = Self::infer_field_type(field_name, schema);
-            let classification = schema.field_data_classifications.get(field_name).cloned();
+            // Use caller-provided classification, or default to (0, "general")
+            let classification = Some(
+                schema
+                    .field_data_classifications
+                    .get(field_name)
+                    .cloned()
+                    .unwrap_or_else(|| default_classification.clone()),
+            );
             let embed_text = Self::build_embedding_text(field_name, &desc);
             if let Ok(vec) = self.embedder.embed_text(&embed_text) {
                 embeddings.insert(field_name.clone(), vec);
@@ -273,12 +285,21 @@ impl SchemaServiceState {
         fields.clear();
         embeddings.clear();
 
+        let default_classification = fold_db::schema::types::DataClassification::new(0, "general")
+            .expect("default classification is always valid");
+
         for schema in schemas.values() {
             for field_name in schema.fields.as_deref().unwrap_or(&[]) {
                 if !fields.contains_key(field_name) {
                     let desc = Self::build_field_description(field_name, schema);
                     let field_type = Self::infer_field_type(field_name, schema);
-                    let classification = schema.field_data_classifications.get(field_name).cloned();
+                    let classification = Some(
+                        schema
+                            .field_data_classifications
+                            .get(field_name)
+                            .cloned()
+                            .unwrap_or_else(|| default_classification.clone()),
+                    );
                     let embed_text = Self::build_embedding_text(field_name, &desc);
                     if let Ok(vec) = self.embedder.embed_text(&embed_text) {
                         embeddings.insert(field_name.clone(), vec);
