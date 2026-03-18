@@ -189,6 +189,11 @@ async fn test_semantic_field_matching_full_pipeline() {
             "artist": ["word"],
             "title": ["word"],
             "year": ["number"]
+        },
+        "field_data_classifications": {
+            "artist": { "sensitivity_level": 0, "data_domain": "general" },
+            "title": { "sensitivity_level": 0, "data_domain": "general" },
+            "year": { "sensitivity_level": 0, "data_domain": "general" }
         }
     }))
     .unwrap();
@@ -240,6 +245,12 @@ async fn test_semantic_field_matching_full_pipeline() {
             "title": ["word"],
             "year": ["number"],
             "medium": ["word"]
+        },
+        "field_data_classifications": {
+            "creator": { "sensitivity_level": 0, "data_domain": "general" },
+            "title": { "sensitivity_level": 0, "data_domain": "general" },
+            "year": { "sensitivity_level": 0, "data_domain": "general" },
+            "medium": { "sensitivity_level": 0, "data_domain": "general" }
         }
     }))
     .unwrap();

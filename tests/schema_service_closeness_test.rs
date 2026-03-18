@@ -1,3 +1,4 @@
+use fold_db::schema::types::data_classification::DataClassification;
 use fold_db_node::schema_service::server::{SchemaAddOutcome, SchemaServiceState};
 use serde_json::json;
 use std::collections::HashMap;
@@ -24,11 +25,13 @@ fn json_to_schema(value: serde_json::Value) -> fold_db::schema::types::Schema {
     if schema.descriptive_name.is_none() {
         schema.descriptive_name = Some(schema.name.clone());
     }
-    // Ensure field_descriptions are set (required by schema service)
+    // Ensure field_descriptions and data classifications are set (required by schema service)
     if let Some(ref fields) = schema.fields {
         for f in fields {
             schema.field_descriptions.entry(f.clone())
                 .or_insert_with(|| format!("{} field", f));
+            schema.field_data_classifications.entry(f.clone())
+                .or_insert_with(|| DataClassification::new(0, "general").unwrap());
         }
     }
     schema

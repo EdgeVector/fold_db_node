@@ -113,6 +113,10 @@ mod tests {
         for f in &field_strings {
             schema.field_classifications.insert(f.clone(), vec!["word".to_string()]);
             schema.field_descriptions.insert(f.clone(), format!("{} field", f));
+            schema.field_data_classifications.insert(
+                f.clone(),
+                fold_db::schema::types::DataClassification::new(0, "general").unwrap(),
+            );
         }
         schema
     }
@@ -365,6 +369,10 @@ mod tests {
         for f in &field_strings {
             schema.field_classifications.insert(f.clone(), vec!["word".to_string()]);
             schema.field_descriptions.insert(f.clone(), format!("{} field", f));
+            schema.field_data_classifications.insert(
+                f.clone(),
+                fold_db::schema::types::DataClassification::new(0, "general").unwrap(),
+            );
         }
         let outcome = state
             .add_schema(schema, HashMap::new())

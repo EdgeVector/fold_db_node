@@ -1,3 +1,4 @@
+use fold_db::schema::types::data_classification::DataClassification;
 use fold_db::schema::types::field_value_type::FieldValueType;
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
@@ -5,11 +6,16 @@ use std::collections::HashMap;
 use fold_db::schema::types::Schema;
 
 /// A canonical field entry in the global field registry.
-/// Carries description (for semantic matching) and type (for enforcement).
+/// Carries description (for semantic matching), type (for enforcement),
+/// and optional data classification (for sensitivity labeling).
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct CanonicalField {
     pub description: String,
     pub field_type: FieldValueType,
+    /// Data classification label for this field. `None` for legacy fields
+    /// that were registered before classification was required.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub classification: Option<DataClassification>,
 }
 
 /// Response containing a list of available schema names

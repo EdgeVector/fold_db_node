@@ -358,6 +358,22 @@ impl SchemaServiceState {
             }
         }
 
+        // field_data_classifications is required — every field must carry a
+        // (sensitivity_level, data_domain) label for access control and
+        // downgrading transform verification.
+        if let Some(ref fields) = schema.fields {
+            let missing: Vec<&String> = fields
+                .iter()
+                .filter(|f| !schema.field_data_classifications.contains_key(*f))
+                .collect();
+            if !missing.is_empty() {
+                return Err(FoldDbError::Config(format!(
+                    "Schema fields missing data classifications (required for access control): {:?}",
+                    missing
+                )));
+            }
+        }
+
         // Canonicalize field names against the global canonical field registry
         // before any dedup or identity hash computation.
         if let Some(ref fields) = schema.fields {
@@ -566,8 +582,9 @@ impl SchemaServiceState {
         // Register new fields as canonical for future schema proposals
         self.register_canonical_fields(&schema);
 
-        // Propagate canonical field types to the schema
+        // Propagate canonical field types and classifications to the schema
         self.apply_canonical_types(&mut schema);
+        self.apply_canonical_classifications(&mut schema);
 
         log_feature!(
             LogFeature::Schema,
