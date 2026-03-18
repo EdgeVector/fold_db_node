@@ -5,7 +5,8 @@ use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 
 use crate::schema_service::types::{
-    BatchSchemaReuseRequest, BatchSchemaReuseResponse, SchemaLookupEntry,
+    AddViewRequest, AddViewResponse, BatchSchemaReuseRequest, BatchSchemaReuseResponse,
+    SchemaLookupEntry, StoredView,
 };
 
 /// Client for communicating with the schema service
@@ -202,6 +203,67 @@ impl SchemaServiceClient {
                 e
             ))
         })
+    }
+
+    /// Register a view with the global schema service.
+    pub async fn add_view(&self, request: &AddViewRequest) -> FoldDbResult<AddViewResponse> {
+        let url = format!("{}/api/views", self.base_url);
+
+        let response = self
+            .client
+            .post(&url)
+            .json(request)
+            .send()
+            .await
+            .map_err(|error| {
+                FoldDbError::Config(format!(
+                    "Failed to submit view to schema service at {}: {}. Is the schema service running?",
+                    url, error
+                ))
+            })?;
+
+        let status = response.status();
+
+        if status == StatusCode::CREATED || status == StatusCode::OK {
+            return response.json::<AddViewResponse>().await.map_err(|error| {
+                FoldDbError::Config(format!("Failed to parse view response: {}", error))
+            });
+        }
+
+        let body = response
+            .text()
+            .await
+            .unwrap_or_else(|_| "<empty>".to_string());
+        Err(FoldDbError::Config(format!(
+            "Schema service add view failed with status {}: {}",
+            status, body
+        )))
+    }
+
+    /// List all views from the global schema service.
+    pub async fn list_views(&self) -> FoldDbResult<Vec<String>> {
+        #[derive(Deserialize)]
+        struct ViewsListResponse { views: Vec<String> }
+
+        let url = format!("{}/api/views", self.base_url);
+        let resp: ViewsListResponse = self.get_json(&url, "views").await?;
+        Ok(resp.views)
+    }
+
+    /// Get all views with their full definitions.
+    pub async fn get_available_views(&self) -> FoldDbResult<Vec<StoredView>> {
+        #[derive(Deserialize)]
+        struct AvailableViewsResponse { views: Vec<StoredView> }
+
+        let url = format!("{}/api/views/available", self.base_url);
+        let resp: AvailableViewsResponse = self.get_json(&url, "available views").await?;
+        Ok(resp.views)
+    }
+
+    /// Get a specific view by name.
+    pub async fn get_view(&self, name: &str) -> FoldDbResult<StoredView> {
+        let url = format!("{}/api/view/{}", self.base_url, name);
+        self.get_json(&url, &format!("view '{}'", name)).await
     }
 }
 

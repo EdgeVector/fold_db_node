@@ -9,6 +9,107 @@ use fold_db::schema::types::Schema;
 use super::state::{SchemaServiceState, SchemaStorage};
 use super::types::*;
 
+// ============== View Route Handlers ==============
+
+/// List all view names
+pub(super) async fn list_views(state: web::Data<SchemaServiceState>) -> impl Responder {
+    match state.get_view_names() {
+        Ok(names) => HttpResponse::Ok().json(ViewsListResponse { views: names }),
+        Err(e) => {
+            log_feature!(LogFeature::Schema, error, "Failed to list views: {}", e);
+            HttpResponse::InternalServerError().json(ErrorResponse {
+                error: format!("Failed to list views: {}", e),
+            })
+        }
+    }
+}
+
+/// Get all views with definitions
+pub(super) async fn get_available_views(
+    state: web::Data<SchemaServiceState>,
+) -> impl Responder {
+    match state.get_all_views() {
+        Ok(views) => HttpResponse::Ok().json(AvailableViewsResponse { views }),
+        Err(e) => {
+            log_feature!(LogFeature::Schema, error, "Failed to get available views: {}", e);
+            HttpResponse::InternalServerError().json(ErrorResponse {
+                error: format!("Failed to get views: {}", e),
+            })
+        }
+    }
+}
+
+/// Get a specific view by name
+pub(super) async fn get_view(
+    path: web::Path<String>,
+    state: web::Data<SchemaServiceState>,
+) -> impl Responder {
+    let view_name = path.into_inner();
+    log_feature!(LogFeature::Schema, info, "Schema service: getting view '{}'", view_name);
+
+    match state.get_view_by_name(&view_name) {
+        Ok(Some(view)) => HttpResponse::Ok().json(view),
+        Ok(None) => {
+            log_feature!(LogFeature::Schema, warn, "View '{}' not found", view_name);
+            HttpResponse::NotFound().json(ErrorResponse {
+                error: "View not found".to_string(),
+            })
+        }
+        Err(e) => {
+            log_feature!(LogFeature::Schema, error, "Failed to get view '{}': {}", view_name, e);
+            HttpResponse::InternalServerError().json(ErrorResponse {
+                error: format!("Failed to get view: {}", e),
+            })
+        }
+    }
+}
+
+/// Register a new view
+pub(super) async fn add_view(
+    payload: web::Json<AddViewRequest>,
+    state: web::Data<SchemaServiceState>,
+) -> impl Responder {
+    let request = payload.into_inner();
+    let view_name = request.name.clone();
+
+    log_feature!(
+        LogFeature::Schema, info,
+        "Schema service: registering view '{}' with {} input queries and {} output fields",
+        view_name, request.input_queries.len(), request.output_fields.len()
+    );
+
+    match state.add_view(request).await {
+        Ok(ViewAddOutcome::Added(view, schema)) => {
+            HttpResponse::Created().json(AddViewResponse {
+                view,
+                output_schema: schema,
+                replaced_schema: None,
+            })
+        }
+        Ok(ViewAddOutcome::AddedWithExistingSchema(view, schema)) => {
+            HttpResponse::Ok().json(AddViewResponse {
+                view,
+                output_schema: schema,
+                replaced_schema: None,
+            })
+        }
+        Ok(ViewAddOutcome::Expanded(view, schema, old_name)) => {
+            HttpResponse::Created().json(AddViewResponse {
+                view,
+                output_schema: schema,
+                replaced_schema: Some(old_name),
+            })
+        }
+        Err(error) => {
+            log_feature!(LogFeature::Schema, error, "Failed to register view '{}': {}", view_name, error);
+            HttpResponse::BadRequest().json(ErrorResponse {
+                error: format!("Failed to register view: {}", error),
+            })
+        }
+    }
+}
+
+
 /// Acquire a read lock on the schemas map, returning an HTTP 500 on poisoned lock.
 fn read_schemas(
     state: &SchemaServiceState,

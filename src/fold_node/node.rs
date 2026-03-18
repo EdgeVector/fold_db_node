@@ -243,6 +243,17 @@ impl FoldNode {
             .batch_check_schema_reuse(entries).await
     }
 
+    /// Register a view with the global schema service.
+    pub async fn add_view_to_service(
+        &self,
+        request: &crate::schema_service::types::AddViewRequest,
+    ) -> FoldDbResult<crate::schema_service::types::AddViewResponse> {
+        let url = self.require_real_schema_service()?;
+        crate::fold_node::SchemaServiceClient::new(&url)
+            .add_view(request)
+            .await
+    }
+
     /// Execute a batch of mutations.
     pub async fn mutate_batch(
         &self,

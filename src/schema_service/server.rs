@@ -14,8 +14,9 @@ pub use super::state::CloudConfig;
 
 // Route handlers (pub(super) visibility — accessible from sibling modules)
 use super::routes::{
-    add_schema, batch_check_reuse, find_similar, get_available_schemas, get_schema, health_check,
-    list_schemas, reload_schemas, reset_database,
+    add_schema, add_view, batch_check_reuse, find_similar, get_available_schemas,
+    get_available_views, get_schema, get_view, health_check, list_schemas, list_views,
+    reload_schemas, reset_database,
 };
 
 /// Schema Service HTTP Server
@@ -77,6 +78,14 @@ impl SchemaServiceServer {
                     .route("/schemas/available", web::get().to(get_available_schemas))
                     .route("/schemas/similar/{name}", web::get().to(find_similar))
                     .route("/schema/{name}", web::get().to(get_schema))
+                    // View endpoints
+                    .service(
+                        web::resource("/views")
+                            .route(web::get().to(list_views))
+                            .route(web::post().to(add_view)),
+                    )
+                    .route("/views/available", web::get().to(get_available_views))
+                    .route("/view/{name}", web::get().to(get_view))
                     .route("/system/reset", web::post().to(reset_database)),
             )
         })
@@ -531,5 +540,204 @@ mod tests {
         let a: HashSet<String> = ["x".to_string()].into_iter().collect();
         let b: HashSet<String> = HashSet::new();
         assert!((jaccard_index(&a, &b) - 0.0).abs() < 1e-10);
+    }
+
+    // ============== View Tests ==============
+
+    use crate::schema_service::types::{AddViewRequest, ViewAddOutcome};
+    use fold_db::schema::types::operations::Query;
+    use fold_db::schema::types::schema::DeclarativeSchemaType;
+
+    fn make_view_request(
+        name: &str,
+        desc_name: &str,
+        output_fields: &[&str],
+        source_schema: &str,
+        source_fields: &[&str],
+    ) -> AddViewRequest {
+        let field_strings: Vec<String> = output_fields.iter().map(|f| f.to_string()).collect();
+        let mut field_descriptions = HashMap::new();
+        let mut field_classifications = HashMap::new();
+        for f in &field_strings {
+            field_descriptions.insert(f.clone(), format!("{} field", f));
+            field_classifications.insert(f.clone(), vec!["word".to_string()]);
+        }
+
+        AddViewRequest {
+            name: name.to_string(),
+            descriptive_name: desc_name.to_string(),
+            input_queries: vec![Query::new(
+                source_schema.to_string(),
+                source_fields.iter().map(|f| f.to_string()).collect(),
+            )],
+            output_fields: field_strings,
+            field_descriptions,
+            field_classifications,
+            wasm_bytes: None,
+            schema_type: DeclarativeSchemaType::Single,
+        }
+    }
+
+    #[tokio::test]
+    async fn add_view_registers_output_schema() {
+        let state = make_test_state();
+
+        let request = make_view_request(
+            "TestView",
+            "Test View Output",
+            &["result_a", "result_b"],
+            "SourceSchema",
+            &["field_a", "field_b"],
+        );
+
+        let outcome = state.add_view(request).await.expect("failed to add view");
+
+        match outcome {
+            ViewAddOutcome::Added(view, schema) => {
+                assert_eq!(view.name, "TestView");
+                assert_eq!(view.input_queries.len(), 1);
+                assert_eq!(view.input_queries[0].schema_name, "SourceSchema");
+                // Output schema should be identity-hashed
+                assert_eq!(schema.descriptive_name, Some("Test View Output".to_string()));
+                // View's output_schema_name should match the registered schema name
+                assert_eq!(view.output_schema_name, schema.name);
+            }
+            _ => panic!("expected Added outcome, got {:?}", outcome),
+        }
+
+        // View should be in the views list
+        let view_names = state.get_view_names().expect("failed to get view names");
+        assert!(view_names.contains(&"TestView".to_string()));
+
+        // Output schema should be in the schemas list
+        let schema_names = state.get_schema_names().expect("failed to get schema names");
+        assert!(!schema_names.is_empty());
+    }
+
+    #[tokio::test]
+    async fn add_view_deduplicates_output_schema() {
+        let state = make_test_state();
+
+        // First view
+        let request1 = make_view_request(
+            "View1",
+            "Shared Output Schema",
+            &["x", "y"],
+            "Source1",
+            &["a"],
+        );
+        let outcome1 = state.add_view(request1).await.expect("failed to add view1");
+        let schema1_name = match &outcome1 {
+            ViewAddOutcome::Added(_, schema) => schema.name.clone(),
+            _ => panic!("expected Added"),
+        };
+
+        // Second view with same output fields and descriptive name
+        let request2 = make_view_request(
+            "View2",
+            "Shared Output Schema",
+            &["x", "y"],
+            "Source2",
+            &["b"],
+        );
+        let outcome2 = state.add_view(request2).await.expect("failed to add view2");
+
+        match outcome2 {
+            ViewAddOutcome::AddedWithExistingSchema(view, schema) => {
+                assert_eq!(view.name, "View2");
+                // Should reuse the same output schema
+                assert_eq!(schema.name, schema1_name);
+            }
+            other => panic!("expected AddedWithExistingSchema, got {:?}", other),
+        }
+
+        // Both views should exist
+        let view_names = state.get_view_names().expect("failed to get view names");
+        assert_eq!(view_names.len(), 2);
+
+        // Only one schema (deduplicated)
+        let schema_names = state.get_schema_names().expect("failed to get schema names");
+        assert_eq!(schema_names.len(), 1);
+    }
+
+    #[tokio::test]
+    async fn add_view_validates_empty_name() {
+        let state = make_test_state();
+        let mut request = make_view_request("", "desc", &["f"], "s", &["a"]);
+        request.name = "  ".to_string();
+
+        let result = state.add_view(request).await;
+        assert!(result.is_err());
+        assert!(format!("{}", result.unwrap_err()).contains("non-empty"));
+    }
+
+    #[tokio::test]
+    async fn add_view_validates_empty_output_fields() {
+        let state = make_test_state();
+        let mut request = make_view_request("V", "desc", &["f"], "s", &["a"]);
+        request.output_fields = vec![];
+
+        let result = state.add_view(request).await;
+        assert!(result.is_err());
+        assert!(format!("{}", result.unwrap_err()).contains("at least one output field"));
+    }
+
+    #[tokio::test]
+    async fn add_view_validates_missing_field_descriptions() {
+        let state = make_test_state();
+        let mut request = make_view_request("V", "desc", &["f"], "s", &["a"]);
+        request.field_descriptions.clear();
+
+        let result = state.add_view(request).await;
+        assert!(result.is_err());
+        assert!(format!("{}", result.unwrap_err()).contains("missing descriptions"));
+    }
+
+    #[tokio::test]
+    async fn add_view_validates_empty_input_query_fields() {
+        let state = make_test_state();
+        let mut request = make_view_request("V", "desc", &["f"], "s", &["a"]);
+        request.input_queries[0].fields = vec![];
+
+        let result = state.add_view(request).await;
+        assert!(result.is_err());
+        assert!(format!("{}", result.unwrap_err()).contains("explicit fields"));
+    }
+
+    #[tokio::test]
+    async fn add_view_validates_duplicate_input_pairs() {
+        let state = make_test_state();
+        let mut request = make_view_request("V", "desc", &["f"], "s", &["a"]);
+        // Add a second query with the same schema.field pair
+        request.input_queries.push(Query::new(
+            "s".to_string(),
+            vec!["a".to_string()],
+        ));
+
+        let result = state.add_view(request).await;
+        assert!(result.is_err());
+        assert!(format!("{}", result.unwrap_err()).contains("Duplicate"));
+    }
+
+    #[tokio::test]
+    async fn get_view_by_name_returns_registered_view() {
+        let state = make_test_state();
+
+        let request = make_view_request(
+            "MyView",
+            "My View Output",
+            &["out1"],
+            "Src",
+            &["in1"],
+        );
+        state.add_view(request).await.expect("failed to add view");
+
+        let view = state.get_view_by_name("MyView").expect("failed to get view");
+        assert!(view.is_some());
+        let view = view.unwrap();
+        assert_eq!(view.name, "MyView");
+
+        let missing = state.get_view_by_name("NonExistent").expect("failed to get view");
+        assert!(missing.is_none());
     }
 }
