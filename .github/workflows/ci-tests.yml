@@ -13,17 +13,11 @@ jobs:
   rust-tests:
     name: Rust Tests
     runs-on: ubuntu-latest
-    timeout-minutes: 20
-
-    env:
-      RUSTFLAGS: -C linker=clang -C link-arg=-fuse-ld=mold
+    timeout-minutes: 25
 
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
-
-      - name: Install mold linker
-        run: sudo apt-get update && sudo apt-get install -y mold
 
       - name: Install Rust
         uses: dtolnay/rust-toolchain@stable
@@ -39,10 +33,14 @@ jobs:
       - name: Stub frontend dist for rust_embed
         run: mkdir -p src/server/static-react/dist && echo '<html></html>' > src/server/static-react/dist/index.html
 
-      # Build test binaries first — this is the slowest step (compiles fold_db from git).
-      # Clippy and check then run incrementally against the cached artifacts.
-      - name: Build test binaries
-        run: cargo test --workspace --all-targets --no-run
+      # Add swap space — test binaries are large (64-134MB each) and can exhaust
+      # the 7GB RAM on ubuntu-latest when running with compilation artifacts in memory.
+      - name: Create swap
+        run: |
+          sudo fallocate -l 4G /swapfile
+          sudo chmod 600 /swapfile
+          sudo mkswap /swapfile
+          sudo swapon /swapfile
 
       - name: Run clippy
         run: cargo clippy --workspace --all-targets -- -D warnings
@@ -50,8 +48,8 @@ jobs:
       - name: Check AWS backend compiles
         run: cargo check --workspace --features aws-backend
 
-      - name: Run tests
-        run: cargo test --workspace --all-targets -- --test-threads=2
+      - name: Run cargo test
+        run: cargo test --workspace --all-targets
 
   integration-tests:
     name: Integration Tests
