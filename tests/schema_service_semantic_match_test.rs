@@ -1,6 +1,7 @@
 #![cfg(feature = "test-utils")]
 
 use fold_db::db_operations::native_index::{MockEmbeddingModel, ScriptedEmbeddingModel};
+use fold_db::schema::types::data_classification::DataClassification;
 use fold_db_node::schema_service::server::{SchemaAddOutcome, SchemaServiceState};
 use serde_json::json;
 use std::collections::HashMap;
@@ -9,7 +10,20 @@ use tempfile::tempdir;
 
 /// Helper function to convert JSON to Schema
 fn json_to_schema(value: serde_json::Value) -> fold_db::schema::types::Schema {
-    serde_json::from_value(value).expect("failed to deserialize schema from JSON")
+    let mut schema: fold_db::schema::types::Schema =
+        serde_json::from_value(value).expect("failed to deserialize schema from JSON");
+    if schema.descriptive_name.is_none() {
+        schema.descriptive_name = Some(schema.name.clone());
+    }
+    if let Some(ref fields) = schema.fields {
+        for f in fields {
+            schema.field_descriptions.entry(f.clone())
+                .or_insert_with(|| format!("{} field", f));
+            schema.field_data_classifications.entry(f.clone())
+                .or_insert_with(|| DataClassification::new(0, "general").unwrap());
+        }
+    }
+    schema
 }
 
 fn create_test_state() -> SchemaServiceState {

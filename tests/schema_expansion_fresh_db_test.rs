@@ -13,6 +13,7 @@
 //!
 //! Run with: `cargo test --test schema_expansion_fresh_db_test -- --nocapture`
 
+use fold_db::schema::types::data_classification::DataClassification;
 use fold_db::schema::types::{Schema, SchemaType};
 use fold_db_node::fold_node::node::FoldNode;
 use fold_db_node::fold_node::OperationProcessor;
@@ -178,6 +179,7 @@ fn build_schema(
     schema.field_classifications = field_classifications;
     for f in schema.fields.clone().unwrap_or_default() {
         schema.field_descriptions.insert(f.clone(), format!("{} field", f));
+        schema.field_data_classifications.insert(f.clone(), DataClassification::new(0, "general").unwrap());
     }
     schema.compute_identity_hash();
     schema.name = schema.get_identity_hash().unwrap().clone();

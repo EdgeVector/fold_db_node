@@ -7,6 +7,7 @@
 //! 4. Expands schemas when a second source adds new fields
 //! 5. Shares canonical fields across schemas in the same domain
 
+use fold_db::schema::types::data_classification::DataClassification;
 use fold_db_node::schema_service::server::{SchemaAddOutcome, SchemaServiceState};
 use serde_json::json;
 use std::collections::HashMap;
@@ -24,6 +25,10 @@ fn json_to_schema(value: serde_json::Value) -> fold_db::schema::types::Schema {
                 .field_descriptions
                 .entry(f.clone())
                 .or_insert_with(|| format!("{} field", f));
+            schema
+                .field_data_classifications
+                .entry(f.clone())
+                .or_insert_with(|| DataClassification::new(0, "general").unwrap());
         }
     }
     schema

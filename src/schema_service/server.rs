@@ -122,6 +122,10 @@ mod tests {
         for f in &field_strings {
             schema.field_classifications.insert(f.clone(), vec!["word".to_string()]);
             schema.field_descriptions.insert(f.clone(), format!("{} field", f));
+            schema.field_data_classifications.insert(
+                f.clone(),
+                fold_db::schema::types::DataClassification::new(0, "general").unwrap(),
+            );
         }
         schema
     }
@@ -374,6 +378,10 @@ mod tests {
         for f in &field_strings {
             schema.field_classifications.insert(f.clone(), vec!["word".to_string()]);
             schema.field_descriptions.insert(f.clone(), format!("{} field", f));
+            schema.field_data_classifications.insert(
+                f.clone(),
+                fold_db::schema::types::DataClassification::new(0, "general").unwrap(),
+            );
         }
         let outcome = state
             .add_schema(schema, HashMap::new())
@@ -558,9 +566,14 @@ mod tests {
         let field_strings: Vec<String> = output_fields.iter().map(|f| f.to_string()).collect();
         let mut field_descriptions = HashMap::new();
         let mut field_classifications = HashMap::new();
+        let mut field_data_classifications = HashMap::new();
         for f in &field_strings {
             field_descriptions.insert(f.clone(), format!("{} field", f));
             field_classifications.insert(f.clone(), vec!["word".to_string()]);
+            field_data_classifications.insert(
+                f.clone(),
+                fold_db::schema::types::DataClassification::new(0, "general").unwrap(),
+            );
         }
 
         AddViewRequest {
@@ -573,6 +586,7 @@ mod tests {
             output_fields: field_strings,
             field_descriptions,
             field_classifications,
+            field_data_classifications,
             wasm_bytes: None,
             schema_type: DeclarativeSchemaType::Single,
         }

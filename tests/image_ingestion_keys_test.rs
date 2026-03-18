@@ -54,6 +54,16 @@ fn image_schema_json(name: &str) -> serde_json::Value {
             "weather": "Weather conditions",
             "source_file_name": "Original file name"
         },
+        "field_data_classifications": {
+            "image_type": { "sensitivity_level": 0, "data_domain": "general" },
+            "subjects": { "sensitivity_level": 0, "data_domain": "general" },
+            "background": { "sensitivity_level": 0, "data_domain": "general" },
+            "tags": { "sensitivity_level": 0, "data_domain": "general" },
+            "setting": { "sensitivity_level": 0, "data_domain": "general" },
+            "time_of_day": { "sensitivity_level": 0, "data_domain": "general" },
+            "weather": { "sensitivity_level": 0, "data_domain": "general" },
+            "source_file_name": { "sensitivity_level": 0, "data_domain": "general" }
+        },
         "permissions": {
             "read": { "policy_type": "NoPolicy" },
             "write": { "policy_type": "NoPolicy" }
@@ -81,6 +91,10 @@ fn hashrange_image_schema_json(name: &str) -> serde_json::Value {
         "field_descriptions": {
             "image_type": "Type of image",
             "source_file_name": "Original file name"
+        },
+        "field_data_classifications": {
+            "image_type": { "sensitivity_level": 0, "data_domain": "general" },
+            "source_file_name": { "sensitivity_level": 0, "data_domain": "general" }
         },
         "permissions": {
             "read": { "policy_type": "NoPolicy" },

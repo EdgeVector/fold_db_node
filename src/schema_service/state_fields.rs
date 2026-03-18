@@ -91,6 +91,7 @@ impl SchemaServiceState {
             }
             let desc = Self::build_field_description(field_name, schema);
             let field_type = Self::infer_field_type(field_name, schema);
+            let classification = schema.field_data_classifications.get(field_name).cloned();
             let embed_text = Self::build_embedding_text(field_name, &desc);
             if let Ok(vec) = self.embedder.embed_text(&embed_text) {
                 embeddings.insert(field_name.clone(), vec);
@@ -98,6 +99,7 @@ impl SchemaServiceState {
             let canonical = CanonicalField {
                 description: desc,
                 field_type,
+                classification,
             };
             self.persist_canonical_field(field_name, &canonical);
             fields.insert(field_name.clone(), canonical);
@@ -232,6 +234,7 @@ impl SchemaServiceState {
                     CanonicalField {
                         description: desc,
                         field_type: FieldValueType::Any,
+                        classification: None,
                     }
                 };
 
@@ -275,6 +278,7 @@ impl SchemaServiceState {
                 if !fields.contains_key(field_name) {
                     let desc = Self::build_field_description(field_name, schema);
                     let field_type = Self::infer_field_type(field_name, schema);
+                    let classification = schema.field_data_classifications.get(field_name).cloned();
                     let embed_text = Self::build_embedding_text(field_name, &desc);
                     if let Ok(vec) = self.embedder.embed_text(&embed_text) {
                         embeddings.insert(field_name.clone(), vec);
@@ -284,6 +288,7 @@ impl SchemaServiceState {
                         CanonicalField {
                             description: desc,
                             field_type,
+                            classification,
                         },
                     );
                 }
@@ -312,6 +317,30 @@ impl SchemaServiceState {
             super::state::SchemaStorage::Cloud { .. } => {
                 // Cloud storage doesn't have a separate canonical_fields table;
                 // canonical fields are rebuilt from schemas on startup.
+            }
+        }
+    }
+
+    /// Populate a schema's `field_data_classifications` map from the canonical field registry.
+    /// Called after canonicalization to propagate classifications from the registry to the schema.
+    /// Only fills in fields that don't already have a classification declared.
+    pub(super) fn apply_canonical_classifications(&self, schema: &mut Schema) {
+        let fields = match self.canonical_fields.read() {
+            Ok(f) => f,
+            Err(_) => return,
+        };
+
+        for field_name in schema.fields.as_deref().unwrap_or(&[]) {
+            // Skip if the schema already has a classification for this field
+            if schema.field_data_classifications.contains_key(field_name) {
+                continue;
+            }
+            if let Some(canonical) = fields.get(field_name) {
+                if let Some(ref classification) = canonical.classification {
+                    schema
+                        .field_data_classifications
+                        .insert(field_name.clone(), classification.clone());
+                }
             }
         }
     }

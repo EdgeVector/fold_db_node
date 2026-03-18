@@ -370,6 +370,10 @@ mod tests {
         schema.descriptive_name = Some("Test Schema".to_string());
         schema.field_classifications.insert("id".to_string(), vec!["word".to_string()]);
         schema.field_descriptions.insert("id".to_string(), "unique identifier".to_string());
+        schema.field_data_classifications.insert(
+            "id".to_string(),
+            fold_db::schema::types::DataClassification::new(0, "general").unwrap(),
+        );
 
         let response = client
             .add_schema(&schema, HashMap::new())
