@@ -47,14 +47,16 @@ jobs:
           sudo mkswap /swap2
           sudo swapon /swap2
 
+      # Build+run tests first — this compiles in test profile and caches the
+      # dep artifacts. Clippy then runs incrementally against the warm cache.
+      - name: Run cargo test
+        run: cargo test --workspace --all-targets
+
       - name: Run clippy
         run: cargo clippy --workspace --all-targets -- -D warnings
 
       - name: Check AWS backend compiles
         run: cargo check --workspace --features aws-backend
-
-      - name: Run cargo test
-        run: cargo test --workspace --all-targets
 
   integration-tests:
     name: Integration Tests
