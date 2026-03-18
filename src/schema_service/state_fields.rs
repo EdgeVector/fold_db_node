@@ -76,17 +76,19 @@ impl SchemaServiceState {
     ///
     /// The schema service is the authority on classification. For each new field:
     /// 1. Use caller-provided classification if present
-    /// 2. LLM call to analyze field description (if ANTHROPIC_API_KEY is set)
-    /// 3. Fall back to (0, "general")
-    pub(super) async fn register_canonical_fields(&self, schema: &Schema) {
+    /// 2. LLM call to analyze field description (requires ANTHROPIC_API_KEY)
+    /// 3. No fallback — returns error if classification cannot be determined
+    pub(super) async fn register_canonical_fields(
+        &self,
+        schema: &Schema,
+    ) -> FoldDbResult<()> {
         let field_names = schema.fields.as_deref().unwrap_or(&[]);
 
         // Phase 1: Identify new fields (read lock only)
         let new_fields: Vec<String> = {
-            let fields = match self.canonical_fields.read() {
-                Ok(f) => f,
-                Err(_) => return,
-            };
+            let fields = self.canonical_fields.read().map_err(|_| {
+                FoldDbError::Config("Failed to acquire canonical_fields read lock".to_string())
+            })?;
             field_names
                 .iter()
                 .filter(|f| !fields.contains_key(*f))
@@ -95,7 +97,7 @@ impl SchemaServiceState {
         };
 
         if new_fields.is_empty() {
-            return;
+            return Ok(());
         }
 
         // Phase 2: Build canonical entries with inferred classifications (no locks held)
@@ -111,7 +113,8 @@ impl SchemaServiceState {
                 &desc,
                 caller_provided,
             )
-            .await;
+            .await
+            .map_err(FoldDbError::Config)?;
 
             let embed_text = Self::build_embedding_text(field_name, &desc);
             let embedding = self.embedder.embed_text(&embed_text).ok();
@@ -128,14 +131,14 @@ impl SchemaServiceState {
         }
 
         // Phase 3: Store under write locks
-        let mut fields = match self.canonical_fields.write() {
-            Ok(f) => f,
-            Err(_) => return,
-        };
-        let mut embeddings = match self.canonical_field_embeddings.write() {
-            Ok(e) => e,
-            Err(_) => return,
-        };
+        let mut fields = self.canonical_fields.write().map_err(|_| {
+            FoldDbError::Config("Failed to acquire canonical_fields write lock".to_string())
+        })?;
+        let mut embeddings = self.canonical_field_embeddings.write().map_err(|_| {
+            FoldDbError::Config(
+                "Failed to acquire canonical_field_embeddings write lock".to_string(),
+            )
+        })?;
 
         for (field_name, canonical, embedding) in entries {
             // Re-check in case another thread registered it between phase 1 and 3
@@ -148,6 +151,8 @@ impl SchemaServiceState {
             self.persist_canonical_field(&field_name, &canonical);
             fields.insert(field_name, canonical);
         }
+
+        Ok(())
     }
 
     /// Canonicalize incoming field names against the global canonical field registry.

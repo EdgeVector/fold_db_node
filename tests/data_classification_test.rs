@@ -49,11 +49,11 @@ fn json_to_schema_with_classifications(
     schema
 }
 
-// T1: Schema service assigns default classification (0, "general") to new canonical
-// fields when the caller does not provide field_data_classifications.
-// The classification lives on the canonical field and propagates to the schema.
+// T1: Without caller-provided classifications, schema service either:
+// - Classifies via LLM (if ANTHROPIC_API_KEY is set) → succeeds with inferred classifications
+// - Errors with clear message (if no API key) → no silent defaults
 #[tokio::test]
-async fn schema_service_assigns_default_classification_for_new_fields() {
+async fn new_fields_without_classification_use_llm_or_error() {
     let temp_dir = tempdir().expect("failed to create temp directory");
     let db_path = temp_dir
         .path()
@@ -64,41 +64,42 @@ async fn schema_service_assigns_default_classification_for_new_fields() {
     let state =
         SchemaServiceState::new(db_path).expect("failed to initialize schema service state");
 
-    // Build schema WITHOUT classifications (skip the helper that auto-fills them)
+    // Build schema WITHOUT classifications
     let mut schema: fold_db::schema::types::Schema = serde_json::from_value(json!({
         "name": "TestSchema",
         "descriptive_name": "Test Schema",
         "fields": ["field_a", "field_b"],
     }))
     .unwrap();
-    // Add descriptions but NOT classifications
     schema.field_descriptions.insert("field_a".to_string(), "field a desc".to_string());
     schema.field_descriptions.insert("field_b".to_string(), "field b desc".to_string());
 
-    let outcome = state
-        .add_schema(schema, HashMap::new())
-        .await
-        .expect("should accept schema without classifications — schema service assigns defaults");
+    let result = state.add_schema(schema, HashMap::new()).await;
 
-    match outcome {
-        SchemaAddOutcome::Added(schema, _) => {
-            // Classifications should be propagated from canonical fields
-            // (which default to (0, "general") for new fields)
-            let class_a = schema
-                .field_data_classifications
-                .get("field_a")
-                .expect("field_a should have classification from canonical field");
-            assert_eq!(class_a.sensitivity_level, 0);
-            assert_eq!(class_a.data_domain, "general");
-
-            let class_b = schema
-                .field_data_classifications
-                .get("field_b")
-                .expect("field_b should have classification from canonical field");
-            assert_eq!(class_b.sensitivity_level, 0);
-            assert_eq!(class_b.data_domain, "general");
+    match result {
+        Ok(outcome) => {
+            // ANTHROPIC_API_KEY is set — LLM classified the fields
+            match outcome {
+                SchemaAddOutcome::Added(schema, _) => {
+                    let class_a = schema
+                        .field_data_classifications
+                        .get("field_a")
+                        .expect("field_a should have LLM-inferred classification");
+                    assert!(class_a.sensitivity_level <= 4);
+                    assert!(!class_a.data_domain.is_empty());
+                }
+                other => panic!("expected Added, got {:?}", other),
+            }
         }
-        other => panic!("expected Added, got {:?}", other),
+        Err(e) => {
+            // No ANTHROPIC_API_KEY — schema service correctly refuses
+            let err_msg = e.to_string();
+            assert!(
+                err_msg.contains("ANTHROPIC_API_KEY"),
+                "error should mention missing API key, got: {}",
+                err_msg
+            );
+        }
     }
 }
 

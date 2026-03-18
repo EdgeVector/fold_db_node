@@ -4,10 +4,10 @@
 //! based on the field's description. The schema service is the sole authority
 //! on data classification.
 //!
-//! Strategy:
-//! 1. Existing canonical field → use its classification (handled by caller)
-//! 2. New field → LLM call using field description (if ANTHROPIC_API_KEY set)
-//! 3. Fallback: (0, "general") if no API key or LLM call fails
+//! Strategy for new fields without an existing canonical match:
+//! 1. Caller-provided classification → use it
+//! 2. LLM call using field description (requires ANTHROPIC_API_KEY)
+//! 3. No fallback — returns error. Incorrect classification is worse than no schema.
 
 use fold_db::schema::types::data_classification::DataClassification;
 
@@ -33,14 +33,20 @@ Return format: {{"sensitivity_level": <0-4>, "data_domain": "<domain>"}}"#
 }
 
 /// Classify a field using LLM analysis of its description.
-/// Returns None if the API key is not set or the call fails.
+/// Returns a descriptive error string on failure.
 pub async fn classify_with_llm(
     field_name: &str,
     description: &str,
-) -> Option<DataClassification> {
-    let api_key = std::env::var("ANTHROPIC_API_KEY").ok()?;
+) -> Result<DataClassification, String> {
+    let api_key = std::env::var("ANTHROPIC_API_KEY").map_err(|_| {
+        "Schema service cannot classify new fields: ANTHROPIC_API_KEY not set. \
+         Set the environment variable to enable automatic sensitivity classification."
+            .to_string()
+    })?;
     if api_key.trim().is_empty() {
-        return None;
+        return Err(
+            "Schema service cannot classify new fields: ANTHROPIC_API_KEY is empty".to_string(),
+        );
     }
 
     let prompt = build_classification_prompt(field_name, description);
@@ -49,7 +55,7 @@ pub async fn classify_with_llm(
         .timeout(std::time::Duration::from_secs(15))
         .no_proxy()
         .build()
-        .ok()?;
+        .map_err(|e| format!("Failed to create HTTP client for classification: {}", e))?;
 
     let request_body = serde_json::json!({
         "model": "claude-haiku-4-5-20251001",
@@ -66,66 +72,72 @@ pub async fn classify_with_llm(
         .json(&request_body)
         .send()
         .await
-        .ok()?;
+        .map_err(|e| {
+            format!(
+                "Classification LLM call failed for field '{}': {}",
+                field_name, e
+            )
+        })?;
 
     if !response.status().is_success() {
-        fold_db::log_feature!(
-            fold_db::logging::features::LogFeature::Schema,
-            warn,
-            "Classification LLM call failed with status {} for field '{}'",
+        return Err(format!(
+            "Classification LLM call returned status {} for field '{}'",
             response.status(),
             field_name
-        );
-        return None;
+        ));
     }
 
-    let resp: serde_json::Value = response.json().await.ok()?;
+    let resp: serde_json::Value = response
+        .json()
+        .await
+        .map_err(|e| format!("Failed to parse LLM response for field '{}': {}", field_name, e))?;
+
     let text = resp
-        .get("content")?
-        .as_array()?
-        .first()?
-        .get("text")?
-        .as_str()?;
+        .get("content")
+        .and_then(|c| c.as_array())
+        .and_then(|a| a.first())
+        .and_then(|c| c.get("text"))
+        .and_then(|t| t.as_str())
+        .ok_or_else(|| {
+            format!(
+                "LLM response missing content text for field '{}'",
+                field_name
+            )
+        })?;
 
     // Parse the JSON response — try raw text first, then extract from markdown fence
-    let parsed: Result<DataClassification, _> = serde_json::from_str(text).or_else(|_| {
-        let trimmed = text.trim();
-        let json_str = trimmed
-            .strip_prefix("```json")
-            .or_else(|| trimmed.strip_prefix("```"))
-            .and_then(|s| s.strip_suffix("```"))
-            .unwrap_or(trimmed)
-            .trim();
-        serde_json::from_str(json_str)
-    });
-
-    match parsed {
-        Ok(classification) => {
-            fold_db::log_feature!(
-                fold_db::logging::features::LogFeature::Schema,
-                info,
-                "LLM classified field '{}' as ({}, {})",
-                field_name,
-                classification.sensitivity_level,
-                classification.data_domain
-            );
-            Some(classification)
-        }
-        Err(e) => {
-            fold_db::log_feature!(
-                fold_db::logging::features::LogFeature::Schema,
-                warn,
+    let classification: DataClassification = serde_json::from_str(text)
+        .or_else(|_| {
+            let trimmed = text.trim();
+            let json_str = trimmed
+                .strip_prefix("```json")
+                .or_else(|| trimmed.strip_prefix("```"))
+                .and_then(|s| s.strip_suffix("```"))
+                .unwrap_or(trimmed)
+                .trim();
+            serde_json::from_str(json_str)
+        })
+        .map_err(|e| {
+            format!(
                 "Failed to parse LLM classification for field '{}': {} (raw: {})",
-                field_name,
-                e,
-                text
-            );
-            None
-        }
-    }
+                field_name, e, text
+            )
+        })?;
+
+    fold_db::log_feature!(
+        fold_db::logging::features::LogFeature::Schema,
+        info,
+        "LLM classified field '{}' as ({}, {})",
+        field_name,
+        classification.sensitivity_level,
+        classification.data_domain
+    );
+
+    Ok(classification)
 }
 
 /// Infer classification for a new canonical field.
+/// Returns an error if classification cannot be determined — no silent fallbacks.
 ///
 /// ```text
 /// caller-provided? ──yes──▶ use it
@@ -134,25 +146,20 @@ pub async fn classify_with_llm(
 /// LLM call (ANTHROPIC_API_KEY) ──success──▶ use it
 ///       │ no key / failure
 ///       ▼
-/// fallback: (0, "general")
+/// ERROR: schema service cannot classify
 /// ```
 pub async fn infer_classification(
     field_name: &str,
     description: &str,
     caller_provided: Option<&DataClassification>,
-) -> DataClassification {
-    // 1. Caller-provided classification takes priority
+) -> Result<DataClassification, String> {
+    // Caller-provided classification takes priority
     if let Some(c) = caller_provided {
-        return c.clone();
+        return Ok(c.clone());
     }
 
-    // 2. LLM-based classification from field description
-    if let Some(c) = classify_with_llm(field_name, description).await {
-        return c;
-    }
-
-    // 3. Fallback: Public/General
-    DataClassification::new(0, "general").expect("default classification is always valid")
+    // LLM-based classification from field description
+    classify_with_llm(field_name, description).await
 }
 
 #[cfg(test)]
@@ -162,26 +169,31 @@ mod tests {
     #[tokio::test]
     async fn infer_uses_caller_provided_first() {
         let caller = DataClassification::new(4, "medical").unwrap();
-        let result = infer_classification(
-            "diagnosis",
-            "patient diagnosis",
-            Some(&caller),
-        )
-        .await;
-        assert_eq!(result.sensitivity_level, 4);
-        assert_eq!(result.data_domain, "medical");
+        let result = infer_classification("diagnosis", "patient diagnosis", Some(&caller)).await;
+        let c = result.unwrap();
+        assert_eq!(c.sensitivity_level, 4);
+        assert_eq!(c.data_domain, "medical");
     }
 
     #[tokio::test]
-    async fn infer_falls_back_to_default_without_api_key() {
-        // No ANTHROPIC_API_KEY set → falls back to (0, "general")
-        let result = infer_classification(
-            "some_field",
-            "a miscellaneous field",
-            None,
-        )
-        .await;
-        assert_eq!(result.sensitivity_level, 0);
-        assert_eq!(result.data_domain, "general");
+    async fn infer_without_caller_provided_uses_llm_or_errors() {
+        // Without caller-provided classification, the result depends on ANTHROPIC_API_KEY:
+        // - If set: LLM classifies successfully → Ok with a valid classification
+        // - If not set: returns Err mentioning ANTHROPIC_API_KEY
+        let result = infer_classification("salary", "employee annual salary", None).await;
+        match result {
+            Ok(c) => {
+                // LLM was available and classified the field
+                assert!(c.sensitivity_level <= 4, "sensitivity level should be valid");
+                assert!(!c.data_domain.is_empty(), "data domain should not be empty");
+            }
+            Err(e) => {
+                assert!(
+                    e.contains("ANTHROPIC_API_KEY"),
+                    "error should mention missing API key, got: {}",
+                    e
+                );
+            }
+        }
     }
 }

@@ -336,8 +336,9 @@ impl SchemaServiceState {
             index.insert(desc_name.to_string(), expanded_name);
         }
 
-        // Register new fields as canonical for future schema proposals
-        self.register_canonical_fields(schema).await;
+        // Register new fields as canonical for future schema proposals.
+        // Fails if classification cannot be determined (no ANTHROPIC_API_KEY for new fields).
+        self.register_canonical_fields(schema).await?;
 
         // Propagate canonical field types and classifications to the expanded schema
         self.apply_canonical_types(schema);
