@@ -373,19 +373,20 @@ impl SchemaServiceState {
             }
         }
 
-        // field_data_classifications is required — every field must carry a
-        // (sensitivity_level, data_domain) label for access control and
-        // downgrading transform verification.
+        // Auto-populate missing field_data_classifications with a default of
+        // (0, "general") = Public/General. The schema service is the authority
+        // on classification — callers CAN provide explicit classifications but
+        // are not required to. Canonical field propagation (apply_canonical_classifications)
+        // will override defaults with known classifications later in the pipeline.
         if let Some(ref fields) = schema.fields {
-            let missing: Vec<&String> = fields
-                .iter()
-                .filter(|f| !schema.field_data_classifications.contains_key(*f))
-                .collect();
-            if !missing.is_empty() {
-                return Err(FoldDbError::Config(format!(
-                    "Schema fields missing data classifications (required for access control): {:?}",
-                    missing
-                )));
+            for field in fields {
+                schema
+                    .field_data_classifications
+                    .entry(field.clone())
+                    .or_insert_with(|| {
+                        fold_db::schema::types::DataClassification::new(0, "general")
+                            .expect("default classification is always valid")
+                    });
             }
         }
 

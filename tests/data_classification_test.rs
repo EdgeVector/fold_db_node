@@ -49,9 +49,9 @@ fn json_to_schema_with_classifications(
     schema
 }
 
-// T1: add_schema rejects missing field_data_classifications
+// T1: add_schema auto-populates missing field_data_classifications with default (0, "general")
 #[tokio::test]
-async fn rejects_missing_field_data_classifications() {
+async fn auto_populates_missing_field_data_classifications() {
     let temp_dir = tempdir().expect("failed to create temp directory");
     let db_path = temp_dir
         .path()
@@ -73,15 +73,30 @@ async fn rejects_missing_field_data_classifications() {
     schema.field_descriptions.insert("field_a".to_string(), "field a desc".to_string());
     schema.field_descriptions.insert("field_b".to_string(), "field b desc".to_string());
 
-    let result = state.add_schema(schema, HashMap::new()).await;
+    let outcome = state
+        .add_schema(schema, HashMap::new())
+        .await
+        .expect("should accept schema without classifications and auto-populate defaults");
 
-    assert!(result.is_err(), "should reject schema without classifications");
-    let err_msg = result.unwrap_err().to_string();
-    assert!(
-        err_msg.contains("missing data classifications"),
-        "error should mention missing classifications, got: {}",
-        err_msg
-    );
+    match outcome {
+        SchemaAddOutcome::Added(schema, _) => {
+            // Both fields should have been auto-populated with (0, "general")
+            let class_a = schema
+                .field_data_classifications
+                .get("field_a")
+                .expect("field_a should have auto-populated classification");
+            assert_eq!(class_a.sensitivity_level, 0);
+            assert_eq!(class_a.data_domain, "general");
+
+            let class_b = schema
+                .field_data_classifications
+                .get("field_b")
+                .expect("field_b should have auto-populated classification");
+            assert_eq!(class_b.sensitivity_level, 0);
+            assert_eq!(class_b.data_domain, "general");
+        }
+        other => panic!("expected Added, got {:?}", other),
+    }
 }
 
 // T2: add_schema accepts valid classification (sensitivity 0-4, domain string)
