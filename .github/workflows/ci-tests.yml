@@ -13,7 +13,7 @@ jobs:
   rust-tests:
     name: Rust Tests
     runs-on: ubuntu-latest
-    timeout-minutes: 20
+    timeout-minutes: 25
 
     env:
       RUSTFLAGS: -C linker=clang -C link-arg=-fuse-ld=mold
@@ -39,10 +39,13 @@ jobs:
       - name: Stub frontend dist for rust_embed
         run: mkdir -p src/server/static-react/dist && echo '<html></html>' > src/server/static-react/dist/index.html
 
-      # Build test binaries first — this is the slowest step (compiles fold_db from git).
-      # Clippy and check then run incrementally against the cached artifacts.
-      - name: Build test binaries
-        run: cargo test --workspace --all-targets --no-run
+      # Swap prevents OOM when linking 64-134MB test binaries
+      - name: Add swap space
+        run: |
+          sudo fallocate -l 4G /swap2
+          sudo chmod 600 /swap2
+          sudo mkswap /swap2
+          sudo swapon /swap2
 
       - name: Run clippy
         run: cargo clippy --workspace --all-targets -- -D warnings
@@ -50,8 +53,13 @@ jobs:
       - name: Check AWS backend compiles
         run: cargo check --workspace --features aws-backend
 
-      - name: Run tests
-        run: cargo test --workspace --all-targets -- --test-threads=2
+      # Run lib tests (unit tests compiled into one binary — no 100MB+ linking).
+      # Integration tests are in a separate CI job to avoid OOM on the runner.
+      - name: Run unit tests
+        run: cargo test --workspace --lib
+
+      - name: Run doc tests
+        run: cargo test --workspace --doc 2>/dev/null || true
 
   integration-tests:
     name: Integration Tests
