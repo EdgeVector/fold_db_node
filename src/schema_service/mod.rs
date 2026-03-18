@@ -1,15 +1,13 @@
-//! Schema Service
+//! Schema Service HTTP Layer
 //!
-//! A standalone HTTP service that provides schema discovery and management.
-//! The schema service loads schemas from a sled database on startup and
-//! provides them via HTTP API to the main FoldDB node.
+//! HTTP server and route handlers for the schema service.
+//! Core logic (types, state, matching, expansion, fields) lives in fold_db::schema_service.
 
 mod routes;
 pub mod server;
-pub mod state;
-mod state_expansion;
-mod state_fields;
-mod state_matching;
-pub mod types;
+
+// Re-export core modules from fold_db so existing imports still work
+pub use fold_db::schema_service::state;
+pub use fold_db::schema_service::types;
 
 pub use server::SchemaServiceServer;
