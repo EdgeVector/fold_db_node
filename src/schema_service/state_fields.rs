@@ -73,11 +73,64 @@ impl SchemaServiceState {
 
     /// Register new fields from a schema as canonical.
     /// Only adds fields that don't already exist in the registry.
-    /// The schema service is the authority on classification: if the caller
-    /// provides a classification it is used, otherwise defaults to (0, "general").
-    pub(super) fn register_canonical_fields(&self, schema: &Schema) {
+    ///
+    /// The schema service is the authority on classification. For each new field:
+    /// 1. Use caller-provided classification if present
+    /// 2. Infer from field_classifications tags (e.g. "email" → identity/restricted)
+    /// 3. Call LLM to analyze field description (if ANTHROPIC_API_KEY is set)
+    /// 4. Fall back to (0, "general")
+    pub(super) async fn register_canonical_fields(&self, schema: &Schema) {
         let field_names = schema.fields.as_deref().unwrap_or(&[]);
 
+        // Phase 1: Identify new fields (read lock only)
+        let new_fields: Vec<String> = {
+            let fields = match self.canonical_fields.read() {
+                Ok(f) => f,
+                Err(_) => return,
+            };
+            field_names
+                .iter()
+                .filter(|f| !fields.contains_key(*f))
+                .cloned()
+                .collect()
+        };
+
+        if new_fields.is_empty() {
+            return;
+        }
+
+        // Phase 2: Build canonical entries with inferred classifications (no locks held)
+        let mut entries: Vec<(String, CanonicalField, Option<Vec<f32>>)> = Vec::new();
+
+        for field_name in &new_fields {
+            let desc = Self::build_field_description(field_name, schema);
+            let field_type = Self::infer_field_type(field_name, schema);
+            let tags = schema.field_classifications.get(field_name);
+            let caller_provided = schema.field_data_classifications.get(field_name);
+
+            let classification = super::classify::infer_classification(
+                field_name,
+                &desc,
+                tags,
+                caller_provided,
+            )
+            .await;
+
+            let embed_text = Self::build_embedding_text(field_name, &desc);
+            let embedding = self.embedder.embed_text(&embed_text).ok();
+
+            entries.push((
+                field_name.clone(),
+                CanonicalField {
+                    description: desc,
+                    field_type,
+                    classification: Some(classification),
+                },
+                embedding,
+            ));
+        }
+
+        // Phase 3: Store under write locks
         let mut fields = match self.canonical_fields.write() {
             Ok(f) => f,
             Err(_) => return,
@@ -87,34 +140,16 @@ impl SchemaServiceState {
             Err(_) => return,
         };
 
-        let default_classification = fold_db::schema::types::DataClassification::new(0, "general")
-            .expect("default classification is always valid");
-
-        for field_name in field_names {
-            if fields.contains_key(field_name) {
+        for (field_name, canonical, embedding) in entries {
+            // Re-check in case another thread registered it between phase 1 and 3
+            if fields.contains_key(&field_name) {
                 continue;
             }
-            let desc = Self::build_field_description(field_name, schema);
-            let field_type = Self::infer_field_type(field_name, schema);
-            // Use caller-provided classification, or default to (0, "general")
-            let classification = Some(
-                schema
-                    .field_data_classifications
-                    .get(field_name)
-                    .cloned()
-                    .unwrap_or_else(|| default_classification.clone()),
-            );
-            let embed_text = Self::build_embedding_text(field_name, &desc);
-            if let Ok(vec) = self.embedder.embed_text(&embed_text) {
+            if let Some(vec) = embedding {
                 embeddings.insert(field_name.clone(), vec);
             }
-            let canonical = CanonicalField {
-                description: desc,
-                field_type,
-                classification,
-            };
-            self.persist_canonical_field(field_name, &canonical);
-            fields.insert(field_name.clone(), canonical);
+            self.persist_canonical_field(&field_name, &canonical);
+            fields.insert(field_name, canonical);
         }
     }
 

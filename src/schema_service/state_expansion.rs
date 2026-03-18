@@ -337,7 +337,7 @@ impl SchemaServiceState {
         }
 
         // Register new fields as canonical for future schema proposals
-        self.register_canonical_fields(schema);
+        self.register_canonical_fields(schema).await;
 
         // Propagate canonical field types and classifications to the expanded schema
         self.apply_canonical_types(schema);
