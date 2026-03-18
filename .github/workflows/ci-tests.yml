@@ -16,13 +16,14 @@ jobs:
     timeout-minutes: 25
 
     env:
-      # Serialize compilation to reduce peak memory — linking 134MB test
-      # binaries in parallel exhausts the 7GB runner RAM.
-      CARGO_BUILD_JOBS: 1
+      RUSTFLAGS: -C linker=clang -C link-arg=-fuse-ld=mold
 
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
+
+      - name: Install mold linker
+        run: sudo apt-get update && sudo apt-get install -y mold
 
       - name: Install Rust
         uses: dtolnay/rust-toolchain@stable
@@ -38,15 +39,13 @@ jobs:
       - name: Stub frontend dist for rust_embed
         run: mkdir -p src/server/static-react/dist && echo '<html></html>' > src/server/static-react/dist/index.html
 
-      # Add swap space — test binaries are large (64-134MB each) and can exhaust
-      # the 7GB RAM on ubuntu-latest when running with compilation artifacts in memory.
+      # Swap prevents OOM when linking 64-134MB test binaries
       - name: Add swap space
         run: |
           sudo fallocate -l 4G /swap2
           sudo chmod 600 /swap2
           sudo mkswap /swap2
           sudo swapon /swap2
-          free -h
 
       - name: Run clippy
         run: cargo clippy --workspace --all-targets -- -D warnings
@@ -54,12 +53,7 @@ jobs:
       - name: Check AWS backend compiles
         run: cargo check --workspace --features aws-backend
 
-      # Build test binaries separately — linking 64-134MB binaries needs
-      # the swap space above. Then running them is fast.
-      - name: Build test binaries
-        run: cargo test --workspace --all-targets --no-run
-
-      - name: Run tests
+      - name: Run cargo test
         run: cargo test --workspace --all-targets
 
   integration-tests:
