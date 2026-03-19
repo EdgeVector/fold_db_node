@@ -183,6 +183,24 @@ pub async fn block_view(
     )
 }
 
+/// Load a view from the global schema service (with transitive dependencies).
+pub async fn load_view(
+    path: web::Path<String>,
+    state: web::Data<AppState>,
+) -> impl Responder {
+    let name = path.into_inner();
+    let (_user_hash, node) = node_or_return!(state);
+    let op = OperationProcessor::new(node.clone());
+    handler_result_to_response(
+        async {
+            let result = op.load_view(&name).await.handler_err("load view")?;
+            let body = serde_json::to_value(&result).handler_err("serialize result")?;
+            Ok(ApiResponse::success(body))
+        }
+        .await,
+    )
+}
+
 /// Delete (remove) a view.
 pub async fn delete_view(
     path: web::Path<String>,

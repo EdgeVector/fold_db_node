@@ -40,4 +40,13 @@ impl OperationProcessor {
         let db = self.get_db().await?;
         Ok(db.schema_manager.remove_view(name).await?)
     }
+
+    /// Load a view from the global schema service, including all transitive
+    /// dependencies (source schemas and source views).
+    pub async fn load_view(
+        &self,
+        name: &str,
+    ) -> FoldDbResult<crate::fold_node::node::ViewLoadResult> {
+        self.node.load_view_from_service(name).await
+    }
 }

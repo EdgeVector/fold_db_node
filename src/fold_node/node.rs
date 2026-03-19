@@ -11,6 +11,23 @@ use fold_db::fold_db_core::FoldDB;
 use fold_db::constants::SINGLE_PUBLIC_KEY_ID;
 use fold_db::security::{PublicKeyInfo, SecurityConfig, SecurityManager};
 
+/// Result of loading a view (and its dependencies) from the schema service.
+#[derive(Debug, Default, Serialize)]
+pub struct ViewLoadResult {
+    /// Views that were fetched and registered locally.
+    pub loaded_views: Vec<String>,
+    /// Schemas that were fetched and loaded locally.
+    pub loaded_schemas: Vec<String>,
+    /// Names that were already loaded locally (skipped).
+    pub already_loaded: Vec<String>,
+    /// TransformViews to register (internal, leaf-first order).
+    #[serde(skip)]
+    pub views_to_register: Vec<fold_db::view::types::TransformView>,
+    /// Schema JSON strings to load (internal, dependency order).
+    #[serde(skip)]
+    pub schemas_to_load: Vec<String>,
+}
+
 /// A node in the Fold distributed database system.
 ///
 /// FoldNode combines database storage, schema management, and networking
@@ -252,6 +269,228 @@ impl FoldNode {
         crate::fold_node::SchemaServiceClient::new(&url)
             .add_view(request)
             .await
+    }
+
+    /// Load a view from the global schema service, including all transitive
+    /// dependencies (source schemas and source views).
+    ///
+    /// ```text
+    /// load_view_from_service("ViewC")
+    ///   ├─ fetch StoredView "ViewC" + its output schema
+    ///   ├─ for each input_query source:
+    ///   │    ├─ already local? → skip
+    ///   │    ├─ schema on service? → fetch + load
+    ///   │    └─ view on service? → recurse
+    ///   ├─ convert StoredView → TransformView
+    ///   └─ register locally
+    /// ```
+    ///
+    /// All-or-nothing: if any dependency fails, nothing is registered.
+    pub async fn load_view_from_service(
+        &self,
+        name: &str,
+    ) -> FoldDbResult<ViewLoadResult> {
+        let url = self.require_real_schema_service()?;
+        let client = crate::fold_node::SchemaServiceClient::new(&url);
+        let mut loading = std::collections::HashSet::new();
+        let mut result = ViewLoadResult::default();
+
+        self.load_view_recursive(&client, name, &mut loading, &mut result, 0)
+            .await?;
+
+        // All fetches succeeded — now register everything in dependency order
+        // (collected_views is in leaf-first order from recursion)
+        let db = self.db.lock().await;
+        for schema_json in &result.schemas_to_load {
+            db.schema_manager
+                .load_schema_from_json(schema_json)
+                .await
+                .map_err(|e| {
+                    FoldDbError::Config(format!(
+                        "Failed to load dependency schema locally: {}",
+                        e
+                    ))
+                })?;
+        }
+        for view in &result.views_to_register {
+            db.schema_manager
+                .register_view(view.clone())
+                .await
+                .map_err(|e| {
+                    FoldDbError::Config(format!(
+                        "Failed to register view '{}' locally: {}",
+                        view.name, e
+                    ))
+                })?;
+        }
+
+        Ok(result)
+    }
+
+    /// Maximum depth for recursive view loading to prevent runaway chains.
+    const MAX_VIEW_LOAD_DEPTH: usize = 16;
+
+    /// Recursively fetch a view and its dependencies from the schema service.
+    /// Collects schemas and views to register (leaf-first order).
+    /// Does NOT register anything — caller handles registration after all fetches succeed.
+    fn load_view_recursive<'a>(
+        &'a self,
+        client: &'a crate::fold_node::SchemaServiceClient,
+        name: &'a str,
+        loading: &'a mut std::collections::HashSet<String>,
+        result: &'a mut ViewLoadResult,
+        depth: usize,
+    ) -> std::pin::Pin<Box<dyn std::future::Future<Output = FoldDbResult<()>> + Send + 'a>> {
+        Box::pin(async move {
+            // Depth limit
+            if depth > Self::MAX_VIEW_LOAD_DEPTH {
+                return Err(FoldDbError::Config(format!(
+                    "View chain depth exceeds limit of {} while loading '{}'",
+                    Self::MAX_VIEW_LOAD_DEPTH,
+                    name
+                )));
+            }
+
+            // Already being loaded in this call chain → cycle
+            if !loading.insert(name.to_string()) {
+                return Err(FoldDbError::Config(format!(
+                    "Circular view dependency detected: '{}' is already being loaded",
+                    name
+                )));
+            }
+
+            // Already loaded locally → skip
+            {
+                let db = self.db.lock().await;
+                if db.schema_manager.get_view(name)?.is_some() {
+                    result.already_loaded.push(name.to_string());
+                    return Ok(());
+                }
+            }
+
+            // Already queued for registration in this batch → skip
+            if result
+                .views_to_register
+                .iter()
+                .any(|v| v.name == name)
+            {
+                return Ok(());
+            }
+
+            // Fetch view from service
+            let stored_view = client.get_view(name).await.map_err(|e| {
+                FoldDbError::Config(format!(
+                    "View '{}' not found on schema service: {}",
+                    name, e
+                ))
+            })?;
+
+            // Fetch output schema (needed for key_config + typed output_fields)
+            let output_schema = client
+                .get_schema(&stored_view.output_schema_name)
+                .await
+                .map_err(|e| {
+                    FoldDbError::Config(format!(
+                        "Output schema '{}' for view '{}' not found on service: {}",
+                        stored_view.output_schema_name, name, e
+                    ))
+                })?;
+
+            // Ensure output schema is loaded locally
+            {
+                let db = self.db.lock().await;
+                if db
+                    .schema_manager
+                    .get_schema(&stored_view.output_schema_name)
+                    .await?
+                    .is_none()
+                {
+                    let schema_json = serde_json::to_string(&output_schema).map_err(|e| {
+                        FoldDbError::Config(format!("Failed to serialize output schema: {}", e))
+                    })?;
+                    result.schemas_to_load.push(schema_json);
+                    result
+                        .loaded_schemas
+                        .push(stored_view.output_schema_name.clone());
+                }
+            }
+
+            // Resolve input dependencies
+            for query in &stored_view.input_queries {
+                let source = &query.schema_name;
+
+                // Already loaded locally as schema or view?
+                let is_local = {
+                    let db = self.db.lock().await;
+                    db.schema_manager.get_schema(source).await?.is_some()
+                        || db.schema_manager.get_view(source)?.is_some()
+                };
+                if is_local {
+                    result.already_loaded.push(source.clone());
+                    continue;
+                }
+
+                // Already queued in this batch?
+                if result.views_to_register.iter().any(|v| v.name == *source)
+                    || result.loaded_schemas.contains(source)
+                {
+                    continue;
+                }
+
+                // Try as schema on service
+                if let Ok(schema) = client.get_schema(source).await {
+                    let schema_json = serde_json::to_string(&schema).map_err(|e| {
+                        FoldDbError::Config(format!(
+                            "Failed to serialize schema '{}': {}",
+                            source, e
+                        ))
+                    })?;
+                    result.schemas_to_load.push(schema_json);
+                    result.loaded_schemas.push(source.clone());
+                    continue;
+                }
+
+                // Try as view on service (recurse)
+                self.load_view_recursive(client, source, loading, result, depth + 1)
+                    .await?;
+            }
+
+            // Convert StoredView → TransformView
+            let transform_view = Self::stored_view_to_transform_view(&stored_view, &output_schema)?;
+            result.views_to_register.push(transform_view);
+            result.loaded_views.push(name.to_string());
+
+            Ok(())
+        })
+    }
+
+    /// Convert a StoredView (from schema service) to a TransformView (local DB)
+    /// by extracting key_config and typed output_fields from the output schema.
+    fn stored_view_to_transform_view(
+        stored: &crate::schema_service::types::StoredView,
+        output_schema: &fold_db::schema::types::Schema,
+    ) -> FoldDbResult<fold_db::view::types::TransformView> {
+        use fold_db::schema::types::field_value_type::FieldValueType;
+
+        let fields = output_schema.fields.as_deref().unwrap_or(&[]);
+        let mut output_fields = std::collections::HashMap::new();
+        for field_name in fields {
+            let field_type = output_schema
+                .field_types
+                .get(field_name)
+                .cloned()
+                .unwrap_or(FieldValueType::Any);
+            output_fields.insert(field_name.clone(), field_type);
+        }
+
+        Ok(fold_db::view::types::TransformView::new(
+            &stored.name,
+            stored.schema_type.clone(),
+            output_schema.key.clone(),
+            stored.input_queries.clone(),
+            stored.wasm_bytes.clone(),
+            output_fields,
+        ))
     }
 
     /// Execute a batch of mutations.

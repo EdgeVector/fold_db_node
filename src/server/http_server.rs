@@ -345,6 +345,10 @@ impl FoldHttpServer {
             .route(
                 "/view/{name}/block",
                 web::post().to(view_routes::block_view),
+            )
+            .route(
+                "/views/load/{name}",
+                web::post().to(view_routes::load_view),
             );
     }
 
