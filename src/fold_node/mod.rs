@@ -22,5 +22,6 @@ pub use config::NodeConfig;
 pub use node::FileIngestionRecord;
 pub use node::FoldNode;
 pub use node::MutationOutcome;
+pub use node::ViewLoadResult;
 pub use operation_processor::OperationProcessor;
 pub use schema_client::SchemaServiceClient;
