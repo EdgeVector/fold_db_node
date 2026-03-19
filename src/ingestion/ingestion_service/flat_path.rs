@@ -129,6 +129,37 @@ impl IngestionService {
 
         let metadata = Self::build_ingestion_metadata(&request.file_hash, tracker.progress_id());
 
+        // Filter mutation mappers to only reference fields that exist in the
+        // schema's runtime_fields. The AI may include mappers for fields it
+        // dropped from the schema definition, causing write failures.
+        let mut mutation_mappers = ai_response.mutation_mappers.clone();
+        if let Ok(Some(schema_meta)) = schema_manager.get_schema_metadata(schema_name) {
+            let schema_fields: std::collections::HashSet<String> = schema_meta
+                .runtime_fields
+                .keys()
+                .cloned()
+                .collect();
+            let before = mutation_mappers.len();
+            mutation_mappers.retain(|_json_field, schema_field| {
+                let target = if schema_field.contains('.') {
+                    schema_field.rsplit('.').next().unwrap_or(schema_field)
+                } else {
+                    schema_field.as_str()
+                };
+                schema_fields.contains(target)
+            });
+            let dropped = before - mutation_mappers.len();
+            if dropped > 0 {
+                log_feature!(
+                    LogFeature::Ingestion,
+                    warn,
+                    "Dropped {} mutation mapper(s) for schema '{}' — target fields not in runtime_fields",
+                    dropped,
+                    schema_name
+                );
+            }
+        }
+
         // Collect items to process — normalize single object to a one-element slice
         let items: Vec<&serde_json::Map<String, Value>> = if let Some(array) = flattened_data.as_array() {
             array
@@ -147,7 +178,7 @@ impl IngestionService {
             let item_mutations = super::generate_mutations_for_item(
                 obj,
                 schema_name,
-                &ai_response.mutation_mappers,
+                &mutation_mappers,
                 &schema_manager,
                 pub_key,
                 request.source_file_name.clone(),
