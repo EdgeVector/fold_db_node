@@ -9,6 +9,7 @@ default = []
 ts-bindings = ["fold_db/ts-bindings"]
 aws-backend = ["fold_db/aws-backend", "dep:aws-config", "dep:aws-sdk-dynamodb"]
 test-utils = ["fold_db/test-utils"]
+transform-wasm = ["fold_db/transform-wasm"]
 
 [dependencies]
 # Core database library
@@ -75,6 +76,7 @@ reqwest = { version = "0.11", features = ["json"] }
 assert_cmd = "2"
 predicates = "3"
 actix-web = "4.3"
+wat = "1"
 
 [lib]
 name = "fold_db_node"
