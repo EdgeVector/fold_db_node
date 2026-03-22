@@ -175,6 +175,61 @@ impl LlmQueryService {
         prompt.push_str("Returns: total files processed, succeeded count, failed count, per-file results with schema_used.\n");
         prompt.push_str("Example: {\"tool\": \"ingest_files\", \"params\": {\"folder_path\": \"sample_data\", \"files\": [\"contacts/address_book.json\", \"journal/2025-01-15.txt\"]}}\n\n");
 
+        prompt.push_str("### create_view\n");
+        prompt.push_str("Create a transform view with a compiled Rust WASM transform. Every view MUST have a WASM transform — identity views are not allowed through this tool.\n");
+        prompt.push_str("Before calling this tool, ALWAYS use get_schema first to inspect the source schema(s) and understand their fields.\n");
+        prompt.push_str("Parameters:\n");
+        prompt.push_str("- name (string, required): Unique view name (e.g. \"EnrichedPosts\")\n");
+        prompt.push_str("- schema_type (string, required): \"Single\", \"Range\", \"Hash\", or \"HashRange\"\n");
+        prompt.push_str("- key_config (object, optional): {\"hash_field\": \"field_name\", \"range_field\": \"field_name\"} — required for Hash/Range/HashRange types\n");
+        prompt.push_str("- input_queries (array, required): [{\"schema_name\": \"Name\", \"fields\": [\"field1\", \"field2\"]}]\n");
+        prompt.push_str("- output_fields (object, required): {\"field_name\": \"type\"} where type is Any, String, Integer, Boolean, Date, Bytes, Reference, List, or Map\n");
+        prompt.push_str("- rust_transform (string, required): A complete Rust function definition. See template below.\n\n");
+
+        prompt.push_str("#### Rust Transform Template\n");
+        prompt.push_str("The transform receives query results as JSON and must return output fields as JSON.\n");
+        prompt.push_str("```rust\n");
+        prompt.push_str("fn transform_impl(input: Value) -> Value {\n");
+        prompt.push_str("    // input structure:\n");
+        prompt.push_str("    // {\"inputs\": {\"SchemaName\": [{\"key\": {..}, \"fields\": {\"field\": value, ..}}, ..]}}\n");
+        prompt.push_str("    //\n");
+        prompt.push_str("    // Must return:\n");
+        prompt.push_str("    // {\"fields\": {\"output_field\": value, ...}}\n");
+        prompt.push_str("    // For multi-record output, return:\n");
+        prompt.push_str("    // {\"records\": [{\"key\": {..}, \"fields\": {\"output_field\": value}}, ...]}\n");
+        prompt.push_str("    \n");
+        prompt.push_str("    let inputs = &input[\"inputs\"];\n");
+        prompt.push_str("    // ... your transform logic ...\n");
+        prompt.push_str("    serde_json::json!({ \"fields\": { /* ... */ } })\n");
+        prompt.push_str("}\n");
+        prompt.push_str("```\n\n");
+
+        prompt.push_str("#### Examples\n\n");
+        prompt.push_str("**Word count view** (count words in a text field):\n");
+        prompt.push_str("```json\n");
+        prompt.push_str("{\"tool\": \"create_view\", \"params\": {\n");
+        prompt.push_str("  \"name\": \"PostWordCounts\",\n");
+        prompt.push_str("  \"schema_type\": \"Single\",\n");
+        prompt.push_str("  \"input_queries\": [{\"schema_name\": \"BlogPost\", \"fields\": [\"content\"]}],\n");
+        prompt.push_str("  \"output_fields\": {\"word_count\": \"Integer\", \"content_preview\": \"String\"},\n");
+        prompt.push_str("  \"rust_transform\": \"fn transform_impl(input: Value) -> Value {\\n    let inputs = &input[\\\"inputs\\\"];\\n    let posts = inputs[\\\"BlogPost\\\"].as_array().unwrap_or(&vec![]);\\n    let records: Vec<Value> = posts.iter().map(|post| {\\n        let content = post[\\\"fields\\\"][\\\"content\\\"].as_str().unwrap_or(\\\"\\\");\\n        let word_count = content.split_whitespace().count();\\n        let preview = content.chars().take(100).collect::<String>();\\n        serde_json::json!({\\n            \\\"key\\\": post[\\\"key\\\"],\\n            \\\"fields\\\": {\\n                \\\"word_count\\\": word_count,\\n                \\\"content_preview\\\": preview\\n            }\\n        })\\n    }).collect();\\n    serde_json::json!({ \\\"records\\\": records })\\n}\"\n");
+        prompt.push_str("}}\n");
+        prompt.push_str("```\n\n");
+
+        prompt.push_str("**Concatenation view** (merge fields from multiple schemas):\n");
+        prompt.push_str("```json\n");
+        prompt.push_str("{\"tool\": \"create_view\", \"params\": {\n");
+        prompt.push_str("  \"name\": \"AuthoredPosts\",\n");
+        prompt.push_str("  \"schema_type\": \"Single\",\n");
+        prompt.push_str("  \"input_queries\": [\n");
+        prompt.push_str("    {\"schema_name\": \"BlogPost\", \"fields\": [\"title\", \"author_id\"]},\n");
+        prompt.push_str("    {\"schema_name\": \"Author\", \"fields\": [\"name\"]}\n");
+        prompt.push_str("  ],\n");
+        prompt.push_str("  \"output_fields\": {\"title\": \"String\", \"author_name\": \"String\"},\n");
+        prompt.push_str("  \"rust_transform\": \"fn transform_impl(input: Value) -> Value {\\n    let inputs = &input[\\\"inputs\\\"];\\n    let posts = inputs[\\\"BlogPost\\\"].as_array().unwrap_or(&vec![]);\\n    let authors = inputs[\\\"Author\\\"].as_array().unwrap_or(&vec![]);\\n    let first_author = authors.first().map(|a| a[\\\"fields\\\"][\\\"name\\\"].as_str().unwrap_or(\\\"Unknown\\\")).unwrap_or(\\\"Unknown\\\");\\n    let records: Vec<Value> = posts.iter().map(|post| {\\n        serde_json::json!({\\n            \\\"key\\\": post[\\\"key\\\"],\\n            \\\"fields\\\": {\\n                \\\"title\\\": post[\\\"fields\\\"][\\\"title\\\"],\\n                \\\"author_name\\\": first_author\\n            }\\n        })\\n    }).collect();\\n    serde_json::json!({ \\\"records\\\": records })\\n}\"\n");
+        prompt.push_str("}}\n");
+        prompt.push_str("```\n\n");
+
         prompt.push_str("## Available Schemas\n\n");
         for schema in schemas {
             prompt.push_str(&format!(

@@ -1,8 +1,13 @@
 //! Native index search, interpretation, and alternative query suggestion.
 
 use super::super::types::{QueryPlan, ToolCallRecord};
-use fold_db::schema::types::Query;
+use fold_db::schema::types::field_value_type::FieldValueType;
+use fold_db::schema::types::key_config::KeyConfig;
+use fold_db::schema::types::operations::Query;
+use fold_db::schema::types::schema::DeclarativeSchemaType as SchemaType;
+use fold_db::view::types::TransformView;
 use serde_json::Value;
+use std::collections::HashMap;
 
 use super::LlmQueryService;
 
@@ -398,6 +403,95 @@ impl LlmQueryService {
                 }))
             }
 
+            "create_view" => {
+                let name = params
+                    .get("name")
+                    .and_then(|n| n.as_str())
+                    .ok_or("create_view tool requires 'name' parameter")?;
+
+                let schema_type_str = params
+                    .get("schema_type")
+                    .and_then(|s| s.as_str())
+                    .ok_or("create_view tool requires 'schema_type' parameter")?;
+
+                let schema_type: SchemaType = serde_json::from_value(
+                    Value::String(schema_type_str.to_string()),
+                )
+                .map_err(|e| format!("Invalid schema_type '{}': {}", schema_type_str, e))?;
+
+                let key_config: Option<KeyConfig> = params
+                    .get("key_config")
+                    .and_then(|k| {
+                        if k.is_null() {
+                            None
+                        } else {
+                            Some(serde_json::from_value(k.clone()))
+                        }
+                    })
+                    .transpose()
+                    .map_err(|e| format!("Invalid key_config: {}", e))?;
+
+                let input_queries_val = params
+                    .get("input_queries")
+                    .and_then(|q| q.as_array())
+                    .ok_or("create_view tool requires 'input_queries' parameter (array)")?;
+
+                let input_queries: Vec<Query> = input_queries_val
+                    .iter()
+                    .map(|q| serde_json::from_value(q.clone()))
+                    .collect::<Result<Vec<_>, _>>()
+                    .map_err(|e| format!("Invalid input_queries: {}", e))?;
+
+                let output_fields_val = params
+                    .get("output_fields")
+                    .and_then(|o| o.as_object())
+                    .ok_or("create_view tool requires 'output_fields' parameter (object)")?;
+
+                let output_fields: HashMap<String, FieldValueType> = output_fields_val
+                    .iter()
+                    .map(|(k, v)| {
+                        let fvt: FieldValueType = serde_json::from_value(v.clone())
+                            .map_err(|e| format!("Invalid field type for '{}': {}", k, e))?;
+                        Ok((k.clone(), fvt))
+                    })
+                    .collect::<Result<HashMap<_, _>, String>>()?;
+
+                let rust_transform = params
+                    .get("rust_transform")
+                    .and_then(|r| r.as_str())
+                    .ok_or("create_view tool requires 'rust_transform' parameter")?;
+
+                // Compile Rust → WASM
+                log::info!("create_view: compiling Rust transform for view '{}'", name);
+                let wasm_bytes =
+                    crate::fold_node::wasm_compiler::compile_rust_to_wasm(rust_transform)?;
+                log::info!(
+                    "create_view: compiled {} bytes of WASM for view '{}'",
+                    wasm_bytes.len(),
+                    name
+                );
+
+                let view = TransformView::new(
+                    name.to_string(),
+                    schema_type,
+                    key_config,
+                    input_queries,
+                    Some(wasm_bytes),
+                    output_fields,
+                );
+
+                processor
+                    .create_view(view)
+                    .await
+                    .map_err(|e| format!("Failed to create view: {}", e))?;
+
+                Ok(serde_json::json!({
+                    "success": true,
+                    "message": format!("View '{}' created successfully with WASM transform", name),
+                    "view_name": name,
+                }))
+            }
+
             _ => Err(format!("Unknown tool: {}", tool)),
         }
     }
@@ -509,6 +603,7 @@ impl LlmQueryService {
                         "query" => "Querying database...",
                         "scan_folder" => "Scanning folder...",
                         "list_schemas" => "Listing schemas...",
+                        "create_view" => "Compiling WASM view...",
                         _ => "Executing tool...",
                     };
                     update_agent_progress(progress_tracker, &agent_job_id, tool_pct, format!("{} ({})", tool_label, tool)).await;
