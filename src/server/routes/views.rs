@@ -8,7 +8,7 @@ use fold_db::schema::types::field_value_type::FieldValueType;
 use fold_db::schema::types::key_config::KeyConfig;
 use fold_db::schema::types::operations::Query;
 use fold_db::schema::types::schema::DeclarativeSchemaType as SchemaType;
-use fold_db::view::types::TransformView;
+use crate::fold_node::TransformView;
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 
@@ -72,7 +72,7 @@ pub async fn list_views(state: web::Data<AppState>) -> impl Responder {
     let op = OperationProcessor::new(node.clone());
     handler_result_to_response(
         async {
-            let views = op.list_views().await.handler_err("list views")?;
+            let views: Vec<_> = op.list_views().await.handler_err("list views")?;
             let count = views.len();
             let views_json =
                 serde_json::to_value(&views).handler_err("serialize views")?;
@@ -98,7 +98,7 @@ pub async fn get_view(
     let op = OperationProcessor::new(node.clone());
     handler_result_to_response(
         async {
-            let view = op
+            let view: TransformView = op
                 .get_view(&name)
                 .await
                 .handler_err("get view")?
