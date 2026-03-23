@@ -198,6 +198,11 @@ CRITICAL RULES:
   Good: "recipes", "journal_entries", "medical_records", "meeting_notes". Bad: "document_content", "text_records", "file_data".
 - If there is a "category" field, use it as a strong signal for the schema name.
 - ALWAYS provide field_descriptions and field_classifications for every field
+- For document/note/journal schemas where "title" is not guaranteed unique (e.g., dated entries, journal notes),
+  use "content_hash" as the range_field if it is present in the data. This guarantees uniqueness.
+  Use "title" or a category field as hash_field for grouping.
+  Example for notes: {"hash_field": "title", "range_field": "content_hash"}
+  This prevents collision when multiple notes share the same title.
 
 The response must be valid JSON."#;
 

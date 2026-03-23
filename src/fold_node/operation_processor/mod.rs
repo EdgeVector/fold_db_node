@@ -9,7 +9,7 @@ mod mutation_ops;
 mod query_ops;
 mod schema_ops;
 mod trust_ops;
-mod view_ops;
+pub mod view_ops;
 
 /// Centralized operation processor that handles all operation types consistently.
 ///

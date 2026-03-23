@@ -14,9 +14,10 @@ pub use super::state::CloudConfig;
 
 // Route handlers (pub(super) visibility — accessible from sibling modules)
 use super::routes::{
-    add_schema, add_view, batch_check_reuse, find_similar, get_available_schemas,
-    get_available_views, get_schema, get_view, health_check, list_schemas, list_views,
-    reload_schemas, reset_database,
+    add_schema, add_view, batch_check_reuse, find_similar, find_similar_transforms,
+    get_available_schemas, get_available_transforms, get_available_views, get_schema,
+    get_transform, get_transform_wasm, get_view, health_check, list_schemas, list_transforms,
+    list_views, register_transform, reload_schemas, reset_database, verify_transform,
 };
 
 /// Schema Service HTTP Server
@@ -86,6 +87,17 @@ impl SchemaServiceServer {
                     )
                     .route("/views/available", web::get().to(get_available_views))
                     .route("/view/{name}", web::get().to(get_view))
+                    // Transform endpoints
+                    .service(
+                        web::resource("/transforms")
+                            .route(web::get().to(list_transforms))
+                            .route(web::post().to(register_transform)),
+                    )
+                    .route("/transforms/available", web::get().to(get_available_transforms))
+                    .route("/transforms/verify", web::post().to(verify_transform))
+                    .route("/transforms/similar/{name}", web::get().to(find_similar_transforms))
+                    .route("/transform/{hash}", web::get().to(get_transform))
+                    .route("/transform/{hash}/wasm", web::get().to(get_transform_wasm))
                     .route("/system/reset", web::post().to(reset_database)),
             )
         })

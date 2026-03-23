@@ -1,6 +1,6 @@
 use fold_db::error::FoldDbResult;
 use fold_db::view::registry::ViewState;
-use fold_db::view::types::TransformView;
+pub use fold_db::view::types::TransformView;
 
 use super::OperationProcessor;
 
