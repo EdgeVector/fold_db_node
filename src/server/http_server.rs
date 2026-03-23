@@ -571,6 +571,10 @@ impl FoldHttpServer {
         .route(
             "/schema/{name}/field/{field}/policy",
             web::get().to(trust_routes::get_field_policy),
+        )
+        .route(
+            "/schema/{name}/policies",
+            web::get().to(trust_routes::get_all_field_policies),
         );
     }
 

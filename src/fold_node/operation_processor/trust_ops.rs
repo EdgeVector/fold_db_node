@@ -145,6 +145,33 @@ impl OperationProcessor {
         Ok(())
     }
 
+    /// Get all field access policies for a schema (bulk).
+    pub async fn get_all_field_policies(
+        &self,
+        schema_name: &str,
+    ) -> Result<std::collections::HashMap<String, Option<FieldAccessPolicy>>, SchemaError> {
+        let db = self.get_db().await.map_err(|e| {
+            SchemaError::InvalidData(format!("Failed to get database: {}", e))
+        })?;
+
+        let schema = db
+            .schema_manager
+            .get_schema(schema_name)
+            .await?
+            .ok_or_else(|| {
+                SchemaError::NotFound(format!("Schema '{}' not found", schema_name))
+            })?;
+
+        let mut result = std::collections::HashMap::new();
+        for (field_name, field_variant) in &schema.runtime_fields {
+            result.insert(
+                field_name.clone(),
+                field_variant.common().access_policy.clone(),
+            );
+        }
+        Ok(result)
+    }
+
     /// Get the access policy for a specific field.
     pub async fn get_field_access_policy(
         &self,

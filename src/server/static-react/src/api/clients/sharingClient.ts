@@ -124,6 +124,19 @@ export async function getFieldPolicy(
   return resp.data?.policy ?? null;
 }
 
+// --- Bulk field policies ---
+
+export async function getAllFieldPolicies(
+  schemaName: string
+): Promise<Record<string, FieldAccessPolicy | null>> {
+  const resp = await client().get<{
+    schema_name: string;
+    field_policies: Record<string, FieldAccessPolicy | null>;
+  }>(`/api/schema/${encodeURIComponent(schemaName)}/policies`);
+  if (!resp.ok) throw new Error(resp.error || 'Failed to get field policies');
+  return resp.data?.field_policies ?? {};
+}
+
 // --- Payment gates ---
 
 export async function setPaymentGate(schemaName: string, gate: PaymentGate): Promise<void> {

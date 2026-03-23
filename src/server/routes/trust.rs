@@ -222,6 +222,34 @@ pub async fn get_field_policy(
     )
 }
 
+/// GET /api/schema/{name}/policies — get all field access policies for a schema
+pub async fn get_all_field_policies(
+    path: web::Path<String>,
+    state: web::Data<AppState>,
+) -> impl Responder {
+    let schema_name = path.into_inner();
+    let (user_hash, node) = node_or_return!(state);
+    let op = OperationProcessor::new(node.clone());
+    handler_result_to_response(
+        async {
+            let policies = op
+                .get_all_field_policies(&schema_name)
+                .await
+                .handler_err("get all field policies")?;
+            let policies_json =
+                serde_json::to_value(&policies).handler_err("serialize policies")?;
+            Ok(ApiResponse::success_with_user(
+                serde_json::json!({
+                    "schema_name": schema_name,
+                    "field_policies": policies_json,
+                }),
+                user_hash,
+            ))
+        }
+        .await,
+    )
+}
+
 // ===== Audit log endpoint =====
 
 /// GET /api/trust/audit?limit=100 — get recent audit events
