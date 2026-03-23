@@ -287,7 +287,6 @@ impl FoldHttpServer {
             web::scope("/api")
                 .configure(Self::configure_openapi_routes)
                 .configure(Self::configure_schema_routes)
-                .configure(Self::configure_view_routes)
                 .configure(Self::configure_query_routes)
                 .configure(Self::configure_ingestion_routes)
                 .configure(Self::configure_log_routes)
@@ -328,6 +327,7 @@ impl FoldHttpServer {
             );
     }
 
+    #[cfg(feature = "views")]
     fn configure_view_routes(cfg: &mut web::ServiceConfig) {
         use crate::server::routes::views as view_routes;
 
@@ -514,7 +514,8 @@ impl FoldHttpServer {
             "/llm-query/analyze-followup",
             web::post().to(llm_query::analyze_followup),
         )
-        .route("/llm-query/agent", web::post().to(llm_query::agent_query));
+        .route("/llm-query/agent", web::post().to(llm_query::agent_query))
+        .route("/llm-query/run", web::post().to(llm_query::agent_query));
     }
 
     fn configure_security_routes(cfg: &mut web::ServiceConfig) {

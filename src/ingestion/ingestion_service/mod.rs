@@ -164,10 +164,11 @@ impl IngestionService {
         // Phase 1: Validate input
         tracker.enter_phase(IngestionPhase::Validating, "Validating input data...".to_string()).await;
         self.validate_input(&request.data)?;
+        let normalized_data = Self::normalize_input(request.data.clone());
 
         // Phase 2: Flatten data structure for AI analysis
         tracker.enter_phase(IngestionPhase::Flattening, "Processing and flattening data structure...".to_string()).await;
-        let mut flattened_data = crate::ingestion::file_handling::json_processor::flatten_root_layers(request.data.clone());
+        let mut flattened_data = crate::ingestion::file_handling::json_processor::flatten_root_layers(normalized_data);
 
         // Enrich text-file JSON with source path context so the AI can propose
         // semantic schema names (e.g., "recipes" instead of "document_content").
@@ -386,13 +387,22 @@ impl IngestionService {
             return Err(IngestionError::invalid_input("Input data cannot be null"));
         }
 
-        if !data.is_object() && !data.is_array() {
+        if !data.is_object() && !data.is_array() && !data.is_string() {
             return Err(IngestionError::invalid_input(
-                "Input data must be a JSON object or array",
+                "Input data must be a JSON object, array, or string",
             ));
         }
 
         Ok(())
+    }
+
+    /// Normalize input data: wrap plain strings as `{"text": "<value>"}`.
+    pub fn normalize_input(data: Value) -> Value {
+        if let Value::String(s) = data {
+            serde_json::json!({ "text": s })
+        } else {
+            data
+        }
     }
 
     /// Returns `true` when the configured AI provider runs locally (e.g. Ollama)
@@ -581,4 +591,50 @@ fn schemas_written_from_map(map: HashMap<String, Vec<KeyValue>>) -> Vec<SchemaWr
     map.into_iter()
         .map(|(name, keys)| SchemaWriteRecord { schema_name: name, keys_written: keys })
         .collect()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use serde_json::json;
+
+    fn test_service() -> IngestionService {
+        IngestionService::new(IngestionConfig::default()).unwrap()
+    }
+
+    #[test]
+    fn validate_input_accepts_string() {
+        assert!(test_service().validate_input(&json!("hello markdown")).is_ok());
+    }
+
+    #[test]
+    fn validate_input_rejects_number() {
+        assert!(test_service().validate_input(&json!(42)).is_err());
+    }
+
+    #[test]
+    fn validate_input_rejects_null() {
+        assert!(test_service().validate_input(&json!(null)).is_err());
+    }
+
+    #[test]
+    fn normalize_wraps_string_as_text_object() {
+        let input = json!("some markdown text");
+        let result = IngestionService::normalize_input(input);
+        assert_eq!(result, json!({"text": "some markdown text"}));
+    }
+
+    #[test]
+    fn normalize_passes_object_through() {
+        let input = json!({"key": "value"});
+        let result = IngestionService::normalize_input(input.clone());
+        assert_eq!(result, input);
+    }
+
+    #[test]
+    fn normalize_passes_array_through() {
+        let input = json!([1, 2, 3]);
+        let result = IngestionService::normalize_input(input.clone());
+        assert_eq!(result, input);
+    }
 }

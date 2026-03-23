@@ -9,6 +9,7 @@ default = []
 ts-bindings = ["fold_db/ts-bindings"]
 aws-backend = ["fold_db/aws-backend", "dep:aws-config", "dep:aws-sdk-dynamodb"]
 test-utils = ["fold_db/test-utils"]
+views = []
 
 [dependencies]
 # Core database library

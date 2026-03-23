@@ -6,6 +6,7 @@ use crate::server::http_server::AppState;
 use crate::server::routes::{handler_error_to_response, handler_result_to_response, node_or_return};
 use actix_web::{web, HttpResponse, Responder};
 use serde::{Deserialize, Serialize};
+use serde_json::Value;
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct SchemaListResponse {
@@ -51,7 +52,8 @@ pub async fn list_schemas(state: web::Data<AppState>) -> impl Responder {
     handler_result_to_response(async {
         let schemas = op.list_schemas().await.handler_err("list schemas")?;
         let count = schemas.len();
-        let schemas_json = serde_json::to_value(&schemas).handler_err("serialize schemas")?;
+        let mut schemas_json = serde_json::to_value(&schemas).handler_err("serialize schemas")?;
+        add_display_names(&mut schemas_json);
         Ok(ApiResponse::success_with_user(SchemaListResponse { schemas: schemas_json, count }, user_hash))
     }.await)
 }
@@ -78,7 +80,8 @@ pub async fn get_schema(path: web::Path<String>, state: web::Data<AppState>) -> 
         let schema_with_state = op.get_schema(&name).await
             .handler_err("get schema")?
             .ok_or_else(|| HandlerError::NotFound(format!("Schema not found: {}", name)))?;
-        let schema_json = serde_json::to_value(&schema_with_state).handler_err("serialize schema")?;
+        let mut schema_json = serde_json::to_value(&schema_with_state).handler_err("serialize schema")?;
+        add_display_name_to_object(&mut schema_json);
         Ok(ApiResponse::success_with_user(SchemaResponse { schema: schema_json }, user_hash))
     }.await)
 }
@@ -203,5 +206,66 @@ pub async fn load_schemas(state: web::Data<AppState>) -> impl Responder {
             log_feature!(LogFeature::Schema, error, "Failed to load schemas: {}", e);
             handler_error_to_response(HandlerError::from(e))
         }
+    }
+}
+
+/// Add `display_name` to a single schema JSON object.
+/// Uses `descriptive_name` if present, otherwise falls back to `name` (the hash).
+fn add_display_name_to_object(obj: &mut Value) {
+    if let Value::Object(map) = obj {
+        let display = map
+            .get("descriptive_name")
+            .and_then(|v| v.as_str())
+            .or_else(|| map.get("name").and_then(|v| v.as_str()))
+            .unwrap_or("")
+            .to_string();
+        map.insert("display_name".to_string(), Value::String(display));
+    }
+}
+
+/// Add `display_name` to each schema in a JSON array.
+fn add_display_names(arr: &mut Value) {
+    if let Value::Array(items) = arr {
+        for item in items.iter_mut() {
+            add_display_name_to_object(item);
+        }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use serde_json::json;
+
+    #[test]
+    fn display_name_uses_descriptive_name_when_present() {
+        let mut schema = json!({"name": "abc123", "descriptive_name": "User Profile"});
+        add_display_name_to_object(&mut schema);
+        assert_eq!(schema["display_name"], "User Profile");
+    }
+
+    #[test]
+    fn display_name_falls_back_to_hash() {
+        let mut schema = json!({"name": "abc123"});
+        add_display_name_to_object(&mut schema);
+        assert_eq!(schema["display_name"], "abc123");
+    }
+
+    #[test]
+    fn display_name_ignores_null_descriptive_name() {
+        let mut schema = json!({"name": "abc123", "descriptive_name": null});
+        add_display_name_to_object(&mut schema);
+        assert_eq!(schema["display_name"], "abc123");
+    }
+
+    #[test]
+    fn add_display_names_processes_array() {
+        let mut schemas = json!([
+            {"name": "hash1", "descriptive_name": "Friendly Name"},
+            {"name": "hash2"}
+        ]);
+        add_display_names(&mut schemas);
+        assert_eq!(schemas[0]["display_name"], "Friendly Name");
+        assert_eq!(schemas[1]["display_name"], "hash2");
     }
 }
