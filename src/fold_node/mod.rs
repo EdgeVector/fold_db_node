@@ -25,5 +25,5 @@ pub use node::FoldNode;
 pub use node::MutationOutcome;
 pub use node::ViewLoadResult;
 pub use operation_processor::OperationProcessor;
-pub use operation_processor::view_ops::TransformView;
+pub use fold_db::view::types::TransformView;
 pub use schema_client::SchemaServiceClient;

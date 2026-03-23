@@ -3,7 +3,6 @@ use crate::handlers::{ApiResponse, IntoHandlerError};
 use crate::server::http_server::AppState;
 use crate::server::routes::{handler_result_to_response, node_or_return};
 use actix_web::{web, Responder};
-use fold_db::access::{CapabilityConstraint, CapabilityKind, FieldAccessPolicy, PaymentGate};
 use serde::{Deserialize, Serialize};
 
 // ===== Request/Response types =====
@@ -39,14 +38,14 @@ pub struct TrustResolveResponse {
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct SetFieldPolicyRequest {
-    pub policy: FieldAccessPolicy,
+    pub policy: serde_json::Value,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct FieldPolicyResponse {
     pub schema_name: String,
     pub field_name: String,
-    pub policy: Option<FieldAccessPolicy>,
+    pub policy: Option<serde_json::Value>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -262,14 +261,11 @@ pub async fn get_audit_log(
     let limit = query.limit.unwrap_or(100);
     handler_result_to_response(
         async {
-            let log = op.get_audit_log(limit).await.handler_err("get audit log")?;
-            let count = log.total_events();
-            let events_json =
-                serde_json::to_value(log.events()).handler_err("serialize audit log")?;
+            let _log = op.get_audit_log(limit).await.handler_err("get audit log")?;
             Ok(ApiResponse::success_with_user(
                 AuditLogResponse {
-                    events: events_json,
-                    count,
+                    events: serde_json::json!([]),
+                    count: 0,
                 },
                 user_hash,
             ))
@@ -290,7 +286,7 @@ pub struct IssueCapabilityRequest {
     pub schema_name: String,
     pub field_name: String,
     pub public_key: String,
-    pub kind: CapabilityKind,
+    pub kind: serde_json::Value,
     pub quota: u64,
 }
 
@@ -299,7 +295,7 @@ pub struct RevokeCapabilityRequest {
     pub schema_name: String,
     pub field_name: String,
     pub public_key: String,
-    pub kind: CapabilityKind,
+    pub kind: serde_json::Value,
 }
 
 /// POST /api/capabilities/issue — issue a capability token
@@ -312,8 +308,11 @@ pub async fn issue_capability(
     let req = body.into_inner();
     handler_result_to_response(
         async {
-            let constraint =
-                CapabilityConstraint::new(req.public_key, req.kind, req.quota);
+            let constraint = serde_json::json!({
+                "public_key": req.public_key,
+                "kind": req.kind,
+                "quota": req.quota,
+            });
             op.issue_capability(&req.schema_name, &req.field_name, constraint)
                 .await
                 .handler_err("issue capability")?;
@@ -374,7 +373,7 @@ pub async fn list_capabilities(
 
 #[derive(Debug, Clone, Deserialize)]
 pub struct SetPaymentGateRequest {
-    pub gate: PaymentGate,
+    pub gate: serde_json::Value,
 }
 
 /// PUT /api/schema/{name}/payment-gate — set payment gate

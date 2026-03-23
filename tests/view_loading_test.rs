@@ -106,6 +106,7 @@ fn make_stored_view(
             source_schema.to_string(),
             source_fields.iter().map(|f| f.to_string()).collect(),
         )],
+        transform_hash: None,
         wasm_bytes: None,
         output_schema_name: output_schema_name.to_string(),
         schema_type: SchemaType::Range,
