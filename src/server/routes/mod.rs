@@ -5,9 +5,11 @@ pub mod discovery;
 pub mod filesystem;
 pub mod log;
 pub mod query;
+pub mod remote;
 pub mod schema;
 pub mod security;
 pub mod system;
+pub mod trust;
 pub mod views;
 
 // Re-export common utilities for convenience

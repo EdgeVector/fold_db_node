@@ -294,7 +294,10 @@ impl FoldHttpServer {
                 .configure(Self::configure_system_routes)
                 .configure(Self::configure_llm_query_routes)
                 .configure(Self::configure_security_routes)
-                .configure(Self::configure_discovery_routes),
+                .configure(Self::configure_discovery_routes)
+                .configure(Self::configure_trust_routes)
+                .configure(Self::configure_capability_routes)
+                .configure(Self::configure_remote_routes),
         );
     }
 
@@ -540,6 +543,69 @@ impl FoldHttpServer {
                 .route("/search", web::post().to(discovery_routes::search))
                 .route("/connect", web::post().to(discovery_routes::connect))
                 .route("/requests", web::get().to(discovery_routes::poll_requests)),
+        );
+    }
+
+    fn configure_trust_routes(cfg: &mut web::ServiceConfig) {
+        use crate::server::routes::trust as trust_routes;
+
+        cfg.service(
+            web::scope("/trust")
+                .route("/grant", web::post().to(trust_routes::grant_trust))
+                .route(
+                    "/revoke/{key}",
+                    web::delete().to(trust_routes::revoke_trust),
+                )
+                .route("/grants", web::get().to(trust_routes::list_trust_grants))
+                .route("/override", web::put().to(trust_routes::set_trust_override))
+                .route(
+                    "/resolve/{key}",
+                    web::get().to(trust_routes::resolve_trust),
+                )
+                .route("/audit", web::get().to(trust_routes::get_audit_log)),
+        )
+        .route(
+            "/schema/{name}/field/{field}/policy",
+            web::put().to(trust_routes::set_field_policy),
+        )
+        .route(
+            "/schema/{name}/field/{field}/policy",
+            web::get().to(trust_routes::get_field_policy),
+        );
+    }
+
+    fn configure_capability_routes(cfg: &mut web::ServiceConfig) {
+        use crate::server::routes::trust as trust_routes;
+
+        cfg.service(
+            web::scope("/capabilities")
+                .route("/issue", web::post().to(trust_routes::issue_capability))
+                .route(
+                    "/revoke",
+                    web::delete().to(trust_routes::revoke_capability),
+                )
+                .route(
+                    "/list/{schema}/{field}",
+                    web::get().to(trust_routes::list_capabilities),
+                ),
+        )
+        .route(
+            "/schema/{name}/payment-gate",
+            web::put().to(trust_routes::set_payment_gate),
+        )
+        .route(
+            "/schema/{name}/payment-gate",
+            web::get().to(trust_routes::get_payment_gate),
+        );
+    }
+
+    fn configure_remote_routes(cfg: &mut web::ServiceConfig) {
+        use crate::server::routes::remote as remote_routes;
+
+        cfg.service(
+            web::scope("/remote")
+                .route("/query", web::post().to(remote_routes::remote_query))
+                .route("/node-info", web::get().to(remote_routes::node_info)),
         );
     }
 }
