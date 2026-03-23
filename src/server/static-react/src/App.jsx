@@ -18,6 +18,7 @@ import WordGraphTab from './components/tabs/WordGraphTab'
 import AgentTab from './components/tabs/AgentTab'
 import DiscoveryTab from './components/tabs/DiscoveryTab'
 import ViewsTab from './components/tabs/ViewsTab'
+import SharingTab from './components/tabs/SharingTab'
 import SettingsModal from './components/SettingsModal'
 
 import LogSidebar from './components/LogSidebar'
@@ -51,6 +52,7 @@ const HASH_TO_TAB = {
   'word-graph': 'word-graph',
   discovery: 'discovery',
   views: 'views',
+  sharing: 'sharing',
 }
 
 function resolveTabFromHash() {
@@ -208,6 +210,8 @@ export function AppContent() {
         return <DiscoveryTab onResult={handleOperationResult} />
       case 'views':
         return <ViewsTab onResult={handleOperationResult} />
+      case 'sharing':
+        return <SharingTab onResult={handleOperationResult} />
       default:
         return null
     }

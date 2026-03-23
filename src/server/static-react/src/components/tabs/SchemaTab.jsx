@@ -1,4 +1,4 @@
-import { useState, useEffect, useRef } from 'react'
+import { useState, useEffect, useRef, useCallback } from 'react'
 import { ChevronDownIcon, ChevronRightIcon } from '@heroicons/react/24/solid'
 import { getRangeSchemaInfo, getHashRangeSchemaInfo } from '../../utils/rangeSchemaHelpers'
 import { useAppSelector, useAppDispatch } from '../../store/hooks'
@@ -12,24 +12,186 @@ import {
 import SchemaName from '../shared/SchemaName'
 import { SCHEMA_BADGE_COLORS } from '../../constants/ui'
 import { toErrorMessage } from '../../utils/schemaUtils'
+import { getAllFieldPolicies, setFieldPolicy as setFieldPolicyApi } from '../../api/clients/sharingClient'
+
+// ===== Access Policy Badge =====
+
+function AccessBadge({ policy }) {
+  if (!policy) {
+    return <span className="px-1.5 py-0.5 text-xs bg-surface-secondary text-secondary rounded font-mono">no policy</span>
+  }
+
+  const readMax = policy.trust_distance?.read_max
+  const writeMax = policy.trust_distance?.write_max
+
+  const readLabel = readMax === 0 ? 'owner' : readMax >= 18446744073709551615 ? 'public' : `d${readMax}`
+  const writeLabel = writeMax === 0 ? 'owner' : writeMax >= 18446744073709551615 ? 'public' : `d${writeMax}`
+
+  const readColor = readMax === 0 ? 'text-gruvbox-red' : readMax >= 18446744073709551615 ? 'text-gruvbox-green' : 'text-gruvbox-yellow'
+  const writeColor = writeMax === 0 ? 'text-gruvbox-red' : 'text-gruvbox-yellow'
+
+  return (
+    <span className="inline-flex items-center gap-1 text-xs font-mono">
+      <span className={`px-1.5 py-0.5 rounded bg-surface-secondary ${readColor}`} title={`Read: trust distance <= ${readMax}`}>
+        R:{readLabel}
+      </span>
+      <span className={`px-1.5 py-0.5 rounded bg-surface-secondary ${writeColor}`} title={`Write: trust distance <= ${writeMax}`}>
+        W:{writeLabel}
+      </span>
+    </span>
+  )
+}
+
+// ===== Field Policy Detail Panel =====
+
+function FieldPolicyPanel({ schemaName, fieldName, policy, onClose, onUpdate }) {
+  const [readMax, setReadMax] = useState(policy?.trust_distance?.read_max ?? 0)
+  const [writeMax, setWriteMax] = useState(policy?.trust_distance?.write_max ?? 0)
+  const [saving, setSaving] = useState(false)
+  const [preset, setPreset] = useState('')
+
+  const applyPreset = (name) => {
+    setPreset(name)
+    switch (name) {
+      case 'owner-only':
+        setReadMax(0); setWriteMax(0); break
+      case 'public-read':
+        setReadMax(18446744073709551615); setWriteMax(0); break
+      case 'trusted-read':
+        setReadMax(2); setWriteMax(0); break
+      case 'trusted-rw':
+        setReadMax(2); setWriteMax(2); break
+    }
+  }
+
+  const handleSave = async () => {
+    setSaving(true)
+    try {
+      await setFieldPolicyApi(schemaName, fieldName, {
+        trust_distance: { read_max: readMax, write_max: writeMax },
+        capabilities: [],
+        security_label: null,
+      })
+      onUpdate()
+    } catch (err) {
+      console.error('Failed to save field policy:', err)
+    } finally {
+      setSaving(false)
+    }
+  }
+
+  return (
+    <div className="mt-2 p-3 bg-surface-primary border border-border rounded-lg space-y-3">
+      <div className="flex items-center justify-between">
+        <h4 className="text-sm font-semibold text-primary">
+          Access Policy: {schemaName}.{fieldName}
+        </h4>
+        <button onClick={onClose} className="text-xs text-secondary hover:text-primary">Close</button>
+      </div>
+
+      {/* Presets */}
+      <div className="flex gap-2">
+        {[
+          ['owner-only', 'Owner Only'],
+          ['public-read', 'Public Read'],
+          ['trusted-read', 'Trusted Read (d=2)'],
+          ['trusted-rw', 'Trusted R+W (d=2)'],
+        ].map(([key, label]) => (
+          <button
+            key={key}
+            onClick={() => applyPreset(key)}
+            className={`px-2 py-1 text-xs rounded border ${
+              preset === key ? 'border-accent text-accent' : 'border-border text-secondary hover:text-primary'
+            }`}
+          >
+            {label}
+          </button>
+        ))}
+      </div>
+
+      {/* Manual controls */}
+      <div className="grid grid-cols-2 gap-3">
+        <div>
+          <label className="text-xs text-secondary block mb-1">Read Max Distance</label>
+          <input
+            type="number"
+            value={readMax > 1e18 ? 'public' : readMax}
+            onChange={(e) => {
+              const v = e.target.value
+              if (v === 'public') setReadMax(18446744073709551615)
+              else setReadMax(parseInt(v) || 0)
+            }}
+            min={0}
+            className="w-full bg-gruvbox-elevated border border-border rounded px-2 py-1 text-sm text-primary"
+          />
+          <p className="text-xs text-secondary mt-0.5">0 = owner only</p>
+        </div>
+        <div>
+          <label className="text-xs text-secondary block mb-1">Write Max Distance</label>
+          <input
+            type="number"
+            value={writeMax > 1e18 ? 'public' : writeMax}
+            onChange={(e) => {
+              const v = e.target.value
+              if (v === 'public') setWriteMax(18446744073709551615)
+              else setWriteMax(parseInt(v) || 0)
+            }}
+            min={0}
+            className="w-full bg-gruvbox-elevated border border-border rounded px-2 py-1 text-sm text-primary"
+          />
+          <p className="text-xs text-secondary mt-0.5">0 = owner only</p>
+        </div>
+      </div>
+
+      {/* Capability & label info */}
+      {policy?.capabilities?.length > 0 && (
+        <p className="text-xs text-secondary">
+          {policy.capabilities.length} capability token(s) attached
+        </p>
+      )}
+      {policy?.security_label && (
+        <p className="text-xs text-secondary">
+          Security label: level {policy.security_label.level} ({policy.security_label.category})
+        </p>
+      )}
+
+      <button
+        onClick={handleSave}
+        disabled={saving}
+        className="px-4 py-1.5 bg-accent text-surface-primary rounded text-sm font-medium disabled:opacity-50 hover:bg-accent/80"
+      >
+        {saving ? 'Saving...' : 'Save Policy'}
+      </button>
+    </div>
+  )
+}
+
+// ===== Main SchemaTab =====
 
 function SchemaTab({ onResult, onSchemaUpdated }) {
   const highlightTimerRef = useRef(null)
-  // Redux state and dispatch
   const dispatch = useAppDispatch()
   const schemas = useAppSelector(selectAllSchemas)
   const [expandedSchemas, setExpandedSchemas] = useState({})
   const [highlightedSchema, setHighlightedSchema] = useState(null)
+  // Per-schema field policies: { schemaName: { fieldName: policy | null } }
+  const [fieldPolicies, setFieldPolicies] = useState({})
+  // Which field's detail panel is open: "schemaName.fieldName" or null
+  const [activePolicyField, setActivePolicyField] = useState(null)
 
-  // Fetch schemas when component mounts; clean up highlight timer on unmount
   useEffect(() => {
     dispatch(fetchSchemas({ forceRefresh: true }))
     return () => { if (highlightTimerRef.current) clearTimeout(highlightTimerRef.current) }
   }, [dispatch])
 
-  // Debug logging
-
-
+  const loadPolicies = useCallback(async (schemaName) => {
+    try {
+      const policies = await getAllFieldPolicies(schemaName)
+      setFieldPolicies(prev => ({ ...prev, [schemaName]: policies }))
+    } catch {
+      // Non-critical — just means badges won't show
+    }
+  }, [])
 
   const toggleSchema = async (schemaName) => {
     const isCurrentlyExpanded = expandedSchemas[schemaName]
@@ -39,21 +201,16 @@ function SchemaTab({ onResult, onSchemaUpdated }) {
       [schemaName]: !prev[schemaName]
     }))
 
-    // If expanding and schema doesn't have fields yet, fetch them
     if (!isCurrentlyExpanded) {
       const schema = schemas.find(s => s.name === schemaName)
       if (schema && (!schema.fields || Object.keys(schema.fields).length === 0)) {
         dispatch(fetchSchemas({ forceRefresh: true }))
-        if (onSchemaUpdated) {
-          onSchemaUpdated()
-        }
+        if (onSchemaUpdated) onSchemaUpdated()
       }
+      // Load field policies when expanding
+      loadPolicies(schemaName)
     }
   }
-
-
-
-
 
   const getStateColor = (state) => {
     const key = state?.toLowerCase()
@@ -68,83 +225,55 @@ function SchemaTab({ onResult, onSchemaUpdated }) {
 
   const approveSchema = async (schemaName) => {
     try {
-      // Use Redux action instead of direct API call
       const result = await dispatch(approveSchemaAction({ schemaName }))
-      
       if (approveSchemaAction.fulfilled.match(result)) {
-        
-        // Extract backfill hash if present
         const backfillHash = result.payload?.backfillHash
-        
-        // Refetch schemas from backend to get updated states
         await dispatch(fetchSchemas({ forceRefresh: true }))
-        
         if (onResult) {
-          const message = backfillHash 
-            ? `Schema ${schemaName} approved successfully. Backfill started with hash: ${backfillHash}` 
+          const message = backfillHash
+            ? `Schema ${schemaName} approved successfully. Backfill started with hash: ${backfillHash}`
             : `Schema ${schemaName} approved successfully`
           onResult({ success: true, message, backfillHash })
         }
-        if (onSchemaUpdated) {
-          onSchemaUpdated()
-        }
+        if (onSchemaUpdated) onSchemaUpdated()
       } else {
-        const errorMessage = typeof result.payload === 'string' 
-          ? result.payload 
+        const errorMessage = typeof result.payload === 'string'
+          ? result.payload
           : result.payload?.error || `Failed to approve schema: ${schemaName}`
         throw new Error(errorMessage)
       }
     } catch (err) {
-      console.error('🔴 SchemaTab: Failed to approve schema:', err)
-      if (onResult) {
-        onResult({ error: `Failed to approve schema: ${toErrorMessage(err)}` })
-      }
+      console.error('Failed to approve schema:', err)
+      if (onResult) onResult({ error: `Failed to approve schema: ${toErrorMessage(err)}` })
     }
   }
 
   const blockSchema = async (schemaName) => {
     try {
-      // Use Redux action instead of direct API call
       const result = await dispatch(blockSchemaAction({ schemaName }))
-      
       if (blockSchemaAction.fulfilled.match(result)) {
-        
-        // Refetch schemas from backend to get updated states
         await dispatch(fetchSchemas({ forceRefresh: true }))
-        
-        if (onResult) {
-          onResult({ success: true, message: `Schema ${schemaName} blocked successfully` })
-        }
-        if (onSchemaUpdated) {
-          onSchemaUpdated()
-        }
+        if (onResult) onResult({ success: true, message: `Schema ${schemaName} blocked successfully` })
+        if (onSchemaUpdated) onSchemaUpdated()
       } else {
-        const errorMessage = typeof result.payload === 'string' 
-          ? result.payload 
+        const errorMessage = typeof result.payload === 'string'
+          ? result.payload
           : result.payload?.error || `Failed to block schema: ${schemaName}`
         throw new Error(errorMessage)
       }
     } catch (err) {
       console.error('Failed to block schema:', err)
-      if (onResult) {
-        onResult({ error: `Failed to block schema: ${toErrorMessage(err)}` })
-      }
+      if (onResult) onResult({ error: `Failed to block schema: ${toErrorMessage(err)}` })
     }
   }
 
-
   const scrollToSchema = (schemaName) => {
-    // Expand the target schema and highlight it
     setExpandedSchemas(prev => ({ ...prev, [schemaName]: true }))
     setHighlightedSchema(schemaName)
-    // Scroll to it after React re-renders
     window.requestAnimationFrame(() => {
       const el = document.getElementById(`schema-${schemaName}`)
-      if (el) {
-        el.scrollIntoView({ behavior: 'smooth', block: 'start' })
-      }
+      if (el) el.scrollIntoView({ behavior: 'smooth', block: 'start' })
     })
-    // Clear highlight after 2 seconds
     if (highlightTimerRef.current) clearTimeout(highlightTimerRef.current)
     highlightTimerRef.current = setTimeout(() => {
       setHighlightedSchema(null)
@@ -157,6 +286,7 @@ function SchemaTab({ onResult, onSchemaUpdated }) {
     const state = schema.state || 'Unknown'
     const rangeSchemaInfo = schema.fields ? getRangeSchemaInfo(schema) : null
     const hashRangeSchemaInfo = getHashRangeSchemaInfo(schema)
+    const schemaPolicies = fieldPolicies[schema.name] || {}
 
     return (
       <div key={schema.name} id={`schema-${schema.name}`} className={`card overflow-hidden transition-shadow duration-500${highlightedSchema === schema.name ? ' ring-2 ring-gruvbox-purple' : ''}`}>
@@ -188,10 +318,6 @@ function SchemaTab({ onResult, onSchemaUpdated }) {
               )}
             </div>
             <div className="flex items-center space-x-2">
-              {/* Schema State Transition Logic (SCHEMA-001):
-                  - available → approved
-                  - approved → blocked (once approved, cannot be unloaded)
-                  - blocked → approved (once approved, cannot be unloaded) */}
               {state.toLowerCase() === 'available' && (
                 <button
                   className="btn-secondary btn-sm"
@@ -249,16 +375,19 @@ function SchemaTab({ onResult, onSchemaUpdated }) {
             )}
 
             <div className="space-y-3">
-              {/* Declarative schema: fields is an array of strings */}
               {Array.isArray(schema.fields) ? (
                 schema.fields.map(fieldName => {
                   const classifications = schema.field_classifications?.[fieldName]
                   const refSchema = schema.ref_fields?.[fieldName]
+                  const policy = schemaPolicies[fieldName]
+                  const policyKey = `${schema.name}.${fieldName}`
+                  const isPolicyOpen = activePolicyField === policyKey
+
                   return (
                     <div key={fieldName} className="card p-3">
                       <div className="flex items-center justify-between">
                         <div className="flex-1">
-                          <div className="flex items-center space-x-2">
+                          <div className="flex items-center space-x-2 flex-wrap gap-y-1">
                             <span className="font-medium text-primary">{fieldName}</span>
                             {rangeSchemaInfo?.rangeKey === fieldName && (
                               <span className="badge badge-info">Range Key</span>
@@ -289,7 +418,29 @@ function SchemaTab({ onResult, onSchemaUpdated }) {
                             )}
                           </div>
                         </div>
+                        {/* Access policy badge + drill-in button */}
+                        <button
+                          onClick={() => setActivePolicyField(isPolicyOpen ? null : policyKey)}
+                          className="flex items-center gap-1 hover:opacity-80 transition-opacity"
+                          title="Click to edit access policy"
+                        >
+                          <AccessBadge policy={policy} />
+                        </button>
                       </div>
+
+                      {/* Drill-in policy editor */}
+                      {isPolicyOpen && (
+                        <FieldPolicyPanel
+                          schemaName={schema.name}
+                          fieldName={fieldName}
+                          policy={policy}
+                          onClose={() => setActivePolicyField(null)}
+                          onUpdate={() => {
+                            loadPolicies(schema.name)
+                            setActivePolicyField(null)
+                          }}
+                        />
+                      )}
                     </div>
                   )
                 })
@@ -304,8 +455,6 @@ function SchemaTab({ onResult, onSchemaUpdated }) {
   }
 
   const approvedSchemas = useAppSelector(selectApprovedSchemas)
-
-
 
   return (
     <div className="space-y-4">

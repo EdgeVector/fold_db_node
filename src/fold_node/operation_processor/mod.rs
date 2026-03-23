@@ -8,6 +8,7 @@ mod admin_ops;
 mod mutation_ops;
 mod query_ops;
 mod schema_ops;
+mod trust_ops;
 mod view_ops;
 
 /// Centralized operation processor that handles all operation types consistently.
@@ -26,6 +27,11 @@ impl OperationProcessor {
 
     /// Acquire the FoldDB mutex guard. Shorthand for `self.node.get_fold_db().await`.
     async fn get_db(&self) -> FoldDbResult<OwnedMutexGuard<FoldDB>> {
+        self.node.get_fold_db().await
+    }
+
+    /// Public accessor for the FoldDB guard. Used by remote query endpoint.
+    pub async fn get_db_public(&self) -> FoldDbResult<OwnedMutexGuard<FoldDB>> {
         self.node.get_fold_db().await
     }
 }

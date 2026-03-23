@@ -3,6 +3,45 @@ import { useApprovedSchemas } from '../../hooks/useApprovedSchemas.js'
 import { discoveryClient } from '../../api/clients/discoveryClient'
 import { toErrorMessage } from '../../utils/schemaUtils'
 
+/** Derive a category from schema classification metadata.
+ *  Prefers field_data_classifications domains, falls back to schema name. */
+function inferCategory(schema) {
+  // Collect unique data domains from field_data_classifications
+  const domains = new Set()
+  if (schema.field_data_classifications) {
+    for (const cls of Object.values(schema.field_data_classifications)) {
+      if (cls?.data_domain) domains.add(cls.data_domain)
+    }
+  }
+  if (domains.size > 0) {
+    // Use the most common domain, or join if mixed
+    return [...domains].join(', ')
+  }
+
+  // Fallback: derive from field_classifications tags
+  const tags = new Set()
+  if (schema.field_classifications) {
+    for (const fieldTags of Object.values(schema.field_classifications)) {
+      if (Array.isArray(fieldTags)) {
+        for (const tag of fieldTags) {
+          // Extract domain from compound tags like "name:person" → "person"
+          const parts = tag.split(':')
+          if (parts.length > 1) tags.add(parts[1])
+          else tags.add(tag)
+        }
+      }
+    }
+  }
+  if (tags.size > 0) {
+    // Pick the most descriptive tags (skip generic ones like "word")
+    const descriptive = [...tags].filter(t => !['word', 'number', 'date'].includes(t))
+    if (descriptive.length > 0) return descriptive.slice(0, 3).join(', ')
+  }
+
+  // Last resort: lowercase schema name
+  return schema.name?.replace(/([A-Z])/g, ' $1').trim().toLowerCase() || 'general'
+}
+
 function OptInForm({ schemas, optedInNames, onOptIn }) {
   const [schemaName, setSchemaName] = useState('')
   const [category, setCategory] = useState('')
@@ -10,6 +49,19 @@ function OptInForm({ schemas, optedInNames, onOptIn }) {
   const [submitting, setSubmitting] = useState(false)
 
   const availableSchemas = (schemas || []).filter(s => !optedInNames.has(s.name))
+
+  // Auto-derive category when schema selection changes
+  const handleSchemaChange = (name) => {
+    setSchemaName(name)
+    if (name) {
+      const schema = availableSchemas.find(s => s.name === name)
+      if (schema) {
+        setCategory(inferCategory(schema))
+      }
+    } else {
+      setCategory('')
+    }
+  }
 
   const handleSubmit = async (e) => {
     e.preventDefault()
@@ -31,7 +83,7 @@ function OptInForm({ schemas, optedInNames, onOptIn }) {
         <label className="text-xs text-secondary block mb-1">Schema</label>
         <select
           value={schemaName}
-          onChange={(e) => setSchemaName(e.target.value)}
+          onChange={(e) => handleSchemaChange(e.target.value)}
           className="input w-full"
         >
           <option value="">Select schema...</option>
@@ -41,12 +93,12 @@ function OptInForm({ schemas, optedInNames, onOptIn }) {
         </select>
       </div>
       <div className="flex-1 min-w-[120px]">
-        <label className="text-xs text-secondary block mb-1">Category</label>
+        <label className="text-xs text-secondary block mb-1">Category <span className="text-tertiary">(auto-detected)</span></label>
         <input
           type="text"
           value={category}
           onChange={(e) => setCategory(e.target.value)}
-          placeholder="e.g. recipes, notes"
+          placeholder="auto-detected from schema"
           className="input w-full"
         />
       </div>

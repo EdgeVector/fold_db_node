@@ -230,6 +230,26 @@ impl LlmQueryService {
         prompt.push_str("}}\n");
         prompt.push_str("```\n\n");
 
+        prompt.push_str("### set_field_policy\n");
+        prompt.push_str("Set the access control policy on a schema field. Controls who can read/write the field based on trust distance.\n");
+        prompt.push_str("Parameters:\n");
+        prompt.push_str("- schema_name (string, required): Name of the schema\n");
+        prompt.push_str("- field_name (string, required): Name of the field\n");
+        prompt.push_str("- read_max (integer, required): Maximum trust distance for reads. 0 = owner only, 1 = direct trust, 18446744073709551615 = public\n");
+        prompt.push_str("- write_max (integer, required): Maximum trust distance for writes. 0 = owner only.\n");
+        prompt.push_str("Common patterns:\n");
+        prompt.push_str("- Owner only: read_max=0, write_max=0\n");
+        prompt.push_str("- Public read, owner write: read_max=18446744073709551615, write_max=0\n");
+        prompt.push_str("- Trusted circle read: read_max=2, write_max=0\n");
+        prompt.push_str("Example: {\"tool\": \"set_field_policy\", \"params\": {\"schema_name\": \"BlogPost\", \"field_name\": \"content\", \"read_max\": 18446744073709551615, \"write_max\": 0}}\n\n");
+
+        prompt.push_str("### get_field_policies\n");
+        prompt.push_str("Get the current access control policies for all fields in a schema.\n");
+        prompt.push_str("Parameters:\n");
+        prompt.push_str("- schema_name (string, required): Name of the schema\n");
+        prompt.push_str("Returns an object mapping field_name to policy (read_max, write_max, etc.). Fields without policies show \"none (legacy)\".\n");
+        prompt.push_str("Example: {\"tool\": \"get_field_policies\", \"params\": {\"schema_name\": \"BlogPost\"}}\n\n");
+
         prompt.push_str("## Available Schemas\n\n");
         for schema in schemas {
             prompt.push_str(&format!(
