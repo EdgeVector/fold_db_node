@@ -377,3 +377,175 @@ pub(super) async fn reset_database(
             .to_string(),
     })
 }
+
+// ============== Transform Route Handlers ==============
+
+/// List all transform hashes + names
+pub(super) async fn list_transforms(state: web::Data<SchemaServiceState>) -> impl Responder {
+    match state.get_transform_list() {
+        Ok(transforms) => HttpResponse::Ok().json(TransformsListResponse { transforms }),
+        Err(e) => {
+            log_feature!(LogFeature::Schema, error, "Failed to list transforms: {}", e);
+            HttpResponse::InternalServerError().json(ErrorResponse {
+                error: format!("Failed to list transforms: {}", e),
+            })
+        }
+    }
+}
+
+/// Register a new transform
+pub(super) async fn register_transform(
+    payload: web::Json<RegisterTransformRequest>,
+    state: web::Data<SchemaServiceState>,
+) -> impl Responder {
+    let request = payload.into_inner();
+    let transform_name = request.name.clone();
+
+    log_feature!(
+        LogFeature::Schema, info,
+        "Schema service: registering transform '{}' v{} ({} bytes WASM)",
+        transform_name, request.version, request.wasm_bytes.len()
+    );
+
+    match state.register_transform(request).await {
+        Ok((record, TransformAddOutcome::Added)) => {
+            HttpResponse::Created().json(RegisterTransformResponse {
+                hash: record.hash.clone(),
+                record,
+                outcome: TransformAddOutcome::Added,
+            })
+        }
+        Ok((record, TransformAddOutcome::AlreadyExists)) => {
+            HttpResponse::Ok().json(RegisterTransformResponse {
+                hash: record.hash.clone(),
+                record,
+                outcome: TransformAddOutcome::AlreadyExists,
+            })
+        }
+        Err(error) => {
+            log_feature!(LogFeature::Schema, error, "Failed to register transform '{}': {}", transform_name, error);
+            HttpResponse::BadRequest().json(ErrorResponse {
+                error: format!("Failed to register transform: {}", error),
+            })
+        }
+    }
+}
+
+/// Get all transforms with full metadata (no wasm_bytes)
+pub(super) async fn get_available_transforms(
+    state: web::Data<SchemaServiceState>,
+) -> impl Responder {
+    match state.get_all_transforms() {
+        Ok(transforms) => HttpResponse::Ok().json(AvailableTransformsResponse { transforms }),
+        Err(e) => {
+            log_feature!(LogFeature::Schema, error, "Failed to get available transforms: {}", e);
+            HttpResponse::InternalServerError().json(ErrorResponse {
+                error: format!("Failed to get transforms: {}", e),
+            })
+        }
+    }
+}
+
+/// Get a specific transform by hash
+pub(super) async fn get_transform(
+    path: web::Path<String>,
+    state: web::Data<SchemaServiceState>,
+) -> impl Responder {
+    let hash = path.into_inner();
+    log_feature!(LogFeature::Schema, info, "Schema service: getting transform '{}'", hash);
+
+    match state.get_transform_by_hash(&hash) {
+        Ok(Some(record)) => HttpResponse::Ok().json(record),
+        Ok(None) => {
+            log_feature!(LogFeature::Schema, warn, "Transform '{}' not found", hash);
+            HttpResponse::NotFound().json(ErrorResponse {
+                error: "Transform not found".to_string(),
+            })
+        }
+        Err(e) => {
+            log_feature!(LogFeature::Schema, error, "Failed to get transform '{}': {}", hash, e);
+            HttpResponse::InternalServerError().json(ErrorResponse {
+                error: format!("Failed to get transform: {}", e),
+            })
+        }
+    }
+}
+
+/// Download WASM bytes for a transform
+pub(super) async fn get_transform_wasm(
+    path: web::Path<String>,
+    state: web::Data<SchemaServiceState>,
+) -> impl Responder {
+    let hash = path.into_inner();
+    log_feature!(LogFeature::Schema, info, "Schema service: getting WASM for transform '{}'", hash);
+
+    match state.get_transform_wasm(&hash) {
+        Ok(Some(bytes)) => HttpResponse::Ok()
+            .content_type("application/wasm")
+            .body(bytes),
+        Ok(None) => {
+            log_feature!(LogFeature::Schema, warn, "Transform WASM '{}' not found", hash);
+            HttpResponse::NotFound().json(ErrorResponse {
+                error: "Transform WASM not found".to_string(),
+            })
+        }
+        Err(e) => {
+            log_feature!(LogFeature::Schema, error, "Failed to get transform WASM '{}': {}", hash, e);
+            HttpResponse::InternalServerError().json(ErrorResponse {
+                error: format!("Failed to get transform WASM: {}", e),
+            })
+        }
+    }
+}
+
+/// Verify a WASM blob matches a hash
+pub(super) async fn verify_transform(
+    payload: web::Json<VerifyTransformRequest>,
+) -> impl Responder {
+    let request = payload.into_inner();
+    let (matches, computed_hash) =
+        SchemaServiceState::verify_transform(&request.hash, &request.wasm_bytes);
+
+    HttpResponse::Ok().json(VerifyTransformResponse {
+        hash: request.hash,
+        matches,
+        computed_hash,
+    })
+}
+
+/// Query parameters for the find-similar-transforms endpoint
+#[derive(Debug, Deserialize)]
+pub(super) struct SimilarTransformQuery {
+    threshold: Option<f64>,
+}
+
+/// Find transforms with similar names
+pub(super) async fn find_similar_transforms(
+    path: web::Path<String>,
+    query: web::Query<SimilarTransformQuery>,
+    state: web::Data<SchemaServiceState>,
+) -> impl Responder {
+    let name = path.into_inner();
+    let threshold = query.threshold.unwrap_or(0.5);
+
+    if !(0.0..=1.0).contains(&threshold) {
+        return HttpResponse::BadRequest().json(ErrorResponse {
+            error: "Threshold must be between 0.0 and 1.0".to_string(),
+        });
+    }
+
+    log_feature!(
+        LogFeature::Schema, info,
+        "Schema service: finding transforms similar to '{}' with threshold {}",
+        name, threshold
+    );
+
+    match state.find_similar_transforms(&name, threshold) {
+        Ok(response) => HttpResponse::Ok().json(response),
+        Err(e) => {
+            HttpResponse::InternalServerError().json(ErrorResponse {
+                error: format!("Failed to find similar transforms: {}", e),
+            })
+        }
+    }
+}

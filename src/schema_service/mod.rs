@@ -9,8 +9,10 @@
 
 mod routes;
 pub mod server;
+pub mod transform_resolver;
 
 pub use fold_db::schema_service::state;
 pub use fold_db::schema_service::types;
 
 pub use server::SchemaServiceServer;
+pub use transform_resolver::TransformResolver;
