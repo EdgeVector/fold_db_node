@@ -33,6 +33,7 @@ export const DEFAULT_TABS = [
   { id: "word-graph", label: "Word Graph", icon: "🕸️", group: "advanced" },
   { id: "views", label: "Views", icon: "👁️", group: "advanced" },
   { id: "discovery", label: "Discovery", icon: "🌐", group: "advanced" },
+  { id: "sharing", label: "Sharing", icon: "🔗", group: "advanced" },
 ];
 
 // Button Text Constants
