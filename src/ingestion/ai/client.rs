@@ -2,6 +2,7 @@
 
 use crate::ingestion::config::{AIProvider, AnthropicConfig, IngestionConfig, OllamaConfig, OllamaGenerationParams};
 use crate::ingestion::{IngestionError, IngestionResult};
+use fold_db::llm_registry::models;
 use fold_db::log_feature;
 use fold_db::logging::features::LogFeature;
 use async_trait::async_trait;
@@ -155,7 +156,7 @@ impl AnthropicBackend {
         let url = format!("{}/v1/messages", self.config.base_url);
         let response = self.client.post(&url)
             .header("x-api-key", &self.config.api_key)
-            .header("anthropic-version", "2023-06-01")
+            .header("anthropic-version", models::ANTHROPIC_API_VERSION)
             .header("Content-Type", "application/json")
             .json(request)
             .send()
@@ -184,8 +185,8 @@ impl AiBackend for AnthropicBackend {
         let request = AnthropicRequest {
             model: self.config.model.clone(),
             messages: vec![AnthropicMessage { role: "user".to_string(), content: prompt.to_string() }],
-            max_tokens: 16000,
-            temperature: Some(0.1),
+            max_tokens: models::MAX_TOKENS_ANALYSIS,
+            temperature: Some(models::TEMPERATURE_FOCUSED),
         };
         super::helpers::call_with_retries(
             "Anthropic API",

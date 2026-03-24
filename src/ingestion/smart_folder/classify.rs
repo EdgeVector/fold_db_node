@@ -2,6 +2,7 @@
 
 use crate::ingestion::error::IngestionError;
 use crate::ingestion::IngestionResult;
+use fold_db::llm_registry::prompts::smart_folder as sf_prompts;
 use super::scanner::IMAGE_EXTS;
 use super::types::{FileRecommendation, file_size_bytes};
 use std::collections::{HashMap, HashSet};
@@ -146,34 +147,7 @@ fn create_image_directory_prompt(
         dir_lines.push(format!("- {}: {} files [{}{}]", display_dir, files.len(), sample_str, more));
     }
 
-    format!(
-        r#"You are classifying IMAGE DIRECTORIES to determine if they contain personal images or non-personal asset images.
-
-IMAGE DIRECTORIES (with file counts and sample filenames):
-{}
-
-For each directory, classify it as either:
-- "personal" — user photos, screenshots, personal artwork, scanned documents, camera images
-- "asset" — UI assets, emoji/icon collections, website graphics, app resources, stock images, thumbnails
-
-GUIDELINES:
-- Directories named like "tweets_media", "profile_media", "photos", "camera", "screenshots" → personal
-- Directories named like "twemoji", "emoji", "icons", "assets/images", "thumbnails", "sprites" → asset
-- Directories with few large files (photos) → likely personal
-- Directories with many small files (icons, emoji) → likely asset
-- When in doubt, classify as "personal" (better to include than exclude)
-
-Respond with a JSON object mapping each directory path to "personal" or "asset":
-```json
-{{
-  "directory/path": "personal",
-  "assets/images/twemoji": "asset"
-}}
-```
-
-Only return the JSON object, no other text."#,
-        dir_lines.join("\n")
-    )
+    sf_prompts::build_image_directory_prompt(&dir_lines)
 }
 
 /// Parse the LLM response for image directory classification.
@@ -217,63 +191,20 @@ pub fn create_adjust_prompt(
     recommended: &[FileRecommendation],
     skipped: &[FileRecommendation],
 ) -> String {
-    let mut rec_lines = Vec::new();
-    for f in recommended {
-        rec_lines.push(format!(
+    let rec_lines: Vec<String> = recommended.iter().map(|f| {
+        format!(
             "  {{\"path\": \"{}\", \"should_ingest\": true, \"category\": \"{}\", \"reason\": \"{}\"}}",
             f.path, f.category, f.reason
-        ));
-    }
-    let mut skip_lines = Vec::new();
-    for f in skipped {
-        if !f.already_ingested {
-            skip_lines.push(format!(
-                "  {{\"path\": \"{}\", \"should_ingest\": false, \"category\": \"{}\", \"reason\": \"{}\"}}",
-                f.path, f.category, f.reason
-            ));
-        }
-    }
+        )
+    }).collect();
+    let skip_lines: Vec<String> = skipped.iter().filter(|f| !f.already_ingested).map(|f| {
+        format!(
+            "  {{\"path\": \"{}\", \"should_ingest\": false, \"category\": \"{}\", \"reason\": \"{}\"}}",
+            f.path, f.category, f.reason
+        )
+    }).collect();
 
-    format!(
-        r#"You are adjusting file ingestion recommendations based on the user's instruction.
-
-USER INSTRUCTION: "{instruction}"
-
-CURRENT FILES TO INGEST:
-[
-{rec_list}
-]
-
-CURRENT SKIPPED FILES:
-[
-{skip_list}
-]
-
-Apply the user's instruction to reclassify files. For example:
-- "include all work files" → move work-category files from skipped to should_ingest=true
-- "skip all images" → move image files from recommended to should_ingest=false
-- "include everything" → set all files to should_ingest=true
-
-CATEGORIES:
-- personal_data: Personal documents, notes, journals, financial records, health data, creative work
-- media: Images, videos, audio that are user-created content
-- config: Application configs, settings files
-- website_scaffolding: HTML templates, CSS, JS bundles, emoji assets
-- work: Work/corporate files, professional documents
-- unknown: Cannot determine
-
-Respond with a JSON array of ALL files (both recommended and skipped) with updated classifications:
-```json
-[
-  {{"path": "file/path.ext", "should_ingest": true, "category": "personal_data", "reason": "Brief reason"}},
-  ...
-]
-```
-
-Only return the JSON array, no other text."#,
-        rec_list = rec_lines.join(",\n"),
-        skip_list = skip_lines.join(",\n"),
-    )
+    sf_prompts::build_adjust_prompt(instruction, &rec_lines, &skip_lines)
 }
 
 /// Merge LLM adjustment results with existing file metadata (sizes, costs, etc.).
@@ -314,66 +245,7 @@ pub fn merge_adjust_results(
 /// what folders represent (e.g. a .gif inside a "Bank of America" HTML save
 /// is scaffolding, not personal media).
 pub fn create_smart_folder_prompt(tree_display: &str, file_paths: &[String]) -> String {
-    let files_list = file_paths.join("\n");
-
-    format!(
-        r#"You are classifying files in a user's personal folder for ingestion into their personal database.
-
-DIRECTORY TREE (for context — understand what each folder represents):
-{tree_display}
-
-FILES TO CLASSIFY:
-{files_list}
-
-For each file path listed in FILES TO CLASSIFY, determine:
-1. Should it be ingested into the user's personal database?
-2. What category does it belong to?
-
-IMPORTANT: Use the directory tree to understand context. For example:
-- A .gif inside a "Bank of America" saved HTML page is website scaffolding, NOT personal media
-- A .js file inside a Twitter data export IS personal data
-- A .css or .html file inside a saved webpage folder is scaffolding
-- A .pdf in a "Statements" folder IS personal financial data
-- Source code files (.py, .rs, .js) in a code project folder are NOT personal data
-- But a .py notebook in a "Research" folder might be personal work
-
-CATEGORIES:
-- personal_data: Personal documents, notes, journals, financial records, health data, creative work, personal projects
-- media: Images, videos, audio that are user-created content (NOT UI assets or website graphics)
-- config: Application configs, settings files, dotfiles
-- website_scaffolding: HTML templates, CSS, JS bundles, emoji assets, fonts, saved webpage resources
-- work: Work/corporate files, professional documents
-- unknown: Cannot determine
-
-SKIP CRITERIA (should_ingest = false):
-- Website scaffolding (CSS, JS bundles, images that are part of saved web pages)
-- Application config files
-- Source code (unless it's personal creative work)
-- Cache and temporary files
-- Downloaded installers/archives
-
-INGEST CRITERIA (should_ingest = true):
-- Personal documents (letters, notes, journals)
-- Photos and videos (user-created, not UI assets)
-- Messages and chat logs
-- Financial records (statements, budgets, tax documents)
-- Health data
-- Creative work (writing, art, music)
-- Data exports from services (Twitter, Facebook, Google Takeout, etc.)
-- Personal work output (reports, presentations, research notes)
-
-When in doubt, set should_ingest to false.
-
-Respond with a JSON array of objects:
-```json
-[
-  {{"path": "file/path.ext", "should_ingest": true, "category": "personal_data", "reason": "Brief reason"}},
-  ...
-]
-```
-
-Only return the JSON array, no other text."#
-    )
+    sf_prompts::build_smart_folder_prompt(tree_display, file_paths)
 }
 
 /// Call the LLM for file analysis using the provided IngestionService
