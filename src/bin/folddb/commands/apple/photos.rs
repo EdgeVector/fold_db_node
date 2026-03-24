@@ -133,15 +133,69 @@ async fn upload_photo(
         return Err(CliError::new(format!("Upload failed ({}): {}", status, msg)));
     }
 
-    let mut ids = Vec::new();
-    if let Some(arr) = body["mutations_executed"].as_array() {
-        for item in arr {
-            if let Some(id) = item["id"].as_str() {
-                ids.push(id.to_string());
-            }
+    // The upload API is async — poll progress until completion.
+    let progress_id = match body["progress_id"].as_str() {
+        Some(id) => id.to_string(),
+        None => {
+            return Err(CliError::new(
+                "Upload response missing progress_id".to_string(),
+            ));
+        }
+    };
+
+    let base_url = upload_url.trim_end_matches("/api/ingestion/upload");
+    let poll_url = format!(
+        "{}/api/ingestion/progress?progress_id={}",
+        base_url, progress_id
+    );
+    let poll_interval = std::time::Duration::from_secs(2);
+    let timeout = std::time::Duration::from_secs(300);
+    let start = std::time::Instant::now();
+
+    loop {
+        if start.elapsed() > timeout {
+            return Err(CliError::new(format!(
+                "Photo ingestion timed out after {}s for {}",
+                timeout.as_secs(),
+                path.display()
+            )));
+        }
+
+        tokio::time::sleep(poll_interval).await;
+
+        let poll_resp = client
+            .get(&poll_url)
+            .send()
+            .await
+            .map_err(|e| CliError::new(format!("Failed to poll progress: {}", e)))?;
+
+        let poll_body: serde_json::Value = poll_resp
+            .json()
+            .await
+            .map_err(|e| CliError::new(format!("Invalid progress response: {}", e)))?;
+
+        let progress = match poll_body["progress"].as_array().and_then(|a| a.first()) {
+            Some(p) => p,
+            None => continue,
+        };
+
+        if progress["is_failed"].as_bool() == Some(true) {
+            let err_msg = progress["error_message"]
+                .as_str()
+                .unwrap_or("Unknown ingestion error");
+            return Err(CliError::new(format!("Photo ingestion failed: {}", err_msg)));
+        }
+
+        if progress["is_complete"].as_bool() == Some(true) {
+            let mutations_executed = progress["results"]["mutations_executed"]
+                .as_u64()
+                .unwrap_or(0) as usize;
+            let ids: Vec<String> = (0..mutations_executed)
+                .map(|i| format!("{}:{}", progress_id, i))
+                .collect();
+            return Ok(ids);
         }
     }
-    Ok(ids)
 }
 
 /// Build an AppleScript that exports photos to a temp directory.
@@ -153,16 +207,23 @@ fn build_export_script(album: Option<&str>, limit: usize) -> String {
     let target_items = match album {
         Some(name) => format!(
             r#"set targetAlbum to album "{album}"
-    set allItems to media items of targetAlbum"#,
+    set allItems to every media item of targetAlbum"#,
             album = name.replace('"', "\\\""),
         ),
-        None => "set allItems to media items".to_string(),
+        None => "set allItems to every media item".to_string(),
     };
 
+    // Force `allItems` into a concrete list, then slice. AppleScript's
+    // `items X thru Y of <reference>` fails on large collections; working
+    // with a counted list avoids this.
     format!(
         r#"tell application "Photos"
     {target_items}
-    set exportItems to items 1 thru (minimum of {{{limit}, count of allItems}}) of allItems
+    set totalCount to count of allItems
+    if totalCount is 0 then return
+    set maxItems to {limit}
+    if totalCount < maxItems then set maxItems to totalCount
+    set exportItems to items 1 thru maxItems of allItems
     export exportItems to POSIX file "{export_dir}" with using originals
 end tell"#,
         target_items = target_items,
