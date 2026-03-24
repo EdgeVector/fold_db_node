@@ -209,16 +209,28 @@ impl LlmQueryService {
                     .map_err(|e| format!("Query execution failed: {}", e))?;
 
                 let total_count = results.len();
-                let truncated: Vec<Value> = results.into_iter().take(limit).collect();
+                let mut records: Vec<Value> = results.into_iter().take(limit).collect();
+
+                // Safety: cap the serialized size at ~100K chars (~25K tokens)
+                // to prevent blowing the conversation context window.
+                const MAX_RESULT_CHARS: usize = 100_000;
+                let mut serialized = serde_json::to_string(&records).unwrap_or_default();
+                while serialized.len() > MAX_RESULT_CHARS && records.len() > 1 {
+                    records.pop();
+                    serialized = serde_json::to_string(&records).unwrap_or_default();
+                }
+
+                let shown = records.len();
                 let mut result = serde_json::json!({
-                    "records": truncated,
+                    "records": records,
                     "total_count": total_count,
+                    "returned_count": shown,
                 });
-                if total_count > limit {
+                if total_count > shown {
                     result["truncated"] = serde_json::json!(true);
                     result["message"] = serde_json::json!(format!(
-                        "Showing {} of {} results. Use 'limit' to page through more, or 'filter' to narrow results.",
-                        limit, total_count
+                        "Showing {} of {} results (trimmed to fit context). Use 'limit' with smaller values, request fewer fields, or use 'filter' to narrow results.",
+                        shown, total_count
                     ));
                 }
                 Ok(result)
