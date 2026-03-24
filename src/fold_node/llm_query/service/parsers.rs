@@ -170,6 +170,34 @@ impl LlmQueryService {
             return Ok(AgentAction::Answer(answer.to_string()));
         }
 
+        // Heuristic: if the JSON has `schema_name` it's likely a bare query the
+        // model forgot to wrap in {"tool": "query", "params": ...}
+        if parsed.get("schema_name").is_some() {
+            log::info!("Agent: auto-wrapping bare query params as tool call");
+            return Ok(AgentAction::ToolCall {
+                tool: "query".to_string(),
+                params: parsed,
+            });
+        }
+
+        // If it has `terms` it's likely a bare search
+        if parsed.get("terms").is_some() {
+            log::info!("Agent: auto-wrapping bare search params as tool call");
+            return Ok(AgentAction::ToolCall {
+                tool: "search".to_string(),
+                params: parsed,
+            });
+        }
+
+        // If it has `path` it's likely a bare scan_folder
+        if parsed.get("path").is_some() && parsed.get("tool").is_none() {
+            log::info!("Agent: auto-wrapping bare scan params as tool call");
+            return Ok(AgentAction::ToolCall {
+                tool: "scan_folder".to_string(),
+                params: parsed,
+            });
+        }
+
         Err(format!("Agent response must contain either 'tool' or 'answer' field. Got: {}", json_str))
     }
 }
