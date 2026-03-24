@@ -72,28 +72,28 @@ const client = () => getSharedClient();
 
 export async function grantTrust(public_key: string, distance: number): Promise<void> {
   const resp = await client().post<{ granted: boolean }>('/api/trust/grant', { public_key, distance });
-  if (!resp.ok) throw new Error(resp.error || 'Failed to grant trust');
+  if (!resp.success) throw new Error(resp.error || 'Failed to grant trust');
 }
 
 export async function revokeTrust(public_key: string): Promise<void> {
   const resp = await client().delete<{ revoked: boolean }>(`/api/trust/revoke/${encodeURIComponent(public_key)}`);
-  if (!resp.ok) throw new Error(resp.error || 'Failed to revoke trust');
+  if (!resp.success) throw new Error(resp.error || 'Failed to revoke trust');
 }
 
 export async function listTrustGrants(): Promise<TrustGrantEntry[]> {
   const resp = await client().get<TrustGrantsResponse>('/api/trust/grants');
-  if (!resp.ok) throw new Error(resp.error || 'Failed to list trust grants');
+  if (!resp.success) throw new Error(resp.error || 'Failed to list trust grants');
   return resp.data?.grants ?? [];
 }
 
 export async function setTrustOverride(public_key: string, distance: number): Promise<void> {
   const resp = await client().put<{ override_set: boolean }>('/api/trust/override', { public_key, distance });
-  if (!resp.ok) throw new Error(resp.error || 'Failed to set trust override');
+  if (!resp.success) throw new Error(resp.error || 'Failed to set trust override');
 }
 
 export async function resolveTrust(public_key: string): Promise<number | null> {
   const resp = await client().get<TrustResolveResponse>(`/api/trust/resolve/${encodeURIComponent(public_key)}`);
-  if (!resp.ok) throw new Error(resp.error || 'Failed to resolve trust');
+  if (!resp.success) throw new Error(resp.error || 'Failed to resolve trust');
   return resp.data?.distance ?? null;
 }
 
@@ -108,7 +108,7 @@ export async function setFieldPolicy(
     `/api/schema/${encodeURIComponent(schemaName)}/field/${encodeURIComponent(fieldName)}/policy`,
     { policy }
   );
-  if (!resp.ok) throw new Error(resp.error || 'Failed to set field policy');
+  if (!resp.success) throw new Error(resp.error || 'Failed to set field policy');
 }
 
 export async function getFieldPolicy(
@@ -120,7 +120,7 @@ export async function getFieldPolicy(
     field_name: string;
     policy: FieldAccessPolicy | null;
   }>(`/api/schema/${encodeURIComponent(schemaName)}/field/${encodeURIComponent(fieldName)}/policy`);
-  if (!resp.ok) throw new Error(resp.error || 'Failed to get field policy');
+  if (!resp.success) throw new Error(resp.error || 'Failed to get field policy');
   return resp.data?.policy ?? null;
 }
 
@@ -133,7 +133,7 @@ export async function getAllFieldPolicies(
     schema_name: string;
     field_policies: Record<string, FieldAccessPolicy | null>;
   }>(`/api/schema/${encodeURIComponent(schemaName)}/policies`);
-  if (!resp.ok) throw new Error(resp.error || 'Failed to get field policies');
+  if (!resp.success) throw new Error(resp.error || 'Failed to get field policies');
   return resp.data?.field_policies ?? {};
 }
 
@@ -144,14 +144,14 @@ export async function setPaymentGate(schemaName: string, gate: PaymentGate): Pro
     `/api/schema/${encodeURIComponent(schemaName)}/payment-gate`,
     { gate }
   );
-  if (!resp.ok) throw new Error(resp.error || 'Failed to set payment gate');
+  if (!resp.success) throw new Error(resp.error || 'Failed to set payment gate');
 }
 
 export async function getPaymentGate(schemaName: string): Promise<PaymentGate | null> {
   const resp = await client().get<{ schema_name: string; payment_gate: PaymentGate | null }>(
     `/api/schema/${encodeURIComponent(schemaName)}/payment-gate`
   );
-  if (!resp.ok) throw new Error(resp.error || 'Failed to get payment gate');
+  if (!resp.success) throw new Error(resp.error || 'Failed to get payment gate');
   return resp.data?.payment_gate ?? null;
 }
 
@@ -159,7 +159,7 @@ export async function getPaymentGate(schemaName: string): Promise<PaymentGate | 
 
 export async function getAuditLog(limit: number = 100): Promise<AuditEvent[]> {
   const resp = await client().get<AuditLogResponse>(`/api/trust/audit?limit=${limit}`);
-  if (!resp.ok) throw new Error(resp.error || 'Failed to get audit log');
+  if (!resp.success) throw new Error(resp.error || 'Failed to get audit log');
   return resp.data?.events ?? [];
 }
 
@@ -167,7 +167,7 @@ export async function getAuditLog(limit: number = 100): Promise<AuditEvent[]> {
 
 export async function getNodeInfo(): Promise<NodeInfoResponse> {
   const resp = await client().get<NodeInfoResponse>('/api/remote/node-info');
-  if (!resp.ok) throw new Error(resp.error || 'Failed to get node info');
+  if (!resp.success) throw new Error(resp.error || 'Failed to get node info');
   return resp.data!;
 }
 
@@ -187,7 +187,7 @@ export async function issueCapability(
     kind,
     quota,
   });
-  if (!resp.ok) throw new Error(resp.error || 'Failed to issue capability');
+  if (!resp.success) throw new Error(resp.error || 'Failed to issue capability');
 }
 
 export async function listCapabilities(
@@ -197,6 +197,6 @@ export async function listCapabilities(
   const resp = await client().get<CapabilityConstraint[]>(
     `/api/capabilities/list/${encodeURIComponent(schemaName)}/${encodeURIComponent(fieldName)}`
   );
-  if (!resp.ok) throw new Error(resp.error || 'Failed to list capabilities');
+  if (!resp.success) throw new Error(resp.error || 'Failed to list capabilities');
   return resp.data ?? [];
 }
