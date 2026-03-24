@@ -26,7 +26,8 @@ pub async fn convert_file_to_json(file_path: &PathBuf) -> Result<Value, Ingestio
 
     let ollama_config = FtmOllamaConfig {
         base_url: ingestion_config.ollama.base_url.clone(),
-        ..FtmOllamaConfig::default()
+        vision_model: fold_db::llm_registry::models::OLLAMA_VISION.to_string(),
+        ocr_model: fold_db::llm_registry::models::OLLAMA_OCR.to_string(),
     };
 
     let config = FtmConfig::from_home_dir(ollama_config, None)
