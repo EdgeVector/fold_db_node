@@ -74,7 +74,13 @@ pub async fn parse_multipart(
 
         match field_name.as_deref() {
             Some("file") => {
-                let (path, filename, exists, hash) = save_uploaded_file(field, upload_storage, encryption_key).await?;
+                // Capture the original filename from the Content-Disposition header
+                // before consuming the field data.
+                let upload_filename = field
+                    .content_disposition()
+                    .get_filename()
+                    .map(|s| s.to_string());
+                let (path, filename, exists, hash) = save_uploaded_file(field, upload_storage, encryption_key, upload_filename.as_deref()).await?;
                 file_path = Some(path);
                 original_filename = Some(filename);
                 already_exists = exists;
@@ -160,6 +166,7 @@ async fn save_uploaded_file(
     mut field: actix_multipart::Field,
     upload_storage: &UploadStorage,
     encryption_key: &[u8; 32],
+    original_filename: Option<&str>,
 ) -> Result<(PathBuf, String, bool, String), HttpResponse> {
     use sha2::{Digest, Sha256};
 
@@ -218,6 +225,19 @@ async fn save_uploaded_file(
         }
     };
 
+    // Extract the file extension from the original filename so file_to_markdown
+    // can detect the format (e.g. jpg → vision model, pdf → PDF handler).
+    let extension = original_filename
+        .and_then(|name| std::path::Path::new(name).extension())
+        .and_then(|ext| ext.to_str())
+        .map(|ext| ext.to_string());
+
+    // The display name returned to callers: prefer the original filename, fall
+    // back to the content hash.
+    let display_name = original_filename
+        .map(|s| s.to_string())
+        .unwrap_or_else(|| unique_filename.clone());
+
     // Handle duplicate detection
     if already_exists {
         log_feature!(
@@ -228,12 +248,12 @@ async fn save_uploaded_file(
             upload_storage.get_display_path(&unique_filename, None)
         );
         // For processing, we need unencrypted data on a local path
-        let process_path = write_unencrypted_for_processing(&unique_filename, &file_data, upload_storage).await?;
-        return Ok((process_path, unique_filename, true, hash_hex));
+        let process_path = write_unencrypted_for_processing(&unique_filename, &file_data, extension.as_deref(), upload_storage).await?;
+        return Ok((process_path, display_name, true, hash_hex));
     }
 
     // Storage has encrypted data; file converter needs unencrypted data on a local path
-    let filepath = write_unencrypted_for_processing(&unique_filename, &file_data, upload_storage).await?;
+    let filepath = write_unencrypted_for_processing(&unique_filename, &file_data, extension.as_deref(), upload_storage).await?;
 
     log_feature!(
         LogFeature::Ingestion,
@@ -243,17 +263,24 @@ async fn save_uploaded_file(
         filepath
     );
 
-    Ok((filepath, unique_filename, false, hash_hex))
+    Ok((filepath, display_name, false, hash_hex))
 }
 
 /// Write unencrypted file data to a temp path for processing by file_to_markdown.
 /// Storage holds encrypted data; this provides the plaintext for conversion.
+/// The optional `extension` is appended so that downstream format detection
+/// (which relies on file extension) works correctly.
 async fn write_unencrypted_for_processing(
     filename: &str,
     file_data: &[u8],
+    extension: Option<&str>,
     _upload_storage: &UploadStorage,
 ) -> Result<PathBuf, HttpResponse> {
-    let temp_path = std::env::temp_dir().join(format!("folddb_proc_{}", filename));
+    let temp_name = match extension {
+        Some(ext) => format!("folddb_proc_{}.{}", filename, ext),
+        None => format!("folddb_proc_{}", filename),
+    };
+    let temp_path = std::env::temp_dir().join(temp_name);
     tokio::fs::write(&temp_path, file_data).await.map_err(|e| {
         log_feature!(
             LogFeature::Ingestion,
