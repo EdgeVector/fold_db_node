@@ -11,7 +11,7 @@ use std::path::{Path, PathBuf};
 pub async fn run(
     action: &IngestCommand,
     processor: &OperationProcessor,
-    user_hash: &str,
+    #[allow(unused_variables)] user_hash: &str,
     mode: OutputMode,
 ) -> Result<CommandOutput, CliError> {
     match action {
