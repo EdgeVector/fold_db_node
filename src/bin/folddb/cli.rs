@@ -213,6 +213,39 @@ pub enum IngestCommand {
         #[arg(long)]
         no_execute: bool,
     },
+
+    /// Ingest notes from Apple Notes (macOS only)
+    #[cfg(target_os = "macos")]
+    AppleNotes {
+        /// Ingest only notes from this folder (default: all folders)
+        #[arg(long)]
+        folder: Option<String>,
+        /// Batch size for ingestion (default: 10)
+        #[arg(long, default_value = "10")]
+        batch_size: usize,
+    },
+
+    /// Ingest photos from Apple Photos (macOS only)
+    #[cfg(target_os = "macos")]
+    ApplePhotos {
+        /// Ingest only photos from this album
+        #[arg(long)]
+        album: Option<String>,
+        /// Maximum number of photos to ingest (default: 50)
+        #[arg(long, default_value = "50")]
+        limit: usize,
+        /// Batch size (default: 5)
+        #[arg(long, default_value = "5")]
+        batch_size: usize,
+    },
+
+    /// Ingest reminders from Apple Reminders (macOS only)
+    #[cfg(target_os = "macos")]
+    AppleReminders {
+        /// Ingest only reminders from this list (default: all lists)
+        #[arg(long)]
+        list: Option<String>,
+    },
 }
 
 #[derive(Subcommand, Debug)]
@@ -620,6 +653,130 @@ mod tests {
         );
     }
 
+    #[cfg(target_os = "macos")]
+    #[test]
+    fn parse_ingest_apple_notes_defaults() {
+        let cli = Cli::parse_from(["folddb", "ingest", "apple-notes"]);
+        match cli.command {
+            Command::Ingest {
+                action: IngestCommand::AppleNotes { folder, batch_size },
+            } => {
+                assert!(folder.is_none());
+                assert_eq!(batch_size, 10);
+            }
+            _ => panic!("Expected Ingest AppleNotes"),
+        }
+    }
+
+    #[cfg(target_os = "macos")]
+    #[test]
+    fn parse_ingest_apple_notes_with_options() {
+        let cli = Cli::parse_from([
+            "folddb",
+            "ingest",
+            "apple-notes",
+            "--folder",
+            "Work",
+            "--batch-size",
+            "25",
+        ]);
+        match cli.command {
+            Command::Ingest {
+                action: IngestCommand::AppleNotes { folder, batch_size },
+            } => {
+                assert_eq!(folder, Some("Work".to_string()));
+                assert_eq!(batch_size, 25);
+            }
+            _ => panic!("Expected Ingest AppleNotes"),
+        }
+    }
+
+    #[cfg(target_os = "macos")]
+    #[test]
+    fn parse_ingest_apple_photos_defaults() {
+        let cli = Cli::parse_from(["folddb", "ingest", "apple-photos"]);
+        match cli.command {
+            Command::Ingest {
+                action:
+                    IngestCommand::ApplePhotos {
+                        album,
+                        limit,
+                        batch_size,
+                    },
+            } => {
+                assert!(album.is_none());
+                assert_eq!(limit, 50);
+                assert_eq!(batch_size, 5);
+            }
+            _ => panic!("Expected Ingest ApplePhotos"),
+        }
+    }
+
+    #[cfg(target_os = "macos")]
+    #[test]
+    fn parse_ingest_apple_photos_with_options() {
+        let cli = Cli::parse_from([
+            "folddb",
+            "ingest",
+            "apple-photos",
+            "--album",
+            "Vacation",
+            "--limit",
+            "20",
+            "--batch-size",
+            "3",
+        ]);
+        match cli.command {
+            Command::Ingest {
+                action:
+                    IngestCommand::ApplePhotos {
+                        album,
+                        limit,
+                        batch_size,
+                    },
+            } => {
+                assert_eq!(album, Some("Vacation".to_string()));
+                assert_eq!(limit, 20);
+                assert_eq!(batch_size, 3);
+            }
+            _ => panic!("Expected Ingest ApplePhotos"),
+        }
+    }
+
+    #[cfg(target_os = "macos")]
+    #[test]
+    fn parse_ingest_apple_reminders_defaults() {
+        let cli = Cli::parse_from(["folddb", "ingest", "apple-reminders"]);
+        match cli.command {
+            Command::Ingest {
+                action: IngestCommand::AppleReminders { list },
+            } => {
+                assert!(list.is_none());
+            }
+            _ => panic!("Expected Ingest AppleReminders"),
+        }
+    }
+
+    #[cfg(target_os = "macos")]
+    #[test]
+    fn parse_ingest_apple_reminders_with_list() {
+        let cli = Cli::parse_from([
+            "folddb",
+            "ingest",
+            "apple-reminders",
+            "--list",
+            "Shopping",
+        ]);
+        match cli.command {
+            Command::Ingest {
+                action: IngestCommand::AppleReminders { list },
+            } => {
+                assert_eq!(list, Some("Shopping".to_string()));
+            }
+            _ => panic!("Expected Ingest AppleReminders"),
+        }
+    }
+
     #[test]
     fn parse_all_subcommands_exist() {
         let commands: Vec<Vec<&str>> = vec![
@@ -645,6 +802,15 @@ mod tests {
             vec!["folddb", "reset"],
             vec!["folddb", "completions", "bash"],
         ];
+
+        #[cfg(target_os = "macos")]
+        let commands = {
+            let mut cmds = commands;
+            cmds.push(vec!["folddb", "ingest", "apple-notes"]);
+            cmds.push(vec!["folddb", "ingest", "apple-photos"]);
+            cmds.push(vec!["folddb", "ingest", "apple-reminders"]);
+            cmds
+        };
 
         for args in &commands {
             let result = Cli::try_parse_from(args.iter());

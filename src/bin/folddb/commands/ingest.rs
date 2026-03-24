@@ -11,6 +11,7 @@ use std::path::{Path, PathBuf};
 pub async fn run(
     action: &IngestCommand,
     processor: &OperationProcessor,
+    #[allow(unused_variables)] user_hash: &str,
     mode: OutputMode,
 ) -> Result<CommandOutput, CliError> {
     match action {
@@ -113,6 +114,25 @@ pub async fn run(
                 failed: total - succeeded,
                 results,
             })
+        }
+
+        #[cfg(target_os = "macos")]
+        IngestCommand::AppleNotes { folder, batch_size } => {
+            super::apple::notes::run(folder.as_deref(), *batch_size, user_hash, mode).await
+        }
+
+        #[cfg(target_os = "macos")]
+        IngestCommand::ApplePhotos {
+            album,
+            limit,
+            batch_size,
+        } => {
+            super::apple::photos::run(album.as_deref(), *limit, *batch_size, user_hash, mode).await
+        }
+
+        #[cfg(target_os = "macos")]
+        IngestCommand::AppleReminders { list } => {
+            super::apple::reminders::run(list.as_deref(), user_hash, mode).await
         }
     }
 }
