@@ -1,4 +1,4 @@
-//! Schema Service
+//! Schema Service HTTP Layer
 //!
 //! A standalone HTTP service that provides schema discovery and management.
 //! The schema service loads schemas from a sled database on startup and
@@ -14,3 +14,4 @@ pub use fold_db::schema_service::state;
 pub use fold_db::schema_service::types;
 
 pub use server::SchemaServiceServer;
+pub use fold_db::TransformResolver;

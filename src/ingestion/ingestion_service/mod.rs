@@ -25,6 +25,7 @@ use fold_db::logging::features::LogFeature;
 use fold_db::schema::types::{KeyValue, Mutation};
 use fold_db::schema::SchemaCore;
 use serde_json::Value;
+use sha2::{Sha256, Digest};
 use std::collections::HashMap;
 use std::sync::Arc;
 
@@ -172,6 +173,10 @@ impl IngestionService {
         // Enrich text-file JSON with source path context so the AI can propose
         // semantic schema names (e.g., "recipes" instead of "document_content").
         enrich_with_source_context(&mut flattened_data, request.source_file_name.as_deref());
+
+        // Inject content_hash for document/note data to prevent key collisions
+        // when multiple items share the same title (e.g., dated journal entries).
+        inject_content_hashes(&mut flattened_data);
 
         // Decide code path based on data shape
         let has_nested_children = self.check_has_nested_children(&flattened_data);
@@ -574,6 +579,45 @@ fn schemas_written_from(mutations: &[Mutation]) -> Vec<SchemaWriteRecord> {
         }
     }
     schemas_written_from_map(map)
+}
+
+/// Inject a `content_hash` field into objects that have a `content` or `body` field.
+///
+/// This prevents key collisions for document/note schemas where titles are not unique
+/// (e.g., multiple notes dated "2026-03-19"). The hash is a truncated SHA-256 of the
+/// content, giving the AI a guaranteed-unique field to use as `range_field`.
+fn inject_content_hash(obj: &mut serde_json::Map<String, Value>) {
+    let content_str = obj
+        .get("content")
+        .or_else(|| obj.get("body"))
+        .and_then(|v| v.as_str())
+        .map(|s| s.to_string());
+    if let Some(text) = content_str {
+        let mut hasher = Sha256::new();
+        hasher.update(text.as_bytes());
+        let hash = format!("{:x}", hasher.finalize());
+        obj.insert(
+            "content_hash".to_string(),
+            Value::String(hash[..16].to_string()),
+        );
+    }
+}
+
+/// Apply `inject_content_hash` to every object in an array or a single object.
+fn inject_content_hashes(data: &mut Value) {
+    match data {
+        Value::Array(arr) => {
+            for item in arr.iter_mut() {
+                if let Some(obj) = item.as_object_mut() {
+                    inject_content_hash(obj);
+                }
+            }
+        }
+        Value::Object(obj) => {
+            inject_content_hash(obj);
+        }
+        _ => {}
+    }
 }
 
 /// Convert a `HashMap<schema_name, keys>` into `Vec<SchemaWriteRecord>`.

@@ -493,83 +493,11 @@ impl LlmQueryService {
             }
 
             "set_field_policy" => {
-                let schema_name = params
-                    .get("schema_name")
-                    .and_then(|s| s.as_str())
-                    .ok_or("set_field_policy requires 'schema_name'")?;
-                let field_name = params
-                    .get("field_name")
-                    .and_then(|s| s.as_str())
-                    .ok_or("set_field_policy requires 'field_name'")?;
-                let read_max = params
-                    .get("read_max")
-                    .and_then(|v| v.as_u64())
-                    .ok_or("set_field_policy requires 'read_max' (integer)")?;
-                let write_max = params
-                    .get("write_max")
-                    .and_then(|v| v.as_u64())
-                    .ok_or("set_field_policy requires 'write_max' (integer)")?;
-
-                let policy = fold_db::access::FieldAccessPolicy {
-                    trust_distance: fold_db::access::TrustDistancePolicy::new(read_max, write_max),
-                    capabilities: Vec::new(),
-                    security_label: None,
-                };
-
-                processor
-                    .set_field_access_policy(schema_name, field_name, policy)
-                    .await
-                    .map_err(|e| format!("Failed to set field policy: {}", e))?;
-
-                Ok(serde_json::json!({
-                    "success": true,
-                    "schema_name": schema_name,
-                    "field_name": field_name,
-                    "read_max": read_max,
-                    "write_max": write_max,
-                }))
+                Err("Access control has been removed from fold_db".to_string())
             }
 
             "get_field_policies" => {
-                let schema_name = params
-                    .get("schema_name")
-                    .and_then(|s| s.as_str())
-                    .ok_or("get_field_policies requires 'schema_name'")?;
-
-                let schema = processor
-                    .get_schema(schema_name)
-                    .await
-                    .map_err(|e| format!("Failed to get schema: {}", e))?
-                    .ok_or_else(|| format!("Schema '{}' not found", schema_name))?;
-
-                use fold_db::schema::types::field::Field;
-                let mut policies = serde_json::Map::new();
-                for (field_name, field_variant) in &schema.schema.runtime_fields {
-                    let policy = field_variant.common().access_policy.as_ref();
-                    match policy {
-                        Some(p) => {
-                            policies.insert(
-                                field_name.clone(),
-                                serde_json::json!({
-                                    "read_max": p.trust_distance.read_max,
-                                    "write_max": p.trust_distance.write_max,
-                                    "has_capabilities": !p.capabilities.is_empty(),
-                                    "security_label": p.security_label.as_ref().map(|l| {
-                                        serde_json::json!({"level": l.level, "category": &l.category})
-                                    }),
-                                }),
-                            );
-                        }
-                        None => {
-                            policies.insert(
-                                field_name.clone(),
-                                serde_json::json!({"policy": "none (legacy - no access control)"}),
-                            );
-                        }
-                    }
-                }
-
-                Ok(Value::Object(policies))
+                Err("Access control has been removed from fold_db".to_string())
             }
 
             _ => Err(format!("Unknown tool: {}", tool)),
