@@ -125,7 +125,7 @@ impl LlmQueryService {
         prompt.push_str("Query data from a schema.\n");
         prompt.push_str("Parameters:\n");
         prompt.push_str("- schema_name (string, required): Name of the schema to query\n");
-        prompt.push_str("- fields (array of strings, optional): Fields to return. If omitted, returns all fields.\n");
+        prompt.push_str("- fields (array of strings, optional): Fields to return. If omitted, returns all fields. IMPORTANT: Always specify only the fields you need — large text fields like 'markdown' or 'body' can be very large and cause context overflow.\n");
         prompt.push_str("- filter (object, optional): Filter to apply. Examples:\n");
         prompt.push_str("  - {\"HashKey\": \"value\"} - exact match on hash key\n");
         prompt.push_str("  - {\"RangePrefix\": \"prefix\"} - prefix match on range key\n");
@@ -133,9 +133,10 @@ impl LlmQueryService {
         prompt.push_str("  - {\"SampleN\": 10} - random sample of N records\n");
         prompt.push_str("  - null - no filter (all records)\n");
         prompt.push_str("- sort_order (string, optional): \"asc\" or \"desc\" — sorts results by range key. Use \"desc\" for most recent/latest queries.\n");
+        prompt.push_str("- limit (integer, optional): Maximum number of results to return. Default: 50. Use smaller limits (5-10) when fetching large text fields.\n");
         prompt.push_str("When the user asks for \"upcoming\", \"future\", or \"after today\" items and a schema has a date-based range key, use RangeRange with today's date as start.\n");
         prompt.push_str("When the user asks for \"most recent\", \"latest\", or \"newest\" items, use null filter with sort_order \"desc\".\n");
-        prompt.push_str("Example: {\"tool\": \"query\", \"params\": {\"schema_name\": \"Tweet\", \"fields\": [\"content\", \"author\"], \"filter\": null, \"sort_order\": \"desc\"}}\n\n");
+        prompt.push_str("Example: {\"tool\": \"query\", \"params\": {\"schema_name\": \"Tweet\", \"fields\": [\"content\", \"author\"], \"filter\": null, \"sort_order\": \"desc\", \"limit\": 20}}\n\n");
 
         prompt.push_str("### list_schemas\n");
         prompt.push_str("List all available schemas.\n");

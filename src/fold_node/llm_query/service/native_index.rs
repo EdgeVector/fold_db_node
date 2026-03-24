@@ -189,6 +189,10 @@ impl LlmQueryService {
 
                 let filter = params.get("filter").cloned();
                 let sort_order = params.get("sort_order").cloned();
+                let limit = params
+                    .get("limit")
+                    .and_then(|l| l.as_u64())
+                    .unwrap_or(50) as usize;
 
                 let query = Query {
                     schema_name: schema_name.to_string(),
@@ -204,7 +208,20 @@ impl LlmQueryService {
                     .await
                     .map_err(|e| format!("Query execution failed: {}", e))?;
 
-                Ok(Value::Array(results))
+                let total_count = results.len();
+                let truncated: Vec<Value> = results.into_iter().take(limit).collect();
+                let mut result = serde_json::json!({
+                    "records": truncated,
+                    "total_count": total_count,
+                });
+                if total_count > limit {
+                    result["truncated"] = serde_json::json!(true);
+                    result["message"] = serde_json::json!(format!(
+                        "Showing {} of {} results. Use 'limit' to page through more, or 'filter' to narrow results.",
+                        limit, total_count
+                    ));
+                }
+                Ok(result)
             }
 
             "list_schemas" => {
@@ -634,12 +651,26 @@ impl LlmQueryService {
                         result: result.clone(),
                     });
 
-                    // Add to conversation context
+                    // Add to conversation context with token budget guard.
+                    // Rough estimate: 1 token ≈ 4 chars. Cap any single tool
+                    // result at ~30K tokens (120K chars) to stay within model limits.
+                    const MAX_RESULT_CHARS: usize = 120_000;
+                    let result_str = serde_json::to_string_pretty(&result).unwrap_or_default();
+                    let result_display = if result_str.len() > MAX_RESULT_CHARS {
+                        format!(
+                            "{}...\n\n[TRUNCATED: result was {} chars (~{} tokens). Use 'limit' param or request fewer/smaller fields to get complete results.]",
+                            &result_str[..MAX_RESULT_CHARS],
+                            result_str.len(),
+                            result_str.len() / 4
+                        )
+                    } else {
+                        result_str
+                    };
                     conversation_context.push_str(&format!(
                         "\n\nTool call: {}\nParameters: {}\nResult: {}\n",
                         tool,
                         serde_json::to_string_pretty(&params).unwrap_or_default(),
-                        serde_json::to_string_pretty(&result).unwrap_or_default()
+                        result_display
                     ));
                 }
             }
