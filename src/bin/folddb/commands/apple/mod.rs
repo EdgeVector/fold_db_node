@@ -12,7 +12,7 @@ const DEFAULT_BASE_URL: &str = "http://localhost:9001";
 fn build_client(user_hash: &str) -> Result<(Client, String), CliError> {
     let base_url = std::env::var("FOLD_NODE_URL").unwrap_or_else(|_| DEFAULT_BASE_URL.to_string());
     let client = Client::builder()
-        .timeout(std::time::Duration::from_secs(30))
+        .timeout(std::time::Duration::from_secs(120))
         .default_headers({
             let mut headers = reqwest::header::HeaderMap::new();
             headers.insert(
