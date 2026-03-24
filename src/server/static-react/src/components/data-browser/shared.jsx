@@ -207,9 +207,15 @@ export function RecordMetadata({ metadata }) {
   const [expanded, setExpanded] = useState(false)
   const [blobUrl, setBlobUrl] = useState(null)
 
-  // Derive all values before hooks to avoid conditional hook calls
+  // Derive all values before hooks to avoid conditional hook calls.
+  // Prefer the `source_file_name` field's own metadata entry — other fields
+  // (e.g. camera_model) may share molecules across records and carry stale
+  // source_file_name from the last writer.
   const entries = (metadata && typeof metadata === 'object') ? Object.entries(metadata) : []
-  const representative = entries.find(([, v]) => v?.source_file_name)?.[1] || entries[0]?.[1]
+  const representative =
+    entries.find(([k]) => k === 'source_file_name')?.[1] ||
+    entries.find(([, v]) => v?.source_file_name)?.[1] ||
+    entries[0]?.[1]
   const sourceFile = representative?.source_file_name
   const fileHash = representative?.metadata?.file_hash
   const hasData = !!(sourceFile || fileHash)
