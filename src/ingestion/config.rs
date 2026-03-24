@@ -1,5 +1,6 @@
 //! Configuration for the ingestion module
 
+use fold_db::llm_registry::models;
 use fold_db::log_feature;
 use fold_db::logging::features::LogFeature;
 use serde::{Deserialize, Serialize};
@@ -37,14 +38,14 @@ pub struct OllamaGenerationParams {
 impl Default for OllamaGenerationParams {
     fn default() -> Self {
         Self {
-            num_ctx: 16384,
-            temperature: 0.8,
-            top_p: 0.95,
-            top_k: 0,
-            num_predict: 16384,
-            repeat_penalty: 1.0,
-            presence_penalty: 0.0,
-            min_p: 0.0,
+            num_ctx: models::OLLAMA_NUM_CTX,
+            temperature: models::TEMPERATURE_CREATIVE,
+            top_p: models::OLLAMA_TOP_P,
+            top_k: models::OLLAMA_TOP_K,
+            num_predict: models::OLLAMA_NUM_PREDICT,
+            repeat_penalty: models::OLLAMA_REPEAT_PENALTY,
+            presence_penalty: models::OLLAMA_PRESENCE_PENALTY,
+            min_p: models::OLLAMA_MIN_P,
         }
     }
 }
@@ -61,8 +62,8 @@ pub struct OllamaConfig {
 impl Default for OllamaConfig {
     fn default() -> Self {
         Self {
-            model: "llama3.3".to_string(),
-            base_url: "http://localhost:11434".to_string(),
+            model: models::OLLAMA_DEFAULT.to_string(),
+            base_url: models::OLLAMA_DEFAULT_URL.to_string(),
             generation_params: OllamaGenerationParams::default(),
         }
     }
@@ -96,8 +97,8 @@ impl Default for AnthropicConfig {
     fn default() -> Self {
         Self {
             api_key: String::new(),
-            model: "claude-sonnet-4-20250514".to_string(),
-            base_url: "https://api.anthropic.com".to_string(),
+            model: models::ANTHROPIC_SONNET.to_string(),
+            base_url: models::ANTHROPIC_API_URL.to_string(),
         }
     }
 }
@@ -351,18 +352,18 @@ mod tests {
         let config = IngestionConfig::default();
         assert!(!config.enabled);
         assert_eq!(config.provider, AIProvider::Anthropic);
-        assert_eq!(config.anthropic.model, "claude-sonnet-4-20250514");
-        assert_eq!(config.anthropic.base_url, "https://api.anthropic.com");
-        assert_eq!(config.ollama.model, "llama3.3");
-        assert_eq!(config.ollama.base_url, "http://localhost:11434");
-        assert_eq!(config.ollama.generation_params.num_ctx, 16384);
-        assert!((config.ollama.generation_params.temperature - 0.8).abs() < f32::EPSILON);
-        assert!((config.ollama.generation_params.top_p - 0.95).abs() < f32::EPSILON);
-        assert_eq!(config.ollama.generation_params.top_k, 0);
-        assert_eq!(config.ollama.generation_params.num_predict, 16384);
-        assert!((config.ollama.generation_params.repeat_penalty - 1.0).abs() < f32::EPSILON);
-        assert!((config.ollama.generation_params.presence_penalty - 0.0).abs() < f32::EPSILON);
-        assert!((config.ollama.generation_params.min_p - 0.0).abs() < f32::EPSILON);
+        assert_eq!(config.anthropic.model, models::ANTHROPIC_SONNET);
+        assert_eq!(config.anthropic.base_url, models::ANTHROPIC_API_URL);
+        assert_eq!(config.ollama.model, models::OLLAMA_DEFAULT);
+        assert_eq!(config.ollama.base_url, models::OLLAMA_DEFAULT_URL);
+        assert_eq!(config.ollama.generation_params.num_ctx, models::OLLAMA_NUM_CTX);
+        assert!((config.ollama.generation_params.temperature - models::TEMPERATURE_CREATIVE).abs() < f32::EPSILON);
+        assert!((config.ollama.generation_params.top_p - models::OLLAMA_TOP_P).abs() < f32::EPSILON);
+        assert_eq!(config.ollama.generation_params.top_k, models::OLLAMA_TOP_K);
+        assert_eq!(config.ollama.generation_params.num_predict, models::OLLAMA_NUM_PREDICT);
+        assert!((config.ollama.generation_params.repeat_penalty - models::OLLAMA_REPEAT_PENALTY).abs() < f32::EPSILON);
+        assert!((config.ollama.generation_params.presence_penalty - models::OLLAMA_PRESENCE_PENALTY).abs() < f32::EPSILON);
+        assert!((config.ollama.generation_params.min_p - models::OLLAMA_MIN_P).abs() < f32::EPSILON);
         assert_eq!(config.max_retries, 3);
         assert_eq!(config.timeout_seconds, 300);
         assert!(config.auto_execute_mutations);

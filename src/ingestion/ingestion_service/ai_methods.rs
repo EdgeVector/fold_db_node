@@ -124,7 +124,7 @@ impl IngestionService {
         };
         let sample = crate::ingestion::ai::helpers::truncate_long_strings(&raw_sample);
 
-        let prompt = crate::ingestion::ai::prompts::FIELD_DESCRIPTIONS_PROMPT
+        let prompt = fold_db::llm_registry::prompts::ingestion::FIELD_DESCRIPTIONS_PROMPT
             .replace("{sample}", &serde_json::to_string_pretty(&sample).unwrap_or_default())
             .replace("{fields}", &format!("{:?}", missing));
 

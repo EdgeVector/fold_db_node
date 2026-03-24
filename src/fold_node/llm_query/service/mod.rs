@@ -9,6 +9,7 @@ use crate::ingestion::{
     ai::client::{build_backend, AiBackend},
     config::IngestionConfig,
 };
+use fold_db::llm_registry::prompts::query as qp;
 use fold_db::schema::SchemaWithState;
 use serde_json::Value;
 use std::sync::Arc;
@@ -113,7 +114,8 @@ impl LlmQueryService {
     fn build_agent_system_prompt(&self, schemas: &[SchemaWithState]) -> String {
         let now = chrono::Local::now();
         let mut prompt = format!(
-            "You are a helpful database assistant with access to tools. Use the tools to query and manipulate data to answer the user's question.\n\nCurrent date and time: {}\n\n",
+            "{}Current date and time: {}\n\n",
+            qp::AGENT_SYSTEM_PREAMBLE,
             now.format("%A, %B %-d, %Y at %-I:%M %p")
         );
 
@@ -286,9 +288,7 @@ impl LlmQueryService {
         prompt.push_str("If a field value is an array of objects with \"schema\" and \"key\" properties, those are references to child records.\n");
         prompt.push_str("The referenced data will be included inline when available. If you need deeper data (references within references), ");
         prompt.push_str("use get_schema to find the child schema's fields, then use query to fetch the child schema's data directly.\n\n");
-        prompt.push_str("IMPORTANT: Always respond with valid JSON. Either:\n");
-        prompt.push_str("- {\"tool\": \"tool_name\", \"params\": {...}} to call a tool\n");
-        prompt.push_str("- {\"answer\": \"your response\"} to provide the final answer\n");
+        prompt.push_str(qp::AGENT_RESPONSE_FORMAT);
 
         prompt
     }

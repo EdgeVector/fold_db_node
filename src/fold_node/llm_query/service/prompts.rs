@@ -1,5 +1,8 @@
 //! LLM prompt builders for query analysis, summarization, chat, and native index.
+//!
+//! Static instruction text is sourced from `fold_db::llm_registry::prompts::query`.
 
+use fold_db::llm_registry::prompts::query as qp;
 use fold_db::schema::SchemaWithState;
 use super::LlmQueryService;
 use serde_json::Value;
@@ -8,10 +11,7 @@ use super::super::types::Message;
 impl LlmQueryService {
     /// Build the analysis prompt
     pub(super) fn build_analysis_prompt(&self, user_query: &str, schemas: &[SchemaWithState]) -> String {
-        let mut prompt = String::from(
-            "You are a database query optimizer. Analyze the following natural language query \
-            and available schemas to create an execution plan.\n\n",
-        );
+        let mut prompt = String::from(qp::QUERY_ANALYSIS_PREAMBLE);
 
         prompt.push_str("Available Schemas:\n");
         for schema in schemas {
@@ -42,63 +42,21 @@ impl LlmQueryService {
             1. Which schema(s) to query\n\
             2. What fields to retrieve\n\
             3. What filters to apply (if any)\n\
-            4. If an index is needed (consider element count > 10,000 as threshold)\n\n\
-            FILTER TYPES AVAILABLE:\n\n\
-            Filters for HashRange schemas (have both Hash Key and Range Key):\n\
-            - HashRangeKey: {\"HashRangeKey\": {\"hash\": \"value\", \"range\": \"value\"}} - exact match on BOTH hash key field AND range key field\n\
-            - HashKey: {\"HashKey\": \"value\"} - filter on hash key field only, returns all records with this hash\n\
-            - HashRangePrefix: {\"HashRangePrefix\": {\"hash\": \"value\", \"prefix\": \"prefix\"}} - filter on hash key field + range key field prefix\n\
-            - HashPattern: {\"HashPattern\": \"*pattern*\"} - glob pattern matching on hash key field\n\n\
-            Filters for Hash schemas (have Hash Key only, no Range Key):\n\
-            - HashKey: {\"HashKey\": \"value\"} - exact match on hash key field\n\
-            - HashPattern: {\"HashPattern\": \"*pattern*\"} - glob pattern matching on hash key field\n\n\
-            Filters for Range schemas (have Range Key only):\n\
-            - RangePrefix: {\"RangePrefix\": \"prefix\"} - filter on range key field, returns records with range starting with prefix\n\
-            - RangePattern: {\"RangePattern\": \"*pattern*\"} - glob pattern matching on range key field\n\
-            - RangeRange: {\"RangeRange\": {\"start\": \"2025-01-01\", \"end\": \"2025-12-31\"}} - filter on range key field for values within range\n\n\
-            Universal filters (work on any schema type):\n\
-            - SampleN: {\"SampleN\": 100} - return N RANDOM records (NOT sorted)\n\
-            - null - no filter (return all records)\n\n\
-            IMPORTANT JSON FORMATTING:\n\
-            - All string values in filters MUST be properly JSON-escaped\n\
-            - Special characters like @ # $ etc. do NOT need escaping in JSON strings\n\
-            - Example: {\"HashKey\": \"user@domain.com\"} is valid JSON\n\n\
-            CRITICAL FILTER SELECTION RULES:\n\
-            1. ALWAYS check the schema's Hash Key and Range Key fields to determine the correct filter\n\
-            2. If the search term matches a Hash Key field value, use HashKey or HashPattern filter\n\
-            3. If the search term matches a Range Key field value, use RangePrefix, RangePattern, or RangeRange filter\n\
-            4. Examples of when to use each:\n\
-               - Searching for author \"Jennifer Liu\" on a schema with hash_field=author → use {\"HashKey\": \"Jennifer Liu\"}\n\
-               - Searching for date \"2025-09\" on a schema with range_field=publish_date → use {\"RangePrefix\": \"2025-09\"}\n\n\
-            IMPORTANT NOTES:\n\
-            - For HashRange schemas, HashKey filters operate on the hash_field, Range filters operate on the range_field\n\
-            - For Hash schemas, HashKey and HashPattern filters operate on the hash_field (no range filters available)\n\
-            - For Range schemas, Range filters operate on the range_field\n\
-            - SampleN returns RANDOM records, NOT sorted or ordered\n\
-            - For \"most recent\" or \"latest\" queries, use null filter with sort_order \"desc\" to get results sorted newest-first by range key\n\
-            - Range keys are stored as strings and compared lexicographically\n\n\
-            EXAMPLES:\n\
+            4. If an index is needed (consider element count > 10,000 as threshold)\n\n"
+        );
+        prompt.push_str(qp::FILTER_TYPES_INSTRUCTION);
+        prompt.push_str("\n\n");
+        prompt.push_str(qp::FILTER_SELECTION_RULES);
+        prompt.push_str("\n\n");
+        prompt.push_str(
+            "EXAMPLES:\n\
             - Search for word \"ai\" in BlogPostWordIndex (hash_field=word): {\"HashKey\": \"ai\"} ✓ CORRECT\n\
             - Search for author \"Jennifer Liu\" in schema with hash_field=author: {\"HashKey\": \"Jennifer Liu\"} ✓ CORRECT\n\
             - Get blog post by ID in BlogPost (range_field=post_id): {\"RangePrefix\": \"post-123\"} ✓ CORRECT\n\
             - Get most recent posts: null filter + sort_order \"desc\" ✓ CORRECT\n\
-            - Get posts in date range (range_field=publish_date): {\"RangeRange\": {\"start\": \"2025-09-01\", \"end\": \"2025-09-30\"}} ✓ CORRECT\n\n\
-            Respond in JSON format with:\n\
-            {\n\
-              \"query\": {\n\
-                \"schema_name\": \"string\",\n\
-                \"fields\": [\"field1\", \"field2\"],\n\
-                \"filter\": null or one of the filter types above,\n\
-                \"sort_order\": \"asc\" or \"desc\" or null\n\
-              },\n\
-              \"reasoning\": \"your analysis\"\n\
-            }\n\n\
-            IMPORTANT: \n\
-            - Return ONLY the JSON object, no additional text\n\
-            - Use the EXACT filter format shown above\n\
-            - For \"most recent\", \"latest\", or \"newest\" queries, use null filter with sort_order \"desc\" (NOT SampleN)\n\
-            - Prefer existing approved schemas for queries"
+            - Get posts in date range (range_field=publish_date): {\"RangeRange\": {\"start\": \"2025-09-01\", \"end\": \"2025-09-30\"}} ✓ CORRECT\n\n"
         );
+        prompt.push_str(qp::QUERY_RESPONSE_FORMAT);
 
         prompt
     }
@@ -115,7 +73,7 @@ impl LlmQueryService {
             .unwrap_or_else(|_| "Failed to serialize results".to_string());
 
         format!(
-            "Summarize the following query results for the user.\n\n\
+            "{}\
             Original Query: {}\n\
             Results ({} total): {}\n\n\
             Provide:\n\
@@ -123,6 +81,7 @@ impl LlmQueryService {
             2. Key insights\n\
             3. Notable patterns or anomalies\n\n\
             Keep the summary concise and informative.",
+            qp::SUMMARIZATION_PREAMBLE,
             original_query,
             results.len(),
             results_str
@@ -146,10 +105,7 @@ impl LlmQueryService {
         let results_str = serde_json::to_string_pretty(results_preview)
             .unwrap_or_else(|_| "Failed to serialize results".to_string());
 
-        let mut prompt = String::from(
-            "You are helping a user explore query results. Answer their question based on \
-            the context provided.\n\n",
-        );
+        let mut prompt = String::from(qp::CHAT_PREAMBLE);
 
         prompt.push_str(&format!("Original Query: {}\n", original_query));
         prompt.push_str(&format!(
@@ -189,9 +145,7 @@ impl LlmQueryService {
         let results_str = serde_json::to_string_pretty(results_preview)
             .unwrap_or_else(|_| "Failed to serialize results".to_string());
 
-        let mut prompt = String::from(
-            "You are analyzing whether a follow-up question can be answered from existing query results or needs a new query.\n\n"
-        );
+        let mut prompt = String::from(qp::FOLLOWUP_ANALYSIS_PREAMBLE);
 
         prompt.push_str(&format!("Original Query: {}\n", original_query));
         prompt.push_str(&format!(
@@ -233,41 +187,11 @@ impl LlmQueryService {
         prompt.push_str("- query: The Query object to execute (same format as before)\n");
         prompt.push_str("- reasoning: Why a new query is needed\n\n");
 
-        prompt.push_str(
-            "FILTER TYPES AVAILABLE:\n\n\
-            Filters for HashRange schemas (have both Hash Key and Range Key):\n\
-            - HashRangeKey: {\"HashRangeKey\": {\"hash\": \"value\", \"range\": \"value\"}} - exact match on BOTH hash key field AND range key field\n\
-            - HashKey: {\"HashKey\": \"value\"} - filter on hash key field only\n\
-            - HashRangePrefix: {\"HashRangePrefix\": {\"hash\": \"value\", \"prefix\": \"prefix\"}} - filter on hash key field + range key field prefix\n\
-            - HashPattern: {\"HashPattern\": \"*pattern*\"} - glob pattern on hash key field\n\n\
-            Filters for Hash schemas (have Hash Key only, no Range Key):\n\
-            - HashKey: {\"HashKey\": \"value\"} - exact match on hash key field\n\
-            - HashPattern: {\"HashPattern\": \"*pattern*\"} - glob pattern on hash key field\n\n\
-            Filters for Range schemas (have Range Key only):\n\
-            - RangePrefix: {\"RangePrefix\": \"prefix\"} - filter on range key field\n\
-            - RangePattern: {\"RangePattern\": \"*pattern*\"} - glob pattern on range key field\n\
-            - RangeRange: {\"RangeRange\": {\"start\": \"2025-01-01\", \"end\": \"2025-12-31\"}} - filter on range key field\n\n\
-            Universal filters (work on any schema type):\n\
-            - SampleN: {\"SampleN\": 100} - return N RANDOM records\n\
-            - null - no filter (return all records)\n\n\
-            IMPORTANT JSON FORMATTING:\n\
-            - All filter string values must use proper JSON format\n\
-            - Special characters like @ # $ are valid in JSON strings without escaping\n\
-            - Example: {\"HashKey\": \"@techinfluencer\"} is correct\n\n\
-            CRITICAL: Always use key-based filters (HashKey, RangePrefix, etc.).\n\
-            Check each schema's Hash Key and Range Key fields to determine which filter to use.\n\
-            Example: If searching for author \"Jennifer Liu\" and schema has hash_field=author, use {\"HashKey\": \"Jennifer Liu\"}.\n\n"
-        );
-
-        prompt.push_str(
-            "Respond in JSON format:\n\
-            {\n\
-              \"needs_query\": true/false,\n\
-              \"query\": null or {\"schema_name\": \"...\", \"fields\": [...], \"filter\": ..., \"sort_order\": \"asc\" or \"desc\" or null},\n\
-              \"reasoning\": \"explanation\"\n\
-            }\n\n\
-            IMPORTANT: Return ONLY the JSON object, no additional text.",
-        );
+        prompt.push_str(qp::FILTER_TYPES_INSTRUCTION);
+        prompt.push_str("\n\n");
+        prompt.push_str(qp::FILTER_SELECTION_RULES);
+        prompt.push_str("\n\n");
+        prompt.push_str(qp::FOLLOWUP_RESPONSE_FORMAT);
 
         prompt
     }
@@ -278,10 +202,7 @@ impl LlmQueryService {
         user_query: &str,
         schemas: &[fold_db::schema::SchemaWithState],
     ) -> String {
-        let mut prompt = String::from(
-            "You are generating search terms for a native word index. Based on the user's natural language query, \
-            generate relevant search terms that would help find matching records.\n\n"
-        );
+        let mut prompt = String::from(qp::NATIVE_INDEX_QUERY_TERMS_PREAMBLE);
 
         prompt.push_str("Available Schemas:\n");
         for schema in schemas {
@@ -312,28 +233,8 @@ impl LlmQueryService {
         }
 
         prompt.push_str(&format!("\nUser Query: {}\n\n", user_query));
-
-        prompt.push_str(
-            "Generate 3-8 relevant search terms that would help find records matching this query.\n\n\
-            Guidelines:\n\
-            - Extract key words and phrases from the query\n\
-            - Include synonyms and related terms\n\
-            - Consider different ways the same concept might be expressed\n\
-            - Include specific names, places, or entities mentioned\n\
-            - Generate terms that would be found in indexed fields\n\
-            - Avoid very common words (stopwords)\n\
-            - Keep terms concise but meaningful\n\n\
-            Examples:\n\
-            - Query: \"Find posts about artificial intelligence\"\n\
-              Terms: [\"artificial\", \"intelligence\", \"AI\", \"machine learning\", \"neural network\"]\n\
-            - Query: \"Show me articles by Jennifer Liu\"\n\
-              Terms: [\"Jennifer\", \"Liu\", \"Jennifer Liu\", \"author\"]\n\
-            - Query: \"Products with electronics tag\"\n\
-              Terms: [\"electronics\", \"electronic\", \"tech\", \"gadgets\", \"devices\"]\n\n\
-            Respond with a JSON array of strings:\n\
-            [\"term1\", \"term2\", \"term3\", ...]\n\n\
-            IMPORTANT: Return ONLY the JSON array, no additional text."
-        );
+        prompt.push_str("Generate 3-8 relevant search terms that would help find records matching this query.\n\n");
+        prompt.push_str(qp::NATIVE_INDEX_SEARCH_GUIDELINES);
 
         prompt
     }
@@ -378,27 +279,8 @@ impl LlmQueryService {
         }
 
         prompt.push_str(&format!("\nUser Query: {}\n\n", user_query));
-
-        prompt.push_str(
-            "Generate 3-6 specific search terms that will be used to search the native word index.\n\n\
-            Guidelines:\n\
-            - Extract the most important keywords from the query\n\
-            - Include specific names, places, or entities mentioned\n\
-            - Generate terms that would be found in indexed text fields\n\
-            - Avoid very common words (stopwords)\n\
-            - Keep terms concise but meaningful\n\
-            - Focus on terms that are likely to appear in the data\n\n\
-            Examples:\n\
-            - Query: \"Find posts about artificial intelligence\"\n\
-              Terms: [\"artificial\", \"intelligence\", \"AI\", \"machine learning\"]\n\
-            - Query: \"Show me articles by Jennifer Liu\"\n\
-              Terms: [\"Jennifer\", \"Liu\", \"Jennifer Liu\"]\n\
-            - Query: \"Products with electronics tag\"\n\
-              Terms: [\"electronics\", \"electronic\", \"tech\"]\n\n\
-            Respond with a JSON array of strings:\n\
-            [\"term1\", \"term2\", \"term3\", ...]\n\n\
-            IMPORTANT: Return ONLY the JSON array, no additional text."
-        );
+        prompt.push_str("Generate 3-6 specific search terms that will be used to search the native word index.\n\n");
+        prompt.push_str(qp::NATIVE_INDEX_SEARCH_GUIDELINES);
 
         prompt
     }
@@ -419,7 +301,7 @@ impl LlmQueryService {
             .unwrap_or_else(|_| "Failed to serialize results".to_string());
 
         format!(
-            "You are interpreting native index search results for a user. Analyze the search results and provide a helpful response.\n\n\
+            "{}\
             Original User Query: {}\n\
             Search Results ({} total, showing first {}):\n{}\n\n\
             Provide:\n\
@@ -428,6 +310,7 @@ impl LlmQueryService {
             3. Notable patterns or interesting findings\n\
             4. If no results were found, suggest alternative search terms\n\n\
             Keep the response concise, informative, and helpful to the user.",
+            qp::NATIVE_INDEX_INTERPRETATION_PREAMBLE,
             original_query,
             results.len(),
             results_preview.len(),
@@ -443,9 +326,7 @@ impl LlmQueryService {
         schemas: &[fold_db::schema::SchemaWithState],
         previous_attempts: &[String],
     ) -> String {
-        let mut prompt = String::from(
-            "A query returned no results. Suggest an alternative approach to find the data the user wants.\n\n"
-        );
+        let mut prompt = String::from(qp::ALTERNATIVE_QUERY_PREAMBLE);
 
         prompt.push_str(&format!(
             "User's Original Question: {}\n\n",
@@ -510,21 +391,10 @@ impl LlmQueryService {
         prompt.push_str("  \"reasoning\": \"why this approach might work\"\n");
         prompt.push_str("}\n\n");
 
+        prompt.push_str(qp::FILTER_TYPES_INSTRUCTION);
+        prompt.push_str("\n\n");
         prompt.push_str(
-            "FILTER TYPES:\n\
-            For HashRange schemas (check Hash Key and Range Key fields):\n\
-            - HashRangeKey, HashKey, HashRangePrefix, HashPattern\n\
-            For Hash schemas (check Hash Key field, no Range Key):\n\
-            - HashKey, HashPattern\n\
-            For Range schemas (check Range Key field):\n\
-            - RangePrefix, RangePattern, RangeRange\n\
-            Universal filters:\n\
-            - Value (LAST RESORT ONLY), SampleN, null (all records)\n\n\
-            JSON FORMATTING:\n\
-            - Use proper JSON format for all filter values\n\
-            - Special characters like @ # $ are valid in JSON strings\n\
-            - Example: {\"Value\": \"@username\"}, {\"HashKey\": \"@mention\"}\n\n\
-            CRITICAL: Prefer key-based filters over Value filter.\n\
+            "CRITICAL: Prefer key-based filters over Value filter.\n\
             Check Hash Key and Range Key fields to determine correct filter.\n\
             If search matches a key field, use key filter (HashKey/RangePrefix), NOT Value filter.\n\n\
             IMPORTANT: Return ONLY the JSON object."
