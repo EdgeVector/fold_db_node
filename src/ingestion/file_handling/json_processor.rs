@@ -49,22 +49,14 @@ pub async fn convert_file_to_json(file_path: &PathBuf) -> Result<Value, Ingestio
 
     strip_null_fields(&mut value);
 
-    // For images, extract a short descriptive_name from the markdown body
-    // (the vision model's caption). enrich_image_json() will consume this later.
+    // For images, use a consistent descriptive_name so all photos land in the
+    // same schema (enables schema expansion instead of creating one schema per photo).
+    // The vision caption goes into the "markdown" field, not the schema name.
     if let Value::Object(map) = &mut value {
         if map.contains_key("image_format") {
-            // Prefer an explicit title if present; otherwise derive from markdown body
-            let desc = map
-                .remove("title")
-                .or_else(|| {
-                    map.get("markdown")
-                        .and_then(|v| v.as_str())
-                        .and_then(first_sentence)
-                        .map(Value::String)
-                });
-            if let Some(d) = desc {
-                map.insert("descriptive_name".to_string(), d);
-            }
+            // Remove title if present — it would be the vision caption, not a schema name
+            map.remove("title");
+            map.insert("descriptive_name".to_string(), Value::String("Photo Collection".to_string()));
         }
     }
 
@@ -72,10 +64,12 @@ pub async fn convert_file_to_json(file_path: &PathBuf) -> Result<Value, Ingestio
 }
 
 /// Maximum length for a derived descriptive_name (characters).
+#[cfg(test)]
 const MAX_DESCRIPTIVE_NAME_LEN: usize = 120;
 
 /// Extract the first meaningful sentence from markdown text, skipping YAML frontmatter.
 /// Returns `None` if the body is empty after stripping.
+#[cfg(test)]
 fn first_sentence(md: &str) -> Option<String> {
     // Skip YAML frontmatter (--- ... ---)
     let body = if md.starts_with("---") {
