@@ -124,6 +124,22 @@ fn to_json(output: &CommandOutput) -> Value {
         CommandOutput::Completions(_) => {
             json!({ "ok": true, "message": "Completions written to stdout" })
         }
+
+        #[cfg(target_os = "macos")]
+        CommandOutput::AppleIngestSuccess {
+            source,
+            total,
+            ingested,
+            ids,
+        } => {
+            json!({
+                "ok": *ingested > 0,
+                "source": source,
+                "total": total,
+                "ingested": ingested,
+                "ids": ids,
+            })
+        }
     }
 }
 

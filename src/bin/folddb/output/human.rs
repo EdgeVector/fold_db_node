@@ -251,6 +251,25 @@ pub fn render(output: &CommandOutput) {
         CommandOutput::Completions(script) => {
             print!("{}", script);
         }
+
+        #[cfg(target_os = "macos")]
+        CommandOutput::AppleIngestSuccess {
+            source,
+            total,
+            ingested,
+            ids,
+        } => {
+            println!(
+                "{} {} ingestion complete: {}/{} ingested",
+                style("\u{2713}").green().bold(),
+                source,
+                ingested,
+                total,
+            );
+            for id in ids {
+                println!("  {}", id);
+            }
+        }
     }
 }
 

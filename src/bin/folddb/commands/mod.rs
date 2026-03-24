@@ -1,4 +1,6 @@
 pub mod ask;
+#[cfg(target_os = "macos")]
+pub mod apple;
 pub mod completions;
 pub mod ingest;
 pub mod mutate;
@@ -68,6 +70,13 @@ pub enum CommandOutput {
     ResetComplete,
     MigrateComplete,
     Completions(String),
+    #[cfg(target_os = "macos")]
+    AppleIngestSuccess {
+        source: String,
+        total: usize,
+        ingested: usize,
+        ids: Vec<String>,
+    },
 }
 
 pub async fn dispatch(
@@ -88,7 +97,7 @@ pub async fn dispatch(
         } => query::run(schema, fields, hash.as_deref(), range.as_deref(), processor).await,
         Command::Search { term } => search::run(term, processor).await,
         Command::Mutate { action } => mutate::run(action, processor).await,
-        Command::Ingest { action } => ingest::run(action, processor, mode).await,
+        Command::Ingest { action } => ingest::run(action, processor, user_hash, mode).await,
         Command::Ask {
             query,
             max_iterations,
