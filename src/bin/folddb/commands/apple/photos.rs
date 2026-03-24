@@ -4,7 +4,10 @@ use crate::error::CliError;
 use crate::output::spinner;
 use crate::output::OutputMode;
 use reqwest::multipart;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
+
+/// Temporary directory where Photos.app exports originals.
+const EXPORT_DIR: &str = "/tmp/folddb_photos";
 
 pub async fn run(
     album: Option<&str>,
@@ -14,19 +17,30 @@ pub async fn run(
     mode: OutputMode,
 ) -> Result<CommandOutput, CliError> {
     let sp = if mode == OutputMode::Human {
-        Some(spinner::new_spinner("Querying Apple Photos..."))
+        Some(spinner::new_spinner("Exporting from Apple Photos..."))
     } else {
         None
     };
 
-    let script = build_photos_script(album, limit);
-    let raw = run_osascript(&script)?;
+    // Ensure the export directory exists and is empty so we get a clean set.
+    let export_dir = Path::new(EXPORT_DIR);
+    if export_dir.exists() {
+        std::fs::remove_dir_all(export_dir)
+            .map_err(|e| CliError::new(format!("Failed to clean export dir: {}", e)))?;
+    }
+    std::fs::create_dir_all(export_dir)
+        .map_err(|e| CliError::new(format!("Failed to create export dir: {}", e)))?;
+
+    // Export photos from Photos.app into the temp directory.
+    let script = build_export_script(album, limit);
+    run_osascript(&script)?;
 
     if let Some(ref pb) = sp {
-        spinner::finish_spinner(pb, "Photo list retrieved");
+        spinner::finish_spinner(pb, "Photos exported");
     }
 
-    let paths = parse_photo_paths(&raw);
+    // Collect exported files and convert HEIC → JPEG with sips.
+    let paths = collect_and_convert(export_dir)?;
     if paths.is_empty() {
         return Err(CliError::new("No photos found in Apple Photos"));
     }
@@ -79,7 +93,7 @@ async fn upload_photo(
     let file_name = path
         .file_name()
         .map(|n| n.to_string_lossy().to_string())
-        .unwrap_or_else(|| "photo".to_string());
+        .unwrap_or_else(|| "photo.jpg".to_string());
 
     let file_bytes = tokio::fs::read(path)
         .await
@@ -130,60 +144,84 @@ async fn upload_photo(
     Ok(ids)
 }
 
-fn build_photos_script(album: Option<&str>, limit: usize) -> String {
-    match album {
+/// Build an AppleScript that exports photos to a temp directory.
+///
+/// Uses `export ... to POSIX file ... using originals` which reliably
+/// copies the actual image files out of the Photos library, unlike the
+/// `filepath` property which is unavailable on modern macOS.
+fn build_export_script(album: Option<&str>, limit: usize) -> String {
+    let target_items = match album {
         Some(name) => format!(
-            r#"tell application "Photos"
-    set targetAlbum to album "{album}"
-    set output to ""
-    set count_ to 0
-    repeat with m in (get media items of targetAlbum)
-        if count_ >= {limit} then exit repeat
-        set fpath to filename of m
-        set output to output & fpath & linefeed
-        set count_ to count_ + 1
-    end repeat
-    return output
-end tell"#,
+            r#"set targetAlbum to album "{album}"
+    set allItems to media items of targetAlbum"#,
             album = name.replace('"', "\\\""),
-            limit = limit,
         ),
-        None => format!(
-            r#"tell application "Photos"
-    set output to ""
-    set count_ to 0
-    repeat with m in (get media items)
-        if count_ >= {limit} then exit repeat
-        set fpath to filename of m
-        set output to output & fpath & linefeed
-        set count_ to count_ + 1
-    end repeat
-    return output
+        None => "set allItems to media items".to_string(),
+    };
+
+    format!(
+        r#"tell application "Photos"
+    {target_items}
+    set exportItems to items 1 thru (minimum of {{{limit}, count of allItems}}) of allItems
+    export exportItems to POSIX file "{export_dir}" with using originals
 end tell"#,
-            limit = limit,
-        ),
-    }
+        target_items = target_items,
+        limit = limit,
+        export_dir = EXPORT_DIR,
+    )
 }
 
-fn parse_photo_paths(raw: &str) -> Vec<PathBuf> {
-    // Photos app returns filenames; the actual files live in the Photos Library
-    let photos_lib = dirs::home_dir()
-        .map(|h| h.join("Pictures/Photos Library.photoslibrary/originals"))
-        .unwrap_or_else(|| PathBuf::from("/Users/Shared/Photos Library.photoslibrary/originals"));
+/// Walk the export directory, convert any HEIC files to JPEG via `sips`,
+/// and return the list of uploadable image paths.
+fn collect_and_convert(export_dir: &Path) -> Result<Vec<PathBuf>, CliError> {
+    let mut result = Vec::new();
 
-    raw.lines()
-        .map(|l| l.trim())
-        .filter(|l| !l.is_empty())
-        .map(|filename| {
-            // Try the Photos Library path first, fall back to just filename
-            let candidate = photos_lib.join(filename);
-            if candidate.exists() {
-                candidate
+    let entries = std::fs::read_dir(export_dir)
+        .map_err(|e| CliError::new(format!("Failed to read export dir: {}", e)))?;
+
+    for entry in entries {
+        let entry = entry
+            .map_err(|e| CliError::new(format!("Failed to read dir entry: {}", e)))?;
+        let path = entry.path();
+
+        if !path.is_file() {
+            continue;
+        }
+
+        let ext = path
+            .extension()
+            .and_then(|e| e.to_str())
+            .map(|e| e.to_lowercase())
+            .unwrap_or_default();
+
+        if ext == "heic" || ext == "heif" {
+            // Convert to JPEG using macOS built-in sips
+            let jpeg_path = path.with_extension("jpg");
+            let status = std::process::Command::new("sips")
+                .args(["-s", "format", "jpeg"])
+                .arg(&path)
+                .arg("--out")
+                .arg(&jpeg_path)
+                .stdout(std::process::Stdio::null())
+                .stderr(std::process::Stdio::null())
+                .status()
+                .map_err(|e| CliError::new(format!("Failed to run sips: {}", e)))?;
+
+            if status.success() {
+                // Remove the original HEIC to save disk space
+                let _ = std::fs::remove_file(&path);
+                result.push(jpeg_path);
             } else {
-                PathBuf::from(filename)
+                // Fall back to uploading the HEIC as-is
+                result.push(path);
             }
-        })
-        .collect()
+        } else {
+            result.push(path);
+        }
+    }
+
+    result.sort();
+    Ok(result)
 }
 
 #[cfg(test)]
@@ -191,29 +229,42 @@ mod tests {
     use super::*;
 
     #[test]
-    fn build_photos_script_with_album() {
-        let script = build_photos_script(Some("Vacation"), 10);
+    fn build_export_script_with_album() {
+        let script = build_export_script(Some("Vacation"), 10);
         assert!(script.contains(r#"album "Vacation""#));
         assert!(script.contains("10"));
+        assert!(script.contains("export"));
+        assert!(script.contains(EXPORT_DIR));
     }
 
     #[test]
-    fn build_photos_script_all() {
-        let script = build_photos_script(None, 50);
+    fn build_export_script_all() {
+        let script = build_export_script(None, 50);
         assert!(!script.contains("targetAlbum"));
         assert!(script.contains("50"));
+        assert!(script.contains("export"));
     }
 
     #[test]
-    fn parse_photo_paths_basic() {
-        let raw = "IMG_0001.jpg\nIMG_0002.png\n\n";
-        let paths = parse_photo_paths(raw);
-        assert_eq!(paths.len(), 2);
-    }
-
-    #[test]
-    fn parse_photo_paths_empty() {
-        let paths = parse_photo_paths("");
+    fn collect_and_convert_empty_dir() {
+        let dir = std::env::temp_dir().join("folddb_test_empty_photos");
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+        let paths = collect_and_convert(&dir).unwrap_or_else(|e| panic!("{}", e));
         assert!(paths.is_empty());
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn collect_and_convert_jpeg_passthrough() {
+        let dir = std::env::temp_dir().join("folddb_test_jpeg_photos");
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+        let jpg = dir.join("test.jpg");
+        std::fs::write(&jpg, b"fake jpeg").unwrap();
+        let paths = collect_and_convert(&dir).unwrap_or_else(|e| panic!("{}", e));
+        assert_eq!(paths.len(), 1);
+        assert_eq!(paths[0].extension().unwrap(), "jpg");
+        let _ = std::fs::remove_dir_all(&dir);
     }
 }
