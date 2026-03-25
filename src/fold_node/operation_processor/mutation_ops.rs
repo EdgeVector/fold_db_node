@@ -11,13 +11,23 @@ use super::OperationProcessor;
 impl OperationProcessor {
     /// Map a mutation write error to FoldDbError with logging.
     fn mutation_write_error(e: impl std::fmt::Display) -> FoldDbError {
-        log_feature!(LogFeature::Mutation, error, "Mutation execution failed: {}", e);
+        log_feature!(
+            LogFeature::Mutation,
+            error,
+            "Mutation execution failed: {}",
+            e
+        );
         FoldDbError::Config(format!("Mutation execution failed: {}", e))
     }
 
     /// Executes a mutation operation from a Mutation struct.
     pub async fn execute_mutation_op(&self, mutation: Mutation) -> FoldDbResult<String> {
-        log_feature!(LogFeature::Mutation, info, "Executing mutation for schema: {}", mutation.schema_name);
+        log_feature!(
+            LogFeature::Mutation,
+            info,
+            "Executing mutation for schema: {}",
+            mutation.schema_name
+        );
 
         let mut db = self.get_db().await?;
         let mut ids = db
@@ -26,9 +36,8 @@ impl OperationProcessor {
             .await
             .map_err(Self::mutation_write_error)?;
 
-        ids.pop().ok_or_else(|| {
-            Self::mutation_write_error("Batch mutation returned no IDs")
-        })
+        ids.pop()
+            .ok_or_else(|| Self::mutation_write_error("Batch mutation returned no IDs"))
     }
 
     /// Executes a mutation operation (legacy wrapper).

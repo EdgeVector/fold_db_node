@@ -8,15 +8,15 @@ use super::routes::{
     security as security_routes, system as system_routes,
 };
 use super::static_assets::Asset;
-use fold_db::error::{FoldDbError, FoldDbResult};
 use crate::fold_node::llm_query;
 use crate::fold_node::FoldNode;
 use crate::ingestion::routes as ingestion_routes;
 use crate::utils::http_errors;
+use fold_db::error::{FoldDbError, FoldDbResult};
 
+use actix_cors::Cors;
 use fold_db::log_feature;
 use fold_db::logging::features::LogFeature;
-use actix_cors::Cors;
 
 use actix_web::{web, App, HttpRequest, HttpResponse, HttpServer as ActixHttpServer};
 use std::sync::Arc;
@@ -337,10 +337,7 @@ impl FoldHttpServer {
         cfg.route("/views", web::get().to(view_routes::list_views))
             .route("/view", web::post().to(view_routes::create_view))
             .route("/view/{name}", web::get().to(view_routes::get_view))
-            .route(
-                "/view/{name}",
-                web::delete().to(view_routes::delete_view),
-            )
+            .route("/view/{name}", web::delete().to(view_routes::delete_view))
             .route(
                 "/view/{name}/approve",
                 web::post().to(view_routes::approve_view),
@@ -349,10 +346,7 @@ impl FoldHttpServer {
                 "/view/{name}/block",
                 web::post().to(view_routes::block_view),
             )
-            .route(
-                "/views/load/{name}",
-                web::post().to(view_routes::load_view),
-            );
+            .route("/views/load/{name}", web::post().to(view_routes::load_view));
     }
 
     fn configure_query_routes(cfg: &mut web::ServiceConfig) {
@@ -459,7 +453,10 @@ impl FoldHttpServer {
                 "/logs/config/reload",
                 web::post().to(log_routes::reload_config),
             )
-            .route("/logs/level", web::put().to(log_routes::update_feature_level))
+            .route(
+                "/logs/level",
+                web::put().to(log_routes::update_feature_level),
+            )
             .route("/logs/features", web::get().to(log_routes::get_features));
     }
 
@@ -558,10 +555,7 @@ impl FoldHttpServer {
                 )
                 .route("/grants", web::get().to(trust_routes::list_trust_grants))
                 .route("/override", web::put().to(trust_routes::set_trust_override))
-                .route(
-                    "/resolve/{key}",
-                    web::get().to(trust_routes::resolve_trust),
-                )
+                .route("/resolve/{key}", web::get().to(trust_routes::resolve_trust))
                 .route("/audit", web::get().to(trust_routes::get_audit_log)),
         )
         .route(
@@ -584,10 +578,7 @@ impl FoldHttpServer {
         cfg.service(
             web::scope("/capabilities")
                 .route("/issue", web::post().to(trust_routes::issue_capability))
-                .route(
-                    "/revoke",
-                    web::delete().to(trust_routes::revoke_capability),
-                )
+                .route("/revoke", web::delete().to(trust_routes::revoke_capability))
                 .route(
                     "/list/{schema}/{field}",
                     web::get().to(trust_routes::list_capabilities),

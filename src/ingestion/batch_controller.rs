@@ -127,12 +127,14 @@ impl BatchController {
 
     /// Track a file that has started processing.
     pub fn add_in_flight(&mut self, name: String, progress_id: String) {
-        self.in_flight_files.push(InFlightFile { name, progress_id });
+        self.in_flight_files
+            .push(InFlightFile { name, progress_id });
     }
 
     /// Remove a file from the in-flight list by progress_id.
     fn remove_in_flight(&mut self, progress_id: &str) {
-        self.in_flight_files.retain(|f| f.progress_id != progress_id);
+        self.in_flight_files
+            .retain(|f| f.progress_id != progress_id);
     }
 
     /// Number of files currently being processed.

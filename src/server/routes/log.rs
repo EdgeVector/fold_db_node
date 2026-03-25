@@ -55,22 +55,25 @@ pub async fn list_logs(
 ) -> impl Responder {
     let (user_hash, node) = node_or_return!(state);
     let op = OperationProcessor::new(node.clone());
-    handler_result_to_response(async {
-        let logs = op.list_logs(query.since, Some(1000)).await;
-        let count = logs.len();
-        let logs_json = serde_json::to_value(&logs).handler_err("serialize logs")?;
-        Ok(ApiResponse::success_with_user(
-            LogListResponse {
-                logs: logs_json,
-                count,
-                timestamp: std::time::SystemTime::now()
-                    .duration_since(std::time::UNIX_EPOCH)
-                    .unwrap_or_default()
-                    .as_secs(),
-            },
-            user_hash,
-        ))
-    }.await)
+    handler_result_to_response(
+        async {
+            let logs = op.list_logs(query.since, Some(1000)).await;
+            let count = logs.len();
+            let logs_json = serde_json::to_value(&logs).handler_err("serialize logs")?;
+            Ok(ApiResponse::success_with_user(
+                LogListResponse {
+                    logs: logs_json,
+                    count,
+                    timestamp: std::time::SystemTime::now()
+                        .duration_since(std::time::UNIX_EPOCH)
+                        .unwrap_or_default()
+                        .as_secs(),
+                },
+                user_hash,
+            ))
+        }
+        .await,
+    )
 }
 
 /// Stream logs via Server-Sent Events (backward compatibility)
@@ -110,12 +113,21 @@ pub async fn stream_logs() -> impl Responder {
 pub async fn get_config(state: web::Data<AppState>) -> impl Responder {
     let (user_hash, node) = node_or_return!(state);
     let op = OperationProcessor::new(node.clone());
-    handler_result_to_response(async {
-        let config = op.get_log_config().await
-            .ok_or_else(|| HandlerError::Internal("Log configuration not available".to_string()))?;
-        let config_json = serde_json::to_value(config).handler_err("serialize log config")?;
-        Ok(ApiResponse::success_with_user(LogConfigResponse { config: config_json }, user_hash))
-    }.await)
+    handler_result_to_response(
+        async {
+            let config = op.get_log_config().await.ok_or_else(|| {
+                HandlerError::Internal("Log configuration not available".to_string())
+            })?;
+            let config_json = serde_json::to_value(config).handler_err("serialize log config")?;
+            Ok(ApiResponse::success_with_user(
+                LogConfigResponse {
+                    config: config_json,
+                },
+                user_hash,
+            ))
+        }
+        .await,
+    )
 }
 
 /// Update feature-specific log level at runtime
@@ -142,17 +154,24 @@ pub async fn update_feature_level(
 
     let (user_hash, node) = node_or_return!(state);
     let op = OperationProcessor::new(node.clone());
-    handler_result_to_response(async {
-        op.update_log_feature_level(&level_update.feature, &level_update.level).await
-            .map_err(HandlerError::from)?;
-        Ok(ApiResponse::success_with_user(
-            crate::handlers::response::SuccessResponse {
-                success: true,
-                message: Some(format!("Updated {} log level to {}", level_update.feature, level_update.level)),
-            },
-            user_hash,
-        ))
-    }.await)
+    handler_result_to_response(
+        async {
+            op.update_log_feature_level(&level_update.feature, &level_update.level)
+                .await
+                .map_err(HandlerError::from)?;
+            Ok(ApiResponse::success_with_user(
+                crate::handlers::response::SuccessResponse {
+                    success: true,
+                    message: Some(format!(
+                        "Updated {} log level to {}",
+                        level_update.feature, level_update.level
+                    )),
+                },
+                user_hash,
+            ))
+        }
+        .await,
+    )
 }
 
 /// Reload logging configuration from file
@@ -165,16 +184,21 @@ pub async fn update_feature_level(
 pub async fn reload_config(state: web::Data<AppState>) -> impl Responder {
     let (user_hash, node) = node_or_return!(state);
     let op = OperationProcessor::new(node.clone());
-    handler_result_to_response(async {
-        op.reload_log_config("config/logging.toml").await.map_err(HandlerError::from)?;
-        Ok(ApiResponse::success_with_user(
-            crate::handlers::response::SuccessResponse {
-                success: true,
-                message: Some("Configuration reloaded successfully".to_string()),
-            },
-            user_hash,
-        ))
-    }.await)
+    handler_result_to_response(
+        async {
+            op.reload_log_config("config/logging.toml")
+                .await
+                .map_err(HandlerError::from)?;
+            Ok(ApiResponse::success_with_user(
+                crate::handlers::response::SuccessResponse {
+                    success: true,
+                    message: Some("Configuration reloaded successfully".to_string()),
+                },
+                user_hash,
+            ))
+        }
+        .await,
+    )
 }
 
 /// Get available log features and their current levels
@@ -187,16 +211,22 @@ pub async fn reload_config(state: web::Data<AppState>) -> impl Responder {
 pub async fn get_features(state: web::Data<AppState>) -> impl Responder {
     let (user_hash, node) = node_or_return!(state);
     let op = OperationProcessor::new(node.clone());
-    handler_result_to_response(async {
-        let features = op.get_log_features().await
-            .ok_or_else(|| HandlerError::Internal("Log features not available".to_string()))?;
-        let features_json = serde_json::to_value(features).handler_err("serialize log features")?;
-        Ok(ApiResponse::success_with_user(
-            LogFeaturesResponse {
-                features: features_json,
-                available_levels: LOG_LEVELS.iter().map(|s| s.to_string()).collect(),
-            },
-            user_hash,
-        ))
-    }.await)
+    handler_result_to_response(
+        async {
+            let features = op
+                .get_log_features()
+                .await
+                .ok_or_else(|| HandlerError::Internal("Log features not available".to_string()))?;
+            let features_json =
+                serde_json::to_value(features).handler_err("serialize log features")?;
+            Ok(ApiResponse::success_with_user(
+                LogFeaturesResponse {
+                    features: features_json,
+                    available_levels: LOG_LEVELS.iter().map(|s| s.to_string()).collect(),
+                },
+                user_hash,
+            ))
+        }
+        .await,
+    )
 }

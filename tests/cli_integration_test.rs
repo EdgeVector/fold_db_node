@@ -45,11 +45,7 @@ fn setup() -> (TempDir, PathBuf) {
     });
 
     let config_path = tmpdir.path().join("node_config.json");
-    fs::write(
-        &config_path,
-        serde_json::to_string_pretty(&config).unwrap(),
-    )
-    .expect("write config");
+    fs::write(&config_path, serde_json::to_string_pretty(&config).unwrap()).expect("write config");
 
     (tmpdir, config_path)
 }

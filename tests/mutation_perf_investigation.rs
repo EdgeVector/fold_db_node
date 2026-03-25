@@ -76,15 +76,15 @@ async fn _test_mutation_generation_performance() {
         )]);
 
         let mutations = mutation_generator::generate_mutations(
-                schema_name,
-                &keys_values,
-                fields,
-                &mappers,
-                "test_pub_key".to_string(),
-                None,
-                None,
-            )
-            .expect("Failed to generate mutations");
+            schema_name,
+            &keys_values,
+            fields,
+            &mappers,
+            "test_pub_key".to_string(),
+            None,
+            None,
+        )
+        .expect("Failed to generate mutations");
 
         total_mutations += mutations.len();
     }
@@ -121,9 +121,7 @@ async fn _test_local_mutation_execution() {
         .with_schema_service_url("test://mock")
         .with_identity(&keypair.public_key_base64(), &keypair.secret_key_base64());
 
-    let node = FoldNode::new(config)
-        .await
-        .expect("Failed to create node");
+    let node = FoldNode::new(config).await.expect("Failed to create node");
 
     // Load schema
     let schema_json = r#"{

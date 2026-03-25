@@ -1,10 +1,12 @@
 use crate::handlers::query as query_handlers;
+use crate::server::http_server::AppState;
+use crate::server::routes::{
+    handler_error_to_response, handler_result_to_response, node_or_return,
+};
+use actix_web::{web, HttpResponse, Responder};
 use fold_db::log_feature;
 use fold_db::logging::features::LogFeature;
 use fold_db::schema::types::operations::{Operation, Query};
-use crate::server::http_server::AppState;
-use crate::server::routes::{handler_error_to_response, handler_result_to_response, node_or_return};
-use actix_web::{web, HttpResponse, Responder};
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
 
@@ -83,7 +85,12 @@ pub async fn execute_mutation(
                 (schema, fields_and_values, key_value, mutation_type)
             }
             Err(e) => {
-                log_feature!(LogFeature::HttpServer, error, "Failed to parse mutation: {}", e);
+                log_feature!(
+                    LogFeature::HttpServer,
+                    error,
+                    "Failed to parse mutation: {}",
+                    e
+                );
                 return HttpResponse::BadRequest()
                     .json(json!({"error": format!("Failed to parse mutation: {}", e)}));
             }
@@ -158,7 +165,11 @@ pub async fn native_index_search(
     let term = match query.get("term") {
         Some(t) if !t.trim().is_empty() => t.trim().to_string(),
         _ => {
-            log_feature!(LogFeature::HttpServer, warn, "native_index_search: missing or empty term");
+            log_feature!(
+                LogFeature::HttpServer,
+                warn,
+                "native_index_search: missing or empty term"
+            );
             return HttpResponse::BadRequest()
                 .json(json!({"error": "Missing required 'term' query parameter"}));
         }
@@ -177,7 +188,12 @@ pub async fn native_index_search(
     match query_handlers::native_index_search(&term, &user_hash, &node).await {
         Ok(response) => HttpResponse::Ok().json(response),
         Err(e) => {
-            log_feature!(LogFeature::HttpServer, error, "native_index_search failed: {}", e);
+            log_feature!(
+                LogFeature::HttpServer,
+                error,
+                "native_index_search failed: {}",
+                e
+            );
             handler_error_to_response(e)
         }
     }
@@ -224,7 +240,9 @@ pub async fn get_molecule_history(
     let molecule_uuid = path.into_inner();
     let (user_hash, node) = node_or_return!(state);
 
-    handler_result_to_response(query_handlers::get_molecule_history(&molecule_uuid, &user_hash, &node).await)
+    handler_result_to_response(
+        query_handlers::get_molecule_history(&molecule_uuid, &user_hash, &node).await,
+    )
 }
 
 /// Get atom content by UUID.
@@ -248,7 +266,9 @@ pub async fn get_atom_content(
     let atom_uuid = path.into_inner();
     let (user_hash, node) = node_or_return!(state);
 
-    handler_result_to_response(query_handlers::get_atom_content(&atom_uuid, &user_hash, &node).await)
+    handler_result_to_response(
+        query_handlers::get_atom_content(&atom_uuid, &user_hash, &node).await,
+    )
 }
 
 /// Get process results for a progress_id (actual stored keys from ingestion mutations).
@@ -259,5 +279,7 @@ pub async fn get_process_results(
     let progress_id = path.into_inner();
     let (user_hash, node) = node_or_return!(state);
 
-    handler_result_to_response(query_handlers::get_process_results(&progress_id, &user_hash, &node).await)
+    handler_result_to_response(
+        query_handlers::get_process_results(&progress_id, &user_hash, &node).await,
+    )
 }

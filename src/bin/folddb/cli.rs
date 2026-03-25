@@ -760,13 +760,7 @@ mod tests {
     #[cfg(target_os = "macos")]
     #[test]
     fn parse_ingest_apple_reminders_with_list() {
-        let cli = Cli::parse_from([
-            "folddb",
-            "ingest",
-            "apple-reminders",
-            "--list",
-            "Shopping",
-        ]);
+        let cli = Cli::parse_from(["folddb", "ingest", "apple-reminders", "--list", "Shopping"]);
         match cli.command {
             Command::Ingest {
                 action: IngestCommand::AppleReminders { list },

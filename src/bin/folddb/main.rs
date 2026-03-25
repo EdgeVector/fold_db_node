@@ -47,9 +47,7 @@ async fn main() {
     }
 
     if let Some(path) = &cli.data_path {
-        config.database = DatabaseConfig::Local {
-            path: path.clone(),
-        };
+        config.database = DatabaseConfig::Local { path: path.clone() };
     }
     if let Some(url) = &cli.schema_service_url {
         config.schema_service_url = Some(url.clone());

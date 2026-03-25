@@ -14,12 +14,11 @@
 use fold_db::logging::core::run_with_user;
 use fold_db_node::fold_node::node::FoldNode;
 use fold_db_node::fold_node::OperationProcessor;
-use fold_db_node::ingestion::ingestion_service::IngestionService;
 use fold_db_node::ingestion::file_handling::json_processor::convert_file_to_json;
+use fold_db_node::ingestion::ingestion_service::IngestionService;
 use fold_db_node::ingestion::{create_progress_tracker, IngestionRequest, ProgressService};
 use fold_db_node::schema_service::server::{
-    AddSchemaResponse, ErrorResponse, SchemaAddOutcome, SchemaServiceState,
-    SchemasListResponse,
+    AddSchemaResponse, ErrorResponse, SchemaAddOutcome, SchemaServiceState, SchemasListResponse,
 };
 mod common;
 
@@ -182,7 +181,11 @@ async fn test_paintings_use_single_schema() {
         .collect();
     painting_files.sort();
     eprintln!("Using {} painting files", painting_files.len());
-    assert_eq!(painting_files.len(), 7, "expected 7 painting files in sample_data/photos/paintings/");
+    assert_eq!(
+        painting_files.len(),
+        7,
+        "expected 7 painting files in sample_data/photos/paintings/"
+    );
 
     // 1. Spin up local schema service
     let (schema_url, schema_handle, _schema_temp_dir) = spawn_local_schema_service().await;
@@ -243,13 +246,8 @@ async fn test_paintings_use_single_schema() {
 
         let svc = ingestion_service.clone();
         let result = run_with_user(&user_id, async {
-            svc.process_json_with_node_and_progress(
-                request,
-                &node,
-                &progress_service,
-                progress_id,
-            )
-            .await
+            svc.process_json_with_node_and_progress(request, &node, &progress_service, progress_id)
+                .await
         })
         .await;
 
@@ -307,10 +305,7 @@ async fn test_paintings_use_single_schema() {
         .filter(|s| s.state != fold_db::schema::SchemaState::Blocked)
         .collect();
 
-    eprintln!(
-        "\nActive schemas (non-blocked): {}",
-        active_schemas.len()
-    );
+    eprintln!("\nActive schemas (non-blocked): {}", active_schemas.len());
     for s in &active_schemas {
         let desc = s.schema.descriptive_name.as_deref().unwrap_or("(none)");
         eprintln!(
@@ -326,7 +321,10 @@ async fn test_paintings_use_single_schema() {
         .iter()
         .filter(|s| s.state == fold_db::schema::SchemaState::Blocked)
         .count();
-    eprintln!("Blocked schemas (expansion predecessors): {}", blocked_count);
+    eprintln!(
+        "Blocked schemas (expansion predecessors): {}",
+        blocked_count
+    );
 
     // ASSERT: schema expansion occurred (at least one blocked predecessor)
     assert!(
@@ -339,10 +337,18 @@ async fn test_paintings_use_single_schema() {
     // Group active schemas by descriptive_name to find unique concepts
     let mut concepts: HashMap<String, Vec<&_>> = HashMap::new();
     for s in &active_schemas {
-        let desc = s.schema.descriptive_name.as_deref().unwrap_or("(unknown)").to_string();
+        let desc = s
+            .schema
+            .descriptive_name
+            .as_deref()
+            .unwrap_or("(unknown)")
+            .to_string();
         concepts.entry(desc).or_default().push(s);
     }
-    eprintln!("\nActive schema concepts: {:?}", concepts.keys().collect::<Vec<_>>());
+    eprintln!(
+        "\nActive schema concepts: {:?}",
+        concepts.keys().collect::<Vec<_>>()
+    );
 
     // Warn if any concept has multiple active schemas (AI variability)
     for (concept, schemas_for_concept) in &concepts {

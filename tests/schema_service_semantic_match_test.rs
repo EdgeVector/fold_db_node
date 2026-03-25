@@ -17,9 +17,13 @@ fn json_to_schema(value: serde_json::Value) -> fold_db::schema::types::Schema {
     }
     if let Some(ref fields) = schema.fields {
         for f in fields {
-            schema.field_descriptions.entry(f.clone())
+            schema
+                .field_descriptions
+                .entry(f.clone())
                 .or_insert_with(|| format!("{} field", f));
-            schema.field_data_classifications.entry(f.clone())
+            schema
+                .field_data_classifications
+                .entry(f.clone())
                 .or_insert_with(|| DataClassification::new(0, "general").unwrap());
         }
     }
@@ -47,10 +51,10 @@ async fn exact_descriptive_name_match_still_triggers_expansion() {
 
     // Add a schema with descriptive_name "Twitter Posts"
     let schema1 = json_to_schema(json!({
-            "name": "Schema1",
-            "descriptive_name": "Twitter Posts",
-            "fields": ["tweet_id", "content"]
-        }));
+        "name": "Schema1",
+        "descriptive_name": "Twitter Posts",
+        "fields": ["tweet_id", "content"]
+    }));
 
     let outcome = state
         .add_schema(schema1, HashMap::new())
@@ -60,10 +64,10 @@ async fn exact_descriptive_name_match_still_triggers_expansion() {
 
     // Add a second schema with the SAME descriptive_name but MORE fields → expansion
     let schema2 = json_to_schema(json!({
-            "name": "Schema2",
-            "descriptive_name": "Twitter Posts",
-            "fields": ["tweet_id", "content", "likes_count"]
-        }));
+        "name": "Schema2",
+        "descriptive_name": "Twitter Posts",
+        "fields": ["tweet_id", "content", "likes_count"]
+    }));
 
     let outcome = state
         .add_schema(schema2, HashMap::new())
@@ -74,7 +78,10 @@ async fn exact_descriptive_name_match_still_triggers_expansion() {
         SchemaAddOutcome::Expanded(old_name, expanded_schema, _) => {
             assert!(!old_name.is_empty());
             // The expanded schema should have all three fields
-            let fields = expanded_schema.fields.as_ref().expect("expanded schema must have fields");
+            let fields = expanded_schema
+                .fields
+                .as_ref()
+                .expect("expanded schema must have fields");
             assert!(fields.contains(&"tweet_id".to_string()));
             assert!(fields.contains(&"content".to_string()));
             assert!(fields.contains(&"likes_count".to_string()));
@@ -89,10 +96,10 @@ async fn exact_descriptive_name_subset_returns_already_exists() {
 
     // Add a schema with descriptive_name
     let schema1 = json_to_schema(json!({
-            "name": "Schema1",
-            "descriptive_name": "User Contacts",
-            "fields": ["name", "email", "phone"]
-        }));
+        "name": "Schema1",
+        "descriptive_name": "User Contacts",
+        "fields": ["name", "email", "phone"]
+    }));
 
     state
         .add_schema(schema1, HashMap::new())
@@ -101,10 +108,10 @@ async fn exact_descriptive_name_subset_returns_already_exists() {
 
     // Add a schema with the same descriptive_name but FEWER fields → subset → AlreadyExists
     let schema2 = json_to_schema(json!({
-            "name": "Schema2",
-            "descriptive_name": "User Contacts",
-            "fields": ["name", "email"]
-        }));
+        "name": "Schema2",
+        "descriptive_name": "User Contacts",
+        "fields": ["name", "email"]
+    }));
 
     let outcome = state
         .add_schema(schema2, HashMap::new())
@@ -124,10 +131,10 @@ async fn semantic_match_similar_descriptive_name_triggers_expansion() {
 
     // Add a schema with descriptive_name "Twitter Posts"
     let schema1 = json_to_schema(json!({
-            "name": "Schema1",
-            "descriptive_name": "Twitter Posts",
-            "fields": ["tweet_id", "content"]
-        }));
+        "name": "Schema1",
+        "descriptive_name": "Twitter Posts",
+        "fields": ["tweet_id", "content"]
+    }));
 
     state
         .add_schema(schema1, HashMap::new())
@@ -138,10 +145,10 @@ async fn semantic_match_similar_descriptive_name_triggers_expansion() {
     // The MockEmbeddingModel uses byte values, so "Twitter Posts" vs "twitter posts" will
     // differ only in case bytes (32 difference per char), yielding high cosine similarity.
     let schema2 = json_to_schema(json!({
-            "name": "Schema2",
-            "descriptive_name": "twitter posts",
-            "fields": ["tweet_id", "content", "author"]
-        }));
+        "name": "Schema2",
+        "descriptive_name": "twitter posts",
+        "fields": ["tweet_id", "content", "author"]
+    }));
 
     let outcome = state
         .add_schema(schema2, HashMap::new())
@@ -151,7 +158,10 @@ async fn semantic_match_similar_descriptive_name_triggers_expansion() {
     match outcome {
         SchemaAddOutcome::Expanded(old_name, expanded_schema, _) => {
             assert!(!old_name.is_empty());
-            let fields = expanded_schema.fields.as_ref().expect("expanded schema must have fields");
+            let fields = expanded_schema
+                .fields
+                .as_ref()
+                .expect("expanded schema must have fields");
             assert!(fields.contains(&"tweet_id".to_string()));
             assert!(fields.contains(&"content".to_string()));
             assert!(fields.contains(&"author".to_string()));
@@ -172,10 +182,10 @@ async fn semantic_match_adopts_canonical_descriptive_name() {
 
     // Add base schema
     let schema1 = json_to_schema(json!({
-            "name": "Schema1",
-            "descriptive_name": "User Profile Data",
-            "fields": ["user_id", "name"]
-        }));
+        "name": "Schema1",
+        "descriptive_name": "User Profile Data",
+        "fields": ["user_id", "name"]
+    }));
 
     state
         .add_schema(schema1, HashMap::new())
@@ -184,10 +194,10 @@ async fn semantic_match_adopts_canonical_descriptive_name() {
 
     // Add with similar (case-different) descriptive name and extra fields
     let schema2 = json_to_schema(json!({
-            "name": "Schema2",
-            "descriptive_name": "user profile data",
-            "fields": ["user_id", "name", "email"]
-        }));
+        "name": "Schema2",
+        "descriptive_name": "user profile data",
+        "fields": ["user_id", "name", "email"]
+    }));
 
     let outcome = state
         .add_schema(schema2, HashMap::new())
@@ -214,10 +224,10 @@ async fn dissimilar_descriptive_names_are_independent_schemas() {
     // produces low cosine similarity. The MockEmbeddingModel hashes bytes into a 384-dim
     // vector, so strings with overlapping byte values can have high similarity.
     let schema1 = json_to_schema(json!({
-            "name": "Schema1",
-            "descriptive_name": "AAAA",
-            "fields": ["tweet_id", "content"]
-        }));
+        "name": "Schema1",
+        "descriptive_name": "AAAA",
+        "fields": ["tweet_id", "content"]
+    }));
 
     state
         .add_schema(schema1, HashMap::new())
@@ -226,10 +236,10 @@ async fn dissimilar_descriptive_names_are_independent_schemas() {
 
     // Completely different descriptive_name — should NOT trigger expansion
     let schema2 = json_to_schema(json!({
-            "name": "Schema2",
-            "descriptive_name": "ZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZ",
-            "fields": ["transaction_id", "amount"]
-        }));
+        "name": "Schema2",
+        "descriptive_name": "ZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZZ",
+        "fields": ["transaction_id", "amount"]
+    }));
 
     let outcome = state
         .add_schema(schema2, HashMap::new())
@@ -248,10 +258,10 @@ async fn no_descriptive_name_skips_semantic_matching() {
     let state = create_test_state();
 
     let schema1 = json_to_schema(json!({
-            "name": "Schema1",
-            "descriptive_name": "Twitter Posts",
-            "fields": ["tweet_id", "content"]
-        }));
+        "name": "Schema1",
+        "descriptive_name": "Twitter Posts",
+        "fields": ["tweet_id", "content"]
+    }));
 
     state
         .add_schema(schema1, HashMap::new())
@@ -261,9 +271,9 @@ async fn no_descriptive_name_skips_semantic_matching() {
     // Schema without descriptive_name and non-overlapping fields
     // should be added independently (no descriptive_name match, no field overlap)
     let schema2 = json_to_schema(json!({
-            "name": "Schema2",
-            "fields": ["user_id", "bio", "avatar"]
-        }));
+        "name": "Schema2",
+        "fields": ["user_id", "bio", "avatar"]
+    }));
 
     let outcome = state
         .add_schema(schema2, HashMap::new())
@@ -282,10 +292,10 @@ async fn semantic_match_with_subset_fields_returns_already_exists() {
     let state = create_test_state();
 
     let schema1 = json_to_schema(json!({
-            "name": "Schema1",
-            "descriptive_name": "Employee Records",
-            "fields": ["emp_id", "name", "department", "salary"]
-        }));
+        "name": "Schema1",
+        "descriptive_name": "Employee Records",
+        "fields": ["emp_id", "name", "department", "salary"]
+    }));
 
     state
         .add_schema(schema1, HashMap::new())
@@ -294,10 +304,10 @@ async fn semantic_match_with_subset_fields_returns_already_exists() {
 
     // Semantically similar descriptive_name but FEWER fields (subset)
     let schema2 = json_to_schema(json!({
-            "name": "Schema2",
-            "descriptive_name": "employee records",
-            "fields": ["emp_id", "name"]
-        }));
+        "name": "Schema2",
+        "descriptive_name": "employee records",
+        "fields": ["emp_id", "name"]
+    }));
 
     let outcome = state
         .add_schema(schema2, HashMap::new())
@@ -317,10 +327,10 @@ async fn high_field_overlap_with_similar_name_creates_superset() {
 
     // Existing schema with 5 fields
     let schema1 = json_to_schema(json!({
-            "name": "Schema1",
-            "descriptive_name": "Customer Orders",
-            "fields": ["order_id", "customer_name", "product", "quantity", "price"]
-        }));
+        "name": "Schema1",
+        "descriptive_name": "Customer Orders",
+        "fields": ["order_id", "customer_name", "product", "quantity", "price"]
+    }));
 
     state
         .add_schema(schema1, HashMap::new())
@@ -329,10 +339,10 @@ async fn high_field_overlap_with_similar_name_creates_superset() {
 
     // New schema with same descriptive_name, 4/5 shared fields (80%) + 1 new field
     let schema2 = json_to_schema(json!({
-            "name": "Schema2",
-            "descriptive_name": "Customer Orders",
-            "fields": ["order_id", "customer_name", "product", "quantity", "shipping_address"]
-        }));
+        "name": "Schema2",
+        "descriptive_name": "Customer Orders",
+        "fields": ["order_id", "customer_name", "product", "quantity", "shipping_address"]
+    }));
 
     let outcome = state
         .add_schema(schema2, HashMap::new())
@@ -347,11 +357,20 @@ async fn high_field_overlap_with_similar_name_creates_superset() {
             assert!(fields.contains(&"customer_name".to_string()));
             assert!(fields.contains(&"product".to_string()));
             assert!(fields.contains(&"quantity".to_string()));
-            assert!(fields.contains(&"price".to_string()), "must keep existing-only field");
-            assert!(fields.contains(&"shipping_address".to_string()), "must include new field");
+            assert!(
+                fields.contains(&"price".to_string()),
+                "must keep existing-only field"
+            );
+            assert!(
+                fields.contains(&"shipping_address".to_string()),
+                "must include new field"
+            );
             assert_eq!(fields.len(), 6, "superset should have all 6 unique fields");
         }
-        other => panic!("80% field overlap + same descriptive name should expand, got {:?}", other),
+        other => panic!(
+            "80% field overlap + same descriptive name should expand, got {:?}",
+            other
+        ),
     }
 }
 
@@ -371,9 +390,8 @@ async fn semantic_field_rename_real_embeddings() {
         .to_string();
     std::mem::forget(temp_dir);
 
-    let state =
-        SchemaServiceState::new_with_embedder(db_path, Arc::new(FastEmbedModel::new()))
-            .expect("failed to init state");
+    let state = SchemaServiceState::new_with_embedder(db_path, Arc::new(FastEmbedModel::new()))
+        .expect("failed to init state");
 
     // Schema A: artwork with "artist"
     let schema_a = json_to_schema(json!({
@@ -442,10 +460,10 @@ async fn low_field_overlap_with_same_name_still_expands() {
     let state = create_test_state();
 
     let schema1 = json_to_schema(json!({
-            "name": "Schema1",
-            "descriptive_name": "Customer Data",
-            "fields": ["customer_id", "name", "email", "phone", "address"]
-        }));
+        "name": "Schema1",
+        "descriptive_name": "Customer Data",
+        "fields": ["customer_id", "name", "email", "phone", "address"]
+    }));
 
     state
         .add_schema(schema1, HashMap::new())
@@ -454,10 +472,10 @@ async fn low_field_overlap_with_same_name_still_expands() {
 
     // Same descriptive_name, only 1/5 fields shared → still expands to superset
     let schema2 = json_to_schema(json!({
-            "name": "Schema2",
-            "descriptive_name": "Customer Data",
-            "fields": ["customer_id", "revenue", "segment", "lifetime_value", "churn_risk"]
-        }));
+        "name": "Schema2",
+        "descriptive_name": "Customer Data",
+        "fields": ["customer_id", "revenue", "segment", "lifetime_value", "churn_risk"]
+    }));
 
     let outcome = state
         .add_schema(schema2, HashMap::new())
@@ -469,7 +487,10 @@ async fn low_field_overlap_with_same_name_still_expands() {
             let fields = schema.fields.as_ref().unwrap();
             assert_eq!(fields.len(), 9, "superset should have all 9 unique fields");
         }
-        other => panic!("same descriptive_name should always expand, got {:?}", other),
+        other => panic!(
+            "same descriptive_name should always expand, got {:?}",
+            other
+        ),
     }
 }
 
@@ -505,9 +526,9 @@ fn create_scripted_state(responses: HashMap<String, Vec<f32>>) -> SchemaServiceS
 async fn scripted_creator_matches_artist_but_medium_does_not() {
     // Direction 0 = "artist" concept, direction 1 = "medium" concept
     // creator is very close to artist (high similarity), medium is its own thing
-    let artist_vec = ScriptedEmbeddingModel::blended_vec(0, 1, 0.0);    // pure dir 0
-    let creator_vec = ScriptedEmbeddingModel::blended_vec(0, 1, 0.05);  // ~0.997 sim to artist
-    let medium_vec = ScriptedEmbeddingModel::blended_vec(0, 1, 0.5);    // ~0.707 sim to artist
+    let artist_vec = ScriptedEmbeddingModel::blended_vec(0, 1, 0.0); // pure dir 0
+    let creator_vec = ScriptedEmbeddingModel::blended_vec(0, 1, 0.05); // ~0.997 sim to artist
+    let medium_vec = ScriptedEmbeddingModel::blended_vec(0, 1, 0.5); // ~0.707 sim to artist
 
     // The schema service embeds "the {field} of the {descriptive_name}"
     let desc = "Artwork Collection";
@@ -518,8 +539,14 @@ async fn scripted_creator_matches_artist_but_medium_does_not() {
     responses.insert(format!("the artist of the {}", desc), artist_vec);
     responses.insert(format!("the creator of the {}", desc), creator_vec);
     responses.insert(format!("the medium of the {}", desc), medium_vec);
-    responses.insert(format!("the title of the {}", desc), ScriptedEmbeddingModel::unit_vec(2));
-    responses.insert(format!("the year of the {}", desc), ScriptedEmbeddingModel::unit_vec(3));
+    responses.insert(
+        format!("the title of the {}", desc),
+        ScriptedEmbeddingModel::unit_vec(2),
+    );
+    responses.insert(
+        format!("the year of the {}", desc),
+        ScriptedEmbeddingModel::unit_vec(3),
+    );
 
     let state = create_scripted_state(responses);
 
@@ -589,7 +616,7 @@ async fn scripted_creator_matches_artist_but_medium_does_not() {
 async fn bidirectional_rejects_non_mutual_best_match() {
     let desc = "Test Domain";
     let a_vec = ScriptedEmbeddingModel::unit_vec(0);
-    let x_vec = ScriptedEmbeddingModel::blended_vec(0, 1, 0.1);  // high sim to A but not best
+    let x_vec = ScriptedEmbeddingModel::blended_vec(0, 1, 0.1); // high sim to A but not best
     let y_vec = ScriptedEmbeddingModel::blended_vec(0, 1, 0.02); // very high sim to A, is best
 
     let mut responses = HashMap::new();
@@ -597,7 +624,10 @@ async fn bidirectional_rejects_non_mutual_best_match() {
     responses.insert(format!("the field_a of the {}", desc), a_vec);
     responses.insert(format!("the field_x of the {}", desc), x_vec);
     responses.insert(format!("the field_y of the {}", desc), y_vec);
-    responses.insert(format!("the shared of the {}", desc), ScriptedEmbeddingModel::unit_vec(5));
+    responses.insert(
+        format!("the shared of the {}", desc),
+        ScriptedEmbeddingModel::unit_vec(5),
+    );
 
     let state = create_scripted_state(responses);
 
@@ -682,7 +712,10 @@ async fn below_threshold_fields_are_not_matched() {
             assert!(fields.contains(&"field_a".to_string()));
             assert!(fields.contains(&"field_b".to_string()));
             assert_eq!(fields.len(), 2);
-            assert!(mappers.is_empty(), "no mutation_mappers when below threshold");
+            assert!(
+                mappers.is_empty(),
+                "no mutation_mappers when below threshold"
+            );
         }
         other => panic!("expected Expanded, got {:?}", other),
     }
@@ -695,8 +728,8 @@ async fn many_to_one_mapping_prevented() {
     let desc = "Test Domain";
     let a_vec = ScriptedEmbeddingModel::unit_vec(0);
     // Both synonyms are very close to field_a
-    let syn1_vec = ScriptedEmbeddingModel::blended_vec(0, 1, 0.01);  // ~0.9999 sim
-    let syn2_vec = ScriptedEmbeddingModel::blended_vec(0, 2, 0.02);  // ~0.9998 sim
+    let syn1_vec = ScriptedEmbeddingModel::blended_vec(0, 1, 0.01); // ~0.9999 sim
+    let syn2_vec = ScriptedEmbeddingModel::blended_vec(0, 2, 0.02); // ~0.9998 sim
 
     let mut responses = HashMap::new();
     responses.insert(desc.to_string(), ScriptedEmbeddingModel::unit_vec(10));
@@ -724,11 +757,13 @@ async fn many_to_one_mapping_prevented() {
         SchemaAddOutcome::Expanded(_, schema, mappers) => {
             let fields = schema.fields.as_ref().unwrap();
             // At most ONE of synonym1/synonym2 should be renamed to field_a
-            let renamed_count = [!fields.contains(&"synonym1".to_string()),
-                                 !fields.contains(&"synonym2".to_string())]
-                .iter()
-                .filter(|&&x| x)
-                .count();
+            let renamed_count = [
+                !fields.contains(&"synonym1".to_string()),
+                !fields.contains(&"synonym2".to_string()),
+            ]
+            .iter()
+            .filter(|&&x| x)
+            .count();
             assert!(
                 renamed_count <= 1,
                 "at most one synonym should be renamed to field_a, but {} were renamed",

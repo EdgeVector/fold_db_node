@@ -157,7 +157,9 @@ async fn load_view_with_schema_dependency() {
     );
     assert!(
         result.loaded_schemas.contains(&"SourceSchema".to_string())
-            || result.loaded_schemas.contains(&"output_schema_1".to_string()),
+            || result
+                .loaded_schemas
+                .contains(&"output_schema_1".to_string()),
         "Schemas should be loaded"
     );
 

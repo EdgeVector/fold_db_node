@@ -83,13 +83,22 @@ impl IngestionError {
     pub fn user_message(&self) -> String {
         match self {
             Self::AuthenticationError { provider, .. } => {
-                format!("{} API key is invalid or expired. Check your configuration.", provider)
+                format!(
+                    "{} API key is invalid or expired. Check your configuration.",
+                    provider
+                )
             }
             Self::RateLimitError { provider, .. } => {
-                format!("{} rate limit reached. Please wait a moment and try again.", provider)
+                format!(
+                    "{} rate limit reached. Please wait a moment and try again.",
+                    provider
+                )
             }
             Self::TimeoutError { provider, .. } => {
-                format!("{} request timed out. The service may be slow or unavailable.", provider)
+                format!(
+                    "{} request timed out. The service may be slow or unavailable.",
+                    provider
+                )
             }
             Self::ConnectionError { provider, message } => {
                 format!("Cannot connect to {}. {}", provider, message)
@@ -112,12 +121,14 @@ pub fn classify_llm_error(provider: &str, status_code: u16, body: &str) -> Inges
             provider: provider.to_string(),
             message: "API key invalid or expired".to_string(),
         },
-        402 => IngestionError::ConfigurationError(
-            format!("{}: insufficient credits — add funds to your account", provider),
-        ),
-        404 => IngestionError::ConfigurationError(
-            format!("{}: model not found — check your model setting", provider),
-        ),
+        402 => IngestionError::ConfigurationError(format!(
+            "{}: insufficient credits — add funds to your account",
+            provider
+        )),
+        404 => IngestionError::ConfigurationError(format!(
+            "{}: model not found — check your model setting",
+            provider
+        )),
         429 => IngestionError::RateLimitError {
             provider: provider.to_string(),
             message: format!("Too many requests. {}", truncate_body(body)),
@@ -126,9 +137,12 @@ pub fn classify_llm_error(provider: &str, status_code: u16, body: &str) -> Inges
             provider: provider.to_string(),
             message: format!("Server error (HTTP {}). Try again later.", status_code),
         },
-        _ => IngestionError::ConfigurationError(
-            format!("{}: API request failed with status {}: {}", provider, status_code, truncate_body(body)),
-        ),
+        _ => IngestionError::ConfigurationError(format!(
+            "{}: API request failed with status {}: {}",
+            provider,
+            status_code,
+            truncate_body(body)
+        )),
     }
 }
 

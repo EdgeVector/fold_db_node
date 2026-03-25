@@ -206,7 +206,10 @@ async fn test_semantic_field_matching_full_pipeline() {
     {
         let db = node.get_fold_db().await.unwrap();
         let json_a = serde_json::to_string(&resp_a.schema).unwrap();
-        db.schema_manager.load_schema_from_json(&json_a).await.unwrap();
+        db.schema_manager
+            .load_schema_from_json(&json_a)
+            .await
+            .unwrap();
         db.schema_manager.approve(&schema_a_name).await.unwrap();
     }
 
@@ -229,7 +232,11 @@ async fn test_semantic_field_matching_full_pipeline() {
         node.mutate_batch(vec![mutation_a]).await
     })
     .await;
-    assert!(result.is_ok(), "Schema A mutation failed: {:?}", result.err());
+    assert!(
+        result.is_ok(),
+        "Schema A mutation failed: {:?}",
+        result.err()
+    );
     eprintln!("Schema A: wrote 'Water Lilies' by 'Claude Monet'");
 
     // 5. Submit Schema B: ["creator", "title", "year", "medium"]
@@ -291,19 +298,20 @@ async fn test_semantic_field_matching_full_pipeline() {
         expanded_fields.contains(&"medium".to_string()),
         "Expanded schema must have 'medium' (new field, not falsely matched)"
     );
-    eprintln!(
-        "  expanded fields: {:?}",
-        expanded_fields
-    );
+    eprintln!("  expanded fields: {:?}", expanded_fields);
 
     // 6. Load and approve Schema B locally, block Schema A
     {
         let db = node.get_fold_db().await.unwrap();
         let json_b = serde_json::to_string(&resp_b.schema).unwrap();
-        db.schema_manager.load_schema_from_json(&json_b).await.unwrap();
+        db.schema_manager
+            .load_schema_from_json(&json_b)
+            .await
+            .unwrap();
         db.schema_manager.approve(&schema_b_name).await.unwrap();
         if let Some(ref old_name) = resp_b.replaced_schema {
-            let _ = db.schema_manager
+            let _ = db
+                .schema_manager
                 .block_and_supersede(old_name, &schema_b_name)
                 .await;
         }
@@ -387,10 +395,7 @@ async fn test_semantic_field_matching_full_pipeline() {
     );
 
     // 9. Execute the mutation and verify data is stored correctly
-    let result = run_with_user(&user_id, async {
-        node.mutate_batch(mutations).await
-    })
-    .await;
+    let result = run_with_user(&user_id, async { node.mutate_batch(mutations).await }).await;
     assert!(
         result.is_ok(),
         "Schema B mutation failed: {:?}",
@@ -424,7 +429,12 @@ async fn test_semantic_field_matching_full_pipeline() {
     // Query via OperationProcessor to verify data is stored under correct fields
     let query = Query::new(
         schema_b_name.clone(),
-        vec!["artist".to_string(), "title".to_string(), "year".to_string(), "medium".to_string()],
+        vec![
+            "artist".to_string(),
+            "title".to_string(),
+            "year".to_string(),
+            "medium".to_string(),
+        ],
     );
 
     let query_result = run_with_user(&user_id, async {
@@ -454,7 +464,10 @@ async fn test_semantic_field_matching_full_pipeline() {
             }
         }
         Err(e) => {
-            eprintln!("Query returned error (field_mapper resolution may need data on old schema): {}", e);
+            eprintln!(
+                "Query returned error (field_mapper resolution may need data on old schema): {}",
+                e
+            );
         }
     }
 

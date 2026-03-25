@@ -44,11 +44,11 @@ impl IngestionService {
         // Deserialize Value to Schema
         let mut schema: fold_db::schema::types::Schema = serde_json::from_value(schema_def.clone())
             .map_err(|error| {
-            IngestionError::SchemaCreationError(format!(
-                "Failed to deserialize schema from AI response: {}",
-                error
-            ))
-        })?;
+                IngestionError::SchemaCreationError(format!(
+                    "Failed to deserialize schema from AI response: {}",
+                    error
+                ))
+            })?;
 
         log_feature!(
             LogFeature::Ingestion,
@@ -63,7 +63,9 @@ impl IngestionService {
         // service doesn't reject the schema.
         if let Some(fields) = &schema.fields {
             for field_name in fields {
-                schema.field_descriptions.entry(field_name.clone())
+                schema
+                    .field_descriptions
+                    .entry(field_name.clone())
                     .or_insert_with(|| {
                         log_feature!(
                             LogFeature::Ingestion,
@@ -85,7 +87,8 @@ impl IngestionService {
             };
 
             for field_name in fields {
-                let needs_default = schema.field_classifications
+                let needs_default = schema
+                    .field_classifications
                     .get(field_name)
                     .map(|v| v.is_empty())
                     .unwrap_or(true);
@@ -101,7 +104,9 @@ impl IngestionService {
                         default,
                         field_name
                     );
-                    schema.field_classifications.insert(field_name.clone(), default);
+                    schema
+                        .field_classifications
+                        .insert(field_name.clone(), default);
                 }
             }
         }
@@ -130,7 +135,8 @@ impl IngestionService {
                 );
             } else {
                 return Err(IngestionError::SchemaCreationError(
-                    "Cannot create schema without at least one field for key configuration".to_string(),
+                    "Cannot create schema without at least one field for key configuration"
+                        .to_string(),
                 ));
             }
         }
@@ -202,14 +208,28 @@ impl IngestionService {
                         let client = crate::fold_node::SchemaServiceClient::new(&url);
                         match client.get_schema(old_name).await {
                             Ok(old_schema) => {
-                                let old_json = serde_json::to_string(&old_schema)
-                                    .map_err(schema_err)?;
-                                if let Err(e) = schema_manager.load_schema_from_json(&old_json).await {
-                                    log_feature!(LogFeature::Ingestion, warn, "Failed to load old schema '{}' from service: {}", old_name, e);
+                                let old_json =
+                                    serde_json::to_string(&old_schema).map_err(schema_err)?;
+                                if let Err(e) =
+                                    schema_manager.load_schema_from_json(&old_json).await
+                                {
+                                    log_feature!(
+                                        LogFeature::Ingestion,
+                                        warn,
+                                        "Failed to load old schema '{}' from service: {}",
+                                        old_name,
+                                        e
+                                    );
                                 }
                             }
                             Err(e) => {
-                                log_feature!(LogFeature::Ingestion, warn, "Failed to fetch old schema '{}' from service: {}", old_name, e);
+                                log_feature!(
+                                    LogFeature::Ingestion,
+                                    warn,
+                                    "Failed to fetch old schema '{}' from service: {}",
+                                    old_name,
+                                    e
+                                );
                             }
                         }
                     }
@@ -235,13 +255,23 @@ impl IngestionService {
         // Block the old schema AFTER approval, so field_mappers are already resolved.
         if let Some(ref old_name) = add_response.replaced_schema {
             log_feature!(
-                LogFeature::Ingestion, info,
+                LogFeature::Ingestion,
+                info,
                 "Schema expansion: blocking old schema '{}', loaded expanded '{}'",
                 old_name,
                 schema_response.name
             );
-            if let Err(e) = schema_manager.block_and_supersede(old_name, &schema_response.name).await {
-                log_feature!(LogFeature::Ingestion, warn, "Failed to block old schema '{}' during expansion: {}", old_name, e);
+            if let Err(e) = schema_manager
+                .block_and_supersede(old_name, &schema_response.name)
+                .await
+            {
+                log_feature!(
+                    LogFeature::Ingestion,
+                    warn,
+                    "Failed to block old schema '{}' during expansion: {}",
+                    old_name,
+                    e
+                );
             }
         }
 

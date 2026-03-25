@@ -1,15 +1,17 @@
 //! File upload and conversion module for ingestion
 
-use crate::ingestion::file_handling::json_processor::{convert_file_to_json_http, save_json_to_temp_file};
+use crate::ingestion::file_handling::json_processor::{
+    convert_file_to_json_http, save_json_to_temp_file,
+};
 use crate::ingestion::routes_helpers::{get_ingestion_service, IngestionServiceState};
 use crate::ingestion::{IngestionRequest, ProgressTracker};
-use fold_db::log_feature;
-use fold_db::logging::features::LogFeature;
 use crate::server::http_server::AppState;
 use crate::server::routes::require_node;
-use fold_db::storage::UploadStorage;
 use actix_multipart::Multipart;
 use actix_web::{web, HttpResponse, Responder};
+use fold_db::log_feature;
+use fold_db::logging::features::LogFeature;
+use fold_db::storage::UploadStorage;
 use futures_util::StreamExt;
 use serde_json::json;
 use std::path::PathBuf;
@@ -80,7 +82,13 @@ pub async fn parse_multipart(
                     .content_disposition()
                     .get_filename()
                     .map(|s| s.to_string());
-                let (path, filename, exists, hash) = save_uploaded_file(field, upload_storage, encryption_key, upload_filename.as_deref()).await?;
+                let (path, filename, exists, hash) = save_uploaded_file(
+                    field,
+                    upload_storage,
+                    encryption_key,
+                    upload_filename.as_deref(),
+                )
+                .await?;
                 file_path = Some(path);
                 original_filename = Some(filename);
                 already_exists = exists;
@@ -91,7 +99,10 @@ pub async fn parse_multipart(
                 s3_file_path = read_field_text(&mut field).await;
             }
             Some("autoExecute") => {
-                auto_execute = read_field_text(&mut field).await.and_then(|s| s.parse().ok()).unwrap_or(true);
+                auto_execute = read_field_text(&mut field)
+                    .await
+                    .and_then(|s| s.parse().ok())
+                    .unwrap_or(true);
             }
             Some("pubKey") => {
                 pub_key = read_field_text(&mut field)
@@ -203,7 +214,12 @@ async fn save_uploaded_file(
     // Encrypt file data before storage
     let encrypted_data = fold_db::crypto::envelope::encrypt_envelope(encryption_key, &file_data)
         .map_err(|e| {
-            log_feature!(LogFeature::Ingestion, error, "Failed to encrypt file: {}", e);
+            log_feature!(
+                LogFeature::Ingestion,
+                error,
+                "Failed to encrypt file: {}",
+                e
+            );
             HttpResponse::InternalServerError().json(json!({
                 "success": false,
                 "error": format!("Failed to encrypt file: {}", e)
@@ -248,12 +264,24 @@ async fn save_uploaded_file(
             upload_storage.get_display_path(&unique_filename, None)
         );
         // For processing, we need unencrypted data on a local path
-        let process_path = write_unencrypted_for_processing(&unique_filename, &file_data, extension.as_deref(), upload_storage).await?;
+        let process_path = write_unencrypted_for_processing(
+            &unique_filename,
+            &file_data,
+            extension.as_deref(),
+            upload_storage,
+        )
+        .await?;
         return Ok((process_path, display_name, true, hash_hex));
     }
 
     // Storage has encrypted data; file converter needs unencrypted data on a local path
-    let filepath = write_unencrypted_for_processing(&unique_filename, &file_data, extension.as_deref(), upload_storage).await?;
+    let filepath = write_unencrypted_for_processing(
+        &unique_filename,
+        &file_data,
+        extension.as_deref(),
+        upload_storage,
+    )
+    .await?;
 
     log_feature!(
         LogFeature::Ingestion,
@@ -351,9 +379,7 @@ async fn handle_s3_file_path(
     // Extract filename from key (last path segment) and sanitize against path traversal
     let raw_filename = key.rsplit('/').next().unwrap_or(key).to_string();
     // Strip any path separators or parent-directory traversal sequences
-    let filename: String = raw_filename
-        .replace(['/', '\\'], "_")
-        .replace("..", "_");
+    let filename: String = raw_filename.replace(['/', '\\'], "_").replace("..", "_");
     if filename.is_empty() {
         return Err(HttpResponse::BadRequest().json(json!({
             "success": false,
@@ -532,11 +558,21 @@ pub async fn upload_file(
     // Save JSON to a temporary file for testing/debugging
     let temp_json_path = match save_json_to_temp_file(&json_value) {
         Ok(path) => {
-            log_feature!(LogFeature::Ingestion, info, "Converted JSON saved to temporary file for testing: {}", path);
+            log_feature!(
+                LogFeature::Ingestion,
+                info,
+                "Converted JSON saved to temporary file for testing: {}",
+                path
+            );
             Some(path)
         }
         Err(e) => {
-            log_feature!(LogFeature::Ingestion, warn, "Failed to save JSON to temp file (non-critical): {}", e);
+            log_feature!(
+                LogFeature::Ingestion,
+                warn,
+                "Failed to save JSON to temp file (non-critical): {}",
+                e
+            );
             None
         }
     };
@@ -671,30 +707,49 @@ pub async fn serve_file(
     };
 
     // Decrypt
-    let decrypted = match fold_db::crypto::envelope::decrypt_envelope(&encryption_key, &encrypted_data) {
-        Ok(data) => data,
-        Err(e) => {
-            log_feature!(LogFeature::Ingestion, error, "Failed to decrypt file {}: {}", file_hash, e);
-            return HttpResponse::InternalServerError().json(json!({
-                "error": "Failed to decrypt file"
-            }));
-        }
-    };
+    let decrypted =
+        match fold_db::crypto::envelope::decrypt_envelope(&encryption_key, &encrypted_data) {
+            Ok(data) => data,
+            Err(e) => {
+                log_feature!(
+                    LogFeature::Ingestion,
+                    error,
+                    "Failed to decrypt file {}: {}",
+                    file_hash,
+                    e
+                );
+                return HttpResponse::InternalServerError().json(json!({
+                    "error": "Failed to decrypt file"
+                }));
+            }
+        };
 
     // Determine content type from optional name query param
-    let content_type = query.get("name")
+    let content_type = query
+        .get("name")
         .and_then(|name| {
             let lower = name.to_lowercase();
-            if lower.ends_with(".jpg") || lower.ends_with(".jpeg") { Some("image/jpeg") }
-            else if lower.ends_with(".png") { Some("image/png") }
-            else if lower.ends_with(".gif") { Some("image/gif") }
-            else if lower.ends_with(".webp") { Some("image/webp") }
-            else if lower.ends_with(".svg") { Some("image/svg+xml") }
-            else if lower.ends_with(".pdf") { Some("application/pdf") }
-            else if lower.ends_with(".json") { Some("application/json") }
-            else if lower.ends_with(".csv") { Some("text/csv") }
-            else if lower.ends_with(".txt") { Some("text/plain") }
-            else { None }
+            if lower.ends_with(".jpg") || lower.ends_with(".jpeg") {
+                Some("image/jpeg")
+            } else if lower.ends_with(".png") {
+                Some("image/png")
+            } else if lower.ends_with(".gif") {
+                Some("image/gif")
+            } else if lower.ends_with(".webp") {
+                Some("image/webp")
+            } else if lower.ends_with(".svg") {
+                Some("image/svg+xml")
+            } else if lower.ends_with(".pdf") {
+                Some("application/pdf")
+            } else if lower.ends_with(".json") {
+                Some("application/json")
+            } else if lower.ends_with(".csv") {
+                Some("text/csv")
+            } else if lower.ends_with(".txt") {
+                Some("text/plain")
+            } else {
+                None
+            }
         })
         .unwrap_or("application/octet-stream");
 

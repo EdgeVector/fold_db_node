@@ -12,9 +12,13 @@ fn json_to_schema(value: serde_json::Value) -> fold_db::schema::types::Schema {
     }
     if let Some(ref fields) = schema.fields {
         for f in fields {
-            schema.field_descriptions.entry(f.clone())
+            schema
+                .field_descriptions
+                .entry(f.clone())
                 .or_insert_with(|| format!("{} field", f));
-            schema.field_data_classifications.entry(f.clone())
+            schema
+                .field_data_classifications
+                .entry(f.clone())
                 .or_insert_with(|| DataClassification::new(0, "general").unwrap());
         }
     }
@@ -70,7 +74,8 @@ async fn canonical_registry_renames_semantically_equivalent_fields() {
     // "creator" → "artist" should trigger canonicalization.
     // Check that the returned schema's fields include canonical names.
     match &outcome_b {
-        SchemaAddOutcome::Added(schema, mappers) | SchemaAddOutcome::Expanded(_, schema, mappers) => {
+        SchemaAddOutcome::Added(schema, mappers)
+        | SchemaAddOutcome::Expanded(_, schema, mappers) => {
             let fields = schema.fields.as_ref().expect("schema must have fields");
             // If canonicalization worked, "creator" should have been renamed to "artist"
             if fields.contains(&"artist".to_string()) {
@@ -199,8 +204,8 @@ async fn canonical_registry_persists_across_restarts() {
 
     // Second instance: canonical fields should be loaded from sled
     {
-        let state = SchemaServiceState::new(db_path)
-            .expect("failed to reopen schema service state");
+        let state =
+            SchemaServiceState::new(db_path).expect("failed to reopen schema service state");
 
         // Add schema with semantically equivalent field "writer" (close to "author")
         let schema = json_to_schema(json!({
@@ -215,7 +220,8 @@ async fn canonical_registry_persists_across_restarts() {
             .expect("failed to add schema after restart");
 
         match &outcome {
-            SchemaAddOutcome::Added(schema, mappers) | SchemaAddOutcome::Expanded(_, schema, mappers) => {
+            SchemaAddOutcome::Added(schema, mappers)
+            | SchemaAddOutcome::Expanded(_, schema, mappers) => {
                 let fields = schema.fields.as_ref().expect("schema must have fields");
                 // If "writer" → "author" canonicalization worked after restart,
                 // it proves persistence

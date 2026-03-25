@@ -94,10 +94,7 @@ pub fn extract_code_metadata(content: &str, file_name: &str, ext: &str) -> Value
         r"(?m)^\s*(?:pub\s+)?(?:class|struct|trait|enum|interface|type)\s+\w+",
         content,
     );
-    let comments = regex_matches(
-        r"(?m)^\s*(?://[/!]?.*|#(?:$|[^!\[].*))",
-        content,
-    );
+    let comments = regex_matches(r"(?m)^\s*(?://[/!]?.*|#(?:$|[^!\[].*))", content);
 
     serde_json::json!({
         "source_file": file_name,
@@ -228,10 +225,7 @@ mod tests {
 
     #[test]
     fn test_read_file_with_hash_json() {
-        let mut tmp = tempfile::Builder::new()
-            .suffix(".json")
-            .tempfile()
-            .unwrap();
+        let mut tmp = tempfile::Builder::new().suffix(".json").tempfile().unwrap();
         let json_content = r#"{"name": "Alice", "age": 30}"#;
         write!(tmp, "{}", json_content).unwrap();
 
@@ -246,10 +240,7 @@ mod tests {
 
     #[test]
     fn test_read_file_with_hash_twitter_js() {
-        let mut tmp = tempfile::Builder::new()
-            .suffix(".js")
-            .tempfile()
-            .unwrap();
+        let mut tmp = tempfile::Builder::new().suffix(".js").tempfile().unwrap();
         let content = r#"window.YTD.tweet.part0 = [{"id": "123", "text": "hello"}]"#;
         write!(tmp, "{}", content).unwrap();
 
@@ -264,10 +255,7 @@ mod tests {
 
     #[test]
     fn test_read_file_with_hash_csv() {
-        let mut tmp = tempfile::Builder::new()
-            .suffix(".csv")
-            .tempfile()
-            .unwrap();
+        let mut tmp = tempfile::Builder::new().suffix(".csv").tempfile().unwrap();
         let content = "name,age\nAlice,30\nBob,25\n";
         write!(tmp, "{}", content).unwrap();
 
@@ -282,10 +270,7 @@ mod tests {
 
     #[test]
     fn test_read_file_with_hash_txt() {
-        let mut tmp = tempfile::Builder::new()
-            .suffix(".txt")
-            .tempfile()
-            .unwrap();
+        let mut tmp = tempfile::Builder::new().suffix(".txt").tempfile().unwrap();
         let content = "Hello, this is a text file.";
         write!(tmp, "{}", content).unwrap();
 
@@ -300,10 +285,7 @@ mod tests {
 
     #[test]
     fn test_read_file_with_hash_md() {
-        let mut tmp = tempfile::Builder::new()
-            .suffix(".md")
-            .tempfile()
-            .unwrap();
+        let mut tmp = tempfile::Builder::new().suffix(".md").tempfile().unwrap();
         let content = "# Heading\n\nSome markdown content.";
         write!(tmp, "{}", content).unwrap();
 
@@ -318,10 +300,7 @@ mod tests {
 
     #[test]
     fn test_read_file_with_hash_unsupported_extension() {
-        let mut tmp = tempfile::Builder::new()
-            .suffix(".xyz")
-            .tempfile()
-            .unwrap();
+        let mut tmp = tempfile::Builder::new().suffix(".xyz").tempfile().unwrap();
         write!(tmp, "some content").unwrap();
 
         let result = read_file_with_hash(tmp.path());
@@ -358,18 +337,30 @@ async def bar():
         assert_eq!(val["source_file"], "example.py");
         assert_eq!(val["file_type"], "py");
 
-        let functions: Vec<&str> = val["functions"].as_array().unwrap()
-            .iter().map(|v| v.as_str().unwrap()).collect();
+        let functions: Vec<&str> = val["functions"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|v| v.as_str().unwrap())
+            .collect();
         assert!(functions.iter().any(|f| f.contains("def foo")));
         assert!(functions.iter().any(|f| f.contains("def bar")));
         assert!(functions.iter().any(|f| f.contains("def __init__")));
 
-        let classes: Vec<&str> = val["classes"].as_array().unwrap()
-            .iter().map(|v| v.as_str().unwrap()).collect();
+        let classes: Vec<&str> = val["classes"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|v| v.as_str().unwrap())
+            .collect();
         assert!(classes.iter().any(|c| c.contains("class MyClass")));
 
-        let comments: Vec<&str> = val["comments"].as_array().unwrap()
-            .iter().map(|v| v.as_str().unwrap()).collect();
+        let comments: Vec<&str> = val["comments"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|v| v.as_str().unwrap())
+            .collect();
         assert!(comments.iter().any(|c| c.contains("Helper utilities")));
         assert!(comments.iter().any(|c| c.contains("compute sum")));
     }
@@ -398,18 +389,30 @@ enum Color {
 "#;
         let val = extract_code_metadata(content, "lib.rs", "rs");
 
-        let functions: Vec<&str> = val["functions"].as_array().unwrap()
-            .iter().map(|v| v.as_str().unwrap()).collect();
+        let functions: Vec<&str> = val["functions"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|v| v.as_str().unwrap())
+            .collect();
         assert!(functions.iter().any(|f| f.contains("fn helper")));
         assert!(functions.iter().any(|f| f.contains("pub async fn greet")));
 
-        let classes: Vec<&str> = val["classes"].as_array().unwrap()
-            .iter().map(|v| v.as_str().unwrap()).collect();
+        let classes: Vec<&str> = val["classes"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|v| v.as_str().unwrap())
+            .collect();
         assert!(classes.iter().any(|c| c.contains("pub struct Greeter")));
         assert!(classes.iter().any(|c| c.contains("enum Color")));
 
-        let comments: Vec<&str> = val["comments"].as_array().unwrap()
-            .iter().map(|v| v.as_str().unwrap()).collect();
+        let comments: Vec<&str> = val["comments"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|v| v.as_str().unwrap())
+            .collect();
         assert!(comments.iter().any(|c| c.contains("A greeter struct")));
         assert!(comments.iter().any(|c| c.contains("private helper")));
         // Rust attributes must NOT be captured as comments
@@ -429,12 +432,20 @@ class App {
 "#;
         let val = extract_code_metadata(content, "app.js", "js");
 
-        let functions: Vec<&str> = val["functions"].as_array().unwrap()
-            .iter().map(|v| v.as_str().unwrap()).collect();
+        let functions: Vec<&str> = val["functions"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|v| v.as_str().unwrap())
+            .collect();
         assert!(functions.iter().any(|f| f.contains("function greet")));
 
-        let classes: Vec<&str> = val["classes"].as_array().unwrap()
-            .iter().map(|v| v.as_str().unwrap()).collect();
+        let classes: Vec<&str> = val["classes"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|v| v.as_str().unwrap())
+            .collect();
         assert!(classes.iter().any(|c| c.contains("class App")));
     }
 
@@ -456,17 +467,31 @@ func (s *Server) Start() {
 "#;
         let val = extract_code_metadata(content, "main.go", "go");
 
-        let functions: Vec<&str> = val["functions"].as_array().unwrap()
-            .iter().map(|v| v.as_str().unwrap()).collect();
+        let functions: Vec<&str> = val["functions"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|v| v.as_str().unwrap())
+            .collect();
         assert!(functions.iter().any(|f| f.contains("func main")));
-        assert!(functions.iter().any(|f| f.contains("func (s *Server) Start")));
+        assert!(functions
+            .iter()
+            .any(|f| f.contains("func (s *Server) Start")));
 
-        let classes: Vec<&str> = val["classes"].as_array().unwrap()
-            .iter().map(|v| v.as_str().unwrap()).collect();
+        let classes: Vec<&str> = val["classes"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|v| v.as_str().unwrap())
+            .collect();
         assert!(classes.iter().any(|c| c.contains("type Server")));
 
-        let comments: Vec<&str> = val["comments"].as_array().unwrap()
-            .iter().map(|v| v.as_str().unwrap()).collect();
+        let comments: Vec<&str> = val["comments"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|v| v.as_str().unwrap())
+            .collect();
         assert!(comments.iter().any(|c| c.contains("Package main")));
     }
 
@@ -487,7 +512,9 @@ func (s *Server) Start() {
         assert_eq!(val["source_file"], "app.js");
         assert_eq!(val["file_type"], "js");
         let functions = val["functions"].as_array().unwrap();
-        assert!(functions.iter().any(|f| f.as_str().unwrap().contains("function hello")));
+        assert!(functions
+            .iter()
+            .any(|f| f.as_str().unwrap().contains("function hello")));
     }
 
     #[test]
@@ -501,25 +528,21 @@ func (s *Server) Start() {
 
     #[test]
     fn test_read_file_with_hash_code_file() {
-        let mut tmp = tempfile::Builder::new()
-            .suffix(".py")
-            .tempfile()
-            .unwrap();
+        let mut tmp = tempfile::Builder::new().suffix(".py").tempfile().unwrap();
         let content = "def greet():\n    print('hi')\n";
         write!(tmp, "{}", content).unwrap();
 
         let (value, _hash, _raw) = read_file_with_hash(tmp.path()).unwrap();
         assert_eq!(value["file_type"], "py");
         let functions = value["functions"].as_array().unwrap();
-        assert!(functions.iter().any(|f| f.as_str().unwrap().contains("def greet")));
+        assert!(functions
+            .iter()
+            .any(|f| f.as_str().unwrap().contains("def greet")));
     }
 
     #[test]
     fn test_read_file_with_hash_config_file() {
-        let mut tmp = tempfile::Builder::new()
-            .suffix(".yaml")
-            .tempfile()
-            .unwrap();
+        let mut tmp = tempfile::Builder::new().suffix(".yaml").tempfile().unwrap();
         let content = "name: test\nversion: 1.0\n";
         write!(tmp, "{}", content).unwrap();
 
@@ -530,25 +553,21 @@ func (s *Server) Start() {
 
     #[test]
     fn test_read_file_as_json_code_file() {
-        let mut tmp = tempfile::Builder::new()
-            .suffix(".rs")
-            .tempfile()
-            .unwrap();
+        let mut tmp = tempfile::Builder::new().suffix(".rs").tempfile().unwrap();
         let content = "pub fn main() {}\n";
         write!(tmp, "{}", content).unwrap();
 
         let value = read_file_as_json(tmp.path()).unwrap();
         assert_eq!(value["file_type"], "rs");
         let functions = value["functions"].as_array().unwrap();
-        assert!(functions.iter().any(|f| f.as_str().unwrap().contains("pub fn main")));
+        assert!(functions
+            .iter()
+            .any(|f| f.as_str().unwrap().contains("pub fn main")));
     }
 
     #[test]
     fn test_read_file_as_json_config_file() {
-        let mut tmp = tempfile::Builder::new()
-            .suffix(".toml")
-            .tempfile()
-            .unwrap();
+        let mut tmp = tempfile::Builder::new().suffix(".toml").tempfile().unwrap();
         let content = "[package]\nname = \"test\"\n";
         write!(tmp, "{}", content).unwrap();
 
@@ -571,8 +590,12 @@ func (s *Server) Start() {
     fn test_extract_code_metadata_shell_comments() {
         let content = "#!/bin/bash\n# Setup env\necho hello\n# Done\n";
         let val = extract_code_metadata(content, "setup.sh", "sh");
-        let comments: Vec<&str> = val["comments"].as_array().unwrap()
-            .iter().map(|v| v.as_str().unwrap()).collect();
+        let comments: Vec<&str> = val["comments"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|v| v.as_str().unwrap())
+            .collect();
         assert!(comments.iter().any(|c| c.contains("Setup env")));
         assert!(comments.iter().any(|c| c.contains("Done")));
         // Shebangs start with #! which is excluded by the pattern
@@ -581,10 +604,7 @@ func (s *Server) Start() {
 
     #[test]
     fn test_read_file_with_hash_js_non_twitter() {
-        let mut tmp = tempfile::Builder::new()
-            .suffix(".js")
-            .tempfile()
-            .unwrap();
+        let mut tmp = tempfile::Builder::new().suffix(".js").tempfile().unwrap();
         let content = "function setup() { return true; }\n";
         write!(tmp, "{}", content).unwrap();
 
@@ -592,6 +612,8 @@ func (s *Server) Start() {
         // Should fall back to code metadata since it's not Twitter format
         assert_eq!(value["file_type"], "js");
         let functions = value["functions"].as_array().unwrap();
-        assert!(functions.iter().any(|f| f.as_str().unwrap().contains("function setup")));
+        assert!(functions
+            .iter()
+            .any(|f| f.as_str().unwrap().contains("function setup")));
     }
 }

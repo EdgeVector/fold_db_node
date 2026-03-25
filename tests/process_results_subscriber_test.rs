@@ -7,10 +7,10 @@
 
 mod common;
 
-use fold_db_node::fold_node::node::FoldNode;
 use fold_db::logging::core::run_with_user;
 use fold_db::schema::types::operations::MutationType;
 use fold_db::schema::types::{KeyValue, Mutation};
+use fold_db_node::fold_node::node::FoldNode;
 use serde_json::json;
 use std::collections::HashMap;
 
@@ -20,7 +20,9 @@ async fn create_test_node() -> (FoldNode, String) {
     let keypair = fold_db::security::Ed25519KeyPair::generate().unwrap();
     let user_id = keypair.public_key_base64();
     config = config.with_identity(&user_id, &keypair.secret_key_base64());
-    let node = FoldNode::new(config).await.expect("Failed to create test node");
+    let node = FoldNode::new(config)
+        .await
+        .expect("Failed to create test node");
     (node, user_id)
 }
 
@@ -277,8 +279,16 @@ async fn test_process_results_isolation_between_progress_ids() {
     let results_a = node.get_process_results(progress_a).await.unwrap();
     let results_b = node.get_process_results(progress_b).await.unwrap();
 
-    assert_eq!(results_a.len(), 1, "Progress A should have exactly 1 result");
-    assert_eq!(results_b.len(), 1, "Progress B should have exactly 1 result");
+    assert_eq!(
+        results_a.len(),
+        1,
+        "Progress A should have exactly 1 result"
+    );
+    assert_eq!(
+        results_b.len(),
+        1,
+        "Progress B should have exactly 1 result"
+    );
 
     assert_eq!(
         results_a[0].key_value.hash.as_deref(),

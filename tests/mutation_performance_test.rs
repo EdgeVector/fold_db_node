@@ -12,8 +12,8 @@ use std::time::Instant;
 
 use serde_json::json;
 
-use fold_db_node::fold_node::{FoldNode, NodeConfig};
 use fold_db::schema::types::Mutation;
+use fold_db_node::fold_node::{FoldNode, NodeConfig};
 // use fold_db::MutationType; - Removed as it's implied or handled by helper if we pass "Create" string
 // use fold_db::schema::types::key_value::KeyValue; - Removed as helper abstracts this
 
@@ -37,10 +37,14 @@ async fn test_mutation_performance_direct() {
     // Wrap entire test in a 10-second timeout
     let result = tokio::time::timeout(
         std::time::Duration::from_secs(10),
-        run_mutation_performance_test()
-    ).await;
+        run_mutation_performance_test(),
+    )
+    .await;
 
-    assert!(result.is_ok(), "Performance test timed out after 10 seconds");
+    assert!(
+        result.is_ok(),
+        "Performance test timed out after 10 seconds"
+    );
 }
 
 async fn run_mutation_performance_test() {
@@ -220,11 +224,7 @@ async fn execute_single_mutations_direct(
 }
 
 /// Execute mutations in a single batch - directly on the database
-async fn execute_batch_mutations_direct(
-    node: &FoldNode,
-    count: usize,
-    schema: &serde_json::Value,
-) {
+async fn execute_batch_mutations_direct(node: &FoldNode, count: usize, schema: &serde_json::Value) {
     let mut mutations = Vec::new();
 
     for i in 0..count {

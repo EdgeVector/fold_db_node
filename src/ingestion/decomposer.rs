@@ -6,8 +6,8 @@
 //! schema service -> mutations). A structure cache keyed by field-name hash
 //! ensures the AI is called only once per unique structure.
 
-use sha2::{Digest, Sha256};
 use serde_json::Value;
+use sha2::{Digest, Sha256};
 
 /// A group of child items extracted from a parent field, all sharing the same structure.
 pub struct ChildGroup {

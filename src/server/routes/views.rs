@@ -1,4 +1,5 @@
 use crate::fold_node::OperationProcessor;
+use crate::fold_node::TransformView;
 use crate::handlers::{ApiResponse, HandlerError, IntoHandlerError};
 use crate::server::http_server::AppState;
 use crate::server::routes::{handler_result_to_response, node_or_return};
@@ -8,7 +9,6 @@ use fold_db::schema::types::field_value_type::FieldValueType;
 use fold_db::schema::types::key_config::KeyConfig;
 use fold_db::schema::types::operations::Query;
 use fold_db::schema::types::schema::DeclarativeSchemaType as SchemaType;
-use crate::fold_node::TransformView;
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 
@@ -74,8 +74,7 @@ pub async fn list_views(state: web::Data<AppState>) -> impl Responder {
         async {
             let views: Vec<_> = op.list_views().await.handler_err("list views")?;
             let count = views.len();
-            let views_json =
-                serde_json::to_value(&views).handler_err("serialize views")?;
+            let views_json = serde_json::to_value(&views).handler_err("serialize views")?;
             Ok(ApiResponse::success_with_user(
                 ViewListResponse {
                     views: views_json,
@@ -89,10 +88,7 @@ pub async fn list_views(state: web::Data<AppState>) -> impl Responder {
 }
 
 /// Get a view by name.
-pub async fn get_view(
-    path: web::Path<String>,
-    state: web::Data<AppState>,
-) -> impl Responder {
+pub async fn get_view(path: web::Path<String>, state: web::Data<AppState>) -> impl Responder {
     let name = path.into_inner();
     let (user_hash, node) = node_or_return!(state);
     let op = OperationProcessor::new(node.clone());
@@ -103,8 +99,7 @@ pub async fn get_view(
                 .await
                 .handler_err("get view")?
                 .ok_or_else(|| HandlerError::NotFound(format!("View not found: {}", name)))?;
-            let view_json =
-                serde_json::to_value(&view).handler_err("serialize view")?;
+            let view_json = serde_json::to_value(&view).handler_err("serialize view")?;
             Ok(ApiResponse::success_with_user(
                 ViewResponse { view: view_json },
                 user_hash,
@@ -141,10 +136,7 @@ pub async fn create_view(
 }
 
 /// Approve a view.
-pub async fn approve_view(
-    path: web::Path<String>,
-    state: web::Data<AppState>,
-) -> impl Responder {
+pub async fn approve_view(path: web::Path<String>, state: web::Data<AppState>) -> impl Responder {
     let name = path.into_inner();
     let (user_hash, node) = node_or_return!(state);
     let op = OperationProcessor::new(node.clone());
@@ -161,10 +153,7 @@ pub async fn approve_view(
 }
 
 /// Block a view.
-pub async fn block_view(
-    path: web::Path<String>,
-    state: web::Data<AppState>,
-) -> impl Responder {
+pub async fn block_view(path: web::Path<String>, state: web::Data<AppState>) -> impl Responder {
     let name = path.into_inner();
     let (user_hash, node) = node_or_return!(state);
     let op = OperationProcessor::new(node.clone());
@@ -184,10 +173,7 @@ pub async fn block_view(
 }
 
 /// Load a view from the global schema service (with transitive dependencies).
-pub async fn load_view(
-    path: web::Path<String>,
-    state: web::Data<AppState>,
-) -> impl Responder {
+pub async fn load_view(path: web::Path<String>, state: web::Data<AppState>) -> impl Responder {
     let name = path.into_inner();
     let (_user_hash, node) = node_or_return!(state);
     let op = OperationProcessor::new(node.clone());
@@ -202,10 +188,7 @@ pub async fn load_view(
 }
 
 /// Delete (remove) a view.
-pub async fn delete_view(
-    path: web::Path<String>,
-    state: web::Data<AppState>,
-) -> impl Responder {
+pub async fn delete_view(path: web::Path<String>, state: web::Data<AppState>) -> impl Responder {
     let name = path.into_inner();
     let (user_hash, node) = node_or_return!(state);
     let op = OperationProcessor::new(node.clone());

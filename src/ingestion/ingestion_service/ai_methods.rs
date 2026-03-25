@@ -15,9 +15,12 @@ impl IngestionService {
         let detail = self.init_error.as_deref().unwrap_or("unknown reason");
         self.backend
             .as_ref()
-            .ok_or_else(|| IngestionError::configuration_error(
-                format!("{:?} backend not initialized ({})", self.config.provider, detail),
-            ))?
+            .ok_or_else(|| {
+                IngestionError::configuration_error(format!(
+                    "{:?} backend not initialized ({})",
+                    self.config.provider, detail
+                ))
+            })?
             .call(prompt)
             .await
     }
@@ -86,7 +89,11 @@ impl IngestionService {
         let fields: Vec<String> = schema_def
             .get("fields")
             .and_then(|f| f.as_array())
-            .map(|arr| arr.iter().filter_map(|v| v.as_str().map(String::from)).collect())
+            .map(|arr| {
+                arr.iter()
+                    .filter_map(|v| v.as_str().map(String::from))
+                    .collect()
+            })
             .unwrap_or_default();
 
         if fields.is_empty() {
@@ -125,14 +132,19 @@ impl IngestionService {
         let sample = crate::ingestion::ai::helpers::truncate_long_strings(&raw_sample);
 
         let prompt = fold_db::llm_registry::prompts::ingestion::FIELD_DESCRIPTIONS_PROMPT
-            .replace("{sample}", &serde_json::to_string_pretty(&sample).unwrap_or_default())
+            .replace(
+                "{sample}",
+                &serde_json::to_string_pretty(&sample).unwrap_or_default(),
+            )
             .replace("{fields}", &format!("{:?}", missing));
 
         match self.call_ai_raw(&prompt).await {
             Ok(raw_response) => {
                 match crate::ingestion::ai::helpers::extract_json_from_response(&raw_response) {
                     Ok(json_str) => {
-                        if let Ok(descriptions) = serde_json::from_str::<serde_json::Map<String, Value>>(&json_str) {
+                        if let Ok(descriptions) =
+                            serde_json::from_str::<serde_json::Map<String, Value>>(&json_str)
+                        {
                             let fd = schema_def
                                 .as_object_mut()
                                 .unwrap()

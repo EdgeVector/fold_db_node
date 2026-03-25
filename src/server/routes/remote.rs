@@ -75,8 +75,7 @@ pub async fn remote_query(
                 .handler_err("execute remote query")?;
 
             // Convert results to JSON
-            let results_json =
-                serde_json::to_value(&results).handler_err("serialize results")?;
+            let results_json = serde_json::to_value(&results).handler_err("serialize results")?;
             Ok(ApiResponse::success_with_user(results_json, user_hash))
         }
         .await,

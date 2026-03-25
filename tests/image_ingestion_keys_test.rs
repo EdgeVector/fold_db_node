@@ -104,40 +104,24 @@ fn hashrange_image_schema_json(name: &str) -> serde_json::Value {
 }
 
 /// Build a mutation for an image record (Hash schema — hash key only).
-fn image_mutation(
-    schema_name: &str,
-    file_name: &str,
-    pub_key: &str,
-) -> Mutation {
+fn image_mutation(schema_name: &str, file_name: &str, pub_key: &str) -> Mutation {
     let mut fields = HashMap::new();
     fields.insert("image_type".to_string(), json!("landscape"));
-    fields.insert(
-        "subjects".to_string(),
-        json!(["ocean", "cliffs", "sunset"]),
-    );
+    fields.insert("subjects".to_string(), json!(["ocean", "cliffs", "sunset"]));
     fields.insert(
         "background".to_string(),
         json!("Ocean with dramatic cliffs"),
     );
-    fields.insert(
-        "tags".to_string(),
-        json!(["nature", "ocean", "sunset"]),
-    );
+    fields.insert("tags".to_string(), json!(["nature", "ocean", "sunset"]));
     fields.insert("setting".to_string(), json!("Rocky coastal area"));
     fields.insert("time_of_day".to_string(), json!("sunset"));
     fields.insert("weather".to_string(), json!("clear"));
-    fields.insert(
-        "source_file_name".to_string(),
-        json!(file_name),
-    );
+    fields.insert("source_file_name".to_string(), json!(file_name));
 
     Mutation::new(
         schema_name.to_string(),
         fields,
-        KeyValue::new(
-            Some(file_name.to_string()),
-            None,
-        ),
+        KeyValue::new(Some(file_name.to_string()), None),
         pub_key.to_string(),
         MutationType::Create,
     )
@@ -183,7 +167,12 @@ async fn test_hash_mutation_keys_queryable() {
         "Schema loaded: name={}, type={:?}, fields={}",
         schema.name(),
         schema.schema.schema_type,
-        schema.schema.fields.as_ref().map(|f: &Vec<String>| f.len()).unwrap_or(0)
+        schema
+            .schema
+            .fields
+            .as_ref()
+            .map(|f: &Vec<String>| f.len())
+            .unwrap_or(0)
     );
 
     // Create and execute mutation with hash key only
@@ -200,7 +189,11 @@ async fn test_hash_mutation_keys_queryable() {
         .await
         .expect("mutate_batch failed");
     eprintln!("Mutation IDs: {:?}", mutation_ids);
-    assert_eq!(mutation_ids.len(), 1, "Should produce exactly one mutation ID");
+    assert_eq!(
+        mutation_ids.len(),
+        1,
+        "Should produce exactly one mutation ID"
+    );
 
     // Query keys — this is what the UI calls
     let (keys, total) = processor
@@ -214,7 +207,10 @@ async fn test_hash_mutation_keys_queryable() {
     assert_eq!(total, 1);
     assert_eq!(keys.len(), 1);
     assert_eq!(keys[0].hash.as_deref(), Some(file_name));
-    assert!(keys[0].range.is_none(), "Hash schema keys should have no range");
+    assert!(
+        keys[0].range.is_none(),
+        "Hash schema keys should have no range"
+    );
 }
 
 /// Test 2: Partial key on a HashRange schema must error, not silently drop data.
@@ -283,8 +279,8 @@ async fn test_image_ingestion_pipeline_produces_keys() {
     // use fold_db::logging::core::run_with_user;
     // use fold_db_node::ingestion::ingestion_service::IngestionService;
     // use fold_db_node::ingestion::{create_progress_tracker, IngestionConfig, IngestionRequest, ProgressService};
-    use fold_db_node::schema_service::server::SchemaServiceState;
     use actix_web::{web, App, HttpResponse, HttpServer};
+    use fold_db_node::schema_service::server::SchemaServiceState;
     use std::net::TcpListener;
     use tempfile::TempDir;
 
@@ -302,15 +298,27 @@ async fn test_image_ingestion_pipeline_produces_keys() {
             Ok(outcome) => {
                 use fold_db_node::schema_service::server::{AddSchemaResponse, SchemaAddOutcome};
                 match outcome {
-                    SchemaAddOutcome::Added(s, m) => HttpResponse::Created().json(AddSchemaResponse {
-                        schema: s, mutation_mappers: m, replaced_schema: None,
-                    }),
-                    SchemaAddOutcome::AlreadyExists(s, _) => HttpResponse::Ok().json(AddSchemaResponse {
-                        schema: s, mutation_mappers: HashMap::new(), replaced_schema: None,
-                    }),
-                    SchemaAddOutcome::Expanded(old, s, m) => HttpResponse::Created().json(AddSchemaResponse {
-                        schema: s, mutation_mappers: m, replaced_schema: Some(old),
-                    }),
+                    SchemaAddOutcome::Added(s, m) => {
+                        HttpResponse::Created().json(AddSchemaResponse {
+                            schema: s,
+                            mutation_mappers: m,
+                            replaced_schema: None,
+                        })
+                    }
+                    SchemaAddOutcome::AlreadyExists(s, _) => {
+                        HttpResponse::Ok().json(AddSchemaResponse {
+                            schema: s,
+                            mutation_mappers: HashMap::new(),
+                            replaced_schema: None,
+                        })
+                    }
+                    SchemaAddOutcome::Expanded(old, s, m) => {
+                        HttpResponse::Created().json(AddSchemaResponse {
+                            schema: s,
+                            mutation_mappers: m,
+                            replaced_schema: Some(old),
+                        })
+                    }
                 }
             }
             Err(e) => HttpResponse::BadRequest().json(json!({"error": e.to_string()})),
@@ -344,20 +352,24 @@ async fn test_image_ingestion_pipeline_produces_keys() {
 
     // Spawn schema service
     let temp_dir = TempDir::new().unwrap();
-    let db_path = temp_dir.path().join("test_schema_db").to_string_lossy().to_string();
+    let db_path = temp_dir
+        .path()
+        .join("test_schema_db")
+        .to_string_lossy()
+        .to_string();
     let state = SchemaServiceState::new(db_path).unwrap();
     let state_data = web::Data::new(state);
     let listener = TcpListener::bind(("127.0.0.1", 0)).unwrap();
     let port = listener.local_addr().unwrap().port();
     let state_clone = state_data.clone();
     let server = HttpServer::new(move || {
-        App::new()
-            .app_data(state_clone.clone())
-            .service(web::scope("/api")
+        App::new().app_data(state_clone.clone()).service(
+            web::scope("/api")
                 .route("/schemas", web::get().to(handle_list))
                 .route("/schemas", web::post().to(handle_add_schema))
                 .route("/schemas/available", web::get().to(handle_available))
-                .route("/schema/{name}", web::get().to(handle_get_schema)))
+                .route("/schema/{name}", web::get().to(handle_get_schema)),
+        )
     })
     .listen(listener)
     .unwrap()
@@ -444,5 +456,8 @@ async fn test_image_ingestion_pipeline_produces_keys() {
         final_name
     );
     assert_eq!(keys[0].hash.as_deref(), Some("ocean_cliff.jpg"));
-    assert!(keys[0].range.is_none(), "Hash schema keys should have no range");
+    assert!(
+        keys[0].range.is_none(),
+        "Hash schema keys should have no range"
+    );
 }

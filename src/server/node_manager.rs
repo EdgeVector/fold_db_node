@@ -12,10 +12,10 @@
 
 use crate::fold_node::config::NodeConfig;
 use crate::fold_node::FoldNode;
+use base64::Engine as _;
 use fold_db::fold_db_core::factory;
 use fold_db::security::Ed25519KeyPair;
 use fold_db::storage::config::DatabaseConfig;
-use base64::Engine as _;
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 use std::collections::HashMap;
@@ -83,10 +83,7 @@ impl NodeManager {
     ///
     /// In local mode (Sled), returns a shared node for all users to avoid lock conflicts.
     /// In cloud mode (DynamoDB), creates/returns a per-user node with user_id isolation.
-    pub async fn get_node(
-        &self,
-        user_id: &str,
-    ) -> Result<Arc<RwLock<FoldNode>>, NodeManagerError> {
+    pub async fn get_node(&self, user_id: &str) -> Result<Arc<RwLock<FoldNode>>, NodeManagerError> {
         // Local mode: use shared single node to avoid Sled lock conflicts
         if *self.is_local_mode.read().await {
             return self.get_shared_local_node(user_id).await;
@@ -140,10 +137,7 @@ impl NodeManager {
     }
 
     /// Create a new node instance for a user
-    async fn create_node(
-        &self,
-        user_id: &str,
-    ) -> Result<Arc<RwLock<FoldNode>>, NodeManagerError> {
+    async fn create_node(&self, user_id: &str) -> Result<Arc<RwLock<FoldNode>>, NodeManagerError> {
         // Clone the base config and set user_id
         let mut node_config = self.config.read().await.base_config.clone();
 
@@ -169,11 +163,17 @@ impl NodeManager {
         // Load or generate E2E encryption keys
         let home = std::env::var("HOME")
             .map(std::path::PathBuf::from)
-            .map_err(|_| NodeManagerError::ConfigurationError("HOME environment variable not set".to_string()))?;
+            .map_err(|_| {
+                NodeManagerError::ConfigurationError(
+                    "HOME environment variable not set".to_string(),
+                )
+            })?;
         let e2e_key_path = home.join(".fold_db/e2e.key");
         let e2e_keys = fold_db::crypto::E2eKeys::load_or_generate(&e2e_key_path)
             .await
-            .map_err(|e| NodeManagerError::ConfigurationError(format!("Failed to load E2E keys: {}", e)))?;
+            .map_err(|e| {
+                NodeManagerError::ConfigurationError(format!("Failed to load E2E keys: {}", e))
+            })?;
 
         // Create FoldDB with user context set
         let db = fold_db::logging::core::run_with_user(user_id, async {
@@ -196,13 +196,11 @@ impl NodeManager {
     ///
     /// Key file path: `~/.fold_db/identity/{sha256(user_id)}.json`
     /// The SHA-256 hash is used as the filename to avoid path injection from arbitrary user_ids.
-    async fn load_or_generate_identity(
-        user_id: &str,
-    ) -> Result<Ed25519KeyPair, NodeManagerError> {
+    async fn load_or_generate_identity(user_id: &str) -> Result<Ed25519KeyPair, NodeManagerError> {
         // Build the key file path: ~/.fold_db/identity/{hash}.json
-        let home = std::env::var("HOME")
-            .map(PathBuf::from)
-            .map_err(|_| NodeManagerError::ConfigurationError("HOME environment variable not set".to_string()))?;
+        let home = std::env::var("HOME").map(PathBuf::from).map_err(|_| {
+            NodeManagerError::ConfigurationError("HOME environment variable not set".to_string())
+        })?;
 
         let mut hasher = Sha256::new();
         hasher.update(user_id.as_bytes());
@@ -215,14 +213,19 @@ impl NodeManager {
             // Load existing keypair
             let content = tokio::fs::read_to_string(&identity_path)
                 .await
-                .map_err(|e| NodeManagerError::SecurityError(format!("Failed to read identity file: {e}")))?;
+                .map_err(|e| {
+                    NodeManagerError::SecurityError(format!("Failed to read identity file: {e}"))
+                })?;
 
-            let identity: NodeIdentity = serde_json::from_str(&content)
-                .map_err(|e| NodeManagerError::SecurityError(format!("Invalid identity file: {e}")))?;
+            let identity: NodeIdentity = serde_json::from_str(&content).map_err(|e| {
+                NodeManagerError::SecurityError(format!("Invalid identity file: {e}"))
+            })?;
 
             let secret_bytes = base64::engine::general_purpose::STANDARD
                 .decode(&identity.private_key)
-                .map_err(|e| NodeManagerError::SecurityError(format!("Invalid private key encoding: {e}")))?;
+                .map_err(|e| {
+                    NodeManagerError::SecurityError(format!("Invalid private key encoding: {e}"))
+                })?;
 
             Ed25519KeyPair::from_secret_key(&secret_bytes)
                 .map_err(|e| NodeManagerError::SecurityError(e.to_string()))
@@ -239,14 +242,21 @@ impl NodeManager {
             // Ensure directory exists
             tokio::fs::create_dir_all(&identity_dir)
                 .await
-                .map_err(|e| NodeManagerError::SecurityError(format!("Failed to create identity directory: {e}")))?;
+                .map_err(|e| {
+                    NodeManagerError::SecurityError(format!(
+                        "Failed to create identity directory: {e}"
+                    ))
+                })?;
 
             // Write the identity file
-            let content = serde_json::to_string_pretty(&identity)
-                .map_err(|e| NodeManagerError::SecurityError(format!("Failed to serialize identity: {e}")))?;
+            let content = serde_json::to_string_pretty(&identity).map_err(|e| {
+                NodeManagerError::SecurityError(format!("Failed to serialize identity: {e}"))
+            })?;
             tokio::fs::write(&identity_path, &content)
                 .await
-                .map_err(|e| NodeManagerError::SecurityError(format!("Failed to write identity file: {e}")))?;
+                .map_err(|e| {
+                    NodeManagerError::SecurityError(format!("Failed to write identity file: {e}"))
+                })?;
 
             // Restrict permissions to owner-only (Unix)
             #[cfg(unix)]
@@ -254,7 +264,9 @@ impl NodeManager {
                 use std::os::unix::fs::PermissionsExt;
                 let perms = std::fs::Permissions::from_mode(0o600);
                 std::fs::set_permissions(&identity_path, perms).map_err(|e| {
-                    NodeManagerError::SecurityError(format!("Failed to set identity file permissions: {e}"))
+                    NodeManagerError::SecurityError(format!(
+                        "Failed to set identity file permissions: {e}"
+                    ))
                 })?;
             }
 

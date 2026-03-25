@@ -4,8 +4,8 @@
 
 use crate::fold_node::node::FoldNode;
 use crate::fold_node::OperationProcessor;
-use crate::handlers::response::{ApiResponse, HandlerResult, IntoHandlerError};
 use crate::handlers::handler_response;
+use crate::handlers::response::{ApiResponse, HandlerResult, IntoHandlerError};
 
 handler_response! {
     pub struct SystemStatusResponse {
@@ -60,7 +60,9 @@ pub async fn get_indexing_status(
         .handler_err("get indexing status")?;
     let status_json = serde_json::to_value(&status).handler_err("serialize indexing status")?;
     Ok(ApiResponse::success_with_user(
-        IndexingStatusResponse { status: status_json },
+        IndexingStatusResponse {
+            status: status_json,
+        },
         user_hash,
     ))
 }

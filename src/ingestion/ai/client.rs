@@ -1,11 +1,13 @@
 //! Unified AI backend abstraction for Anthropic and Ollama.
 
-use crate::ingestion::config::{AIProvider, AnthropicConfig, IngestionConfig, OllamaConfig, OllamaGenerationParams};
+use crate::ingestion::config::{
+    AIProvider, AnthropicConfig, IngestionConfig, OllamaConfig, OllamaGenerationParams,
+};
 use crate::ingestion::{IngestionError, IngestionResult};
+use async_trait::async_trait;
 use fold_db::llm_registry::models;
 use fold_db::log_feature;
 use fold_db::logging::features::LogFeature;
-use async_trait::async_trait;
 use reqwest::Client;
 use serde::{Deserialize, Serialize};
 use std::sync::Arc;
@@ -32,7 +34,9 @@ async fn check_error_response(
         .await
         .unwrap_or_else(|_| "Unknown error".to_string());
     Err(crate::ingestion::error::classify_llm_error(
-        provider, status, &error_text,
+        provider,
+        status,
+        &error_text,
     ))
 }
 
@@ -67,15 +71,25 @@ pub struct OllamaBackend {
 }
 
 impl OllamaBackend {
-    pub fn new(config: OllamaConfig, timeout_seconds: u64, max_retries: u32) -> IngestionResult<Self> {
+    pub fn new(
+        config: OllamaConfig,
+        timeout_seconds: u64,
+        max_retries: u32,
+    ) -> IngestionResult<Self> {
         config.validate()?;
         let client = build_http_client(timeout_seconds).map_err(IngestionError::ollama_error)?;
-        Ok(Self { client, config, max_retries })
+        Ok(Self {
+            client,
+            config,
+            max_retries,
+        })
     }
 
     async fn make_request(&self, request: &OllamaRequest) -> IngestionResult<String> {
         let url = format!("{}/api/generate", self.config.base_url);
-        let response = self.client.post(&url)
+        let response = self
+            .client
+            .post(&url)
             .header("Content-Type", "application/json")
             .json(request)
             .send()
@@ -102,7 +116,8 @@ impl AiBackend for OllamaBackend {
             self.max_retries,
             || IngestionError::ollama_error("All API attempts failed"),
             || self.make_request(&request),
-        ).await
+        )
+        .await
     }
 }
 
@@ -146,15 +161,26 @@ pub struct AnthropicBackend {
 }
 
 impl AnthropicBackend {
-    pub fn new(config: AnthropicConfig, timeout_seconds: u64, max_retries: u32) -> IngestionResult<Self> {
+    pub fn new(
+        config: AnthropicConfig,
+        timeout_seconds: u64,
+        max_retries: u32,
+    ) -> IngestionResult<Self> {
         config.validate()?;
-        let client = build_http_client(timeout_seconds).map_err(IngestionError::configuration_error)?;
-        Ok(Self { client, config, max_retries })
+        let client =
+            build_http_client(timeout_seconds).map_err(IngestionError::configuration_error)?;
+        Ok(Self {
+            client,
+            config,
+            max_retries,
+        })
     }
 
     async fn make_request(&self, request: &AnthropicRequest) -> IngestionResult<String> {
         let url = format!("{}/v1/messages", self.config.base_url);
-        let response = self.client.post(&url)
+        let response = self
+            .client
+            .post(&url)
             .header("x-api-key", &self.config.api_key)
             .header("anthropic-version", models::ANTHROPIC_API_VERSION)
             .header("Content-Type", "application/json")
@@ -167,13 +193,17 @@ impl AnthropicBackend {
         let resp: AnthropicResponse = response.json().await?;
         if let Some(usage) = &resp.usage {
             log_feature!(
-                LogFeature::Ingestion, info,
+                LogFeature::Ingestion,
+                info,
                 "Anthropic usage - input: {:?}, output: {:?}",
-                usage.input_tokens, usage.output_tokens
+                usage.input_tokens,
+                usage.output_tokens
             );
         }
         if resp.content.is_empty() {
-            return Err(IngestionError::configuration_error("No content in Anthropic API response"));
+            return Err(IngestionError::configuration_error(
+                "No content in Anthropic API response",
+            ));
         }
         Ok(resp.content[0].text.clone())
     }
@@ -184,7 +214,10 @@ impl AiBackend for AnthropicBackend {
     async fn call(&self, prompt: &str) -> IngestionResult<String> {
         let request = AnthropicRequest {
             model: self.config.model.clone(),
-            messages: vec![AnthropicMessage { role: "user".to_string(), content: prompt.to_string() }],
+            messages: vec![AnthropicMessage {
+                role: "user".to_string(),
+                content: prompt.to_string(),
+            }],
             max_tokens: models::MAX_TOKENS_ANALYSIS,
             temperature: Some(models::TEMPERATURE_FOCUSED),
         };
@@ -193,7 +226,8 @@ impl AiBackend for AnthropicBackend {
             self.max_retries,
             || IngestionError::configuration_error("All Anthropic API attempts failed"),
             || self.make_request(&request),
-        ).await
+        )
+        .await
     }
 }
 
@@ -219,12 +253,22 @@ pub fn build_backend(config: &IngestionConfig) -> (Option<Arc<dyn AiBackend>>, O
     }
 
     match config.provider {
-        AIProvider::Ollama => try_init("Ollama", OllamaBackend::new(
-            config.ollama.clone(), config.timeout_seconds, config.max_retries,
-        )),
-        AIProvider::Anthropic => try_init("Anthropic", AnthropicBackend::new(
-            config.anthropic.clone(), config.timeout_seconds, config.max_retries,
-        )),
+        AIProvider::Ollama => try_init(
+            "Ollama",
+            OllamaBackend::new(
+                config.ollama.clone(),
+                config.timeout_seconds,
+                config.max_retries,
+            ),
+        ),
+        AIProvider::Anthropic => try_init(
+            "Anthropic",
+            AnthropicBackend::new(
+                config.anthropic.clone(),
+                config.timeout_seconds,
+                config.max_retries,
+            ),
+        ),
     }
 }
 

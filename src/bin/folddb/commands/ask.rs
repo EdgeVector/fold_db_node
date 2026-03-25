@@ -27,8 +27,5 @@ pub async fn run(
     }
 
     let (answer, tool_calls) = result?;
-    Ok(CommandOutput::AskAnswer {
-        answer,
-        tool_calls,
-    })
+    Ok(CommandOutput::AskAnswer { answer, tool_calls })
 }

@@ -57,8 +57,8 @@ fn default_config_dir(demo: bool) -> PathBuf {
 
 /// Check if a user-provided or env-var config file exists.
 fn config_file_exists() -> bool {
-    let path = std::env::var("NODE_CONFIG")
-        .unwrap_or_else(|_| "config/node_config.json".to_string());
+    let path =
+        std::env::var("NODE_CONFIG").unwrap_or_else(|_| "config/node_config.json".to_string());
     std::path::Path::new(&path).exists()
 }
 
@@ -114,7 +114,11 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         // Let ingestion config saves go to ~/.folddb/config
         std::env::set_var("FOLD_CONFIG_DIR", &config_path);
 
-        let label = if demo { "FoldDB Server [DEMO]" } else { "FoldDB Server" };
+        let label = if demo {
+            "FoldDB Server [DEMO]"
+        } else {
+            "FoldDB Server"
+        };
         println!("{}", label);
         println!("  Data:   {}", data_path.display());
         println!("  Config: {}", config_path.display());
@@ -202,10 +206,7 @@ mod tests {
     #[test]
     fn with_data_dir() {
         let cli = Cli::parse_from(["test", "--data-dir", "/tmp/folddb"]);
-        assert_eq!(
-            cli.data_dir,
-            Some(std::path::PathBuf::from("/tmp/folddb"))
-        );
+        assert_eq!(cli.data_dir, Some(std::path::PathBuf::from("/tmp/folddb")));
     }
 
     #[test]

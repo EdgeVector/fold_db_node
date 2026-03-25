@@ -3,19 +3,19 @@
 use crate::ingestion::ingestion_service::IngestionService;
 use crate::ingestion::IngestionRequest;
 use crate::ingestion::ProgressTracker;
-use fold_db::log_feature;
-use fold_db::logging::features::LogFeature;
 use crate::server::http_server::AppState;
 use crate::server::routes::{handler_error_to_response, require_user_context};
 use actix_web::{web, HttpResponse, Responder};
+use fold_db::log_feature;
+use fold_db::logging::features::LogFeature;
 use serde_json::json;
 use std::sync::Arc;
 
 // Re-export from sibling modules so external callers (http_server.rs) can still
 // reference everything through `crate::ingestion::routes::*`.
-pub use super::smart_folder::routes::*;
-pub use super::routes_helpers::*;
 pub use super::routes_batch::*;
+pub use super::routes_helpers::*;
+pub use super::smart_folder::routes::*;
 
 /// Process JSON ingestion request
 #[utoipa::path(
@@ -37,10 +37,11 @@ pub async fn process_json(
         "Received JSON ingestion request"
     );
 
-    let (user_id, node_arc, service) = match require_ingestion_context(&state, &ingestion_service).await {
-        Ok(ctx) => ctx,
-        Err(response) => return response,
-    };
+    let (user_id, node_arc, service) =
+        match require_ingestion_context(&state, &ingestion_service).await {
+            Ok(ctx) => ctx,
+            Err(response) => return response,
+        };
 
     // Lock briefly — handler clones the node and spawns a background task
     let node = node_arc.read().await;
@@ -66,9 +67,7 @@ pub async fn process_json(
     tag = "ingestion",
     responses((status = 200, description = "Ingestion status", body = crate::ingestion::IngestionStatus))
 )]
-pub async fn get_status(
-    ingestion_service: web::Data<IngestionServiceState>,
-) -> impl Responder {
+pub async fn get_status(ingestion_service: web::Data<IngestionServiceState>) -> impl Responder {
     log_feature!(
         LogFeature::Ingestion,
         debug,

@@ -1,8 +1,8 @@
+use fold_db::schema::types::key_value::KeyValue;
+use fold_db::MutationType;
 use fold_db_node::fold_node::config::NodeConfig;
 use fold_db_node::fold_node::FoldNode;
 use fold_db_node::fold_node::OperationProcessor;
-use fold_db::schema::types::key_value::KeyValue;
-use fold_db::MutationType;
 use serde_json::json;
 use std::collections::HashMap;
 use tempfile::TempDir;
@@ -13,7 +13,9 @@ async fn setup_node() -> (FoldNode, TempDir) {
     let config = NodeConfig::new(temp_dir.path().to_str().unwrap().into())
         .with_schema_service_url("test://mock")
         .with_identity(&keypair.public_key_base64(), &keypair.secret_key_base64());
-    let node = FoldNode::new(config).await.expect("Failed to create FoldNode");
+    let node = FoldNode::new(config)
+        .await
+        .expect("Failed to create FoldNode");
     (node, temp_dir)
 }
 
@@ -258,7 +260,10 @@ async fn test_search_spans_multiple_schemas() {
     msg_fields.insert("conversation_id".to_string(), json!("conv-1"));
     msg_fields.insert("sender_id".to_string(), json!("alice"));
     msg_fields.insert("recipient_id".to_string(), json!("bob"));
-    msg_fields.insert("content".to_string(), json!("Excited about quantum computing research!"));
+    msg_fields.insert(
+        "content".to_string(),
+        json!("Excited about quantum computing research!"),
+    );
     msg_fields.insert("sent_at".to_string(), json!("2024-01-02T10:00:00Z"));
     msg_fields.insert("read_at".to_string(), json!(""));
     msg_fields.insert("message_type".to_string(), json!("text"));
@@ -267,7 +272,10 @@ async fn test_search_spans_multiple_schemas() {
         .execute_mutation(
             "Message".to_string(),
             msg_fields,
-            KeyValue::new(Some("conv-1".to_string()), Some("2024-01-02T10:00:00Z".to_string())),
+            KeyValue::new(
+                Some("conv-1".to_string()),
+                Some("2024-01-02T10:00:00Z".to_string()),
+            ),
             MutationType::Create,
         )
         .await

@@ -30,9 +30,7 @@ pub fn render(output: &CommandOutput) {
             );
         }
 
-        CommandOutput::SchemaApproved {
-            name,
-        } => {
+        CommandOutput::SchemaApproved { name } => {
             println!(
                 "{} Schema '{}' approved",
                 style("\u{2713}").green().bold(),

@@ -32,10 +32,7 @@ mod tests {
         let keypair = fold_db::security::Ed25519KeyPair::generate().unwrap();
         let config = NodeConfig::new(temp_db_path.into())
             .with_schema_service_url("test://mock")
-            .with_identity(
-                &keypair.public_key_base64(),
-                &keypair.secret_key_base64(),
-            );
+            .with_identity(&keypair.public_key_base64(), &keypair.secret_key_base64());
         let node = FoldNode::new(config)
             .await
             .expect("Failed to create FoldNode");
@@ -225,7 +222,10 @@ mod tests {
                 .map(|c| c > 0)
                 .unwrap_or(false)
         });
-        assert!(has_word_count, "At least one result should have a positive word_count");
+        assert!(
+            has_word_count,
+            "At least one result should have a positive word_count"
+        );
 
         // Verify content_preview is present
         let has_preview = results.iter().any(|r| {
@@ -235,7 +235,10 @@ mod tests {
                 .map(|s| !s.is_empty())
                 .unwrap_or(false)
         });
-        assert!(has_preview, "At least one result should have a non-empty content_preview");
+        assert!(
+            has_preview,
+            "At least one result should have a non-empty content_preview"
+        );
     }
 
     /// Verify the tool rejects params with missing required fields.
@@ -356,8 +359,20 @@ mod tests {
         load_schema(&node, "BlogPost.json").await;
         let processor = OperationProcessor::new(node);
 
-        insert_blog_post(&processor, "Rust 101", "Learn Rust from scratch", "2024-01-01").await;
-        insert_blog_post(&processor, "WASM Guide", "WebAssembly introduction", "2024-02-01").await;
+        insert_blog_post(
+            &processor,
+            "Rust 101",
+            "Learn Rust from scratch",
+            "2024-01-01",
+        )
+        .await;
+        insert_blog_post(
+            &processor,
+            "WASM Guide",
+            "WebAssembly introduction",
+            "2024-02-01",
+        )
+        .await;
 
         // View that combines title + author into a single summary string
         let tool_params = json!({
@@ -397,12 +412,16 @@ mod tests {
 
         // Verify summaries contain expected content
         assert!(
-            summaries.iter().any(|s| s.contains("Rust 101") && s.contains("TestAuthor")),
+            summaries
+                .iter()
+                .any(|s| s.contains("Rust 101") && s.contains("TestAuthor")),
             "Should have Rust 101 summary, got: {:?}",
             summaries
         );
         assert!(
-            summaries.iter().any(|s| s.contains("WASM Guide") && s.contains("words")),
+            summaries
+                .iter()
+                .any(|s| s.contains("WASM Guide") && s.contains("words")),
             "Should have WASM Guide summary with word count, got: {:?}",
             summaries
         );

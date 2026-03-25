@@ -62,10 +62,11 @@ pub async fn batch_folder_ingest(
     );
 
     // Extract user, node, and ingestion service up front
-    let (user_id, node_arc, service) = match require_ingestion_context(&state, &ingestion_service).await {
-        Ok(ctx) => ctx,
-        Err(response) => return response,
-    };
+    let (user_id, node_arc, service) =
+        match require_ingestion_context(&state, &ingestion_service).await {
+            Ok(ctx) => ctx,
+            Err(response) => return response,
+        };
 
     // Resolve folder path - support both absolute and relative paths
     let folder_path = resolve_folder_path(&request.folder_path);
@@ -230,8 +231,8 @@ pub async fn cancel_batch(
 
 #[cfg(test)]
 mod tests {
-    use super::*;
     use super::super::routes_helpers::FileProgressInfo;
+    use super::*;
 
     #[tokio::test]
     async fn test_batch_folder_request_serialization() {

@@ -13,7 +13,7 @@ use crate::ingestion::ai::client::{build_backend, AiBackend};
 use crate::ingestion::config::AIProvider;
 use crate::ingestion::decomposer;
 use crate::ingestion::progress::{
-    IngestionPhase, IngestionResults, ProgressService, SchemaWriteRecord, PhaseTracker,
+    IngestionPhase, IngestionResults, PhaseTracker, ProgressService, SchemaWriteRecord,
 };
 use crate::ingestion::IngestionRequest;
 use crate::ingestion::{
@@ -25,7 +25,7 @@ use fold_db::logging::features::LogFeature;
 use fold_db::schema::types::{KeyValue, Mutation};
 use fold_db::schema::SchemaCore;
 use serde_json::Value;
-use sha2::{Sha256, Digest};
+use sha2::{Digest, Sha256};
 use std::collections::HashMap;
 use std::sync::Arc;
 
@@ -71,8 +71,12 @@ pub(crate) fn apply_image_schema_override(
             }
             schema_def["fields"] = serde_json::json!(field_names);
         }
-        if let Some(fc) = schema_def.get_mut("field_classifications").and_then(|f| f.as_object_mut()) {
-            fc.entry("source_file_name").or_insert_with(|| serde_json::json!(["word"]));
+        if let Some(fc) = schema_def
+            .get_mut("field_classifications")
+            .and_then(|f| f.as_object_mut())
+        {
+            fc.entry("source_file_name")
+                .or_insert_with(|| serde_json::json!(["word"]));
         }
         if let Some(desc) = descriptive_name {
             schema_def["descriptive_name"] = serde_json::json!(desc);
@@ -163,12 +167,25 @@ impl IngestionService {
         }
 
         // Phase 1: Validate input
-        tracker.enter_phase(IngestionPhase::Validating, "Validating input data...".to_string()).await;
+        tracker
+            .enter_phase(
+                IngestionPhase::Validating,
+                "Validating input data...".to_string(),
+            )
+            .await;
         self.validate_input(&request.data)?;
 
         // Phase 2: Flatten data structure for AI analysis
-        tracker.enter_phase(IngestionPhase::Flattening, "Processing and flattening data structure...".to_string()).await;
-        let mut flattened_data = crate::ingestion::file_handling::json_processor::flatten_root_layers(request.data.clone());
+        tracker
+            .enter_phase(
+                IngestionPhase::Flattening,
+                "Processing and flattening data structure...".to_string(),
+            )
+            .await;
+        let mut flattened_data =
+            crate::ingestion::file_handling::json_processor::flatten_root_layers(
+                request.data.clone(),
+            );
 
         // Enrich text-file JSON with source path context so the AI can propose
         // semantic schema names (e.g., "recipes" instead of "document_content").
@@ -182,14 +199,25 @@ impl IngestionService {
         let has_nested_children = self.check_has_nested_children(&flattened_data);
 
         // Phases 3-6: Delegate to path-specific handler
-        let (schema_name, new_schema_created, mutations_generated, mutations_executed, schemas_written) =
-            if has_nested_children {
-                tracker.enter_phase(IngestionPhase::AIRecommendation,
-                    "Decomposing nested data structures...".to_string()).await;
-                self.process_decomposed_path(&flattened_data, &request, node, &tracker).await?
-            } else {
-                self.process_flat_path(&flattened_data, &request, node, &mut tracker).await?
-            };
+        let (
+            schema_name,
+            new_schema_created,
+            mutations_generated,
+            mutations_executed,
+            schemas_written,
+        ) = if has_nested_children {
+            tracker
+                .enter_phase(
+                    IngestionPhase::AIRecommendation,
+                    "Decomposing nested data structures...".to_string(),
+                )
+                .await;
+            self.process_decomposed_path(&flattened_data, &request, node, &tracker)
+                .await?
+        } else {
+            self.process_flat_path(&flattened_data, &request, node, &mut tracker)
+                .await?
+        };
 
         // Finalize: record file dedup + complete progress
         self.record_file_ingested(&request, node).await;
@@ -258,12 +286,18 @@ impl IngestionService {
         } else {
             Some(flattened_data.clone())
         };
-        let rep = representative.as_ref()
+        let rep = representative
+            .as_ref()
             .expect("representative is Some when has_nested_children is true");
         let top_level_hash = crate::ingestion::decomposer::compute_structure_hash(rep);
 
         // AI proposal collection (part of the AIRecommendation phase, already entered by caller)
-        tracker.sub_progress(0.5, "Collecting AI proposals for nested structures...".to_string()).await;
+        tracker
+            .sub_progress(
+                0.5,
+                "Collecting AI proposals for nested structures...".to_string(),
+            )
+            .await;
         let mut proposals: HashMap<String, AiProposal> = HashMap::new();
         self.collect_ai_proposals_recursive(
             &top_level_hash,
@@ -276,12 +310,16 @@ impl IngestionService {
         .await?;
 
         // Schema resolution phase: batch check reuse then resolve
-        tracker.sub_progress(1.0, "Batch-checking schema reuse...".to_string()).await;
+        tracker
+            .sub_progress(1.0, "Batch-checking schema reuse...".to_string())
+            .await;
         let entries: Vec<SchemaLookupEntry> = proposals
             .values()
             .filter_map(|p| extract_lookup_entry(&p.ai_response))
             .collect();
-        let batch_result = node.batch_check_schema_reuse(&entries).await
+        let batch_result = node
+            .batch_check_schema_reuse(&entries)
+            .await
             .unwrap_or_else(|e| {
                 log_feature!(
                     LogFeature::Ingestion,
@@ -334,8 +372,12 @@ impl IngestionService {
             // Report progress at the item level
             if items.len() > 1 {
                 let fraction = (idx + 1) as f32 / items.len() as f32;
-                tracker.sub_progress(fraction,
-                    format!("Processing item {}/{}", idx + 1, items.len())).await;
+                tracker
+                    .sub_progress(
+                        fraction,
+                        format!("Processing item {}/{}", idx + 1, items.len()),
+                    )
+                    .await;
             }
         }
 
@@ -344,13 +386,24 @@ impl IngestionService {
             .get(&top_level_hash)
             .map(|c| c.schema_name)
             .unwrap_or_else(|| {
-                log_feature!(LogFeature::Ingestion, warn, "Schema cache miss for top-level hash '{}' — returning empty schema name", top_level_hash);
+                log_feature!(
+                    LogFeature::Ingestion,
+                    warn,
+                    "Schema cache miss for top-level hash '{}' — returning empty schema name",
+                    top_level_hash
+                );
                 String::new()
             });
 
         let schemas_written = schemas_written_from_map(schemas_written_map);
 
-        Ok((top_schema_name, true, total_mutations_generated, total_mutations_executed, schemas_written))
+        Ok((
+            top_schema_name,
+            true,
+            total_mutations_generated,
+            total_mutations_executed,
+            schemas_written,
+        ))
     }
 
     /// Builds metadata HashMap from file_hash and progress_id for mutations.
@@ -367,11 +420,7 @@ impl IngestionService {
     }
 
     /// Records a file as ingested for per-user file-level dedup.
-    async fn record_file_ingested(
-        &self,
-        request: &IngestionRequest,
-        node: &FoldNode,
-    ) {
+    async fn record_file_ingested(&self, request: &IngestionRequest, node: &FoldNode) {
         if let Some(ref fh) = request.file_hash {
             let record = FileIngestionRecord {
                 ingested_at: chrono::Utc::now().to_rfc3339(),
@@ -380,7 +429,12 @@ impl IngestionService {
                 progress_id: request.progress_id.clone(),
             };
             if let Err(e) = node.mark_file_ingested(&request.pub_key, fh, record).await {
-                log_feature!(LogFeature::Ingestion, warn, "Failed to record file dedup entry: {}", e);
+                log_feature!(
+                    LogFeature::Ingestion,
+                    warn,
+                    "Failed to record file dedup entry: {}",
+                    e
+                );
             }
         }
     }
@@ -494,10 +548,14 @@ fn enrich_with_source_context(data: &mut Value, source_file_name: Option<&str>) 
             return;
         }
         // Update source_file to include the full path
-        obj.insert("source_file".to_string(), Value::String(source_path.to_string()));
+        obj.insert(
+            "source_file".to_string(),
+            Value::String(source_path.to_string()),
+        );
         // Add category hint from the directory name
         if let Some(ref cat) = category {
-            obj.entry("category").or_insert_with(|| Value::String(cat.clone()));
+            obj.entry("category")
+                .or_insert_with(|| Value::String(cat.clone()));
         }
     };
 
@@ -524,7 +582,11 @@ fn extract_lookup_entry(ai_response: &AISchemaResponse) -> Option<SchemaLookupEn
     let fields: Vec<String> = schema_def
         .get("fields")
         .and_then(|v| v.as_array())
-        .map(|arr| arr.iter().filter_map(|v| v.as_str().map(|s| s.to_string())).collect())
+        .map(|arr| {
+            arr.iter()
+                .filter_map(|v| v.as_str().map(|s| s.to_string()))
+                .collect()
+        })
         .or_else(|| {
             schema_def
                 .get("field_classifications")
@@ -623,6 +685,9 @@ fn inject_content_hashes(data: &mut Value) {
 /// Convert a `HashMap<schema_name, keys>` into `Vec<SchemaWriteRecord>`.
 fn schemas_written_from_map(map: HashMap<String, Vec<KeyValue>>) -> Vec<SchemaWriteRecord> {
     map.into_iter()
-        .map(|(name, keys)| SchemaWriteRecord { schema_name: name, keys_written: keys })
+        .map(|(name, keys)| SchemaWriteRecord {
+            schema_name: name,
+            keys_written: keys,
+        })
         .collect()
 }

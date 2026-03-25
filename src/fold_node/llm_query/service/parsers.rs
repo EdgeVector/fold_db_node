@@ -27,7 +27,10 @@ impl LlmQueryService {
         }
 
         let parsed: LlmResponse = serde_json::from_str(json_str).map_err(|e| {
-            format!("Failed to parse LLM response: {}. Response: {}", e, json_str)
+            format!(
+                "Failed to parse LLM response: {}. Response: {}",
+                e, json_str
+            )
         })?;
 
         Ok(QueryPlan {
@@ -37,7 +40,10 @@ impl LlmQueryService {
     }
 
     /// Parse the followup analysis response
-    pub(super) fn parse_followup_analysis(&self, response: &str) -> Result<FollowupAnalysis, String> {
+    pub(super) fn parse_followup_analysis(
+        &self,
+        response: &str,
+    ) -> Result<FollowupAnalysis, String> {
         let json_str = extract_json_delimited(response, '{', '}');
 
         #[derive(serde::Deserialize)]
@@ -48,7 +54,10 @@ impl LlmQueryService {
         }
 
         let parsed: LlmFollowupResponse = serde_json::from_str(json_str).map_err(|e| {
-            format!("Failed to parse followup analysis: {}. Response: {}", e, json_str)
+            format!(
+                "Failed to parse followup analysis: {}. Response: {}",
+                e, json_str
+            )
         })?;
 
         Ok(FollowupAnalysis {
@@ -73,7 +82,10 @@ impl LlmQueryService {
     }
 
     /// Parse alternative query response
-    pub(super) fn parse_alternative_query(&self, response: &str) -> Result<Option<QueryPlan>, String> {
+    pub(super) fn parse_alternative_query(
+        &self,
+        response: &str,
+    ) -> Result<Option<QueryPlan>, String> {
         let json_str = extract_json_delimited(response, '{', '}');
 
         #[derive(serde::Deserialize)]
@@ -84,7 +96,10 @@ impl LlmQueryService {
         }
 
         let parsed: LlmAlternativeResponse = serde_json::from_str(json_str).map_err(|e| {
-            format!("Failed to parse alternative query: {}. Response: {}", e, json_str)
+            format!(
+                "Failed to parse alternative query: {}. Response: {}",
+                e, json_str
+            )
         })?;
 
         if parsed.has_alternative {
@@ -158,7 +173,10 @@ impl LlmQueryService {
 
         // Check if it's a tool call
         if let Some(tool) = parsed.get("tool").and_then(|t| t.as_str()) {
-            let params = parsed.get("params").cloned().unwrap_or(Value::Object(serde_json::Map::new()));
+            let params = parsed
+                .get("params")
+                .cloned()
+                .unwrap_or(Value::Object(serde_json::Map::new()));
             return Ok(AgentAction::ToolCall {
                 tool: tool.to_string(),
                 params,
@@ -198,6 +216,9 @@ impl LlmQueryService {
             });
         }
 
-        Err(format!("Agent response must contain either 'tool' or 'answer' field. Got: {}", json_str))
+        Err(format!(
+            "Agent response must contain either 'tool' or 'answer' field. Got: {}",
+            json_str
+        ))
     }
 }

@@ -33,7 +33,9 @@ pub const IMAGE_EXTENSIONS: &[&str] = &[
 /// Returns `true` when `filename` ends with a known image extension (case-insensitive).
 pub fn is_image_file(filename: &str) -> bool {
     let lower = filename.to_lowercase();
-    IMAGE_EXTENSIONS.iter().any(|ext| lower.ends_with(&format!(".{}", ext)))
+    IMAGE_EXTENSIONS
+        .iter()
+        .any(|ext| lower.ends_with(&format!(".{}", ext)))
 }
 
 // Public re-exports
@@ -138,7 +140,10 @@ impl IngestionResponse {
 
     /// Create a failed ingestion response
     pub fn failure(errors: Vec<String>) -> Self {
-        Self { errors, ..Default::default() }
+        Self {
+            errors,
+            ..Default::default()
+        }
     }
 }
 
@@ -156,4 +161,3 @@ pub struct IngestionStatus {
     /// Whether mutations are auto-executed by default
     pub auto_execute_mutations: bool,
 }
-

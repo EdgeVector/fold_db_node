@@ -18,14 +18,13 @@ use fold_db::schema::types::{Schema, SchemaType};
 use fold_db_node::fold_node::node::FoldNode;
 use fold_db_node::fold_node::OperationProcessor;
 use fold_db_node::schema_service::server::{
-    AddSchemaResponse, ErrorResponse, SchemaAddOutcome, SchemaServiceState,
-    SchemasListResponse,
+    AddSchemaResponse, ErrorResponse, SchemaAddOutcome, SchemaServiceState, SchemasListResponse,
 };
 mod common;
 
 use actix_web::{web, App, HttpResponse, HttpServer};
-use fold_db::schema::SchemaState;
 use fold_db::schema::types::KeyConfig;
+use fold_db::schema::SchemaState;
 use serde::Deserialize;
 use std::collections::HashMap;
 use std::net::TcpListener;
@@ -178,8 +177,12 @@ fn build_schema(
     schema.descriptive_name = Some(descriptive_name.to_string());
     schema.field_classifications = field_classifications;
     for f in schema.fields.clone().unwrap_or_default() {
-        schema.field_descriptions.insert(f.clone(), format!("{} field", f));
-        schema.field_data_classifications.insert(f.clone(), DataClassification::new(0, "general").unwrap());
+        schema
+            .field_descriptions
+            .insert(f.clone(), format!("{} field", f));
+        schema
+            .field_data_classifications
+            .insert(f.clone(), DataClassification::new(0, "general").unwrap());
     }
     schema.compute_identity_hash();
     schema.name = schema.get_identity_hash().unwrap().clone();
@@ -207,9 +210,10 @@ async fn test_schema_expansion_on_fresh_db() {
 
     // --- Phase 1: Create Schema A and write data ---
     let temp_dir_1 = TempDir::new().unwrap();
-    let config_1 = fold_db_node::fold_node::config::NodeConfig::new(temp_dir_1.path().to_path_buf())
-        .with_identity(&user_id, &keypair.secret_key_base64())
-        .with_schema_service_url(&schema_url);
+    let config_1 =
+        fold_db_node::fold_node::config::NodeConfig::new(temp_dir_1.path().to_path_buf())
+            .with_identity(&user_id, &keypair.secret_key_base64())
+            .with_schema_service_url(&schema_url);
     let node_1 = FoldNode::new(config_1).await.unwrap();
 
     // Schema A: 3 fields
@@ -266,9 +270,10 @@ async fn test_schema_expansion_on_fresh_db() {
 
     // --- Phase 2: Fresh DB, submit superset schema B ---
     let temp_dir_2 = TempDir::new().unwrap();
-    let config_2 = fold_db_node::fold_node::config::NodeConfig::new(temp_dir_2.path().to_path_buf())
-        .with_identity(&user_id, &keypair.secret_key_base64())
-        .with_schema_service_url(&schema_url);
+    let config_2 =
+        fold_db_node::fold_node::config::NodeConfig::new(temp_dir_2.path().to_path_buf())
+            .with_identity(&user_id, &keypair.secret_key_base64())
+            .with_schema_service_url(&schema_url);
     let node_2 = FoldNode::new(config_2).await.unwrap();
 
     // Verify Schema A is NOT loaded in this fresh DB
@@ -354,11 +359,19 @@ async fn test_schema_expansion_on_fresh_db() {
 
     eprintln!("Active schemas: {}", active_schemas.len());
     for s in &active_schemas {
-        eprintln!("  Active: {} fields={:?}", &s.schema.name[..16], s.schema.fields);
+        eprintln!(
+            "  Active: {} fields={:?}",
+            &s.schema.name[..16],
+            s.schema.fields
+        );
     }
     eprintln!("add_resp_b fields: {:?}", add_resp_b.schema.fields);
 
-    assert_eq!(active_schemas.len(), 1, "Should have exactly 1 active schema");
+    assert_eq!(
+        active_schemas.len(),
+        1,
+        "Should have exactly 1 active schema"
+    );
     assert_eq!(
         active_schemas[0].schema.name, add_resp_b.schema.name,
         "Active schema should be Schema B"
@@ -381,15 +394,27 @@ async fn test_schema_expansion_on_fresh_db() {
 
     // Verify Schema B has the new fields
     let b_fields = active_schemas[0].schema.fields.as_ref().unwrap();
-    assert!(b_fields.contains(&"medium".to_string()), "Should have new field 'medium'");
-    assert!(b_fields.contains(&"dimensions".to_string()), "Should have new field 'dimensions'");
-    assert!(b_fields.contains(&"title".to_string()), "Should have shared field 'title'");
+    assert!(
+        b_fields.contains(&"medium".to_string()),
+        "Should have new field 'medium'"
+    );
+    assert!(
+        b_fields.contains(&"dimensions".to_string()),
+        "Should have new field 'dimensions'"
+    );
+    assert!(
+        b_fields.contains(&"title".to_string()),
+        "Should have shared field 'title'"
+    );
 
     // Verify field_mappers exist for shared fields
     let b_field_mappers = &active_schemas[0].schema.field_mappers;
     eprintln!("Schema B field_mappers: {:?}", b_field_mappers);
     assert!(
-        b_field_mappers.as_ref().map(|m| !m.is_empty()).unwrap_or(false),
+        b_field_mappers
+            .as_ref()
+            .map(|m| !m.is_empty())
+            .unwrap_or(false),
         "Expanded schema should have field_mappers for shared fields"
     );
 
@@ -411,9 +436,10 @@ async fn test_expansion_without_old_schema_warns_but_succeeds() {
 
     // Create Schema A on the schema service
     let temp_dir_1 = TempDir::new().unwrap();
-    let config_1 = fold_db_node::fold_node::config::NodeConfig::new(temp_dir_1.path().to_path_buf())
-        .with_identity(&user_id, &keypair.secret_key_base64())
-        .with_schema_service_url(&schema_url);
+    let config_1 =
+        fold_db_node::fold_node::config::NodeConfig::new(temp_dir_1.path().to_path_buf())
+            .with_identity(&user_id, &keypair.secret_key_base64())
+            .with_schema_service_url(&schema_url);
     let node_1 = FoldNode::new(config_1).await.unwrap();
 
     let schema_a = build_schema(
@@ -426,9 +452,10 @@ async fn test_expansion_without_old_schema_warns_but_succeeds() {
 
     // Fresh DB — submit superset Schema B
     let temp_dir_2 = TempDir::new().unwrap();
-    let config_2 = fold_db_node::fold_node::config::NodeConfig::new(temp_dir_2.path().to_path_buf())
-        .with_identity(&user_id, &keypair.secret_key_base64())
-        .with_schema_service_url(&schema_url);
+    let config_2 =
+        fold_db_node::fold_node::config::NodeConfig::new(temp_dir_2.path().to_path_buf())
+            .with_identity(&user_id, &keypair.secret_key_base64())
+            .with_schema_service_url(&schema_url);
     let node_2 = FoldNode::new(config_2).await.unwrap();
 
     let schema_b = build_schema(
@@ -439,7 +466,10 @@ async fn test_expansion_without_old_schema_warns_but_succeeds() {
     );
 
     let add_resp = node_2.add_schema_to_service(&schema_b).await.unwrap();
-    assert!(add_resp.replaced_schema.is_some(), "Should trigger expansion");
+    assert!(
+        add_resp.replaced_schema.is_some(),
+        "Should trigger expansion"
+    );
 
     // Load Schema B WITHOUT loading old Schema A first (testing defense-in-depth)
     {

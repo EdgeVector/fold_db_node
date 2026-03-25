@@ -1,8 +1,8 @@
+use fold_db::schema::types::{Schema, SchemaType};
 /// Example demonstrating that HTTP client timeouts prevent indefinite hanging
 ///
 /// Run with: cargo run --example test_timeout
 use fold_db_node::fold_node::schema_client::SchemaServiceClient;
-use fold_db::schema::types::{Schema, SchemaType};
 use std::collections::HashMap;
 use std::time::Instant;
 
@@ -25,8 +25,12 @@ async fn main() {
     );
 
     // Add field classifications
-    schema.field_classifications.insert("id".to_string(), vec!["word".to_string()]);
-    schema.field_classifications.insert("name".to_string(), vec!["word".to_string()]);
+    schema
+        .field_classifications
+        .insert("id".to_string(), vec!["word".to_string()]);
+    schema
+        .field_classifications
+        .insert("name".to_string(), vec!["word".to_string()]);
 
     schema.compute_identity_hash();
 

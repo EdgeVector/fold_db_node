@@ -37,7 +37,9 @@ pub async fn run(
             } else {
                 None
             };
-            let result = processor.smart_folder_scan(path, *max_depth, *max_files).await;
+            let result = processor
+                .smart_folder_scan(path, *max_depth, *max_files)
+                .await;
             if let Some(ref pb) = sp {
                 spinner::finish_spinner(pb, "Scan complete");
             }
@@ -60,7 +62,8 @@ pub async fn run(
                 ))
             })?;
 
-            let files_to_ingest = resolve_files(path, *all, files.as_ref(), processor, mode).await?;
+            let files_to_ingest =
+                resolve_files(path, *all, files.as_ref(), processor, mode).await?;
 
             if files_to_ingest.is_empty() {
                 return Err(CliError::new("No files to ingest"));
@@ -182,6 +185,5 @@ fn read_json_from_file_or_stdin(file: Option<&PathBuf>) -> Result<Value, CliErro
             buf
         }
     };
-    serde_json::from_str(&content)
-        .map_err(|e| CliError::new(format!("Invalid JSON: {}", e)))
+    serde_json::from_str(&content).map_err(|e| CliError::new(format!("Invalid JSON: {}", e)))
 }

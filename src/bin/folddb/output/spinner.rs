@@ -7,8 +7,8 @@ pub fn new_spinner(message: &str) -> ProgressBar {
         ProgressStyle::with_template("{spinner:.cyan} {msg}")
             .unwrap()
             .tick_strings(&[
-                "\u{28fe}", "\u{28fd}", "\u{28fb}", "\u{28f7}", "\u{28ef}", "\u{28df}",
-                "\u{28bf}", "\u{287f}", "\u{28fe}",
+                "\u{28fe}", "\u{28fd}", "\u{28fb}", "\u{28f7}", "\u{28ef}", "\u{28df}", "\u{28bf}",
+                "\u{287f}", "\u{28fe}",
             ]),
     );
     pb.set_message(message.to_string());

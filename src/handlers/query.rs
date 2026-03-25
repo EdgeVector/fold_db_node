@@ -5,8 +5,10 @@
 
 use crate::fold_node::node::FoldNode;
 use crate::fold_node::OperationProcessor;
-use crate::handlers::response::{get_db_guard, ApiResponse, HandlerError, HandlerResult, IntoHandlerError};
 use crate::handlers::handler_response;
+use crate::handlers::response::{
+    get_db_guard, ApiResponse, HandlerError, HandlerResult, IntoHandlerError,
+};
 use fold_db::schema::types::operations::Query;
 use fold_db::storage::traits::TypedStore;
 use serde::{Deserialize, Serialize};
@@ -35,7 +37,10 @@ pub async fn execute_query(
 ) -> HandlerResult<QueryResponse> {
     let processor = OperationProcessor::new(node.clone());
 
-    let results = processor.execute_query_json(query).await.handler_err("execute query")?;
+    let results = processor
+        .execute_query_json(query)
+        .await
+        .handler_err("execute query")?;
     let results_json = serde_json::Value::Array(results);
 
     Ok(ApiResponse::success_with_user(
@@ -54,10 +59,15 @@ pub async fn native_index_search(
 ) -> HandlerResult<IndexSearchResponse> {
     let processor = OperationProcessor::new(node.clone());
 
-    let results = processor.native_index_search(query_string).await.handler_err("search native index")?;
+    let results = processor
+        .native_index_search(query_string)
+        .await
+        .handler_err("search native index")?;
     let results_json = serde_json::to_value(&results).handler_err("serialize search results")?;
     Ok(ApiResponse::success_with_user(
-        IndexSearchResponse { results: results_json },
+        IndexSearchResponse {
+            results: results_json,
+        },
         user_hash,
     ))
 }

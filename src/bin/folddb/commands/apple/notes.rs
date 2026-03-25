@@ -113,8 +113,10 @@ end tell"#
 }
 
 fn parse_notes_output(raw: &str) -> Result<Vec<Note>, CliError> {
-    let re = Regex::new(r"<<<NOTE_START>>>(.*?)<<<SEP>>>(.*?)<<<SEP>>>(.*?)<<<SEP>>>(.*?)<<<NOTE_END>>>")
-        .map_err(|e| CliError::new(format!("Regex error: {}", e)))?;
+    let re = Regex::new(
+        r"<<<NOTE_START>>>(.*?)<<<SEP>>>(.*?)<<<SEP>>>(.*?)<<<SEP>>>(.*?)<<<NOTE_END>>>",
+    )
+    .map_err(|e| CliError::new(format!("Regex error: {}", e)))?;
 
     let mut notes = Vec::new();
     for cap in re.captures_iter(raw) {
@@ -138,7 +140,10 @@ mod tests {
         let notes = parse_notes_output(raw).map_err(|e| e.to_string()).unwrap();
         assert_eq!(notes.len(), 1);
         assert_eq!(notes[0].title, "My Title");
-        assert_eq!(notes[0].body, "This is the body of the note with enough text");
+        assert_eq!(
+            notes[0].body,
+            "This is the body of the note with enough text"
+        );
         assert_eq!(notes[0].created_at, "2024-01-15 10:30:00");
         assert_eq!(notes[0].modified_at, "2024-01-16 14:00:00");
     }

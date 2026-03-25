@@ -71,8 +71,12 @@ async fn new_fields_without_classification_use_llm_or_error() {
         "fields": ["field_a", "field_b"],
     }))
     .unwrap();
-    schema.field_descriptions.insert("field_a".to_string(), "field a desc".to_string());
-    schema.field_descriptions.insert("field_b".to_string(), "field b desc".to_string());
+    schema
+        .field_descriptions
+        .insert("field_a".to_string(), "field a desc".to_string());
+    schema
+        .field_descriptions
+        .insert("field_b".to_string(), "field b desc".to_string());
 
     let result = state.add_schema(schema, HashMap::new()).await;
 
@@ -409,7 +413,8 @@ async fn field_rename_carries_classification() {
         .expect("should add second schema");
 
     match &outcome {
-        SchemaAddOutcome::Added(schema, mappers) | SchemaAddOutcome::Expanded(_, schema, mappers) => {
+        SchemaAddOutcome::Added(schema, mappers)
+        | SchemaAddOutcome::Expanded(_, schema, mappers) => {
             let fields = schema.fields.as_ref().expect("must have fields");
             // If canonicalization renamed "creator" → "artist"
             if fields.contains(&"artist".to_string()) && mappers.contains_key("creator") {
@@ -487,7 +492,11 @@ async fn legacy_canonical_field_loads_without_classification() {
 
     if let SchemaAddOutcome::Added(schema, _) = outcome {
         assert!(
-            schema.fields.as_ref().unwrap().contains(&"author".to_string()),
+            schema
+                .fields
+                .as_ref()
+                .unwrap()
+                .contains(&"author".to_string()),
             "'author' should be in fields"
         );
     }

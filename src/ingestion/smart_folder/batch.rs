@@ -6,11 +6,11 @@
 use crate::ingestion::batch_controller::{BatchControllerMap, BatchStatus, PendingFile};
 use crate::ingestion::ingestion_service::IngestionService;
 use crate::ingestion::progress::ProgressService;
-use crate::ingestion::ProgressTracker;
 use crate::ingestion::routes_helpers::process_single_file_via_smart_folder;
+use crate::ingestion::ProgressTracker;
+use actix_web::web;
 use fold_db::log_feature;
 use fold_db::logging::features::LogFeature;
-use actix_web::web;
 use std::sync::Arc;
 use tokio::sync::Notify;
 
@@ -27,10 +27,7 @@ enum PopResult {
 }
 
 /// Lock the controller briefly, check cancellation/empty/spend, pop a file.
-async fn try_pop_file(
-    map: &BatchControllerMap,
-    batch_id: &str,
-) -> PopResult {
+async fn try_pop_file(map: &BatchControllerMap, batch_id: &str) -> PopResult {
     let map_guard = map.lock().await;
     let ctrl_arc = match map_guard.get(batch_id) {
         Some(c) => c.clone(),
@@ -137,8 +134,8 @@ pub(crate) fn spawn_batch_coordinator(
     tokio::spawn(async move {
         let user_id_inner = user_id.clone();
         fold_db::logging::core::run_with_user(&user_id, async move {
-            let batch_user_id = fold_db::logging::core::get_current_user_id()
-                .unwrap_or(user_id_inner);
+            let batch_user_id =
+                fold_db::logging::core::get_current_user_id().unwrap_or(user_id_inner);
             let mut join_set = tokio::task::JoinSet::new();
             let mut all_popped = false;
 
@@ -155,29 +152,29 @@ pub(crate) fn spawn_batch_coordinator(
                             let task_uid = batch_user_id.clone();
                             join_set.spawn(async move {
                                 fold_db::logging::core::run_with_user(&task_uid, async move {
-                                let progress_service = ProgressService::new(tracker);
-                                let result = process_single_file_via_smart_folder(
-                                    &file.path,
-                                    &file.progress_id,
-                                    &progress_service,
-                                    &node_arc,
-                                    auto_execute,
-                                    &service,
-                                    &storage,
-                                    &enc_key,
-                                    force_reingest,
-                                )
-                                .await;
-                                (file, result)
-                                }).await
+                                    let progress_service = ProgressService::new(tracker);
+                                    let result = process_single_file_via_smart_folder(
+                                        &file.path,
+                                        &file.progress_id,
+                                        &progress_service,
+                                        &node_arc,
+                                        auto_execute,
+                                        &service,
+                                        &storage,
+                                        &enc_key,
+                                        force_reingest,
+                                    )
+                                    .await;
+                                    (file, result)
+                                })
+                                .await
                             });
                         }
                         PopResult::SpendLimitHit(notifier) => {
                             // If tasks are still in flight, let them finish
                             // before blocking on resume.
                             if join_set.is_empty() {
-                                let cancelled =
-                                    wait_for_resume(notifier, &map, &batch_id).await;
+                                let cancelled = wait_for_resume(notifier, &map, &batch_id).await;
                                 if cancelled {
                                     all_popped = true;
                                 }

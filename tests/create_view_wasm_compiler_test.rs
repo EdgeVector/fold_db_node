@@ -155,10 +155,7 @@ mod integration {
         let keypair = fold_db::security::Ed25519KeyPair::generate().unwrap();
         let config = NodeConfig::new(temp_db_path.into())
             .with_schema_service_url("test://mock")
-            .with_identity(
-                &keypair.public_key_base64(),
-                &keypair.secret_key_base64(),
-            );
+            .with_identity(&keypair.public_key_base64(), &keypair.secret_key_base64());
         let node = FoldNode::new(config)
             .await
             .expect("Failed to create FoldNode");
@@ -220,13 +217,7 @@ mod integration {
             "2024-01-01",
         )
         .await;
-        insert_blog_post(
-            &processor,
-            "Second Post",
-            "three words here",
-            "2024-02-01",
-        )
-        .await;
+        insert_blog_post(&processor, "Second Post", "three words here", "2024-02-01").await;
 
         // Compile Rust → WASM
         let rust_code = r#"
@@ -337,10 +328,7 @@ fn transform_impl(input: Value) -> Value {
             .await
             .expect("Should register view");
 
-        let query = Query::new(
-            "AuthoredPostView".to_string(),
-            vec!["summary".to_string()],
-        );
+        let query = Query::new("AuthoredPostView".to_string(), vec!["summary".to_string()]);
         let results = processor
             .execute_query_json(query)
             .await
@@ -370,8 +358,7 @@ fn transform_impl(input: Value) -> Value {
     serde_json::json!({ "fields": { "result": "constant" } })
 }
 "#;
-        let wasm_bytes = wasm_compiler::compile_rust_to_wasm(rust_code)
-            .expect("Should compile");
+        let wasm_bytes = wasm_compiler::compile_rust_to_wasm(rust_code).expect("Should compile");
 
         let view = TransformView::new(
             "ReadOnlyCompiledView",
@@ -435,8 +422,7 @@ fn transform_impl(input: Value) -> Value {
     serde_json::json!({ "records": records })
 }
 "#;
-        let wasm_bytes =
-            wasm_compiler::compile_rust_to_wasm(rust_code).expect("Should compile");
+        let wasm_bytes = wasm_compiler::compile_rust_to_wasm(rust_code).expect("Should compile");
 
         let view = TransformView::new(
             "LiveWordCount",
@@ -452,10 +438,7 @@ fn transform_impl(input: Value) -> Value {
         processor.create_view(view).await.expect("Should register");
 
         // First query
-        let query = Query::new(
-            "LiveWordCount".to_string(),
-            vec!["word_count".to_string()],
-        );
+        let query = Query::new("LiveWordCount".to_string(), vec!["word_count".to_string()]);
         let r1 = processor
             .execute_query_json(query.clone())
             .await

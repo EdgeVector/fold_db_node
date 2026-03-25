@@ -17,8 +17,7 @@ use fold_db_node::fold_node::node::FoldNode;
 use fold_db_node::fold_node::OperationProcessor;
 use fold_db_node::ingestion::IngestionConfig;
 use fold_db_node::schema_service::server::{
-    AddSchemaResponse, ErrorResponse, SchemaAddOutcome, SchemaServiceState,
-    SchemasListResponse,
+    AddSchemaResponse, ErrorResponse, SchemaAddOutcome, SchemaServiceState, SchemasListResponse,
 };
 mod common;
 
@@ -120,24 +119,20 @@ async fn spawn_local_schema_service() -> (String, actix_web::dev::ServerHandle, 
 
     let listener =
         TcpListener::bind(("127.0.0.1", 0)).expect("failed to bind schema service listener");
-    let bound_address = listener
-        .local_addr()
-        .expect("failed to read bound address");
+    let bound_address = listener.local_addr().expect("failed to read bound address");
 
     let state_clone = state_data.clone();
     let server = HttpServer::new(move || {
-        App::new()
-            .app_data(state_clone.clone())
-            .service(
-                web::scope("/api")
-                    .route("/schemas", web::get().to(handle_list_schemas))
-                    .route("/schemas", web::post().to(handle_add_schema))
-                    .route(
-                        "/schemas/available",
-                        web::get().to(handle_get_available_schemas),
-                    )
-                    .route("/schema/{name}", web::get().to(handle_get_schema)),
-            )
+        App::new().app_data(state_clone.clone()).service(
+            web::scope("/api")
+                .route("/schemas", web::get().to(handle_list_schemas))
+                .route("/schemas", web::post().to(handle_add_schema))
+                .route(
+                    "/schemas/available",
+                    web::get().to(handle_get_available_schemas),
+                )
+                .route("/schema/{name}", web::get().to(handle_get_schema)),
+        )
     })
     .listen(listener)
     .expect("failed to listen")
@@ -195,9 +190,7 @@ async fn test_agent_scan_ingest_and_query() {
 
     eprintln!("\n=== Phase 2: Scanning via OperationProcessor ===");
     let scan_result = run_with_user(&user_id, async {
-        processor
-            .smart_folder_scan(&sample_data_path, 5, 500)
-            .await
+        processor.smart_folder_scan(&sample_data_path, 5, 500).await
     })
     .await
     .expect("smart_folder_scan failed");
@@ -229,10 +222,7 @@ async fn test_agent_scan_ingest_and_query() {
         scan_result.recommended_files.len()
     );
 
-    assert!(
-        !text_files.is_empty(),
-        "Should have text files to ingest"
-    );
+    assert!(!text_files.is_empty(), "Should have text files to ingest");
 
     // ── Phase 3: Agent ingest_files tool ────────────────────────────────
 
@@ -333,15 +323,32 @@ async fn test_agent_scan_ingest_and_query() {
     let test_queries: Vec<(&str, Vec<&str>)> = vec![
         (
             "What medications are in the database?",
-            vec!["medication", "lisinopril", "vitamin", "metformin", "drug", "prescription"],
+            vec![
+                "medication",
+                "lisinopril",
+                "vitamin",
+                "metformin",
+                "drug",
+                "prescription",
+            ],
         ),
         (
             "Who are the contacts in the address book?",
-            vec!["contact", "mom", "dad", "sarah", "address", "phone", "name", "email"],
+            vec![
+                "contact", "mom", "dad", "sarah", "address", "phone", "name", "email",
+            ],
         ),
         (
             "What financial records do I have?",
-            vec!["bank", "transaction", "finance", "payment", "deposit", "investment", "expense"],
+            vec![
+                "bank",
+                "transaction",
+                "finance",
+                "payment",
+                "deposit",
+                "investment",
+                "expense",
+            ],
         ),
         (
             "Give me a summary of all data in the database",
@@ -398,10 +405,7 @@ async fn test_agent_scan_ingest_and_query() {
                 if matched {
                     eprintln!("  Keyword match: PASS");
                 } else {
-                    eprintln!(
-                        "  WARNING: Answer did not contain any of {:?}",
-                        keywords
-                    );
+                    eprintln!("  WARNING: Answer did not contain any of {:?}", keywords);
                 }
 
                 queries_succeeded += 1;

@@ -108,29 +108,18 @@ impl StructureAnalyzer {
                         // Only recurse into the first element of object arrays
                         if seen_paths.insert(arr_path.clone()) {
                             if let Some(inner_obj) = arr[0].as_object() {
-                                Self::skeleton_object(
-                                    inner_obj,
-                                    fields,
-                                    &arr_path,
-                                    seen_paths,
-                                );
+                                Self::skeleton_object(inner_obj, fields, &arr_path, seen_paths);
                             }
                         }
                     } else {
                         // Primitive array — emit element type, e.g. "[string]", "[number]"
                         let elem_type = Self::json_type_name(&arr[0]);
-                        fields.insert(
-                            arr_path,
-                            Value::String(format!("[{}]", elem_type)),
-                        );
+                        fields.insert(arr_path, Value::String(format!("[{}]", elem_type)));
                     }
                 }
                 _ => {
                     if !fields.contains_key(&path) {
-                        fields.insert(
-                            path,
-                            Value::String(Self::json_type_name(value).to_string()),
-                        );
+                        fields.insert(path, Value::String(Self::json_type_name(value).to_string()));
                     }
                 }
             }

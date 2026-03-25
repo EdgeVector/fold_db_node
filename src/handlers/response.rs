@@ -94,7 +94,6 @@ impl ApiResponse<()> {
             user_hash: None,
         }
     }
-
 }
 
 /// Handler-level error types
@@ -173,7 +172,6 @@ impl HandlerError {
     pub fn to_response(&self) -> ApiResponse<()> {
         ApiResponse::error(self.to_string())
     }
-
 }
 
 /// Result type for handlers

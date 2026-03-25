@@ -1,8 +1,8 @@
 #![cfg(feature = "aws-backend")]
-use fold_db_node::fold_node::config::DatabaseConfig;
-use fold_db_node::fold_node::{FoldNode, NodeConfig};
 use fold_db::schema::types::Mutation;
 use fold_db::storage::{CloudConfig, ExplicitTables};
+use fold_db_node::fold_node::config::DatabaseConfig;
+use fold_db_node::fold_node::{FoldNode, NodeConfig};
 use serde_json::json;
 use std::collections::HashMap;
 
@@ -21,7 +21,8 @@ fn get_test_schema() -> (String, String) {
             "content": ["word"]
         },
         "key": { "hash_field": "id" }
-    }"#.to_string();
+    }"#
+    .to_string();
     (schema_name, schema_json)
 }
 

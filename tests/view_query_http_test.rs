@@ -23,10 +23,7 @@ async fn setup_node() -> (FoldNode, TempDir) {
     let keypair = fold_db::security::Ed25519KeyPair::generate().unwrap();
     let config = NodeConfig::new(temp_db_path.into())
         .with_schema_service_url("test://mock")
-        .with_identity(
-            &keypair.public_key_base64(),
-            &keypair.secret_key_base64(),
-        );
+        .with_identity(&keypair.public_key_base64(), &keypair.secret_key_base64());
     let node = FoldNode::new(config)
         .await
         .expect("Failed to create FoldNode");
@@ -115,7 +112,11 @@ async fn query_view_via_execute_query_json() {
     // Verify the data is present
     let titles: Vec<String> = results
         .iter()
-        .filter_map(|r| r.get("fields").and_then(|f| f.get("title")).and_then(|v| v.as_str()))
+        .filter_map(|r| {
+            r.get("fields")
+                .and_then(|f| f.get("title"))
+                .and_then(|v| v.as_str())
+        })
         .map(|s| s.to_string())
         .collect();
     assert!(titles.contains(&"Hello World".to_string()));
@@ -186,10 +187,7 @@ async fn query_view_chain_via_execute_query_json() {
         "ViewB",
         SchemaType::Range,
         None,
-        vec![Query::new(
-            "ViewA".to_string(),
-            vec!["title".to_string()],
-        )],
+        vec![Query::new("ViewA".to_string(), vec!["title".to_string()])],
         None,
         HashMap::from([("title".to_string(), FieldValueType::Any)]),
     );
@@ -287,7 +285,10 @@ async fn query_view_after_mutation_returns_fresh_data() {
         .and_then(|f| f.get("content"))
         .and_then(|v| v.as_str())
         .expect("should have content field");
-    assert_eq!(content, "v2 content", "Should see fresh data after mutation");
+    assert_eq!(
+        content, "v2 content",
+        "Should see fresh data after mutation"
+    );
 }
 
 #[tokio::test(flavor = "multi_thread")]
@@ -610,7 +611,11 @@ mod wasm_tests {
         // The WASM module outputs the byte count of its input JSON as a number.
         // The exact value depends on serialization, but it must be a positive integer.
         let count = char_count.as_u64().expect("char_count should be a number");
-        assert!(count > 0, "Input byte count should be positive, got {}", count);
+        assert!(
+            count > 0,
+            "Input byte count should be positive, got {}",
+            count
+        );
     }
 
     #[tokio::test(flavor = "multi_thread")]
@@ -651,7 +656,10 @@ mod wasm_tests {
             .execute_query_json(query)
             .await
             .expect("Post-mutation WASM query should succeed");
-        assert!(!r2.is_empty(), "Should return results after cache invalidation");
+        assert!(
+            !r2.is_empty(),
+            "Should return results after cache invalidation"
+        );
     }
 
     #[tokio::test(flavor = "multi_thread")]
@@ -689,9 +697,6 @@ mod wasm_tests {
         // The mutation should either fail or be treated as a schema mutation
         // (which would fail since ReadOnlyWasm is not a schema).
         // Either way, this should not succeed silently.
-        assert!(
-            result.is_err(),
-            "Writing through a WASM view should fail"
-        );
+        assert!(result.is_err(), "Writing through a WASM view should fail");
     }
 }

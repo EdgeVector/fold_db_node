@@ -20,9 +20,7 @@ fn to_json(output: &CommandOutput) -> Value {
             let val = serde_json::to_value(schema).unwrap_or(Value::Null);
             json!({ "ok": true, "schema": val })
         }
-        CommandOutput::SchemaApproved {
-            name,
-        } => {
+        CommandOutput::SchemaApproved { name } => {
             json!({
                 "ok": true,
                 "schema": name,

@@ -22,10 +22,7 @@ async fn test_sign_and_verify_round_trip() {
         "system".to_string(),
         vec!["read".to_string(), "write".to_string()],
     );
-    verifier
-        .register_system_public_key(key_info)
-        .await
-        .unwrap();
+    verifier.register_system_public_key(key_info).await.unwrap();
 
     // Sign a mutation-like payload
     let payload = json!({
@@ -60,10 +57,7 @@ async fn test_tampered_payload_rejected() {
         "system".to_string(),
         vec!["read".to_string(), "write".to_string()],
     );
-    verifier
-        .register_system_public_key(key_info)
-        .await
-        .unwrap();
+    verifier.register_system_public_key(key_info).await.unwrap();
 
     let payload = json!({"data": "original"});
     let mut signed = signer.sign_message(payload).unwrap();
@@ -74,7 +68,10 @@ async fn test_tampered_payload_rejected() {
     signed.payload = base64::engine::general_purpose::STANDARD.encode(&tampered_bytes);
 
     let result = verifier.verify_message(&signed).unwrap();
-    assert!(!result.is_valid, "Tampered payload should fail verification");
+    assert!(
+        !result.is_valid,
+        "Tampered payload should fail verification"
+    );
 }
 
 /// Test that verification fails when no public key is registered
@@ -111,19 +108,13 @@ async fn test_wrong_key_rejected() {
         "system".to_string(),
         vec!["read".to_string(), "write".to_string()],
     );
-    verifier
-        .register_system_public_key(key_info)
-        .await
-        .unwrap();
+    verifier.register_system_public_key(key_info).await.unwrap();
 
     let payload = json!({"data": "test"});
     let signed = signer.sign_message(payload).unwrap();
 
     let result = verifier.verify_message(&signed).unwrap();
-    assert!(
-        !result.is_valid,
-        "Should fail when signed with wrong key"
-    );
+    assert!(!result.is_valid, "Should fail when signed with wrong key");
 }
 
 /// Test that write endpoints are currently unprotected while signature

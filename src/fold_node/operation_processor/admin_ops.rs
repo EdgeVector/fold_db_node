@@ -1,7 +1,7 @@
-use fold_db::error::{FoldDbError, FoldDbResult};
-use fold_db::fold_db_core::orchestration::IndexingStatus;
 use crate::fold_node::config::DatabaseConfig;
 use crate::ingestion::ingestion_service::IngestionService;
+use fold_db::error::{FoldDbError, FoldDbResult};
+use fold_db::fold_db_core::orchestration::IndexingStatus;
 use std::collections::HashMap;
 
 use super::OperationProcessor;
@@ -47,7 +47,8 @@ impl OperationProcessor {
     /// Get event statistics.
     pub async fn get_event_statistics(
         &self,
-    ) -> FoldDbResult<fold_db::fold_db_core::infrastructure::event_statistics::EventStatistics> {
+    ) -> FoldDbResult<fold_db::fold_db_core::infrastructure::event_statistics::EventStatistics>
+    {
         let db = self.get_db().await?;
         Ok(db.get_event_statistics())
     }
@@ -262,7 +263,15 @@ impl OperationProcessor {
         let schemas = self.list_schemas().await?;
 
         service
-            .run_agent_query(user_query, &schemas, &self.node, user_hash, max_iterations, &[], None)
+            .run_agent_query(
+                user_query,
+                &schemas,
+                &self.node,
+                user_hash,
+                max_iterations,
+                &[],
+                None,
+            )
             .await
             .map_err(FoldDbError::Other)
     }
@@ -293,18 +302,13 @@ impl OperationProcessor {
 
         let data_dir = std::env::var("FOLD_STORAGE_PATH").unwrap_or_else(|_| "data".to_string());
         let sync_setup = fold_db::sync::SyncSetup::from_exemem(api_url, api_key, &data_dir);
-        let sync_crypto: std::sync::Arc<dyn fold_db::crypto::CryptoProvider> =
-            std::sync::Arc::new(fold_db::crypto::LocalCryptoProvider::from_key(
-                e2e_keys.encryption_key(),
-            ));
+        let sync_crypto: std::sync::Arc<dyn fold_db::crypto::CryptoProvider> = std::sync::Arc::new(
+            fold_db::crypto::LocalCryptoProvider::from_key(e2e_keys.encryption_key()),
+        );
 
         let http = std::sync::Arc::new(reqwest::Client::new());
         let s3 = fold_db::sync::s3::S3Client::new(http.clone());
-        let auth = fold_db::sync::auth::AuthClient::new(
-            http,
-            sync_setup.auth_url,
-            sync_setup.auth,
-        );
+        let auth = fold_db::sync::auth::AuthClient::new(http, sync_setup.auth_url, sync_setup.auth);
 
         // Open the existing Sled database to snapshot it
         let config = self.node.config.clone();

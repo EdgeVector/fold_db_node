@@ -28,11 +28,7 @@ pub struct DiscoveryPublisher {
 }
 
 impl DiscoveryPublisher {
-    pub fn new(
-        master_key: Vec<u8>,
-        discovery_url: String,
-        auth_token: String,
-    ) -> Self {
+    pub fn new(master_key: Vec<u8>, discovery_url: String, auth_token: String) -> Self {
         Self {
             master_key,
             discovery_url,
@@ -221,11 +217,7 @@ impl DiscoveryPublisher {
     }
 
     /// Send a connection request to a pseudonym owner.
-    pub async fn connect(
-        &self,
-        target_pseudonym: Uuid,
-        message: String,
-    ) -> Result<(), String> {
+    pub async fn connect(&self, target_pseudonym: Uuid, message: String) -> Result<(), String> {
         // Generate a one-time requester pseudonym
         let requester_pseudo = pseudonym::derive_pseudonym(
             &self.master_key,
@@ -291,11 +283,7 @@ impl DiscoveryPublisher {
 /// Note: We only have field names from StoredEmbedding, not the actual values.
 /// A full implementation would read the record's field values from the database.
 /// For now, returns a comma-separated list of field names as a placeholder.
-fn build_preview(
-    field_names: &[String],
-    excluded: &[String],
-    max_chars: usize,
-) -> String {
+fn build_preview(field_names: &[String], excluded: &[String], max_chars: usize) -> String {
     let included: Vec<&str> = field_names
         .iter()
         .filter(|f| !excluded.iter().any(|e| e == *f))

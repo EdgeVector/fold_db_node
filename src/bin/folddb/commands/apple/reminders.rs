@@ -11,7 +11,9 @@ pub async fn run(
     mode: OutputMode,
 ) -> Result<CommandOutput, CliError> {
     let sp = if mode == OutputMode::Human {
-        Some(spinner::new_spinner("Exporting reminders from Apple Reminders..."))
+        Some(spinner::new_spinner(
+            "Exporting reminders from Apple Reminders...",
+        ))
     } else {
         None
     };
@@ -32,7 +34,10 @@ pub async fn run(
     let (client, base_url) = build_client(user_hash)?;
 
     let sp2 = if mode == OutputMode::Human {
-        Some(spinner::new_spinner(&format!("Ingesting {} reminders...", total)))
+        Some(spinner::new_spinner(&format!(
+            "Ingesting {} reminders...",
+            total
+        )))
     } else {
         None
     };
@@ -140,7 +145,9 @@ mod tests {
     #[test]
     fn parse_reminders_output_basic() {
         let raw = "<<<REM_START>>>Buy groceries<<<SEP>>>Shopping<<<SEP>>>false<<<SEP>>>2024-01-20 10:00:00<<<SEP>>>1<<<REM_END>>>";
-        let reminders = parse_reminders_output(raw).map_err(|e| e.to_string()).unwrap();
+        let reminders = parse_reminders_output(raw)
+            .map_err(|e| e.to_string())
+            .unwrap();
         assert_eq!(reminders.len(), 1);
         assert_eq!(reminders[0].name, "Buy groceries");
         assert_eq!(reminders[0].list, "Shopping");
@@ -152,7 +159,9 @@ mod tests {
     #[test]
     fn parse_reminders_output_completed() {
         let raw = "<<<REM_START>>>Done task<<<SEP>>>Work<<<SEP>>>true<<<SEP>>>none<<<SEP>>>0<<<REM_END>>>";
-        let reminders = parse_reminders_output(raw).map_err(|e| e.to_string()).unwrap();
+        let reminders = parse_reminders_output(raw)
+            .map_err(|e| e.to_string())
+            .unwrap();
         assert_eq!(reminders.len(), 1);
         assert!(reminders[0].completed);
     }
@@ -160,14 +169,18 @@ mod tests {
     #[test]
     fn parse_reminders_output_multiple() {
         let raw = "<<<REM_START>>>Task 1<<<SEP>>>List A<<<SEP>>>false<<<SEP>>>none<<<SEP>>>0<<<REM_END>>><<<REM_START>>>Task 2<<<SEP>>>List B<<<SEP>>>true<<<SEP>>>none<<<SEP>>>5<<<REM_END>>>";
-        let reminders = parse_reminders_output(raw).map_err(|e| e.to_string()).unwrap();
+        let reminders = parse_reminders_output(raw)
+            .map_err(|e| e.to_string())
+            .unwrap();
         assert_eq!(reminders.len(), 2);
         assert_eq!(reminders[1].priority, 5);
     }
 
     #[test]
     fn parse_reminders_output_empty() {
-        let reminders = parse_reminders_output("").map_err(|e| e.to_string()).unwrap();
+        let reminders = parse_reminders_output("")
+            .map_err(|e| e.to_string())
+            .unwrap();
         assert!(reminders.is_empty());
     }
 

@@ -38,8 +38,13 @@ pub(super) struct SchemaCache {
 
 impl SchemaCache {
     /// Create a new cache backed by a shared cross-file store.
-    pub(super) fn new(shared: std::sync::Arc<std::sync::RwLock<HashMap<String, CachedSchema>>>) -> Self {
-        Self { shared, local: HashMap::new() }
+    pub(super) fn new(
+        shared: std::sync::Arc<std::sync::RwLock<HashMap<String, CachedSchema>>>,
+    ) -> Self {
+        Self {
+            shared,
+            local: HashMap::new(),
+        }
     }
 
     /// Look up a structure hash. Checks local first, then shared.
@@ -47,14 +52,19 @@ impl SchemaCache {
         if let Some(cached) = self.local.get(structure_hash) {
             return Some(cached.clone());
         }
-        self.shared.read().ok()
+        self.shared
+            .read()
+            .ok()
             .and_then(|cache| cache.get(structure_hash).cloned())
     }
 
     /// Returns true if the structure hash is in either local or shared cache.
     pub(super) fn contains_key(&self, structure_hash: &str) -> bool {
         self.local.contains_key(structure_hash)
-            || self.shared.read().ok()
+            || self
+                .shared
+                .read()
+                .ok()
                 .map(|cache| cache.contains_key(structure_hash))
                 .unwrap_or(false)
     }
@@ -153,15 +163,12 @@ async fn update_ref_fields(
         );
     }
 
-    schema_manager
-        .update_schema(&schema)
-        .await
-        .map_err(|e| {
-            IngestionError::SchemaCreationError(format!(
-                "Failed to update schema with ref_fields: {}",
-                e
-            ))
-        })?;
+    schema_manager.update_schema(&schema).await.map_err(|e| {
+        IngestionError::SchemaCreationError(format!(
+            "Failed to update schema with ref_fields: {}",
+            e
+        ))
+    })?;
 
     Ok(())
 }
@@ -219,10 +226,15 @@ impl IngestionService {
         let mut ai_response = self.get_ai_recommendation(&rep_decomp.parent).await?;
 
         // If the AI didn't provide field_descriptions, do a second AI call
-        self.fill_missing_field_descriptions(&mut ai_response, &rep_decomp.parent).await?;
+        self.fill_missing_field_descriptions(&mut ai_response, &rep_decomp.parent)
+            .await?;
 
         // Apply image override at depth 0 (top-level parent is the image schema)
-        if depth == 0 && source_file_name.map(crate::ingestion::is_image_file).unwrap_or(false) {
+        if depth == 0
+            && source_file_name
+                .map(crate::ingestion::is_image_file)
+                .unwrap_or(false)
+        {
             super::apply_image_schema_override(&mut ai_response, None);
         }
 
@@ -301,7 +313,11 @@ impl IngestionService {
             .await?;
 
         // Apply image override at depth 0
-        if depth == 0 && source_file_name.map(crate::ingestion::is_image_file).unwrap_or(false) {
+        if depth == 0
+            && source_file_name
+                .map(crate::ingestion::is_image_file)
+                .unwrap_or(false)
+        {
             super::apply_image_schema_override(&mut ai_response, None);
         }
 
@@ -388,8 +404,8 @@ impl IngestionService {
                     .map(|opt| opt.is_some())
                     .unwrap_or(false);
                 if !already_loaded {
-                    let json_str = serde_json::to_string(&reuse_match.schema)
-                        .map_err(super::schema_err)?;
+                    let json_str =
+                        serde_json::to_string(&reuse_match.schema).map_err(super::schema_err)?;
                     schema_manager
                         .load_schema_from_json(&json_str)
                         .await
@@ -401,7 +417,10 @@ impl IngestionService {
                 }
                 let mappers = merge_mappers(
                     &proposal.ai_response.mutation_mappers,
-                    reuse_match.field_rename_map.iter().map(|(k, v)| (k.clone(), v.clone())),
+                    reuse_match
+                        .field_rename_map
+                        .iter()
+                        .map(|(k, v)| (k.clone(), v.clone())),
                 );
                 (reuse_match.schema.name.clone(), mappers)
             } else {
@@ -409,14 +428,20 @@ impl IngestionService {
                 let (name, service_mappers) = self
                     .determine_schema_to_use(&proposal.ai_response, &proposal.parent_data, node)
                     .await?;
-                (name.clone(), merge_mappers(&proposal.ai_response.mutation_mappers, service_mappers))
+                (
+                    name.clone(),
+                    merge_mappers(&proposal.ai_response.mutation_mappers, service_mappers),
+                )
             }
         } else {
             // No batch match — create via standard path
             let (name, service_mappers) = self
                 .determine_schema_to_use(&proposal.ai_response, &proposal.parent_data, node)
                 .await?;
-            (name.clone(), merge_mappers(&proposal.ai_response.mutation_mappers, service_mappers))
+            (
+                name.clone(),
+                merge_mappers(&proposal.ai_response.mutation_mappers, service_mappers),
+            )
         };
 
         log_feature!(
@@ -483,54 +508,54 @@ impl IngestionService {
                 structure_hash
             );
         } else {
-        for child_group in &item_decomp.children {
-            let mut refs_for_field = Vec::new();
+            for child_group in &item_decomp.children {
+                let mut refs_for_field = Vec::new();
 
-            for child_item in &child_group.items {
-                let (gen, exec, child_key_value) = Box::pin(self.ingest_decomposed_item(
-                    child_item,
-                    &child_group.structure_hash,
-                    schema_cache,
-                    node,
-                    pub_key,
-                    source_file_name.clone(),
-                    metadata.clone(),
-                    auto_execute,
-                    depth + 1,
-                    schemas_written_map,
-                ))
-                .await?;
-                total_gen += gen;
-                total_exec += exec;
+                for child_item in &child_group.items {
+                    let (gen, exec, child_key_value) = Box::pin(self.ingest_decomposed_item(
+                        child_item,
+                        &child_group.structure_hash,
+                        schema_cache,
+                        node,
+                        pub_key,
+                        source_file_name.clone(),
+                        metadata.clone(),
+                        auto_execute,
+                        depth + 1,
+                        schemas_written_map,
+                    ))
+                    .await?;
+                    total_gen += gen;
+                    total_exec += exec;
 
-                // Build reference matching the indexing system's (schema, key) pattern
-                if let Some(kv) = child_key_value {
-                    let child_schema_name = schema_cache
-                        .get(&child_group.structure_hash)
-                        .map(|c| c.schema_name)
-                        .ok_or_else(|| {
-                            IngestionError::SchemaCreationError(format!(
-                                "No cached schema for child structure hash '{}' (field '{}')",
-                                child_group.structure_hash, child_group.field_name
-                            ))
-                        })?;
-                    refs_for_field.push(serde_json::json!({
-                        "schema": child_schema_name,
-                        "key": kv,
-                    }));
-                } else {
-                    log_feature!(
+                    // Build reference matching the indexing system's (schema, key) pattern
+                    if let Some(kv) = child_key_value {
+                        let child_schema_name = schema_cache
+                            .get(&child_group.structure_hash)
+                            .map(|c| c.schema_name)
+                            .ok_or_else(|| {
+                                IngestionError::SchemaCreationError(format!(
+                                    "No cached schema for child structure hash '{}' (field '{}')",
+                                    child_group.structure_hash, child_group.field_name
+                                ))
+                            })?;
+                        refs_for_field.push(serde_json::json!({
+                            "schema": child_schema_name,
+                            "key": kv,
+                        }));
+                    } else {
+                        log_feature!(
                         LogFeature::Ingestion,
                         warn,
                         "Child item in field '{}' (structure hash {}) produced no key_value — reference will be missing",
                         child_group.field_name,
                         child_group.structure_hash
                     );
+                    }
                 }
-            }
 
-            child_references.insert(child_group.field_name.clone(), refs_for_field);
-        }
+                child_references.insert(child_group.field_name.clone(), refs_for_field);
+            }
         } // end depth guard else
 
         // Generate and execute mutation for this item's flat parent.
@@ -608,11 +633,8 @@ impl IngestionService {
             // dropped from the schema definition, causing write failures.
             let schema_manager = super::get_schema_manager(node).await?;
             if let Ok(Some(schema_meta)) = schema_manager.get_schema_metadata(&schema_name) {
-                let schema_fields: std::collections::HashSet<String> = schema_meta
-                    .runtime_fields
-                    .keys()
-                    .cloned()
-                    .collect();
+                let schema_fields: std::collections::HashSet<String> =
+                    schema_meta.runtime_fields.keys().cloned().collect();
                 let before = mutation_mappers.len();
                 mutation_mappers.retain(|_json_field, schema_field| {
                     let target = if schema_field.contains('.') {
@@ -666,9 +688,9 @@ impl IngestionService {
                     .await
                     .map(|ids| ids.len())
                     .map_err(|e| {
-                        IngestionError::SchemaSystemError(fold_db::schema::SchemaError::InvalidData(
-                            e.to_string(),
-                        ))
+                        IngestionError::SchemaSystemError(
+                            fold_db::schema::SchemaError::InvalidData(e.to_string()),
+                        )
                     })?;
                 total_exec += exec_count;
             }

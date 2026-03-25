@@ -13,18 +13,20 @@
 //! Requires: ANTHROPIC_API_KEY
 //! Run with: `cargo test --test smart_folder_tweets_test -- --ignored --nocapture`
 
+use fold_db::logging::core::run_with_user;
+use fold_db::security::Ed25519KeyPair;
 use fold_db_node::fold_node::llm_query::LlmQueryService;
 use fold_db_node::fold_node::node::FoldNode;
 use fold_db_node::fold_node::OperationProcessor;
 use fold_db_node::ingestion::ingestion_service::IngestionService;
 use fold_db_node::ingestion::smart_folder::{perform_smart_folder_scan, read_file_with_hash};
-use fold_db_node::ingestion::{create_progress_tracker, IngestionConfig, IngestionRequest, ProgressService};
-use fold_db::logging::core::run_with_user;
+use fold_db_node::ingestion::{
+    create_progress_tracker, IngestionConfig, IngestionRequest, ProgressService,
+};
 use fold_db_node::schema_service::server::{
     AddSchemaResponse, AvailableSchemasResponse, ErrorResponse, SchemaAddOutcome,
     SchemaServiceState, SchemasListResponse,
 };
-use fold_db::security::Ed25519KeyPair;
 mod common;
 
 use actix_web::{web, App, HttpResponse, HttpServer};
@@ -131,18 +133,16 @@ async fn spawn_local_schema_service() -> (String, actix_web::dev::ServerHandle, 
 
     let state_clone = state_data.clone();
     let server = HttpServer::new(move || {
-        App::new()
-            .app_data(state_clone.clone())
-            .service(
-                web::scope("/api")
-                    .route("/schemas", web::get().to(handle_list_schemas))
-                    .route("/schemas", web::post().to(handle_add_schema))
-                    .route(
-                        "/schemas/available",
-                        web::get().to(handle_get_available_schemas),
-                    )
-                    .route("/schema/{name}", web::get().to(handle_get_schema)),
-            )
+        App::new().app_data(state_clone.clone()).service(
+            web::scope("/api")
+                .route("/schemas", web::get().to(handle_list_schemas))
+                .route("/schemas", web::post().to(handle_add_schema))
+                .route(
+                    "/schemas/available",
+                    web::get().to(handle_get_available_schemas),
+                )
+                .route("/schema/{name}", web::get().to(handle_get_schema)),
+        )
     })
     .listen(listener)
     .expect("failed to listen")
@@ -162,12 +162,10 @@ async fn spawn_local_schema_service() -> (String, actix_web::dev::ServerHandle, 
 #[ignore] // Requires ANTHROPIC_API_KEY and AI calls
 async fn test_smart_folder_tweets_ingest_and_query() {
     // Guard: fail loudly if no API key (test is #[ignore] — must be opted in explicitly)
-    std::env::var("ANTHROPIC_API_KEY")
-        .expect("ANTHROPIC_API_KEY must be set to run this test");
+    std::env::var("ANTHROPIC_API_KEY").expect("ANTHROPIC_API_KEY must be set to run this test");
 
     // Verify the tweets.js fixture is present
-    let tweets_fixture =
-        Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/tweets.js");
+    let tweets_fixture = Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/tweets.js");
     assert!(
         tweets_fixture.exists(),
         "tweets.js fixture not found at {}",
@@ -205,8 +203,8 @@ async fn test_smart_folder_tweets_ingest_and_query() {
     eprintln!("Scanning: {}", scan_dir.path().display());
     let scan = perform_smart_folder_scan(
         scan_dir.path(),
-        2,   // max_depth
-        10,  // max_files
+        2,  // max_depth
+        10, // max_files
         Some(&ingestion_service),
         Some(&node),
     )
@@ -227,10 +225,7 @@ async fn test_smart_folder_tweets_ingest_and_query() {
     }
 
     assert!(scan.success, "Scan should succeed");
-    assert!(
-        scan.total_files >= 1,
-        "Scan should find tweets.js"
-    );
+    assert!(scan.total_files >= 1, "Scan should find tweets.js");
 
     let tweets_rec = scan
         .recommended_files
@@ -305,8 +300,7 @@ async fn test_smart_folder_tweets_ingest_and_query() {
 
     // ── Phase 3: Query ingested tweet data ───────────────────────────────────
 
-    let ingestion_config =
-        IngestionConfig::from_env().expect("IngestionConfig::from_env failed");
+    let ingestion_config = IngestionConfig::from_env().expect("IngestionConfig::from_env failed");
     let query_service =
         LlmQueryService::new(ingestion_config).expect("Failed to create LlmQueryService");
 
@@ -318,9 +312,16 @@ async fn test_smart_folder_tweets_ingest_and_query() {
 
     eprintln!(
         "Schemas available: {}",
-        schemas.iter().map(|s| s.name()).collect::<Vec<_>>().join(", ")
+        schemas
+            .iter()
+            .map(|s| s.name())
+            .collect::<Vec<_>>()
+            .join(", ")
     );
-    assert!(!schemas.is_empty(), "At least one schema should exist after ingestion");
+    assert!(
+        !schemas.is_empty(),
+        "At least one schema should exist after ingestion"
+    );
 
     let (answer, tool_calls) = query_service
         .run_agent_query(
@@ -358,8 +359,7 @@ async fn test_smart_folder_tweets_ingest_and_query() {
     // Soft keyword check: answer should reference tweet-related concepts
     let answer_lower = answer.to_lowercase();
     let tweet_keywords = [
-        "tweet", "twitter", "post", "retweet", "mention", "hashtag",
-        "social", "message", "thread",
+        "tweet", "twitter", "post", "retweet", "mention", "hashtag", "social", "message", "thread",
     ];
     let matched = tweet_keywords.iter().any(|kw| answer_lower.contains(kw));
     assert!(

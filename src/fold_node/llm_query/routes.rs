@@ -76,7 +76,14 @@ async fn require_service(llm_state: &LlmQueryState) -> Result<Arc<LlmQueryServic
 async fn require_llm_context(
     app_state: &web::Data<AppState>,
     llm_state: &LlmQueryState,
-) -> Result<(Arc<LlmQueryService>, String, tokio::sync::OwnedRwLockReadGuard<crate::fold_node::FoldNode>), HttpResponse> {
+) -> Result<
+    (
+        Arc<LlmQueryService>,
+        String,
+        tokio::sync::OwnedRwLockReadGuard<crate::fold_node::FoldNode>,
+    ),
+    HttpResponse,
+> {
     let service = require_service(llm_state).await?;
     let (user_hash, node_arc) = require_node(app_state).await?;
     let node = node_arc.read_owned().await;
@@ -90,7 +97,9 @@ fn data_or_500<T: serde::Serialize>(
     match result {
         Ok(response) => match response.data {
             Some(data) => HttpResponse::Ok().json(data),
-            None => HttpResponse::InternalServerError().json(json!({"error": "Missing response data"})),
+            None => {
+                HttpResponse::InternalServerError().json(json!({"error": "Missing response data"}))
+            }
         },
         Err(e) => handler_error_to_response(e),
     }
@@ -163,7 +172,6 @@ pub async fn chat(
         .await,
     )
 }
-
 
 /// Execute an AI-native index query workflow
 #[utoipa::path(

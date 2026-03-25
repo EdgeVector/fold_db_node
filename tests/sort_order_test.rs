@@ -1,9 +1,9 @@
-use fold_db_node::fold_node::config::NodeConfig;
-use fold_db_node::fold_node::FoldNode;
-use fold_db_node::fold_node::OperationProcessor;
 use fold_db::schema::types::key_value::KeyValue;
 use fold_db::schema::types::operations::{Query, SortOrder};
 use fold_db::MutationType;
+use fold_db_node::fold_node::config::NodeConfig;
+use fold_db_node::fold_node::FoldNode;
+use fold_db_node::fold_node::OperationProcessor;
 use serde_json::json;
 use std::collections::HashMap;
 use tempfile::TempDir;
@@ -16,10 +16,7 @@ async fn setup_node() -> (FoldNode, TempDir) {
     let keypair = fold_db::security::Ed25519KeyPair::generate().unwrap();
     let config = NodeConfig::new(temp_db_path.into())
         .with_schema_service_url("test://mock")
-        .with_identity(
-            &keypair.public_key_base64(),
-            &keypair.secret_key_base64(),
-        );
+        .with_identity(&keypair.public_key_base64(), &keypair.secret_key_base64());
     let node = FoldNode::new(config)
         .await
         .expect("Failed to create FoldNode");

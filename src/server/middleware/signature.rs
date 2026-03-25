@@ -13,8 +13,8 @@ use futures_util::StreamExt;
 use std::future::{ready, Ready};
 use std::rc::Rc;
 
-use fold_db::security::SignedMessage;
 use crate::server::http_server::AppState;
+use fold_db::security::SignedMessage;
 
 use base64::{engine::general_purpose, Engine as _};
 
@@ -107,20 +107,14 @@ where
         Box::pin(async move {
             // Only verify protected write endpoints
             if !is_protected_write(req.method(), req.path()) {
-                return svc
-                    .call(req)
-                    .await
-                    .map(|res| res.map_into_left_body());
+                return svc.call(req).await.map(|res| res.map_into_left_body());
             }
 
             // Skip multipart uploads (file uploads have their own handling)
             if let Some(ct) = req.headers().get("content-type") {
                 if let Ok(ct_str) = ct.to_str() {
                     if ct_str.starts_with("multipart/") {
-                        return svc
-                            .call(req)
-                            .await
-                            .map(|res| res.map_into_left_body());
+                        return svc.call(req).await.map(|res| res.map_into_left_body());
                     }
                 }
             }
@@ -138,10 +132,9 @@ where
                 Ok(msg) => msg,
                 Err(_) => {
                     // Not a SignedMessage envelope — reject when signatures are required
-                    let response = HttpResponse::Unauthorized()
-                        .json(serde_json::json!({
-                            "error": "Request must be signed. Expected a SignedMessage envelope."
-                        }));
+                    let response = HttpResponse::Unauthorized().json(serde_json::json!({
+                        "error": "Request must be signed. Expected a SignedMessage envelope."
+                    }));
                     return Ok(req.into_response(response).map_into_right_body());
                 }
             };
@@ -150,10 +143,9 @@ where
             let app_state = match req.app_data::<actix_web::web::Data<AppState>>() {
                 Some(state) => state.clone(),
                 None => {
-                    let response = HttpResponse::InternalServerError()
-                        .json(serde_json::json!({
-                            "error": "Server configuration error: missing app state"
-                        }));
+                    let response = HttpResponse::InternalServerError().json(serde_json::json!({
+                        "error": "Server configuration error: missing app state"
+                    }));
                     return Ok(req.into_response(response).map_into_right_body());
                 }
             };
@@ -171,10 +163,9 @@ where
             let node_arc = match app_state.node_manager.get_node(user_id).await {
                 Ok(n) => n,
                 Err(e) => {
-                    let response = HttpResponse::InternalServerError()
-                        .json(serde_json::json!({
-                            "error": format!("Failed to get node for verification: {}", e)
-                        }));
+                    let response = HttpResponse::InternalServerError().json(serde_json::json!({
+                        "error": format!("Failed to get node for verification: {}", e)
+                    }));
                     return Ok(req.into_response(response).map_into_right_body());
                 }
             };
@@ -186,26 +177,24 @@ where
             match verifier.verify_message(&signed_message) {
                 Ok(result) if result.is_valid => {
                     // Signature valid — decode the payload and replace the body
-                    let payload_bytes = match general_purpose::STANDARD
-                        .decode(&signed_message.payload)
-                    {
-                        Ok(bytes) => bytes,
-                        Err(_) => {
-                            let response = HttpResponse::BadRequest()
-                                .json(serde_json::json!({
+                    let payload_bytes =
+                        match general_purpose::STANDARD.decode(&signed_message.payload) {
+                            Ok(bytes) => bytes,
+                            Err(_) => {
+                                let response = HttpResponse::BadRequest().json(serde_json::json!({
                                     "error": "Invalid base64 payload in signed message"
                                 }));
-                            return Ok(req.into_response(response).map_into_right_body());
-                        }
-                    };
+                                return Ok(req.into_response(response).map_into_right_body());
+                            }
+                        };
 
                     // Drop the node lock before calling the downstream service
                     drop(node);
 
                     // Replace the request payload with the decoded original JSON bytes
-                    req.set_payload(actix_http::Payload::from(
-                        actix_web::web::Bytes::from(payload_bytes),
-                    ));
+                    req.set_payload(actix_http::Payload::from(actix_web::web::Bytes::from(
+                        payload_bytes,
+                    )));
 
                     svc.call(req).await.map(|res| res.map_into_left_body())
                 }
@@ -218,10 +207,9 @@ where
                     Ok(req.into_response(response).map_into_right_body())
                 }
                 Err(e) => {
-                    let response = HttpResponse::Unauthorized()
-                        .json(serde_json::json!({
-                            "error": format!("Signature verification error: {}", e)
-                        }));
+                    let response = HttpResponse::Unauthorized().json(serde_json::json!({
+                        "error": format!("Signature verification error: {}", e)
+                    }));
                     Ok(req.into_response(response).map_into_right_body())
                 }
             }
@@ -240,16 +228,49 @@ mod tests {
     #[test]
     fn test_is_protected_write_all_disabled() {
         // While enforcement is disabled, nothing is protected
-        assert!(!is_protected_write(&actix_web::http::Method::POST, "/api/mutation"));
-        assert!(!is_protected_write(&actix_web::http::Method::GET, "/api/mutation"));
-        assert!(!is_protected_write(&actix_web::http::Method::POST, "/api/query"));
-        assert!(!is_protected_write(&actix_web::http::Method::POST, "/api/schema/my_schema/approve"));
-        assert!(!is_protected_write(&actix_web::http::Method::POST, "/api/llm-query/chat"));
-        assert!(!is_protected_write(&actix_web::http::Method::POST, "/api/system/auto-identity"));
-        assert!(!is_protected_write(&actix_web::http::Method::POST, "/api/schemas/load"));
-        assert!(!is_protected_write(&actix_web::http::Method::POST, "/api/ingestion/process"));
-        assert!(!is_protected_write(&actix_web::http::Method::POST, "/api/system/setup"));
-        assert!(!is_protected_write(&actix_web::http::Method::GET, "/api/schemas"));
-        assert!(!is_protected_write(&actix_web::http::Method::POST, "/api/ingestion/status"));
+        assert!(!is_protected_write(
+            &actix_web::http::Method::POST,
+            "/api/mutation"
+        ));
+        assert!(!is_protected_write(
+            &actix_web::http::Method::GET,
+            "/api/mutation"
+        ));
+        assert!(!is_protected_write(
+            &actix_web::http::Method::POST,
+            "/api/query"
+        ));
+        assert!(!is_protected_write(
+            &actix_web::http::Method::POST,
+            "/api/schema/my_schema/approve"
+        ));
+        assert!(!is_protected_write(
+            &actix_web::http::Method::POST,
+            "/api/llm-query/chat"
+        ));
+        assert!(!is_protected_write(
+            &actix_web::http::Method::POST,
+            "/api/system/auto-identity"
+        ));
+        assert!(!is_protected_write(
+            &actix_web::http::Method::POST,
+            "/api/schemas/load"
+        ));
+        assert!(!is_protected_write(
+            &actix_web::http::Method::POST,
+            "/api/ingestion/process"
+        ));
+        assert!(!is_protected_write(
+            &actix_web::http::Method::POST,
+            "/api/system/setup"
+        ));
+        assert!(!is_protected_write(
+            &actix_web::http::Method::GET,
+            "/api/schemas"
+        ));
+        assert!(!is_protected_write(
+            &actix_web::http::Method::POST,
+            "/api/ingestion/status"
+        ));
     }
 }

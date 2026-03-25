@@ -1,10 +1,12 @@
 use crate::handlers::system::NodeKeyResponse;
 use crate::handlers::{ApiResponse, HandlerError};
+use crate::server::http_server::AppState;
+use crate::server::routes::{
+    handler_error_to_response, handler_result_to_response, node_or_return,
+};
+use actix_web::{web, HttpResponse, Responder};
 use fold_db::log_feature;
 use fold_db::logging::features::LogFeature;
-use crate::server::http_server::AppState;
-use crate::server::routes::{handler_error_to_response, handler_result_to_response, node_or_return};
-use actix_web::{web, HttpResponse, Responder};
 use serde_json::json;
 
 /// Get system status information
@@ -55,7 +57,11 @@ fn key_response(
 pub async fn get_node_private_key(state: web::Data<AppState>) -> impl Responder {
     let (user_hash, node) = node_or_return!(state);
     let result = crate::handlers::system::get_node_private_key(&user_hash, &node).await;
-    key_response(result, "private_key", "Node private key retrieved successfully")
+    key_response(
+        result,
+        "private_key",
+        "Node private key retrieved successfully",
+    )
 }
 
 /// Get the node's public key
@@ -73,7 +79,11 @@ pub async fn get_node_private_key(state: web::Data<AppState>) -> impl Responder 
 pub async fn get_node_public_key(state: web::Data<AppState>) -> impl Responder {
     let (user_hash, node) = node_or_return!(state);
     let result = crate::handlers::system::get_node_public_key(&user_hash, &node).await;
-    key_response(result, "public_key", "Node public key retrieved successfully")
+    key_response(
+        result,
+        "public_key",
+        "Node public key retrieved successfully",
+    )
 }
 
 #[cfg(test)]

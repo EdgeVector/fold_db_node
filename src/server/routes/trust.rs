@@ -78,10 +78,7 @@ pub async fn grant_trust(
 }
 
 /// DELETE /api/trust/revoke/{key} — revoke trust for a public key
-pub async fn revoke_trust(
-    path: web::Path<String>,
-    state: web::Data<AppState>,
-) -> impl Responder {
+pub async fn revoke_trust(path: web::Path<String>, state: web::Data<AppState>) -> impl Responder {
     let public_key = path.into_inner();
     let (user_hash, node) = node_or_return!(state);
     let op = OperationProcessor::new(node.clone());
@@ -144,10 +141,7 @@ pub async fn set_trust_override(
 }
 
 /// GET /api/trust/resolve/{key} — check resolved distance for a key
-pub async fn resolve_trust(
-    path: web::Path<String>,
-    state: web::Data<AppState>,
-) -> impl Responder {
+pub async fn resolve_trust(path: web::Path<String>, state: web::Data<AppState>) -> impl Responder {
     let public_key = path.into_inner();
     let (user_hash, node) = node_or_return!(state);
     let op = OperationProcessor::new(node.clone());
@@ -361,8 +355,7 @@ pub async fn list_capabilities(
                 .list_capabilities(&schema_name, &field_name)
                 .await
                 .handler_err("list capabilities")?;
-            let caps_json =
-                serde_json::to_value(&caps).handler_err("serialize capabilities")?;
+            let caps_json = serde_json::to_value(&caps).handler_err("serialize capabilities")?;
             Ok(ApiResponse::success_with_user(caps_json, user_hash))
         }
         .await,

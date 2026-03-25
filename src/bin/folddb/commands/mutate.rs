@@ -1,8 +1,8 @@
 use crate::cli::MutateCommand;
 use crate::commands::CommandOutput;
 use crate::error::CliError;
-use fold_db_node::fold_node::OperationProcessor;
 use fold_db::schema::types::key_value::KeyValue;
+use fold_db_node::fold_node::OperationProcessor;
 use serde_json::Value;
 use std::collections::HashMap;
 use std::path::PathBuf;
@@ -23,12 +23,7 @@ pub async fn run(
                 .map_err(|e| CliError::new(format!("Invalid fields JSON: {}", e)))?;
             let key_value = KeyValue::new(hash.clone(), range.clone());
             let id = processor
-                .execute_mutation(
-                    schema.clone(),
-                    fields_map,
-                    key_value,
-                    r#type.clone(),
-                )
+                .execute_mutation(schema.clone(), fields_map, key_value, r#type.clone())
                 .await?;
             Ok(CommandOutput::MutationSuccess { id })
         }
@@ -57,6 +52,5 @@ fn read_json_from_file_or_stdin(file: Option<&PathBuf>) -> Result<Value, CliErro
             buf
         }
     };
-    serde_json::from_str(&content)
-        .map_err(|e| CliError::new(format!("Invalid JSON: {}", e)))
+    serde_json::from_str(&content).map_err(|e| CliError::new(format!("Invalid JSON: {}", e)))
 }

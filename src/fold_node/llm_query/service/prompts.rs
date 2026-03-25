@@ -2,15 +2,19 @@
 //!
 //! Static instruction text is sourced from `fold_db::llm_registry::prompts::query`.
 
+use super::super::types::Message;
+use super::LlmQueryService;
 use fold_db::llm_registry::prompts::query as qp;
 use fold_db::schema::SchemaWithState;
-use super::LlmQueryService;
 use serde_json::Value;
-use super::super::types::Message;
 
 impl LlmQueryService {
     /// Build the analysis prompt
-    pub(super) fn build_analysis_prompt(&self, user_query: &str, schemas: &[SchemaWithState]) -> String {
+    pub(super) fn build_analysis_prompt(
+        &self,
+        user_query: &str,
+        schemas: &[SchemaWithState],
+    ) -> String {
         let mut prompt = String::from(qp::QUERY_ANALYSIS_PREAMBLE);
 
         prompt.push_str("Available Schemas:\n");
@@ -42,7 +46,7 @@ impl LlmQueryService {
             1. Which schema(s) to query\n\
             2. What fields to retrieve\n\
             3. What filters to apply (if any)\n\
-            4. If an index is needed (consider element count > 10,000 as threshold)\n\n"
+            4. If an index is needed (consider element count > 10,000 as threshold)\n\n",
         );
         prompt.push_str(qp::FILTER_TYPES_INSTRUCTION);
         prompt.push_str("\n\n");
@@ -62,7 +66,11 @@ impl LlmQueryService {
     }
 
     /// Build the summarization prompt
-    pub(super) fn build_summarization_prompt(&self, original_query: &str, results: &[Value]) -> String {
+    pub(super) fn build_summarization_prompt(
+        &self,
+        original_query: &str,
+        results: &[Value],
+    ) -> String {
         let results_preview = if results.len() > 1000 {
             &results[..1000]
         } else {

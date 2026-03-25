@@ -127,10 +127,11 @@ async fn upload_photo(
         .map_err(|e| CliError::new(format!("Invalid response: {}", e)))?;
 
     if !status.is_success() {
-        let msg = body["error"]
-            .as_str()
-            .unwrap_or("Unknown upload error");
-        return Err(CliError::new(format!("Upload failed ({}): {}", status, msg)));
+        let msg = body["error"].as_str().unwrap_or("Unknown upload error");
+        return Err(CliError::new(format!(
+            "Upload failed ({}): {}",
+            status, msg
+        )));
     }
 
     // The upload API is async — poll progress until completion.
@@ -183,7 +184,10 @@ async fn upload_photo(
             let err_msg = progress["error_message"]
                 .as_str()
                 .unwrap_or("Unknown ingestion error");
-            return Err(CliError::new(format!("Photo ingestion failed: {}", err_msg)));
+            return Err(CliError::new(format!(
+                "Photo ingestion failed: {}",
+                err_msg
+            )));
         }
 
         if progress["is_complete"].as_bool() == Some(true) {
@@ -241,8 +245,7 @@ fn collect_and_convert(export_dir: &Path) -> Result<Vec<PathBuf>, CliError> {
         .map_err(|e| CliError::new(format!("Failed to read export dir: {}", e)))?;
 
     for entry in entries {
-        let entry = entry
-            .map_err(|e| CliError::new(format!("Failed to read dir entry: {}", e)))?;
+        let entry = entry.map_err(|e| CliError::new(format!("Failed to read dir entry: {}", e)))?;
         let path = entry.path();
 
         if !path.is_file() {

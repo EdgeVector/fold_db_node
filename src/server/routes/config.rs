@@ -1,13 +1,13 @@
 use crate::fold_node::config::NodeConfig;
-use fold_db::log_feature;
-use fold_db::logging::features::LogFeature;
 use crate::server::http_server::AppState;
 use crate::server::node_manager::NodeManagerConfig;
-use fold_db::storage::config::DatabaseConfig;
+use crate::utils::crypto::user_hash_from_pubkey;
 use actix_web::{web, HttpResponse, Responder};
+use fold_db::log_feature;
+use fold_db::logging::features::LogFeature;
+use fold_db::storage::config::DatabaseConfig;
 use serde::{Deserialize, Serialize};
 use serde_json::json;
-use crate::utils::crypto::user_hash_from_pubkey;
 use std::path::Path;
 
 /// Database configuration request/response types
@@ -348,9 +348,17 @@ pub async fn get_database_status(state: web::Data<AppState>) -> impl Responder {
         match &config.public_key {
             Some(pk) if !pk.is_empty() => {
                 let user_hash = user_hash_from_pubkey(pk);
-                state.node_manager.get_node(&user_hash).await
+                state
+                    .node_manager
+                    .get_node(&user_hash)
+                    .await
                     .inspect_err(|e| {
-                        log_feature!(LogFeature::HttpServer, warn, "Auto-initialization failed for returning user: {}", e);
+                        log_feature!(
+                            LogFeature::HttpServer,
+                            warn,
+                            "Auto-initialization failed for returning user: {}",
+                            e
+                        );
                     })
                     .is_ok()
             }
@@ -360,5 +368,8 @@ pub async fn get_database_status(state: web::Data<AppState>) -> impl Responder {
         false
     };
 
-    HttpResponse::Ok().json(DatabaseStatusResponse { initialized, has_saved_config })
+    HttpResponse::Ok().json(DatabaseStatusResponse {
+        initialized,
+        has_saved_config,
+    })
 }

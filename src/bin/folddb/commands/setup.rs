@@ -7,8 +7,7 @@ use serde::{Deserialize, Serialize};
 use std::fs;
 use std::path::{Path, PathBuf};
 
-const DEFAULT_SCHEMA_SERVICE_URL: &str =
-    "https://y0q3m6vk75.execute-api.us-west-2.amazonaws.com";
+const DEFAULT_SCHEMA_SERVICE_URL: &str = "https://y0q3m6vk75.execute-api.us-west-2.amazonaws.com";
 
 const DEFAULT_EXEMEM_API_URL: &str = "https://api.exemem.com";
 
@@ -96,10 +95,11 @@ fn register_with_exemem(
         .map_err(|e| CliError::new(format!("Failed to parse registration response: {}", e)))?;
 
     if !resp.ok {
-        let msg = resp
-            .message
-            .unwrap_or_else(|| "Unknown error".to_string());
-        return Err(CliError::new(format!("Exemem registration failed: {}", msg)));
+        let msg = resp.message.unwrap_or_else(|| "Unknown error".to_string());
+        return Err(CliError::new(format!(
+            "Exemem registration failed: {}",
+            msg
+        )));
     }
 
     Ok(resp)
@@ -168,9 +168,9 @@ pub fn run_setup_wizard() -> Result<NodeConfig, CliError> {
             eprintln!(" done.");
             eprintln!();
 
-            let api_key = resp
-                .api_key
-                .ok_or_else(|| CliError::new("Registration response missing api_key".to_string()))?;
+            let api_key = resp.api_key.ok_or_else(|| {
+                CliError::new("Registration response missing api_key".to_string())
+            })?;
             let user_hash = resp.user_hash.unwrap_or_default();
             let deposit_address = resp.deposit_address.unwrap_or_default();
             let network = resp.network.unwrap_or_default();
@@ -182,10 +182,7 @@ pub fn run_setup_wizard() -> Result<NodeConfig, CliError> {
             eprintln!("  Network:          {} (chain {})", network, chain_id);
             eprintln!("  Payment token:    {}", token);
             eprintln!();
-            eprintln!(
-                "Fund your account by sending {} on {} to:",
-                token, network
-            );
+            eprintln!("Fund your account by sending {} on {} to:", token, network);
             eprintln!("  {}", deposit_address);
             eprintln!();
 

@@ -11,16 +11,17 @@
 //!
 //! Run with: `cargo test --test smart_folder_ingestion_test -- --ignored --nocapture`
 
+use fold_db::logging::core::run_with_user;
 use fold_db_node::fold_node::llm_query::LlmQueryService;
 use fold_db_node::fold_node::node::FoldNode;
 use fold_db_node::fold_node::OperationProcessor;
 use fold_db_node::ingestion::ingestion_service::IngestionService;
 use fold_db_node::ingestion::smart_folder::{perform_smart_folder_scan, read_file_with_hash};
-use fold_db_node::ingestion::{create_progress_tracker, IngestionConfig, IngestionRequest, ProgressService};
-use fold_db::logging::core::run_with_user;
+use fold_db_node::ingestion::{
+    create_progress_tracker, IngestionConfig, IngestionRequest, ProgressService,
+};
 use fold_db_node::schema_service::server::{
-    AddSchemaResponse, ErrorResponse, SchemaAddOutcome, SchemaServiceState,
-    SchemasListResponse,
+    AddSchemaResponse, ErrorResponse, SchemaAddOutcome, SchemaServiceState, SchemasListResponse,
 };
 mod common;
 
@@ -126,24 +127,20 @@ async fn spawn_local_schema_service() -> (String, actix_web::dev::ServerHandle, 
 
     let listener =
         TcpListener::bind(("127.0.0.1", 0)).expect("failed to bind schema service listener");
-    let bound_address = listener
-        .local_addr()
-        .expect("failed to read bound address");
+    let bound_address = listener.local_addr().expect("failed to read bound address");
 
     let state_clone = state_data.clone();
     let server = HttpServer::new(move || {
-        App::new()
-            .app_data(state_clone.clone())
-            .service(
-                web::scope("/api")
-                    .route("/schemas", web::get().to(handle_list_schemas))
-                    .route("/schemas", web::post().to(handle_add_schema))
-                    .route(
-                        "/schemas/available",
-                        web::get().to(handle_get_available_schemas),
-                    )
-                    .route("/schema/{name}", web::get().to(handle_get_schema)),
-            )
+        App::new().app_data(state_clone.clone()).service(
+            web::scope("/api")
+                .route("/schemas", web::get().to(handle_list_schemas))
+                .route("/schemas", web::post().to(handle_add_schema))
+                .route(
+                    "/schemas/available",
+                    web::get().to(handle_get_available_schemas),
+                )
+                .route("/schema/{name}", web::get().to(handle_get_schema)),
+        )
     })
     .listen(listener)
     .expect("failed to listen")
@@ -266,7 +263,12 @@ async fn test_smart_folder_ingest_and_query() {
         let file_name = rec.path.clone();
         let progress_id = format!("test-smart-{}", idx);
 
-        eprintln!("\nIngesting [{}/{}]: {}", idx + 1, text_files.len(), file_name);
+        eprintln!(
+            "\nIngesting [{}/{}]: {}",
+            idx + 1,
+            text_files.len(),
+            file_name
+        );
 
         // Read file
         let (json_data, file_hash, _raw_bytes) = match read_file_with_hash(&full_path) {

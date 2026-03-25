@@ -18,8 +18,10 @@
 //!   cargo test --test twitter_export_scan_test -- --ignored --nocapture
 
 use fold_db_node::ingestion::ingestion_service::IngestionService;
+use fold_db_node::ingestion::smart_folder::scanner::{
+    is_ingestible_file, scan_directory_tree_with_context,
+};
 use fold_db_node::ingestion::smart_folder::{perform_smart_folder_scan, read_file_with_hash};
-use fold_db_node::ingestion::smart_folder::scanner::{is_ingestible_file, scan_directory_tree_with_context};
 
 use std::path::Path;
 use tempfile::TempDir;
@@ -45,16 +47,56 @@ fn twitter_js(var_name: &str, payload: &str) -> String {
 fn build_twitter_fixture(root: &Path) -> Vec<String> {
     // Personal-data .js files
     let js_files: &[(&str, &str, &str)] = &[
-        ("data/account.js",           "account",          r#"[{"account":{"username":"testuser","email":"test@example.com","accountId":"12345","createdAt":"2014-01-01T00:00:00.000Z"}}]"#),
-        ("data/tweets.js",            "tweet",            r#"[{"tweet":{"id":"1","full_text":"Hello world","created_at":"Mon Jan 01 00:00:00 +0000 2024"}}]"#),
-        ("data/follower.js",          "follower",         r#"[{"follower":{"accountId":"67890","userLink":"https://twitter.com/intent/user?user_id=67890"}}]"#),
-        ("data/following.js",         "following",        r#"[{"following":{"accountId":"11111","userLink":"https://twitter.com/intent/user?user_id=11111"}}]"#),
-        ("data/direct-messages.js",   "direct_messages",  r#"[{"dmConversation":{"conversationId":"12345-67890","messages":[{"messageCreate":{"id":"999","senderId":"12345","text":"Hi!","createdAt":"2023-01-01T00:00:00.000Z"}}]}}]"#),
-        ("data/like.js",              "like",             r#"[{"like":{"tweetId":"9999","fullText":"liked tweet"}}]"#),
-        ("data/profile.js",           "profile",          r#"[{"profile":{"description":{"bio":"Software engineer"},"avatarMediaUrl":"https://example.com/img.jpg"}}]"#),
-        ("data/block.js",             "block",            r#"[{"blocking":{"accountId":"22222","userLink":"https://twitter.com/intent/user?user_id=22222"}}]"#),
-        ("data/mute.js",              "mute",             r#"[{"muting":{"accountId":"33333","userLink":"https://twitter.com/intent/user?user_id=33333"}}]"#),
-        ("data/screen-name-change.js","screen_name_change",r#"[{"screenNameChange":{"changedAt":"2020-01-01T00:00:00.000Z","changedFrom":"oldname","changedTo":"testuser"}}]"#),
+        (
+            "data/account.js",
+            "account",
+            r#"[{"account":{"username":"testuser","email":"test@example.com","accountId":"12345","createdAt":"2014-01-01T00:00:00.000Z"}}]"#,
+        ),
+        (
+            "data/tweets.js",
+            "tweet",
+            r#"[{"tweet":{"id":"1","full_text":"Hello world","created_at":"Mon Jan 01 00:00:00 +0000 2024"}}]"#,
+        ),
+        (
+            "data/follower.js",
+            "follower",
+            r#"[{"follower":{"accountId":"67890","userLink":"https://twitter.com/intent/user?user_id=67890"}}]"#,
+        ),
+        (
+            "data/following.js",
+            "following",
+            r#"[{"following":{"accountId":"11111","userLink":"https://twitter.com/intent/user?user_id=11111"}}]"#,
+        ),
+        (
+            "data/direct-messages.js",
+            "direct_messages",
+            r#"[{"dmConversation":{"conversationId":"12345-67890","messages":[{"messageCreate":{"id":"999","senderId":"12345","text":"Hi!","createdAt":"2023-01-01T00:00:00.000Z"}}]}}]"#,
+        ),
+        (
+            "data/like.js",
+            "like",
+            r#"[{"like":{"tweetId":"9999","fullText":"liked tweet"}}]"#,
+        ),
+        (
+            "data/profile.js",
+            "profile",
+            r#"[{"profile":{"description":{"bio":"Software engineer"},"avatarMediaUrl":"https://example.com/img.jpg"}}]"#,
+        ),
+        (
+            "data/block.js",
+            "block",
+            r#"[{"blocking":{"accountId":"22222","userLink":"https://twitter.com/intent/user?user_id=22222"}}]"#,
+        ),
+        (
+            "data/mute.js",
+            "mute",
+            r#"[{"muting":{"accountId":"33333","userLink":"https://twitter.com/intent/user?user_id=33333"}}]"#,
+        ),
+        (
+            "data/screen-name-change.js",
+            "screen_name_change",
+            r#"[{"screenNameChange":{"changedAt":"2020-01-01T00:00:00.000Z","changedFrom":"oldname","changedTo":"testuser"}}]"#,
+        ),
     ];
 
     for (rel, var, payload) in js_files {
@@ -69,13 +111,21 @@ fn build_twitter_fixture(root: &Path) -> Vec<String> {
     );
 
     // README is a text file — should appear in the scan
-    write_fixture(root, "data/README.txt", b"This is your Twitter data archive.\n");
+    write_fixture(
+        root,
+        "data/README.txt",
+        b"This is your Twitter data archive.\n",
+    );
 
     // ── Image files (now ingestible) ────────────────────────────────────────
 
     // tweets_media/ (jpg) — ingestible images
     for i in 0..50 {
-        write_fixture(root, &format!("data/tweets_media/photo_{}.jpg", i), b"\xff\xd8\xff");
+        write_fixture(
+            root,
+            &format!("data/tweets_media/photo_{}.jpg", i),
+            b"\xff\xd8\xff",
+        );
     }
 
     // profile_media/
@@ -93,16 +143,17 @@ fn build_twitter_fixture(root: &Path) -> Vec<String> {
 
     // ── Non-ingestible files (video, audio, fonts, ico) ──────────────────
 
-    write_fixture(root, "data/direct_messages_media/video.mp4", b"\x00\x00\x00");
+    write_fixture(
+        root,
+        "data/direct_messages_media/video.mp4",
+        b"\x00\x00\x00",
+    );
     write_fixture(root, "assets/fonts/chirp-regular.woff2", b"\x00wOF2");
-    write_fixture(root, "assets/fonts/chirp-bold.ttf",      b"\x00\x01\x00\x00");
+    write_fixture(root, "assets/fonts/chirp-bold.ttf", b"\x00\x01\x00\x00");
     write_fixture(root, "assets/images/favicon.ico", b"\x00\x00\x01\x00");
 
     // Return the names of JS/TXT data files that SHOULD appear in scan results
-    let mut expected: Vec<String> = js_files
-        .iter()
-        .map(|(rel, _, _)| rel.to_string())
-        .collect();
+    let mut expected: Vec<String> = js_files.iter().map(|(rel, _, _)| rel.to_string()).collect();
     expected.push("data/manifest.js".to_string());
     expected.push("data/README.txt".to_string());
     expected
@@ -119,7 +170,11 @@ fn test_twitter_export_scanner_includes_all_ingestible() {
     // max_files large enough for all ingestible files (data + images)
     let result = scan_directory_tree_with_context(root, 10, 500).unwrap();
 
-    eprintln!("Found {} ingestible, {} skipped:", result.file_paths.len(), result.skipped_files.len());
+    eprintln!(
+        "Found {} ingestible, {} skipped:",
+        result.file_paths.len(),
+        result.skipped_files.len()
+    );
     for f in &result.file_paths {
         eprintln!("  {}", f);
     }
@@ -196,15 +251,13 @@ const MUST_INGEST: &[&str] = &[
 #[actix_web::test]
 #[ignore] // Requires ANTHROPIC_API_KEY
 async fn test_twitter_export_llm_scan() {
-    std::env::var("ANTHROPIC_API_KEY")
-        .expect("ANTHROPIC_API_KEY must be set to run this test");
+    std::env::var("ANTHROPIC_API_KEY").expect("ANTHROPIC_API_KEY must be set to run this test");
 
     // ── Resolve scan directory ────────────────────────────────────────────────
 
     // Default: use the committed fixture at tests/fixtures/twitter_export/.
     // Override with TWITTER_EXPORT_PATH to scan a different archive.
-    let fixture_dir = Path::new(env!("CARGO_MANIFEST_DIR"))
-        .join("tests/fixtures/twitter_export");
+    let fixture_dir = Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/twitter_export");
 
     let override_path = std::env::var("TWITTER_EXPORT_PATH").ok();
     let scan_path: &Path = match &override_path {
@@ -216,15 +269,15 @@ async fn test_twitter_export_llm_scan() {
 
     // ── Scan ─────────────────────────────────────────────────────────────────
 
-    let ingestion_service = IngestionService::from_env()
-        .expect("Failed to create IngestionService");
+    let ingestion_service =
+        IngestionService::from_env().expect("Failed to create IngestionService");
 
     let scan = perform_smart_folder_scan(
         scan_path,
-        10,    // max_depth
-        500,   // max_files — generous; media is now filtered before counting
+        10,  // max_depth
+        500, // max_files — generous; media is now filtered before counting
         Some(&ingestion_service),
-        None,  // no node needed for classification
+        None, // no node needed for classification
     )
     .await
     .expect("SmartFolder scan failed");
@@ -244,11 +297,18 @@ async fn test_twitter_export_llm_scan() {
     }
 
     assert!(scan.success, "Scan must succeed");
-    assert!(!scan.scan_truncated, "Scan must not be truncated at max_files=500");
+    assert!(
+        !scan.scan_truncated,
+        "Scan must not be truncated at max_files=500"
+    );
 
     // ── All results must have whitelisted (ingestible) extensions ──────────────
 
-    for rec in scan.recommended_files.iter().chain(scan.skipped_files.iter()) {
+    for rec in scan
+        .recommended_files
+        .iter()
+        .chain(scan.skipped_files.iter())
+    {
         assert!(
             is_ingestible_file(&rec.path),
             "File '{}' is not in the ingestible whitelist — \

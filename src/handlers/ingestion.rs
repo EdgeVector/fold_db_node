@@ -4,10 +4,10 @@
 //! These can be called by both HTTP server routes and Lambda handlers.
 
 use crate::fold_node::node::FoldNode;
-use crate::handlers::response::{ApiResponse, HandlerError, HandlerResult, IntoHandlerError};
 use crate::handlers::handler_response;
-use crate::ingestion::progress::{IngestionProgress, ProgressService, ProgressTracker};
+use crate::handlers::response::{ApiResponse, HandlerError, HandlerResult, IntoHandlerError};
 use crate::ingestion::ingestion_service::IngestionService;
+use crate::ingestion::progress::{IngestionProgress, ProgressService, ProgressTracker};
 use crate::ingestion::IngestionRequest;
 use fold_db::progress::JobType;
 use serde::{Deserialize, Serialize};
@@ -264,5 +264,4 @@ mod tests {
         let json = serde_json::to_string(&response).unwrap();
         assert!(json.contains("progress"));
     }
-
 }

@@ -9,14 +9,14 @@
 //!    write_mutation to create a new molecule instead of appending.
 
 use fold_db::fold_db_core::FoldDB;
-use fold_db_node::fold_node::config::NodeConfig;
-use fold_db_node::fold_node::FoldNode;
-use fold_db_node::fold_node::OperationProcessor;
-use fold_db::schema::SchemaState;
 use fold_db::schema::types::field::Field;
 use fold_db::schema::types::key_value::KeyValue;
 use fold_db::schema::types::operations::Query;
+use fold_db::schema::SchemaState;
 use fold_db::MutationType;
+use fold_db_node::fold_node::config::NodeConfig;
+use fold_db_node::fold_node::FoldNode;
+use fold_db_node::fold_node::OperationProcessor;
 use serde_json::json;
 use std::collections::HashMap;
 use tempfile::TempDir;
@@ -57,7 +57,12 @@ async fn setup_schema(node: &FoldNode) {
 }
 
 /// Helper: execute a single Range mutation for one file.
-async fn write_file_mutation(processor: &OperationProcessor, source_file: &str, content: &str, file_type: &str) {
+async fn write_file_mutation(
+    processor: &OperationProcessor,
+    source_file: &str,
+    content: &str,
+    file_type: &str,
+) {
     let mut fields = HashMap::new();
     fields.insert("source_file".to_string(), json!(source_file));
     fields.insert("content".to_string(), json!(content));
@@ -76,10 +81,7 @@ async fn write_file_mutation(processor: &OperationProcessor, source_file: &str, 
 
 /// Helper: query all FileRecords and return the source_file values.
 async fn query_source_files(processor: &OperationProcessor) -> Vec<String> {
-    let query = Query::new(
-        "FileRecords".to_string(),
-        vec!["source_file".to_string()],
-    );
+    let query = Query::new("FileRecords".to_string(), vec!["source_file".to_string()]);
     let result = processor
         .execute_query_map(query)
         .await
@@ -210,18 +212,21 @@ async fn mutations_work_after_simulated_restart() {
 
         // Verify molecule UUIDs exist before the simulated restart
         assert!(
-            schema.field_molecule_uuids.as_ref().is_some_and(|m| !m.is_empty()),
+            schema
+                .field_molecule_uuids
+                .as_ref()
+                .is_some_and(|m| !m.is_empty()),
             "should have field_molecule_uuids after mutation"
         );
 
         // Reload schema from DB (which calls populate_runtime_fields internally)
         // This creates fresh runtime_fields with molecule_uuid set but molecule=None
-        let reloaded: fold_db::schema::types::Schema =
-            fold_db.get_db_ops()
-                .get_schema("FileRecords")
-                .await
-                .unwrap()
-                .expect("schema in DB");
+        let reloaded: fold_db::schema::types::Schema = fold_db
+            .get_db_ops()
+            .get_schema("FileRecords")
+            .await
+            .unwrap()
+            .expect("schema in DB");
 
         // Verify the reload state: molecule_uuid set but molecule is None
         let field = reloaded.runtime_fields.get("source_file").expect("field");
@@ -239,7 +244,8 @@ async fn mutations_work_after_simulated_restart() {
 
         // Force the schema manager cache to use the reloaded schema (no molecules).
         // Use update_schema which replaces both DB and cache entries.
-        fold_db.schema_manager()
+        fold_db
+            .schema_manager()
             .update_schema(&reloaded)
             .await
             .expect("update schema with reloaded version");
@@ -276,10 +282,7 @@ async fn mutations_work_after_simulated_restart() {
         .get("source_file")
         .expect("source_file field");
     let keys = source_field.get_all_keys();
-    let mut range_keys: Vec<String> = keys
-        .iter()
-        .filter_map(|kv| kv.range.clone())
-        .collect();
+    let mut range_keys: Vec<String> = keys.iter().filter_map(|kv| kv.range.clone()).collect();
     range_keys.sort();
 
     assert_eq!(
@@ -308,7 +311,11 @@ async fn molecule_uuid_stays_consistent_across_batches() {
     let mol_uuid_first = {
         let fold_db = node.get_fold_db().await.expect("get fold_db");
         let db_ops = &fold_db.get_db_ops();
-        let schema = db_ops.get_schema("FileRecords").await.unwrap().expect("schema");
+        let schema = db_ops
+            .get_schema("FileRecords")
+            .await
+            .unwrap()
+            .expect("schema");
         schema
             .field_molecule_uuids
             .as_ref()
@@ -324,7 +331,11 @@ async fn molecule_uuid_stays_consistent_across_batches() {
     let mol_uuid_second = {
         let fold_db = node.get_fold_db().await.expect("get fold_db");
         let db_ops = &fold_db.get_db_ops();
-        let schema = db_ops.get_schema("FileRecords").await.unwrap().expect("schema");
+        let schema = db_ops
+            .get_schema("FileRecords")
+            .await
+            .unwrap()
+            .expect("schema");
         schema
             .field_molecule_uuids
             .as_ref()

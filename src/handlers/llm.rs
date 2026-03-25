@@ -5,7 +5,9 @@
 
 use crate::fold_node::llm_query::{conversation_store, types::*, LlmQueryService, SessionManager};
 use crate::fold_node::node::FoldNode;
-use crate::handlers::response::{get_db_guard, ApiResponse, HandlerError, HandlerResult, IntoHandlerError};
+use crate::handlers::response::{
+    get_db_guard, ApiResponse, HandlerError, HandlerResult, IntoHandlerError,
+};
 use fold_db::log_feature;
 use fold_db::logging::features::LogFeature;
 use fold_db::schema::SchemaWithState;
@@ -26,13 +28,17 @@ fn get_session_with_results(
     let context = match session_manager.get_session(session_id) {
         Ok(Some(ctx)) => ctx,
         Ok(None) => return Err(HandlerError::NotFound("Session not found".to_string())),
-        Err(e) => return Err(HandlerError::Internal(format!("Failed to get session: {}", e))),
+        Err(e) => {
+            return Err(HandlerError::Internal(format!(
+                "Failed to get session: {}",
+                e
+            )))
+        }
     };
 
-    let results = context
-        .query_results
-        .clone()
-        .ok_or_else(|| HandlerError::BadRequest("No query results available in session".to_string()))?;
+    let results = context.query_results.clone().ok_or_else(|| {
+        HandlerError::BadRequest("No query results available in session".to_string())
+    })?;
 
     Ok((context, results))
 }
@@ -41,7 +47,13 @@ fn get_session_with_results(
 /// the primary operation has already succeeded, so we warn rather than fail.
 fn warn_session_err(result: Result<(), String>, action: &str) {
     if let Err(e) = result {
-        log_feature!(LogFeature::Query, warn, "Session update failed ({}): {}", action, e);
+        log_feature!(
+            LogFeature::Query,
+            warn,
+            "Session update failed ({}): {}",
+            action,
+            e
+        );
     }
 }
 
@@ -76,7 +88,13 @@ pub async fn chat(
     session_manager: &SessionManager,
     node: &FoldNode,
 ) -> HandlerResult<ChatHandlerResponse> {
-    log_feature!(LogFeature::Query, info, "AI Query Chat: received for session: {:?}, user: {}", request.session_id, user_hash);
+    log_feature!(
+        LogFeature::Query,
+        info,
+        "AI Query Chat: received for session: {:?}, user: {}",
+        request.session_id,
+        user_hash
+    );
 
     let session_id = &request.session_id;
     let question = &request.question;
@@ -102,7 +120,10 @@ pub async fn chat(
         .handler_err("answer question")?;
 
     // Update session with conversation
-    warn_session_err(session_manager.add_message(session_id, "user".to_string(), question.clone()), "add user message");
+    warn_session_err(
+        session_manager.add_message(session_id, "user".to_string(), question.clone()),
+        "add user message",
+    );
 
     let assistant_message = if analysis.needs_query {
         format!("[Analyzed context: {}]\n\n{}", analysis.reasoning, answer)
@@ -110,10 +131,23 @@ pub async fn chat(
         answer.clone()
     };
 
-    warn_session_err(session_manager.add_message(session_id, "assistant".to_string(), assistant_message.clone()), "add assistant message");
+    warn_session_err(
+        session_manager.add_message(
+            session_id,
+            "assistant".to_string(),
+            assistant_message.clone(),
+        ),
+        "add assistant message",
+    );
 
     // Persist chat turn to FoldDB
-    conversation_store::save_chat_turn(node, session_id.clone(), question.clone(), assistant_message.clone()).await;
+    conversation_store::save_chat_turn(
+        node,
+        session_id.clone(),
+        question.clone(),
+        assistant_message.clone(),
+    )
+    .await;
 
     Ok(ApiResponse::success_with_user(
         ChatHandlerResponse {
@@ -142,7 +176,13 @@ pub async fn analyze_followup(
     session_manager: &SessionManager,
     node: &FoldNode,
 ) -> HandlerResult<AnalyzeFollowupHandlerResponse> {
-    log_feature!(LogFeature::Query, info, "AI Query Analyze Followup: received for session: {:?}, user: {}", request.session_id, user_hash);
+    log_feature!(
+        LogFeature::Query,
+        info,
+        "AI Query Analyze Followup: received for session: {:?}, user: {}",
+        request.session_id,
+        user_hash
+    );
 
     let session_id = &request.session_id;
     let question = &request.question;
@@ -189,7 +229,13 @@ pub async fn ai_native_index_query(
     session_manager: &SessionManager,
     node: &FoldNode,
 ) -> HandlerResult<AiNativeIndexHandlerResponse> {
-    log_feature!(LogFeature::Query, info, "AI Native Index Query: received for session: {:?}, user: {}", request.session_id, user_hash);
+    log_feature!(
+        LogFeature::Query,
+        info,
+        "AI Native Index Query: received for session: {:?}, user: {}",
+        request.session_id,
+        user_hash
+    );
 
     // Create or get session
     let session_id = session_manager
@@ -213,12 +259,22 @@ pub async fn ai_native_index_query(
         .await
         .handler_err("search native index")?;
 
-    log_feature!(LogFeature::Query, info, "AI Native Index Query: found {} results, hydrating...", search_results.len());
+    log_feature!(
+        LogFeature::Query,
+        info,
+        "AI Native Index Query: found {} results, hydrating...",
+        search_results.len()
+    );
 
     // Step 2: Hydrate results by fetching actual field values
     let hydrated_results = hydrate_index_results(search_results, &db_guard).await;
 
-    log_feature!(LogFeature::Query, info, "AI Native Index Query: hydration complete, {} results ready for AI interpretation", hydrated_results.len());
+    log_feature!(
+        LogFeature::Query,
+        info,
+        "AI Native Index Query: hydration complete, {} results ready for AI interpretation",
+        hydrated_results.len()
+    );
 
     // Step 3: Send hydrated results to AI for interpretation
     let ai_interpretation = service
@@ -232,14 +288,38 @@ pub async fn ai_native_index_query(
         .map(|result| serde_json::to_value(result).unwrap_or(json!({})))
         .collect();
 
-    warn_session_err(session_manager.add_results(&session_id, results_as_json.clone()), "store results");
-    warn_session_err(session_manager.add_message(&session_id, "user".to_string(), request.query.clone()), "add user message");
-    warn_session_err(session_manager.add_message(&session_id, "assistant".to_string(), ai_interpretation.clone()), "add assistant message");
+    warn_session_err(
+        session_manager.add_results(&session_id, results_as_json.clone()),
+        "store results",
+    );
+    warn_session_err(
+        session_manager.add_message(&session_id, "user".to_string(), request.query.clone()),
+        "add user message",
+    );
+    warn_session_err(
+        session_manager.add_message(
+            &session_id,
+            "assistant".to_string(),
+            ai_interpretation.clone(),
+        ),
+        "add assistant message",
+    );
 
-    log_feature!(LogFeature::Query, info, "AI Native Index Query complete for session: {}", session_id);
+    log_feature!(
+        LogFeature::Query,
+        info,
+        "AI Native Index Query complete for session: {}",
+        session_id
+    );
 
     // Persist native-index turn to FoldDB
-    conversation_store::save_chat_turn(node, session_id.clone(), request.query.clone(), ai_interpretation.clone()).await;
+    conversation_store::save_chat_turn(
+        node,
+        session_id.clone(),
+        request.query.clone(),
+        ai_interpretation.clone(),
+    )
+    .await;
 
     Ok(ApiResponse::success_with_user(
         AiNativeIndexHandlerResponse {
@@ -276,7 +356,13 @@ pub async fn agent_query(
     node: &FoldNode,
     progress_tracker: Option<&crate::ingestion::ProgressTracker>,
 ) -> HandlerResult<AgentQueryHandlerResponse> {
-    log_feature!(LogFeature::Query, info, "Agent Query: received for user: {}, query: {}", user_hash, &request.query[..request.query.len().min(100)]);
+    log_feature!(
+        LogFeature::Query,
+        info,
+        "Agent Query: received for user: {}, query: {}",
+        user_hash,
+        &request.query[..request.query.len().min(100)]
+    );
 
     // Create or get session
     let session_id = session_manager
@@ -324,7 +410,10 @@ pub async fn agent_query(
         .handler_err("run agent query")?;
 
     // Store conversation in session (user message + tool call summary + assistant answer)
-    warn_session_err(session_manager.add_message(&session_id, "user".to_string(), request.query.clone()), "add user message");
+    warn_session_err(
+        session_manager.add_message(&session_id, "user".to_string(), request.query.clone()),
+        "add user message",
+    );
 
     // Store a summary of tool calls so future turns know what happened
     if !tool_calls.is_empty() {
@@ -345,12 +434,28 @@ pub async fn agent_query(
                 )
             })
             .collect();
-        warn_session_err(session_manager.add_message(&session_id, "tool_calls".to_string(), tool_summary.join("\n---\n")), "add tool calls");
+        warn_session_err(
+            session_manager.add_message(
+                &session_id,
+                "tool_calls".to_string(),
+                tool_summary.join("\n---\n"),
+            ),
+            "add tool calls",
+        );
     }
 
-    warn_session_err(session_manager.add_message(&session_id, "assistant".to_string(), answer.clone()), "add assistant message");
+    warn_session_err(
+        session_manager.add_message(&session_id, "assistant".to_string(), answer.clone()),
+        "add assistant message",
+    );
 
-    log_feature!(LogFeature::Query, info, "Agent Query complete for session: {}. Made {} tool calls.", session_id, tool_calls.len());
+    log_feature!(
+        LogFeature::Query,
+        info,
+        "Agent Query complete for session: {}. Made {} tool calls.",
+        session_id,
+        tool_calls.len()
+    );
 
     // Persist conversation turn to FoldDB synchronously so failures are visible
     conversation_store::save_conversation_turn(

@@ -18,8 +18,7 @@ use fold_db_node::ingestion::ingestion_service::IngestionService;
 use fold_db_node::ingestion::smart_folder::read_file_with_hash;
 use fold_db_node::ingestion::{create_progress_tracker, IngestionRequest, ProgressService};
 use fold_db_node::schema_service::server::{
-    AddSchemaResponse, ErrorResponse, SchemaAddOutcome, SchemaServiceState,
-    SchemasListResponse,
+    AddSchemaResponse, ErrorResponse, SchemaAddOutcome, SchemaServiceState, SchemasListResponse,
 };
 mod common;
 
@@ -125,18 +124,16 @@ async fn spawn_local_schema_service() -> (String, actix_web::dev::ServerHandle, 
 
     let state_clone = state_data.clone();
     let server = HttpServer::new(move || {
-        App::new()
-            .app_data(state_clone.clone())
-            .service(
-                web::scope("/api")
-                    .route("/schemas", web::get().to(handle_list_schemas))
-                    .route("/schemas", web::post().to(handle_add_schema))
-                    .route(
-                        "/schemas/available",
-                        web::get().to(handle_get_available_schemas),
-                    )
-                    .route("/schema/{name}", web::get().to(handle_get_schema)),
-            )
+        App::new().app_data(state_clone.clone()).service(
+            web::scope("/api")
+                .route("/schemas", web::get().to(handle_list_schemas))
+                .route("/schemas", web::post().to(handle_add_schema))
+                .route(
+                    "/schemas/available",
+                    web::get().to(handle_get_available_schemas),
+                )
+                .route("/schema/{name}", web::get().to(handle_get_schema)),
+        )
     })
     .listen(listener)
     .expect("failed to listen")
@@ -231,7 +228,10 @@ async fn test_schema_names_are_semantic_not_hashes() {
 
     // Test files spanning different content types
     let test_files: Vec<(&str, &str)> = vec![
-        ("recipes/grandmas_cookies.txt", "recipes/grandmas_cookies.txt"),
+        (
+            "recipes/grandmas_cookies.txt",
+            "recipes/grandmas_cookies.txt",
+        ),
         ("journal/2025-01-15.txt", "journal/2025-01-15.txt"),
         ("health/doctor_visits.txt", "health/doctor_visits.txt"),
         ("health/medications.json", "health/medications.json"),
@@ -317,10 +317,8 @@ async fn test_schema_names_are_semantic_not_hashes() {
 
     // 4. Different content domains should produce different schema names
     //    (recipes vs journal vs health should not all share one schema)
-    let unique_names: std::collections::HashSet<&str> = schema_names
-        .iter()
-        .map(|(_, name)| name.as_str())
-        .collect();
+    let unique_names: std::collections::HashSet<&str> =
+        schema_names.iter().map(|(_, name)| name.as_str()).collect();
     assert!(
         unique_names.len() >= 3,
         "Different content types should produce at least 3 distinct schemas, got {}: {:?}",
@@ -387,7 +385,10 @@ async fn test_text_files_get_distinct_schemas() {
 
     // Three text files from completely different domains
     let text_files = [
-        ("recipes/grandmas_cookies.txt", "recipes/grandmas_cookies.txt"),
+        (
+            "recipes/grandmas_cookies.txt",
+            "recipes/grandmas_cookies.txt",
+        ),
         ("journal/2025-01-15.txt", "journal/2025-01-15.txt"),
         ("health/doctor_visits.txt", "health/doctor_visits.txt"),
     ];
@@ -424,8 +425,7 @@ async fn test_text_files_get_distinct_schemas() {
     );
 
     // All three should have DIFFERENT schema names
-    let unique: std::collections::HashSet<&str> =
-        results.iter().map(|(_, n)| n.as_str()).collect();
+    let unique: std::collections::HashSet<&str> = results.iter().map(|(_, n)| n.as_str()).collect();
 
     eprintln!("\nResults:");
     for (file, name) in &results {

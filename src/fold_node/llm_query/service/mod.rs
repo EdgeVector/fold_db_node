@@ -144,17 +144,22 @@ impl LlmQueryService {
         prompt.push_str("Example: {\"tool\": \"list_schemas\", \"params\": {}}\n\n");
 
         prompt.push_str("### get_schema\n");
-        prompt.push_str("Get details of a specific schema including its fields and key configuration.\n");
+        prompt.push_str(
+            "Get details of a specific schema including its fields and key configuration.\n",
+        );
         prompt.push_str("Parameters:\n");
         prompt.push_str("- name (string, required): Name of the schema\n");
-        prompt.push_str("Example: {\"tool\": \"get_schema\", \"params\": {\"name\": \"Tweet\"}}\n\n");
+        prompt
+            .push_str("Example: {\"tool\": \"get_schema\", \"params\": {\"name\": \"Tweet\"}}\n\n");
 
         prompt.push_str("### search\n");
         prompt.push_str("**PREFERRED for content discovery.** Full-text search across all indexed fields (tags, subjects, names, descriptions, etc.).\n");
         prompt.push_str("Use this whenever the user asks about finding, searching, or checking if data exists.\n");
         prompt.push_str("Parameters:\n");
         prompt.push_str("- terms (string, required): Search keywords (e.g. \"lake\", \"birthday\", \"Leonardo da Vinci\")\n");
-        prompt.push_str("Returns matching records with schema_name, field, key_value, and matched content.\n");
+        prompt.push_str(
+            "Returns matching records with schema_name, field, key_value, and matched content.\n",
+        );
         prompt.push_str("After getting results, use the **query** tool with the returned schema_name and key to fetch full records.\n");
         prompt.push_str("Example: {\"tool\": \"search\", \"params\": {\"terms\": \"lake\"}}\n\n");
 
@@ -167,13 +172,19 @@ impl LlmQueryService {
         prompt.push_str("- max_files (number, optional): Maximum files to scan (default: 100)\n");
         prompt.push_str("Returns: recommended_files (files to ingest), skipped_files, summary by category, total_estimated_cost.\n");
         prompt.push_str("After scanning, show the user what was found and ask if they want to proceed with ingestion.\n");
-        prompt.push_str("Example: {\"tool\": \"scan_folder\", \"params\": {\"path\": \"sample_data\"}}\n\n");
+        prompt.push_str(
+            "Example: {\"tool\": \"scan_folder\", \"params\": {\"path\": \"sample_data\"}}\n\n",
+        );
 
         prompt.push_str("### ingest_files\n");
         prompt.push_str("Ingest files from a previously scanned folder into the database. Each file is processed by AI to extract schema and data.\n");
-        prompt.push_str("Only call this AFTER scan_folder and AFTER the user confirms they want to proceed.\n");
+        prompt.push_str(
+            "Only call this AFTER scan_folder and AFTER the user confirms they want to proceed.\n",
+        );
         prompt.push_str("Parameters:\n");
-        prompt.push_str("- folder_path (string, required): The same folder path used in scan_folder\n");
+        prompt.push_str(
+            "- folder_path (string, required): The same folder path used in scan_folder\n",
+        );
         prompt.push_str("- files (array of strings, required): Relative file paths from the scan results (use the 'path' field from recommended_files)\n");
         prompt.push_str("Returns: total files processed, succeeded count, failed count, per-file results with schema_used.\n");
         prompt.push_str("Example: {\"tool\": \"ingest_files\", \"params\": {\"folder_path\": \"sample_data\", \"files\": [\"contacts/address_book.json\", \"journal/2025-01-15.txt\"]}}\n\n");
@@ -183,14 +194,18 @@ impl LlmQueryService {
         prompt.push_str("Before calling this tool, ALWAYS use get_schema first to inspect the source schema(s) and understand their fields.\n");
         prompt.push_str("Parameters:\n");
         prompt.push_str("- name (string, required): Unique view name (e.g. \"EnrichedPosts\")\n");
-        prompt.push_str("- schema_type (string, required): \"Single\", \"Range\", \"Hash\", or \"HashRange\"\n");
+        prompt.push_str(
+            "- schema_type (string, required): \"Single\", \"Range\", \"Hash\", or \"HashRange\"\n",
+        );
         prompt.push_str("- key_config (object, optional): {\"hash_field\": \"field_name\", \"range_field\": \"field_name\"} — required for Hash/Range/HashRange types\n");
         prompt.push_str("- input_queries (array, required): [{\"schema_name\": \"Name\", \"fields\": [\"field1\", \"field2\"]}]\n");
         prompt.push_str("- output_fields (object, required): {\"field_name\": \"type\"} where type is Any, String, Integer, Boolean, Date, Bytes, Reference, List, or Map\n");
         prompt.push_str("- rust_transform (string, required): A complete Rust function definition. See template below.\n\n");
 
         prompt.push_str("#### Rust Transform Template\n");
-        prompt.push_str("The transform receives query results as JSON and must return output fields as JSON.\n");
+        prompt.push_str(
+            "The transform receives query results as JSON and must return output fields as JSON.\n",
+        );
         prompt.push_str("```rust\n");
         prompt.push_str("fn transform_impl(input: Value) -> Value {\n");
         prompt.push_str("    // input structure:\n");
@@ -199,7 +214,9 @@ impl LlmQueryService {
         prompt.push_str("    // Must return:\n");
         prompt.push_str("    // {\"fields\": {\"output_field\": value, ...}}\n");
         prompt.push_str("    // For multi-record output, return:\n");
-        prompt.push_str("    // {\"records\": [{\"key\": {..}, \"fields\": {\"output_field\": value}}, ...]}\n");
+        prompt.push_str(
+            "    // {\"records\": [{\"key\": {..}, \"fields\": {\"output_field\": value}}, ...]}\n",
+        );
         prompt.push_str("    \n");
         prompt.push_str("    let inputs = &input[\"inputs\"];\n");
         prompt.push_str("    // ... your transform logic ...\n");
@@ -213,7 +230,9 @@ impl LlmQueryService {
         prompt.push_str("{\"tool\": \"create_view\", \"params\": {\n");
         prompt.push_str("  \"name\": \"PostWordCounts\",\n");
         prompt.push_str("  \"schema_type\": \"Single\",\n");
-        prompt.push_str("  \"input_queries\": [{\"schema_name\": \"BlogPost\", \"fields\": [\"content\"]}],\n");
+        prompt.push_str(
+            "  \"input_queries\": [{\"schema_name\": \"BlogPost\", \"fields\": [\"content\"]}],\n",
+        );
         prompt.push_str("  \"output_fields\": {\"word_count\": \"Integer\", \"content_preview\": \"String\"},\n");
         prompt.push_str("  \"rust_transform\": \"fn transform_impl(input: Value) -> Value {\\n    let inputs = &input[\\\"inputs\\\"];\\n    let posts = inputs[\\\"BlogPost\\\"].as_array().unwrap_or(&vec![]);\\n    let records: Vec<Value> = posts.iter().map(|post| {\\n        let content = post[\\\"fields\\\"][\\\"content\\\"].as_str().unwrap_or(\\\"\\\");\\n        let word_count = content.split_whitespace().count();\\n        let preview = content.chars().take(100).collect::<String>();\\n        serde_json::json!({\\n            \\\"key\\\": post[\\\"key\\\"],\\n            \\\"fields\\\": {\\n                \\\"word_count\\\": word_count,\\n                \\\"content_preview\\\": preview\\n            }\\n        })\\n    }).collect();\\n    serde_json::json!({ \\\"records\\\": records })\\n}\"\n");
         prompt.push_str("}}\n");
@@ -225,10 +244,14 @@ impl LlmQueryService {
         prompt.push_str("  \"name\": \"AuthoredPosts\",\n");
         prompt.push_str("  \"schema_type\": \"Single\",\n");
         prompt.push_str("  \"input_queries\": [\n");
-        prompt.push_str("    {\"schema_name\": \"BlogPost\", \"fields\": [\"title\", \"author_id\"]},\n");
+        prompt.push_str(
+            "    {\"schema_name\": \"BlogPost\", \"fields\": [\"title\", \"author_id\"]},\n",
+        );
         prompt.push_str("    {\"schema_name\": \"Author\", \"fields\": [\"name\"]}\n");
         prompt.push_str("  ],\n");
-        prompt.push_str("  \"output_fields\": {\"title\": \"String\", \"author_name\": \"String\"},\n");
+        prompt.push_str(
+            "  \"output_fields\": {\"title\": \"String\", \"author_name\": \"String\"},\n",
+        );
         prompt.push_str("  \"rust_transform\": \"fn transform_impl(input: Value) -> Value {\\n    let inputs = &input[\\\"inputs\\\"];\\n    let posts = inputs[\\\"BlogPost\\\"].as_array().unwrap_or(&vec![]);\\n    let authors = inputs[\\\"Author\\\"].as_array().unwrap_or(&vec![]);\\n    let first_author = authors.first().map(|a| a[\\\"fields\\\"][\\\"name\\\"].as_str().unwrap_or(\\\"Unknown\\\")).unwrap_or(\\\"Unknown\\\");\\n    let records: Vec<Value> = posts.iter().map(|post| {\\n        serde_json::json!({\\n            \\\"key\\\": post[\\\"key\\\"],\\n            \\\"fields\\\": {\\n                \\\"title\\\": post[\\\"fields\\\"][\\\"title\\\"],\\n                \\\"author_name\\\": first_author\\n            }\\n        })\\n    }).collect();\\n    serde_json::json!({ \\\"records\\\": records })\\n}\"\n");
         prompt.push_str("}}\n");
         prompt.push_str("```\n\n");
@@ -239,7 +262,9 @@ impl LlmQueryService {
         prompt.push_str("- schema_name (string, required): Name of the schema\n");
         prompt.push_str("- field_name (string, required): Name of the field\n");
         prompt.push_str("- read_max (integer, required): Maximum trust distance for reads. 0 = owner only, 1 = direct trust, 18446744073709551615 = public\n");
-        prompt.push_str("- write_max (integer, required): Maximum trust distance for writes. 0 = owner only.\n");
+        prompt.push_str(
+            "- write_max (integer, required): Maximum trust distance for writes. 0 = owner only.\n",
+        );
         prompt.push_str("Common patterns:\n");
         prompt.push_str("- Owner only: read_max=0, write_max=0\n");
         prompt.push_str("- Public read, owner write: read_max=18446744073709551615, write_max=0\n");
@@ -282,7 +307,9 @@ impl LlmQueryService {
         prompt.push_str("This searches the full-text index and will find records by tags, subjects, descriptions, names, and other indexed content. ");
         prompt.push_str("After getting search results, use the **query** tool with the returned schema and key to fetch full records.\n");
         prompt.push_str("3. Use other tools to gather additional information as needed\n");
-        prompt.push_str("4. When you have enough information to answer, provide your final response\n");
+        prompt.push_str(
+            "4. When you have enough information to answer, provide your final response\n",
+        );
         prompt.push_str("5. Use the current date/time above to determine temporal context. Events with dates before today are in the PAST. Events with dates after today are in the FUTURE. Label them accordingly (e.g. \"upcoming\" vs \"past\").\n\n");
         prompt.push_str("## Reference Fields\n\n");
         prompt.push_str("Some fields are References to records in other schemas. Query results automatically resolve references one level deep.\n");
@@ -296,16 +323,17 @@ impl LlmQueryService {
 
     /// Call the LLM service
     pub(super) async fn call_llm(&self, prompt: &str) -> Result<String, String> {
-        self.backend.call(prompt).await.map_err(|e| format!("AI backend error: {}", e))
+        self.backend
+            .call(prompt)
+            .await
+            .map_err(|e| format!("AI backend error: {}", e))
     }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
-    use fold_db::schema::types::{
-        DeclarativeSchemaDefinition, KeyConfig,
-    };
+    use fold_db::schema::types::{DeclarativeSchemaDefinition, KeyConfig};
     use fold_db::schema::{SchemaState, SchemaWithState};
 
     fn create_test_hash_range_schema() -> SchemaWithState {
@@ -322,8 +350,12 @@ mod tests {
         );
 
         schema.descriptive_name = Some("Blog Post Author Index".to_string());
-        schema.field_classifications.insert("author".to_string(), vec!["word".to_string()]);
-        schema.field_classifications.insert("publish_date".to_string(), vec!["word".to_string()]);
+        schema
+            .field_classifications
+            .insert("author".to_string(), vec!["word".to_string()]);
+        schema
+            .field_classifications
+            .insert("publish_date".to_string(), vec!["word".to_string()]);
 
         SchemaWithState {
             schema,

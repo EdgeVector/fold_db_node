@@ -1,9 +1,9 @@
 //! Flat (non-nested) ingestion path for IngestionService.
 
 use super::{get_schema_manager, IngestionService};
+use crate::fold_node::FoldNode;
 use crate::ingestion::progress::{IngestionPhase, PhaseTracker, SchemaWriteRecord};
 use crate::ingestion::{AISchemaResponse, IngestionRequest, IngestionResult};
-use crate::fold_node::FoldNode;
 use fold_db::log_feature;
 use fold_db::logging::features::LogFeature;
 use fold_db::schema::types::Mutation;
@@ -27,13 +27,18 @@ impl IngestionService {
             .as_ref()
             .map(|name| crate::ingestion::is_image_file(name))
             .unwrap_or(false);
-        tracker.enter_phase(IngestionPhase::AIRecommendation,
-            "Analyzing data with AI to determine schema...".to_string()).await;
+        tracker
+            .enter_phase(
+                IngestionPhase::AIRecommendation,
+                "Analyzing data with AI to determine schema...".to_string(),
+            )
+            .await;
         let mut ai_response = self.get_ai_recommendation(flattened_data).await?;
 
         // If the AI didn't provide field_descriptions, do a second AI call
         // focused just on generating descriptions from the JSON structure.
-        self.fill_missing_field_descriptions(&mut ai_response, flattened_data).await?;
+        self.fill_missing_field_descriptions(&mut ai_response, flattened_data)
+            .await?;
 
         if is_image {
             super::apply_image_schema_override(
@@ -43,8 +48,12 @@ impl IngestionService {
         }
 
         // Schema resolution
-        tracker.enter_phase(IngestionPhase::SchemaResolution,
-            "Setting up schema and preparing for data storage...".to_string()).await;
+        tracker
+            .enter_phase(
+                IngestionPhase::SchemaResolution,
+                "Setting up schema and preparing for data storage...".to_string(),
+            )
+            .await;
         let (schema_name, service_mappers) = self
             .determine_schema_to_use(&ai_response, flattened_data, node)
             .await?;
@@ -52,7 +61,9 @@ impl IngestionService {
         // Service mappers (e.g., "creator" → "artist") take precedence since they
         // reflect the canonical field names on the actual expanded schema.
         for (from, to) in &service_mappers {
-            ai_response.mutation_mappers.insert(from.clone(), to.clone());
+            ai_response
+                .mutation_mappers
+                .insert(from.clone(), to.clone());
         }
         let new_schema_created = ai_response.new_schemas.is_some();
 
@@ -75,8 +86,12 @@ impl IngestionService {
         };
 
         // Mutation generation
-        tracker.enter_phase(IngestionPhase::MutationGeneration,
-            "Generating database mutations...".to_string()).await;
+        tracker
+            .enter_phase(
+                IngestionPhase::MutationGeneration,
+                "Generating database mutations...".to_string(),
+            )
+            .await;
         let (mutations, schemas_written) = self
             .generate_flat_mutations(
                 &enriched_data,
@@ -97,18 +112,29 @@ impl IngestionService {
         );
 
         // Mutation execution
-        tracker.enter_phase(IngestionPhase::MutationExecution,
-            "Executing mutations to store data...".to_string()).await;
+        tracker
+            .enter_phase(
+                IngestionPhase::MutationExecution,
+                "Executing mutations to store data...".to_string(),
+            )
+            .await;
 
         let mutations_len = mutations.len();
 
         let mutations_executed = if request.auto_execute {
-            self.execute_mutations_with_tracking(mutations, node, tracker).await?
+            self.execute_mutations_with_tracking(mutations, node, tracker)
+                .await?
         } else {
             0
         };
 
-        Ok((schema_name, new_schema_created, mutations_len, mutations_executed, schemas_written))
+        Ok((
+            schema_name,
+            new_schema_created,
+            mutations_len,
+            mutations_executed,
+            schemas_written,
+        ))
     }
 
     /// Generates mutations for flat (non-nested) data items.
@@ -134,11 +160,8 @@ impl IngestionService {
         // dropped from the schema definition, causing write failures.
         let mut mutation_mappers = ai_response.mutation_mappers.clone();
         if let Ok(Some(schema_meta)) = schema_manager.get_schema_metadata(schema_name) {
-            let schema_fields: std::collections::HashSet<String> = schema_meta
-                .runtime_fields
-                .keys()
-                .cloned()
-                .collect();
+            let schema_fields: std::collections::HashSet<String> =
+                schema_meta.runtime_fields.keys().cloned().collect();
             let before = mutation_mappers.len();
             mutation_mappers.retain(|_json_field, schema_field| {
                 let target = if schema_field.contains('.') {
@@ -161,16 +184,14 @@ impl IngestionService {
         }
 
         // Collect items to process — normalize single object to a one-element slice
-        let items: Vec<&serde_json::Map<String, Value>> = if let Some(array) = flattened_data.as_array() {
-            array
-                .iter()
-                .filter_map(|item| item.as_object())
-                .collect()
-        } else if let Some(obj) = flattened_data.as_object() {
-            vec![obj]
-        } else {
-            vec![]
-        };
+        let items: Vec<&serde_json::Map<String, Value>> =
+            if let Some(array) = flattened_data.as_array() {
+                array.iter().filter_map(|item| item.as_object()).collect()
+            } else if let Some(obj) = flattened_data.as_object() {
+                vec![obj]
+            } else {
+                vec![]
+            };
 
         let total_items = items.len();
         let mut mutations = Vec::new();

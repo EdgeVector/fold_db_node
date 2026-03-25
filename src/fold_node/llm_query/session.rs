@@ -101,7 +101,6 @@ impl SessionManager {
     pub fn set_schema_created(&self, session_id: &str, schema_name: String) -> Result<(), String> {
         self.update_session(session_id, |ctx| ctx.schema_created = Some(schema_name))
     }
-
 }
 
 impl Default for SessionManager {

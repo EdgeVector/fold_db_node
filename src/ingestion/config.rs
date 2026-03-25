@@ -186,11 +186,20 @@ impl IngestionConfig {
         // File exists but unreadable/unparseable → fail fast.
         let has_saved = match Self::config_file_path() {
             None => {
-                log_feature!(LogFeature::Ingestion, info, "FOLD_CONFIG_DIR not set; using env vars/defaults");
+                log_feature!(
+                    LogFeature::Ingestion,
+                    info,
+                    "FOLD_CONFIG_DIR not set; using env vars/defaults"
+                );
                 false
             }
             Some(path) if !path.exists() => {
-                log_feature!(LogFeature::Ingestion, info, "No saved ingestion config at {}; using env vars/defaults", path.display());
+                log_feature!(
+                    LogFeature::Ingestion,
+                    info,
+                    "No saved ingestion config at {}; using env vars/defaults",
+                    path.display()
+                );
                 false
             }
             Some(path) => {
@@ -226,10 +235,18 @@ impl IngestionConfig {
                     _ => AIProvider::Anthropic,
                 };
             }
-            if let Ok(v) = env::var("OLLAMA_MODEL") { config.ollama.model = v; }
-            if let Ok(v) = env::var("OLLAMA_BASE_URL") { config.ollama.base_url = v; }
-            if let Ok(v) = env::var("ANTHROPIC_MODEL") { config.anthropic.model = v; }
-            if let Ok(v) = env::var("ANTHROPIC_BASE_URL") { config.anthropic.base_url = v; }
+            if let Ok(v) = env::var("OLLAMA_MODEL") {
+                config.ollama.model = v;
+            }
+            if let Ok(v) = env::var("OLLAMA_BASE_URL") {
+                config.ollama.base_url = v;
+            }
+            if let Ok(v) = env::var("ANTHROPIC_MODEL") {
+                config.anthropic.model = v;
+            }
+            if let Ok(v) = env::var("ANTHROPIC_BASE_URL") {
+                config.anthropic.base_url = v;
+            }
         }
 
         // Runtime settings: env vars override defaults; ingestion is enabled by default
@@ -237,7 +254,8 @@ impl IngestionConfig {
         config.enabled = env_bool("INGESTION_ENABLED", true);
         config.max_retries = env_parse("INGESTION_MAX_RETRIES", config.max_retries);
         config.timeout_seconds = env_parse("INGESTION_TIMEOUT_SECONDS", config.timeout_seconds);
-        config.auto_execute_mutations = env_bool("INGESTION_AUTO_EXECUTE", config.auto_execute_mutations);
+        config.auto_execute_mutations =
+            env_bool("INGESTION_AUTO_EXECUTE", config.auto_execute_mutations);
 
         Ok(config)
     }
@@ -261,7 +279,8 @@ impl IngestionConfig {
     /// preserved. If the file exists but cannot be read, returns an error rather
     /// than silently clearing the key.
     pub fn save_to_file(config: &SavedConfig) -> Result<(), Box<dyn std::error::Error>> {
-        let config_path = Self::config_file_path().ok_or("FOLD_CONFIG_DIR is not set; cannot save ingestion config")?;
+        let config_path = Self::config_file_path()
+            .ok_or("FOLD_CONFIG_DIR is not set; cannot save ingestion config")?;
 
         let mut to_save = config.clone();
         // Preserve API keys if not explicitly set (redacted or empty)
@@ -273,7 +292,10 @@ impl IngestionConfig {
             None
         };
         if to_save.anthropic.api_key.is_empty() || to_save.anthropic.api_key == "***configured***" {
-            to_save.anthropic.api_key = existing.as_ref().map(|e| e.anthropic.api_key.clone()).unwrap_or_default();
+            to_save.anthropic.api_key = existing
+                .as_ref()
+                .map(|e| e.anthropic.api_key.clone())
+                .unwrap_or_default();
         }
 
         if let Some(parent) = config_path.parent() {
@@ -336,11 +358,17 @@ pub struct SavedConfig {
 // ---- env var helpers ----
 
 fn env_bool(name: &str, default: bool) -> bool {
-    env::var(name).ok().and_then(|v| v.parse().ok()).unwrap_or(default)
+    env::var(name)
+        .ok()
+        .and_then(|v| v.parse().ok())
+        .unwrap_or(default)
 }
 
 fn env_parse<T: std::str::FromStr>(name: &str, default: T) -> T {
-    env::var(name).ok().and_then(|v| v.parse().ok()).unwrap_or(default)
+    env::var(name)
+        .ok()
+        .and_then(|v| v.parse().ok())
+        .unwrap_or(default)
 }
 
 #[cfg(test)]
@@ -356,14 +384,34 @@ mod tests {
         assert_eq!(config.anthropic.base_url, models::ANTHROPIC_API_URL);
         assert_eq!(config.ollama.model, models::OLLAMA_DEFAULT);
         assert_eq!(config.ollama.base_url, models::OLLAMA_DEFAULT_URL);
-        assert_eq!(config.ollama.generation_params.num_ctx, models::OLLAMA_NUM_CTX);
-        assert!((config.ollama.generation_params.temperature - models::TEMPERATURE_CREATIVE).abs() < f32::EPSILON);
-        assert!((config.ollama.generation_params.top_p - models::OLLAMA_TOP_P).abs() < f32::EPSILON);
+        assert_eq!(
+            config.ollama.generation_params.num_ctx,
+            models::OLLAMA_NUM_CTX
+        );
+        assert!(
+            (config.ollama.generation_params.temperature - models::TEMPERATURE_CREATIVE).abs()
+                < f32::EPSILON
+        );
+        assert!(
+            (config.ollama.generation_params.top_p - models::OLLAMA_TOP_P).abs() < f32::EPSILON
+        );
         assert_eq!(config.ollama.generation_params.top_k, models::OLLAMA_TOP_K);
-        assert_eq!(config.ollama.generation_params.num_predict, models::OLLAMA_NUM_PREDICT);
-        assert!((config.ollama.generation_params.repeat_penalty - models::OLLAMA_REPEAT_PENALTY).abs() < f32::EPSILON);
-        assert!((config.ollama.generation_params.presence_penalty - models::OLLAMA_PRESENCE_PENALTY).abs() < f32::EPSILON);
-        assert!((config.ollama.generation_params.min_p - models::OLLAMA_MIN_P).abs() < f32::EPSILON);
+        assert_eq!(
+            config.ollama.generation_params.num_predict,
+            models::OLLAMA_NUM_PREDICT
+        );
+        assert!(
+            (config.ollama.generation_params.repeat_penalty - models::OLLAMA_REPEAT_PENALTY).abs()
+                < f32::EPSILON
+        );
+        assert!(
+            (config.ollama.generation_params.presence_penalty - models::OLLAMA_PRESENCE_PENALTY)
+                .abs()
+                < f32::EPSILON
+        );
+        assert!(
+            (config.ollama.generation_params.min_p - models::OLLAMA_MIN_P).abs() < f32::EPSILON
+        );
         assert_eq!(config.max_retries, 3);
         assert_eq!(config.timeout_seconds, 300);
         assert!(config.auto_execute_mutations);

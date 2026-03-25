@@ -129,7 +129,8 @@ pub fn generate_mutations(
                 LogFeature::Ingestion,
                 warn,
                 "Range key missing for schema '{}', using timestamp '{}' as fallback",
-                schema_name, ts
+                schema_name,
+                ts
             );
             KeyValue::new(key_value.hash, Some(ts))
         } else {
@@ -169,7 +170,6 @@ pub fn generate_mutations(
 
     Ok(mutations)
 }
-
 
 #[cfg(test)]
 mod tests {

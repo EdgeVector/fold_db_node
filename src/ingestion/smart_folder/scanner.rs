@@ -27,7 +27,15 @@ pub fn scan_directory_tree_with_context(
 ) -> IngestionResult<DirectoryScanResult> {
     let mut files = Vec::new();
     let mut skipped = Vec::new();
-    scan_directory_recursive(root, root, 0, max_depth, max_files, &mut files, &mut skipped)?;
+    scan_directory_recursive(
+        root,
+        root,
+        0,
+        max_depth,
+        max_files,
+        &mut files,
+        &mut skipped,
+    )?;
     let truncated = files.len() >= max_files;
     let tree_display = build_directory_tree_string_with_skipped(&files, &skipped);
     Ok(DirectoryScanResult {
@@ -46,7 +54,15 @@ pub fn scan_directory_tree(
 ) -> IngestionResult<Vec<String>> {
     let mut files = Vec::new();
     let mut skipped = Vec::new();
-    scan_directory_recursive(root, root, 0, max_depth, max_files, &mut files, &mut skipped)?;
+    scan_directory_recursive(
+        root,
+        root,
+        0,
+        max_depth,
+        max_files,
+        &mut files,
+        &mut skipped,
+    )?;
     Ok(files)
 }
 
@@ -107,7 +123,10 @@ pub fn build_directory_tree_string(file_paths: &[String]) -> String {
 }
 
 /// Build an indented directory tree string including skipped files marked as [skipped].
-pub fn build_directory_tree_string_with_skipped(file_paths: &[String], skipped_paths: &[String]) -> String {
+pub fn build_directory_tree_string_with_skipped(
+    file_paths: &[String],
+    skipped_paths: &[String],
+) -> String {
     let mut dirs: BTreeSet<String> = BTreeSet::new();
     let mut all_paths: BTreeSet<String> = BTreeSet::new();
     let skipped_set: HashSet<&String> = skipped_paths.iter().collect();
@@ -181,17 +200,14 @@ pub const DATA_EXTS: &[&str] = &["json", "csv", "txt", "md"];
 
 /// Document file extensions (personal data — handled by LLM classifier).
 pub const DOC_EXTS: &[&str] = &[
-    "pdf", "doc", "docx", "rtf", "odt", "pages",
-    "xls", "xlsx", "ods", "numbers",
-    "pptx", "ppt", "odp", "key",
-    "eml", "mbox", "vcf",
+    "pdf", "doc", "docx", "rtf", "odt", "pages", "xls", "xlsx", "ods", "numbers", "pptx", "ppt",
+    "odp", "key", "eml", "mbox", "vcf",
 ];
 
 /// Code file extensions handled by `extract_code_metadata`.
 pub const CODE_EXTS: &[&str] = &[
-    "js", "jsx", "ts", "tsx", "py", "rs", "go", "java", "kt", "rb",
-    "c", "cpp", "h", "hpp", "cs", "swift", "scala", "lua", "r", "pl",
-    "sh", "bash", "zsh",
+    "js", "jsx", "ts", "tsx", "py", "rs", "go", "java", "kt", "rb", "c", "cpp", "h", "hpp", "cs",
+    "swift", "scala", "lua", "r", "pl", "sh", "bash", "zsh",
 ];
 
 /// Config file extensions wrapped as text content.
@@ -210,7 +226,11 @@ pub fn is_ingestible_file(path: &str) -> bool {
         .unwrap_or("")
         .to_lowercase();
     let e = ext.as_str();
-    DATA_EXTS.contains(&e) || DOC_EXTS.contains(&e) || CODE_EXTS.contains(&e) || CONFIG_EXTS.contains(&e) || IMAGE_EXTS.contains(&e)
+    DATA_EXTS.contains(&e)
+        || DOC_EXTS.contains(&e)
+        || CODE_EXTS.contains(&e)
+        || CONFIG_EXTS.contains(&e)
+        || IMAGE_EXTS.contains(&e)
 }
 
 #[cfg(test)]

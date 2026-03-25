@@ -12,9 +12,7 @@ use std::path::Path;
 /// schema recommendation, child schema resolution) plus a base schema-service call.
 pub fn estimate_file_cost(path: &Path, root: &Path) -> f64 {
     let full_path = root.join(path);
-    let file_size = std::fs::metadata(&full_path)
-        .map(|m| m.len())
-        .unwrap_or(0);
+    let file_size = std::fs::metadata(&full_path).map(|m| m.len()).unwrap_or(0);
 
     let ext = path
         .extension()
@@ -54,9 +52,7 @@ fn text_cost_by_size(size: u64) -> f64 {
 /// Get the file size for a path relative to root, returning 0 on error.
 pub(crate) fn file_size_bytes(path: &Path, root: &Path) -> u64 {
     let full_path = root.join(path);
-    std::fs::metadata(&full_path)
-        .map(|m| m.len())
-        .unwrap_or(0)
+    std::fs::metadata(&full_path).map(|m| m.len()).unwrap_or(0)
 }
 
 // ---- Data types ----

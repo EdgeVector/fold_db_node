@@ -111,13 +111,22 @@ impl SchemaServiceClient {
     }
 
     /// Send a GET request and deserialize the JSON response.
-    async fn get_json<T: serde::de::DeserializeOwned>(&self, url: &str, context: &str) -> FoldDbResult<T> {
-        let response = self.client.get(url).send().await.map_err(|e| {
-            FoldDbError::Config(format!("Failed to fetch {}: {}", context, e))
-        })?;
+    async fn get_json<T: serde::de::DeserializeOwned>(
+        &self,
+        url: &str,
+        context: &str,
+    ) -> FoldDbResult<T> {
+        let response = self
+            .client
+            .get(url)
+            .send()
+            .await
+            .map_err(|e| FoldDbError::Config(format!("Failed to fetch {}: {}", context, e)))?;
         if !response.status().is_success() {
             return Err(FoldDbError::Config(format!(
-                "Schema service returned error for {}: {}", context, response.status()
+                "Schema service returned error for {}: {}",
+                context,
+                response.status()
             )));
         }
         response.json().await.map_err(|e| {
@@ -131,7 +140,11 @@ impl SchemaServiceClient {
             let obj = v.as_object()?;
             obj.get("name")
                 .and_then(|n| n.as_str())
-                .or_else(|| obj.get("schema").and_then(|s| s.get("name")).and_then(|n| n.as_str()))
+                .or_else(|| {
+                    obj.get("schema")
+                        .and_then(|s| s.get("name"))
+                        .and_then(|n| n.as_str())
+                })
                 .map(|s| s.to_string())
         })
     }
@@ -139,17 +152,25 @@ impl SchemaServiceClient {
     /// List all available schemas from the schema service
     pub async fn list_schemas(&self) -> FoldDbResult<Vec<String>> {
         #[derive(Deserialize)]
-        struct SchemasListResponse { schemas: Vec<serde_json::Value> }
+        struct SchemasListResponse {
+            schemas: Vec<serde_json::Value>,
+        }
 
         let url = format!("{}/api/schemas", self.base_url);
         let resp: SchemasListResponse = self.get_json(&url, "schemas").await?;
-        Ok(resp.schemas.into_iter().filter_map(Self::extract_schema_name).collect())
+        Ok(resp
+            .schemas
+            .into_iter()
+            .filter_map(Self::extract_schema_name)
+            .collect())
     }
 
     /// Get all available schemas with their full definitions from the schema service
     pub async fn get_available_schemas(&self) -> FoldDbResult<Vec<Schema>> {
         #[derive(Deserialize)]
-        struct AvailableSchemasResponse { schemas: Vec<Schema> }
+        struct AvailableSchemasResponse {
+            schemas: Vec<Schema>,
+        }
 
         let url = format!("{}/api/schemas/available", self.base_url);
         let resp: AvailableSchemasResponse = self.get_json(&url, "available schemas").await?;
@@ -197,12 +218,15 @@ impl SchemaServiceClient {
             )));
         }
 
-        response.json::<BatchSchemaReuseResponse>().await.map_err(|e| {
-            FoldDbError::Config(format!(
-                "Failed to parse batch schema reuse response: {}",
-                e
-            ))
-        })
+        response
+            .json::<BatchSchemaReuseResponse>()
+            .await
+            .map_err(|e| {
+                FoldDbError::Config(format!(
+                    "Failed to parse batch schema reuse response: {}",
+                    e
+                ))
+            })
     }
 
     /// Register a view with the global schema service.
@@ -243,7 +267,9 @@ impl SchemaServiceClient {
     /// List all views from the global schema service.
     pub async fn list_views(&self) -> FoldDbResult<Vec<String>> {
         #[derive(Deserialize)]
-        struct ViewsListResponse { views: Vec<String> }
+        struct ViewsListResponse {
+            views: Vec<String>,
+        }
 
         let url = format!("{}/api/views", self.base_url);
         let resp: ViewsListResponse = self.get_json(&url, "views").await?;
@@ -253,7 +279,9 @@ impl SchemaServiceClient {
     /// Get all views with their full definitions.
     pub async fn get_available_views(&self) -> FoldDbResult<Vec<StoredView>> {
         #[derive(Deserialize)]
-        struct AvailableViewsResponse { views: Vec<StoredView> }
+        struct AvailableViewsResponse {
+            views: Vec<StoredView>,
+        }
 
         let url = format!("{}/api/views/available", self.base_url);
         let resp: AvailableViewsResponse = self.get_json(&url, "available views").await?;
@@ -270,11 +298,9 @@ impl SchemaServiceClient {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use fold_db::schema::types::SchemaType;
-    use crate::schema_service::server::{
-        ErrorResponse, SchemaAddOutcome, SchemaServiceState,
-    };
+    use crate::schema_service::server::{ErrorResponse, SchemaAddOutcome, SchemaServiceState};
     use actix_web::{rt::time::sleep, web, App, HttpResponse, HttpServer};
+    use fold_db::schema::types::SchemaType;
     use std::net::TcpListener;
     use std::time::Duration;
     use tempfile::tempdir;
@@ -317,13 +343,15 @@ mod tests {
                                         replaced_schema: None,
                                     })
                                 }
-                                Ok(SchemaAddOutcome::Expanded(old_name, schema, mutation_mappers)) => {
-                                    HttpResponse::Created().json(AddSchemaResponse {
-                                        schema,
-                                        mutation_mappers,
-                                        replaced_schema: Some(old_name),
-                                    })
-                                }
+                                Ok(SchemaAddOutcome::Expanded(
+                                    old_name,
+                                    schema,
+                                    mutation_mappers,
+                                )) => HttpResponse::Created().json(AddSchemaResponse {
+                                    schema,
+                                    mutation_mappers,
+                                    replaced_schema: Some(old_name),
+                                }),
                                 Err(error) => HttpResponse::BadRequest().json(ErrorResponse {
                                     error: format!("Failed to add schema: {}", error),
                                 }),
@@ -368,8 +396,12 @@ mod tests {
             None,
         );
         schema.descriptive_name = Some("Test Schema".to_string());
-        schema.field_classifications.insert("id".to_string(), vec!["word".to_string()]);
-        schema.field_descriptions.insert("id".to_string(), "unique identifier".to_string());
+        schema
+            .field_classifications
+            .insert("id".to_string(), vec!["word".to_string()]);
+        schema
+            .field_descriptions
+            .insert("id".to_string(), "unique identifier".to_string());
         schema.field_data_classifications.insert(
             "id".to_string(),
             fold_db::schema::types::DataClassification::new(0, "general").unwrap(),
@@ -382,8 +414,14 @@ mod tests {
 
         // Schema name is now the identity hash (hash of descriptive_name + fields)
         // The readable name lives in descriptive_name
-        assert_eq!(response.schema.descriptive_name, Some("Test Schema".to_string()));
-        assert!(!response.schema.name.is_empty(), "schema name should be set");
+        assert_eq!(
+            response.schema.descriptive_name,
+            Some("Test Schema".to_string())
+        );
+        assert!(
+            !response.schema.name.is_empty(),
+            "schema name should be set"
+        );
 
         handle.stop(true).await;
     }

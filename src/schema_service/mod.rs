@@ -13,5 +13,5 @@ pub mod server;
 pub use fold_db::schema_service::state;
 pub use fold_db::schema_service::types;
 
-pub use server::SchemaServiceServer;
 pub use fold_db::TransformResolver;
+pub use server::SchemaServiceServer;

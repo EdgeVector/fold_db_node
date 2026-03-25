@@ -12,14 +12,13 @@
 //!
 //! Run with: `cargo test --test ingest_tweets_test -- --ignored --nocapture`
 
+use fold_db::logging::core::run_with_user;
 use fold_db_node::fold_node::node::FoldNode;
 use fold_db_node::ingestion::ingestion_service::IngestionService;
 use fold_db_node::ingestion::smart_folder::read_file_as_json;
 use fold_db_node::ingestion::{create_progress_tracker, IngestionRequest, ProgressService};
-use fold_db::logging::core::run_with_user;
 use fold_db_node::schema_service::server::{
-    AddSchemaResponse, ErrorResponse, SchemaAddOutcome, SchemaServiceState,
-    SchemasListResponse,
+    AddSchemaResponse, ErrorResponse, SchemaAddOutcome, SchemaServiceState, SchemasListResponse,
 };
 mod common;
 

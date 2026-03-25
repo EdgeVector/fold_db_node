@@ -6,12 +6,11 @@
 
 use crate::fold_node::llm_query::types::ToolCallRecord;
 use crate::fold_node::node::FoldNode;
+use chrono::Utc;
 use fold_db::schema::types::{
-    DeclarativeSchemaDefinition, KeyConfig, KeyValue, Mutation, MutationType,
-    SchemaType,
+    DeclarativeSchemaDefinition, KeyConfig, KeyValue, Mutation, MutationType, SchemaType,
 };
 use fold_db::schema::SchemaState;
-use chrono::Utc;
 use serde_json::json;
 use std::collections::HashMap;
 
@@ -36,10 +35,18 @@ fn build_schema() -> DeclarativeSchemaDefinition {
         None,
     );
 
-    schema.field_classifications.insert("session_id".to_string(), vec!["word".to_string()]);
-    schema.field_classifications.insert("timestamp".to_string(), vec!["date".to_string()]);
-    schema.field_classifications.insert("query".to_string(), vec!["word".to_string()]);
-    schema.field_classifications.insert("answer".to_string(), vec!["word".to_string()]);
+    schema
+        .field_classifications
+        .insert("session_id".to_string(), vec!["word".to_string()]);
+    schema
+        .field_classifications
+        .insert("timestamp".to_string(), vec!["date".to_string()]);
+    schema
+        .field_classifications
+        .insert("query".to_string(), vec!["word".to_string()]);
+    schema
+        .field_classifications
+        .insert("answer".to_string(), vec!["word".to_string()]);
 
     schema
 }
@@ -86,12 +93,7 @@ async fn ensure_schema(node: &FoldNode) {
 }
 
 /// Save a simple chat turn (no tool calls) to FoldDB.
-pub async fn save_chat_turn(
-    node: &FoldNode,
-    session_id: String,
-    query: String,
-    answer: String,
-) {
+pub async fn save_chat_turn(node: &FoldNode, session_id: String, query: String, answer: String) {
     save_conversation_turn(node, session_id, query, answer, vec![]).await;
 }
 

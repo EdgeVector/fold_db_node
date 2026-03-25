@@ -66,7 +66,10 @@ async fn post_ingestion_batch(
         let msg = body["error"]
             .as_str()
             .unwrap_or("Unknown error from ingestion API");
-        return Err(CliError::new(format!("Ingestion failed ({}): {}", status, msg)));
+        return Err(CliError::new(format!(
+            "Ingestion failed ({}): {}",
+            status, msg
+        )));
     }
 
     // The ingestion API is async — it returns a progress_id for tracking.

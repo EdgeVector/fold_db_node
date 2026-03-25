@@ -1,28 +1,26 @@
 //! Smart folder route handlers — LLM-powered file filtering and ingestion.
 
-use crate::ingestion::batch_controller::{
-    BatchController, BatchControllerMap, PendingFile,
-};
+use crate::ingestion::batch_controller::{BatchController, BatchControllerMap, PendingFile};
 use crate::ingestion::progress::ProgressService;
 use crate::ingestion::smart_folder;
 use crate::ingestion::ProgressTracker;
-use fold_db::log_feature;
-use fold_db::logging::features::LogFeature;
-use fold_db::progress::{Job, JobStatus, JobType};
 use crate::server::http_server::AppState;
 use crate::server::routes::{require_node, require_user_context};
 use actix_web::{web, HttpResponse, Responder};
+use fold_db::log_feature;
+use fold_db::logging::features::LogFeature;
+use fold_db::progress::{Job, JobStatus, JobType};
 use serde::{Deserialize, Serialize};
 use serde_json::json;
 use std::path::Path;
 use std::sync::Arc;
 use tokio::sync::Mutex;
 
-use crate::ingestion::routes_helpers::{
-    get_ingestion_service, resolve_folder_path,
-    start_file_progress, validate_folder, BatchFolderResponse, IngestionServiceState,
-};
 use super::batch::spawn_batch_coordinator;
+use crate::ingestion::routes_helpers::{
+    get_ingestion_service, resolve_folder_path, start_file_progress, validate_folder,
+    BatchFolderResponse, IngestionServiceState,
+};
 
 /// Request for smart folder scanning
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -169,13 +167,17 @@ pub async fn smart_folder_scan(
                             job.update_progress(pct, msg);
                             let _ = tracker_inner.save(&job).await;
                         }
-                    }).await
+                    })
+                    .await
                 });
             });
 
             let node_guard;
             let node_ref = match node_arc {
-                Some(ref arc) => { node_guard = arc.read().await; Some(&*node_guard) }
+                Some(ref arc) => {
+                    node_guard = arc.read().await;
+                    Some(&*node_guard)
+                }
                 None => None,
             };
             let result = smart_folder::perform_smart_folder_scan_with_progress(
@@ -288,10 +290,16 @@ pub async fn smart_folder_ingest(
     let folder_path = resolve_folder_path(&request.folder_path);
 
     // Extract user, node, and ingestion service up front
-    let (user_id, node_arc, service) = match crate::ingestion::routes_helpers::require_ingestion_context(&state, &ingestion_service).await {
-        Ok(ctx) => ctx,
-        Err(response) => return response,
-    };
+    let (user_id, node_arc, service) =
+        match crate::ingestion::routes_helpers::require_ingestion_context(
+            &state,
+            &ingestion_service,
+        )
+        .await
+        {
+            Ok(ctx) => ctx,
+            Err(response) => return response,
+        };
 
     // Validate files exist and build full paths with costs
     let file_costs = request.file_costs.as_deref();
@@ -349,7 +357,12 @@ pub async fn smart_folder_ingest(
 
     // Create the batch controller
     let is_local = service.is_local_provider();
-    let controller = BatchController::new(batch_id.clone(), request.spend_limit, pending_files, is_local);
+    let controller = BatchController::new(
+        batch_id.clone(),
+        request.spend_limit,
+        pending_files,
+        is_local,
+    );
     let ctrl_arc = Arc::new(Mutex::new(controller));
 
     // Register in the global map
@@ -465,7 +478,8 @@ pub async fn adjust_scan_results(
 
             let mut recommended = Vec::new();
             let mut skipped = Vec::new();
-            let mut summary: std::collections::HashMap<String, usize> = std::collections::HashMap::new();
+            let mut summary: std::collections::HashMap<String, usize> =
+                std::collections::HashMap::new();
             let mut total_cost = 0.0;
 
             for file in updated {

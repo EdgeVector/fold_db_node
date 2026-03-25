@@ -25,9 +25,7 @@ pub async fn run(
         }
         SchemaCommand::Approve { name } => {
             processor.approve_schema(name).await?;
-            Ok(CommandOutput::SchemaApproved {
-                name: name.clone(),
-            })
+            Ok(CommandOutput::SchemaApproved { name: name.clone() })
         }
         SchemaCommand::Block { name } => {
             processor.block_schema(name).await?;

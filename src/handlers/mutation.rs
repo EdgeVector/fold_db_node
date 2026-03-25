@@ -5,8 +5,8 @@
 
 use crate::fold_node::node::FoldNode;
 use crate::fold_node::OperationProcessor;
-use crate::handlers::response::{ApiResponse, HandlerResult, IntoHandlerError};
 use crate::handlers::handler_response;
+use crate::handlers::response::{ApiResponse, HandlerResult, IntoHandlerError};
 use fold_db::schema::types::key_value::KeyValue;
 use fold_db::schema::types::operations::{Mutation, MutationType};
 use serde_json::Value;
@@ -78,7 +78,10 @@ pub async fn execute_mutations_batch(
 ) -> HandlerResult<MutationResponse> {
     let count = mutations.len();
 
-    let mutation_ids = node.mutate_batch(mutations).await.handler_err("execute mutations")?;
+    let mutation_ids = node
+        .mutate_batch(mutations)
+        .await
+        .handler_err("execute mutations")?;
 
     // Wait for background tasks (indexing) to complete
     node.wait_for_background_tasks(DEFAULT_BACKGROUND_TASK_TIMEOUT)

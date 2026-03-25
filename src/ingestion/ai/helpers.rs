@@ -109,12 +109,12 @@ pub fn truncate_long_strings(value: &Value) -> Value {
             let truncated: String = s.chars().take(MAX_PROMPT_FIELD_CHARS).collect();
             Value::String(format!("{}...", truncated))
         }
-        Value::Object(map) => {
-            Value::Object(map.iter().map(|(k, v)| (k.clone(), truncate_long_strings(v))).collect())
-        }
-        Value::Array(arr) => {
-            Value::Array(arr.iter().map(truncate_long_strings).collect())
-        }
+        Value::Object(map) => Value::Object(
+            map.iter()
+                .map(|(k, v)| (k.clone(), truncate_long_strings(v)))
+                .collect(),
+        ),
+        Value::Array(arr) => Value::Array(arr.iter().map(truncate_long_strings).collect()),
         other => other.clone(),
     }
 }
@@ -171,12 +171,22 @@ fn extract_content_hint(json: &Value) -> Option<String> {
     if !obj.contains_key("file_type") {
         return None;
     }
-    let content = obj.get("content").or_else(|| obj.get("markdown")).and_then(|v| v.as_str())?;
+    let content = obj
+        .get("content")
+        .or_else(|| obj.get("markdown"))
+        .and_then(|v| v.as_str())?;
     let category = obj.get("category").and_then(|v| v.as_str());
-    let source = obj.get("source_file").or_else(|| obj.get("source")).and_then(|v| v.as_str());
+    let source = obj
+        .get("source_file")
+        .or_else(|| obj.get("source"))
+        .and_then(|v| v.as_str());
 
     let preview: String = content.chars().take(MAX_CONTENT_HINT_CHARS).collect();
-    let truncated = if content.chars().count() > MAX_CONTENT_HINT_CHARS { "..." } else { "" };
+    let truncated = if content.chars().count() > MAX_CONTENT_HINT_CHARS {
+        "..."
+    } else {
+        ""
+    };
 
     let mut hint = format!(
         "\n\nCONTENT PREVIEW (use this to determine the schema name topic):\n\"{}{}\"",
@@ -210,9 +220,12 @@ pub fn analyze_and_build_prompt(sample_json: &Value) -> IngestionResult<String> 
     }
 
     log_feature!(
-        LogFeature::Ingestion, info,
+        LogFeature::Ingestion,
+        info,
         "Analyzing JSON: {} elements, {} unique fields, is_array={}",
-        stats.total_elements, stats.unique_fields, sample_json.is_array()
+        stats.total_elements,
+        stats.unique_fields,
+        sample_json.is_array()
     );
 
     let is_array_input = sample_json.is_array();
@@ -220,7 +233,8 @@ pub fn analyze_and_build_prompt(sample_json: &Value) -> IngestionResult<String> 
     let prompt = create_prompt(&superset_structure, is_array_input, Some(&compact_json));
 
     log_feature!(
-        LogFeature::Ingestion, debug,
+        LogFeature::Ingestion,
+        debug,
         "AI prompt ({} chars): {}...",
         prompt.len(),
         &prompt[..prompt.len().min(500)]
@@ -258,8 +272,7 @@ pub fn extract_json_from_response(response_text: &str) -> IngestionResult<String
     };
 
     // Use serde_json stream deserializer to parse the first valid JSON value
-    let deserialize_stream =
-        serde_json::Deserializer::from_str(text_to_parse).into_iter::<Value>();
+    let deserialize_stream = serde_json::Deserializer::from_str(text_to_parse).into_iter::<Value>();
 
     for value in deserialize_stream {
         match value {
@@ -324,9 +337,7 @@ fn warn_missing_field_descriptions(schema_val: &Value) {
         .unwrap_or("<unnamed>");
 
     for field in fields.iter().filter_map(|f| f.as_str()) {
-        let has_desc = descriptions
-            .map(|d| d.contains_key(field))
-            .unwrap_or(false);
+        let has_desc = descriptions.map(|d| d.contains_key(field)).unwrap_or(false);
         if !has_desc {
             log_feature!(
                 LogFeature::Ingestion, warn,
@@ -379,7 +390,10 @@ pub fn validate_schema_has_classifications(schema_val: &Value) -> IngestionResul
         .unwrap_or("unknown");
 
     // field_classifications is optional — AI may not always provide them and defaults will be applied later
-    let field_classifications = match schema_obj.get("field_classifications").and_then(|v| v.as_object()) {
+    let field_classifications = match schema_obj
+        .get("field_classifications")
+        .and_then(|v| v.as_object())
+    {
         Some(fc) => fc,
         None => return Ok(()),
     };
@@ -429,9 +443,10 @@ pub fn validate_and_convert_response(parsed: Value) -> IngestionResult<AISchemaR
                 warn_missing_field_descriptions(schema_val);
             }
             _ => {
-                return Err(IngestionError::ai_response_validation_error(
-                    format!("new_schemas must be an object or array, got: {}", schema_val),
-                ));
+                return Err(IngestionError::ai_response_validation_error(format!(
+                    "new_schemas must be an object or array, got: {}",
+                    schema_val
+                )));
             }
         }
     }
@@ -475,9 +490,11 @@ pub fn parse_ai_response(response_text: &str) -> IngestionResult<AISchemaRespons
     let result = validate_and_convert_response(parsed)?;
 
     log_feature!(
-        LogFeature::Ingestion, debug,
+        LogFeature::Ingestion,
+        debug,
         "Parsed AI response: {} mappers, new_schema={}",
-        result.mutation_mappers.len(), result.new_schemas.is_some()
+        result.mutation_mappers.len(),
+        result.new_schemas.is_some()
     );
 
     Ok(result)

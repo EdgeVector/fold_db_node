@@ -68,12 +68,18 @@ mod tests {
     async fn load_and_approve_schema(node: &FoldNode, mut schema: DeclarativeSchemaDefinition) {
         schema.populate_runtime_fields().unwrap();
         let db = node.get_fold_db().await.unwrap();
-        db.schema_manager.load_schema_internal(schema).await.unwrap();
+        db.schema_manager
+            .load_schema_internal(schema)
+            .await
+            .unwrap();
     }
 
     async fn approve_schema(node: &FoldNode, name: &str) {
         let db = node.get_fold_db().await.unwrap();
-        db.schema_manager.set_schema_state(name, SchemaState::Approved).await.unwrap();
+        db.schema_manager
+            .set_schema_state(name, SchemaState::Approved)
+            .await
+            .unwrap();
     }
 
     /// Helper: create a child HashRange schema with hash+range keys and one data field.
@@ -90,13 +96,21 @@ mod tests {
             None,
             None,
         );
-        schema.field_classifications.insert(field.to_string(), vec!["word".to_string()]);
-        schema.field_classifications.insert("_rk".to_string(), vec!["word".to_string()]);
+        schema
+            .field_classifications
+            .insert(field.to_string(), vec!["word".to_string()]);
+        schema
+            .field_classifications
+            .insert("_rk".to_string(), vec!["word".to_string()]);
         schema
     }
 
     /// Helper: create a parent HashRange schema with a name field and a reference field.
-    fn make_parent_schema(name: &str, ref_field: &str, child_schema_name: &str) -> DeclarativeSchemaDefinition {
+    fn make_parent_schema(
+        name: &str,
+        ref_field: &str,
+        child_schema_name: &str,
+    ) -> DeclarativeSchemaDefinition {
         let mut schema = DeclarativeSchemaDefinition::new(
             name.to_string(),
             SchemaType::HashRange,
@@ -104,13 +118,23 @@ mod tests {
                 hash_field: Some("name".to_string()),
                 range_field: Some("_rk".to_string()),
             }),
-            Some(vec!["name".to_string(), "_rk".to_string(), ref_field.to_string()]),
+            Some(vec![
+                "name".to_string(),
+                "_rk".to_string(),
+                ref_field.to_string(),
+            ]),
             None,
             None,
         );
-        schema.field_classifications.insert("name".to_string(), vec!["word".to_string()]);
-        schema.field_classifications.insert("_rk".to_string(), vec!["word".to_string()]);
-        schema.ref_fields.insert(ref_field.to_string(), child_schema_name.to_string());
+        schema
+            .field_classifications
+            .insert("name".to_string(), vec!["word".to_string()]);
+        schema
+            .field_classifications
+            .insert("_rk".to_string(), vec!["word".to_string()]);
+        schema
+            .ref_fields
+            .insert(ref_field.to_string(), child_schema_name.to_string());
         schema
     }
 
@@ -131,24 +155,37 @@ mod tests {
         let mut child_fields = HashMap::new();
         child_fields.insert("title".to_string(), json!("Hello World"));
         child_fields.insert("_rk".to_string(), json!("r1"));
-        processor.execute_mutation_op(Mutation::new(
-            "PostSchema".to_string(), child_fields,
-            KeyValue::new(Some("Hello World".to_string()), Some("r1".to_string())),
-            pub_key.clone(), MutationType::Create,
-        )).await.unwrap();
+        processor
+            .execute_mutation_op(Mutation::new(
+                "PostSchema".to_string(),
+                child_fields,
+                KeyValue::new(Some("Hello World".to_string()), Some("r1".to_string())),
+                pub_key.clone(),
+                MutationType::Create,
+            ))
+            .await
+            .unwrap();
 
         // Create a parent record with reference to the child
         let mut parent_fields = HashMap::new();
         parent_fields.insert("name".to_string(), json!("Alice"));
         parent_fields.insert("_rk".to_string(), json!("r1"));
-        parent_fields.insert("posts".to_string(), json!([
-            {"schema": "PostSchema", "key": {"hash": "Hello World", "range": "r1"}}
-        ]));
-        processor.execute_mutation_op(Mutation::new(
-            "UserSchema".to_string(), parent_fields,
-            KeyValue::new(Some("Alice".to_string()), Some("r1".to_string())),
-            pub_key.clone(), MutationType::Create,
-        )).await.unwrap();
+        parent_fields.insert(
+            "posts".to_string(),
+            json!([
+                {"schema": "PostSchema", "key": {"hash": "Hello World", "range": "r1"}}
+            ]),
+        );
+        processor
+            .execute_mutation_op(Mutation::new(
+                "UserSchema".to_string(),
+                parent_fields,
+                KeyValue::new(Some("Alice".to_string()), Some("r1".to_string())),
+                pub_key.clone(),
+                MutationType::Create,
+            ))
+            .await
+            .unwrap();
 
         // Query WITHOUT rehydration - should return raw reference objects
         let query = fold_db::schema::types::Query::new(
@@ -184,24 +221,37 @@ mod tests {
         let mut child_fields = HashMap::new();
         child_fields.insert("title".to_string(), json!("Hello World"));
         child_fields.insert("_rk".to_string(), json!("r1"));
-        processor.execute_mutation_op(Mutation::new(
-            "PostSchema".to_string(), child_fields,
-            KeyValue::new(Some("Hello World".to_string()), Some("r1".to_string())),
-            pub_key.clone(), MutationType::Create,
-        )).await.unwrap();
+        processor
+            .execute_mutation_op(Mutation::new(
+                "PostSchema".to_string(),
+                child_fields,
+                KeyValue::new(Some("Hello World".to_string()), Some("r1".to_string())),
+                pub_key.clone(),
+                MutationType::Create,
+            ))
+            .await
+            .unwrap();
 
         // Create parent record with reference to child
         let mut parent_fields = HashMap::new();
         parent_fields.insert("name".to_string(), json!("Alice"));
         parent_fields.insert("_rk".to_string(), json!("r1"));
-        parent_fields.insert("posts".to_string(), json!([
-            {"schema": "PostSchema", "key": {"hash": "Hello World", "range": "r1"}}
-        ]));
-        processor.execute_mutation_op(Mutation::new(
-            "UserSchema".to_string(), parent_fields,
-            KeyValue::new(Some("Alice".to_string()), Some("r1".to_string())),
-            pub_key.clone(), MutationType::Create,
-        )).await.unwrap();
+        parent_fields.insert(
+            "posts".to_string(),
+            json!([
+                {"schema": "PostSchema", "key": {"hash": "Hello World", "range": "r1"}}
+            ]),
+        );
+        processor
+            .execute_mutation_op(Mutation::new(
+                "UserSchema".to_string(),
+                parent_fields,
+                KeyValue::new(Some("Alice".to_string()), Some("r1".to_string())),
+                pub_key.clone(),
+                MutationType::Create,
+            ))
+            .await
+            .unwrap();
 
         // Query WITH rehydration depth 1 - should resolve references
         let mut query = fold_db::schema::types::Query::new(
@@ -221,10 +271,17 @@ mod tests {
 
         // Hydrated record should have "fields" with the child's data
         let hydrated_post = &posts[0];
-        assert!(hydrated_post.get("fields").is_some(), "Hydrated post should have 'fields': {}", hydrated_post);
+        assert!(
+            hydrated_post.get("fields").is_some(),
+            "Hydrated post should have 'fields': {}",
+            hydrated_post
+        );
         assert_eq!(hydrated_post["fields"]["title"], json!("Hello World"));
         // Should also have a "key"
-        assert!(hydrated_post.get("key").is_some(), "Hydrated post should have 'key'");
+        assert!(
+            hydrated_post.get("key").is_some(),
+            "Hydrated post should have 'key'"
+        );
     }
 
     #[tokio::test]
@@ -244,24 +301,37 @@ mod tests {
         let mut child_fields = HashMap::new();
         child_fields.insert("label".to_string(), json!("Widget"));
         child_fields.insert("_rk".to_string(), json!("r1"));
-        processor.execute_mutation_op(Mutation::new(
-            "ItemSchema".to_string(), child_fields,
-            KeyValue::new(Some("Widget".to_string()), Some("r1".to_string())),
-            pub_key.clone(), MutationType::Create,
-        )).await.unwrap();
+        processor
+            .execute_mutation_op(Mutation::new(
+                "ItemSchema".to_string(),
+                child_fields,
+                KeyValue::new(Some("Widget".to_string()), Some("r1".to_string())),
+                pub_key.clone(),
+                MutationType::Create,
+            ))
+            .await
+            .unwrap();
 
         // Create parent with reference
         let mut parent_fields = HashMap::new();
         parent_fields.insert("name".to_string(), json!("c1"));
         parent_fields.insert("_rk".to_string(), json!("r1"));
-        parent_fields.insert("items".to_string(), json!([
-            {"schema": "ItemSchema", "key": {"hash": "Widget", "range": "r1"}}
-        ]));
-        processor.execute_mutation_op(Mutation::new(
-            "ContainerSchema".to_string(), parent_fields,
-            KeyValue::new(Some("c1".to_string()), Some("r1".to_string())),
-            pub_key.clone(), MutationType::Create,
-        )).await.unwrap();
+        parent_fields.insert(
+            "items".to_string(),
+            json!([
+                {"schema": "ItemSchema", "key": {"hash": "Widget", "range": "r1"}}
+            ]),
+        );
+        processor
+            .execute_mutation_op(Mutation::new(
+                "ContainerSchema".to_string(),
+                parent_fields,
+                KeyValue::new(Some("c1".to_string()), Some("r1".to_string())),
+                pub_key.clone(),
+                MutationType::Create,
+            ))
+            .await
+            .unwrap();
 
         // Query with depth 0 - should NOT resolve references
         let mut query = fold_db::schema::types::Query::new(
@@ -275,7 +345,10 @@ mod tests {
         let items = results[0]["fields"]["items"].as_array().unwrap();
         assert_eq!(items.len(), 1);
         // Should still be raw reference - has "schema" key, not "fields" key
-        assert!(items[0].get("schema").is_some(), "depth=0 should leave raw references");
+        assert!(
+            items[0].get("schema").is_some(),
+            "depth=0 should leave raw references"
+        );
     }
 
     #[test]
@@ -311,7 +384,9 @@ mod tests {
     fn test_filter_from_key_value_hash_and_range() {
         let kv = KeyValue::new(Some("h".to_string()), Some("r".to_string()));
         let filter = OperationProcessor::filter_from_key_value(&kv);
-        assert!(matches!(filter, Some(HashRangeFilter::HashRangeKey { ref hash, ref range }) if hash == "h" && range == "r"));
+        assert!(
+            matches!(filter, Some(HashRangeFilter::HashRangeKey { ref hash, ref range }) if hash == "h" && range == "r")
+        );
     }
 
     #[test]
@@ -340,8 +415,12 @@ mod tests {
             None,
             None,
         );
-        schema.field_classifications.insert("booking_id".to_string(), vec!["word".to_string()]);
-        schema.field_classifications.insert("departure".to_string(), vec!["word".to_string()]);
+        schema
+            .field_classifications
+            .insert("booking_id".to_string(), vec!["word".to_string()]);
+        schema
+            .field_classifications
+            .insert("departure".to_string(), vec!["word".to_string()]);
 
         load_and_approve_schema(&node, schema).await;
         approve_schema(&node, "FlightBooking").await;
@@ -350,7 +429,10 @@ mod tests {
         // because mutation_manager re-extracts it via KeyValue::from_mutation()
         let mut fields = HashMap::new();
         fields.insert("booking_id".to_string(), json!("BK-001"));
-        fields.insert("departure".to_string(), json!({"date": "2025-03-15", "city": "NYC"}));
+        fields.insert(
+            "departure".to_string(),
+            json!({"date": "2025-03-15", "city": "NYC"}),
+        );
 
         let mutation = Mutation::new(
             "FlightBooking".to_string(),
@@ -375,8 +457,16 @@ mod tests {
 
         // Verify the key was correctly extracted from nested path
         let key = &record["key"];
-        assert_eq!(key["hash"], json!("BK-001"), "Hash should be booking_id value");
-        assert_eq!(key["range"], json!("2025-03-15"), "Range should be departure.date value");
+        assert_eq!(
+            key["hash"],
+            json!("BK-001"),
+            "Hash should be booking_id value"
+        );
+        assert_eq!(
+            key["range"],
+            json!("2025-03-15"),
+            "Range should be departure.date value"
+        );
 
         // Verify field values
         assert_eq!(record["fields"]["booking_id"], json!("BK-001"));
@@ -402,8 +492,12 @@ mod tests {
             None,
             None,
         );
-        schema.field_classifications.insert("ticker".to_string(), vec!["word".to_string()]);
-        schema.field_classifications.insert("price".to_string(), vec!["number".to_string()]);
+        schema
+            .field_classifications
+            .insert("ticker".to_string(), vec!["word".to_string()]);
+        schema
+            .field_classifications
+            .insert("price".to_string(), vec!["number".to_string()]);
 
         load_and_approve_schema(&node, schema).await;
         approve_schema(&node, "StockPrice").await;
@@ -414,13 +508,16 @@ mod tests {
             fields.insert("ticker".to_string(), json!(ticker));
             fields.insert("price".to_string(), json!(price));
 
-            processor.execute_mutation_op(Mutation::new(
-                "StockPrice".to_string(),
-                fields,
-                KeyValue::new(None, None),
-                pub_key.clone(),
-                MutationType::Create,
-            )).await.unwrap();
+            processor
+                .execute_mutation_op(Mutation::new(
+                    "StockPrice".to_string(),
+                    fields,
+                    KeyValue::new(None, None),
+                    pub_key.clone(),
+                    MutationType::Create,
+                ))
+                .await
+                .unwrap();
         }
 
         // Query all records
@@ -435,7 +532,10 @@ mod tests {
         // Verify keys — hash should be null (no hash_field), range should be ticker
         for result in &results {
             let key = &result["key"];
-            assert!(key["hash"].is_null(), "Hash should be null for Range schema");
+            assert!(
+                key["hash"].is_null(),
+                "Hash should be null for Range schema"
+            );
             let range = key["range"].as_str().unwrap();
             assert!(
                 range == "VOO" || range == "QQQ",

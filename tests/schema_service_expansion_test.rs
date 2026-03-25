@@ -22,9 +22,13 @@ fn json_to_schema(value: serde_json::Value) -> fold_db::schema::types::Schema {
     }
     if let Some(ref fields) = schema.fields {
         for f in fields {
-            schema.field_descriptions.entry(f.clone())
+            schema
+                .field_descriptions
+                .entry(f.clone())
                 .or_insert_with(|| format!("{} field", f));
-            schema.field_data_classifications.entry(f.clone())
+            schema
+                .field_data_classifications
+                .entry(f.clone())
                 .or_insert_with(|| DataClassification::new(0, "general").unwrap());
         }
     }
@@ -53,10 +57,10 @@ async fn expansion_returns_old_schema_name_for_blocking() {
     let state = create_test_state();
 
     let schema_a = json_to_schema(json!({
-            "name": "SchemaA",
-            "descriptive_name": "Contact Records",
-            "fields": ["name", "email", "phone"]
-        }));
+        "name": "SchemaA",
+        "descriptive_name": "Contact Records",
+        "fields": ["name", "email", "phone"]
+    }));
 
     let outcome_a = state
         .add_schema(schema_a, HashMap::new())
@@ -70,10 +74,10 @@ async fn expansion_returns_old_schema_name_for_blocking() {
 
     // Schema B: same descriptive_name, superset fields (3/3 overlap = 100%)
     let schema_b = json_to_schema(json!({
-            "name": "SchemaB",
-            "descriptive_name": "Contact Records",
-            "fields": ["name", "email", "phone", "address"]
-        }));
+        "name": "SchemaB",
+        "descriptive_name": "Contact Records",
+        "fields": ["name", "email", "phone", "address"]
+    }));
 
     let outcome_b = state
         .add_schema(schema_b, HashMap::new())
@@ -100,10 +104,10 @@ async fn expanded_schema_has_field_mappers_to_predecessor() {
     let state = create_test_state();
 
     let schema_a = json_to_schema(json!({
-            "name": "SchemaA",
-            "descriptive_name": "Employee Info",
-            "fields": ["emp_id", "name", "department"]
-        }));
+        "name": "SchemaA",
+        "descriptive_name": "Employee Info",
+        "fields": ["emp_id", "name", "department"]
+    }));
 
     let old_hash = match state.add_schema(schema_a, HashMap::new()).await.unwrap() {
         SchemaAddOutcome::Added(s, _) => s.name.clone(),
@@ -112,10 +116,10 @@ async fn expanded_schema_has_field_mappers_to_predecessor() {
 
     // Expand with 1 new field (3/3 shared = 100% overlap)
     let schema_b = json_to_schema(json!({
-            "name": "SchemaB",
-            "descriptive_name": "Employee Info",
-            "fields": ["emp_id", "name", "department", "salary"]
-        }));
+        "name": "SchemaB",
+        "descriptive_name": "Employee Info",
+        "fields": ["emp_id", "name", "department", "salary"]
+    }));
 
     let outcome = state.add_schema(schema_b, HashMap::new()).await.unwrap();
 
@@ -158,20 +162,20 @@ async fn expanded_schema_contains_superset_of_fields() {
     let state = create_test_state();
 
     let schema_a = json_to_schema(json!({
-            "name": "SchemaA",
-            "descriptive_name": "Product Catalog",
-            "fields": ["sku", "name", "price", "category"]
-        }));
+        "name": "SchemaA",
+        "descriptive_name": "Product Catalog",
+        "fields": ["sku", "name", "price", "category"]
+    }));
 
     state.add_schema(schema_a, HashMap::new()).await.unwrap();
 
     // Schema B shares 3/4 fields (75%? no, 3 out of min(4,4)=4 → 75%). Need 80%.
     // Let's make it 4/4 shared + 1 new = 100% overlap
     let schema_b = json_to_schema(json!({
-            "name": "SchemaB",
-            "descriptive_name": "Product Catalog",
-            "fields": ["sku", "name", "price", "category", "weight", "dimensions"]
-        }));
+        "name": "SchemaB",
+        "descriptive_name": "Product Catalog",
+        "fields": ["sku", "name", "price", "category", "weight", "dimensions"]
+    }));
 
     let outcome = state.add_schema(schema_b, HashMap::new()).await.unwrap();
 
@@ -202,19 +206,19 @@ async fn expansion_merges_fields_from_both_schemas() {
 
     // Schema A: [a, b, c, d, e]
     let schema_a = json_to_schema(json!({
-            "name": "SchemaA",
-            "descriptive_name": "Sensor Readings",
-            "fields": ["sensor_id", "timestamp", "temperature", "humidity", "pressure"]
-        }));
+        "name": "SchemaA",
+        "descriptive_name": "Sensor Readings",
+        "fields": ["sensor_id", "timestamp", "temperature", "humidity", "pressure"]
+    }));
 
     state.add_schema(schema_a, HashMap::new()).await.unwrap();
 
     // Schema B: shares 4/5 fields (80%) but drops "pressure", adds "wind_speed"
     let schema_b = json_to_schema(json!({
-            "name": "SchemaB",
-            "descriptive_name": "Sensor Readings",
-            "fields": ["sensor_id", "timestamp", "temperature", "humidity", "wind_speed"]
-        }));
+        "name": "SchemaB",
+        "descriptive_name": "Sensor Readings",
+        "fields": ["sensor_id", "timestamp", "temperature", "humidity", "wind_speed"]
+    }));
 
     let outcome = state.add_schema(schema_b, HashMap::new()).await.unwrap();
 
@@ -252,10 +256,10 @@ async fn chain_expansion_produces_correct_field_mapper_lineage() {
 
     // A: [id, name, email]
     let schema_a = json_to_schema(json!({
-            "name": "A",
-            "descriptive_name": "User Profiles",
-            "fields": ["id", "name", "email"]
-        }));
+        "name": "A",
+        "descriptive_name": "User Profiles",
+        "fields": ["id", "name", "email"]
+    }));
 
     let hash_a = match state.add_schema(schema_a, HashMap::new()).await.unwrap() {
         SchemaAddOutcome::Added(s, _) => s.name.clone(),
@@ -264,10 +268,10 @@ async fn chain_expansion_produces_correct_field_mapper_lineage() {
 
     // B: superset of A + phone → expands A
     let schema_b = json_to_schema(json!({
-            "name": "B",
-            "descriptive_name": "User Profiles",
-            "fields": ["id", "name", "email", "phone"]
-        }));
+        "name": "B",
+        "descriptive_name": "User Profiles",
+        "fields": ["id", "name", "email", "phone"]
+    }));
 
     let (hash_b, mappers_b) = match state.add_schema(schema_b, HashMap::new()).await.unwrap() {
         SchemaAddOutcome::Expanded(old, schema, _) => {
@@ -286,10 +290,10 @@ async fn chain_expansion_produces_correct_field_mapper_lineage() {
 
     // C: superset of B + avatar → expands B
     let schema_c = json_to_schema(json!({
-            "name": "C",
-            "descriptive_name": "User Profiles",
-            "fields": ["id", "name", "email", "phone", "avatar"]
-        }));
+        "name": "C",
+        "descriptive_name": "User Profiles",
+        "fields": ["id", "name", "email", "phone", "avatar"]
+    }));
 
     let (_, mappers_c) = match state.add_schema(schema_c, HashMap::new()).await.unwrap() {
         SchemaAddOutcome::Expanded(old, schema, _) => {
@@ -335,10 +339,10 @@ async fn semantic_match_expansion_has_field_mappers() {
     let state = create_test_state();
 
     let schema_a = json_to_schema(json!({
-            "name": "A",
-            "descriptive_name": "Medical Records",
-            "fields": ["patient_id", "diagnosis", "date"]
-        }));
+        "name": "A",
+        "descriptive_name": "Medical Records",
+        "fields": ["patient_id", "diagnosis", "date"]
+    }));
 
     let hash_a = match state.add_schema(schema_a, HashMap::new()).await.unwrap() {
         SchemaAddOutcome::Added(s, _) => s.name.clone(),
@@ -347,10 +351,10 @@ async fn semantic_match_expansion_has_field_mappers() {
 
     // Similar descriptive name (case change triggers semantic match via MockEmbeddingModel)
     let schema_b = json_to_schema(json!({
-            "name": "B",
-            "descriptive_name": "medical records",
-            "fields": ["patient_id", "diagnosis", "date", "treatment"]
-        }));
+        "name": "B",
+        "descriptive_name": "medical records",
+        "fields": ["patient_id", "diagnosis", "date", "treatment"]
+    }));
 
     let outcome = state.add_schema(schema_b, HashMap::new()).await.unwrap();
 
@@ -393,10 +397,10 @@ async fn subset_fields_suggests_existing_schema() {
     let state = create_test_state();
 
     let schema_a = json_to_schema(json!({
-            "name": "A",
-            "descriptive_name": "Order Records",
-            "fields": ["order_id", "customer", "total", "status", "shipped_at"]
-        }));
+        "name": "A",
+        "descriptive_name": "Order Records",
+        "fields": ["order_id", "customer", "total", "status", "shipped_at"]
+    }));
 
     let hash_a = match state.add_schema(schema_a, HashMap::new()).await.unwrap() {
         SchemaAddOutcome::Added(s, _) => s.name.clone(),
@@ -405,10 +409,10 @@ async fn subset_fields_suggests_existing_schema() {
 
     // Schema with fewer fields (subset) + same descriptive_name
     let schema_b = json_to_schema(json!({
-            "name": "B",
-            "descriptive_name": "Order Records",
-            "fields": ["order_id", "customer", "total"]
-        }));
+        "name": "B",
+        "descriptive_name": "Order Records",
+        "fields": ["order_id", "customer", "total"]
+    }));
 
     let outcome = state.add_schema(schema_b, HashMap::new()).await.unwrap();
 
@@ -437,10 +441,10 @@ async fn low_overlap_same_name_still_expands() {
     let state = create_test_state();
 
     let schema_a = json_to_schema(json!({
-            "name": "A",
-            "descriptive_name": "Activity Log",
-            "fields": ["id", "timestamp", "event_type", "user_id", "details"]
-        }));
+        "name": "A",
+        "descriptive_name": "Activity Log",
+        "fields": ["id", "timestamp", "event_type", "user_id", "details"]
+    }));
 
     let hash_a = match state.add_schema(schema_a, HashMap::new()).await.unwrap() {
         SchemaAddOutcome::Added(s, _) => s.name.clone(),
@@ -449,10 +453,10 @@ async fn low_overlap_same_name_still_expands() {
 
     // Only 1/5 fields shared, but same descriptive_name → expand to superset
     let schema_b = json_to_schema(json!({
-            "name": "B",
-            "descriptive_name": "Activity Log",
-            "fields": ["id", "calories", "distance", "heart_rate", "duration"]
-        }));
+        "name": "B",
+        "descriptive_name": "Activity Log",
+        "fields": ["id", "calories", "distance", "heart_rate", "duration"]
+    }));
 
     let outcome = state.add_schema(schema_b, HashMap::new()).await.unwrap();
 
@@ -463,7 +467,10 @@ async fn low_overlap_same_name_still_expands() {
             // Superset of both: 5 + 4 new = 9 unique fields
             assert_eq!(fields.len(), 9);
         }
-        other => panic!("same descriptive_name should always expand, got {:?}", other),
+        other => panic!(
+            "same descriptive_name should always expand, got {:?}",
+            other
+        ),
     }
 }
 
@@ -476,10 +483,10 @@ async fn zero_overlap_same_name_still_expands() {
     let state = create_test_state();
 
     let schema_a = json_to_schema(json!({
-            "name": "A",
-            "descriptive_name": "Weather Data",
-            "fields": ["temperature", "humidity", "pressure"]
-        }));
+        "name": "A",
+        "descriptive_name": "Weather Data",
+        "fields": ["temperature", "humidity", "pressure"]
+    }));
 
     let hash_a = match state.add_schema(schema_a, HashMap::new()).await.unwrap() {
         SchemaAddOutcome::Added(s, _) => s.name.clone(),
@@ -488,10 +495,10 @@ async fn zero_overlap_same_name_still_expands() {
 
     // Completely disjoint fields, same descriptive_name → must still expand
     let schema_b = json_to_schema(json!({
-            "name": "B",
-            "descriptive_name": "Weather Data",
-            "fields": ["wind_speed", "visibility", "uv_index"]
-        }));
+        "name": "B",
+        "descriptive_name": "Weather Data",
+        "fields": ["wind_speed", "visibility", "uv_index"]
+    }));
 
     let outcome = state.add_schema(schema_b, HashMap::new()).await.unwrap();
 
@@ -508,10 +515,17 @@ async fn zero_overlap_same_name_still_expands() {
             }
             // B-only fields should NOT have mappers
             for f in &["wind_speed", "visibility", "uv_index"] {
-                assert!(!mappers.contains_key(*f), "'{}' should not have a mapper", f);
+                assert!(
+                    !mappers.contains_key(*f),
+                    "'{}' should not have a mapper",
+                    f
+                );
             }
         }
-        other => panic!("zero overlap + same name should still expand, got {:?}", other),
+        other => panic!(
+            "zero overlap + same name should still expand, got {:?}",
+            other
+        ),
     }
 }
 
@@ -525,22 +539,26 @@ async fn superseded_schema_returns_active_successor() {
 
     // A: [x, y, z]
     let schema_a = json_to_schema(json!({
-            "name": "A",
-            "descriptive_name": "Metric Data",
-            "fields": ["x", "y", "z"]
-        }));
+        "name": "A",
+        "descriptive_name": "Metric Data",
+        "fields": ["x", "y", "z"]
+    }));
 
-    let hash_a = match state.add_schema(schema_a.clone(), HashMap::new()).await.unwrap() {
+    let hash_a = match state
+        .add_schema(schema_a.clone(), HashMap::new())
+        .await
+        .unwrap()
+    {
         SchemaAddOutcome::Added(s, _) => s.name.clone(),
         other => panic!("expected Added, got {:?}", other),
     };
 
     // B: superset [x, y, z, w] → expands A
     let schema_b = json_to_schema(json!({
-            "name": "B",
-            "descriptive_name": "Metric Data",
-            "fields": ["x", "y", "z", "w"]
-        }));
+        "name": "B",
+        "descriptive_name": "Metric Data",
+        "fields": ["x", "y", "z", "w"]
+    }));
 
     let hash_b = match state.add_schema(schema_b, HashMap::new()).await.unwrap() {
         SchemaAddOutcome::Expanded(old, schema, _) => {
@@ -579,10 +597,10 @@ async fn partial_overlap_same_name_expands_with_mappers() {
     let state = create_test_state();
 
     let schema_a = json_to_schema(json!({
-            "name": "A",
-            "descriptive_name": "Invoice Records",
-            "fields": ["invoice_id", "vendor", "amount", "due_date", "currency"]
-        }));
+        "name": "A",
+        "descriptive_name": "Invoice Records",
+        "fields": ["invoice_id", "vendor", "amount", "due_date", "currency"]
+    }));
 
     let hash_a = match state.add_schema(schema_a, HashMap::new()).await.unwrap() {
         SchemaAddOutcome::Added(s, _) => s.name.clone(),
@@ -591,10 +609,10 @@ async fn partial_overlap_same_name_expands_with_mappers() {
 
     // 4/5 shared fields + 1 new field
     let schema_b = json_to_schema(json!({
-            "name": "B",
-            "descriptive_name": "Invoice Records",
-            "fields": ["invoice_id", "vendor", "amount", "due_date", "tax"]
-        }));
+        "name": "B",
+        "descriptive_name": "Invoice Records",
+        "fields": ["invoice_id", "vendor", "amount", "due_date", "tax"]
+    }));
 
     let outcome = state.add_schema(schema_b, HashMap::new()).await.unwrap();
 
@@ -604,8 +622,14 @@ async fn partial_overlap_same_name_expands_with_mappers() {
             let fields = schema.fields.as_ref().unwrap();
             // Superset: 5 original + 1 new = 6
             assert_eq!(fields.len(), 6);
-            assert!(fields.contains(&"currency".to_string()), "must keep A-only field");
-            assert!(fields.contains(&"tax".to_string()), "must include B-only field");
+            assert!(
+                fields.contains(&"currency".to_string()),
+                "must keep A-only field"
+            );
+            assert!(
+                fields.contains(&"tax".to_string()),
+                "must include B-only field"
+            );
 
             // field_mappers for all existing fields (from A)
             let mappers = schema.field_mappers().unwrap();

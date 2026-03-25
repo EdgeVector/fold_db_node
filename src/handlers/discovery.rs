@@ -45,14 +45,20 @@ pub struct ConnectRequest {
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[cfg_attr(feature = "ts-bindings", derive(TS))]
-#[cfg_attr(feature = "ts-bindings", ts(export, export_to = "src/fold_node/static-react/src/types/"))]
+#[cfg_attr(
+    feature = "ts-bindings",
+    ts(export, export_to = "src/fold_node/static-react/src/types/")
+)]
 pub struct DiscoveryOptInListResponse {
     pub configs: Vec<DiscoveryOptIn>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[cfg_attr(feature = "ts-bindings", derive(TS))]
-#[cfg_attr(feature = "ts-bindings", ts(export, export_to = "src/fold_node/static-react/src/types/"))]
+#[cfg_attr(
+    feature = "ts-bindings",
+    ts(export, export_to = "src/fold_node/static-react/src/types/")
+)]
 pub struct DiscoveryPublishResponse {
     pub accepted: usize,
     pub quarantined: usize,
@@ -62,14 +68,20 @@ pub struct DiscoveryPublishResponse {
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[cfg_attr(feature = "ts-bindings", derive(TS))]
-#[cfg_attr(feature = "ts-bindings", ts(export, export_to = "src/fold_node/static-react/src/types/"))]
+#[cfg_attr(
+    feature = "ts-bindings",
+    ts(export, export_to = "src/fold_node/static-react/src/types/")
+)]
 pub struct DiscoveryNetworkSearchResponse {
     pub results: Vec<DiscoverySearchResult>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[cfg_attr(feature = "ts-bindings", derive(TS))]
-#[cfg_attr(feature = "ts-bindings", ts(export, export_to = "src/fold_node/static-react/src/types/"))]
+#[cfg_attr(
+    feature = "ts-bindings",
+    ts(export, export_to = "src/fold_node/static-react/src/types/")
+)]
 pub struct DiscoveryConnectionsResponse {
     pub requests: Vec<IncomingConnectionRequest>,
 }
@@ -85,11 +97,14 @@ fn get_metadata_store(
 
 /// List all discovery opt-in configs.
 pub async fn list_opt_ins(node: &FoldNode) -> HandlerResult<DiscoveryOptInListResponse> {
-    let db = node.get_fold_db().await
+    let db = node
+        .get_fold_db()
+        .await
         .map_err(|e| HandlerError::Internal(format!("Failed to access database: {}", e)))?;
     let store = get_metadata_store(&db);
 
-    let configs = config::list_opt_ins(&*store).await
+    let configs = config::list_opt_ins(&*store)
+        .await
         .handler_err("list discovery opt-ins")?;
 
     Ok(ApiResponse::success(DiscoveryOptInListResponse { configs }))
@@ -100,14 +115,13 @@ pub async fn opt_in(
     req: &OptInRequest,
     node: &FoldNode,
 ) -> HandlerResult<DiscoveryOptInListResponse> {
-    let db = node.get_fold_db().await
+    let db = node
+        .get_fold_db()
+        .await
         .map_err(|e| HandlerError::Internal(format!("Failed to access database: {}", e)))?;
     let store = get_metadata_store(&db);
 
-    let mut opt_in_config = DiscoveryOptIn::new(
-        req.schema_name.clone(),
-        req.category.clone(),
-    );
+    let mut opt_in_config = DiscoveryOptIn::new(req.schema_name.clone(), req.category.clone());
 
     if req.include_preview.unwrap_or(false) {
         opt_in_config = opt_in_config.with_preview(
@@ -116,11 +130,13 @@ pub async fn opt_in(
         );
     }
 
-    config::save_opt_in(&*store, &opt_in_config).await
+    config::save_opt_in(&*store, &opt_in_config)
+        .await
         .handler_err("save discovery opt-in")?;
 
     // Return updated list
-    let configs = config::list_opt_ins(&*store).await
+    let configs = config::list_opt_ins(&*store)
+        .await
         .handler_err("list discovery opt-ins")?;
 
     Ok(ApiResponse::success(DiscoveryOptInListResponse { configs }))
@@ -134,12 +150,15 @@ pub async fn opt_out(
     auth_token: &str,
     master_key: &[u8],
 ) -> HandlerResult<DiscoveryOptInListResponse> {
-    let db = node.get_fold_db().await
+    let db = node
+        .get_fold_db()
+        .await
         .map_err(|e| HandlerError::Internal(format!("Failed to access database: {}", e)))?;
     let store = get_metadata_store(&db);
 
     // Remove local config
-    config::remove_opt_in(&*store, &req.schema_name).await
+    config::remove_opt_in(&*store, &req.schema_name)
+        .await
         .handler_err("remove discovery opt-in")?;
 
     // Tell the discovery service to remove published vectors
@@ -148,10 +167,13 @@ pub async fn opt_out(
         discovery_url.to_string(),
         auth_token.to_string(),
     );
-    publisher.unpublish_schema(&req.schema_name).await
+    publisher
+        .unpublish_schema(&req.schema_name)
+        .await
         .handler_err("unpublish from discovery service")?;
 
-    let configs = config::list_opt_ins(&*store).await
+    let configs = config::list_opt_ins(&*store)
+        .await
         .handler_err("list discovery opt-ins")?;
 
     Ok(ApiResponse::success(DiscoveryOptInListResponse { configs }))
@@ -164,12 +186,15 @@ pub async fn publish(
     auth_token: &str,
     master_key: &[u8],
 ) -> HandlerResult<DiscoveryPublishResponse> {
-    let db = node.get_fold_db().await
+    let db = node
+        .get_fold_db()
+        .await
         .map_err(|e| HandlerError::Internal(format!("Failed to access database: {}", e)))?;
 
     let db_ops = db.get_db_ops();
     let metadata_store = db_ops.metadata_store().inner().clone();
-    let configs = config::list_opt_ins(&*metadata_store).await
+    let configs = config::list_opt_ins(&*metadata_store)
+        .await
         .handler_err("list discovery opt-ins")?;
 
     if configs.is_empty() {
@@ -181,7 +206,8 @@ pub async fn publish(
         }));
     }
 
-    let native_index_mgr = db_ops.native_index_manager()
+    let native_index_mgr = db_ops
+        .native_index_manager()
         .ok_or_else(|| HandlerError::Internal("Native index not available".to_string()))?;
     let embedding_store = native_index_mgr.store().clone();
 
@@ -197,7 +223,10 @@ pub async fn publish(
     let mut total_skipped = 0;
 
     for opt_in_config in &configs {
-        match publisher.publish_schema(opt_in_config, &*embedding_store).await {
+        match publisher
+            .publish_schema(opt_in_config, &*embedding_store)
+            .await
+        {
             Ok(result) => {
                 total_accepted += result.accepted;
                 total_quarantined += result.quarantined;
@@ -235,14 +264,18 @@ pub async fn search(
     master_key: &[u8],
 ) -> HandlerResult<DiscoveryNetworkSearchResponse> {
     // Generate embedding from query text
-    let db = node.get_fold_db().await
+    let db = node
+        .get_fold_db()
+        .await
         .map_err(|e| HandlerError::Internal(format!("Failed to access database: {}", e)))?;
 
     let db_ops = db.get_db_ops();
-    let native_index_mgr = db_ops.native_index_manager()
+    let native_index_mgr = db_ops
+        .native_index_manager()
         .ok_or_else(|| HandlerError::Internal("Native index not available".to_string()))?;
 
-    let query_embedding = native_index_mgr.embed_text(&req.query)
+    let query_embedding = native_index_mgr
+        .embed_text(&req.query)
         .handler_err("generate query embedding")?;
 
     let publisher = DiscoveryPublisher::new(
@@ -251,13 +284,18 @@ pub async fn search(
         auth_token.to_string(),
     );
 
-    let results = publisher.search(
-        query_embedding,
-        req.top_k.unwrap_or(20),
-        req.category_filter.clone(),
-    ).await.handler_err("search discovery network")?;
+    let results = publisher
+        .search(
+            query_embedding,
+            req.top_k.unwrap_or(20),
+            req.category_filter.clone(),
+        )
+        .await
+        .handler_err("search discovery network")?;
 
-    Ok(ApiResponse::success(DiscoveryNetworkSearchResponse { results }))
+    Ok(ApiResponse::success(DiscoveryNetworkSearchResponse {
+        results,
+    }))
 }
 
 /// Send a connection request to a pseudonym owner.
@@ -273,7 +311,9 @@ pub async fn connect(
         auth_token.to_string(),
     );
 
-    publisher.connect(req.target_pseudonym, req.message.clone()).await
+    publisher
+        .connect(req.target_pseudonym, req.message.clone())
+        .await
         .handler_err("send connection request")?;
 
     Ok(ApiResponse::success(()))
@@ -291,8 +331,12 @@ pub async fn poll_requests(
         auth_token.to_string(),
     );
 
-    let requests = publisher.poll_requests().await
+    let requests = publisher
+        .poll_requests()
+        .await
         .handler_err("poll connection requests")?;
 
-    Ok(ApiResponse::success(DiscoveryConnectionsResponse { requests }))
+    Ok(ApiResponse::success(DiscoveryConnectionsResponse {
+        requests,
+    }))
 }

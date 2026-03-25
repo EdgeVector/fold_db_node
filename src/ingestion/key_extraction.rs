@@ -3,8 +3,8 @@
 //! Extracts hash and range key values from ingested data, including
 //! support for nested field paths and date normalization.
 
-use chrono::{DateTime, FixedOffset, NaiveDate, NaiveDateTime};
 use crate::ingestion::IngestionResult;
+use chrono::{DateTime, FixedOffset, NaiveDate, NaiveDateTime};
 use fold_db::log_feature;
 use fold_db::logging::features::LogFeature;
 use fold_db::schema::SchemaCore;
@@ -51,8 +51,8 @@ pub(crate) fn try_normalize_date(value: &str) -> String {
 
     // Timezone-aware formats
     let tz_formats = [
-        "%Y-%m-%dT%H:%M:%S%z",        // "2024-01-05T15:30:00+0000"
-        "%Y-%m-%dT%H:%M:%S%.f%z",     // "2024-01-05T15:30:00.000+0000"
+        "%Y-%m-%dT%H:%M:%S%z",    // "2024-01-05T15:30:00+0000"
+        "%Y-%m-%dT%H:%M:%S%.f%z", // "2024-01-05T15:30:00.000+0000"
     ];
     for fmt in &tz_formats {
         if let Ok(dt) = DateTime::<FixedOffset>::parse_from_str(trimmed, fmt) {
@@ -62,9 +62,9 @@ pub(crate) fn try_normalize_date(value: &str) -> String {
 
     // Naive datetime formats (no timezone)
     let naive_dt_formats = [
-        "%Y-%m-%dT%H:%M:%S",          // "2024-01-05T15:30:00"
-        "%m/%d/%Y %H:%M:%S",          // "01/05/2024 15:30:00"
-        "%Y-%m-%d %H:%M",             // "2024-01-05 15:30"
+        "%Y-%m-%dT%H:%M:%S", // "2024-01-05T15:30:00"
+        "%m/%d/%Y %H:%M:%S", // "01/05/2024 15:30:00"
+        "%Y-%m-%d %H:%M",    // "2024-01-05 15:30"
     ];
     for fmt in &naive_dt_formats {
         if let Ok(dt) = NaiveDateTime::parse_from_str(trimmed, fmt) {
@@ -74,12 +74,12 @@ pub(crate) fn try_normalize_date(value: &str) -> String {
 
     // Date-only formats — normalize to midnight
     let date_formats = [
-        "%Y-%m-%d",                    // "2024-01-05"
-        "%m/%d/%Y",                    // "01/05/2024"
-        "%B %d, %Y",                  // "January 5, 2024"
-        "%b %d, %Y",                  // "Jan 5, 2024"
-        "%d %B %Y",                   // "5 January 2024"
-        "%d %b %Y",                   // "5 Jan 2024"
+        "%Y-%m-%d",  // "2024-01-05"
+        "%m/%d/%Y",  // "01/05/2024"
+        "%B %d, %Y", // "January 5, 2024"
+        "%b %d, %Y", // "Jan 5, 2024"
+        "%d %B %Y",  // "5 January 2024"
+        "%d %b %Y",  // "5 Jan 2024"
     ];
     for fmt in &date_formats {
         if let Ok(d) = NaiveDate::parse_from_str(trimmed, fmt) {
@@ -137,7 +137,11 @@ pub(crate) async fn extract_key_values_from_data(
                     match extract_nested_field_value(fields_and_values, field) {
                         Some(val) if val.is_string() => {
                             let s = val.as_str().unwrap();
-                            let s = if normalize_date { try_normalize_date(s) } else { s.to_string() };
+                            let s = if normalize_date {
+                                try_normalize_date(s)
+                            } else {
+                                s.to_string()
+                            };
                             keys_and_values.insert(key_name.to_string(), s);
                         }
                         Some(val) if val.is_f64() || val.is_i64() || val.is_u64() => {
@@ -156,7 +160,9 @@ pub(crate) async fn extract_key_values_from_data(
                                 LogFeature::Ingestion,
                                 warn,
                                 "{} '{}' not found in data for schema '{}'",
-                                key_name, field, schema_name
+                                key_name,
+                                field,
+                                schema_name
                             );
                         }
                     }
@@ -170,10 +176,12 @@ pub(crate) async fn extract_key_values_from_data(
             )));
         }
         Err(e) => {
-            return Err(crate::ingestion::IngestionError::SchemaCreationError(format!(
-                "Failed to get schema '{}' for key extraction: {}",
-                schema_name, e
-            )));
+            return Err(crate::ingestion::IngestionError::SchemaCreationError(
+                format!(
+                    "Failed to get schema '{}' for key extraction: {}",
+                    schema_name, e
+                ),
+            ));
         }
     }
 
@@ -213,7 +221,8 @@ pub(crate) fn extract_nested_field_value<'a>(
     }
 
     // Shallow fallback: search one level of nested objects by field name
-    fields_and_values.values()
+    fields_and_values
+        .values()
         .filter_map(|v| v.as_object())
         .find_map(|obj| obj.get(field_path))
 }
@@ -262,14 +271,8 @@ mod tests {
 
     #[test]
     fn test_normalize_date_only() {
-        assert_eq!(
-            try_normalize_date("2024-01-05"),
-            "2024-01-05 00:00:00"
-        );
-        assert_eq!(
-            try_normalize_date("January 5, 2024"),
-            "2024-01-05 00:00:00"
-        );
+        assert_eq!(try_normalize_date("2024-01-05"), "2024-01-05 00:00:00");
+        assert_eq!(try_normalize_date("January 5, 2024"), "2024-01-05 00:00:00");
     }
 
     #[test]
@@ -319,7 +322,10 @@ mod tests {
         );
 
         // Missing nested field
-        assert_eq!(extract_nested_field_value(&fields, "departure.terminal"), None);
+        assert_eq!(
+            extract_nested_field_value(&fields, "departure.terminal"),
+            None
+        );
 
         // Missing parent
         assert_eq!(extract_nested_field_value(&fields, "arrival.airport"), None);
@@ -337,6 +343,9 @@ mod tests {
         let mut normalized: Vec<String> = dates.iter().map(|d| try_normalize_date(d)).collect();
         let sorted = normalized.clone();
         normalized.sort();
-        assert_eq!(normalized, sorted, "Normalized dates should already be in chronological order");
+        assert_eq!(
+            normalized, sorted,
+            "Normalized dates should already be in chronological order"
+        );
     }
 }

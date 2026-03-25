@@ -25,13 +25,16 @@ pub(super) async fn list_views(state: web::Data<SchemaServiceState>) -> impl Res
 }
 
 /// Get all views with definitions
-pub(super) async fn get_available_views(
-    state: web::Data<SchemaServiceState>,
-) -> impl Responder {
+pub(super) async fn get_available_views(state: web::Data<SchemaServiceState>) -> impl Responder {
     match state.get_all_views() {
         Ok(views) => HttpResponse::Ok().json(AvailableViewsResponse { views }),
         Err(e) => {
-            log_feature!(LogFeature::Schema, error, "Failed to get available views: {}", e);
+            log_feature!(
+                LogFeature::Schema,
+                error,
+                "Failed to get available views: {}",
+                e
+            );
             HttpResponse::InternalServerError().json(ErrorResponse {
                 error: format!("Failed to get views: {}", e),
             })
@@ -45,7 +48,12 @@ pub(super) async fn get_view(
     state: web::Data<SchemaServiceState>,
 ) -> impl Responder {
     let view_name = path.into_inner();
-    log_feature!(LogFeature::Schema, info, "Schema service: getting view '{}'", view_name);
+    log_feature!(
+        LogFeature::Schema,
+        info,
+        "Schema service: getting view '{}'",
+        view_name
+    );
 
     match state.get_view_by_name(&view_name) {
         Ok(Some(view)) => HttpResponse::Ok().json(view),
@@ -56,7 +64,13 @@ pub(super) async fn get_view(
             })
         }
         Err(e) => {
-            log_feature!(LogFeature::Schema, error, "Failed to get view '{}': {}", view_name, e);
+            log_feature!(
+                LogFeature::Schema,
+                error,
+                "Failed to get view '{}': {}",
+                view_name,
+                e
+            );
             HttpResponse::InternalServerError().json(ErrorResponse {
                 error: format!("Failed to get view: {}", e),
             })
@@ -73,19 +87,20 @@ pub(super) async fn add_view(
     let view_name = request.name.clone();
 
     log_feature!(
-        LogFeature::Schema, info,
+        LogFeature::Schema,
+        info,
         "Schema service: registering view '{}' with {} input queries and {} output fields",
-        view_name, request.input_queries.len(), request.output_fields.len()
+        view_name,
+        request.input_queries.len(),
+        request.output_fields.len()
     );
 
     match state.add_view(request).await {
-        Ok(ViewAddOutcome::Added(view, schema)) => {
-            HttpResponse::Created().json(AddViewResponse {
-                view,
-                output_schema: schema,
-                replaced_schema: None,
-            })
-        }
+        Ok(ViewAddOutcome::Added(view, schema)) => HttpResponse::Created().json(AddViewResponse {
+            view,
+            output_schema: schema,
+            replaced_schema: None,
+        }),
         Ok(ViewAddOutcome::AddedWithExistingSchema(view, schema)) => {
             HttpResponse::Ok().json(AddViewResponse {
                 view,
@@ -101,7 +116,13 @@ pub(super) async fn add_view(
             })
         }
         Err(error) => {
-            log_feature!(LogFeature::Schema, error, "Failed to register view '{}': {}", view_name, error);
+            log_feature!(
+                LogFeature::Schema,
+                error,
+                "Failed to register view '{}': {}",
+                view_name,
+                error
+            );
             HttpResponse::BadRequest().json(ErrorResponse {
                 error: format!("Failed to register view: {}", error),
             })
@@ -109,13 +130,17 @@ pub(super) async fn add_view(
     }
 }
 
-
 /// Acquire a read lock on the schemas map, returning an HTTP 500 on poisoned lock.
 fn read_schemas(
     state: &SchemaServiceState,
 ) -> Result<RwLockReadGuard<'_, std::collections::HashMap<String, Schema>>, HttpResponse> {
     state.schemas.read().map_err(|e| {
-        log_feature!(LogFeature::Schema, error, "Failed to acquire schemas read lock: {}", e);
+        log_feature!(
+            LogFeature::Schema,
+            error,
+            "Failed to acquire schemas read lock: {}",
+            e
+        );
         HttpResponse::InternalServerError().json(ErrorResponse {
             error: "Failed to acquire schemas read lock".to_string(),
         })
@@ -135,9 +160,7 @@ pub(super) async fn list_schemas(state: web::Data<SchemaServiceState>) -> impl R
 }
 
 /// Get all available schemas with their full definitions
-pub(super) async fn get_available_schemas(
-    state: web::Data<SchemaServiceState>,
-) -> impl Responder {
+pub(super) async fn get_available_schemas(state: web::Data<SchemaServiceState>) -> impl Responder {
     let schemas = match read_schemas(&state) {
         Ok(s) => s,
         Err(r) => return r,
@@ -154,7 +177,12 @@ pub(super) async fn get_schema(
     state: web::Data<SchemaServiceState>,
 ) -> impl Responder {
     let schema_name = path.into_inner();
-    log_feature!(LogFeature::Schema, info, "Schema service: getting schema '{}'", schema_name);
+    log_feature!(
+        LogFeature::Schema,
+        info,
+        "Schema service: getting schema '{}'",
+        schema_name
+    );
 
     let schemas = match read_schemas(&state) {
         Ok(s) => s,
@@ -164,7 +192,12 @@ pub(super) async fn get_schema(
     match schemas.get(&schema_name) {
         Some(schema) => HttpResponse::Ok().json(schema),
         None => {
-            log_feature!(LogFeature::Schema, warn, "Schema '{}' not found", schema_name);
+            log_feature!(
+                LogFeature::Schema,
+                warn,
+                "Schema '{}' not found",
+                schema_name
+            );
             HttpResponse::NotFound().json(ErrorResponse {
                 error: "Schema not found".to_string(),
             })
@@ -194,9 +227,11 @@ pub(super) async fn find_similar(
     }
 
     log_feature!(
-        LogFeature::Schema, info,
+        LogFeature::Schema,
+        info,
         "Schema service: finding schemas similar to '{}' with threshold {}",
-        schema_name, threshold
+        schema_name,
+        threshold
     );
 
     match state.find_similar_schemas(&schema_name, threshold) {
@@ -218,7 +253,11 @@ pub(super) async fn find_similar(
 
 /// Reload schemas from the directory
 pub(super) async fn reload_schemas(state: web::Data<SchemaServiceState>) -> impl Responder {
-    log_feature!(LogFeature::Schema, info, "Schema service: reloading schemas");
+    log_feature!(
+        LogFeature::Schema,
+        info,
+        "Schema service: reloading schemas"
+    );
 
     match state.load_schemas().await {
         Ok(_) => {
@@ -249,9 +288,11 @@ pub(super) async fn add_schema(
     let schema_name = request.schema.name.clone();
 
     log_feature!(
-        LogFeature::Schema, info,
+        LogFeature::Schema,
+        info,
         "Schema service: adding schema '{}' with {} mutation mappers",
-        schema_name, request.mutation_mappers.len()
+        schema_name,
+        request.mutation_mappers.len()
     );
 
     match state
@@ -280,7 +321,13 @@ pub(super) async fn add_schema(
             })
         }
         Err(error) => {
-            log_feature!(LogFeature::Schema, error, "Failed to add schema '{}': {}", schema_name, error);
+            log_feature!(
+                LogFeature::Schema,
+                error,
+                "Failed to add schema '{}': {}",
+                schema_name,
+                error
+            );
             HttpResponse::BadRequest().json(ErrorResponse {
                 error: format!("Failed to add schema: {}", error),
             })
@@ -298,7 +345,12 @@ pub(super) async fn batch_check_reuse(
     match state.batch_check_schema_reuse(&request.schemas) {
         Ok(matches) => HttpResponse::Ok().json(BatchSchemaReuseResponse { matches }),
         Err(e) => {
-            log_feature!(LogFeature::Schema, error, "Batch schema reuse check failed: {}", e);
+            log_feature!(
+                LogFeature::Schema,
+                error,
+                "Batch schema reuse check failed: {}",
+                e
+            );
             HttpResponse::InternalServerError().json(ErrorResponse {
                 error: format!("Batch schema reuse check failed: {}", e),
             })
@@ -325,14 +377,23 @@ pub(super) async fn reset_database(
         });
     }
 
-    log_feature!(LogFeature::Schema, info, "Resetting schema service database");
+    log_feature!(
+        LogFeature::Schema,
+        info,
+        "Resetting schema service database"
+    );
 
     // Clear the in-memory schemas map
     {
         let mut schemas = match state.schemas.write() {
             Ok(s) => s,
             Err(e) => {
-                log_feature!(LogFeature::Schema, error, "Failed to acquire schemas write lock: {}", e);
+                log_feature!(
+                    LogFeature::Schema,
+                    error,
+                    "Failed to acquire schemas write lock: {}",
+                    e
+                );
                 return HttpResponse::InternalServerError().json(ResetResponse {
                     success: false,
                     message: "Failed to acquire schemas write lock".to_string(),
@@ -346,7 +407,12 @@ pub(super) async fn reset_database(
     match &state.storage {
         SchemaStorage::Sled { db, schemas_tree } => {
             if let Err(e) = schemas_tree.clear() {
-                log_feature!(LogFeature::Schema, error, "Failed to clear schemas tree: {}", e);
+                log_feature!(
+                    LogFeature::Schema,
+                    error,
+                    "Failed to clear schemas tree: {}",
+                    e
+                );
                 return HttpResponse::InternalServerError().json(ResetResponse {
                     success: false,
                     message: format!("Failed to reset sled database: {}", e),
@@ -354,13 +420,23 @@ pub(super) async fn reset_database(
             }
 
             if let Err(e) = db.flush() {
-                log_feature!(LogFeature::Schema, warn, "Failed to flush database after reset: {}", e);
+                log_feature!(
+                    LogFeature::Schema,
+                    warn,
+                    "Failed to flush database after reset: {}",
+                    e
+                );
             }
         }
         #[cfg(feature = "aws-backend")]
         SchemaStorage::Cloud { store } => {
             if let Err(e) = store.clear_all_schemas().await {
-                log_feature!(LogFeature::Schema, error, "Failed to clear DynamoDB schemas: {}", e);
+                log_feature!(
+                    LogFeature::Schema,
+                    error,
+                    "Failed to clear DynamoDB schemas: {}",
+                    e
+                );
                 return HttpResponse::InternalServerError().json(ResetResponse {
                     success: false,
                     message: format!("Failed to reset DynamoDB: {}", e),
@@ -369,7 +445,11 @@ pub(super) async fn reset_database(
         }
     }
 
-    log_feature!(LogFeature::Schema, info, "Schema service database reset successfully");
+    log_feature!(
+        LogFeature::Schema,
+        info,
+        "Schema service database reset successfully"
+    );
 
     HttpResponse::Ok().json(ResetResponse {
         success: true,
@@ -385,7 +465,12 @@ pub(super) async fn list_transforms(state: web::Data<SchemaServiceState>) -> imp
     match state.get_transform_list() {
         Ok(transforms) => HttpResponse::Ok().json(TransformsListResponse { transforms }),
         Err(e) => {
-            log_feature!(LogFeature::Schema, error, "Failed to list transforms: {}", e);
+            log_feature!(
+                LogFeature::Schema,
+                error,
+                "Failed to list transforms: {}",
+                e
+            );
             HttpResponse::InternalServerError().json(ErrorResponse {
                 error: format!("Failed to list transforms: {}", e),
             })
@@ -402,9 +487,12 @@ pub(super) async fn register_transform(
     let transform_name = request.name.clone();
 
     log_feature!(
-        LogFeature::Schema, info,
+        LogFeature::Schema,
+        info,
         "Schema service: registering transform '{}' v{} ({} bytes WASM)",
-        transform_name, request.version, request.wasm_bytes.len()
+        transform_name,
+        request.version,
+        request.wasm_bytes.len()
     );
 
     match state.register_transform(request).await {
@@ -423,7 +511,13 @@ pub(super) async fn register_transform(
             })
         }
         Err(error) => {
-            log_feature!(LogFeature::Schema, error, "Failed to register transform '{}': {}", transform_name, error);
+            log_feature!(
+                LogFeature::Schema,
+                error,
+                "Failed to register transform '{}': {}",
+                transform_name,
+                error
+            );
             HttpResponse::BadRequest().json(ErrorResponse {
                 error: format!("Failed to register transform: {}", error),
             })
@@ -438,7 +532,12 @@ pub(super) async fn get_available_transforms(
     match state.get_all_transforms() {
         Ok(transforms) => HttpResponse::Ok().json(AvailableTransformsResponse { transforms }),
         Err(e) => {
-            log_feature!(LogFeature::Schema, error, "Failed to get available transforms: {}", e);
+            log_feature!(
+                LogFeature::Schema,
+                error,
+                "Failed to get available transforms: {}",
+                e
+            );
             HttpResponse::InternalServerError().json(ErrorResponse {
                 error: format!("Failed to get transforms: {}", e),
             })
@@ -452,7 +551,12 @@ pub(super) async fn get_transform(
     state: web::Data<SchemaServiceState>,
 ) -> impl Responder {
     let hash = path.into_inner();
-    log_feature!(LogFeature::Schema, info, "Schema service: getting transform '{}'", hash);
+    log_feature!(
+        LogFeature::Schema,
+        info,
+        "Schema service: getting transform '{}'",
+        hash
+    );
 
     match state.get_transform_by_hash(&hash) {
         Ok(Some(record)) => HttpResponse::Ok().json(record),
@@ -463,7 +567,13 @@ pub(super) async fn get_transform(
             })
         }
         Err(e) => {
-            log_feature!(LogFeature::Schema, error, "Failed to get transform '{}': {}", hash, e);
+            log_feature!(
+                LogFeature::Schema,
+                error,
+                "Failed to get transform '{}': {}",
+                hash,
+                e
+            );
             HttpResponse::InternalServerError().json(ErrorResponse {
                 error: format!("Failed to get transform: {}", e),
             })
@@ -477,20 +587,36 @@ pub(super) async fn get_transform_wasm(
     state: web::Data<SchemaServiceState>,
 ) -> impl Responder {
     let hash = path.into_inner();
-    log_feature!(LogFeature::Schema, info, "Schema service: getting WASM for transform '{}'", hash);
+    log_feature!(
+        LogFeature::Schema,
+        info,
+        "Schema service: getting WASM for transform '{}'",
+        hash
+    );
 
     match state.get_transform_wasm(&hash) {
         Ok(Some(bytes)) => HttpResponse::Ok()
             .content_type("application/wasm")
             .body(bytes),
         Ok(None) => {
-            log_feature!(LogFeature::Schema, warn, "Transform WASM '{}' not found", hash);
+            log_feature!(
+                LogFeature::Schema,
+                warn,
+                "Transform WASM '{}' not found",
+                hash
+            );
             HttpResponse::NotFound().json(ErrorResponse {
                 error: "Transform WASM not found".to_string(),
             })
         }
         Err(e) => {
-            log_feature!(LogFeature::Schema, error, "Failed to get transform WASM '{}': {}", hash, e);
+            log_feature!(
+                LogFeature::Schema,
+                error,
+                "Failed to get transform WASM '{}': {}",
+                hash,
+                e
+            );
             HttpResponse::InternalServerError().json(ErrorResponse {
                 error: format!("Failed to get transform WASM: {}", e),
             })
@@ -499,9 +625,7 @@ pub(super) async fn get_transform_wasm(
 }
 
 /// Verify a WASM blob matches a hash
-pub(super) async fn verify_transform(
-    payload: web::Json<VerifyTransformRequest>,
-) -> impl Responder {
+pub(super) async fn verify_transform(payload: web::Json<VerifyTransformRequest>) -> impl Responder {
     let request = payload.into_inner();
     let (matches, computed_hash) =
         SchemaServiceState::verify_transform(&request.hash, &request.wasm_bytes);
@@ -535,17 +659,17 @@ pub(super) async fn find_similar_transforms(
     }
 
     log_feature!(
-        LogFeature::Schema, info,
+        LogFeature::Schema,
+        info,
         "Schema service: finding transforms similar to '{}' with threshold {}",
-        name, threshold
+        name,
+        threshold
     );
 
     match state.find_similar_transforms(&name, threshold) {
         Ok(response) => HttpResponse::Ok().json(response),
-        Err(e) => {
-            HttpResponse::InternalServerError().json(ErrorResponse {
-                error: format!("Failed to find similar transforms: {}", e),
-            })
-        }
+        Err(e) => HttpResponse::InternalServerError().json(ErrorResponse {
+            error: format!("Failed to find similar transforms: {}", e),
+        }),
     }
 }

@@ -6,9 +6,9 @@ use std::sync::Arc;
 use tokio::sync::Mutex;
 
 use crate::fold_node::config::NodeConfig;
+use fold_db::constants::SINGLE_PUBLIC_KEY_ID;
 use fold_db::error::{FoldDbError, FoldDbResult};
 use fold_db::fold_db_core::FoldDB;
-use fold_db::constants::SINGLE_PUBLIC_KEY_ID;
 use fold_db::security::{PublicKeyInfo, SecurityConfig, SecurityManager};
 
 /// Result of loading a view (and its dependencies) from the schema service.
@@ -154,8 +154,7 @@ impl FoldNode {
 
     /// Creates a new FoldNode with the specified configuration.
     pub async fn new(#[allow(unused_mut)] mut config: NodeConfig) -> FoldDbResult<Self> {
-        let (private_key, public_key, e2e_keys) =
-            Self::resolve_identity_and_keys(&config).await?;
+        let (private_key, public_key, e2e_keys) = Self::resolve_identity_and_keys(&config).await?;
 
         // Update config with public key as user_id if not set (for DynamoDB)
         #[cfg(feature = "aws-backend")]
@@ -165,7 +164,8 @@ impl FoldNode {
             }
         }
 
-        let db = fold_db::fold_db_core::factory::create_fold_db(&config.database, &e2e_keys).await?;
+        let db =
+            fold_db::fold_db_core::factory::create_fold_db(&config.database, &e2e_keys).await?;
         let node = Self::assemble(config, db, private_key, public_key, e2e_keys).await?;
         log_feature!(
             LogFeature::Database,
@@ -177,8 +177,7 @@ impl FoldNode {
 
     /// Creates a new FoldNode with a pre-created FoldDB instance.
     pub async fn new_with_db(config: NodeConfig, db: Arc<Mutex<FoldDB>>) -> FoldDbResult<Self> {
-        let (private_key, public_key, e2e_keys) =
-            Self::resolve_identity_and_keys(&config).await?;
+        let (private_key, public_key, e2e_keys) = Self::resolve_identity_and_keys(&config).await?;
         let node = Self::assemble(config, db, private_key, public_key, e2e_keys).await?;
         log_feature!(
             LogFeature::Database,
@@ -224,9 +223,13 @@ impl FoldNode {
     }
 
     /// Fetch available schemas from the schema service.
-    pub async fn fetch_available_schemas(&self) -> FoldDbResult<Vec<fold_db::schema::types::Schema>> {
+    pub async fn fetch_available_schemas(
+        &self,
+    ) -> FoldDbResult<Vec<fold_db::schema::types::Schema>> {
         let url = self.require_real_schema_service()?;
-        crate::fold_node::SchemaServiceClient::new(&url).get_available_schemas().await
+        crate::fold_node::SchemaServiceClient::new(&url)
+            .get_available_schemas()
+            .await
     }
 
     /// Add a new schema to the schema service.
@@ -257,7 +260,8 @@ impl FoldNode {
         }
 
         crate::fold_node::SchemaServiceClient::new(&schema_service_url)
-            .batch_check_schema_reuse(entries).await
+            .batch_check_schema_reuse(entries)
+            .await
     }
 
     /// Register a view with the global schema service.
@@ -286,10 +290,7 @@ impl FoldNode {
     /// ```
     ///
     /// All-or-nothing: if any dependency fails, nothing is registered.
-    pub async fn load_view_from_service(
-        &self,
-        name: &str,
-    ) -> FoldDbResult<ViewLoadResult> {
+    pub async fn load_view_from_service(&self, name: &str) -> FoldDbResult<ViewLoadResult> {
         let url = self.require_real_schema_service()?;
         let client = crate::fold_node::SchemaServiceClient::new(&url);
         let mut loading = std::collections::HashSet::new();
@@ -306,10 +307,7 @@ impl FoldNode {
                 .load_schema_from_json(schema_json)
                 .await
                 .map_err(|e| {
-                    FoldDbError::Config(format!(
-                        "Failed to load dependency schema locally: {}",
-                        e
-                    ))
+                    FoldDbError::Config(format!("Failed to load dependency schema locally: {}", e))
                 })?;
         }
         for view in &result.views_to_register {
@@ -369,11 +367,7 @@ impl FoldNode {
             }
 
             // Already queued for registration in this batch → skip
-            if result
-                .views_to_register
-                .iter()
-                .any(|v| v.name == name)
-            {
+            if result.views_to_register.iter().any(|v| v.name == name) {
                 return Ok(());
             }
 
@@ -499,7 +493,8 @@ impl FoldNode {
         mutations: Vec<fold_db::schema::types::operations::Mutation>,
     ) -> FoldDbResult<Vec<String>> {
         let mut db = self.db.lock().await;
-        Ok(db.mutation_manager
+        Ok(db
+            .mutation_manager
             .write_mutations_batch_async(mutations)
             .await?)
     }
@@ -594,7 +589,9 @@ impl FoldNode {
     }
 
     /// Get the current indexing status
-    pub async fn get_indexing_status(&self) -> fold_db::fold_db_core::orchestration::IndexingStatus {
+    pub async fn get_indexing_status(
+        &self,
+    ) -> fold_db::fold_db_core::orchestration::IndexingStatus {
         let db = self.db.lock().await;
         db.get_indexing_status().await
     }
@@ -680,11 +677,7 @@ impl FoldNode {
         Ok(items
             .into_iter()
             .map(|(key, result)| {
-                let mutation_id = key
-                    .rsplit(":mut:")
-                    .next()
-                    .unwrap_or("")
-                    .to_string();
+                let mutation_id = key.rsplit(":mut:").next().unwrap_or("").to_string();
                 MutationOutcome {
                     mutation_id,
                     schema_name: result.schema_name,
@@ -715,8 +708,8 @@ pub struct FileIngestionRecord {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use fold_db::security::Ed25519KeyPair;
     use base64::{engine::general_purpose, Engine as _};
+    use fold_db::security::Ed25519KeyPair;
     use tempfile::tempdir;
 
     #[tokio::test]

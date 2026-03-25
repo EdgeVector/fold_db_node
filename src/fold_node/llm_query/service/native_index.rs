@@ -70,10 +70,7 @@ impl LlmQueryService {
         let mut all_results = Vec::new();
         if let Some(native_index_mgr) = db_ops.native_index_manager() {
             for term in &search_terms {
-                match native_index_mgr
-                    .search_all_classifications(term)
-                    .await
-                {
+                match native_index_mgr.search_all_classifications(term).await {
                     Ok(mut results) => {
                         log::debug!(
                             "LLM Query: Term '{}' returned {} results",
@@ -183,16 +180,18 @@ impl LlmQueryService {
                 // When the agent omits fields, default to all fields from the schema
                 if fields.is_empty() {
                     if let Ok(Some(schema_with_state)) = processor.get_schema(schema_name).await {
-                        fields = schema_with_state.schema.runtime_fields.keys().cloned().collect();
+                        fields = schema_with_state
+                            .schema
+                            .runtime_fields
+                            .keys()
+                            .cloned()
+                            .collect();
                     }
                 }
 
                 let filter = params.get("filter").cloned();
                 let sort_order = params.get("sort_order").cloned();
-                let limit = params
-                    .get("limit")
-                    .and_then(|l| l.as_u64())
-                    .unwrap_or(50) as usize;
+                let limit = params.get("limit").and_then(|l| l.as_u64()).unwrap_or(50) as usize;
 
                 let query = Query {
                     schema_name: schema_name.to_string(),
@@ -305,10 +304,9 @@ impl LlmQueryService {
                     .get("folder_path")
                     .and_then(|p| p.as_str())
                     .ok_or("ingest_files tool requires 'folder_path' parameter")?;
-                let files = params
-                    .get("files")
-                    .and_then(|f| f.as_array())
-                    .ok_or("ingest_files tool requires 'files' parameter (array of relative paths)")?;
+                let files = params.get("files").and_then(|f| f.as_array()).ok_or(
+                    "ingest_files tool requires 'files' parameter (array of relative paths)",
+                )?;
 
                 let base_expanded = expand_home_path(folder_path_raw);
                 let base = base_expanded.as_path();
@@ -351,21 +349,21 @@ impl LlmQueryService {
                             .update_progress_with_percentage(
                                 &batch_progress_id,
                                 crate::ingestion::progress::IngestionStep::ExecutingMutations,
-                                format!(
-                                    "Ingesting {}/{} files: {}",
-                                    idx + 1,
-                                    total,
-                                    relative
-                                ),
+                                format!("Ingesting {}/{} files: {}", idx + 1, total, relative),
                                 pct,
                             )
                             .await;
                     }
 
                     // Skip files that have already been ingested (dedup by content hash)
-                    if let Ok(hash) = crate::ingestion::smart_folder::scanner::compute_file_hash(&full_path) {
+                    if let Ok(hash) =
+                        crate::ingestion::smart_folder::scanner::compute_file_hash(&full_path)
+                    {
                         if node.is_file_ingested(&pub_key, &hash).await.is_some() {
-                            log::info!("Agent ingest_files: skipping already-ingested file: {}", relative);
+                            log::info!(
+                                "Agent ingest_files: skipping already-ingested file: {}",
+                                relative
+                            );
                             results.push(serde_json::json!({
                                 "file": relative,
                                 "success": true,
@@ -443,10 +441,9 @@ impl LlmQueryService {
                     .and_then(|s| s.as_str())
                     .ok_or("create_view tool requires 'schema_type' parameter")?;
 
-                let schema_type: SchemaType = serde_json::from_value(
-                    Value::String(schema_type_str.to_string()),
-                )
-                .map_err(|e| format!("Invalid schema_type '{}': {}", schema_type_str, e))?;
+                let schema_type: SchemaType =
+                    serde_json::from_value(Value::String(schema_type_str.to_string()))
+                        .map_err(|e| format!("Invalid schema_type '{}': {}", schema_type_str, e))?;
 
                 let key_config: Option<KeyConfig> = params
                     .get("key_config")
@@ -521,13 +518,9 @@ impl LlmQueryService {
                 }))
             }
 
-            "set_field_policy" => {
-                Err("Access control has been removed from fold_db".to_string())
-            }
+            "set_field_policy" => Err("Access control has been removed from fold_db".to_string()),
 
-            "get_field_policies" => {
-                Err("Access control has been removed from fold_db".to_string())
-            }
+            "get_field_policies" => Err("Access control has been removed from fold_db".to_string()),
 
             _ => Err(format!("Unknown tool: {}", tool)),
         }
@@ -558,10 +551,7 @@ impl LlmQueryService {
         if !prior_history.is_empty() {
             conversation_context.push_str("## Previous Conversation\n");
             for msg in prior_history {
-                conversation_context.push_str(&format!(
-                    "\n{}: {}\n",
-                    msg.role, msg.content
-                ));
+                conversation_context.push_str(&format!("\n{}: {}\n", msg.role, msg.content));
             }
             conversation_context.push_str("\n## Current Turn\n");
         }
@@ -605,11 +595,20 @@ impl LlmQueryService {
             log::debug!("Agent: Iteration {} - calling LLM", iteration + 1);
 
             let pct = 5 + (iteration * 90 / max_iterations.max(1)).min(90) as u8;
-            update_agent_progress(progress_tracker, &agent_job_id, pct, format!("Thinking... (step {})", iteration + 1)).await;
+            update_agent_progress(
+                progress_tracker,
+                &agent_job_id,
+                pct,
+                format!("Thinking... (step {})", iteration + 1),
+            )
+            .await;
 
             let response = self.call_llm(&full_prompt).await?;
 
-            log::debug!("Agent: LLM response: {}", &response[..response.len().min(200)]);
+            log::debug!(
+                "Agent: LLM response: {}",
+                &response[..response.len().min(200)]
+            );
 
             // Parse the response
             let action = self.parse_agent_response(&response)?;
@@ -643,10 +642,19 @@ impl LlmQueryService {
                         "create_view" => "Compiling WASM view...",
                         _ => "Executing tool...",
                     };
-                    update_agent_progress(progress_tracker, &agent_job_id, tool_pct, format!("{} ({})", tool_label, tool)).await;
+                    update_agent_progress(
+                        progress_tracker,
+                        &agent_job_id,
+                        tool_pct,
+                        format!("{} ({})", tool_label, tool),
+                    )
+                    .await;
 
                     // Execute the tool, capturing errors as results so the agent can retry
-                    let result = match self.execute_tool(&tool, &params, node, progress_tracker).await {
+                    let result = match self
+                        .execute_tool(&tool, &params, node, progress_tracker)
+                        .await
+                    {
                         Ok(val) => val,
                         Err(e) => {
                             log::warn!("Agent: Tool '{}' failed: {}", tool, e);
@@ -654,7 +662,11 @@ impl LlmQueryService {
                         }
                     };
 
-                    log::debug!("Agent: Tool '{}' returned: {}", tool, &result.to_string()[..result.to_string().len().min(200)]);
+                    log::debug!(
+                        "Agent: Tool '{}' returned: {}",
+                        tool,
+                        &result.to_string()[..result.to_string().len().min(200)]
+                    );
 
                     // Record the tool call
                     tool_calls.push(ToolCallRecord {

@@ -1,6 +1,6 @@
-pub mod ask;
 #[cfg(target_os = "macos")]
 pub mod apple;
+pub mod ask;
 pub mod completions;
 pub mod ingest;
 pub mod mutate;
@@ -15,10 +15,10 @@ use crate::error::CliError;
 use crate::output::OutputMode;
 use fold_db::db_operations::native_index::IndexResult;
 use fold_db::fold_db_core::orchestration::index_status::IndexingStatus;
-use fold_db_node::fold_node::OperationProcessor;
-use fold_db_node::ingestion::smart_folder::SmartFolderScanResponse;
 use fold_db::schema::schema_types::SchemaWithState;
 use fold_db::storage::DatabaseConfig;
+use fold_db_node::fold_node::OperationProcessor;
+use fold_db_node::ingestion::smart_folder::SmartFolderScanResponse;
 use serde_json::Value;
 
 #[derive(Debug)]

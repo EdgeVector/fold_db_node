@@ -1,9 +1,9 @@
 //! Security-related HTTP routes for key management and authentication
 
-use fold_db::security::SecurityManager;
 use crate::server::http_server::AppState;
 use crate::server::routes::require_node;
 use actix_web::{web, HttpResponse, Result as ActixResult};
+use fold_db::security::SecurityManager;
 use serde_json::json;
 use std::sync::Arc;
 // OpenAPI annotations are attached via #[utoipa::path(...)] on handlers

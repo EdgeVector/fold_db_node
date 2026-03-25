@@ -1,6 +1,8 @@
 //! JSON conversion and processing for file uploads
 
-use file_to_markdown::{Config as FtmConfig, Converter as FtmConverter, OllamaConfig as FtmOllamaConfig};
+use file_to_markdown::{
+    Config as FtmConfig, Converter as FtmConverter, OllamaConfig as FtmOllamaConfig,
+};
 use serde_json::{json, Value};
 use std::io::Write;
 use std::path::PathBuf;
@@ -35,15 +37,18 @@ pub async fn convert_file_to_json(file_path: &PathBuf) -> Result<Value, Ingestio
 
     let converter = FtmConverter::new(config);
 
-    let file_markdown = converter.convert_path(file_path.as_path()).await.map_err(|e| {
-        log_feature!(
-            LogFeature::Ingestion,
-            error,
-            "Failed to convert file: {}",
-            e
-        );
-        IngestionError::FileConversionFailed(e.to_string())
-    })?;
+    let file_markdown = converter
+        .convert_path(file_path.as_path())
+        .await
+        .map_err(|e| {
+            log_feature!(
+                LogFeature::Ingestion,
+                error,
+                "Failed to convert file: {}",
+                e
+            );
+            IngestionError::FileConversionFailed(e.to_string())
+        })?;
 
     let mut value = serde_json::to_value(&file_markdown)
         .map_err(|e| IngestionError::FileConversionFailed(format!("Serialization: {}", e)))?;
@@ -57,7 +62,10 @@ pub async fn convert_file_to_json(file_path: &PathBuf) -> Result<Value, Ingestio
         if map.contains_key("image_format") {
             // Remove title if present — it would be the vision caption, not a schema name
             map.remove("title");
-            map.insert("descriptive_name".to_string(), Value::String("Photography".to_string()));
+            map.insert(
+                "descriptive_name".to_string(),
+                Value::String("Photography".to_string()),
+            );
         }
     }
 
@@ -229,7 +237,11 @@ fn flatten_array_elements(value: Value) -> Value {
 ///
 /// Returns the `descriptive_name` extracted from the vision model output (if any)
 /// so it can be injected into the schema definition later.
-pub fn enrich_image_json(json: &mut Value, file_path: &std::path::PathBuf, source_file_name: Option<&str>) -> Option<String> {
+pub fn enrich_image_json(
+    json: &mut Value,
+    file_path: &std::path::PathBuf,
+    source_file_name: Option<&str>,
+) -> Option<String> {
     let mut descriptive_name = None;
     if let Value::Object(map) = json {
         // Extract descriptive_name — it's schema metadata, not record data
@@ -240,7 +252,10 @@ pub fn enrich_image_json(json: &mut Value, file_path: &std::path::PathBuf, sourc
         // source_file_name — used as hash key for unique record identity
         if !map.contains_key("source_file_name") {
             if let Some(sfn) = source_file_name {
-                map.insert("source_file_name".to_string(), Value::String(sfn.to_string()));
+                map.insert(
+                    "source_file_name".to_string(),
+                    Value::String(sfn.to_string()),
+                );
             }
         }
         // image_type — keep if already set
@@ -277,7 +292,9 @@ pub fn classify_image_type(source_file_name: &str) -> String {
 fn get_exif_date(file_path: &std::path::PathBuf) -> Option<String> {
     let file = std::fs::File::open(file_path).ok()?;
     let mut bufreader = std::io::BufReader::new(file);
-    let exif_data = exif::Reader::new().read_from_container(&mut bufreader).ok()?;
+    let exif_data = exif::Reader::new()
+        .read_from_container(&mut bufreader)
+        .ok()?;
 
     let field = exif_data
         .get_field(exif::Tag::DateTimeOriginal, exif::In::PRIMARY)
@@ -596,7 +613,10 @@ mod tests {
 
     #[test]
     fn test_classify_image_type_screenshot() {
-        assert_eq!(classify_image_type("Screenshot_2024-01-01.png"), "screenshot");
+        assert_eq!(
+            classify_image_type("Screenshot_2024-01-01.png"),
+            "screenshot"
+        );
         assert_eq!(classify_image_type("my_screenshot.jpg"), "screenshot");
     }
 
@@ -707,5 +727,4 @@ mod tests {
         assert!(result.len() <= MAX_DESCRIPTIVE_NAME_LEN + 3); // +3 for "..."
         assert!(result.ends_with("..."));
     }
-
 }

@@ -61,7 +61,13 @@ pub async fn get_node_for_user(
     user_id: &str,
 ) -> Result<Arc<RwLock<FoldNode>>, HttpResponse> {
     state.node_manager.get_node(user_id).await.map_err(|e| {
-        log_feature!(LogFeature::HttpServer, error, "Failed to get node for user {}: {}", user_id, e);
+        log_feature!(
+            LogFeature::HttpServer,
+            error,
+            "Failed to get node for user {}: {}",
+            user_id,
+            e
+        );
         HttpResponse::InternalServerError().json(json!({
             "ok": false,
             "error": format!("Failed to initialize user context: {}", e),

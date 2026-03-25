@@ -1,8 +1,8 @@
 use crate::commands::CommandOutput;
 use crate::error::CliError;
-use fold_db_node::fold_node::OperationProcessor;
 use fold_db::schema::types::field::HashRangeFilter;
 use fold_db::schema::types::operations::Query;
+use fold_db_node::fold_node::OperationProcessor;
 
 pub async fn run(
     schema: &str,

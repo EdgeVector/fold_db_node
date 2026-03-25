@@ -74,7 +74,10 @@ impl SchemaServiceServer {
                             .route(web::get().to(list_schemas))
                             .route(web::post().to(add_schema)),
                     )
-                    .route("/schemas/batch-check-reuse", web::post().to(batch_check_reuse))
+                    .route(
+                        "/schemas/batch-check-reuse",
+                        web::post().to(batch_check_reuse),
+                    )
                     .route("/schemas/reload", web::post().to(reload_schemas))
                     .route("/schemas/available", web::get().to(get_available_schemas))
                     .route("/schemas/similar/{name}", web::get().to(find_similar))
@@ -93,9 +96,15 @@ impl SchemaServiceServer {
                             .route(web::get().to(list_transforms))
                             .route(web::post().to(register_transform)),
                     )
-                    .route("/transforms/available", web::get().to(get_available_transforms))
+                    .route(
+                        "/transforms/available",
+                        web::get().to(get_available_transforms),
+                    )
                     .route("/transforms/verify", web::post().to(verify_transform))
-                    .route("/transforms/similar/{name}", web::get().to(find_similar_transforms))
+                    .route(
+                        "/transforms/similar/{name}",
+                        web::get().to(find_similar_transforms),
+                    )
                     .route("/transform/{hash}", web::get().to(get_transform))
                     .route("/transform/{hash}/wasm", web::get().to(get_transform_wasm))
                     .route("/system/reset", web::post().to(reset_database)),
@@ -116,8 +125,8 @@ impl SchemaServiceServer {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use fold_db::schema::types::Schema;
     use crate::schema_service::state::jaccard_index;
+    use fold_db::schema::types::Schema;
 
     /// Build a test schema with all required fields (descriptive_name, field_descriptions, classifications)
     fn make_test_schema(name: &str, fields: &[&str]) -> Schema {
@@ -132,8 +141,12 @@ mod tests {
         );
         schema.descriptive_name = Some(name.to_string());
         for f in &field_strings {
-            schema.field_classifications.insert(f.clone(), vec!["word".to_string()]);
-            schema.field_descriptions.insert(f.clone(), format!("{} field", f));
+            schema
+                .field_classifications
+                .insert(f.clone(), vec!["word".to_string()]);
+            schema
+                .field_descriptions
+                .insert(f.clone(), format!("{} field", f));
             schema.field_data_classifications.insert(
                 f.clone(),
                 fold_db::schema::types::DataClassification::new(0, "general").unwrap(),
@@ -171,11 +184,20 @@ mod tests {
         };
 
         // Schema name should be the identity hash (hash of descriptive_name + fields)
-        assert_ne!(added_schema.name, "New Schema", "schema name should be a hash, not the readable name");
-        assert_eq!(added_schema.descriptive_name, Some("New Schema".to_string()));
+        assert_ne!(
+            added_schema.name, "New Schema",
+            "schema name should be a hash, not the readable name"
+        );
+        assert_eq!(
+            added_schema.descriptive_name,
+            Some("New Schema".to_string())
+        );
 
         // Classifications should match
-        assert_eq!(added_schema.field_classifications, new_schema.field_classifications);
+        assert_eq!(
+            added_schema.field_classifications,
+            new_schema.field_classifications
+        );
 
         let stored_schemas = state
             .schemas
@@ -274,8 +296,10 @@ mod tests {
             .await
             .expect("failed to add second schema");
         // Should NOT be AlreadyExists — should be Added or Expanded
-        assert!(!matches!(outcome2, SchemaAddOutcome::AlreadyExists(..)),
-            "Different semantic names with same fields should create separate schemas");
+        assert!(
+            !matches!(outcome2, SchemaAddOutcome::AlreadyExists(..)),
+            "Different semantic names with same fields should create separate schemas"
+        );
     }
 
     #[tokio::test]
@@ -304,7 +328,10 @@ mod tests {
         };
 
         // Second schema: 4 fields with <50% overlap so it stays separate
-        let schema2 = make_test_schema("Product Catalog", &["sku", "price", "category", "description"]);
+        let schema2 = make_test_schema(
+            "Product Catalog",
+            &["sku", "price", "category", "description"],
+        );
 
         let outcome2 = state
             .add_schema(schema2.clone(), HashMap::new())
@@ -335,7 +362,8 @@ mod tests {
 
         let schema1 = make_test_schema("Users", &["user_id", "username", "email"]);
 
-        let schema2 = make_test_schema("Products", &["product_id", "title", "price", "description"]);
+        let schema2 =
+            make_test_schema("Products", &["product_id", "title", "price", "description"]);
 
         let outcome1 = state
             .add_schema(schema1.clone(), HashMap::new())
@@ -372,11 +400,7 @@ mod tests {
     // ========== find_similar_schemas tests ==========
 
     /// Helper: create a schema with the given fields, add classifications, and insert it via state.add_schema
-    async fn add_test_schema(
-        state: &SchemaServiceState,
-        name: &str,
-        fields: Vec<&str>,
-    ) -> String {
+    async fn add_test_schema(state: &SchemaServiceState, name: &str, fields: Vec<&str>) -> String {
         let field_strings: Vec<String> = fields.iter().map(|f| f.to_string()).collect();
         let mut schema = Schema::new(
             name.to_string(),
@@ -388,8 +412,12 @@ mod tests {
         );
         schema.descriptive_name = Some(name.to_string());
         for f in &field_strings {
-            schema.field_classifications.insert(f.clone(), vec!["word".to_string()]);
-            schema.field_descriptions.insert(f.clone(), format!("{} field", f));
+            schema
+                .field_classifications
+                .insert(f.clone(), vec!["word".to_string()]);
+            schema
+                .field_descriptions
+                .insert(f.clone(), format!("{} field", f));
             schema.field_data_classifications.insert(
                 f.clone(),
                 fold_db::schema::types::DataClassification::new(0, "general").unwrap(),
@@ -441,7 +469,8 @@ mod tests {
         // Use lower overlap: A: {a, b, c, d}, B: {c, e, f, g} → Jaccard = 1/7
         // Overlap = 1 out of min_size 4 → 1*2=2 ≤ 4, no expansion.
         let name_a = add_test_schema(&state, "Astronomy Records", vec!["a", "b", "c", "d"]).await;
-        let _name_b = add_test_schema(&state, "Banking Transactions", vec!["c", "e", "f", "g"]).await;
+        let _name_b =
+            add_test_schema(&state, "Banking Transactions", vec!["c", "e", "f", "g"]).await;
 
         let result = state.find_similar_schemas(&name_a, 0.0).unwrap();
         assert_eq!(result.similar_schemas.len(), 1);
@@ -495,9 +524,20 @@ mod tests {
         // A: {a, b, c, d, e, f}
         // B: {a, b, g, h, i, j}  → overlap=2, min_size=6, 2*2=4 ≤ 6, Jaccard = 2/10 = 0.2
         // C: {a, k, l, m, n, o}  → overlap=1, min_size=6, 1*2=2 ≤ 6, Jaccard = 1/11 ≈ 0.091
-        let name_a = add_test_schema(&state, "Weather Forecasts", vec!["a", "b", "c", "d", "e", "f"]).await;
-        let _name_b = add_test_schema(&state, "Tax Documents", vec!["a", "b", "g", "h", "i", "j"]).await;
-        let _name_c = add_test_schema(&state, "Pet Vaccinations", vec!["a", "k", "l", "m", "n", "o"]).await;
+        let name_a = add_test_schema(
+            &state,
+            "Weather Forecasts",
+            vec!["a", "b", "c", "d", "e", "f"],
+        )
+        .await;
+        let _name_b =
+            add_test_schema(&state, "Tax Documents", vec!["a", "b", "g", "h", "i", "j"]).await;
+        let _name_c = add_test_schema(
+            &state,
+            "Pet Vaccinations",
+            vec!["a", "k", "l", "m", "n", "o"],
+        )
+        .await;
 
         let result = state.find_similar_schemas(&name_a, 0.0).unwrap();
         assert_eq!(result.similar_schemas.len(), 2);
@@ -535,7 +575,10 @@ mod tests {
             .expect("failed to evaluate second schema");
         match outcome2 {
             SchemaAddOutcome::Added(schema, _) => {
-                assert_ne!(schema.name, first_name, "Different descriptive names should create separate schemas");
+                assert_ne!(
+                    schema.name, first_name,
+                    "Different descriptive names should create separate schemas"
+                );
                 // Schema name is a hash, readable name is in descriptive_name
                 assert_eq!(schema.descriptive_name, Some("Portrait Photos".to_string()));
             }
@@ -624,7 +667,10 @@ mod tests {
                 assert_eq!(view.input_queries.len(), 1);
                 assert_eq!(view.input_queries[0].schema_name, "SourceSchema");
                 // Output schema should be identity-hashed
-                assert_eq!(schema.descriptive_name, Some("Test View Output".to_string()));
+                assert_eq!(
+                    schema.descriptive_name,
+                    Some("Test View Output".to_string())
+                );
                 // View's output_schema_name should match the registered schema name
                 assert_eq!(view.output_schema_name, schema.name);
             }
@@ -636,7 +682,9 @@ mod tests {
         assert!(view_names.contains(&"TestView".to_string()));
 
         // Output schema should be in the schemas list
-        let schema_names = state.get_schema_names().expect("failed to get schema names");
+        let schema_names = state
+            .get_schema_names()
+            .expect("failed to get schema names");
         assert!(!schema_names.is_empty());
     }
 
@@ -682,7 +730,9 @@ mod tests {
         assert_eq!(view_names.len(), 2);
 
         // Only one schema (deduplicated)
-        let schema_names = state.get_schema_names().expect("failed to get schema names");
+        let schema_names = state
+            .get_schema_names()
+            .expect("failed to get schema names");
         assert_eq!(schema_names.len(), 1);
     }
 
@@ -735,10 +785,9 @@ mod tests {
         let state = make_test_state();
         let mut request = make_view_request("V", "desc", &["f"], "s", &["a"]);
         // Add a second query with the same schema.field pair
-        request.input_queries.push(Query::new(
-            "s".to_string(),
-            vec!["a".to_string()],
-        ));
+        request
+            .input_queries
+            .push(Query::new("s".to_string(), vec!["a".to_string()]));
 
         let result = state.add_view(request).await;
         assert!(result.is_err());
@@ -749,21 +798,19 @@ mod tests {
     async fn get_view_by_name_returns_registered_view() {
         let state = make_test_state();
 
-        let request = make_view_request(
-            "MyView",
-            "My View Output",
-            &["out1"],
-            "Src",
-            &["in1"],
-        );
+        let request = make_view_request("MyView", "My View Output", &["out1"], "Src", &["in1"]);
         state.add_view(request).await.expect("failed to add view");
 
-        let view = state.get_view_by_name("MyView").expect("failed to get view");
+        let view = state
+            .get_view_by_name("MyView")
+            .expect("failed to get view");
         assert!(view.is_some());
         let view = view.unwrap();
         assert_eq!(view.name, "MyView");
 
-        let missing = state.get_view_by_name("NonExistent").expect("failed to get view");
+        let missing = state
+            .get_view_by_name("NonExistent")
+            .expect("failed to get view");
         assert!(missing.is_none());
     }
 }

@@ -38,10 +38,8 @@ impl CliError {
             }
             println!(
                 "{}",
-                serde_json::to_string(&obj).unwrap_or_else(|_| format!(
-                    "{{\"ok\":false,\"error\":\"{}\"}}",
-                    self.message
-                ))
+                serde_json::to_string(&obj)
+                    .unwrap_or_else(|_| format!("{{\"ok\":false,\"error\":\"{}\"}}", self.message))
             );
         } else {
             eprintln!("{} {}", style("error:").red().bold(), self.message);

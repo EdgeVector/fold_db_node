@@ -1,9 +1,9 @@
-use fold_db::log_feature;
-use fold_db::logging::features::LogFeature;
-use fold_db::progress::{Job, JobType, ProgressTracker};
 use crate::server::http_server::AppState;
 use crate::server::routes::require_user_context;
 use actix_web::{web, HttpResponse, Responder};
+use fold_db::log_feature;
+use fold_db::logging::features::LogFeature;
+use fold_db::progress::{Job, JobType, ProgressTracker};
 use serde::{Deserialize, Serialize};
 
 // ---- Job tracking helper ----
@@ -27,31 +27,58 @@ impl JobHandle {
             Ok(Some(mut job)) => {
                 f(&mut job);
                 if let Err(e) = self.tracker.save(&job).await {
-                    log_feature!(LogFeature::HttpServer, error, "Failed to save job {} for '{}': {}", operation, self.job_id, e);
+                    log_feature!(
+                        LogFeature::HttpServer,
+                        error,
+                        "Failed to save job {} for '{}': {}",
+                        operation,
+                        self.job_id,
+                        e
+                    );
                 }
             }
             Ok(None) => {
-                log_feature!(LogFeature::HttpServer, warn, "Job '{}' not found during {}", self.job_id, operation);
+                log_feature!(
+                    LogFeature::HttpServer,
+                    warn,
+                    "Job '{}' not found during {}",
+                    self.job_id,
+                    operation
+                );
             }
             Err(e) => {
-                log_feature!(LogFeature::HttpServer, error, "Failed to load job '{}': {}", self.job_id, e);
+                log_feature!(
+                    LogFeature::HttpServer,
+                    error,
+                    "Failed to load job '{}': {}",
+                    self.job_id,
+                    e
+                );
             }
         }
     }
 
     async fn update(&self, pct: u8, msg: impl Into<String>) {
         let msg = msg.into();
-        self.with_job("progress update", |job| job.update_progress(pct, msg)).await;
+        self.with_job("progress update", |job| job.update_progress(pct, msg))
+            .await;
     }
 
     async fn fail(&self, error: impl Into<String>) {
         let error = error.into();
-        log_feature!(LogFeature::HttpServer, error, "Job '{}' failed: {}", self.job_id, error);
+        log_feature!(
+            LogFeature::HttpServer,
+            error,
+            "Job '{}' failed: {}",
+            self.job_id,
+            error
+        );
         self.with_job("failure update", |job| job.fail(error)).await;
     }
 
     async fn complete(&self, result: serde_json::Value) {
-        self.with_job("completion", |job| job.complete(Some(result))).await;
+        self.with_job("completion", |job| job.complete(Some(result)))
+            .await;
     }
 }
 
@@ -68,11 +95,19 @@ pub struct AdminJobResponse {
 
 impl AdminJobResponse {
     fn error(message: impl Into<String>) -> Self {
-        Self { success: false, message: message.into(), job_id: None }
+        Self {
+            success: false,
+            message: message.into(),
+            job_id: None,
+        }
     }
 
     fn started(job_id: String, message: impl Into<String>) -> Self {
-        Self { success: true, message: message.into(), job_id: Some(job_id) }
+        Self {
+            success: true,
+            message: message.into(),
+            job_id: Some(job_id),
+        }
     }
 }
 
@@ -90,10 +125,19 @@ async fn create_async_job(
     job.update_progress(5, initial_msg.into());
 
     if let Err(e) = tracker.save(&job).await {
-        log_feature!(LogFeature::HttpServer, error, "Failed to create {} job: {}", job_type, e);
-        return Err(HttpResponse::InternalServerError().json(
-            AdminJobResponse::error(format!("Failed to create {} job: {}", job_type, e)),
-        ));
+        log_feature!(
+            LogFeature::HttpServer,
+            error,
+            "Failed to create {} job: {}",
+            job_type,
+            e
+        );
+        return Err(
+            HttpResponse::InternalServerError().json(AdminJobResponse::error(format!(
+                "Failed to create {} job: {}",
+                job_type, e
+            ))),
+        );
     }
     Ok(job_id)
 }
@@ -137,9 +181,9 @@ pub async fn reset_database(
     req: web::Json<ResetDatabaseRequest>,
 ) -> impl Responder {
     if !req.confirm {
-        return HttpResponse::BadRequest().json(
-            AdminJobResponse::error("Reset confirmation required. Set 'confirm' to true."),
-        );
+        return HttpResponse::BadRequest().json(AdminJobResponse::error(
+            "Reset confirmation required. Set 'confirm' to true.",
+        ));
     }
 
     let user_id = match require_user_context() {
@@ -148,8 +192,14 @@ pub async fn reset_database(
     };
 
     let job_id = match create_async_job(
-        "reset", "database_reset", "Initializing database reset...", &user_id, &progress_tracker,
-    ).await {
+        "reset",
+        "database_reset",
+        "Initializing database reset...",
+        &user_id,
+        &progress_tracker,
+    )
+    .await
+    {
         Ok(id) => id,
         Err(response) => return response,
     };
@@ -160,7 +210,9 @@ pub async fn reset_database(
     tokio::spawn(async move {
         let uid = user_id.clone();
         fold_db::logging::core::run_with_user(&user_id, async move {
-            handle.update(10, "Clearing user data from storage...").await;
+            handle
+                .update(10, "Clearing user data from storage...")
+                .await;
 
             let node_arc = match node_manager.get_node(&uid).await {
                 Ok(n) => n,
@@ -170,9 +222,8 @@ pub async fn reset_database(
                 }
             };
 
-            let processor = crate::fold_node::OperationProcessor::new(
-                node_arc.read().await.clone(),
-            );
+            let processor =
+                crate::fold_node::OperationProcessor::new(node_arc.read().await.clone());
 
             if let Err(e) = processor.perform_database_reset(Some(&uid)).await {
                 handle.fail(format!("Database reset failed: {}", e)).await;
@@ -181,17 +232,26 @@ pub async fn reset_database(
 
             node_manager.invalidate_node(&uid).await;
 
-            log_feature!(LogFeature::HttpServer, info, "Database reset completed for user: {}", uid);
-            handle.complete(serde_json::json!({
-                "user_id": uid,
-                "message": "Database reset successfully. All data has been cleared."
-            })).await;
-        }).await;
+            log_feature!(
+                LogFeature::HttpServer,
+                info,
+                "Database reset completed for user: {}",
+                uid
+            );
+            handle
+                .complete(serde_json::json!({
+                    "user_id": uid,
+                    "message": "Database reset successfully. All data has been cleared."
+                }))
+                .await;
+        })
+        .await;
     });
 
-    HttpResponse::Accepted().json(
-        AdminJobResponse::started(job_id, "Database reset started. Monitor progress via /api/ingestion/progress endpoint."),
-    )
+    HttpResponse::Accepted().json(AdminJobResponse::started(
+        job_id,
+        "Database reset started. Monitor progress via /api/ingestion/progress endpoint.",
+    ))
 }
 
 /// Request body for migrating to cloud
@@ -229,16 +289,19 @@ pub async fn migrate_to_cloud(
     };
 
     if req.api_url.is_empty() || req.api_key.is_empty() {
-        return HttpResponse::BadRequest().json(
-            AdminJobResponse::error("api_url and api_key are required."),
-        );
+        return HttpResponse::BadRequest()
+            .json(AdminJobResponse::error("api_url and api_key are required."));
     }
 
     let job_id = match create_async_job(
-        "migrate", "cloud_migration",
+        "migrate",
+        "cloud_migration",
         format!("Initializing migration to {}...", req.api_url),
-        &user_id, &progress_tracker,
-    ).await {
+        &user_id,
+        &progress_tracker,
+    )
+    .await
+    {
         Ok(id) => id,
         Err(response) => return response,
     };
@@ -261,9 +324,8 @@ pub async fn migrate_to_cloud(
                 }
             };
 
-            let processor = crate::fold_node::OperationProcessor::new(
-                node_arc.read().await.clone(),
-            );
+            let processor =
+                crate::fold_node::OperationProcessor::new(node_arc.read().await.clone());
 
             handle.update(20, "Syncing schemas and documents...").await;
 
@@ -272,17 +334,26 @@ pub async fn migrate_to_cloud(
                 return;
             }
 
-            log_feature!(LogFeature::HttpServer, info, "Cloud migration completed for user: {}", uid);
-            handle.complete(serde_json::json!({
-                "user_id": uid,
-                "message": "Migration completed successfully"
-            })).await;
-        }).await;
+            log_feature!(
+                LogFeature::HttpServer,
+                info,
+                "Cloud migration completed for user: {}",
+                uid
+            );
+            handle
+                .complete(serde_json::json!({
+                    "user_id": uid,
+                    "message": "Migration completed successfully"
+                }))
+                .await;
+        })
+        .await;
     });
 
-    HttpResponse::Accepted().json(
-        AdminJobResponse::started(job_id, "Cloud migration started. Monitor progress via /api/ingestion/progress endpoint."),
-    )
+    HttpResponse::Accepted().json(AdminJobResponse::started(
+        job_id,
+        "Cloud migration started. Monitor progress via /api/ingestion/progress endpoint.",
+    ))
 }
 
 #[cfg(test)]

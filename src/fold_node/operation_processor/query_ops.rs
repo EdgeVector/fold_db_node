@@ -1,11 +1,11 @@
+use crate::fold_node::response_types::QueryResultMap;
 use fold_db::db_operations::IndexResult;
 use fold_db::error::{FoldDbError, FoldDbResult};
-use crate::fold_node::response_types::QueryResultMap;
 use fold_db::schema::types::field::Field;
-use fold_db::schema::types::{KeyValue, Query};
-use fold_db::schema::types::operations::SortOrder;
 #[cfg(test)]
 use fold_db::schema::types::field::HashRangeFilter;
+use fold_db::schema::types::operations::SortOrder;
+use fold_db::schema::types::{KeyValue, Query};
 use serde_json::Value;
 use std::collections::{HashMap, HashSet};
 
@@ -32,7 +32,8 @@ impl OperationProcessor {
     /// When `rehydrate_depth` is set on the query, Reference fields are automatically
     /// resolved to their actual child records up to the specified depth.
     pub async fn execute_query_json(&self, query: Query) -> FoldDbResult<Vec<Value>> {
-        self.execute_query_json_internal(query, HashSet::new()).await
+        self.execute_query_json_internal(query, HashSet::new())
+            .await
     }
 
     /// Internal implementation that threads a visited-schema set to detect circular references.
@@ -61,11 +62,13 @@ impl OperationProcessor {
 
         if let Some(ref order) = sort_order {
             results.sort_by(|a, b| {
-                let range_a = a.get("key")
+                let range_a = a
+                    .get("key")
                     .and_then(|k| k.get("range"))
                     .and_then(|v| v.as_str())
                     .unwrap_or("");
-                let range_b = b.get("key")
+                let range_b = b
+                    .get("key")
                     .and_then(|k| k.get("range"))
                     .and_then(|v| v.as_str())
                     .unwrap_or("");
@@ -78,7 +81,8 @@ impl OperationProcessor {
 
         if let Some(depth) = rehydrate_depth {
             if depth > 0 {
-                self.rehydrate_references(&mut results, &schema_name, depth, visited).await?;
+                self.rehydrate_references(&mut results, &schema_name, depth, visited)
+                    .await?;
             }
         }
 
@@ -131,10 +135,7 @@ impl OperationProcessor {
                     None => continue,
                 };
 
-                let child_query = Query::new(
-                    child_schema_name.clone(),
-                    child_fields.clone(),
-                );
+                let child_query = Query::new(child_schema_name.clone(), child_fields.clone());
 
                 let mut child_results = match self
                     .execute_query_json_internal(child_query, HashSet::new())
@@ -144,7 +145,8 @@ impl OperationProcessor {
                     Err(e) => {
                         log::warn!(
                             "Rehydration: failed to query child schema '{}': {}",
-                            child_schema_name, e
+                            child_schema_name,
+                            e
                         );
                         continue;
                     }
@@ -163,7 +165,8 @@ impl OperationProcessor {
                     {
                         log::warn!(
                             "Rehydration: recursive rehydration failed for child schema '{}': {}",
-                            child_schema_name, e
+                            child_schema_name,
+                            e
                         );
                     }
                 }
@@ -196,10 +199,7 @@ impl OperationProcessor {
     )> {
         let db = self.get_db().await?;
 
-        let schema = match db
-            .schema_manager
-            .get_schema_metadata(schema_name)?
-        {
+        let schema = match db.schema_manager.get_schema_metadata(schema_name)? {
             Some(s) => s,
             None => return Ok((vec![], HashMap::new(), HashMap::new())),
         };
@@ -213,12 +213,14 @@ impl OperationProcessor {
 
         // Pre-fetch queryable fields and key configs for each referenced child schema
         let mut child_field_map: HashMap<String, Vec<String>> = HashMap::new();
-        let mut child_key_config_map: HashMap<String, (Option<String>, Option<String>)> = HashMap::new();
+        let mut child_key_config_map: HashMap<String, (Option<String>, Option<String>)> =
+            HashMap::new();
         for (_, child_schema_name) in &ref_fields {
             if child_field_map.contains_key(child_schema_name) {
                 continue;
             }
-            if let Ok(Some(child_schema)) = db.schema_manager.get_schema_metadata(child_schema_name) {
+            if let Ok(Some(child_schema)) = db.schema_manager.get_schema_metadata(child_schema_name)
+            {
                 let fields = Self::get_queryable_fields(&child_schema);
                 if !fields.is_empty() {
                     child_field_map.insert(child_schema_name.clone(), fields);
@@ -256,10 +258,7 @@ impl OperationProcessor {
                     continue;
                 }
 
-                let refs_array = match fields_obj
-                    .get(field_name)
-                    .and_then(|v| v.as_array())
-                {
+                let refs_array = match fields_obj.get(field_name).and_then(|v| v.as_array()) {
                     Some(arr) => arr,
                     None => continue,
                 };
@@ -285,7 +284,10 @@ impl OperationProcessor {
     }
 
     /// Extract a key component (hash or range) from a record's fields using the field name.
-    fn extract_key_component(fields_obj: Option<&Value>, field_name: &Option<String>) -> Option<String> {
+    fn extract_key_component(
+        fields_obj: Option<&Value>,
+        field_name: &Option<String>,
+    ) -> Option<String> {
         field_name
             .as_ref()
             .and_then(|name| fields_obj?.get(name))
@@ -300,9 +302,8 @@ impl OperationProcessor {
         let mut index: HashMap<KeyValue, Value> = HashMap::new();
         for record in child_results {
             let fields_obj = record.get("fields");
-            let (hash_field, range_field) = key_config
-                .map(|(h, r)| (h, r))
-                .unwrap_or((&None, &None));
+            let (hash_field, range_field) =
+                key_config.map(|(h, r)| (h, r)).unwrap_or((&None, &None));
             let hash = Self::extract_key_component(fields_obj, hash_field);
             let range = Self::extract_key_component(fields_obj, range_field);
             index.insert(KeyValue::new(hash, range), record);
@@ -404,9 +405,7 @@ impl OperationProcessor {
             .schema_manager
             .get_schema(schema_name)
             .await?
-            .ok_or_else(|| {
-                FoldDbError::Database(format!("Schema '{}' not found", schema_name))
-            })?;
+            .ok_or_else(|| FoldDbError::Database(format!("Schema '{}' not found", schema_name)))?;
 
         if schema.runtime_fields.is_empty() {
             log::warn!(
@@ -474,7 +473,6 @@ impl OperationProcessor {
 
         let db = self.get_db().await?;
 
-        Ok(db.native_search_all_classifications(term)
-            .await?)
+        Ok(db.native_search_all_classifications(term).await?)
     }
 }

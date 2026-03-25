@@ -1,10 +1,10 @@
 //! LLM-based file classification, image-directory classification, and heuristic fallback.
 
+use super::scanner::IMAGE_EXTS;
+use super::types::{file_size_bytes, FileRecommendation};
 use crate::ingestion::error::IngestionError;
 use crate::ingestion::IngestionResult;
 use fold_db::llm_registry::prompts::smart_folder as sf_prompts;
-use super::scanner::IMAGE_EXTS;
-use super::types::{FileRecommendation, file_size_bytes};
 use std::collections::{HashMap, HashSet};
 use std::path::Path;
 
@@ -47,11 +47,14 @@ pub(crate) async fn classify_image_directories(
         return Ok(Vec::new());
     }
 
-    report(16, format!(
-        "Found {} image directories with {} total images — classifying...",
-        image_dirs.len(),
-        image_dirs.values().map(|v| v.len()).sum::<usize>(),
-    ));
+    report(
+        16,
+        format!(
+            "Found {} image directories with {} total images — classifying...",
+            image_dirs.len(),
+            image_dirs.values().map(|v| v.len()).sum::<usize>(),
+        ),
+    );
 
     // Try LLM classification; fall back to keeping all images if unavailable
     let svc = match service {
@@ -64,7 +67,9 @@ pub(crate) async fn classify_image_directories(
                     return Ok(Vec::new());
                 }
                 Err(_) => {
-                    log::info!("No LLM available for image directory classification, keeping all images");
+                    log::info!(
+                        "No LLM available for image directory classification, keeping all images"
+                    );
                     return Ok(Vec::new());
                 }
             }
@@ -77,7 +82,10 @@ pub(crate) async fn classify_image_directories(
     let llm_response = match call_llm_for_file_analysis(&prompt, svc).await {
         Ok(r) => r,
         Err(e) => {
-            log::warn!("LLM unavailable for image directory classification: {}. Keeping all images.", e);
+            log::warn!(
+                "LLM unavailable for image directory classification: {}. Keeping all images.",
+                e
+            );
             return Ok(Vec::new());
         }
     };
@@ -97,7 +105,10 @@ pub(crate) async fn classify_image_directories(
                     path: f.clone(),
                     should_ingest: false,
                     category: "non_personal_media".to_string(),
-                    reason: format!("Image directory '{}' classified as non-personal assets", dir),
+                    reason: format!(
+                        "Image directory '{}' classified as non-personal assets",
+                        dir
+                    ),
                     file_size_bytes: file_size_bytes(Path::new(f), folder_path),
                     estimated_cost: 0.0,
                     already_ingested: false,
@@ -130,21 +141,35 @@ fn create_image_directory_prompt(
     sorted_dirs.sort_by_key(|(dir, _)| (*dir).clone());
 
     for (dir, files) in &sorted_dirs {
-        let display_dir = if dir.is_empty() { "(root)" } else { dir.as_str() };
+        let display_dir = if dir.is_empty() {
+            "(root)"
+        } else {
+            dir.as_str()
+        };
         // Show up to 5 sample filenames
-        let samples: Vec<&str> = files.iter().take(5).map(|f| {
-            Path::new(f.as_str())
-                .file_name()
-                .and_then(|n| n.to_str())
-                .unwrap_or(f.as_str())
-        }).collect();
+        let samples: Vec<&str> = files
+            .iter()
+            .take(5)
+            .map(|f| {
+                Path::new(f.as_str())
+                    .file_name()
+                    .and_then(|n| n.to_str())
+                    .unwrap_or(f.as_str())
+            })
+            .collect();
         let sample_str = samples.join(", ");
         let more = if files.len() > 5 {
             format!(" (+{} more)", files.len() - 5)
         } else {
             String::new()
         };
-        dir_lines.push(format!("- {}: {} files [{}{}]", display_dir, files.len(), sample_str, more));
+        dir_lines.push(format!(
+            "- {}: {} files [{}{}]",
+            display_dir,
+            files.len(),
+            sample_str,
+            more
+        ));
     }
 
     sf_prompts::build_image_directory_prompt(&dir_lines)
@@ -159,7 +184,10 @@ fn parse_image_directory_response(
     let json_str = match crate::ingestion::ai::helpers::extract_json_from_response(response) {
         Ok(s) => s,
         Err(e) => {
-            log::warn!("Failed to extract JSON from image directory response: {}", e);
+            log::warn!(
+                "Failed to extract JSON from image directory response: {}",
+                e
+            );
             return Vec::new();
         }
     };
@@ -293,25 +321,60 @@ pub fn apply_heuristic_filtering(file_tree: &[String]) -> Vec<FileRecommendation
             // Strong personal data signals (documents with well-known personal formats)
             let is_personal_doc = matches!(
                 ext.as_str(),
-                "doc" | "docx" | "pdf" | "rtf" | "odt" | "pages"
-                    | "xlsx" | "xls" | "csv" | "ods" | "numbers"
-                    | "pptx" | "ppt" | "odp" | "key"
-                    | "eml" | "mbox" | "vcf"
+                "doc"
+                    | "docx"
+                    | "pdf"
+                    | "rtf"
+                    | "odt"
+                    | "pages"
+                    | "xlsx"
+                    | "xls"
+                    | "csv"
+                    | "ods"
+                    | "numbers"
+                    | "pptx"
+                    | "ppt"
+                    | "odp"
+                    | "key"
+                    | "eml"
+                    | "mbox"
+                    | "vcf"
             );
 
             // Strong media signals
             let is_media = matches!(
                 ext.as_str(),
-                "jpg" | "jpeg" | "png" | "gif" | "heic" | "heif" | "webp" | "bmp" | "tiff"
-                    | "raw" | "cr2" | "nef" | "arw"
-                    | "mp4" | "mov" | "avi" | "mkv" | "m4v" | "wmv"
-                    | "mp3" | "wav" | "flac" | "aac" | "m4a" | "ogg" | "wma"
+                "jpg"
+                    | "jpeg"
+                    | "png"
+                    | "gif"
+                    | "heic"
+                    | "heif"
+                    | "webp"
+                    | "bmp"
+                    | "tiff"
+                    | "raw"
+                    | "cr2"
+                    | "nef"
+                    | "arw"
+                    | "mp4"
+                    | "mov"
+                    | "avi"
+                    | "mkv"
+                    | "m4v"
+                    | "wmv"
+                    | "mp3"
+                    | "wav"
+                    | "flac"
+                    | "aac"
+                    | "m4a"
+                    | "ogg"
+                    | "wma"
             );
 
             // Data export patterns (high confidence personal data)
-            let is_data_export = lower.contains("export")
-                || lower.contains("backup")
-                || lower.contains("takeout");
+            let is_data_export =
+                lower.contains("export") || lower.contains("backup") || lower.contains("takeout");
 
             let (should_ingest, category, reason) = if is_personal_doc {
                 (true, "personal_data", "Personal document file")
@@ -350,10 +413,7 @@ mod tests {
   {"path": "photos/pic.jpg", "should_ingest": true, "category": "media", "reason": "Photo"}
 ]
 ```"#;
-        let file_tree = vec![
-            "docs/notes.txt".to_string(),
-            "photos/pic.jpg".to_string(),
-        ];
+        let file_tree = vec!["docs/notes.txt".to_string(), "photos/pic.jpg".to_string()];
         let result = parse_llm_file_recommendations(response, &file_tree).unwrap();
         assert_eq!(result.len(), 2);
         assert_eq!(result[0].path, "docs/notes.txt");
@@ -416,10 +476,7 @@ mod tests {
     #[test]
     fn test_prompt_contains_tree_and_file_paths() {
         let tree = "docs/\n  notes.txt\n  report.pdf";
-        let files = vec![
-            "docs/notes.txt".to_string(),
-            "docs/report.pdf".to_string(),
-        ];
+        let files = vec!["docs/notes.txt".to_string(), "docs/report.pdf".to_string()];
         let prompt = create_smart_folder_prompt(tree, &files);
         assert!(prompt.contains(tree));
         assert!(prompt.contains("docs/notes.txt"));
@@ -542,9 +599,18 @@ mod tests {
     fn test_parse_image_directory_response_valid() {
         let response = r#"{"photos/vacation": "personal", "assets/images/twemoji/v/latest/svg": "asset", "data/tweets_media": "personal"}"#;
         let mut image_dirs = HashMap::new();
-        image_dirs.insert("photos/vacation".to_string(), vec!["photos/vacation/img1.jpg".to_string()]);
-        image_dirs.insert("assets/images/twemoji/v/latest/svg".to_string(), vec!["assets/images/twemoji/v/latest/svg/emoji_0.svg".to_string()]);
-        image_dirs.insert("data/tweets_media".to_string(), vec!["data/tweets_media/photo_0.jpg".to_string()]);
+        image_dirs.insert(
+            "photos/vacation".to_string(),
+            vec!["photos/vacation/img1.jpg".to_string()],
+        );
+        image_dirs.insert(
+            "assets/images/twemoji/v/latest/svg".to_string(),
+            vec!["assets/images/twemoji/v/latest/svg/emoji_0.svg".to_string()],
+        );
+        image_dirs.insert(
+            "data/tweets_media".to_string(),
+            vec!["data/tweets_media/photo_0.jpg".to_string()],
+        );
 
         let non_personal = parse_image_directory_response(response, &image_dirs);
         assert_eq!(non_personal.len(), 1);
@@ -572,13 +638,17 @@ mod tests {
     #[test]
     fn test_create_image_directory_prompt_contains_dirs() {
         let mut image_dirs = HashMap::new();
-        image_dirs.insert("photos/vacation".to_string(), vec![
-            "photos/vacation/img1.jpg".to_string(),
-            "photos/vacation/img2.jpg".to_string(),
-        ]);
-        image_dirs.insert("assets/icons".to_string(), vec![
-            "assets/icons/icon1.svg".to_string(),
-        ]);
+        image_dirs.insert(
+            "photos/vacation".to_string(),
+            vec![
+                "photos/vacation/img1.jpg".to_string(),
+                "photos/vacation/img2.jpg".to_string(),
+            ],
+        );
+        image_dirs.insert(
+            "assets/icons".to_string(),
+            vec!["assets/icons/icon1.svg".to_string()],
+        );
 
         let prompt = create_image_directory_prompt(&image_dirs, Path::new("/tmp"));
         assert!(prompt.contains("photos/vacation"));

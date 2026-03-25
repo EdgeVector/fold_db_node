@@ -33,9 +33,9 @@ impl EmbeddedServerHandle {
 
     /// Wait for the server to finish (blocks until server stops).
     pub async fn wait(self) -> FoldDbResult<()> {
-        self.task_handle
-            .await
-            .map_err(|e| fold_db::error::FoldDbError::Other(format!("Server task panicked: {}", e)))?
+        self.task_handle.await.map_err(|e| {
+            fold_db::error::FoldDbError::Other(format!("Server task panicked: {}", e))
+        })?
     }
 
     /// Abort the server task.
@@ -156,8 +156,7 @@ mod tests {
         let temp_dir = tempdir().unwrap();
 
         // Create a config with a mock schema service URL
-        let mut config =
-            crate::fold_node::config::NodeConfig::new(temp_dir.path().to_path_buf());
+        let mut config = crate::fold_node::config::NodeConfig::new(temp_dir.path().to_path_buf());
         config.schema_service_url = Some("mock://test".to_string());
 
         let keypair = fold_db::security::Ed25519KeyPair::generate().unwrap();

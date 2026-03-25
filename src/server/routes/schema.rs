@@ -1,10 +1,12 @@
 use crate::fold_node::OperationProcessor;
 use crate::handlers::{ApiResponse, HandlerError, IntoHandlerError};
+use crate::server::http_server::AppState;
+use crate::server::routes::{
+    handler_error_to_response, handler_result_to_response, node_or_return,
+};
+use actix_web::{web, HttpResponse, Responder};
 use fold_db::log_feature;
 use fold_db::logging::features::LogFeature;
-use crate::server::http_server::AppState;
-use crate::server::routes::{handler_error_to_response, handler_result_to_response, node_or_return};
-use actix_web::{web, HttpResponse, Responder};
 use serde::{Deserialize, Serialize};
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -48,12 +50,21 @@ pub struct SchemaKeysResponse {
 pub async fn list_schemas(state: web::Data<AppState>) -> impl Responder {
     let (user_hash, node) = node_or_return!(state);
     let op = OperationProcessor::new(node.clone());
-    handler_result_to_response(async {
-        let schemas = op.list_schemas().await.handler_err("list schemas")?;
-        let count = schemas.len();
-        let schemas_json = serde_json::to_value(&schemas).handler_err("serialize schemas")?;
-        Ok(ApiResponse::success_with_user(SchemaListResponse { schemas: schemas_json, count }, user_hash))
-    }.await)
+    handler_result_to_response(
+        async {
+            let schemas = op.list_schemas().await.handler_err("list schemas")?;
+            let count = schemas.len();
+            let schemas_json = serde_json::to_value(&schemas).handler_err("serialize schemas")?;
+            Ok(ApiResponse::success_with_user(
+                SchemaListResponse {
+                    schemas: schemas_json,
+                    count,
+                },
+                user_hash,
+            ))
+        }
+        .await,
+    )
 }
 
 /// Get a schema by name.
@@ -74,13 +85,24 @@ pub async fn get_schema(path: web::Path<String>, state: web::Data<AppState>) -> 
     let name = path.into_inner();
     let (user_hash, node) = node_or_return!(state);
     let op = OperationProcessor::new(node.clone());
-    handler_result_to_response(async {
-        let schema_with_state = op.get_schema(&name).await
-            .handler_err("get schema")?
-            .ok_or_else(|| HandlerError::NotFound(format!("Schema not found: {}", name)))?;
-        let schema_json = serde_json::to_value(&schema_with_state).handler_err("serialize schema")?;
-        Ok(ApiResponse::success_with_user(SchemaResponse { schema: schema_json }, user_hash))
-    }.await)
+    handler_result_to_response(
+        async {
+            let schema_with_state = op
+                .get_schema(&name)
+                .await
+                .handler_err("get schema")?
+                .ok_or_else(|| HandlerError::NotFound(format!("Schema not found: {}", name)))?;
+            let schema_json =
+                serde_json::to_value(&schema_with_state).handler_err("serialize schema")?;
+            Ok(ApiResponse::success_with_user(
+                SchemaResponse {
+                    schema: schema_json,
+                },
+                user_hash,
+            ))
+        }
+        .await,
+    )
 }
 
 /// Approve a schema for queries and mutations
@@ -100,10 +122,18 @@ pub async fn approve_schema(path: web::Path<String>, state: web::Data<AppState>)
     let schema_name = path.into_inner();
     let (user_hash, node) = node_or_return!(state);
     let op = OperationProcessor::new(node.clone());
-    handler_result_to_response(async {
-        op.approve_schema(&schema_name).await.handler_err("approve schema")?;
-        Ok(ApiResponse::success_with_user(SchemaApproveResponse { approved: true }, user_hash))
-    }.await)
+    handler_result_to_response(
+        async {
+            op.approve_schema(&schema_name)
+                .await
+                .handler_err("approve schema")?;
+            Ok(ApiResponse::success_with_user(
+                SchemaApproveResponse { approved: true },
+                user_hash,
+            ))
+        }
+        .await,
+    )
 }
 
 /// Block a schema from queries and mutations
@@ -123,13 +153,21 @@ pub async fn block_schema(path: web::Path<String>, state: web::Data<AppState>) -
     let schema_name = path.into_inner();
     let (user_hash, node) = node_or_return!(state);
     let op = OperationProcessor::new(node.clone());
-    handler_result_to_response(async {
-        op.block_schema(&schema_name).await.handler_err("block schema")?;
-        Ok(ApiResponse::success_with_user(
-            crate::handlers::response::SuccessResponse { success: true, message: None },
-            user_hash,
-        ))
-    }.await)
+    handler_result_to_response(
+        async {
+            op.block_schema(&schema_name)
+                .await
+                .handler_err("block schema")?;
+            Ok(ApiResponse::success_with_user(
+                crate::handlers::response::SuccessResponse {
+                    success: true,
+                    message: None,
+                },
+                user_hash,
+            ))
+        }
+        .await,
+    )
 }
 
 /// Query parameters for schema keys pagination
@@ -166,10 +204,19 @@ pub async fn list_schema_keys(
     let limit = query.limit.unwrap_or(50);
     let (user_hash, node) = node_or_return!(state);
     let op = OperationProcessor::new(node.clone());
-    handler_result_to_response(async {
-        let (keys, total_count) = op.list_schema_keys(&name, offset, limit).await.handler_err("list keys")?;
-        Ok(ApiResponse::success_with_user(SchemaKeysResponse { keys, total_count }, user_hash))
-    }.await)
+    handler_result_to_response(
+        async {
+            let (keys, total_count) = op
+                .list_schema_keys(&name, offset, limit)
+                .await
+                .handler_err("list keys")?;
+            Ok(ApiResponse::success_with_user(
+                SchemaKeysResponse { keys, total_count },
+                user_hash,
+            ))
+        }
+        .await,
+    )
 }
 
 /// Load schemas from standard directories into memory as Available
@@ -195,7 +242,11 @@ pub async fn load_schemas(state: web::Data<AppState>) -> impl Responder {
                 available_schemas_loaded
             );
             HttpResponse::Ok().json(ApiResponse::success_with_user(
-                SchemaLoadResponse { available_schemas_loaded, schemas_loaded_to_db, failed_schemas },
+                SchemaLoadResponse {
+                    available_schemas_loaded,
+                    schemas_loaded_to_db,
+                    failed_schemas,
+                },
                 user_hash,
             ))
         }

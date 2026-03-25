@@ -121,7 +121,8 @@ impl ProgressService {
         message: String,
     ) -> Option<IngestionProgress> {
         let pct = Self::step_to_percentage(&step);
-        self.update_progress_with_percentage(id, step, message, pct).await
+        self.update_progress_with_percentage(id, step, message, pct)
+            .await
     }
 
     pub async fn update_progress_with_percentage(
@@ -131,7 +132,9 @@ impl ProgressService {
         message: String,
         percentage: u8,
     ) -> Option<IngestionProgress> {
-        let Ok(Some(mut job)) = self.tracker.load(id).await else { return None };
+        let Ok(Some(mut job)) = self.tracker.load(id).await else {
+            return None;
+        };
         job.update_progress(percentage, message);
         Self::set_job_step(&mut job, &step);
         self.save_job(&job).await;
@@ -143,7 +146,9 @@ impl ProgressService {
         id: &str,
         results: IngestionResults,
     ) -> Option<IngestionProgress> {
-        let Ok(Some(mut job)) = self.tracker.load(id).await else { return None };
+        let Ok(Some(mut job)) = self.tracker.load(id).await else {
+            return None;
+        };
         job.complete(serde_json::to_value(results).ok());
         Self::set_job_step(&mut job, &IngestionStep::Completed);
         self.save_job(&job).await;
@@ -155,7 +160,9 @@ impl ProgressService {
         id: &str,
         error_message: String,
     ) -> Option<IngestionProgress> {
-        let Ok(Some(mut job)) = self.tracker.load(id).await else { return None };
+        let Ok(Some(mut job)) = self.tracker.load(id).await else {
+            return None;
+        };
         job.fail(error_message);
         Self::set_job_step(&mut job, &IngestionStep::Failed);
         self.save_job(&job).await;
@@ -163,7 +170,11 @@ impl ProgressService {
     }
 
     pub async fn get_progress(&self, id: &str) -> Option<IngestionProgress> {
-        self.tracker.load(id).await.unwrap_or(None).map(|j| j.into())
+        self.tracker
+            .load(id)
+            .await
+            .unwrap_or(None)
+            .map(|j| j.into())
     }
 
     pub async fn get_all_progress(&self) -> Vec<IngestionProgress> {
@@ -301,9 +312,7 @@ impl<'a> PhaseTracker<'a> {
 
     /// Mark as failed.
     pub async fn fail(&self, error: String) {
-        self.service
-            .fail_progress(&self.progress_id, error)
-            .await;
+        self.service.fail_progress(&self.progress_id, error).await;
     }
 
     pub fn progress_id(&self) -> &str {

@@ -78,10 +78,7 @@ async fn setup_node_with_medical_schema() -> (FoldNode, TempDir) {
     let keypair = fold_db::security::Ed25519KeyPair::generate().unwrap();
     let config = NodeConfig::new(temp_db_path.into())
         .with_schema_service_url("test://mock")
-        .with_identity(
-            &keypair.public_key_base64(),
-            &keypair.secret_key_base64(),
-        );
+        .with_identity(&keypair.public_key_base64(), &keypair.secret_key_base64());
     let node = FoldNode::new(config).await.expect("create FoldNode");
 
     // Load the medical_records schema into FoldDB
@@ -151,8 +148,7 @@ async fn transform_registry_e2e_medical_summary() {
         .join("transform_registry")
         .to_string_lossy()
         .to_string();
-    let schema_state =
-        SchemaServiceState::new(registry_path).expect("create SchemaServiceState");
+    let schema_state = SchemaServiceState::new(registry_path).expect("create SchemaServiceState");
 
     // Step 2: Register the medical_records schema in the global registry
     // (needed so resolve_input_classifications can look up field classifications)
@@ -288,9 +284,25 @@ async fn transform_registry_e2e_medical_summary() {
     let (node, _tmp) = setup_node_with_medical_schema().await;
     let processor = OperationProcessor::new(node);
 
-    insert_medical_record(&processor, "Alice Smith", 34, "Type 2 Diabetes", "Metformin 500mg", "A+").await;
+    insert_medical_record(
+        &processor,
+        "Alice Smith",
+        34,
+        "Type 2 Diabetes",
+        "Metformin 500mg",
+        "A+",
+    )
+    .await;
     insert_medical_record(&processor, "Bob Jones", 72, "", "", "O-").await;
-    insert_medical_record(&processor, "Carol Lee", 8, "Asthma", "Albuterol inhaler", "B+").await;
+    insert_medical_record(
+        &processor,
+        "Carol Lee",
+        8,
+        "Asthma",
+        "Albuterol inhaler",
+        "B+",
+    )
+    .await;
 
     // Step 10: Create a TransformView referencing the WASM transform
     let view = TransformView::new(
@@ -392,7 +404,10 @@ async fn transform_registry_e2e_medical_summary() {
     // Step 13: Verify classification on the transform record
     assert_eq!(
         record.assigned_classification,
-        std::cmp::max(record.input_ceiling.clone(), record.output_classification.clone()),
+        std::cmp::max(
+            record.input_ceiling.clone(),
+            record.output_classification.clone()
+        ),
         "assigned_classification = max(input_ceiling, output_classification)"
     );
 }
@@ -444,7 +459,11 @@ async fn transform_registry_idempotent_reregistration() {
         description: None,
         input_queries: vec![Query::new(
             "Medical Records".to_string(),
-            vec!["name".to_string(), "age".to_string(), "diagnosis".to_string()],
+            vec![
+                "name".to_string(),
+                "age".to_string(),
+                "diagnosis".to_string(),
+            ],
         )],
         output_fields: HashMap::from([
             ("patient_name".to_string(), FieldValueType::String),

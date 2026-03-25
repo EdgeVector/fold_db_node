@@ -88,8 +88,8 @@ pub fn check_wasm_toolchain() -> Result<(), String> {
 pub fn compile_rust_to_wasm(rust_transform: &str) -> Result<Vec<u8>, String> {
     check_wasm_toolchain()?;
 
-    let tmp_dir = tempfile::tempdir()
-        .map_err(|e| format!("Failed to create temp directory: {e}"))?;
+    let tmp_dir =
+        tempfile::tempdir().map_err(|e| format!("Failed to create temp directory: {e}"))?;
 
     let project_dir = tmp_dir.path().join("wasm_transform");
     let src_dir = project_dir.join("src");
@@ -105,13 +105,17 @@ pub fn compile_rust_to_wasm(rust_transform: &str) -> Result<Vec<u8>, String> {
     std::fs::write(src_dir.join("lib.rs"), &lib_rs)
         .map_err(|e| format!("Failed to write lib.rs: {e}"))?;
 
-    log::info!("WASM compiler: building transform in {}", project_dir.display());
+    log::info!(
+        "WASM compiler: building transform in {}",
+        project_dir.display()
+    );
 
     // Build with cargo
     let output = Command::new("cargo")
         .args([
             "build",
-            "--target", "wasm32-unknown-unknown",
+            "--target",
+            "wasm32-unknown-unknown",
             "--release",
             "--manifest-path",
         ])
@@ -122,10 +126,7 @@ pub fn compile_rust_to_wasm(rust_transform: &str) -> Result<Vec<u8>, String> {
     if !output.status.success() {
         let stderr = String::from_utf8_lossy(&output.stderr);
         // Extract just the error lines for a cleaner message
-        let errors: Vec<&str> = stderr
-            .lines()
-            .filter(|l| l.contains("error"))
-            .collect();
+        let errors: Vec<&str> = stderr.lines().filter(|l| l.contains("error")).collect();
         let error_summary = if errors.is_empty() {
             stderr.to_string()
         } else {

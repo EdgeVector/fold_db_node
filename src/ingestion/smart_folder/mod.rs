@@ -18,19 +18,21 @@ use std::path::Path;
 
 // Re-export from sibling modules so external callers can still use
 // `smart_folder::read_file_as_json`, etc.
-pub use super::file_handling::conversion::{csv_to_json, read_file_as_json, read_file_with_hash, twitter_js_to_json};
+pub use super::file_handling::conversion::{
+    csv_to_json, read_file_as_json, read_file_with_hash, twitter_js_to_json,
+};
 pub use scanner::*;
 
 // Re-export types and classification functions so callers using
 // `smart_folder::FileRecommendation`, `smart_folder::estimate_file_cost`, etc. still work.
-pub use types::{
-    estimate_file_cost, FileRecommendation, ScanProgressFn,
-    SmartFolderScanResponse, SmartFolderSummary,
-};
-pub(crate) use types::file_size_bytes;
 pub use classify::{
     apply_heuristic_filtering, call_llm_for_file_analysis, create_adjust_prompt,
     create_smart_folder_prompt, merge_adjust_results, parse_llm_file_recommendations,
+};
+pub(crate) use types::file_size_bytes;
+pub use types::{
+    estimate_file_cost, FileRecommendation, ScanProgressFn, SmartFolderScanResponse,
+    SmartFolderSummary,
 };
 
 use classify::classify_image_directories;
@@ -84,7 +86,13 @@ pub async fn perform_smart_folder_scan_with_progress(
         });
     }
 
-    report(15, format!("Found {} candidate files (only ingestible extensions collected).", scan.file_paths.len()));
+    report(
+        15,
+        format!(
+            "Found {} candidate files (only ingestible extensions collected).",
+            scan.file_paths.len()
+        ),
+    );
 
     // The scanner whitelist already filtered to ingestible extensions, so all
     // paths here are candidates for LLM classification.
@@ -93,12 +101,8 @@ pub async fn perform_smart_folder_scan_with_progress(
     // --- Image directory classification: filter non-personal image directories ---
     // Group image files by parent directory, then use LLM to classify which
     // directories contain personal images vs. asset/scaffolding images.
-    let image_dir_skipped = classify_image_directories(
-        &mut llm_candidates,
-        folder_path,
-        service,
-        &report,
-    ).await?;
+    let image_dir_skipped =
+        classify_image_directories(&mut llm_candidates, folder_path, service, &report).await?;
 
     log_feature!(
         LogFeature::Ingestion,
@@ -112,10 +116,13 @@ pub async fn perform_smart_folder_scan_with_progress(
     let mut already_ingested_recs: Vec<FileRecommendation> = Vec::new();
 
     if let (Some(ref pk), Some(n)) = (&pub_key, node) {
-        report(20, format!(
-            "Checking {} files for previously ingested (concurrent)...",
-            llm_candidates.len(),
-        ));
+        report(
+            20,
+            format!(
+                "Checking {} files for previously ingested (concurrent)...",
+                llm_candidates.len(),
+            ),
+        );
 
         // Check dedup concurrently — up to 16 at a time (mixed CPU hash + async DB lookup)
         let dedup_results: Vec<(String, bool, u64)> = stream::iter(llm_candidates)
@@ -160,11 +167,14 @@ pub async fn perform_smart_folder_scan_with_progress(
         );
     }
 
-    report(25, format!(
-        "Classifying {} files ({} already ingested)...",
-        llm_candidates.len(),
-        already_ingested_recs.len(),
-    ));
+    report(
+        25,
+        format!(
+            "Classifying {} files ({} already ingested)...",
+            llm_candidates.len(),
+            already_ingested_recs.len(),
+        ),
+    );
 
     // Two-pass classification: heuristics first (instant), LLM only for ambiguous files.
     // This avoids sending hundreds of obviously-classifiable files to a slow Ollama call.
@@ -195,10 +205,13 @@ pub async fn perform_smart_folder_scan_with_progress(
         if !ambiguous.is_empty() {
             // TODO: Re-enable LLM classification once Ollama concurrency is sorted out.
             // For now, use heuristic filtering which is instant and doesn't hit Ollama.
-            report(30, format!(
-                "Classifying {} ambiguous files with heuristics...",
-                ambiguous.len(),
-            ));
+            report(
+                30,
+                format!(
+                    "Classifying {} ambiguous files with heuristics...",
+                    ambiguous.len(),
+                ),
+            );
             resolved.extend(apply_heuristic_filtering(&ambiguous));
         }
 
@@ -258,11 +271,14 @@ pub async fn perform_smart_folder_scan_with_progress(
     // Don't report 100% here — the caller sets JobStatus::Completed after we return.
     // Reporting 100% via the fire-and-forget spawned callback races with the
     // caller's completion save and can overwrite Completed back to Running.
-    report(99, format!(
-        "Finalizing... {} to ingest, {} skipped.",
-        recommended_files.len(),
-        skipped_files.len(),
-    ));
+    report(
+        99,
+        format!(
+            "Finalizing... {} to ingest, {} skipped.",
+            recommended_files.len(),
+            skipped_files.len(),
+        ),
+    );
 
     Ok(SmartFolderScanResponse {
         success: true,

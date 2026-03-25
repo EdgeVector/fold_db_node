@@ -1,6 +1,6 @@
+use actix_web::{web, HttpResponse, Responder};
 use fold_db::log_feature;
 use fold_db::logging::features::LogFeature;
-use actix_web::{web, HttpResponse, Responder};
 use serde::Deserialize;
 use serde_json::json;
 use std::path::{Path, PathBuf};
