@@ -343,16 +343,24 @@ pub fn validate_schema_has_descriptive_name(schema_val: &Value) -> IngestionResu
         IngestionError::ai_response_validation_error("Schema must be a JSON object")
     })?;
 
-    let has_name = schema_obj
+    let name = schema_obj
         .get("descriptive_name")
         .and_then(|v| v.as_str())
-        .map(|s| !s.trim().is_empty())
-        .unwrap_or(false);
+        .map(|s| s.trim())
+        .unwrap_or("");
 
-    if !has_name {
+    if name.is_empty() {
         return Err(IngestionError::ai_response_validation_error(
             "Schema must have a non-empty 'descriptive_name'. \
              ALWAYS include \"descriptive_name\": a clear, human-readable description.",
+        ));
+    }
+
+    if fold_db::schema_service::name_validator::is_generic_name(name) {
+        return Err(IngestionError::ai_response_validation_error(
+            "Schema descriptive_name is too generic (e.g., 'Document Collection'). \
+             The name must describe the CONTENT TOPIC — read the actual data and name it \
+             specifically (e.g., 'Family Vacation Photos', 'Technical Architecture Notes').",
         ));
     }
 

@@ -57,7 +57,7 @@ pub async fn convert_file_to_json(file_path: &PathBuf) -> Result<Value, Ingestio
         if map.contains_key("image_format") {
             // Remove title if present — it would be the vision caption, not a schema name
             map.remove("title");
-            map.insert("descriptive_name".to_string(), Value::String("Photo Collection".to_string()));
+            map.insert("descriptive_name".to_string(), Value::String("Photography".to_string()));
         }
     }
 
