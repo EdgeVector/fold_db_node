@@ -28,7 +28,7 @@ jobs:
       - name: Install Rust
         uses: dtolnay/rust-toolchain@stable
         with:
-          components: clippy
+          components: clippy, rustfmt
 
       - name: Configure git for private dependencies
         run: git config --global url."https://x-access-token:${{ secrets.PRIVATE_DEPS_TOKEN }}@github.com/".insteadOf "https://github.com/"
@@ -47,6 +47,9 @@ jobs:
           sudo mkswap /swap2
           sudo swapon /swap2
 
+      - name: Check formatting
+        run: cargo fmt --all -- --check
+
       - name: Run clippy
         run: cargo clippy --workspace --all-targets -- -D warnings
 
@@ -59,7 +62,7 @@ jobs:
         run: cargo test --workspace --lib
 
       - name: Run doc tests
-        run: cargo test --workspace --doc 2>/dev/null || true
+        run: cargo test --workspace --doc
 
   integration-tests:
     name: Integration Tests
