@@ -185,6 +185,21 @@ pub(crate) async fn extract_key_values_from_data(
         }
     }
 
+    // Disambiguate range keys: if the data has a content_hash field,
+    // append it to the range key so records with the same date don't
+    // overwrite each other.  RangePrefix("2024-01-") still matches all
+    // January records because the hash comes after the date.
+    if let Some(range_val) = keys_and_values.get_mut("range_field") {
+        if let Some(hash_val) = fields_and_values
+            .get("content_hash")
+            .and_then(|v| v.as_str())
+        {
+            if !hash_val.is_empty() && !range_val.contains(hash_val) {
+                *range_val = format!("{}|{}", range_val, hash_val);
+            }
+        }
+    }
+
     log_feature!(
         LogFeature::Ingestion,
         info,
