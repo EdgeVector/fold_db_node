@@ -10,6 +10,7 @@
 //! relationships defining how they share and access data.
 
 pub mod config;
+pub mod embedding;
 pub mod llm_query;
 pub mod node;
 mod operation_processor;
@@ -19,6 +20,7 @@ pub mod schema_client;
 pub use crate::server::{start_embedded_server, start_embedded_server_lazy, EmbeddedServerHandle};
 pub use config::load_node_config;
 pub use config::NodeConfig;
+pub use embedding::{build_embedder, EmbeddingConfig, EmbeddingProvider};
 pub use node::FileIngestionRecord;
 pub use node::FoldNode;
 pub use node::MutationOutcome;

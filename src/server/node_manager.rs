@@ -11,6 +11,7 @@
 //!   This avoids Sled lock conflicts since only one process can hold the lock.
 
 use crate::fold_node::config::NodeConfig;
+use crate::fold_node::embedding::build_embedder;
 use crate::fold_node::FoldNode;
 use fold_db::fold_db_core::factory;
 use fold_db::security::Ed25519KeyPair;
@@ -176,8 +177,10 @@ impl NodeManager {
             .map_err(|e| NodeManagerError::ConfigurationError(format!("Failed to load E2E keys: {}", e)))?;
 
         // Create FoldDB with user context set
+        let embedder = build_embedder(&node_config.embedding)
+            .map_err(|e| NodeManagerError::ConfigurationError(e.to_string()))?;
         let db = fold_db::logging::core::run_with_user(user_id, async {
-            factory::create_fold_db(&node_config.database, &e2e_keys).await
+            factory::create_fold_db(&node_config.database, &e2e_keys, embedder).await
         })
         .await
         .map_err(|e| NodeManagerError::StorageError(e.to_string()))?;
@@ -285,6 +288,27 @@ impl NodeManager {
 
         let mut shared = self.shared_local_node.lock().await;
         *shared = None;
+    }
+
+    /// Update the in-memory configuration without invalidating cached nodes.
+    ///
+    /// Use this when the config change only takes effect on server restart
+    /// (e.g. embedding provider). Avoids dropping nodes, which would release
+    /// the sled lock and cause WouldBlock on re-open if background tasks still
+    /// hold references to the old node.
+    pub async fn update_config_persist_only(&self, new_config: NodeManagerConfig) {
+        let new_is_local = matches!(
+            new_config.base_config.database,
+            DatabaseConfig::Local { .. } | DatabaseConfig::Exemem { .. }
+        );
+        {
+            let mut config = self.config.write().await;
+            *config = new_config;
+        }
+        {
+            let mut is_local = self.is_local_mode.write().await;
+            *is_local = new_is_local;
+        }
     }
 
     /// Update the configuration and invalidate all cached nodes

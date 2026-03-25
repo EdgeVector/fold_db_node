@@ -3,6 +3,7 @@ import KeyManagementTab from './tabs/KeyManagementTab'
 import useAiConfig from './settings/AiConfigSettings'
 import SchemaServiceSettings from './settings/SchemaServiceSettings'
 import useDatabaseConfig from './settings/DatabaseSettings'
+import useEmbeddingConfig from './settings/EmbeddingSettings'
 import CloudMigrationSettings from './tabs/CloudMigrationSettings'
 
 const NOOP = () => {}
@@ -54,6 +55,7 @@ function SettingsModal({ isOpen, onClose, initialTab }) {
   // called unconditionally before the early return below.
   const aiConfig = useAiConfig({ configSaveStatus, setConfigSaveStatus, onClose })
   const dbConfig = useDatabaseConfig({ configSaveStatus, setConfigSaveStatus, onClose })
+  const embeddingConfig = useEmbeddingConfig({ configSaveStatus, setConfigSaveStatus, onClose })
 
   if (!isOpen) return null
 
@@ -62,12 +64,14 @@ function SettingsModal({ isOpen, onClose, initialTab }) {
     { id: 'keys', label: 'Key Management' },
     { id: 'schema-service', label: 'Schema Service' },
     { id: 'database', label: 'Database' },
+    { id: 'embedding', label: 'Text Encoder' },
     { id: 'upgrade-cloud', label: 'Cloud DB' },
   ]
 
   const handleSave = () => {
     if (activeTab === 'ai') aiConfig.saveAiConfig()
     else if (activeTab === 'database') dbConfig.saveDatabaseConfig()
+    else if (activeTab === 'embedding') embeddingConfig.saveEmbeddingConfig()
   }
 
   return (
@@ -99,11 +103,12 @@ function SettingsModal({ isOpen, onClose, initialTab }) {
           {activeTab === 'keys' && <KeyManagementTab onResult={NOOP} />}
           {activeTab === 'schema-service' && <SchemaServiceSettings />}
           {activeTab === 'database' && dbConfig.content}
+          {activeTab === 'embedding' && embeddingConfig.content}
           {activeTab === 'upgrade-cloud' && <CloudMigrationSettings onClose={onClose} />}
         </div>
 
         <div className="modal-footer">
-          {activeTab === 'ai' || activeTab === 'database' ? (
+          {activeTab === 'ai' || activeTab === 'database' || activeTab === 'embedding' ? (
             <>
               <button onClick={onClose} className="btn-secondary">Cancel</button>
               <button onClick={handleSave} className="btn-primary">

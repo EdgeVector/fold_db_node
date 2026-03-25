@@ -220,6 +220,7 @@ pub fn run_setup_wizard() -> Result<NodeConfig, CliError> {
         schema_service_url: Some(schema_url),
         public_key: Some(identity.public_key),
         private_key: Some(identity.private_key),
+        embedding: fold_db_node::fold_node::embedding::EmbeddingProvider::default_ollama(),
     };
 
     // Persist config

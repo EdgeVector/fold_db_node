@@ -165,7 +165,9 @@ impl FoldNode {
             }
         }
 
-        let db = fold_db::fold_db_core::factory::create_fold_db(&config.database, &e2e_keys).await?;
+        let embedder = crate::fold_node::embedding::build_embedder(&config.embedding)
+            .map_err(|e| FoldDbError::Config(e.to_string()))?;
+        let db = fold_db::fold_db_core::factory::create_fold_db(&config.database, &e2e_keys, embedder).await?;
         let node = Self::assemble(config, db, private_key, public_key, e2e_keys).await?;
         log_feature!(
             LogFeature::Database,

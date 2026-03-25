@@ -499,6 +499,14 @@ impl FoldHttpServer {
             web::get().to(config_routes::get_database_status),
         )
         .route(
+            "/system/embedding-config",
+            web::get().to(config_routes::get_embedding_config),
+        )
+        .route(
+            "/system/embedding-config",
+            web::post().to(config_routes::update_embedding_config),
+        )
+        .route(
             "/system/complete-path",
             web::post().to(filesystem_routes::complete_path),
         )

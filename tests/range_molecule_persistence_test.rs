@@ -8,11 +8,13 @@
 //!    restart), fields had molecule_uuid but molecule=None, causing
 //!    write_mutation to create a new molecule instead of appending.
 
+use fold_db::db_operations::native_index::FastEmbedModel;
 use fold_db::fold_db_core::FoldDB;
 use fold_db_node::fold_node::config::NodeConfig;
 use fold_db_node::fold_node::FoldNode;
 use fold_db_node::fold_node::OperationProcessor;
 use fold_db::schema::SchemaState;
+use std::sync::Arc;
 use fold_db::schema::types::field::Field;
 use fold_db::schema::types::key_value::KeyValue;
 use fold_db::schema::types::operations::Query;
@@ -166,7 +168,7 @@ async fn schema_reload_from_json_preserves_molecules() {
 async fn mutations_work_after_simulated_restart() {
     let temp_dir = TempDir::new().expect("temp dir");
     let db_path = temp_dir.path().to_str().expect("path");
-    let mut fold_db = FoldDB::new(db_path).await.expect("create FoldDB");
+    let mut fold_db = FoldDB::new(db_path, Arc::new(FastEmbedModel::new())).await.expect("create FoldDB");
 
     let schema_str = serde_json::to_string(&file_records_schema_json()).unwrap();
     fold_db

@@ -47,6 +47,9 @@ export const API_ENDPOINTS_DERIVED = {
   RESET_SCHEMA_SERVICE: "/system/reset-schema-service",
   APPLY_SETUP: "/system/setup",
   GET_SYSTEM_STATUS: "/system/status",
+  GET_EMBEDDING_CONFIG: "/system/embedding-config",
+  UPDATE_EMBEDDING_CONFIG: "/system/embedding-config",
+  GET_DATABASE_STATUS: "/system/database-status",
 } as const;
 
 // Base URL prefixes derived from OpenAPI paths

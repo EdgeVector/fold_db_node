@@ -1,3 +1,4 @@
+use crate::fold_node::embedding::EmbeddingProvider;
 use fold_db::log_feature;
 use fold_db::logging::features::LogFeature;
 use fold_db::security::SecurityConfig;
@@ -29,6 +30,13 @@ pub struct NodeConfig {
     /// Explicitly provided node private key (Base64)
     #[serde(default)]
     pub private_key: Option<String>,
+    /// Embedding model provider for native index search
+    #[serde(default = "default_embedding_provider")]
+    pub embedding: EmbeddingProvider,
+}
+
+fn default_embedding_provider() -> EmbeddingProvider {
+    EmbeddingProvider::default_ollama()
 }
 
 fn default_network_listen_address() -> String {
@@ -44,6 +52,7 @@ impl Default for NodeConfig {
             schema_service_url: None,
             public_key: None,
             private_key: None,
+            embedding: default_embedding_provider(),
         }
     }
 }
@@ -58,6 +67,7 @@ impl NodeConfig {
             schema_service_url: None,
             public_key: None,
             private_key: None,
+            embedding: default_embedding_provider(),
         }
     }
 

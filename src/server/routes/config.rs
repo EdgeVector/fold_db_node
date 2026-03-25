@@ -1,4 +1,5 @@
 use crate::fold_node::config::NodeConfig;
+use crate::fold_node::embedding::EmbeddingProvider;
 use fold_db::log_feature;
 use fold_db::logging::features::LogFeature;
 use crate::server::http_server::AppState;
@@ -361,4 +362,62 @@ pub async fn get_database_status(state: web::Data<AppState>) -> impl Responder {
     };
 
     HttpResponse::Ok().json(DatabaseStatusResponse { initialized, has_saved_config })
+}
+
+/// Get current embedding configuration
+#[utoipa::path(
+    get,
+    path = "/api/system/embedding-config",
+    tag = "system",
+    responses(
+        (status = 200, description = "Current embedding provider configuration", body = EmbeddingProvider)
+    )
+)]
+pub async fn get_embedding_config(state: web::Data<AppState>) -> impl Responder {
+    let config = state.node_manager.get_base_config().await;
+    HttpResponse::Ok().json(&config.embedding)
+}
+
+/// Update embedding configuration
+///
+/// Persists the new embedding provider to the node config file.
+/// The server must be restarted for the new model to take effect.
+#[utoipa::path(
+    post,
+    path = "/api/system/embedding-config",
+    tag = "system",
+    request_body = EmbeddingProvider,
+    responses(
+        (status = 200, description = "Embedding config updated", body = SetupResponse),
+        (status = 500, description = "Server error", body = SetupResponse)
+    )
+)]
+pub async fn update_embedding_config(
+    state: web::Data<AppState>,
+    req: web::Json<EmbeddingProvider>,
+) -> impl Responder {
+    let mut config = state.node_manager.get_base_config().await;
+    config.embedding = req.into_inner();
+
+    if let Err(e) = persist_node_config(&config) {
+        log_feature!(
+            LogFeature::HttpServer,
+            error,
+            "Failed to persist embedding config: {}",
+            e
+        );
+        return HttpResponse::InternalServerError().json(SetupResponse {
+            success: false,
+            message: format!("Failed to save configuration: {}", e),
+        });
+    }
+
+    let new_manager_config = NodeManagerConfig { base_config: config };
+    state.node_manager.update_config_persist_only(new_manager_config).await;
+
+    log_feature!(LogFeature::HttpServer, info, "Embedding config updated");
+    HttpResponse::Ok().json(SetupResponse {
+        success: true,
+        message: "Embedding configuration saved. Restart the server to apply.".to_string(),
+    })
 }

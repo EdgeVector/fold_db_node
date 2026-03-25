@@ -106,6 +106,21 @@ export interface DatabaseStatusResponse {
   has_saved_config: boolean;
 }
 
+export interface EmbeddingConfigOllama {
+  base_url: string;
+  model: string;
+  dimensions: number | null;
+}
+
+export type EmbeddingConfigDto =
+  | { type: "FastEmbed" }
+  | ({ type: "Ollama" } & EmbeddingConfigOllama);
+
+export interface EmbeddingConfigResponse {
+  success: boolean;
+  message: string;
+}
+
 // Unified System API Client Implementation
 export class UnifiedSystemClient {
   private readonly client: ApiClient;
@@ -332,6 +347,34 @@ export class UnifiedSystemClient {
     });
   }
 
+  // Get embedding configuration
+  async getEmbeddingConfig(): Promise<EnhancedApiResponse<EmbeddingConfigDto>> {
+    return this.client.get<EmbeddingConfigDto>(
+      API_ENDPOINTS.GET_EMBEDDING_CONFIG,
+      {
+        requiresAuth: false,
+        timeout: API_TIMEOUTS.STANDARD,
+        retries: API_RETRIES.STANDARD,
+        cacheable: false,
+      },
+    );
+  }
+
+  // Update embedding configuration
+  async updateEmbeddingConfig(
+    config: EmbeddingConfigDto,
+  ): Promise<EnhancedApiResponse<EmbeddingConfigResponse>> {
+    return this.client.post<EmbeddingConfigResponse>(
+      API_ENDPOINTS.UPDATE_EMBEDDING_CONFIG,
+      config,
+      {
+        timeout: API_TIMEOUTS.STANDARD,
+        retries: API_RETRIES.NONE,
+        cacheable: false,
+      },
+    );
+  }
+
   // Clear system-related cache
   clearCache(): void {
     this.client.clearCache();
@@ -365,5 +408,7 @@ export const getDatabaseStatus = systemClient.getDatabaseStatus.bind(systemClien
 export const createLogStream = systemClient.createLogStream.bind(systemClient);
 export const validateResetRequest =
   systemClient.validateResetRequest.bind(systemClient);
+export const getEmbeddingConfig = systemClient.getEmbeddingConfig.bind(systemClient);
+export const updateEmbeddingConfig = systemClient.updateEmbeddingConfig.bind(systemClient);
 
 export default systemClient;
