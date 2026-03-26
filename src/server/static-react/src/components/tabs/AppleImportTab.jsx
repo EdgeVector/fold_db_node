@@ -139,8 +139,12 @@ export default function AppleImportTab({ onResult }) {
 
   useEffect(() => {
     ingestionClient.getAppleImportStatus().then((resp) => {
+      console.log('APPLE_STATUS_RESP:', JSON.stringify(resp))
       setAvailable(resp.success && resp.data?.available)
-    }).catch(() => setAvailable(false))
+    }).catch((e) => {
+      console.log('APPLE_STATUS_ERR:', e.message)
+      setAvailable(false)
+    })
   }, [])
 
   const importNotes = useCallback(async () => {
