@@ -518,6 +518,120 @@ impl LlmQueryService {
                 }))
             }
 
+            "discovery_opt_in" => {
+                let schema_name = params
+                    .get("schema_name")
+                    .and_then(|v| v.as_str())
+                    .ok_or("discovery_opt_in requires 'schema_name'")?
+                    .to_string();
+                let category = params
+                    .get("category")
+                    .and_then(|v| v.as_str())
+                    .ok_or("discovery_opt_in requires 'category'")?
+                    .to_string();
+                let include_preview = params
+                    .get("include_preview")
+                    .and_then(|v| v.as_bool())
+                    .unwrap_or(false);
+
+                let mut opt_in_config =
+                    crate::discovery::config::DiscoveryOptIn::new(schema_name.clone(), category);
+
+                if include_preview {
+                    opt_in_config = opt_in_config.with_preview(100, Vec::new());
+                }
+
+                // Parse field_privacy map if provided
+                let mut field_classes: HashMap<String, String> = HashMap::new();
+                if let Some(fp_val) = params.get("field_privacy") {
+                    if let Some(fp_obj) = fp_val.as_object() {
+                        let mut privacy_map = HashMap::new();
+                        for (field, class_val) in fp_obj {
+                            if let Some(class_str) = class_val.as_str() {
+                                let class = match class_str {
+                                    "NeverPublish" => fold_db::db_operations::native_index::anonymity::FieldPrivacyClass::NeverPublish,
+                                    "AlwaysPublish" => fold_db::db_operations::native_index::anonymity::FieldPrivacyClass::AlwaysPublish,
+                                    _ => fold_db::db_operations::native_index::anonymity::FieldPrivacyClass::PublishIfAnonymous,
+                                };
+                                field_classes.insert(field.clone(), class_str.to_string());
+                                privacy_map.insert(field.clone(), class);
+                            }
+                        }
+                        opt_in_config = opt_in_config.with_field_privacy(privacy_map);
+                    }
+                }
+
+                let db = node
+                    .get_fold_db()
+                    .await
+                    .map_err(|e| format!("Failed to access database: {}", e))?;
+                let store = db.get_db_ops().metadata_store().inner().clone();
+
+                crate::discovery::config::save_opt_in(&*store, &opt_in_config)
+                    .await
+                    .map_err(|e| format!("Failed to save discovery opt-in: {}", e))?;
+
+                Ok(serde_json::json!({
+                    "success": true,
+                    "message": format!("Schema '{}' opted into discovery", schema_name),
+                    "field_classes": field_classes,
+                }))
+            }
+
+            "discovery_opt_out" => {
+                let schema_name = params
+                    .get("schema_name")
+                    .and_then(|v| v.as_str())
+                    .ok_or("discovery_opt_out requires 'schema_name'")?
+                    .to_string();
+
+                let db = node
+                    .get_fold_db()
+                    .await
+                    .map_err(|e| format!("Failed to access database: {}", e))?;
+                let store = db.get_db_ops().metadata_store().inner().clone();
+
+                crate::discovery::config::remove_opt_in(&*store, &schema_name)
+                    .await
+                    .map_err(|e| format!("Failed to remove discovery opt-in: {}", e))?;
+
+                Ok(serde_json::json!({
+                    "success": true,
+                    "message": format!("Schema '{}' removed from discovery", schema_name),
+                }))
+            }
+
+            "discovery_status" => {
+                let db = node
+                    .get_fold_db()
+                    .await
+                    .map_err(|e| format!("Failed to access database: {}", e))?;
+                let store = db.get_db_ops().metadata_store().inner().clone();
+
+                let configs = crate::discovery::config::list_opt_ins(&*store)
+                    .await
+                    .map_err(|e| format!("Failed to list discovery opt-ins: {}", e))?;
+
+                let entries: Vec<serde_json::Value> = configs
+                    .iter()
+                    .map(|c| {
+                        serde_json::json!({
+                            "schema_name": c.schema_name,
+                            "category": c.category,
+                            "include_preview": c.include_preview,
+                            "field_privacy": c.field_privacy,
+                            "opted_in_at": c.opted_in_at.to_rfc3339(),
+                        })
+                    })
+                    .collect();
+
+                Ok(serde_json::json!({
+                    "success": true,
+                    "schemas": entries,
+                    "total": entries.len(),
+                }))
+            }
+
             "set_field_policy" => Err("Access control has been removed from fold_db".to_string()),
 
             "get_field_policies" => Err("Access control has been removed from fold_db".to_string()),
