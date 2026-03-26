@@ -294,9 +294,9 @@ function NodeInfoSection() {
 
         <div>
           <label className="text-xs text-secondary block mb-1">
-            Shared Schemas ({info.shared_schemas.length})
+            Shared Schemas ({(info.shared_schemas || []).length})
           </label>
-          {info.shared_schemas.length === 0 ? (
+          {(info.shared_schemas || []).length === 0 ? (
             <p className="text-xs text-secondary">
               No schemas are shared yet. Set field access policies with read_max {'>'} 0 to share.
             </p>
