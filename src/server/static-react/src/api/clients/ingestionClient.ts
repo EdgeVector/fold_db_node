@@ -578,7 +578,8 @@ export class UnifiedIngestionClient {
   /** Check if Apple import is available (macOS only) */
   async getAppleImportStatus(): Promise<EnhancedApiResponse<{ available: boolean }>> {
     return this.client.get<{ available: boolean }>(
-      `${API_BASE_URLS.main}/ingestion/apple-import/status`,
+      `/ingestion/apple-import/status`,
+      { cacheable: false },
     );
   }
 
@@ -587,7 +588,7 @@ export class UnifiedIngestionClient {
     folder?: string,
   ): Promise<EnhancedApiResponse<{ success: boolean; progress_id: string }>> {
     return this.client.post<{ success: boolean; progress_id: string }>(
-      `${API_BASE_URLS.main}/ingestion/apple-import/notes`,
+      `/ingestion/apple-import/notes`,
       { folder: folder || null },
     );
   }
@@ -597,7 +598,7 @@ export class UnifiedIngestionClient {
     list?: string,
   ): Promise<EnhancedApiResponse<{ success: boolean; progress_id: string }>> {
     return this.client.post<{ success: boolean; progress_id: string }>(
-      `${API_BASE_URLS.main}/ingestion/apple-import/reminders`,
+      `/ingestion/apple-import/reminders`,
       { list: list || null },
     );
   }
@@ -608,7 +609,7 @@ export class UnifiedIngestionClient {
     limit = 50,
   ): Promise<EnhancedApiResponse<{ success: boolean; progress_id: string }>> {
     return this.client.post<{ success: boolean; progress_id: string }>(
-      `${API_BASE_URLS.main}/ingestion/apple-import/photos`,
+      `/ingestion/apple-import/photos`,
       { album: album || null, limit },
     );
   }
