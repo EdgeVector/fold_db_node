@@ -351,7 +351,8 @@ else
       "transform_queue": "${TABLE_NAME}-transform_queue_tree",
       "native_index": "${TABLE_NAME}-native_index",
       "process": "${TABLE_NAME}-process",
-      "logs": "${TABLE_NAME}-logs"
+      "logs": "${TABLE_NAME}-logs",
+      "idempotency": "${TABLE_NAME}-idempotency"
     },
     "auto_create": true,
     "user_id": "$USER_ID"

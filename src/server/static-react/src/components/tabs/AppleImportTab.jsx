@@ -15,7 +15,7 @@ function ImportSection({ label, icon, description, fields, onImport, progressId,
     const poll = async () => {
       try {
         const resp = await ingestionClient.getJobProgress(progressId)
-        if (resp.ok && resp.data) {
+        if (resp.success && resp.data) {
           const job = resp.data
           setProgress(job.progress_percentage || 0)
           setMessage(job.status_message || job.message || '')
@@ -139,13 +139,13 @@ export default function AppleImportTab({ onResult }) {
 
   useEffect(() => {
     ingestionClient.getAppleImportStatus().then((resp) => {
-      setAvailable(resp.ok && resp.data?.available)
+      setAvailable(resp.success && resp.data?.available)
     }).catch(() => setAvailable(false))
   }, [])
 
   const importNotes = useCallback(async () => {
     const resp = await ingestionClient.appleImportNotes()
-    if (resp.ok && resp.data?.progress_id) {
+    if (resp.success && resp.data?.progress_id) {
       setNotesProgressId(resp.data.progress_id)
     } else {
       throw new Error(resp.error?.message || 'Failed to start notes import')
@@ -154,7 +154,7 @@ export default function AppleImportTab({ onResult }) {
 
   const importReminders = useCallback(async () => {
     const resp = await ingestionClient.appleImportReminders()
-    if (resp.ok && resp.data?.progress_id) {
+    if (resp.success && resp.data?.progress_id) {
       setRemindersProgressId(resp.data.progress_id)
     } else {
       throw new Error(resp.error?.message || 'Failed to start reminders import')
@@ -163,7 +163,7 @@ export default function AppleImportTab({ onResult }) {
 
   const importPhotos = useCallback(async () => {
     const resp = await ingestionClient.appleImportPhotos(null, photosLimit)
-    if (resp.ok && resp.data?.progress_id) {
+    if (resp.success && resp.data?.progress_id) {
       setPhotosProgressId(resp.data.progress_id)
     } else {
       throw new Error(resp.error?.message || 'Failed to start photos import')
