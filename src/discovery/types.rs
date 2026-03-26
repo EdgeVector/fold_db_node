@@ -1,6 +1,10 @@
 use serde::{Deserialize, Serialize};
 use uuid::Uuid;
 
+fn default_fragment_type() -> String {
+    "field".to_string()
+}
+
 /// A single entry to upload to the discovery service.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct DiscoveryUploadEntry {
@@ -9,6 +13,8 @@ pub struct DiscoveryUploadEntry {
     pub category: String,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub content_preview: Option<String>,
+    #[serde(default = "default_fragment_type")]
+    pub fragment_type: String,
 }
 
 /// Owner mapping sent alongside upload entries.
@@ -60,12 +66,11 @@ pub struct DiscoverySearchResponse {
     pub results: Vec<DiscoverySearchResult>,
 }
 
-/// Connection request sent to the discovery service.
+/// Connection request sent to the discovery service (encrypted bulletin board).
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct DiscoveryConnectRequest {
     pub target_pseudonym: Uuid,
-    pub requester_pseudonym: Uuid,
-    pub message: String,
+    pub encrypted_blob: String,
 }
 
 /// Opt-out request to the discovery service.
@@ -74,7 +79,22 @@ pub struct DiscoveryOptOutRequest {
     pub schema_name: String,
 }
 
-/// An incoming connection request (polled by the node).
+/// An encrypted message from the discovery bulletin board.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct EncryptedMessage {
+    pub message_id: String,
+    pub encrypted_blob: String,
+    pub target_pseudonym: String,
+    pub created_at: String,
+}
+
+/// Response from polling encrypted messages.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct EncryptedMessagesResponse {
+    pub messages: Vec<EncryptedMessage>,
+}
+
+/// Legacy: An incoming connection request (polled by the node).
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct IncomingConnectionRequest {
     pub request_id: String,
@@ -85,7 +105,7 @@ pub struct IncomingConnectionRequest {
     pub created_at: String,
 }
 
-/// Response from polling connection requests.
+/// Legacy: Response from polling connection requests.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ConnectionRequestsResponse {
     pub requests: Vec<IncomingConnectionRequest>,

@@ -256,6 +256,26 @@ impl LlmQueryService {
         prompt.push_str("}}\n");
         prompt.push_str("```\n\n");
 
+        prompt.push_str("### discovery_opt_in\n");
+        prompt.push_str("Opt a schema into the discovery network so its embeddings are published for pseudonymous matching.\n");
+        prompt.push_str("Parameters:\n");
+        prompt.push_str("- schema_name (string, required): Name of the schema to opt in\n");
+        prompt.push_str("- category (string, required): Discovery category (e.g. \"recipes\", \"research\", \"music\")\n");
+        prompt.push_str("- field_privacy (object, optional): Map of field_name to privacy class. Classes: \"NeverPublish\", \"PublishIfAnonymous\", \"AlwaysPublish\". Fields not listed get an auto-inferred default based on field name.\n");
+        prompt.push_str("- include_preview (boolean, optional): Whether to include text previews in published entries (default false)\n");
+        prompt.push_str("Example: {\"tool\": \"discovery_opt_in\", \"params\": {\"schema_name\": \"Recipe\", \"category\": \"recipes\", \"field_privacy\": {\"ingredients\": \"AlwaysPublish\", \"author_name\": \"NeverPublish\"}}}\n\n");
+
+        prompt.push_str("### discovery_opt_out\n");
+        prompt.push_str("Remove a schema from the discovery network. Stops publishing and requests removal of previously published embeddings.\n");
+        prompt.push_str("Parameters:\n");
+        prompt.push_str("- schema_name (string, required): Name of the schema to opt out\n");
+        prompt.push_str("Example: {\"tool\": \"discovery_opt_out\", \"params\": {\"schema_name\": \"Recipe\"}}\n\n");
+
+        prompt.push_str("### discovery_status\n");
+        prompt.push_str("List all schemas currently opted into the discovery network, with their categories and field privacy settings.\n");
+        prompt.push_str("Parameters: none\n");
+        prompt.push_str("Example: {\"tool\": \"discovery_status\", \"params\": {}}\n\n");
+
         prompt.push_str("### set_field_policy\n");
         prompt.push_str("Set the access control policy on a schema field. Controls who can read/write the field based on trust distance.\n");
         prompt.push_str("Parameters:\n");
