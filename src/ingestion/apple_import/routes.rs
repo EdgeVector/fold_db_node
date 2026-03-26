@@ -5,13 +5,16 @@
 //! standard `ProgressTracker` / `Job` infrastructure.
 
 use actix_web::{web, HttpResponse, Responder};
+#[cfg(target_os = "macos")]
 use fold_db::log_feature;
+#[cfg(target_os = "macos")]
 use fold_db::logging::features::LogFeature;
 use fold_db::progress::{Job, JobStatus, JobType, ProgressTracker};
 use serde::Deserialize;
 use serde_json::json;
 
 use crate::ingestion::routes_helpers::IngestionServiceState;
+#[cfg(target_os = "macos")]
 use crate::ingestion::IngestionRequest;
 use crate::server::http_server::AppState;
 use crate::server::routes::common::require_node;

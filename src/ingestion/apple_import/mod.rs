@@ -12,7 +12,9 @@ pub mod photos;
 pub mod reminders;
 pub mod routes;
 
+#[cfg(target_os = "macos")]
 use crate::ingestion::IngestionError;
+#[cfg(target_os = "macos")]
 use sha2::{Digest, Sha256};
 
 /// Check whether we're running on macOS (Apple import requires osascript).
@@ -41,6 +43,7 @@ pub fn run_osascript(script: &str) -> Result<String, IngestionError> {
 }
 
 /// Compute a short content hash for deduplication.
+#[cfg(target_os = "macos")]
 pub fn content_hash(content: &str) -> String {
     let mut hasher = Sha256::new();
     hasher.update(content.as_bytes());
