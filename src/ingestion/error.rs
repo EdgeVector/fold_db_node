@@ -41,6 +41,10 @@ pub enum IngestionError {
     #[error("File conversion failed: {0}")]
     FileConversionFailed(String),
 
+    /// Apple data extraction errors (osascript, parsing, etc.)
+    #[error("Extraction error: {0}")]
+    Extraction(String),
+
     /// Authentication errors (invalid or expired API key)
     #[error("{provider} authentication error: {message}")]
     AuthenticationError { provider: String, message: String },

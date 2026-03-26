@@ -442,6 +442,22 @@ impl FoldHttpServer {
         .route(
             "/ingestion/ollama/models",
             web::get().to(ingestion_routes::list_ollama_models),
+        )
+        .route(
+            "/ingestion/apple-import/status",
+            web::get().to(ingestion_routes::apple_import_routes::apple_import_status),
+        )
+        .route(
+            "/ingestion/apple-import/notes",
+            web::post().to(ingestion_routes::apple_import_routes::apple_import_notes),
+        )
+        .route(
+            "/ingestion/apple-import/reminders",
+            web::post().to(ingestion_routes::apple_import_routes::apple_import_reminders),
+        )
+        .route(
+            "/ingestion/apple-import/photos",
+            web::post().to(ingestion_routes::apple_import_routes::apple_import_photos),
         );
     }
 

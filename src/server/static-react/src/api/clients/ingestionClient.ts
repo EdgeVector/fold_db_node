@@ -572,6 +572,46 @@ export class UnifiedIngestionClient {
   clearCache(): void {
     this.client.clearCache();
   }
+
+  // ── Apple Import ─────────────────────────────────────────────────
+
+  /** Check if Apple import is available (macOS only) */
+  async getAppleImportStatus(): Promise<EnhancedApiResponse<{ available: boolean }>> {
+    return this.client.get<{ available: boolean }>(
+      `${API_BASE_URLS.main}/ingestion/apple-import/status`,
+    );
+  }
+
+  /** Import notes from Apple Notes */
+  async appleImportNotes(
+    folder?: string,
+  ): Promise<EnhancedApiResponse<{ success: boolean; progress_id: string }>> {
+    return this.client.post<{ success: boolean; progress_id: string }>(
+      `${API_BASE_URLS.main}/ingestion/apple-import/notes`,
+      { folder: folder || null },
+    );
+  }
+
+  /** Import reminders from Apple Reminders */
+  async appleImportReminders(
+    list?: string,
+  ): Promise<EnhancedApiResponse<{ success: boolean; progress_id: string }>> {
+    return this.client.post<{ success: boolean; progress_id: string }>(
+      `${API_BASE_URLS.main}/ingestion/apple-import/reminders`,
+      { list: list || null },
+    );
+  }
+
+  /** Import photos from Apple Photos */
+  async appleImportPhotos(
+    album?: string,
+    limit = 50,
+  ): Promise<EnhancedApiResponse<{ success: boolean; progress_id: string }>> {
+    return this.client.post<{ success: boolean; progress_id: string }>(
+      `${API_BASE_URLS.main}/ingestion/apple-import/photos`,
+      { album: album || null, limit },
+    );
+  }
 }
 
 // Create default instance
