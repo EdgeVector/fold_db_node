@@ -417,14 +417,15 @@ pub async fn apple_import_photos(
         Err(response) => return response,
     };
 
-    // Verify ingestion service is available (we don't use it directly for photos
-    // but its absence means the system isn't configured)
-    if ingestion_service.read().await.is_none() {
-        return HttpResponse::ServiceUnavailable().json(json!({
-            "success": false,
-            "error": "Ingestion service not available",
-        }));
-    }
+    let service = match ingestion_service.read().await.clone() {
+        Some(s) => s,
+        None => {
+            return HttpResponse::ServiceUnavailable().json(json!({
+                "success": false,
+                "error": "Ingestion service not available",
+            }));
+        }
+    };
 
     let progress_id = uuid::Uuid::new_v4().to_string();
     let tracker = progress_tracker.get_ref().clone();
@@ -441,7 +442,7 @@ pub async fn apple_import_photos(
 
     tokio::spawn(async move {
         fold_db::logging::core::run_with_user(&user_id, async move {
-            run_apple_photos_import(album, limit, pid, tracker, node_arc).await;
+            run_apple_photos_import(album, limit, pid, tracker, node_arc, service).await;
         })
         .await;
     });
@@ -458,7 +459,8 @@ async fn run_apple_photos_import(
     limit: usize,
     progress_id: String,
     tracker: ProgressTracker,
-    _node_arc: std::sync::Arc<tokio::sync::RwLock<crate::fold_node::FoldNode>>,
+    node_arc: std::sync::Arc<tokio::sync::RwLock<crate::fold_node::FoldNode>>,
+    service: std::sync::Arc<crate::ingestion::ingestion_service::IngestionService>,
 ) {
     use super::photos;
 
@@ -500,7 +502,8 @@ async fn run_apple_photos_import(
     job.message = format!("Exported {} photos, uploading...", total);
     let _ = tracker.save(&job).await;
 
-    // Convert and ingest each photo via file_to_markdown
+    // Convert and ingest each photo via file_to_markdown → ingestion pipeline
+    let node = node_arc.read().await;
     let mut ingested = 0;
 
     for (i, path) in paths.iter().enumerate() {
@@ -513,12 +516,45 @@ async fn run_apple_photos_import(
                     .file_name()
                     .and_then(|n| n.to_str())
                     .unwrap_or("photo.jpg");
-                crate::ingestion::file_handling::json_processor::enrich_image_json(
-                    &mut json_value,
-                    &file_path,
-                    Some(file_name),
-                );
-                ingested += 1;
+                let descriptive_name =
+                    crate::ingestion::file_handling::json_processor::enrich_image_json(
+                        &mut json_value,
+                        &file_path,
+                        Some(file_name),
+                    );
+
+                // Feed into ingestion pipeline
+                let request = IngestionRequest {
+                    data: json_value,
+                    auto_execute: true,
+                    pub_key: "default".to_string(),
+                    source_file_name: Some(file_name.to_string()),
+                    progress_id: None,
+                    file_hash: None,
+                    source_folder: None,
+                    image_descriptive_name: descriptive_name,
+                };
+
+                match crate::handlers::ingestion::process_json(
+                    request,
+                    &fold_db::logging::core::get_current_user_id().unwrap_or_default(),
+                    &tracker,
+                    &node,
+                    service.clone(),
+                )
+                .await
+                {
+                    Ok(_) => ingested += 1,
+                    Err(e) => {
+                        log_feature!(
+                            LogFeature::Ingestion,
+                            warn,
+                            "Failed to ingest photo {}: {}",
+                            file_name,
+                            e
+                        );
+                    }
+                }
             }
             Err(e) => {
                 log_feature!(
@@ -535,7 +571,7 @@ async fn run_apple_photos_import(
         let mut job = Job::new(progress_id.clone(), JobType::Other("apple-photos".into()));
         job.status = JobStatus::Running;
         job.progress_percentage = pct as u8;
-        job.message = format!("Processed {}/{} photos...", i + 1, total);
+        job.message = format!("Ingesting {}/{} photos...", i + 1, total);
         let _ = tracker.save(&job).await;
     }
 
@@ -554,6 +590,7 @@ async fn run_apple_photos_import(
     progress_id: String,
     tracker: ProgressTracker,
     _node_arc: std::sync::Arc<tokio::sync::RwLock<crate::fold_node::FoldNode>>,
+    _service: std::sync::Arc<crate::ingestion::ingestion_service::IngestionService>,
 ) {
     let mut job = Job::new(progress_id, JobType::Other("apple-photos".into()));
     job.status = JobStatus::Failed;
