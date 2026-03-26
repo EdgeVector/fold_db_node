@@ -17,6 +17,7 @@ export const DEFAULT_TABS = [
   { id: "agent", label: "Agent", icon: "💬", group: "main" },
   { id: "smart-folder", label: "Smart Folder", icon: "📂", group: "main" },
   { id: "file-upload", label: "File Upload", icon: "📄", group: "main" },
+  { id: "apple-import", label: "Apple Import", icon: "🍎", group: "main" },
   { id: "llm-query", label: "AI Query", icon: "🤖", group: "main" },
   // Developer/Advanced features
   { id: "schemas", label: "Schema", icon: "📋", group: "advanced" },

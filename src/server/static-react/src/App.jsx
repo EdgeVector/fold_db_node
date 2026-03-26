@@ -19,6 +19,7 @@ import AgentTab from './components/tabs/AgentTab'
 import DiscoveryTab from './components/tabs/DiscoveryTab'
 import ViewsTab from './components/tabs/ViewsTab'
 import SharingTab from './components/tabs/SharingTab'
+import AppleImportTab from './components/tabs/AppleImportTab'
 import SettingsModal from './components/SettingsModal'
 
 import LogSidebar from './components/LogSidebar'
@@ -53,6 +54,7 @@ const HASH_TO_TAB = {
   discovery: 'discovery',
   views: 'views',
   sharing: 'sharing',
+  'apple-import': 'apple-import',
 }
 
 function resolveTabFromHash() {
@@ -212,6 +214,8 @@ export function AppContent() {
         return <ViewsTab onResult={handleOperationResult} />
       case 'sharing':
         return <SharingTab onResult={handleOperationResult} />
+      case 'apple-import':
+        return <AppleImportTab onResult={handleOperationResult} />
       default:
         return null
     }
