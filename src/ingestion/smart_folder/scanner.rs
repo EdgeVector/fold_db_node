@@ -287,6 +287,7 @@ mod tests {
     fn test_document_files_are_ingestible() {
         assert!(is_ingestible_file("report.pdf"));
         assert!(is_ingestible_file("letter.docx"));
+        assert!(is_ingestible_file("notes.pages"));
         assert!(is_ingestible_file("budget.xlsx"));
         assert!(is_ingestible_file("contacts.vcf"));
         assert!(is_ingestible_file("mail.eml"));
