@@ -209,7 +209,7 @@ async fn notes_sources_converge_synonyms() {
     // Source 1: Apple Notes
     let apple_notes = json_to_schema(json!({
         "name": "AppleNotes",
-        "descriptive_name": "Personal Notes",
+        "descriptive_name": "Daily Journal Notes",
         "fields": ["title", "content", "created_date", "folder"],
         "field_descriptions": {
             "title": "The title of the note",
@@ -232,7 +232,7 @@ async fn notes_sources_converge_synonyms() {
     // Source 2: Obsidian Notes - different field names for same concepts
     let obsidian_notes = json_to_schema(json!({
         "name": "ObsidianNotes",
-        "descriptive_name": "Personal Notes",
+        "descriptive_name": "Daily Journal Notes",
         "fields": ["note_title", "body", "created_at", "tags", "folder_path"],
         "field_descriptions": {
             "note_title": "The title of the note",
@@ -284,7 +284,7 @@ async fn notes_sources_converge_synonyms() {
     // Source 3: Meeting Notes - yet another naming convention
     let meeting_notes = json_to_schema(json!({
         "name": "MeetingNotes",
-        "descriptive_name": "Personal Notes",
+        "descriptive_name": "Daily Journal Notes",
         "fields": ["subject", "notes_text", "date", "attendees", "action_items"],
         "field_descriptions": {
             "subject": "The subject or title of the meeting notes",
@@ -364,8 +364,8 @@ async fn calendar_and_notes_remain_separate_schemas() {
 
     // Notes schema - different descriptive_name, but shares "subject" field name
     let notes = json_to_schema(json!({
-        "name": "PersonalNotes",
-        "descriptive_name": "Personal Notes",
+        "name": "DailyJournalNotes",
+        "descriptive_name": "Daily Journal Notes",
         "fields": ["subject", "content", "created_date", "tags"],
         "field_descriptions": {
             "subject": "The subject or title of the note",
@@ -385,7 +385,7 @@ async fn calendar_and_notes_remain_separate_schemas() {
         SchemaAddOutcome::Added(schema, _) => {
             assert_eq!(
                 schema.descriptive_name.as_deref(),
-                Some("Personal Notes"),
+                Some("Daily Journal Notes"),
                 "notes schema should keep its own descriptive name"
             );
             let fields = schema.fields.as_ref().expect("must have fields");
@@ -422,7 +422,7 @@ async fn calendar_and_notes_remain_separate_schemas() {
         "Calendar Events schema should exist"
     );
     assert!(
-        descriptive_names.contains(&"Personal Notes"),
+        descriptive_names.contains(&"Daily Journal Notes"),
         "Personal Notes schema should exist"
     );
 }
@@ -439,7 +439,7 @@ async fn canonical_fields_shared_across_domains() {
     // Notes registers "title" as canonical
     let notes = json_to_schema(json!({
         "name": "NotesSchema",
-        "descriptive_name": "Personal Notes",
+        "descriptive_name": "Daily Journal Notes",
         "fields": ["title", "content", "created_date"],
         "field_descriptions": {
             "title": "The title of the note",
@@ -551,11 +551,11 @@ async fn full_pipeline_six_sources_produce_two_schemas() {
         }
     }));
 
-    // --- Notes sources (all descriptive_name = "Personal Notes") ---
+    // --- Notes sources (all descriptive_name = "Daily Journal Notes") ---
 
     let notes1 = json_to_schema(json!({
         "name": "AppleNotes",
-        "descriptive_name": "Personal Notes",
+        "descriptive_name": "Daily Journal Notes",
         "fields": ["title", "content", "created_date", "folder"],
         "field_descriptions": {
             "title": "The title of the note",
@@ -567,7 +567,7 @@ async fn full_pipeline_six_sources_produce_two_schemas() {
 
     let notes2 = json_to_schema(json!({
         "name": "ObsidianNotes",
-        "descriptive_name": "Personal Notes",
+        "descriptive_name": "Daily Journal Notes",
         "fields": ["note_title", "body", "created_at", "tags", "folder_path"],
         "field_descriptions": {
             "note_title": "The title of the note",
@@ -580,7 +580,7 @@ async fn full_pipeline_six_sources_produce_two_schemas() {
 
     let notes3 = json_to_schema(json!({
         "name": "MeetingNotes",
-        "descriptive_name": "Personal Notes",
+        "descriptive_name": "Daily Journal Notes",
         "fields": ["subject", "notes_text", "date", "attendees", "action_items"],
         "field_descriptions": {
             "subject": "The subject or title of the meeting notes",
@@ -660,7 +660,7 @@ async fn full_pipeline_six_sources_produce_two_schemas() {
         "should have Calendar Events schema"
     );
     assert!(
-        active_descriptive_names.contains("Personal Notes"),
+        active_descriptive_names.contains("Daily Journal Notes"),
         "should have Personal Notes schema"
     );
 
@@ -692,7 +692,7 @@ async fn full_pipeline_six_sources_produce_two_schemas() {
     // Find the final notes schema
     let notes_schemas: Vec<_> = all_schemas
         .iter()
-        .filter(|s| s.descriptive_name.as_deref() == Some("Personal Notes"))
+        .filter(|s| s.descriptive_name.as_deref() == Some("Daily Journal Notes"))
         .collect();
 
     let final_notes = notes_schemas

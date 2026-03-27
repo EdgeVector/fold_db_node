@@ -1,5 +1,7 @@
+use fold_db::db_operations::native_index::anonymity::FieldPrivacyClass;
 use fold_db::storage::traits::KvStore;
 use serde::{Deserialize, Serialize};
+use std::collections::HashMap;
 
 const CONFIG_PREFIX: &str = "discovery:config:";
 
@@ -11,6 +13,8 @@ pub struct DiscoveryOptIn {
     pub include_preview: bool,
     pub preview_max_chars: usize,
     pub preview_excluded_fields: Vec<String>,
+    #[serde(default)]
+    pub field_privacy: HashMap<String, FieldPrivacyClass>,
     pub opted_in_at: chrono::DateTime<chrono::Utc>,
 }
 
@@ -22,6 +26,7 @@ impl DiscoveryOptIn {
             include_preview: false,
             preview_max_chars: 100,
             preview_excluded_fields: Vec::new(),
+            field_privacy: HashMap::new(),
             opted_in_at: chrono::Utc::now(),
         }
     }
@@ -30,6 +35,11 @@ impl DiscoveryOptIn {
         self.include_preview = true;
         self.preview_max_chars = max_chars;
         self.preview_excluded_fields = excluded_fields;
+        self
+    }
+
+    pub fn with_field_privacy(mut self, field_privacy: HashMap<String, FieldPrivacyClass>) -> Self {
+        self.field_privacy = field_privacy;
         self
     }
 }

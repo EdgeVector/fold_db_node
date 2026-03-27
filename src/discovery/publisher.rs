@@ -1,6 +1,9 @@
 use super::config::DiscoveryOptIn;
 use super::pseudonym;
 use super::types::*;
+use fold_db::db_operations::native_index::anonymity::{
+    check_fragment_anonymity, default_privacy_class, FieldPrivacyClass, FragmentDecision,
+};
 use fold_db::storage::traits::KvStore;
 use serde::Deserialize;
 use uuid::Uuid;
@@ -15,8 +18,24 @@ struct StoredEmbedding {
     pub schema: String,
     #[allow(dead_code)]
     pub key: fold_db::schema::types::key_value::KeyValue,
+    #[serde(default)]
+    #[allow(dead_code)]
     pub field_names: Vec<String>,
+    #[serde(default)]
+    pub field_name: String,
+    #[serde(default)]
+    #[allow(dead_code)]
+    pub fragment_idx: usize,
+    #[serde(default)]
+    pub fragment_text: Option<String>,
     pub embedding: Vec<f32>,
+}
+
+impl StoredEmbedding {
+    /// Returns true if this is a legacy embedding (pre-fragmentation format).
+    fn is_legacy(&self) -> bool {
+        self.field_name.is_empty()
+    }
 }
 
 /// Publishes embeddings from the local native index to the discovery service.
@@ -71,6 +90,34 @@ impl DiscoveryPublisher {
                 continue;
             }
 
+            // Determine field name: new format uses field_name, legacy uses schema name
+            let field_name = if stored.is_legacy() {
+                config.schema_name.clone()
+            } else {
+                stored.field_name.clone()
+            };
+
+            // Anonymity gate: check field privacy before publishing
+            let privacy_class = config
+                .field_privacy
+                .get(&field_name)
+                .copied()
+                .unwrap_or_else(|| default_privacy_class(&field_name));
+
+            if let Some(ref text) = stored.fragment_text {
+                let decision = check_fragment_anonymity(&field_name, text, privacy_class);
+                match decision {
+                    FragmentDecision::Reject(_reason) => {
+                        skipped += 1;
+                        continue;
+                    }
+                    FragmentDecision::Accept | FragmentDecision::SubmitForNetworkCheck => {}
+                }
+            } else if privacy_class == FieldPrivacyClass::NeverPublish {
+                skipped += 1;
+                continue;
+            }
+
             // Derive pseudonym from master_key + SHA256(embedding bytes)
             let embedding_bytes: Vec<u8> = stored
                 .embedding
@@ -81,13 +128,15 @@ impl DiscoveryPublisher {
             let pseudo = pseudonym::derive_pseudonym(&self.master_key, &content_hash);
 
             let preview = if config.include_preview {
-                Some(build_preview(
-                    &stored.field_names,
-                    &config.preview_excluded_fields,
-                    config.preview_max_chars,
-                ))
+                stored.fragment_text.clone()
             } else {
                 None
+            };
+
+            let fragment_type = if stored.is_legacy() {
+                "field".to_string()
+            } else {
+                "fragment".to_string()
             };
 
             upload_entries.push(DiscoveryUploadEntry {
@@ -95,6 +144,7 @@ impl DiscoveryPublisher {
                 embedding: stored.embedding,
                 category: config.category.clone(),
                 content_preview: preview,
+                fragment_type,
             });
 
             owner_entries.push(OwnerEntry {
@@ -216,18 +266,15 @@ impl DiscoveryPublisher {
         Ok(search_response.results)
     }
 
-    /// Send a connection request to a pseudonym owner.
-    pub async fn connect(&self, target_pseudonym: Uuid, message: String) -> Result<(), String> {
-        // Generate a one-time requester pseudonym
-        let requester_pseudo = pseudonym::derive_pseudonym(
-            &self.master_key,
-            &pseudonym::content_hash(&format!("connect:{}", target_pseudonym)),
-        );
-
+    /// Send an encrypted connection request to a pseudonym owner via the bulletin board.
+    pub async fn connect(
+        &self,
+        target_pseudonym: Uuid,
+        encrypted_blob: String,
+    ) -> Result<(), String> {
         let request = DiscoveryConnectRequest {
             target_pseudonym,
-            requester_pseudonym: requester_pseudo,
-            message,
+            encrypted_blob,
         };
 
         let response = self
@@ -251,7 +298,42 @@ impl DiscoveryPublisher {
         Ok(())
     }
 
-    /// Poll for incoming connection requests.
+    /// Poll for encrypted messages from the bulletin board.
+    pub async fn poll_messages(
+        &self,
+        since: Option<&str>,
+    ) -> Result<Vec<EncryptedMessage>, String> {
+        let mut url = format!("{}/discover/messages", self.discovery_url);
+        if let Some(since_ts) = since {
+            url = format!("{}?since={}", url, since_ts);
+        }
+
+        let response = self
+            .http_client
+            .get(&url)
+            .header("Authorization", format!("Bearer {}", self.auth_token))
+            .send()
+            .await
+            .map_err(|e| format!("Failed to poll messages: {}", e))?;
+
+        if !response.status().is_success() {
+            let status = response.status();
+            let body = response.text().await.unwrap_or_default();
+            return Err(format!(
+                "Poll messages failed with status {}: {}",
+                status, body
+            ));
+        }
+
+        let poll_response: EncryptedMessagesResponse = response
+            .json()
+            .await
+            .map_err(|e| format!("Failed to parse messages response: {}", e))?;
+
+        Ok(poll_response.messages)
+    }
+
+    /// Legacy: Poll for incoming connection requests.
     pub async fn poll_requests(&self) -> Result<Vec<IncomingConnectionRequest>, String> {
         let response = self
             .http_client
@@ -276,25 +358,5 @@ impl DiscoveryPublisher {
             .map_err(|e| format!("Failed to parse poll response: {}", e))?;
 
         Ok(poll_response.requests)
-    }
-}
-
-/// Build a content preview from field names, excluding specified fields.
-/// Note: We only have field names from StoredEmbedding, not the actual values.
-/// A full implementation would read the record's field values from the database.
-/// For now, returns a comma-separated list of field names as a placeholder.
-fn build_preview(field_names: &[String], excluded: &[String], max_chars: usize) -> String {
-    let included: Vec<&str> = field_names
-        .iter()
-        .filter(|f| !excluded.iter().any(|e| e == *f))
-        .map(|s| s.as_str())
-        .collect();
-
-    let preview = included.join(", ");
-    if preview.len() > max_chars {
-        let truncated: String = preview.chars().take(max_chars.saturating_sub(3)).collect();
-        format!("{}...", truncated)
-    } else {
-        preview
     }
 }

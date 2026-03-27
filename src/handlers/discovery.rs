@@ -21,6 +21,12 @@ pub struct OptInRequest {
     pub include_preview: Option<bool>,
     pub preview_max_chars: Option<usize>,
     pub preview_excluded_fields: Option<Vec<String>>,
+    pub field_privacy: Option<
+        std::collections::HashMap<
+            String,
+            fold_db::db_operations::native_index::anonymity::FieldPrivacyClass,
+        >,
+    >,
 }
 
 #[derive(Debug, Clone, Deserialize)]
@@ -38,7 +44,7 @@ pub struct SearchRequest {
 #[derive(Debug, Clone, Deserialize)]
 pub struct ConnectRequest {
     pub target_pseudonym: uuid::Uuid,
-    pub message: String,
+    pub encrypted_blob: String,
 }
 
 // === Response types ===
@@ -128,6 +134,10 @@ pub async fn opt_in(
             req.preview_max_chars.unwrap_or(100),
             req.preview_excluded_fields.clone().unwrap_or_default(),
         );
+    }
+
+    if let Some(ref field_privacy) = req.field_privacy {
+        opt_in_config = opt_in_config.with_field_privacy(field_privacy.clone());
     }
 
     config::save_opt_in(&*store, &opt_in_config)
@@ -312,7 +322,7 @@ pub async fn connect(
     );
 
     publisher
-        .connect(req.target_pseudonym, req.message.clone())
+        .connect(req.target_pseudonym, req.encrypted_blob.clone())
         .await
         .handler_err("send connection request")?;
 
