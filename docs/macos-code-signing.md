@@ -17,9 +17,8 @@ the DMG without this friction, the app must be:
 
 1. Go to https://developer.apple.com/programs/
 2. Sign in with the Apple ID that will own the certificate
-3. Enroll as **Organization** (Edge Vector Foundation) — $99/year
-   - Requires a D-U-N-S number (free from Dun & Bradstreet, takes ~5 business days)
-   - Legal entity name must match D-U-N-S records exactly
+3. Enroll as **Individual / Sole Proprietor** — $99/year
+   - No D-U-N-S number required for sole proprietor enrollment
 4. Once approved, the Team ID (10-character alphanumeric) appears at
    https://developer.apple.com/account → Membership Details
 
