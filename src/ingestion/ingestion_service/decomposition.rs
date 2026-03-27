@@ -588,11 +588,7 @@ impl IngestionService {
                 );
             }
             // Classify photo visibility using AI
-            if parent
-                .get("visibility")
-                .and_then(|v| v.as_str())
-                .is_none()
-            {
+            if parent.get("visibility").and_then(|v| v.as_str()).is_none() {
                 match crate::ingestion::file_handling::json_processor::classify_visibility(
                     &parent, self,
                 )
@@ -600,10 +596,7 @@ impl IngestionService {
                 {
                     Ok(visibility) => {
                         if let Value::Object(ref mut map) = parent {
-                            map.insert(
-                                "visibility".to_string(),
-                                Value::String(visibility),
-                            );
+                            map.insert("visibility".to_string(), Value::String(visibility));
                         }
                     }
                     Err(e) => {

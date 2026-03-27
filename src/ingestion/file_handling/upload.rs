@@ -563,7 +563,8 @@ pub async fn upload_file(
         {
             if let Some(service) = get_ingestion_service(&ingestion_service).await {
                 match crate::ingestion::file_handling::json_processor::classify_visibility(
-                    &json_value, &service,
+                    &json_value,
+                    &service,
                 )
                 .await
                 {

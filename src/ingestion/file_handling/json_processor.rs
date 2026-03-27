@@ -671,10 +671,7 @@ mod tests {
     #[test]
     fn test_parse_visibility_private() {
         assert_eq!(parse_visibility_response("private").unwrap(), "private");
-        assert_eq!(
-            parse_visibility_response("  PRIVATE  ").unwrap(),
-            "private"
-        );
+        assert_eq!(parse_visibility_response("  PRIVATE  ").unwrap(), "private");
         assert_eq!(
             parse_visibility_response("This looks private.").unwrap(),
             "private"

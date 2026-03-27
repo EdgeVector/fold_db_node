@@ -529,7 +529,8 @@ async fn run_apple_photos_import(
                     .is_none()
                 {
                     match crate::ingestion::file_handling::json_processor::classify_visibility(
-                        &json_value, &service,
+                        &json_value,
+                        &service,
                     )
                     .await
                     {
