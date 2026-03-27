@@ -128,10 +128,7 @@ fn extract_visibility(line: &str, lang: &str) -> String {
         }
         "python" => {
             // Convention: _name is private, __name is private
-            let name_part = trimmed
-                .split_whitespace()
-                .nth(1)
-                .unwrap_or("");
+            let name_part = trimmed.split_whitespace().nth(1).unwrap_or("");
             if name_part.starts_with('_') {
                 "private".to_string()
             } else {
@@ -143,7 +140,8 @@ fn extract_visibility(line: &str, lang: &str) -> String {
             let parts: Vec<&str> = trimmed.split_whitespace().collect();
             let name = if trimmed.starts_with("func") {
                 // func Name() or func (r *T) Name()
-                parts.iter()
+                parts
+                    .iter()
                     .position(|p| p.starts_with('(') || !["func"].contains(p))
                     .and_then(|i| {
                         let p = parts[i];
@@ -300,24 +298,15 @@ pub fn extract_code_metadata(content: &str, file_name: &str, ext: &str) -> Value
 // ---------------------------------------------------------------------------
 
 fn extract_rust_symbols(lines: &[&str]) -> Vec<RawSymbol> {
-    let fn_re = Regex::new(
-        r"^\s*(?:pub(?:\((?:crate|super)\))?\s+)?(?:async\s+)?(?:unsafe\s+)?fn\s+(\w+)",
-    ).unwrap();
-    let struct_re = Regex::new(
-        r"^\s*(?:pub(?:\((?:crate|super)\))?\s+)?struct\s+(\w+)",
-    ).unwrap();
-    let enum_re = Regex::new(
-        r"^\s*(?:pub(?:\((?:crate|super)\))?\s+)?enum\s+(\w+)",
-    ).unwrap();
-    let trait_re = Regex::new(
-        r"^\s*(?:pub(?:\((?:crate|super)\))?\s+)?trait\s+(\w+)",
-    ).unwrap();
-    let type_re = Regex::new(
-        r"^\s*(?:pub(?:\((?:crate|super)\))?\s+)?type\s+(\w+)",
-    ).unwrap();
-    let const_re = Regex::new(
-        r"^\s*(?:pub(?:\((?:crate|super)\))?\s+)?(?:const|static)\s+(\w+)",
-    ).unwrap();
+    let fn_re =
+        Regex::new(r"^\s*(?:pub(?:\((?:crate|super)\))?\s+)?(?:async\s+)?(?:unsafe\s+)?fn\s+(\w+)")
+            .unwrap();
+    let struct_re = Regex::new(r"^\s*(?:pub(?:\((?:crate|super)\))?\s+)?struct\s+(\w+)").unwrap();
+    let enum_re = Regex::new(r"^\s*(?:pub(?:\((?:crate|super)\))?\s+)?enum\s+(\w+)").unwrap();
+    let trait_re = Regex::new(r"^\s*(?:pub(?:\((?:crate|super)\))?\s+)?trait\s+(\w+)").unwrap();
+    let type_re = Regex::new(r"^\s*(?:pub(?:\((?:crate|super)\))?\s+)?type\s+(\w+)").unwrap();
+    let const_re =
+        Regex::new(r"^\s*(?:pub(?:\((?:crate|super)\))?\s+)?(?:const|static)\s+(\w+)").unwrap();
     let use_re = Regex::new(r"^\s*(?:pub\s+)?use\s+(.+);").unwrap();
     let impl_re = Regex::new(r"^\s*impl(?:<[^>]*>)?\s+(?:(\w+)\s+for\s+)?(\w+)").unwrap();
 
@@ -355,7 +344,12 @@ fn extract_rust_symbols(lines: &[&str]) -> Vec<RawSymbol> {
             let name = caps.get(1).unwrap().as_str();
             symbols.push(RawSymbol {
                 name: name.to_string(),
-                kind: if current_impl.is_some() { "method" } else { "function" }.to_string(),
+                kind: if current_impl.is_some() {
+                    "method"
+                } else {
+                    "function"
+                }
+                .to_string(),
                 signature: line.trim().to_string(),
                 line_number: line_num,
                 parent: current_impl.clone(),
@@ -469,7 +463,12 @@ fn extract_python_symbols(lines: &[&str]) -> Vec<RawSymbol> {
 
             symbols.push(RawSymbol {
                 name: name.to_string(),
-                kind: if parent.is_some() { "method" } else { "function" }.to_string(),
+                kind: if parent.is_some() {
+                    "method"
+                } else {
+                    "function"
+                }
+                .to_string(),
                 signature: line.trim().to_string(),
                 line_number: line_num,
                 parent,
@@ -509,7 +508,10 @@ fn extract_python_symbols(lines: &[&str]) -> Vec<RawSymbol> {
         // Reset class context if we hit a non-empty line at class indent or less
         if current_class.is_some() && !line.trim().is_empty() {
             let indent = line.len() - line.trim_start().len();
-            if indent <= class_indent && !line.trim().starts_with('#') && !line.trim().starts_with('@') {
+            if indent <= class_indent
+                && !line.trim().starts_with('#')
+                && !line.trim().starts_with('@')
+            {
                 current_class = None;
             }
         }
@@ -519,27 +521,20 @@ fn extract_python_symbols(lines: &[&str]) -> Vec<RawSymbol> {
 }
 
 fn extract_js_ts_symbols(lines: &[&str]) -> Vec<RawSymbol> {
-    let fn_re = Regex::new(
-        r"^\s*(?:export\s+)?(?:default\s+)?(?:async\s+)?function\s+(\w+)",
-    ).unwrap();
-    let class_re = Regex::new(
-        r"^\s*(?:export\s+)?(?:default\s+)?(?:abstract\s+)?class\s+(\w+)",
-    ).unwrap();
-    let interface_re = Regex::new(
-        r"^\s*(?:export\s+)?interface\s+(\w+)",
-    ).unwrap();
-    let type_re = Regex::new(
-        r"^\s*(?:export\s+)?type\s+(\w+)\s*=",
-    ).unwrap();
-    let const_fn_re = Regex::new(
-        r"^\s*(?:export\s+)?(?:const|let|var)\s+(\w+)\s*=\s*(?:async\s+)?\(",
-    ).unwrap();
+    let fn_re =
+        Regex::new(r"^\s*(?:export\s+)?(?:default\s+)?(?:async\s+)?function\s+(\w+)").unwrap();
+    let class_re =
+        Regex::new(r"^\s*(?:export\s+)?(?:default\s+)?(?:abstract\s+)?class\s+(\w+)").unwrap();
+    let interface_re = Regex::new(r"^\s*(?:export\s+)?interface\s+(\w+)").unwrap();
+    let type_re = Regex::new(r"^\s*(?:export\s+)?type\s+(\w+)\s*=").unwrap();
+    let const_fn_re =
+        Regex::new(r"^\s*(?:export\s+)?(?:const|let|var)\s+(\w+)\s*=\s*(?:async\s+)?\(").unwrap();
     let arrow_fn_re = Regex::new(
         r"^\s*(?:export\s+)?(?:const|let|var)\s+(\w+)\s*=\s*(?:async\s+)?(?:\([^)]*\)|[\w]+)\s*=>",
-    ).unwrap();
-    let const_re = Regex::new(
-        r"^\s*(?:export\s+)?(?:const|let|var)\s+([A-Z][A-Z_0-9]+)\s*=",
-    ).unwrap();
+    )
+    .unwrap();
+    let const_re =
+        Regex::new(r"^\s*(?:export\s+)?(?:const|let|var)\s+([A-Z][A-Z_0-9]+)\s*=").unwrap();
     let import_re = Regex::new(r"^\s*import\s+").unwrap();
     let enum_re = Regex::new(r"^\s*(?:export\s+)?(?:const\s+)?enum\s+(\w+)").unwrap();
 
@@ -579,7 +574,12 @@ fn extract_js_ts_symbols(lines: &[&str]) -> Vec<RawSymbol> {
         } else if let Some(caps) = fn_re.captures(line) {
             symbols.push(RawSymbol {
                 name: caps.get(1).unwrap().as_str().to_string(),
-                kind: if current_class.is_some() { "method" } else { "function" }.to_string(),
+                kind: if current_class.is_some() {
+                    "method"
+                } else {
+                    "function"
+                }
+                .to_string(),
                 signature: line.trim().to_string(),
                 line_number: line_num,
                 parent: current_class.clone(),
@@ -750,17 +750,15 @@ fn extract_go_symbols(lines: &[&str]) -> Vec<RawSymbol> {
 fn extract_java_like_symbols(lines: &[&str]) -> Vec<RawSymbol> {
     let class_re = Regex::new(
         r"^\s*(?:public\s+|private\s+|protected\s+)?(?:abstract\s+|final\s+)?class\s+(\w+)",
-    ).unwrap();
-    let interface_re = Regex::new(
-        r"^\s*(?:public\s+|private\s+|protected\s+)?interface\s+(\w+)",
-    ).unwrap();
+    )
+    .unwrap();
+    let interface_re =
+        Regex::new(r"^\s*(?:public\s+|private\s+|protected\s+)?interface\s+(\w+)").unwrap();
     let method_re = Regex::new(
         r"^\s*(?:public\s+|private\s+|protected\s+)?(?:static\s+)?(?:abstract\s+)?(?:final\s+)?(?:synchronized\s+)?(?:\w+(?:<[^>]*>)?)\s+(\w+)\s*\(",
     ).unwrap();
     let import_re = Regex::new(r"^\s*import\s+(.+);").unwrap();
-    let enum_re = Regex::new(
-        r"^\s*(?:public\s+|private\s+|protected\s+)?enum\s+(\w+)",
-    ).unwrap();
+    let enum_re = Regex::new(r"^\s*(?:public\s+|private\s+|protected\s+)?enum\s+(\w+)").unwrap();
 
     let mut symbols = Vec::new();
     let mut current_class: Option<String> = None;
@@ -816,10 +814,19 @@ fn extract_java_like_symbols(lines: &[&str]) -> Vec<RawSymbol> {
         } else if let Some(caps) = method_re.captures(line) {
             let name = caps.get(1).unwrap().as_str();
             // Skip common false positives like control flow keywords
-            if !["if", "else", "for", "while", "switch", "catch", "return", "new"].contains(&name) {
+            if ![
+                "if", "else", "for", "while", "switch", "catch", "return", "new",
+            ]
+            .contains(&name)
+            {
                 symbols.push(RawSymbol {
                     name: name.to_string(),
-                    kind: if current_class.is_some() { "method" } else { "function" }.to_string(),
+                    kind: if current_class.is_some() {
+                        "method"
+                    } else {
+                        "function"
+                    }
+                    .to_string(),
                     signature: line.trim().to_string(),
                     line_number: line_num,
                     parent: current_class.clone(),
@@ -876,7 +883,11 @@ fn extract_cpp_symbols(lines: &[&str]) -> Vec<RawSymbol> {
             let name = caps.get(1).unwrap().as_str();
             current_class = Some(name.to_string());
             class_brace_depth = prev_depth;
-            let kind = if line.trim().starts_with("struct") { "struct" } else { "class" };
+            let kind = if line.trim().starts_with("struct") {
+                "struct"
+            } else {
+                "class"
+            };
             symbols.push(RawSymbol {
                 name: name.to_string(),
                 kind: kind.to_string(),
@@ -896,10 +907,19 @@ fn extract_cpp_symbols(lines: &[&str]) -> Vec<RawSymbol> {
             });
         } else if let Some(caps) = fn_re.captures(line) {
             let name = caps.get(1).unwrap().as_str();
-            if !["if", "else", "for", "while", "switch", "catch", "return", "new", "delete"].contains(&name) {
+            if ![
+                "if", "else", "for", "while", "switch", "catch", "return", "new", "delete",
+            ]
+            .contains(&name)
+            {
                 symbols.push(RawSymbol {
                     name: name.to_string(),
-                    kind: if current_class.is_some() { "method" } else { "function" }.to_string(),
+                    kind: if current_class.is_some() {
+                        "method"
+                    } else {
+                        "function"
+                    }
+                    .to_string(),
                     signature: line.trim().to_string(),
                     line_number: line_num,
                     parent: current_class.clone(),
@@ -925,10 +945,10 @@ fn extract_cpp_symbols(lines: &[&str]) -> Vec<RawSymbol> {
 fn extract_generic_symbols(lines: &[&str]) -> Vec<RawSymbol> {
     let fn_re = Regex::new(
         r"^\s*(?:pub\s+)?(?:async\s+)?(?:fn|def|function|func|sub)\s+(?:\([^)]*\)\s*)?(\w+)",
-    ).unwrap();
-    let class_re = Regex::new(
-        r"^\s*(?:pub\s+)?(?:class|struct|trait|enum|interface|type)\s+(\w+)",
-    ).unwrap();
+    )
+    .unwrap();
+    let class_re =
+        Regex::new(r"^\s*(?:pub\s+)?(?:class|struct|trait|enum|interface|type)\s+(\w+)").unwrap();
 
     let mut symbols = Vec::new();
 
@@ -1080,7 +1100,11 @@ mod tests {
     // ---- Helper to find a symbol by name in the array ----
 
     fn find_symbol<'a>(symbols: &'a Value, name: &str) -> Option<&'a Value> {
-        symbols.as_array().unwrap().iter().find(|s| s["name"] == name)
+        symbols
+            .as_array()
+            .unwrap()
+            .iter()
+            .find(|s| s["name"] == name)
     }
 
     fn find_symbols_by_kind<'a>(symbols: &'a Value, kind: &str) -> Vec<&'a Value> {
