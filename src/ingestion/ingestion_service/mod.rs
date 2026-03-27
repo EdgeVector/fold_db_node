@@ -543,11 +543,17 @@ fn enrich_with_source_context(data: &mut Value, source_file_name: Option<&str>) 
         .filter(|s| !s.is_empty() && s != "." && s != "..");
 
     let enrich_obj = |obj: &mut serde_json::Map<String, Value>| {
-        // Only enrich objects that look like text-file wrappers (have "content" and "file_type")
-        if !obj.contains_key("content") || !obj.contains_key("file_type") {
+        // Enrich objects from native parsers: text-file wrappers (content + file_type)
+        // and code metadata (source_file + file_type, with functions/classes/comments).
+        if !obj.contains_key("file_type") {
             return;
         }
-        // Update source_file to include the full path
+        let is_text_wrapper = obj.contains_key("content");
+        let is_code_metadata = obj.contains_key("source_file");
+        if !is_text_wrapper && !is_code_metadata {
+            return;
+        }
+        // Update source_file to use the original filename
         obj.insert(
             "source_file".to_string(),
             Value::String(source_path.to_string()),
