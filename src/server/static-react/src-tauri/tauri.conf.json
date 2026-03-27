@@ -28,8 +28,8 @@
       "frameworks": [],
       "minimumSystemVersion": "10.13",
       "exceptionDomain": "localhost",
-      "signingIdentity": null,
-      "entitlements": null
+      "signingIdentity": "-",
+      "entitlements": "Entitlements.plist"
     },
     "category": "Developer Tool",
     "shortDescription": "Personal Database for Data Sovereignty",
