@@ -522,32 +522,31 @@ pub async fn upload_file(
 
     // Try native parsers first (JSON, CSV, code, config, text/markdown),
     // fall back to file_to_markdown for types that need it (images, PDFs, Office docs).
-    let mut json_value =
-        match crate::ingestion::file_handling::conversion::read_file_as_json(
-            &form_data.file_path,
-        ) {
-            Ok(json) => {
-                log_feature!(
-                    LogFeature::Ingestion,
-                    info,
-                    "File parsed via native parser: {}",
-                    form_data.original_filename
-                );
-                json
+    let mut json_value = match crate::ingestion::file_handling::conversion::read_file_as_json(
+        &form_data.file_path,
+    ) {
+        Ok(json) => {
+            log_feature!(
+                LogFeature::Ingestion,
+                info,
+                "File parsed via native parser: {}",
+                form_data.original_filename
+            );
+            json
+        }
+        Err(_) => {
+            log_feature!(
+                LogFeature::Ingestion,
+                info,
+                "Native parser unavailable, using file_to_markdown: {}",
+                form_data.original_filename
+            );
+            match convert_file_to_json_http(&form_data.file_path).await {
+                Ok(json) => json,
+                Err(response) => return response,
             }
-            Err(_) => {
-                log_feature!(
-                    LogFeature::Ingestion,
-                    info,
-                    "Native parser unavailable, using file_to_markdown: {}",
-                    form_data.original_filename
-                );
-                match convert_file_to_json_http(&form_data.file_path).await {
-                    Ok(json) => json,
-                    Err(response) => return response,
-                }
-            }
-        };
+        }
+    };
 
     // Enrich image JSON with image_type and created_at for HashRange schema support
     let image_descriptive_name = if crate::ingestion::is_image_file(&form_data.original_filename) {
