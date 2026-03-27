@@ -79,20 +79,33 @@ fn collect_and_convert(export_dir: &Path) -> Result<Vec<PathBuf>, IngestionError
 
         if ext == "heic" || ext == "heif" {
             let jpeg_path = path.with_extension("jpg");
-            let status = std::process::Command::new("sips")
+            // 30-second timeout per file; large HEIC conversions rarely exceed this.
+            let mut child = std::process::Command::new("sips")
                 .args(["-s", "format", "jpeg"])
                 .arg(&path)
                 .arg("--out")
                 .arg(&jpeg_path)
                 .stdout(std::process::Stdio::null())
                 .stderr(std::process::Stdio::null())
-                .status()
+                .spawn()
                 .map_err(|e| IngestionError::Extraction(format!("Failed to run sips: {}", e)))?;
 
-            if status.success() {
+            let (tx, rx) = std::sync::mpsc::channel();
+            std::thread::spawn(move || {
+                let _ = tx.send(child.wait());
+            });
+
+            let success = match rx.recv_timeout(std::time::Duration::from_secs(30)) {
+                Ok(Ok(status)) => status.success(),
+                _ => false, // timeout or error — skip conversion, use original
+            };
+
+            if success {
                 let _ = std::fs::remove_file(&path);
                 result.push(jpeg_path);
             } else {
+                // Clean up partial JPEG if it exists
+                let _ = std::fs::remove_file(&jpeg_path);
                 result.push(path);
             }
         } else {
