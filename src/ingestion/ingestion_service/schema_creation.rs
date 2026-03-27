@@ -151,6 +151,8 @@ impl IngestionService {
 
         // Keep the AI-provided semantic name (e.g., "customer_orders").
         // If the AI left it blank or used the placeholder "Schema", fall back to identity_hash.
+        // Note: the schema service always overrides the name with identity_hash for dedup.
+        // The human-readable name lives in descriptive_name (used by the UI).
         let ai_name = schema.name.trim().to_string();
         if ai_name.is_empty() || ai_name.eq_ignore_ascii_case("schema") {
             schema.name = schema.get_identity_hash().unwrap().clone();
