@@ -8,7 +8,7 @@ use std::io::Write;
 use std::path::PathBuf;
 use tempfile::NamedTempFile;
 
-use crate::ingestion::IngestionError;
+use crate::ingestion::{IngestionError, IngestionResult};
 use fold_db::log_feature;
 use fold_db::logging::features::LogFeature;
 
@@ -285,6 +285,60 @@ pub fn classify_image_type(source_file_name: &str) -> String {
         "diagram".to_string()
     } else {
         "photo".to_string()
+    }
+}
+
+/// Prompt for AI-powered visibility classification of photo content.
+const VISIBILITY_CLASSIFICATION_PROMPT: &str = r#"Classify this photo as either "public" or "private" for a social feed.
+
+"public": suitable for sharing — landscapes, food, pets, group activities, events, nature, architecture, art, travel, selfies, sports
+"private": sensitive or personal content — documents, IDs, medical records, financial info, nudity, screenshots of private messages, personal correspondence, passwords, credit cards, prescriptions
+
+Photo description:
+{description}
+
+Respond with exactly one word: public or private"#;
+
+/// Classify a photo's visibility as `"public"` or `"private"` using the AI backend.
+///
+/// Reads the `markdown` field (vision model description) from the JSON and sends
+/// it to the text AI for a simple binary classification. Returns the classification
+/// string to be inserted into the JSON as the `visibility` field.
+pub async fn classify_visibility(
+    json: &Value,
+    service: &crate::ingestion::ingestion_service::IngestionService,
+) -> IngestionResult<String> {
+    let description = json
+        .get("markdown")
+        .and_then(|v| v.as_str())
+        .ok_or_else(|| {
+            IngestionError::InvalidInput(
+                "Cannot classify visibility: no 'markdown' field in image JSON".to_string(),
+            )
+        })?;
+
+    let truncated: String = description.chars().take(500).collect();
+    let prompt = VISIBILITY_CLASSIFICATION_PROMPT.replace("{description}", &truncated);
+
+    let raw_response = service.call_ai_raw(&prompt).await?;
+    parse_visibility_response(&raw_response)
+}
+
+/// Parse the raw AI response into `"public"` or `"private"`.
+///
+/// Conservative: if the response mentions both words, `"private"` wins.
+/// Errors on unrecognizable responses.
+pub(crate) fn parse_visibility_response(response: &str) -> IngestionResult<String> {
+    let trimmed = response.trim().to_lowercase();
+    if trimmed.contains("private") {
+        Ok("private".to_string())
+    } else if trimmed.contains("public") {
+        Ok("public".to_string())
+    } else {
+        Err(IngestionError::ai_response_validation_error(format!(
+            "Unexpected visibility response: '{}'. Expected 'public' or 'private'.",
+            trimmed
+        )))
     }
 }
 
@@ -602,6 +656,57 @@ mod tests {
         assert_eq!(arr[1]["text"], "World");
         assert_eq!(arr[1]["user"], "bob");
         assert!(arr[1].get("tweet").is_none());
+    }
+
+    #[test]
+    fn test_parse_visibility_public() {
+        assert_eq!(parse_visibility_response("public").unwrap(), "public");
+        assert_eq!(parse_visibility_response("  Public  \n").unwrap(), "public");
+        assert_eq!(
+            parse_visibility_response("The image is public.").unwrap(),
+            "public"
+        );
+    }
+
+    #[test]
+    fn test_parse_visibility_private() {
+        assert_eq!(parse_visibility_response("private").unwrap(), "private");
+        assert_eq!(
+            parse_visibility_response("  PRIVATE  ").unwrap(),
+            "private"
+        );
+        assert_eq!(
+            parse_visibility_response("This looks private.").unwrap(),
+            "private"
+        );
+    }
+
+    #[test]
+    fn test_parse_visibility_ambiguous_defaults_to_private() {
+        // If response contains both words, "private" wins (conservative)
+        assert_eq!(
+            parse_visibility_response("not private, actually public").unwrap(),
+            "private"
+        );
+    }
+
+    #[test]
+    fn test_parse_visibility_invalid() {
+        assert!(parse_visibility_response("unknown").is_err());
+        assert!(parse_visibility_response("").is_err());
+        assert!(parse_visibility_response("maybe").is_err());
+    }
+
+    #[test]
+    fn test_enrich_image_json_preserves_existing_visibility() {
+        let mut json = json!({
+            "description": "A sunset",
+            "visibility": "private"
+        });
+        let path = std::path::PathBuf::from("/tmp/test.jpg");
+        enrich_image_json(&mut json, &path, Some("test.jpg"));
+        // enrich_image_json should NOT touch visibility — it's set by classify_visibility
+        assert_eq!(json["visibility"], "private");
     }
 
     #[test]

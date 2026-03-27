@@ -77,6 +77,26 @@ pub(crate) fn apply_image_schema_override(
         {
             fc.entry("source_file_name")
                 .or_insert_with(|| serde_json::json!(["word"]));
+            fc.entry("visibility")
+                .or_insert_with(|| serde_json::json!(["word"]));
+        }
+        // Ensure visibility is in the fields list
+        if let Some(fields) = schema_def.get_mut("fields").and_then(|f| f.as_array_mut()) {
+            let vis = serde_json::json!("visibility");
+            if !fields.contains(&vis) {
+                fields.push(vis);
+            }
+        }
+        // Ensure visibility has a field description
+        if let Some(fd) = schema_def
+            .get_mut("field_descriptions")
+            .and_then(|f| f.as_object_mut())
+        {
+            fd.entry("visibility").or_insert_with(|| {
+                serde_json::json!(
+                    "AI-classified photo visibility: public (suitable for social feed) or private (sensitive content)"
+                )
+            });
         }
         if let Some(desc) = descriptive_name {
             schema_def["descriptive_name"] = serde_json::json!(desc);
@@ -86,6 +106,10 @@ pub(crate) fn apply_image_schema_override(
         .mutation_mappers
         .entry("source_file_name".to_string())
         .or_insert_with(|| "source_file_name".to_string());
+    ai_response
+        .mutation_mappers
+        .entry("visibility".to_string())
+        .or_insert_with(|| "visibility".to_string());
 }
 
 /// Acquire a clone of the SchemaCore from the node without holding the DB lock.
@@ -696,4 +720,51 @@ fn schemas_written_from_map(map: HashMap<String, Vec<KeyValue>>) -> Vec<SchemaWr
             keys_written: keys,
         })
         .collect()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use serde_json::json;
+
+    #[test]
+    fn test_apply_image_schema_override_includes_visibility() {
+        let mut response = AISchemaResponse {
+            new_schemas: Some(json!({
+                "name": "social_photos",
+                "fields": ["markdown", "image_type"],
+                "field_classifications": {"markdown": ["word"], "image_type": ["word"]},
+                "field_descriptions": {"markdown": "description", "image_type": "type"}
+            })),
+            mutation_mappers: HashMap::new(),
+        };
+        apply_image_schema_override(&mut response, Some("Photos"));
+
+        let schema = response.new_schemas.unwrap();
+        let fields = schema["fields"].as_array().unwrap();
+        assert!(
+            fields.contains(&json!("visibility")),
+            "visibility must be in fields"
+        );
+        assert!(
+            fields.contains(&json!("source_file_name")),
+            "source_file_name must be in fields"
+        );
+        assert!(
+            schema["field_classifications"]["visibility"].is_array(),
+            "visibility must have field_classifications"
+        );
+        assert!(
+            schema["field_descriptions"]["visibility"].is_string(),
+            "visibility must have field_descriptions"
+        );
+        assert!(
+            response.mutation_mappers.contains_key("visibility"),
+            "visibility must be in mutation_mappers"
+        );
+        assert!(
+            response.mutation_mappers.contains_key("source_file_name"),
+            "source_file_name must be in mutation_mappers"
+        );
+    }
 }
