@@ -228,17 +228,44 @@ pub(crate) async fn process_single_file_via_smart_folder(
                     .await
                     .map_err(|e| e.to_string())?;
                 // Enrich image JSON with image_type and created_at for HashRange schema support
-                let image_descriptive_name = file_path
+                let is_image_file = file_path
                     .file_name()
                     .and_then(|n| n.to_str())
-                    .filter(|name| crate::ingestion::is_image_file(name))
-                    .and_then(|name| {
-                        crate::ingestion::file_handling::json_processor::enrich_image_json(
-                            &mut data,
-                            &file_path.to_path_buf(),
-                            Some(name),
-                        )
-                    });
+                    .filter(|name| crate::ingestion::is_image_file(name));
+                let image_descriptive_name = is_image_file.and_then(|name| {
+                    crate::ingestion::file_handling::json_processor::enrich_image_json(
+                        &mut data,
+                        &file_path.to_path_buf(),
+                        Some(name),
+                    )
+                });
+                // Classify photo visibility using AI
+                if is_image_file.is_some()
+                    && data.get("visibility").and_then(|v| v.as_str()).is_none()
+                {
+                    match crate::ingestion::file_handling::json_processor::classify_visibility(
+                        &data, service,
+                    )
+                    .await
+                    {
+                        Ok(visibility) => {
+                            if let serde_json::Value::Object(ref mut map) = data {
+                                map.insert(
+                                    "visibility".to_string(),
+                                    serde_json::Value::String(visibility),
+                                );
+                            }
+                        }
+                        Err(e) => {
+                            log_feature!(
+                                LogFeature::Ingestion,
+                                warn,
+                                "Visibility classification failed, skipping: {}",
+                                e
+                            );
+                        }
+                    }
+                }
                 (data, hash_hex, raw_bytes, image_descriptive_name)
             }
         };

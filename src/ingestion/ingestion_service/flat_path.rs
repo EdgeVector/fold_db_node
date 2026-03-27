@@ -80,6 +80,28 @@ impl IngestionService {
                     Some(sfn.as_str()),
                 );
             }
+            // Classify photo visibility using AI
+            if data.get("visibility").and_then(|v| v.as_str()).is_none() {
+                match crate::ingestion::file_handling::json_processor::classify_visibility(
+                    &data, self,
+                )
+                .await
+                {
+                    Ok(visibility) => {
+                        if let Value::Object(ref mut map) = data {
+                            map.insert("visibility".to_string(), Value::String(visibility));
+                        }
+                    }
+                    Err(e) => {
+                        log_feature!(
+                            LogFeature::Ingestion,
+                            warn,
+                            "Visibility classification failed, skipping: {}",
+                            e
+                        );
+                    }
+                }
+            }
             data
         } else {
             flattened_data.clone()

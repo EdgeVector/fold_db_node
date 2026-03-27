@@ -522,6 +522,36 @@ async fn run_apple_photos_import(
                         &file_path,
                         Some(file_name),
                     );
+                // Classify photo visibility using AI
+                if json_value
+                    .get("visibility")
+                    .and_then(|v| v.as_str())
+                    .is_none()
+                {
+                    match crate::ingestion::file_handling::json_processor::classify_visibility(
+                        &json_value,
+                        &service,
+                    )
+                    .await
+                    {
+                        Ok(visibility) => {
+                            if let serde_json::Value::Object(ref mut map) = json_value {
+                                map.insert(
+                                    "visibility".to_string(),
+                                    serde_json::Value::String(visibility),
+                                );
+                            }
+                        }
+                        Err(e) => {
+                            log_feature!(
+                                LogFeature::Ingestion,
+                                warn,
+                                "Visibility classification failed, skipping: {}",
+                                e
+                            );
+                        }
+                    }
+                }
 
                 // Feed into ingestion pipeline
                 let request = IngestionRequest {

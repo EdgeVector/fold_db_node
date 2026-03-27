@@ -550,11 +550,44 @@ pub async fn upload_file(
 
     // Enrich image JSON with image_type and created_at for HashRange schema support
     let image_descriptive_name = if crate::ingestion::is_image_file(&form_data.original_filename) {
-        crate::ingestion::file_handling::json_processor::enrich_image_json(
+        let desc_name = crate::ingestion::file_handling::json_processor::enrich_image_json(
             &mut json_value,
             &form_data.file_path,
             Some(&form_data.original_filename),
-        )
+        );
+        // Classify photo visibility using AI
+        if json_value
+            .get("visibility")
+            .and_then(|v| v.as_str())
+            .is_none()
+        {
+            if let Some(service) = get_ingestion_service(&ingestion_service).await {
+                match crate::ingestion::file_handling::json_processor::classify_visibility(
+                    &json_value,
+                    &service,
+                )
+                .await
+                {
+                    Ok(visibility) => {
+                        if let serde_json::Value::Object(ref mut map) = json_value {
+                            map.insert(
+                                "visibility".to_string(),
+                                serde_json::Value::String(visibility),
+                            );
+                        }
+                    }
+                    Err(e) => {
+                        log_feature!(
+                            LogFeature::Ingestion,
+                            warn,
+                            "Visibility classification failed, skipping: {}",
+                            e
+                        );
+                    }
+                }
+            }
+        }
+        desc_name
     } else {
         None
     };
