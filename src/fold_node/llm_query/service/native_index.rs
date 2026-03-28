@@ -637,10 +637,7 @@ impl LlmQueryService {
                     .get("query")
                     .and_then(|q| q.as_str())
                     .ok_or("web_search tool requires 'query' parameter")?;
-                let count = params
-                    .get("count")
-                    .and_then(|c| c.as_u64())
-                    .unwrap_or(5) as usize;
+                let count = params.get("count").and_then(|c| c.as_u64()).unwrap_or(5) as usize;
 
                 log::info!("Agent web_search: query='{}', count={}", query, count);
                 let results = super::web_tools::web_search(query, count).await?;

@@ -46,10 +46,7 @@ pub async fn web_search(query: &str, count: usize) -> Result<Vec<WebSearchResult
     let status = response.status();
     if !status.is_success() {
         let body = response.text().await.unwrap_or_default();
-        return Err(format!(
-            "Web search API returned HTTP {}: {}",
-            status, body
-        ));
+        return Err(format!("Web search API returned HTTP {}: {}", status, body));
     }
 
     let body: Value = response

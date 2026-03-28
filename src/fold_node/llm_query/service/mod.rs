@@ -281,7 +281,9 @@ impl LlmQueryService {
         prompt.push_str("Search the web for real-time information. Use this when the user's question requires external knowledge not available in the local database — e.g., restaurant recommendations, travel logistics, current events, prices, directions, reviews.\n");
         prompt.push_str("Parameters:\n");
         prompt.push_str("- query (string, required): Search query (e.g. \"best restaurants in Maui Hawaii\", \"flights from SFO to OGG\")\n");
-        prompt.push_str("- count (integer, optional): Number of results to return (default: 5, max: 5)\n");
+        prompt.push_str(
+            "- count (integer, optional): Number of results to return (default: 5, max: 5)\n",
+        );
         prompt.push_str("Returns: array of results with title, url, and snippet for each.\n");
         prompt.push_str("After getting results, use **fetch_url** to read full page content for the most relevant results.\n");
         prompt.push_str("Example: {\"tool\": \"web_search\", \"params\": {\"query\": \"best snorkeling spots Maui\"}}\n\n");
