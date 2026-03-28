@@ -632,6 +632,42 @@ impl LlmQueryService {
                 }))
             }
 
+            "web_search" => {
+                let query = params
+                    .get("query")
+                    .and_then(|q| q.as_str())
+                    .ok_or("web_search tool requires 'query' parameter")?;
+                let count = params
+                    .get("count")
+                    .and_then(|c| c.as_u64())
+                    .unwrap_or(5) as usize;
+
+                log::info!("Agent web_search: query='{}', count={}", query, count);
+                let results = super::web_tools::web_search(query, count).await?;
+
+                Ok(serde_json::json!({
+                    "results": results,
+                    "total": results.len(),
+                    "query": query,
+                }))
+            }
+
+            "fetch_url" => {
+                let url = params
+                    .get("url")
+                    .and_then(|u| u.as_str())
+                    .ok_or("fetch_url tool requires 'url' parameter")?;
+
+                log::info!("Agent fetch_url: url='{}'", url);
+                let content = super::web_tools::fetch_url(url).await?;
+
+                Ok(serde_json::json!({
+                    "url": url,
+                    "content": content,
+                    "length": content.len(),
+                }))
+            }
+
             "set_field_policy" => Err("Access control has been removed from fold_db".to_string()),
 
             "get_field_policies" => Err("Access control has been removed from fold_db".to_string()),
@@ -754,6 +790,8 @@ impl LlmQueryService {
                         "scan_folder" => "Scanning folder...",
                         "list_schemas" => "Listing schemas...",
                         "create_view" => "Compiling WASM view...",
+                        "web_search" => "Searching the web...",
+                        "fetch_url" => "Fetching URL...",
                         _ => "Executing tool...",
                     };
                     update_agent_progress(
