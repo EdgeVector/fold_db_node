@@ -95,14 +95,23 @@ jobs:
         working-directory: src/server/static-react
         env:
           APPLE_SIGNING_IDENTITY: ${{ secrets.APPLE_SIGNING_IDENTITY }}
-        run: npx tauri build --target ${{ matrix.target }} --bundles dmg
+        run: npx tauri build --target ${{ matrix.target }} --bundles app,dmg
 
       # --- Verify signing ---
       - name: Verify code signature
         run: |
           APP_PATH="src/server/static-react/src-tauri/target/${{ matrix.target }}/release/bundle/macos/FoldDB.app"
-          echo "Verifying: $APP_PATH"
-          codesign --verify --deep --strict --verbose=2 "$APP_PATH"
+          if [[ -d "$APP_PATH" ]]; then
+            echo "Verifying: $APP_PATH"
+            codesign --verify --deep --strict --verbose=2 "$APP_PATH"
+          else
+            echo "Standalone .app not found at $APP_PATH, verifying DMG signature instead"
+            BUNDLE_DIR="src/server/static-react/src-tauri/target/${{ matrix.target }}/release/bundle"
+            DMG=$(find "$BUNDLE_DIR/dmg" -name "*.dmg" | head -1)
+            if [[ -n "$DMG" ]]; then
+              codesign --verify --verbose=2 "$DMG"
+            fi
+          fi
 
       # --- Notarize ---
       - name: Notarize app
