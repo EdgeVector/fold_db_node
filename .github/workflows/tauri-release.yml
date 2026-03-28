@@ -72,7 +72,7 @@ jobs:
             -T /usr/bin/security
 
           # Allow codesign to access the keychain without UI prompt
-          security set-key-partition-list -S apple-tool:,apple: -k "$KEYCHAIN_PASSWORD" "$KEYCHAIN_PATH"
+          security set-key-partition-list -S apple-tool:,apple:,codesign: -k "$KEYCHAIN_PASSWORD" "$KEYCHAIN_PATH"
 
           # Add to keychain search list
           security list-keychains -d user -s "$KEYCHAIN_PATH" login.keychain-db
@@ -95,14 +95,23 @@ jobs:
         working-directory: src/server/static-react
         env:
           APPLE_SIGNING_IDENTITY: ${{ secrets.APPLE_SIGNING_IDENTITY }}
-        run: npx tauri build --target ${{ matrix.target }}
+        run: npx tauri build --target ${{ matrix.target }} --bundles app,dmg
 
       # --- Verify signing ---
       - name: Verify code signature
         run: |
           APP_PATH="src/server/static-react/src-tauri/target/${{ matrix.target }}/release/bundle/macos/FoldDB.app"
-          echo "Verifying: $APP_PATH"
-          codesign --verify --deep --strict --verbose=2 "$APP_PATH"
+          if [[ -d "$APP_PATH" ]]; then
+            echo "Verifying: $APP_PATH"
+            codesign --verify --deep --strict --verbose=2 "$APP_PATH"
+          else
+            echo "Standalone .app not found at $APP_PATH, verifying DMG signature instead"
+            BUNDLE_DIR="src/server/static-react/src-tauri/target/${{ matrix.target }}/release/bundle"
+            DMG=$(find "$BUNDLE_DIR/dmg" -name "*.dmg" | head -1)
+            if [[ -n "$DMG" ]]; then
+              codesign --verify --verbose=2 "$DMG"
+            fi
+          fi
 
       # --- Notarize ---
       - name: Notarize app
@@ -129,12 +138,38 @@ jobs:
           echo "Stapling notarization ticket..."
           xcrun stapler staple "$DMG"
 
+      # --- Verify notarization ---
+      - name: Verify notarization
+        run: |
+          BUNDLE_DIR="src/server/static-react/src-tauri/target/${{ matrix.target }}/release/bundle"
+          DMG=$(find "$BUNDLE_DIR/dmg" -name "*.dmg" | head -1)
+          if [[ -n "$DMG" ]]; then
+            echo "Checking Gatekeeper assessment..."
+            spctl --assess --type open --context context:primary-signature -vvv "$DMG" 2>&1 || true
+            echo ""
+            echo "Validating stapled ticket..."
+            stapler validate "$DMG"
+          fi
+
+      # --- Rename with version + arch ---
+      - name: Prepare artifact
+        id: artifact
+        run: |
+          BUNDLE_DIR="src/server/static-react/src-tauri/target/${{ matrix.target }}/release/bundle"
+          DMG=$(find "$BUNDLE_DIR/dmg" -name "*.dmg" | head -1)
+          VERSION=$(jq -r '.version' src/server/static-react/src-tauri/tauri.conf.json)
+          FINAL_NAME="FoldDB_${VERSION}_${{ matrix.arch }}.dmg"
+          cp "$DMG" "$RUNNER_TEMP/$FINAL_NAME"
+          echo "dmg_path=$RUNNER_TEMP/$FINAL_NAME" >> "$GITHUB_OUTPUT"
+          echo "dmg_name=$FINAL_NAME" >> "$GITHUB_OUTPUT"
+
       # --- Upload ---
       - name: Upload DMG artifact
         uses: actions/upload-artifact@v4
         with:
-          name: FoldDB-${{ matrix.arch }}-apple-darwin.dmg
-          path: src/server/static-react/src-tauri/target/${{ matrix.target }}/release/bundle/dmg/*.dmg
+          name: ${{ steps.artifact.outputs.dmg_name }}
+          path: ${{ steps.artifact.outputs.dmg_path }}
+          if-no-files-found: error
 
       # --- Cleanup keychain ---
       - name: Cleanup keychain
@@ -156,7 +191,17 @@ jobs:
         with:
           path: artifacts
 
+      - name: Generate checksums
+        run: |
+          cd artifacts
+          find . -name '*.dmg' -exec cp {} . \;
+          shasum -a 256 *.dmg > SHA256SUMS.txt
+          cat SHA256SUMS.txt
+
       - name: Attach to GitHub Release
         uses: softprops/action-gh-release@v2
         with:
-          files: artifacts/**/*.dmg
+          generate_release_notes: true
+          files: |
+            artifacts/*.dmg
+            artifacts/SHA256SUMS.txt
