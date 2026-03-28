@@ -18,9 +18,9 @@ crate-type = ["staticlib", "cdylib", "rlib"]
 tauri-build = { version = "2.5.5", features = [] }
 
 [dependencies]
-# Fold libraries
-fold_db = { path = "../../../../../fold_db" }
-fold_db_node = { path = "../../../../../fold_db_node" }
+# Fold libraries (git deps for CI; local path overrides via workspace .cargo/config.toml)
+fold_db = { git = "https://github.com/shiba4life/fold_db.git", branch = "mainline", features = ["cli"] }
+fold_db_node = { git = "https://github.com/shiba4life/fold_db_node.git", branch = "main" }
 
 # Tauri dependencies
 tauri = { version = "2.10.2", features = ["devtools"] }
