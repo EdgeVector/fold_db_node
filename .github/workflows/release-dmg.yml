@@ -1,0 +1,195 @@
+name: Release Notarized DMG
+
+on:
+  push:
+    tags:
+      - 'v*'
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: 'Tag to build (e.g. v0.2.3). Uses HEAD if empty.'
+        required: false
+
+permissions:
+  contents: write
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  build-dmg:
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - target: aarch64-apple-darwin
+            os: macos-14
+            arch: arm64
+          - target: x86_64-apple-darwin
+            os: macos-13
+            arch: x64
+
+    runs-on: ${{ matrix.os }}
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.inputs.tag || github.ref }}
+
+      - name: Configure git for private dependencies
+        run: git config --global url."https://x-access-token:${{ secrets.PRIVATE_DEPS_TOKEN }}@github.com/".insteadOf "https://github.com/"
+
+      # ── Toolchains ──────────────────────────────────────────────
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: ${{ matrix.target }}
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+
+      - name: Cache Rust artifacts
+        uses: Swatinem/rust-cache@v2
+        with:
+          key: dmg-${{ matrix.target }}
+          workspaces: src/server/static-react/src-tauri
+
+      # ── Import Apple signing certificate ────────────────────────
+      - name: Import Apple Developer ID certificate
+        env:
+          APPLE_CERTIFICATE: ${{ secrets.APPLE_CERTIFICATE }}
+          APPLE_CERTIFICATE_PASSWORD: ${{ secrets.APPLE_CERTIFICATE_PASSWORD }}
+          KEYCHAIN_PASSWORD: ${{ github.run_id }}
+        run: |
+          # Decode certificate
+          CERT_PATH="$RUNNER_TEMP/certificate.p12"
+          echo "$APPLE_CERTIFICATE" | base64 --decode > "$CERT_PATH"
+
+          # Create a temporary keychain
+          KEYCHAIN_PATH="$RUNNER_TEMP/signing.keychain-db"
+          security create-keychain -p "$KEYCHAIN_PASSWORD" "$KEYCHAIN_PATH"
+          security set-keychain-settings -lut 21600 "$KEYCHAIN_PATH"
+          security unlock-keychain -p "$KEYCHAIN_PASSWORD" "$KEYCHAIN_PATH"
+
+          # Import certificate into keychain
+          security import "$CERT_PATH" \
+            -P "$APPLE_CERTIFICATE_PASSWORD" \
+            -A -t cert -f pkcs12 \
+            -k "$KEYCHAIN_PATH"
+
+          # Allow codesign to access the keychain without UI prompt
+          security set-key-partition-list \
+            -S apple-tool:,apple:,codesign: \
+            -s -k "$KEYCHAIN_PASSWORD" "$KEYCHAIN_PATH"
+
+          # Add temporary keychain to search list (prepend so it's found first)
+          security list-keychains -d user -s "$KEYCHAIN_PATH" $(security list-keychains -d user | tr -d '"')
+
+          # Verify identity is available
+          security find-identity -v -p codesigning "$KEYCHAIN_PATH"
+
+      # ── Build frontend ──────────────────────────────────────────
+      - name: Install frontend dependencies
+        working-directory: src/server/static-react
+        run: npm ci
+
+      - name: Build React frontend
+        working-directory: src/server/static-react
+        run: npm run build
+
+      # ── Build Tauri app (signed + notarized) ────────────────────
+      - name: Build Tauri app
+        working-directory: src/server/static-react
+        env:
+          # Signing
+          APPLE_SIGNING_IDENTITY: ${{ secrets.APPLE_SIGNING_IDENTITY }}
+          # Notarization (Tauri 2.x reads these automatically)
+          APPLE_ID: ${{ secrets.APPLE_ID }}
+          APPLE_PASSWORD: ${{ secrets.APPLE_PASSWORD }}
+          APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
+          # Build for the correct target
+          TAURI_SIGNING_PRIVATE_KEY: ''
+        run: npx tauri build --target ${{ matrix.target }} --bundles dmg
+
+      # ── Locate and rename artifacts ─────────────────────────────
+      - name: Prepare artifacts
+        id: artifacts
+        run: |
+          DMG_DIR="src/server/static-react/src-tauri/target/${{ matrix.target }}/release/bundle/dmg"
+          DMG_FILE=$(ls "$DMG_DIR"/*.dmg 2>/dev/null | head -1)
+
+          if [ -z "$DMG_FILE" ]; then
+            echo "::error::No DMG file found in $DMG_DIR"
+            ls -la "$DMG_DIR" || true
+            exit 1
+          fi
+
+          # Extract version from tauri.conf.json
+          VERSION=$(jq -r '.version' src/server/static-react/src-tauri/tauri.conf.json)
+
+          # Rename with architecture suffix
+          FINAL_NAME="FoldDB_${VERSION}_${{ matrix.arch }}.dmg"
+          cp "$DMG_FILE" "$RUNNER_TEMP/$FINAL_NAME"
+
+          echo "dmg_path=$RUNNER_TEMP/$FINAL_NAME" >> "$GITHUB_OUTPUT"
+          echo "dmg_name=$FINAL_NAME" >> "$GITHUB_OUTPUT"
+          echo "version=$VERSION" >> "$GITHUB_OUTPUT"
+
+      # ── Verify notarization ─────────────────────────────────────
+      - name: Verify notarization staple
+        run: |
+          echo "Verifying Gatekeeper assessment..."
+          spctl --assess --type open --context context:primary-signature -vvv "${{ steps.artifacts.outputs.dmg_path }}" 2>&1 || true
+
+          echo ""
+          echo "Checking stapled notarization ticket..."
+          stapler validate "${{ steps.artifacts.outputs.dmg_path }}" 2>&1 || true
+
+          echo ""
+          echo "Verifying codesign on DMG..."
+          codesign --verify --verbose=4 "${{ steps.artifacts.outputs.dmg_path }}" 2>&1 || true
+
+      # ── Upload artifact ─────────────────────────────────────────
+      - name: Upload DMG artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: ${{ steps.artifacts.outputs.dmg_name }}
+          path: ${{ steps.artifacts.outputs.dmg_path }}
+          if-no-files-found: error
+
+      # ── Cleanup keychain ────────────────────────────────────────
+      - name: Cleanup keychain
+        if: always()
+        run: security delete-keychain "$RUNNER_TEMP/signing.keychain-db" 2>/dev/null || true
+
+  # ── Create GitHub Release ─────────────────────────────────────────
+  release:
+    needs: build-dmg
+    runs-on: ubuntu-latest
+    if: startsWith(github.ref, 'refs/tags/v')
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Download all DMG artifacts
+        uses: actions/download-artifact@v4
+        with:
+          path: artifacts
+
+      - name: Generate checksums
+        run: |
+          cd artifacts
+          find . -name '*.dmg' -exec cp {} . \;
+          shasum -a 256 *.dmg > SHA256SUMS.txt
+          cat SHA256SUMS.txt
+
+      - name: Create GitHub Release
+        uses: softprops/action-gh-release@v2
+        with:
+          generate_release_notes: true
+          files: |
+            artifacts/*.dmg
+            artifacts/SHA256SUMS.txt
