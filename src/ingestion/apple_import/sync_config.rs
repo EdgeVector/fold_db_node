@@ -15,7 +15,9 @@ pub enum SyncSchedule {
     Daily,
     Weekly,
     /// Custom interval in hours.
-    Custom { hours: u32 },
+    Custom {
+        hours: u32,
+    },
 }
 
 impl SyncSchedule {
@@ -122,8 +124,7 @@ impl AppleSyncConfig {
         }
         let json = serde_json::to_string_pretty(self)
             .map_err(|e| format!("Failed to serialize sync config: {e}"))?;
-        std::fs::write(&path, json)
-            .map_err(|e| format!("Failed to write sync config: {e}"))?;
+        std::fs::write(&path, json).map_err(|e| format!("Failed to write sync config: {e}"))?;
         Ok(())
     }
 }
@@ -173,9 +174,7 @@ mod tests {
         };
         cfg.recompute_next_sync();
         let expected = now + Duration::hours(24);
-        let diff = (cfg.next_sync.unwrap() - expected)
-            .num_seconds()
-            .abs();
+        let diff = (cfg.next_sync.unwrap() - expected).num_seconds().abs();
         assert!(diff < 2, "next_sync should be ~24h after last_sync");
     }
 

@@ -44,8 +44,7 @@ pub fn spawn_sync_scheduler(
 
             let should_sync = {
                 let cfg = sync_config.read().await;
-                cfg.enabled
-                    && cfg.next_sync.is_some_and(|next| Utc::now() >= next)
+                cfg.enabled && cfg.next_sync.is_some_and(|next| Utc::now() >= next)
             };
 
             if !should_sync {
@@ -132,7 +131,11 @@ async fn run_sync(
     let tracker = progress_tracker.get_ref().clone();
 
     if sources.notes {
-        log_feature!(LogFeature::Ingestion, info, "Apple auto-sync: importing notes");
+        log_feature!(
+            LogFeature::Ingestion,
+            info,
+            "Apple auto-sync: importing notes"
+        );
         sync_notes(&user_id, node_arc.clone(), service.clone(), tracker.clone()).await;
     }
 
@@ -178,11 +181,21 @@ async fn sync_notes(
     let notes = match tokio::task::spawn_blocking(|| notes::extract(None)).await {
         Ok(Ok(n)) => n,
         Ok(Err(e)) => {
-            log_feature!(LogFeature::Ingestion, warn, "Auto-sync notes extract failed: {}", e);
+            log_feature!(
+                LogFeature::Ingestion,
+                warn,
+                "Auto-sync notes extract failed: {}",
+                e
+            );
             return;
         }
         Err(e) => {
-            log_feature!(LogFeature::Ingestion, warn, "Auto-sync notes task panicked: {}", e);
+            log_feature!(
+                LogFeature::Ingestion,
+                warn,
+                "Auto-sync notes task panicked: {}",
+                e
+            );
             return;
         }
     };
@@ -207,11 +220,21 @@ async fn sync_notes(
             image_descriptive_name: None,
         };
 
-        if let Err(e) =
-            crate::handlers::ingestion::process_json(request, &uid, &tracker, &node, service.clone())
-                .await
+        if let Err(e) = crate::handlers::ingestion::process_json(
+            request,
+            &uid,
+            &tracker,
+            &node,
+            service.clone(),
+        )
+        .await
         {
-            log_feature!(LogFeature::Ingestion, warn, "Auto-sync notes batch error: {}", e);
+            log_feature!(
+                LogFeature::Ingestion,
+                warn,
+                "Auto-sync notes batch error: {}",
+                e
+            );
         }
     }
 }
@@ -229,11 +252,21 @@ async fn sync_reminders(
     let rems = match tokio::task::spawn_blocking(|| reminders::extract(None)).await {
         Ok(Ok(r)) => r,
         Ok(Err(e)) => {
-            log_feature!(LogFeature::Ingestion, warn, "Auto-sync reminders extract failed: {}", e);
+            log_feature!(
+                LogFeature::Ingestion,
+                warn,
+                "Auto-sync reminders extract failed: {}",
+                e
+            );
             return;
         }
         Err(e) => {
-            log_feature!(LogFeature::Ingestion, warn, "Auto-sync reminders task panicked: {}", e);
+            log_feature!(
+                LogFeature::Ingestion,
+                warn,
+                "Auto-sync reminders task panicked: {}",
+                e
+            );
             return;
         }
     };
@@ -259,7 +292,12 @@ async fn sync_reminders(
     if let Err(e) =
         crate::handlers::ingestion::process_json(request, user_id, &tracker, &node, service).await
     {
-        log_feature!(LogFeature::Ingestion, warn, "Auto-sync reminders error: {}", e);
+        log_feature!(
+            LogFeature::Ingestion,
+            warn,
+            "Auto-sync reminders error: {}",
+            e
+        );
     }
 }
 
@@ -277,11 +315,21 @@ async fn sync_photos(
     let paths = match tokio::task::spawn_blocking(move || photos::export(None, limit)).await {
         Ok(Ok(p)) => p,
         Ok(Err(e)) => {
-            log_feature!(LogFeature::Ingestion, warn, "Auto-sync photos export failed: {}", e);
+            log_feature!(
+                LogFeature::Ingestion,
+                warn,
+                "Auto-sync photos export failed: {}",
+                e
+            );
             return;
         }
         Err(e) => {
-            log_feature!(LogFeature::Ingestion, warn, "Auto-sync photos task panicked: {}", e);
+            log_feature!(
+                LogFeature::Ingestion,
+                warn,
+                "Auto-sync photos task panicked: {}",
+                e
+            );
             return;
         }
     };
@@ -294,7 +342,8 @@ async fn sync_photos(
 
     for path in &paths {
         let file_path = path.to_path_buf();
-        match crate::ingestion::file_handling::json_processor::convert_file_to_json(&file_path).await
+        match crate::ingestion::file_handling::json_processor::convert_file_to_json(&file_path)
+            .await
         {
             Ok(mut json_value) => {
                 let file_name = path
