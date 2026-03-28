@@ -1,7 +1,0 @@
-# Local development overrides — use workspace path deps instead of git
-# These are ignored on CI where the paths don't exist (Cargo falls back to git deps)
-[patch."https://github.com/shiba4life/fold_db.git"]
-fold_db = { path = "../../../../../fold_db" }
-
-[patch."https://github.com/shiba4life/fold_db_node.git"]
-fold_db_node = { path = "../../../../../fold_db_node" }
