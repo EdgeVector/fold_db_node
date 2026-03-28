@@ -3,6 +3,7 @@
 mod native_index;
 mod parsers;
 mod prompts;
+pub mod web_tools;
 
 use super::types::{FollowupAnalysis, Message, QueryPlan};
 use crate::ingestion::{
@@ -276,6 +277,24 @@ impl LlmQueryService {
         prompt.push_str("Parameters: none\n");
         prompt.push_str("Example: {\"tool\": \"discovery_status\", \"params\": {}}\n\n");
 
+        prompt.push_str("### web_search\n");
+        prompt.push_str("Search the web for real-time information. Use this when the user's question requires external knowledge not available in the local database — e.g., restaurant recommendations, travel logistics, current events, prices, directions, reviews.\n");
+        prompt.push_str("Parameters:\n");
+        prompt.push_str("- query (string, required): Search query (e.g. \"best restaurants in Maui Hawaii\", \"flights from SFO to OGG\")\n");
+        prompt.push_str(
+            "- count (integer, optional): Number of results to return (default: 5, max: 5)\n",
+        );
+        prompt.push_str("Returns: array of results with title, url, and snippet for each.\n");
+        prompt.push_str("After getting results, use **fetch_url** to read full page content for the most relevant results.\n");
+        prompt.push_str("Example: {\"tool\": \"web_search\", \"params\": {\"query\": \"best snorkeling spots Maui\"}}\n\n");
+
+        prompt.push_str("### fetch_url\n");
+        prompt.push_str("Fetch a URL and extract its text content. Use this after web_search to get detailed information from a specific page.\n");
+        prompt.push_str("Parameters:\n");
+        prompt.push_str("- url (string, required): The URL to fetch (must be a full URL starting with http:// or https://)\n");
+        prompt.push_str("Returns: extracted text content from the page (HTML tags stripped, truncated to ~50K chars).\n");
+        prompt.push_str("Example: {\"tool\": \"fetch_url\", \"params\": {\"url\": \"https://example.com/maui-guide\"}}\n\n");
+
         prompt.push_str("### set_field_policy\n");
         prompt.push_str("Set the access control policy on a schema field. Controls who can read/write the field based on trust distance.\n");
         prompt.push_str("Parameters:\n");
@@ -326,11 +345,12 @@ impl LlmQueryService {
         prompt.push_str("ALWAYS use the **search** tool first with relevant keywords. ");
         prompt.push_str("This searches the full-text index and will find records by tags, subjects, descriptions, names, and other indexed content. ");
         prompt.push_str("After getting search results, use the **query** tool with the returned schema and key to fetch full records.\n");
-        prompt.push_str("3. Use other tools to gather additional information as needed\n");
+        prompt.push_str("3. **For questions requiring external/real-world information** (vacation planning, restaurant recommendations, travel logistics, current events, prices), use the **web_search** tool. Follow up with **fetch_url** on the most relevant results for detailed information.\n");
+        prompt.push_str("4. Use other tools to gather additional information as needed\n");
         prompt.push_str(
-            "4. When you have enough information to answer, provide your final response\n",
+            "5. When you have enough information to answer, provide your final response\n",
         );
-        prompt.push_str("5. Use the current date/time above to determine temporal context. Events with dates before today are in the PAST. Events with dates after today are in the FUTURE. Label them accordingly (e.g. \"upcoming\" vs \"past\").\n\n");
+        prompt.push_str("6. Use the current date/time above to determine temporal context. Events with dates before today are in the PAST. Events with dates after today are in the FUTURE. Label them accordingly (e.g. \"upcoming\" vs \"past\").\n\n");
         prompt.push_str("## Reference Fields\n\n");
         prompt.push_str("Some fields are References to records in other schemas. Query results automatically resolve references one level deep.\n");
         prompt.push_str("If a field value is an array of objects with \"schema\" and \"key\" properties, those are references to child records.\n");
