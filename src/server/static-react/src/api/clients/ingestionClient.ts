@@ -613,6 +613,16 @@ export class UnifiedIngestionClient {
       { album: album || null, limit },
     );
   }
+
+  /** Import events from Apple Calendar */
+  async appleImportCalendar(
+    calendar?: string,
+  ): Promise<EnhancedApiResponse<{ success: boolean; progress_id: string }>> {
+    return this.client.post<{ success: boolean; progress_id: string }>(
+      `/ingestion/apple-import/calendar`,
+      { calendar: calendar || null },
+    );
+  }
 }
 
 // Create default instance
