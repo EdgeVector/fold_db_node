@@ -401,10 +401,13 @@ export const getNodePrivateKey =
 export const getNodePublicKey =
   systemClient.getNodePublicKey.bind(systemClient);
 export const getSyncStatus = systemClient.getSyncStatus.bind(systemClient);
+export const triggerSync = systemClient.triggerSync.bind(systemClient);
 export const getDatabaseConfig =
   systemClient.getDatabaseConfig.bind(systemClient);
 export const updateDatabaseConfig =
   systemClient.updateDatabaseConfig.bind(systemClient);
+export const getDatabaseStatus =
+  systemClient.getDatabaseStatus.bind(systemClient);
 export const applySetup = systemClient.applySetup.bind(systemClient);
 export const migrateToCloud = systemClient.migrateToCloud.bind(systemClient);
 export const createLogStream = systemClient.createLogStream.bind(systemClient);
