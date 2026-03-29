@@ -62,6 +62,9 @@ pub struct NodeManager {
     shared_local_node: Arc<Mutex<Option<Arc<RwLock<FoldNode>>>>>,
     /// Whether we're in local mode (wrapped in RwLock for live reconfiguration)
     is_local_mode: RwLock<bool>,
+    /// Serializes ensure_default_identity calls to prevent race conditions
+    /// where concurrent requests could both generate different keypairs
+    identity_init_lock: Mutex<()>,
 }
 
 impl NodeManager {
@@ -77,6 +80,7 @@ impl NodeManager {
             nodes: Arc::new(Mutex::new(HashMap::new())),
             shared_local_node: Arc::new(Mutex::new(None)),
             is_local_mode: RwLock::new(is_local_mode),
+            identity_init_lock: Mutex::new(()),
         }
     }
 
@@ -249,27 +253,37 @@ impl NodeManager {
                     ))
                 })?;
 
-            // Write the identity file
+            // Write atomically via temp file + rename to prevent partial reads
             let content = serde_json::to_string_pretty(&identity).map_err(|e| {
                 NodeManagerError::SecurityError(format!("Failed to serialize identity: {e}"))
             })?;
-            tokio::fs::write(&identity_path, &content)
+            let tmp_path = identity_dir.join(format!("{hash_hex}.json.tmp"));
+            tokio::fs::write(&tmp_path, &content)
                 .await
                 .map_err(|e| {
                     NodeManagerError::SecurityError(format!("Failed to write identity file: {e}"))
                 })?;
 
-            // Restrict permissions to owner-only (Unix)
+            // Restrict permissions to owner-only (Unix) on the temp file
             #[cfg(unix)]
             {
                 use std::os::unix::fs::PermissionsExt;
                 let perms = std::fs::Permissions::from_mode(0o600);
-                std::fs::set_permissions(&identity_path, perms).map_err(|e| {
+                std::fs::set_permissions(&tmp_path, perms).map_err(|e| {
                     NodeManagerError::SecurityError(format!(
                         "Failed to set identity file permissions: {e}"
                     ))
                 })?;
             }
+
+            // Atomic rename: readers never see a partial file
+            tokio::fs::rename(&tmp_path, &identity_path)
+                .await
+                .map_err(|e| {
+                    NodeManagerError::SecurityError(format!(
+                        "Failed to finalize identity file: {e}"
+                    ))
+                })?;
 
             log::info!("Generated new node identity at {}", identity_path.display());
 
@@ -346,7 +360,21 @@ impl NodeManager {
     /// creates the local-mode node so subsequent authenticated requests are fast.
     /// Returns the base-64 public key string.
     pub async fn ensure_default_identity(&self) -> Result<String, NodeManagerError> {
-        // Fast path: identity already populated in the base config
+        // Fast path (lock-free): identity already populated in the base config
+        {
+            let config = self.config.read().await;
+            if let Some(pk) = &config.base_config.public_key {
+                if !pk.is_empty() {
+                    return Ok(pk.clone());
+                }
+            }
+        }
+
+        // Serialize initialization to prevent concurrent calls from racing
+        // (e.g., frontend retries could overlap, causing partial file reads)
+        let _guard = self.identity_init_lock.lock().await;
+
+        // Re-check after acquiring lock — another caller may have completed init
         {
             let config = self.config.read().await;
             if let Some(pk) = &config.base_config.public_key {

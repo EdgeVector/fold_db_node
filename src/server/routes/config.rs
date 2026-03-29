@@ -121,13 +121,22 @@ pub async fn get_database_config(state: web::Data<AppState>) -> impl Responder {
     )
 )]
 pub async fn auto_identity(state: web::Data<AppState>) -> impl Responder {
-    // Ensure the node identity exists (generates one on first call)
+    // Ensure the node identity exists (generates one on first call).
+    // Uses serialized initialization to prevent race conditions from
+    // concurrent requests (e.g., frontend retries).
     let public_key = match state.node_manager.ensure_default_identity().await {
         Ok(pk) => pk,
         Err(e) => {
-            return HttpResponse::InternalServerError().json(json!({
+            log_feature!(
+                LogFeature::HttpServer,
+                error,
+                "auto-identity failed: {}",
+                e
+            );
+            return HttpResponse::ServiceUnavailable().json(json!({
                 "ok": false,
-                "error": format!("Failed to initialize node identity: {e}")
+                "error": format!("Failed to initialize node identity: {e}"),
+                "code": "IDENTITY_INIT_FAILED"
             }));
         }
     };
