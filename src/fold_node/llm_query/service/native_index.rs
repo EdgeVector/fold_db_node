@@ -8,6 +8,7 @@ use fold_db::schema::types::schema::DeclarativeSchemaType as SchemaType;
 use fold_db::view::types::TransformView;
 use serde_json::Value;
 use std::collections::HashMap;
+use std::time::Duration;
 
 use super::LlmQueryService;
 
@@ -191,6 +192,7 @@ impl LlmQueryService {
 
                 let filter = params.get("filter").cloned();
                 let sort_order = params.get("sort_order").cloned();
+                let value_filters = params.get("value_filters").cloned();
                 let limit = params.get("limit").and_then(|l| l.as_u64()).unwrap_or(50) as usize;
 
                 let query = Query {
@@ -200,6 +202,7 @@ impl LlmQueryService {
                     as_of: None,
                     rehydrate_depth: Some(1),
                     sort_order: sort_order.and_then(|s| serde_json::from_value(s).ok()),
+                    value_filters: value_filters.and_then(|v| serde_json::from_value(v).ok()),
                 };
 
                 let results = processor
@@ -753,6 +756,72 @@ impl LlmQueryService {
                 }))
             }
 
+            "update_record" => {
+                let schema_name = params
+                    .get("schema_name")
+                    .and_then(|s| s.as_str())
+                    .ok_or("update_record tool requires 'schema_name' parameter")?;
+
+                let key_obj = params.get("key").and_then(|k| k.as_object()).ok_or(
+                    "update_record tool requires 'key' parameter (object with hash_key/range_key)",
+                )?;
+
+                let hash_key = key_obj
+                    .get("hash_key")
+                    .and_then(|v| v.as_str())
+                    .map(String::from);
+                let range_key = key_obj
+                    .get("range_key")
+                    .and_then(|v| v.as_str())
+                    .map(String::from);
+
+                if hash_key.is_none() && range_key.is_none() {
+                    return Err(
+                        "update_record 'key' must include at least one of 'hash_key' or 'range_key'"
+                            .to_string(),
+                    );
+                }
+
+                let fields_obj = params
+                    .get("fields")
+                    .and_then(|f| f.as_object())
+                    .ok_or("update_record tool requires 'fields' parameter (object)")?;
+
+                if fields_obj.is_empty() {
+                    return Err("update_record 'fields' must not be empty".to_string());
+                }
+
+                let fields_and_values: HashMap<String, Value> = fields_obj
+                    .iter()
+                    .map(|(k, v)| (k.clone(), v.clone()))
+                    .collect();
+
+                let key_value = fold_db::schema::types::KeyValue::new(hash_key, range_key);
+
+                log::info!(
+                    "Agent update_record: schema={}, key={:?}, fields={:?}",
+                    schema_name,
+                    key_value,
+                    fields_and_values.keys().collect::<Vec<_>>()
+                );
+
+                let mutation_id = processor
+                    .execute_mutation(
+                        schema_name.to_string(),
+                        fields_and_values,
+                        key_value,
+                        fold_db::schema::types::operations::MutationType::Update,
+                    )
+                    .await
+                    .map_err(|e| format!("Update failed: {}", e))?;
+
+                Ok(serde_json::json!({
+                    "success": true,
+                    "mutation_id": mutation_id,
+                    "message": format!("Record updated in schema '{}'", schema_name),
+                }))
+            }
+
             "set_field_policy" => Err("Access control has been removed from fold_db".to_string()),
 
             "get_field_policies" => Err("Access control has been removed from fold_db".to_string()),
@@ -768,6 +837,9 @@ impl LlmQueryService {
     /// 2. Parse the response for tool calls or final answer
     /// 3. Execute tool calls and add results to conversation
     /// 4. Repeat until a final answer is given or max_iterations reached
+    // 120s accommodates web-tool-heavy queries with multiple LLM round-trips.
+    const AGENT_QUERY_TIMEOUT: Duration = Duration::from_secs(120);
+
     #[allow(clippy::too_many_arguments)]
     pub async fn run_agent_query(
         &self,
@@ -778,6 +850,65 @@ impl LlmQueryService {
         max_iterations: usize,
         prior_history: &[super::super::types::Message],
         progress_tracker: Option<&crate::ingestion::ProgressTracker>,
+    ) -> Result<(String, Vec<ToolCallRecord>), String> {
+        // Create an agent progress job so the frontend can track what's happening
+        let agent_job_id = format!("agent-{}", uuid::Uuid::new_v4());
+        if let Some(tracker) = progress_tracker {
+            let user_id = fold_db::logging::core::get_current_user_id()
+                .unwrap_or_else(|| "unknown".to_string());
+            let mut job = fold_db::progress::Job::new(
+                agent_job_id.clone(),
+                fold_db::progress::JobType::Other("agent".to_string()),
+            )
+            .with_user(user_id);
+            job.update_progress(5, "Thinking...".to_string());
+            let _ = tracker.save(&job).await;
+        }
+
+        match tokio::time::timeout(
+            Self::AGENT_QUERY_TIMEOUT,
+            self.run_agent_query_inner(
+                user_query,
+                schemas,
+                node,
+                max_iterations,
+                prior_history,
+                progress_tracker,
+                &agent_job_id,
+            ),
+        )
+        .await
+        {
+            Ok(result) => result,
+            Err(_elapsed) => {
+                log::error!(
+                    "Agent: query timed out after {}s",
+                    Self::AGENT_QUERY_TIMEOUT.as_secs()
+                );
+                if let Some(tracker) = progress_tracker {
+                    if let Ok(Some(mut job)) = tracker.load(&agent_job_id).await {
+                        job.fail("Agent query timed out".to_string());
+                        let _ = tracker.save(&job).await;
+                    }
+                }
+                Err(format!(
+                    "Agent query timed out after {} seconds",
+                    Self::AGENT_QUERY_TIMEOUT.as_secs()
+                ))
+            }
+        }
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    async fn run_agent_query_inner(
+        &self,
+        user_query: &str,
+        schemas: &[fold_db::schema::SchemaWithState],
+        node: &crate::fold_node::node::FoldNode,
+        max_iterations: usize,
+        prior_history: &[super::super::types::Message],
+        progress_tracker: Option<&crate::ingestion::ProgressTracker>,
+        agent_job_id: &str,
     ) -> Result<(String, Vec<ToolCallRecord>), String> {
         let mut tool_calls: Vec<ToolCallRecord> = Vec::new();
 
@@ -802,19 +933,10 @@ impl LlmQueryService {
             user_query
         );
 
-        // Create an agent progress job so the frontend can track what's happening
-        let agent_job_id = format!("agent-{}", uuid::Uuid::new_v4());
-        if let Some(tracker) = progress_tracker {
-            let user_id = fold_db::logging::core::get_current_user_id()
-                .unwrap_or_else(|| "unknown".to_string());
-            let mut job = fold_db::progress::Job::new(
-                agent_job_id.clone(),
-                fold_db::progress::JobType::Other("agent".to_string()),
-            )
-            .with_user(user_id);
-            job.update_progress(5, "Thinking...".to_string());
-            let _ = tracker.save(&job).await;
-        }
+        // Track consecutive empty-response failures so we can abort early
+        // instead of burning all iterations on a broken LLM backend.
+        let mut consecutive_empty_errors: u32 = 0;
+        const MAX_CONSECUTIVE_EMPTY: u32 = 2;
 
         for iteration in 0..max_iterations {
             // Build the full prompt with conversation history
@@ -832,7 +954,7 @@ impl LlmQueryService {
             let pct = 5 + (iteration * 90 / max_iterations.max(1)).min(90) as u8;
             update_agent_progress(
                 progress_tracker,
-                &agent_job_id,
+                agent_job_id,
                 pct,
                 format!("Thinking... (step {})", iteration + 1),
             )
@@ -845,11 +967,54 @@ impl LlmQueryService {
                 &response[..response.len().min(200)]
             );
 
-            // Parse the response
-            let action = self.parse_agent_response(&response)?;
+            // Parse the response — empty responses now return Err
+            let action = match self.parse_agent_response(&response) {
+                Ok(action) => {
+                    consecutive_empty_errors = 0;
+                    action
+                }
+                Err(e) if e.contains("empty response") => {
+                    consecutive_empty_errors += 1;
+                    log::warn!(
+                        "Agent: empty LLM response on iteration {} ({}/{})",
+                        iteration + 1,
+                        consecutive_empty_errors,
+                        MAX_CONSECUTIVE_EMPTY
+                    );
+                    if consecutive_empty_errors >= MAX_CONSECUTIVE_EMPTY {
+                        if let Some(tracker) = progress_tracker {
+                            if let Ok(Some(mut job)) = tracker.load(agent_job_id).await {
+                                job.fail("LLM backend returning empty responses".to_string());
+                                let _ = tracker.save(&job).await;
+                            }
+                        }
+                        return Err(
+                            "LLM backend returned empty responses on consecutive attempts"
+                                .to_string(),
+                        );
+                    }
+                    // Add a note to context so the LLM knows the previous attempt failed
+                    conversation_context
+                        .push_str("\n\n[System: previous response was empty, please try again]\n");
+                    continue;
+                }
+                Err(e) => return Err(e),
+            };
 
             match action {
                 super::super::types::AgentAction::Answer(answer) => {
+                    // Reject empty answers — the agent must provide a substantive response
+                    if answer.trim().is_empty() {
+                        log::warn!(
+                            "Agent: LLM returned empty answer on iteration {}",
+                            iteration + 1
+                        );
+                        conversation_context.push_str(
+                            "\n\n[System: your answer was empty, please provide a substantive response]\n",
+                        );
+                        continue;
+                    }
+
                     log::info!(
                         "Agent: Completed after {} iterations with {} tool calls",
                         iteration + 1,
@@ -857,7 +1022,7 @@ impl LlmQueryService {
                     );
                     // Mark agent job complete
                     if let Some(tracker) = progress_tracker {
-                        if let Ok(Some(mut job)) = tracker.load(&agent_job_id).await {
+                        if let Ok(Some(mut job)) = tracker.load(agent_job_id).await {
                             job.complete(None);
                             let _ = tracker.save(&job).await;
                         }
@@ -876,13 +1041,14 @@ impl LlmQueryService {
                         "scan_folder" => "Scanning folder...",
                         "list_schemas" => "Listing schemas...",
                         "create_view" => "Compiling WASM view...",
+                        "update_record" => "Updating record...",
                         "web_search" => "Searching the web...",
                         "fetch_url" => "Fetching URL...",
                         _ => "Executing tool...",
                     };
                     update_agent_progress(
                         progress_tracker,
-                        &agent_job_id,
+                        agent_job_id,
                         tool_pct,
                         format!("{} ({})", tool_label, tool),
                     )
@@ -940,7 +1106,7 @@ impl LlmQueryService {
 
         // Mark agent job as failed on max iterations
         if let Some(tracker) = progress_tracker {
-            if let Ok(Some(mut job)) = tracker.load(&agent_job_id).await {
+            if let Ok(Some(mut job)) = tracker.load(agent_job_id).await {
                 job.fail("Reached maximum iterations without a final answer".to_string());
                 let _ = tracker.save(&job).await;
             }

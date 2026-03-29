@@ -146,12 +146,19 @@ impl LlmQueryService {
 
     /// Parse an LLM response into an AgentAction
     pub(super) fn parse_agent_response(&self, response: &str) -> Result<AgentAction, String> {
+        // Reject empty or whitespace-only LLM responses — these indicate a backend
+        // issue (timeout, empty generation) and must not be silently accepted.
+        let trimmed = response.trim();
+        if trimmed.is_empty() {
+            return Err("LLM returned an empty response".to_string());
+        }
+
         // Extract the first complete JSON object (not first '{' to last '}')
         let json_str = match Self::extract_first_json_object(response) {
             Some(s) => s,
             None => {
                 // No JSON object found - treat entire response as a plain-text answer
-                return Ok(AgentAction::Answer(response.trim().to_string()));
+                return Ok(AgentAction::Answer(trimmed.to_string()));
             }
         };
 
@@ -247,5 +254,97 @@ impl LlmQueryService {
             "Agent response must contain either 'tool' or 'answer' field. Got: {}",
             json_str
         ))
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn make_service() -> LlmQueryService {
+        let mut config = crate::ingestion::config::IngestionConfig::default();
+        config.provider = crate::ingestion::config::AIProvider::Ollama;
+        LlmQueryService::new(config).expect("Failed to create test service")
+    }
+
+    #[test]
+    fn test_parse_agent_response_empty_string_is_error() {
+        let service = make_service();
+        let result = service.parse_agent_response("");
+        assert!(result.is_err(), "empty string should be rejected");
+        assert!(result.unwrap_err().contains("empty response"));
+    }
+
+    #[test]
+    fn test_parse_agent_response_whitespace_only_is_error() {
+        let service = make_service();
+        let result = service.parse_agent_response("   \n\t  ");
+        assert!(result.is_err(), "whitespace-only should be rejected");
+        assert!(result.unwrap_err().contains("empty response"));
+    }
+
+    #[test]
+    fn test_parse_agent_response_valid_answer() {
+        let service = make_service();
+        let result = service
+            .parse_agent_response(r#"{"answer": "Here are the results"}"#)
+            .unwrap();
+        match result {
+            AgentAction::Answer(a) => assert_eq!(a, "Here are the results"),
+            _ => panic!("expected Answer"),
+        }
+    }
+
+    #[test]
+    fn test_parse_agent_response_valid_tool_call() {
+        let service = make_service();
+        let result = service
+            .parse_agent_response(r#"{"tool": "web_search", "params": {"query": "test"}}"#)
+            .unwrap();
+        match result {
+            AgentAction::ToolCall { tool, params } => {
+                assert_eq!(tool, "web_search");
+                assert_eq!(params["query"], "test");
+            }
+            _ => panic!("expected ToolCall"),
+        }
+    }
+
+    #[test]
+    fn test_parse_agent_response_plain_text_answer() {
+        let service = make_service();
+        let result = service
+            .parse_agent_response("I don't have enough information to answer that.")
+            .unwrap();
+        match result {
+            AgentAction::Answer(a) => {
+                assert_eq!(a, "I don't have enough information to answer that.")
+            }
+            _ => panic!("expected Answer for plain text"),
+        }
+    }
+
+    #[test]
+    fn test_parse_agent_response_bare_web_search() {
+        let service = make_service();
+        let result = service
+            .parse_agent_response(r#"{"query": "best restaurants maui"}"#)
+            .unwrap();
+        match result {
+            AgentAction::ToolCall { tool, .. } => assert_eq!(tool, "web_search"),
+            _ => panic!("expected auto-wrapped web_search"),
+        }
+    }
+
+    #[test]
+    fn test_parse_agent_response_bare_fetch_url() {
+        let service = make_service();
+        let result = service
+            .parse_agent_response(r#"{"url": "https://example.com"}"#)
+            .unwrap();
+        match result {
+            AgentAction::ToolCall { tool, .. } => assert_eq!(tool, "fetch_url"),
+            _ => panic!("expected auto-wrapped fetch_url"),
+        }
     }
 }

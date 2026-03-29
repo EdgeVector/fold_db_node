@@ -117,6 +117,7 @@ pub async fn get_feed(
         as_of: None,
         rehydrate_depth: None,
         sort_order: Some(SortOrder::Desc),
+        value_filters: None,
     };
 
     let result_map = processor

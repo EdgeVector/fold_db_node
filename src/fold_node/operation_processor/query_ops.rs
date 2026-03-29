@@ -4,7 +4,7 @@ use fold_db::error::{FoldDbError, FoldDbResult};
 use fold_db::schema::types::field::Field;
 #[cfg(test)]
 use fold_db::schema::types::field::HashRangeFilter;
-use fold_db::schema::types::operations::SortOrder;
+use fold_db::schema::types::operations::{SortOrder, ValueFilter};
 use fold_db::schema::types::{KeyValue, Query};
 use serde_json::Value;
 use std::collections::{HashMap, HashSet};
@@ -45,6 +45,7 @@ impl OperationProcessor {
         let schema_name = query.schema_name.clone();
         let rehydrate_depth = query.rehydrate_depth;
         let sort_order = query.sort_order.clone();
+        let value_filters = query.value_filters.clone();
 
         let result_map = self.execute_query_map(query).await?;
         let records_map = fold_db::fold_db_core::query::records_from_field_map(&result_map);
@@ -59,6 +60,11 @@ impl OperationProcessor {
                 })
             })
             .collect();
+
+        // Apply post-fetch numeric value filters (AND'd together)
+        if let Some(ref filters) = value_filters {
+            results.retain(|record| Self::record_matches_value_filters(record, filters));
+        }
 
         if let Some(ref order) = sort_order {
             results.sort_by(|a, b| {
@@ -366,6 +372,21 @@ impl OperationProcessor {
         }
     }
 
+    /// Tests whether a JSON record passes all value filters (AND logic).
+    /// A record is `{"key": ..., "fields": {"price": 500, ...}, ...}`.
+    fn record_matches_value_filters(record: &Value, filters: &[ValueFilter]) -> bool {
+        let fields = match record.get("fields") {
+            Some(f) => f,
+            None => return false,
+        };
+        filters.iter().all(|filter| {
+            match fields.get(filter.field_name()) {
+                Some(v) => filter.matches(v),
+                None => false, // missing field fails the filter
+            }
+        })
+    }
+
     /// Get the list of queryable field names from a schema.
     fn get_queryable_fields(schema: &fold_db::schema::types::schema::Schema) -> Vec<String> {
         schema.fields.clone().unwrap_or_default()
@@ -473,6 +494,25 @@ impl OperationProcessor {
 
         let db = self.get_db().await?;
 
-        Ok(db.native_search_all_classifications(term).await?)
+        let mut results = db.native_search_all_classifications(term).await?;
+
+        // Enrich results with human-readable schema display names
+        let schemas = db.schema_manager.get_active_schemas_with_states()?;
+        let display_names: std::collections::HashMap<&str, &str> = schemas
+            .iter()
+            .filter_map(|s| {
+                s.schema
+                    .descriptive_name
+                    .as_deref()
+                    .map(|dn| (s.schema.name.as_str(), dn))
+            })
+            .collect();
+        for result in &mut results {
+            if let Some(&dn) = display_names.get(result.schema_name.as_str()) {
+                result.schema_display_name = Some(dn.to_string());
+            }
+        }
+
+        Ok(results)
     }
 }

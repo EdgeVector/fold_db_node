@@ -104,6 +104,7 @@ pub async fn hydrate_index_results(
             as_of: None,
             rehydrate_depth: Some(1),
             sort_order: None,
+            value_filters: None,
         };
 
         // Execute the query

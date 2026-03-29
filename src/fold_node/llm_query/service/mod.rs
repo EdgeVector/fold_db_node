@@ -134,10 +134,17 @@ impl LlmQueryService {
         prompt.push_str("  - {\"SampleN\": 10} - random sample of N records\n");
         prompt.push_str("  - null - no filter (all records)\n");
         prompt.push_str("- sort_order (string, optional): \"asc\" or \"desc\" — sorts results by range key. Use \"desc\" for most recent/latest queries.\n");
+        prompt.push_str("- value_filters (array, optional): Numeric comparison filters on field values. Applied AFTER key-based filtering. Multiple filters are AND'd. Examples:\n");
+        prompt.push_str("  - [{\"LessThan\": {\"field\": \"price\", \"value\": 600}}] - records where price < 600\n");
+        prompt.push_str("  - [{\"GreaterThan\": {\"field\": \"score\", \"value\": 90}}] - records where score > 90\n");
+        prompt.push_str("  - [{\"Between\": {\"field\": \"price\", \"min\": 200, \"max\": 600}}] - records where 200 <= price <= 600\n");
+        prompt.push_str("  - [{\"Equals\": {\"field\": \"rating\", \"value\": 5}}] - records where rating == 5\n");
+        prompt.push_str("  - null - no value filtering\n");
         prompt.push_str("- limit (integer, optional): Maximum number of results to return. Default: 50. Use smaller limits (5-10) when fetching large text fields.\n");
         prompt.push_str("When the user asks for \"upcoming\", \"future\", or \"after today\" items and a schema has a date-based range key, use RangeRange with today's date as start.\n");
         prompt.push_str("When the user asks for \"most recent\", \"latest\", or \"newest\" items, use null filter with sort_order \"desc\".\n");
-        prompt.push_str("Example: {\"tool\": \"query\", \"params\": {\"schema_name\": \"Tweet\", \"fields\": [\"content\", \"author\"], \"filter\": null, \"sort_order\": \"desc\", \"limit\": 20}}\n\n");
+        prompt.push_str("When the user asks for numeric comparisons (e.g., \"flights under $600\", \"scores above 90\"), use value_filters.\n");
+        prompt.push_str("Example: {\"tool\": \"query\", \"params\": {\"schema_name\": \"Flight\", \"fields\": [\"airline\", \"price\", \"departure\"], \"filter\": null, \"value_filters\": [{\"LessThan\": {\"field\": \"price\", \"value\": 600}}], \"sort_order\": \"asc\", \"limit\": 20}}\n\n");
 
         prompt.push_str("### list_schemas\n");
         prompt.push_str("List all available schemas.\n");
@@ -288,7 +295,21 @@ impl LlmQueryService {
         prompt.push_str("- For arrays, include a field suitable as a range key (e.g., \"date\", \"day_number\", \"order\") so records are sortable.\n");
         prompt.push_str("- Keep field names descriptive and consistent across records.\n");
         prompt.push_str("- You can call this multiple times with different data structures — each will get its own schema.\n");
-        prompt.push_str("Example: {\"tool\": \"ingest_json\", \"params\": {\"data\": [{\"day\": 1, \"date\": \"2026-06-01\", \"city\": \"Taipei\", \"activity\": \"Night market food tour\"}, {\"day\": 2, \"date\": \"2026-06-02\", \"city\": \"Taipei\", \"activity\": \"Dim sum breakfast\"}], \"source_context\": \"vacation_itinerary\"}}\n\n");
+        prompt.push_str("IMPORTANT: Use real JSON arrays for list-valued fields (e.g., \"tags\": [\"hiking\", \"food\"]), NOT comma-separated strings.\n");
+        prompt.push_str("Example (scalar fields): {\"tool\": \"ingest_json\", \"params\": {\"data\": [{\"day\": 1, \"date\": \"2026-06-01\", \"city\": \"Taipei\", \"activity\": \"Night market food tour\"}, {\"day\": 2, \"date\": \"2026-06-02\", \"city\": \"Taipei\", \"activity\": \"Dim sum breakfast\"}], \"source_context\": \"vacation_itinerary\"}}\n");
+        prompt.push_str("Example (array fields): {\"tool\": \"ingest_json\", \"params\": {\"data\": [{\"traveler\": \"Alice\", \"destination\": \"Tokyo\", \"must_see\": [\"Meiji Shrine\", \"Shibuya Crossing\"], \"dietary_restrictions\": [\"vegetarian\"], \"interests\": [\"hiking\", \"street food\"]}], \"source_context\": \"travel_preferences\"}}\n\n");
+
+        prompt.push_str("### update_record\n");
+        prompt.push_str("Update an existing record in a schema. Use this when the user wants to modify, change, or correct data that already exists — e.g., update a budget, change a date, swap a hotel, fix a typo.\n");
+        prompt.push_str("IMPORTANT: First use **query** or **search** to find the record and confirm its schema_name and key values, then call update_record with the fields to change.\n");
+        prompt.push_str("Parameters:\n");
+        prompt.push_str("- schema_name (string, required): Name of the schema (use the schema ID, not the descriptive name)\n");
+        prompt.push_str("- key (object, required): Record identifier. Must include the key fields that identify the record:\n");
+        prompt.push_str("  - hash_key (string, optional): The hash key value\n");
+        prompt.push_str("  - range_key (string, optional): The range key value\n");
+        prompt.push_str("- fields (object, required): Fields to update as {\"field_name\": new_value}. Only include the fields you want to change — other fields remain unchanged.\n");
+        prompt.push_str("Returns: success status and mutation_id.\n");
+        prompt.push_str("Example: {\"tool\": \"update_record\", \"params\": {\"schema_name\": \"VacationItinerary\", \"key\": {\"range_key\": \"2026-06-03\"}, \"fields\": {\"hotel\": \"Grand Hyatt\", \"budget\": 3000}}}\n\n");
 
         prompt.push_str("### web_search\n");
         prompt.push_str("Search the web for real-time information. Use this when the user's question requires external knowledge not available in the local database — e.g., restaurant recommendations, travel logistics, current events, prices, directions, reviews.\n");
@@ -331,11 +352,25 @@ impl LlmQueryService {
         prompt.push_str("Example: {\"tool\": \"get_field_policies\", \"params\": {\"schema_name\": \"BlogPost\"}}\n\n");
 
         prompt.push_str("## Available Schemas\n\n");
+        prompt.push_str("When referring to schemas in tool calls, always use the schema ID (not the display name).\n\n");
         for schema in schemas {
-            prompt.push_str(&format!(
-                "- **{}** (Type: {:?}, State: {:?})\n",
-                schema.schema.name, schema.schema.schema_type, schema.state
-            ));
+            let has_descriptive = schema.schema.descriptive_name.is_some();
+            let display_name = schema
+                .schema
+                .descriptive_name
+                .as_deref()
+                .unwrap_or(&schema.schema.name);
+            if has_descriptive {
+                prompt.push_str(&format!(
+                    "- **{}** (ID: `{}`, Type: {:?}, State: {:?})\n",
+                    display_name, schema.schema.name, schema.schema.schema_type, schema.state
+                ));
+            } else {
+                prompt.push_str(&format!(
+                    "- **{}** (Type: {:?}, State: {:?})\n",
+                    display_name, schema.schema.schema_type, schema.state
+                ));
+            }
 
             if let Some(ref key) = schema.schema.key {
                 if let Some(ref hash_field) = key.hash_field {
@@ -360,11 +395,12 @@ impl LlmQueryService {
         prompt.push_str("After getting search results, use the **query** tool with the returned schema and key to fetch full records.\n");
         prompt.push_str("3. **For questions requiring external/real-world information** (vacation planning, restaurant recommendations, travel logistics, current events, prices), use the **web_search** tool. Follow up with **fetch_url** on the most relevant results for detailed information.\n");
         prompt.push_str("4. **For tasks that create structured data** (planning, organizing, comparing, building lists), use **web_search** to research first, then use **ingest_json** to store the results in the database. The data will be schema-validated and queryable in the dashboard.\n");
-        prompt.push_str("5. Use other tools to gather additional information as needed\n");
+        prompt.push_str("5. **For tasks that modify existing data** (change a budget, update a date, swap a hotel, fix a value), first **query** the schema to find the record's key, then use **update_record** to change specific fields. Do NOT re-ingest the entire record — just update the fields that changed.\n");
+        prompt.push_str("6. Use other tools to gather additional information as needed\n");
         prompt.push_str(
-            "6. When you have enough information to answer, provide your final response\n",
+            "7. When you have enough information to answer, provide your final response\n",
         );
-        prompt.push_str("7. Use the current date/time above to determine temporal context. Events with dates before today are in the PAST. Events with dates after today are in the FUTURE. Label them accordingly (e.g. \"upcoming\" vs \"past\").\n\n");
+        prompt.push_str("8. Use the current date/time above to determine temporal context. Events with dates before today are in the PAST. Events with dates after today are in the FUTURE. Label them accordingly (e.g. \"upcoming\" vs \"past\").\n\n");
         prompt.push_str("## Reference Fields\n\n");
         prompt.push_str("Some fields are References to records in other schemas. Query results automatically resolve references one level deep.\n");
         prompt.push_str("If a field value is an array of objects with \"schema\" and \"key\" properties, those are references to child records.\n");
