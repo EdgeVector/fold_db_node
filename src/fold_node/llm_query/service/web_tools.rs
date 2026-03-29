@@ -33,7 +33,10 @@ pub async fn web_search(query: &str, count: usize) -> Result<Vec<WebSearchResult
 
     let count = count.min(MAX_RESULTS);
 
-    let client = reqwest::Client::new();
+    let client = reqwest::Client::builder()
+        .timeout(std::time::Duration::from_secs(15))
+        .build()
+        .map_err(|e| format!("Failed to create HTTP client: {}", e))?;
     let response = client
         .get(BRAVE_SEARCH_URL)
         .header("X-Subscription-Token", &api_key)
