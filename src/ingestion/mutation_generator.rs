@@ -14,6 +14,41 @@ use std::collections::HashMap;
 /// format used by `key_extraction::try_normalize_date`.
 const RANGE_KEY_TIMESTAMP_FMT: &str = "%Y-%m-%d %H:%M:%S";
 
+/// Flatten a JSON object's nested objects into dot-notation keys.
+///
+/// Nested objects like `{"budget": {"flights": 1500, "hotel": 800}}` become
+/// `{"budget.flights": 1500, "budget.hotel": 800}`. Non-object values (strings,
+/// numbers, booleans, arrays, nulls) are kept as-is. This ensures the flattened
+/// keys match the dot-notation paths the AI sees in the structure skeleton.
+pub fn flatten_json_object(obj: &serde_json::Map<String, Value>) -> HashMap<String, Value> {
+    let mut result = HashMap::new();
+    flatten_recursive(obj, "", &mut result);
+    result
+}
+
+fn flatten_recursive(
+    obj: &serde_json::Map<String, Value>,
+    prefix: &str,
+    out: &mut HashMap<String, Value>,
+) {
+    for (key, value) in obj {
+        let path = if prefix.is_empty() {
+            key.clone()
+        } else {
+            format!("{}.{}", prefix, key)
+        };
+
+        match value {
+            Value::Object(nested) => {
+                flatten_recursive(nested, &path, out);
+            }
+            _ => {
+                out.insert(path, value.clone());
+            }
+        }
+    }
+}
+
 /// Generate mutations from JSON data and mutation mappers
 pub fn generate_mutations(
     schema_name: &str,
@@ -175,6 +210,124 @@ pub fn generate_mutations(
 mod tests {
     use super::*;
     use serde_json::json;
+
+    #[test]
+    fn test_flatten_json_object_basic() {
+        let obj: serde_json::Map<String, Value> = serde_json::from_value(json!({
+            "name": "Vacation",
+            "budget_breakdown": {
+                "flights": 1500,
+                "accommodation": 1500,
+                "food": 500
+            },
+            "travel_dates": {
+                "departure": "2026-06-01",
+                "return": "2026-06-15"
+            },
+            "total_budget": 5000
+        }))
+        .unwrap();
+
+        let flat = flatten_json_object(&obj);
+
+        assert_eq!(flat.get("name"), Some(&json!("Vacation")));
+        assert_eq!(flat.get("total_budget"), Some(&json!(5000)));
+        assert_eq!(flat.get("budget_breakdown.flights"), Some(&json!(1500)));
+        assert_eq!(
+            flat.get("budget_breakdown.accommodation"),
+            Some(&json!(1500))
+        );
+        assert_eq!(flat.get("budget_breakdown.food"), Some(&json!(500)));
+        assert_eq!(
+            flat.get("travel_dates.departure"),
+            Some(&json!("2026-06-01"))
+        );
+        assert_eq!(flat.get("travel_dates.return"), Some(&json!("2026-06-15")));
+        // Nested object keys themselves should NOT appear
+        assert!(!flat.contains_key("budget_breakdown"));
+        assert!(!flat.contains_key("travel_dates"));
+    }
+
+    #[test]
+    fn test_flatten_deeply_nested() {
+        let obj: serde_json::Map<String, Value> = serde_json::from_value(json!({
+            "a": { "b": { "c": 42 } }
+        }))
+        .unwrap();
+
+        let flat = flatten_json_object(&obj);
+        assert_eq!(flat.get("a.b.c"), Some(&json!(42)));
+        assert_eq!(flat.len(), 1);
+    }
+
+    #[test]
+    fn test_flatten_preserves_arrays() {
+        let obj: serde_json::Map<String, Value> = serde_json::from_value(json!({
+            "tags": ["travel", "vacation"],
+            "nested": { "items": [1, 2, 3] }
+        }))
+        .unwrap();
+
+        let flat = flatten_json_object(&obj);
+        assert_eq!(flat.get("tags"), Some(&json!(["travel", "vacation"])));
+        assert_eq!(flat.get("nested.items"), Some(&json!([1, 2, 3])));
+    }
+
+    #[test]
+    fn test_generate_mutations_with_nested_objects() {
+        let mut keys_and_values = HashMap::new();
+        keys_and_values.insert("hash_field".to_string(), "Vacation".to_string());
+        keys_and_values.insert("range_field".to_string(), "2026-06-01".to_string());
+
+        // Simulate flattened fields (as generate_mutations_for_item now produces)
+        let mut fields_and_values = HashMap::new();
+        fields_and_values.insert("name".to_string(), json!("Vacation"));
+        fields_and_values.insert("budget_breakdown.flights".to_string(), json!(1500));
+        fields_and_values.insert("budget_breakdown.accommodation".to_string(), json!(1500));
+        fields_and_values.insert("travel_dates.departure".to_string(), json!("2026-06-01"));
+        fields_and_values.insert("travel_dates.return".to_string(), json!("2026-06-15"));
+
+        let mut mappers = HashMap::new();
+        mappers.insert("name".to_string(), "TripSchema.name".to_string());
+        mappers.insert(
+            "budget_breakdown.flights".to_string(),
+            "TripSchema.flights_budget".to_string(),
+        );
+        mappers.insert(
+            "budget_breakdown.accommodation".to_string(),
+            "TripSchema.accommodation_budget".to_string(),
+        );
+        mappers.insert(
+            "travel_dates.departure".to_string(),
+            "TripSchema.departure_date".to_string(),
+        );
+        mappers.insert(
+            "travel_dates.return".to_string(),
+            "TripSchema.return_date".to_string(),
+        );
+
+        let result = generate_mutations(
+            "TripSchema",
+            &keys_and_values,
+            &fields_and_values,
+            &mappers,
+            "test-key".to_string(),
+            None,
+            None,
+        )
+        .unwrap();
+
+        assert_eq!(result.len(), 1);
+        assert_eq!(result[0].fields_and_values.len(), 5);
+        assert_eq!(
+            result[0].fields_and_values.get("flights_budget"),
+            Some(&json!(1500))
+        );
+        assert_eq!(
+            result[0].fields_and_values.get("departure_date"),
+            Some(&json!("2026-06-01"))
+        );
+    }
 
     #[test]
     fn test_generate_mutations() {
