@@ -755,6 +755,72 @@ impl LlmQueryService {
                 }))
             }
 
+            "update_record" => {
+                let schema_name = params
+                    .get("schema_name")
+                    .and_then(|s| s.as_str())
+                    .ok_or("update_record tool requires 'schema_name' parameter")?;
+
+                let key_obj = params.get("key").and_then(|k| k.as_object()).ok_or(
+                    "update_record tool requires 'key' parameter (object with hash_key/range_key)",
+                )?;
+
+                let hash_key = key_obj
+                    .get("hash_key")
+                    .and_then(|v| v.as_str())
+                    .map(String::from);
+                let range_key = key_obj
+                    .get("range_key")
+                    .and_then(|v| v.as_str())
+                    .map(String::from);
+
+                if hash_key.is_none() && range_key.is_none() {
+                    return Err(
+                        "update_record 'key' must include at least one of 'hash_key' or 'range_key'"
+                            .to_string(),
+                    );
+                }
+
+                let fields_obj = params
+                    .get("fields")
+                    .and_then(|f| f.as_object())
+                    .ok_or("update_record tool requires 'fields' parameter (object)")?;
+
+                if fields_obj.is_empty() {
+                    return Err("update_record 'fields' must not be empty".to_string());
+                }
+
+                let fields_and_values: HashMap<String, Value> = fields_obj
+                    .iter()
+                    .map(|(k, v)| (k.clone(), v.clone()))
+                    .collect();
+
+                let key_value = fold_db::schema::types::KeyValue::new(hash_key, range_key);
+
+                log::info!(
+                    "Agent update_record: schema={}, key={:?}, fields={:?}",
+                    schema_name,
+                    key_value,
+                    fields_and_values.keys().collect::<Vec<_>>()
+                );
+
+                let mutation_id = processor
+                    .execute_mutation(
+                        schema_name.to_string(),
+                        fields_and_values,
+                        key_value,
+                        fold_db::schema::types::operations::MutationType::Update,
+                    )
+                    .await
+                    .map_err(|e| format!("Update failed: {}", e))?;
+
+                Ok(serde_json::json!({
+                    "success": true,
+                    "mutation_id": mutation_id,
+                    "message": format!("Record updated in schema '{}'", schema_name),
+                }))
+            }
+
             "set_field_policy" => Err("Access control has been removed from fold_db".to_string()),
 
             "get_field_policies" => Err("Access control has been removed from fold_db".to_string()),
@@ -878,6 +944,7 @@ impl LlmQueryService {
                         "scan_folder" => "Scanning folder...",
                         "list_schemas" => "Listing schemas...",
                         "create_view" => "Compiling WASM view...",
+                        "update_record" => "Updating record...",
                         "web_search" => "Searching the web...",
                         "fetch_url" => "Fetching URL...",
                         _ => "Executing tool...",
