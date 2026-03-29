@@ -133,13 +133,19 @@ pub async fn fetch_url(url: &str) -> Result<String, String> {
         body
     };
 
-    // Truncate to prevent context overflow
+    // Truncate to prevent context overflow (char-boundary safe for multibyte UTF-8)
     if text.len() > MAX_FETCH_CHARS {
+        let truncate_at = text
+            .char_indices()
+            .map(|(i, _)| i)
+            .take_while(|&i| i <= MAX_FETCH_CHARS)
+            .last()
+            .unwrap_or(0);
         Ok(format!(
             "{}\n\n[TRUNCATED: content was {} chars, showing first {}]",
-            &text[..MAX_FETCH_CHARS],
+            &text[..truncate_at],
             text.len(),
-            MAX_FETCH_CHARS
+            truncate_at
         ))
     } else {
         Ok(text)
@@ -154,24 +160,33 @@ fn strip_html(html: &str) -> String {
     let mut in_style = false;
     let mut last_was_whitespace = false;
 
-    let lower = html.to_lowercase();
     let chars: Vec<char> = html.chars().collect();
-    let lower_chars: Vec<char> = lower.chars().collect();
     let len = chars.len();
     let mut i = 0;
 
+    // Helper: check if chars[i..] starts with the given ASCII pattern (case-insensitive)
+    let starts_with = |pos: usize, pattern: &str| -> bool {
+        if pos + pattern.len() > len {
+            return false;
+        }
+        chars[pos..pos + pattern.len()]
+            .iter()
+            .zip(pattern.chars())
+            .all(|(c, p)| c.to_ascii_lowercase() == p)
+    };
+
     while i < len {
-        if !in_tag && i + 7 < len && &lower[i..i + 7] == "<script" {
+        if !in_tag && starts_with(i, "<script") {
             in_script = true;
             in_tag = true;
-        } else if in_script && i + 9 <= len && &lower[i..i + 9] == "</script>" {
+        } else if in_script && starts_with(i, "</script>") {
             in_script = false;
             i += 9;
             continue;
-        } else if !in_tag && i + 6 < len && &lower[i..i + 6] == "<style" {
+        } else if !in_tag && starts_with(i, "<style") {
             in_style = true;
             in_tag = true;
-        } else if in_style && i + 8 <= len && &lower[i..i + 8] == "</style>" {
+        } else if in_style && starts_with(i, "</style>") {
             in_style = false;
             i += 8;
             continue;
@@ -187,9 +202,10 @@ fn strip_html(html: &str) -> String {
             in_tag = true;
             // Block-level tags get a newline
             if i + 3 < len {
-                let next3: String = lower_chars[i + 1..len.min(i + 4)]
+                let next3: String = chars[i + 1..len.min(i + 4)]
                     .iter()
-                    .collect::<String>();
+                    .map(|c| c.to_ascii_lowercase())
+                    .collect();
                 if next3.starts_with("br")
                     || next3.starts_with("p ")
                     || next3.starts_with("p>")
