@@ -1,4 +1,5 @@
 pub mod admin;
+pub mod auth;
 pub mod common;
 pub mod config;
 pub mod discovery;
@@ -8,6 +9,7 @@ pub mod query;
 pub mod remote;
 pub mod schema;
 pub mod security;
+pub mod sync;
 pub mod system;
 pub mod trust;
 pub mod views;

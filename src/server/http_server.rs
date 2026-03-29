@@ -3,9 +3,9 @@ use super::middleware::signature::SignatureVerificationMiddleware;
 use super::node_manager::NodeManager;
 use super::routes::log as log_routes;
 use super::routes::{
-    admin as admin_routes, config as config_routes, discovery as discovery_routes,
-    filesystem as filesystem_routes, query as query_routes, schema as schema_routes,
-    security as security_routes, system as system_routes,
+    admin as admin_routes, auth as auth_routes, config as config_routes,
+    discovery as discovery_routes, filesystem as filesystem_routes, query as query_routes,
+    schema as schema_routes, security as security_routes, system as system_routes,
 };
 use super::static_assets::Asset;
 use crate::fold_node::llm_query;
@@ -168,6 +168,11 @@ impl FoldHttpServer {
         let batch_controller_map_data =
             web::Data::new(crate::ingestion::batch_controller::create_batch_controller_map());
 
+        // Load Apple auto-sync config
+        let sync_config_state =
+            crate::ingestion::apple_import::sync_scheduler::create_sync_config_state();
+        let sync_config_data = web::Data::new(sync_config_state);
+
         // Create progress tracker based on database config
         let progress_tracker = {
             #[cfg(feature = "aws-backend")]
@@ -192,6 +197,14 @@ impl FoldHttpServer {
         };
         let progress_tracker_data = web::Data::new(progress_tracker);
 
+        // Spawn Apple auto-sync background scheduler
+        crate::ingestion::apple_import::sync_scheduler::spawn_sync_scheduler(
+            sync_config_data.get_ref().clone(),
+            app_state.clone(),
+            ingestion_service_data.clone(),
+            progress_tracker_data.clone(),
+        );
+
         // Start the HTTP server
         let server = ActixHttpServer::new(move || {
             // Create CORS middleware
@@ -215,6 +228,7 @@ impl FoldHttpServer {
                 .app_data(progress_tracker_data.clone())
                 .app_data(ingestion_service_data.clone())
                 .app_data(batch_controller_map_data.clone())
+                .app_data(sync_config_data.clone())
                 .app_data(json_config)
                 .configure(Self::configure_api)
                 // Serve embedded static assets (React build)
@@ -297,7 +311,9 @@ impl FoldHttpServer {
                 .configure(Self::configure_discovery_routes)
                 .configure(Self::configure_trust_routes)
                 .configure(Self::configure_capability_routes)
-                .configure(Self::configure_remote_routes),
+                .configure(Self::configure_remote_routes)
+                .configure(Self::configure_auth_routes)
+                .configure(Self::configure_sync_routes),
         );
     }
 
@@ -458,6 +474,22 @@ impl FoldHttpServer {
         .route(
             "/ingestion/apple-import/photos",
             web::post().to(ingestion_routes::apple_import_routes::apple_import_photos),
+        )
+        .route(
+            "/ingestion/apple-import/calendar",
+            web::post().to(ingestion_routes::apple_import_routes::apple_import_calendar),
+        )
+        .route(
+            "/ingestion/apple-import/sync-config",
+            web::get().to(ingestion_routes::apple_import_routes::get_sync_config),
+        )
+        .route(
+            "/ingestion/apple-import/sync-config",
+            web::post().to(ingestion_routes::apple_import_routes::update_sync_config),
+        )
+        .route(
+            "/ingestion/apple-import/next-sync",
+            web::get().to(ingestion_routes::apple_import_routes::get_next_sync),
         );
     }
 
@@ -474,6 +506,13 @@ impl FoldHttpServer {
                 web::put().to(log_routes::update_feature_level),
             )
             .route("/logs/features", web::get().to(log_routes::get_features));
+    }
+
+    fn configure_sync_routes(cfg: &mut web::ServiceConfig) {
+        use super::routes::sync as sync_routes;
+
+        cfg.route("/sync/status", web::get().to(sync_routes::get_sync_status))
+            .route("/sync/trigger", web::post().to(sync_routes::trigger_sync));
     }
 
     fn configure_system_routes(cfg: &mut web::ServiceConfig) {
@@ -559,7 +598,16 @@ impl FoldHttpServer {
                 .route("/publish", web::post().to(discovery_routes::publish))
                 .route("/search", web::post().to(discovery_routes::search))
                 .route("/connect", web::post().to(discovery_routes::connect))
-                .route("/requests", web::get().to(discovery_routes::poll_requests)),
+                .route("/requests", web::get().to(discovery_routes::poll_requests))
+                .route("/interests", web::get().to(discovery_routes::get_interests))
+                .route(
+                    "/interests/toggle",
+                    web::post().to(discovery_routes::toggle_interest),
+                )
+                .route(
+                    "/interests/detect",
+                    web::post().to(discovery_routes::detect_interests),
+                ),
         );
     }
 
@@ -621,6 +669,29 @@ impl FoldHttpServer {
             web::scope("/remote")
                 .route("/query", web::post().to(remote_routes::remote_query))
                 .route("/node-info", web::get().to(remote_routes::node_info)),
+        );
+    }
+
+    fn configure_auth_routes(cfg: &mut web::ServiceConfig) {
+        cfg.service(
+            web::scope("/auth")
+                .route(
+                    "/magic-link/start",
+                    web::post().to(auth_routes::magic_link_start),
+                )
+                .route(
+                    "/magic-link/verify",
+                    web::post().to(auth_routes::magic_link_verify),
+                )
+                .route("/credentials", web::get().to(auth_routes::get_credentials))
+                .route(
+                    "/credentials",
+                    web::post().to(auth_routes::store_credentials),
+                )
+                .route(
+                    "/credentials",
+                    web::delete().to(auth_routes::delete_credentials),
+                ),
         );
     }
 }

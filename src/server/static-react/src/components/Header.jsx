@@ -4,6 +4,7 @@ import { logoutUser } from '../store/authSlice'
 import { selectIngestionConfig, selectAiProvider, selectActiveModel, selectIsAiConfigured } from '../store/ingestionSlice'
 import { BROWSER_CONFIG } from '../constants/config'
 import { systemClient } from '../api/clients/systemClient'
+import { getSubscriptionStatus, formatBytes } from '../api/clients/subscriptionClient'
 import HeaderProgress from './HeaderProgress'
 import AnimatedLogo from './AnimatedLogo'
 import SyncStatusIndicator from './SyncStatusIndicator'
@@ -33,18 +34,28 @@ function Header({ onSettingsClick, onAiSettingsClick, onCloudSettingsClick }) {
   const aiReady = useAppSelector(selectIsAiConfigured)
   const [storageMode, setStorageMode] = useState(null)
   const [storageSize, setStorageSize] = useState(null)
+  const [storageQuota, setStorageQuota] = useState(null)
   const [schemaEnv, setSchemaEnv] = useState(null)
 
   useEffect(() => {
     systemClient.getDatabaseConfig().then(res => {
       if (res.data) {
-        setStorageMode(res.data.type === 'dynamodb' ? 'Cloud' : 'Local')
+        const isCloud = res.data.type === 'dynamodb' || res.data.type === 'exemem'
+        setStorageMode(isCloud ? 'Cloud' : 'Local')
         if (res.data.storage_size_bytes) setStorageSize(res.data.storage_size_bytes)
       }
     }).catch(() => { /* best-effort - header info is non-critical */ })
     systemClient.getSystemStatus().then(res => {
       if (res.data) setSchemaEnv(classifySchemaEnv(res.data.schema_service_url))
     }).catch(() => { /* best-effort - header info is non-critical */ })
+    // Fetch cloud storage quota if connected
+    const hasCloud = localStorage.getItem('exemem_api_url') && localStorage.getItem('exemem_api_key')
+    if (hasCloud) {
+      getSubscriptionStatus().then(status => {
+        setStorageSize(status.storage.used_bytes)
+        setStorageQuota(status.storage.quota_bytes)
+      }).catch(() => { /* cloud API not reachable */ })
+    }
   }, [])
 
   const handleLogout = () => {
@@ -55,6 +66,8 @@ function Header({ onSettingsClick, onAiSettingsClick, onCloudSettingsClick }) {
 
   const isLocal = storageMode === 'Local'
   const formattedSize = formatStorageSize(storageSize)
+  const formattedQuota = storageQuota ? formatBytes(storageQuota) : null
+  const quotaWarning = storageQuota && storageSize ? (storageSize / storageQuota) > 0.8 : false
 
   return (
     <header className="bg-surface border-b border-border px-8 py-3 flex-shrink-0">
@@ -69,7 +82,9 @@ function Header({ onSettingsClick, onAiSettingsClick, onCloudSettingsClick }) {
         <div className="flex items-center gap-4">
           <div className="flex items-center gap-2 text-sm text-secondary font-mono">
             <span>{storageMode || '...'}</span>
-            {formattedSize && <><span className="text-tertiary">/</span><span className="text-secondary">{formattedSize}</span></>}
+            {formattedSize && formattedQuota
+              ? <><span className="text-tertiary">/</span><span className={quotaWarning ? 'text-gruvbox-orange' : 'text-secondary'}>{formattedSize} / {formattedQuota}</span></>
+              : formattedSize && <><span className="text-tertiary">/</span><span className="text-secondary">{formattedSize}</span></>}
             {schemaEnv && <><span className="text-tertiary">/</span><span className={schemaEnv.color}>Schema: {schemaEnv.label}</span></>}
             {ingestionConfig && (
               <><span className="text-tertiary">/</span><button

@@ -4,10 +4,11 @@ import useAiConfig from './settings/AiConfigSettings'
 import SchemaServiceSettings from './settings/SchemaServiceSettings'
 import useDatabaseConfig from './settings/DatabaseSettings'
 import CloudMigrationSettings from './tabs/CloudMigrationSettings'
+import BackupSettingsPanel from './settings/BackupSettingsPanel'
 
 const NOOP = () => {}
 
-function SettingsModal({ isOpen, onClose, initialTab }) {
+function SettingsModal({ isOpen, onClose, initialTab, onRelaunchOnboarding }) {
   const [activeTab, setActiveTab] = useState(initialTab || 'ai')
   const [configSaveStatus, setConfigSaveStatus] = useState(null)
 
@@ -63,6 +64,7 @@ function SettingsModal({ isOpen, onClose, initialTab }) {
     { id: 'schema-service', label: 'Schema Service' },
     { id: 'database', label: 'Database' },
     { id: 'upgrade-cloud', label: 'Cloud DB' },
+    { id: 'backup', label: 'Backup' },
   ]
 
   const handleSave = () => {
@@ -100,9 +102,21 @@ function SettingsModal({ isOpen, onClose, initialTab }) {
           {activeTab === 'schema-service' && <SchemaServiceSettings />}
           {activeTab === 'database' && dbConfig.content}
           {activeTab === 'upgrade-cloud' && <CloudMigrationSettings onClose={onClose} />}
+          {activeTab === 'backup' && <BackupSettingsPanel />}
         </div>
 
         <div className="modal-footer">
+          {onRelaunchOnboarding && (
+            <button
+              onClick={() => {
+                localStorage.removeItem('folddb_onboarding_complete')
+                onRelaunchOnboarding()
+              }}
+              className="btn-secondary mr-auto"
+            >
+              Relaunch Setup Wizard
+            </button>
+          )}
           {activeTab === 'ai' || activeTab === 'database' ? (
             <>
               <button onClick={onClose} className="btn-secondary">Cancel</button>
