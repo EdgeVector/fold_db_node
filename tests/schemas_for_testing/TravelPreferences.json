@@ -1,0 +1,28 @@
+{
+  "name": "TravelPreferences",
+  "descriptive_name": "Travel Preferences",
+  "schema_type": "HashRange",
+  "key": {
+    "hash_field": "traveler",
+    "range_field": "destination"
+  },
+  "fields": ["traveler", "destination", "must_see", "avoid", "interests", "dietary_restrictions", "budget"],
+  "field_types": {
+    "traveler": "String",
+    "destination": "String",
+    "must_see": { "Array": "String" },
+    "avoid": { "Array": "String" },
+    "interests": { "Array": "String" },
+    "dietary_restrictions": { "Array": "String" },
+    "budget": "Number"
+  },
+  "field_classifications": {
+    "traveler": ["name:person", "word"],
+    "destination": ["word"],
+    "must_see": ["word"],
+    "avoid": ["word"],
+    "interests": ["word"],
+    "dietary_restrictions": ["word"],
+    "budget": ["number"]
+  }
+}

@@ -295,7 +295,9 @@ impl LlmQueryService {
         prompt.push_str("- For arrays, include a field suitable as a range key (e.g., \"date\", \"day_number\", \"order\") so records are sortable.\n");
         prompt.push_str("- Keep field names descriptive and consistent across records.\n");
         prompt.push_str("- You can call this multiple times with different data structures — each will get its own schema.\n");
-        prompt.push_str("Example: {\"tool\": \"ingest_json\", \"params\": {\"data\": [{\"day\": 1, \"date\": \"2026-06-01\", \"city\": \"Taipei\", \"activity\": \"Night market food tour\"}, {\"day\": 2, \"date\": \"2026-06-02\", \"city\": \"Taipei\", \"activity\": \"Dim sum breakfast\"}], \"source_context\": \"vacation_itinerary\"}}\n\n");
+        prompt.push_str("IMPORTANT: Use real JSON arrays for list-valued fields (e.g., \"tags\": [\"hiking\", \"food\"]), NOT comma-separated strings.\n");
+        prompt.push_str("Example (scalar fields): {\"tool\": \"ingest_json\", \"params\": {\"data\": [{\"day\": 1, \"date\": \"2026-06-01\", \"city\": \"Taipei\", \"activity\": \"Night market food tour\"}, {\"day\": 2, \"date\": \"2026-06-02\", \"city\": \"Taipei\", \"activity\": \"Dim sum breakfast\"}], \"source_context\": \"vacation_itinerary\"}}\n");
+        prompt.push_str("Example (array fields): {\"tool\": \"ingest_json\", \"params\": {\"data\": [{\"traveler\": \"Alice\", \"destination\": \"Tokyo\", \"must_see\": [\"Meiji Shrine\", \"Shibuya Crossing\"], \"dietary_restrictions\": [\"vegetarian\"], \"interests\": [\"hiking\", \"street food\"]}], \"source_context\": \"travel_preferences\"}}\n\n");
 
         prompt.push_str("### update_record\n");
         prompt.push_str("Update an existing record in a schema. Use this when the user wants to modify, change, or correct data that already exists — e.g., update a budget, change a date, swap a hotel, fix a typo.\n");

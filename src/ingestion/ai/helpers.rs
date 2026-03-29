@@ -470,10 +470,75 @@ pub fn validate_and_convert_response(parsed: Value) -> IngestionResult<AISchemaR
         }
     };
 
+    // Auto-fill identity mappers for schema fields missing from mutation_mappers.
+    // The AI sometimes omits array fields (e.g., must_see: ["Temple", "Market"])
+    // from mutation_mappers even though they appear in the schema's fields list.
+    // Without a mapper, the field data is silently dropped during mutation generation.
+    let mutation_mappers = backfill_missing_mappers(mutation_mappers, &new_schemas);
+
     Ok(AISchemaResponse {
         new_schemas,
         mutation_mappers,
     })
+}
+
+/// For each field declared in `new_schemas.fields` that has no entry in
+/// `mutation_mappers`, insert an identity mapper (`field -> field`).
+fn backfill_missing_mappers(
+    mut mappers: HashMap<String, String>,
+    new_schemas: &Option<Value>,
+) -> HashMap<String, String> {
+    let schema_val = match new_schemas {
+        Some(v) => v,
+        None => return mappers,
+    };
+
+    // Extract the fields list from the schema definition
+    let fields = match schema_val.get("fields").and_then(|f| f.as_array()) {
+        Some(arr) => arr,
+        None => return mappers,
+    };
+
+    let schema_name = schema_val
+        .get("name")
+        .and_then(|n| n.as_str())
+        .unwrap_or("");
+
+    // Collect which schema fields already have mappers pointing to them
+    let mapped_targets: std::collections::HashSet<String> = mappers
+        .values()
+        .map(|v| {
+            // "SchemaName.field" -> "field"
+            v.rsplit('.').next().unwrap_or(v).to_string()
+        })
+        .collect();
+
+    let mut added = 0;
+    for field_val in fields {
+        if let Some(field_name) = field_val.as_str() {
+            if !mapped_targets.contains(field_name) && !mappers.contains_key(field_name) {
+                let target = if schema_name.is_empty() {
+                    field_name.to_string()
+                } else {
+                    format!("{}.{}", schema_name, field_name)
+                };
+                mappers.insert(field_name.to_string(), target);
+                added += 1;
+            }
+        }
+    }
+
+    if added > 0 {
+        log_feature!(
+            LogFeature::Ingestion,
+            info,
+            "Auto-filled {} missing mutation mapper(s) for fields declared in schema '{}'",
+            added,
+            schema_name
+        );
+    }
+
+    mappers
 }
 
 /// Parse the raw AI response text into an AISchemaResponse.
@@ -679,5 +744,95 @@ Done."#;
         let input = serde_json::json!({"count": 42, "active": true, "data": null});
         let result = truncate_long_strings(&input);
         assert_eq!(result, input);
+    }
+
+    // ---- backfill_missing_mappers tests ----
+
+    #[test]
+    fn test_backfill_adds_missing_array_field_mappers() {
+        let mut mappers = HashMap::new();
+        mappers.insert("name".to_string(), "vacation_prefs.name".to_string());
+
+        let schema = Some(serde_json::json!({
+            "name": "vacation_prefs",
+            "fields": ["name", "must_see", "avoid", "interests"]
+        }));
+
+        let result = backfill_missing_mappers(mappers, &schema);
+        assert_eq!(result.len(), 4);
+        assert_eq!(result.get("name").unwrap(), "vacation_prefs.name");
+        assert_eq!(result.get("must_see").unwrap(), "vacation_prefs.must_see");
+        assert_eq!(result.get("avoid").unwrap(), "vacation_prefs.avoid");
+        assert_eq!(result.get("interests").unwrap(), "vacation_prefs.interests");
+    }
+
+    #[test]
+    fn test_backfill_no_op_when_all_mapped() {
+        let mut mappers = HashMap::new();
+        mappers.insert("name".to_string(), "s.name".to_string());
+        mappers.insert("age".to_string(), "s.age".to_string());
+
+        let schema = Some(serde_json::json!({
+            "name": "s",
+            "fields": ["name", "age"]
+        }));
+
+        let result = backfill_missing_mappers(mappers, &schema);
+        assert_eq!(result.len(), 2);
+    }
+
+    #[test]
+    fn test_backfill_no_op_when_no_schema() {
+        let mappers = HashMap::new();
+        let result = backfill_missing_mappers(mappers, &None);
+        assert!(result.is_empty());
+    }
+
+    #[test]
+    fn test_backfill_respects_existing_target_mapping() {
+        // AI mapped "creator" -> "schema.artist" — "artist" is already covered
+        let mut mappers = HashMap::new();
+        mappers.insert("creator".to_string(), "schema.artist".to_string());
+
+        let schema = Some(serde_json::json!({
+            "name": "schema",
+            "fields": ["artist", "title"]
+        }));
+
+        let result = backfill_missing_mappers(mappers, &schema);
+        // "artist" is already a target, so only "title" should be added
+        assert_eq!(result.len(), 2);
+        assert_eq!(result.get("creator").unwrap(), "schema.artist");
+        assert!(result.contains_key("title"));
+    }
+
+    #[test]
+    fn test_backfill_end_to_end_with_validate() {
+        // Simulates AI response that declares array fields but omits them from mappers
+        let ai_json = serde_json::json!({
+            "new_schemas": {
+                "name": "travel_preferences",
+                "descriptive_name": "Travel Preferences",
+                "schema_type": "HashRange",
+                "key": {"hash_field": "traveler", "range_field": "destination"},
+                "fields": ["traveler", "destination", "must_see", "dietary_restrictions"],
+                "field_descriptions": {
+                    "traveler": "Name of the traveler",
+                    "destination": "Travel destination",
+                    "must_see": "Must-see attractions",
+                    "dietary_restrictions": "Dietary restrictions"
+                }
+            },
+            "mutation_mappers": {
+                "traveler": "travel_preferences.traveler",
+                "destination": "travel_preferences.destination"
+            }
+        });
+
+        let result = validate_and_convert_response(ai_json).unwrap();
+        // All 4 fields should have mappers now
+        assert_eq!(result.mutation_mappers.len(), 4);
+        assert!(result.mutation_mappers.contains_key("must_see"));
+        assert!(result.mutation_mappers.contains_key("dietary_restrictions"));
     }
 }
