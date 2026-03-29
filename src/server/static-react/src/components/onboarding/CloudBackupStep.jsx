@@ -1,66 +1,47 @@
 import { useState } from 'react'
-import { systemClient } from '../../api/clients/systemClient'
+import { migrateToCloud } from '../../api/clients/systemClient'
 
 export default function CloudBackupStep({ onNext, onSkip }) {
-  const [email, setEmail] = useState('')
-  const [password, setPassword] = useState('')
-  const [confirmPassword, setConfirmPassword] = useState('')
-  const [creating, setCreating] = useState(false)
+  const [apiUrl, setApiUrl] = useState('https://api.exemem.com')
+  const [apiKey, setApiKey] = useState('')
+  const [loading, setLoading] = useState(false)
   const [error, setError] = useState(null)
-  const [created, setCreated] = useState(false)
+  const [success, setSuccess] = useState(false)
 
-  const canCreate = email && password && password === confirmPassword && !creating
-
-  const handleCreateAccount = async () => {
-    if (password !== confirmPassword) {
-      setError('Passwords do not match.')
+  const handleEnable = async () => {
+    if (!apiKey.trim()) {
+      setError('API key is required')
       return
     }
-    setCreating(true)
+    setLoading(true)
     setError(null)
     try {
-      const response = await systemClient.applySetup({
-        storage: {
-          type: 'exemem',
-          api_url: 'https://api.exemem.com',
-          api_key: '',
-        },
-        exemem_account: { email, password },
-      })
-      if (response.success) {
-        setCreated(true)
+      const resp = await migrateToCloud(apiUrl, apiKey)
+      if (resp.success) {
+        setSuccess(true)
       } else {
-        setError(response.data?.message || 'Account creation failed. Please try again.')
+        setError(resp.data?.message || 'Failed to enable cloud backup')
       }
-    } catch (err) {
-      setError(err?.message || 'Failed to create account. Please try again.')
+    } catch (e) {
+      setError(e?.message || String(e))
     } finally {
-      setCreating(false)
+      setLoading(false)
     }
   }
 
-  const handleSkip = () => {
-    localStorage.setItem('folddb_cloud_backup_skipped', '1')
-    onSkip()
-  }
-
-  if (created) {
+  if (success) {
     return (
       <div>
         <h2 className="text-sm font-bold mb-1">
           <span className="text-gruvbox-green">CLOUD BACKUP</span>{' '}
           <span className="text-secondary">Enabled</span>
         </h2>
-        <div className="card-success p-3 mt-3">
-          <p><span className="badge badge-success">ACCOUNT CREATED</span></p>
-          <p className="text-primary mt-1">
-            Your Exemem cloud backup account is ready. Encrypted backups will sync automatically.
-          </p>
+        <div className="card-success p-4 mt-4">
+          <p className="text-primary">Cloud backup is now enabled. Your data will sync to Exemem cloud storage.</p>
+          <p className="text-xs text-secondary mt-2">Your local database is preserved as a backup.</p>
         </div>
-        <div className="mt-4">
-          <button className="btn-primary w-full text-center" onClick={onNext}>
-            Continue
-          </button>
+        <div className="flex gap-2 mt-4">
+          <button onClick={onNext} className="btn-primary flex-1 text-center">Continue</button>
         </div>
       </div>
     )
@@ -69,97 +50,56 @@ export default function CloudBackupStep({ onNext, onSkip }) {
   return (
     <div>
       <h2 className="text-sm font-bold mb-1">
-        <span className="text-gruvbox-blue">CLOUD BACKUP</span>{' '}
-        <span className="text-secondary">Encrypted backup to Exemem</span>
+        <span className="text-gruvbox-purple">CLOUD BACKUP</span>{' '}
+        <span className="text-secondary">Sync across devices</span>
       </h2>
-
-      <p className="text-primary mt-2">
-        Keep your data safe with automatic encrypted cloud backups.
+      <p className="text-primary mb-1">Enable encrypted cloud backup to sync your data across devices.</p>
+      <p className="text-xs text-secondary mb-4">
+        Your data is encrypted before leaving your device. The local database remains your primary store.
       </p>
 
-      {/* Privacy guarantees */}
-      <div className="card p-3 mt-3">
-        <p className="font-bold text-primary text-sm mb-2">How it works</p>
-        <ul className="text-secondary text-sm space-y-2">
-          <li className="flex items-start gap-2">
-            <span className="text-gruvbox-green mt-0.5 flex-shrink-0">*</span>
-            <span>Your data is <strong className="text-primary">encrypted on your device</strong> before it leaves — the cloud only stores opaque bytes.</span>
-          </li>
-          <li className="flex items-start gap-2">
-            <span className="text-gruvbox-green mt-0.5 flex-shrink-0">*</span>
-            <span>Encryption keys <strong className="text-primary">never leave your device</strong>. Not even Exemem can read your data.</span>
-          </li>
-          <li className="flex items-start gap-2">
-            <span className="text-gruvbox-green mt-0.5 flex-shrink-0">*</span>
-            <span>Backups sync automatically in the background. Restore to any device with your keys.</span>
-          </li>
-          <li className="flex items-start gap-2">
-            <span className="text-gruvbox-green mt-0.5 flex-shrink-0">*</span>
-            <span>Your local database remains the primary copy — the cloud is a backup, not a replacement.</span>
-          </li>
-        </ul>
-      </div>
-
-      {/* Account creation form */}
-      <div className="mt-4">
-        <p className="label">Email</p>
-        <input
-          type="email"
-          value={email}
-          onChange={e => setEmail(e.target.value)}
-          placeholder="you@example.com"
-          className="input"
-          data-testid="backup-email-input"
-        />
-      </div>
-
-      <div className="mt-3">
-        <p className="label">Password</p>
-        <input
-          type="password"
-          value={password}
-          onChange={e => setPassword(e.target.value)}
-          placeholder="Choose a password"
-          className="input"
-          data-testid="backup-password-input"
-        />
-      </div>
-
-      <div className="mt-3">
-        <p className="label">Confirm Password</p>
-        <input
-          type="password"
-          value={confirmPassword}
-          onChange={e => setConfirmPassword(e.target.value)}
-          placeholder="Confirm your password"
-          className="input"
-          data-testid="backup-confirm-password-input"
-        />
-        {confirmPassword && password !== confirmPassword && (
-          <p className="text-gruvbox-red text-xs mt-1">Passwords do not match</p>
-        )}
+      <div className="space-y-3">
+        <div>
+          <p className="label">Cloud API URL</p>
+          <input
+            type="text"
+            value={apiUrl}
+            onChange={(e) => setApiUrl(e.target.value)}
+            className="input"
+            placeholder="https://api.exemem.com"
+          />
+        </div>
+        <div>
+          <p className="label">API Key</p>
+          <input
+            type="password"
+            value={apiKey}
+            onChange={(e) => setApiKey(e.target.value)}
+            className="input"
+            placeholder="Your Exemem API key"
+          />
+          <p className="text-xs text-secondary mt-1">
+            Don't have an account? You can set this up later in Settings.
+          </p>
+        </div>
       </div>
 
       {error && (
-        <p className="text-gruvbox-red mt-2 text-sm">{error}</p>
+        <p className="text-gruvbox-red text-sm mt-3">{error}</p>
       )}
 
       <div className="flex gap-2 mt-4">
         <button
-          onClick={handleCreateAccount}
-          disabled={!canCreate}
+          onClick={handleEnable}
+          disabled={loading || !apiKey.trim()}
           className="btn-primary flex-1 text-center"
         >
-          {creating ? 'Creating Account...' : 'Create Account & Enable Backup'}
+          {loading ? 'Enabling...' : 'Enable Cloud Backup'}
         </button>
-        <button onClick={handleSkip} className="btn-secondary flex-1 text-center">
-          Skip for Now
+        <button onClick={onSkip} className="btn-secondary flex-1 text-center">
+          Skip
         </button>
       </div>
-
-      <p className="text-secondary text-xs mt-3 text-center">
-        You can enable cloud backup later in Settings &gt; Cloud DB.
-      </p>
     </div>
   )
 }
