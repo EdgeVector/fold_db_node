@@ -1,4 +1,4 @@
-//! Extract events from Apple Calendar via osascript.
+//! Extract calendar events from Apple Calendar via osascript.
 
 use regex::Regex;
 use serde_json::{json, Value};
@@ -7,41 +7,40 @@ use super::{content_hash, run_osascript};
 use crate::ingestion::IngestionError;
 
 /// A single event extracted from Apple Calendar.
-pub struct Event {
-    pub title: String,
-    pub start_date: String,
-    pub end_date: String,
+pub struct CalendarEvent {
+    pub summary: String,
+    pub start_time: String,
+    pub end_time: String,
     pub location: String,
-    pub notes: String,
-    pub calendar_name: String,
-    pub attendees: String,
-    pub is_all_day: bool,
-    pub recurrence_rule: String,
+    pub description: String,
+    pub calendar: String,
+    pub all_day: bool,
+    pub recurring: bool,
 }
 
-/// Extract all events (or from a specific calendar) from Apple Calendar.
-pub fn extract(calendar: Option<&str>) -> Result<Vec<Event>, IngestionError> {
+/// Extract all events (or events from a specific calendar) from Apple Calendar.
+pub fn extract(calendar: Option<&str>) -> Result<Vec<CalendarEvent>, IngestionError> {
     let script = build_script(calendar);
     let raw = run_osascript(&script)?;
     parse_output(&raw)
 }
 
-/// Convert extracted events into JSON records ready for ingestion.
-pub fn to_json_records(events: &[Event]) -> Vec<Value> {
+/// Convert extracted calendar events into JSON records ready for ingestion.
+pub fn to_json_records(events: &[CalendarEvent]) -> Vec<Value> {
     events
         .iter()
         .map(|e| {
-            let hash = content_hash(&format!("{}{}{}", e.title, e.start_date, e.calendar_name));
+            let hash_input = format!("{}|{}|{}", e.summary, e.start_time, e.calendar);
+            let hash = content_hash(&hash_input);
             json!({
-                "title": e.title,
-                "start_date": e.start_date,
-                "end_date": e.end_date,
+                "summary": e.summary,
+                "start_time": e.start_time,
+                "end_time": e.end_time,
                 "location": e.location,
-                "notes": e.notes,
-                "calendar_name": e.calendar_name,
-                "attendees": e.attendees,
-                "is_all_day": e.is_all_day,
-                "recurrence_rule": e.recurrence_rule,
+                "description": e.description,
+                "calendar": e.calendar,
+                "all_day": e.all_day,
+                "recurring": e.recurring,
                 "content_hash": hash,
                 "source": "apple_calendar",
             })
@@ -49,21 +48,18 @@ pub fn to_json_records(events: &[Event]) -> Vec<Value> {
         .collect()
 }
 
-fn build_script(calendar: Option<&str>) -> String {
+pub fn build_script(calendar: Option<&str>) -> String {
     let calendar_filter = match calendar {
         Some(name) => format!(
             r#"set targetCalendar to calendar "{}"
-    set eventList to every event of targetCalendar"#,
+    set eventList to every event of targetCalendar whose start date ≥ (current date) - 30 * days and start date ≤ (current date) + 90 * days"#,
             name.replace('"', "\\\"")
         ),
-        None => {
-            // Collect events from all calendars
-            r#"set eventList to {}
+        None => r#"set eventList to {}
     repeat with cal in calendars
-        set eventList to eventList & (every event of cal)
+        set eventList to eventList & (every event of cal whose start date ≥ (current date) - 30 * days and start date ≤ (current date) + 90 * days)
     end repeat"#
-                .to_string()
-        }
+            .to_string(),
     };
 
     format!(
@@ -71,67 +67,55 @@ fn build_script(calendar: Option<&str>) -> String {
     {calendar_filter}
     set output to ""
     repeat with e in eventList
-        set eTitle to summary of e
+        set eSummary to summary of e
         set eStart to (start date of e) as string
         set eEnd to (end date of e) as string
-        try
-            set eLoc to location of e
-            if eLoc is missing value then set eLoc to "none"
-        on error
-            set eLoc to "none"
-        end try
-        try
-            set eNotes to description of e
-            if eNotes is missing value then set eNotes to "none"
-        on error
-            set eNotes to "none"
-        end try
-        set eCalName to name of calendar of e
-        try
-            set eAttendees to ""
-            set attendeeList to attendees of e
-            repeat with a in attendeeList
-                if eAttendees is not "" then set eAttendees to eAttendees & ", "
-                set eAttendees to eAttendees & (display name of a)
-            end repeat
-            if eAttendees is "" then set eAttendees to "none"
-        on error
-            set eAttendees to "none"
-        end try
         set eAllDay to allday event of e
+        set eRecurring to false
         try
             set eRecurrence to recurrence of e
-            if eRecurrence is missing value then set eRecurrence to "none"
-        on error
-            set eRecurrence to "none"
+            if eRecurrence is not missing value then set eRecurring to true
         end try
-        set output to output & "<<<EVT_START>>>" & eTitle & "<<<SEP>>>" & eStart & "<<<SEP>>>" & eEnd & "<<<SEP>>>" & eLoc & "<<<SEP>>>" & eNotes & "<<<SEP>>>" & eCalName & "<<<SEP>>>" & eAttendees & "<<<SEP>>>" & eAllDay & "<<<SEP>>>" & eRecurrence & "<<<EVT_END>>>"
+        try
+            set eLocation to location of e
+            if eLocation is missing value then set eLocation to ""
+        on error
+            set eLocation to ""
+        end try
+        try
+            set eDescription to description of e
+            if eDescription is missing value then set eDescription to ""
+        on error
+            set eDescription to ""
+        end try
+        set eCalName to name of calendar of e
+        set output to output & "<<<EVT_START>>>" & eSummary & "<<<SEP>>>" & eStart & "<<<SEP>>>" & eEnd & "<<<SEP>>>" & eLocation & "<<<SEP>>>" & eDescription & "<<<SEP>>>" & eCalName & "<<<SEP>>>" & eAllDay & "<<<SEP>>>" & eRecurring & "<<<EVT_END>>>"
     end repeat
     return output
 end tell"#
     )
 }
 
-fn parse_output(raw: &str) -> Result<Vec<Event>, IngestionError> {
+pub fn parse_output(raw: &str) -> Result<Vec<CalendarEvent>, IngestionError> {
     let re = Regex::new(
-        r"<<<EVT_START>>>(.*?)<<<SEP>>>(.*?)<<<SEP>>>(.*?)<<<SEP>>>(.*?)<<<SEP>>>(.*?)<<<SEP>>>(.*?)<<<SEP>>>(.*?)<<<SEP>>>(.*?)<<<SEP>>>(.*?)<<<EVT_END>>>"
+        r"<<<EVT_START>>>(.*?)<<<SEP>>>(.*?)<<<SEP>>>(.*?)<<<SEP>>>(.*?)<<<SEP>>>(.*?)<<<SEP>>>(.*?)<<<SEP>>>(.*?)<<<SEP>>>(.*?)<<<EVT_END>>>"
     )
     .map_err(|e| IngestionError::Extraction(format!("Regex error: {}", e)))?;
 
     let mut events = Vec::new();
     for cap in re.captures_iter(raw) {
-        let is_all_day = cap[8].trim().to_lowercase() == "true";
+        let all_day = cap[7].trim().to_lowercase() == "true";
+        let recurring = cap[8].trim().to_lowercase() == "true";
 
-        events.push(Event {
-            title: cap[1].trim().to_string(),
-            start_date: cap[2].trim().to_string(),
-            end_date: cap[3].trim().to_string(),
+        events.push(CalendarEvent {
+            summary: cap[1].trim().to_string(),
+            start_time: cap[2].trim().to_string(),
+            end_time: cap[3].trim().to_string(),
             location: cap[4].trim().to_string(),
-            notes: cap[5].trim().to_string(),
-            calendar_name: cap[6].trim().to_string(),
-            attendees: cap[7].trim().to_string(),
-            is_all_day,
-            recurrence_rule: cap[9].trim().to_string(),
+            description: cap[5].trim().to_string(),
+            calendar: cap[6].trim().to_string(),
+            all_day,
+            recurring,
         });
     }
     Ok(events)
@@ -143,37 +127,39 @@ mod tests {
 
     #[test]
     fn parse_output_basic() {
-        let raw = "<<<EVT_START>>>Team Meeting<<<SEP>>>2024-01-20 10:00:00<<<SEP>>>2024-01-20 11:00:00<<<SEP>>>Conference Room<<<SEP>>>Weekly sync<<<SEP>>>Work<<<SEP>>>Alice, Bob<<<SEP>>>false<<<SEP>>>FREQ=WEEKLY<<<EVT_END>>>";
+        let raw = "<<<EVT_START>>>Team Standup<<<SEP>>>2026-03-28 09:00:00<<<SEP>>>2026-03-28 09:15:00<<<SEP>>>Zoom<<<SEP>>>Daily sync<<<SEP>>>Work<<<SEP>>>false<<<SEP>>>true<<<EVT_END>>>";
         let events = parse_output(raw).unwrap();
         assert_eq!(events.len(), 1);
-        assert_eq!(events[0].title, "Team Meeting");
-        assert_eq!(events[0].start_date, "2024-01-20 10:00:00");
-        assert_eq!(events[0].end_date, "2024-01-20 11:00:00");
-        assert_eq!(events[0].location, "Conference Room");
-        assert_eq!(events[0].notes, "Weekly sync");
-        assert_eq!(events[0].calendar_name, "Work");
-        assert_eq!(events[0].attendees, "Alice, Bob");
-        assert!(!events[0].is_all_day);
-        assert_eq!(events[0].recurrence_rule, "FREQ=WEEKLY");
+        assert_eq!(events[0].summary, "Team Standup");
+        assert_eq!(events[0].start_time, "2026-03-28 09:00:00");
+        assert_eq!(events[0].end_time, "2026-03-28 09:15:00");
+        assert_eq!(events[0].location, "Zoom");
+        assert_eq!(events[0].description, "Daily sync");
+        assert_eq!(events[0].calendar, "Work");
+        assert!(!events[0].all_day);
+        assert!(events[0].recurring);
     }
 
     #[test]
-    fn parse_output_all_day() {
-        let raw = "<<<EVT_START>>>Holiday<<<SEP>>>2024-12-25 00:00:00<<<SEP>>>2024-12-26 00:00:00<<<SEP>>>none<<<SEP>>>none<<<SEP>>>Personal<<<SEP>>>none<<<SEP>>>true<<<SEP>>>none<<<EVT_END>>>";
+    fn parse_output_all_day_event() {
+        let raw = "<<<EVT_START>>>Company Holiday<<<SEP>>>2026-03-28 00:00:00<<<SEP>>>2026-03-29 00:00:00<<<SEP>>><<<SEP>>><<<SEP>>>Personal<<<SEP>>>true<<<SEP>>>false<<<EVT_END>>>";
         let events = parse_output(raw).unwrap();
         assert_eq!(events.len(), 1);
-        assert!(events[0].is_all_day);
-        assert_eq!(events[0].location, "none");
+        assert!(events[0].all_day);
+        assert!(!events[0].recurring);
+        assert!(events[0].location.is_empty());
+        assert!(events[0].description.is_empty());
     }
 
     #[test]
     fn parse_output_multiple() {
-        let raw = "<<<EVT_START>>>Event 1<<<SEP>>>2024-01-01 09:00:00<<<SEP>>>2024-01-01 10:00:00<<<SEP>>>Room A<<<SEP>>>none<<<SEP>>>Work<<<SEP>>>none<<<SEP>>>false<<<SEP>>>none<<<EVT_END>>><<<EVT_START>>>Event 2<<<SEP>>>2024-01-02 14:00:00<<<SEP>>>2024-01-02 15:00:00<<<SEP>>>none<<<SEP>>>Important<<<SEP>>>Personal<<<SEP>>>Charlie<<<SEP>>>false<<<SEP>>>FREQ=DAILY<<<EVT_END>>>";
+        let raw = "<<<EVT_START>>>Event 1<<<SEP>>>Start1<<<SEP>>>End1<<<SEP>>>Loc1<<<SEP>>>Desc1<<<SEP>>>Cal1<<<SEP>>>false<<<SEP>>>false<<<EVT_END>>><<<EVT_START>>>Event 2<<<SEP>>>Start2<<<SEP>>>End2<<<SEP>>>Loc2<<<SEP>>>Desc2<<<SEP>>>Cal2<<<SEP>>>true<<<SEP>>>true<<<EVT_END>>>";
         let events = parse_output(raw).unwrap();
         assert_eq!(events.len(), 2);
-        assert_eq!(events[0].title, "Event 1");
-        assert_eq!(events[1].title, "Event 2");
-        assert_eq!(events[1].attendees, "Charlie");
+        assert_eq!(events[0].summary, "Event 1");
+        assert_eq!(events[1].summary, "Event 2");
+        assert!(events[1].all_day);
+        assert!(events[1].recurring);
     }
 
     #[test]
@@ -183,7 +169,7 @@ mod tests {
     }
 
     #[test]
-    fn build_script_all() {
+    fn build_script_all_calendars() {
         let script = build_script(None);
         assert!(script.contains("repeat with cal in calendars"));
         assert!(!script.contains("targetCalendar"));
@@ -197,22 +183,23 @@ mod tests {
     }
 
     #[test]
-    fn to_json_records_basic() {
-        let events = vec![Event {
-            title: "Test".to_string(),
-            start_date: "2024-01-01 10:00:00".to_string(),
-            end_date: "2024-01-01 11:00:00".to_string(),
-            location: "none".to_string(),
-            notes: "none".to_string(),
-            calendar_name: "Work".to_string(),
-            attendees: "none".to_string(),
-            is_all_day: false,
-            recurrence_rule: "none".to_string(),
+    fn to_json_records_produces_expected_fields() {
+        let events = vec![CalendarEvent {
+            summary: "Test Event".to_string(),
+            start_time: "2026-03-28 10:00:00".to_string(),
+            end_time: "2026-03-28 11:00:00".to_string(),
+            location: "Office".to_string(),
+            description: "A test event".to_string(),
+            calendar: "Work".to_string(),
+            all_day: false,
+            recurring: false,
         }];
         let records = to_json_records(&events);
         assert_eq!(records.len(), 1);
+        assert_eq!(records[0]["summary"], "Test Event");
         assert_eq!(records[0]["source"], "apple_calendar");
-        assert_eq!(records[0]["title"], "Test");
-        assert!(records[0]["content_hash"].as_str().is_some());
+        assert_eq!(records[0]["all_day"], false);
+        assert_eq!(records[0]["recurring"], false);
+        assert!(records[0]["content_hash"].is_string());
     }
 }

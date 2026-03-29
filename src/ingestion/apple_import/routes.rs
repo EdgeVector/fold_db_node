@@ -13,7 +13,6 @@ use fold_db::progress::{Job, JobStatus, JobType, ProgressTracker};
 use serde::{Deserialize, Serialize};
 use serde_json::json;
 
-use super::sync_scheduler::SyncConfigState;
 use crate::ingestion::routes_helpers::IngestionServiceState;
 #[cfg(target_os = "macos")]
 use crate::ingestion::IngestionRequest;
@@ -697,12 +696,12 @@ async fn run_apple_calendar_import(
     node_arc: std::sync::Arc<tokio::sync::RwLock<crate::fold_node::FoldNode>>,
     service: std::sync::Arc<crate::ingestion::ingestion_service::IngestionService>,
 ) {
-    use super::calendar;
+    use super::calendar as cal;
 
-    let calendar_result =
-        tokio::task::spawn_blocking(move || calendar::extract(calendar.as_deref())).await;
+    let events_result =
+        tokio::task::spawn_blocking(move || cal::extract(calendar.as_deref())).await;
 
-    let events = match calendar_result {
+    let events = match events_result {
         Ok(Ok(e)) => e,
         Ok(Err(e)) => {
             let mut job = Job::new(progress_id.clone(), JobType::Other("apple-calendar".into()));
@@ -731,7 +730,7 @@ async fn run_apple_calendar_import(
     }
 
     let total = events.len();
-    let records = calendar::to_json_records(&events);
+    let records = cal::to_json_records(&events);
 
     let mut job = Job::new(progress_id.clone(), JobType::Other("apple-calendar".into()));
     job.status = JobStatus::Running;
@@ -777,7 +776,6 @@ async fn run_apple_calendar_import(
             }
         }
 
-        // Update progress
         let pct = 30 + ((i + 1) * 70 / total.div_ceil(batch_size)).min(70);
         let mut job = Job::new(progress_id.clone(), JobType::Other("apple-calendar".into()));
         job.status = JobStatus::Running;
@@ -810,14 +808,14 @@ async fn run_apple_calendar_import(
 
 // ── Auto-Sync Config Routes ─────────────────────────────────────────
 
+use super::sync_scheduler::SyncConfigState;
+
 /// GET /api/ingestion/apple-import/sync-config
-/// Returns the current auto-sync configuration.
 pub async fn get_sync_config(sync_config: web::Data<SyncConfigState>) -> impl Responder {
     let cfg = sync_config.read().await;
     HttpResponse::Ok().json(&*cfg)
 }
 
-/// Request body for updating sync config.
 #[derive(Deserialize, Serialize)]
 pub struct UpdateSyncConfigRequest {
     pub enabled: Option<bool>,
@@ -827,7 +825,6 @@ pub struct UpdateSyncConfigRequest {
 }
 
 /// POST /api/ingestion/apple-import/sync-config
-/// Update the auto-sync configuration.
 pub async fn update_sync_config(
     req: web::Json<UpdateSyncConfigRequest>,
     sync_config: web::Data<SyncConfigState>,
@@ -847,7 +844,6 @@ pub async fn update_sync_config(
         cfg.photos_limit = limit;
     }
 
-    // Recompute next sync whenever config changes
     cfg.recompute_next_sync();
 
     match cfg.save() {
@@ -860,7 +856,6 @@ pub async fn update_sync_config(
 }
 
 /// GET /api/ingestion/apple-import/next-sync
-/// Returns the next scheduled sync time (or null if disabled).
 pub async fn get_next_sync(sync_config: web::Data<SyncConfigState>) -> impl Responder {
     let cfg = sync_config.read().await;
     HttpResponse::Ok().json(json!({

@@ -29,7 +29,7 @@ pub fn export(album: Option<&str>, limit: usize) -> Result<Vec<PathBuf>, Ingesti
     collect_and_convert(export_dir)
 }
 
-fn build_script(album: Option<&str>, limit: usize) -> String {
+pub fn build_script(album: Option<&str>, limit: usize) -> String {
     let target_items = match album {
         Some(name) => format!(
             r#"set targetAlbum to album "{album}"
@@ -56,7 +56,7 @@ end tell"#,
 }
 
 /// Walk the export directory, convert HEIC→JPEG via `sips`, return uploadable paths.
-fn collect_and_convert(export_dir: &Path) -> Result<Vec<PathBuf>, IngestionError> {
+pub fn collect_and_convert(export_dir: &Path) -> Result<Vec<PathBuf>, IngestionError> {
     let mut result = Vec::new();
 
     let entries = std::fs::read_dir(export_dir)
