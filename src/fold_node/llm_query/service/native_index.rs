@@ -191,6 +191,7 @@ impl LlmQueryService {
 
                 let filter = params.get("filter").cloned();
                 let sort_order = params.get("sort_order").cloned();
+                let value_filters = params.get("value_filters").cloned();
                 let limit = params.get("limit").and_then(|l| l.as_u64()).unwrap_or(50) as usize;
 
                 let query = Query {
@@ -200,6 +201,7 @@ impl LlmQueryService {
                     as_of: None,
                     rehydrate_depth: Some(1),
                     sort_order: sort_order.and_then(|s| serde_json::from_value(s).ok()),
+                    value_filters: value_filters.and_then(|v| serde_json::from_value(v).ok()),
                 };
 
                 let results = processor

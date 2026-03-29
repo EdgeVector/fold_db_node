@@ -134,10 +134,17 @@ impl LlmQueryService {
         prompt.push_str("  - {\"SampleN\": 10} - random sample of N records\n");
         prompt.push_str("  - null - no filter (all records)\n");
         prompt.push_str("- sort_order (string, optional): \"asc\" or \"desc\" — sorts results by range key. Use \"desc\" for most recent/latest queries.\n");
+        prompt.push_str("- value_filters (array, optional): Numeric comparison filters on field values. Applied AFTER key-based filtering. Multiple filters are AND'd. Examples:\n");
+        prompt.push_str("  - [{\"LessThan\": {\"field\": \"price\", \"value\": 600}}] - records where price < 600\n");
+        prompt.push_str("  - [{\"GreaterThan\": {\"field\": \"score\", \"value\": 90}}] - records where score > 90\n");
+        prompt.push_str("  - [{\"Between\": {\"field\": \"price\", \"min\": 200, \"max\": 600}}] - records where 200 <= price <= 600\n");
+        prompt.push_str("  - [{\"Equals\": {\"field\": \"rating\", \"value\": 5}}] - records where rating == 5\n");
+        prompt.push_str("  - null - no value filtering\n");
         prompt.push_str("- limit (integer, optional): Maximum number of results to return. Default: 50. Use smaller limits (5-10) when fetching large text fields.\n");
         prompt.push_str("When the user asks for \"upcoming\", \"future\", or \"after today\" items and a schema has a date-based range key, use RangeRange with today's date as start.\n");
         prompt.push_str("When the user asks for \"most recent\", \"latest\", or \"newest\" items, use null filter with sort_order \"desc\".\n");
-        prompt.push_str("Example: {\"tool\": \"query\", \"params\": {\"schema_name\": \"Tweet\", \"fields\": [\"content\", \"author\"], \"filter\": null, \"sort_order\": \"desc\", \"limit\": 20}}\n\n");
+        prompt.push_str("When the user asks for numeric comparisons (e.g., \"flights under $600\", \"scores above 90\"), use value_filters.\n");
+        prompt.push_str("Example: {\"tool\": \"query\", \"params\": {\"schema_name\": \"Flight\", \"fields\": [\"airline\", \"price\", \"departure\"], \"filter\": null, \"value_filters\": [{\"LessThan\": {\"field\": \"price\", \"value\": 600}}], \"sort_order\": \"asc\", \"limit\": 20}}\n\n");
 
         prompt.push_str("### list_schemas\n");
         prompt.push_str("List all available schemas.\n");

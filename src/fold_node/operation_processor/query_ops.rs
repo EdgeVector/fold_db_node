@@ -4,7 +4,7 @@ use fold_db::error::{FoldDbError, FoldDbResult};
 use fold_db::schema::types::field::Field;
 #[cfg(test)]
 use fold_db::schema::types::field::HashRangeFilter;
-use fold_db::schema::types::operations::SortOrder;
+use fold_db::schema::types::operations::{SortOrder, ValueFilter};
 use fold_db::schema::types::{KeyValue, Query};
 use serde_json::Value;
 use std::collections::{HashMap, HashSet};
@@ -45,6 +45,7 @@ impl OperationProcessor {
         let schema_name = query.schema_name.clone();
         let rehydrate_depth = query.rehydrate_depth;
         let sort_order = query.sort_order.clone();
+        let value_filters = query.value_filters.clone();
 
         let result_map = self.execute_query_map(query).await?;
         let records_map = fold_db::fold_db_core::query::records_from_field_map(&result_map);
@@ -59,6 +60,11 @@ impl OperationProcessor {
                 })
             })
             .collect();
+
+        // Apply post-fetch numeric value filters (AND'd together)
+        if let Some(ref filters) = value_filters {
+            results.retain(|record| Self::record_matches_value_filters(record, filters));
+        }
 
         if let Some(ref order) = sort_order {
             results.sort_by(|a, b| {
@@ -364,6 +370,21 @@ impl OperationProcessor {
             (Some(h), None) => Some(HashRangeFilter::HashKey(h.clone())),
             _ => None,
         }
+    }
+
+    /// Tests whether a JSON record passes all value filters (AND logic).
+    /// A record is `{"key": ..., "fields": {"price": 500, ...}, ...}`.
+    fn record_matches_value_filters(record: &Value, filters: &[ValueFilter]) -> bool {
+        let fields = match record.get("fields") {
+            Some(f) => f,
+            None => return false,
+        };
+        filters.iter().all(|filter| {
+            match fields.get(filter.field_name()) {
+                Some(v) => filter.matches(v),
+                None => false, // missing field fails the filter
+            }
+        })
     }
 
     /// Get the list of queryable field names from a schema.
