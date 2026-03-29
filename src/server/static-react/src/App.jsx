@@ -21,6 +21,7 @@ import ViewsTab from './components/tabs/ViewsTab'
 import SharingTab from './components/tabs/SharingTab'
 import AppleImportTab from './components/tabs/AppleImportTab'
 import SettingsModal from './components/SettingsModal'
+import OnboardingWizard, { ONBOARDING_STORAGE_KEY } from './components/onboarding/OnboardingWizard'
 
 import LogSidebar from './components/LogSidebar'
 import ErrorBoundary from './components/ErrorBoundary'
@@ -74,6 +75,9 @@ export function AppContent() {
   )
   const [dbStatus, setDbStatus] = useState(null) // { initialized, has_saved_config }
   const [dbStatusLoading, setDbStatusLoading] = useState(true)
+  const [showOnboarding, setShowOnboarding] = useState(
+    () => localStorage.getItem(ONBOARDING_STORAGE_KEY) !== '1'
+  )
 
   // Sync activeTab with URL hash changes
   useEffect(() => {
@@ -261,6 +265,15 @@ export function AppContent() {
     );
   }
 
+  // Show onboarding wizard on first run (after DB is initialized)
+  if (showOnboarding && dbStatus?.initialized) {
+    return (
+      <OnboardingWizard
+        onComplete={() => setShowOnboarding(false)}
+      />
+    )
+  }
+
   return (
     <div className="h-screen flex flex-col bg-surface overflow-hidden">
       <Header
@@ -268,7 +281,12 @@ export function AppContent() {
         onAiSettingsClick={() => { setSettingsInitialTab('ai'); setIsSettingsOpen(true) }}
         onCloudSettingsClick={() => { setSettingsInitialTab('upgrade-cloud'); setIsSettingsOpen(true) }}
       />
-      <SettingsModal isOpen={isSettingsOpen} onClose={() => setIsSettingsOpen(false)} initialTab={settingsInitialTab} />
+      <SettingsModal
+        isOpen={isSettingsOpen}
+        onClose={() => setIsSettingsOpen(false)}
+        initialTab={settingsInitialTab}
+        onRelaunchOnboarding={() => { setIsSettingsOpen(false); setShowOnboarding(true) }}
+      />
 
       {showSetupBanner && (
         <div className="bg-gruvbox-elevated border-b border-border px-8 py-3 flex items-center justify-between">
