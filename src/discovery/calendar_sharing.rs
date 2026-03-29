@@ -83,7 +83,11 @@ pub async fn is_opted_in(store: &dyn KvStore) -> Result<bool, String> {
 
 /// Set calendar sharing opt-in status.
 pub async fn set_opt_in(store: &dyn KvStore, opted_in: bool) -> Result<(), String> {
-    let value = if opted_in { b"true".to_vec() } else { b"false".to_vec() };
+    let value = if opted_in {
+        b"true".to_vec()
+    } else {
+        b"false".to_vec()
+    };
     store
         .put(CALENDAR_SHARING_OPTED_IN_KEY.as_bytes(), value)
         .await
@@ -95,7 +99,15 @@ pub async fn set_opt_in(store: &dyn KvStore, opted_in: bool) -> Result<(), Strin
 /// Tokenize a string: lowercase, split on whitespace and punctuation, remove empties.
 fn tokenize(s: &str) -> Vec<String> {
     s.to_lowercase()
-        .split(|c: char| c.is_whitespace() || c == ',' || c == '-' || c == '/' || c == '(' || c == ')' || c == ':')
+        .split(|c: char| {
+            c.is_whitespace()
+                || c == ','
+                || c == '-'
+                || c == '/'
+                || c == '('
+                || c == ')'
+                || c == ':'
+        })
         .filter(|t| !t.is_empty() && t.len() > 1)
         .map(String::from)
         .collect()
@@ -209,12 +221,7 @@ fn parse_datetime(s: &str) -> Result<NaiveDateTime, ParseError> {
 
 /// Check if two date ranges overlap and return overlap ratio (0.0–1.0).
 /// Returns 1.0 for perfect overlap, 0.0 for no overlap.
-fn date_overlap_score(
-    start_a: &str,
-    end_a: &str,
-    start_b: &str,
-    end_b: &str,
-) -> f64 {
+fn date_overlap_score(start_a: &str, end_a: &str, start_b: &str, end_b: &str) -> f64 {
     let (Ok(sa), Ok(ea), Ok(sb), Ok(eb)) = (
         parse_datetime(start_a),
         parse_datetime(end_a),
@@ -294,9 +301,7 @@ pub fn detect_shared_events(
                             event_title: local_fp.display_title.clone(),
                             start_time: local_fp.start_time.clone(),
                             end_time: local_fp.end_time.clone(),
-                            location: local_fp
-                                .location_tokens
-                                .join(" "),
+                            location: local_fp.location_tokens.join(" "),
                             connection_count: 0,
                             connection_pseudonyms: Vec::new(),
                             match_score: 0.0,
@@ -384,8 +389,20 @@ mod tests {
 
     #[test]
     fn test_fingerprint_deterministic() {
-        let fp1 = fingerprint_event("Event", "2026-01-01 00:00:00", "2026-01-02 00:00:00", "", "Cal");
-        let fp2 = fingerprint_event("Event", "2026-01-01 00:00:00", "2026-01-02 00:00:00", "", "Cal");
+        let fp1 = fingerprint_event(
+            "Event",
+            "2026-01-01 00:00:00",
+            "2026-01-02 00:00:00",
+            "",
+            "Cal",
+        );
+        let fp2 = fingerprint_event(
+            "Event",
+            "2026-01-01 00:00:00",
+            "2026-01-02 00:00:00",
+            "",
+            "Cal",
+        );
         assert_eq!(fp1.event_hash, fp2.event_hash);
     }
 
@@ -468,7 +485,11 @@ mod tests {
             "Work",
         );
         let score = event_similarity(&a, &b);
-        assert!(score > OVERLAP_THRESHOLD, "Same event should exceed threshold: {}", score);
+        assert!(
+            score > OVERLAP_THRESHOLD,
+            "Same event should exceed threshold: {}",
+            score
+        );
     }
 
     #[test]
@@ -488,7 +509,11 @@ mod tests {
             "Cal",
         );
         let score = event_similarity(&a, &b);
-        assert!(score < OVERLAP_THRESHOLD, "Different events should be below threshold: {}", score);
+        assert!(
+            score < OVERLAP_THRESHOLD,
+            "Different events should be below threshold: {}",
+            score
+        );
     }
 
     #[test]
@@ -509,7 +534,11 @@ mod tests {
         );
         let score = event_similarity(&a, &b);
         // Same time but different event — should be below threshold
-        assert!(score < OVERLAP_THRESHOLD, "Different events at same time: {}", score);
+        assert!(
+            score < OVERLAP_THRESHOLD,
+            "Different events at same time: {}",
+            score
+        );
     }
 
     #[test]
@@ -557,7 +586,11 @@ mod tests {
         ];
 
         let shared = detect_shared_events(&local, &peer_sets);
-        assert_eq!(shared.len(), 1, "Should detect exactly one shared event (RustConf)");
+        assert_eq!(
+            shared.len(),
+            1,
+            "Should detect exactly one shared event (RustConf)"
+        );
         assert_eq!(shared[0].connection_count, 2);
         assert!(shared[0].event_title.contains("RustConf"));
     }
