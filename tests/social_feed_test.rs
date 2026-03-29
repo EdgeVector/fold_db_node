@@ -120,9 +120,8 @@ async fn test_basic_feed_returns_friends_photos_sorted_desc() {
         limit: None,
     };
 
-    let feed = unwrap_feed(
-        fold_db_node::handlers::feed::get_feed(request, "test_user", &node).await,
-    );
+    let feed =
+        unwrap_feed(fold_db_node::handlers::feed::get_feed(request, "test_user", &node).await);
 
     assert_eq!(feed.total, 3, "Should return all 3 photos from friends");
     assert_eq!(feed.items.len(), 3);
@@ -188,9 +187,8 @@ async fn test_feed_filters_out_non_friends() {
         limit: None,
     };
 
-    let feed = unwrap_feed(
-        fold_db_node::handlers::feed::get_feed(request, "test_user", &node).await,
-    );
+    let feed =
+        unwrap_feed(fold_db_node::handlers::feed::get_feed(request, "test_user", &node).await);
 
     assert_eq!(feed.total, 2, "Should exclude stranger's photo");
 
@@ -227,9 +225,8 @@ async fn test_empty_friends_returns_empty_feed() {
         limit: None,
     };
 
-    let feed = unwrap_feed(
-        fold_db_node::handlers::feed::get_feed(request, "test_user", &node).await,
-    );
+    let feed =
+        unwrap_feed(fold_db_node::handlers::feed::get_feed(request, "test_user", &node).await);
 
     assert_eq!(feed.total, 0);
     assert!(feed.items.is_empty());
@@ -259,12 +256,15 @@ async fn test_feed_respects_limit() {
         limit: Some(2),
     };
 
-    let feed = unwrap_feed(
-        fold_db_node::handlers::feed::get_feed(request, "test_user", &node).await,
-    );
+    let feed =
+        unwrap_feed(fold_db_node::handlers::feed::get_feed(request, "test_user", &node).await);
 
     assert_eq!(feed.total, 5, "Total should reflect all matching items");
-    assert_eq!(feed.items.len(), 2, "Should return only 2 items due to limit");
+    assert_eq!(
+        feed.items.len(),
+        2,
+        "Should return only 2 items due to limit"
+    );
 
     // Should be the 2 newest
     assert_eq!(
@@ -327,9 +327,8 @@ async fn test_feed_strips_non_public_fields() {
         limit: None,
     };
 
-    let feed = unwrap_feed(
-        fold_db_node::handlers::feed::get_feed(request, "test_user", &node).await,
-    );
+    let feed =
+        unwrap_feed(fold_db_node::handlers::feed::get_feed(request, "test_user", &node).await);
 
     assert_eq!(feed.total, 1);
     let fields = feed.items[0]["fields"].as_object().unwrap();
@@ -361,8 +360,10 @@ async fn test_feed_nonexistent_schema_returns_error() {
         limit: None,
     };
 
-    let result =
-        fold_db_node::handlers::feed::get_feed(request, "test_user", &node).await;
+    let result = fold_db_node::handlers::feed::get_feed(request, "test_user", &node).await;
 
-    assert!(result.is_err(), "Should return error for nonexistent schema");
+    assert!(
+        result.is_err(),
+        "Should return error for nonexistent schema"
+    );
 }
