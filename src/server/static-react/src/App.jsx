@@ -34,6 +34,7 @@ import { DEFAULT_TAB } from './constants'
 import { BROWSER_CONFIG } from './constants/config'
 import { getAutoIdentity, getDatabaseStatus } from './api/clients/systemClient'
 import DatabaseSetupScreen from './components/DatabaseSetupScreen'
+import OnboardingWizard from './components/onboarding/OnboardingWizard'
 
 function isIngestionResult(results) {
   if (!results?.success) return false
@@ -75,6 +76,9 @@ export function AppContent() {
   )
   const [dbStatus, setDbStatus] = useState(null) // { initialized, has_saved_config }
   const [dbStatusLoading, setDbStatusLoading] = useState(true)
+  const [onboardingComplete, setOnboardingComplete] = useState(
+    () => localStorage.getItem('folddb_onboarding_complete') === '1'
+  )
 
   // Sync activeTab with URL hash changes
   useEffect(() => {
@@ -257,6 +261,18 @@ export function AppContent() {
               setDbStatus({ initialized: true, has_saved_config: true })
             })
             .finally(() => setDbStatusLoading(false))
+        }}
+      />
+    );
+  }
+
+  // Show onboarding wizard for first-time setup (after DB init, before main app)
+  if (!onboardingComplete) {
+    return (
+      <OnboardingWizard
+        onComplete={() => {
+          setOnboardingComplete(true)
+          dispatch(fetchIngestionConfig())
         }}
       />
     );

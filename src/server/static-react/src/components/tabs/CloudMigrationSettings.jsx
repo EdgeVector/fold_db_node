@@ -2,6 +2,7 @@ import React, { useState } from 'react'
 import { systemClient } from '../../api/clients/systemClient'
 
 export default function CloudMigrationSettings({ onClose }) {
+  const backupSkipped = localStorage.getItem('folddb_cloud_backup_skipped') === '1'
   const [migrationMode, setMigrationMode] = useState('encryption_at_rest')
   const [apiUrl, setApiUrl] = useState('')
   const [apiKey, setApiKey] = useState('')
@@ -122,6 +123,24 @@ export default function CloudMigrationSettings({ onClose }) {
   return (
     <div className="flex flex-col gap-6 w-full max-w-2xl text-gruvbox-bright p-4 border border-border rounded-md bg-surface shadow-md">
       
+      {/* Skipped backup reminder */}
+      {backupSkipped && (
+        <div className="flex items-start gap-3 p-4 border border-gruvbox-yellow bg-gruvbox-yellow/5 rounded-md">
+          <div className="text-gruvbox-yellow mt-0.5 flex-shrink-0">
+            <svg className="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-2.5L13.732 4c-.77-.833-1.964-.833-2.732 0L4.082 16.5c-.77.833.192 2.5 1.732 2.5z" />
+            </svg>
+          </div>
+          <div>
+            <p className="text-sm font-bold text-gruvbox-yellow">Cloud backup not enabled</p>
+            <p className="text-xs text-gruvbox-light mt-1">
+              You skipped cloud backup during setup. Your data is only stored locally.
+              Enable encrypted cloud backup below to protect against data loss.
+            </p>
+          </div>
+        </div>
+      )}
+
       {/* Explanation Banner */}
       <div className="flex items-start gap-4 p-4 border border-gruvbox-blue bg-gruvbox-blue/5 rounded-md">
         <div className="text-gruvbox-blue mt-1 flex-shrink-0">
