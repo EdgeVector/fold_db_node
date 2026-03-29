@@ -494,6 +494,25 @@ impl OperationProcessor {
 
         let db = self.get_db().await?;
 
-        Ok(db.native_search_all_classifications(term).await?)
+        let mut results = db.native_search_all_classifications(term).await?;
+
+        // Enrich results with human-readable schema display names
+        let schemas = db.schema_manager.get_active_schemas_with_states()?;
+        let display_names: std::collections::HashMap<&str, &str> = schemas
+            .iter()
+            .filter_map(|s| {
+                s.schema
+                    .descriptive_name
+                    .as_deref()
+                    .map(|dn| (s.schema.name.as_str(), dn))
+            })
+            .collect();
+        for result in &mut results {
+            if let Some(&dn) = display_names.get(result.schema_name.as_str()) {
+                result.schema_display_name = Some(dn.to_string());
+            }
+        }
+
+        Ok(results)
     }
 }

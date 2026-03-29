@@ -352,11 +352,25 @@ impl LlmQueryService {
         prompt.push_str("Example: {\"tool\": \"get_field_policies\", \"params\": {\"schema_name\": \"BlogPost\"}}\n\n");
 
         prompt.push_str("## Available Schemas\n\n");
+        prompt.push_str("When referring to schemas in tool calls, always use the schema ID (not the display name).\n\n");
         for schema in schemas {
-            prompt.push_str(&format!(
-                "- **{}** (Type: {:?}, State: {:?})\n",
-                schema.schema.name, schema.schema.schema_type, schema.state
-            ));
+            let has_descriptive = schema.schema.descriptive_name.is_some();
+            let display_name = schema
+                .schema
+                .descriptive_name
+                .as_deref()
+                .unwrap_or(&schema.schema.name);
+            if has_descriptive {
+                prompt.push_str(&format!(
+                    "- **{}** (ID: `{}`, Type: {:?}, State: {:?})\n",
+                    display_name, schema.schema.name, schema.schema.schema_type, schema.state
+                ));
+            } else {
+                prompt.push_str(&format!(
+                    "- **{}** (Type: {:?}, State: {:?})\n",
+                    display_name, schema.schema.schema_type, schema.state
+                ));
+            }
 
             if let Some(ref key) = schema.schema.key {
                 if let Some(ref hash_field) = key.hash_field {

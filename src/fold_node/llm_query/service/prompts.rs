@@ -8,6 +8,15 @@ use fold_db::llm_registry::prompts::query as qp;
 use fold_db::schema::SchemaWithState;
 use serde_json::Value;
 
+/// Format a schema header line for LLM prompts.
+/// Shows descriptive name with ID when available, falls back to just the name.
+fn schema_prompt_label(schema: &SchemaWithState) -> String {
+    match &schema.schema.descriptive_name {
+        Some(dn) => format!("{} (ID: `{}`)", dn, schema.schema.name),
+        None => schema.schema.name.clone(),
+    }
+}
+
 impl LlmQueryService {
     /// Build the analysis prompt
     pub(super) fn build_analysis_prompt(
@@ -21,7 +30,9 @@ impl LlmQueryService {
         for schema in schemas {
             prompt.push_str(&format!(
                 "- {} (Type: {:?}, State: {:?})\n",
-                schema.schema.name, schema.schema.schema_type, schema.state
+                schema_prompt_label(schema),
+                schema.schema.schema_type,
+                schema.state
             ));
 
             if let Some(ref key) = schema.schema.key {
@@ -167,7 +178,8 @@ impl LlmQueryService {
         for schema in schemas {
             prompt.push_str(&format!(
                 "- {} (Type: {:?})\n",
-                schema.schema.name, schema.schema.schema_type
+                schema_prompt_label(schema),
+                schema.schema.schema_type
             ));
 
             if let Some(ref key) = schema.schema.key {
@@ -216,7 +228,9 @@ impl LlmQueryService {
         for schema in schemas {
             prompt.push_str(&format!(
                 "- {} (Type: {:?}, State: {:?})\n",
-                schema.schema.name, schema.schema.schema_type, schema.state
+                schema_prompt_label(schema),
+                schema.schema.schema_type,
+                schema.state
             ));
 
             if let Some(ref key) = schema.schema.key {
@@ -262,7 +276,9 @@ impl LlmQueryService {
         for schema in schemas {
             prompt.push_str(&format!(
                 "- {} (Type: {:?}, State: {:?})\n",
-                schema.schema.name, schema.schema.schema_type, schema.state
+                schema_prompt_label(schema),
+                schema.schema.schema_type,
+                schema.state
             ));
 
             if let Some(ref key) = schema.schema.key {
@@ -358,7 +374,9 @@ impl LlmQueryService {
         for schema in schemas {
             prompt.push_str(&format!(
                 "- {} (Type: {:?}, State: {:?})\n",
-                schema.schema.name, schema.schema.schema_type, schema.state
+                schema_prompt_label(schema),
+                schema.schema.schema_type,
+                schema.state
             ));
 
             if let Some(ref key) = schema.schema.key {
