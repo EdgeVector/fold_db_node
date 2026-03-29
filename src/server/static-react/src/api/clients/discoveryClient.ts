@@ -134,6 +134,45 @@ export interface SharedEventsResponse {
   connection_count: number;
 }
 
+// Photo Moment Detection types
+
+export interface MomentOptIn {
+  peer_pseudonym: string;
+  peer_display_name: string | null;
+  opted_in_at: string;
+}
+
+export interface SharedMoment {
+  moment_id: string;
+  peer_pseudonym: string;
+  peer_display_name: string | null;
+  time_bucket: string;
+  geohash: string;
+  location_name: string | null;
+  our_record_id: string;
+  our_timestamp: string;
+  peer_timestamp: string | null;
+  detected_at: string;
+}
+
+export interface PhotoMetadata {
+  record_id: string;
+  timestamp: string;
+  latitude: number;
+  longitude: number;
+}
+
+export interface MomentScanResult {
+  photos_scanned: number;
+  hashes_generated: number;
+  peers_processed: number;
+}
+
+export interface MomentDetectResult {
+  new_moments_found: number;
+  moments: SharedMoment[];
+}
+
 export class DiscoveryClient {
   private readonly client: ApiClient;
 
@@ -286,6 +325,69 @@ export class DiscoveryClient {
 
   async getSharedEvents(): Promise<EnhancedApiResponse<SharedEventsResponse>> {
     return this.client.get('/discovery/shared-events', {
+      timeout: API_TIMEOUTS.STANDARD,
+      retries: API_RETRIES.STANDARD,
+    });
+  }
+
+  // Photo Moment Detection
+
+  async listMomentOptIns(): Promise<EnhancedApiResponse<{ opt_ins: MomentOptIn[] }>> {
+    return this.client.get('/discovery/moments/opt-ins', {
+      timeout: API_TIMEOUTS.STANDARD,
+    });
+  }
+
+  async momentOptIn(
+    peer_pseudonym: string,
+    peer_display_name?: string,
+  ): Promise<EnhancedApiResponse<{ opt_ins: MomentOptIn[] }>> {
+    return this.client.post('/discovery/moments/opt-in', {
+      peer_pseudonym,
+      peer_display_name: peer_display_name || undefined,
+    }, {
+      timeout: API_TIMEOUTS.STANDARD,
+    });
+  }
+
+  async momentOptOut(
+    peer_pseudonym: string,
+  ): Promise<EnhancedApiResponse<{ opt_ins: MomentOptIn[] }>> {
+    return this.client.post('/discovery/moments/opt-out', {
+      peer_pseudonym,
+    }, {
+      timeout: API_TIMEOUTS.STANDARD,
+    });
+  }
+
+  async momentScan(
+    photos: PhotoMetadata[],
+  ): Promise<EnhancedApiResponse<MomentScanResult>> {
+    return this.client.post('/discovery/moments/scan', photos, {
+      timeout: API_TIMEOUTS.LONG,
+    });
+  }
+
+  async momentReceiveHashes(
+    sender_pseudonym: string,
+    hashes: string[],
+  ): Promise<EnhancedApiResponse<void>> {
+    return this.client.post('/discovery/moments/receive', {
+      sender_pseudonym,
+      hashes,
+    }, {
+      timeout: API_TIMEOUTS.STANDARD,
+    });
+  }
+
+  async momentDetect(): Promise<EnhancedApiResponse<MomentDetectResult>> {
+    return this.client.post('/discovery/moments/detect', {}, {
+      timeout: API_TIMEOUTS.LONG,
+    });
+  }
+
+  async listSharedMoments(): Promise<EnhancedApiResponse<{ moments: SharedMoment[] }>> {
+    return this.client.get('/discovery/moments', {
       timeout: API_TIMEOUTS.STANDARD,
       retries: API_RETRIES.STANDARD,
     });

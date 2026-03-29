@@ -148,3 +148,34 @@ pub struct BrowseCategory {
 pub struct BrowseCategoriesResponse {
     pub categories: Vec<BrowseCategory>,
 }
+
+// === Photo Moment Detection Types ===
+
+/// Request to opt-in to photo moment sharing with a specific peer.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct MomentOptInRequest {
+    pub peer_pseudonym: String,
+    pub peer_display_name: Option<String>,
+}
+
+/// Request to opt-out of photo moment sharing with a specific peer.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct MomentOptOutRequest {
+    pub peer_pseudonym: String,
+}
+
+/// Request to receive moment hashes from a peer.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct MomentHashReceiveRequest {
+    pub sender_pseudonym: String,
+    pub hashes: Vec<String>,
+}
+
+/// Photo metadata extracted from a local record for moment hashing.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct PhotoMetadata {
+    pub record_id: String,
+    pub timestamp: String,
+    pub latitude: f64,
+    pub longitude: f64,
+}

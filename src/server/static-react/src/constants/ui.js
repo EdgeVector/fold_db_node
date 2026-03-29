@@ -20,6 +20,7 @@ export const DEFAULT_TABS = [
   { id: "apple-import", label: "Apple Import", icon: "🍎", group: "main" },
   { id: "llm-query", label: "AI Query", icon: "🤖", group: "main" },
   { id: "feed", label: "Feed", icon: "📷", group: "main" },
+  { id: "shared-moments", label: "Shared Moments", icon: "📸", group: "main" },
   { id: "my-profile", label: "My Profile", icon: "🧬", group: "main" },
   // Developer/Advanced features
   { id: "schemas", label: "Schema", icon: "📋", group: "advanced" },
