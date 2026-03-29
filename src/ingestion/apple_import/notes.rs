@@ -41,7 +41,7 @@ pub fn to_json_records(notes: &[Note]) -> Vec<Value> {
         .collect()
 }
 
-fn build_script(folder: Option<&str>) -> String {
+pub fn build_script(folder: Option<&str>) -> String {
     let folder_filter = match folder {
         Some(name) => format!(
             r#"set targetFolder to folder "{}"
@@ -69,7 +69,7 @@ end tell"#
     )
 }
 
-fn parse_output(raw: &str) -> Result<Vec<Note>, IngestionError> {
+pub fn parse_output(raw: &str) -> Result<Vec<Note>, IngestionError> {
     let re = Regex::new(
         r"<<<NOTE_START>>>(.*?)<<<SEP>>>(.*?)<<<SEP>>>(.*?)<<<SEP>>>(.*?)<<<NOTE_END>>>",
     )
