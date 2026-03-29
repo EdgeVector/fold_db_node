@@ -306,15 +306,17 @@ fn test_similar_profile_aggregation_sorting() {
     // p1 shares 2 of 3 categories, top sim 0.8
     profile_map.insert(p1, (vec!["Music".into(), "Cooking".into()], 0.8));
     // p2 shares 3 of 3 categories, top sim 0.6
-    profile_map.insert(p2, (vec!["Music".into(), "Cooking".into(), "Travel".into()], 0.6));
+    profile_map.insert(
+        p2,
+        (vec!["Music".into(), "Cooking".into(), "Travel".into()], 0.6),
+    );
     // p3 shares 1 of 3, top sim 0.9
     profile_map.insert(p3, (vec!["Music".into()], 0.9));
 
     let mut profiles: Vec<SimilarProfile> = profile_map
         .into_iter()
         .map(|(pseudonym, (shared_categories, top_similarity))| {
-            let match_percentage =
-                (shared_categories.len() as f32 / user_cat_count as f32) * 100.0;
+            let match_percentage = (shared_categories.len() as f32 / user_cat_count as f32) * 100.0;
             SimilarProfile {
                 pseudonym,
                 match_percentage,
@@ -379,7 +381,10 @@ fn test_similar_profile_dedup_categories() {
 
     let (cats, top_sim) = &profile_map[&p];
     assert_eq!(cats.len(), 1, "Duplicate categories should be deduped");
-    assert!((top_sim - 0.9).abs() < f32::EPSILON, "Should keep highest similarity");
+    assert!(
+        (top_sim - 0.9).abs() < f32::EPSILON,
+        "Should keep highest similarity"
+    );
 }
 
 #[cfg(feature = "test-utils")]

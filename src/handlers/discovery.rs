@@ -528,13 +528,14 @@ pub async fn similar_profiles(
             None => continue,
         };
 
-        let results = match publisher
-            .search(centroid, 20, Some(cat_name.clone()))
-            .await
-        {
+        let results = match publisher.search(centroid, 20, Some(cat_name.clone())).await {
             Ok(r) => r,
             Err(e) => {
-                log::warn!("Similar profiles search failed for category '{}': {}", cat_name, e);
+                log::warn!(
+                    "Similar profiles search failed for category '{}': {}",
+                    cat_name,
+                    e
+                );
                 continue;
             }
         };
@@ -556,8 +557,7 @@ pub async fn similar_profiles(
     let mut profiles: Vec<SimilarProfile> = profile_map
         .into_iter()
         .map(|(pseudonym, (shared_categories, top_similarity))| {
-            let match_percentage =
-                (shared_categories.len() as f32 / user_cat_count as f32) * 100.0;
+            let match_percentage = (shared_categories.len() as f32 / user_cat_count as f32) * 100.0;
             SimilarProfile {
                 pseudonym,
                 match_percentage,
