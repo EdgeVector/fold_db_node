@@ -9,6 +9,7 @@ const mockAppleImportReminders = vi.fn()
 const mockAppleImportPhotos = vi.fn()
 const mockAppleImportCalendar = vi.fn()
 const mockGetJobProgress = vi.fn()
+const mockGetAppleSyncConfig = vi.fn()
 
 vi.mock('../../../api/clients/ingestionClient', () => ({
   default: {
@@ -18,6 +19,7 @@ vi.mock('../../../api/clients/ingestionClient', () => ({
     appleImportPhotos: (...args) => mockAppleImportPhotos(...args),
     appleImportCalendar: (...args) => mockAppleImportCalendar(...args),
     getJobProgress: (...args) => mockGetJobProgress(...args),
+    getAppleSyncConfig: (...args) => mockGetAppleSyncConfig(...args),
   },
 }))
 
@@ -25,6 +27,8 @@ describe('AppleImportTab', () => {
   beforeEach(() => {
     vi.clearAllMocks()
     vi.useFakeTimers()
+    // AutoSyncSettings calls this on mount — return null config so it renders nothing
+    mockGetAppleSyncConfig.mockResolvedValue({ success: true, data: null })
   })
 
   afterEach(() => {

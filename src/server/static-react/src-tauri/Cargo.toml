@@ -19,14 +19,17 @@ tauri-build = { version = "2.5.5", features = [] }
 
 [dependencies]
 # Fold libraries
-fold_db = { path = "../../../../../fold_db" }
-fold_db_node = { path = "../../../../../fold_db_node" }
+# fold_db: git dep for CI; patched to local path by .cargo/config.toml for local dev
+fold_db = { git = "https://github.com/shiba4life/fold_db.git", branch = "mainline", features = ["cli"] }
+# fold_db_node: always a path dep (this crate lives inside fold_db_node)
+fold_db_node = { path = "../../../../" }
 
 # Tauri dependencies
 tauri = { version = "2.10.2", features = ["devtools"] }
 tauri-plugin-log = "2.0.0"
 tauri-plugin-shell = "2.0.0"
 tauri-plugin-dialog = "2"
+tauri-plugin-updater = "2"
 
 # Async runtime
 tokio = { version = "1.0", features = ["macros", "rt-multi-thread", "sync", "time"] }
