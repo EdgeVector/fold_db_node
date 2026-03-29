@@ -12,6 +12,7 @@
 
 use crate::fold_node::config::NodeConfig;
 use crate::fold_node::FoldNode;
+use crate::utils::crypto::user_hash_from_pubkey;
 use base64::Engine as _;
 use fold_db::fold_db_core::factory;
 use fold_db::security::Ed25519KeyPair;
@@ -337,6 +338,42 @@ impl NodeManager {
     /// Get the base configuration (returns a clone since config is behind RwLock)
     pub async fn get_base_config(&self) -> NodeConfig {
         self.config.read().await.base_config.clone()
+    }
+
+    /// Ensure a default identity exists and return its public key.
+    ///
+    /// On first call this generates a keypair (persisted to disk) and eagerly
+    /// creates the local-mode node so subsequent authenticated requests are fast.
+    /// Returns the base-64 public key string.
+    pub async fn ensure_default_identity(&self) -> Result<String, NodeManagerError> {
+        // Fast path: identity already populated in the base config
+        {
+            let config = self.config.read().await;
+            if let Some(pk) = &config.base_config.public_key {
+                if !pk.is_empty() {
+                    return Ok(pk.clone());
+                }
+            }
+        }
+
+        // Generate (or load) an identity for the "default" local user
+        let keypair = Self::load_or_generate_identity("default").await?;
+        let public_key = keypair.public_key_base64();
+
+        // Persist the identity into the base config so future reads find it
+        {
+            let mut config = self.config.write().await;
+            config.base_config = config
+                .base_config
+                .clone()
+                .with_identity(&public_key, &keypair.secret_key_base64());
+        }
+
+        // Eagerly create the node so the first authenticated request doesn't block
+        let user_hash = user_hash_from_pubkey(&public_key);
+        let _ = self.get_node(&user_hash).await;
+
+        Ok(public_key)
     }
 
     /// Check if any active node exists in the cache.
