@@ -121,15 +121,13 @@ pub async fn get_database_config(state: web::Data<AppState>) -> impl Responder {
     )
 )]
 pub async fn auto_identity(state: web::Data<AppState>) -> impl Responder {
-    // Use the node's unique public key from config (set per-installation)
-    let config = state.node_manager.get_base_config().await;
-
-    let public_key = match &config.public_key {
-        Some(pk) if !pk.is_empty() => pk.clone(),
-        _ => {
+    // Ensure the node identity exists (generates one on first call)
+    let public_key = match state.node_manager.ensure_default_identity().await {
+        Ok(pk) => pk,
+        Err(e) => {
             return HttpResponse::InternalServerError().json(json!({
                 "ok": false,
-                "error": "No node public key configured. The server identity has not been initialized."
+                "error": format!("Failed to initialize node identity: {e}")
             }));
         }
     };
