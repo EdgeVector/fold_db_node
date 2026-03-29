@@ -67,6 +67,59 @@ pub async fn get_indexing_status(
     ))
 }
 
+handler_response! {
+    pub struct SyncStatusResponse {
+        /// Whether sync is enabled (cloud mode).
+        pub enabled: bool,
+        /// Current sync state: "idle", "dirty", "syncing", "offline". Null if disabled.
+        #[serde(skip_serializing_if = "Option::is_none")]
+        pub state: Option<String>,
+        /// Number of pending (unsynced) log entries. Null if disabled.
+        #[serde(skip_serializing_if = "Option::is_none")]
+        pub pending_count: Option<usize>,
+        /// Unix timestamp (seconds) of last successful sync. Null if never synced or disabled.
+        #[serde(skip_serializing_if = "Option::is_none")]
+        pub last_sync_at: Option<u64>,
+        /// Last sync error message. Null if no error or disabled.
+        #[serde(skip_serializing_if = "Option::is_none")]
+        pub last_error: Option<String>,
+    }
+}
+
+pub async fn get_sync_status(
+    user_hash: &str,
+    node: &FoldNode,
+) -> HandlerResult<SyncStatusResponse> {
+    let db = node.get_fold_db().await.handler_err("get database")?;
+    let enabled = db.is_sync_enabled();
+    let response = if enabled {
+        let state = db.sync_state().await;
+        let pending = db.sync_pending_count().await;
+        let state_str = state.map(|s| match s {
+            fold_db::sync::SyncState::Idle => "idle",
+            fold_db::sync::SyncState::Dirty => "dirty",
+            fold_db::sync::SyncState::Syncing => "syncing",
+            fold_db::sync::SyncState::Offline => "offline",
+        });
+        SyncStatusResponse {
+            enabled: true,
+            state: state_str.map(String::from),
+            pending_count: pending,
+            last_sync_at: None,
+            last_error: None,
+        }
+    } else {
+        SyncStatusResponse {
+            enabled: false,
+            state: None,
+            pending_count: None,
+            last_sync_at: None,
+            last_error: None,
+        }
+    };
+    Ok(ApiResponse::success_with_user(response, user_hash))
+}
+
 pub async fn get_node_private_key(
     user_hash: &str,
     node: &FoldNode,

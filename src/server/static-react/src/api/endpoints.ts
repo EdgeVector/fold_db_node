@@ -75,6 +75,7 @@ const API_ENDPOINTS_SYNC = {
 const API_ENDPOINTS_MANUAL = {
   ANALYZE_FOLLOWUP: "/llm-query/analyze-followup",
   AGENT_QUERY: "/llm-query/agent",
+  GET_SYNC_STATUS: "/system/sync-status",
   AUTO_IDENTITY: "/system/auto-identity",
   UPDATE_DATABASE_CONFIG: "/system/database-config",
   GET_DATABASE_STATUS: "/system/database-status",
