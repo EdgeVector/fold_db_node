@@ -555,7 +555,10 @@ pub async fn similar_profiles(
             None => continue,
         };
 
-        let results = match publisher.search(centroid, 20, Some(cat_name.clone()), None).await {
+        let results = match publisher
+            .search(centroid, 20, Some(cat_name.clone()), None)
+            .await
+        {
             Ok(r) => r,
             Err(e) => {
                 log::warn!(
