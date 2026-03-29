@@ -3,11 +3,15 @@
 //! Framework-agnostic handlers for discovery network operations.
 
 use crate::discovery::config::{self, DiscoveryOptIn};
+use crate::discovery::connection::{
+    self, ConnectionPayload, LocalConnectionRequest, LocalSentRequest,
+};
 use crate::discovery::interests::{self, InterestProfile};
 use crate::discovery::publisher::DiscoveryPublisher;
 use crate::discovery::types::*;
 use crate::fold_node::node::FoldNode;
 use crate::handlers::response::{ApiResponse, HandlerError, HandlerResult, IntoHandlerError};
+use base64::{engine::general_purpose::STANDARD as B64, Engine};
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 
@@ -47,7 +51,15 @@ pub struct SearchRequest {
 #[derive(Debug, Clone, Deserialize)]
 pub struct ConnectRequest {
     pub target_pseudonym: uuid::Uuid,
-    pub encrypted_blob: String,
+    pub message: String,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+pub struct RespondToRequestPayload {
+    pub request_id: String,
+    /// "accept" or "decline"
+    pub action: String,
+    pub message: Option<String>,
 }
 
 #[derive(Debug, Clone, Deserialize)]
@@ -103,6 +115,36 @@ pub struct DiscoveryConnectionsResponse {
 
 /// Response for the browse-categories endpoint (re-exported from types).
 pub use crate::discovery::types::BrowseCategoriesResponse;
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[cfg_attr(feature = "ts-bindings", derive(TS))]
+#[cfg_attr(
+    feature = "ts-bindings",
+    ts(export, export_to = "src/fold_node/static-react/src/types/")
+)]
+pub struct ConnectionRequestsResponse {
+    pub requests: Vec<LocalConnectionRequest>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[cfg_attr(feature = "ts-bindings", derive(TS))]
+#[cfg_attr(
+    feature = "ts-bindings",
+    ts(export, export_to = "src/fold_node/static-react/src/types/")
+)]
+pub struct SentRequestsResponse {
+    pub requests: Vec<LocalSentRequest>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[cfg_attr(feature = "ts-bindings", derive(TS))]
+#[cfg_attr(
+    feature = "ts-bindings",
+    ts(export, export_to = "src/fold_node/static-react/src/types/")
+)]
+pub struct RespondToRequestResponse {
+    pub request: LocalConnectionRequest,
+}
 
 /// A single anonymized profile aggregated from discovery search results.
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -347,9 +389,16 @@ pub async fn search(
     }))
 }
 
-/// Send a connection request to a pseudonym owner.
+/// Send an E2E encrypted connection request to a pseudonym owner.
+///
+/// 1. Looks up the target pseudonym's published X25519 public key
+/// 2. Picks a sender pseudonym from our published embeddings
+/// 3. Encrypts the intro message with the target's public key
+/// 4. Posts the encrypted blob to the bulletin board
+/// 5. Saves the sent request locally for tracking
 pub async fn connect(
     req: &ConnectRequest,
+    node: &FoldNode,
     discovery_url: &str,
     auth_token: &str,
     master_key: &[u8],
@@ -360,15 +409,348 @@ pub async fn connect(
         auth_token.to_string(),
     );
 
+    // 1. Look up target's public key
+    let target_pk_b64 = publisher
+        .get_public_key(&req.target_pseudonym)
+        .await
+        .handler_err("look up target public key")?
+        .ok_or_else(|| {
+            HandlerError::NotFound(
+                "Target pseudonym has no published public key. They may not have published yet."
+                    .to_string(),
+            )
+        })?;
+
+    let target_pk_bytes = B64.decode(&target_pk_b64).map_err(|e| {
+        HandlerError::Internal(format!("Invalid target public key encoding: {}", e))
+    })?;
+    if target_pk_bytes.len() != 32 {
+        return Err(HandlerError::Internal(
+            "Target public key must be 32 bytes".to_string(),
+        ));
+    }
+    let mut target_pk = [0u8; 32];
+    target_pk.copy_from_slice(&target_pk_bytes);
+
+    // 2. Pick a sender pseudonym — use first published pseudonym we have
+    let db = node
+        .get_fold_db()
+        .await
+        .map_err(|e| HandlerError::Internal(format!("Failed to access database: {}", e)))?;
+    let store = get_metadata_store(&db);
+    let configs = config::list_opt_ins(&*store)
+        .await
+        .handler_err("list opt-ins")?;
+
+    // Derive a stable sender pseudonym from our first opt-in config
+    let sender_pseudonym = if let Some(first_config) = configs.first() {
+        let hash = crate::discovery::pseudonym::content_hash(&first_config.schema_name);
+        crate::discovery::pseudonym::derive_pseudonym(master_key, &hash)
+    } else {
+        // No configs — derive from master key alone
+        let hash = crate::discovery::pseudonym::content_hash("connection-sender");
+        crate::discovery::pseudonym::derive_pseudonym(master_key, &hash)
+    };
+
+    // 3. Build and encrypt the connection payload
+    let sender_pk_b64 = connection::get_pseudonym_public_key_b64(master_key, &sender_pseudonym);
+
+    let payload = ConnectionPayload {
+        message_type: "request".to_string(),
+        message: req.message.clone(),
+        sender_public_key: sender_pk_b64.clone(),
+        sender_pseudonym: sender_pseudonym.to_string(),
+        reply_public_key: sender_pk_b64,
+    };
+
+    let encrypted = connection::encrypt_connection_message(&target_pk, &payload)
+        .map_err(|e| HandlerError::Internal(format!("Encryption failed: {}", e)))?;
+
+    let encrypted_b64 = B64.encode(&encrypted);
+
+    // 4. Post to bulletin board
     publisher
-        .connect(req.target_pseudonym, req.encrypted_blob.clone())
+        .connect(req.target_pseudonym, encrypted_b64, Some(sender_pseudonym))
         .await
         .handler_err("send connection request")?;
+
+    // 5. Save sent request locally
+    let sent = LocalSentRequest {
+        request_id: uuid::Uuid::new_v4().to_string(),
+        target_pseudonym: req.target_pseudonym.to_string(),
+        sender_pseudonym: sender_pseudonym.to_string(),
+        message: req.message.clone(),
+        status: "pending".to_string(),
+        created_at: chrono::Utc::now().to_rfc3339(),
+    };
+    connection::save_sent_request(&*store, &sent)
+        .await
+        .handler_err("save sent request")?;
 
     Ok(ApiResponse::success(()))
 }
 
-/// Poll for incoming connection requests.
+/// Poll the bulletin board, decrypt messages for our pseudonyms, and store locally.
+pub async fn poll_and_decrypt_requests(
+    node: &FoldNode,
+    discovery_url: &str,
+    auth_token: &str,
+    master_key: &[u8],
+) -> HandlerResult<ConnectionRequestsResponse> {
+    let publisher = DiscoveryPublisher::new(
+        master_key.to_vec(),
+        discovery_url.to_string(),
+        auth_token.to_string(),
+    );
+
+    let db = node
+        .get_fold_db()
+        .await
+        .map_err(|e| HandlerError::Internal(format!("Failed to access database: {}", e)))?;
+    let store = get_metadata_store(&db);
+
+    // Get our published pseudonyms from opt-in configs
+    let configs = config::list_opt_ins(&*store)
+        .await
+        .handler_err("list opt-ins")?;
+
+    // Derive pseudonyms we own (same derivation as in publisher)
+    // We need to check the native index for our actual pseudonyms
+    // For now, derive the sender pseudonym and check messages targeting it
+    let our_pseudonyms: Vec<uuid::Uuid> = {
+        let mut pseudonyms = Vec::new();
+        // Add our connection-sender pseudonym
+        let hash = crate::discovery::pseudonym::content_hash("connection-sender");
+        pseudonyms.push(crate::discovery::pseudonym::derive_pseudonym(
+            master_key, &hash,
+        ));
+        // Add pseudonyms from opt-in configs
+        for cfg in &configs {
+            let hash = crate::discovery::pseudonym::content_hash(&cfg.schema_name);
+            pseudonyms.push(crate::discovery::pseudonym::derive_pseudonym(
+                master_key, &hash,
+            ));
+        }
+        pseudonyms
+    };
+
+    if our_pseudonyms.is_empty() {
+        return Ok(ApiResponse::success(ConnectionRequestsResponse {
+            requests: Vec::new(),
+        }));
+    }
+
+    // Poll messages targeting our pseudonyms
+    let messages = publisher
+        .poll_messages(None, Some(&our_pseudonyms))
+        .await
+        .handler_err("poll messages")?;
+
+    // Try to decrypt each message
+    for msg in &messages {
+        let target: uuid::Uuid = match msg.target_pseudonym.parse() {
+            Ok(u) => u,
+            Err(_) => continue,
+        };
+
+        // Derive the secret key for this pseudonym
+        let (secret, _) = connection::derive_pseudonym_keypair(master_key, &target);
+
+        let encrypted_bytes = match B64.decode(&msg.encrypted_blob) {
+            Ok(b) => b,
+            Err(_) => continue,
+        };
+
+        let payload = match connection::decrypt_connection_message(&secret, &encrypted_bytes) {
+            Ok(p) => p,
+            Err(_) => continue, // Not for us or corrupted
+        };
+
+        // Check if we already have this request stored
+        let request_id = format!("msg-{}", msg.message_id);
+        let existing = store
+            .get(format!("discovery:conn_req:{}", request_id).as_bytes())
+            .await
+            .ok()
+            .flatten();
+
+        if existing.is_some() {
+            continue; // Already processed
+        }
+
+        match payload.message_type.as_str() {
+            "request" => {
+                let local_req = LocalConnectionRequest {
+                    request_id: request_id.clone(),
+                    message_id: msg.message_id.clone(),
+                    target_pseudonym: msg.target_pseudonym.clone(),
+                    sender_pseudonym: payload.sender_pseudonym.clone(),
+                    sender_public_key: payload.sender_public_key.clone(),
+                    reply_public_key: payload.reply_public_key.clone(),
+                    message: payload.message.clone(),
+                    status: "pending".to_string(),
+                    created_at: msg.created_at.clone(),
+                    responded_at: None,
+                };
+                if let Err(e) = connection::save_received_request(&*store, &local_req).await {
+                    log::warn!("Failed to save received request: {}", e);
+                }
+            }
+            "accept" => {
+                // Someone accepted our connection request — update our sent request
+                if let Err(e) = connection::update_sent_request_status(
+                    &*store,
+                    &payload.sender_pseudonym, // the acceptor's pseudonym was our target
+                    "accepted",
+                )
+                .await
+                {
+                    log::warn!("Failed to update sent request: {}", e);
+                }
+            }
+            "decline" => {
+                if let Err(e) = connection::update_sent_request_status(
+                    &*store,
+                    &payload.sender_pseudonym,
+                    "declined",
+                )
+                .await
+                {
+                    log::warn!("Failed to update sent request: {}", e);
+                }
+            }
+            _ => {
+                log::warn!("Unknown message type: {}", payload.message_type);
+            }
+        }
+    }
+
+    // Return all locally stored received requests
+    let requests = connection::list_received_requests(&*store)
+        .await
+        .handler_err("list received requests")?;
+
+    Ok(ApiResponse::success(ConnectionRequestsResponse {
+        requests,
+    }))
+}
+
+/// Respond to a connection request (accept or decline).
+pub async fn respond_to_request(
+    req: &RespondToRequestPayload,
+    node: &FoldNode,
+    discovery_url: &str,
+    auth_token: &str,
+    master_key: &[u8],
+) -> HandlerResult<RespondToRequestResponse> {
+    if req.action != "accept" && req.action != "decline" {
+        return Err(HandlerError::BadRequest(
+            "action must be 'accept' or 'decline'".to_string(),
+        ));
+    }
+
+    let db = node
+        .get_fold_db()
+        .await
+        .map_err(|e| HandlerError::Internal(format!("Failed to access database: {}", e)))?;
+    let store = get_metadata_store(&db);
+
+    // Update local status
+    let updated = connection::update_request_status(&*store, &req.request_id, &req.action)
+        .await
+        .handler_err("update request status")?;
+
+    // If accepting, send an encrypted response back to the requester
+    if req.action == "accept" {
+        let reply_pk_bytes = B64
+            .decode(&updated.reply_public_key)
+            .map_err(|e| HandlerError::Internal(format!("Invalid reply public key: {}", e)))?;
+        if reply_pk_bytes.len() != 32 {
+            return Err(HandlerError::Internal(
+                "Reply public key must be 32 bytes".to_string(),
+            ));
+        }
+        let mut reply_pk = [0u8; 32];
+        reply_pk.copy_from_slice(&reply_pk_bytes);
+
+        // Derive our response pseudonym and public key
+        let our_pseudonym: uuid::Uuid = updated
+            .target_pseudonym
+            .parse()
+            .map_err(|_| HandlerError::Internal("Invalid target pseudonym UUID".to_string()))?;
+        let our_pk_b64 = connection::get_pseudonym_public_key_b64(master_key, &our_pseudonym);
+
+        let response_payload = ConnectionPayload {
+            message_type: "accept".to_string(),
+            message: req
+                .message
+                .clone()
+                .unwrap_or_else(|| "Connection accepted".to_string()),
+            sender_public_key: our_pk_b64.clone(),
+            sender_pseudonym: updated.target_pseudonym.clone(),
+            reply_public_key: our_pk_b64,
+        };
+
+        let encrypted = connection::encrypt_connection_message(&reply_pk, &response_payload)
+            .map_err(|e| HandlerError::Internal(format!("Encryption failed: {}", e)))?;
+        let encrypted_b64 = B64.encode(&encrypted);
+
+        let sender_pseudonym: uuid::Uuid = updated
+            .sender_pseudonym
+            .parse()
+            .map_err(|_| HandlerError::Internal("Invalid sender pseudonym UUID".to_string()))?;
+
+        let publisher = DiscoveryPublisher::new(
+            master_key.to_vec(),
+            discovery_url.to_string(),
+            auth_token.to_string(),
+        );
+        publisher
+            .connect(sender_pseudonym, encrypted_b64, Some(our_pseudonym))
+            .await
+            .handler_err("send acceptance response")?;
+    }
+
+    Ok(ApiResponse::success(RespondToRequestResponse {
+        request: updated,
+    }))
+}
+
+/// List locally stored received connection requests.
+pub async fn list_connection_requests(
+    node: &FoldNode,
+) -> HandlerResult<ConnectionRequestsResponse> {
+    let db = node
+        .get_fold_db()
+        .await
+        .map_err(|e| HandlerError::Internal(format!("Failed to access database: {}", e)))?;
+    let store = get_metadata_store(&db);
+
+    let requests = connection::list_received_requests(&*store)
+        .await
+        .handler_err("list received requests")?;
+
+    Ok(ApiResponse::success(ConnectionRequestsResponse {
+        requests,
+    }))
+}
+
+/// List locally stored sent connection requests.
+pub async fn list_sent_requests(node: &FoldNode) -> HandlerResult<SentRequestsResponse> {
+    let db = node
+        .get_fold_db()
+        .await
+        .map_err(|e| HandlerError::Internal(format!("Failed to access database: {}", e)))?;
+    let store = get_metadata_store(&db);
+
+    let requests = connection::list_sent_requests(&*store)
+        .await
+        .handler_err("list sent requests")?;
+
+    Ok(ApiResponse::success(SentRequestsResponse { requests }))
+}
+
+/// Legacy: Poll for incoming connection requests (uses DynamoDB).
 pub async fn poll_requests(
     discovery_url: &str,
     auth_token: &str,

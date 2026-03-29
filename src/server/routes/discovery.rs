@@ -164,13 +164,13 @@ pub async fn search(
     }
 }
 
-/// POST /api/discovery/connect — Send a connection request.
+/// POST /api/discovery/connect — Send an E2E encrypted connection request.
 pub async fn connect(
     req: HttpRequest,
     body: web::Json<discovery_handlers::ConnectRequest>,
     state: web::Data<AppState>,
 ) -> impl Responder {
-    let (_user_hash, _node) = match require_node_read(&state).await {
+    let (_user_hash, node) = match require_node_read(&state).await {
         Ok(res) => res,
         Err(response) => return response,
     };
@@ -185,13 +185,76 @@ pub async fn connect(
         Err(response) => return response,
     };
 
-    match discovery_handlers::connect(&body, &url, &auth_token, &key).await {
+    match discovery_handlers::connect(&body, &node, &url, &auth_token, &key).await {
         Ok(response) => HttpResponse::Ok().json(response),
         Err(e) => handler_error_to_response(e),
     }
 }
 
-/// GET /api/discovery/requests — Poll for incoming connection requests.
+/// GET /api/discovery/connection-requests — Poll, decrypt, and list received connection requests.
+pub async fn connection_requests(req: HttpRequest, state: web::Data<AppState>) -> impl Responder {
+    let (_user_hash, node) = match require_node_read(&state).await {
+        Ok(res) => res,
+        Err(response) => return response,
+    };
+
+    let (url, key) = match get_discovery_config() {
+        Ok(c) => c,
+        Err(response) => return response,
+    };
+
+    let auth_token = match get_auth_token(&req) {
+        Ok(t) => t,
+        Err(response) => return response,
+    };
+
+    match discovery_handlers::poll_and_decrypt_requests(&node, &url, &auth_token, &key).await {
+        Ok(response) => HttpResponse::Ok().json(response),
+        Err(e) => handler_error_to_response(e),
+    }
+}
+
+/// POST /api/discovery/connection-requests/respond — Accept or decline a connection request.
+pub async fn respond_to_request(
+    req: HttpRequest,
+    body: web::Json<discovery_handlers::RespondToRequestPayload>,
+    state: web::Data<AppState>,
+) -> impl Responder {
+    let (_user_hash, node) = match require_node_read(&state).await {
+        Ok(res) => res,
+        Err(response) => return response,
+    };
+
+    let (url, key) = match get_discovery_config() {
+        Ok(c) => c,
+        Err(response) => return response,
+    };
+
+    let auth_token = match get_auth_token(&req) {
+        Ok(t) => t,
+        Err(response) => return response,
+    };
+
+    match discovery_handlers::respond_to_request(&body, &node, &url, &auth_token, &key).await {
+        Ok(response) => HttpResponse::Ok().json(response),
+        Err(e) => handler_error_to_response(e),
+    }
+}
+
+/// GET /api/discovery/sent-requests — List sent connection requests with status.
+pub async fn sent_requests(state: web::Data<AppState>) -> impl Responder {
+    let (_user_hash, node) = match require_node_read(&state).await {
+        Ok(res) => res,
+        Err(response) => return response,
+    };
+
+    match discovery_handlers::list_sent_requests(&node).await {
+        Ok(response) => HttpResponse::Ok().json(response),
+        Err(e) => handler_error_to_response(e),
+    }
+}
+
+/// GET /api/discovery/requests — Legacy: Poll for incoming connection requests.
 pub async fn poll_requests(req: HttpRequest, _state: web::Data<AppState>) -> impl Responder {
     let (url, key) = match get_discovery_config() {
         Ok(c) => c,

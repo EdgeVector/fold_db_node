@@ -15,6 +15,9 @@ pub struct DiscoveryUploadEntry {
     pub content_preview: Option<String>,
     #[serde(default = "default_fragment_type")]
     pub fragment_type: String,
+    /// X25519 public key for this pseudonym (base64-encoded, 32 bytes)
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub public_key: Option<String>,
 }
 
 /// Owner mapping sent alongside upload entries.
@@ -73,6 +76,8 @@ pub struct DiscoverySearchResponse {
 pub struct DiscoveryConnectRequest {
     pub target_pseudonym: Uuid,
     pub encrypted_blob: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub sender_pseudonym: Option<Uuid>,
 }
 
 /// Opt-out request to the discovery service.
@@ -87,7 +92,15 @@ pub struct EncryptedMessage {
     pub message_id: String,
     pub encrypted_blob: String,
     pub target_pseudonym: String,
+    #[serde(default)]
+    pub sender_pseudonym: Option<String>,
     pub created_at: String,
+}
+
+/// Response from looking up a pseudonym's public key.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct PublicKeyResponse {
+    pub public_key: String,
 }
 
 /// Response from polling encrypted messages.
