@@ -29,6 +29,7 @@
 //! ```
 
 pub mod discovery;
+pub mod feed;
 pub mod ingestion;
 pub mod llm;
 pub mod llm_hydration;

@@ -1,0 +1,368 @@
+use fold_db::schema::types::key_value::KeyValue;
+use fold_db::schema::types::mutation::Mutation;
+use fold_db::MutationType;
+use fold_db_node::fold_node::config::NodeConfig;
+use fold_db_node::fold_node::FoldNode;
+use fold_db_node::fold_node::OperationProcessor;
+use fold_db_node::handlers::feed::{FeedRequest, FeedResponse};
+use serde_json::json;
+use std::collections::HashMap;
+use tempfile::TempDir;
+
+/// Helper: create a FoldNode with a temp directory and mock schema service.
+async fn setup_node() -> (FoldNode, TempDir) {
+    let temp_dir = TempDir::new().expect("Failed to create temp dir");
+    let temp_db_path = temp_dir.path().to_str().unwrap();
+
+    let keypair = fold_db::security::Ed25519KeyPair::generate().unwrap();
+    let config = NodeConfig::new(temp_db_path.into())
+        .with_schema_service_url("test://mock")
+        .with_identity(&keypair.public_key_base64(), &keypair.secret_key_base64());
+    let node = FoldNode::new(config)
+        .await
+        .expect("Failed to create FoldNode");
+
+    (node, temp_dir)
+}
+
+/// Helper: load the Photo schema into the node's database.
+async fn load_photo_schema(node: &FoldNode) {
+    let schema_path = std::env::current_dir()
+        .expect("Failed to get current directory")
+        .join("tests/schemas_for_testing")
+        .join("Photo.json");
+
+    let mut fold_db = node.get_fold_db().await.expect("Failed to get FoldDB");
+    fold_db
+        .load_schema_from_file(&schema_path)
+        .await
+        .expect("Failed to load Photo schema");
+}
+
+/// Helper: insert a photo record with a specific author pub_key.
+async fn insert_photo(
+    processor: &OperationProcessor,
+    pub_key: &str,
+    timestamp: &str,
+    photo_url: &str,
+    caption: &str,
+    author_name: &str,
+) {
+    let mut fields = HashMap::new();
+    fields.insert("photo_url".to_string(), json!(photo_url));
+    fields.insert("caption".to_string(), json!(caption));
+    fields.insert("author_name".to_string(), json!(author_name));
+    fields.insert("timestamp".to_string(), json!(timestamp));
+
+    let mutation = Mutation::new(
+        "Photo".to_string(),
+        fields,
+        KeyValue::new(None, Some(timestamp.to_string())),
+        pub_key.to_string(),
+        MutationType::Create,
+    );
+
+    processor
+        .execute_mutation_op(mutation)
+        .await
+        .expect("Failed to insert photo");
+}
+
+/// Extract the FeedResponse data from handler result.
+fn unwrap_feed(
+    result: Result<
+        fold_db_node::handlers::response::ApiResponse<FeedResponse>,
+        fold_db_node::handlers::response::HandlerError,
+    >,
+) -> FeedResponse {
+    let api_response = result.expect("Feed handler returned error");
+    api_response.data.expect("Feed response missing data")
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn test_basic_feed_returns_friends_photos_sorted_desc() {
+    let (node, _tmp) = setup_node().await;
+    load_photo_schema(&node).await;
+    let processor = OperationProcessor::new(node.clone());
+
+    // Insert photos from two friends at different timestamps
+    insert_photo(
+        &processor,
+        "friend_a",
+        "2026-03-01T10:00:00Z",
+        "https://example.com/a1.jpg",
+        "Morning view",
+        "Alice",
+    )
+    .await;
+    insert_photo(
+        &processor,
+        "friend_b",
+        "2026-03-02T15:00:00Z",
+        "https://example.com/b1.jpg",
+        "Sunset photo",
+        "Bob",
+    )
+    .await;
+    insert_photo(
+        &processor,
+        "friend_a",
+        "2026-03-03T08:00:00Z",
+        "https://example.com/a2.jpg",
+        "Breakfast",
+        "Alice",
+    )
+    .await;
+
+    let request = FeedRequest {
+        schema_name: "Photo".to_string(),
+        friend_hashes: vec!["friend_a".to_string(), "friend_b".to_string()],
+        limit: None,
+    };
+
+    let feed = unwrap_feed(
+        fold_db_node::handlers::feed::get_feed(request, "test_user", &node).await,
+    );
+
+    assert_eq!(feed.total, 3, "Should return all 3 photos from friends");
+    assert_eq!(feed.items.len(), 3);
+
+    // Verify sorted descending by timestamp
+    let timestamps: Vec<&str> = feed
+        .items
+        .iter()
+        .map(|item| item["timestamp"].as_str().unwrap())
+        .collect();
+    assert_eq!(
+        timestamps,
+        vec![
+            "2026-03-03T08:00:00Z",
+            "2026-03-02T15:00:00Z",
+            "2026-03-01T10:00:00Z"
+        ],
+        "Items should be sorted newest first"
+    );
+
+    // Verify author field is present
+    assert_eq!(feed.items[0]["author"].as_str().unwrap(), "friend_a");
+    assert_eq!(feed.items[1]["author"].as_str().unwrap(), "friend_b");
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn test_feed_filters_out_non_friends() {
+    let (node, _tmp) = setup_node().await;
+    load_photo_schema(&node).await;
+    let processor = OperationProcessor::new(node.clone());
+
+    insert_photo(
+        &processor,
+        "friend_a",
+        "2026-03-01T10:00:00Z",
+        "https://example.com/a1.jpg",
+        "Friend photo",
+        "Alice",
+    )
+    .await;
+    insert_photo(
+        &processor,
+        "stranger",
+        "2026-03-02T12:00:00Z",
+        "https://example.com/s1.jpg",
+        "Stranger photo",
+        "Eve",
+    )
+    .await;
+    insert_photo(
+        &processor,
+        "friend_b",
+        "2026-03-03T14:00:00Z",
+        "https://example.com/b1.jpg",
+        "Another friend",
+        "Bob",
+    )
+    .await;
+
+    let request = FeedRequest {
+        schema_name: "Photo".to_string(),
+        friend_hashes: vec!["friend_a".to_string(), "friend_b".to_string()],
+        limit: None,
+    };
+
+    let feed = unwrap_feed(
+        fold_db_node::handlers::feed::get_feed(request, "test_user", &node).await,
+    );
+
+    assert_eq!(feed.total, 2, "Should exclude stranger's photo");
+
+    let authors: Vec<&str> = feed
+        .items
+        .iter()
+        .map(|item| item["author"].as_str().unwrap())
+        .collect();
+    assert!(
+        !authors.contains(&"stranger"),
+        "Stranger should not appear in feed"
+    );
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn test_empty_friends_returns_empty_feed() {
+    let (node, _tmp) = setup_node().await;
+    load_photo_schema(&node).await;
+    let processor = OperationProcessor::new(node.clone());
+
+    insert_photo(
+        &processor,
+        "someone",
+        "2026-03-01T10:00:00Z",
+        "https://example.com/x.jpg",
+        "Some photo",
+        "Someone",
+    )
+    .await;
+
+    let request = FeedRequest {
+        schema_name: "Photo".to_string(),
+        friend_hashes: vec![],
+        limit: None,
+    };
+
+    let feed = unwrap_feed(
+        fold_db_node::handlers::feed::get_feed(request, "test_user", &node).await,
+    );
+
+    assert_eq!(feed.total, 0);
+    assert!(feed.items.is_empty());
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn test_feed_respects_limit() {
+    let (node, _tmp) = setup_node().await;
+    load_photo_schema(&node).await;
+    let processor = OperationProcessor::new(node.clone());
+
+    for i in 1..=5 {
+        insert_photo(
+            &processor,
+            "friend_a",
+            &format!("2026-03-{:02}T10:00:00Z", i),
+            &format!("https://example.com/photo{}.jpg", i),
+            &format!("Photo {}", i),
+            "Alice",
+        )
+        .await;
+    }
+
+    let request = FeedRequest {
+        schema_name: "Photo".to_string(),
+        friend_hashes: vec!["friend_a".to_string()],
+        limit: Some(2),
+    };
+
+    let feed = unwrap_feed(
+        fold_db_node::handlers::feed::get_feed(request, "test_user", &node).await,
+    );
+
+    assert_eq!(feed.total, 5, "Total should reflect all matching items");
+    assert_eq!(feed.items.len(), 2, "Should return only 2 items due to limit");
+
+    // Should be the 2 newest
+    assert_eq!(
+        feed.items[0]["timestamp"].as_str().unwrap(),
+        "2026-03-05T10:00:00Z"
+    );
+    assert_eq!(
+        feed.items[1]["timestamp"].as_str().unwrap(),
+        "2026-03-04T10:00:00Z"
+    );
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn test_feed_strips_non_public_fields() {
+    let (node, _tmp) = setup_node().await;
+    load_photo_schema(&node).await;
+
+    // Set one field's access policy to owner-only (read_max = 0)
+    {
+        use fold_db::access::types::{FieldAccessPolicy, TrustDistancePolicy};
+        use fold_db::schema::types::field::Field;
+
+        let db = node.get_fold_db().await.expect("Failed to get FoldDB");
+        let mut schema = db
+            .schema_manager
+            .get_schema("Photo")
+            .await
+            .expect("Failed to get Photo schema")
+            .expect("Photo schema not found");
+
+        if let Some(field) = schema.runtime_fields.get_mut("caption") {
+            field.common_mut().access_policy = Some(FieldAccessPolicy {
+                trust_distance: TrustDistancePolicy::owner_only(),
+                capabilities: vec![],
+                security_label: None,
+            });
+        }
+
+        db.schema_manager
+            .update_schema(&schema)
+            .await
+            .expect("Failed to update schema with access policy");
+    }
+
+    let processor = OperationProcessor::new(node.clone());
+
+    insert_photo(
+        &processor,
+        "friend_a",
+        "2026-03-01T10:00:00Z",
+        "https://example.com/a1.jpg",
+        "Secret caption",
+        "Alice",
+    )
+    .await;
+
+    let request = FeedRequest {
+        schema_name: "Photo".to_string(),
+        friend_hashes: vec!["friend_a".to_string()],
+        limit: None,
+    };
+
+    let feed = unwrap_feed(
+        fold_db_node::handlers::feed::get_feed(request, "test_user", &node).await,
+    );
+
+    assert_eq!(feed.total, 1);
+    let fields = feed.items[0]["fields"].as_object().unwrap();
+
+    // caption should be stripped (owner-only)
+    assert!(
+        !fields.contains_key("caption"),
+        "Owner-only field 'caption' should be stripped from feed"
+    );
+
+    // Other fields should still be present
+    assert!(
+        fields.contains_key("photo_url"),
+        "Public field 'photo_url' should be present"
+    );
+    assert!(
+        fields.contains_key("author_name"),
+        "Public field 'author_name' should be present"
+    );
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn test_feed_nonexistent_schema_returns_error() {
+    let (node, _tmp) = setup_node().await;
+
+    let request = FeedRequest {
+        schema_name: "NonExistent".to_string(),
+        friend_hashes: vec!["friend_a".to_string()],
+        limit: None,
+    };
+
+    let result =
+        fold_db_node::handlers::feed::get_feed(request, "test_user", &node).await;
+
+    assert!(result.is_err(), "Should return error for nonexistent schema");
+}
