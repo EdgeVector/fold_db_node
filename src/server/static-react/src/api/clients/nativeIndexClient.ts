@@ -5,6 +5,7 @@ import type { EnhancedApiResponse } from '../core/types';
 
 export interface NativeIndexResult {
   schema_name: string;
+  schema_display_name?: string | null;
   field: string;
   key_value: { hash?: string | null; range?: string | null };
   value: unknown;

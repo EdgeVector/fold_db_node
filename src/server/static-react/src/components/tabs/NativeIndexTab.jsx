@@ -21,7 +21,7 @@ function RecordRow({ result, schemaByName, fetchRecordFor }) {
   const [loading, setLoading] = useState(false)
 
   const schema = schemaByName?.get(result.schema_name)
-  const displayName = getSchemaDisplayName(schema) || result.schema_name
+  const displayName = result.schema_display_name || getSchemaDisplayName(schema) || result.schema_name
   const hash = result.key_value?.hash ?? ''
   const range = result.key_value?.range ?? ''
   const truncatedHash = hash.length > 10 ? hash.slice(0, 10) + '...' : hash
