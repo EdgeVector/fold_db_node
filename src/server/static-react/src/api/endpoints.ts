@@ -65,6 +65,12 @@ export const API_BASE_URLS = {
   SYSTEM: "/api/system",
 } as const;
 
+// Sync/backup endpoints
+const API_ENDPOINTS_SYNC = {
+  SYNC_STATUS: "/sync/status",
+  SYNC_TRIGGER: "/sync/trigger",
+} as const;
+
 // Endpoints not yet in OpenAPI spec but used by the backend
 const API_ENDPOINTS_MANUAL = {
   ANALYZE_FOLLOWUP: "/llm-query/analyze-followup",
@@ -78,9 +84,10 @@ const API_ENDPOINTS_MANUAL = {
   MIGRATE_TO_CLOUD: "/system/migrate-to-cloud",
 } as const;
 
-// Export merged endpoints (generated + manual)
+// Export merged endpoints (generated + manual + sync)
 export const API_ENDPOINTS = {
   ...API_ENDPOINTS_DERIVED,
   ...API_ENDPOINTS_MANUAL,
+  ...API_ENDPOINTS_SYNC,
 };
 export type ApiEndpoint = (typeof API_ENDPOINTS)[keyof typeof API_ENDPOINTS];
