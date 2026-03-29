@@ -1,16 +1,5 @@
 
 function MutationEditor({ fields, mutationType, mutationData, onFieldChange, isRangeSchema }) {
-  if (mutationType === 'Delete') {
-    return (
-      <div className="card p-6">
-        <h3 className="text-lg font-medium text-primary mb-4">Delete Operation</h3>
-        <p className="text-sm text-secondary">
-          This will delete the selected schema. No additional fields are required.
-        </p>
-      </div>
-    )
-  }
-
   const renderField = (fieldName, field) => {
     // Fields are writable by default unless explicitly marked as non-writable
     const isWritable = field.writable !== false
