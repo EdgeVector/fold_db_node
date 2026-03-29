@@ -761,10 +761,9 @@ impl LlmQueryService {
                     .and_then(|s| s.as_str())
                     .ok_or("update_record tool requires 'schema_name' parameter")?;
 
-                let key_obj = params
-                    .get("key")
-                    .and_then(|k| k.as_object())
-                    .ok_or("update_record tool requires 'key' parameter (object with hash_key/range_key)")?;
+                let key_obj = params.get("key").and_then(|k| k.as_object()).ok_or(
+                    "update_record tool requires 'key' parameter (object with hash_key/range_key)",
+                )?;
 
                 let hash_key = key_obj
                     .get("hash_key")
