@@ -186,7 +186,7 @@ pub fn run_setup_wizard() -> Result<NodeConfig, CliError> {
             eprintln!("  {}", deposit_address);
             eprintln!();
 
-            DatabaseConfig::Exemem { api_url, api_key }
+            DatabaseConfig::Exemem { api_url, api_key, session_token: None, user_hash: None }
         }
         _ => unreachable!(),
     };
