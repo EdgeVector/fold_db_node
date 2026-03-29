@@ -675,26 +675,43 @@ fn schemas_written_from(mutations: &[Mutation]) -> Vec<SchemaWriteRecord> {
     schemas_written_from_map(map)
 }
 
-/// Inject a `content_hash` field into objects that have a `content` or `body` field.
+/// Inject a `content_hash` field into objects to prevent key collisions.
 ///
-/// This prevents key collisions for document/note schemas where titles are not unique
-/// (e.g., multiple notes dated "2026-03-19"). The hash is a truncated SHA-256 of the
-/// content, giving the AI a guaranteed-unique field to use as `range_field`.
+/// For objects with a `content` or `body` field, hashes that text.
+/// For all other objects, hashes all field values so that structurally
+/// distinct records (e.g., two flights on the same date with different
+/// flight_ids) get unique disambiguation keys.
 fn inject_content_hash(obj: &mut serde_json::Map<String, Value>) {
+    // Prefer content/body text when available (original behavior)
     let content_str = obj
         .get("content")
         .or_else(|| obj.get("body"))
         .and_then(|v| v.as_str())
         .map(|s| s.to_string());
-    if let Some(text) = content_str {
-        let mut hasher = Sha256::new();
-        hasher.update(text.as_bytes());
-        let hash = format!("{:x}", hasher.finalize());
-        obj.insert(
-            "content_hash".to_string(),
-            Value::String(hash[..16].to_string()),
-        );
-    }
+
+    let hash_input = if let Some(text) = content_str {
+        text
+    } else {
+        // Hash all field values for structured data without content/body
+        let mut sorted_keys: Vec<&String> = obj.keys().collect();
+        sorted_keys.sort();
+        let mut parts = String::new();
+        for k in sorted_keys {
+            parts.push_str(k);
+            parts.push(':');
+            parts.push_str(&obj[k].to_string());
+            parts.push('\n');
+        }
+        parts
+    };
+
+    let mut hasher = Sha256::new();
+    hasher.update(hash_input.as_bytes());
+    let hash = format!("{:x}", hasher.finalize());
+    obj.insert(
+        "content_hash".to_string(),
+        Value::String(hash[..16].to_string()),
+    );
 }
 
 /// Apply `inject_content_hash` to every object in an array or a single object.
@@ -767,6 +784,53 @@ mod tests {
         assert!(
             response.mutation_mappers.contains_key("source_file_name"),
             "source_file_name must be in mutation_mappers"
+        );
+    }
+
+    #[test]
+    fn test_inject_content_hash_with_content_field() {
+        let mut obj = serde_json::Map::new();
+        obj.insert("title".to_string(), json!("Note"));
+        obj.insert("content".to_string(), json!("Hello world"));
+        inject_content_hash(&mut obj);
+        assert!(obj.contains_key("content_hash"));
+        let hash = obj["content_hash"].as_str().unwrap();
+        assert_eq!(hash.len(), 16);
+    }
+
+    #[test]
+    fn test_inject_content_hash_without_content_field() {
+        // Structured data like flights should still get a content_hash
+        let mut obj = serde_json::Map::new();
+        obj.insert("flight_id".to_string(), json!("AA100"));
+        obj.insert("airline".to_string(), json!("American Airlines"));
+        obj.insert("departure_date".to_string(), json!("2026-04-01"));
+        inject_content_hash(&mut obj);
+        assert!(
+            obj.contains_key("content_hash"),
+            "Structured data without content/body should still get a content_hash"
+        );
+        let hash = obj["content_hash"].as_str().unwrap();
+        assert_eq!(hash.len(), 16);
+    }
+
+    #[test]
+    fn test_inject_content_hash_different_data_produces_different_hashes() {
+        let mut obj1 = serde_json::Map::new();
+        obj1.insert("flight_id".to_string(), json!("AA100"));
+        obj1.insert("departure_date".to_string(), json!("2026-04-01"));
+
+        let mut obj2 = serde_json::Map::new();
+        obj2.insert("flight_id".to_string(), json!("AA200"));
+        obj2.insert("departure_date".to_string(), json!("2026-04-01"));
+
+        inject_content_hash(&mut obj1);
+        inject_content_hash(&mut obj2);
+
+        assert_ne!(
+            obj1["content_hash"].as_str().unwrap(),
+            obj2["content_hash"].as_str().unwrap(),
+            "Different records should produce different content hashes"
         );
     }
 }

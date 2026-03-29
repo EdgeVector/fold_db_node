@@ -8,6 +8,7 @@ use fold_db::log_feature;
 use fold_db::logging::features::LogFeature;
 use fold_db::schema::types::Mutation;
 use serde_json::Value;
+use std::collections::HashMap;
 
 impl IngestionService {
     /// Handles the flat (non-nested) ingestion path: AI recommendation, mutation generation, execution.
@@ -240,6 +241,33 @@ impl IngestionService {
                         format!("Generating mutations... ({}/{})", idx + 1, total_items),
                     )
                     .await;
+            }
+        }
+
+        // Detect key collisions — two records mapping to the same key means
+        // the second will silently overwrite the first. Log a warning so the
+        // operator knows data was lost.
+        {
+            let mut seen: HashMap<(String, fold_db::schema::types::KeyValue), usize> =
+                HashMap::new();
+            for m in &mutations {
+                let key = (m.schema_name.clone(), m.key_value.clone());
+                let count = seen.entry(key).or_insert(0);
+                *count += 1;
+            }
+            for ((schema, key_val), count) in &seen {
+                if *count > 1 {
+                    log_feature!(
+                        LogFeature::Ingestion,
+                        warn,
+                        "Key collision: {} records in schema '{}' share key {:?} — \
+                         later records will overwrite earlier ones. \
+                         Consider using a unique ID field as hash_field.",
+                        count,
+                        schema,
+                        key_val
+                    );
+                }
             }
         }
 
