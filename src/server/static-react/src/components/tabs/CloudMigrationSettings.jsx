@@ -1,5 +1,6 @@
-import React, { useState } from 'react'
+import React, { useState, useEffect } from 'react'
 import { systemClient } from '../../api/clients/systemClient'
+import EmailSignupFlow from '../EmailSignupFlow'
 
 export default function CloudMigrationSettings({ onClose }) {
   const backupSkipped = localStorage.getItem('folddb_cloud_backup_skipped') === '1'
@@ -9,9 +10,33 @@ export default function CloudMigrationSettings({ onClose }) {
   const [isMigrating, setIsMigrating] = useState(false)
   const [error, setError] = useState(null)
   const [success, setSuccess] = useState(false)
-  
+  const [showEmailSignup, setShowEmailSignup] = useState(false)
+  const [hasCredentials, setHasCredentials] = useState(null)
+
   const [switching, setSwitching] = useState(false)
   const [switchError, setSwitchError] = useState(null)
+
+  // Check if credentials exist on mount
+  useEffect(() => {
+    fetch('/api/auth/credentials')
+      .then(r => r.json())
+      .then(data => {
+        if (data.ok && data.has_credentials) {
+          setHasCredentials(true)
+        } else {
+          setHasCredentials(false)
+          setShowEmailSignup(true)
+        }
+      })
+      .catch(() => setHasCredentials(false))
+  }, [])
+
+  const handleEmailSignupSuccess = (credentials) => {
+    setApiUrl('https://api.exemem.com')
+    setApiKey(credentials.api_key)
+    setShowEmailSignup(false)
+    setHasCredentials(true)
+  }
 
   const handleMigrate = async () => {
     if (!apiUrl || !apiKey) {
@@ -62,6 +87,32 @@ export default function CloudMigrationSettings({ onClose }) {
       setSwitchError(err.response?.data?.message || err.message || 'Failed to apply configuration. Please restart the instance manually.')
       setSwitching(false)
     }
+  }
+
+  if (showEmailSignup) {
+    return (
+      <div className="flex flex-col gap-6 w-full max-w-2xl text-gruvbox-bright p-4 border border-border rounded-md bg-surface shadow-md">
+        <div className="flex items-start gap-4 p-4 border border-gruvbox-blue bg-gruvbox-blue/5 rounded-md">
+          <div className="text-gruvbox-blue mt-1 flex-shrink-0">
+            <svg className="w-6 h-6" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M3 8l7.89 5.26a2 2 0 002.22 0L21 8M5 19h14a2 2 0 002-2V7a2 2 0 00-2-2H5a2 2 0 00-2 2v10a2 2 0 002 2z" />
+            </svg>
+          </div>
+          <div className="flex-1">
+            <h4 className="text-sm font-bold text-gruvbox-blue mb-1">Sign In to Exemem Cloud</h4>
+            <p className="text-xs text-gruvbox-light leading-relaxed">
+              Sign in or create an Exemem account to migrate your local data to the cloud.
+            </p>
+          </div>
+        </div>
+        <div className="p-4">
+          <EmailSignupFlow
+            onSuccess={handleEmailSignupSuccess}
+            onCancel={onClose}
+          />
+        </div>
+      </div>
+    )
   }
 
   if (success) {
