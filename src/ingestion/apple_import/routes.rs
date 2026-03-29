@@ -1,4 +1,4 @@
-//! HTTP route handlers for Apple data import (Notes, Reminders, Photos).
+//! HTTP route handlers for Apple data import (Notes, Reminders, Photos, Calendar).
 //!
 //! Each endpoint spawns a background task that extracts data via osascript,
 //! then feeds it into the ingestion pipeline. Progress is tracked via the
@@ -10,7 +10,7 @@ use fold_db::log_feature;
 #[cfg(target_os = "macos")]
 use fold_db::logging::features::LogFeature;
 use fold_db::progress::{Job, JobStatus, JobType, ProgressTracker};
-use serde::Deserialize;
+use serde::{Deserialize, Serialize};
 use serde_json::json;
 
 use crate::ingestion::routes_helpers::IngestionServiceState;
@@ -626,4 +626,241 @@ async fn run_apple_photos_import(
     job.status = JobStatus::Failed;
     job.message = "Apple import is only available on macOS".into();
     let _ = tracker.save(&job).await;
+}
+
+#[derive(Deserialize)]
+pub struct AppleCalendarRequest {
+    pub calendar: Option<String>,
+}
+
+/// POST /api/ingestion/apple-import/calendar
+/// Extract events from Apple Calendar and ingest them.
+pub async fn apple_import_calendar(
+    request: web::Json<AppleCalendarRequest>,
+    state: web::Data<AppState>,
+    ingestion_service: web::Data<IngestionServiceState>,
+    progress_tracker: web::Data<ProgressTracker>,
+) -> impl Responder {
+    if !super::is_available() {
+        return HttpResponse::BadRequest().json(json!({
+            "success": false,
+            "error": "Apple import is only available on macOS",
+        }));
+    }
+
+    let (user_id, node_arc) = match require_node(&state).await {
+        Ok(ctx) => ctx,
+        Err(response) => return response,
+    };
+
+    let service = match ingestion_service.read().await.clone() {
+        Some(s) => s,
+        None => {
+            return HttpResponse::ServiceUnavailable().json(json!({
+                "success": false,
+                "error": "Ingestion service not available",
+            }))
+        }
+    };
+
+    let progress_id = uuid::Uuid::new_v4().to_string();
+    let tracker = progress_tracker.get_ref().clone();
+
+    let mut job = Job::new(progress_id.clone(), JobType::Other("apple-calendar".into()));
+    job = job.with_user(user_id.clone());
+    job.message = "Extracting events from Apple Calendar...".into();
+    job.progress_percentage = 5;
+    let _ = tracker.save(&job).await;
+
+    let calendar = request.calendar.clone();
+    let pid = progress_id.clone();
+
+    tokio::spawn(async move {
+        fold_db::logging::core::run_with_user(&user_id, async move {
+            run_apple_calendar_import(calendar, pid, tracker, node_arc, service).await;
+        })
+        .await;
+    });
+
+    HttpResponse::Accepted().json(json!({
+        "success": true,
+        "progress_id": progress_id,
+    }))
+}
+
+#[cfg(target_os = "macos")]
+async fn run_apple_calendar_import(
+    calendar: Option<String>,
+    progress_id: String,
+    tracker: ProgressTracker,
+    node_arc: std::sync::Arc<tokio::sync::RwLock<crate::fold_node::FoldNode>>,
+    service: std::sync::Arc<crate::ingestion::ingestion_service::IngestionService>,
+) {
+    use super::calendar as cal;
+
+    let events_result =
+        tokio::task::spawn_blocking(move || cal::extract(calendar.as_deref())).await;
+
+    let events = match events_result {
+        Ok(Ok(e)) => e,
+        Ok(Err(e)) => {
+            let mut job = Job::new(progress_id.clone(), JobType::Other("apple-calendar".into()));
+            job.status = JobStatus::Failed;
+            job.message = format!("Failed to extract calendar events: {}", e);
+            let _ = tracker.save(&job).await;
+            return;
+        }
+        Err(e) => {
+            let mut job = Job::new(progress_id.clone(), JobType::Other("apple-calendar".into()));
+            job.status = JobStatus::Failed;
+            job.message = format!("Extraction task panicked: {}", e);
+            let _ = tracker.save(&job).await;
+            return;
+        }
+    };
+
+    if events.is_empty() {
+        let mut job = Job::new(progress_id.clone(), JobType::Other("apple-calendar".into()));
+        job.status = JobStatus::Completed;
+        job.progress_percentage = 100;
+        job.message = "No calendar events found".into();
+        job.result = Some(json!({ "total": 0, "ingested": 0 }));
+        let _ = tracker.save(&job).await;
+        return;
+    }
+
+    let total = events.len();
+    let records = cal::to_json_records(&events);
+
+    let mut job = Job::new(progress_id.clone(), JobType::Other("apple-calendar".into()));
+    job.status = JobStatus::Running;
+    job.progress_percentage = 30;
+    job.message = format!("Extracted {} events, ingesting...", total);
+    let _ = tracker.save(&job).await;
+
+    // Ingest in batches of 10
+    let batch_size = 10;
+    let mut ingested = 0;
+    let node = node_arc.read().await;
+
+    for (i, chunk) in records.chunks(batch_size).enumerate() {
+        let request = IngestionRequest {
+            data: serde_json::Value::Array(chunk.to_vec()),
+            auto_execute: true,
+            pub_key: "default".to_string(),
+            source_file_name: None,
+            progress_id: None,
+            file_hash: None,
+            source_folder: None,
+            image_descriptive_name: None,
+        };
+
+        match crate::handlers::ingestion::process_json(
+            request,
+            &fold_db::logging::core::get_current_user_id().unwrap_or_default(),
+            &tracker,
+            &node,
+            service.clone(),
+        )
+        .await
+        {
+            Ok(_) => ingested += chunk.len(),
+            Err(e) => {
+                log_feature!(
+                    LogFeature::Ingestion,
+                    warn,
+                    "Apple Calendar batch {} failed: {}",
+                    i,
+                    e
+                );
+            }
+        }
+
+        let pct = 30 + ((i + 1) * 70 / total.div_ceil(batch_size)).min(70);
+        let mut job = Job::new(progress_id.clone(), JobType::Other("apple-calendar".into()));
+        job.status = JobStatus::Running;
+        job.progress_percentage = pct as u8;
+        job.message = format!("Ingested {}/{} events...", ingested, total);
+        let _ = tracker.save(&job).await;
+    }
+
+    let mut job = Job::new(progress_id.clone(), JobType::Other("apple-calendar".into()));
+    job.status = JobStatus::Completed;
+    job.progress_percentage = 100;
+    job.message = format!("Imported {} calendar events", ingested);
+    job.result = Some(json!({ "total": total, "ingested": ingested }));
+    let _ = tracker.save(&job).await;
+}
+
+#[cfg(not(target_os = "macos"))]
+async fn run_apple_calendar_import(
+    _calendar: Option<String>,
+    progress_id: String,
+    tracker: ProgressTracker,
+    _node_arc: std::sync::Arc<tokio::sync::RwLock<crate::fold_node::FoldNode>>,
+    _service: std::sync::Arc<crate::ingestion::ingestion_service::IngestionService>,
+) {
+    let mut job = Job::new(progress_id, JobType::Other("apple-calendar".into()));
+    job.status = JobStatus::Failed;
+    job.message = "Apple import is only available on macOS".into();
+    let _ = tracker.save(&job).await;
+}
+
+// ── Auto-Sync Config Routes ─────────────────────────────────────────
+
+use super::sync_scheduler::SyncConfigState;
+
+/// GET /api/ingestion/apple-import/sync-config
+pub async fn get_sync_config(sync_config: web::Data<SyncConfigState>) -> impl Responder {
+    let cfg = sync_config.read().await;
+    HttpResponse::Ok().json(&*cfg)
+}
+
+#[derive(Deserialize, Serialize)]
+pub struct UpdateSyncConfigRequest {
+    pub enabled: Option<bool>,
+    pub schedule: Option<super::sync_config::SyncSchedule>,
+    pub sources: Option<super::sync_config::EnabledSources>,
+    pub photos_limit: Option<usize>,
+}
+
+/// POST /api/ingestion/apple-import/sync-config
+pub async fn update_sync_config(
+    req: web::Json<UpdateSyncConfigRequest>,
+    sync_config: web::Data<SyncConfigState>,
+) -> impl Responder {
+    let mut cfg = sync_config.write().await;
+
+    if let Some(enabled) = req.enabled {
+        cfg.enabled = enabled;
+    }
+    if let Some(ref schedule) = req.schedule {
+        cfg.schedule = schedule.clone();
+    }
+    if let Some(ref sources) = req.sources {
+        cfg.sources = sources.clone();
+    }
+    if let Some(limit) = req.photos_limit {
+        cfg.photos_limit = limit;
+    }
+
+    cfg.recompute_next_sync();
+
+    match cfg.save() {
+        Ok(()) => HttpResponse::Ok().json(&*cfg),
+        Err(e) => HttpResponse::InternalServerError().json(json!({
+            "success": false,
+            "error": format!("Failed to save sync config: {}", e),
+        })),
+    }
+}
+
+/// GET /api/ingestion/apple-import/next-sync
+pub async fn get_next_sync(sync_config: web::Data<SyncConfigState>) -> impl Responder {
+    let cfg = sync_config.read().await;
+    HttpResponse::Ok().json(json!({
+        "enabled": cfg.enabled,
+        "next_sync": cfg.next_sync,
+        "last_sync": cfg.last_sync,
+    }))
 }

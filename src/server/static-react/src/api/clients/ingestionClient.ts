@@ -613,6 +613,68 @@ export class UnifiedIngestionClient {
       { album: album || null, limit },
     );
   }
+
+  /** Import events from Apple Calendar */
+  async appleImportCalendar(
+    calendar?: string,
+  ): Promise<EnhancedApiResponse<{ success: boolean; progress_id: string }>> {
+    return this.client.post<{ success: boolean; progress_id: string }>(
+      `/ingestion/apple-import/calendar`,
+      { calendar: calendar || null },
+    );
+  }
+
+  // ── Apple Auto-Sync ─────────────────────────────────────────────
+
+  /** Get the current Apple auto-sync configuration */
+  async getAppleSyncConfig(): Promise<EnhancedApiResponse<AppleSyncConfig>> {
+    return this.client.get<AppleSyncConfig>(
+      `/ingestion/apple-import/sync-config`,
+      { cacheable: false },
+    );
+  }
+
+  /** Update the Apple auto-sync configuration */
+  async updateAppleSyncConfig(
+    update: Partial<AppleSyncConfig>,
+  ): Promise<EnhancedApiResponse<AppleSyncConfig>> {
+    return this.client.post<AppleSyncConfig>(
+      `/ingestion/apple-import/sync-config`,
+      update,
+    );
+  }
+
+  /** Get next scheduled sync time */
+  async getAppleNextSync(): Promise<
+    EnhancedApiResponse<{ enabled: boolean; next_sync: string | null; last_sync: string | null }>
+  > {
+    return this.client.get<{
+      enabled: boolean;
+      next_sync: string | null;
+      last_sync: string | null;
+    }>(`/ingestion/apple-import/next-sync`, { cacheable: false });
+  }
+}
+
+/** Apple auto-sync configuration shape */
+export interface AppleSyncConfig {
+  enabled: boolean;
+  schedule: SyncSchedule;
+  sources: EnabledSources;
+  photos_limit: number;
+  last_sync: string | null;
+  next_sync: string | null;
+}
+
+export type SyncSchedule =
+  | "daily"
+  | "weekly"
+  | { custom: { hours: number } };
+
+export interface EnabledSources {
+  notes: boolean;
+  reminders: boolean;
+  photos: boolean;
 }
 
 // Create default instance

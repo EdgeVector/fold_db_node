@@ -216,6 +216,33 @@ impl LlmQueryService {
             });
         }
 
+        // If it has `data` (object or array) it's likely a bare ingest_json
+        if parsed.get("data").is_some() && parsed.get("tool").is_none() {
+            log::info!("Agent: auto-wrapping bare data as ingest_json tool call");
+            return Ok(AgentAction::ToolCall {
+                tool: "ingest_json".to_string(),
+                params: parsed,
+            });
+        }
+
+        // If it has `query` (string) it's likely a bare web_search
+        if parsed.get("query").and_then(|q| q.as_str()).is_some() && parsed.get("tool").is_none() {
+            log::info!("Agent: auto-wrapping bare query string as web_search tool call");
+            return Ok(AgentAction::ToolCall {
+                tool: "web_search".to_string(),
+                params: parsed,
+            });
+        }
+
+        // If it has `url` (string) it's likely a bare fetch_url
+        if parsed.get("url").and_then(|u| u.as_str()).is_some() && parsed.get("tool").is_none() {
+            log::info!("Agent: auto-wrapping bare url as fetch_url tool call");
+            return Ok(AgentAction::ToolCall {
+                tool: "fetch_url".to_string(),
+                params: parsed,
+            });
+        }
+
         Err(format!(
             "Agent response must contain either 'tool' or 'answer' field. Got: {}",
             json_str

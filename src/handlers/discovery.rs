@@ -3,6 +3,7 @@
 //! Framework-agnostic handlers for discovery network operations.
 
 use crate::discovery::config::{self, DiscoveryOptIn};
+use crate::discovery::interests::{self, InterestProfile};
 use crate::discovery::publisher::DiscoveryPublisher;
 use crate::discovery::types::*;
 use crate::fold_node::node::FoldNode;
@@ -45,6 +46,12 @@ pub struct SearchRequest {
 pub struct ConnectRequest {
     pub target_pseudonym: uuid::Uuid,
     pub encrypted_blob: String,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+pub struct ToggleInterestRequest {
+    pub category: String,
+    pub enabled: bool,
 }
 
 // === Response types ===
@@ -349,4 +356,75 @@ pub async fn poll_requests(
     Ok(ApiResponse::success(DiscoveryConnectionsResponse {
         requests,
     }))
+}
+
+// === Interest Detection Handlers ===
+
+/// Get the current interest profile.
+pub async fn get_interests(node: &FoldNode) -> HandlerResult<InterestProfile> {
+    let db = node
+        .get_fold_db()
+        .await
+        .map_err(|e| HandlerError::Internal(format!("Failed to access database: {}", e)))?;
+    let store = get_metadata_store(&db);
+
+    let profile = interests::load_interest_profile(&*store)
+        .await
+        .handler_err("load interest profile")?;
+
+    match profile {
+        Some(p) => Ok(ApiResponse::success(p)),
+        None => Ok(ApiResponse::success(InterestProfile {
+            categories: Vec::new(),
+            total_embeddings_scanned: 0,
+            unmatched_count: 0,
+            detected_at: chrono::Utc::now(),
+            seed_version: 0,
+        })),
+    }
+}
+
+/// Toggle an interest category's enabled flag.
+pub async fn toggle_interest(
+    req: &ToggleInterestRequest,
+    node: &FoldNode,
+) -> HandlerResult<InterestProfile> {
+    let db = node
+        .get_fold_db()
+        .await
+        .map_err(|e| HandlerError::Internal(format!("Failed to access database: {}", e)))?;
+    let store = get_metadata_store(&db);
+
+    let profile = interests::toggle_interest_category(&*store, &req.category, req.enabled)
+        .await
+        .handler_err("toggle interest category")?;
+
+    Ok(ApiResponse::success(profile))
+}
+
+/// Manually trigger interest detection.
+pub async fn detect_interests(node: &FoldNode) -> HandlerResult<InterestProfile> {
+    let db = node
+        .get_fold_db()
+        .await
+        .map_err(|e| HandlerError::Internal(format!("Failed to access database: {}", e)))?;
+
+    let db_ops = db.get_db_ops();
+    let metadata_store = db_ops.metadata_store().inner().clone();
+
+    let native_index_mgr = db_ops
+        .native_index_manager()
+        .ok_or_else(|| HandlerError::Internal("Native index not available".to_string()))?;
+
+    let embedding_store = native_index_mgr.store().clone();
+    let embedder = native_index_mgr.embedder().clone();
+
+    // Drop the DB lock before doing the heavy work
+    drop(db);
+
+    let profile = interests::detect_interests(&*embedding_store, &*metadata_store, &*embedder)
+        .await
+        .handler_err("detect interests")?;
+
+    Ok(ApiResponse::success(profile))
 }

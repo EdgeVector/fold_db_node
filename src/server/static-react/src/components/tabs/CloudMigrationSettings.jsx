@@ -1,14 +1,18 @@
 import React, { useState, useEffect } from 'react'
 import { systemClient } from '../../api/clients/systemClient'
 import { getSubscriptionStatus, createCheckoutSession, createPortalSession, formatBytes, usagePercent } from '../../api/clients/subscriptionClient'
+import EmailSignupFlow from '../EmailSignupFlow'
 
 export default function CloudMigrationSettings({ onClose }) {
+  const backupSkipped = localStorage.getItem('folddb_cloud_backup_skipped') === '1'
   const [migrationMode, setMigrationMode] = useState('encryption_at_rest')
   const [apiUrl, setApiUrl] = useState('')
   const [apiKey, setApiKey] = useState('')
   const [isMigrating, setIsMigrating] = useState(false)
   const [error, setError] = useState(null)
   const [success, setSuccess] = useState(false)
+  const [showEmailSignup, setShowEmailSignup] = useState(false)
+  const [hasCredentials, setHasCredentials] = useState(null)
 
   const [switching, setSwitching] = useState(false)
   const [switchError, setSwitchError] = useState(null)
@@ -56,6 +60,28 @@ export default function CloudMigrationSettings({ onClose }) {
     } catch (err) {
       setError(err.message || 'Failed to open billing portal')
     }
+  }
+
+  // Check if credentials exist on mount
+  useEffect(() => {
+    fetch('/api/auth/credentials')
+      .then(r => r.json())
+      .then(data => {
+        if (data.ok && data.has_credentials) {
+          setHasCredentials(true)
+        } else {
+          setHasCredentials(false)
+          setShowEmailSignup(true)
+        }
+      })
+      .catch(() => setHasCredentials(false))
+  }, [])
+
+  const handleEmailSignupSuccess = (credentials) => {
+    setApiUrl('https://api.exemem.com')
+    setApiKey(credentials.api_key)
+    setShowEmailSignup(false)
+    setHasCredentials(true)
   }
 
   const handleMigrate = async () => {
@@ -110,6 +136,32 @@ export default function CloudMigrationSettings({ onClose }) {
       setSwitchError(err.response?.data?.message || err.message || 'Failed to apply configuration. Please restart the instance manually.')
       setSwitching(false)
     }
+  }
+
+  if (showEmailSignup) {
+    return (
+      <div className="flex flex-col gap-6 w-full max-w-2xl text-gruvbox-bright p-4 border border-border rounded-md bg-surface shadow-md">
+        <div className="flex items-start gap-4 p-4 border border-gruvbox-blue bg-gruvbox-blue/5 rounded-md">
+          <div className="text-gruvbox-blue mt-1 flex-shrink-0">
+            <svg className="w-6 h-6" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M3 8l7.89 5.26a2 2 0 002.22 0L21 8M5 19h14a2 2 0 002-2V7a2 2 0 00-2-2H5a2 2 0 00-2 2v10a2 2 0 002 2z" />
+            </svg>
+          </div>
+          <div className="flex-1">
+            <h4 className="text-sm font-bold text-gruvbox-blue mb-1">Sign In to Exemem Cloud</h4>
+            <p className="text-xs text-gruvbox-light leading-relaxed">
+              Sign in or create an Exemem account to migrate your local data to the cloud.
+            </p>
+          </div>
+        </div>
+        <div className="p-4">
+          <EmailSignupFlow
+            onSuccess={handleEmailSignupSuccess}
+            onCancel={onClose}
+          />
+        </div>
+      </div>
+    )
   }
 
   if (success) {
@@ -241,6 +293,24 @@ export default function CloudMigrationSettings({ onClose }) {
 
   return (
     <div className="flex flex-col gap-6 w-full max-w-2xl text-gruvbox-bright p-4 border border-border rounded-md bg-surface shadow-md">
+
+      {/* Skipped backup reminder */}
+      {backupSkipped && (
+        <div className="flex items-start gap-3 p-4 border border-gruvbox-yellow bg-gruvbox-yellow/5 rounded-md">
+          <div className="text-gruvbox-yellow mt-0.5 flex-shrink-0">
+            <svg className="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-2.5L13.732 4c-.77-.833-1.964-.833-2.732 0L4.082 16.5c-.77.833.192 2.5 1.732 2.5z" />
+            </svg>
+          </div>
+          <div>
+            <p className="text-sm font-bold text-gruvbox-yellow">Cloud backup not enabled</p>
+            <p className="text-xs text-gruvbox-light mt-1">
+              You skipped cloud backup during setup. Your data is only stored locally.
+              Enable encrypted cloud backup below to protect against data loss.
+            </p>
+          </div>
+        </div>
+      )}
 
       {/* Explanation Banner */}
       <div className="flex items-start gap-4 p-4 border border-gruvbox-blue bg-gruvbox-blue/5 rounded-md">

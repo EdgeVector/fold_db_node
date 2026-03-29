@@ -41,7 +41,7 @@ pub fn to_json_records(reminders: &[Reminder]) -> Vec<Value> {
         .collect()
 }
 
-fn build_script(list: Option<&str>) -> String {
+pub fn build_script(list: Option<&str>) -> String {
     let list_filter = match list {
         Some(name) => format!(
             r#"set targetList to list "{}"
@@ -76,7 +76,7 @@ end tell"#
     )
 }
 
-fn parse_output(raw: &str) -> Result<Vec<Reminder>, IngestionError> {
+pub fn parse_output(raw: &str) -> Result<Vec<Reminder>, IngestionError> {
     let re = Regex::new(
         r"<<<REM_START>>>(.*?)<<<SEP>>>(.*?)<<<SEP>>>(.*?)<<<SEP>>>(.*?)<<<SEP>>>(.*?)<<<REM_END>>>"
     )

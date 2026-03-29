@@ -1,4 +1,5 @@
 pub mod admin;
+pub mod auth;
 pub mod common;
 pub mod config;
 pub mod discovery;

@@ -8,7 +8,7 @@ import BackupSettingsPanel from './settings/BackupSettingsPanel'
 
 const NOOP = () => {}
 
-function SettingsModal({ isOpen, onClose, initialTab }) {
+function SettingsModal({ isOpen, onClose, initialTab, onRelaunchOnboarding }) {
   const [activeTab, setActiveTab] = useState(initialTab || 'ai')
   const [configSaveStatus, setConfigSaveStatus] = useState(null)
 
@@ -106,6 +106,17 @@ function SettingsModal({ isOpen, onClose, initialTab }) {
         </div>
 
         <div className="modal-footer">
+          {onRelaunchOnboarding && (
+            <button
+              onClick={() => {
+                localStorage.removeItem('folddb_onboarding_complete')
+                onRelaunchOnboarding()
+              }}
+              className="btn-secondary mr-auto"
+            >
+              Relaunch Setup Wizard
+            </button>
+          )}
           {activeTab === 'ai' || activeTab === 'database' ? (
             <>
               <button onClick={onClose} className="btn-secondary">Cancel</button>

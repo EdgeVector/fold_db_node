@@ -98,7 +98,11 @@ pub async fn trigger_sync(state: web::Data<AppState>) -> impl Responder {
 
     match db.force_sync().await {
         Ok(()) => {
-            log_feature!(LogFeature::HttpServer, info, "Manual sync triggered successfully");
+            log_feature!(
+                LogFeature::HttpServer,
+                info,
+                "Manual sync triggered successfully"
+            );
             HttpResponse::Ok().json(SyncTriggerResponse {
                 success: true,
                 message: "Sync triggered successfully".to_string(),
