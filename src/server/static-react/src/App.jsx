@@ -22,6 +22,7 @@ import ViewsTab from './components/tabs/ViewsTab'
 import SharingTab from './components/tabs/SharingTab'
 import AppleImportTab from './components/tabs/AppleImportTab'
 import SettingsModal from './components/SettingsModal'
+import OnboardingWizard, { ONBOARDING_STORAGE_KEY } from './components/onboarding/OnboardingWizard'
 
 import LogSidebar from './components/LogSidebar'
 import ErrorBoundary from './components/ErrorBoundary'
@@ -34,7 +35,6 @@ import { DEFAULT_TAB } from './constants'
 import { BROWSER_CONFIG } from './constants/config'
 import { getAutoIdentity, getDatabaseStatus } from './api/clients/systemClient'
 import DatabaseSetupScreen from './components/DatabaseSetupScreen'
-import OnboardingWizard from './components/onboarding/OnboardingWizard'
 
 function isIngestionResult(results) {
   if (!results?.success) return false
@@ -76,8 +76,8 @@ export function AppContent() {
   )
   const [dbStatus, setDbStatus] = useState(null) // { initialized, has_saved_config }
   const [dbStatusLoading, setDbStatusLoading] = useState(true)
-  const [onboardingComplete, setOnboardingComplete] = useState(
-    () => localStorage.getItem('folddb_onboarding_complete') === '1'
+  const [showOnboarding, setShowOnboarding] = useState(
+    () => localStorage.getItem(ONBOARDING_STORAGE_KEY) !== '1'
   )
 
   // Sync activeTab with URL hash changes
@@ -266,16 +266,13 @@ export function AppContent() {
     );
   }
 
-  // Show onboarding wizard for first-time setup (after DB init, before main app)
-  if (!onboardingComplete) {
+  // Show onboarding wizard on first run (after DB is initialized)
+  if (showOnboarding && dbStatus?.initialized) {
     return (
       <OnboardingWizard
-        onComplete={() => {
-          setOnboardingComplete(true)
-          dispatch(fetchIngestionConfig())
-        }}
+        onComplete={() => setShowOnboarding(false)}
       />
-    );
+    )
   }
 
   return (
@@ -286,7 +283,12 @@ export function AppContent() {
         onCloudSettingsClick={() => { setSettingsInitialTab('upgrade-cloud'); setIsSettingsOpen(true) }}
       />
       <UpdateBanner />
-      <SettingsModal isOpen={isSettingsOpen} onClose={() => setIsSettingsOpen(false)} initialTab={settingsInitialTab} />
+      <SettingsModal
+        isOpen={isSettingsOpen}
+        onClose={() => setIsSettingsOpen(false)}
+        initialTab={settingsInitialTab}
+        onRelaunchOnboarding={() => { setIsSettingsOpen(false); setShowOnboarding(true) }}
+      />
 
       {showSetupBanner && (
         <div className="bg-gruvbox-elevated border-b border-border px-8 py-3 flex items-center justify-between">
