@@ -168,6 +168,11 @@ impl FoldHttpServer {
         let batch_controller_map_data =
             web::Data::new(crate::ingestion::batch_controller::create_batch_controller_map());
 
+        // Load Apple auto-sync config
+        let sync_config_state =
+            crate::ingestion::apple_import::sync_scheduler::create_sync_config_state();
+        let sync_config_data = web::Data::new(sync_config_state);
+
         // Create progress tracker based on database config
         let progress_tracker = {
             #[cfg(feature = "aws-backend")]
@@ -192,6 +197,14 @@ impl FoldHttpServer {
         };
         let progress_tracker_data = web::Data::new(progress_tracker);
 
+        // Spawn Apple auto-sync background scheduler
+        crate::ingestion::apple_import::sync_scheduler::spawn_sync_scheduler(
+            sync_config_data.get_ref().clone(),
+            app_state.clone(),
+            ingestion_service_data.clone(),
+            progress_tracker_data.clone(),
+        );
+
         // Start the HTTP server
         let server = ActixHttpServer::new(move || {
             // Create CORS middleware
@@ -215,6 +228,7 @@ impl FoldHttpServer {
                 .app_data(progress_tracker_data.clone())
                 .app_data(ingestion_service_data.clone())
                 .app_data(batch_controller_map_data.clone())
+                .app_data(sync_config_data.clone())
                 .app_data(json_config)
                 .configure(Self::configure_api)
                 // Serve embedded static assets (React build)
@@ -458,6 +472,22 @@ impl FoldHttpServer {
         .route(
             "/ingestion/apple-import/photos",
             web::post().to(ingestion_routes::apple_import_routes::apple_import_photos),
+        )
+        .route(
+            "/ingestion/apple-import/calendar",
+            web::post().to(ingestion_routes::apple_import_routes::apple_import_calendar),
+        )
+        .route(
+            "/ingestion/apple-import/sync-config",
+            web::get().to(ingestion_routes::apple_import_routes::get_sync_config),
+        )
+        .route(
+            "/ingestion/apple-import/sync-config",
+            web::post().to(ingestion_routes::apple_import_routes::update_sync_config),
+        )
+        .route(
+            "/ingestion/apple-import/next-sync",
+            web::get().to(ingestion_routes::apple_import_routes::get_next_sync),
         );
     }
 
@@ -555,7 +585,16 @@ impl FoldHttpServer {
                 .route("/publish", web::post().to(discovery_routes::publish))
                 .route("/search", web::post().to(discovery_routes::search))
                 .route("/connect", web::post().to(discovery_routes::connect))
-                .route("/requests", web::get().to(discovery_routes::poll_requests)),
+                .route("/requests", web::get().to(discovery_routes::poll_requests))
+                .route("/interests", web::get().to(discovery_routes::get_interests))
+                .route(
+                    "/interests/toggle",
+                    web::post().to(discovery_routes::toggle_interest),
+                )
+                .route(
+                    "/interests/detect",
+                    web::post().to(discovery_routes::detect_interests),
+                ),
         );
     }
 

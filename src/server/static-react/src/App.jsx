@@ -2,6 +2,7 @@ import { useState, useEffect } from 'react'
 import { FoldDbProvider } from './components/FoldDbProvider'
 import Header from './components/Header'
 import Footer from './components/Footer'
+import UpdateBanner from './components/UpdateBanner'
 import ResultsSection from './components/ResultsSection'
 import IngestionReport from './components/IngestionReport'
 import TabNavigation from './components/TabNavigation'
@@ -281,6 +282,7 @@ export function AppContent() {
         onAiSettingsClick={() => { setSettingsInitialTab('ai'); setIsSettingsOpen(true) }}
         onCloudSettingsClick={() => { setSettingsInitialTab('upgrade-cloud'); setIsSettingsOpen(true) }}
       />
+      <UpdateBanner />
       <SettingsModal
         isOpen={isSettingsOpen}
         onClose={() => setIsSettingsOpen(false)}

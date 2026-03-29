@@ -6,25 +6,19 @@ import { toErrorMessage } from '../../utils/schemaUtils'
 /** Derive a category from schema classification metadata.
  *  Prefers field_data_classifications domains, falls back to schema name. */
 function inferCategory(schema) {
-  // Collect unique data domains from field_data_classifications
   const domains = new Set()
   if (schema.field_data_classifications) {
     for (const cls of Object.values(schema.field_data_classifications)) {
       if (cls?.data_domain) domains.add(cls.data_domain)
     }
   }
-  if (domains.size > 0) {
-    // Use the most common domain, or join if mixed
-    return [...domains].join(', ')
-  }
+  if (domains.size > 0) return [...domains].join(', ')
 
-  // Fallback: derive from field_classifications tags
   const tags = new Set()
   if (schema.field_classifications) {
     for (const fieldTags of Object.values(schema.field_classifications)) {
       if (Array.isArray(fieldTags)) {
         for (const tag of fieldTags) {
-          // Extract domain from compound tags like "name:person" → "person"
           const parts = tag.split(':')
           if (parts.length > 1) tags.add(parts[1])
           else tags.add(tag)
@@ -33,116 +27,173 @@ function inferCategory(schema) {
     }
   }
   if (tags.size > 0) {
-    // Pick the most descriptive tags (skip generic ones like "word")
     const descriptive = [...tags].filter(t => !['word', 'number', 'date'].includes(t))
     if (descriptive.length > 0) return descriptive.slice(0, 3).join(', ')
   }
 
-  // Last resort: lowercase schema name
   return schema.name?.replace(/([A-Z])/g, ' $1').trim().toLowerCase() || 'general'
 }
 
-function OptInForm({ schemas, optedInNames, onOptIn }) {
-  const [schemaName, setSchemaName] = useState('')
-  const [category, setCategory] = useState('')
-  const [includePreview, setIncludePreview] = useState(false)
-  const [submitting, setSubmitting] = useState(false)
+/** Group schemas by their inferred category. */
+function groupByCategory(schemas) {
+  const groups = {}
+  for (const s of schemas) {
+    const cat = inferCategory(s)
+    if (!groups[cat]) groups[cat] = []
+    groups[cat].push(s)
+  }
+  return groups
+}
 
-  const availableSchemas = (schemas || []).filter(s => !optedInNames.has(s.name))
+/** Count fields across schemas in a category. */
+function fieldCount(schemas) {
+  let count = 0
+  for (const s of schemas) {
+    if (s.fields) count += Object.keys(s.fields).length
+  }
+  return count
+}
 
-  // Auto-derive category when schema selection changes
-  const handleSchemaChange = (name) => {
-    setSchemaName(name)
-    if (name) {
-      const schema = availableSchemas.find(s => s.name === name)
-      if (schema) {
-        setCategory(inferCategory(schema))
-      }
-    } else {
-      setCategory('')
+/** Build a preview of what will be shared for a set of schemas. */
+function buildPreviewItems(schemas) {
+  const items = []
+  for (const s of schemas) {
+    if (!s.fields) continue
+    for (const [fieldName, fieldDef] of Object.entries(s.fields)) {
+      const type = fieldDef?.field_type || 'unknown'
+      items.push({ schema: s.name, field: fieldName, type })
     }
   }
+  return items
+}
 
-  const handleSubmit = async (e) => {
-    e.preventDefault()
-    if (!schemaName || !category) return
-    setSubmitting(true)
-    try {
-      await onOptIn({ schema_name: schemaName, category, include_preview: includePreview })
-      setSchemaName('')
-      setCategory('')
-      setIncludePreview(false)
-    } finally {
-      setSubmitting(false)
-    }
-  }
-
+function ToggleSwitch({ enabled, onChange, disabled }) {
   return (
-    <form onSubmit={handleSubmit} className="flex flex-wrap gap-2 items-end">
-      <div className="flex-1 min-w-[150px]">
-        <label className="text-xs text-secondary block mb-1">Schema</label>
-        <select
-          value={schemaName}
-          onChange={(e) => handleSchemaChange(e.target.value)}
-          className="input w-full"
-        >
-          <option value="">Select schema...</option>
-          {availableSchemas.map(s => (
-            <option key={s.name} value={s.name}>{s.name}</option>
-          ))}
-        </select>
-      </div>
-      <div className="flex-1 min-w-[120px]">
-        <label className="text-xs text-secondary block mb-1">Category <span className="text-tertiary">(auto-detected)</span></label>
-        <input
-          type="text"
-          value={category}
-          onChange={(e) => setCategory(e.target.value)}
-          placeholder="auto-detected from schema"
-          className="input w-full"
-        />
-      </div>
-      <label className="flex items-center gap-1 text-xs text-secondary cursor-pointer">
-        <input
-          type="checkbox"
-          checked={includePreview}
-          onChange={(e) => setIncludePreview(e.target.checked)}
-        />
-        Preview
-      </label>
-      <button
-        type="submit"
-        disabled={submitting || !schemaName || !category}
-        className="btn-primary"
-      >
-        {submitting ? 'Opting in...' : 'Opt In'}
-      </button>
-    </form>
+    <button
+      type="button"
+      role="switch"
+      aria-checked={enabled}
+      disabled={disabled}
+      onClick={() => onChange(!enabled)}
+      className={`relative inline-flex h-5 w-9 items-center rounded-full transition-colors ${
+        disabled ? 'opacity-50 cursor-not-allowed' : 'cursor-pointer'
+      } ${enabled ? 'bg-gruvbox-green' : 'bg-gruvbox-elevated border border-border'}`}
+    >
+      <span
+        className={`inline-block h-3.5 w-3.5 rounded-full bg-primary transition-transform ${
+          enabled ? 'translate-x-[18px]' : 'translate-x-[3px]'
+        }`}
+      />
+    </button>
   )
 }
 
-function OptInList({ configs, onOptOut }) {
-  if (!configs || configs.length === 0) {
-    return <p className="text-secondary text-sm">No schemas opted in for discovery.</p>
-  }
+function PrivacyGuarantees() {
+  return (
+    <div className="card-info p-3 rounded text-xs space-y-1.5">
+      <div className="font-semibold text-gruvbox-blue">Privacy Guarantees</div>
+      <ul className="space-y-1 text-secondary">
+        <li>Only embedding vectors are shared — never raw text</li>
+        <li>Each entry gets a unique pseudonym — your identity stays hidden</li>
+        <li>Fields marked as sensitive are automatically excluded</li>
+        <li>You can unpublish at any time to remove all shared data</li>
+      </ul>
+    </div>
+  )
+}
+
+function CategoryCard({
+  category,
+  schemas,
+  optedInNames,
+  publishedCategories,
+  onToggle,
+  toggling,
+  expanded,
+  onExpandToggle,
+}) {
+  const allOptedIn = schemas.every(s => optedInNames.has(s.name))
+  const someOptedIn = schemas.some(s => optedInNames.has(s.name))
+  const isPublished = publishedCategories.has(category)
+  const previewItems = buildPreviewItems(schemas)
 
   return (
-    <div className="space-y-1">
-      {configs.map(c => (
-        <div key={c.schema_name} className="flex items-center justify-between px-3 py-2 bg-surface-secondary rounded">
-          <div className="flex items-center gap-3">
-            <span className="font-mono text-sm text-primary">{c.schema_name}</span>
-            <span className="badge badge-info">{c.category}</span>
-            {c.include_preview && <span className="badge badge-warning">preview</span>}
+    <div className="card rounded p-4 space-y-3">
+      <div className="flex items-center justify-between">
+        <div className="flex items-center gap-3">
+          <ToggleSwitch
+            enabled={allOptedIn}
+            onChange={(val) => onToggle(category, schemas, val)}
+            disabled={toggling}
+          />
+          <div>
+            <div className="flex items-center gap-2">
+              <span className="font-semibold text-sm text-primary">{category}</span>
+              {isPublished && (
+                <span className="badge badge-success">published</span>
+              )}
+              {someOptedIn && !isPublished && (
+                <span className="badge badge-warning">unpublished</span>
+              )}
+            </div>
+            <div className="text-xs text-secondary mt-0.5">
+              {schemas.length} schema{schemas.length !== 1 ? 's' : ''} &middot; {fieldCount(schemas)} field{fieldCount(schemas) !== 1 ? 's' : ''}
+            </div>
           </div>
-          <button
-            onClick={() => onOptOut(c.schema_name)}
-            className="btn-secondary btn-sm text-gruvbox-red"
-          >
-            Opt Out
-          </button>
         </div>
-      ))}
+        <button
+          onClick={onExpandToggle}
+          className="text-xs text-secondary hover:text-primary transition-colors"
+        >
+          {expanded ? 'Hide preview' : 'Show preview'}
+        </button>
+      </div>
+
+      {expanded && (
+        <div className="border-t border-border pt-3 space-y-2">
+          <div className="text-xs text-secondary font-semibold">
+            What will be shared:
+          </div>
+          {previewItems.length === 0 ? (
+            <div className="text-xs text-tertiary">No fields detected</div>
+          ) : (
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-1">
+              {previewItems.map((item, i) => (
+                <div key={i} className="flex items-center gap-2 text-xs">
+                  <span className="text-gruvbox-blue font-mono">{item.field}</span>
+                  <span className="text-tertiary">({item.type})</span>
+                  <span className="text-tertiary">from {item.schema}</span>
+                </div>
+              ))}
+            </div>
+          )}
+          <div className="text-xs text-tertiary mt-1">
+            Embedding vectors of these fields will be published — raw text is never shared.
+          </div>
+        </div>
+      )}
+    </div>
+  )
+}
+
+function EmptyState() {
+  return (
+    <div className="card p-8 text-center space-y-4 rounded">
+      <div className="text-3xl">
+        {/* Simple icon using unicode */}
+        <span className="text-gruvbox-yellow">&#9776;</span>
+      </div>
+      <div>
+        <h3 className="text-lg text-primary font-semibold">No data to discover yet</h3>
+        <p className="text-secondary text-sm mt-2 max-w-md mx-auto">
+          Ingest some data first using the Data tab. Once you have schemas with data,
+          you can choose which categories to share on the discovery network.
+        </p>
+      </div>
+      <div className="card-info p-3 rounded text-xs text-secondary max-w-sm mx-auto">
+        Discovery lets others find your data by topic — without revealing your identity
+        or the actual content. You stay in full control of what gets shared.
+      </div>
     </div>
   )
 }
@@ -312,15 +363,131 @@ function IncomingRequests() {
   )
 }
 
+function InterestsPanel({ onResult }) {
+  const [profile, setProfile] = useState(null)
+  const [loading, setLoading] = useState(true)
+  const [detecting, setDetecting] = useState(false)
+
+  const loadInterests = useCallback(async () => {
+    try {
+      const res = await discoveryClient.getInterests()
+      if (res.success) {
+        setProfile(res.data)
+      }
+    } finally {
+      setLoading(false)
+    }
+  }, [])
+
+  useEffect(() => { loadInterests() }, [loadInterests])
+
+  const handleToggle = async (categoryName, enabled) => {
+    try {
+      const res = await discoveryClient.toggleInterest(categoryName, enabled)
+      if (res.success) {
+        setProfile(res.data)
+      } else {
+        onResult({ error: res.error || 'Toggle failed' })
+      }
+    } catch (e) {
+      onResult({ error: toErrorMessage(e) || 'Network error' })
+    }
+  }
+
+  const handleDetect = async () => {
+    setDetecting(true)
+    try {
+      const res = await discoveryClient.detectInterests()
+      if (res.success) {
+        setProfile(res.data)
+        onResult({ success: true, data: { message: `Detected ${res.data?.categories?.length || 0} interest categories` } })
+      } else {
+        onResult({ error: res.error || 'Detection failed' })
+      }
+    } catch (e) {
+      onResult({ error: toErrorMessage(e) || 'Network error' })
+    } finally {
+      setDetecting(false)
+    }
+  }
+
+  if (loading) return <p className="text-secondary text-sm">Loading interests...</p>
+
+  const categories = profile?.categories || []
+  const hasProfile = profile && profile.seed_version > 0
+
+  return (
+    <div className="space-y-4">
+      {hasProfile && (
+        <div className="text-xs text-tertiary">
+          {profile.total_embeddings_scanned} items scanned &middot;{' '}
+          {profile.unmatched_count} uncategorized &middot;{' '}
+          detected {new Date(profile.detected_at).toLocaleDateString()}
+        </div>
+      )}
+
+      {categories.length > 0 ? (
+        <div className="flex flex-wrap gap-2">
+          {categories.map(cat => (
+            <button
+              key={cat.name}
+              onClick={() => handleToggle(cat.name, !cat.enabled)}
+              className={`px-3 py-2 rounded border text-sm transition-colors ${
+                cat.enabled
+                  ? 'bg-surface-secondary border-border text-primary'
+                  : 'bg-transparent border-border text-tertiary'
+              }`}
+            >
+              <span className="font-medium">{cat.name}</span>
+              <span className={`ml-2 text-xs ${cat.enabled ? 'text-secondary' : 'text-tertiary'}`}>
+                {cat.count}
+              </span>
+            </button>
+          ))}
+        </div>
+      ) : (
+        <div className="card p-6 text-center">
+          <p className="text-secondary text-sm">
+            No interests detected yet. Ingest some data and click Re-detect to discover your interest categories.
+          </p>
+        </div>
+      )}
+
+      <button
+        onClick={handleDetect}
+        disabled={detecting}
+        className="btn-secondary"
+      >
+        {detecting ? 'Detecting...' : 'Re-detect Interests'}
+      </button>
+    </div>
+  )
+}
+
 export default function DiscoveryTab({ onResult }) {
   const { approvedSchemas } = useApprovedSchemas()
   const [configs, setConfigs] = useState([])
   const [publishing, setPublishing] = useState(false)
-  const [activeSection, setActiveSection] = useState('manage')
+  const [activeSection, setActiveSection] = useState('interests')
   const [error, setError] = useState(null)
   const [serviceAvailable, setServiceAvailable] = useState(true)
+  const [expandedCategories, setExpandedCategories] = useState(new Set())
+  const [toggling, setToggling] = useState(false)
+  const [lastPublishResult, setLastPublishResult] = useState(null)
 
   const optedInNames = new Set(configs.map(c => c.schema_name))
+
+  // Categories that have been published (have at least one opted-in schema)
+  // We track this via lastPublishResult — if publish was called, those categories are live
+  const publishedCategories = new Set(
+    lastPublishResult
+      ? configs.filter(c => optedInNames.has(c.schema_name)).map(c => c.category)
+      : []
+  )
+
+  const categoryGroups = groupByCategory(approvedSchemas || [])
+  const categoryNames = Object.keys(categoryGroups).sort()
+  const hasSchemas = (approvedSchemas || []).length > 0
 
   const loadConfigs = useCallback(async () => {
     try {
@@ -328,6 +495,10 @@ export default function DiscoveryTab({ onResult }) {
       if (res.success) {
         setConfigs(res.data?.configs || [])
         setServiceAvailable(true)
+        // If there are existing opt-ins, they may have been published before
+        if ((res.data?.configs || []).length > 0) {
+          setLastPublishResult({ existing: true })
+        }
       } else if (res.status === 503) {
         setServiceAvailable(false)
       }
@@ -338,39 +509,76 @@ export default function DiscoveryTab({ onResult }) {
 
   useEffect(() => { loadConfigs() }, [loadConfigs])
 
-  const handleOptIn = async (req) => {
+  const handleToggleCategory = async (category, schemas, enable) => {
+    setToggling(true)
     setError(null)
     try {
-      const res = await discoveryClient.optIn(req)
-      if (res.success) {
-        setConfigs(res.data?.configs || [])
-        onResult({ success: true, data: { message: `Opted in ${req.schema_name}` } })
+      if (enable) {
+        // Opt in all schemas in this category
+        for (const s of schemas) {
+          if (!optedInNames.has(s.name)) {
+            const res = await discoveryClient.optIn({
+              schema_name: s.name,
+              category,
+              include_preview: false,
+            })
+            if (res.success) {
+              setConfigs(res.data?.configs || [])
+            } else {
+              setError(res.error)
+              break
+            }
+          }
+        }
       } else {
-        setError(res.error)
-        onResult({ error: res.error })
+        // Opt out all schemas in this category
+        for (const s of schemas) {
+          if (optedInNames.has(s.name)) {
+            const res = await discoveryClient.optOut(s.name)
+            if (res.success) {
+              setConfigs(res.data?.configs || [])
+            } else {
+              setError(res.error)
+              break
+            }
+          }
+        }
       }
     } catch (e) {
-      const msg = toErrorMessage(e)
-      setError(msg)
-      onResult({ error: msg })
+      setError(toErrorMessage(e))
+    } finally {
+      setToggling(false)
     }
   }
 
-  const handleOptOut = async (schemaName) => {
+  const handleBulkAction = async (action) => {
+    setToggling(true)
     setError(null)
     try {
-      const res = await discoveryClient.optOut(schemaName)
-      if (res.success) {
-        setConfigs(res.data?.configs || [])
-        onResult({ success: true, data: { message: `Opted out ${schemaName}` } })
-      } else {
-        setError(res.error)
-        onResult({ error: res.error })
+      if (action === 'publish-all') {
+        for (const [cat, schemas] of Object.entries(categoryGroups)) {
+          for (const s of schemas) {
+            if (!optedInNames.has(s.name)) {
+              const res = await discoveryClient.optIn({
+                schema_name: s.name,
+                category: cat,
+                include_preview: false,
+              })
+              if (res.success) setConfigs(res.data?.configs || [])
+            }
+          }
+        }
+      } else if (action === 'unpublish-all') {
+        for (const c of configs) {
+          const res = await discoveryClient.optOut(c.schema_name)
+          if (res.success) setConfigs(res.data?.configs || [])
+        }
+        setLastPublishResult(null)
       }
     } catch (e) {
-      const msg = toErrorMessage(e)
-      setError(msg)
-      onResult({ error: msg })
+      setError(toErrorMessage(e))
+    } finally {
+      setToggling(false)
     }
   }
 
@@ -380,6 +588,7 @@ export default function DiscoveryTab({ onResult }) {
     try {
       const res = await discoveryClient.publish()
       if (res.success) {
+        setLastPublishResult(res.data)
         onResult({
           success: true,
           data: {
@@ -400,10 +609,19 @@ export default function DiscoveryTab({ onResult }) {
     }
   }
 
+  const toggleExpand = (cat) => {
+    setExpandedCategories(prev => {
+      const next = new Set(prev)
+      if (next.has(cat)) next.delete(cat)
+      else next.add(cat)
+      return next
+    })
+  }
+
   if (!serviceAvailable) {
     return (
       <div className="space-y-4">
-        <div className="card p-6 text-center">
+        <div className="card p-6 text-center rounded">
           <h3 className="text-lg text-primary mb-2">Discovery Not Configured</h3>
           <p className="text-secondary text-sm">
             Set <code className="text-gruvbox-yellow">DISCOVERY_SERVICE_URL</code> and{' '}
@@ -420,7 +638,8 @@ export default function DiscoveryTab({ onResult }) {
       {/* Section Tabs */}
       <div className="flex gap-1 border-b border-border pb-1">
         {[
-          { id: 'manage', label: 'Manage Opt-Ins' },
+          { id: 'interests', label: 'Your Interests' },
+          { id: 'manage', label: 'Interest Categories' },
           { id: 'search', label: 'Search Network' },
           { id: 'requests', label: 'Incoming Requests' },
         ].map(s => (
@@ -440,31 +659,81 @@ export default function DiscoveryTab({ onResult }) {
 
       {error && <div className="text-sm text-gruvbox-red">{error}</div>}
 
-      {/* Manage Section */}
+      {/* Interests Section */}
+      {activeSection === 'interests' && (
+        <InterestsPanel onResult={onResult} />
+      )}
+
+      {/* Manage Section — Category Cards */}
       {activeSection === 'manage' && (
         <div className="space-y-4">
-          <div className="card p-4 space-y-3">
-            <h3 className="text-sm font-semibold text-primary">Opted-In Schemas</h3>
-            <OptInList configs={configs} onOptOut={handleOptOut} />
-          </div>
+          {!hasSchemas ? (
+            <EmptyState />
+          ) : (
+            <>
+              {/* Bulk Actions */}
+              <div className="flex items-center justify-between">
+                <div className="text-xs text-secondary">
+                  {configs.length} of {(approvedSchemas || []).length} schemas opted in
+                </div>
+                <div className="flex gap-2">
+                  <button
+                    onClick={() => handleBulkAction('publish-all')}
+                    disabled={toggling || configs.length === (approvedSchemas || []).length}
+                    className="btn-secondary btn-sm"
+                  >
+                    Opt In All
+                  </button>
+                  <button
+                    onClick={() => handleBulkAction('unpublish-all')}
+                    disabled={toggling || configs.length === 0}
+                    className="btn-secondary btn-sm text-gruvbox-red"
+                  >
+                    Opt Out All
+                  </button>
+                </div>
+              </div>
 
-          <div className="card p-4 space-y-3">
-            <h3 className="text-sm font-semibold text-primary">Add Schema</h3>
-            <OptInForm
-              schemas={approvedSchemas}
-              optedInNames={optedInNames}
-              onOptIn={handleOptIn}
-            />
-          </div>
+              {/* Privacy Guarantees */}
+              <PrivacyGuarantees />
 
-          {configs.length > 0 && (
-            <button
-              onClick={handlePublish}
-              disabled={publishing}
-              className="btn-primary w-full"
-            >
-              {publishing ? 'Publishing...' : `Publish ${configs.length} Schema${configs.length !== 1 ? 's' : ''} to Network`}
-            </button>
+              {/* Category Cards */}
+              <div className="space-y-3">
+                {categoryNames.map(cat => (
+                  <CategoryCard
+                    key={cat}
+                    category={cat}
+                    schemas={categoryGroups[cat]}
+                    optedInNames={optedInNames}
+                    publishedCategories={publishedCategories}
+                    onToggle={handleToggleCategory}
+                    toggling={toggling}
+                    expanded={expandedCategories.has(cat)}
+                    onExpandToggle={() => toggleExpand(cat)}
+                  />
+                ))}
+              </div>
+
+              {/* Publish Button */}
+              {configs.length > 0 && (
+                <button
+                  onClick={handlePublish}
+                  disabled={publishing}
+                  className="btn-primary w-full"
+                >
+                  {publishing
+                    ? 'Publishing...'
+                    : `Publish ${configs.length} Schema${configs.length !== 1 ? 's' : ''} to Network`}
+                </button>
+              )}
+
+              {/* Last Publish Result */}
+              {lastPublishResult && lastPublishResult.accepted !== undefined && (
+                <div className="card-success p-3 rounded text-xs text-secondary">
+                  Last publish: {lastPublishResult.accepted} accepted, {lastPublishResult.quarantined} quarantined, {lastPublishResult.skipped} skipped of {lastPublishResult.total} total
+                </div>
+              )}
+            </>
           )}
         </div>
       )}
