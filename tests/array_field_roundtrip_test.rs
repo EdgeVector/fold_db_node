@@ -90,6 +90,7 @@ async fn test_array_fields_survive_roundtrip() {
         as_of: None,
         rehydrate_depth: None,
         sort_order: None,
+        value_filters: None,
     };
 
     let results = processor
@@ -181,6 +182,7 @@ async fn test_empty_array_fields_survive_roundtrip() {
         as_of: None,
         rehydrate_depth: None,
         sort_order: None,
+        value_filters: None,
     };
 
     let results = processor
