@@ -1,3 +1,4 @@
+pub mod calendar_sharing;
 pub mod config;
 pub mod connection;
 pub mod interests;

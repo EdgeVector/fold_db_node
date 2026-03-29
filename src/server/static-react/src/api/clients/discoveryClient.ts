@@ -103,6 +103,37 @@ export interface BrowseCategoriesResponse {
   categories: BrowseCategory[];
 }
 
+// Calendar sharing types
+
+export interface CalendarSharingStatus {
+  opted_in: boolean;
+  local_event_count: number;
+  peer_count: number;
+}
+
+export interface CalendarEventInput {
+  summary: string;
+  start_time: string;
+  end_time: string;
+  location: string;
+  calendar: string;
+}
+
+export interface SharedEvent {
+  event_title: string;
+  start_time: string;
+  end_time: string;
+  location: string;
+  connection_count: number;
+  connection_pseudonyms: string[];
+  match_score: number;
+}
+
+export interface SharedEventsResponse {
+  shared_events: SharedEvent[];
+  connection_count: number;
+}
+
 export class DiscoveryClient {
   private readonly client: ApiClient;
 
@@ -223,6 +254,39 @@ export class DiscoveryClient {
   async getSimilarProfiles(): Promise<EnhancedApiResponse<SimilarProfilesResponse>> {
     return this.client.get('/discovery/similar-profiles', {
       timeout: API_TIMEOUTS.LONG,
+      retries: API_RETRIES.STANDARD,
+    });
+  }
+
+  // Calendar sharing methods
+
+  async getCalendarSharingStatus(): Promise<EnhancedApiResponse<CalendarSharingStatus>> {
+    return this.client.get('/discovery/calendar-sharing/status', {
+      timeout: API_TIMEOUTS.STANDARD,
+    });
+  }
+
+  async calendarSharingOptIn(): Promise<EnhancedApiResponse<CalendarSharingStatus>> {
+    return this.client.post('/discovery/calendar-sharing/opt-in', {}, {
+      timeout: API_TIMEOUTS.STANDARD,
+    });
+  }
+
+  async calendarSharingOptOut(): Promise<EnhancedApiResponse<CalendarSharingStatus>> {
+    return this.client.post('/discovery/calendar-sharing/opt-out', {}, {
+      timeout: API_TIMEOUTS.STANDARD,
+    });
+  }
+
+  async syncCalendarEvents(events: CalendarEventInput[]): Promise<EnhancedApiResponse<{ synced_count: number }>> {
+    return this.client.post('/discovery/calendar-sharing/sync', { events }, {
+      timeout: API_TIMEOUTS.LONG,
+    });
+  }
+
+  async getSharedEvents(): Promise<EnhancedApiResponse<SharedEventsResponse>> {
+    return this.client.get('/discovery/shared-events', {
+      timeout: API_TIMEOUTS.STANDARD,
       retries: API_RETRIES.STANDARD,
     });
   }
