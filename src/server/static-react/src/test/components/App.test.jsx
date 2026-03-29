@@ -238,6 +238,14 @@ vi.mock('../../components/DatabaseSetupScreen', () => ({
   default: ({ onComplete }) => <div data-testid="database-setup-screen"><button onClick={onComplete}>Setup</button></div>
 }));
 
+vi.mock('../../components/onboarding/OnboardingWizard', () => {
+  const comp = ({ onComplete }) => <div data-testid="onboarding-wizard"><button onClick={onComplete}>Finish</button></div>
+  return {
+    default: comp,
+    ONBOARDING_STORAGE_KEY: 'folddb_onboarding_complete',
+  }
+});
+
 vi.mock('../../hooks/useApprovedSchemas.js', () => ({
   useApprovedSchemas: () => mockApprovedSchemas
 }));
@@ -250,6 +258,8 @@ describe('App Component', () => {
   describe('AppContent Component', () => {
     beforeEach(() => {
       vi.clearAllMocks();
+      // Mark onboarding as complete so tests see the main app
+      localStorage.setItem('folddb_onboarding_complete', '1');
       // Reset mock values
       mockApprovedSchemas.isLoading = false;
       mockApprovedSchemas.error = null;
