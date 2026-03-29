@@ -61,10 +61,7 @@ async fn test_array_fields_survive_roundtrip() {
         "interests".to_string(),
         json!(["hiking", "street food", "temples"]),
     );
-    fields.insert(
-        "dietary_restrictions".to_string(),
-        json!(["vegetarian"]),
-    );
+    fields.insert("dietary_restrictions".to_string(), json!(["vegetarian"]));
     fields.insert("budget".to_string(), json!(3000));
 
     processor
@@ -122,7 +119,11 @@ async fn test_array_fields_survive_roundtrip() {
     );
 
     let avoid = fields.get("avoid").expect("avoid field missing");
-    assert!(avoid.is_array(), "avoid should be an array, got: {:?}", avoid);
+    assert!(
+        avoid.is_array(),
+        "avoid should be an array, got: {:?}",
+        avoid
+    );
     assert_eq!(avoid, &json!(["tourist traps", "rush hour"]));
 
     let interests = fields.get("interests").expect("interests field missing");
