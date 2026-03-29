@@ -9,6 +9,20 @@ use fold_db::log_feature;
 use fold_db::logging::features::LogFeature;
 use serde_json::json;
 
+/// Get sync engine status
+#[utoipa::path(
+    get,
+    path = "/api/system/sync-status",
+    tag = "system",
+    responses(
+        (status = 200, description = "Sync engine status", body = serde_json::Value)
+    )
+)]
+pub async fn get_sync_status(state: web::Data<AppState>) -> impl Responder {
+    let (user_hash, node) = node_or_return!(state);
+    handler_result_to_response(crate::handlers::system::get_sync_status(&user_hash, &node).await)
+}
+
 /// Get system status information
 #[utoipa::path(
     get,

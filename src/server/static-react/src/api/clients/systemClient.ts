@@ -59,6 +59,14 @@ export interface NodeKeyResponse {
   message: string;
 }
 
+export interface SyncStatusResponse {
+  enabled: boolean;
+  state?: "idle" | "dirty" | "syncing" | "offline";
+  pending_count?: number;
+  last_sync_at?: number;
+  last_error?: string;
+}
+
 export interface DatabaseConfigDto {
   type: "local" | "dynamodb" | "s3";
   path?: string;
@@ -263,6 +271,16 @@ export class UnifiedSystemClient {
       );
   }
 
+  // Get sync engine status (no auth required, polled periodically)
+  async getSyncStatus(): Promise<EnhancedApiResponse<SyncStatusResponse>> {
+    return this.client.get<SyncStatusResponse>(API_ENDPOINTS.GET_SYNC_STATUS, {
+      requiresAuth: false,
+      timeout: API_TIMEOUTS.QUICK,
+      retries: API_RETRIES.STANDARD,
+      cacheable: false,
+    });
+  }
+
   // Get database configuration (no auth required)
   async getDatabaseConfig(): Promise<EnhancedApiResponse<DatabaseConfigDto>> {
     return this.client.get<DatabaseConfigDto>(
@@ -355,6 +373,7 @@ export const getNodePrivateKey =
   systemClient.getNodePrivateKey.bind(systemClient);
 export const getNodePublicKey =
   systemClient.getNodePublicKey.bind(systemClient);
+export const getSyncStatus = systemClient.getSyncStatus.bind(systemClient);
 export const getDatabaseConfig =
   systemClient.getDatabaseConfig.bind(systemClient);
 export const updateDatabaseConfig =

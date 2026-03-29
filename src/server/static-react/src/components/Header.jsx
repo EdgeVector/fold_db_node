@@ -6,6 +6,7 @@ import { BROWSER_CONFIG } from '../constants/config'
 import { systemClient } from '../api/clients/systemClient'
 import HeaderProgress from './HeaderProgress'
 import AnimatedLogo from './AnimatedLogo'
+import SyncStatusIndicator from './SyncStatusIndicator'
 
 function classifySchemaEnv(url) {
   if (!url) return { label: 'None', color: 'text-gruvbox-yellow' }
@@ -79,14 +80,8 @@ function Header({ onSettingsClick, onAiSettingsClick, onCloudSettingsClick }) {
                 {aiReady ? `AI: ${aiProvider}` : 'AI: off'}
               </button></>
             )}
-            {isLocal && (
-              <><span className="text-tertiary">/</span><button
-                onClick={onCloudSettingsClick}
-                className="bg-transparent border-none text-gruvbox-blue no-underline hover:text-primary text-sm font-mono cursor-pointer"
-              >
-                Upgrade to Cloud
-              </button></>
-            )}
+            <span className="text-tertiary">/</span>
+            <SyncStatusIndicator onCloudSettingsClick={onCloudSettingsClick} />
           </div>
           {isAuthenticated && (
             <div className="flex items-center gap-4">

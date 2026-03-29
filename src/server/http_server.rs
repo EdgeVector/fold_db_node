@@ -490,6 +490,10 @@ impl FoldHttpServer {
             web::get().to(system_routes::get_node_public_key),
         )
         .route(
+            "/system/sync-status",
+            web::get().to(system_routes::get_sync_status),
+        )
+        .route(
             "/system/reset-database",
             web::post().to(admin_routes::reset_database),
         )
