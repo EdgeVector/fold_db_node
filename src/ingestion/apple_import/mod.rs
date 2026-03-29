@@ -1,9 +1,11 @@
-//! Apple data import: extract Notes, Reminders, and Photos from macOS apps.
+//! Apple data import: extract Notes, Reminders, Photos, and Calendar events from macOS apps.
 //!
 //! This module provides shared extraction logic used by both the CLI
 //! (`folddb ingest apple-*`) and the HTTP server (Apple Import tab).
 //! Extraction uses `osascript` to call AppleScript on macOS.
 
+#[cfg(target_os = "macos")]
+pub mod calendar;
 #[cfg(target_os = "macos")]
 pub mod notes;
 #[cfg(target_os = "macos")]
