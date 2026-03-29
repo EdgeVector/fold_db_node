@@ -44,6 +44,21 @@ export interface ConnectionRequest {
   created_at: string;
 }
 
+export interface InterestCategory {
+  name: string;
+  count: number;
+  avg_similarity: number;
+  enabled: boolean;
+}
+
+export interface InterestProfile {
+  categories: InterestCategory[];
+  total_embeddings_scanned: number;
+  unmatched_count: number;
+  detected_at: string;
+  seed_version: number;
+}
+
 export class DiscoveryClient {
   private readonly client: ApiClient;
 
@@ -105,6 +120,24 @@ export class DiscoveryClient {
   async pollRequests(): Promise<EnhancedApiResponse<{ requests: ConnectionRequest[] }>> {
     return this.client.get('/discovery/requests', {
       timeout: API_TIMEOUTS.STANDARD,
+    });
+  }
+
+  async getInterests(): Promise<EnhancedApiResponse<InterestProfile>> {
+    return this.client.get('/discovery/interests', {
+      timeout: API_TIMEOUTS.STANDARD,
+    });
+  }
+
+  async toggleInterest(category: string, enabled: boolean): Promise<EnhancedApiResponse<InterestProfile>> {
+    return this.client.post('/discovery/interests/toggle', { category, enabled }, {
+      timeout: API_TIMEOUTS.STANDARD,
+    });
+  }
+
+  async detectInterests(): Promise<EnhancedApiResponse<InterestProfile>> {
+    return this.client.post('/discovery/interests/detect', {}, {
+      timeout: API_TIMEOUTS.LONG,
     });
   }
 }

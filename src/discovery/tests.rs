@@ -1,5 +1,8 @@
 use super::config::*;
+use super::interests;
 use super::pseudonym::*;
+#[cfg(feature = "test-utils")]
+use fold_db::db_operations::native_index::MockEmbeddingModel;
 use fold_db::storage::{NamespacedStore, SledNamespacedStore};
 use std::sync::Arc;
 
@@ -146,4 +149,131 @@ async fn test_upsert_opt_in() {
 
     let configs = list_opt_ins(&*store).await.unwrap();
     assert_eq!(configs.len(), 1);
+}
+
+// === Interest Detection Tests ===
+
+async fn make_interest_stores() -> (
+    Arc<dyn fold_db::storage::traits::KvStore>,
+    Arc<dyn fold_db::storage::traits::KvStore>,
+) {
+    let db = sled::Config::new().temporary(true).open().unwrap();
+    let store = Arc::new(SledNamespacedStore::new(db));
+    let emb_store = store.open_namespace("embeddings").await.unwrap();
+    let meta_store = store.open_namespace("metadata").await.unwrap();
+    (emb_store, meta_store)
+}
+
+#[tokio::test]
+async fn test_save_and_load_interest_profile() {
+    let (_emb, meta) = make_interest_stores().await;
+
+    let profile = interests::InterestProfile {
+        categories: vec![
+            interests::InterestCategory {
+                name: "Photography".to_string(),
+                count: 15,
+                avg_similarity: 0.45,
+                enabled: true,
+            },
+            interests::InterestCategory {
+                name: "Cooking".to_string(),
+                count: 8,
+                avg_similarity: 0.38,
+                enabled: true,
+            },
+        ],
+        total_embeddings_scanned: 100,
+        unmatched_count: 77,
+        detected_at: chrono::Utc::now(),
+        seed_version: 1,
+    };
+
+    interests::save_interest_profile(&*meta, &profile).await.unwrap();
+    let loaded = interests::load_interest_profile(&*meta).await.unwrap();
+
+    assert!(loaded.is_some());
+    let loaded = loaded.unwrap();
+    assert_eq!(loaded.categories.len(), 2);
+    assert_eq!(loaded.categories[0].name, "Photography");
+    assert_eq!(loaded.categories[0].count, 15);
+    assert_eq!(loaded.total_embeddings_scanned, 100);
+    assert_eq!(loaded.unmatched_count, 77);
+}
+
+#[tokio::test]
+async fn test_toggle_interest_category() {
+    let (_emb, meta) = make_interest_stores().await;
+
+    let profile = interests::InterestProfile {
+        categories: vec![interests::InterestCategory {
+            name: "Music".to_string(),
+            count: 10,
+            avg_similarity: 0.4,
+            enabled: true,
+        }],
+        total_embeddings_scanned: 50,
+        unmatched_count: 40,
+        detected_at: chrono::Utc::now(),
+        seed_version: 1,
+    };
+
+    interests::save_interest_profile(&*meta, &profile).await.unwrap();
+
+    // Toggle off
+    let updated = interests::toggle_interest_category(&*meta, "Music", false)
+        .await
+        .unwrap();
+    assert!(!updated.categories[0].enabled);
+
+    // Verify persistence
+    let loaded = interests::load_interest_profile(&*meta).await.unwrap().unwrap();
+    assert!(!loaded.categories[0].enabled);
+
+    // Toggle back on
+    let updated = interests::toggle_interest_category(&*meta, "Music", true)
+        .await
+        .unwrap();
+    assert!(updated.categories[0].enabled);
+}
+
+#[tokio::test]
+async fn test_toggle_nonexistent_category_errors() {
+    let (_emb, meta) = make_interest_stores().await;
+
+    let profile = interests::InterestProfile {
+        categories: vec![],
+        total_embeddings_scanned: 0,
+        unmatched_count: 0,
+        detected_at: chrono::Utc::now(),
+        seed_version: 1,
+    };
+
+    interests::save_interest_profile(&*meta, &profile).await.unwrap();
+
+    let result = interests::toggle_interest_category(&*meta, "Nonexistent", true).await;
+    assert!(result.is_err());
+}
+
+#[cfg(feature = "test-utils")]
+#[tokio::test]
+async fn test_empty_embedding_store_returns_empty_profile() {
+    let (emb, meta) = make_interest_stores().await;
+
+    let embedder = MockEmbeddingModel;
+
+    let profile = interests::detect_interests(&*emb, &*meta, &embedder)
+        .await
+        .unwrap();
+
+    assert!(profile.categories.is_empty());
+    assert_eq!(profile.total_embeddings_scanned, 0);
+    assert_eq!(profile.unmatched_count, 0);
+}
+
+#[tokio::test]
+async fn test_load_nonexistent_profile_returns_none() {
+    let (_emb, meta) = make_interest_stores().await;
+    let loaded = interests::load_interest_profile(&*meta).await.unwrap();
+    assert!(loaded.is_none());
 }
