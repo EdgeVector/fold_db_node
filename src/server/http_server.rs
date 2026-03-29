@@ -630,6 +630,30 @@ impl FoldHttpServer {
                     "/similar-profiles",
                     web::get().to(discovery_routes::similar_profiles),
                 )
+                .route(
+                    "/calendar-sharing/status",
+                    web::get().to(discovery_routes::calendar_sharing_status),
+                )
+                .route(
+                    "/calendar-sharing/opt-in",
+                    web::post().to(discovery_routes::calendar_sharing_opt_in),
+                )
+                .route(
+                    "/calendar-sharing/opt-out",
+                    web::post().to(discovery_routes::calendar_sharing_opt_out),
+                )
+                .route(
+                    "/calendar-sharing/sync",
+                    web::post().to(discovery_routes::sync_calendar_events),
+                )
+                .route(
+                    "/calendar-sharing/peer-events",
+                    web::post().to(discovery_routes::store_peer_events),
+                )
+                .route(
+                    "/shared-events",
+                    web::get().to(discovery_routes::get_shared_events),
+                )
                 // Photo moment detection routes
                 .route("/moments", web::get().to(discovery_routes::moment_list))
                 .route(

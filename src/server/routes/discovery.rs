@@ -355,6 +355,92 @@ pub async fn similar_profiles(req: HttpRequest, state: web::Data<AppState>) -> i
     }
 }
 
+// === Calendar Sharing Routes ===
+
+/// GET /api/discovery/calendar-sharing/status — Get calendar sharing opt-in status.
+pub async fn calendar_sharing_status(state: web::Data<AppState>) -> impl Responder {
+    let (_user_hash, node) = match require_node_read(&state).await {
+        Ok(res) => res,
+        Err(response) => return response,
+    };
+
+    match discovery_handlers::calendar_sharing_status(&node).await {
+        Ok(response) => HttpResponse::Ok().json(response),
+        Err(e) => handler_error_to_response(e),
+    }
+}
+
+/// POST /api/discovery/calendar-sharing/opt-in — Enable calendar sharing.
+pub async fn calendar_sharing_opt_in(state: web::Data<AppState>) -> impl Responder {
+    let (_user_hash, node) = match require_node_read(&state).await {
+        Ok(res) => res,
+        Err(response) => return response,
+    };
+
+    match discovery_handlers::calendar_sharing_opt_in(&node).await {
+        Ok(response) => HttpResponse::Ok().json(response),
+        Err(e) => handler_error_to_response(e),
+    }
+}
+
+/// POST /api/discovery/calendar-sharing/opt-out — Disable calendar sharing.
+pub async fn calendar_sharing_opt_out(state: web::Data<AppState>) -> impl Responder {
+    let (_user_hash, node) = match require_node_read(&state).await {
+        Ok(res) => res,
+        Err(response) => return response,
+    };
+
+    match discovery_handlers::calendar_sharing_opt_out(&node).await {
+        Ok(response) => HttpResponse::Ok().json(response),
+        Err(e) => handler_error_to_response(e),
+    }
+}
+
+/// POST /api/discovery/calendar-sharing/sync — Sync calendar events for comparison.
+pub async fn sync_calendar_events(
+    body: web::Json<discovery_handlers::SyncCalendarEventsRequest>,
+    state: web::Data<AppState>,
+) -> impl Responder {
+    let (_user_hash, node) = match require_node_read(&state).await {
+        Ok(res) => res,
+        Err(response) => return response,
+    };
+
+    match discovery_handlers::sync_calendar_events(&body, &node).await {
+        Ok(response) => HttpResponse::Ok().json(response),
+        Err(e) => handler_error_to_response(e),
+    }
+}
+
+/// POST /api/discovery/calendar-sharing/peer-events — Store peer event fingerprints.
+pub async fn store_peer_events(
+    body: web::Json<discovery_handlers::StorePeerEventsRequest>,
+    state: web::Data<AppState>,
+) -> impl Responder {
+    let (_user_hash, node) = match require_node_read(&state).await {
+        Ok(res) => res,
+        Err(response) => return response,
+    };
+
+    match discovery_handlers::store_peer_events(&body, &node).await {
+        Ok(response) => HttpResponse::Ok().json(response),
+        Err(e) => handler_error_to_response(e),
+    }
+}
+
+/// GET /api/discovery/shared-events — Detect and return shared events with connections.
+pub async fn get_shared_events(state: web::Data<AppState>) -> impl Responder {
+    let (_user_hash, node) = match require_node_read(&state).await {
+        Ok(res) => res,
+        Err(response) => return response,
+    };
+
+    match discovery_handlers::get_shared_events(&node).await {
+        Ok(response) => HttpResponse::Ok().json(response),
+        Err(e) => handler_error_to_response(e),
+    }
+}
+
 // === Photo Moment Detection Routes ===
 
 /// GET /api/discovery/moments/opt-ins — List all moment sharing opt-ins.
