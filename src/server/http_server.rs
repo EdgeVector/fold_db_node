@@ -312,7 +312,8 @@ impl FoldHttpServer {
                 .configure(Self::configure_trust_routes)
                 .configure(Self::configure_capability_routes)
                 .configure(Self::configure_remote_routes)
-                .configure(Self::configure_auth_routes),
+                .configure(Self::configure_auth_routes)
+                .configure(Self::configure_sync_routes),
         );
     }
 
@@ -505,6 +506,13 @@ impl FoldHttpServer {
                 web::put().to(log_routes::update_feature_level),
             )
             .route("/logs/features", web::get().to(log_routes::get_features));
+    }
+
+    fn configure_sync_routes(cfg: &mut web::ServiceConfig) {
+        use super::routes::sync as sync_routes;
+
+        cfg.route("/sync/status", web::get().to(sync_routes::get_sync_status))
+            .route("/sync/trigger", web::post().to(sync_routes::trigger_sync));
     }
 
     fn configure_system_routes(cfg: &mut web::ServiceConfig) {

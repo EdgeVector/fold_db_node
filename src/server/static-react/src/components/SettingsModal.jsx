@@ -4,6 +4,7 @@ import useAiConfig from './settings/AiConfigSettings'
 import SchemaServiceSettings from './settings/SchemaServiceSettings'
 import useDatabaseConfig from './settings/DatabaseSettings'
 import CloudMigrationSettings from './tabs/CloudMigrationSettings'
+import BackupSettingsPanel from './settings/BackupSettingsPanel'
 
 const NOOP = () => {}
 
@@ -63,6 +64,7 @@ function SettingsModal({ isOpen, onClose, initialTab, onRelaunchOnboarding }) {
     { id: 'schema-service', label: 'Schema Service' },
     { id: 'database', label: 'Database' },
     { id: 'upgrade-cloud', label: 'Cloud DB' },
+    { id: 'backup', label: 'Backup' },
   ]
 
   const handleSave = () => {
@@ -100,6 +102,7 @@ function SettingsModal({ isOpen, onClose, initialTab, onRelaunchOnboarding }) {
           {activeTab === 'schema-service' && <SchemaServiceSettings />}
           {activeTab === 'database' && dbConfig.content}
           {activeTab === 'upgrade-cloud' && <CloudMigrationSettings onClose={onClose} />}
+          {activeTab === 'backup' && <BackupSettingsPanel />}
         </div>
 
         <div className="modal-footer">
