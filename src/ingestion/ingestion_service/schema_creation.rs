@@ -111,6 +111,35 @@ impl IngestionService {
             }
         }
 
+        // Infer field_types from sample data for any field that doesn't have
+        // a declared type. The AI prompt doesn't ask for field_types, so they're
+        // always empty — without this, all fields default to `Any` and the system
+        // has no type information (e.g., can't distinguish String from Array<String>).
+        if let Some(fields) = &schema.fields {
+            let sample_obj = if let Some(array) = sample_data.as_array() {
+                array.first().unwrap_or(sample_data)
+            } else {
+                sample_data
+            };
+            for field_name in fields {
+                if !schema.field_types.contains_key(field_name) {
+                    if let Some(sample_value) = sample_obj.get(field_name) {
+                        let inferred = fold_db::schema::types::FieldValueType::infer(sample_value);
+                        if inferred != fold_db::schema::types::FieldValueType::Null {
+                            log_feature!(
+                                LogFeature::Ingestion,
+                                info,
+                                "Inferred field_type for '{}': {}",
+                                field_name,
+                                inferred
+                            );
+                            schema.field_types.insert(field_name.clone(), inferred);
+                        }
+                    }
+                }
+            }
+        }
+
         // Ensure schema has key configuration for mutations to work
         if schema.key.is_none() {
             // Use the first field as the hash key
