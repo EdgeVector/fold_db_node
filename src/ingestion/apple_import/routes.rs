@@ -667,10 +667,7 @@ pub async fn apple_import_calendar(
     let progress_id = uuid::Uuid::new_v4().to_string();
     let tracker = progress_tracker.get_ref().clone();
 
-    let mut job = Job::new(
-        progress_id.clone(),
-        JobType::Other("apple-calendar".into()),
-    );
+    let mut job = Job::new(progress_id.clone(), JobType::Other("apple-calendar".into()));
     job = job.with_user(user_id.clone());
     job.message = "Extracting events from Apple Calendar...".into();
     job.progress_percentage = 5;
@@ -708,20 +705,14 @@ async fn run_apple_calendar_import(
     let events = match calendar_result {
         Ok(Ok(e)) => e,
         Ok(Err(e)) => {
-            let mut job = Job::new(
-                progress_id.clone(),
-                JobType::Other("apple-calendar".into()),
-            );
+            let mut job = Job::new(progress_id.clone(), JobType::Other("apple-calendar".into()));
             job.status = JobStatus::Failed;
             job.message = format!("Failed to extract calendar events: {}", e);
             let _ = tracker.save(&job).await;
             return;
         }
         Err(e) => {
-            let mut job = Job::new(
-                progress_id.clone(),
-                JobType::Other("apple-calendar".into()),
-            );
+            let mut job = Job::new(progress_id.clone(), JobType::Other("apple-calendar".into()));
             job.status = JobStatus::Failed;
             job.message = format!("Extraction task panicked: {}", e);
             let _ = tracker.save(&job).await;
@@ -730,10 +721,7 @@ async fn run_apple_calendar_import(
     };
 
     if events.is_empty() {
-        let mut job = Job::new(
-            progress_id.clone(),
-            JobType::Other("apple-calendar".into()),
-        );
+        let mut job = Job::new(progress_id.clone(), JobType::Other("apple-calendar".into()));
         job.status = JobStatus::Completed;
         job.progress_percentage = 100;
         job.message = "No calendar events found".into();
@@ -745,10 +733,7 @@ async fn run_apple_calendar_import(
     let total = events.len();
     let records = calendar::to_json_records(&events);
 
-    let mut job = Job::new(
-        progress_id.clone(),
-        JobType::Other("apple-calendar".into()),
-    );
+    let mut job = Job::new(progress_id.clone(), JobType::Other("apple-calendar".into()));
     job.status = JobStatus::Running;
     job.progress_percentage = 30;
     job.message = format!("Extracted {} events, ingesting...", total);
@@ -794,20 +779,14 @@ async fn run_apple_calendar_import(
 
         // Update progress
         let pct = 30 + ((i + 1) * 70 / total.div_ceil(batch_size)).min(70);
-        let mut job = Job::new(
-            progress_id.clone(),
-            JobType::Other("apple-calendar".into()),
-        );
+        let mut job = Job::new(progress_id.clone(), JobType::Other("apple-calendar".into()));
         job.status = JobStatus::Running;
         job.progress_percentage = pct as u8;
         job.message = format!("Ingested {}/{} events...", ingested, total);
         let _ = tracker.save(&job).await;
     }
 
-    let mut job = Job::new(
-        progress_id.clone(),
-        JobType::Other("apple-calendar".into()),
-    );
+    let mut job = Job::new(progress_id.clone(), JobType::Other("apple-calendar".into()));
     job.status = JobStatus::Completed;
     job.progress_percentage = 100;
     job.message = format!("Imported {} calendar events", ingested);
