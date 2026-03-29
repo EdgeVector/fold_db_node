@@ -41,6 +41,7 @@ pub struct SearchRequest {
     pub query: String,
     pub top_k: Option<usize>,
     pub category_filter: Option<String>,
+    pub offset: Option<usize>,
 }
 
 #[derive(Debug, Clone, Deserialize)]
@@ -99,6 +100,9 @@ pub struct DiscoveryNetworkSearchResponse {
 pub struct DiscoveryConnectionsResponse {
     pub requests: Vec<IncomingConnectionRequest>,
 }
+
+/// Response for the browse-categories endpoint (re-exported from types).
+pub use crate::discovery::types::BrowseCategoriesResponse;
 
 /// A single anonymized profile aggregated from discovery search results.
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -333,6 +337,7 @@ pub async fn search(
             query_embedding,
             req.top_k.unwrap_or(20),
             req.category_filter.clone(),
+            req.offset,
         )
         .await
         .handler_err("search discovery network")?;
@@ -382,6 +387,28 @@ pub async fn poll_requests(
 
     Ok(ApiResponse::success(DiscoveryConnectionsResponse {
         requests,
+    }))
+}
+
+/// Browse categories available on the discovery network.
+pub async fn browse_categories(
+    discovery_url: &str,
+    auth_token: &str,
+    master_key: &[u8],
+) -> HandlerResult<BrowseCategoriesResponse> {
+    let publisher = DiscoveryPublisher::new(
+        master_key.to_vec(),
+        discovery_url.to_string(),
+        auth_token.to_string(),
+    );
+
+    let categories = publisher
+        .browse_categories()
+        .await
+        .handler_err("browse discovery categories")?;
+
+    Ok(ApiResponse::success(BrowseCategoriesResponse {
+        categories,
     }))
 }
 
@@ -528,7 +555,7 @@ pub async fn similar_profiles(
             None => continue,
         };
 
-        let results = match publisher.search(centroid, 20, Some(cat_name.clone())).await {
+        let results = match publisher.search(centroid, 20, Some(cat_name.clone()), None).await {
             Ok(r) => r,
             Err(e) => {
                 log::warn!(

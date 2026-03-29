@@ -48,6 +48,8 @@ pub struct DiscoverySearchRequest {
     pub category_filter: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub similarity_threshold: Option<f32>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub offset: Option<usize>,
 }
 
 /// A single search result from the discovery service.
@@ -118,4 +120,18 @@ pub struct PublishResult {
     pub quarantined: usize,
     pub total: usize,
     pub skipped: usize,
+}
+
+/// A category entry returned by the browse/categories endpoint.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct BrowseCategory {
+    pub category: String,
+    pub entry_count: i64,
+    pub user_count: i64,
+}
+
+/// Response from the browse/categories endpoint.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct BrowseCategoriesResponse {
+    pub categories: Vec<BrowseCategory>,
 }

@@ -232,12 +232,14 @@ impl DiscoveryPublisher {
         query_embedding: Vec<f32>,
         top_k: usize,
         category_filter: Option<String>,
+        offset: Option<usize>,
     ) -> Result<Vec<DiscoverySearchResult>, String> {
         let request = DiscoverySearchRequest {
             embedding: query_embedding,
             top_k,
             category_filter,
             similarity_threshold: None,
+            offset,
         };
 
         let response = self
@@ -331,6 +333,33 @@ impl DiscoveryPublisher {
             .map_err(|e| format!("Failed to parse messages response: {}", e))?;
 
         Ok(poll_response.messages)
+    }
+
+    /// Browse categories on the discovery network.
+    pub async fn browse_categories(&self) -> Result<Vec<BrowseCategory>, String> {
+        let response = self
+            .http_client
+            .get(format!("{}/discover/browse/categories", self.discovery_url))
+            .header("Authorization", format!("Bearer {}", self.auth_token))
+            .send()
+            .await
+            .map_err(|e| format!("Failed to browse categories: {}", e))?;
+
+        if !response.status().is_success() {
+            let status = response.status();
+            let body = response.text().await.unwrap_or_default();
+            return Err(format!(
+                "Browse categories failed with status {}: {}",
+                status, body
+            ));
+        }
+
+        let browse_response: BrowseCategoriesResponse = response
+            .json()
+            .await
+            .map_err(|e| format!("Failed to parse browse response: {}", e))?;
+
+        Ok(browse_response.categories)
     }
 
     /// Legacy: Poll for incoming connection requests.
