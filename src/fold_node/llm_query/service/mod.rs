@@ -297,6 +297,18 @@ impl LlmQueryService {
         prompt.push_str("- You can call this multiple times with different data structures — each will get its own schema.\n");
         prompt.push_str("Example: {\"tool\": \"ingest_json\", \"params\": {\"data\": [{\"day\": 1, \"date\": \"2026-06-01\", \"city\": \"Taipei\", \"activity\": \"Night market food tour\"}, {\"day\": 2, \"date\": \"2026-06-02\", \"city\": \"Taipei\", \"activity\": \"Dim sum breakfast\"}], \"source_context\": \"vacation_itinerary\"}}\n\n");
 
+        prompt.push_str("### update_record\n");
+        prompt.push_str("Update an existing record in a schema. Use this when the user wants to modify, change, or correct data that already exists — e.g., update a budget, change a date, swap a hotel, fix a typo.\n");
+        prompt.push_str("IMPORTANT: First use **query** or **search** to find the record and confirm its schema_name and key values, then call update_record with the fields to change.\n");
+        prompt.push_str("Parameters:\n");
+        prompt.push_str("- schema_name (string, required): Name of the schema (use the schema ID, not the descriptive name)\n");
+        prompt.push_str("- key (object, required): Record identifier. Must include the key fields that identify the record:\n");
+        prompt.push_str("  - hash_key (string, optional): The hash key value\n");
+        prompt.push_str("  - range_key (string, optional): The range key value\n");
+        prompt.push_str("- fields (object, required): Fields to update as {\"field_name\": new_value}. Only include the fields you want to change — other fields remain unchanged.\n");
+        prompt.push_str("Returns: success status and mutation_id.\n");
+        prompt.push_str("Example: {\"tool\": \"update_record\", \"params\": {\"schema_name\": \"VacationItinerary\", \"key\": {\"range_key\": \"2026-06-03\"}, \"fields\": {\"hotel\": \"Grand Hyatt\", \"budget\": 3000}}}\n\n");
+
         prompt.push_str("### web_search\n");
         prompt.push_str("Search the web for real-time information. Use this when the user's question requires external knowledge not available in the local database — e.g., restaurant recommendations, travel logistics, current events, prices, directions, reviews.\n");
         prompt.push_str("Parameters:\n");
@@ -367,11 +379,12 @@ impl LlmQueryService {
         prompt.push_str("After getting search results, use the **query** tool with the returned schema and key to fetch full records.\n");
         prompt.push_str("3. **For questions requiring external/real-world information** (vacation planning, restaurant recommendations, travel logistics, current events, prices), use the **web_search** tool. Follow up with **fetch_url** on the most relevant results for detailed information.\n");
         prompt.push_str("4. **For tasks that create structured data** (planning, organizing, comparing, building lists), use **web_search** to research first, then use **ingest_json** to store the results in the database. The data will be schema-validated and queryable in the dashboard.\n");
-        prompt.push_str("5. Use other tools to gather additional information as needed\n");
+        prompt.push_str("5. **For tasks that modify existing data** (change a budget, update a date, swap a hotel, fix a value), first **query** the schema to find the record's key, then use **update_record** to change specific fields. Do NOT re-ingest the entire record — just update the fields that changed.\n");
+        prompt.push_str("6. Use other tools to gather additional information as needed\n");
         prompt.push_str(
-            "6. When you have enough information to answer, provide your final response\n",
+            "7. When you have enough information to answer, provide your final response\n",
         );
-        prompt.push_str("7. Use the current date/time above to determine temporal context. Events with dates before today are in the PAST. Events with dates after today are in the FUTURE. Label them accordingly (e.g. \"upcoming\" vs \"past\").\n\n");
+        prompt.push_str("8. Use the current date/time above to determine temporal context. Events with dates before today are in the PAST. Events with dates after today are in the FUTURE. Label them accordingly (e.g. \"upcoming\" vs \"past\").\n\n");
         prompt.push_str("## Reference Fields\n\n");
         prompt.push_str("Some fields are References to records in other schemas. Query results automatically resolve references one level deep.\n");
         prompt.push_str("If a field value is an array of objects with \"schema\" and \"key\" properties, those are references to child records.\n");
