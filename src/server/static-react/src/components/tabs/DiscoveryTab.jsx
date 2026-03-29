@@ -324,14 +324,14 @@ function SearchPanel({ onResult }) {
   )
 }
 
-function IncomingRequests() {
+function ConnectionRequestsPanel({ onResult }) {
   const [requests, setRequests] = useState([])
-  const [loading, setLoading] = useState(false)
+  const [loading, setLoading] = useState(true)
+  const [responding, setResponding] = useState(null)
 
   const fetchRequests = useCallback(async () => {
-    setLoading(true)
     try {
-      const res = await discoveryClient.pollRequests()
+      const res = await discoveryClient.getConnectionRequests()
       if (res.success) {
         setRequests(res.data?.requests || [])
       }
@@ -342,23 +342,171 @@ function IncomingRequests() {
 
   useEffect(() => { fetchRequests() }, [fetchRequests])
 
-  if (loading) return <p className="text-secondary text-sm">Loading requests...</p>
-  if (requests.length === 0) return <p className="text-secondary text-sm">No pending connection requests.</p>
+  const handleRespond = async (requestId, action) => {
+    setResponding(requestId)
+    try {
+      const res = await discoveryClient.respondToRequest(requestId, action)
+      if (res.success) {
+        setRequests(prev =>
+          prev.map(r => r.request_id === requestId ? res.data.request : r)
+        )
+        onResult({ success: true, data: { message: `Connection ${action}ed` } })
+      } else {
+        onResult({ error: res.error || `Failed to ${action}` })
+      }
+    } catch (e) {
+      onResult({ error: toErrorMessage(e) || 'Network error' })
+    } finally {
+      setResponding(null)
+    }
+  }
+
+  if (loading) return <p className="text-secondary text-sm">Loading connection requests...</p>
+
+  const pending = requests.filter(r => r.status === 'pending')
+  const responded = requests.filter(r => r.status !== 'pending')
+
+  return (
+    <div className="space-y-4">
+      {pending.length === 0 && responded.length === 0 && (
+        <div className="card p-6 text-center rounded">
+          <p className="text-secondary text-sm">No connection requests yet.</p>
+          <p className="text-tertiary text-xs mt-1">
+            When someone discovers your data and wants to connect, their requests will appear here.
+          </p>
+        </div>
+      )}
+
+      {pending.length > 0 && (
+        <div className="space-y-2">
+          <div className="text-xs text-secondary font-semibold">
+            Pending ({pending.length})
+          </div>
+          {pending.map(r => (
+            <div key={r.request_id} className="card rounded p-4 space-y-2 border-l-2 border-gruvbox-yellow">
+              <div className="flex items-center justify-between">
+                <div className="flex items-center gap-2 text-xs">
+                  <span className="badge badge-warning">pending</span>
+                  <span className="text-secondary">
+                    {new Date(r.created_at).toLocaleDateString()}
+                  </span>
+                </div>
+                <div className="flex gap-2">
+                  <button
+                    onClick={() => handleRespond(r.request_id, 'accept')}
+                    disabled={responding === r.request_id}
+                    className="btn-primary btn-sm"
+                  >
+                    {responding === r.request_id ? '...' : 'Accept'}
+                  </button>
+                  <button
+                    onClick={() => handleRespond(r.request_id, 'decline')}
+                    disabled={responding === r.request_id}
+                    className="btn-secondary btn-sm text-gruvbox-red"
+                  >
+                    Decline
+                  </button>
+                </div>
+              </div>
+              <p className="text-sm text-primary">{r.message}</p>
+              <div className="text-xs text-tertiary font-mono truncate">
+                from: {r.sender_pseudonym}
+              </div>
+            </div>
+          ))}
+        </div>
+      )}
+
+      {responded.length > 0 && (
+        <div className="space-y-2">
+          <div className="text-xs text-secondary font-semibold">
+            History ({responded.length})
+          </div>
+          {responded.map(r => (
+            <div key={r.request_id} className="card rounded p-3 space-y-1 opacity-75">
+              <div className="flex items-center gap-2 text-xs">
+                <span className={`badge ${
+                  r.status === 'accept' ? 'badge-success' : 'badge-error'
+                }`}>
+                  {r.status === 'accept' ? 'accepted' : 'declined'}
+                </span>
+                <span className="text-secondary">
+                  {r.responded_at ? new Date(r.responded_at).toLocaleDateString() : ''}
+                </span>
+              </div>
+              <p className="text-sm text-secondary">{r.message}</p>
+              <div className="text-xs text-tertiary font-mono truncate">
+                from: {r.sender_pseudonym}
+              </div>
+            </div>
+          ))}
+        </div>
+      )}
+
+      <button onClick={fetchRequests} className="btn-secondary btn-sm">
+        Refresh
+      </button>
+    </div>
+  )
+}
+
+function SentRequestsPanel() {
+  const [requests, setRequests] = useState([])
+  const [loading, setLoading] = useState(true)
+
+  const fetchRequests = useCallback(async () => {
+    try {
+      const res = await discoveryClient.getSentRequests()
+      if (res.success) {
+        setRequests(res.data?.requests || [])
+      }
+    } finally {
+      setLoading(false)
+    }
+  }, [])
+
+  useEffect(() => { fetchRequests() }, [fetchRequests])
+
+  if (loading) return <p className="text-secondary text-sm">Loading sent requests...</p>
+
+  if (requests.length === 0) {
+    return (
+      <div className="card p-6 text-center rounded">
+        <p className="text-secondary text-sm">No sent connection requests.</p>
+        <p className="text-tertiary text-xs mt-1">
+          When you send a connection request from search results or similar profiles, it will appear here.
+        </p>
+      </div>
+    )
+  }
 
   return (
     <div className="space-y-2">
+      <div className="text-xs text-secondary">
+        {requests.length} request{requests.length !== 1 ? 's' : ''} sent
+      </div>
       {requests.map(r => (
-        <div key={r.request_id} className="border border-border rounded p-3">
+        <div key={r.request_id} className="card rounded p-3 space-y-1">
           <div className="flex items-center gap-2 text-xs">
-            <span className="badge badge-warning">{r.status}</span>
-            <span className="text-secondary">{r.created_at}</span>
+            <span className={`badge ${
+              r.status === 'pending' ? 'badge-warning' :
+              r.status === 'accepted' ? 'badge-success' : 'badge-error'
+            }`}>
+              {r.status}
+            </span>
+            <span className="text-secondary">
+              {new Date(r.created_at).toLocaleDateString()}
+            </span>
           </div>
-          <p className="text-sm text-primary mt-1">{r.message}</p>
-          <div className="text-xs text-tertiary font-mono mt-1 truncate">
-            from: {r.requester_pseudonym}
+          <p className="text-sm text-primary">{r.message}</p>
+          <div className="text-xs text-tertiary font-mono truncate">
+            to: {r.target_pseudonym}
           </div>
         </div>
       ))}
+      <button onClick={fetchRequests} className="btn-secondary btn-sm">
+        Refresh
+      </button>
     </div>
   )
 }
@@ -804,7 +952,8 @@ export default function DiscoveryTab({ onResult }) {
           { id: 'interests', label: 'Your Interests' },
           { id: 'manage', label: 'Interest Categories' },
           { id: 'search', label: 'Search Network' },
-          { id: 'requests', label: 'Incoming Requests' },
+          { id: 'requests', label: 'Received' },
+          { id: 'sent', label: 'Sent' },
         ].map(s => (
           <button
             key={s.id}
@@ -911,9 +1060,14 @@ export default function DiscoveryTab({ onResult }) {
         <SearchPanel onResult={onResult} />
       )}
 
-      {/* Incoming Requests Section */}
+      {/* Received Connection Requests */}
       {activeSection === 'requests' && (
-        <IncomingRequests />
+        <ConnectionRequestsPanel onResult={onResult} />
+      )}
+
+      {/* Sent Connection Requests */}
+      {activeSection === 'sent' && (
+        <SentRequestsPanel />
       )}
     </div>
   )

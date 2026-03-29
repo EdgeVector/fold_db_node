@@ -1,4 +1,5 @@
 use super::config::DiscoveryOptIn;
+use super::connection;
 use super::pseudonym;
 use super::types::*;
 use fold_db::db_operations::native_index::anonymity::{
@@ -139,12 +140,18 @@ impl DiscoveryPublisher {
                 "fragment".to_string()
             };
 
+            let public_key = Some(connection::get_pseudonym_public_key_b64(
+                &self.master_key,
+                &pseudo,
+            ));
+
             upload_entries.push(DiscoveryUploadEntry {
                 pseudonym: pseudo,
                 embedding: stored.embedding,
                 category: config.category.clone(),
                 content_preview: preview,
                 fragment_type,
+                public_key,
             });
 
             owner_entries.push(OwnerEntry {
@@ -273,10 +280,12 @@ impl DiscoveryPublisher {
         &self,
         target_pseudonym: Uuid,
         encrypted_blob: String,
+        sender_pseudonym: Option<Uuid>,
     ) -> Result<(), String> {
         let request = DiscoveryConnectRequest {
             target_pseudonym,
             encrypted_blob,
+            sender_pseudonym,
         };
 
         let response = self
@@ -300,14 +309,27 @@ impl DiscoveryPublisher {
         Ok(())
     }
 
-    /// Poll for encrypted messages from the bulletin board.
+    /// Poll for encrypted messages from the bulletin board, filtered by target pseudonyms.
     pub async fn poll_messages(
         &self,
         since: Option<&str>,
+        target_pseudonyms: Option<&[Uuid]>,
     ) -> Result<Vec<EncryptedMessage>, String> {
         let mut url = format!("{}/discover/messages", self.discovery_url);
+        let mut params = Vec::new();
         if let Some(since_ts) = since {
-            url = format!("{}?since={}", url, since_ts);
+            params.push(format!("since={}", since_ts));
+        }
+        if let Some(pseudonyms) = target_pseudonyms {
+            let csv: String = pseudonyms
+                .iter()
+                .map(|p| p.to_string())
+                .collect::<Vec<_>>()
+                .join(",");
+            params.push(format!("pseudonyms={}", csv));
+        }
+        if !params.is_empty() {
+            url = format!("{}?{}", url, params.join("&"));
         }
 
         let response = self
@@ -360,6 +382,42 @@ impl DiscoveryPublisher {
             .map_err(|e| format!("Failed to parse browse response: {}", e))?;
 
         Ok(browse_response.categories)
+    }
+
+    /// Look up the X25519 public key for a target pseudonym.
+    pub async fn get_public_key(&self, pseudonym: &Uuid) -> Result<Option<String>, String> {
+        let url = format!(
+            "{}/discover/public-key?pseudonym={}",
+            self.discovery_url, pseudonym
+        );
+
+        let response = self
+            .http_client
+            .get(&url)
+            .header("Authorization", format!("Bearer {}", self.auth_token))
+            .send()
+            .await
+            .map_err(|e| format!("Failed to get public key: {}", e))?;
+
+        if response.status().as_u16() == 404 {
+            return Ok(None);
+        }
+
+        if !response.status().is_success() {
+            let status = response.status();
+            let body = response.text().await.unwrap_or_default();
+            return Err(format!(
+                "Public key lookup failed with status {}: {}",
+                status, body
+            ));
+        }
+
+        let pk_response: PublicKeyResponse = response
+            .json()
+            .await
+            .map_err(|e| format!("Failed to parse public key response: {}", e))?;
+
+        Ok(Some(pk_response.public_key))
     }
 
     /// Legacy: Poll for incoming connection requests.

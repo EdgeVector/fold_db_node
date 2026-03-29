@@ -44,6 +44,28 @@ export interface ConnectionRequest {
   created_at: string;
 }
 
+export interface LocalConnectionRequest {
+  request_id: string;
+  message_id: string;
+  target_pseudonym: string;
+  sender_pseudonym: string;
+  sender_public_key: string;
+  reply_public_key: string;
+  message: string;
+  status: string;
+  created_at: string;
+  responded_at: string | null;
+}
+
+export interface LocalSentRequest {
+  request_id: string;
+  target_pseudonym: string;
+  sender_pseudonym: string;
+  message: string;
+  status: string;
+  created_at: string;
+}
+
 export interface InterestCategory {
   name: string;
   count: number;
@@ -144,6 +166,32 @@ export class DiscoveryClient {
       target_pseudonym,
       message,
     }, {
+      timeout: API_TIMEOUTS.LONG,
+    });
+  }
+
+  async getConnectionRequests(): Promise<EnhancedApiResponse<{ requests: LocalConnectionRequest[] }>> {
+    return this.client.get('/discovery/connection-requests', {
+      timeout: API_TIMEOUTS.LONG,
+    });
+  }
+
+  async respondToRequest(
+    request_id: string,
+    action: 'accept' | 'decline',
+    message?: string,
+  ): Promise<EnhancedApiResponse<{ request: LocalConnectionRequest }>> {
+    return this.client.post('/discovery/connection-requests/respond', {
+      request_id,
+      action,
+      message,
+    }, {
+      timeout: API_TIMEOUTS.LONG,
+    });
+  }
+
+  async getSentRequests(): Promise<EnhancedApiResponse<{ requests: LocalSentRequest[] }>> {
+    return this.client.get('/discovery/sent-requests', {
       timeout: API_TIMEOUTS.STANDARD,
     });
   }
