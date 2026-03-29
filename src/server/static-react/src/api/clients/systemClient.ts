@@ -362,15 +362,7 @@ export class UnifiedSystemClient {
     });
   }
 
-  // Get sync/backup status
-  async getSyncStatus(): Promise<EnhancedApiResponse<SyncStatusResponse>> {
-    return this.client.get<SyncStatusResponse>(API_ENDPOINTS.SYNC_STATUS, {
-      requiresAuth: false,
-      timeout: API_TIMEOUTS.QUICK,
-      retries: API_RETRIES.STANDARD,
-      cacheable: false,
-    });
-  }
+
 
   // Trigger a manual sync/backup
   async triggerSync(): Promise<EnhancedApiResponse<SyncTriggerResponse>> {
@@ -415,9 +407,6 @@ export const updateDatabaseConfig =
   systemClient.updateDatabaseConfig.bind(systemClient);
 export const applySetup = systemClient.applySetup.bind(systemClient);
 export const migrateToCloud = systemClient.migrateToCloud.bind(systemClient);
-export const getDatabaseStatus = systemClient.getDatabaseStatus.bind(systemClient);
-export const getSyncStatus = systemClient.getSyncStatus.bind(systemClient);
-export const triggerSync = systemClient.triggerSync.bind(systemClient);
 export const createLogStream = systemClient.createLogStream.bind(systemClient);
 export const validateResetRequest =
   systemClient.validateResetRequest.bind(systemClient);
