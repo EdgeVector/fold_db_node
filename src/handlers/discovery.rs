@@ -9,10 +9,10 @@ use crate::discovery::connection::{
 use crate::discovery::interests::{self, InterestProfile};
 use crate::discovery::moments;
 use crate::discovery::publisher::DiscoveryPublisher;
+use crate::discovery::types::*;
 pub use crate::discovery::types::{
     MomentHashReceiveRequest, MomentOptInRequest, MomentOptOutRequest, PhotoMetadata,
 };
-use crate::discovery::types::*;
 use crate::fold_node::node::FoldNode;
 use crate::handlers::response::{ApiResponse, HandlerError, HandlerResult, IntoHandlerError};
 use base64::{engine::general_purpose::STANDARD as B64, Engine};
@@ -1103,9 +1103,7 @@ pub async fn moment_opt_out(
 }
 
 /// List all moment opt-ins.
-pub async fn moment_opt_in_list(
-    node: &FoldNode,
-) -> HandlerResult<MomentOptInListResponse> {
+pub async fn moment_opt_in_list(node: &FoldNode) -> HandlerResult<MomentOptInListResponse> {
     let db = node
         .get_fold_db()
         .await
@@ -1148,8 +1146,7 @@ pub async fn moment_scan(
 
     // Derive our pseudonym for the shared secret
     let our_pseudo_hash = crate::discovery::pseudonym::content_hash("moment-sharing");
-    let our_pseudonym =
-        crate::discovery::pseudonym::derive_pseudonym(master_key, &our_pseudo_hash);
+    let our_pseudonym = crate::discovery::pseudonym::derive_pseudonym(master_key, &our_pseudo_hash);
     let our_pseudonym_str = our_pseudonym.to_string();
 
     let mut total_hashes = 0;
@@ -1234,9 +1231,7 @@ pub async fn moment_receive_hashes(
 }
 
 /// Detect shared moments by comparing our hashes with received peer hashes.
-pub async fn moment_detect(
-    node: &FoldNode,
-) -> HandlerResult<MomentDetectResponse> {
+pub async fn moment_detect(node: &FoldNode) -> HandlerResult<MomentDetectResponse> {
     let db = node
         .get_fold_db()
         .await
@@ -1269,9 +1264,7 @@ pub async fn moment_detect(
 }
 
 /// List all detected shared moments.
-pub async fn moment_list(
-    node: &FoldNode,
-) -> HandlerResult<SharedMomentsResponse> {
+pub async fn moment_list(node: &FoldNode) -> HandlerResult<SharedMomentsResponse> {
     let db = node
         .get_fold_db()
         .await

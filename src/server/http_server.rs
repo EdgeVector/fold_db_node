@@ -631,10 +631,7 @@ impl FoldHttpServer {
                     web::get().to(discovery_routes::similar_profiles),
                 )
                 // Photo moment detection routes
-                .route(
-                    "/moments",
-                    web::get().to(discovery_routes::moment_list),
-                )
+                .route("/moments", web::get().to(discovery_routes::moment_list))
                 .route(
                     "/moments/opt-ins",
                     web::get().to(discovery_routes::moment_opt_in_list),

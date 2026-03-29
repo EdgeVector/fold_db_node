@@ -104,7 +104,11 @@ pub fn time_bucket(timestamp: &DateTime<Utc>) -> String {
 pub fn adjacent_time_buckets(timestamp: &DateTime<Utc>) -> Vec<String> {
     let prev = *timestamp - chrono::Duration::hours(1);
     let next = *timestamp + chrono::Duration::hours(1);
-    vec![time_bucket(&prev), time_bucket(timestamp), time_bucket(&next)]
+    vec![
+        time_bucket(&prev),
+        time_bucket(timestamp),
+        time_bucket(&next),
+    ]
 }
 
 /// Encode GPS coordinates as a geohash at precision 6 (~1.2km x 0.6km).
@@ -114,7 +118,14 @@ pub fn encode_location(latitude: f64, longitude: f64) -> Option<String> {
         return None;
     }
     // Precision 6 gives ~1.2km x 0.6km cells — close to 500m target
-    geohash::encode(geohash::Coord { x: longitude, y: latitude }, 6).ok()
+    geohash::encode(
+        geohash::Coord {
+            x: longitude,
+            y: latitude,
+        },
+        6,
+    )
+    .ok()
 }
 
 /// Get neighboring geohash cells (for 500m radius matching).
@@ -138,8 +149,7 @@ pub fn neighboring_geohashes(gh: &str) -> Vec<String> {
 /// The shared_secret is derived per-peer-pair to prevent cross-peer correlation.
 pub fn compute_moment_hash(time_bucket: &str, geohash: &str, shared_secret: &[u8]) -> String {
     let input = format!("{}|{}", time_bucket, geohash);
-    let mut mac =
-        HmacSha256::new_from_slice(shared_secret).expect("HMAC accepts any key length");
+    let mut mac = HmacSha256::new_from_slice(shared_secret).expect("HMAC accepts any key length");
     mac.update(input.as_bytes());
     hex::encode(mac.finalize().into_bytes())
 }
@@ -224,10 +234,7 @@ pub fn find_hash_overlaps(
 // === Sled Storage ===
 
 /// Save a moment opt-in for a specific peer.
-pub async fn save_moment_opt_in(
-    store: &dyn KvStore,
-    opt_in: &MomentOptIn,
-) -> Result<(), String> {
+pub async fn save_moment_opt_in(store: &dyn KvStore, opt_in: &MomentOptIn) -> Result<(), String> {
     let key = format!("{}{}", MOMENT_OPTIN_PREFIX, opt_in.peer_pseudonym);
     let value =
         serde_json::to_vec(opt_in).map_err(|e| format!("Failed to serialize opt-in: {}", e))?;
@@ -238,10 +245,7 @@ pub async fn save_moment_opt_in(
 }
 
 /// Remove a moment opt-in for a specific peer.
-pub async fn remove_moment_opt_in(
-    store: &dyn KvStore,
-    peer_pseudonym: &str,
-) -> Result<(), String> {
+pub async fn remove_moment_opt_in(store: &dyn KvStore, peer_pseudonym: &str) -> Result<(), String> {
     let key = format!("{}{}", MOMENT_OPTIN_PREFIX, peer_pseudonym);
     store
         .delete(key.as_bytes())
@@ -268,10 +272,7 @@ pub async fn list_moment_opt_ins(store: &dyn KvStore) -> Result<Vec<MomentOptIn>
 }
 
 /// Check if we have a moment opt-in for a specific peer.
-pub async fn has_moment_opt_in(
-    store: &dyn KvStore,
-    peer_pseudonym: &str,
-) -> Result<bool, String> {
+pub async fn has_moment_opt_in(store: &dyn KvStore, peer_pseudonym: &str) -> Result<bool, String> {
     let key = format!("{}{}", MOMENT_OPTIN_PREFIX, peer_pseudonym);
     let value = store
         .get(key.as_bytes())
@@ -348,10 +349,7 @@ pub async fn load_peer_moment_hashes(
 }
 
 /// Save a detected shared moment.
-pub async fn save_shared_moment(
-    store: &dyn KvStore,
-    moment: &SharedMoment,
-) -> Result<(), String> {
+pub async fn save_shared_moment(store: &dyn KvStore, moment: &SharedMoment) -> Result<(), String> {
     let key = format!("{}{}", SHARED_MOMENT_PREFIX, moment.moment_id);
     let value = serde_json::to_vec(moment)
         .map_err(|e| format!("Failed to serialize shared moment: {}", e))?;
@@ -543,7 +541,10 @@ mod tests {
         let peer_hash_strings: Vec<String> = peer.iter().map(|h| h.hash.clone()).collect();
 
         let overlaps = find_hash_overlaps(&our, &peer_hash_strings);
-        assert!(!overlaps.is_empty(), "Same place+hour should have overlapping hashes");
+        assert!(
+            !overlaps.is_empty(),
+            "Same place+hour should have overlapping hashes"
+        );
     }
 
     #[test]
@@ -572,6 +573,9 @@ mod tests {
         let peer_hash_strings: Vec<String> = peer.iter().map(|h| h.hash.clone()).collect();
 
         let overlaps = find_hash_overlaps(&our, &peer_hash_strings);
-        assert!(!overlaps.is_empty(), "~200m apart should have overlapping hashes via neighbors");
+        assert!(
+            !overlaps.is_empty(),
+            "~200m apart should have overlapping hashes via neighbors"
+        );
     }
 }
