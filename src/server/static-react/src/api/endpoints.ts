@@ -83,6 +83,7 @@ const API_ENDPOINTS_MANUAL = {
   GET_MOLECULE_HISTORY: (uuid: string) => `/history/${uuid}`,
   GET_ATOM_CONTENT: (uuid: string) => `/atom/${uuid}`,
   MIGRATE_TO_CLOUD: "/system/migrate-to-cloud",
+  SOCIAL_FEED: "/feed",
 } as const;
 
 // Export merged endpoints (generated + manual + sync)
