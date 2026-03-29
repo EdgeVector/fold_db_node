@@ -106,6 +106,18 @@ export interface DatabaseStatusResponse {
   has_saved_config: boolean;
 }
 
+export interface SyncStatusResponse {
+  enabled: boolean;
+  state: string | null;
+  pending_count: number | null;
+  encryption_active: boolean;
+}
+
+export interface SyncTriggerResponse {
+  success: boolean;
+  message: string;
+}
+
 // Unified System API Client Implementation
 export class UnifiedSystemClient {
   private readonly client: ApiClient;
@@ -332,6 +344,29 @@ export class UnifiedSystemClient {
     });
   }
 
+  // Get sync/backup status
+  async getSyncStatus(): Promise<EnhancedApiResponse<SyncStatusResponse>> {
+    return this.client.get<SyncStatusResponse>(API_ENDPOINTS.SYNC_STATUS, {
+      requiresAuth: false,
+      timeout: API_TIMEOUTS.QUICK,
+      retries: API_RETRIES.STANDARD,
+      cacheable: false,
+    });
+  }
+
+  // Trigger a manual sync/backup
+  async triggerSync(): Promise<EnhancedApiResponse<SyncTriggerResponse>> {
+    return this.client.post<SyncTriggerResponse>(
+      API_ENDPOINTS.SYNC_TRIGGER,
+      {},
+      {
+        timeout: API_TIMEOUTS.STANDARD,
+        retries: API_RETRIES.NONE,
+        cacheable: false,
+      },
+    );
+  }
+
   // Clear system-related cache
   clearCache(): void {
     this.client.clearCache();
@@ -362,6 +397,8 @@ export const updateDatabaseConfig =
 export const applySetup = systemClient.applySetup.bind(systemClient);
 export const migrateToCloud = systemClient.migrateToCloud.bind(systemClient);
 export const getDatabaseStatus = systemClient.getDatabaseStatus.bind(systemClient);
+export const getSyncStatus = systemClient.getSyncStatus.bind(systemClient);
+export const triggerSync = systemClient.triggerSync.bind(systemClient);
 export const createLogStream = systemClient.createLogStream.bind(systemClient);
 export const validateResetRequest =
   systemClient.validateResetRequest.bind(systemClient);
