@@ -70,11 +70,11 @@ pub fn encrypt_connection_message(
         .map_err(|e| format!("HKDF expand failed: {}", e))?;
 
     // Encrypt payload
-    let plaintext = serde_json::to_vec(payload)
-        .map_err(|e| format!("Failed to serialize payload: {}", e))?;
+    let plaintext =
+        serde_json::to_vec(payload).map_err(|e| format!("Failed to serialize payload: {}", e))?;
 
-    let cipher = Aes256Gcm::new_from_slice(&aes_key)
-        .map_err(|e| format!("Invalid AES key: {}", e))?;
+    let cipher =
+        Aes256Gcm::new_from_slice(&aes_key).map_err(|e| format!("Invalid AES key: {}", e))?;
 
     let mut nonce_bytes = [0u8; 12];
     OsRng.fill_bytes(&mut nonce_bytes);
@@ -122,8 +122,8 @@ pub fn decrypt_connection_message(
     let nonce_bytes = &encrypted[32..44];
     let ciphertext = &encrypted[44..];
 
-    let cipher = Aes256Gcm::new_from_slice(&aes_key)
-        .map_err(|e| format!("Invalid AES key: {}", e))?;
+    let cipher =
+        Aes256Gcm::new_from_slice(&aes_key).map_err(|e| format!("Invalid AES key: {}", e))?;
 
     let nonce = Nonce::from_slice(nonce_bytes);
 
@@ -131,8 +131,7 @@ pub fn decrypt_connection_message(
         .decrypt(nonce, ciphertext)
         .map_err(|_| "Decryption failed (wrong key or tampered message)".to_string())?;
 
-    serde_json::from_slice(&plaintext)
-        .map_err(|e| format!("Failed to deserialize payload: {}", e))
+    serde_json::from_slice(&plaintext).map_err(|e| format!("Failed to deserialize payload: {}", e))
 }
 
 /// A decrypted, locally stored connection request.
@@ -169,8 +168,8 @@ pub async fn save_received_request(
     request: &LocalConnectionRequest,
 ) -> Result<(), String> {
     let key = format!("{}{}", CONN_REQ_PREFIX, request.request_id);
-    let value = serde_json::to_vec(request)
-        .map_err(|e| format!("Failed to serialize request: {}", e))?;
+    let value =
+        serde_json::to_vec(request).map_err(|e| format!("Failed to serialize request: {}", e))?;
     store
         .put(key.as_bytes(), value)
         .await
@@ -219,8 +218,8 @@ pub async fn update_request_status(
     request.status = status.to_string();
     request.responded_at = Some(chrono::Utc::now().to_rfc3339());
 
-    let updated = serde_json::to_vec(&request)
-        .map_err(|e| format!("Failed to serialize request: {}", e))?;
+    let updated =
+        serde_json::to_vec(&request).map_err(|e| format!("Failed to serialize request: {}", e))?;
     store
         .put(key.as_bytes(), updated)
         .await
@@ -244,9 +243,7 @@ pub async fn save_sent_request(
 }
 
 /// Load all sent connection requests.
-pub async fn list_sent_requests(
-    store: &dyn KvStore,
-) -> Result<Vec<LocalSentRequest>, String> {
+pub async fn list_sent_requests(store: &dyn KvStore) -> Result<Vec<LocalSentRequest>, String> {
     let entries = store
         .scan_prefix(CONN_SENT_PREFIX.as_bytes())
         .await
@@ -260,9 +257,7 @@ pub async fn list_sent_requests(
         }
     }
 
-    requests.sort_by(|a: &LocalSentRequest, b: &LocalSentRequest| {
-        b.created_at.cmp(&a.created_at)
-    });
+    requests.sort_by(|a: &LocalSentRequest, b: &LocalSentRequest| b.created_at.cmp(&a.created_at));
     Ok(requests)
 }
 
@@ -281,8 +276,8 @@ pub async fn update_sent_request_status(
         if let Ok(mut req) = serde_json::from_slice::<LocalSentRequest>(&value) {
             if req.target_pseudonym == target_pseudonym && req.status == "pending" {
                 req.status = status.to_string();
-                let updated = serde_json::to_vec(&req)
-                    .map_err(|e| format!("Failed to serialize: {}", e))?;
+                let updated =
+                    serde_json::to_vec(&req).map_err(|e| format!("Failed to serialize: {}", e))?;
                 store
                     .put(&key, updated)
                     .await

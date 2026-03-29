@@ -3,7 +3,9 @@
 //! Framework-agnostic handlers for discovery network operations.
 
 use crate::discovery::config::{self, DiscoveryOptIn};
-use crate::discovery::connection::{self, ConnectionPayload, LocalConnectionRequest, LocalSentRequest};
+use crate::discovery::connection::{
+    self, ConnectionPayload, LocalConnectionRequest, LocalSentRequest,
+};
 use crate::discovery::interests::{self, InterestProfile};
 use crate::discovery::publisher::DiscoveryPublisher;
 use crate::discovery::types::*;
@@ -451,8 +453,7 @@ pub async fn connect(
     };
 
     // 3. Build and encrypt the connection payload
-    let sender_pk_b64 =
-        connection::get_pseudonym_public_key_b64(master_key, &sender_pseudonym);
+    let sender_pk_b64 = connection::get_pseudonym_public_key_b64(master_key, &sender_pseudonym);
 
     let payload = ConnectionPayload {
         message_type: "request".to_string(),
@@ -629,7 +630,9 @@ pub async fn poll_and_decrypt_requests(
         .await
         .handler_err("list received requests")?;
 
-    Ok(ApiResponse::success(ConnectionRequestsResponse { requests }))
+    Ok(ApiResponse::success(ConnectionRequestsResponse {
+        requests,
+    }))
 }
 
 /// Respond to a connection request (accept or decline).
@@ -659,9 +662,9 @@ pub async fn respond_to_request(
 
     // If accepting, send an encrypted response back to the requester
     if req.action == "accept" {
-        let reply_pk_bytes = B64.decode(&updated.reply_public_key).map_err(|e| {
-            HandlerError::Internal(format!("Invalid reply public key: {}", e))
-        })?;
+        let reply_pk_bytes = B64
+            .decode(&updated.reply_public_key)
+            .map_err(|e| HandlerError::Internal(format!("Invalid reply public key: {}", e)))?;
         if reply_pk_bytes.len() != 32 {
             return Err(HandlerError::Internal(
                 "Reply public key must be 32 bytes".to_string(),
@@ -671,14 +674,18 @@ pub async fn respond_to_request(
         reply_pk.copy_from_slice(&reply_pk_bytes);
 
         // Derive our response pseudonym and public key
-        let our_pseudonym: uuid::Uuid = updated.target_pseudonym.parse().map_err(|_| {
-            HandlerError::Internal("Invalid target pseudonym UUID".to_string())
-        })?;
+        let our_pseudonym: uuid::Uuid = updated
+            .target_pseudonym
+            .parse()
+            .map_err(|_| HandlerError::Internal("Invalid target pseudonym UUID".to_string()))?;
         let our_pk_b64 = connection::get_pseudonym_public_key_b64(master_key, &our_pseudonym);
 
         let response_payload = ConnectionPayload {
             message_type: "accept".to_string(),
-            message: req.message.clone().unwrap_or_else(|| "Connection accepted".to_string()),
+            message: req
+                .message
+                .clone()
+                .unwrap_or_else(|| "Connection accepted".to_string()),
             sender_public_key: our_pk_b64.clone(),
             sender_pseudonym: updated.target_pseudonym.clone(),
             reply_public_key: our_pk_b64,
@@ -688,10 +695,10 @@ pub async fn respond_to_request(
             .map_err(|e| HandlerError::Internal(format!("Encryption failed: {}", e)))?;
         let encrypted_b64 = B64.encode(&encrypted);
 
-        let sender_pseudonym: uuid::Uuid =
-            updated.sender_pseudonym.parse().map_err(|_| {
-                HandlerError::Internal("Invalid sender pseudonym UUID".to_string())
-            })?;
+        let sender_pseudonym: uuid::Uuid = updated
+            .sender_pseudonym
+            .parse()
+            .map_err(|_| HandlerError::Internal("Invalid sender pseudonym UUID".to_string()))?;
 
         let publisher = DiscoveryPublisher::new(
             master_key.to_vec(),
@@ -723,13 +730,13 @@ pub async fn list_connection_requests(
         .await
         .handler_err("list received requests")?;
 
-    Ok(ApiResponse::success(ConnectionRequestsResponse { requests }))
+    Ok(ApiResponse::success(ConnectionRequestsResponse {
+        requests,
+    }))
 }
 
 /// List locally stored sent connection requests.
-pub async fn list_sent_requests(
-    node: &FoldNode,
-) -> HandlerResult<SentRequestsResponse> {
+pub async fn list_sent_requests(node: &FoldNode) -> HandlerResult<SentRequestsResponse> {
     let db = node
         .get_fold_db()
         .await

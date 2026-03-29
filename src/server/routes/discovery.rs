@@ -192,10 +192,7 @@ pub async fn connect(
 }
 
 /// GET /api/discovery/connection-requests — Poll, decrypt, and list received connection requests.
-pub async fn connection_requests(
-    req: HttpRequest,
-    state: web::Data<AppState>,
-) -> impl Responder {
+pub async fn connection_requests(req: HttpRequest, state: web::Data<AppState>) -> impl Responder {
     let (_user_hash, node) = match require_node_read(&state).await {
         Ok(res) => res,
         Err(response) => return response,
