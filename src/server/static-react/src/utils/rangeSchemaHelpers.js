@@ -254,7 +254,7 @@ export function validateRangeKey(rangeKeyValue, isRequired = true) {
  * Range schemas require non-range_key fields to be JSON objects
  * 
  * @param {Schema} schema - Schema object
- * @param {string} mutationType - Mutation type (Create, Update, Delete)
+ * @param {string} mutationType - Mutation type (Create, Update)
  * @param {string} rangeKeyValue - Range key value
  * @param {Object} fieldData - Field data for mutation
  * @returns {Object} Formatted mutation object
@@ -263,57 +263,46 @@ export function formatRangeMutation(schema, mutationType, rangeKeyValue, fieldDa
   const normalizedMutationType = typeof mutationType === 'string'
     ? (MUTATION_TYPE_API_MAP[mutationType] || mutationType.toLowerCase())
     : '';
-  const isDeleteOperation = normalizedMutationType === 'delete';
   const mutation = {
     type: 'mutation',
     schema: schema.name,
     mutation_type: normalizedMutationType
   };
-  
+
   // Get the actual range key field name from the schema
   const rangeKeyFieldName = getRangeKey(schema);
-  
-  if (isDeleteOperation) {
-    mutation.fields_and_values = {};
-    mutation.key_value = { hash: null, range: null };
-    // For delete operations, use the actual range key field name
-    if (rangeKeyValue && rangeKeyValue.trim() && rangeKeyFieldName) {
-      mutation.fields_and_values[rangeKeyFieldName] = rangeKeyValue.trim();
-      mutation.key_value.range = rangeKeyValue.trim();
-    }
-  } else {
-    const fieldsAndValues = {};
-    
-    // Add range key using the actual field name from schema (as primitive value)
-    if (rangeKeyValue && rangeKeyValue.trim() && rangeKeyFieldName) {
-      fieldsAndValues[rangeKeyFieldName] = rangeKeyValue.trim();
-    }
-    
-    // Format non-range_key fields as JSON objects for range schemas
-    // The backend expects non-range_key fields to be objects so it can inject the range_key
-    Object.entries(fieldData).forEach(([fieldName, fieldValue]) => {
-      if (fieldName !== rangeKeyFieldName) {
-        // Convert simple values to JSON objects with a 'value' key
-        const wrapperKey = RANGE_SCHEMA_CONFIG.MUTATION_WRAPPER_KEY || 'value';
-        
-        if (typeof fieldValue === 'string' || typeof fieldValue === 'number' || typeof fieldValue === 'boolean') {
-          fieldsAndValues[fieldName] = { [wrapperKey]: fieldValue };
-        } else if (typeof fieldValue === 'object' && fieldValue !== null) {
-          // If already an object, use as-is
-          fieldsAndValues[fieldName] = fieldValue;
-        } else {
-          // For other types, wrap in an object
-          fieldsAndValues[fieldName] = { [wrapperKey]: fieldValue };
-        }
-      }
-    });
-    
-    mutation.fields_and_values = fieldsAndValues;
-    mutation.key_value = { 
-      hash: null, 
-      range: rangeKeyValue && rangeKeyValue.trim() ? rangeKeyValue.trim() : null 
-    };
+
+  const fieldsAndValues = {};
+
+  // Add range key using the actual field name from schema (as primitive value)
+  if (rangeKeyValue && rangeKeyValue.trim() && rangeKeyFieldName) {
+    fieldsAndValues[rangeKeyFieldName] = rangeKeyValue.trim();
   }
+
+  // Format non-range_key fields as JSON objects for range schemas
+  // The backend expects non-range_key fields to be objects so it can inject the range_key
+  Object.entries(fieldData).forEach(([fieldName, fieldValue]) => {
+    if (fieldName !== rangeKeyFieldName) {
+      // Convert simple values to JSON objects with a 'value' key
+      const wrapperKey = RANGE_SCHEMA_CONFIG.MUTATION_WRAPPER_KEY || 'value';
+
+      if (typeof fieldValue === 'string' || typeof fieldValue === 'number' || typeof fieldValue === 'boolean') {
+        fieldsAndValues[fieldName] = { [wrapperKey]: fieldValue };
+      } else if (typeof fieldValue === 'object' && fieldValue !== null) {
+        // If already an object, use as-is
+        fieldsAndValues[fieldName] = fieldValue;
+      } else {
+        // For other types, wrap in an object
+        fieldsAndValues[fieldName] = { [wrapperKey]: fieldValue };
+      }
+    }
+  });
+
+  mutation.fields_and_values = fieldsAndValues;
+  mutation.key_value = {
+    hash: null,
+    range: rangeKeyValue && rangeKeyValue.trim() ? rangeKeyValue.trim() : null
+  };
   
   return mutation;
 }

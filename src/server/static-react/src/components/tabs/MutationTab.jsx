@@ -55,7 +55,7 @@ function MutationTab({ onResult }) {
         type: 'mutation',
         schema: selectedSchema,
         mutation_type: normalizedMutationType,
-        fields_and_values: mutationType === 'Delete' ? {} : mutationData,
+        fields_and_values: mutationData,
         key_value: { hash: null, range: null }
       }
     }
@@ -110,8 +110,8 @@ function MutationTab({ onResult }) {
   const isMutationDisabled =
     !selectedSchema ||
     !mutationType ||
-    (mutationType !== 'Delete' && Object.keys(mutationData).length === 0) ||
-    (isCurrentSchemaRangeSchema && mutationType !== 'Delete' && !rangeKeyValue.trim())
+    Object.keys(mutationData).length === 0 ||
+    (isCurrentSchemaRangeSchema && !rangeKeyValue.trim())
 
   return (
     <div>
@@ -132,13 +132,9 @@ function MutationTab({ onResult }) {
               value={rangeKeyValue}
               onChange={setRangeKeyValue}
               placeholder={`Enter ${rangeKey} value`}
-              required={mutationType !== 'Delete'}
+              required={true}
               error={undefined}
-              helpText={
-                mutationType !== 'Delete'
-                  ? FORM_LABELS.rangeKeyRequired
-                  : FORM_LABELS.rangeKeyOptional
-              }
+              helpText={FORM_LABELS.rangeKeyRequired}
               debounced={true}
             />
           </div>

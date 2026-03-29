@@ -150,24 +150,6 @@ describe('useRangeSchema Hook', () => {
     expect(mutation.fields_and_values.metadata).toEqual({ [RANGE_SCHEMA_CONFIG.MUTATION_WRAPPER_KEY]: 'test string' });
   });
 
-  it('should format range mutations correctly for Delete', () => {
-    const { result } = renderHook(() => useRangeSchema());
-    const rangeSchema = createMockRangeSchema();
-
-    const mutation = result.current.rangeProps.formatRangeMutation(
-      rangeSchema,
-      'Delete',
-      'test_key_123',
-      {}
-    );
-
-    expect(mutation.type).toBe('mutation');
-    expect(mutation.schema).toBe('TestRangeSchema');
-    expect(mutation.mutation_type).toBe('delete');
-    expect(mutation.fields_and_values.timestamp).toBe('test_key_123');
-    expect(Object.keys(mutation.fields_and_values)).toHaveLength(1); // Only range key
-  });
-
   it('should handle different field value types in mutations', () => {
     const { result } = renderHook(() => useRangeSchema());
     const rangeSchema = createMockRangeSchema();

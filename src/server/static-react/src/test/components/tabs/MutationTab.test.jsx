@@ -144,7 +144,6 @@ describe('MutationTab Component', () => {
 
     expect(screen.getByText('Insert')).toBeInTheDocument()
     expect(screen.getByText('Update')).toBeInTheDocument()
-    expect(screen.getByText('Delete')).toBeInTheDocument()
   })
 
   it('handles basic form interactions', async () => {
