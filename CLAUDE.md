@@ -34,6 +34,13 @@ After creating the PR, enable auto-merge so it merges itself once CI passes:
 gh pr merge --auto --squash <PR_URL>
 ```
 
+**Monitor the PR until it merges — your task is NOT done until the PR is merged.**
+Poll CI status (`gh pr view <PR_URL> --json state,statusCheckRollup,mergeStateStatus`) every 30-60 seconds.
+- CI failing: read logs (`gh pr checks`), fix the code, push.
+- Branch out of date: `git fetch origin && git rebase origin/<base-branch> && git push --force-with-lease`.
+- Review comments: fix, push, resolve threads.
+- Only done when `state: MERGED`.
+
 Once frontend code exists:
 ```bash
 cd src/server/static-react/
