@@ -77,10 +77,12 @@ function ViewsTab({ onResult }) {
 
     return (
       <div key={view.name} className="card overflow-hidden">
-        <button
-          type="button"
+        <div
+          role="button"
+          tabIndex={0}
           className="w-full px-4 py-3 bg-surface-secondary cursor-pointer select-none text-left"
           onClick={() => toggleView(view.name)}
+          onKeyDown={(e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); toggleView(view.name) } }}
         >
           <div className="flex items-center justify-between">
             <div className="flex items-center space-x-2">
@@ -127,7 +129,7 @@ function ViewsTab({ onResult }) {
               </button>
             </div>
           </div>
-        </button>
+        </div>
 
         {isExpanded && (
           <div className="p-4 border-t border-border space-y-3">

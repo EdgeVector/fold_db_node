@@ -290,10 +290,12 @@ function SchemaTab({ onResult, onSchemaUpdated }) {
 
     return (
       <div key={schema.name} id={`schema-${schema.name}`} className={`card overflow-hidden transition-shadow duration-500${highlightedSchema === schema.name ? ' ring-2 ring-gruvbox-purple' : ''}`}>
-        <button
-          type="button"
+        <div
+          role="button"
+          tabIndex={0}
           className="w-full px-4 py-3 bg-surface-secondary cursor-pointer select-none text-left"
           onClick={() => toggleSchema(schema.name)}
+          onKeyDown={(e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); toggleSchema(schema.name) } }}
           aria-expanded={isExpanded}
           aria-label={`${isExpanded ? 'Collapse' : 'Expand'} schema ${schema.descriptive_name || schema.name}`}
         >
@@ -344,7 +346,7 @@ function SchemaTab({ onResult, onSchemaUpdated }) {
               )}
             </div>
           </div>
-        </button>
+        </div>
 
         {isExpanded && schema.fields && (
           <div className="p-4 border-t border-border">
