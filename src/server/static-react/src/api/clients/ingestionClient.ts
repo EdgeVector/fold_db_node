@@ -614,6 +614,16 @@ export class UnifiedIngestionClient {
     );
   }
 
+  /** Import events from Apple Calendar */
+  async appleImportCalendar(
+    calendar?: string,
+  ): Promise<EnhancedApiResponse<{ success: boolean; progress_id: string }>> {
+    return this.client.post<{ success: boolean; progress_id: string }>(
+      `/ingestion/apple-import/calendar`,
+      { calendar: calendar || null },
+    );
+  }
+
   // ── Apple Auto-Sync ─────────────────────────────────────────────
 
   /** Get the current Apple auto-sync configuration */

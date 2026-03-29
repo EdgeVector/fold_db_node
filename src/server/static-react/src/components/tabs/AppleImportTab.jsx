@@ -19,7 +19,6 @@ function AutoSyncSettings() {
     }).catch(() => setLoading(false))
   }, [])
 
-  // Refresh next sync time every 30 seconds
   useEffect(() => {
     if (!config?.enabled) return
     const timer = setInterval(async () => {
@@ -40,9 +39,7 @@ function AutoSyncSettings() {
     setSaving(false)
   }
 
-  const handleToggle = () => {
-    updateConfig({ enabled: !config?.enabled })
-  }
+  const handleToggle = () => updateConfig({ enabled: !config?.enabled })
 
   const handleScheduleChange = (e) => {
     const val = e.target.value
@@ -118,7 +115,6 @@ function AutoSyncSettings() {
 
       {config.enabled && (
         <div className="space-y-3">
-          {/* Schedule selector */}
           <div className="flex items-center gap-2">
             <label className="text-xs text-secondary w-16">Schedule:</label>
             <select
@@ -146,7 +142,6 @@ function AutoSyncSettings() {
             )}
           </div>
 
-          {/* Source toggles */}
           <div className="flex items-center gap-4">
             <label className="text-xs text-secondary w-16">Sources:</label>
             {['notes', 'reminders', 'photos'].map((source) => (
@@ -162,7 +157,6 @@ function AutoSyncSettings() {
             ))}
           </div>
 
-          {/* Photos limit (shown when photos enabled) */}
           {config.sources.photos && (
             <div className="flex items-center gap-2">
               <label className="text-xs text-secondary w-16">Photo limit:</label>
@@ -177,7 +171,6 @@ function AutoSyncSettings() {
             </div>
           )}
 
-          {/* Sync times */}
           <div className="border-t border-border pt-2 space-y-1">
             <p className="text-xs text-secondary">
               <span className="font-medium">Last sync:</span> {formatTime(config.last_sync)}
@@ -201,14 +194,147 @@ function AutoSyncSettings() {
   )
 }
 
-function ImportSection({ label, icon, description, fields, onImport, progressId, onReset }) {
+const SOURCES = [
+  {
+    key: 'notes',
+    label: 'Notes',
+    icon: "\uD83D\uDCDD",
+    description: 'Import all notes from Apple Notes. Notes shorter than 20 characters are skipped.',
+  },
+  {
+    key: 'photos',
+    label: 'Photos',
+    icon: "\uD83D\uDCF7",
+    description: 'Export and import photos from Apple Photos. HEIC files are converted to JPEG.',
+    hasLimit: true,
+  },
+  {
+    key: 'calendar',
+    label: 'Calendar',
+    icon: "\uD83D\uDCC5",
+    description: 'Import events from Apple Calendar.',
+    comingSoon: true,
+  },
+  {
+    key: 'reminders',
+    label: 'Reminders',
+    icon: "\u2705",
+    description: 'Import all reminders from Apple Reminders, including completed items.',
+  },
+]
+
+function SourceToggle({ checked, onChange, disabled }) {
+  return (
+    <button
+      type="button"
+      role="switch"
+      aria-checked={checked}
+      disabled={disabled}
+      onClick={() => onChange(!checked)}
+      className={`relative inline-flex h-5 w-9 shrink-0 rounded-full border-2 border-transparent transition-colors duration-200 focus:outline-none ${
+        disabled ? 'opacity-40 cursor-not-allowed' : 'cursor-pointer'
+      } ${checked ? 'bg-accent' : 'bg-surface-secondary'}`}
+    >
+      <span
+        className={`pointer-events-none inline-block h-4 w-4 rounded-full bg-white shadow transform transition-transform duration-200 ${
+          checked ? 'translate-x-4' : 'translate-x-0'
+        }`}
+      />
+    </button>
+  )
+}
+
+function ProgressBar({ progress }) {
+  return (
+    <div className="w-full bg-surface-secondary rounded-full h-1.5 mt-2">
+      <div
+        className="bg-accent h-1.5 rounded-full transition-all duration-300"
+        style={{ width: `${progress}%` }}
+      />
+    </div>
+  )
+}
+
+function SourceCard({ source, enabled, onToggle, status, progress, message, result, photosLimit, onPhotosLimitChange }) {
+  const isRunning = status === 'running'
+  const isDone = status === 'done'
+  const isError = status === 'error'
+
+  return (
+    <div className={`bg-surface-primary border rounded-lg p-4 ${
+      isError ? 'border-red-500/40' : 'border-border'
+    }`}>
+      <div className="flex items-center justify-between mb-1">
+        <div className="flex items-center gap-2">
+          <span className="text-base">{source.icon}</span>
+          <h3 className="text-sm font-medium text-primary">{source.label}</h3>
+          {source.comingSoon && (
+            <span className="text-[10px] px-1.5 py-0.5 rounded bg-surface-secondary text-secondary">
+              coming soon
+            </span>
+          )}
+        </div>
+        <SourceToggle
+          checked={enabled}
+          onChange={onToggle}
+          disabled={source.comingSoon || isRunning}
+        />
+      </div>
+
+      <p className="text-xs text-secondary mb-2">{source.description}</p>
+
+      {source.hasLimit && enabled && !isRunning && !isDone && (
+        <div className="flex items-center gap-2 mb-2">
+          <label className="text-xs text-secondary">Limit:</label>
+          <input
+            type="number"
+            min={1}
+            max={500}
+            value={photosLimit}
+            onChange={(e) => onPhotosLimitChange(parseInt(e.target.value) || 50)}
+            className="w-20 px-2 py-1 text-xs bg-surface-secondary border border-border rounded text-primary"
+          />
+          <span className="text-xs text-secondary">photos</span>
+        </div>
+      )}
+
+      {isRunning && (
+        <div>
+          <ProgressBar progress={progress} />
+          <p className="text-xs text-secondary mt-1">{message}</p>
+        </div>
+      )}
+
+      {isDone && (
+        <div className="flex items-center gap-2 mt-1">
+          <span className="text-green-500 text-xs">&#10003;</span>
+          <span className="text-xs text-primary">{message}</span>
+          {result && (
+            <span className="text-xs text-secondary">
+              ({result.total} total, {result.ingested} ingested)
+            </span>
+          )}
+        </div>
+      )}
+
+      {isError && (
+        <div className="flex items-center gap-2 mt-1">
+          <span className="text-red-500 text-xs">&#10007;</span>
+          <span className="text-xs text-red-400">{message}</span>
+        </div>
+      )}
+    </div>
+  )
+}
+
+function useSourceImport(sourceKey, importFn) {
+  const [progressId, setProgressId] = useState(null)
   const [status, setStatus] = useState('idle') // idle | running | done | error
   const [progress, setProgress] = useState(0)
   const [message, setMessage] = useState('')
   const [result, setResult] = useState(null)
   const pollRef = useRef(null)
 
-  // Poll progress when we have a progressId
   useEffect(() => {
     if (!progressId || status !== 'running') return
 
@@ -236,143 +362,94 @@ function ImportSection({ label, icon, description, fields, onImport, progressId,
     }
 
     pollRef.current = setInterval(poll, 2000)
-    poll() // immediate first poll
+    poll()
     return () => clearInterval(pollRef.current)
   }, [progressId, status])
 
-  const handleImport = async () => {
+  const start = useCallback(async () => {
     setStatus('running')
     setProgress(5)
     setMessage('Starting...')
     setResult(null)
     try {
-      await onImport()
+      const resp = await importFn()
+      if (resp.success && resp.data?.progress_id) {
+        setProgressId(resp.data.progress_id)
+      } else {
+        throw new Error(resp.error?.message || `Failed to start ${sourceKey} import`)
+      }
     } catch (e) {
       setStatus('error')
-      setMessage(e.message || 'Failed to start import')
+      setMessage(e.message || `Failed to start ${sourceKey} import`)
     }
-  }
+  }, [importFn, sourceKey])
 
-  const handleReset = () => {
+  const reset = useCallback(() => {
     setStatus('idle')
     setProgress(0)
     setMessage('')
     setResult(null)
-    if (onReset) onReset()
-  }
+    setProgressId(null)
+  }, [])
 
-  return (
-    <div className="bg-surface-primary border border-border rounded-lg p-4 mb-4">
-      <div className="flex items-center gap-2 mb-2">
-        <span className="text-lg">{icon}</span>
-        <h3 className="text-sm font-medium text-primary">{label}</h3>
-      </div>
-      <p className="text-xs text-secondary mb-3">{description}</p>
-
-      {fields}
-
-      {status === 'idle' && (
-        <button
-          onClick={handleImport}
-          className="px-4 py-2 bg-accent text-white text-sm rounded hover:opacity-90 transition-opacity"
-        >
-          Import {label}
-        </button>
-      )}
-
-      {status === 'running' && (
-        <div className="space-y-2">
-          <div className="w-full bg-surface-secondary rounded-full h-2">
-            <div
-              className="bg-accent h-2 rounded-full transition-all duration-300"
-              style={{ width: `${progress}%` }}
-            />
-          </div>
-          <p className="text-xs text-secondary">{message}</p>
-        </div>
-      )}
-
-      {status === 'done' && (
-        <div className="space-y-2">
-          <div className="flex items-center gap-2">
-            <span className="text-green-500">&#10003;</span>
-            <span className="text-sm text-primary">{message}</span>
-          </div>
-          {result && (
-            <p className="text-xs text-secondary">
-              Total: {result.total}, Ingested: {result.ingested}
-            </p>
-          )}
-          <button
-            onClick={handleReset}
-            className="px-3 py-1 text-xs border border-border rounded hover:bg-surface-secondary transition-colors"
-          >
-            Import Again
-          </button>
-        </div>
-      )}
-
-      {status === 'error' && (
-        <div className="space-y-2">
-          <div className="flex items-center gap-2">
-            <span className="text-red-500">&#10007;</span>
-            <span className="text-sm text-red-400">{message}</span>
-          </div>
-          <button
-            onClick={handleReset}
-            className="px-3 py-1 text-xs border border-border rounded hover:bg-surface-secondary transition-colors"
-          >
-            Try Again
-          </button>
-        </div>
-      )}
-    </div>
-  )
+  return { status, progress, message, result, start, reset }
 }
 
 export default function AppleImportTab({ onResult }) {
   const [available, setAvailable] = useState(null) // null = loading, true/false
-  const [notesProgressId, setNotesProgressId] = useState(null)
-  const [remindersProgressId, setRemindersProgressId] = useState(null)
-  const [photosProgressId, setPhotosProgressId] = useState(null)
+  const [enabled, setEnabled] = useState({ notes: true, photos: true, calendar: false, reminders: true })
   const [photosLimit, setPhotosLimit] = useState(50)
 
   useEffect(() => {
     ingestionClient.getAppleImportStatus().then((resp) => {
-      console.log('APPLE_STATUS_RESP:', JSON.stringify(resp))
       setAvailable(resp.success && resp.data?.available)
-    }).catch((e) => {
-      console.log('APPLE_STATUS_ERR:', e.message)
+    }).catch(() => {
       setAvailable(false)
     })
   }, [])
 
-  const importNotes = useCallback(async () => {
-    const resp = await ingestionClient.appleImportNotes()
-    if (resp.success && resp.data?.progress_id) {
-      setNotesProgressId(resp.data.progress_id)
-    } else {
-      throw new Error(resp.error?.message || 'Failed to start notes import')
-    }
-  }, [])
+  const notes = useSourceImport('notes', useCallback(
+    () => ingestionClient.appleImportNotes(), []
+  ))
+  const photos = useSourceImport('photos', useCallback(
+    () => ingestionClient.appleImportPhotos(null, photosLimit), [photosLimit]
+  ))
+  const calendar = useSourceImport('calendar', useCallback(
+    () => ingestionClient.appleImportCalendar(), []
+  ))
+  const reminders = useSourceImport('reminders', useCallback(
+    () => ingestionClient.appleImportReminders(), []
+  ))
 
-  const importReminders = useCallback(async () => {
-    const resp = await ingestionClient.appleImportReminders()
-    if (resp.success && resp.data?.progress_id) {
-      setRemindersProgressId(resp.data.progress_id)
-    } else {
-      throw new Error(resp.error?.message || 'Failed to start reminders import')
-    }
-  }, [])
+  const imports = { notes, photos, calendar, reminders }
 
-  const importPhotos = useCallback(async () => {
-    const resp = await ingestionClient.appleImportPhotos(null, photosLimit)
-    if (resp.success && resp.data?.progress_id) {
-      setPhotosProgressId(resp.data.progress_id)
-    } else {
-      throw new Error(resp.error?.message || 'Failed to start photos import')
+  const toggleSource = (key) => (val) => {
+    setEnabled((prev) => ({ ...prev, [key]: val }))
+  }
+
+  const anyRunning = SOURCES.some((s) => imports[s.key].status === 'running')
+  const enabledSources = SOURCES.filter((s) => enabled[s.key] && !s.comingSoon)
+  const canImportAll = enabledSources.length > 0 && !anyRunning
+
+  const handleImportAll = () => {
+    for (const source of enabledSources) {
+      const imp = imports[source.key]
+      if (imp.status === 'idle' || imp.status === 'done' || imp.status === 'error') {
+        imp.reset()
+        // Small delay to ensure reset state propagates before start
+        setTimeout(() => imp.start(), 0)
+      }
     }
-  }, [photosLimit])
+  }
+
+  const anyDone = SOURCES.some((s) => imports[s.key].status === 'done')
+  const anyError = SOURCES.some((s) => imports[s.key].status === 'error')
+
+  const handleResetAll = () => {
+    for (const source of SOURCES) {
+      imports[source.key].reset()
+    }
+  }
 
   if (available === null) {
     return (
@@ -395,53 +472,57 @@ export default function AppleImportTab({ onResult }) {
   }
 
   return (
-    <div className="p-4 space-y-2">
-      <p className="text-xs text-secondary mb-4">
-        Import data from macOS apps into FoldDB. You may be prompted to grant access permission on first use.
-      </p>
+    <div className="p-4">
+      <div className="flex items-center justify-between mb-4">
+        <div>
+          <h2 className="text-sm font-medium text-primary">Import My Data</h2>
+          <p className="text-xs text-secondary mt-0.5">
+            Toggle sources on/off, then import all at once. You may be prompted to grant access on first use.
+          </p>
+        </div>
+      </div>
 
       <AutoSyncSettings />
 
-      <ImportSection
-        label="Apple Notes"
-        icon={"\uD83D\uDCDD"}
-        description="Import all notes from Apple Notes. Notes shorter than 20 characters are skipped."
-        progressId={notesProgressId}
-        onImport={importNotes}
-        onReset={() => setNotesProgressId(null)}
-      />
+      <div className="grid gap-3 mb-4">
+        {SOURCES.map((source) => (
+          <SourceCard
+            key={source.key}
+            source={source}
+            enabled={enabled[source.key]}
+            onToggle={toggleSource(source.key)}
+            status={imports[source.key].status}
+            progress={imports[source.key].progress}
+            message={imports[source.key].message}
+            result={imports[source.key].result}
+            photosLimit={photosLimit}
+            onPhotosLimitChange={setPhotosLimit}
+          />
+        ))}
+      </div>
 
-      <ImportSection
-        label="Apple Reminders"
-        icon={"\u2705"}
-        description="Import all reminders from Apple Reminders, including completed items."
-        progressId={remindersProgressId}
-        onImport={importReminders}
-        onReset={() => setRemindersProgressId(null)}
-      />
+      <div className="flex items-center gap-3">
+        <button
+          onClick={handleImportAll}
+          disabled={!canImportAll}
+          className={`px-5 py-2 text-sm rounded font-medium transition-opacity ${
+            canImportAll
+              ? 'bg-accent text-white hover:opacity-90'
+              : 'bg-surface-secondary text-secondary cursor-not-allowed'
+          }`}
+        >
+          {anyRunning ? 'Importing...' : `Import All (${enabledSources.length})`}
+        </button>
 
-      <ImportSection
-        label="Apple Photos"
-        icon={"\uD83D\uDCF7"}
-        description="Export and import photos from Apple Photos. HEIC files are converted to JPEG."
-        fields={
-          <div className="flex items-center gap-2 mb-3">
-            <label className="text-xs text-secondary">Limit:</label>
-            <input
-              type="number"
-              min={1}
-              max={500}
-              value={photosLimit}
-              onChange={(e) => setPhotosLimit(parseInt(e.target.value) || 50)}
-              className="w-20 px-2 py-1 text-xs bg-surface-secondary border border-border rounded text-primary"
-            />
-            <span className="text-xs text-secondary">photos</span>
-          </div>
-        }
-        progressId={photosProgressId}
-        onImport={importPhotos}
-        onReset={() => setPhotosProgressId(null)}
-      />
+        {(anyDone || anyError) && !anyRunning && (
+          <button
+            onClick={handleResetAll}
+            className="px-3 py-2 text-xs border border-border rounded hover:bg-surface-secondary transition-colors"
+          >
+            Reset All
+          </button>
+        )}
+      </div>
     </div>
   )
 }
