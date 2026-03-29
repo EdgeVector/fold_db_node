@@ -250,3 +250,26 @@ pub async fn detect_interests(state: web::Data<AppState>) -> impl Responder {
         Err(e) => handler_error_to_response(e),
     }
 }
+
+/// GET /api/discovery/similar-profiles — Find users with similar interest fingerprints.
+pub async fn similar_profiles(req: HttpRequest, state: web::Data<AppState>) -> impl Responder {
+    let (_user_hash, node) = match require_node_read(&state).await {
+        Ok(res) => res,
+        Err(response) => return response,
+    };
+
+    let (url, key) = match get_discovery_config() {
+        Ok(c) => c,
+        Err(response) => return response,
+    };
+
+    let auth_token = match get_auth_token(&req) {
+        Ok(t) => t,
+        Err(response) => return response,
+    };
+
+    match discovery_handlers::similar_profiles(&node, &url, &auth_token, &key).await {
+        Ok(response) => HttpResponse::Ok().json(response),
+        Err(e) => handler_error_to_response(e),
+    }
+}

@@ -607,6 +607,10 @@ impl FoldHttpServer {
                 .route(
                     "/interests/detect",
                     web::post().to(discovery_routes::detect_interests),
+                )
+                .route(
+                    "/similar-profiles",
+                    web::get().to(discovery_routes::similar_profiles),
                 ),
         );
     }

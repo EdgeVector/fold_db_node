@@ -59,6 +59,18 @@ export interface InterestProfile {
   seed_version: number;
 }
 
+export interface SimilarProfile {
+  pseudonym: string;
+  match_percentage: number;
+  shared_categories: string[];
+  top_similarity: number;
+}
+
+export interface SimilarProfilesResponse {
+  profiles: SimilarProfile[];
+  user_categories_used: number;
+}
+
 export class DiscoveryClient {
   private readonly client: ApiClient;
 
@@ -138,6 +150,13 @@ export class DiscoveryClient {
   async detectInterests(): Promise<EnhancedApiResponse<InterestProfile>> {
     return this.client.post('/discovery/interests/detect', {}, {
       timeout: API_TIMEOUTS.LONG,
+    });
+  }
+
+  async getSimilarProfiles(): Promise<EnhancedApiResponse<SimilarProfilesResponse>> {
+    return this.client.get('/discovery/similar-profiles', {
+      timeout: API_TIMEOUTS.LONG,
+      retries: API_RETRIES.STANDARD,
     });
   }
 }
