@@ -302,11 +302,11 @@ export default function MyProfileTab({ onResult }) {
     try {
       const res = await discoveryClient.detectInterests()
       if (res.success) {
-        setProfile(res.data)
         onResult?.({
           success: true,
           data: { message: `Detected ${res.data?.categories?.length || 0} interest categories` },
         })
+        await loadProfile()
       } else {
         onResult?.({ error: res.error || 'Detection failed' })
       }
