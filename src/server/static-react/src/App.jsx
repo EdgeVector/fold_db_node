@@ -22,6 +22,7 @@ import DiscoveryBrowseTab from './components/tabs/DiscoveryBrowseTab'
 import ViewsTab from './components/tabs/ViewsTab'
 import SharingTab from './components/tabs/SharingTab'
 import FeedTab from './components/tabs/FeedTab'
+import SharedMomentsTab from './components/tabs/SharedMomentsTab'
 import AppleImportTab from './components/tabs/AppleImportTab'
 import MyProfileTab from './components/tabs/MyProfileTab'
 import SettingsModal from './components/SettingsModal'
@@ -62,6 +63,7 @@ const HASH_TO_TAB = {
   sharing: 'sharing',
   'apple-import': 'apple-import',
   feed: 'feed',
+  'shared-moments': 'shared-moments',
   'my-profile': 'my-profile',
 }
 
@@ -231,6 +233,8 @@ export function AppContent() {
         return <AppleImportTab onResult={handleOperationResult} />
       case 'feed':
         return <FeedTab />
+      case 'shared-moments':
+        return <SharedMomentsTab onResult={handleOperationResult} />
       case 'my-profile':
         return <MyProfileTab onResult={handleOperationResult} />
       default:
