@@ -30,7 +30,9 @@ impl LlmQueryService {
         for schema in schemas {
             prompt.push_str(&format!(
                 "- {} (Type: {:?}, State: {:?})\n",
-                schema_prompt_label(schema), schema.schema.schema_type, schema.state
+                schema_prompt_label(schema),
+                schema.schema.schema_type,
+                schema.state
             ));
 
             if let Some(ref key) = schema.schema.key {
@@ -176,7 +178,8 @@ impl LlmQueryService {
         for schema in schemas {
             prompt.push_str(&format!(
                 "- {} (Type: {:?})\n",
-                schema_prompt_label(schema), schema.schema.schema_type
+                schema_prompt_label(schema),
+                schema.schema.schema_type
             ));
 
             if let Some(ref key) = schema.schema.key {
@@ -225,7 +228,9 @@ impl LlmQueryService {
         for schema in schemas {
             prompt.push_str(&format!(
                 "- {} (Type: {:?}, State: {:?})\n",
-                schema_prompt_label(schema), schema.schema.schema_type, schema.state
+                schema_prompt_label(schema),
+                schema.schema.schema_type,
+                schema.state
             ));
 
             if let Some(ref key) = schema.schema.key {
@@ -271,7 +276,9 @@ impl LlmQueryService {
         for schema in schemas {
             prompt.push_str(&format!(
                 "- {} (Type: {:?}, State: {:?})\n",
-                schema_prompt_label(schema), schema.schema.schema_type, schema.state
+                schema_prompt_label(schema),
+                schema.schema.schema_type,
+                schema.state
             ));
 
             if let Some(ref key) = schema.schema.key {
@@ -367,7 +374,9 @@ impl LlmQueryService {
         for schema in schemas {
             prompt.push_str(&format!(
                 "- {} (Type: {:?}, State: {:?})\n",
-                schema_prompt_label(schema), schema.schema.schema_type, schema.state
+                schema_prompt_label(schema),
+                schema.schema.schema_type,
+                schema.state
             ));
 
             if let Some(ref key) = schema.schema.key {
