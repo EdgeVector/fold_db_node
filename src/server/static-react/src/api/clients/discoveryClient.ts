@@ -173,6 +173,23 @@ export interface MomentDetectResult {
   moments: SharedMoment[];
 }
 
+// Weekly Digest types
+
+export interface DigestSection {
+  title: string;
+  items: string[];
+  icon: string;
+}
+
+export interface WeeklyDigest {
+  digest_id: string;
+  period_start: string;
+  period_end: string;
+  sections: DigestSection[];
+  summary: string;
+  generated_at: string;
+}
+
 export class DiscoveryClient {
   private readonly client: ApiClient;
 
@@ -390,6 +407,28 @@ export class DiscoveryClient {
     return this.client.get('/discovery/moments', {
       timeout: API_TIMEOUTS.STANDARD,
       retries: API_RETRIES.STANDARD,
+    });
+  }
+
+  // Weekly Digest
+
+  async getLatestDigest(): Promise<EnhancedApiResponse<{ digest: WeeklyDigest | null }>> {
+    return this.client.get('/discovery/digest', {
+      timeout: API_TIMEOUTS.STANDARD,
+      retries: API_RETRIES.STANDARD,
+    });
+  }
+
+  async listDigests(): Promise<EnhancedApiResponse<{ digests: WeeklyDigest[] }>> {
+    return this.client.get('/discovery/digest/history', {
+      timeout: API_TIMEOUTS.STANDARD,
+      retries: API_RETRIES.STANDARD,
+    });
+  }
+
+  async generateDigest(): Promise<EnhancedApiResponse<{ digest: WeeklyDigest }>> {
+    return this.client.post('/discovery/digest/generate', {}, {
+      timeout: API_TIMEOUTS.LONG,
     });
   }
 }

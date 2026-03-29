@@ -550,3 +550,44 @@ pub async fn moment_list(state: web::Data<AppState>) -> impl Responder {
         Err(e) => handler_error_to_response(e),
     }
 }
+
+// === Weekly Digest Routes ===
+
+/// GET /api/discovery/digest — Get the latest weekly digest.
+pub async fn get_latest_digest(state: web::Data<AppState>) -> impl Responder {
+    let (_user_hash, node) = match require_node_read(&state).await {
+        Ok(res) => res,
+        Err(response) => return response,
+    };
+
+    match discovery_handlers::get_latest_digest(&node).await {
+        Ok(response) => HttpResponse::Ok().json(response),
+        Err(e) => handler_error_to_response(e),
+    }
+}
+
+/// GET /api/discovery/digest/history — List all stored weekly digests.
+pub async fn list_digests(state: web::Data<AppState>) -> impl Responder {
+    let (_user_hash, node) = match require_node_read(&state).await {
+        Ok(res) => res,
+        Err(response) => return response,
+    };
+
+    match discovery_handlers::list_digests(&node).await {
+        Ok(response) => HttpResponse::Ok().json(response),
+        Err(e) => handler_error_to_response(e),
+    }
+}
+
+/// POST /api/discovery/digest/generate — Manually trigger digest generation.
+pub async fn generate_digest(state: web::Data<AppState>) -> impl Responder {
+    let (_user_hash, node) = match require_node_read(&state).await {
+        Ok(res) => res,
+        Err(response) => return response,
+    };
+
+    match discovery_handlers::generate_digest(&node).await {
+        Ok(response) => HttpResponse::Ok().json(response),
+        Err(e) => handler_error_to_response(e),
+    }
+}

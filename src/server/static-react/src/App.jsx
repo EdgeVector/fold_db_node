@@ -25,6 +25,7 @@ import FeedTab from './components/tabs/FeedTab'
 import SharedMomentsTab from './components/tabs/SharedMomentsTab'
 import AppleImportTab from './components/tabs/AppleImportTab'
 import MyProfileTab from './components/tabs/MyProfileTab'
+import WeeklyDigestTab from './components/tabs/WeeklyDigestTab'
 import SettingsModal from './components/SettingsModal'
 import OnboardingWizard, { ONBOARDING_STORAGE_KEY } from './components/onboarding/OnboardingWizard'
 
@@ -237,6 +238,8 @@ export function AppContent() {
         return <SharedMomentsTab onResult={handleOperationResult} />
       case 'my-profile':
         return <MyProfileTab onResult={handleOperationResult} />
+      case 'weekly-digest':
+        return <WeeklyDigestTab onResult={handleOperationResult} />
       default:
         return null
     }

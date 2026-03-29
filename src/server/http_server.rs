@@ -206,6 +206,11 @@ impl FoldHttpServer {
             progress_tracker_data.clone(),
         );
 
+        // Spawn weekly digest background scheduler
+        crate::discovery::digest::spawn_digest_scheduler(
+            app_state.node_manager.clone(),
+        );
+
         // Start the HTTP server
         let server = ActixHttpServer::new(move || {
             // Create CORS middleware
@@ -679,6 +684,16 @@ impl FoldHttpServer {
                 .route(
                     "/moments/detect",
                     web::post().to(discovery_routes::moment_detect),
+                )
+                // Weekly digest routes
+                .route("/digest", web::get().to(discovery_routes::get_latest_digest))
+                .route(
+                    "/digest/history",
+                    web::get().to(discovery_routes::list_digests),
+                )
+                .route(
+                    "/digest/generate",
+                    web::post().to(discovery_routes::generate_digest),
                 ),
         );
     }

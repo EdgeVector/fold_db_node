@@ -352,4 +352,20 @@ impl NodeManager {
             !nodes.is_empty()
         }
     }
+
+    /// List all active user IDs with initialized nodes.
+    /// In local mode, returns a single "local" user if a node exists.
+    pub async fn list_users(&self) -> Vec<String> {
+        if *self.is_local_mode.read().await {
+            let shared = self.shared_local_node.lock().await;
+            if shared.is_some() {
+                vec!["local".to_string()]
+            } else {
+                vec![]
+            }
+        } else {
+            let nodes = self.nodes.lock().await;
+            nodes.keys().cloned().collect()
+        }
+    }
 }

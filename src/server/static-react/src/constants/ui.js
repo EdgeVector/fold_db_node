@@ -22,6 +22,7 @@ export const DEFAULT_TABS = [
   { id: "feed", label: "Feed", icon: "📷", group: "main" },
   { id: "shared-moments", label: "Shared Moments", icon: "📸", group: "main" },
   { id: "my-profile", label: "My Profile", icon: "🧬", group: "main" },
+  { id: "weekly-digest", label: "Weekly Digest", icon: "📰", group: "main" },
   // Developer/Advanced features
   { id: "schemas", label: "Schema", icon: "📋", group: "advanced" },
   { id: "query", label: "Query", icon: "🔍", group: "advanced" },

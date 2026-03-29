@@ -1542,3 +1542,74 @@ pub async fn moment_list(node: &FoldNode) -> HandlerResult<SharedMomentsResponse
         moments: shared_moments,
     }))
 }
+
+// === Weekly Digest ===
+
+use crate::discovery::digest;
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[cfg_attr(feature = "ts-bindings", derive(TS))]
+#[cfg_attr(
+    feature = "ts-bindings",
+    ts(export, export_to = "src/fold_node/static-react/src/types/")
+)]
+pub struct WeeklyDigestResponse {
+    pub digest: Option<digest::WeeklyDigest>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[cfg_attr(feature = "ts-bindings", derive(TS))]
+#[cfg_attr(
+    feature = "ts-bindings",
+    ts(export, export_to = "src/fold_node/static-react/src/types/")
+)]
+pub struct DigestListResponse {
+    pub digests: Vec<digest::WeeklyDigest>,
+}
+
+/// Get the latest weekly digest.
+pub async fn get_latest_digest(node: &FoldNode) -> HandlerResult<WeeklyDigestResponse> {
+    let db = node
+        .get_fold_db()
+        .await
+        .map_err(|e| HandlerError::Internal(format!("Failed to access database: {}", e)))?;
+    let store = get_metadata_store(&db);
+
+    let latest = digest::load_latest_digest(&*store)
+        .await
+        .handler_err("load latest digest")?;
+
+    Ok(ApiResponse::success(WeeklyDigestResponse { digest: latest }))
+}
+
+/// List all stored weekly digests.
+pub async fn list_digests(node: &FoldNode) -> HandlerResult<DigestListResponse> {
+    let db = node
+        .get_fold_db()
+        .await
+        .map_err(|e| HandlerError::Internal(format!("Failed to access database: {}", e)))?;
+    let store = get_metadata_store(&db);
+
+    let digests = digest::list_digests(&*store)
+        .await
+        .handler_err("list digests")?;
+
+    Ok(ApiResponse::success(DigestListResponse { digests }))
+}
+
+/// Manually trigger digest generation (for testing or on-demand refresh).
+pub async fn generate_digest(node: &FoldNode) -> HandlerResult<WeeklyDigestResponse> {
+    let db = node
+        .get_fold_db()
+        .await
+        .map_err(|e| HandlerError::Internal(format!("Failed to access database: {}", e)))?;
+    let store = get_metadata_store(&db);
+
+    let generated = digest::generate_digest(&*store)
+        .await
+        .handler_err("generate digest")?;
+
+    Ok(ApiResponse::success(WeeklyDigestResponse {
+        digest: Some(generated),
+    }))
+}
