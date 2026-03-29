@@ -88,6 +88,11 @@ export function AppContent() {
     () => localStorage.getItem(ONBOARDING_STORAGE_KEY) !== '1'
   )
 
+  // Clear results whenever the active tab changes (covers all switch paths)
+  useEffect(() => {
+    setResults(null)
+  }, [activeTab])
+
   // Sync activeTab with URL hash changes
   useEffect(() => {
     const handleHashChange = () => {
@@ -177,7 +182,6 @@ export function AppContent() {
 
   const handleTabChange = (tab) => {
     setActiveTab(tab)
-    setResults(null)
     // Update URL hash to match active tab
     if (typeof window !== 'undefined') {
       window.location.hash = tab;
