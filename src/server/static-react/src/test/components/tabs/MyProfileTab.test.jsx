@@ -71,11 +71,11 @@ describe('MyProfileTab', () => {
       expect(screen.getByText('Generate Fingerprint')).toBeInTheDocument()
     })
 
-    it('triggers detection when Generate Fingerprint is clicked', async () => {
-      discoveryClient.getInterests.mockResolvedValue({
-        success: true,
-        data: EMPTY_PROFILE,
-      })
+    it('triggers detection and re-fetches profile when Generate Fingerprint is clicked', async () => {
+      // First call returns empty, second call (after detect) returns full profile
+      discoveryClient.getInterests
+        .mockResolvedValueOnce({ success: true, data: EMPTY_PROFILE })
+        .mockResolvedValueOnce({ success: true, data: MOCK_PROFILE })
       discoveryClient.detectInterests.mockResolvedValue({
         success: true,
         data: MOCK_PROFILE,
@@ -94,10 +94,21 @@ describe('MyProfileTab', () => {
         expect(discoveryClient.detectInterests).toHaveBeenCalled()
       })
 
+      // After detection, loadProfile is called to re-fetch canonical data
+      await waitFor(() => {
+        expect(discoveryClient.getInterests).toHaveBeenCalledTimes(2)
+      })
+
       await waitFor(() => {
         expect(onResult).toHaveBeenCalledWith(
           expect.objectContaining({ success: true })
         )
+      })
+
+      // Profile should now be displayed (radar chart, stats, etc.)
+      await waitFor(() => {
+        expect(screen.getByText('Interest Fingerprint')).toBeInTheDocument()
+        expect(screen.getByText('5')).toBeInTheDocument() // interests detected
       })
     })
   })
@@ -222,6 +233,11 @@ describe('MyProfileTab', () => {
 
       await waitFor(() => {
         expect(discoveryClient.detectInterests).toHaveBeenCalled()
+      })
+
+      // After detection, loadProfile is called to re-fetch
+      await waitFor(() => {
+        expect(discoveryClient.getInterests).toHaveBeenCalledTimes(2)
       })
     })
   })
