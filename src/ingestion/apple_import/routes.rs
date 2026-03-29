@@ -10,9 +10,10 @@ use fold_db::log_feature;
 #[cfg(target_os = "macos")]
 use fold_db::logging::features::LogFeature;
 use fold_db::progress::{Job, JobStatus, JobType, ProgressTracker};
-use serde::Deserialize;
+use serde::{Deserialize, Serialize};
 use serde_json::json;
 
+use super::sync_scheduler::SyncConfigState;
 use crate::ingestion::routes_helpers::IngestionServiceState;
 #[cfg(target_os = "macos")]
 use crate::ingestion::IngestionRequest;
@@ -826,4 +827,66 @@ async fn run_apple_calendar_import(
     job.status = JobStatus::Failed;
     job.message = "Apple import is only available on macOS".into();
     let _ = tracker.save(&job).await;
+}
+
+// ── Auto-Sync Config Routes ─────────────────────────────────────────
+
+/// GET /api/ingestion/apple-import/sync-config
+/// Returns the current auto-sync configuration.
+pub async fn get_sync_config(sync_config: web::Data<SyncConfigState>) -> impl Responder {
+    let cfg = sync_config.read().await;
+    HttpResponse::Ok().json(&*cfg)
+}
+
+/// Request body for updating sync config.
+#[derive(Deserialize, Serialize)]
+pub struct UpdateSyncConfigRequest {
+    pub enabled: Option<bool>,
+    pub schedule: Option<super::sync_config::SyncSchedule>,
+    pub sources: Option<super::sync_config::EnabledSources>,
+    pub photos_limit: Option<usize>,
+}
+
+/// POST /api/ingestion/apple-import/sync-config
+/// Update the auto-sync configuration.
+pub async fn update_sync_config(
+    req: web::Json<UpdateSyncConfigRequest>,
+    sync_config: web::Data<SyncConfigState>,
+) -> impl Responder {
+    let mut cfg = sync_config.write().await;
+
+    if let Some(enabled) = req.enabled {
+        cfg.enabled = enabled;
+    }
+    if let Some(ref schedule) = req.schedule {
+        cfg.schedule = schedule.clone();
+    }
+    if let Some(ref sources) = req.sources {
+        cfg.sources = sources.clone();
+    }
+    if let Some(limit) = req.photos_limit {
+        cfg.photos_limit = limit;
+    }
+
+    // Recompute next sync whenever config changes
+    cfg.recompute_next_sync();
+
+    match cfg.save() {
+        Ok(()) => HttpResponse::Ok().json(&*cfg),
+        Err(e) => HttpResponse::InternalServerError().json(json!({
+            "success": false,
+            "error": format!("Failed to save sync config: {}", e),
+        })),
+    }
+}
+
+/// GET /api/ingestion/apple-import/next-sync
+/// Returns the next scheduled sync time (or null if disabled).
+pub async fn get_next_sync(sync_config: web::Data<SyncConfigState>) -> impl Responder {
+    let cfg = sync_config.read().await;
+    HttpResponse::Ok().json(json!({
+        "enabled": cfg.enabled,
+        "next_sync": cfg.next_sync,
+        "last_sync": cfg.last_sync,
+    }))
 }
