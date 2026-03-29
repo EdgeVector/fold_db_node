@@ -20,6 +20,7 @@ import AgentTab from './components/tabs/AgentTab'
 import DiscoveryTab from './components/tabs/DiscoveryTab'
 import ViewsTab from './components/tabs/ViewsTab'
 import SharingTab from './components/tabs/SharingTab'
+import FeedTab from './components/tabs/FeedTab'
 import AppleImportTab from './components/tabs/AppleImportTab'
 import SettingsModal from './components/SettingsModal'
 import OnboardingWizard, { ONBOARDING_STORAGE_KEY } from './components/onboarding/OnboardingWizard'
@@ -57,6 +58,7 @@ const HASH_TO_TAB = {
   views: 'views',
   sharing: 'sharing',
   'apple-import': 'apple-import',
+  feed: 'feed',
 }
 
 function resolveTabFromHash() {
@@ -221,6 +223,8 @@ export function AppContent() {
         return <SharingTab onResult={handleOperationResult} />
       case 'apple-import':
         return <AppleImportTab onResult={handleOperationResult} />
+      case 'feed':
+        return <FeedTab />
       default:
         return null
     }

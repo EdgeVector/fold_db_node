@@ -19,6 +19,7 @@ export const DEFAULT_TABS = [
   { id: "file-upload", label: "File Upload", icon: "📄", group: "main" },
   { id: "apple-import", label: "Apple Import", icon: "🍎", group: "main" },
   { id: "llm-query", label: "AI Query", icon: "🤖", group: "main" },
+  { id: "feed", label: "Feed", icon: "📷", group: "main" },
   // Developer/Advanced features
   { id: "schemas", label: "Schema", icon: "📋", group: "advanced" },
   { id: "query", label: "Query", icon: "🔍", group: "advanced" },
