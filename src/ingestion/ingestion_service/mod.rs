@@ -647,8 +647,7 @@ pub(crate) async fn generate_mutations_for_item(
     // Flatten nested objects into dot-notation keys so that mapper paths like
     // "budget_breakdown.flights" resolve correctly. Without this, only top-level
     // scalar fields are preserved and nested objects are silently dropped.
-    let fields_and_values: HashMap<String, Value> =
-        mutation_generator::flatten_json_object(obj);
+    let fields_and_values: HashMap<String, Value> = mutation_generator::flatten_json_object(obj);
 
     let keys_and_values =
         extract_key_values_from_data(&fields_and_values, schema_name, schema_manager).await?;

@@ -213,21 +213,20 @@ mod tests {
 
     #[test]
     fn test_flatten_json_object_basic() {
-        let obj: serde_json::Map<String, Value> =
-            serde_json::from_value(json!({
-                "name": "Vacation",
-                "budget_breakdown": {
-                    "flights": 1500,
-                    "accommodation": 1500,
-                    "food": 500
-                },
-                "travel_dates": {
-                    "departure": "2026-06-01",
-                    "return": "2026-06-15"
-                },
-                "total_budget": 5000
-            }))
-            .unwrap();
+        let obj: serde_json::Map<String, Value> = serde_json::from_value(json!({
+            "name": "Vacation",
+            "budget_breakdown": {
+                "flights": 1500,
+                "accommodation": 1500,
+                "food": 500
+            },
+            "travel_dates": {
+                "departure": "2026-06-01",
+                "return": "2026-06-15"
+            },
+            "total_budget": 5000
+        }))
+        .unwrap();
 
         let flat = flatten_json_object(&obj);
 
@@ -243,10 +242,7 @@ mod tests {
             flat.get("travel_dates.departure"),
             Some(&json!("2026-06-01"))
         );
-        assert_eq!(
-            flat.get("travel_dates.return"),
-            Some(&json!("2026-06-15"))
-        );
+        assert_eq!(flat.get("travel_dates.return"), Some(&json!("2026-06-15")));
         // Nested object keys themselves should NOT appear
         assert!(!flat.contains_key("budget_breakdown"));
         assert!(!flat.contains_key("travel_dates"));
@@ -254,11 +250,10 @@ mod tests {
 
     #[test]
     fn test_flatten_deeply_nested() {
-        let obj: serde_json::Map<String, Value> =
-            serde_json::from_value(json!({
-                "a": { "b": { "c": 42 } }
-            }))
-            .unwrap();
+        let obj: serde_json::Map<String, Value> = serde_json::from_value(json!({
+            "a": { "b": { "c": 42 } }
+        }))
+        .unwrap();
 
         let flat = flatten_json_object(&obj);
         assert_eq!(flat.get("a.b.c"), Some(&json!(42)));
@@ -267,12 +262,11 @@ mod tests {
 
     #[test]
     fn test_flatten_preserves_arrays() {
-        let obj: serde_json::Map<String, Value> =
-            serde_json::from_value(json!({
-                "tags": ["travel", "vacation"],
-                "nested": { "items": [1, 2, 3] }
-            }))
-            .unwrap();
+        let obj: serde_json::Map<String, Value> = serde_json::from_value(json!({
+            "tags": ["travel", "vacation"],
+            "nested": { "items": [1, 2, 3] }
+        }))
+        .unwrap();
 
         let flat = flatten_json_object(&obj);
         assert_eq!(flat.get("tags"), Some(&json!(["travel", "vacation"])));
