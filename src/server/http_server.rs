@@ -4,9 +4,8 @@ use super::node_manager::NodeManager;
 use super::routes::log as log_routes;
 use super::routes::{
     admin as admin_routes, auth as auth_routes, config as config_routes,
-    discovery as discovery_routes, filesystem as filesystem_routes,
-    query as query_routes, schema as schema_routes, security as security_routes,
-    system as system_routes,
+    discovery as discovery_routes, filesystem as filesystem_routes, query as query_routes,
+    schema as schema_routes, security as security_routes, system as system_routes,
 };
 use super::static_assets::Asset;
 use crate::fold_node::llm_query;
@@ -672,10 +671,7 @@ impl FoldHttpServer {
                     "/magic-link/verify",
                     web::post().to(auth_routes::magic_link_verify),
                 )
-                .route(
-                    "/credentials",
-                    web::get().to(auth_routes::get_credentials),
-                )
+                .route("/credentials", web::get().to(auth_routes::get_credentials))
                 .route(
                     "/credentials",
                     web::post().to(auth_routes::store_credentials),

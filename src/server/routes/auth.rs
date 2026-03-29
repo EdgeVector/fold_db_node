@@ -48,10 +48,13 @@ pub async fn magic_link_start(body: web::Json<MagicLinkStartRequest>) -> HttpRes
             let status = resp.status();
             match resp.text().await {
                 Ok(text) => {
-                    let json: serde_json::Value =
-                        serde_json::from_str(&text).unwrap_or(serde_json::json!({"ok": false, "error": text}));
-                    HttpResponse::build(actix_web::http::StatusCode::from_u16(status.as_u16()).unwrap_or(actix_web::http::StatusCode::INTERNAL_SERVER_ERROR))
-                        .json(json)
+                    let json: serde_json::Value = serde_json::from_str(&text)
+                        .unwrap_or(serde_json::json!({"ok": false, "error": text}));
+                    HttpResponse::build(
+                        actix_web::http::StatusCode::from_u16(status.as_u16())
+                            .unwrap_or(actix_web::http::StatusCode::INTERNAL_SERVER_ERROR),
+                    )
+                    .json(json)
                 }
                 Err(e) => HttpResponse::BadGateway().json(serde_json::json!({
                     "ok": false,
@@ -85,8 +88,8 @@ pub async fn magic_link_verify(body: web::Json<MagicLinkVerifyRequest>) -> HttpR
             let status = resp.status();
             match resp.text().await {
                 Ok(text) => {
-                    let json: serde_json::Value =
-                        serde_json::from_str(&text).unwrap_or(serde_json::json!({"ok": false, "error": text}));
+                    let json: serde_json::Value = serde_json::from_str(&text)
+                        .unwrap_or(serde_json::json!({"ok": false, "error": text}));
 
                     // If verification succeeded, store credentials in keychain
                     if json.get("ok").and_then(|v| v.as_bool()).unwrap_or(false) {
@@ -107,8 +110,11 @@ pub async fn magic_link_verify(body: web::Json<MagicLinkVerifyRequest>) -> HttpR
                         }
                     }
 
-                    HttpResponse::build(actix_web::http::StatusCode::from_u16(status.as_u16()).unwrap_or(actix_web::http::StatusCode::INTERNAL_SERVER_ERROR))
-                        .json(json)
+                    HttpResponse::build(
+                        actix_web::http::StatusCode::from_u16(status.as_u16())
+                            .unwrap_or(actix_web::http::StatusCode::INTERNAL_SERVER_ERROR),
+                    )
+                    .json(json)
                 }
                 Err(e) => HttpResponse::BadGateway().json(serde_json::json!({
                     "ok": false,
