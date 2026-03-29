@@ -422,10 +422,9 @@ pub async fn detect_interests(node: &FoldNode) -> HandlerResult<InterestProfile>
     // Drop the DB lock before doing the heavy work
     drop(db);
 
-    let profile =
-        interests::detect_interests(&*embedding_store, &*metadata_store, &*embedder)
-            .await
-            .handler_err("detect interests")?;
+    let profile = interests::detect_interests(&*embedding_store, &*metadata_store, &*embedder)
+        .await
+        .handler_err("detect interests")?;
 
     Ok(ApiResponse::success(profile))
 }

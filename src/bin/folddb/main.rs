@@ -2,6 +2,7 @@ mod cli;
 mod commands;
 mod error;
 mod output;
+mod update_check;
 
 use clap::Parser;
 use cli::Cli;
@@ -15,6 +16,12 @@ use fold_db_node::utils::crypto::user_hash_from_pubkey;
 #[tokio::main]
 async fn main() {
     let cli = Cli::parse();
+
+    // Fire-and-forget background update check (non-blocking, prints to stderr)
+    if !cli.json {
+        update_check::spawn_update_check();
+    }
+
     let json_mode = cli.json;
     let mode = if json_mode {
         OutputMode::Json

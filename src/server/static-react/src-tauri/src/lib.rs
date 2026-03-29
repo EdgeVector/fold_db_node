@@ -4,8 +4,9 @@ use fold_db::security::Ed25519KeyPair;
 use fold_db_node::fold_node::config::{load_node_config, DatabaseConfig};
 use fold_db_node::server::{start_embedded_server_lazy, EmbeddedServerHandle};
 use fold_db_node::server::node_manager::NodeManagerConfig;
-use tauri::{Manager, State, WebviewUrl, WebviewWindowBuilder};
+use tauri::{Emitter, Manager, State, WebviewUrl, WebviewWindowBuilder};
 use tauri_plugin_dialog::{DialogExt, MessageDialogKind};
+use tauri_plugin_updater::UpdaterExt;
 use serde::{Serialize, Deserialize};
 
 /// Shared state for the Tauri application
@@ -76,6 +77,62 @@ fn get_app_version() -> String {
     env!("CARGO_PKG_VERSION").to_string()
 }
 
+/// Update availability info sent to the frontend
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct UpdateInfo {
+    pub version: String,
+    pub current_version: String,
+    pub body: Option<String>,
+}
+
+/// Check for updates and return info if available
+#[tauri::command]
+async fn check_for_update(app: tauri::AppHandle) -> Result<Option<UpdateInfo>, String> {
+    let updater = app.updater().map_err(|e| format!("Updater not available: {}", e))?;
+    match updater.check().await {
+        Ok(Some(update)) => {
+            Ok(Some(UpdateInfo {
+                version: update.version.clone(),
+                current_version: update.current_version.clone(),
+                body: update.body.clone(),
+            }))
+        }
+        Ok(None) => Ok(None),
+        Err(e) => {
+            eprintln!("[FoldDB] Update check failed: {}", e);
+            Err(format!("Update check failed: {}", e))
+        }
+    }
+}
+
+/// Download and install an available update, then restart
+#[tauri::command]
+async fn install_update(app: tauri::AppHandle) -> Result<(), String> {
+    let updater = app.updater().map_err(|e| format!("Updater not available: {}", e))?;
+    let update = updater.check().await
+        .map_err(|e| format!("Update check failed: {}", e))?
+        .ok_or_else(|| "No update available".to_string())?;
+
+    let mut started = false;
+    update.download_and_install(|event, _body| {
+        match event {
+            tauri_plugin_updater::DownloadEvent::Started { content_length } => {
+                if !started {
+                    eprintln!("[FoldDB] Downloading update ({} bytes)", content_length.unwrap_or(0));
+                    started = true;
+                }
+            }
+            tauri_plugin_updater::DownloadEvent::Finished => {
+                eprintln!("[FoldDB] Update downloaded, installing...");
+            }
+            _ => {}
+        }
+    }).await.map_err(|e| format!("Install failed: {}", e))?;
+
+    // Restart the app to apply the update
+    app.restart();
+}
+
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
   // Start the server in a separate thread with its own tokio runtime
@@ -112,10 +169,13 @@ pub fn run() {
   tauri::Builder::default()
     .plugin(tauri_plugin_shell::init())
     .plugin(tauri_plugin_dialog::init())
+    .plugin(tauri_plugin_updater::Builder::new().build())
     .invoke_handler(tauri::generate_handler![
       get_server_status,
       open_data_directory,
-      get_app_version
+      get_app_version,
+      check_for_update,
+      install_update
     ])
     .setup(move |app| {
       // Try to set up logging — may fail if the embedded server already initialized a logger
@@ -155,6 +215,32 @@ pub fn run() {
         .center()
         .build()
         .map_err(|e| format!("Failed to create window: {}", e))?;
+
+      // Background update check — non-blocking, fires event to frontend if update found
+      let handle = app.handle().clone();
+      tauri::async_runtime::spawn(async move {
+        // Delay so the UI has time to load before we hit the network
+        tokio::time::sleep(std::time::Duration::from_secs(5)).await;
+        if let Ok(updater) = handle.updater() {
+          match updater.check().await {
+            Ok(Some(update)) => {
+              let info = UpdateInfo {
+                version: update.version.clone(),
+                current_version: update.current_version.clone(),
+                body: update.body.clone(),
+              };
+              eprintln!("[FoldDB] Update available: {} -> {}", info.current_version, info.version);
+              let _ = handle.emit("update-available", info);
+            }
+            Ok(None) => {
+              eprintln!("[FoldDB] App is up to date");
+            }
+            Err(e) => {
+              eprintln!("[FoldDB] Background update check failed: {}", e);
+            }
+          }
+        }
+      });
 
       Ok(())
     })

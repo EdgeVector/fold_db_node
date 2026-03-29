@@ -189,7 +189,9 @@ async fn test_save_and_load_interest_profile() {
         seed_version: 1,
     };
 
-    interests::save_interest_profile(&*meta, &profile).await.unwrap();
+    interests::save_interest_profile(&*meta, &profile)
+        .await
+        .unwrap();
     let loaded = interests::load_interest_profile(&*meta).await.unwrap();
 
     assert!(loaded.is_some());
@@ -218,7 +220,9 @@ async fn test_toggle_interest_category() {
         seed_version: 1,
     };
 
-    interests::save_interest_profile(&*meta, &profile).await.unwrap();
+    interests::save_interest_profile(&*meta, &profile)
+        .await
+        .unwrap();
 
     // Toggle off
     let updated = interests::toggle_interest_category(&*meta, "Music", false)
@@ -227,7 +231,10 @@ async fn test_toggle_interest_category() {
     assert!(!updated.categories[0].enabled);
 
     // Verify persistence
-    let loaded = interests::load_interest_profile(&*meta).await.unwrap().unwrap();
+    let loaded = interests::load_interest_profile(&*meta)
+        .await
+        .unwrap()
+        .unwrap();
     assert!(!loaded.categories[0].enabled);
 
     // Toggle back on
@@ -249,7 +256,9 @@ async fn test_toggle_nonexistent_category_errors() {
         seed_version: 1,
     };
 
-    interests::save_interest_profile(&*meta, &profile).await.unwrap();
+    interests::save_interest_profile(&*meta, &profile)
+        .await
+        .unwrap();
 
     let result = interests::toggle_interest_category(&*meta, "Nonexistent", true).await;
     assert!(result.is_err());

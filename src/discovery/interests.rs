@@ -358,9 +358,7 @@ pub async fn detect_interests(
 
         match best_name {
             Some(name) => {
-                let entry = category_stats
-                    .entry(name.to_string())
-                    .or_insert((0, 0.0));
+                let entry = category_stats.entry(name.to_string()).or_insert((0, 0.0));
                 entry.0 += 1;
                 entry.1 += best_sim;
             }
@@ -413,9 +411,7 @@ pub async fn save_interest_profile(
 }
 
 /// Load the interest profile from the metadata store.
-pub async fn load_interest_profile(
-    store: &dyn KvStore,
-) -> Result<Option<InterestProfile>, String> {
+pub async fn load_interest_profile(store: &dyn KvStore) -> Result<Option<InterestProfile>, String> {
     let bytes = store
         .get(PROFILE_KEY.as_bytes())
         .await
