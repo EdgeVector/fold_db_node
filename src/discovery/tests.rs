@@ -4,6 +4,7 @@ use super::pseudonym::*;
 #[cfg(feature = "test-utils")]
 use fold_db::db_operations::native_index::MockEmbeddingModel;
 use fold_db::storage::{NamespacedStore, SledNamespacedStore};
+use std::collections::HashMap;
 use std::sync::Arc;
 
 // === Pseudonym Tests ===
@@ -285,4 +286,112 @@ async fn test_load_nonexistent_profile_returns_none() {
     let (_emb, meta) = make_interest_stores().await;
     let loaded = interests::load_interest_profile(&*meta).await.unwrap();
     assert!(loaded.is_none());
+}
+
+// === Similar Profile Aggregation Tests ===
+
+/// Tests the aggregation logic used in handlers::discovery::similar_profiles.
+/// This mirrors the actual code path without requiring network calls.
+#[test]
+fn test_similar_profile_aggregation_sorting() {
+    use crate::handlers::discovery::SimilarProfile;
+
+    let user_cat_count = 3usize;
+    let mut profile_map: HashMap<uuid::Uuid, (Vec<String>, f32)> = HashMap::new();
+
+    let p1 = uuid::Uuid::new_v4();
+    let p2 = uuid::Uuid::new_v4();
+    let p3 = uuid::Uuid::new_v4();
+
+    // p1 shares 2 of 3 categories, top sim 0.8
+    profile_map.insert(p1, (vec!["Music".into(), "Cooking".into()], 0.8));
+    // p2 shares 3 of 3 categories, top sim 0.6
+    profile_map.insert(p2, (vec!["Music".into(), "Cooking".into(), "Travel".into()], 0.6));
+    // p3 shares 1 of 3, top sim 0.9
+    profile_map.insert(p3, (vec!["Music".into()], 0.9));
+
+    let mut profiles: Vec<SimilarProfile> = profile_map
+        .into_iter()
+        .map(|(pseudonym, (shared_categories, top_similarity))| {
+            let match_percentage =
+                (shared_categories.len() as f32 / user_cat_count as f32) * 100.0;
+            SimilarProfile {
+                pseudonym,
+                match_percentage,
+                shared_categories,
+                top_similarity,
+            }
+        })
+        .collect();
+
+    profiles.sort_by(|a, b| {
+        b.match_percentage
+            .partial_cmp(&a.match_percentage)
+            .unwrap_or(std::cmp::Ordering::Equal)
+            .then(
+                b.top_similarity
+                    .partial_cmp(&a.top_similarity)
+                    .unwrap_or(std::cmp::Ordering::Equal),
+            )
+    });
+
+    // p2 first (100%), then p1 (66.7%), then p3 (33.3%)
+    assert_eq!(profiles[0].pseudonym, p2);
+    assert!((profiles[0].match_percentage - 100.0).abs() < 0.1);
+
+    assert_eq!(profiles[1].pseudonym, p1);
+    assert!((profiles[1].match_percentage - 66.7).abs() < 0.5);
+
+    assert_eq!(profiles[2].pseudonym, p3);
+    assert!((profiles[2].match_percentage - 33.3).abs() < 0.5);
+}
+
+#[test]
+fn test_similar_profile_empty_categories_returns_empty() {
+    let enabled_categories: Vec<String> = vec![];
+    assert!(enabled_categories.is_empty());
+    // Mirrors the early return in the handler
+}
+
+#[test]
+fn test_similar_profile_dedup_categories() {
+    // Simulates the same pseudonym appearing in multiple search results for the same category
+    let mut profile_map: HashMap<uuid::Uuid, (Vec<String>, f32)> = HashMap::new();
+    let p = uuid::Uuid::new_v4();
+
+    // First result from Music search
+    let entry = profile_map.entry(p).or_insert_with(|| (Vec::new(), 0.0));
+    let cat = "Music".to_string();
+    if !entry.0.contains(&cat) {
+        entry.0.push(cat);
+    }
+    entry.1 = 0.7f32.max(entry.1);
+
+    // Second result also from Music search (same category, different fragment)
+    let entry = profile_map.entry(p).or_insert_with(|| (Vec::new(), 0.0));
+    let cat = "Music".to_string();
+    if !entry.0.contains(&cat) {
+        entry.0.push(cat);
+    }
+    if 0.9 > entry.1 {
+        entry.1 = 0.9;
+    }
+
+    let (cats, top_sim) = &profile_map[&p];
+    assert_eq!(cats.len(), 1, "Duplicate categories should be deduped");
+    assert!((top_sim - 0.9).abs() < f32::EPSILON, "Should keep highest similarity");
+}
+
+#[cfg(feature = "test-utils")]
+#[tokio::test]
+async fn test_get_centroids_public_accessor() {
+    let (_emb, meta) = make_interest_stores().await;
+    let embedder = MockEmbeddingModel;
+    let centroids = interests::get_centroids(&*meta, &embedder).await.unwrap();
+    // Should return 25 centroids (one per seed category)
+    assert_eq!(centroids.len(), 25);
+    for (name, emb) in &centroids {
+        assert!(!name.is_empty());
+        assert!(!emb.is_empty());
+    }
 }

@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useState } from 'react'
+import { useCallback, useEffect, useRef, useState } from 'react'
 import { useApprovedSchemas } from '../../hooks/useApprovedSchemas.js'
 import { discoveryClient } from '../../api/clients/discoveryClient'
 import { toErrorMessage } from '../../utils/schemaUtils'
@@ -363,6 +363,168 @@ function IncomingRequests() {
   )
 }
 
+const REFRESH_INTERVAL_MS = 60_000
+
+function PeopleLikeYouPanel({ onResult }) {
+  const [profiles, setProfiles] = useState([])
+  const [categoriesUsed, setCategoriesUsed] = useState(0)
+  const [loading, setLoading] = useState(true)
+  const [error, setError] = useState(null)
+  const [connectingTo, setConnectingTo] = useState(null)
+  const [connectMessage, setConnectMessage] = useState('')
+  const intervalRef = useRef(null)
+
+  const fetchProfiles = useCallback(async () => {
+    try {
+      const res = await discoveryClient.getSimilarProfiles()
+      if (res.success) {
+        setProfiles(res.data?.profiles || [])
+        setCategoriesUsed(res.data?.user_categories_used || 0)
+        setError(null)
+      } else {
+        setError(res.error || 'Failed to load similar profiles')
+      }
+    } catch (e) {
+      setError(toErrorMessage(e) || 'Network error')
+    } finally {
+      setLoading(false)
+    }
+  }, [])
+
+  useEffect(() => {
+    fetchProfiles()
+    intervalRef.current = setInterval(fetchProfiles, REFRESH_INTERVAL_MS)
+    return () => clearInterval(intervalRef.current)
+  }, [fetchProfiles])
+
+  const handleConnect = async (pseudonym) => {
+    if (!connectMessage.trim()) return
+    try {
+      const res = await discoveryClient.connect(pseudonym, connectMessage)
+      if (res.success) {
+        setConnectingTo(null)
+        setConnectMessage('')
+        onResult({ success: true, data: { message: 'Connection request sent' } })
+      } else {
+        onResult({ error: res.error || 'Connect failed' })
+      }
+    } catch (e) {
+      onResult({ error: toErrorMessage(e) || 'Network error' })
+    }
+  }
+
+  if (loading) return <p className="text-secondary text-sm">Finding people like you...</p>
+
+  if (error) {
+    return (
+      <div className="space-y-3">
+        <div className="text-sm text-gruvbox-red">{error}</div>
+        <button onClick={fetchProfiles} className="btn-secondary btn-sm">Retry</button>
+      </div>
+    )
+  }
+
+  if (categoriesUsed === 0) {
+    return (
+      <div className="card p-8 text-center space-y-4 rounded">
+        <h3 className="text-lg text-primary font-semibold">Opt into discovery first</h3>
+        <p className="text-secondary text-sm max-w-md mx-auto">
+          To find people with similar interests, you need to detect your interest categories
+          and publish your embeddings to the network. Visit the <strong>Your Interests</strong> tab
+          to get started.
+        </p>
+      </div>
+    )
+  }
+
+  if (profiles.length === 0) {
+    return (
+      <div className="card p-8 text-center space-y-4 rounded">
+        <h3 className="text-lg text-primary font-semibold">No matches yet</h3>
+        <p className="text-secondary text-sm max-w-md mx-auto">
+          We searched across {categoriesUsed} of your interest categories but haven't found
+          similar profiles yet. As more people join the discovery network, matches will
+          appear here automatically.
+        </p>
+        <div className="text-xs text-tertiary">Refreshes every 60 seconds</div>
+      </div>
+    )
+  }
+
+  return (
+    <div className="space-y-3">
+      <div className="flex items-center justify-between">
+        <div className="text-xs text-secondary">
+          {profiles.length} profile{profiles.length !== 1 ? 's' : ''} matched across {categoriesUsed} interest categories
+        </div>
+        <button onClick={fetchProfiles} className="btn-secondary btn-sm">Refresh</button>
+      </div>
+
+      {profiles.map(p => (
+        <div key={p.pseudonym} className="card rounded p-4 space-y-2">
+          <div className="flex items-center justify-between">
+            <div className="flex items-center gap-3">
+              <div className="flex items-center justify-center w-10 h-10 rounded-full bg-surface-secondary border border-border text-sm font-bold text-gruvbox-blue">
+                {Math.round(p.match_percentage)}%
+              </div>
+              <div>
+                <div className="text-sm text-primary font-medium">
+                  {Math.round(p.match_percentage)}% match
+                </div>
+                <div className="text-xs text-secondary">
+                  Top similarity: {(p.top_similarity * 100).toFixed(1)}%
+                </div>
+              </div>
+            </div>
+            {connectingTo === p.pseudonym ? (
+              <div className="flex gap-1 items-center">
+                <input
+                  type="text"
+                  value={connectMessage}
+                  onChange={(e) => setConnectMessage(e.target.value)}
+                  onKeyDown={(e) => e.key === 'Enter' && handleConnect(p.pseudonym)}
+                  placeholder="Message..."
+                  className="input text-xs w-48"
+                />
+                <button
+                  onClick={() => handleConnect(p.pseudonym)}
+                  disabled={!connectMessage.trim()}
+                  className="btn-primary btn-sm"
+                >
+                  Send
+                </button>
+                <button
+                  onClick={() => { setConnectingTo(null); setConnectMessage('') }}
+                  className="btn-secondary btn-sm"
+                >
+                  Cancel
+                </button>
+              </div>
+            ) : (
+              <button
+                onClick={() => setConnectingTo(p.pseudonym)}
+                className="btn-primary btn-sm"
+              >
+                Connect
+              </button>
+            )}
+          </div>
+
+          <div className="flex flex-wrap gap-1.5">
+            {p.shared_categories.map(cat => (
+              <span key={cat} className="badge badge-info">{cat}</span>
+            ))}
+          </div>
+
+          <div className="text-xs text-tertiary font-mono truncate">
+            {p.pseudonym}
+          </div>
+        </div>
+      ))}
+    </div>
+  )
+}
+
 function InterestsPanel({ onResult }) {
   const [profile, setProfile] = useState(null)
   const [loading, setLoading] = useState(true)
@@ -468,7 +630,7 @@ export default function DiscoveryTab({ onResult }) {
   const { approvedSchemas } = useApprovedSchemas()
   const [configs, setConfigs] = useState([])
   const [publishing, setPublishing] = useState(false)
-  const [activeSection, setActiveSection] = useState('interests')
+  const [activeSection, setActiveSection] = useState('people')
   const [error, setError] = useState(null)
   const [serviceAvailable, setServiceAvailable] = useState(true)
   const [expandedCategories, setExpandedCategories] = useState(new Set())
@@ -638,6 +800,7 @@ export default function DiscoveryTab({ onResult }) {
       {/* Section Tabs */}
       <div className="flex gap-1 border-b border-border pb-1">
         {[
+          { id: 'people', label: 'People Like You' },
           { id: 'interests', label: 'Your Interests' },
           { id: 'manage', label: 'Interest Categories' },
           { id: 'search', label: 'Search Network' },
@@ -658,6 +821,11 @@ export default function DiscoveryTab({ onResult }) {
       </div>
 
       {error && <div className="text-sm text-gruvbox-red">{error}</div>}
+
+      {/* People Like You Section */}
+      {activeSection === 'people' && (
+        <PeopleLikeYouPanel onResult={onResult} />
+      )}
 
       {/* Interests Section */}
       {activeSection === 'interests' && (

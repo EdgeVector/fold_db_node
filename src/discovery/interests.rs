@@ -248,6 +248,14 @@ const SEED_CATEGORIES: &[(&str, &[&str])] = &[
     ),
 ];
 
+/// Public access to cached category centroids for use by similar-profiles matching.
+pub async fn get_centroids(
+    metadata_store: &dyn KvStore,
+    embedder: &dyn Embedder,
+) -> Result<Vec<(String, Vec<f32>)>, String> {
+    get_or_compute_centroids(metadata_store, embedder).await
+}
+
 /// Compute or load cached category centroids.
 ///
 /// Each centroid is the average of the embedded seed phrases for that category.
