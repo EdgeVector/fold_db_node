@@ -26,9 +26,13 @@ describe('Component Integration Tests', () => {
         />, { initialState: createUnauthenticatedState() }
       )
 
-      // All tabs should be enabled
-      expect(screen.getByRole('button', { name: /ingestion tab/i })).toBeEnabled()
+      // Main tabs should be directly enabled
       expect(screen.getByRole('button', { name: /ai query tab/i })).toBeEnabled()
+
+      // Advanced tabs (ingestion) are in the More dropdown — More button shows active label
+      const moreButton = screen.getByRole('button', { name: /more tabs/i })
+      expect(moreButton).toBeEnabled()
+      expect(moreButton).toHaveTextContent('JSON Ingestion')
 
       // Unmount and re-mount with different active tab
       unmount()
@@ -39,9 +43,11 @@ describe('Component Integration Tests', () => {
         />, { initialState: createAuthenticatedState() }
       )
 
-      // Tabs remain enabled
-      expect(screen.getByRole('button', { name: /ingestion tab/i })).toBeEnabled()
+      // Main tabs remain enabled
       expect(screen.getByRole('button', { name: /ai query tab/i })).toBeEnabled()
+
+      // More button shows "More" when no advanced tab is active
+      expect(screen.getByRole('button', { name: /more tabs/i })).toBeEnabled()
     })
   })
 
