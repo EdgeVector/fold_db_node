@@ -208,3 +208,45 @@ pub async fn poll_requests(req: HttpRequest, _state: web::Data<AppState>) -> imp
         Err(e) => handler_error_to_response(e),
     }
 }
+
+/// GET /api/discovery/interests — Get detected interest categories.
+pub async fn get_interests(state: web::Data<AppState>) -> impl Responder {
+    let (_user_hash, node) = match require_node_read(&state).await {
+        Ok(res) => res,
+        Err(response) => return response,
+    };
+
+    match discovery_handlers::get_interests(&node).await {
+        Ok(response) => HttpResponse::Ok().json(response),
+        Err(e) => handler_error_to_response(e),
+    }
+}
+
+/// POST /api/discovery/interests/toggle — Toggle an interest category.
+pub async fn toggle_interest(
+    body: web::Json<discovery_handlers::ToggleInterestRequest>,
+    state: web::Data<AppState>,
+) -> impl Responder {
+    let (_user_hash, node) = match require_node_read(&state).await {
+        Ok(res) => res,
+        Err(response) => return response,
+    };
+
+    match discovery_handlers::toggle_interest(&body, &node).await {
+        Ok(response) => HttpResponse::Ok().json(response),
+        Err(e) => handler_error_to_response(e),
+    }
+}
+
+/// POST /api/discovery/interests/detect — Manually trigger interest detection.
+pub async fn detect_interests(state: web::Data<AppState>) -> impl Responder {
+    let (_user_hash, node) = match require_node_read(&state).await {
+        Ok(res) => res,
+        Err(response) => return response,
+    };
+
+    match discovery_handlers::detect_interests(&node).await {
+        Ok(response) => HttpResponse::Ok().json(response),
+        Err(e) => handler_error_to_response(e),
+    }
+}

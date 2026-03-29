@@ -14,9 +14,18 @@
       "csp": null
     }
   },
+  "plugins": {
+    "updater": {
+      "endpoints": [
+        "https://github.com/shiba4life/fold_db_node/releases/latest/download/latest.json"
+      ],
+      "pubkey": ""
+    }
+  },
   "bundle": {
     "active": true,
     "targets": "all",
+    "createUpdaterArtifacts": "v1Compatible",
     "icon": [
       "icons/32x32.png",
       "icons/128x128.png",
@@ -28,8 +37,8 @@
       "frameworks": [],
       "minimumSystemVersion": "10.13",
       "exceptionDomain": "localhost",
-      "signingIdentity": null,
-      "entitlements": null
+      "signingIdentity": "-",
+      "entitlements": "Entitlements.plist"
     },
     "category": "Developer Tool",
     "shortDescription": "Personal Database for Data Sovereignty",

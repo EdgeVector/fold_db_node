@@ -632,6 +632,127 @@ impl LlmQueryService {
                 }))
             }
 
+            "web_search" => {
+                let query = params
+                    .get("query")
+                    .and_then(|q| q.as_str())
+                    .ok_or("web_search tool requires 'query' parameter")?;
+                let count = params.get("count").and_then(|c| c.as_u64()).unwrap_or(5) as usize;
+
+                log::info!("Agent web_search: query='{}', count={}", query, count);
+                let results = super::web_tools::web_search(query, count).await?;
+
+                Ok(serde_json::json!({
+                    "results": results,
+                    "total": results.len(),
+                    "query": query,
+                }))
+            }
+
+            "fetch_url" => {
+                let url = params
+                    .get("url")
+                    .and_then(|u| u.as_str())
+                    .ok_or("fetch_url tool requires 'url' parameter")?;
+
+                log::info!("Agent fetch_url: url='{}'", url);
+                let content = super::web_tools::fetch_url(url).await?;
+
+                Ok(serde_json::json!({
+                    "url": url,
+                    "content": content,
+                    "length": content.len(),
+                }))
+            }
+
+            "ingest_json" => {
+                let data = params
+                    .get("data")
+                    .ok_or("ingest_json tool requires 'data' parameter (JSON object or array)")?
+                    .clone();
+
+                // Validate: must be object or array
+                if !data.is_object() && !data.is_array() {
+                    return Err(
+                        "ingest_json 'data' must be a JSON object or array of objects".to_string(),
+                    );
+                }
+                if let Some(arr) = data.as_array() {
+                    if arr.is_empty() {
+                        return Err("ingest_json 'data' array must not be empty".to_string());
+                    }
+                }
+
+                let source_context = params
+                    .get("source_context")
+                    .and_then(|s| s.as_str())
+                    .map(|s| s.to_string());
+
+                log::info!(
+                    "Agent ingest_json: source_context={:?}, data_type={}",
+                    source_context,
+                    if data.is_array() { "array" } else { "object" }
+                );
+
+                let progress_id = format!("agent-ingest-json-{}", uuid::Uuid::new_v4());
+                let pub_key = node.get_node_public_key().to_string();
+
+                let request = crate::ingestion::IngestionRequest {
+                    data,
+                    auto_execute: true,
+                    pub_key,
+                    source_file_name: source_context.map(|ctx| format!("{}.json", ctx)),
+                    progress_id: Some(progress_id.clone()),
+                    file_hash: None,
+                    source_folder: None,
+                    image_descriptive_name: None,
+                };
+
+                let service = crate::ingestion::ingestion_service::IngestionService::from_env()
+                    .map_err(|e| format!("Failed to create ingestion service: {}", e))?;
+
+                let tracker = match progress_tracker {
+                    Some(t) => t.clone(),
+                    None => crate::ingestion::create_progress_tracker(None).await,
+                };
+                let progress_service = crate::ingestion::progress::ProgressService::new(tracker);
+                progress_service
+                    .start_progress(progress_id.clone(), "agent".to_string())
+                    .await;
+
+                let response = service
+                    .process_json_with_node_and_progress(
+                        request,
+                        node,
+                        &progress_service,
+                        progress_id,
+                    )
+                    .await
+                    .map_err(|e| format!("JSON ingestion failed: {}", e))?;
+
+                // Look up descriptive_name so the agent sees the human-readable schema name
+                let descriptive_name = if let Some(ref schema_name) = response.schema_used {
+                    processor
+                        .get_schema(schema_name)
+                        .await
+                        .ok()
+                        .flatten()
+                        .and_then(|s| s.schema.descriptive_name.clone())
+                } else {
+                    None
+                };
+
+                Ok(serde_json::json!({
+                    "success": response.success,
+                    "schema_name": descriptive_name.as_deref().unwrap_or_else(|| response.schema_used.as_deref().unwrap_or("unknown")),
+                    "schema_id": response.schema_used,
+                    "new_schema_created": response.new_schema_created,
+                    "mutations_generated": response.mutations_generated,
+                    "mutations_executed": response.mutations_executed,
+                    "errors": response.errors,
+                }))
+            }
+
             "set_field_policy" => Err("Access control has been removed from fold_db".to_string()),
 
             "get_field_policies" => Err("Access control has been removed from fold_db".to_string()),
@@ -750,10 +871,13 @@ impl LlmQueryService {
                     let tool_pct = 10 + (iteration * 90 / max_iterations.max(1)).min(85) as u8;
                     let tool_label = match tool.as_str() {
                         "ingest_files" => "Ingesting files...",
+                        "ingest_json" => "Ingesting JSON data...",
                         "query" => "Querying database...",
                         "scan_folder" => "Scanning folder...",
                         "list_schemas" => "Listing schemas...",
                         "create_view" => "Compiling WASM view...",
+                        "web_search" => "Searching the web...",
+                        "fetch_url" => "Fetching URL...",
                         _ => "Executing tool...",
                     };
                     update_agent_progress(
