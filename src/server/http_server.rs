@@ -474,6 +474,10 @@ impl FoldHttpServer {
             web::post().to(ingestion_routes::apple_import_routes::apple_import_photos),
         )
         .route(
+            "/ingestion/apple-import/calendar",
+            web::post().to(ingestion_routes::apple_import_routes::apple_import_calendar),
+        )
+        .route(
             "/ingestion/apple-import/sync-config",
             web::get().to(ingestion_routes::apple_import_routes::get_sync_config),
         )
