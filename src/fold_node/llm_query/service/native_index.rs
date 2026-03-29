@@ -730,9 +730,22 @@ impl LlmQueryService {
                     .await
                     .map_err(|e| format!("JSON ingestion failed: {}", e))?;
 
+                // Look up descriptive_name so the agent sees the human-readable schema name
+                let descriptive_name = if let Some(ref schema_name) = response.schema_used {
+                    processor
+                        .get_schema(schema_name)
+                        .await
+                        .ok()
+                        .flatten()
+                        .and_then(|s| s.schema.descriptive_name.clone())
+                } else {
+                    None
+                };
+
                 Ok(serde_json::json!({
                     "success": response.success,
-                    "schema_used": response.schema_used,
+                    "schema_name": descriptive_name.as_deref().unwrap_or_else(|| response.schema_used.as_deref().unwrap_or("unknown")),
+                    "schema_id": response.schema_used,
                     "new_schema_created": response.new_schema_created,
                     "mutations_generated": response.mutations_generated,
                     "mutations_executed": response.mutations_executed,
