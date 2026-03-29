@@ -18,6 +18,7 @@ import DataBrowserTab from './components/tabs/DataBrowserTab'
 import WordGraphTab from './components/tabs/WordGraphTab'
 import AgentTab from './components/tabs/AgentTab'
 import DiscoveryTab from './components/tabs/DiscoveryTab'
+import DiscoveryBrowseTab from './components/tabs/DiscoveryBrowseTab'
 import ViewsTab from './components/tabs/ViewsTab'
 import SharingTab from './components/tabs/SharingTab'
 import FeedTab from './components/tabs/FeedTab'
@@ -55,6 +56,7 @@ const HASH_TO_TAB = {
   'data-browser': 'data-browser',
   'word-graph': 'word-graph',
   discovery: 'discovery',
+  'discovery-browse': 'discovery-browse',
   views: 'views',
   sharing: 'sharing',
   'apple-import': 'apple-import',
@@ -217,6 +219,8 @@ export function AppContent() {
         return <WordGraphTab />
       case 'discovery':
         return <DiscoveryTab onResult={handleOperationResult} />
+      case 'discovery-browse':
+        return <DiscoveryBrowseTab onResult={handleOperationResult} />
       case 'views':
         return <ViewsTab onResult={handleOperationResult} />
       case 'sharing':

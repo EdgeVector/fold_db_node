@@ -71,6 +71,16 @@ export interface SimilarProfilesResponse {
   user_categories_used: number;
 }
 
+export interface BrowseCategory {
+  category: string;
+  entry_count: number;
+  user_count: number;
+}
+
+export interface BrowseCategoriesResponse {
+  categories: BrowseCategory[];
+}
+
 export class DiscoveryClient {
   private readonly client: ApiClient;
 
@@ -107,13 +117,22 @@ export class DiscoveryClient {
     query: string,
     top_k?: number,
     category_filter?: string,
+    offset?: number,
   ): Promise<EnhancedApiResponse<{ results: SearchResult[] }>> {
     return this.client.post('/discovery/search', {
       query,
       top_k: top_k || 20,
       category_filter: category_filter || undefined,
+      offset: offset || undefined,
     }, {
       timeout: API_TIMEOUTS.LONG,
+    });
+  }
+
+  async browseCategories(): Promise<EnhancedApiResponse<BrowseCategoriesResponse>> {
+    return this.client.get('/discovery/browse/categories', {
+      timeout: API_TIMEOUTS.STANDARD,
+      retries: API_RETRIES.STANDARD,
     });
   }
 

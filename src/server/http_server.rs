@@ -601,6 +601,10 @@ impl FoldHttpServer {
                 .route("/search", web::post().to(discovery_routes::search))
                 .route("/connect", web::post().to(discovery_routes::connect))
                 .route("/requests", web::get().to(discovery_routes::poll_requests))
+                .route(
+                    "/browse/categories",
+                    web::get().to(discovery_routes::browse_categories),
+                )
                 .route("/interests", web::get().to(discovery_routes::get_interests))
                 .route(
                     "/interests/toggle",
