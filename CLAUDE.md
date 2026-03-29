@@ -16,11 +16,22 @@ CI triggers on push to `main` and on pull requests. Three jobs run in parallel, 
 
 ### Pre-PR Checklist
 
-Once Rust code exists, run before every push:
+Before every push, first fetch and rebase on the latest base branch:
+```bash
+git fetch origin
+git rebase origin/<base-branch>   # e.g. origin/main
+```
+
+Then run CI checks:
 ```bash
 cargo clippy --workspace --all-targets -- -D warnings
 cargo check --workspace --features aws-backend
 cargo test --workspace --all-targets
+```
+
+After creating the PR, enable auto-merge so it merges itself once CI passes:
+```bash
+gh pr merge --auto --squash <PR_URL>
 ```
 
 Once frontend code exists:
