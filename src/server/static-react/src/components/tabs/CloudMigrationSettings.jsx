@@ -1,5 +1,6 @@
-import React, { useState } from 'react'
+import React, { useState, useEffect } from 'react'
 import { systemClient } from '../../api/clients/systemClient'
+import { getSubscriptionStatus, createCheckoutSession, createPortalSession, formatBytes, usagePercent } from '../../api/clients/subscriptionClient'
 
 export default function CloudMigrationSettings({ onClose }) {
   const [migrationMode, setMigrationMode] = useState('encryption_at_rest')
@@ -8,9 +9,54 @@ export default function CloudMigrationSettings({ onClose }) {
   const [isMigrating, setIsMigrating] = useState(false)
   const [error, setError] = useState(null)
   const [success, setSuccess] = useState(false)
-  
+
   const [switching, setSwitching] = useState(false)
   const [switchError, setSwitchError] = useState(null)
+
+  // Storage tier state (cloud mode only)
+  const [isCloudMode, setIsCloudMode] = useState(false)
+  const [storageInfo, setStorageInfo] = useState(null)
+  const [upgrading, setUpgrading] = useState(false)
+
+  useEffect(() => {
+    // Check if already in cloud mode
+    const hasCloudConfig = localStorage.getItem('exemem_api_url') && localStorage.getItem('exemem_api_key')
+    if (hasCloudConfig) {
+      setIsCloudMode(true)
+      getSubscriptionStatus()
+        .then(status => {
+          setStorageInfo({
+            plan: status.plan,
+            used_bytes: status.storage.used_bytes,
+            quota_bytes: status.storage.quota_bytes,
+            has_subscription: status.has_subscription,
+          })
+        })
+        .catch(() => { /* Cloud API not reachable — show migration form instead */ })
+    }
+  }, [])
+
+  const handleUpgrade = async () => {
+    setUpgrading(true)
+    setError(null)
+    try {
+      const url = await createCheckoutSession()
+      window.location.href = url
+    } catch (err) {
+      setError(err.message || 'Failed to start checkout')
+      setUpgrading(false)
+    }
+  }
+
+  const handleManageSubscription = async () => {
+    setError(null)
+    try {
+      const url = await createPortalSession()
+      window.location.href = url
+    } catch (err) {
+      setError(err.message || 'Failed to open billing portal')
+    }
+  }
 
   const handleMigrate = async () => {
     if (!apiUrl || !apiKey) {
@@ -46,6 +92,9 @@ export default function CloudMigrationSettings({ onClose }) {
     setSwitching(true)
     setSwitchError(null)
     try {
+      // Save cloud credentials for subscription/storage API calls
+      localStorage.setItem('exemem_api_url', apiUrl.trim())
+      localStorage.setItem('exemem_api_key', apiKey.trim())
       await systemClient.applySetup({
         storage: {
           type: 'exemem',
@@ -119,9 +168,80 @@ export default function CloudMigrationSettings({ onClose }) {
     )
   }
 
+  // Cloud mode: show storage tier info instead of migration form
+  if (isCloudMode && storageInfo) {
+    const pct = usagePercent(storageInfo.used_bytes, storageInfo.quota_bytes)
+    const barColor = pct > 90 ? 'bg-gruvbox-red' : pct > 80 ? 'bg-gruvbox-orange' : 'bg-gruvbox-green'
+    const isFree = storageInfo.plan === 'free'
+
+    return (
+      <div className="flex flex-col gap-6 w-full max-w-2xl text-gruvbox-bright p-4 border border-border rounded-md bg-surface shadow-md">
+        <h3 className="text-sm font-bold uppercase tracking-widest text-gruvbox-light">Cloud Storage</h3>
+
+        {/* Usage bar */}
+        <div className="flex flex-col gap-2">
+          <div className="flex justify-between text-xs text-gruvbox-dim">
+            <span>{formatBytes(storageInfo.used_bytes)} used</span>
+            <span>{formatBytes(storageInfo.quota_bytes)} total</span>
+          </div>
+          <div className="w-full h-2 bg-surface-elevated rounded-full overflow-hidden">
+            <div className={`h-full ${barColor} rounded-full transition-all`} style={{ width: `${Math.max(1, pct)}%` }} />
+          </div>
+          <div className="text-xs text-gruvbox-dim text-right">{pct.toFixed(1)}% used</div>
+        </div>
+
+        {/* Plan info */}
+        <div className="flex items-center justify-between p-4 border border-border rounded-md bg-surface-elevated">
+          <div>
+            <div className="text-sm font-bold text-gruvbox-bright">
+              {isFree ? 'Free Plan' : 'Paid Plan'}
+            </div>
+            <div className="text-xs text-gruvbox-dim mt-1">
+              {isFree
+                ? `1 GB backup storage included`
+                : `50 GB backup storage ($5/mo)`}
+            </div>
+          </div>
+          {isFree ? (
+            <button
+              onClick={handleUpgrade}
+              disabled={upgrading}
+              className="px-4 py-2 text-xs font-bold border border-gruvbox-green text-surface bg-gruvbox-green hover:bg-gruvbox-green/90 rounded-md transition-colors cursor-pointer disabled:opacity-50"
+            >
+              {upgrading ? 'Redirecting...' : 'Upgrade to 50 GB - $5/mo'}
+            </button>
+          ) : (
+            <button
+              onClick={handleManageSubscription}
+              className="px-4 py-2 text-xs font-bold border border-border text-gruvbox-dim hover:text-gruvbox-bright rounded-md transition-colors cursor-pointer"
+            >
+              Manage Subscription
+            </button>
+          )}
+        </div>
+
+        {pct > 80 && isFree && (
+          <div className="flex items-start gap-3 p-3 border border-gruvbox-orange bg-gruvbox-orange/5 rounded-md">
+            <span className="text-gruvbox-orange text-sm flex-shrink-0">!</span>
+            <p className="text-xs text-gruvbox-orange leading-relaxed">
+              You're running low on storage. Upgrade to the paid plan for 50 GB of backup storage.
+            </p>
+          </div>
+        )}
+
+        {error && (
+          <div className="flex items-start gap-3 p-3 border border-gruvbox-red bg-gruvbox-red/5 rounded-md">
+            <span className="text-gruvbox-red text-sm flex-shrink-0">!</span>
+            <p className="text-xs text-gruvbox-red leading-relaxed">{error}</p>
+          </div>
+        )}
+      </div>
+    )
+  }
+
   return (
     <div className="flex flex-col gap-6 w-full max-w-2xl text-gruvbox-bright p-4 border border-border rounded-md bg-surface shadow-md">
-      
+
       {/* Explanation Banner */}
       <div className="flex items-start gap-4 p-4 border border-gruvbox-blue bg-gruvbox-blue/5 rounded-md">
         <div className="text-gruvbox-blue mt-1 flex-shrink-0">
