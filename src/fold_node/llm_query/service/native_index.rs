@@ -679,9 +679,7 @@ impl LlmQueryService {
                 }
                 if let Some(arr) = data.as_array() {
                     if arr.is_empty() {
-                        return Err(
-                            "ingest_json 'data' array must not be empty".to_string()
-                        );
+                        return Err("ingest_json 'data' array must not be empty".to_string());
                     }
                 }
 
@@ -717,8 +715,7 @@ impl LlmQueryService {
                     Some(t) => t.clone(),
                     None => crate::ingestion::create_progress_tracker(None).await,
                 };
-                let progress_service =
-                    crate::ingestion::progress::ProgressService::new(tracker);
+                let progress_service = crate::ingestion::progress::ProgressService::new(tracker);
                 progress_service
                     .start_progress(progress_id.clone(), "agent".to_string())
                     .await;
