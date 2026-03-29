@@ -261,6 +261,8 @@ pub async fn apply_setup(
                 config.database = DatabaseConfig::Exemem {
                     api_url: api_url.clone(),
                     api_key: api_key.clone(),
+                    session_token: None,
+                    user_hash: None,
                 };
                 changes.push("storage (exemem)");
             }

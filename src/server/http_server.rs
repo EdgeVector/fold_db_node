@@ -3,9 +3,10 @@ use super::middleware::signature::SignatureVerificationMiddleware;
 use super::node_manager::NodeManager;
 use super::routes::log as log_routes;
 use super::routes::{
-    admin as admin_routes, config as config_routes, discovery as discovery_routes,
-    filesystem as filesystem_routes, query as query_routes, schema as schema_routes,
-    security as security_routes, system as system_routes,
+    admin as admin_routes, auth as auth_routes, config as config_routes,
+    discovery as discovery_routes, filesystem as filesystem_routes,
+    query as query_routes, schema as schema_routes, security as security_routes,
+    system as system_routes,
 };
 use super::static_assets::Asset;
 use crate::fold_node::llm_query;
@@ -297,7 +298,8 @@ impl FoldHttpServer {
                 .configure(Self::configure_discovery_routes)
                 .configure(Self::configure_trust_routes)
                 .configure(Self::configure_capability_routes)
-                .configure(Self::configure_remote_routes),
+                .configure(Self::configure_remote_routes)
+                .configure(Self::configure_auth_routes),
         );
     }
 
@@ -617,6 +619,32 @@ impl FoldHttpServer {
             web::scope("/remote")
                 .route("/query", web::post().to(remote_routes::remote_query))
                 .route("/node-info", web::get().to(remote_routes::node_info)),
+        );
+    }
+
+    fn configure_auth_routes(cfg: &mut web::ServiceConfig) {
+        cfg.service(
+            web::scope("/auth")
+                .route(
+                    "/magic-link/start",
+                    web::post().to(auth_routes::magic_link_start),
+                )
+                .route(
+                    "/magic-link/verify",
+                    web::post().to(auth_routes::magic_link_verify),
+                )
+                .route(
+                    "/credentials",
+                    web::get().to(auth_routes::get_credentials),
+                )
+                .route(
+                    "/credentials",
+                    web::post().to(auth_routes::store_credentials),
+                )
+                .route(
+                    "/credentials",
+                    web::delete().to(auth_routes::delete_credentials),
+                ),
         );
     }
 }
