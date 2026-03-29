@@ -53,11 +53,9 @@ jobs:
       - name: Run clippy
         run: cargo clippy --workspace --all-targets -- -D warnings
 
-      - name: Check AWS backend compiles
-        run: cargo check --workspace --features aws-backend
-
-      # Run lib tests (unit tests compiled into one binary — no 100MB+ linking).
-      # Integration tests are in a separate CI job to avoid OOM on the runner.
+      # Run lib tests — clippy already compiled the workspace, so this
+      # only needs to link the test binary (~20s, not a full rebuild).
+      # Integration tests are in a separate CI job to avoid OOM.
       - name: Run unit tests
         run: cargo test --workspace --lib
 

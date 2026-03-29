@@ -9,8 +9,8 @@
 
 #[cfg(target_os = "macos")]
 mod tests {
-    use fold_db_node::ingestion::apple_import::{content_hash, is_available};
     use fold_db_node::ingestion::apple_import::{calendar, notes, photos, reminders};
+    use fold_db_node::ingestion::apple_import::{content_hash, is_available};
     use serde_json::Value;
     use std::collections::HashSet;
 
@@ -277,7 +277,11 @@ mod tests {
             .iter()
             .map(|r| r["content_hash"].as_str().unwrap())
             .collect();
-        assert_eq!(hashes.len(), 3, "each event should have a unique content hash");
+        assert_eq!(
+            hashes.len(),
+            3,
+            "each event should have a unique content hash"
+        );
     }
 
     // =========================================================================
@@ -623,10 +627,12 @@ mod tests {
 
         // Verify calendar distribution
         let cal_counts: std::collections::HashMap<&str, usize> =
-            parsed.iter().fold(std::collections::HashMap::new(), |mut m, e| {
-                *m.entry(e.calendar.as_str()).or_default() += 1;
-                m
-            });
+            parsed
+                .iter()
+                .fold(std::collections::HashMap::new(), |mut m, e| {
+                    *m.entry(e.calendar.as_str()).or_default() += 1;
+                    m
+                });
         // 30 events across 4 calendars: 8, 8, 7, 7
         assert_eq!(cal_counts.len(), 4);
         for count in cal_counts.values() {
@@ -839,7 +845,10 @@ mod tests {
         let raw = "<<<REM_START>>>Task<<<SEP>>>List<<<SEP>>>false<<<SEP>>>none<<<SEP>>>not_a_number<<<REM_END>>>";
         let parsed = reminders::parse_output(raw).unwrap();
         assert_eq!(parsed.len(), 1);
-        assert_eq!(parsed[0].priority, 0, "invalid priority should default to 0");
+        assert_eq!(
+            parsed[0].priority, 0,
+            "invalid priority should default to 0"
+        );
     }
 
     // =========================================================================
@@ -877,7 +886,10 @@ mod tests {
         let parsed = calendar::parse_output(&raw).unwrap();
         assert_eq!(parsed.len(), 20);
 
-        let regular: Vec<_> = parsed.iter().filter(|e| !e.all_day && !e.recurring).collect();
+        let regular: Vec<_> = parsed
+            .iter()
+            .filter(|e| !e.all_day && !e.recurring)
+            .collect();
         let all_day: Vec<_> = parsed.iter().filter(|e| e.all_day).collect();
         let recurring: Vec<_> = parsed.iter().filter(|e| e.recurring).collect();
 
