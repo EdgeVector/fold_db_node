@@ -3,6 +3,7 @@ pub mod auth;
 pub mod common;
 pub mod config;
 pub mod discovery;
+pub mod feed;
 pub mod filesystem;
 pub mod log;
 pub mod query;

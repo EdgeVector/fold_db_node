@@ -1,0 +1,9 @@
+{
+  "name": "Photo",
+  "descriptive_name": "Photo Post",
+  "schema_type": "Range",
+  "key": {
+    "range_field": "timestamp"
+  },
+  "fields": ["photo_url", "caption", "author_name", "timestamp"]
+}
