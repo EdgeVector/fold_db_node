@@ -211,14 +211,37 @@ pub(crate) fn spawn_batch_coordinator(
             }
 
             // Mark completed if not already cancelled/failed
-            {
+            let batch_completed = {
                 let map_guard = map.lock().await;
                 if let Some(ctrl_arc) = map_guard.get(&batch_id) {
                     let mut ctrl = ctrl_arc.lock().await;
                     if ctrl.status == BatchStatus::Running {
                         ctrl.status = BatchStatus::Completed;
+                        true
+                    } else {
+                        false
                     }
+                } else {
+                    false
                 }
+            };
+
+            // Run interest detection after successful batch completion
+            if batch_completed {
+                let node_for_interests = node_arc.clone();
+                tokio::spawn(async move {
+                    if let Err(e) =
+                        crate::discovery::interests::run_interest_detection(&node_for_interests)
+                            .await
+                    {
+                        log_feature!(
+                            LogFeature::Ingestion,
+                            warn,
+                            "Interest detection after batch completion failed: {}",
+                            e
+                        );
+                    }
+                });
             }
 
             // Clean up the controller after a short delay so final status
