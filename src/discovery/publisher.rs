@@ -241,11 +241,23 @@ impl DiscoveryPublisher {
         category_filter: Option<String>,
         offset: Option<usize>,
     ) -> Result<Vec<DiscoverySearchResult>, String> {
+        self.search_with_threshold(query_embedding, top_k, category_filter, offset, None)
+            .await
+    }
+
+    pub async fn search_with_threshold(
+        &self,
+        query_embedding: Vec<f32>,
+        top_k: usize,
+        category_filter: Option<String>,
+        offset: Option<usize>,
+        similarity_threshold: Option<f32>,
+    ) -> Result<Vec<DiscoverySearchResult>, String> {
         let request = DiscoverySearchRequest {
             embedding: query_embedding,
             top_k,
             category_filter,
-            similarity_threshold: None,
+            similarity_threshold,
             offset,
         };
 
