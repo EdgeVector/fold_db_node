@@ -71,28 +71,28 @@ const client = () => getSharedClient();
 // --- Trust management ---
 
 export async function grantTrust(public_key: string, distance: number): Promise<void> {
-  const resp = await client().post<{ granted: boolean }>('/api/trust/grant', { public_key, distance });
+  const resp = await client().post<{ granted: boolean }>('/trust/grant', { public_key, distance });
   if (!resp.success) throw new Error(resp.error || 'Failed to grant trust');
 }
 
 export async function revokeTrust(public_key: string): Promise<void> {
-  const resp = await client().delete<{ revoked: boolean }>(`/api/trust/revoke/${encodeURIComponent(public_key)}`);
+  const resp = await client().delete<{ revoked: boolean }>(`/trust/revoke/${encodeURIComponent(public_key)}`);
   if (!resp.success) throw new Error(resp.error || 'Failed to revoke trust');
 }
 
 export async function listTrustGrants(): Promise<TrustGrantEntry[]> {
-  const resp = await client().get<TrustGrantsResponse>('/api/trust/grants');
+  const resp = await client().get<TrustGrantsResponse>('/trust/grants');
   if (!resp.success) throw new Error(resp.error || 'Failed to list trust grants');
   return resp.data?.grants ?? [];
 }
 
 export async function setTrustOverride(public_key: string, distance: number): Promise<void> {
-  const resp = await client().put<{ override_set: boolean }>('/api/trust/override', { public_key, distance });
+  const resp = await client().put<{ override_set: boolean }>('/trust/override', { public_key, distance });
   if (!resp.success) throw new Error(resp.error || 'Failed to set trust override');
 }
 
 export async function resolveTrust(public_key: string): Promise<number | null> {
-  const resp = await client().get<TrustResolveResponse>(`/api/trust/resolve/${encodeURIComponent(public_key)}`);
+  const resp = await client().get<TrustResolveResponse>(`/trust/resolve/${encodeURIComponent(public_key)}`);
   if (!resp.success) throw new Error(resp.error || 'Failed to resolve trust');
   return resp.data?.distance ?? null;
 }
@@ -105,7 +105,7 @@ export async function setFieldPolicy(
   policy: FieldAccessPolicy
 ): Promise<void> {
   const resp = await client().put<{ policy_set: boolean }>(
-    `/api/schema/${encodeURIComponent(schemaName)}/field/${encodeURIComponent(fieldName)}/policy`,
+    `/schema/${encodeURIComponent(schemaName)}/field/${encodeURIComponent(fieldName)}/policy`,
     { policy }
   );
   if (!resp.success) throw new Error(resp.error || 'Failed to set field policy');
@@ -119,7 +119,7 @@ export async function getFieldPolicy(
     schema_name: string;
     field_name: string;
     policy: FieldAccessPolicy | null;
-  }>(`/api/schema/${encodeURIComponent(schemaName)}/field/${encodeURIComponent(fieldName)}/policy`);
+  }>(`/schema/${encodeURIComponent(schemaName)}/field/${encodeURIComponent(fieldName)}/policy`);
   if (!resp.success) throw new Error(resp.error || 'Failed to get field policy');
   return resp.data?.policy ?? null;
 }
@@ -132,7 +132,7 @@ export async function getAllFieldPolicies(
   const resp = await client().get<{
     schema_name: string;
     field_policies: Record<string, FieldAccessPolicy | null>;
-  }>(`/api/schema/${encodeURIComponent(schemaName)}/policies`);
+  }>(`/schema/${encodeURIComponent(schemaName)}/policies`);
   if (!resp.success) throw new Error(resp.error || 'Failed to get field policies');
   return resp.data?.field_policies ?? {};
 }
@@ -141,7 +141,7 @@ export async function getAllFieldPolicies(
 
 export async function setPaymentGate(schemaName: string, gate: PaymentGate): Promise<void> {
   const resp = await client().put<{ payment_gate_set: boolean }>(
-    `/api/schema/${encodeURIComponent(schemaName)}/payment-gate`,
+    `/schema/${encodeURIComponent(schemaName)}/payment-gate`,
     { gate }
   );
   if (!resp.success) throw new Error(resp.error || 'Failed to set payment gate');
@@ -149,7 +149,7 @@ export async function setPaymentGate(schemaName: string, gate: PaymentGate): Pro
 
 export async function getPaymentGate(schemaName: string): Promise<PaymentGate | null> {
   const resp = await client().get<{ schema_name: string; payment_gate: PaymentGate | null }>(
-    `/api/schema/${encodeURIComponent(schemaName)}/payment-gate`
+    `/schema/${encodeURIComponent(schemaName)}/payment-gate`
   );
   if (!resp.success) throw new Error(resp.error || 'Failed to get payment gate');
   return resp.data?.payment_gate ?? null;
@@ -158,7 +158,7 @@ export async function getPaymentGate(schemaName: string): Promise<PaymentGate | 
 // --- Audit log ---
 
 export async function getAuditLog(limit: number = 100): Promise<AuditEvent[]> {
-  const resp = await client().get<AuditLogResponse>(`/api/trust/audit?limit=${limit}`);
+  const resp = await client().get<AuditLogResponse>(`/trust/audit?limit=${limit}`);
   if (!resp.success) throw new Error(resp.error || 'Failed to get audit log');
   return resp.data?.events ?? [];
 }
@@ -166,7 +166,7 @@ export async function getAuditLog(limit: number = 100): Promise<AuditEvent[]> {
 // --- Node info ---
 
 export async function getNodeInfo(): Promise<NodeInfoResponse> {
-  const resp = await client().get<NodeInfoResponse>('/api/remote/node-info');
+  const resp = await client().get<NodeInfoResponse>('/remote/node-info');
   if (!resp.success) throw new Error(resp.error || 'Failed to get node info');
   return resp.data!;
 }
@@ -180,7 +180,7 @@ export async function issueCapability(
   kind: 'Read' | 'Write',
   quota: number
 ): Promise<void> {
-  const resp = await client().post<{ issued: boolean }>('/api/capabilities/issue', {
+  const resp = await client().post<{ issued: boolean }>('/capabilities/issue', {
     schema_name,
     field_name,
     public_key,
@@ -195,7 +195,7 @@ export async function listCapabilities(
   fieldName: string
 ): Promise<CapabilityConstraint[]> {
   const resp = await client().get<CapabilityConstraint[]>(
-    `/api/capabilities/list/${encodeURIComponent(schemaName)}/${encodeURIComponent(fieldName)}`
+    `/capabilities/list/${encodeURIComponent(schemaName)}/${encodeURIComponent(fieldName)}`
   );
   if (!resp.success) throw new Error(resp.error || 'Failed to list capabilities');
   return resp.data ?? [];
