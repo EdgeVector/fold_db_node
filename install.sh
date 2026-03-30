@@ -1,10 +1,10 @@
 #!/bin/sh
 # FoldDB Installer
-# Usage: curl -fsSL https://raw.githubusercontent.com/shiba4life/fold_db/master/install.sh | sh
+# Usage: curl -fsSL https://raw.githubusercontent.com/EdgeVector/fold_db/master/install.sh | sh
 
 set -e
 
-REPO="shiba4life/fold_db"
+REPO="EdgeVector/fold_db"
 BINARIES="folddb_server folddb"
 
 # Detect OS

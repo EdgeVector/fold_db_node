@@ -5,8 +5,8 @@
 FoldDB is being open-sourced as a database protocol. The core database library (`fold_db`) stays open source. All application-layer code (server, ingestion, frontend, CLI, handlers) moves to `fold_db_node` (proprietary). Each step is a separate commit with tests passing.
 
 ## Two repos involved
-- **fold_db** — branch `mainline`, remote `origin` (github.com/shiba4life/fold_db.git)
-- **fold_db_node** — branch `main`, remote `origin` (github.com/shiba4life/fold_db_node.git)
+- **fold_db** — branch `mainline`, remote `origin` (github.com/EdgeVector/fold_db.git)
+- **fold_db_node** — branch `main`, remote `origin` (github.com/EdgeVector/fold_db_node.git)
 
 Changes alternate between repos. Each commit must leave that repo's tests passing.
 
