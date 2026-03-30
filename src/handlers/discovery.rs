@@ -917,17 +917,18 @@ pub async fn detect_interests(node: &FoldNode) -> HandlerResult<InterestProfile>
     let db_ops = db.get_db_ops();
     let metadata_store = db_ops.metadata_store().inner().clone();
 
-    let native_index_mgr = db_ops
-        .native_index_manager()
-        .ok_or_else(|| HandlerError::Internal("Native index not available".to_string()))?;
+    // Get all schemas and extract their field_interest_categories
+    let schemas: Vec<_> = db
+        .schema_manager()
+        .get_schemas()
+        .handler_err("get schemas")?
+        .into_values()
+        .collect();
 
-    let embedding_store = native_index_mgr.store().clone();
-    let embedder = native_index_mgr.embedder().clone();
-
-    // Drop the DB lock before doing the heavy work
+    // Drop the DB lock before doing the work
     drop(db);
 
-    let profile = interests::detect_interests(&*embedding_store, &*metadata_store, &*embedder)
+    let profile = interests::detect_interests_from_schemas(&schemas, &*metadata_store)
         .await
         .handler_err("detect interests")?;
 

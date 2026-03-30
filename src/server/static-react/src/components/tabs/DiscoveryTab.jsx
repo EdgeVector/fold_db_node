@@ -3,35 +3,20 @@ import { useApprovedSchemas } from '../../hooks/useApprovedSchemas.js'
 import { discoveryClient } from '../../api/clients/discoveryClient'
 import { toErrorMessage } from '../../utils/schemaUtils'
 
-/** Derive a category from schema classification metadata.
- *  Prefers field_data_classifications domains, falls back to schema name. */
+/** Derive a category from schema field_interest_categories.
+ *  Returns the most common interest category across the schema's fields,
+ *  falling back to schema name if no interest categories are assigned. */
 function inferCategory(schema) {
-  const domains = new Set()
-  if (schema.field_data_classifications) {
-    for (const cls of Object.values(schema.field_data_classifications)) {
-      if (cls?.data_domain) domains.add(cls.data_domain)
+  if (schema.field_interest_categories) {
+    const counts = {}
+    for (const cat of Object.values(schema.field_interest_categories)) {
+      counts[cat] = (counts[cat] || 0) + 1
     }
-  }
-  if (domains.size > 0) return [...domains].join(', ')
-
-  const tags = new Set()
-  if (schema.field_classifications) {
-    for (const fieldTags of Object.values(schema.field_classifications)) {
-      if (Array.isArray(fieldTags)) {
-        for (const tag of fieldTags) {
-          const parts = tag.split(':')
-          if (parts.length > 1) tags.add(parts[1])
-          else tags.add(tag)
-        }
-      }
-    }
-  }
-  if (tags.size > 0) {
-    const descriptive = [...tags].filter(t => !['word', 'number', 'date'].includes(t))
-    if (descriptive.length > 0) return descriptive.slice(0, 3).join(', ')
+    const sorted = Object.entries(counts).sort((a, b) => b[1] - a[1])
+    if (sorted.length > 0) return sorted[0][0]
   }
 
-  return schema.name?.replace(/([A-Z])/g, ' $1').trim().toLowerCase() || 'general'
+  return schema.descriptive_name || schema.name?.replace(/([A-Z])/g, ' $1').trim().toLowerCase() || 'general'
 }
 
 /** Group schemas by their inferred category. */
