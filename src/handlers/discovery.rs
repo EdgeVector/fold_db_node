@@ -943,7 +943,7 @@ pub async fn similar_profiles(
         };
 
         let results = match publisher
-            .search(centroid, 20, Some(cat_name.clone()), None)
+            .search_with_threshold(centroid, 20, Some(cat_name.clone()), None, Some(0.15))
             .await
         {
             Ok(r) => r,
