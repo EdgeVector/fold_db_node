@@ -218,7 +218,7 @@ function AgentTab() {
       if (images.length > 0) {
         addMessage('images', `${images.length} image(s)`, images);
       }
-      if (result.tool_calls.some(tc => tc.tool === 'ingest_files')) {
+      if (result.tool_calls.some(tc => ['ingest_files', 'ingest_json'].includes(tc.tool))) {
         dispatch(fetchSchemas());
       }
     }
