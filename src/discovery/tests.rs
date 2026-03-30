@@ -296,9 +296,15 @@ async fn test_detect_interests_from_schemas_aggregates_categories() {
         None,
         None,
     );
-    schema.field_interest_categories.insert("title".to_string(), "Photography".to_string());
-    schema.field_interest_categories.insert("camera".to_string(), "Photography".to_string());
-    schema.field_interest_categories.insert("album".to_string(), "Photography".to_string());
+    schema
+        .field_interest_categories
+        .insert("title".to_string(), "Photography".to_string());
+    schema
+        .field_interest_categories
+        .insert("camera".to_string(), "Photography".to_string());
+    schema
+        .field_interest_categories
+        .insert("album".to_string(), "Photography".to_string());
     // content_hash has no interest category (structural field)
 
     let schemas = vec![schema];
@@ -327,7 +333,9 @@ async fn test_detect_interests_preserves_toggle_state() {
         None,
         None,
     );
-    schema.field_interest_categories.insert("recipe".to_string(), "Cooking".to_string());
+    schema
+        .field_interest_categories
+        .insert("recipe".to_string(), "Cooking".to_string());
 
     let schemas = vec![schema.clone()];
     let profile = interests::detect_interests_from_schemas(&schemas, &*meta)

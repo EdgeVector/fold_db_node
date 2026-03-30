@@ -121,7 +121,12 @@ pub async fn detect_interests_from_schemas(
     // Preserve existing enabled/disabled state from previous profile
     let existing_profile = load_interest_profile(metadata_store).await?;
     let existing_enabled: HashMap<String, bool> = existing_profile
-        .map(|p| p.categories.into_iter().map(|c| (c.name, c.enabled)).collect())
+        .map(|p| {
+            p.categories
+                .into_iter()
+                .map(|c| (c.name, c.enabled))
+                .collect()
+        })
         .unwrap_or_default();
 
     // Build categories from field counts (no minimum threshold — schema service already filtered)
