@@ -539,15 +539,20 @@ pub async fn poll_and_decrypt_requests(
                 if let Ok(raw_entries) = embedding_store.scan_prefix(prefix.as_bytes()).await {
                     for (_key, value) in &raw_entries {
                         if let Ok(stored) = serde_json::from_slice::<serde_json::Value>(value) {
-                            if let Some(emb_arr) = stored.get("embedding").and_then(|e| e.as_array()) {
+                            if let Some(emb_arr) =
+                                stored.get("embedding").and_then(|e| e.as_array())
+                            {
                                 let embedding_bytes: Vec<u8> = emb_arr
                                     .iter()
                                     .filter_map(|v| v.as_f64().map(|f| f as f32))
                                     .flat_map(|f| f.to_le_bytes())
                                     .collect();
-                                let content_hash = crate::discovery::pseudonym::content_hash_bytes(&embedding_bytes);
+                                let content_hash = crate::discovery::pseudonym::content_hash_bytes(
+                                    &embedding_bytes,
+                                );
                                 pseudonyms.push(crate::discovery::pseudonym::derive_pseudonym(
-                                    master_key, &content_hash,
+                                    master_key,
+                                    &content_hash,
                                 ));
                             }
                         }
@@ -605,7 +610,12 @@ pub async fn poll_and_decrypt_requests(
         let payload = match connection::decrypt_connection_message(&secret, &encrypted_bytes) {
             Ok(p) => p,
             Err(e) => {
-                log::debug!("Failed to decrypt message {} for target {}: {}", msg.message_id, target, e);
+                log::debug!(
+                    "Failed to decrypt message {} for target {}: {}",
+                    msg.message_id,
+                    target,
+                    e
+                );
                 continue; // Not for us or corrupted
             }
         };
