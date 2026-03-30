@@ -512,30 +512,56 @@ pub async fn poll_and_decrypt_requests(
         .get_fold_db()
         .await
         .map_err(|e| HandlerError::Internal(format!("Failed to access database: {}", e)))?;
+    let db_ops = db.get_db_ops();
     let store = get_metadata_store(&db);
 
-    // Get our published pseudonyms from opt-in configs
+    // Get our published pseudonyms by scanning the native index — same derivation
+    // as the publisher uses when uploading: derive(master_key, SHA256(embedding_bytes)).
     let configs = config::list_opt_ins(&*store)
         .await
         .handler_err("list opt-ins")?;
 
-    // Derive pseudonyms we own (same derivation as in publisher)
-    // We need to check the native index for our actual pseudonyms
-    // For now, derive the sender pseudonym and check messages targeting it
     let our_pseudonyms: Vec<uuid::Uuid> = {
         let mut pseudonyms = Vec::new();
-        // Add our connection-sender pseudonym
+
+        // Add our connection-sender pseudonym (used by the connect handler as sender_pseudonym)
         let hash = crate::discovery::pseudonym::content_hash("connection-sender");
         pseudonyms.push(crate::discovery::pseudonym::derive_pseudonym(
             master_key, &hash,
         ));
-        // Add pseudonyms from opt-in configs
-        for cfg in &configs {
-            let hash = crate::discovery::pseudonym::content_hash(&cfg.schema_name);
-            pseudonyms.push(crate::discovery::pseudonym::derive_pseudonym(
-                master_key, &hash,
-            ));
+
+        // Add pseudonyms derived from actual published embeddings (same as publisher.rs)
+        let native_index_mgr = db_ops.native_index_manager();
+        if let Some(nim) = native_index_mgr {
+            let embedding_store = nim.store().clone();
+            for cfg in &configs {
+                let prefix = format!("emb:{}:", cfg.schema_name);
+                if let Ok(raw_entries) = embedding_store.scan_prefix(prefix.as_bytes()).await {
+                    for (_key, value) in &raw_entries {
+                        if let Ok(stored) = serde_json::from_slice::<serde_json::Value>(value) {
+                            if let Some(emb_arr) = stored.get("embedding").and_then(|e| e.as_array()) {
+                                let embedding_bytes: Vec<u8> = emb_arr
+                                    .iter()
+                                    .filter_map(|v| v.as_f64().map(|f| f as f32))
+                                    .flat_map(|f| f.to_le_bytes())
+                                    .collect();
+                                let content_hash = crate::discovery::pseudonym::content_hash_bytes(&embedding_bytes);
+                                pseudonyms.push(crate::discovery::pseudonym::derive_pseudonym(
+                                    master_key, &content_hash,
+                                ));
+                            }
+                        }
+                    }
+                }
+            }
         }
+
+        pseudonyms.sort();
+        pseudonyms.dedup();
+        // Cap pseudonyms to avoid excessively long URLs in the poll request.
+        // Each UUID is 36 chars + comma separator. At 1000 pseudonyms that's ~37KB,
+        // within typical URL limits for most HTTP servers.
+        pseudonyms.truncate(1000);
         pseudonyms
     };
 
@@ -545,9 +571,19 @@ pub async fn poll_and_decrypt_requests(
         }));
     }
 
-    // Poll messages targeting our pseudonyms
+    // Poll messages: if we have a reasonable number of pseudonyms, filter server-side.
+    // Otherwise poll all recent messages and filter client-side during decryption.
+    let pseudonym_filter = if our_pseudonyms.len() <= 100 {
+        Some(our_pseudonyms.as_slice())
+    } else {
+        log::info!(
+            "Too many pseudonyms ({}) for URL filter, polling all recent messages",
+            our_pseudonyms.len()
+        );
+        None
+    };
     let messages = publisher
-        .poll_messages(None, Some(&our_pseudonyms))
+        .poll_messages(None, pseudonym_filter)
         .await
         .handler_err("poll messages")?;
 
@@ -568,7 +604,10 @@ pub async fn poll_and_decrypt_requests(
 
         let payload = match connection::decrypt_connection_message(&secret, &encrypted_bytes) {
             Ok(p) => p,
-            Err(_) => continue, // Not for us or corrupted
+            Err(e) => {
+                log::debug!("Failed to decrypt message {} for target {}: {}", msg.message_id, target, e);
+                continue; // Not for us or corrupted
+            }
         };
 
         // Check if we already have this request stored
