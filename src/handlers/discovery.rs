@@ -400,12 +400,7 @@ pub async fn search(
     let offset = req.offset.map(|o| o.min(MAX_OFFSET));
 
     let results = publisher
-        .search(
-            query_embedding,
-            top_k,
-            req.category_filter.clone(),
-            offset,
-        )
+        .search(query_embedding, top_k, req.category_filter.clone(), offset)
         .await
         .handler_err("search discovery network")?;
 
