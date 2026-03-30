@@ -17,7 +17,7 @@
   "plugins": {
     "updater": {
       "endpoints": [
-        "https://github.com/shiba4life/fold_db_node/releases/latest/download/latest.json"
+        "https://github.com/EdgeVector/fold_db_node/releases/latest/download/latest.json"
       ],
       "pubkey": ""
     }

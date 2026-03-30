@@ -7,7 +7,7 @@
 use std::time::Duration;
 
 const GITHUB_RELEASES_URL: &str =
-    "https://api.github.com/repos/shiba4life/fold_db_node/releases/latest";
+    "https://api.github.com/repos/EdgeVector/fold_db_node/releases/latest";
 const CURRENT_VERSION: &str = env!("CARGO_PKG_VERSION");
 const CHECK_TIMEOUT: Duration = Duration::from_secs(3);
 
