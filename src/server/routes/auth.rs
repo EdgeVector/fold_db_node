@@ -255,8 +255,8 @@ async fn signed_register(data: &web::Data<AppState>) -> Result<serde_json::Value
     drop(node);
 
     // Decode base64 → hex (CLI register endpoint expects hex)
-    let public_key_hex = base64_to_hex(&public_key_b64)
-        .ok_or("Failed to decode node public key from base64")?;
+    let public_key_hex =
+        base64_to_hex(&public_key_b64).ok_or("Failed to decode node public key from base64")?;
 
     // Sign: "{public_key_hex}:{timestamp}"
     // Must match auth_service/src/cli/types.rs::verify_ed25519_signature()
@@ -284,8 +284,8 @@ async fn signed_register(data: &web::Data<AppState>) -> Result<serde_json::Value
         .await
         .map_err(|e| format!("Failed to read response: {}", e))?;
 
-    let json: serde_json::Value = serde_json::from_str(&text)
-        .map_err(|_| format!("Invalid JSON response: {}", text))?;
+    let json: serde_json::Value =
+        serde_json::from_str(&text).map_err(|_| format!("Invalid JSON response: {}", text))?;
 
     if !json.get("ok").and_then(|v| v.as_bool()).unwrap_or(false) {
         let error = json
