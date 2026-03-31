@@ -23,6 +23,13 @@ use std::collections::HashMap;
 #[cfg(feature = "ts-bindings")]
 use ts_rs::TS;
 
+/// Maximum number of results per search query.
+const MAX_TOP_K: usize = 100;
+/// Maximum offset for paginated results.
+const MAX_OFFSET: usize = 10_000;
+/// Maximum number of photos in a single moment scan request.
+const MAX_PHOTO_BATCH: usize = 1_000;
+
 // === Request types ===
 
 #[derive(Debug, Clone, Deserialize)]
@@ -301,6 +308,16 @@ pub async fn publish(
         }));
     }
 
+    let disabled_categories = match interests::load_interest_profile(&*metadata_store).await {
+        Ok(Some(profile)) => profile
+            .categories
+            .iter()
+            .filter(|c| !c.enabled)
+            .map(|c| c.name.clone())
+            .collect::<Vec<_>>(),
+        _ => Vec::new(),
+    };
+
     let native_index_mgr = db_ops
         .native_index_manager()
         .ok_or_else(|| HandlerError::Internal("Native index not available".to_string()))?;
@@ -319,7 +336,7 @@ pub async fn publish(
 
     for opt_in_config in &configs {
         match publisher
-            .publish_schema(opt_in_config, &*embedding_store)
+            .publish_schema(opt_in_config, &*embedding_store, &disabled_categories)
             .await
         {
             Ok(result) => {
@@ -379,13 +396,11 @@ pub async fn search(
         auth_token.to_string(),
     );
 
+    let top_k = req.top_k.unwrap_or(20).min(MAX_TOP_K);
+    let offset = req.offset.map(|o| o.min(MAX_OFFSET));
+
     let results = publisher
-        .search(
-            query_embedding,
-            req.top_k.unwrap_or(20),
-            req.category_filter.clone(),
-            req.offset,
-        )
+        .search(query_embedding, top_k, req.category_filter.clone(), offset)
         .await
         .handler_err("search discovery network")?;
 
@@ -1445,6 +1460,14 @@ pub async fn moment_scan(
         .await
         .map_err(|e| HandlerError::Internal(format!("Failed to access database: {}", e)))?;
     let store = get_metadata_store(&db);
+
+    if photo_metadata.len() > MAX_PHOTO_BATCH {
+        return Err(HandlerError::BadRequest(format!(
+            "Too many photos in batch: {} (max {})",
+            photo_metadata.len(),
+            MAX_PHOTO_BATCH
+        )));
+    }
 
     let opt_ins = moments::list_moment_opt_ins(&*store)
         .await

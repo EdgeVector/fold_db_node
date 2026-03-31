@@ -255,7 +255,12 @@ pub async fn sent_requests(state: web::Data<AppState>) -> impl Responder {
 }
 
 /// GET /api/discovery/requests — Legacy: Poll for incoming connection requests.
-pub async fn poll_requests(req: HttpRequest, _state: web::Data<AppState>) -> impl Responder {
+pub async fn poll_requests(req: HttpRequest, state: web::Data<AppState>) -> impl Responder {
+    let (_user_hash, _node) = match require_node_read(&state).await {
+        Ok(res) => res,
+        Err(response) => return response,
+    };
+
     let (url, key) = match get_discovery_config() {
         Ok(c) => c,
         Err(response) => return response,
@@ -273,7 +278,12 @@ pub async fn poll_requests(req: HttpRequest, _state: web::Data<AppState>) -> imp
 }
 
 /// GET /api/discovery/browse/categories — Browse available categories on the network.
-pub async fn browse_categories(req: HttpRequest, _state: web::Data<AppState>) -> impl Responder {
+pub async fn browse_categories(req: HttpRequest, state: web::Data<AppState>) -> impl Responder {
+    let (_user_hash, _node) = match require_node_read(&state).await {
+        Ok(res) => res,
+        Err(response) => return response,
+    };
+
     let (url, key) = match get_discovery_config() {
         Ok(c) => c,
         Err(response) => return response,

@@ -65,7 +65,18 @@ impl DiscoveryPublisher {
         &self,
         config: &DiscoveryOptIn,
         embedding_store: &dyn KvStore,
+        disabled_categories: &[String],
     ) -> Result<PublishResult, String> {
+        // Skip schemas whose category has been disabled in interest profile
+        if disabled_categories.iter().any(|c| c == &config.category) {
+            return Ok(PublishResult {
+                accepted: 0,
+                quarantined: 0,
+                total: 0,
+                skipped: 0,
+            });
+        }
+
         let prefix = format!("{}{}:", EMB_PREFIX, config.schema_name);
         let raw_entries = embedding_store
             .scan_prefix(prefix.as_bytes())
@@ -112,7 +123,13 @@ impl DiscoveryPublisher {
                         skipped += 1;
                         continue;
                     }
-                    FragmentDecision::Accept | FragmentDecision::SubmitForNetworkCheck => {}
+                    FragmentDecision::Accept => {}
+                    FragmentDecision::SubmitForNetworkCheck => {
+                        log::debug!(
+                            "Fragment for field '{}' passes local checks, submitting for network k-anonymity",
+                            field_name
+                        );
+                    }
                 }
             } else if privacy_class == FieldPrivacyClass::NeverPublish {
                 skipped += 1;
