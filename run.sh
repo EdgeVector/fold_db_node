@@ -303,6 +303,27 @@ if [ -f "$CONFIG_FILE" ]; then
     cp "$CONFIG_FILE" "${CONFIG_FILE}.backup"
 fi
 
+# If no explicit mode flag was given and saved config is Exemem, respect it
+if [ "$LOCAL_MODE" = false ] && [ "$EXEMEM_MODE" = false ] && [ -f "$CONFIG_FILE" ]; then
+    SAVED_DB_TYPE=$(python3 -c "import json; print(json.load(open('$CONFIG_FILE')).get('database',{}).get('type',''))" 2>/dev/null || echo "")
+    if [ "$SAVED_DB_TYPE" = "exemem" ]; then
+        echo "Detected saved Exemem config — preserving it (use --local to override)"
+        EXEMEM_MODE=true
+        # Read credentials from saved config so the EXEMEM_MODE branch doesn't fail on empty key
+        EXEMEM_API_KEY=$(python3 -c "import json; print(json.load(open('$CONFIG_FILE')).get('database',{}).get('api_key',''))" 2>/dev/null || echo "")
+        export EXEMEM_API_KEY
+        # Update schema service URL if --local-schema was passed
+        if [ "$LOCAL_SCHEMA" = true ]; then
+            python3 -c "
+import json
+with open('$CONFIG_FILE') as f: cfg = json.load(f)
+cfg['schema_service_url'] = 'http://127.0.0.1:9002'
+with open('$CONFIG_FILE', 'w') as f: json.dump(cfg, f, indent=2)
+" 2>/dev/null
+        fi
+    fi
+fi
+
 # Set up configuration based on mode
 if [ "$LOCAL_MODE" = true ]; then
     echo "Setting up LOCAL configuration (Sled storage)..."
