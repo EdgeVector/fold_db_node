@@ -10,6 +10,7 @@ set -e
 #
 # Options:
 #   --local          Use local Sled storage (default: cloud/DynamoDB)
+#   --exemem         Exemem cloud sync mode (local Sled + encrypted sync)
 #   --local-schema   Run local schema service (for offline development)
 #   --dev            Use dev schema service (default: prod)
 #   --reset-db       Reset database from test_db template
@@ -23,6 +24,7 @@ set -e
 #   ./run.sh --local                   # Local storage with global schema service
 #   ./run.sh --local --local-schema    # Fully offline development
 #   ./run.sh --local --empty-db        # Local with fresh database
+#   ./run.sh --exemem                  # Exemem cloud sync mode (requires EXEMEM_API_KEY)
 #######################################
 
 # ============================================================================
@@ -232,6 +234,7 @@ start_vite_dev() {
 # ============================================================================
 
 LOCAL_MODE=false
+EXEMEM_MODE=false
 LOCAL_SCHEMA=false
 DEV_MODE=false
 RESET_DB=false
@@ -244,6 +247,9 @@ for arg in "$@"; do
     case "$arg" in
         --local)
             LOCAL_MODE=true
+            ;;
+        --exemem)
+            EXEMEM_MODE=true
             ;;
         --local-schema)
             LOCAL_SCHEMA=true
@@ -321,6 +327,57 @@ if [ "$LOCAL_MODE" = true ]; then
 EOF
     CARGO_FEATURES=""
     SERVER_TIMEOUT=60
+elif [ "$EXEMEM_MODE" = true ]; then
+    echo "Setting up EXEMEM configuration (Sled + encrypted cloud sync)..."
+
+    if [ -z "$EXEMEM_API_KEY" ]; then
+        echo "ERROR: EXEMEM_API_KEY environment variable is required for --exemem mode."
+        echo "Set it in your shell profile or export it before running:"
+        echo "  export EXEMEM_API_KEY=your_api_key"
+        exit 1
+    fi
+
+    EXEMEM_API_URL="https://ygyu7ritx8.execute-api.us-west-2.amazonaws.com"
+    CONFIG_SCHEMA_URL="https://y0q3m6vk75.execute-api.us-west-2.amazonaws.com"
+
+    # Build optional JSON fields
+    if [ -n "$EXEMEM_SESSION_TOKEN" ]; then
+        SESSION_TOKEN_JSON="\"$EXEMEM_SESSION_TOKEN\""
+    else
+        SESSION_TOKEN_JSON="null"
+    fi
+
+    if [ -n "$EXEMEM_USER_HASH" ]; then
+        USER_HASH_JSON="\"$EXEMEM_USER_HASH\""
+    else
+        USER_HASH_JSON="null"
+    fi
+
+    cat > "$CONFIG_FILE" <<EOF
+{
+  "database": {
+    "type": "exemem",
+    "api_url": "$EXEMEM_API_URL",
+    "api_key": "$EXEMEM_API_KEY",
+    "session_token": $SESSION_TOKEN_JSON,
+    "user_hash": $USER_HASH_JSON
+  },
+  "storage_path": "data",
+  "default_trust_distance": 1,
+  "network_listen_address": "/ip4/0.0.0.0/tcp/0",
+  "security_config": {
+    "require_tls": false,
+    "encrypt_at_rest": false
+  },
+  "schema_service_url": "$CONFIG_SCHEMA_URL"
+}
+EOF
+    CARGO_FEATURES=""
+    SERVER_TIMEOUT=60
+
+    echo "Exemem API: $EXEMEM_API_URL"
+    echo "Session token: $([ -n "$EXEMEM_SESSION_TOKEN" ] && echo "configured" || echo "not set")"
+    echo "User hash: $([ -n "$EXEMEM_USER_HASH" ] && echo "configured" || echo "not set")"
 else
     echo "Setting up CLOUD configuration (DynamoDB storage)..."
 
@@ -429,9 +486,16 @@ echo ""
 echo "=========================================="
 echo "FoldDB Development Server Running"
 echo "=========================================="
-echo "Storage: $([ "$LOCAL_MODE" = true ] && echo "LOCAL (Sled)" || echo "CLOUD (DynamoDB)")"
+if [ "$LOCAL_MODE" = true ]; then
+    STORAGE_LABEL="LOCAL (Sled)"
+elif [ "$EXEMEM_MODE" = true ]; then
+    STORAGE_LABEL="EXEMEM (Sled + cloud sync)"
+else
+    STORAGE_LABEL="CLOUD (DynamoDB)"
+fi
+echo "Storage: $STORAGE_LABEL"
 echo "Schema Service: DEV - $SCHEMA_SERVICE_URL"
-[ "$LOCAL_MODE" = false ] && echo "AWS Region: $REGION"
+[ "$LOCAL_MODE" = false ] && [ "$EXEMEM_MODE" = false ] && echo "AWS Region: $REGION"
 echo "=========================================="
 
 # Start Vite dev server (foreground)
