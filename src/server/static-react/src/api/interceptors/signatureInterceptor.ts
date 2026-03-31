@@ -25,6 +25,8 @@ const EXEMPT_PATHS = [
   "/api/system/complete-path",
   "/api/security/",
   "/api/openapi.json",
+  "/api/trust/",
+  "/api/capabilities/",
 ];
 
 function isExemptPath(url: string): boolean {
