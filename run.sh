@@ -396,9 +396,24 @@ EOF
     CARGO_FEATURES=""
     SERVER_TIMEOUT=60
 
+    # Wire up discovery service (same API Gateway as Exemem)
+    export DISCOVERY_SERVICE_URL="${EXEMEM_API_URL}/api"
+
+    # Ensure node identity exists so we can derive the discovery master key
+    echo "Ensuring node identity..."
+    cargo run --quiet --bin ensure_identity > /dev/null 2>&1 || true
+
+    # Derive DISCOVERY_MASTER_KEY from node's private key (deterministic)
+    IDENTITY_FILE="config/node_identity.json"
+    if [ -f "$IDENTITY_FILE" ]; then
+        NODE_PRIV_KEY=$(python3 -c "import json; print(json.load(open('$IDENTITY_FILE'))['private_key'])" 2>/dev/null || echo "")
+        if [ -n "$NODE_PRIV_KEY" ]; then
+            export DISCOVERY_MASTER_KEY=$(printf '%s' "$NODE_PRIV_KEY" | shasum -a 256 | cut -d' ' -f1)
+        fi
+    fi
+
     echo "Exemem API: $EXEMEM_API_URL"
-    echo "Session token: $([ -n "$EXEMEM_SESSION_TOKEN" ] && echo "configured" || echo "not set")"
-    echo "User hash: $([ -n "$EXEMEM_USER_HASH" ] && echo "configured" || echo "not set")"
+    echo "Discovery: $([ -n "$DISCOVERY_MASTER_KEY" ] && echo "configured" || echo "no node identity yet")"
 else
     echo "Setting up CLOUD configuration (DynamoDB storage)..."
 

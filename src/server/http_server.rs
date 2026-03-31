@@ -152,6 +152,17 @@ impl FoldHttpServer {
             node_manager: self.node_manager.clone(),
         });
 
+        // Auto-refresh Exemem session token on startup if credentials exist in keychain.
+        // This ensures a fresh 24h token is available for discovery and API calls.
+        // Non-fatal: if refresh fails (no network, not registered), we log and continue.
+        if crate::keychain::has_credentials() {
+            log::info!("Refreshing Exemem session token on startup...");
+            match crate::server::routes::auth::refresh_session_token(&app_state).await {
+                Ok(_) => log::info!("Exemem session token refreshed successfully"),
+                Err(e) => log::warn!("Exemem session token refresh failed (non-fatal): {}", e),
+            }
+        }
+
         // Create upload storage data
         let upload_storage_data = web::Data::new(upload_storage.clone());
 

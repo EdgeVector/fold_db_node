@@ -204,90 +204,128 @@ pub async fn get_exemem_config() -> HttpResponse {
 
 /// POST /api/auth/register
 /// Register this node's public key with Exemem to create a cloud account.
-/// Uses the node's Ed25519 public key — no email required.
+/// Signs the request with the node's Ed25519 private key to prove key ownership.
+/// Idempotent: if already registered, returns a fresh session token.
 pub async fn register_with_exemem(data: web::Data<AppState>) -> HttpResponse {
-    // Get the node's public key (base64-encoded)
-    let (_user_hash, node_arc) = match require_node(&data).await {
-        Ok(res) => res,
-        Err(response) => return response,
-    };
+    match signed_register(&data).await {
+        Ok(json) => {
+            // Include the API URL in the response so frontend can use it
+            let mut response = json;
+            if let Some(obj) = response.as_object_mut() {
+                obj.insert(
+                    "api_url".to_string(),
+                    serde_json::Value::String(exemem_api_url()),
+                );
+            }
+            HttpResponse::Ok().json(response)
+        }
+        Err(e) => HttpResponse::InternalServerError().json(serde_json::json!({
+            "ok": false,
+            "error": e
+        })),
+    }
+}
+
+/// Refresh the session token by calling the signed register endpoint.
+/// The register endpoint is idempotent: for existing users with a valid
+/// signature, it returns a fresh session token + new API key.
+///
+/// Returns the new session token on success.
+pub async fn refresh_session_token(data: &web::Data<AppState>) -> Result<String, String> {
+    let json = signed_register(data).await?;
+
+    json.get("session_token")
+        .and_then(|v| v.as_str())
+        .map(|s| s.to_string())
+        .ok_or_else(|| "Missing session_token in register response".to_string())
+}
+
+/// Core signed register logic shared by register_with_exemem and refresh_session_token.
+///
+/// Signs "{public_key_hex}:{timestamp}" with the node's Ed25519 private key,
+/// sends to the Exemem CLI register endpoint, and stores credentials in keychain.
+async fn signed_register(data: &web::Data<AppState>) -> Result<serde_json::Value, String> {
+    // Get the node's keys
+    let (_user_hash, node_arc) = require_node(data)
+        .await
+        .map_err(|_| "Node not available".to_string())?;
     let node = node_arc.read().await;
     let public_key_b64 = node.get_node_public_key().to_string();
+    let private_key_b64 = node.get_node_private_key().to_string();
     drop(node);
 
-    // Decode base64 → bytes → hex (CLI register endpoint expects hex)
-    let public_key_hex = match base64_to_hex(&public_key_b64) {
-        Some(hex) => hex,
-        None => {
-            return HttpResponse::InternalServerError().json(serde_json::json!({
-                "ok": false,
-                "error": "Failed to decode node public key from base64"
-            }));
-        }
-    };
+    // Decode base64 → hex (CLI register endpoint expects hex)
+    let public_key_hex =
+        base64_to_hex(&public_key_b64).ok_or("Failed to decode node public key from base64")?;
 
-    // Call Exemem CLI register endpoint
+    // Sign: "{public_key_hex}:{timestamp}"
+    // Must match auth_service/src/cli/types.rs::verify_ed25519_signature()
+    let timestamp = chrono::Utc::now().timestamp();
+    let payload = format!("{}:{}", public_key_hex, timestamp);
+    let signature_b64 = sign_payload(&private_key_b64, &payload)?;
+
+    // Call Exemem CLI register endpoint with signature
     let client = reqwest::Client::new();
     let url = format!("{}/api/auth/cli/register", exemem_api_url());
 
-    match client
+    let resp = client
         .post(&url)
-        .json(&serde_json::json!({ "public_key": public_key_hex }))
+        .json(&serde_json::json!({
+            "public_key": public_key_hex,
+            "timestamp": timestamp,
+            "signature": signature_b64
+        }))
         .send()
         .await
-    {
-        Ok(resp) => {
-            let status = resp.status();
-            match resp.text().await {
-                Ok(text) => {
-                    let json: serde_json::Value = serde_json::from_str(&text)
-                        .unwrap_or(serde_json::json!({"ok": false, "error": text}));
+        .map_err(|e| format!("Failed to connect to Exemem API: {}", e))?;
 
-                    // Store credentials in keychain on success
-                    if json.get("ok").and_then(|v| v.as_bool()).unwrap_or(false) {
-                        if let (Some(user_hash), Some(session_token), Some(api_key)) = (
-                            json.get("user_hash").and_then(|v| v.as_str()),
-                            json.get("session_token").and_then(|v| v.as_str()),
-                            json.get("api_key").and_then(|v| v.as_str()),
-                        ) {
-                            let creds = keychain::ExememCredentials {
-                                user_hash: user_hash.to_string(),
-                                session_token: session_token.to_string(),
-                                api_key: api_key.to_string(),
-                                encryption_key: String::new(),
-                            };
-                            if let Err(e) = keychain::store_credentials(&creds) {
-                                log::warn!("Failed to store credentials in keychain: {}", e);
-                            }
-                        }
-                    }
+    let text = resp
+        .text()
+        .await
+        .map_err(|e| format!("Failed to read response: {}", e))?;
 
-                    // Include the API URL in the response so frontend can use it
-                    let mut response = json.clone();
-                    if let Some(obj) = response.as_object_mut() {
-                        obj.insert(
-                            "api_url".to_string(),
-                            serde_json::Value::String(exemem_api_url()),
-                        );
-                    }
+    let json: serde_json::Value =
+        serde_json::from_str(&text).map_err(|_| format!("Invalid JSON response: {}", text))?;
 
-                    HttpResponse::build(
-                        actix_web::http::StatusCode::from_u16(status.as_u16())
-                            .unwrap_or(actix_web::http::StatusCode::INTERNAL_SERVER_ERROR),
-                    )
-                    .json(response)
-                }
-                Err(e) => HttpResponse::BadGateway().json(serde_json::json!({
-                    "ok": false,
-                    "error": format!("Failed to read response: {}", e)
-                })),
-            }
-        }
-        Err(e) => HttpResponse::BadGateway().json(serde_json::json!({
-            "ok": false,
-            "error": format!("Failed to connect to Exemem API: {}", e)
-        })),
+    if !json.get("ok").and_then(|v| v.as_bool()).unwrap_or(false) {
+        let error = json
+            .get("error")
+            .and_then(|v| v.as_str())
+            .unwrap_or("Unknown error");
+        return Err(format!("Register failed: {}", error));
     }
+
+    // Store credentials in keychain on success
+    if let (Some(user_hash), Some(session_token), Some(api_key)) = (
+        json.get("user_hash").and_then(|v| v.as_str()),
+        json.get("session_token").and_then(|v| v.as_str()),
+        json.get("api_key").and_then(|v| v.as_str()),
+    ) {
+        let creds = keychain::ExememCredentials {
+            user_hash: user_hash.to_string(),
+            session_token: session_token.to_string(),
+            api_key: api_key.to_string(),
+            encryption_key: String::new(),
+        };
+        if let Err(e) = keychain::store_credentials(&creds) {
+            log::warn!("Failed to store credentials in keychain: {}", e);
+        }
+    }
+
+    Ok(json)
+}
+
+/// Sign a payload with the node's Ed25519 private key.
+/// Returns the base64-encoded signature.
+fn sign_payload(private_key_b64: &str, payload: &str) -> Result<String, String> {
+    use base64::Engine;
+    let key_bytes = base64::engine::general_purpose::STANDARD
+        .decode(private_key_b64)
+        .map_err(|e| format!("Failed to decode private key: {}", e))?;
+    let key_pair = fold_db::security::Ed25519KeyPair::from_secret_key(&key_bytes)
+        .map_err(|e| format!("Failed to create key pair: {}", e))?;
+    let signature = key_pair.sign(payload.as_bytes());
+    Ok(fold_db::security::KeyUtils::signature_to_base64(&signature))
 }
 
 /// Decode a base64 string to hex. Returns None on invalid base64.
