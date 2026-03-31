@@ -55,16 +55,39 @@ export function isHashRangeFieldsShape(maybeData) {
 }
 
 /**
- * Extracts the underlying data object whether caller passed results or results.data
+ * Transform an array of query results [{fields, key: {hash, range}, metadata}]
+ * into the nested hash->range->fields shape expected by the structured view.
+ * @param {Array} results
+ * @returns {object}
+ */
+function transformQueryResultsArray(results) {
+  const nested = {};
+  for (const record of results) {
+    const hash = record.key?.hash || '_default';
+    const range = record.key?.range || '_default';
+    if (!nested[hash]) nested[hash] = {};
+    nested[hash][range] = record.fields || {};
+  }
+  return nested;
+}
+
+/**
+ * Extracts the underlying data object whether caller passed results or results.data.
+ * Also handles the array-of-records format returned by queries by transforming it
+ * into the nested hash->range->fields shape.
  * @param {unknown} maybeData
  * @returns {any}
  */
 export function extractData(maybeData) {
-  if (maybeData && isPlainObject(maybeData) && Object.prototype.hasOwnProperty.call(maybeData, 'data')) {
-    // @ts-ignore
-    return maybeData.data;
+  let data = maybeData;
+  if (data && isPlainObject(data) && Object.prototype.hasOwnProperty.call(data, 'data')) {
+    data = data.data;
   }
-  return maybeData;
+  // Transform array-of-records format to nested hash->range->fields
+  if (Array.isArray(data) && data.length > 0 && data[0] && isPlainObject(data[0]) && ('key' in data[0] || 'fields' in data[0])) {
+    return transformQueryResultsArray(data);
+  }
+  return data;
 }
 
 /**
@@ -146,7 +169,7 @@ export default {
   getSortedHashKeys,
   getSortedRangeKeys,
   getFieldsAt,
-  sliceKeys
+  sliceKeys,
 };
 
 

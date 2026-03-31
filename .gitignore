@@ -79,3 +79,5 @@ vendor/
 
 # ML cache
 .fastembed_cache/
+snapshots/
+.claude/worktrees/

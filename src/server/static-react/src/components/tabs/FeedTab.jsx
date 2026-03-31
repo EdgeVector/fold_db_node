@@ -43,7 +43,6 @@ export default function FeedTab() {
     setError(null)
     try {
       const response = await apiClient.post(API_ENDPOINTS.SOCIAL_FEED, {
-        schema_name: 'Photo',
         friend_hashes: hashes,
         limit: 50,
       })
@@ -68,7 +67,7 @@ export default function FeedTab() {
         <h2 className="text-lg font-semibold text-primary">Social Feed</h2>
         {fetched && (
           <span className="text-sm text-secondary">
-            {items.length} of {total} photos
+            {items.length} of {total} items
           </span>
         )}
       </div>
@@ -109,7 +108,7 @@ export default function FeedTab() {
       {/* Empty state */}
       {fetched && !loading && items.length === 0 && !error && (
         <div className="card p-8 text-center">
-          <p className="text-secondary text-sm">No photos in your feed.</p>
+          <p className="text-secondary text-sm">No items in your feed.</p>
         </div>
       )}
 

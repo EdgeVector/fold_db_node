@@ -16,8 +16,9 @@ use std::collections::HashSet;
 /// Request for the social feed endpoint.
 #[derive(Debug, Clone, Deserialize)]
 pub struct FeedRequest {
-    /// Schema to query for photo data (e.g. "Photo")
-    pub schema_name: String,
+    /// Schema to query (optional — if omitted, queries all schemas)
+    #[serde(default)]
+    pub schema_name: Option<String>,
     /// Public keys of friends whose data to include
     pub friend_hashes: Vec<String>,
     /// Maximum number of results (default 50)
@@ -37,11 +38,11 @@ handler_response! {
 /// Default feed limit
 const DEFAULT_FEED_LIMIT: usize = 50;
 
-/// Get the social photo feed for a user.
+/// Get the social feed for a user.
 ///
-/// Queries the specified schema for records authored by users in `friend_hashes`,
-/// filters to only publicly-readable fields, and returns results sorted by
-/// timestamp (range key) descending.
+/// When `schema_name` is provided, queries only that schema. When omitted,
+/// queries all registered schemas. Filters to records authored by friends
+/// with publicly-readable fields, sorted by timestamp descending.
 pub async fn get_feed(
     request: FeedRequest,
     user_hash: &str,
@@ -61,118 +62,115 @@ pub async fn get_feed(
         ));
     }
 
-    // Get schema to inspect field access policies
-    let (all_fields, public_fields) = {
-        let db = processor
-            .get_db_public()
-            .await
-            .handler_err("acquire database lock")?;
-        let schema = db
-            .schema_manager
-            .get_schema(&request.schema_name)
-            .await
-            .handler_err("get schema")?
-            .ok_or_else(|| {
-                crate::handlers::response::HandlerError::NotFound(format!(
-                    "Schema '{}' not found",
-                    request.schema_name
-                ))
-            })?;
-
-        let all_fields: Vec<String> = schema.fields.clone().unwrap_or_default();
-        let public_fields: HashSet<String> = schema
-            .runtime_fields
-            .iter()
-            .filter(|(_, field)| {
-                use fold_db::schema::types::field::Field;
-                match &field.common().access_policy {
-                    // No policy = legacy behavior, allow read
-                    None => true,
-                    // Has policy: check if publicly readable (any trust distance)
-                    Some(policy) => policy.trust_distance.can_read(u64::MAX),
-                }
-            })
-            .map(|(name, _)| name.clone())
-            .collect();
-
-        (all_fields, public_fields)
+    // Determine which schemas to query
+    let schema_names: Vec<String> = match &request.schema_name {
+        Some(name) if !name.is_empty() => vec![name.clone()],
+        _ => {
+            // Query all registered schemas
+            let schemas = processor.list_schemas().await.handler_err("list schemas")?;
+            schemas.into_iter().map(|s| s.schema.name).collect()
+        }
     };
 
-    if public_fields.is_empty() {
-        return Ok(ApiResponse::success_with_user(
-            FeedResponse {
-                items: vec![],
-                total: 0,
-            },
-            user_hash,
-        ));
-    }
+    let mut all_items = Vec::new();
 
-    // Query all fields (we need metadata from all for author filtering),
-    // sort descending by range key (timestamp)
-    let query = Query {
-        schema_name: request.schema_name.clone(),
-        fields: all_fields,
-        filter: None,
-        as_of: None,
-        rehydrate_depth: None,
-        sort_order: Some(SortOrder::Desc),
-        value_filters: None,
-    };
+    for schema_name in &schema_names {
+        // Get schema to inspect field access policies
+        let (all_fields, public_fields) = {
+            let db = processor
+                .get_db_public()
+                .await
+                .handler_err("acquire database lock")?;
+            let schema = match db.schema_manager.get_schema(schema_name).await {
+                Ok(Some(s)) => s,
+                // Skip schemas that don't exist or fail to load
+                _ => continue,
+            };
 
-    let result_map = processor
-        .execute_query_map(query)
-        .await
-        .handler_err("execute feed query")?;
+            let all_fields: Vec<String> = schema.fields.clone().unwrap_or_default();
+            let public_fields: HashSet<String> = schema
+                .runtime_fields
+                .iter()
+                .filter(|(_, field)| {
+                    use fold_db::schema::types::field::Field;
+                    match &field.common().access_policy {
+                        None => true,
+                        Some(policy) => policy.trust_distance.can_read(u64::MAX),
+                    }
+                })
+                .map(|(name, _)| name.clone())
+                .collect();
 
-    let records = records_from_field_map(&result_map);
-
-    // Sort records by range key descending
-    let mut sorted_records: Vec<_> = records.into_iter().collect();
-    sorted_records.sort_by(|(key_a, _), (key_b, _)| {
-        let range_a = key_a.range.as_deref().unwrap_or("");
-        let range_b = key_b.range.as_deref().unwrap_or("");
-        range_b.cmp(range_a) // descending
-    });
-
-    // Filter by author and format response
-    let mut items = Vec::new();
-    for (key, record) in &sorted_records {
-        // Determine the author from any field's source_pub_key in metadata
-        let author = record
-            .metadata
-            .values()
-            .find_map(|meta| meta.source_pub_key.as_deref());
-
-        let author = match author {
-            Some(a) if friends.contains(a) => a.to_string(),
-            // Skip records not authored by a friend (or with unknown author)
-            _ => continue,
+            (all_fields, public_fields)
         };
 
-        // Build fields map with only public fields
-        let mut filtered_fields = serde_json::Map::new();
-        for (field_name, value) in &record.fields {
-            if public_fields.contains(field_name) {
-                filtered_fields.insert(field_name.clone(), value.clone());
-            }
+        if public_fields.is_empty() {
+            continue;
         }
 
-        let timestamp = key.range.clone().unwrap_or_default();
+        let query = Query {
+            schema_name: schema_name.clone(),
+            fields: all_fields,
+            filter: None,
+            as_of: None,
+            rehydrate_depth: None,
+            sort_order: Some(SortOrder::Desc),
+            value_filters: None,
+        };
 
-        items.push(serde_json::json!({
-            "key": key,
-            "fields": filtered_fields,
-            "author": author,
-            "timestamp": timestamp,
-        }));
+        let result_map = match processor.execute_query_map(query).await {
+            Ok(m) => m,
+            // Skip schemas that fail to query
+            Err(_) => continue,
+        };
+
+        let records = records_from_field_map(&result_map);
+
+        for (key, record) in records {
+            let author = record
+                .metadata
+                .values()
+                .find_map(|meta| meta.source_pub_key.as_deref());
+
+            let author = match author {
+                Some(a) if friends.contains(a) => a.to_string(),
+                _ => continue,
+            };
+
+            let mut filtered_fields = serde_json::Map::new();
+            for (field_name, value) in &record.fields {
+                if public_fields.contains(field_name) {
+                    filtered_fields.insert(field_name.clone(), value.clone());
+                }
+            }
+
+            let timestamp = key.range.clone().unwrap_or_default();
+
+            all_items.push(serde_json::json!({
+                "key": key,
+                "fields": filtered_fields,
+                "author": author,
+                "timestamp": timestamp,
+                "schema_name": schema_name,
+            }));
+        }
     }
 
-    let total = items.len();
-    items.truncate(limit);
+    // Sort all items by timestamp descending
+    all_items.sort_by(|a, b| {
+        let ts_a = a["timestamp"].as_str().unwrap_or("");
+        let ts_b = b["timestamp"].as_str().unwrap_or("");
+        ts_b.cmp(ts_a)
+    });
+
+    let total = all_items.len();
+    all_items.truncate(limit);
 
     Ok(ApiResponse::success_with_user(
-        FeedResponse { items, total },
+        FeedResponse {
+            items: all_items,
+            total,
+        },
         user_hash,
     ))
 }

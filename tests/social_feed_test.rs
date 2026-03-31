@@ -115,7 +115,7 @@ async fn test_basic_feed_returns_friends_photos_sorted_desc() {
     .await;
 
     let request = FeedRequest {
-        schema_name: "Photo".to_string(),
+        schema_name: Some("Photo".to_string()),
         friend_hashes: vec!["friend_a".to_string(), "friend_b".to_string()],
         limit: None,
     };
@@ -182,7 +182,7 @@ async fn test_feed_filters_out_non_friends() {
     .await;
 
     let request = FeedRequest {
-        schema_name: "Photo".to_string(),
+        schema_name: Some("Photo".to_string()),
         friend_hashes: vec!["friend_a".to_string(), "friend_b".to_string()],
         limit: None,
     };
@@ -220,7 +220,7 @@ async fn test_empty_friends_returns_empty_feed() {
     .await;
 
     let request = FeedRequest {
-        schema_name: "Photo".to_string(),
+        schema_name: Some("Photo".to_string()),
         friend_hashes: vec![],
         limit: None,
     };
@@ -251,7 +251,7 @@ async fn test_feed_respects_limit() {
     }
 
     let request = FeedRequest {
-        schema_name: "Photo".to_string(),
+        schema_name: Some("Photo".to_string()),
         friend_hashes: vec!["friend_a".to_string()],
         limit: Some(2),
     };
@@ -322,7 +322,7 @@ async fn test_feed_strips_non_public_fields() {
     .await;
 
     let request = FeedRequest {
-        schema_name: "Photo".to_string(),
+        schema_name: Some("Photo".to_string()),
         friend_hashes: vec!["friend_a".to_string()],
         limit: None,
     };
@@ -351,19 +351,20 @@ async fn test_feed_strips_non_public_fields() {
 }
 
 #[tokio::test(flavor = "multi_thread")]
-async fn test_feed_nonexistent_schema_returns_error() {
+async fn test_feed_nonexistent_schema_returns_empty() {
     let (node, _tmp) = setup_node().await;
 
     let request = FeedRequest {
-        schema_name: "NonExistent".to_string(),
+        schema_name: Some("NonExistent".to_string()),
         friend_hashes: vec!["friend_a".to_string()],
         limit: None,
     };
 
     let result = fold_db_node::handlers::feed::get_feed(request, "test_user", &node).await;
 
-    assert!(
-        result.is_err(),
-        "Should return error for nonexistent schema"
-    );
+    // Nonexistent schemas are skipped gracefully, returning empty results
+    let response = result.expect("Should succeed with empty results");
+    let data = response.data.expect("Should have data");
+    assert_eq!(data.items.len(), 0);
+    assert_eq!(data.total, 0);
 }
