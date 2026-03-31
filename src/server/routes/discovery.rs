@@ -33,15 +33,22 @@ fn get_discovery_config() -> Result<(String, Vec<u8>), HttpResponse> {
     Ok((url, key))
 }
 
-/// Extract the auth token from the DISCOVERY_AUTH_TOKEN env var or the
-/// incoming request's Authorization header.
+/// Extract the auth token from the OS keychain (primary), DISCOVERY_AUTH_TOKEN
+/// env var (fallback), or the incoming request's Authorization header (last resort).
 fn get_auth_token(req: &HttpRequest) -> Result<String, HttpResponse> {
-    // First check env var (for server-side automated publishing)
+    // 1. Try keychain first (where register/refresh store the token)
+    if let Ok(Some(creds)) = crate::keychain::load_credentials() {
+        if !creds.session_token.is_empty() {
+            return Ok(creds.session_token);
+        }
+    }
+
+    // 2. Fall back to env var (for backward compat / CI)
     if let Ok(token) = std::env::var("DISCOVERY_AUTH_TOKEN") {
         return Ok(token);
     }
 
-    // Fall back to incoming request's Authorization header
+    // 3. Fall back to incoming request's Authorization header
     let auth = req
         .headers()
         .get("Authorization")
@@ -52,10 +59,30 @@ fn get_auth_token(req: &HttpRequest) -> Result<String, HttpResponse> {
     auth.ok_or_else(|| {
         HttpResponse::Unauthorized().json(serde_json::json!({
             "ok": false,
-            "error": "Missing auth token. Set DISCOVERY_AUTH_TOKEN or pass Authorization: Bearer <token>.",
+            "error": "No auth token available. Register with Exemem first (POST /api/auth/register).",
             "code": "AUTH_REQUIRED"
         }))
     })
+}
+
+/// Check if a discovery handler error looks like a 401/auth failure.
+fn is_auth_error(err: &str) -> bool {
+    err.contains("401") || err.contains("Unauthorized") || err.contains("unauthorized")
+}
+
+/// Try to refresh the session token via signed register, then return the new token.
+/// Returns None if refresh is not possible (no node, no exemem API, etc.).
+async fn try_refresh_token(state: &web::Data<AppState>) -> Option<String> {
+    match crate::server::routes::auth::refresh_session_token(state).await {
+        Ok(token) => {
+            log::info!("Discovery auth: refreshed session token after 401");
+            Some(token)
+        }
+        Err(e) => {
+            log::warn!("Discovery auth: token refresh failed: {}", e);
+            None
+        }
+    }
 }
 
 /// GET /api/discovery/opt-ins — List all discovery opt-in configs.
@@ -133,6 +160,15 @@ pub async fn publish(req: HttpRequest, state: web::Data<AppState>) -> impl Respo
 
     match discovery_handlers::publish(&node, &url, &auth_token, &key).await {
         Ok(response) => HttpResponse::Ok().json(response),
+        Err(e) if is_auth_error(&e.to_string()) => {
+            if let Some(new_token) = try_refresh_token(&state).await {
+                match discovery_handlers::publish(&node, &url, &new_token, &key).await {
+                    Ok(response) => return HttpResponse::Ok().json(response),
+                    Err(e) => return handler_error_to_response(e),
+                }
+            }
+            handler_error_to_response(e)
+        }
         Err(e) => handler_error_to_response(e),
     }
 }
@@ -160,6 +196,15 @@ pub async fn search(
 
     match discovery_handlers::search(&body, &node, &url, &auth_token, &key).await {
         Ok(response) => HttpResponse::Ok().json(response),
+        Err(e) if is_auth_error(&e.to_string()) => {
+            if let Some(new_token) = try_refresh_token(&state).await {
+                match discovery_handlers::search(&body, &node, &url, &new_token, &key).await {
+                    Ok(response) => return HttpResponse::Ok().json(response),
+                    Err(e) => return handler_error_to_response(e),
+                }
+            }
+            handler_error_to_response(e)
+        }
         Err(e) => handler_error_to_response(e),
     }
 }
@@ -187,6 +232,15 @@ pub async fn connect(
 
     match discovery_handlers::connect(&body, &node, &url, &auth_token, &key).await {
         Ok(response) => HttpResponse::Ok().json(response),
+        Err(e) if is_auth_error(&e.to_string()) => {
+            if let Some(new_token) = try_refresh_token(&state).await {
+                match discovery_handlers::connect(&body, &node, &url, &new_token, &key).await {
+                    Ok(response) => return HttpResponse::Ok().json(response),
+                    Err(e) => return handler_error_to_response(e),
+                }
+            }
+            handler_error_to_response(e)
+        }
         Err(e) => handler_error_to_response(e),
     }
 }
@@ -278,6 +332,7 @@ pub async fn poll_requests(req: HttpRequest, state: web::Data<AppState>) -> impl
 }
 
 /// GET /api/discovery/browse/categories — Browse available categories on the network.
+/// Retries once with a refreshed token on 401.
 pub async fn browse_categories(req: HttpRequest, state: web::Data<AppState>) -> impl Responder {
     let (_user_hash, _node) = match require_node_read(&state).await {
         Ok(res) => res,
@@ -296,6 +351,16 @@ pub async fn browse_categories(req: HttpRequest, state: web::Data<AppState>) -> 
 
     match discovery_handlers::browse_categories(&url, &auth_token, &key).await {
         Ok(response) => HttpResponse::Ok().json(response),
+        Err(e) if is_auth_error(&e.to_string()) => {
+            // Try refreshing the token and retrying once
+            if let Some(new_token) = try_refresh_token(&state).await {
+                match discovery_handlers::browse_categories(&url, &new_token, &key).await {
+                    Ok(response) => return HttpResponse::Ok().json(response),
+                    Err(e) => return handler_error_to_response(e),
+                }
+            }
+            handler_error_to_response(e)
+        }
         Err(e) => handler_error_to_response(e),
     }
 }
