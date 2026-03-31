@@ -258,10 +258,7 @@ pub async fn get_audit_log(
             let events = op.get_audit_log(limit).await.handler_err("get audit log")?;
             let count = events.as_array().map_or(0, |a| a.len());
             Ok(ApiResponse::success_with_user(
-                AuditLogResponse {
-                    events,
-                    count,
-                },
+                AuditLogResponse { events, count },
                 user_hash,
             ))
         }
