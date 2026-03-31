@@ -767,6 +767,14 @@ impl FoldHttpServer {
                 .route(
                     "/credentials",
                     web::delete().to(auth_routes::delete_credentials),
+                )
+                .route(
+                    "/exemem-config",
+                    web::get().to(auth_routes::get_exemem_config),
+                )
+                .route(
+                    "/register",
+                    web::post().to(auth_routes::register_with_exemem),
                 ),
         );
     }

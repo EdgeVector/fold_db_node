@@ -1,27 +1,37 @@
 import { useState } from 'react'
-import { migrateToCloud } from '../../api/clients/systemClient'
+import { systemClient } from '../../api/clients/systemClient'
 
 export default function CloudBackupStep({ onNext, onSkip }) {
-  const [apiUrl, setApiUrl] = useState('https://api.exemem.com')
-  const [apiKey, setApiKey] = useState('')
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState(null)
   const [success, setSuccess] = useState(false)
 
   const handleEnable = async () => {
-    if (!apiKey.trim()) {
-      setError('API key is required')
-      return
-    }
     setLoading(true)
     setError(null)
     try {
-      const resp = await migrateToCloud(apiUrl, apiKey)
-      if (resp.success) {
-        setSuccess(true)
-      } else {
-        setError(resp.data?.message || 'Failed to enable cloud backup')
+      // Register this node's public key with Exemem (one-click, no email)
+      const resp = await fetch('/api/auth/register', { method: 'POST' })
+      const data = await resp.json()
+
+      if (!data.ok) {
+        throw new Error(data.error || 'Registration failed')
       }
+
+      // Store cloud credentials for subscription client
+      localStorage.setItem('exemem_api_url', data.api_url)
+      localStorage.setItem('exemem_api_key', data.api_key)
+
+      // Switch database to Exemem mode
+      await systemClient.applySetup({
+        storage: {
+          type: 'exemem',
+          api_url: data.api_url,
+          api_key: data.api_key,
+        }
+      })
+
+      setSuccess(true)
     } catch (e) {
       setError(e?.message || String(e))
     } finally {
@@ -56,33 +66,8 @@ export default function CloudBackupStep({ onNext, onSkip }) {
       <p className="text-primary mb-1">Enable encrypted cloud backup to sync your data across devices.</p>
       <p className="text-xs text-secondary mb-4">
         Your data is encrypted before leaving your device. The local database remains your primary store.
+        You get 1 GB of free storage to start.
       </p>
-
-      <div className="space-y-3">
-        <div>
-          <p className="label">Cloud API URL</p>
-          <input
-            type="text"
-            value={apiUrl}
-            onChange={(e) => setApiUrl(e.target.value)}
-            className="input"
-            placeholder="https://api.exemem.com"
-          />
-        </div>
-        <div>
-          <p className="label">API Key</p>
-          <input
-            type="password"
-            value={apiKey}
-            onChange={(e) => setApiKey(e.target.value)}
-            className="input"
-            placeholder="Your Exemem API key"
-          />
-          <p className="text-xs text-secondary mt-1">
-            Don't have an account? You can set this up later in Settings.
-          </p>
-        </div>
-      </div>
 
       {error && (
         <p className="text-gruvbox-red text-sm mt-3">{error}</p>
@@ -91,7 +76,7 @@ export default function CloudBackupStep({ onNext, onSkip }) {
       <div className="flex gap-2 mt-4">
         <button
           onClick={handleEnable}
-          disabled={loading || !apiKey.trim()}
+          disabled={loading}
           className="btn-primary flex-1 text-center"
         >
           {loading ? 'Enabling...' : 'Enable Cloud Backup'}

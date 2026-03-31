@@ -1,6 +1,5 @@
 import { useState } from 'react'
 import { applySetup } from '../api/clients/systemClient'
-import EmailSignupFlow from './EmailSignupFlow'
 
 // Gruvbox-warm palette matching the rest of the app
 const colors = {
@@ -19,7 +18,7 @@ const colors = {
 export default function DatabaseSetupScreen({ onComplete }) {
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState(null)
-  const [showEmailSignup, setShowEmailSignup] = useState(false)
+
 
   const handleLocalSetup = async () => {
     setLoading(true)
@@ -55,15 +54,28 @@ export default function DatabaseSetupScreen({ onComplete }) {
     }
   }
 
-  const handleEmailSignupSuccess = async (credentials) => {
+  const handleCloudSetup = async () => {
     setLoading(true)
     setError(null)
     try {
+      // Register this node's public key with Exemem (one-click, no email)
+      const resp = await fetch('/api/auth/register', { method: 'POST' })
+      const data = await resp.json()
+
+      if (!data.ok) {
+        throw new Error(data.error || 'Registration failed')
+      }
+
+      // Store cloud credentials for subscription client
+      localStorage.setItem('exemem_api_url', data.api_url)
+      localStorage.setItem('exemem_api_key', data.api_key)
+
+      // Switch database to Exemem mode
       const response = await applySetup({
         storage: {
           type: 'exemem',
-          api_url: 'https://api.exemem.com',
-          api_key: credentials.api_key,
+          api_url: data.api_url,
+          api_key: data.api_key,
         },
       })
       if (response.success) {
@@ -76,48 +88,6 @@ export default function DatabaseSetupScreen({ onComplete }) {
     } finally {
       setLoading(false)
     }
-  }
-
-  if (showEmailSignup) {
-    return (
-      <div style={{
-        position: 'fixed', top: 0, left: 0, width: '100%', height: '100%',
-        background: colors.bg, zIndex: 1000,
-        display: 'flex', alignItems: 'center', justifyContent: 'center',
-        fontFamily: "'IBM Plex Mono', monospace", color: colors.text,
-      }}>
-        <div style={{ maxWidth: '400px', width: '90%' }}>
-          <h1 style={{
-            fontSize: '24px', fontWeight: 700, color: colors.textBright,
-            marginBottom: '8px', textAlign: 'center',
-          }}>
-            Exemem Cloud
-          </h1>
-          <p style={{ fontSize: '14px', color: colors.dim, marginBottom: '24px', textAlign: 'center' }}>
-            Sign in or create an account
-          </p>
-          <div style={{
-            background: colors.bgElevated,
-            border: `1px solid ${colors.border}`,
-            padding: '24px',
-          }}>
-            <EmailSignupFlow
-              onSuccess={handleEmailSignupSuccess}
-              onCancel={() => setShowEmailSignup(false)}
-            />
-          </div>
-          {error && (
-            <div style={{
-              marginTop: '16px', padding: '12px',
-              background: `${colors.red}15`, border: `1px solid ${colors.red}`,
-              fontSize: '13px', color: colors.red,
-            }}>
-              {error}
-            </div>
-          )}
-        </div>
-      </div>
-    )
   }
 
   return (
@@ -173,7 +143,7 @@ export default function DatabaseSetupScreen({ onComplete }) {
 
           {/* Exemem Cloud Card */}
           <button
-            onClick={() => setShowEmailSignup(true)}
+            onClick={handleCloudSetup}
             disabled={loading}
             style={{
               background: colors.bgElevated, border: `1px solid ${colors.border}`,
