@@ -33,6 +33,15 @@ import {
   selectViewMode,
 } from '../../store/aiQuerySlice';
 
+/** Unwrap FoldDB typed values like { String: "foo" } to plain primitives */
+function unwrap(val) {
+  if (val == null) return val;
+  if (typeof val !== 'object') return val;
+  const keys = Object.keys(val);
+  if (keys.length === 1) return val[keys[0]];
+  return val;
+}
+
 function LlmQueryTab({ onResult }) {
   // Redux state and dispatch
   const dispatch = useAppDispatch();
@@ -214,21 +223,24 @@ function LlmQueryTab({ onResult }) {
       const sorted = [...records].sort((a, b) => {
         const fa = a.fields || a;
         const fb = b.fields || b;
-        return (fa.timestamp || '').localeCompare(fb.timestamp || '');
+        return String(unwrap(fa.timestamp) || '').localeCompare(String(unwrap(fb.timestamp) || ''));
       });
 
       const messages = [];
       for (const record of sorted) {
-        const fields = record.fields || record;
-        const timestamp = fields.timestamp || new Date().toISOString();
+        const raw = record.fields || record;
+        const timestamp = unwrap(raw.timestamp) || new Date().toISOString();
+        const query = unwrap(raw.query);
+        const answer = unwrap(raw.answer);
+        const toolCallsJson = unwrap(raw.tool_calls_json);
 
-        if (fields.query) {
-          messages.push({ type: 'user', content: fields.query, timestamp });
+        if (query) {
+          messages.push({ type: 'user', content: query, timestamp });
         }
 
-        if (fields.tool_calls_json) {
+        if (toolCallsJson) {
           try {
-            const toolCalls = JSON.parse(fields.tool_calls_json);
+            const toolCalls = JSON.parse(toolCallsJson);
             if (Array.isArray(toolCalls) && toolCalls.length > 0) {
               messages.push({
                 type: 'system',
@@ -247,13 +259,13 @@ function LlmQueryTab({ onResult }) {
           }
         }
 
-        if (fields.answer) {
-          messages.push({ type: 'system', content: fields.answer, timestamp });
+        if (answer) {
+          messages.push({ type: 'system', content: answer, timestamp });
         }
 
-        if (fields.tool_calls_json) {
+        if (toolCallsJson) {
           try {
-            const toolCalls = JSON.parse(fields.tool_calls_json);
+            const toolCalls = JSON.parse(toolCallsJson);
             const images = extractImagesFromToolCalls(toolCalls);
             if (images.length > 0) {
               messages.push({ type: 'images', content: `${images.length} image(s)`, data: images, timestamp });
