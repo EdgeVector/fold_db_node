@@ -16,9 +16,8 @@ impl OperationProcessor {
     pub async fn load_trust_graph(&self) -> Result<serde_json::Value, SchemaError> {
         let db = self.get_db().await.map_err(to_schema_err)?;
         let graph = db.db_ops.load_trust_graph().await?;
-        serde_json::to_value(&graph).map_err(|e| {
-            SchemaError::InvalidData(format!("Failed to serialize trust graph: {e}"))
-        })
+        serde_json::to_value(&graph)
+            .map_err(|e| SchemaError::InvalidData(format!("Failed to serialize trust graph: {e}")))
     }
 
     pub async fn grant_trust(
@@ -180,8 +179,7 @@ impl OperationProcessor {
         let db = self.get_db().await.map_err(to_schema_err)?;
         let log = db.db_ops.load_audit_log().await?;
         let recent = log.recent(limit);
-        serde_json::to_value(recent).map_err(|e| {
-            SchemaError::InvalidData(format!("Failed to serialize audit log: {e}"))
-        })
+        serde_json::to_value(recent)
+            .map_err(|e| SchemaError::InvalidData(format!("Failed to serialize audit log: {e}")))
     }
 }
