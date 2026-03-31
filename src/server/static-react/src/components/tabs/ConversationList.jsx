@@ -8,6 +8,15 @@
 import { useState, useEffect, useCallback } from 'react';
 import { mutationClient } from '../../api/clients/mutationClient';
 
+/** Unwrap FoldDB typed values like { String: "foo" } to plain primitives */
+function unwrap(val) {
+  if (val == null) return val;
+  if (typeof val !== 'object') return val;
+  const keys = Object.keys(val);
+  if (keys.length === 1) return val[keys[0]];
+  return val;
+}
+
 function ConversationList({ onSelectConversation, onNewConversation }) {
   const [sessions, setSessions] = useState([]);
   const [isLoading, setIsLoading] = useState(true);
@@ -39,9 +48,9 @@ function ConversationList({ onSelectConversation, onNewConversation }) {
       const grouped = {};
       for (const record of records) {
         const fields = record.fields || record;
-        const sessionId = fields.session_id;
-        const timestamp = fields.timestamp;
-        const query = fields.query;
+        const sessionId = unwrap(fields.session_id);
+        const timestamp = unwrap(fields.timestamp);
+        const query = unwrap(fields.query);
 
         if (!sessionId) continue;
 
@@ -64,7 +73,7 @@ function ConversationList({ onSelectConversation, onNewConversation }) {
       });
 
       // Sort sessions by lastTimestamp descending (most recent first)
-      summaries.sort((a, b) => b.lastTimestamp.localeCompare(a.lastTimestamp));
+      summaries.sort((a, b) => String(b.lastTimestamp).localeCompare(String(a.lastTimestamp)));
 
       setSessions(summaries);
     } catch (err) {
