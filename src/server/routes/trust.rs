@@ -255,11 +255,12 @@ pub async fn get_audit_log(
     let limit = query.limit.unwrap_or(100);
     handler_result_to_response(
         async {
-            let _log = op.get_audit_log(limit).await.handler_err("get audit log")?;
+            let events = op.get_audit_log(limit).await.handler_err("get audit log")?;
+            let count = events.as_array().map_or(0, |a| a.len());
             Ok(ApiResponse::success_with_user(
                 AuditLogResponse {
-                    events: serde_json::json!([]),
-                    count: 0,
+                    events,
+                    count,
                 },
                 user_hash,
             ))
