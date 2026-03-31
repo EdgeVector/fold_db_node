@@ -81,7 +81,7 @@ export async function revokeTrust(public_key: string): Promise<void> {
 }
 
 export async function listTrustGrants(): Promise<TrustGrantEntry[]> {
-  const resp = await client().get<TrustGrantsResponse>('/trust/grants');
+  const resp = await client().get<TrustGrantsResponse>('/trust/grants', { cacheable: false });
   if (!resp.success) throw new Error(resp.error || 'Failed to list trust grants');
   return resp.data?.grants ?? [];
 }
