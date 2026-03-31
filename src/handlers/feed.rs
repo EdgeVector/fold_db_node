@@ -67,10 +67,7 @@ pub async fn get_feed(
         Some(name) if !name.is_empty() => vec![name.clone()],
         _ => {
             // Query all registered schemas
-            let schemas = processor
-                .list_schemas()
-                .await
-                .handler_err("list schemas")?;
+            let schemas = processor.list_schemas().await.handler_err("list schemas")?;
             schemas.into_iter().map(|s| s.schema.name).collect()
         }
     };

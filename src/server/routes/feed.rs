@@ -27,10 +27,7 @@ pub async fn get_feed(
         LogFeature::HttpServer,
         info,
         "get_feed: schema={}, friends={}",
-        request_inner
-            .schema_name
-            .as_deref()
-            .unwrap_or("(all)"),
+        request_inner.schema_name.as_deref().unwrap_or("(all)"),
         request_inner.friend_hashes.len()
     );
 
