@@ -265,20 +265,94 @@ async fn test_toggle_nonexistent_category_errors() {
     assert!(result.is_err());
 }
 
-#[cfg(feature = "test-utils")]
 #[tokio::test]
-async fn test_empty_embedding_store_returns_empty_profile() {
-    let (emb, meta) = make_interest_stores().await;
+async fn test_empty_schemas_returns_empty_profile() {
+    let (_emb, meta) = make_interest_stores().await;
 
-    let embedder = MockEmbeddingModel;
-
-    let profile = interests::detect_interests(&*emb, &*meta, &embedder)
+    let schemas: Vec<fold_db::schema::types::Schema> = vec![];
+    let profile = interests::detect_interests_from_schemas(&schemas, &*meta)
         .await
         .unwrap();
 
     assert!(profile.categories.is_empty());
     assert_eq!(profile.total_embeddings_scanned, 0);
     assert_eq!(profile.unmatched_count, 0);
+}
+
+#[tokio::test]
+async fn test_detect_interests_from_schemas_aggregates_categories() {
+    let (_emb, meta) = make_interest_stores().await;
+
+    let mut schema = fold_db::schema::types::Schema::new(
+        "test_photos".to_string(),
+        fold_db::schema::types::schema::DeclarativeSchemaType::Single,
+        None,
+        Some(vec![
+            "title".to_string(),
+            "camera".to_string(),
+            "album".to_string(),
+            "content_hash".to_string(),
+        ]),
+        None,
+        None,
+    );
+    schema
+        .field_interest_categories
+        .insert("title".to_string(), "Photography".to_string());
+    schema
+        .field_interest_categories
+        .insert("camera".to_string(), "Photography".to_string());
+    schema
+        .field_interest_categories
+        .insert("album".to_string(), "Photography".to_string());
+    // content_hash has no interest category (structural field)
+
+    let schemas = vec![schema];
+    let profile = interests::detect_interests_from_schemas(&schemas, &*meta)
+        .await
+        .unwrap();
+
+    assert_eq!(profile.categories.len(), 1);
+    assert_eq!(profile.categories[0].name, "Photography");
+    assert_eq!(profile.categories[0].count, 3);
+    assert_eq!(profile.total_embeddings_scanned, 4);
+    assert_eq!(profile.unmatched_count, 1);
+    assert!(profile.categories[0].enabled);
+}
+
+#[tokio::test]
+async fn test_detect_interests_preserves_toggle_state() {
+    let (_emb, meta) = make_interest_stores().await;
+
+    // First detection
+    let mut schema = fold_db::schema::types::Schema::new(
+        "test".to_string(),
+        fold_db::schema::types::schema::DeclarativeSchemaType::Single,
+        None,
+        Some(vec!["recipe".to_string()]),
+        None,
+        None,
+    );
+    schema
+        .field_interest_categories
+        .insert("recipe".to_string(), "Cooking".to_string());
+
+    let schemas = vec![schema.clone()];
+    let profile = interests::detect_interests_from_schemas(&schemas, &*meta)
+        .await
+        .unwrap();
+    assert!(profile.categories[0].enabled);
+
+    // Toggle off
+    interests::toggle_interest_category(&*meta, "Cooking", false)
+        .await
+        .unwrap();
+
+    // Re-detect — should preserve disabled state
+    let profile = interests::detect_interests_from_schemas(&schemas, &*meta)
+        .await
+        .unwrap();
+    assert!(!profile.categories[0].enabled);
 }
 
 #[tokio::test]

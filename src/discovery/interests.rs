@@ -1,5 +1,5 @@
-use fold_db::db_operations::native_index::cosine_similarity;
 use fold_db::db_operations::native_index::Embedder;
+use fold_db::llm_registry::prompts::classification::INTEREST_CATEGORIES;
 use fold_db::storage::traits::KvStore;
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
@@ -7,16 +7,17 @@ use std::sync::Arc;
 
 const PROFILE_KEY: &str = "discovery:interests:profile";
 const CENTROID_KEY_PREFIX: &str = "discovery:interests:centroids:v";
-const SEED_VERSION: u32 = 1;
-const MIN_CATEGORY_COUNT: usize = 3;
-const SIMILARITY_THRESHOLD: f32 = 0.25;
-const EMB_PREFIX: &str = "emb:";
+
+/// Centroid cache version — bump when INTEREST_CATEGORIES changes to invalidate cache.
+const CENTROID_VERSION: u32 = 2;
 
 /// A detected interest category with match statistics.
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 pub struct InterestCategory {
     pub name: String,
     pub count: usize,
+    /// Average similarity is no longer computed from embeddings.
+    /// Retained for API compatibility; set to 1.0 for schema-sourced categories.
     pub avg_similarity: f32,
     pub enabled: bool,
 }
@@ -37,218 +38,8 @@ struct CachedCentroids {
     centroids: Vec<(String, Vec<f32>)>,
 }
 
-/// Deserialized embedding from the KvStore (mirrors fold_db's StoredEmbedding).
-#[derive(Deserialize)]
-struct StoredEmbedding {
-    #[serde(default)]
-    pub embedding: Vec<f32>,
-}
-
-// ~25 seed categories with descriptive phrases for embedding-based classification.
-const SEED_CATEGORIES: &[(&str, &[&str])] = &[
-    (
-        "Photography",
-        &[
-            "camera settings aperture shutter speed ISO",
-            "photo composition lighting portrait landscape",
-            "editing photos retouching lightroom",
-        ],
-    ),
-    (
-        "Cooking",
-        &[
-            "recipe ingredients cooking instructions kitchen",
-            "baking bread pastry dessert cake",
-            "meal prep dinner planning seasoning spices",
-        ],
-    ),
-    (
-        "Running",
-        &[
-            "marathon training pace miles distance",
-            "running shoes jogging trail 5K 10K",
-            "race time splits cadence stride",
-        ],
-    ),
-    (
-        "Software Engineering",
-        &[
-            "programming code function variable algorithm",
-            "software architecture API design patterns",
-            "debugging testing deployment git pull request",
-        ],
-    ),
-    (
-        "Music",
-        &[
-            "guitar piano drums instrument playing",
-            "song lyrics melody chord progression",
-            "concert band album recording studio",
-        ],
-    ),
-    (
-        "Travel",
-        &[
-            "flight hotel vacation itinerary trip",
-            "passport visa international travel abroad",
-            "sightseeing tourist destination explore city",
-        ],
-    ),
-    (
-        "Fitness",
-        &[
-            "workout exercise gym strength training",
-            "yoga stretching flexibility mobility",
-            "weightlifting bench press squat deadlift",
-        ],
-    ),
-    (
-        "Reading",
-        &[
-            "book novel author fiction nonfiction",
-            "reading list recommendation review chapter",
-            "literature story narrative plot character",
-        ],
-    ),
-    (
-        "Gaming",
-        &[
-            "video game console controller gameplay",
-            "strategy RPG multiplayer online match",
-            "game level quest achievement score",
-        ],
-    ),
-    (
-        "Finance",
-        &[
-            "investment stock portfolio dividend market",
-            "budget savings retirement planning funds",
-            "crypto bitcoin blockchain trading exchange",
-        ],
-    ),
-    (
-        "Gardening",
-        &[
-            "plants seeds soil compost mulch",
-            "flowers garden vegetables herbs growing",
-            "pruning watering fertilizer harvest season",
-        ],
-    ),
-    (
-        "Art & Design",
-        &[
-            "painting drawing sketch illustration canvas",
-            "graphic design typography color palette",
-            "sculpture ceramics creative artwork gallery",
-        ],
-    ),
-    (
-        "Parenting",
-        &[
-            "children kids family parenting childcare",
-            "baby toddler school education milestone",
-            "activities playtime bedtime routine",
-        ],
-    ),
-    (
-        "Health & Wellness",
-        &[
-            "meditation mindfulness mental health therapy",
-            "nutrition diet vitamins supplements",
-            "sleep hygiene stress management self care",
-        ],
-    ),
-    (
-        "Sports",
-        &[
-            "basketball football soccer baseball hockey",
-            "team score game championship league",
-            "athlete competition season playoffs tournament",
-        ],
-    ),
-    (
-        "Movies & TV",
-        &[
-            "film movie director actor scene cinema",
-            "TV series episode streaming show season",
-            "documentary thriller comedy drama genre",
-        ],
-    ),
-    (
-        "Science",
-        &[
-            "experiment hypothesis research data analysis",
-            "physics chemistry biology evolution",
-            "scientific journal discovery laboratory",
-        ],
-    ),
-    (
-        "Writing",
-        &[
-            "essay article blog post draft editing",
-            "creative writing story narrative prose",
-            "publishing manuscript journal memoir",
-        ],
-    ),
-    (
-        "Fashion",
-        &[
-            "clothing outfit style wardrobe trend",
-            "fashion designer brand collection runway",
-            "accessories shoes jewelry handbag",
-        ],
-    ),
-    (
-        "Home Improvement",
-        &[
-            "renovation remodel paint flooring tile",
-            "DIY tools hardware plumbing electrical",
-            "furniture decor interior design layout",
-        ],
-    ),
-    (
-        "Pets",
-        &[
-            "dog cat pet veterinarian animal",
-            "pet food training grooming health",
-            "puppy kitten adoption shelter care",
-        ],
-    ),
-    (
-        "Automotive",
-        &[
-            "car engine maintenance oil change repair",
-            "driving road trip vehicle mileage",
-            "electric vehicle hybrid fuel efficiency",
-        ],
-    ),
-    (
-        "Productivity",
-        &[
-            "task management calendar scheduling planning",
-            "goal setting time management priorities",
-            "workflow automation efficiency habits",
-        ],
-    ),
-    (
-        "Social Media",
-        &[
-            "post followers engagement likes comments",
-            "content creator influencer platform brand",
-            "tweet instagram tiktok share viral",
-        ],
-    ),
-    (
-        "Education",
-        &[
-            "course lecture homework assignment exam",
-            "university college degree major class",
-            "learning tutorial certification study",
-        ],
-    ),
-];
-
 /// Public access to cached category centroids for use by similar-profiles matching.
+/// Centroids are computed from the canonical INTEREST_CATEGORIES vocabulary.
 pub async fn get_centroids(
     metadata_store: &dyn KvStore,
     embedder: &dyn Embedder,
@@ -258,12 +49,13 @@ pub async fn get_centroids(
 
 /// Compute or load cached category centroids.
 ///
-/// Each centroid is the average of the embedded seed phrases for that category.
+/// Each centroid is the embedding of the category name itself.
+/// Used by similar_profiles to search the discovery network per category.
 async fn get_or_compute_centroids(
     metadata_store: &dyn KvStore,
     embedder: &dyn Embedder,
 ) -> Result<Vec<(String, Vec<f32>)>, String> {
-    let cache_key = format!("{}{}", CENTROID_KEY_PREFIX, SEED_VERSION);
+    let cache_key = format!("{}{}", CENTROID_KEY_PREFIX, CENTROID_VERSION);
 
     // Try loading cached centroids
     if let Ok(Some(bytes)) = metadata_store.get(cache_key.as_bytes()).await {
@@ -274,20 +66,14 @@ async fn get_or_compute_centroids(
         }
     }
 
-    // Compute centroids from seed phrases
-    let mut centroids = Vec::with_capacity(SEED_CATEGORIES.len());
+    // Compute centroids from category names
+    let mut centroids = Vec::with_capacity(INTEREST_CATEGORIES.len());
 
-    for (name, phrases) in SEED_CATEGORIES {
-        let mut phrase_embeddings = Vec::with_capacity(phrases.len());
-        for phrase in *phrases {
-            let emb = embedder
-                .embed_text(phrase)
-                .map_err(|e| format!("Failed to embed seed phrase: {}", e))?;
-            phrase_embeddings.push(emb);
-        }
-
-        let centroid = average_vectors(&phrase_embeddings);
-        centroids.push((name.to_string(), centroid));
+    for name in INTEREST_CATEGORIES {
+        let emb = embedder
+            .embed_text(name)
+            .map_err(|e| format!("Failed to embed category '{}': {}", name, e))?;
+        centroids.push((name.to_string(), emb));
     }
 
     // Cache for future runs
@@ -303,88 +89,57 @@ async fn get_or_compute_centroids(
     Ok(centroids)
 }
 
-/// Average a set of vectors element-wise.
-fn average_vectors(vecs: &[Vec<f32>]) -> Vec<f32> {
-    if vecs.is_empty() {
-        return Vec::new();
-    }
-    let dim = vecs[0].len();
-    let n = vecs.len() as f32;
-    let mut avg = vec![0.0f32; dim];
-    for v in vecs {
-        for (i, val) in v.iter().enumerate() {
-            avg[i] += val;
-        }
-    }
-    for val in &mut avg {
-        *val /= n;
-    }
-    avg
-}
-
-/// Core detection: classify all embeddings in the store against seed centroids.
-pub async fn detect_interests(
-    embedding_store: &dyn KvStore,
+/// Detect interests from approved schemas' `field_interest_categories`.
+///
+/// Instead of scanning embeddings and classifying against seed centroids,
+/// this reads the schema-service-assigned interest categories from each
+/// approved schema and aggregates field counts per category.
+pub async fn detect_interests_from_schemas(
+    schemas: &[fold_db::schema::types::Schema],
     metadata_store: &dyn KvStore,
-    embedder: &dyn Embedder,
 ) -> Result<InterestProfile, String> {
-    let centroids = get_or_compute_centroids(metadata_store, embedder).await?;
-
-    // Scan all embeddings
-    let raw_entries = embedding_store
-        .scan_prefix(EMB_PREFIX.as_bytes())
-        .await
-        .map_err(|e| format!("Failed to scan embeddings: {}", e))?;
-
-    let mut category_stats: HashMap<String, (usize, f32)> = HashMap::new();
-    let mut total_scanned = 0usize;
+    let mut category_counts: HashMap<String, usize> = HashMap::new();
+    let mut total_fields = 0usize;
     let mut unmatched = 0usize;
 
-    for (_key, value) in &raw_entries {
-        let stored: StoredEmbedding = match serde_json::from_slice(value) {
-            Ok(s) => s,
-            Err(_) => continue,
-        };
-
-        if stored.embedding.is_empty() {
+    for schema in schemas {
+        // Skip superseded schemas
+        if schema.superseded_by.is_some() {
             continue;
         }
 
-        total_scanned += 1;
-
-        // Find best matching centroid
-        let mut best_name: Option<&str> = None;
-        let mut best_sim = SIMILARITY_THRESHOLD;
-
-        for (name, centroid) in &centroids {
-            let sim = cosine_similarity(&stored.embedding, centroid);
-            if sim > best_sim {
-                best_sim = sim;
-                best_name = Some(name);
-            }
-        }
-
-        match best_name {
-            Some(name) => {
-                let entry = category_stats.entry(name.to_string()).or_insert((0, 0.0));
-                entry.0 += 1;
-                entry.1 += best_sim;
-            }
-            None => {
+        for field_name in schema.fields.as_deref().unwrap_or(&[]) {
+            total_fields += 1;
+            if let Some(category) = schema.field_interest_categories.get(field_name) {
+                *category_counts.entry(category.clone()).or_insert(0) += 1;
+            } else {
                 unmatched += 1;
             }
         }
     }
 
-    // Build categories, filtering by minimum count
-    let mut categories: Vec<InterestCategory> = category_stats
+    // Preserve existing enabled/disabled state from previous profile
+    let existing_profile = load_interest_profile(metadata_store).await?;
+    let existing_enabled: HashMap<String, bool> = existing_profile
+        .map(|p| {
+            p.categories
+                .into_iter()
+                .map(|c| (c.name, c.enabled))
+                .collect()
+        })
+        .unwrap_or_default();
+
+    // Build categories from field counts (no minimum threshold — schema service already filtered)
+    let mut categories: Vec<InterestCategory> = category_counts
         .into_iter()
-        .filter(|(_, (count, _))| *count >= MIN_CATEGORY_COUNT)
-        .map(|(name, (count, total_sim))| InterestCategory {
-            name,
-            count,
-            avg_similarity: total_sim / count as f32,
-            enabled: true,
+        .map(|(name, count)| {
+            let enabled = existing_enabled.get(&name).copied().unwrap_or(true);
+            InterestCategory {
+                name,
+                count,
+                avg_similarity: 1.0,
+                enabled,
+            }
         })
         .collect();
 
@@ -393,13 +148,12 @@ pub async fn detect_interests(
 
     let profile = InterestProfile {
         categories,
-        total_embeddings_scanned: total_scanned,
+        total_embeddings_scanned: total_fields,
         unmatched_count: unmatched,
         detected_at: chrono::Utc::now(),
-        seed_version: SEED_VERSION,
+        seed_version: CENTROID_VERSION,
     };
 
-    // Save the profile
     save_interest_profile(metadata_store, &profile).await?;
 
     Ok(profile)
@@ -456,7 +210,8 @@ pub async fn toggle_interest_category(
 }
 
 /// Top-level entry point called from the batch completion hook.
-/// Acquires FoldNode locks, runs detection, saves result.
+/// Reads schemas from FoldNode and detects interests from their
+/// field_interest_categories.
 pub async fn run_interest_detection(
     node: &Arc<tokio::sync::RwLock<crate::fold_node::FoldNode>>,
 ) -> Result<InterestProfile, String> {
@@ -469,16 +224,17 @@ pub async fn run_interest_detection(
     let db_ops = db.get_db_ops();
     let metadata_store = db_ops.metadata_store().inner().clone();
 
-    let native_index_mgr = db_ops
-        .native_index_manager()
-        .ok_or_else(|| "Native index not available".to_string())?;
+    // Get all schemas
+    let schemas: Vec<_> = db
+        .schema_manager()
+        .get_schemas()
+        .map_err(|e| format!("Failed to get schemas: {}", e))?
+        .into_values()
+        .collect();
 
-    let embedding_store = native_index_mgr.store().clone();
-    let embedder = native_index_mgr.embedder().clone();
-
-    // Drop the DB lock before doing the heavy work
+    // Drop the DB lock before doing the work
     drop(db);
     drop(node_guard);
 
-    detect_interests(&*embedding_store, &*metadata_store, &*embedder).await
+    detect_interests_from_schemas(&schemas, &*metadata_store).await
 }
