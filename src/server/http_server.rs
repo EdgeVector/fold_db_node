@@ -154,13 +154,33 @@ impl FoldHttpServer {
 
         // Auto-refresh Exemem session token on startup if credentials exist in keychain.
         // This ensures a fresh 24h token is available for discovery and API calls.
-        // Non-fatal: if refresh fails (no network, not registered), we log and continue.
-        if crate::keychain::has_credentials() {
-            log::info!("Refreshing Exemem session token on startup...");
-            match crate::server::routes::auth::refresh_session_token(&app_state).await {
-                Ok(_) => log::info!("Exemem session token refreshed successfully"),
-                Err(e) => log::warn!("Exemem session token refresh failed (non-fatal): {}", e),
-            }
+        // Non-fatal: if refresh fails (no network, no credentials), we log and continue.
+        // Wrapped in spawn_blocking + timeout because macOS Keychain access can block
+        // (e.g. permission dialogs) and must not prevent the HTTP server from starting.
+        {
+            let app_state_clone = app_state.clone();
+            tokio::spawn(async move {
+                let has_creds = tokio::task::spawn_blocking(crate::keychain::has_credentials)
+                    .await
+                    .unwrap_or(false);
+                if has_creds {
+                    log::info!("Refreshing Exemem session token...");
+                    match tokio::time::timeout(
+                        std::time::Duration::from_secs(10),
+                        crate::server::routes::auth::refresh_session_token(&app_state_clone),
+                    )
+                    .await
+                    {
+                        Ok(Ok(_)) => log::info!("Exemem session token refreshed successfully"),
+                        Ok(Err(e)) => {
+                            log::warn!("Exemem session token refresh failed (non-fatal): {}", e)
+                        }
+                        Err(_) => log::warn!(
+                            "Exemem session token refresh timed out after 10s (non-fatal)"
+                        ),
+                    }
+                }
+            });
         }
 
         // Create upload storage data
