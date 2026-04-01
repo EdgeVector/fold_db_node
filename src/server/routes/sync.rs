@@ -123,6 +123,38 @@ pub async fn trigger_sync(state: web::Data<AppState>) -> impl Responder {
     }
 }
 
+/// Get sync status for a specific org
+///
+/// GET /api/sync/org/{org_hash}/status
+pub async fn get_org_sync_status(
+    path: web::Path<String>,
+    state: web::Data<AppState>,
+) -> impl Responder {
+    let (_user_hash, node) = node_or_return!(state);
+    let org_hash = path.into_inner();
+
+    match node.get_org_sync_status(&org_hash).await {
+        Ok(Some(status)) => HttpResponse::Ok().json(status),
+        Ok(None) => HttpResponse::Ok().json(serde_json::json!({
+            "org_hash": org_hash,
+            "sync_enabled": false,
+            "message": "Sync is not enabled on this node"
+        })),
+        Err(e) => {
+            log_feature!(
+                LogFeature::HttpServer,
+                error,
+                "Failed to get org sync status for {}: {}",
+                org_hash,
+                e
+            );
+            HttpResponse::NotFound().json(serde_json::json!({
+                "error": format!("{}", e)
+            }))
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
