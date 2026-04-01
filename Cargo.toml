@@ -13,7 +13,7 @@ transform-wasm = ["fold_db/transform-wasm"]
 
 [dependencies]
 # Core database library
-fold_db = { git = "https://github.com/EdgeVector/fold_db.git", branch = "feat/expose-sled-db", features = ["cli"] }
+fold_db = { git = "https://github.com/EdgeVector/fold_db.git", branch = "mainline", features = ["cli"] }
 
 # HTTP Server
 actix-web = "4.3"
