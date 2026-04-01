@@ -94,6 +94,9 @@ pub async fn create_org(
     let invite_bundle = org_ops::generate_invite(&sled_db, &membership.org_hash)
         .handler_err("generate initial invite")?;
 
+    // Reconfigure org sync with the new org
+    node.configure_org_sync_if_needed().await;
+
     Ok(ApiResponse::success_with_user(
         CreateOrgResponse {
             org: membership,
@@ -116,6 +119,9 @@ pub async fn join_org(
 
     let membership = org_ops::join_org(&sled_db, invite, &my_public_key, &my_display_name)
         .handler_err("join org")?;
+
+    // Reconfigure org sync with the joined org
+    node.configure_org_sync_if_needed().await;
 
     Ok(ApiResponse::success_with_user(
         JoinOrgResponse { org: membership },
@@ -228,6 +234,9 @@ pub async fn delete_org(
     let sled_db = get_sled_db(node).await?;
 
     org_ops::delete_org(&sled_db, org_hash).handler_err("delete org")?;
+
+    // Reconfigure org sync without the deleted org
+    node.configure_org_sync_if_needed().await;
 
     Ok(ApiResponse::success_with_user(
         serde_json::json!({"ok": true}),

@@ -1,15 +1,21 @@
+use base64::{engine::general_purpose::STANDARD as BASE64, Engine as _};
 use fold_db::log_feature;
 use fold_db::logging::features::LogFeature;
 use fold_db::storage::traits::TypedStore;
 use serde::{Deserialize, Serialize};
+use std::collections::HashMap;
 use std::sync::Arc;
 use tokio::sync::Mutex;
 
 use crate::fold_node::config::NodeConfig;
 use fold_db::constants::SINGLE_PUBLIC_KEY_ID;
+use fold_db::crypto::{CryptoProvider, LocalCryptoProvider};
 use fold_db::error::{FoldDbError, FoldDbResult};
 use fold_db::fold_db_core::FoldDB;
+use fold_db::org::operations as org_ops;
+use fold_db::org::OrgMembership;
 use fold_db::security::{PublicKeyInfo, SecurityConfig, SecurityManager};
+use fold_db::sync::org_sync::{member_id_from_public_key, SyncPartitioner};
 
 /// Result of loading a view (and its dependencies) from the schema service.
 #[derive(Debug, Default, Serialize)]
@@ -149,6 +155,10 @@ impl FoldNode {
         };
 
         Self::log_schema_service(&config);
+
+        // Configure org sync if the sync engine is enabled and orgs exist
+        node.configure_org_sync_if_needed().await;
+
         Ok(node)
     }
 
@@ -688,6 +698,205 @@ impl FoldNode {
     }
 }
 
+// =========================================================================
+// Org sync wiring
+// =========================================================================
+
+impl FoldNode {
+    /// Configure org sync on the sync engine if sync is enabled and the node
+    /// is a member of any organizations.
+    ///
+    /// Called automatically at startup and should be called again when the
+    /// node creates, joins, or leaves an org.
+    pub async fn configure_org_sync_if_needed(&self) {
+        let db_guard = match self.db.try_lock() {
+            Ok(guard) => guard,
+            Err(_) => {
+                // DB is locked (e.g., during init); skip org sync config.
+                // It will be retried when an org is created/joined.
+                return;
+            }
+        };
+
+        // Check if sync is enabled
+        let sync_engine = match db_guard.sync_engine() {
+            Some(engine) => Arc::clone(engine),
+            None => return, // Sync not configured (local mode)
+        };
+
+        // Load org memberships from Sled
+        let sled_db = match db_guard.sled_db() {
+            Some(db) => db.clone(),
+            None => return,
+        };
+
+        // Drop the db guard before async work
+        drop(db_guard);
+
+        let memberships = match org_ops::list_orgs(&sled_db) {
+            Ok(orgs) => orgs,
+            Err(e) => {
+                log_feature!(
+                    LogFeature::Database,
+                    warn,
+                    "Failed to load org memberships for sync config: {}",
+                    e
+                );
+                return;
+            }
+        };
+
+        if memberships.is_empty() {
+            log_feature!(
+                LogFeature::Database,
+                debug,
+                "No org memberships found, skipping org sync configuration"
+            );
+            return;
+        }
+
+        // Derive member_id from the node's public key
+        let pub_key_bytes = match BASE64.decode(&self.public_key) {
+            Ok(bytes) => bytes,
+            Err(e) => {
+                log_feature!(
+                    LogFeature::Database,
+                    error,
+                    "Failed to decode node public key for member_id: {}",
+                    e
+                );
+                return;
+            }
+        };
+        let member_id = member_id_from_public_key(&pub_key_bytes);
+
+        // Build per-org crypto providers from each org's E2E secret
+        let mut org_crypto: HashMap<String, Arc<dyn CryptoProvider>> = HashMap::new();
+        for membership in &memberships {
+            match Self::crypto_provider_for_org(membership) {
+                Ok(provider) => {
+                    org_crypto.insert(membership.org_hash.clone(), provider);
+                }
+                Err(e) => {
+                    log_feature!(
+                        LogFeature::Database,
+                        error,
+                        "Failed to create crypto provider for org '{}': {}",
+                        membership.org_name,
+                        e
+                    );
+                }
+            }
+        }
+
+        let partitioner = SyncPartitioner::new(&memberships);
+
+        log_feature!(
+            LogFeature::Database,
+            info,
+            "Configuring org sync: {} org(s), member_id={}",
+            memberships.len(),
+            member_id
+        );
+
+        sync_engine
+            .configure_org_sync(partitioner, member_id, org_crypto)
+            .await;
+    }
+
+    /// Create a CryptoProvider from an org's E2E secret (base64-encoded 32-byte key).
+    fn crypto_provider_for_org(
+        membership: &OrgMembership,
+    ) -> Result<Arc<dyn CryptoProvider>, FoldDbError> {
+        let key_bytes = BASE64.decode(&membership.org_e2e_secret).map_err(|e| {
+            FoldDbError::SecurityError(format!(
+                "Invalid base64 org E2E secret for org '{}': {}",
+                membership.org_name, e
+            ))
+        })?;
+
+        if key_bytes.len() != 32 {
+            return Err(FoldDbError::SecurityError(format!(
+                "Org E2E secret for '{}' is {} bytes, expected 32",
+                membership.org_name,
+                key_bytes.len()
+            )));
+        }
+
+        let mut key = [0u8; 32];
+        key.copy_from_slice(&key_bytes);
+        Ok(Arc::new(LocalCryptoProvider::from_key(key)))
+    }
+
+    /// Get the org sync status for a specific organization.
+    ///
+    /// Returns sync state, pending count, member list, and last sync time
+    /// for the specified org, or None if sync is not enabled.
+    pub async fn get_org_sync_status(
+        &self,
+        org_hash: &str,
+    ) -> FoldDbResult<Option<OrgSyncStatus>> {
+        let db_guard = self.db.lock().await;
+
+        let sync_engine = match db_guard.sync_engine() {
+            Some(engine) => Arc::clone(engine),
+            None => return Ok(None),
+        };
+
+        let sled_db = match db_guard.sled_db() {
+            Some(db) => db.clone(),
+            None => return Ok(None),
+        };
+
+        drop(db_guard);
+
+        // Get the org membership
+        let membership = org_ops::get_org(&sled_db, org_hash)?;
+        let membership = match membership {
+            Some(m) => m,
+            None => {
+                return Err(FoldDbError::Database(format!(
+                    "Organization '{}' not found",
+                    org_hash
+                )));
+            }
+        };
+
+        let has_org = sync_engine.has_org_sync().await;
+        let status = sync_engine.status().await;
+
+        let members: Vec<String> = membership
+            .members
+            .iter()
+            .map(|m| m.display_name.clone())
+            .collect();
+
+        Ok(Some(OrgSyncStatus {
+            org_hash: org_hash.to_string(),
+            org_name: membership.org_name,
+            sync_enabled: has_org,
+            state: format!("{:?}", status.state).to_lowercase(),
+            pending_count: status.pending_count,
+            last_sync_at: status.last_sync_at,
+            last_error: status.last_error,
+            members,
+        }))
+    }
+}
+
+/// Sync status for a specific organization.
+#[derive(Debug, Clone, Serialize)]
+pub struct OrgSyncStatus {
+    pub org_hash: String,
+    pub org_name: String,
+    pub sync_enabled: bool,
+    pub state: String,
+    pub pending_count: usize,
+    pub last_sync_at: Option<u64>,
+    pub last_error: Option<String>,
+    pub members: Vec<String>,
+}
+
 /// A single mutation outcome from the process_results store.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct MutationOutcome {
@@ -708,7 +917,7 @@ pub struct FileIngestionRecord {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use base64::{engine::general_purpose, Engine as _};
+    use base64::engine::general_purpose;
     use fold_db::security::Ed25519KeyPair;
     use tempfile::tempdir;
 

@@ -546,7 +546,11 @@ impl FoldHttpServer {
         use super::routes::sync as sync_routes;
 
         cfg.route("/sync/status", web::get().to(sync_routes::get_sync_status))
-            .route("/sync/trigger", web::post().to(sync_routes::trigger_sync));
+            .route("/sync/trigger", web::post().to(sync_routes::trigger_sync))
+            .route(
+                "/sync/org/{org_hash}/status",
+                web::get().to(sync_routes::get_org_sync_status),
+            );
     }
 
     fn configure_system_routes(cfg: &mut web::ServiceConfig) {
