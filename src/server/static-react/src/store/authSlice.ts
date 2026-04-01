@@ -1,5 +1,8 @@
 import { createSlice, createAsyncThunk, PayloadAction } from "@reduxjs/toolkit";
-import { getNodePrivateKey } from "../api/clients/systemClient";
+import {
+  getNodePrivateKey,
+  getAutoIdentity,
+} from "../api/clients/systemClient";
 import { base64ToBytes } from "../utils/cryptoUtils";
 import { BROWSER_CONFIG } from "../constants/config";
 import * as ed from "@noble/ed25519";
@@ -206,6 +209,31 @@ export const loginUser = createAsyncThunk(
   },
 );
 
+// Async thunk for auto-login in local mode (skips login screen entirely)
+export const autoLoginLocal = createAsyncThunk(
+  "auth/autoLoginLocal",
+  async (_, { rejectWithValue }) => {
+    try {
+      const response = await getAutoIdentity();
+      if (
+        response.success &&
+        response.data?.user_id &&
+        response.data?.user_hash
+      ) {
+        const { user_id, user_hash } = response.data;
+        localStorage.setItem(BROWSER_CONFIG.STORAGE_KEYS.USER_ID, user_id);
+        localStorage.setItem(BROWSER_CONFIG.STORAGE_KEYS.USER_HASH, user_hash);
+        return { id: user_id, hash: user_hash };
+      }
+      return rejectWithValue("Auto-identity endpoint returned no data");
+    } catch (err) {
+      return rejectWithValue(
+        err instanceof Error ? err.message : "Failed to auto-login",
+      );
+    }
+  },
+);
+
 // Async thunk for starting magic link verification
 export const startMagicLink = createAsyncThunk(
   "auth/startMagicLink",
@@ -368,6 +396,21 @@ const authSlice = createSlice({
       .addCase(loginUser.rejected, (state, action) => {
         state.isAuthenticated = false;
         state.error = (action.payload as string) || "Login failed";
+      })
+      // autoLoginLocal cases
+      .addCase(autoLoginLocal.pending, (state) => {
+        state.isLoading = true;
+        state.error = null;
+      })
+      .addCase(autoLoginLocal.fulfilled, (state, action) => {
+        state.isLoading = false;
+        state.isAuthenticated = true;
+        state.user = action.payload;
+        state.error = null;
+      })
+      .addCase(autoLoginLocal.rejected, (state, action) => {
+        state.isLoading = false;
+        state.error = (action.payload as string) || "Auto-login failed";
       })
       // startMagicLink cases
       .addCase(startMagicLink.pending, (state) => {
