@@ -109,7 +109,7 @@ pub async fn get_molecule_history(
     let db_ops = db_guard.get_db_ops();
 
     let events = db_ops
-        .get_mutation_events(molecule_uuid)
+        .get_mutation_events(molecule_uuid, None)
         .await
         .handler_err("load history")?;
 

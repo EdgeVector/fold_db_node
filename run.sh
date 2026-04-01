@@ -109,8 +109,27 @@ check_schema_service() {
 }
 
 start_local_schema_service() {
-    echo "Starting LOCAL schema service on port 9002..."
-    nohup cargo run --bin schema_service -- --port 9002 --db-path schema_registry > schema_service.log 2>&1 &
+    echo "Starting LOCAL schema service on port 9002 (AI_PROVIDER=ollama)..."
+
+    # Read Ollama model/URL from the node's saved ingestion config so the schema
+    # service uses the same AI settings the user configured in the UI.
+    local config_dir="${FOLD_CONFIG_DIR:-${HOME}/.folddb/config}"
+    local config_file="${config_dir}/ingestion_config.json"
+    local ollama_model=""
+    local ollama_url=""
+    if [ -f "$config_file" ]; then
+        ollama_model=$(python3 -c "import json; c=json.load(open('$config_file')); print(c.get('ollama',{}).get('model',''))" 2>/dev/null)
+        ollama_url=$(python3 -c "import json; c=json.load(open('$config_file')); print(c.get('ollama',{}).get('base_url',''))" 2>/dev/null)
+    fi
+
+    [ -n "$ollama_model" ] && echo "  Ollama model: $ollama_model"
+    [ -n "$ollama_url" ] && echo "  Ollama URL: $ollama_url"
+
+    # Scope env vars to the schema service process only — don't leak to folddb_server
+    AI_PROVIDER=ollama \
+        ${ollama_model:+OLLAMA_MODEL="$ollama_model"} \
+        ${ollama_url:+OLLAMA_BASE_URL="$ollama_url"} \
+        nohup cargo run --bin schema_service -- --port 9002 --db-path schema_registry > schema_service.log 2>&1 &
     SCHEMA_SERVICE_PID=$!
 
     echo "Waiting for local schema service to be ready..."

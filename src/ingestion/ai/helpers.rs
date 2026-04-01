@@ -425,6 +425,21 @@ pub fn validate_and_convert_response(parsed: Value) -> IngestionResult<AISchemaR
     // Parse new_schemas (treat JSON null as absent)
     let new_schemas = obj.get("new_schemas").cloned().filter(|v| !v.is_null());
 
+    // Unwrap single-element arrays: Ollama often wraps the schema in an array
+    // like [{"name": "..."}] instead of {"name": "..."}. The downstream
+    // deserializer expects a single object, not an array.
+    // Multi-element arrays are rejected — the prompt asks for a single schema.
+    let new_schemas = match new_schemas {
+        Some(Value::Array(mut arr)) if arr.len() == 1 => Some(arr.remove(0)),
+        Some(Value::Array(arr)) if arr.len() > 1 => {
+            return Err(IngestionError::ai_response_validation_error(format!(
+                "new_schemas array contains {} schemas, expected 1",
+                arr.len()
+            )));
+        }
+        other => other,
+    };
+
     // Validate that new schemas have required fields.
     // These checks run INSIDE the retry loop, so a validation failure here
     // triggers a fresh AI call with a new chance to produce correct output.
@@ -476,10 +491,133 @@ pub fn validate_and_convert_response(parsed: Value) -> IngestionResult<AISchemaR
     // Without a mapper, the field data is silently dropped during mutation generation.
     let mutation_mappers = backfill_missing_mappers(mutation_mappers, &new_schemas);
 
+    // Sanitize HashMap<String, String> fields in the schema — Ollama models sometimes
+    // return nested objects where flat strings are expected (e.g. field_descriptions:
+    // {"name": {"description": "text"}} instead of {"name": "text"}).
+    let new_schemas = new_schemas.map(sanitize_string_map_fields);
+
     Ok(AISchemaResponse {
         new_schemas,
         mutation_mappers,
     })
+}
+
+/// Sanitize a schema JSON value so that fields expecting strings don't contain nested objects.
+///
+/// Ollama models sometimes return nested objects where the Schema struct expects
+/// flat strings. For example:
+///   `"field_descriptions": {"name": {"description": "the person's name"}}`
+/// becomes:
+///   `"field_descriptions": {"name": "the person's name"}`
+///
+/// Also flattens non-string values in `key.hash_field`, `key.range_field`,
+/// `name`, and `descriptive_name`.
+fn sanitize_string_map_fields(mut schema_val: Value) -> Value {
+    let schema_obj = match schema_val.as_object_mut() {
+        Some(obj) => obj,
+        None => return schema_val,
+    };
+
+    // 1. Sanitize HashMap<String, String> fields — values must be strings
+    const STRING_MAP_FIELDS: &[&str] = &[
+        "field_descriptions",
+        "field_interest_categories",
+        "ref_fields",
+        "transform_fields",
+    ];
+
+    for field_name in STRING_MAP_FIELDS {
+        let map = match schema_obj
+            .get_mut(*field_name)
+            .and_then(|v| v.as_object_mut())
+        {
+            Some(m) => m,
+            None => continue,
+        };
+
+        let mut fixes = Vec::new();
+        for (key, val) in map.iter() {
+            if val.is_string() {
+                continue;
+            }
+            if let Some(s) = flatten_value_to_string(val) {
+                fixes.push((key.clone(), s));
+            }
+        }
+
+        for (key, val) in fixes {
+            log_feature!(
+                LogFeature::Ingestion,
+                warn,
+                "Flattened non-string {} value for key '{}' to string",
+                field_name,
+                key
+            );
+            map.insert(key, Value::String(val));
+        }
+    }
+
+    // 2. Sanitize top-level String fields
+    const TOP_LEVEL_STRING_FIELDS: &[&str] = &["name", "descriptive_name"];
+    for field_name in TOP_LEVEL_STRING_FIELDS {
+        if let Some(val) = schema_obj.get(*field_name) {
+            if !val.is_string() && !val.is_null() {
+                if let Some(s) = flatten_value_to_string(val) {
+                    log_feature!(
+                        LogFeature::Ingestion,
+                        warn,
+                        "Flattened non-string top-level '{}' to string",
+                        field_name
+                    );
+                    schema_obj.insert(field_name.to_string(), Value::String(s));
+                }
+            }
+        }
+    }
+
+    // 3. Sanitize key.hash_field and key.range_field
+    if let Some(key_obj) = schema_obj.get_mut("key").and_then(|v| v.as_object_mut()) {
+        for key_field in &["hash_field", "range_field"] {
+            if let Some(val) = key_obj.get(*key_field) {
+                if !val.is_string() && !val.is_null() {
+                    if let Some(s) = flatten_value_to_string(val) {
+                        log_feature!(
+                            LogFeature::Ingestion,
+                            warn,
+                            "Flattened non-string key.{} to string",
+                            key_field
+                        );
+                        key_obj.insert(key_field.to_string(), Value::String(s));
+                    }
+                }
+            }
+        }
+    }
+
+    schema_val
+}
+
+/// Extract a string from a JSON value. For objects, take the first string value.
+/// For arrays, join string elements. For primitives, convert to string.
+fn flatten_value_to_string(val: &Value) -> Option<String> {
+    match val {
+        Value::String(s) => Some(s.clone()),
+        Value::Object(map) => {
+            // Take the first string value in the object
+            map.values().find_map(|v| v.as_str()).map(|s| s.to_string())
+        }
+        Value::Array(arr) => {
+            let strings: Vec<&str> = arr.iter().filter_map(|v| v.as_str()).collect();
+            if strings.is_empty() {
+                None
+            } else {
+                Some(strings.join(", "))
+            }
+        }
+        Value::Number(n) => Some(n.to_string()),
+        Value::Bool(b) => Some(b.to_string()),
+        Value::Null => None,
+    }
 }
 
 /// For each field declared in `new_schemas.fields` that has no entry in
@@ -834,5 +972,208 @@ Done."#;
         assert_eq!(result.mutation_mappers.len(), 4);
         assert!(result.mutation_mappers.contains_key("must_see"));
         assert!(result.mutation_mappers.contains_key("dietary_restrictions"));
+    }
+
+    // ---- sanitize_string_map_fields tests ----
+
+    #[test]
+    fn test_sanitize_flattens_nested_objects_in_field_descriptions() {
+        let schema = serde_json::json!({
+            "name": "bank_statement",
+            "field_descriptions": {
+                "date": {"description": "the transaction date"},
+                "amount": {"description": "the dollar amount", "type": "number"},
+                "memo": "a plain string already"
+            }
+        });
+
+        let result = sanitize_string_map_fields(schema);
+        let descs = result["field_descriptions"].as_object().unwrap();
+        assert_eq!(descs["date"].as_str().unwrap(), "the transaction date");
+        assert_eq!(descs["amount"].as_str().unwrap(), "the dollar amount");
+        assert_eq!(descs["memo"].as_str().unwrap(), "a plain string already");
+    }
+
+    #[test]
+    fn test_sanitize_leaves_valid_strings_unchanged() {
+        let schema = serde_json::json!({
+            "name": "recipes",
+            "field_descriptions": {
+                "title": "the recipe title",
+                "servings": "number of servings"
+            }
+        });
+
+        let result = sanitize_string_map_fields(schema.clone());
+        assert_eq!(result, schema);
+    }
+
+    #[test]
+    fn test_sanitize_handles_missing_field_descriptions() {
+        let schema = serde_json::json!({"name": "test"});
+        let result = sanitize_string_map_fields(schema.clone());
+        assert_eq!(result, schema);
+    }
+
+    #[test]
+    fn test_sanitize_handles_array_values() {
+        let schema = serde_json::json!({
+            "name": "test",
+            "field_descriptions": {
+                "tags": ["topic", "category"]
+            }
+        });
+
+        let result = sanitize_string_map_fields(schema);
+        assert_eq!(
+            result["field_descriptions"]["tags"].as_str().unwrap(),
+            "topic, category"
+        );
+    }
+
+    #[test]
+    fn test_sanitize_handles_number_values() {
+        let schema = serde_json::json!({
+            "name": "test",
+            "field_descriptions": {
+                "count": 42
+            }
+        });
+
+        let result = sanitize_string_map_fields(schema);
+        assert_eq!(
+            result["field_descriptions"]["count"].as_str().unwrap(),
+            "42"
+        );
+    }
+
+    #[test]
+    fn test_sanitize_end_to_end_with_validate() {
+        // Simulates Ollama returning nested objects in field_descriptions
+        let ai_json = serde_json::json!({
+            "new_schemas": {
+                "name": "bank_transactions",
+                "descriptive_name": "Bank Transactions",
+                "key": {"hash_field": "id", "range_field": "date"},
+                "fields": ["id", "date", "amount", "description"],
+                "field_descriptions": {
+                    "id": {"description": "unique transaction identifier"},
+                    "date": {"description": "date of the transaction", "format": "ISO 8601"},
+                    "amount": "transaction amount in dollars",
+                    "description": {"description": "merchant or transaction description"}
+                }
+            },
+            "mutation_mappers": {
+                "id": "bank_transactions.id",
+                "date": "bank_transactions.date",
+                "amount": "bank_transactions.amount",
+                "description": "bank_transactions.description"
+            }
+        });
+
+        let result = validate_and_convert_response(ai_json).unwrap();
+        let schema = result.new_schemas.unwrap();
+        let descs = schema["field_descriptions"].as_object().unwrap();
+        // All values should now be strings
+        for (key, val) in descs {
+            assert!(
+                val.is_string(),
+                "field_descriptions['{}'] should be a string, got: {}",
+                key,
+                val
+            );
+        }
+        assert_eq!(
+            descs["id"].as_str().unwrap(),
+            "unique transaction identifier"
+        );
+        assert_eq!(
+            descs["amount"].as_str().unwrap(),
+            "transaction amount in dollars"
+        );
+    }
+
+    // ---- array unwrap tests ----
+
+    #[test]
+    fn test_single_element_array_unwrapped() {
+        let ai_json = serde_json::json!({
+            "new_schemas": [{
+                "name": "expenses",
+                "descriptive_name": "Monthly Expenses",
+                "fields": ["amount"],
+                "field_descriptions": {"amount": "dollar amount"}
+            }],
+            "mutation_mappers": {"amount": "expenses.amount"}
+        });
+
+        let result = validate_and_convert_response(ai_json).unwrap();
+        let schema = result.new_schemas.unwrap();
+        // Should be unwrapped from array to object
+        assert!(schema.is_object(), "expected object, got: {}", schema);
+        assert_eq!(schema["name"], "expenses");
+    }
+
+    #[test]
+    fn test_multi_element_array_rejected() {
+        let ai_json = serde_json::json!({
+            "new_schemas": [
+                {"name": "s1", "descriptive_name": "S1", "fields": ["a"]},
+                {"name": "s2", "descriptive_name": "S2", "fields": ["b"]}
+            ],
+            "mutation_mappers": {}
+        });
+
+        let result = validate_and_convert_response(ai_json);
+        assert!(result.is_err());
+        let err = format!("{}", result.unwrap_err());
+        assert!(err.contains("2 schemas"), "got: {}", err);
+    }
+
+    // ---- sanitize top-level and key field tests ----
+
+    #[test]
+    fn test_sanitize_flattens_top_level_name() {
+        let schema = serde_json::json!({
+            "name": {"value": "bank_statement"},
+            "descriptive_name": {"text": "Bank Statement"}
+        });
+
+        let result = sanitize_string_map_fields(schema);
+        assert_eq!(result["name"].as_str().unwrap(), "bank_statement");
+        assert_eq!(
+            result["descriptive_name"].as_str().unwrap(),
+            "Bank Statement"
+        );
+    }
+
+    #[test]
+    fn test_sanitize_flattens_key_fields() {
+        let schema = serde_json::json!({
+            "name": "test",
+            "key": {
+                "hash_field": {"name": "category", "type": "string"},
+                "range_field": {"name": "date", "type": "date"}
+            }
+        });
+
+        let result = sanitize_string_map_fields(schema);
+        let key = result["key"].as_object().unwrap();
+        assert_eq!(key["hash_field"].as_str().unwrap(), "category");
+        assert_eq!(key["range_field"].as_str().unwrap(), "date");
+    }
+
+    #[test]
+    fn test_sanitize_leaves_valid_key_fields_unchanged() {
+        let schema = serde_json::json!({
+            "name": "test",
+            "key": {
+                "hash_field": "id",
+                "range_field": "date"
+            }
+        });
+
+        let result = sanitize_string_map_fields(schema.clone());
+        assert_eq!(result, schema);
     }
 }
