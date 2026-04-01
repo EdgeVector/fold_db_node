@@ -527,7 +527,10 @@ fn sanitize_string_map_fields(mut schema_val: Value) -> Value {
     ];
 
     for field_name in STRING_MAP_FIELDS {
-        let map = match schema_obj.get_mut(*field_name).and_then(|v| v.as_object_mut()) {
+        let map = match schema_obj
+            .get_mut(*field_name)
+            .and_then(|v| v.as_object_mut())
+        {
             Some(m) => m,
             None => continue,
         };
@@ -601,9 +604,7 @@ fn flatten_value_to_string(val: &Value) -> Option<String> {
         Value::String(s) => Some(s.clone()),
         Value::Object(map) => {
             // Take the first string value in the object
-            map.values()
-                .find_map(|v| v.as_str())
-                .map(|s| s.to_string())
+            map.values().find_map(|v| v.as_str()).map(|s| s.to_string())
         }
         Value::Array(arr) => {
             let strings: Vec<&str> = arr.iter().filter_map(|v| v.as_str()).collect();
@@ -1082,8 +1083,14 @@ Done."#;
                 val
             );
         }
-        assert_eq!(descs["id"].as_str().unwrap(), "unique transaction identifier");
-        assert_eq!(descs["amount"].as_str().unwrap(), "transaction amount in dollars");
+        assert_eq!(
+            descs["id"].as_str().unwrap(),
+            "unique transaction identifier"
+        );
+        assert_eq!(
+            descs["amount"].as_str().unwrap(),
+            "transaction amount in dollars"
+        );
     }
 
     // ---- array unwrap tests ----
@@ -1134,7 +1141,10 @@ Done."#;
 
         let result = sanitize_string_map_fields(schema);
         assert_eq!(result["name"].as_str().unwrap(), "bank_statement");
-        assert_eq!(result["descriptive_name"].as_str().unwrap(), "Bank Statement");
+        assert_eq!(
+            result["descriptive_name"].as_str().unwrap(),
+            "Bank Statement"
+        );
     }
 
     #[test]
