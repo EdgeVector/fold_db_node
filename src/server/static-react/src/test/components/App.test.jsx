@@ -23,7 +23,7 @@ vi.mock('../../store/authSlice', async () => {
     ...actual,
     // Mock async thunks to be no-ops that don't trigger reducers
     initializeSystemKey: createMockThunk('initializeSystemKey'),
-    autoLoginLocal: createMockThunk('autoLoginLocal'),
+    autoLogin: createMockThunk('autoLogin'),
     restoreSession: (payload) => ({ type: 'auth/restoreSession/noop', payload }),
   };
 });
