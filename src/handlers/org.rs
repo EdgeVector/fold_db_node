@@ -58,18 +58,13 @@ pub struct AddMemberRequest {
 }
 
 /// Get the sled::Db from a FoldNode, returning a handler error if unavailable.
-async fn get_sled_db(
-    node: &FoldNode,
-) -> Result<sled::Db, crate::handlers::HandlerError> {
+async fn get_sled_db(node: &FoldNode) -> Result<sled::Db, crate::handlers::HandlerError> {
     let db_guard = node.get_fold_db().await.handler_err("lock database")?;
-    db_guard
-        .sled_db()
-        .cloned()
-        .ok_or_else(|| {
-            crate::handlers::HandlerError::ServiceUnavailable(
-                "Org operations require a Sled backend".to_string(),
-            )
-        })
+    db_guard.sled_db().cloned().ok_or_else(|| {
+        crate::handlers::HandlerError::ServiceUnavailable(
+            "Org operations require a Sled backend".to_string(),
+        )
+    })
 }
 
 /// Create a new organization. The calling node becomes the admin.
@@ -82,7 +77,10 @@ pub async fn create_org(
 
     let creator_public_key = node.get_node_public_key().to_string();
     // Use a short display name derived from the public key
-    let creator_display_name = format!("node-{}", &creator_public_key[..8.min(creator_public_key.len())]);
+    let creator_display_name = format!(
+        "node-{}",
+        &creator_public_key[..8.min(creator_public_key.len())]
+    );
 
     let membership = org_ops::create_org(
         &sled_db,
@@ -126,10 +124,7 @@ pub async fn join_org(
 }
 
 /// List all organizations this node belongs to.
-pub async fn list_orgs(
-    user_hash: &str,
-    node: &FoldNode,
-) -> HandlerResult<ListOrgsResponse> {
+pub async fn list_orgs(user_hash: &str, node: &FoldNode) -> HandlerResult<ListOrgsResponse> {
     let sled_db = get_sled_db(node).await?;
 
     let orgs = org_ops::list_orgs(&sled_db).handler_err("list orgs")?;
@@ -151,9 +146,10 @@ pub async fn get_org(
     let membership = org_ops::get_org(&sled_db, org_hash)
         .handler_err("get org")?
         .ok_or_else(|| {
-            crate::handlers::HandlerError::NotFound(
-                format!("Organization '{}' not found", org_hash),
-            )
+            crate::handlers::HandlerError::NotFound(format!(
+                "Organization '{}' not found",
+                org_hash
+            ))
         })?;
 
     Ok(ApiResponse::success_with_user(
@@ -198,8 +194,7 @@ pub async fn remove_member(
 ) -> HandlerResult<serde_json::Value> {
     let sled_db = get_sled_db(node).await?;
 
-    org_ops::remove_member(&sled_db, org_hash, node_public_key)
-        .handler_err("remove member")?;
+    org_ops::remove_member(&sled_db, org_hash, node_public_key).handler_err("remove member")?;
 
     Ok(ApiResponse::success_with_user(
         serde_json::json!({"ok": true}),
