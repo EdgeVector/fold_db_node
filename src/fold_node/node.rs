@@ -832,10 +832,7 @@ impl FoldNode {
     ///
     /// Returns sync state, pending count, member list, and last sync time
     /// for the specified org, or None if sync is not enabled.
-    pub async fn get_org_sync_status(
-        &self,
-        org_hash: &str,
-    ) -> FoldDbResult<Option<OrgSyncStatus>> {
+    pub async fn get_org_sync_status(&self, org_hash: &str) -> FoldDbResult<Option<OrgSyncStatus>> {
         let db_guard = self.db.lock().await;
 
         let sync_engine = match db_guard.sync_engine() {
