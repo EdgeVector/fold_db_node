@@ -3,7 +3,6 @@ use serde::{Deserialize, Serialize};
 
 use crate::keychain;
 use crate::server::http_server::AppState;
-use crate::server::routes::common::require_node;
 
 fn exemem_api_url() -> String {
     std::env::var("EXEMEM_API_URL")
@@ -245,14 +244,19 @@ pub async fn refresh_session_token(data: &web::Data<AppState>) -> Result<String,
 /// Signs "{public_key_hex}:{timestamp}" with the node's Ed25519 private key,
 /// sends to the Exemem CLI register endpoint, and stores credentials in keychain.
 async fn signed_register(data: &web::Data<AppState>) -> Result<serde_json::Value, String> {
-    // Get the node's keys
-    let (_user_hash, node_arc) = require_node(data)
+    // Get the node's keys from identity (works even during onboarding before user context)
+    let public_key_b64 = data
+        .node_manager
+        .ensure_default_identity()
         .await
-        .map_err(|_| "Node not available".to_string())?;
-    let node = node_arc.read().await;
-    let public_key_b64 = node.get_node_public_key().to_string();
-    let private_key_b64 = node.get_node_private_key().to_string();
-    drop(node);
+        .map_err(|e| format!("Failed to initialize node identity: {e}"))?;
+
+    let private_key_b64 = data
+        .node_manager
+        .get_base_config()
+        .await
+        .private_key
+        .ok_or("Node private key not available".to_string())?;
 
     // Decode base64 → hex (CLI register endpoint expects hex)
     let public_key_hex =
