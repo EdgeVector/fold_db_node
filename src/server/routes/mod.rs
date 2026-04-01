@@ -6,6 +6,7 @@ pub mod discovery;
 pub mod feed;
 pub mod filesystem;
 pub mod log;
+pub mod org;
 pub mod query;
 pub mod remote;
 pub mod schema;

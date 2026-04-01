@@ -346,7 +346,8 @@ impl FoldHttpServer {
                 .configure(Self::configure_feed_routes)
                 .configure(Self::configure_remote_routes)
                 .configure(Self::configure_auth_routes)
-                .configure(Self::configure_sync_routes),
+                .configure(Self::configure_sync_routes)
+                .configure(Self::configure_org_routes),
         );
     }
 
@@ -777,6 +778,31 @@ impl FoldHttpServer {
 
     fn configure_feed_routes(cfg: &mut web::ServiceConfig) {
         cfg.route("/feed", web::post().to(feed_routes::get_feed));
+    }
+
+    fn configure_org_routes(cfg: &mut web::ServiceConfig) {
+        use super::routes::org as org_routes;
+
+        cfg.service(
+            web::scope("/org")
+                .route("", web::post().to(org_routes::create_org))
+                .route("", web::get().to(org_routes::list_orgs))
+                .route("/join", web::post().to(org_routes::join_org))
+                .route("/{org_hash}", web::get().to(org_routes::get_org))
+                .route("/{org_hash}", web::delete().to(org_routes::delete_org))
+                .route(
+                    "/{org_hash}/members",
+                    web::post().to(org_routes::add_member),
+                )
+                .route(
+                    "/{org_hash}/members/{node_public_key}",
+                    web::delete().to(org_routes::remove_member),
+                )
+                .route(
+                    "/{org_hash}/invite",
+                    web::post().to(org_routes::generate_invite),
+                ),
+        );
     }
 
     fn configure_auth_routes(cfg: &mut web::ServiceConfig) {

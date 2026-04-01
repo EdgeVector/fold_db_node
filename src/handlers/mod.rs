@@ -35,6 +35,7 @@ pub mod llm;
 pub mod llm_hydration;
 pub mod llm_types;
 pub mod mutation;
+pub mod org;
 pub mod query;
 pub mod response;
 pub mod system;
