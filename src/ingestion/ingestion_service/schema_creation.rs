@@ -44,6 +44,13 @@ impl IngestionService {
         // Deserialize Value to Schema
         let mut schema: fold_db::schema::types::Schema = serde_json::from_value(schema_def.clone())
             .map_err(|error| {
+                log_feature!(
+                    LogFeature::Ingestion,
+                    error,
+                    "Schema deserialization failed: {}. Raw AI schema JSON: {}",
+                    error,
+                    serde_json::to_string_pretty(schema_def).unwrap_or_default()
+                );
                 IngestionError::SchemaCreationError(format!(
                     "Failed to deserialize schema from AI response: {}",
                     error
