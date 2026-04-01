@@ -23,6 +23,7 @@ vi.mock('../../store/authSlice', async () => {
     ...actual,
     // Mock async thunks to be no-ops that don't trigger reducers
     initializeSystemKey: createMockThunk('initializeSystemKey'),
+    autoLoginLocal: createMockThunk('autoLoginLocal'),
     restoreSession: (payload) => ({ type: 'auth/restoreSession/noop', payload }),
   };
 });
@@ -232,6 +233,7 @@ const mockApprovedSchemas = {
 vi.mock('../../api/clients/systemClient', () => ({
   getAutoIdentity: () => Promise.resolve({ success: true, data: { user_id: 'test', user_hash: 'testhash', public_key: 'pk' } }),
   getDatabaseStatus: () => Promise.resolve({ success: true, data: { initialized: true, has_saved_config: true } }),
+  getDatabaseConfig: () => Promise.resolve({ success: true, data: { type: 'local', path: './data' } }),
 }));
 
 vi.mock('../../components/DatabaseSetupScreen', () => ({
