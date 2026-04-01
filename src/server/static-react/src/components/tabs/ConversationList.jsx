@@ -7,15 +7,7 @@
 
 import { useState, useEffect, useCallback } from 'react';
 import { mutationClient } from '../../api/clients/mutationClient';
-
-/** Unwrap FoldDB typed values like { String: "foo" } to plain primitives */
-function unwrap(val) {
-  if (val == null) return val;
-  if (typeof val !== 'object') return val;
-  const keys = Object.keys(val);
-  if (keys.length === 1) return val[keys[0]];
-  return val;
-}
+import { unwrapFieldValue as unwrap } from '../../utils/fieldUtils';
 
 function ConversationList({ onSelectConversation, onNewConversation }) {
   const [sessions, setSessions] = useState([]);
