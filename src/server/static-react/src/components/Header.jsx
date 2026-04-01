@@ -1,6 +1,6 @@
 import { useState, useEffect } from 'react'
 import { useAppDispatch, useAppSelector } from '../store/hooks'
-import { logoutUser } from '../store/authSlice'
+import { logoutUser, autoLogin } from '../store/authSlice'
 import { selectIngestionConfig, selectAiProvider, selectActiveModel, selectIsAiConfigured } from '../store/ingestionSlice'
 import { BROWSER_CONFIG } from '../constants/config'
 import { systemClient } from '../api/clients/systemClient'
@@ -62,6 +62,8 @@ function Header({ onSettingsClick, onAiSettingsClick, onCloudSettingsClick }) {
     dispatch(logoutUser())
     localStorage.removeItem(BROWSER_CONFIG.STORAGE_KEYS.USER_ID)
     localStorage.removeItem(BROWSER_CONFIG.STORAGE_KEYS.USER_HASH)
+    // Re-trigger auto-login with node identity (no login screen)
+    dispatch(autoLogin())
   }
 
   const isLocal = storageMode === 'Local'

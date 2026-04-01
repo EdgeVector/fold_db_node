@@ -32,12 +32,11 @@ import LogSidebar from './components/LogSidebar'
 import ErrorBoundary from './components/ErrorBoundary'
 import { useApprovedSchemas } from './hooks/useApprovedSchemas.js'
 import { useAppSelector, useAppDispatch } from './store/hooks'
-import { initializeSystemKey, restoreSession, autoLoginLocal } from './store/authSlice'
+import { initializeSystemKey, restoreSession, autoLogin } from './store/authSlice'
 import { fetchIngestionConfig, selectIngestionConfig, selectIsAiConfigured, selectAiProvider } from './store/ingestionSlice'
-import LoginPage from './components/LoginPage'
 import { DEFAULT_TAB } from './constants'
 import { BROWSER_CONFIG } from './constants/config'
-import { getAutoIdentity, getDatabaseStatus, getDatabaseConfig } from './api/clients/systemClient'
+import { getDatabaseStatus } from './api/clients/systemClient'
 import DatabaseSetupScreen from './components/DatabaseSetupScreen'
 
 function isIngestionResult(results) {
@@ -84,10 +83,6 @@ export function AppContent() {
   )
   const [dbStatus, setDbStatus] = useState(null) // { initialized, has_saved_config }
   const [dbStatusLoading, setDbStatusLoading] = useState(true)
-  // Track whether we're still checking database config for auto-login (prevents login screen flash)
-  const [configChecking, setConfigChecking] = useState(
-    () => !localStorage.getItem(BROWSER_CONFIG.STORAGE_KEYS.USER_ID)
-  )
   const [showOnboarding, setShowOnboarding] = useState(
     () => localStorage.getItem(ONBOARDING_STORAGE_KEY) !== '1'
   )
@@ -116,7 +111,7 @@ export function AppContent() {
   const { isAuthenticated, isLoading: isAuthLoading } = useAppSelector(state => state.auth)
 
   // Restore session on mount FIRST - this must run before other effects.
-  // In local mode, skip the login screen entirely and auto-login with node identity.
+  // Always auto-login with node identity (public key is the sole identity source).
   useEffect(() => {
     const userId = localStorage.getItem(BROWSER_CONFIG.STORAGE_KEYS.USER_ID)
     const userHash = localStorage.getItem(BROWSER_CONFIG.STORAGE_KEYS.USER_HASH)
@@ -125,30 +120,8 @@ export function AppContent() {
       return
     }
 
-    // Check database config to decide whether to auto-login
-    getDatabaseConfig()
-      .then(response => {
-        if (response.success && response.data?.type === 'local') {
-          // Local mode: auto-login with node identity, skip login screen
-          dispatch(autoLoginLocal()).finally(() => setConfigChecking(false))
-        } else {
-          // Non-local modes: show the login screen
-          setConfigChecking(false)
-        }
-      })
-      .catch(() => {
-        // If config endpoint unavailable, fall back to auto-identity (backwards compat)
-        getAutoIdentity()
-          .then(response => {
-            if (response.success && response.data?.user_id && response.data?.user_hash) {
-              localStorage.setItem(BROWSER_CONFIG.STORAGE_KEYS.USER_ID, response.data.user_id)
-              localStorage.setItem(BROWSER_CONFIG.STORAGE_KEYS.USER_HASH, response.data.user_hash)
-              dispatch(restoreSession({ id: response.data.user_id, hash: response.data.user_hash }))
-            }
-          })
-          .catch(() => {})
-          .finally(() => setConfigChecking(false))
-      })
+    // No stored credentials — auto-login with node's public key identity
+    dispatch(autoLogin())
   }, [dispatch])
 
   // Check database status after authenticated
@@ -265,25 +238,8 @@ export function AppContent() {
     }
   }
 
-  // Show login page if not authenticated (cloud/exemem mode).
-  // While configChecking, show a loading spinner instead of the login screen
-  // to prevent a flash of the login page in local mode.
-  if (!isAuthenticated && !isAuthLoading) {
-    if (configChecking) {
-      return (
-        <div className="h-screen flex items-center justify-center bg-surface-secondary">
-          <div className="text-center">
-            <div className="w-6 h-6 border-2 border-border border-t-primary rounded-full animate-spin mx-auto mb-4" />
-            <p className="text-secondary text-sm">Loading...</p>
-          </div>
-        </div>
-      );
-    }
-    return <LoginPage />;
-  }
-
-  // Show loading spinner while restoring session or checking auth/db status
-  if (isAuthLoading || dbStatusLoading) {
+  // Show loading spinner while auto-login is in progress or checking db status
+  if (!isAuthenticated || isAuthLoading || dbStatusLoading) {
     return (
       <div className="h-screen flex items-center justify-center bg-surface-secondary">
         <div className="text-center">

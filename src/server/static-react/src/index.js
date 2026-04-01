@@ -55,7 +55,7 @@ export {
   initializeSystemKey,
   validatePrivateKey,
   refreshSystemKey,
-  loginUser,
+  autoLogin,
   clearAuthentication,
   setError,
   clearError,

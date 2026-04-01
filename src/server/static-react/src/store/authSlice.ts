@@ -183,35 +183,9 @@ export const refreshSystemKey = createAsyncThunk(
   },
 );
 
-// Async thunk for user login and hash generation
-export const loginUser = createAsyncThunk(
-  "auth/loginUser",
-  async (userId: string, { rejectWithValue }) => {
-    try {
-      const encoder = new TextEncoder();
-      const data = encoder.encode(userId);
-      const hashBuffer = await crypto.subtle.digest("SHA-256", data);
-      const hashArray = Array.from(new Uint8Array(hashBuffer));
-      const hashHex = hashArray
-        .map((b) => b.toString(16).padStart(2, "0"))
-        .join("");
-      const userHash = hashHex.substring(0, 32);
-
-      // Set localStorage BEFORE returning so credentials are available
-      // when Redux state change triggers component re-renders and API calls
-      localStorage.setItem(BROWSER_CONFIG.STORAGE_KEYS.USER_ID, userId);
-      localStorage.setItem(BROWSER_CONFIG.STORAGE_KEYS.USER_HASH, userHash);
-
-      return { id: userId, hash: userHash };
-    } catch {
-      return rejectWithValue("Failed to generate user hash");
-    }
-  },
-);
-
-// Async thunk for auto-login in local mode (skips login screen entirely)
-export const autoLoginLocal = createAsyncThunk(
-  "auth/autoLoginLocal",
+// Async thunk for auto-login using the node's public key identity (all modes)
+export const autoLogin = createAsyncThunk(
+  "auth/autoLogin",
   async (_, { rejectWithValue }) => {
     try {
       const response = await getAutoIdentity();
@@ -387,28 +361,18 @@ const authSlice = createSlice({
         state.systemKeyId = null;
         state.error = action.payload as string;
       })
-      // loginUser cases
-      .addCase(loginUser.fulfilled, (state, action) => {
-        state.isAuthenticated = true;
-        state.user = action.payload;
-        state.error = null;
-      })
-      .addCase(loginUser.rejected, (state, action) => {
-        state.isAuthenticated = false;
-        state.error = (action.payload as string) || "Login failed";
-      })
-      // autoLoginLocal cases
-      .addCase(autoLoginLocal.pending, (state) => {
+      // autoLogin cases
+      .addCase(autoLogin.pending, (state) => {
         state.isLoading = true;
         state.error = null;
       })
-      .addCase(autoLoginLocal.fulfilled, (state, action) => {
+      .addCase(autoLogin.fulfilled, (state, action) => {
         state.isLoading = false;
         state.isAuthenticated = true;
         state.user = action.payload;
         state.error = null;
       })
-      .addCase(autoLoginLocal.rejected, (state, action) => {
+      .addCase(autoLogin.rejected, (state, action) => {
         state.isLoading = false;
         state.error = (action.payload as string) || "Auto-login failed";
       })
