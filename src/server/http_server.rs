@@ -147,6 +147,28 @@ impl FoldHttpServer {
             }
         );
 
+        // Auto-configure discovery service env vars if not already set.
+        // run.sh sets these, but when running the binary directly they must be derived.
+        if std::env::var("DISCOVERY_SERVICE_URL").is_err() {
+            let url = format!(
+                "{}/api",
+                super::routes::auth::exemem_api_url()
+            );
+            log::info!("Auto-configuring DISCOVERY_SERVICE_URL={}", url);
+            std::env::set_var("DISCOVERY_SERVICE_URL", &url);
+        }
+        if std::env::var("DISCOVERY_MASTER_KEY").is_err() {
+            let base_config = self.node_manager.get_base_config().await;
+            if let Some(ref priv_key_b64) = base_config.private_key {
+                use sha2::{Digest, Sha256};
+                let mut hasher = Sha256::new();
+                hasher.update(priv_key_b64.as_bytes());
+                let key_hex = hex::encode(hasher.finalize());
+                log::info!("Auto-configuring DISCOVERY_MASTER_KEY from node identity");
+                std::env::set_var("DISCOVERY_MASTER_KEY", &key_hex);
+            }
+        }
+
         // Create shared application state
         let app_state = web::Data::new(AppState {
             node_manager: self.node_manager.clone(),

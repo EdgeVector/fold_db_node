@@ -4,7 +4,7 @@ use serde::{Deserialize, Serialize};
 use crate::keychain;
 use crate::server::http_server::AppState;
 
-fn exemem_api_url() -> String {
+pub(crate) fn exemem_api_url() -> String {
     std::env::var("EXEMEM_API_URL")
         .unwrap_or_else(|_| "https://ygyu7ritx8.execute-api.us-west-2.amazonaws.com".to_string())
 }

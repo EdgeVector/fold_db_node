@@ -57,14 +57,29 @@ pub struct AddMemberRequest {
     pub display_name: String,
 }
 
-/// Get the sled::Db from a FoldNode, returning a handler error if unavailable.
+/// Get the sled::Db from a FoldNode, falling back to a local metadata db if unavailable.
 async fn get_sled_db(node: &FoldNode) -> Result<sled::Db, crate::handlers::HandlerError> {
     let db_guard = node.get_fold_db().await.handler_err("lock database")?;
-    db_guard.sled_db().cloned().ok_or_else(|| {
-        crate::handlers::HandlerError::ServiceUnavailable(
-            "Org operations require a Sled backend".to_string(),
-        )
-    })
+    if let Some(db) = db_guard.sled_db().cloned() {
+        Ok(db)
+    } else {
+        let meta_path = node.config.get_storage_path().join("meta_db");
+        sled::open(meta_path).handler_err("open fallback meta db")
+    }
+}
+
+/// Helper to get an AuthClient if the node is configured for Exemem syncing.
+fn get_auth_client(node: &FoldNode) -> Option<fold_db::sync::auth::AuthClient> {
+    if let fold_db::storage::config::DatabaseConfig::Exemem { api_url, api_key, .. } = &node.config.database {
+        let http = std::sync::Arc::new(reqwest::Client::new());
+        Some(fold_db::sync::auth::AuthClient::new(
+            http,
+            api_url.clone(),
+            fold_db::sync::auth::SyncAuth::ApiKey(api_key.clone()),
+        ))
+    } else {
+        None
+    }
 }
 
 /// Create a new organization. The calling node becomes the admin.
@@ -93,6 +108,11 @@ pub async fn create_org(
     // Generate an invite bundle so the creator can share it immediately
     let invite_bundle = org_ops::generate_invite(&sled_db, &membership.org_hash)
         .handler_err("generate initial invite")?;
+
+    // If connected to Exemem, register the org on the backend
+    if let Some(client) = get_auth_client(node) {
+        client.create_org(&membership.org_hash).await.handler_err("sync create_org to cloud")?;
+    }
 
     // Reconfigure org sync with the new org
     node.configure_org_sync_if_needed().await;
@@ -185,6 +205,13 @@ pub async fn add_member(
 
     org_ops::add_member(&sled_db, org_hash, member).handler_err("add member")?;
 
+    if let Some(client) = get_auth_client(node) {
+        // Find member's user_hash. Currently we just use the public key as user_hash, 
+        // or require the UI to pass it correctly if we added target_user_hash to request.
+        // For simplicity we try to register the node_public_key.
+        client.add_member(org_hash, &req.node_public_key, "Member").await.handler_err("sync add_member to cloud")?;
+    }
+
     Ok(ApiResponse::success_with_user(
         serde_json::json!({"ok": true}),
         user_hash,
@@ -201,6 +228,17 @@ pub async fn remove_member(
     let sled_db = get_sled_db(node).await?;
 
     org_ops::remove_member(&sled_db, org_hash, node_public_key).handler_err("remove member")?;
+
+    // If we are removing ourselves, purge the org data locally
+    if node_public_key == node.get_node_public_key() {
+        let fold_db = node.get_fold_db().await.handler_err("get fold_db")?;
+        let db_ops = fold_db.get_db_ops();
+        let _ = db_ops.purge_org_data(org_hash).await.map_err(|e| log::error!("Failed to purge org data after removal: {}", e));
+    }
+
+    if let Some(client) = get_auth_client(node) {
+        client.remove_member(org_hash, node_public_key).await.handler_err("sync remove_member to cloud")?;
+    }
 
     Ok(ApiResponse::success_with_user(
         serde_json::json!({"ok": true}),
@@ -234,6 +272,11 @@ pub async fn delete_org(
     let sled_db = get_sled_db(node).await?;
 
     org_ops::delete_org(&sled_db, org_hash).handler_err("delete org")?;
+
+    // Purge local data since the org is completely gone
+    let fold_db = node.get_fold_db().await.handler_err("get fold_db")?;
+    let db_ops = fold_db.get_db_ops();
+    let _ = db_ops.purge_org_data(org_hash).await.map_err(|e| log::error!("Failed to purge org data after deletion: {}", e));
 
     // Reconfigure org sync without the deleted org
     node.configure_org_sync_if_needed().await;
