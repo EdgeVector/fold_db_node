@@ -5,9 +5,12 @@ import { selectIngestionConfig, selectAiProvider, selectActiveModel, selectIsAiC
 import { BROWSER_CONFIG } from '../constants/config'
 import { systemClient } from '../api/clients/systemClient'
 import { getSubscriptionStatus, formatBytes } from '../api/clients/subscriptionClient'
+import { orgClient } from '../api/clients/orgClient'
 import HeaderProgress from './HeaderProgress'
 import AnimatedLogo from './AnimatedLogo'
 import SyncStatusIndicator from './SyncStatusIndicator'
+import PendingInvitesModal from './PendingInvitesModal'
+import { EnvelopeIcon } from '@heroicons/react/24/outline'
 
 function classifySchemaEnv(url) {
   if (!url) return { label: 'None', color: 'text-gruvbox-yellow' }
@@ -36,6 +39,10 @@ function Header({ onSettingsClick, onAiSettingsClick, onCloudSettingsClick }) {
   const [storageSize, setStorageSize] = useState(null)
   const [storageQuota, setStorageQuota] = useState(null)
   const [schemaEnv, setSchemaEnv] = useState(null)
+  
+  // Pending Invites State
+  const [pendingInvites, setPendingInvites] = useState([])
+  const [isInvitesModalOpen, setIsInvitesModalOpen] = useState(false)
 
   useEffect(() => {
     systemClient.getDatabaseConfig().then(res => {
@@ -58,6 +65,23 @@ function Header({ onSettingsClick, onAiSettingsClick, onCloudSettingsClick }) {
     }
   }, [])
 
+  // Poll for invites after layout mount
+  useEffect(() => {
+    if (!isAuthenticated) return;
+    const fetchInvites = async () => {
+      try {
+        const res = await orgClient.getPendingInvites();
+        if (res.data) setPendingInvites(res.data);
+      } catch {
+        // fail silently for telemetry
+      }
+    };
+    fetchInvites();
+    // Poll every 60 seconds
+    const interval = setInterval(fetchInvites, 60000);
+    return () => clearInterval(interval);
+  }, [isAuthenticated]);
+
   const handleLogout = () => {
     dispatch(logoutUser())
     localStorage.removeItem(BROWSER_CONFIG.STORAGE_KEYS.USER_ID)
@@ -66,7 +90,6 @@ function Header({ onSettingsClick, onAiSettingsClick, onCloudSettingsClick }) {
     dispatch(autoLogin())
   }
 
-  const isLocal = storageMode === 'Local'
   const formattedSize = formatStorageSize(storageSize)
   const formattedQuota = storageQuota ? formatBytes(storageQuota) : null
   const quotaWarning = storageQuota && storageSize ? (storageSize / storageQuota) > 0.8 : false
@@ -113,11 +136,30 @@ function Header({ onSettingsClick, onAiSettingsClick, onCloudSettingsClick }) {
               </button>
             </div>
           )}
+          <div className="relative">
+            <button 
+              onClick={() => setIsInvitesModalOpen(true)}
+              className="p-2 text-tertiary hover:text-primary transition-colors bg-transparent border-none cursor-pointer flex items-center justify-center"
+              title="Inbox"
+            >
+              <EnvelopeIcon className="w-5 h-5" />
+              {pendingInvites.length > 0 && (
+                <span className="absolute top-0 right-0 w-2.5 h-2.5 bg-gruvbox-red rounded-full border-2 border-surface"></span>
+              )}
+            </button>
+          </div>
           <button onClick={onSettingsClick} className="btn-secondary" title="Settings">
             Settings
           </button>
         </div>
       </div>
+      
+      <PendingInvitesModal 
+        isOpen={isInvitesModalOpen} 
+        onClose={() => setIsInvitesModalOpen(false)}
+        pendingInvites={pendingInvites}
+        setPendingInvites={setPendingInvites}
+      />
     </header>
   )
 }

@@ -1,0 +1,65 @@
+    Checking fold_db_node v0.1.0 (/Users/tomtang/code/exemem-workspace/fold_db_node)
+error: #[derive(RustEmbed)] folder '/Users/tomtang/code/exemem-workspace/fold_db_node/src/server/static-react/dist' does not exist. cwd: '/Users/tomtang/code/exemem-workspace/fold_db_node'
+ --> src/server/static_assets.rs:4:1
+  |
+4 | / #[folder = "src/server/static-react/dist"]
+5 | | #[prefix = "/"]
+6 | | pub struct Asset;
+  | |_________________^
+
+error[E0599]: no function or associated item named `get` found for struct `Asset` in the current scope
+   --> src/server/http_server.rs:851:35
+    |
+851 | ...nt) = Asset::get(asset_path) {
+    |                 ^^^ function or associated item not found in `Asset`
+    |
+   ::: src/server/static_assets.rs:6:1
+    |
+  6 | pub struct Asset;
+    | ---------------- function or associated item `get` not found for this struct
+    |
+    = help: items from traits can only be used if the trait is implemented and in scope
+    = note: the following traits define an item `get`, perhaps you need to implement one of them:
+            candidate #1: `Embed`
+            candidate #2: `KvStore`
+            candidate #3: `SliceIndex`
+            candidate #4: `icu_collections::codepointtrie::cptrie::TypedCodePointTrie`
+            candidate #5: `icu_properties::names::PropertyEnumToValueNameLookup`
+            candidate #6: `icu_provider::baked::DataStore`
+            candidate #7: `itertools::Itertools`
+            candidate #8: `ndarray::impl_views::indexing::IndexLonger`
+            candidate #9: `pdfium_render::pdf::document::page::objects::common::PdfPageObjectsCommon`
+            candidate #10: `pdfium_render::pdf::path::segments::PdfPathSegments`
+            candidate #11: `rustls::server::server_conn::StoresServerSessions`
+            candidate #12: `toml_edit::table::TableLike`
+            candidate #13: `utf16string::slicing::SliceIndex`
+
+error[E0599]: no function or associated item named `get` found for struct `Asset` in the current scope
+   --> src/server/http_server.rs:858:22
+    |
+858 |         match Asset::get("/index.html") {
+    |                      ^^^ function or associated item not found in `Asset`
+    |
+   ::: src/server/static_assets.rs:6:1
+    |
+  6 | pub struct Asset;
+    | ---------------- function or associated item `get` not found for this struct
+    |
+    = help: items from traits can only be used if the trait is implemented and in scope
+    = note: the following traits define an item `get`, perhaps you need to implement one of them:
+            candidate #1: `Embed`
+            candidate #2: `KvStore`
+            candidate #3: `SliceIndex`
+            candidate #4: `icu_collections::codepointtrie::cptrie::TypedCodePointTrie`
+            candidate #5: `icu_properties::names::PropertyEnumToValueNameLookup`
+            candidate #6: `icu_provider::baked::DataStore`
+            candidate #7: `itertools::Itertools`
+            candidate #8: `ndarray::impl_views::indexing::IndexLonger`
+            candidate #9: `pdfium_render::pdf::document::page::objects::common::PdfPageObjectsCommon`
+            candidate #10: `pdfium_render::pdf::path::segments::PdfPathSegments`
+            candidate #11: `rustls::server::server_conn::StoresServerSessions`
+            candidate #12: `toml_edit::table::TableLike`
+            candidate #13: `utf16string::slicing::SliceIndex`
+
+For more information about this error, try `rustc --explain E0599`.
+error: could not compile `fold_db_node` (lib) due to 3 previous errors

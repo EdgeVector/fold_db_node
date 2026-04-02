@@ -76,3 +76,8 @@ pub async fn generate_invite(
     let org_hash = path.into_inner();
     handler_result_to_response(org_handlers::generate_invite(&org_hash, &user_hash, &node).await)
 }
+/// GET /api/org/invites/pending — get pending invites from inbox
+pub async fn get_pending_invites(state: web::Data<AppState>) -> impl Responder {
+    let (user_hash, node) = node_or_return!(state);
+    handler_result_to_response(org_handlers::get_pending_invites(&user_hash, &node).await)
+}
