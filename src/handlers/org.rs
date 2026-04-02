@@ -70,7 +70,10 @@ async fn get_sled_db(node: &FoldNode) -> Result<sled::Db, crate::handlers::Handl
 
 /// Helper to get an AuthClient if the node is configured for Exemem syncing.
 fn get_auth_client(node: &FoldNode) -> Option<fold_db::sync::auth::AuthClient> {
-    if let fold_db::storage::config::DatabaseConfig::Exemem { api_url, api_key, .. } = &node.config.database {
+    if let fold_db::storage::config::DatabaseConfig::Exemem {
+        api_url, api_key, ..
+    } = &node.config.database
+    {
         let http = std::sync::Arc::new(reqwest::Client::new());
         Some(fold_db::sync::auth::AuthClient::new(
             http,
@@ -111,7 +114,10 @@ pub async fn create_org(
 
     // If connected to Exemem, register the org on the backend
     if let Some(client) = get_auth_client(node) {
-        client.create_org(&membership.org_hash).await.handler_err("sync create_org to cloud")?;
+        client
+            .create_org(&membership.org_hash)
+            .await
+            .handler_err("sync create_org to cloud")?;
     }
 
     // Reconfigure org sync with the new org
@@ -206,10 +212,36 @@ pub async fn add_member(
     org_ops::add_member(&sled_db, org_hash, member).handler_err("add member")?;
 
     if let Some(client) = get_auth_client(node) {
-        // Find member's user_hash. Currently we just use the public key as user_hash, 
+        // Find member's user_hash. Currently we just use the public key as user_hash,
         // or require the UI to pass it correctly if we added target_user_hash to request.
         // For simplicity we try to register the node_public_key.
-        client.add_member(org_hash, &req.node_public_key, "Member").await.handler_err("sync add_member to cloud")?;
+        client
+            .add_member(org_hash, &req.node_public_key, "Member")
+            .await
+            .handler_err("sync add_member to cloud")?;
+
+        // Generate an invite bundle for the target user's inbox
+        let invite_bundle = org_ops::generate_invite(&sled_db, org_hash)
+            .handler_err("generate invite for inbox")?;
+        let invite_json = serde_json::to_vec(&invite_bundle).handler_err("serialize invite")?;
+
+        // Encrypt the invite using the target user's base64 Ed25519 public key
+        let encrypted_invite =
+            fold_db::crypto::inbox::seal_box_base64(&req.node_public_key, &invite_json)
+                .handler_err("seal invite box")?;
+
+        // Upload to the target's S3 inbox
+        let file_name = format!("{}.enc", org_hash);
+        let presigned = client
+            .presign_inbox_upload(&req.node_public_key, &file_name)
+            .await
+            .handler_err("presign inbox upload")?;
+        let http = std::sync::Arc::new(reqwest::Client::new());
+        let s3_client = fold_db::sync::s3::S3Client::new(http);
+        s3_client
+            .upload(&presigned, encrypted_invite)
+            .await
+            .handler_err("upload invite to inbox")?;
     }
 
     Ok(ApiResponse::success_with_user(
@@ -233,11 +265,17 @@ pub async fn remove_member(
     if node_public_key == node.get_node_public_key() {
         let fold_db = node.get_fold_db().await.handler_err("get fold_db")?;
         let db_ops = fold_db.get_db_ops();
-        let _ = db_ops.purge_org_data(org_hash).await.map_err(|e| log::error!("Failed to purge org data after removal: {}", e));
+        let _ = db_ops
+            .purge_org_data(org_hash)
+            .await
+            .map_err(|e| log::error!("Failed to purge org data after removal: {}", e));
     }
 
     if let Some(client) = get_auth_client(node) {
-        client.remove_member(org_hash, node_public_key).await.handler_err("sync remove_member to cloud")?;
+        client
+            .remove_member(org_hash, node_public_key)
+            .await
+            .handler_err("sync remove_member to cloud")?;
     }
 
     Ok(ApiResponse::success_with_user(
@@ -276,7 +314,10 @@ pub async fn delete_org(
     // Purge local data since the org is completely gone
     let fold_db = node.get_fold_db().await.handler_err("get fold_db")?;
     let db_ops = fold_db.get_db_ops();
-    let _ = db_ops.purge_org_data(org_hash).await.map_err(|e| log::error!("Failed to purge org data after deletion: {}", e));
+    let _ = db_ops
+        .purge_org_data(org_hash)
+        .await
+        .map_err(|e| log::error!("Failed to purge org data after deletion: {}", e));
 
     // Reconfigure org sync without the deleted org
     node.configure_org_sync_if_needed().await;
@@ -286,7 +327,66 @@ pub async fn delete_org(
         user_hash,
     ))
 }
+#[derive(Debug, serde::Serialize)]
+pub struct PendingInvitesResponse {
+    pub invites: Vec<OrgInviteBundle>,
+}
 
+/// Fetch pending org invitations from the S3 inbox.
+pub async fn get_pending_invites(
+    user_hash: &str,
+    node: &FoldNode,
+) -> HandlerResult<PendingInvitesResponse> {
+    let mut invites = Vec::new();
+
+    if let Some(client) = get_auth_client(node) {
+        let http = std::sync::Arc::new(reqwest::Client::new());
+        let s3_client = fold_db::sync::s3::S3Client::new(http);
+
+        // 1. List objects in inbox/org_invites/
+        let objects = match client.list_objects("inbox/org_invites/").await {
+            Ok(objs) => objs,
+            Err(e) => {
+                log::warn!("Could not list inbox: {}", e);
+                return Ok(ApiResponse::success_with_user(
+                    PendingInvitesResponse { invites },
+                    user_hash,
+                ));
+            }
+        };
+
+        for obj in objects {
+            if obj.key.ends_with(".enc") {
+                let file_name = obj.key.split('/').next_back().unwrap();
+
+                // 2. Request download URL
+                if let Ok(presigned) = client.presign_inbox_download(file_name).await {
+                    // 3. Download encrypted blob
+                    if let Ok(Some(encrypted_bytes)) = s3_client.download(&presigned).await {
+                        // 4. Decrypt using node's secret key
+                        let my_sec = node.get_node_private_key();
+                        if let Ok(plaintext) =
+                            fold_db::crypto::inbox::open_box_base64(my_sec, &encrypted_bytes)
+                        {
+                            if let Ok(bundle) =
+                                serde_json::from_slice::<OrgInviteBundle>(&plaintext)
+                            {
+                                invites.push(bundle);
+                            }
+                        } else {
+                            log::warn!("Failed to decrypt invite: {}", file_name);
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    Ok(ApiResponse::success_with_user(
+        PendingInvitesResponse { invites },
+        user_hash,
+    ))
+}
 #[cfg(test)]
 mod tests {
     use super::*;

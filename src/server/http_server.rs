@@ -150,10 +150,7 @@ impl FoldHttpServer {
         // Auto-configure discovery service env vars if not already set.
         // run.sh sets these, but when running the binary directly they must be derived.
         if std::env::var("DISCOVERY_SERVICE_URL").is_err() {
-            let url = format!(
-                "{}/api",
-                super::routes::auth::exemem_api_url()
-            );
+            let url = format!("{}/api", super::routes::auth::exemem_api_url());
             log::info!("Auto-configuring DISCOVERY_SERVICE_URL={}", url);
             std::env::set_var("DISCOVERY_SERVICE_URL", &url);
         }
@@ -814,6 +811,10 @@ impl FoldHttpServer {
                 .route("", web::post().to(org_routes::create_org))
                 .route("", web::get().to(org_routes::list_orgs))
                 .route("/join", web::post().to(org_routes::join_org))
+                .route(
+                    "/invites/pending",
+                    web::get().to(org_routes::get_pending_invites),
+                )
                 .route("/{org_hash}", web::get().to(org_routes::get_org))
                 .route("/{org_hash}", web::delete().to(org_routes::delete_org))
                 .route(
