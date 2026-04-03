@@ -19,7 +19,7 @@ export default function PendingInvitesModal({ isOpen, onClose, pendingInvites, s
       }
     } catch (err) {
       console.error('Failed to accept invite', err);
-      setError('Failed to join organization. Try again.');
+      setError(err.message || 'Failed to join organization. Try again.');
     } finally {
       setLoadingIds(prev => {
         const next = new Set(prev);
