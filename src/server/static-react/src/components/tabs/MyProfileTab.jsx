@@ -364,13 +364,21 @@ export default function MyProfileTab({ onResult }) {
             Ingest some data first, then click below to generate your fingerprint.
             It will update automatically as you add more data.
           </p>
-          <button
-            onClick={handleDetect}
-            disabled={detecting}
-            className="btn-primary"
-          >
-            {detecting ? 'Scanning your data...' : 'Generate Fingerprint'}
-          </button>
+          <div className="flex items-center gap-3 justify-center">
+            <button
+              onClick={handleDetect}
+              disabled={detecting}
+              className="btn-primary"
+            >
+              {detecting ? 'Scanning your data...' : 'Generate Fingerprint'}
+            </button>
+            <button
+              onClick={() => { window.location.hash = 'smart-folder' }}
+              className="btn-secondary text-sm"
+            >
+              Import data
+            </button>
+          </div>
         </div>
       </div>
     )
