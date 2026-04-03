@@ -61,9 +61,7 @@ impl IngestionService {
 
         // If ingesting into an org, create an org-scoped copy of the schema
         if let Some(ref org_hash) = request.org_hash {
-            schema_name = self
-                .ensure_org_schema(&schema_name, org_hash, node)
-                .await?;
+            schema_name = self.ensure_org_schema(&schema_name, org_hash, node).await?;
         }
         // Merge schema service's semantic field renames into AI's mutation_mappers.
         // Service mappers (e.g., "creator" → "artist") take precedence since they

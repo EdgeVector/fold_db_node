@@ -217,7 +217,8 @@ async fn sync_notes(
             progress_id: None,
             file_hash: None,
             source_folder: None,
-            image_descriptive_name: None, org_hash: None,
+            image_descriptive_name: None,
+            org_hash: None,
         };
 
         if let Err(e) = crate::handlers::ingestion::process_json(
@@ -286,7 +287,8 @@ async fn sync_reminders(
         progress_id: None,
         file_hash: None,
         source_folder: None,
-        image_descriptive_name: None, org_hash: None,
+        image_descriptive_name: None,
+        org_hash: None,
     };
 
     if let Err(e) =

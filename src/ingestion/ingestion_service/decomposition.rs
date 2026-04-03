@@ -76,10 +76,7 @@ impl SchemaCache {
 
     /// Return all unique schema names in the local cache.
     pub(super) fn local_schema_names(&self) -> Vec<String> {
-        self.local
-            .values()
-            .map(|c| c.schema_name.clone())
-            .collect()
+        self.local.values().map(|c| c.schema_name.clone()).collect()
     }
 
     /// Remap all cached schema names to org-scoped versions.

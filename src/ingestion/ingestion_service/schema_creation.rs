@@ -333,11 +333,7 @@ impl IngestionService {
         org_hash: &str,
         node: &FoldNode,
     ) -> IngestionResult<String> {
-        let org_schema_name = format!(
-            "{}:{}",
-            &org_hash[..12.min(org_hash.len())],
-            schema_name
-        );
+        let org_schema_name = format!("{}:{}", &org_hash[..12.min(org_hash.len())], schema_name);
 
         let schema_manager = get_schema_manager(node).await?;
 
