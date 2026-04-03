@@ -185,6 +185,36 @@ export default function CloudMigrationSettings({ onClose }) {
           </div>
         )}
 
+        {/* Passkey recovery */}
+        <div className="flex items-center justify-between p-4 border border-border rounded-md bg-surface-elevated">
+          <div>
+            <div className="text-sm font-bold text-gruvbox-bright">Web Recovery</div>
+            <div className="text-xs text-gruvbox-dim mt-1">
+              Add a passkey so you can recover your account from any browser
+            </div>
+          </div>
+          <button
+            onClick={async () => {
+              try {
+                const resp = await fetch('/api/auth/credentials')
+                const data = await resp.json()
+                if (!data.ok || !data.session_token) {
+                  setError('No active session. Try re-enabling cloud backup.')
+                  return
+                }
+                const exememUrl = localStorage.getItem('exemem_api_url') || 'https://exemem.com'
+                const baseUrl = exememUrl.replace(/\/api\/?$/, '').replace(/execute-api\.[^/]+/, 'exemem.com')
+                window.open(`${baseUrl}/link-passkey?session=${encodeURIComponent(data.session_token)}`, '_blank')
+              } catch {
+                setError('Failed to get session token')
+              }
+            }}
+            className="px-4 py-2 text-xs font-bold border border-gruvbox-blue text-gruvbox-blue hover:bg-gruvbox-blue/10 rounded-md transition-colors cursor-pointer"
+          >
+            Add Passkey
+          </button>
+        </div>
+
         {error && (
           <div className="flex items-start gap-3 p-3 border border-gruvbox-red bg-gruvbox-red/5 rounded-md">
             <span className="text-gruvbox-red text-sm flex-shrink-0">!</span>

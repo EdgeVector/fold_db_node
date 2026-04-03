@@ -145,6 +145,7 @@ pub async fn get_credentials() -> HttpResponse {
             "ok": true,
             "has_credentials": true,
             "user_hash": creds.user_hash,
+            "session_token": creds.session_token,
         })),
         Ok(None) => HttpResponse::Ok().json(serde_json::json!({
             "ok": true,
