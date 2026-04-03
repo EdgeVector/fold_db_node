@@ -211,6 +211,7 @@ async fn test_ingest_tweets_js() {
         file_hash: None,
         source_folder: None,
         image_descriptive_name: None,
+        org_hash: None,
     };
 
     // 7. Run ingestion within user context

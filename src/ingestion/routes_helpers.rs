@@ -315,6 +315,7 @@ pub(crate) async fn process_single_file_via_smart_folder(
         file_hash: Some(file_hash),
         source_folder: file_path.parent().map(|p| p.to_string_lossy().to_string()),
         image_descriptive_name,
+        org_hash: None,
     };
 
     service

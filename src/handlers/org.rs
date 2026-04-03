@@ -86,7 +86,7 @@ fn get_auth_client(node: &FoldNode) -> Option<fold_db::sync::auth::AuthClient> {
 }
 
 /// Require Exemem cloud configuration, returning the AuthClient or a BadRequest error.
-fn require_exemem(
+pub fn require_exemem(
     node: &FoldNode,
 ) -> Result<fold_db::sync::auth::AuthClient, crate::handlers::HandlerError> {
     get_auth_client(node).ok_or_else(|| {

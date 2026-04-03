@@ -185,6 +185,35 @@ pub async fn process_json(
         }
     }
 
+    // Validate org_hash if provided
+    if let Some(ref org_hash) = request.org_hash {
+        if org_hash.len() != 64 || !org_hash.chars().all(|c| c.is_ascii_hexdigit()) {
+            return Err(HandlerError::BadRequest(
+                "Invalid org_hash format — expected 64-character hex string".to_string(),
+            ));
+        }
+
+        // Require Exemem config for org ingestion
+        crate::handlers::org::require_exemem(node)?;
+
+        // Verify the org exists locally
+        let sled_db = {
+            let db_guard = node.get_fold_db().await.handler_err("lock database")?;
+            db_guard
+                .sled_db()
+                .cloned()
+                .ok_or_else(|| HandlerError::Internal("No sled database".to_string()))?
+        };
+        let org = fold_db::org::operations::get_org(&sled_db, org_hash)
+            .handler_err("check org membership")?;
+        if org.is_none() {
+            return Err(HandlerError::BadRequest(format!(
+                "Not a member of organization '{}'",
+                org_hash
+            )));
+        }
+    }
+
     // Generate or use provided progress_id
     let progress_id = request
         .progress_id

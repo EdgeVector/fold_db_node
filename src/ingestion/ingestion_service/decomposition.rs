@@ -74,6 +74,21 @@ impl SchemaCache {
         self.local.insert(structure_hash, cached);
     }
 
+    /// Return all unique schema names in the local cache.
+    pub(super) fn local_schema_names(&self) -> Vec<String> {
+        self.local.values().map(|c| c.schema_name.clone()).collect()
+    }
+
+    /// Remap all cached schema names to org-scoped versions.
+    /// Called after schema resolution when ingesting into an org.
+    pub(super) fn remap_to_org(&mut self, name_map: &HashMap<String, String>) {
+        for cached in self.local.values_mut() {
+            if let Some(org_name) = name_map.get(&cached.schema_name) {
+                cached.schema_name = org_name.clone();
+            }
+        }
+    }
+
     /// Flush all local entries to the shared cross-file cache.
     pub(super) fn commit(&self) {
         if let Ok(mut shared) = self.shared.write() {

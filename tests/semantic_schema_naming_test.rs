@@ -175,6 +175,7 @@ async fn ingest_file(
         file_hash: Some(file_hash),
         source_folder: Some(file_path.parent()?.to_string_lossy().to_string()),
         image_descriptive_name: None,
+        org_hash: None,
     };
 
     let pid = progress_id.clone();

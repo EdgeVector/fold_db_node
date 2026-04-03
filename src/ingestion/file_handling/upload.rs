@@ -655,6 +655,7 @@ pub async fn upload_file(
         file_hash: Some(form_data.file_hash.clone()),
         source_folder: None,
         image_descriptive_name,
+        org_hash: None,
     };
 
     // Extract ingestion service

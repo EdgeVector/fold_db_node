@@ -218,6 +218,7 @@ async fn sync_notes(
             file_hash: None,
             source_folder: None,
             image_descriptive_name: None,
+            org_hash: None,
         };
 
         if let Err(e) = crate::handlers::ingestion::process_json(
@@ -287,6 +288,7 @@ async fn sync_reminders(
         file_hash: None,
         source_folder: None,
         image_descriptive_name: None,
+        org_hash: None,
     };
 
     if let Err(e) =
@@ -387,6 +389,7 @@ async fn sync_photos(
                     file_hash: None,
                     source_folder: None,
                     image_descriptive_name: descriptive_name,
+                    org_hash: None,
                 };
 
                 if let Err(e) = crate::handlers::ingestion::process_json(

@@ -1,5 +1,6 @@
-import { useState } from 'react'
+import { useState, useEffect } from 'react'
 import { ingestionClient } from '../../api/clients'
+import { defaultApiClient } from '../../api/core/client'
 import { generateBlogPosts } from '../../data/sampleBlogPosts'
 import { twitterSamples, instagramSamples, linkedinSamples, tiktokSamples } from '../../data/sampleSocialPosts'
 
@@ -9,13 +10,26 @@ function IngestionTab({ onResult }) {
   const [jsonData, setJsonData] = useState('')
   const [autoExecute, setAutoExecute] = useState(true)
   const [isLoading, setIsLoading] = useState(false)
+  const [orgs, setOrgs] = useState([])
+  const [selectedOrg, setSelectedOrg] = useState('')
+
+  useEffect(() => {
+    defaultApiClient.get('/org').then(res => {
+      setOrgs(res.orgs || [])
+    }).catch(() => {})
+  }, [])
 
   const processIngestion = async () => {
     setIsLoading(true)
     onResult(null)
     try {
       const parsedData = JSON.parse(jsonData)
-      const response = await ingestionClient.processIngestion(parsedData, { autoExecute, pubKey: 'default' })
+      const options = {
+        autoExecute,
+        pubKey: 'default',
+        ...(selectedOrg ? { orgHash: selectedOrg } : {}),
+      }
+      const response = await ingestionClient.processIngestion(parsedData, options)
       if (response.success) {
         onResult({ success: true, data: response.data })
         setJsonData('')
@@ -34,6 +48,8 @@ function IngestionTab({ onResult }) {
     setJsonData(JSON.stringify(samples[type], null, 2))
   }
 
+  const selectedOrgName = orgs.find(o => o.org_hash === selectedOrg)?.org_name
+
   return (
     <div className="space-y-4">
       <div className="flex items-center justify-between">
@@ -46,10 +62,26 @@ function IngestionTab({ onResult }) {
             ))}
           </div>
         )}
-        <label className="flex items-center gap-2 text-sm cursor-pointer">
-          <input type="checkbox" checked={autoExecute} onChange={(e) => setAutoExecute(e.target.checked)} className="checkbox" />
-          <span className="text-secondary">Auto-execute</span>
-        </label>
+        <div className="flex items-center gap-4">
+          {orgs.length > 0 && (
+            <select
+              value={selectedOrg}
+              onChange={(e) => setSelectedOrg(e.target.value)}
+              className="input-field text-sm py-1 px-2"
+            >
+              <option value="">Personal</option>
+              {orgs.map(org => (
+                <option key={org.org_hash} value={org.org_hash}>
+                  {org.org_name}
+                </option>
+              ))}
+            </select>
+          )}
+          <label className="flex items-center gap-2 text-sm cursor-pointer">
+            <input type="checkbox" checked={autoExecute} onChange={(e) => setAutoExecute(e.target.checked)} className="checkbox" />
+            <span className="text-secondary">Auto-execute</span>
+          </label>
+        </div>
       </div>
 
       <textarea
@@ -59,7 +91,12 @@ function IngestionTab({ onResult }) {
         className="textarea h-72 font-mono"
       />
 
-      <div className="flex justify-end">
+      <div className="flex justify-end items-center gap-3">
+        {selectedOrg && (
+          <span className="text-xs text-text-muted bg-primary/10 text-primary px-2 py-1 rounded">
+            Ingesting into: {selectedOrgName}
+          </span>
+        )}
         <button onClick={processIngestion} disabled={isLoading || !jsonData.trim()} className="btn-primary btn-lg flex items-center gap-2">
           {isLoading ? <><span className="spinner" />Processing...</> : <>→ Process Data</>}
         </button>

@@ -279,6 +279,7 @@ export class UnifiedIngestionClient {
     options: {
       autoExecute?: boolean;
       pubKey?: string;
+      orgHash?: string;
     } = {},
   ): Promise<EnhancedApiResponse<ProcessIngestionResponse>> {
     // Generate a UUID for progress tracking
@@ -289,6 +290,7 @@ export class UnifiedIngestionClient {
       auto_execute: options.autoExecute ?? true,
       pub_key: options.pubKey ?? "default",
       progress_id: progressId,
+      ...(options.orgHash ? { org_hash: options.orgHash } : {}),
     };
 
     // Validate request before sending
