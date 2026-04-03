@@ -1,4 +1,5 @@
 import { useState, useCallback } from 'react'
+import { useAppSelector } from '../../store/hooks'
 import { createApiClient } from '../../api/core/client'
 import { API_ENDPOINTS } from '../../api/endpoints'
 
@@ -21,12 +22,22 @@ function relativeTime(timestamp) {
 }
 
 export default function FeedTab() {
+  const { user } = useAppSelector(state => state.auth)
   const [items, setItems] = useState([])
   const [total, setTotal] = useState(0)
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState(null)
   const [fetched, setFetched] = useState(false)
   const [friendInput, setFriendInput] = useState('')
+  const [keyCopied, setKeyCopied] = useState(false)
+
+  const handleCopyKey = async () => {
+    if (user?.id) {
+      await navigator.clipboard.writeText(user.id)
+      setKeyCopied(true)
+      setTimeout(() => setKeyCopied(false), 2000)
+    }
+  }
 
   const fetchFeed = useCallback(async () => {
     const hashes = friendInput
@@ -35,7 +46,7 @@ export default function FeedTab() {
       .filter(Boolean)
 
     if (hashes.length === 0) {
-      setError('Enter at least one friend hash to load the feed.')
+      setError('Add at least one friend\'s key to load the feed.')
       return
     }
 
@@ -72,13 +83,37 @@ export default function FeedTab() {
         )}
       </div>
 
-      {/* Friend hashes input */}
+      {/* Share your key */}
+      <div className="card p-4 space-y-2">
+        <div className="flex items-center justify-between">
+          <div>
+            <h3 className="text-sm font-medium text-primary">Your node key</h3>
+            <p className="text-xs text-tertiary mt-0.5">Share this with friends so they can add you to their feed</p>
+          </div>
+          <button
+            onClick={handleCopyKey}
+            className={`btn text-sm px-3 py-1.5 ${keyCopied ? 'btn-primary' : 'btn-secondary'}`}
+          >
+            {keyCopied ? 'Copied!' : 'Copy key'}
+          </button>
+        </div>
+        {user?.id && (
+          <div className="bg-gruvbox-elevated rounded px-3 py-2 font-mono text-xs text-secondary break-all select-all">
+            {user.id}
+          </div>
+        )}
+      </div>
+
+      {/* Add friends */}
       <div className="card p-4 space-y-3">
-        <label className="label">Friend Public Keys</label>
+        <div>
+          <h3 className="text-sm font-medium text-primary">Friends</h3>
+          <p className="text-xs text-tertiary mt-0.5">Paste node keys from friends to see their shared content</p>
+        </div>
         <textarea
           className="textarea w-full"
           rows={3}
-          placeholder={"Paste friend public keys, one per line..."}
+          placeholder="Paste friend node keys, one per line..."
           value={friendInput}
           onChange={e => setFriendInput(e.target.value)}
         />

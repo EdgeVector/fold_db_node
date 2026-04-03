@@ -126,10 +126,10 @@ start_local_schema_service() {
     [ -n "$ollama_url" ] && echo "  Ollama URL: $ollama_url"
 
     # Scope env vars to the schema service process only — don't leak to folddb_server
-    AI_PROVIDER=ollama \
-        ${ollama_model:+OLLAMA_MODEL="$ollama_model"} \
-        ${ollama_url:+OLLAMA_BASE_URL="$ollama_url"} \
-        nohup cargo run --bin schema_service -- --port 9002 --db-path schema_registry > schema_service.log 2>&1 &
+    local schema_env="AI_PROVIDER=ollama"
+    [ -n "$ollama_model" ] && schema_env="$schema_env OLLAMA_MODEL=$ollama_model"
+    [ -n "$ollama_url" ] && schema_env="$schema_env OLLAMA_BASE_URL=$ollama_url"
+    nohup env $schema_env cargo run --bin schema_service -- --port 9002 --db-path schema_registry > schema_service.log 2>&1 &
     SCHEMA_SERVICE_PID=$!
 
     echo "Waiting for local schema service to be ready..."

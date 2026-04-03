@@ -44,9 +44,10 @@ describe('TabNavigation', () => {
   it('renders main group tabs', () => {
     render(<TabNavigation {...defaultProps} />)
 
-    expect(screen.getByText('Smart Folder')).toBeInTheDocument()
-    expect(screen.getByText('AI Query')).toBeInTheDocument()
-    expect(screen.getByText('File Upload')).toBeInTheDocument()
+    expect(screen.getByText('Agent')).toBeInTheDocument()
+    expect(screen.getByText('Import')).toBeInTheDocument()
+    expect(screen.getByText('Feed')).toBeInTheDocument()
+    expect(screen.getByText('My Profile')).toBeInTheDocument()
   })
 
   it('renders advanced group tabs inside More dropdown', () => {
@@ -69,9 +70,9 @@ describe('TabNavigation', () => {
   })
 
   it('highlights active main tab correctly', () => {
-    render(<TabNavigation {...defaultProps} activeTab="llm-query" />)
+    render(<TabNavigation {...defaultProps} activeTab="feed" />)
 
-    const activeTab = screen.getByRole('button', { name: /ai query tab/i })
+    const activeTab = screen.getByRole('button', { name: /feed tab/i })
     expect(activeTab).toHaveAttribute('aria-current', 'page')
   })
 
@@ -87,17 +88,17 @@ describe('TabNavigation', () => {
   it('does not highlight inactive tabs', () => {
     render(<TabNavigation {...defaultProps} activeTab="ingestion" />)
 
-    const inactiveTab = screen.getByRole('button', { name: /ai query tab/i })
+    const inactiveTab = screen.getByRole('button', { name: /feed tab/i })
     expect(inactiveTab).not.toHaveAttribute('aria-current')
   })
 
   it('calls onTabChange when clicking a main tab', () => {
     render(<TabNavigation {...defaultProps} />)
 
-    const aiQueryTab = screen.getByRole('button', { name: /ai query tab/i })
-    fireEvent.click(aiQueryTab)
+    const feedTab = screen.getByRole('button', { name: /feed tab/i })
+    fireEvent.click(feedTab)
 
-    expect(defaultProps.onTabChange).toHaveBeenCalledWith('llm-query')
+    expect(defaultProps.onTabChange).toHaveBeenCalledWith('feed')
   })
 
   it('calls onTabChange when clicking an advanced tab in dropdown', () => {

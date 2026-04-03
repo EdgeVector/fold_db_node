@@ -12,33 +12,33 @@ export const TAB_TRANSITION_DURATION_MS = 200;
 export const FORM_FIELD_DEBOUNCE_MS = 300;
 
 // Tab Definitions
+// Main tabs: core user-facing features (5 tabs max visible)
+// Advanced tabs: developer/power-user tools in "More" dropdown
 export const DEFAULT_TABS = [
-  // Main features
+  // Core experience
   { id: "agent", label: "Agent", icon: "💬", group: "main" },
-  { id: "smart-folder", label: "Smart Folder", icon: "📂", group: "main" },
-  { id: "file-upload", label: "File Upload", icon: "📄", group: "main" },
-  { id: "apple-import", label: "Apple Import", icon: "🍎", group: "main" },
-  { id: "llm-query", label: "AI Query", icon: "🤖", group: "main" },
+  { id: "smart-folder", label: "Import", icon: "📂", group: "main" },
   { id: "feed", label: "Feed", icon: "📷", group: "main" },
-  { id: "shared-moments", label: "Shared Moments", icon: "📸", group: "main" },
   { id: "my-profile", label: "My Profile", icon: "🧬", group: "main" },
-  // Developer/Advanced features
+  // Import methods (under More > Import)
+  { id: "file-upload", label: "File Upload", icon: "📄", group: "advanced" },
+  { id: "apple-import", label: "Apple Import", icon: "🍎", group: "advanced" },
+  { id: "ingestion", label: "JSON Ingestion", icon: "📥", group: "advanced" },
+  // Social
+  { id: "shared-moments", label: "Shared Moments", icon: "📸", group: "advanced" },
+  { id: "sharing", label: "Sharing", icon: "🔗", group: "advanced" },
+  // Data tools
+  { id: "llm-query", label: "AI Query", icon: "🤖", group: "advanced" },
   { id: "schemas", label: "Schema", icon: "📋", group: "advanced" },
   { id: "query", label: "Query", icon: "🔍", group: "advanced" },
   { id: "mutation", label: "Mutation", icon: "✏️", group: "advanced" },
-  { id: "ingestion", label: "JSON Ingestion", icon: "📥", group: "advanced" },
-  {
-    id: "native-index",
-    label: "Native Index",
-    icon: "🧭",
-    group: "advanced",
-  },
   { id: "data-browser", label: "Data Browser", icon: "🗄️", group: "advanced" },
+  { id: "native-index", label: "Native Index", icon: "🧭", group: "advanced" },
   { id: "word-graph", label: "Word Graph", icon: "🕸️", group: "advanced" },
   { id: "views", label: "Views", icon: "👁️", group: "advanced" },
+  // Network
   { id: "discovery", label: "Discovery", icon: "🌐", group: "advanced" },
   { id: "discovery-browse", label: "Browse Network", icon: "🔎", group: "advanced" },
-  { id: "sharing", label: "Sharing", icon: "🔗", group: "advanced" },
 ];
 
 // Button Text Constants

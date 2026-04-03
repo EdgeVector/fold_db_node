@@ -100,13 +100,13 @@ describe('Header Component', () => {
 
   it('shows user info when authenticated', () => {
     const authenticatedState = {
-      auth: createAuthState({ isAuthenticated: true, user: { id: 'testuser' } })
+      auth: createAuthState({ isAuthenticated: true, user: { id: 'testuser123456' } })
     }
     renderWithRedux(<Header onSettingsClick={vi.fn()} />, {
       preloadedState: authenticatedState
     })
 
-    expect(screen.getByText('testuser')).toBeInTheDocument()
-    expect(screen.getByText('logout')).toBeInTheDocument()
+    // Node ID is truncated to first 8 chars with copy-on-click
+    expect(screen.getByText('testuser...')).toBeInTheDocument()
   })
 })

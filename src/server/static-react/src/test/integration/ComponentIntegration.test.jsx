@@ -27,24 +27,24 @@ describe('Component Integration Tests', () => {
       )
 
       // Main tabs should be directly enabled
-      expect(screen.getByRole('button', { name: /ai query tab/i })).toBeEnabled()
+      expect(screen.getByRole('button', { name: /feed tab/i })).toBeEnabled()
 
       // Advanced tabs (ingestion) are in the More dropdown — More button shows active label
       const moreButton = screen.getByRole('button', { name: /more tabs/i })
       expect(moreButton).toBeEnabled()
       expect(moreButton).toHaveTextContent('JSON Ingestion')
 
-      // Unmount and re-mount with different active tab
+      // Unmount and re-mount with different active tab (a main tab)
       unmount()
       await renderWithRedux(
         <TabNavigation
-          activeTab="llm-query"
+          activeTab="feed"
           onTabChange={onTabChange}
         />, { initialState: createAuthenticatedState() }
       )
 
       // Main tabs remain enabled
-      expect(screen.getByRole('button', { name: /ai query tab/i })).toBeEnabled()
+      expect(screen.getByRole('button', { name: /feed tab/i })).toBeEnabled()
 
       // More button shows "More" when no advanced tab is active
       expect(screen.getByRole('button', { name: /more tabs/i })).toBeEnabled()
@@ -150,10 +150,10 @@ describe('Component Integration Tests', () => {
         { initialState: createAuthenticatedState() }
       )
 
-      // Navigate to AI Query tab
-      const aiQueryTab = screen.getByRole('button', { name: /ai query tab/i })
-      await user.click(aiQueryTab)
-      expect(onTabChange).toHaveBeenCalledWith('llm-query')
+      // Navigate to Feed tab
+      const feedTab = screen.getByRole('button', { name: /feed tab/i })
+      await user.click(feedTab)
+      expect(onTabChange).toHaveBeenCalledWith('feed')
 
       // Select a schema
       const schemaSelect = screen.getByRole('combobox')
