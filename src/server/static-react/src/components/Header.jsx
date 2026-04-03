@@ -94,6 +94,17 @@ function Header({ onSettingsClick, onAiSettingsClick, onCloudSettingsClick }) {
   const formattedQuota = storageQuota ? formatBytes(storageQuota) : null
   const quotaWarning = storageQuota && storageSize ? (storageSize / storageQuota) > 0.8 : false
 
+  const truncatedId = user?.id ? `${user.id.slice(0, 8)}...` : null
+  const [idCopied, setIdCopied] = useState(false)
+
+  const handleCopyId = async () => {
+    if (user?.id) {
+      await navigator.clipboard.writeText(user.id)
+      setIdCopied(true)
+      setTimeout(() => setIdCopied(false), 2000)
+    }
+  }
+
   return (
     <header className="bg-surface border-b border-border px-8 py-3 flex-shrink-0">
       <div className="flex items-center justify-between">
@@ -104,40 +115,44 @@ function Header({ onSettingsClick, onAiSettingsClick, onCloudSettingsClick }) {
           </a>
           <HeaderProgress />
         </div>
-        <div className="flex items-center gap-4">
-          <div className="flex items-center gap-2 text-sm text-secondary font-mono">
-            <span>{storageMode || '...'}</span>
-            {formattedSize && formattedQuota
-              ? <><span className="text-tertiary">/</span><span className={quotaWarning ? 'text-gruvbox-orange' : 'text-secondary'}>{formattedSize} / {formattedQuota}</span></>
-              : formattedSize && <><span className="text-tertiary">/</span><span className="text-secondary">{formattedSize}</span></>}
-            {schemaEnv && <><span className="text-tertiary">/</span><span className={schemaEnv.color}>Schema: {schemaEnv.label}</span></>}
+        <div className="flex items-center gap-3">
+          {/* Status badges — compact pills instead of verbose text */}
+          <div className="flex items-center gap-1.5">
+            <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-xs font-medium bg-gruvbox-elevated border border-border text-secondary">
+              {storageMode || '...'}
+              {formattedSize && formattedQuota
+                ? <span className={quotaWarning ? 'text-gruvbox-orange' : ''}>{formattedSize}/{formattedQuota}</span>
+                : formattedSize && <span>{formattedSize}</span>}
+            </span>
             {ingestionConfig && (
-              <><span className="text-tertiary">/</span><button
+              <button
                 onClick={onAiSettingsClick}
-                className={`bg-transparent border-none cursor-pointer p-0 font-mono text-sm ${aiReady ? 'text-gruvbox-green' : 'text-gruvbox-red'} hover:text-primary`}
-                title={aiReady ? `${aiProvider} · ${activeModel}` : 'AI not configured -- click to open Settings'}
+                className={`inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-xs font-medium border cursor-pointer transition-colors
+                  ${aiReady
+                    ? 'bg-gruvbox-elevated border-gruvbox-green/30 text-gruvbox-green hover:border-gruvbox-green'
+                    : 'bg-gruvbox-elevated border-gruvbox-red/30 text-gruvbox-red hover:border-gruvbox-red'}`}
+                title={aiReady ? `${aiProvider} · ${activeModel}` : 'AI not configured — click to set up'}
               >
                 {aiReady ? `AI: ${aiProvider}` : 'AI: off'}
-              </button></>
+              </button>
             )}
-            <span className="text-tertiary">/</span>
             <SyncStatusIndicator onCloudSettingsClick={onCloudSettingsClick} />
           </div>
-          {isAuthenticated && (
-            <div className="flex items-center gap-4">
-              <span className="text-secondary text-sm">
-                {user?.id}
-              </span>
-              <button
-                onClick={handleLogout}
-                className="text-tertiary text-sm bg-transparent border-none cursor-pointer hover:text-primary transition-colors"
-              >
-                logout
-              </button>
-            </div>
+
+          {/* Node ID — truncated with copy */}
+          {isAuthenticated && truncatedId && (
+            <button
+              onClick={handleCopyId}
+              className="inline-flex items-center gap-1 px-2 py-0.5 rounded text-xs font-mono text-tertiary bg-transparent border border-border cursor-pointer hover:text-secondary hover:border-secondary transition-colors"
+              title={`Node ID: ${user.id}\nClick to copy`}
+            >
+              {idCopied ? 'Copied!' : truncatedId}
+            </button>
           )}
+
+          {/* Action buttons */}
           <div className="relative">
-            <button 
+            <button
               onClick={() => setIsInvitesModalOpen(true)}
               className="p-2 text-tertiary hover:text-primary transition-colors bg-transparent border-none cursor-pointer flex items-center justify-center"
               title="Inbox"

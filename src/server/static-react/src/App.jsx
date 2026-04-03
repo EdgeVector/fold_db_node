@@ -53,7 +53,7 @@ const HASH_TO_TAB = {
   ingestion: 'ingestion', 'file-upload': 'file-upload',
   'native-index': 'native-index',
   'llm-query': 'llm-query', 'ai-query': 'llm-query',
-  'smart-folder': 'smart-folder',
+  'smart-folder': 'smart-folder', import: 'smart-folder',
   'data-browser': 'data-browser',
   'word-graph': 'word-graph',
   discovery: 'discovery',
