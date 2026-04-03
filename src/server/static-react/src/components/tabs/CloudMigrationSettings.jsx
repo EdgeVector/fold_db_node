@@ -20,27 +20,44 @@ export default function CloudMigrationSettings({ onClose }) {
       window.history.replaceState({}, '', window.location.pathname)
     }
 
-    // Check if already in cloud mode
+    // Check if already in cloud mode via localStorage OR keychain
     const hasCloudConfig = localStorage.getItem('exemem_api_url') && localStorage.getItem('exemem_api_key')
-    if (hasCloudConfig) {
-      setIsCloudMode(true)
-      getSubscriptionStatus()
-        .then(status => {
+
+    const detectCloudMode = async () => {
+      // Check keychain credentials as fallback
+      let keychainCreds = false
+      try {
+        const resp = await fetch('/api/auth/credentials')
+        const data = await resp.json()
+        keychainCreds = data.ok && data.has_credentials
+        setHasCredentials(keychainCreds)
+      } catch {
+        setHasCredentials(false)
+      }
+
+      if (hasCloudConfig || keychainCreds) {
+        setIsCloudMode(true)
+        try {
+          const status = await getSubscriptionStatus()
           setStorageInfo({
             plan: status.plan,
             used_bytes: status.storage.used_bytes,
             quota_bytes: status.storage.quota_bytes,
             has_subscription: status.has_subscription,
           })
-        })
-        .catch(() => { /* Cloud API not reachable */ })
+        } catch {
+          // Cloud API not reachable — still show connected state with defaults
+          setStorageInfo({
+            plan: 'free',
+            used_bytes: 0,
+            quota_bytes: 1073741824, // 1 GB
+            has_subscription: false,
+            offline: true,
+          })
+        }
+      }
     }
-
-    // Check if credentials exist in keychain
-    fetch('/api/auth/credentials')
-      .then(r => r.json())
-      .then(data => setHasCredentials(data.ok && data.has_credentials))
-      .catch(() => setHasCredentials(false))
+    detectCloudMode()
   }, [])
 
   const handleEnableCloud = async () => {
@@ -107,6 +124,15 @@ export default function CloudMigrationSettings({ onClose }) {
     return (
       <div className="flex flex-col gap-6 w-full max-w-2xl text-gruvbox-bright p-4 border border-border rounded-md bg-surface shadow-md">
         <h3 className="text-sm font-bold uppercase tracking-widest text-gruvbox-light">Cloud Storage</h3>
+
+        {storageInfo.offline && (
+          <div className="flex items-start gap-3 p-3 border border-gruvbox-yellow bg-gruvbox-yellow/5 rounded-md">
+            <span className="text-gruvbox-yellow text-sm flex-shrink-0">!</span>
+            <p className="text-xs text-gruvbox-yellow leading-relaxed">
+              Connected to Exemem but couldn't reach the cloud API. Storage info may be outdated.
+            </p>
+          </div>
+        )}
 
         {/* Usage bar */}
         <div className="flex flex-col gap-2">
