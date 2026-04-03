@@ -215,6 +215,7 @@ impl OperationProcessor {
             file_hash: None,
             source_folder: file_path.parent().map(|p| p.to_string_lossy().to_string()),
             image_descriptive_name: None,
+            org_hash: None,
         };
 
         let service =

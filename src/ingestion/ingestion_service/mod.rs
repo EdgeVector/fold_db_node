@@ -369,6 +369,25 @@ impl IngestionService {
         )
         .await?;
 
+        // If ingesting into an org, remap all resolved schemas to org-scoped versions
+        if let Some(ref org_hash) = request.org_hash {
+            // Collect unique schema names from the cache
+            let unique_names: std::collections::HashSet<String> = schema_cache
+                .local_schema_names()
+                .into_iter()
+                .collect();
+            let mut name_map = HashMap::new();
+            for name in unique_names {
+                let org_name = self
+                    .ensure_org_schema(&name, org_hash, node)
+                    .await?;
+                if org_name != name {
+                    name_map.insert(name, org_name);
+                }
+            }
+            schema_cache.remap_to_org(&name_map);
+        }
+
         // Flush resolved schemas to the shared cross-file cache
         schema_cache.commit();
 

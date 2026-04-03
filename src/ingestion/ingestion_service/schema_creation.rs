@@ -319,4 +319,71 @@ impl IngestionService {
 
         Ok((schema_name, service_mappers))
     }
+
+    /// Create an org-scoped copy of an existing schema.
+    ///
+    /// The schema service is unaware of orgs. This clones the personal schema
+    /// definition, sets `org_hash`, and registers it locally under a namespaced
+    /// name so mutations get org-prefixed storage keys.
+    ///
+    /// Returns the org-scoped schema name. No-ops if the org schema already exists.
+    pub(super) async fn ensure_org_schema(
+        &self,
+        schema_name: &str,
+        org_hash: &str,
+        node: &FoldNode,
+    ) -> IngestionResult<String> {
+        let org_schema_name = format!(
+            "{}:{}",
+            &org_hash[..12.min(org_hash.len())],
+            schema_name
+        );
+
+        let schema_manager = get_schema_manager(node).await?;
+
+        // Already loaded — return early
+        if schema_manager
+            .get_schema_metadata(&org_schema_name)
+            .map(|opt| opt.is_some())
+            .unwrap_or(false)
+        {
+            return Ok(org_schema_name);
+        }
+
+        // Clone the personal schema and set org fields
+        let personal = schema_manager
+            .get_schema(schema_name)
+            .await
+            .map_err(schema_err)?
+            .ok_or_else(|| {
+                IngestionError::SchemaCreationError(format!(
+                    "Schema '{}' not found for org copy",
+                    schema_name
+                ))
+            })?;
+
+        let mut org_schema = personal;
+        org_schema.name = org_schema_name.clone();
+        org_schema.org_hash = Some(org_hash.to_string());
+
+        let org_json = serde_json::to_string(&org_schema).map_err(schema_err)?;
+        schema_manager
+            .load_schema_from_json(&org_json)
+            .await
+            .map_err(schema_err)?;
+        schema_manager
+            .approve(&org_schema_name)
+            .await
+            .map_err(schema_err)?;
+
+        log_feature!(
+            LogFeature::Ingestion,
+            info,
+            "Registered org-scoped schema '{}' for org {}",
+            org_schema_name,
+            &org_hash[..12.min(org_hash.len())]
+        );
+
+        Ok(org_schema_name)
+    }
 }

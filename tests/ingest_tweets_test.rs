@@ -210,7 +210,7 @@ async fn test_ingest_tweets_js() {
         progress_id: Some("test-tweets-ingestion".to_string()),
         file_hash: None,
         source_folder: None,
-        image_descriptive_name: None,
+        image_descriptive_name: None, org_hash: None,
     };
 
     // 7. Run ingestion within user context

@@ -94,6 +94,11 @@ pub struct IngestionRequest {
     /// Descriptive name from image vision model (schema metadata, not record data)
     #[serde(default)]
     pub image_descriptive_name: Option<String>,
+    /// Optional org hash — if set, data is ingested into this org's namespace.
+    /// The schema is loaded from the schema service as normal, then org_hash is
+    /// applied locally so mutations get org-prefixed storage keys.
+    #[serde(default)]
+    pub org_hash: Option<String>,
 }
 
 /// Response from the ingestion process

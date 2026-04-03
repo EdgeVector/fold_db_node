@@ -153,7 +153,7 @@ async fn run_apple_notes_import(
             progress_id: None,
             file_hash: None,
             source_folder: None,
-            image_descriptive_name: None,
+            image_descriptive_name: None, org_hash: None,
         };
 
         match crate::handlers::ingestion::process_json(
@@ -343,7 +343,7 @@ async fn run_apple_reminders_import(
         progress_id: None,
         file_hash: None,
         source_folder: None,
-        image_descriptive_name: None,
+        image_descriptive_name: None, org_hash: None,
     };
 
     let ingested = match crate::handlers::ingestion::process_json(
@@ -563,6 +563,7 @@ async fn run_apple_photos_import(
                     file_hash: None,
                     source_folder: None,
                     image_descriptive_name: descriptive_name,
+                    org_hash: None,
                 };
 
                 match crate::handlers::ingestion::process_json(
@@ -752,7 +753,7 @@ async fn run_apple_calendar_import(
             progress_id: None,
             file_hash: None,
             source_folder: None,
-            image_descriptive_name: None,
+            image_descriptive_name: None, org_hash: None,
         };
 
         match crate::handlers::ingestion::process_json(
