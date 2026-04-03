@@ -187,6 +187,12 @@ pub async fn process_json(
 
     // Validate org_hash if provided
     if let Some(ref org_hash) = request.org_hash {
+        if org_hash.len() != 64 || !org_hash.chars().all(|c| c.is_ascii_hexdigit()) {
+            return Err(HandlerError::BadRequest(
+                "Invalid org_hash format — expected 64-character hex string".to_string(),
+            ));
+        }
+
         // Require Exemem config for org ingestion
         crate::handlers::org::require_exemem(node)?;
 

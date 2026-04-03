@@ -365,6 +365,12 @@ impl IngestionService {
         let mut org_schema = personal;
         org_schema.name = org_schema_name.clone();
         org_schema.org_hash = Some(org_hash.to_string());
+        // Clear inherited molecule state — org data uses prefixed keys so
+        // personal molecule UUIDs don't apply. Fresh molecules will be created
+        // on the first mutation.
+        org_schema.field_molecule_uuids = None;
+        org_schema.runtime_fields.clear();
+        org_schema.populate_runtime_fields().map_err(schema_err)?;
 
         let org_json = serde_json::to_string(&org_schema).map_err(schema_err)?;
         schema_manager
