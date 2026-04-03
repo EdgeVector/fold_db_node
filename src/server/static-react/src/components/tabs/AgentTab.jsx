@@ -313,7 +313,12 @@ function AgentTab() {
       <div className="flex-1 overflow-y-auto p-6 space-y-3">
         {messages.length === 0 ? (
           <div className="flex flex-col items-center justify-center h-full text-secondary">
-            <p className="text-base mb-4">{phaseConf.heading}</p>
+            <p className="text-base mb-2">{phaseConf.heading}</p>
+            <p className="text-xs text-tertiary mb-5 max-w-md text-center">
+              {phase === 'has_data'
+                ? 'Ask questions about your data, search across schemas, or scan new folders to ingest.'
+                : 'Point me at a folder and I\'ll scan, classify, and ingest your files automatically.'}
+            </p>
             <div className="flex flex-wrap gap-2 justify-center max-w-lg">
               {phaseConf.suggestions.map((s) => (
                 <button

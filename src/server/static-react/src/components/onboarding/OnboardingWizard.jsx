@@ -137,6 +137,17 @@ export default function OnboardingWizard({ onComplete }) {
         <div className="card p-6">
           {renderStep()}
         </div>
+
+        {currentStep !== 'all-set' && (
+          <div className="text-center mt-4">
+            <button
+              onClick={handleFinish}
+              className="text-xs text-tertiary hover:text-secondary bg-transparent border-none cursor-pointer transition-colors"
+            >
+              Skip setup entirely
+            </button>
+          </div>
+        )}
       </div>
     </div>
   )
