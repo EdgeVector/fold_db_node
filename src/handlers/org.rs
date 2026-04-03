@@ -85,12 +85,26 @@ fn get_auth_client(node: &FoldNode) -> Option<fold_db::sync::auth::AuthClient> {
     }
 }
 
+/// Require Exemem cloud configuration, returning the AuthClient or a BadRequest error.
+fn require_exemem(
+    node: &FoldNode,
+) -> Result<fold_db::sync::auth::AuthClient, crate::handlers::HandlerError> {
+    get_auth_client(node).ok_or_else(|| {
+        crate::handlers::HandlerError::BadRequest(
+            "Organizations require an Exemem account. Configure Exemem cloud sync to create or join orgs.".to_string(),
+        )
+    })
+}
+
 /// Create a new organization. The calling node becomes the admin.
+/// Requires Exemem cloud configuration — orgs need cloud sync for invite
+/// distribution and multi-device membership.
 pub async fn create_org(
     req: &CreateOrgRequest,
     user_hash: &str,
     node: &FoldNode,
 ) -> HandlerResult<CreateOrgResponse> {
+    let client = require_exemem(node)?;
     let sled_db = get_sled_db(node).await?;
 
     let creator_public_key = node.get_node_public_key().to_string();
@@ -112,13 +126,11 @@ pub async fn create_org(
     let invite_bundle = org_ops::generate_invite(&sled_db, &membership.org_hash)
         .handler_err("generate initial invite")?;
 
-    // If connected to Exemem, register the org on the backend
-    if let Some(client) = get_auth_client(node) {
-        client
-            .create_org(&membership.org_hash)
-            .await
-            .handler_err("sync create_org to cloud")?;
-    }
+    // Register the org on the Exemem backend
+    client
+        .create_org(&membership.org_hash)
+        .await
+        .handler_err("sync create_org to cloud")?;
 
     // Reconfigure org sync with the new org
     node.configure_org_sync_if_needed().await;
@@ -133,11 +145,13 @@ pub async fn create_org(
 }
 
 /// Join an existing organization using an invite bundle.
+/// Requires Exemem cloud configuration — org data sync needs cloud connectivity.
 pub async fn join_org(
     invite: &OrgInviteBundle,
     user_hash: &str,
     node: &FoldNode,
 ) -> HandlerResult<JoinOrgResponse> {
+    require_exemem(node)?;
     let sled_db = get_sled_db(node).await?;
 
     let my_public_key = node.get_node_public_key().to_string();
