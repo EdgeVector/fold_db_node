@@ -77,7 +77,7 @@ fn default_ocr_model() -> String {
 fn default_text_model() -> String {
     let ram_gb = system_ram_gb();
     if ram_gb >= 64 {
-        models::OLLAMA_DEFAULT.to_string() // llama3.3 (70B)
+        "llama3.3".to_string() // 70B — needs ~42GB VRAM
     } else if ram_gb >= 32 {
         "llama3.1:8b".to_string()
     } else {
