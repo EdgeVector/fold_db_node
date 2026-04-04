@@ -225,8 +225,8 @@ pub async fn add_member(
 
     // Validate the public key can be used for encryption BEFORE modifying state.
     // This prevents adding a member locally/cloud but failing to deliver the invite.
-    let invite_bundle = org_ops::generate_invite(&sled_db, org_hash)
-        .handler_err("generate invite for inbox")?;
+    let invite_bundle =
+        org_ops::generate_invite(&sled_db, org_hash).handler_err("generate invite for inbox")?;
     let invite_json = serde_json::to_vec(&invite_bundle).handler_err("serialize invite")?;
     let encrypted_invite =
         fold_db::crypto::inbox::seal_box_base64(&req.node_public_key, &invite_json)
