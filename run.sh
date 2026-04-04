@@ -124,10 +124,21 @@ check_schema_service() {
 }
 
 start_local_schema_service() {
-    echo "Starting LOCAL schema service on port $SCHEMA_PORT (AI_PROVIDER=ollama)..."
+    # Schema service auto-detects its AI provider:
+    #   - ANTHROPIC_API_KEY set → Anthropic (fast, accurate classification via Haiku)
+    #   - No API key → Ollama (local, needs model config)
+    # We do NOT force AI_PROVIDER=ollama — let it prefer Anthropic when available.
 
-    # Read Ollama model/URL from the node's saved ingestion config so the schema
-    # service uses the same AI settings the user configured in the UI.
+    local has_anthropic_key=false
+    [ -n "$ANTHROPIC_API_KEY" ] && has_anthropic_key=true
+
+    if [ "$has_anthropic_key" = true ]; then
+        echo "Starting LOCAL schema service on port $SCHEMA_PORT (Anthropic for classification)..."
+    else
+        echo "Starting LOCAL schema service on port $SCHEMA_PORT (Ollama for classification)..."
+    fi
+
+    # Read Ollama model/URL from saved config (used when Anthropic key is absent)
     local config_file="${FOLDDB_HOME}/config/ingestion_config.json"
     local ollama_model=""
     local ollama_url=""
@@ -151,11 +162,11 @@ start_local_schema_service() {
         fi
     fi
 
-    [ -n "$ollama_model" ] && echo "  Ollama model: $ollama_model"
+    [ -n "$ollama_model" ] && echo "  Ollama model (fallback): $ollama_model"
     [ -n "$ollama_url" ] && echo "  Ollama URL: $ollama_url"
 
-    # Scope env vars to the schema service process only — don't leak to folddb_server
-    local schema_env="AI_PROVIDER=ollama"
+    # Pass Ollama config as fallback — schema service uses Anthropic when ANTHROPIC_API_KEY is set
+    local schema_env=""
     [ -n "$ollama_model" ] && schema_env="$schema_env OLLAMA_MODEL=$ollama_model"
     [ -n "$ollama_url" ] && schema_env="$schema_env OLLAMA_BASE_URL=$ollama_url"
     nohup env $schema_env cargo run --bin schema_service -- --port "$SCHEMA_PORT" --db-path "$FOLDDB_HOME/schema_registry" > "$FOLDDB_HOME/schema_service.log" 2>&1 &

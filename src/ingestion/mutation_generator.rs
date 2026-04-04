@@ -81,14 +81,41 @@ pub fn generate_mutations(
         );
         fields_and_values.clone()
     } else {
-        // Apply mappers to transform JSON field names to schema field names
+        // Apply mappers to transform JSON field names to schema field names.
+        // First pass: detect collisions (multiple JSON fields → same schema field).
+        // Keep the mapping whose JSON key exactly matches the schema field name
+        // (identity mapping), since it's almost certainly the correct one.
         let mut result = HashMap::new();
+        let mut sources: HashMap<String, String> = HashMap::new(); // schema_field → json_field
+
         for (json_field, schema_field) in mutation_mappers {
             if let Some(value) = fields_and_values.get(json_field) {
-                // Extract just the field name from schema path (e.g., "UserSchema.name" -> "name")
                 let field_name = schema_field.rsplit('.').next().unwrap_or(schema_field);
 
-                result.insert(field_name.to_string(), value.clone());
+                if let Some(prev_json) = sources.get(field_name) {
+                    // Collision: two JSON fields map to the same schema field.
+                    // Prefer the identity mapping (json_field == field_name).
+                    if json_field == field_name {
+                        log_feature!(
+                            LogFeature::Ingestion, warn,
+                            "Mapper collision: '{}' and '{}' both map to '{}' — keeping identity mapping '{}'",
+                            prev_json, json_field, field_name, json_field
+                        );
+                        result.insert(field_name.to_string(), value.clone());
+                        sources.insert(field_name.to_string(), json_field.to_string());
+                    } else {
+                        log_feature!(
+                            LogFeature::Ingestion, warn,
+                            "Mapper collision: '{}' and '{}' both map to '{}' — keeping earlier mapping from '{}'",
+                            prev_json, json_field, field_name, prev_json
+                        );
+                        // Don't overwrite — keep the first (or identity) mapping
+                    }
+                } else {
+                    result.insert(field_name.to_string(), value.clone());
+                    sources.insert(field_name.to_string(), json_field.to_string());
+                }
+
                 log_feature!(
                     LogFeature::Ingestion,
                     debug,
