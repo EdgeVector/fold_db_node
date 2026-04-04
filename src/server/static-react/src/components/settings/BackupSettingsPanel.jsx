@@ -85,7 +85,7 @@ function BackupSettingsPanel() {
             <p className="text-xs text-secondary mt-1">
               {enabled
                 ? 'Your data is being synced to Exemem cloud storage with end-to-end encryption.'
-                : 'Cloud backup is not configured. Set up Exemem cloud storage in the Cloud DB tab to enable backup sync.'}
+                : 'Cloud backup is not configured. Sign up for Exemem above to enable backup sync.'}
             </p>
           </div>
           <div className={`px-3 py-1 rounded-full text-xs font-medium ${

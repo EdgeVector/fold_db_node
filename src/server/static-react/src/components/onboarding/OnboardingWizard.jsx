@@ -1,4 +1,5 @@
 import { useState, useCallback } from 'react'
+import { markOnboardingComplete } from '../../api/clients/systemClient'
 import ConfigureAiStep from './ConfigureAiStep'
 import AppleDataStep from './AppleDataStep'
 import CloudBackupStep from './CloudBackupStep'
@@ -65,6 +66,10 @@ export default function OnboardingWizard({ onComplete }) {
 
   const handleFinish = useCallback(() => {
     localStorage.setItem(ONBOARDING_STORAGE_KEY, '1')
+    // Persist onboarding completion on the backend so --empty-db can reset it
+    markOnboardingComplete().catch(() => {
+      // Best-effort — localStorage is the fallback
+    })
     onComplete()
   }, [onComplete])
 

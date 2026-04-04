@@ -112,6 +112,7 @@ export interface SetupResponse {
 export interface DatabaseStatusResponse {
   initialized: boolean;
   has_saved_config: boolean;
+  onboarding_complete: boolean;
 }
 
 export interface SyncStatusResponse {
@@ -362,6 +363,20 @@ export class UnifiedSystemClient {
     });
   }
 
+  // Mark onboarding as complete (writes marker file on backend)
+  async markOnboardingComplete(): Promise<EnhancedApiResponse<{ ok: boolean }>> {
+    return this.client.post<{ ok: boolean }>(
+      API_ENDPOINTS.MARK_ONBOARDING_COMPLETE,
+      {},
+      {
+        requiresAuth: false,
+        timeout: API_TIMEOUTS.QUICK,
+        retries: API_RETRIES.NONE,
+        cacheable: false,
+      },
+    );
+  }
+
 
 
   // Trigger a manual sync/backup
@@ -409,6 +424,8 @@ export const updateDatabaseConfig =
 export const getDatabaseStatus =
   systemClient.getDatabaseStatus.bind(systemClient);
 export const applySetup = systemClient.applySetup.bind(systemClient);
+export const markOnboardingComplete =
+  systemClient.markOnboardingComplete.bind(systemClient);
 export const migrateToCloud = systemClient.migrateToCloud.bind(systemClient);
 export const createLogStream = systemClient.createLogStream.bind(systemClient);
 export const validateResetRequest =

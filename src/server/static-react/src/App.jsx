@@ -36,7 +36,7 @@ import { initializeSystemKey, restoreSession, autoLogin } from './store/authSlic
 import { fetchIngestionConfig, selectIngestionConfig, selectIsAiConfigured, selectAiProvider } from './store/ingestionSlice'
 import { DEFAULT_TAB } from './constants'
 import { BROWSER_CONFIG } from './constants/config'
-import { getDatabaseStatus } from './api/clients/systemClient'
+import { getDatabaseStatus, markOnboardingComplete } from './api/clients/systemClient'
 import DatabaseSetupScreen from './components/DatabaseSetupScreen'
 
 function isIngestionResult(results) {
@@ -83,9 +83,7 @@ export function AppContent() {
   )
   const [dbStatus, setDbStatus] = useState(null) // { initialized, has_saved_config }
   const [dbStatusLoading, setDbStatusLoading] = useState(true)
-  const [showOnboarding, setShowOnboarding] = useState(
-    () => localStorage.getItem(ONBOARDING_STORAGE_KEY) !== '1'
-  )
+  const [showOnboarding, setShowOnboarding] = useState(false)
 
   // Clear results whenever the active tab changes (covers all switch paths)
   useEffect(() => {
@@ -132,14 +130,20 @@ export function AppContent() {
       .then(response => {
         if (response.success && response.data) {
           setDbStatus(response.data)
+          // Show onboarding if backend says it hasn't been completed.
+          // This is authoritative — it's based on a marker file in the data dir,
+          // so --empty-db (which wipes the data dir) resets onboarding state.
+          if (!response.data.onboarding_complete) {
+            setShowOnboarding(true)
+          }
         } else {
           // If endpoint is unavailable (older backend), assume initialized
-          setDbStatus({ initialized: true, has_saved_config: true })
+          setDbStatus({ initialized: true, has_saved_config: true, onboarding_complete: true })
         }
       })
       .catch(() => {
         // If endpoint doesn't exist, assume initialized (backwards compat)
-        setDbStatus({ initialized: true, has_saved_config: true })
+        setDbStatus({ initialized: true, has_saved_config: true, onboarding_complete: true })
       })
       .finally(() => setDbStatusLoading(false))
   }, [isAuthenticated])

@@ -613,6 +613,10 @@ impl FoldHttpServer {
             web::get().to(config_routes::get_database_status),
         )
         .route(
+            "/system/onboarding-complete",
+            web::post().to(config_routes::mark_onboarding_complete),
+        )
+        .route(
             "/system/complete-path",
             web::post().to(filesystem_routes::complete_path),
         )

@@ -209,7 +209,6 @@ export default function CloudBackupStep({ onNext, onSkip }) {
           onChange={(e) => setInviteCode(e.target.value.toUpperCase())}
           placeholder="EXM-XXXX-XXXX"
           className="input-field w-full font-mono tracking-wider"
-          maxLength={13}
           disabled={loading}
         />
         <p className="text-xs text-secondary mt-1">Get an invite code from an existing Exemem user.</p>

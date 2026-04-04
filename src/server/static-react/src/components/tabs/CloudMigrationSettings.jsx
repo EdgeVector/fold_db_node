@@ -410,7 +410,6 @@ export default function CloudMigrationSettings({ onClose }) {
           onChange={(e) => setInviteCode(e.target.value.toUpperCase())}
           placeholder="EXM-XXXX-XXXX"
           className="w-full px-3 py-2 text-sm font-mono tracking-wider border border-border rounded-md bg-surface text-gruvbox-bright placeholder-gruvbox-dim focus:outline-none focus:border-gruvbox-blue"
-          maxLength={13}
           disabled={registering}
         />
         <p className="text-xs text-gruvbox-dim mt-1">Get an invite code from an existing Exemem user.</p>
