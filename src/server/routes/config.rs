@@ -324,6 +324,8 @@ pub struct DatabaseStatusResponse {
     pub initialized: bool,
     /// Whether a saved config file exists on disk (returning user)
     pub has_saved_config: bool,
+    /// Whether the onboarding wizard has been completed (marker file in data dir)
+    pub onboarding_complete: bool,
 }
 
 /// Get database initialization status
@@ -384,8 +386,59 @@ pub async fn get_database_status(state: web::Data<AppState>) -> impl Responder {
         false
     };
 
+    // Check for onboarding marker file in the data directory.
+    // This file is created when the user completes the onboarding wizard,
+    // and is wiped when --empty-db removes the data directory.
+    let onboarding_complete = crate::utils::paths::folddb_home()
+        .map(|h| h.join("data").join(".onboarding_complete").exists())
+        .unwrap_or(false);
+
     HttpResponse::Ok().json(DatabaseStatusResponse {
         initialized,
         has_saved_config,
+        onboarding_complete,
     })
+}
+
+/// Mark onboarding as complete by writing a marker file in the data directory.
+///
+/// This marker lives in `FOLDDB_HOME/data/.onboarding_complete` so that
+/// `--empty-db` (which removes the data directory) also resets onboarding state.
+#[utoipa::path(
+    post,
+    path = "/api/system/onboarding-complete",
+    tag = "system",
+    responses(
+        (status = 200, description = "Onboarding marked complete", body = serde_json::Value)
+    )
+)]
+pub async fn mark_onboarding_complete() -> impl Responder {
+    let marker_path = match crate::utils::paths::folddb_home() {
+        Ok(h) => h.join("data").join(".onboarding_complete"),
+        Err(e) => {
+            return HttpResponse::InternalServerError().json(json!({
+                "ok": false,
+                "error": format!("Cannot determine FOLDDB_HOME: {e}")
+            }));
+        }
+    };
+
+    // Ensure the data directory exists
+    if let Some(parent) = marker_path.parent() {
+        if let Err(e) = std::fs::create_dir_all(parent) {
+            return HttpResponse::InternalServerError().json(json!({
+                "ok": false,
+                "error": format!("Failed to create data directory: {e}")
+            }));
+        }
+    }
+
+    if let Err(e) = std::fs::write(&marker_path, "1") {
+        return HttpResponse::InternalServerError().json(json!({
+            "ok": false,
+            "error": format!("Failed to write onboarding marker: {e}")
+        }));
+    }
+
+    HttpResponse::Ok().json(json!({ "ok": true }))
 }

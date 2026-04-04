@@ -232,7 +232,7 @@ const mockApprovedSchemas = {
 // Mock hooks
 vi.mock('../../api/clients/systemClient', () => ({
   getAutoIdentity: () => Promise.resolve({ success: true, data: { user_id: 'test', user_hash: 'testhash', public_key: 'pk' } }),
-  getDatabaseStatus: () => Promise.resolve({ success: true, data: { initialized: true, has_saved_config: true } }),
+  getDatabaseStatus: () => Promise.resolve({ success: true, data: { initialized: true, has_saved_config: true, onboarding_complete: true } }),
   getDatabaseConfig: () => Promise.resolve({ success: true, data: { type: 'local', path: './data' } }),
 }));
 

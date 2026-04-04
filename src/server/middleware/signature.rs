@@ -31,6 +31,7 @@ const PREFIX_RULES: &[(&str, bool)] = &[
     ("/api/system/public-key", false),
     ("/api/system/status", false),
     ("/api/system/database-status", false),
+    ("/api/system/onboarding-complete", false),
     ("/api/system/complete-path", false),
     ("/api/system/list-directory", false),
     ("/api/ingestion/smart-folder/", false),

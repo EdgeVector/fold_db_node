@@ -250,7 +250,6 @@ export default function DatabaseSetupScreen({ onComplete }) {
               value={inviteCode}
               onChange={(e) => setInviteCode(e.target.value.toUpperCase())}
               placeholder="EXM-XXXX-XXXX"
-              maxLength={13}
               style={{ ...inputStyle, letterSpacing: '2px' }}
               onFocus={e => { e.currentTarget.style.borderColor = colors.blue }}
               onBlur={e => { e.currentTarget.style.borderColor = colors.border }}

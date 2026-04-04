@@ -65,8 +65,7 @@ function SettingsModal({ isOpen, onClose, initialTab, onRelaunchOnboarding }) {
     { id: 'schema-service', label: 'Schema Service' },
     { id: 'database', label: 'Database' },
     { id: 'org', label: 'Organizations' },
-    { id: 'upgrade-cloud', label: 'Cloud DB' },
-    { id: 'backup', label: 'Backup' },
+    { id: 'upgrade-cloud', label: 'Exemem' },
   ]
 
   const handleSave = () => {
@@ -104,8 +103,12 @@ function SettingsModal({ isOpen, onClose, initialTab, onRelaunchOnboarding }) {
           {activeTab === 'schema-service' && <SchemaServiceSettings />}
           {activeTab === 'database' && dbConfig.content}
           {activeTab === 'org' && <OrgSettingsPanel />}
-          {activeTab === 'upgrade-cloud' && <CloudMigrationSettings onClose={onClose} />}
-          {activeTab === 'backup' && <BackupSettingsPanel />}
+          {activeTab === 'upgrade-cloud' && (
+            <div className="space-y-6">
+              <CloudMigrationSettings onClose={onClose} />
+              <BackupSettingsPanel />
+            </div>
+          )}
         </div>
 
         <div className="modal-footer">
