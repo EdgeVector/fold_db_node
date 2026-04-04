@@ -157,16 +157,24 @@ export default function DiscoveryStep({ onNext, onSkip }) {
       )}
 
       <div className="flex gap-2 mt-4">
-        <button
-          onClick={handleOptIn}
-          disabled={optingIn}
-          className="btn-primary flex-1 text-center"
-        >
-          {optingIn ? 'Joining...' : interests.size > 0 ? 'Join Network' : 'Continue Without Joining'}
-        </button>
-        <button onClick={onSkip} className="btn-secondary flex-1 text-center">
-          Skip
-        </button>
+        {interests.size > 0 ? (
+          <>
+            <button
+              onClick={handleOptIn}
+              disabled={optingIn}
+              className="btn-primary flex-1 text-center"
+            >
+              {optingIn ? 'Joining...' : 'Join & Continue'}
+            </button>
+            <button onClick={onSkip} className="btn-secondary flex-1 text-center">
+              Skip
+            </button>
+          </>
+        ) : (
+          <button onClick={onSkip} className="btn-secondary flex-1 text-center">
+            Skip
+          </button>
+        )}
       </div>
     </div>
   )

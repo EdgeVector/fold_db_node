@@ -106,8 +106,9 @@ export default function ConfigureAiStep({ onNext, onSkip }) {
     try {
       const response = await ingestionClient.saveConfig(config)
       if (response.success) {
-        setSaveResult('success')
         dispatch(fetchIngestionConfig())
+        onNext()
+        return
       } else {
         setSaveResult('error')
       }
@@ -242,32 +243,21 @@ export default function ConfigureAiStep({ onNext, onSkip }) {
         </>
       )}
 
-      {saveResult === 'success' && (
-        <p className="text-gruvbox-green mt-2">Configuration saved successfully!</p>
-      )}
       {saveResult === 'error' && (
         <p className="text-gruvbox-red mt-2">Failed to save. Please try again.</p>
       )}
 
       <div className="flex gap-2 mt-4">
-        {saveResult === 'success' ? (
-          <button className="btn-primary flex-1 text-center" onClick={onNext}>
-            Continue
-          </button>
-        ) : (
-          <>
-            <button
-              onClick={handleSave}
-              disabled={canSave}
-              className="btn-primary flex-1 text-center"
-            >
-              {saving ? 'Saving...' : 'Save & Continue'}
-            </button>
-            <button onClick={onSkip} className="btn-secondary flex-1 text-center">
-              Skip
-            </button>
-          </>
-        )}
+        <button
+          onClick={handleSave}
+          disabled={canSave}
+          className="btn-primary flex-1 text-center"
+        >
+          {saving ? 'Saving...' : 'Save & Continue'}
+        </button>
+        <button onClick={onSkip} className="btn-secondary flex-1 text-center">
+          Skip
+        </button>
       </div>
     </div>
   )
