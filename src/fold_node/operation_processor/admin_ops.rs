@@ -293,10 +293,9 @@ impl OperationProcessor {
         // Create a temporary SyncEngine to perform the initial upload.
         // The existing Sled data is already encrypted — we just need to snapshot
         // it and upload to S3.
-        let home = std::env::var("HOME")
-            .map(std::path::PathBuf::from)
-            .map_err(|e| FoldDbError::Config(format!("HOME not set: {e}")))?;
-        let e2e_key_path = home.join(".fold_db/e2e.key");
+        let folddb_home = crate::utils::paths::folddb_home()
+            .map_err(|e| FoldDbError::Config(format!("Cannot resolve FOLDDB_HOME: {e}")))?;
+        let e2e_key_path = folddb_home.join("e2e.key");
         let e2e_keys = fold_db::crypto::E2eKeys::load_or_generate(&e2e_key_path)
             .await
             .map_err(|e| FoldDbError::Config(format!("Failed to load E2E keys: {e}")))?;

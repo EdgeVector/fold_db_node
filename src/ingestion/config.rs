@@ -384,6 +384,11 @@ impl IngestionConfig {
         env::var("FOLD_CONFIG_DIR")
             .ok()
             .map(|dir| std::path::Path::new(&dir).join("ingestion_config.json"))
+            .or_else(|| {
+                crate::utils::paths::folddb_home()
+                    .ok()
+                    .map(|h| h.join("config").join("ingestion_config.json"))
+            })
     }
 
     fn load_from_file(

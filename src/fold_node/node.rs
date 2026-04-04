@@ -86,10 +86,9 @@ impl FoldNode {
 
     /// Load or generate E2E encryption keys from the standard path.
     async fn load_e2e_keys() -> FoldDbResult<fold_db::crypto::E2eKeys> {
-        let home = std::env::var("HOME")
-            .map(std::path::PathBuf::from)
-            .map_err(|_| FoldDbError::Config("HOME environment variable not set".to_string()))?;
-        let e2e_key_path = home.join(".fold_db/e2e.key");
+        let folddb_home = crate::utils::paths::folddb_home()
+            .map_err(|e| FoldDbError::Config(format!("Cannot resolve FOLDDB_HOME: {e}")))?;
+        let e2e_key_path = folddb_home.join("e2e.key");
         fold_db::crypto::E2eKeys::load_or_generate(&e2e_key_path)
             .await
             .map_err(|e| FoldDbError::Config(format!("Failed to load E2E keys: {}", e)))
@@ -960,9 +959,12 @@ struct NodeIdentity {
 }
 
 fn load_persisted_identity() -> FoldDbResult<Option<(String, String)>> {
-    let config_path = std::path::Path::new("config/node_identity.json");
+    // Check FOLDDB_HOME/config/node_identity.json first, fall back to relative path
+    let config_path = crate::utils::paths::folddb_home()
+        .map(|h| h.join("config").join("node_identity.json"))
+        .unwrap_or_else(|_| std::path::PathBuf::from("config/node_identity.json"));
     if config_path.exists() {
-        let content = std::fs::read_to_string(config_path).map_err(|e| {
+        let content = std::fs::read_to_string(&config_path).map_err(|e| {
             FoldDbError::Config(format!("Failed to read node_identity.json: {}", e))
         })?;
 
