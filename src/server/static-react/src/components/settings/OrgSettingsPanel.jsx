@@ -18,7 +18,8 @@ export default function OrgSettingsPanel() {
     try {
       setLoading(true)
       const res = await defaultApiClient.get('/org')
-      setOrgs(res.orgs || [])
+      const data = res.data || res
+      setOrgs(data.orgs || [])
       setError(null)
     } catch (err) {
       setError(err.message || 'Failed to fetch organizations')

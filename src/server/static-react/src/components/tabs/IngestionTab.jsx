@@ -15,7 +15,8 @@ function IngestionTab({ onResult }) {
 
   useEffect(() => {
     defaultApiClient.get('/org').then(res => {
-      setOrgs(res.orgs || [])
+      const data = res.data || res
+      setOrgs(data.orgs || [])
     }).catch(() => {})
   }, [])
 
