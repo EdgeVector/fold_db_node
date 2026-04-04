@@ -223,28 +223,24 @@ pub async fn add_member(
         added_by: node.get_node_public_key().to_string(),
     };
 
+    // Validate the public key can be used for encryption BEFORE modifying state.
+    // This prevents adding a member locally/cloud but failing to deliver the invite.
+    let invite_bundle = org_ops::generate_invite(&sled_db, org_hash)
+        .handler_err("generate invite for inbox")?;
+    let invite_json = serde_json::to_vec(&invite_bundle).handler_err("serialize invite")?;
+    let encrypted_invite =
+        fold_db::crypto::inbox::seal_box_base64(&req.node_public_key, &invite_json)
+            .handler_err("encrypt invite — is the public key valid base64 Ed25519?")?;
+
     org_ops::add_member(&sled_db, org_hash, member).handler_err("add member")?;
 
     if let Some(client) = get_auth_client(node) {
-        // Find member's user_hash. Currently we just use the public key as user_hash,
-        // or require the UI to pass it correctly if we added target_user_hash to request.
-        // For simplicity we try to register the node_public_key.
         client
             .add_member(org_hash, &req.node_public_key, "Member")
             .await
             .handler_err("sync add_member to cloud")?;
 
-        // Generate an invite bundle for the target user's inbox
-        let invite_bundle = org_ops::generate_invite(&sled_db, org_hash)
-            .handler_err("generate invite for inbox")?;
-        let invite_json = serde_json::to_vec(&invite_bundle).handler_err("serialize invite")?;
-
-        // Encrypt the invite using the target user's base64 Ed25519 public key
-        let encrypted_invite =
-            fold_db::crypto::inbox::seal_box_base64(&req.node_public_key, &invite_json)
-                .handler_err("seal invite box")?;
-
-        // Upload to the target's S3 inbox
+        // Upload encrypted invite to the target's S3 inbox
         let file_name = format!("{}.enc", org_hash);
         let presigned = client
             .presign_inbox_upload(&req.node_public_key, &file_name)
