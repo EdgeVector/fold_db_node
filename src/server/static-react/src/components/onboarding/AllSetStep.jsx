@@ -19,9 +19,21 @@ export default function AllSetStep({ onFinish, completedSteps }) {
   const [storageMode, setStorageMode] = useState('Local')
 
   useEffect(() => {
-    // Check storage mode from localStorage or infer from setup
-    const mode = localStorage.getItem('folddb_storage_mode')
-    if (mode) setStorageMode(mode)
+    async function detectStorage() {
+      try {
+        const resp = await fetch('/api/system/config')
+        const data = await resp.json()
+        const dbType = data?.database?.type
+        if (dbType === 'exemem') setStorageMode('Cloud (Exemem)')
+        else if (dbType === 'local') setStorageMode('Local')
+        else if (dbType) setStorageMode(dbType)
+      } catch {
+        // Fall back to localStorage hint
+        const mode = localStorage.getItem('folddb_storage_mode')
+        if (mode) setStorageMode(mode)
+      }
+    }
+    detectStorage()
   }, [])
 
   const schemaCount = approvedSchemas?.length || 0

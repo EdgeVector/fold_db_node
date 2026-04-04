@@ -8,6 +8,8 @@ export default function CloudBackupStep({ onNext, onSkip }) {
   const [inviteCode, setInviteCode] = useState('')
   const [recoveryWords, setRecoveryWords] = useState(null)
   const [savedConfirmed, setSavedConfirmed] = useState(false)
+  const [showRestore, setShowRestore] = useState(false)
+  const [restorePhrase, setRestorePhrase] = useState('')
 
   const handleEnable = async () => {
     if (!inviteCode.trim()) {
@@ -53,6 +55,76 @@ export default function CloudBackupStep({ onNext, onSkip }) {
     } finally {
       setLoading(false)
     }
+  }
+
+  const handleRestore = async () => {
+    const words = restorePhrase.trim().toLowerCase()
+    const wordCount = words.split(/\s+/).length
+    if (wordCount !== 24) {
+      setError(`Recovery phrase must be 24 words (got ${wordCount})`)
+      return
+    }
+    setLoading(true)
+    setError(null)
+    try {
+      const resp = await fetch('/api/auth/restore', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ words }),
+      })
+      const data = await resp.json()
+      if (!data.ok) throw new Error(data.error || 'Restore failed')
+
+      localStorage.setItem('exemem_api_url', data.api_url)
+      localStorage.setItem('exemem_api_key', data.api_key)
+
+      await systemClient.applySetup({
+        storage: { type: 'exemem', api_url: data.api_url, api_key: data.api_key }
+      })
+
+      setSuccess(true)
+    } catch (e) {
+      setError(e?.message || String(e))
+    } finally {
+      setLoading(false)
+    }
+  }
+
+  if (showRestore) {
+    return (
+      <div>
+        <h2 className="text-sm font-bold mb-1">
+          <span className="text-gruvbox-purple">RESTORE</span>{' '}
+          <span className="text-secondary">From recovery phrase</span>
+        </h2>
+        <p className="text-xs text-secondary mb-3">
+          Enter the 24 words you saved when you first set up your account.
+        </p>
+
+        <textarea
+          value={restorePhrase}
+          onChange={(e) => setRestorePhrase(e.target.value.toLowerCase())}
+          placeholder="Enter your 24-word recovery phrase..."
+          rows={4}
+          className="input-field w-full font-mono text-xs"
+          disabled={loading}
+        />
+
+        {error && <p className="text-gruvbox-red text-sm mt-3">{error}</p>}
+
+        <div className="flex gap-2 mt-4">
+          <button
+            onClick={() => { setShowRestore(false); setRestorePhrase(''); setError(null) }}
+            className="btn-secondary flex-1 text-center"
+          >Back</button>
+          <button
+            onClick={handleRestore}
+            disabled={loading || restorePhrase.trim().split(/\s+/).length !== 24}
+            className="btn-primary flex-1 text-center"
+          >{loading ? 'Restoring...' : 'Restore'}</button>
+        </div>
+      </div>
+    )
   }
 
   if (success && recoveryWords) {
@@ -159,6 +231,15 @@ export default function CloudBackupStep({ onNext, onSkip }) {
           Skip
         </button>
       </div>
+
+      <p className="text-xs text-center mt-4">
+        <button
+          onClick={() => { setShowRestore(true); setError(null) }}
+          className="text-tertiary hover:text-secondary bg-transparent border-none cursor-pointer underline text-xs"
+        >
+          Restore from recovery phrase
+        </button>
+      </p>
     </div>
   )
 }
