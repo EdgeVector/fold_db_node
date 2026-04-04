@@ -368,11 +368,12 @@ pub fn validate_schema_has_descriptive_name(schema_val: &Value) -> IngestionResu
     }
 
     if fold_db::schema_service::name_validator::is_generic_name(name) {
-        return Err(IngestionError::ai_response_validation_error(
-            "Schema descriptive_name is too generic (e.g., 'Document Collection'). \
+        return Err(IngestionError::ai_response_validation_error(format!(
+            "Schema descriptive_name '{}' is too generic (e.g., 'Document Collection'). \
              The name must describe the CONTENT TOPIC — read the actual data and name it \
              specifically (e.g., 'Family Vacation Photos', 'Technical Architecture Notes').",
-        ));
+            name
+        )));
     }
 
     Ok(())
@@ -436,6 +437,22 @@ pub fn validate_and_convert_response(parsed: Value) -> IngestionResult<AISchemaR
                 "new_schemas array contains {} schemas, expected 1",
                 arr.len()
             )));
+        }
+        other => other,
+    };
+
+    // Unwrap named-key wrappers: Ollama models often return new_schemas as
+    // {"schema_name": {actual_schema}} instead of {actual_schema} directly.
+    // Detect this by checking if the object has exactly one key whose value
+    // is itself an object containing "name" or "fields" (schema indicators).
+    let new_schemas = match new_schemas {
+        Some(Value::Object(ref map)) if map.len() == 1 => {
+            let (_key, inner) = map.iter().next().unwrap();
+            if inner.is_object() && (inner.get("name").is_some() || inner.get("fields").is_some()) {
+                Some(inner.clone())
+            } else {
+                new_schemas
+            }
         }
         other => other,
     };
@@ -682,6 +699,14 @@ fn backfill_missing_mappers(
 /// Parse the raw AI response text into an AISchemaResponse.
 pub fn parse_ai_response(response_text: &str) -> IngestionResult<AISchemaResponse> {
     let json_str = extract_json_from_response(response_text)?;
+
+    log_feature!(
+        LogFeature::Ingestion,
+        debug,
+        "Extracted JSON from AI response ({} chars): {}",
+        json_str.len(),
+        &json_str[..json_str.len().min(500)]
+    );
 
     let parsed: Value = serde_json::from_str(&json_str).map_err(|e| {
         IngestionError::ai_response_validation_error(format!(
@@ -972,6 +997,58 @@ Done."#;
         assert_eq!(result.mutation_mappers.len(), 4);
         assert!(result.mutation_mappers.contains_key("must_see"));
         assert!(result.mutation_mappers.contains_key("dietary_restrictions"));
+    }
+
+    // ---- named-key wrapper unwrap tests ----
+
+    #[test]
+    fn test_unwrap_named_key_wrapper_in_new_schemas() {
+        // Ollama often returns new_schemas as {"schema_name": {actual_schema}}
+        // instead of {actual_schema} directly. The unwrap should extract the inner object.
+        let ai_json = serde_json::json!({
+            "new_schemas": {
+                "meeting_notes": {
+                    "name": "meeting_notes",
+                    "descriptive_name": "Meeting Minutes",
+                    "fields": ["title", "content"],
+                    "field_descriptions": {
+                        "title": "The meeting title",
+                        "content": "The meeting content"
+                    },
+                    "key": {"hash_field": "title"}
+                }
+            },
+            "mutation_mappers": {
+                "title": "title",
+                "content": "content"
+            }
+        });
+
+        let result = validate_and_convert_response(ai_json).unwrap();
+        let schema = result.new_schemas.unwrap();
+        assert_eq!(schema["name"], "meeting_notes");
+        assert_eq!(schema["descriptive_name"], "Meeting Minutes");
+    }
+
+    #[test]
+    fn test_flat_new_schemas_not_unwrapped() {
+        // Normal flat schema should pass through unchanged
+        let ai_json = serde_json::json!({
+            "new_schemas": {
+                "name": "recipes",
+                "descriptive_name": "Cooking Recipes",
+                "fields": ["title", "ingredients"],
+                "field_descriptions": {
+                    "title": "Recipe name",
+                    "ingredients": "List of ingredients"
+                }
+            },
+            "mutation_mappers": {"title": "title", "ingredients": "ingredients"}
+        });
+
+        let result = validate_and_convert_response(ai_json).unwrap();
+        let schema = result.new_schemas.unwrap();
+        assert_eq!(schema["name"], "recipes");
     }
 
     // ---- sanitize_string_map_fields tests ----

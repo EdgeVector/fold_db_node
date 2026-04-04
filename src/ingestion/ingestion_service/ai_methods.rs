@@ -36,11 +36,21 @@ impl IngestionService {
     ) -> IngestionResult<AISchemaResponse> {
         use crate::ingestion::ai::helpers::{analyze_and_build_prompt, parse_ai_response};
 
-        let prompt = analyze_and_build_prompt(json_data)?;
+        let base_prompt = analyze_and_build_prompt(json_data)?;
         let max_validation_attempts = self.config.max_retries.clamp(1, 3);
         let mut last_error = None;
 
         for attempt in 1..=max_validation_attempts {
+            // On retries, append the previous validation error so the model
+            // can correct its output instead of repeating the same mistake.
+            let prompt = match &last_error {
+                Some(err) if attempt > 1 => format!(
+                    "{}\n\nYour previous response was rejected: {}. Fix this issue.",
+                    base_prompt, err
+                ),
+                _ => base_prompt.clone(),
+            };
+
             let raw_response = self.call_ai_raw(&prompt).await?;
 
             match parse_ai_response(&raw_response) {
