@@ -74,7 +74,7 @@ pub async fn magic_link_start(body: web::Json<MagicLinkStartRequest>) -> HttpRes
 }
 
 /// POST /api/auth/magic-link/verify
-/// Proxy to Exemem auth service, then store credentials in keychain on success.
+/// Proxy to Exemem auth service, then store credentials locally on success.
 pub async fn magic_link_verify(body: web::Json<MagicLinkVerifyRequest>) -> HttpResponse {
     let client = reqwest::Client::new();
     let url = format!("{}/api/auth/magic-link/verify", exemem_api_url());
@@ -95,7 +95,7 @@ pub async fn magic_link_verify(body: web::Json<MagicLinkVerifyRequest>) -> HttpR
                     let json: serde_json::Value = serde_json::from_str(&text)
                         .unwrap_or(serde_json::json!({"ok": false, "error": text}));
 
-                    // If verification succeeded, store credentials in keychain
+                    // If verification succeeded, store credentials locally
                     if json.get("ok").and_then(|v| v.as_bool()).unwrap_or(false) {
                         if let (Some(user_hash), Some(session_token), Some(api_key)) = (
                             json.get("user_hash").and_then(|v| v.as_str()),
@@ -109,7 +109,7 @@ pub async fn magic_link_verify(body: web::Json<MagicLinkVerifyRequest>) -> HttpR
                                 encryption_key: String::new(),
                             };
                             if let Err(e) = keychain::store_credentials(&creds) {
-                                log::warn!("Failed to store credentials in keychain: {}", e);
+                                log::warn!("Failed to store credentials locally: {}", e);
                             }
                         }
                     }
@@ -134,11 +134,11 @@ pub async fn magic_link_verify(body: web::Json<MagicLinkVerifyRequest>) -> HttpR
 }
 
 // ============================================================================
-// Keychain routes — local credential management
+// Credential routes — local credential management
 // ============================================================================
 
 /// GET /api/auth/credentials
-/// Check if credentials exist in the keychain.
+/// Check if credentials exist locally.
 pub async fn get_credentials() -> HttpResponse {
     match keychain::load_credentials() {
         Ok(Some(creds)) => HttpResponse::Ok().json(serde_json::json!({
@@ -159,7 +159,7 @@ pub async fn get_credentials() -> HttpResponse {
 }
 
 /// POST /api/auth/credentials
-/// Store credentials in the keychain (called after verify with encryption key).
+/// Store credentials locally (called after verify with encryption key).
 pub async fn store_credentials(body: web::Json<StoreCredentialsRequest>) -> HttpResponse {
     let creds = keychain::ExememCredentials {
         user_hash: body.user_hash.clone(),
@@ -178,7 +178,7 @@ pub async fn store_credentials(body: web::Json<StoreCredentialsRequest>) -> Http
 }
 
 /// DELETE /api/auth/credentials
-/// Delete credentials from the keychain (logout).
+/// Delete credentials from local storage (logout).
 pub async fn delete_credentials() -> HttpResponse {
     match keychain::delete_credentials() {
         Ok(()) => HttpResponse::Ok().json(serde_json::json!({"ok": true})),
@@ -243,7 +243,7 @@ pub async fn refresh_session_token(data: &web::Data<AppState>) -> Result<String,
 /// Core signed register logic shared by register_with_exemem and refresh_session_token.
 ///
 /// Signs "{public_key_hex}:{timestamp}" with the node's Ed25519 private key,
-/// sends to the Exemem CLI register endpoint, and stores credentials in keychain.
+/// sends to the Exemem CLI register endpoint, and stores credentials.
 async fn signed_register(data: &web::Data<AppState>) -> Result<serde_json::Value, String> {
     // Get the node's keys from identity (works even during onboarding before user context)
     let public_key_b64 = data
@@ -300,7 +300,7 @@ async fn signed_register(data: &web::Data<AppState>) -> Result<serde_json::Value
         return Err(format!("Register failed: {}", error));
     }
 
-    // Store credentials in keychain on success
+    // Store credentials on success
     if let (Some(user_hash), Some(session_token), Some(api_key)) = (
         json.get("user_hash").and_then(|v| v.as_str()),
         json.get("session_token").and_then(|v| v.as_str()),
@@ -313,7 +313,7 @@ async fn signed_register(data: &web::Data<AppState>) -> Result<serde_json::Value
             encryption_key: String::new(),
         };
         if let Err(e) = keychain::store_credentials(&creds) {
-            log::warn!("Failed to store credentials in keychain: {}", e);
+            log::warn!("Failed to store credentials locally: {}", e);
         }
     }
 
