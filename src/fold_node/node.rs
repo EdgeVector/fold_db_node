@@ -802,6 +802,9 @@ impl FoldNode {
         sync_engine
             .configure_org_sync(partitioner, member_id, org_crypto)
             .await;
+
+        // Load persisted cursors so incremental org downloads resume from where they left off
+        sync_engine.load_org_cursors().await;
     }
 
     /// Create a CryptoProvider from an org's E2E secret (base64-encoded 32-byte key).
