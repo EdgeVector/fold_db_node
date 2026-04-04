@@ -13,6 +13,10 @@ export default function CloudMigrationSettings({ onClose }) {
   const [storageInfo, setStorageInfo] = useState(null)
   const [upgrading, setUpgrading] = useState(false)
   const [hasCredentials, setHasCredentials] = useState(null)
+  const [recoveryWords, setRecoveryWords] = useState(null)
+  const [showRecovery, setShowRecovery] = useState(false)
+  const [inviteCodes, setInviteCodes] = useState(null)
+  const [creatingCode, setCreatingCode] = useState(false)
 
   useEffect(() => {
     // Detect Stripe checkout return
@@ -222,6 +226,125 @@ export default function CloudMigrationSettings({ onClose }) {
           >
             Add Passkey
           </button>
+        </div>
+
+        {/* Recovery phrase */}
+        <div className="p-4 border border-border rounded-md bg-surface-elevated">
+          <div className="flex items-center justify-between">
+            <div>
+              <div className="text-sm font-bold text-gruvbox-bright">Recovery Phrase</div>
+              <div className="text-xs text-gruvbox-dim mt-1">
+                24-word phrase to restore your account on a new device
+              </div>
+            </div>
+            <button
+              onClick={async () => {
+                if (showRecovery) { setShowRecovery(false); setRecoveryWords(null); return }
+                try {
+                  const resp = await fetch('/api/auth/recovery-phrase')
+                  const data = await resp.json()
+                  if (data.ok) { setRecoveryWords(data.words); setShowRecovery(true) }
+                  else setError(data.error || 'Failed to get recovery phrase')
+                } catch { setError('Failed to get recovery phrase') }
+              }}
+              className="px-4 py-2 text-xs font-bold border border-gruvbox-purple text-gruvbox-purple hover:bg-gruvbox-purple/10 rounded-md transition-colors cursor-pointer"
+            >
+              {showRecovery ? 'Hide' : 'Show Phrase'}
+            </button>
+          </div>
+          {showRecovery && recoveryWords && (
+            <div className="grid grid-cols-4 gap-1.5 mt-3 p-3 border border-border rounded bg-surface font-mono text-xs">
+              {recoveryWords.map((word, i) => (
+                <div key={i} className="flex items-center gap-1">
+                  <span className="text-gruvbox-dim w-5 text-right">{i + 1}.</span>
+                  <span className="text-gruvbox-bright">{word}</span>
+                </div>
+              ))}
+            </div>
+          )}
+        </div>
+
+        {/* Invite codes */}
+        <div className="p-4 border border-border rounded-md bg-surface-elevated">
+          <div className="flex items-center justify-between mb-3">
+            <div>
+              <div className="text-sm font-bold text-gruvbox-bright">Invite Codes</div>
+              <div className="text-xs text-gruvbox-dim mt-1">
+                Share invite codes so others can join Exemem
+              </div>
+            </div>
+            <button
+              onClick={async () => {
+                setCreatingCode(true)
+                try {
+                  const resp = await fetch('/api/auth/invite-codes', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: '{}',
+                  })
+                  // Proxy through node — need to forward to Exemem API
+                  const creds = await fetch('/api/auth/credentials').then(r => r.json())
+                  if (!creds.ok) { setError('No session'); return }
+                  const apiUrl = localStorage.getItem('exemem_api_url') || 'https://ygyu7ritx8.execute-api.us-west-2.amazonaws.com'
+                  const createResp = await fetch(`${apiUrl}/api/auth/invite-codes`, {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${creds.session_token}` },
+                    body: '{}',
+                  })
+                  const createData = await createResp.json()
+                  if (createData.ok) {
+                    // Refresh the list
+                    const listResp = await fetch(`${apiUrl}/api/auth/invite-codes`, {
+                      headers: { 'Authorization': `Bearer ${creds.session_token}` },
+                    })
+                    const listData = await listResp.json()
+                    if (listData.ok) setInviteCodes(listData.codes)
+                  } else {
+                    setError(createData.error || 'Failed to create invite code')
+                  }
+                } catch (e) { setError(e?.message || 'Failed to create invite code') }
+                finally { setCreatingCode(false) }
+              }}
+              disabled={creatingCode}
+              className="px-4 py-2 text-xs font-bold border border-gruvbox-green text-gruvbox-green hover:bg-gruvbox-green/10 rounded-md transition-colors cursor-pointer disabled:opacity-50"
+            >
+              {creatingCode ? 'Creating...' : 'Create Code'}
+            </button>
+          </div>
+          {inviteCodes === null && (
+            <button
+              onClick={async () => {
+                try {
+                  const creds = await fetch('/api/auth/credentials').then(r => r.json())
+                  if (!creds.ok) return
+                  const apiUrl = localStorage.getItem('exemem_api_url') || 'https://ygyu7ritx8.execute-api.us-west-2.amazonaws.com'
+                  const resp = await fetch(`${apiUrl}/api/auth/invite-codes`, {
+                    headers: { 'Authorization': `Bearer ${creds.session_token}` },
+                  })
+                  const data = await resp.json()
+                  if (data.ok) setInviteCodes(data.codes)
+                } catch { /* ignore */ }
+              }}
+              className="text-xs text-gruvbox-blue underline cursor-pointer bg-transparent border-none"
+            >
+              Load invite codes
+            </button>
+          )}
+          {inviteCodes && inviteCodes.length === 0 && (
+            <p className="text-xs text-gruvbox-dim">No invite codes yet. Create one to share.</p>
+          )}
+          {inviteCodes && inviteCodes.length > 0 && (
+            <div className="space-y-2">
+              {inviteCodes.map((c, i) => (
+                <div key={i} className="flex items-center justify-between p-2 border border-border rounded bg-surface text-xs">
+                  <span className="font-mono text-gruvbox-bright tracking-wider">{c.code}</span>
+                  <span className={c.redeemed_by ? 'text-gruvbox-dim' : 'text-gruvbox-green'}>
+                    {c.redeemed_by ? 'Used' : 'Active'}
+                  </span>
+                </div>
+              ))}
+            </div>
+          )}
         </div>
 
         {error && (
