@@ -2,7 +2,6 @@ pub mod admin;
 pub mod auth;
 pub mod common;
 pub mod config;
-pub mod conflict;
 pub mod discovery;
 pub mod feed;
 pub mod filesystem;
