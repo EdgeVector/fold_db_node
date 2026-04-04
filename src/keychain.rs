@@ -1,14 +1,15 @@
 //! Cross-platform credential storage.
 //!
-//! Stores Exemem credentials as a JSON file at `~/.folddb/credentials.json`.
+//! Stores Exemem credentials as a JSON file at `$FOLDDB_HOME/credentials.json`
+//! (defaults to `~/.folddb/credentials.json`).
 //! No OS-specific APIs (keychain, credential manager) — works on macOS, Linux,
 //! Windows, Docker, and CI.
 
+use crate::utils::paths::folddb_home;
 use serde::{Deserialize, Serialize};
 use std::fs;
 use std::path::PathBuf;
 
-const CREDENTIALS_DIR: &str = ".folddb";
 const CREDENTIALS_FILE: &str = "credentials.json";
 
 /// Credentials stored locally
@@ -22,8 +23,7 @@ pub struct ExememCredentials {
 }
 
 fn credentials_path() -> Result<PathBuf, String> {
-    let home = dirs::home_dir().ok_or_else(|| "Cannot determine home directory".to_string())?;
-    Ok(home.join(CREDENTIALS_DIR).join(CREDENTIALS_FILE))
+    Ok(folddb_home()?.join(CREDENTIALS_FILE))
 }
 
 /// Store Exemem credentials to disk.

@@ -102,6 +102,11 @@ impl AppleSyncConfig {
         let config_dir = std::env::var("NODE_CONFIG")
             .ok()
             .and_then(|p| Path::new(&p).parent().map(|d| d.to_path_buf()))
+            .or_else(|| {
+                crate::utils::paths::folddb_home()
+                    .ok()
+                    .map(|h| h.join("config"))
+            })
             .unwrap_or_else(|| PathBuf::from("config"));
         config_dir.join("apple_sync_config.json")
     }

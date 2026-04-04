@@ -106,7 +106,16 @@ pub fn load_node_config(
     let config_path = path
         .map(|p| p.to_string())
         .or_else(|| std::env::var("NODE_CONFIG").ok())
-        .unwrap_or_else(|| "config/node_config.json".to_string());
+        .unwrap_or_else(|| {
+            crate::utils::paths::folddb_home()
+                .map(|h| {
+                    h.join("config")
+                        .join("node_config.json")
+                        .to_string_lossy()
+                        .to_string()
+                })
+                .unwrap_or_else(|_| "config/node_config.json".to_string())
+        });
 
     if let Ok(config_str) = fs::read_to_string(&config_path) {
         match serde_json::from_str::<NodeConfig>(&config_str) {

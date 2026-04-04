@@ -37,28 +37,34 @@ struct Cli {
     demo: bool,
 }
 
-/// Resolve the default data directory: ~/.folddb/data (or ~/.folddb/demo-data in demo mode)
+/// Resolve the default data directory: $FOLDDB_HOME/data (or $FOLDDB_HOME/demo-data in demo mode)
 fn default_data_dir(demo: bool) -> PathBuf {
     let subdir = if demo { "demo-data" } else { "data" };
-    dirs::home_dir()
-        .unwrap_or_else(|| PathBuf::from("."))
-        .join(".folddb")
+    fold_db_node::utils::paths::folddb_home()
+        .unwrap_or_else(|_| PathBuf::from(".folddb"))
         .join(subdir)
 }
 
-/// Resolve the default config directory: ~/.folddb/config (or ~/.folddb/demo-config in demo mode)
+/// Resolve the default config directory: $FOLDDB_HOME/config (or $FOLDDB_HOME/demo-config in demo mode)
 fn default_config_dir(demo: bool) -> PathBuf {
     let subdir = if demo { "demo-config" } else { "config" };
-    dirs::home_dir()
-        .unwrap_or_else(|| PathBuf::from("."))
-        .join(".folddb")
+    fold_db_node::utils::paths::folddb_home()
+        .unwrap_or_else(|_| PathBuf::from(".folddb"))
         .join(subdir)
 }
 
 /// Check if a user-provided or env-var config file exists.
 fn config_file_exists() -> bool {
-    let path =
-        std::env::var("NODE_CONFIG").unwrap_or_else(|_| "config/node_config.json".to_string());
+    let path = std::env::var("NODE_CONFIG").unwrap_or_else(|_| {
+        fold_db_node::utils::paths::folddb_home()
+            .map(|h| {
+                h.join("config")
+                    .join("node_config.json")
+                    .to_string_lossy()
+                    .to_string()
+            })
+            .unwrap_or_else(|_| "config/node_config.json".to_string())
+    });
     std::path::Path::new(&path).exists()
 }
 

@@ -5,7 +5,7 @@ use fold_db::storage::DatabaseConfig;
 use fold_db_node::fold_node::config::NodeConfig;
 use serde::{Deserialize, Serialize};
 use std::fs;
-use std::path::{Path, PathBuf};
+use std::path::PathBuf;
 
 const DEFAULT_SCHEMA_SERVICE_URL: &str = "https://y0q3m6vk75.execute-api.us-west-2.amazonaws.com";
 
@@ -37,9 +37,12 @@ struct ExememRegisterResponse {
     message: Option<String>,
 }
 
-/// Check whether a persisted node identity exists at `config/node_identity.json`.
+/// Check whether a persisted node identity exists at `$FOLDDB_HOME/config/node_identity.json`.
 pub fn identity_file_exists() -> bool {
-    Path::new("config/node_identity.json").exists()
+    let path = fold_db_node::utils::paths::folddb_home()
+        .map(|h| h.join("config").join("node_identity.json"))
+        .unwrap_or_else(|_| PathBuf::from("config/node_identity.json"));
+    path.exists()
 }
 
 /// Hex-encode a byte slice.
@@ -139,9 +142,9 @@ pub fn run_setup_wizard() -> Result<NodeConfig, CliError> {
 
     let database = match backend_idx {
         0 => {
-            let default_path = dirs::home_dir()
-                .map(|h| h.join(".folddb").join("data"))
-                .unwrap_or_else(|| PathBuf::from("data"));
+            let default_path = fold_db_node::utils::paths::folddb_home()
+                .map(|h| h.join("data"))
+                .unwrap_or_else(|_| PathBuf::from("data"));
 
             let data_dir: String = Input::new()
                 .with_prompt("Data directory")
@@ -204,9 +207,11 @@ pub fn run_setup_wizard() -> Result<NodeConfig, CliError> {
         .map_err(|e| CliError::new(format!("Input cancelled: {}", e)))?;
 
     // --- Persist identity ---
-    let config_dir = Path::new("config");
+    let config_dir = fold_db_node::utils::paths::folddb_home()
+        .map(|h| h.join("config"))
+        .unwrap_or_else(|_| PathBuf::from("config"));
     if !config_dir.exists() {
-        fs::create_dir_all(config_dir)
+        fs::create_dir_all(&config_dir)
             .map_err(|e| CliError::new(format!("Failed to create config dir: {}", e)))?;
     }
     let identity_json = serde_json::to_string_pretty(&identity)
@@ -230,7 +235,7 @@ pub fn run_setup_wizard() -> Result<NodeConfig, CliError> {
     fs::write(config_dir.join("node_config.json"), &config_json)
         .map_err(|e| CliError::new(format!("Failed to write node_config.json: {}", e)))?;
 
-    eprintln!("Config saved to config/node_config.json");
+    eprintln!("Config saved to {}", config_dir.join("node_config.json").display());
     eprintln!();
 
     Ok(config)

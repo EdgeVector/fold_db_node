@@ -448,15 +448,20 @@ pub async fn restore_from_phrase(
     let public_key_b64 =
         base64::engine::general_purpose::STANDARD.encode(key_pair.public_key_bytes());
 
-    // Write identity to disk
-    let identity_path = "config/node_identity.json";
+    // Write identity to disk ($FOLDDB_HOME/config/node_identity.json)
+    let identity_path = crate::utils::paths::folddb_home()
+        .map(|h| h.join("config").join("node_identity.json"))
+        .unwrap_or_else(|_| std::path::PathBuf::from("config/node_identity.json"));
+    if let Some(parent) = identity_path.parent() {
+        let _ = std::fs::create_dir_all(parent);
+    }
     let identity_json = serde_json::json!({
         "private_key": private_key_b64,
         "public_key": public_key_b64,
     });
 
     if let Err(e) = std::fs::write(
-        identity_path,
+        &identity_path,
         serde_json::to_string_pretty(&identity_json).unwrap(),
     ) {
         return HttpResponse::InternalServerError().json(serde_json::json!({

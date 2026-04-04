@@ -15,8 +15,14 @@ set -e
 #   --dev            Use dev schema service (default: prod)
 #   --reset-db       Reset database from test_db template
 #   --empty-db       Start with empty database
-#   --demo           Use isolated demo directories (~/.folddb/demo-data, demo-config)
+#   --demo           Use isolated demo directories ($FOLDDB_HOME/demo-data, demo-config)
 #   --region=REGION  AWS region for cloud mode (default: us-west-2)
+#   --home <path>    Set FOLDDB_HOME (default: .folddb relative to CWD)
+#   --port <port>    HTTP server port (default: 9001)
+#   --schema-port <port>  Schema service port (default: 9002)
+#
+# Environment Variables:
+#   FOLDDB_HOME      Where all instance-specific state lives (default: .folddb)
 #
 # Examples:
 #   ./run.sh                           # Cloud mode with prod schema service
@@ -25,59 +31,68 @@ set -e
 #   ./run.sh --local --local-schema    # Fully offline development
 #   ./run.sh --local --empty-db        # Local with fresh database
 #   ./run.sh --exemem                  # Exemem cloud sync mode (requires EXEMEM_API_KEY)
+#   ./run.sh --home /tmp/node2 --port 9003 --local --local-schema
 #######################################
 
 # ============================================================================
 # Shared Functions
 # ============================================================================
 
+# Kill a process by reading its PID from a file.
+# Usage: kill_pid_file <path>
+kill_pid_file() {
+    local pidfile="$1"
+    if [ -f "$pidfile" ]; then
+        local pid
+        pid=$(cat "$pidfile" 2>/dev/null)
+        if [ -n "$pid" ] && kill -0 "$pid" 2>/dev/null; then
+            echo "Stopping process $pid (from $pidfile)..."
+            kill "$pid" 2>/dev/null || true
+            # Wait up to 3 seconds for graceful shutdown
+            for i in 1 2 3; do
+                kill -0 "$pid" 2>/dev/null || break
+                sleep 1
+            done
+            # Force kill if still alive
+            if kill -0 "$pid" 2>/dev/null; then
+                kill -9 "$pid" 2>/dev/null || true
+            fi
+        fi
+        rm -f "$pidfile"
+    fi
+}
+
 cleanup_processes() {
     echo "Checking for existing fold_db processes..."
 
-    # Kill any existing processes (try multiple patterns)
-    pkill -f folddb_server 2>/dev/null || true
-    pkill -f fold_db 2>/dev/null || true
-    pkill -f "cargo run.*fold_db" 2>/dev/null || true
-    pkill -f "cargo run.*fold_db" 2>/dev/null || true
-    pkill -f schema_service 2>/dev/null || true
-    pkill -f "cargo run.*schema" 2>/dev/null || true
-    # Kill Vite and related frontend processes
-    pkill -f "vite" 2>/dev/null || true
-    pkill -f "esbuild.*fold_db" 2>/dev/null || true
-
-    # Kill by port if something is listening
-    lsof -ti:9001 | xargs kill -9 2>/dev/null || true
-    lsof -ti:9002 | xargs kill -9 2>/dev/null || true
-    lsof -ti:5173 | xargs kill -9 2>/dev/null || true
-
-    # Wait for processes to terminate
-    sleep 2
-
-    # Force kill if still running
-    pkill -9 -f folddb_server 2>/dev/null || true
-    pkill -9 -f fold_db 2>/dev/null || true
-    pkill -9 -f "cargo run.*fold_db" 2>/dev/null || true
-    pkill -9 -f schema_service 2>/dev/null || true
-    pkill -9 -f "cargo run.*schema" 2>/dev/null || true
-    pkill -9 -f "vite" 2>/dev/null || true
-
-    # Give dying processes time to release locks
-    sleep 1
+    # PID-based cleanup — only kill processes we started
+    kill_pid_file "$FOLDDB_HOME/folddb.pid"
+    kill_pid_file "$FOLDDB_HOME/schema.pid"
+    kill_pid_file "$FOLDDB_HOME/vite.pid"
 
     echo "Cleaned up existing processes."
 }
 
+# Cleanup handler for script exit
+on_exit() {
+    echo "Shutting down..."
+    kill_pid_file "$FOLDDB_HOME/folddb.pid"
+    kill_pid_file "$FOLDDB_HOME/schema.pid"
+    kill_pid_file "$FOLDDB_HOME/vite.pid"
+}
+trap on_exit EXIT
+
 reset_db() {
     echo "Resetting database from test_db template..."
-    rm -rf data
-    cp -R test_db data
+    rm -rf "$FOLDDB_HOME/data"
+    cp -R test_db "$FOLDDB_HOME/data"
     echo "Database reset complete."
 }
 
 empty_db() {
     echo "Initializing empty database directory..."
-    rm -rf data
-    mkdir -p data
+    rm -rf "$FOLDDB_HOME/data"
+    mkdir -p "$FOLDDB_HOME/data"
     echo "Empty database directory ready."
 }
 
@@ -109,12 +124,11 @@ check_schema_service() {
 }
 
 start_local_schema_service() {
-    echo "Starting LOCAL schema service on port 9002 (AI_PROVIDER=ollama)..."
+    echo "Starting LOCAL schema service on port $SCHEMA_PORT (AI_PROVIDER=ollama)..."
 
     # Read Ollama model/URL from the node's saved ingestion config so the schema
     # service uses the same AI settings the user configured in the UI.
-    local config_dir="${FOLD_CONFIG_DIR:-${HOME}/.folddb/config}"
-    local config_file="${config_dir}/ingestion_config.json"
+    local config_file="${FOLDDB_HOME}/config/ingestion_config.json"
     local ollama_model=""
     local ollama_url=""
     if [ -f "$config_file" ]; then
@@ -129,26 +143,28 @@ start_local_schema_service() {
     local schema_env="AI_PROVIDER=ollama"
     [ -n "$ollama_model" ] && schema_env="$schema_env OLLAMA_MODEL=$ollama_model"
     [ -n "$ollama_url" ] && schema_env="$schema_env OLLAMA_BASE_URL=$ollama_url"
-    nohup env $schema_env cargo run --bin schema_service -- --port 9002 --db-path schema_registry > schema_service.log 2>&1 &
+    nohup env $schema_env cargo run --bin schema_service -- --port "$SCHEMA_PORT" --db-path "$FOLDDB_HOME/schema_registry" > "$FOLDDB_HOME/schema_service.log" 2>&1 &
     SCHEMA_SERVICE_PID=$!
+    echo "$SCHEMA_SERVICE_PID" > "$FOLDDB_HOME/schema.pid"
 
     echo "Waiting for local schema service to be ready..."
     for i in {1..30}; do
         if kill -0 $SCHEMA_SERVICE_PID 2>/dev/null; then
-            if curl -s http://127.0.0.1:9002/api/health > /dev/null 2>&1; then
+            if curl -s "http://127.0.0.1:${SCHEMA_PORT}/api/health" > /dev/null 2>&1; then
                 echo "Local schema service started successfully with PID: $SCHEMA_SERVICE_PID"
-                echo "Schema service logs: schema_service.log"
+                echo "Schema service logs: $FOLDDB_HOME/schema_service.log"
                 return 0
             fi
             sleep 1
         else
-            echo "Schema service process died. Check schema_service.log for details."
+            echo "Schema service process died. Check $FOLDDB_HOME/schema_service.log for details."
             exit 1
         fi
     done
 
     echo "Local schema service failed to become healthy within 30 seconds."
     kill $SCHEMA_SERVICE_PID 2>/dev/null || true
+    rm -f "$FOLDDB_HOME/schema.pid"
     exit 1
 }
 
@@ -209,31 +225,33 @@ start_http_server() {
         extra_args="--demo"
     fi
 
-    echo "Starting the HTTP server on port 9001..."
+    echo "Starting the HTTP server on port $HTTP_PORT..."
     if [ -n "$features" ]; then
-        RUST_LOG=debug nohup cargo run --features "$features" --bin folddb_server -- --port 9001 --schema-service-url "$schema_url" $extra_args > server.log 2>&1 &
+        FOLDDB_HOME="$FOLDDB_HOME" RUST_LOG=debug nohup cargo run --features "$features" --bin folddb_server -- --port "$HTTP_PORT" --schema-service-url "$schema_url" $extra_args > "$FOLDDB_HOME/server.log" 2>&1 &
     else
-        RUST_LOG=debug nohup cargo run --bin folddb_server -- --port 9001 --schema-service-url "$schema_url" $extra_args > server.log 2>&1 &
+        FOLDDB_HOME="$FOLDDB_HOME" RUST_LOG=debug nohup cargo run --bin folddb_server -- --port "$HTTP_PORT" --schema-service-url "$schema_url" $extra_args > "$FOLDDB_HOME/server.log" 2>&1 &
     fi
     SERVER_PID=$!
+    echo "$SERVER_PID" > "$FOLDDB_HOME/folddb.pid"
 
     echo "Waiting for HTTP server to be ready..."
     for i in $(seq 1 $timeout); do
         if kill -0 $SERVER_PID 2>/dev/null; then
-            if curl -s http://127.0.0.1:9001/api/system/status > /dev/null 2>&1; then
+            if curl -s "http://127.0.0.1:${HTTP_PORT}/api/system/status" > /dev/null 2>&1; then
                 echo "HTTP server started successfully with PID: $SERVER_PID"
-                echo "Server logs: server.log"
+                echo "Server logs: $FOLDDB_HOME/server.log"
                 return 0
             fi
             sleep 1
         else
-            echo "HTTP server process died. Check server.log for details."
+            echo "HTTP server process died. Check $FOLDDB_HOME/server.log for details."
             return 1
         fi
     done
 
     echo "HTTP server failed to become healthy within $timeout seconds."
     kill $SERVER_PID 2>/dev/null || true
+    rm -f "$FOLDDB_HOME/folddb.pid"
     return 1
 }
 
@@ -245,6 +263,7 @@ start_vite_dev() {
 
     cd src/server/static-react
     export VITE_ENABLE_SAMPLES=true
+    export VITE_API_PORT="$HTTP_PORT"
     npm run dev
 }
 
@@ -261,6 +280,8 @@ EMPTY_DB=false
 DEMO_MODE=false
 REGION="us-west-2"
 TABLE_NAME="FoldDBStorage"
+HTTP_PORT="${FOLDDB_PORT:-9001}"
+SCHEMA_PORT="9002"
 
 for arg in "$@"; do
     case "$arg" in
@@ -288,8 +309,26 @@ for arg in "$@"; do
         --region=*)
             REGION="${arg#*=}"
             ;;
+        --home)
+            # Handled below via positional peek
+            ;;
+        --home=*)
+            FOLDDB_HOME="${arg#*=}"
+            ;;
+        --port)
+            # Handled below via positional peek
+            ;;
+        --port=*)
+            HTTP_PORT="${arg#*=}"
+            ;;
+        --schema-port)
+            # Handled below via positional peek
+            ;;
+        --schema-port=*)
+            SCHEMA_PORT="${arg#*=}"
+            ;;
         --help|-h)
-            head -30 "$0" | tail -25
+            head -38 "$0" | tail -33
             exit 0
             ;;
         *)
@@ -297,11 +336,36 @@ for arg in "$@"; do
     esac
 done
 
+# Handle --home <value>, --port <value>, --schema-port <value> (space-separated)
+args=("$@")
+for i in "${!args[@]}"; do
+    case "${args[$i]}" in
+        --home)
+            FOLDDB_HOME="${args[$((i+1))]}"
+            ;;
+        --port)
+            HTTP_PORT="${args[$((i+1))]}"
+            ;;
+        --schema-port)
+            SCHEMA_PORT="${args[$((i+1))]}"
+            ;;
+    esac
+done
+
+# Default FOLDDB_HOME if not set via --home or env var
+if [ -z "$FOLDDB_HOME" ]; then
+    FOLDDB_HOME=".folddb"
+fi
+export FOLDDB_HOME
+
 # ============================================================================
 # Main Script
 # ============================================================================
 
-# Cleanup existing processes
+# Ensure FOLDDB_HOME directory exists
+mkdir -p "$FOLDDB_HOME"
+
+# Cleanup existing processes (PID-based, only kills our processes)
 cleanup_processes
 
 # Handle database reset options
@@ -314,8 +378,14 @@ if [ "$EMPTY_DB" = true ]; then
 fi
 
 # Ensure config directory exists
-mkdir -p config
-CONFIG_FILE="config/node_config.json"
+mkdir -p "$FOLDDB_HOME/config"
+CONFIG_FILE="$FOLDDB_HOME/config/node_config.json"
+
+# Set NODE_CONFIG so Rust code finds the config file
+export NODE_CONFIG="$CONFIG_FILE"
+
+# Set FOLD_CONFIG_DIR so ingestion config can be saved/loaded
+export FOLD_CONFIG_DIR="$FOLDDB_HOME/config"
 
 # Backup existing config
 if [ -f "$CONFIG_FILE" ]; then
@@ -336,7 +406,7 @@ if [ "$LOCAL_MODE" = false ] && [ "$EXEMEM_MODE" = false ] && [ -f "$CONFIG_FILE
             python3 -c "
 import json
 with open('$CONFIG_FILE') as f: cfg = json.load(f)
-cfg['schema_service_url'] = 'http://127.0.0.1:9002'
+cfg['schema_service_url'] = 'http://127.0.0.1:${SCHEMA_PORT}'
 with open('$CONFIG_FILE', 'w') as f: json.dump(cfg, f, indent=2)
 " 2>/dev/null
         fi
@@ -353,9 +423,9 @@ if [ "$LOCAL_MODE" = true ]; then
 {
   "database": {
     "type": "local",
-    "path": "data"
+    "path": "$FOLDDB_HOME/data"
   },
-  "storage_path": "data",
+  "storage_path": "$FOLDDB_HOME/data",
   "default_trust_distance": 1,
   "network_listen_address": "/ip4/0.0.0.0/tcp/0",
   "security_config": {
@@ -402,7 +472,7 @@ elif [ "$EXEMEM_MODE" = true ]; then
     "session_token": $SESSION_TOKEN_JSON,
     "user_hash": $USER_HASH_JSON
   },
-  "storage_path": "data",
+  "storage_path": "$FOLDDB_HOME/data",
   "default_trust_distance": 1,
   "network_listen_address": "/ip4/0.0.0.0/tcp/0",
   "security_config": {
@@ -420,10 +490,10 @@ EOF
 
     # Ensure node identity exists so we can derive the discovery master key
     echo "Ensuring node identity..."
-    cargo run --quiet --bin ensure_identity > /dev/null 2>&1 || true
+    FOLDDB_HOME="$FOLDDB_HOME" cargo run --quiet --bin ensure_identity > /dev/null 2>&1 || true
 
     # Derive DISCOVERY_MASTER_KEY from node's private key (deterministic)
-    IDENTITY_FILE="config/node_identity.json"
+    IDENTITY_FILE="$FOLDDB_HOME/config/node_identity.json"
     if [ -f "$IDENTITY_FILE" ]; then
         NODE_PRIV_KEY=$(python3 -c "import json; print(json.load(open('$IDENTITY_FILE'))['private_key'])" 2>/dev/null || echo "")
         if [ -n "$NODE_PRIV_KEY" ]; then
@@ -438,7 +508,7 @@ else
 
     # Get node identity
     echo "Ensuring node identity..."
-    USER_ID=$(cargo run --quiet --bin ensure_identity)
+    USER_ID=$(FOLDDB_HOME="$FOLDDB_HOME" cargo run --quiet --bin ensure_identity)
     echo "Node Identity (User ID): $USER_ID"
 
     echo "Region: $REGION"
@@ -469,7 +539,7 @@ else
     "auto_create": true,
     "user_id": "$USER_ID"
   },
-  "storage_path": "data",
+  "storage_path": "$FOLDDB_HOME/data",
   "default_trust_distance": 1,
   "network_listen_address": "/ip4/0.0.0.0/tcp/0",
   "security_config": {
@@ -512,7 +582,7 @@ SCHEMA_SERVICE_URL="https://y0q3m6vk75.execute-api.us-west-2.amazonaws.com"
 SCHEMA_SERVICE_PID=""
 
 if [ "$LOCAL_SCHEMA" = true ]; then
-    SCHEMA_SERVICE_URL="http://127.0.0.1:9002"
+    SCHEMA_SERVICE_URL="http://127.0.0.1:${SCHEMA_PORT}"
     start_local_schema_service
 else
     echo "Using global schema service at: $SCHEMA_SERVICE_URL"
@@ -532,7 +602,6 @@ fi
 
 # Start HTTP server
 if ! start_http_server "$CARGO_FEATURES" "$SCHEMA_SERVICE_URL" "$SERVER_TIMEOUT" "$DEMO_MODE"; then
-    [ -n "$SCHEMA_SERVICE_PID" ] && kill $SCHEMA_SERVICE_PID 2>/dev/null || true
     exit 1
 fi
 
@@ -549,14 +618,11 @@ else
     STORAGE_LABEL="CLOUD (DynamoDB)"
 fi
 echo "Storage: $STORAGE_LABEL"
+echo "FOLDDB_HOME: $FOLDDB_HOME"
+echo "HTTP Port: $HTTP_PORT"
 echo "Schema Service: DEV - $SCHEMA_SERVICE_URL"
 [ "$LOCAL_MODE" = false ] && [ "$EXEMEM_MODE" = false ] && echo "AWS Region: $REGION"
 echo "=========================================="
 
-# Start Vite dev server (foreground)
+# Start Vite dev server (foreground — on_exit trap handles cleanup)
 start_vite_dev
-
-# Cleanup on exit
-echo "Shutting down..."
-kill $SERVER_PID 2>/dev/null || true
-[ -n "$SCHEMA_SERVICE_PID" ] && kill $SCHEMA_SERVICE_PID 2>/dev/null || true

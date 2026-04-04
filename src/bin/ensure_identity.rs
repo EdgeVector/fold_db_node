@@ -11,9 +11,11 @@ struct NodeIdentity {
 }
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {
-    let config_dir = Path::new("config");
+    let config_dir = fold_db_node::utils::paths::folddb_home()
+        .map(|h| h.join("config"))
+        .unwrap_or_else(|_| std::path::PathBuf::from("config"));
     if !config_dir.exists() {
-        fs::create_dir_all(config_dir)?;
+        fs::create_dir_all(&config_dir)?;
     }
     let identity_path = config_dir.join("node_identity.json");
 

@@ -20,7 +20,6 @@ use fold_db::storage::config::DatabaseConfig;
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 use std::collections::HashMap;
-use std::path::PathBuf;
 use std::sync::Arc;
 use tokio::sync::{Mutex, RwLock};
 
@@ -162,14 +161,10 @@ impl NodeManager {
             node_config.with_identity(&keypair.public_key_base64(), &keypair.secret_key_base64());
 
         // Load or generate E2E encryption keys
-        let home = std::env::var("HOME")
-            .map(std::path::PathBuf::from)
-            .map_err(|_| {
-                NodeManagerError::ConfigurationError(
-                    "HOME environment variable not set".to_string(),
-                )
-            })?;
-        let e2e_key_path = home.join(".fold_db/e2e.key");
+        let folddb_home = crate::utils::paths::folddb_home().map_err(|e| {
+            NodeManagerError::ConfigurationError(format!("Cannot resolve FOLDDB_HOME: {e}"))
+        })?;
+        let e2e_key_path = folddb_home.join("e2e.key");
         let e2e_keys = fold_db::crypto::E2eKeys::load_or_generate(&e2e_key_path)
             .await
             .map_err(|e| {
@@ -198,16 +193,16 @@ impl NodeManager {
     /// Key file path: `~/.fold_db/identity/{sha256(user_id)}.json`
     /// The SHA-256 hash is used as the filename to avoid path injection from arbitrary user_ids.
     async fn load_or_generate_identity(user_id: &str) -> Result<Ed25519KeyPair, NodeManagerError> {
-        // Build the key file path: ~/.fold_db/identity/{hash}.json
-        let home = std::env::var("HOME").map(PathBuf::from).map_err(|_| {
-            NodeManagerError::ConfigurationError("HOME environment variable not set".to_string())
+        // Build the key file path: $FOLDDB_HOME/identity/{hash}.json
+        let folddb_home = crate::utils::paths::folddb_home().map_err(|e| {
+            NodeManagerError::ConfigurationError(format!("Cannot resolve FOLDDB_HOME: {e}"))
         })?;
 
         let mut hasher = Sha256::new();
         hasher.update(user_id.as_bytes());
         let hash_hex = format!("{:x}", hasher.finalize());
 
-        let identity_dir = home.join(".fold_db/identity");
+        let identity_dir = folddb_home.join("identity");
         let identity_path = identity_dir.join(format!("{hash_hex}.json"));
 
         if identity_path.exists() {

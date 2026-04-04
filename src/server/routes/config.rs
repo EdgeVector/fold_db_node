@@ -203,8 +203,16 @@ pub struct SetupResponse {
 
 /// Persist a NodeConfig to disk (same path the server loaded from)
 fn persist_node_config(config: &NodeConfig) -> Result<(), String> {
-    let config_path =
-        std::env::var("NODE_CONFIG").unwrap_or_else(|_| "config/node_config.json".to_string());
+    let config_path = std::env::var("NODE_CONFIG").unwrap_or_else(|_| {
+        crate::utils::paths::folddb_home()
+            .map(|h| {
+                h.join("config")
+                    .join("node_config.json")
+                    .to_string_lossy()
+                    .to_string()
+            })
+            .unwrap_or_else(|_| "config/node_config.json".to_string())
+    });
 
     // Ensure config directory exists
     if let Some(parent) = std::path::Path::new(&config_path).parent() {
@@ -336,8 +344,16 @@ pub struct DatabaseStatusResponse {
     )
 )]
 pub async fn get_database_status(state: web::Data<AppState>) -> impl Responder {
-    let config_path =
-        std::env::var("NODE_CONFIG").unwrap_or_else(|_| "config/node_config.json".to_string());
+    let config_path = std::env::var("NODE_CONFIG").unwrap_or_else(|_| {
+        crate::utils::paths::folddb_home()
+            .map(|h| {
+                h.join("config")
+                    .join("node_config.json")
+                    .to_string_lossy()
+                    .to_string()
+            })
+            .unwrap_or_else(|_| "config/node_config.json".to_string())
+    });
     let has_saved_config = Path::new(&config_path).exists();
 
     let initialized = if state.node_manager.has_active_node().await {
