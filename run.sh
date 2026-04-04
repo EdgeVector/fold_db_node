@@ -136,6 +136,21 @@ start_local_schema_service() {
         ollama_url=$(python3 -c "import json; c=json.load(open('$config_file')); print(c.get('ollama',{}).get('base_url',''))" 2>/dev/null)
     fi
 
+    # If no saved config, detect a safe default based on system RAM.
+    # Without this, the schema service falls back to OLLAMA_DEFAULT (llama3.3 / 70B)
+    # which most users don't have installed.
+    if [ -z "$ollama_model" ]; then
+        local ram_gb
+        ram_gb=$(sysctl -n hw.memsize 2>/dev/null | awk '{printf "%d", $1/1073741824}')
+        if [ -n "$ram_gb" ] && [ "$ram_gb" -ge 64 ] 2>/dev/null; then
+            ollama_model="llama3.3"
+        elif [ -n "$ram_gb" ] && [ "$ram_gb" -ge 32 ] 2>/dev/null; then
+            ollama_model="llama3.1:8b"
+        else
+            ollama_model="llama3.2:3b"
+        fi
+    fi
+
     [ -n "$ollama_model" ] && echo "  Ollama model: $ollama_model"
     [ -n "$ollama_url" ] && echo "  Ollama URL: $ollama_url"
 
