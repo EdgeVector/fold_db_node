@@ -33,19 +33,20 @@ fn get_discovery_config() -> Result<(String, Vec<u8>), HttpResponse> {
     Ok((url, key))
 }
 
-/// Extract the auth token from the OS keychain (primary), DISCOVERY_AUTH_TOKEN
-/// env var (fallback), or the incoming request's Authorization header (last resort).
+/// Extract the auth token from env var, OS keychain, or the incoming request's
+/// Authorization header. Env var is checked first to avoid macOS keychain popups
+/// in dev/CLI mode.
 fn get_auth_token(req: &HttpRequest) -> Result<String, HttpResponse> {
-    // 1. Try keychain first (where register/refresh store the token)
+    // 1. Env var (no keychain access needed — preferred for dev/CLI)
+    if let Ok(token) = std::env::var("DISCOVERY_AUTH_TOKEN") {
+        return Ok(token);
+    }
+
+    // 2. OS keychain (where register/refresh store the token in desktop app)
     if let Ok(Some(creds)) = crate::keychain::load_credentials() {
         if !creds.session_token.is_empty() {
             return Ok(creds.session_token);
         }
-    }
-
-    // 2. Fall back to env var (for backward compat / CI)
-    if let Ok(token) = std::env::var("DISCOVERY_AUTH_TOKEN") {
-        return Ok(token);
     }
 
     // 3. Fall back to incoming request's Authorization header

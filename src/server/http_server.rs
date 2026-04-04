@@ -176,7 +176,10 @@ impl FoldHttpServer {
         // Non-fatal: if refresh fails (no network, no credentials), we log and continue.
         // Wrapped in spawn_blocking + timeout because macOS Keychain access can block
         // (e.g. permission dialogs) and must not prevent the HTTP server from starting.
-        {
+        //
+        // Skip when EXEMEM_API_KEY is set — credentials are in the config file,
+        // no need to access the macOS keychain (avoids permission popups in dev).
+        if std::env::var("EXEMEM_API_KEY").is_err() {
             let app_state_clone = app_state.clone();
             tokio::spawn(async move {
                 let has_creds = tokio::task::spawn_blocking(crate::keychain::has_credentials)
