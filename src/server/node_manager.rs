@@ -171,6 +171,12 @@ impl NodeManager {
                 NodeManagerError::ConfigurationError(format!("Failed to load E2E keys: {}", e))
             })?;
 
+        // Ensure the Exemem factory can find the correct storage path.
+        // The factory reads FOLD_STORAGE_PATH to locate the Sled database;
+        // without this, it falls back to a relative "data" path which causes
+        // lock conflicts in multi-node setups.
+        std::env::set_var("FOLD_STORAGE_PATH", node_config.get_storage_path());
+
         // Create FoldDB with user context set
         let db = fold_db::logging::core::run_with_user(user_id, async {
             factory::create_fold_db(&node_config.database, &e2e_keys).await

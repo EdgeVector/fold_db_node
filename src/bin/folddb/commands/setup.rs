@@ -220,8 +220,15 @@ pub fn run_setup_wizard() -> Result<NodeConfig, CliError> {
         .map_err(|e| CliError::new(format!("Failed to write node_identity.json: {}", e)))?;
 
     // --- Build NodeConfig ---
+    let storage_path = match &database {
+        DatabaseConfig::Local { path } => Some(path.clone()),
+        _ => fold_db_node::utils::paths::folddb_home()
+            .map(|h| h.join("data"))
+            .ok(),
+    };
     let config = NodeConfig {
         database,
+        storage_path,
         network_listen_address: "/ip4/0.0.0.0/tcp/0".to_string(),
         security_config: SecurityConfig::from_env(),
         schema_service_url: Some(schema_url),

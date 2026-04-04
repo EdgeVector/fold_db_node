@@ -144,6 +144,9 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         std::fs::create_dir_all(&config_path)?;
         std::env::set_var("FOLD_CONFIG_DIR", &config_path);
 
+        // Propagate storage path so the Exemem factory finds the right Sled directory
+        std::env::set_var("FOLD_STORAGE_PATH", config.get_storage_path());
+
         println!("FoldDB Server (config file detected)");
         println!("  Data:   {}", config.get_storage_path().display());
         if let Some(ref url) = config.schema_service_url {

@@ -14,6 +14,12 @@ pub struct NodeConfig {
     #[serde(default)]
     pub database: DatabaseConfig,
 
+    /// Explicit storage path override. Used by Exemem and Cloud modes where the
+    /// database config doesn't carry a local path. `run.sh` writes this from
+    /// `$FOLDDB_HOME/data` so multi-node setups each get their own Sled directory.
+    #[serde(default)]
+    pub storage_path: Option<PathBuf>,
+
     /// Network listening address
     #[serde(default = "default_network_listen_address")]
     pub network_listen_address: String,
@@ -39,6 +45,7 @@ impl Default for NodeConfig {
     fn default() -> Self {
         Self {
             database: DatabaseConfig::default(),
+            storage_path: None,
             network_listen_address: default_network_listen_address(),
             security_config: SecurityConfig::from_env(),
             schema_service_url: None,
@@ -52,7 +59,10 @@ impl NodeConfig {
     /// Create a new node configuration with the specified storage path
     pub fn new(storage_path: PathBuf) -> Self {
         Self {
-            database: DatabaseConfig::Local { path: storage_path },
+            database: DatabaseConfig::Local {
+                path: storage_path.clone(),
+            },
+            storage_path: Some(storage_path),
             network_listen_address: default_network_listen_address(),
             security_config: SecurityConfig::from_env(),
             schema_service_url: None,
@@ -61,13 +71,25 @@ impl NodeConfig {
         }
     }
 
-    /// Get the effective storage path (from database config)
+    /// Get the effective storage path.
+    ///
+    /// For Local mode the path is embedded in the database config.
+    /// For Exemem/Cloud modes we use the explicit `storage_path` field
+    /// (written by `run.sh` from `$FOLDDB_HOME/data`) so that each node
+    /// instance gets its own Sled directory. Falls back to `"data"` for
+    /// backwards compatibility when `storage_path` is absent.
     pub fn get_storage_path(&self) -> PathBuf {
         match &self.database {
             DatabaseConfig::Local { path } => path.clone(),
             #[cfg(feature = "aws-backend")]
-            DatabaseConfig::Cloud(_) => PathBuf::from("data"),
-            DatabaseConfig::Exemem { .. } => PathBuf::from("data"),
+            DatabaseConfig::Cloud(_) => self
+                .storage_path
+                .clone()
+                .unwrap_or_else(|| PathBuf::from("data")),
+            DatabaseConfig::Exemem { .. } => self
+                .storage_path
+                .clone()
+                .unwrap_or_else(|| PathBuf::from("data")),
         }
     }
 
