@@ -206,8 +206,16 @@ pub async fn get_exemem_config() -> HttpResponse {
 /// Register this node's public key with Exemem to create a cloud account.
 /// Signs the request with the node's Ed25519 private key to prove key ownership.
 /// Idempotent: if already registered, returns a fresh session token.
-pub async fn register_with_exemem(data: web::Data<AppState>) -> HttpResponse {
-    match signed_register(&data).await {
+/// Accepts optional JSON body with `invite_code` for new registrations.
+pub async fn register_with_exemem(
+    data: web::Data<AppState>,
+    body: web::Json<serde_json::Value>,
+) -> HttpResponse {
+    let invite_code = body
+        .get("invite_code")
+        .and_then(|v| v.as_str())
+        .map(|s| s.to_string());
+    match signed_register(&data, invite_code.as_deref()).await {
         Ok(json) => {
             // Include the API URL in the response so frontend can use it
             let mut response = json;
@@ -232,7 +240,7 @@ pub async fn register_with_exemem(data: web::Data<AppState>) -> HttpResponse {
 ///
 /// Returns the new session token on success.
 pub async fn refresh_session_token(data: &web::Data<AppState>) -> Result<String, String> {
-    let json = signed_register(data).await?;
+    let json = signed_register(data, None).await?;
 
     json.get("session_token")
         .and_then(|v| v.as_str())
@@ -244,7 +252,10 @@ pub async fn refresh_session_token(data: &web::Data<AppState>) -> Result<String,
 ///
 /// Signs "{public_key_hex}:{timestamp}" with the node's Ed25519 private key,
 /// sends to the Exemem CLI register endpoint, and stores credentials.
-async fn signed_register(data: &web::Data<AppState>) -> Result<serde_json::Value, String> {
+async fn signed_register(
+    data: &web::Data<AppState>,
+    invite_code: Option<&str>,
+) -> Result<serde_json::Value, String> {
     // Get the node's keys from identity (works even during onboarding before user context)
     let public_key_b64 = data
         .node_manager
@@ -273,13 +284,18 @@ async fn signed_register(data: &web::Data<AppState>) -> Result<serde_json::Value
     let client = reqwest::Client::new();
     let url = format!("{}/api/auth/cli/register", exemem_api_url());
 
+    let mut register_body = serde_json::json!({
+        "public_key": public_key_hex,
+        "timestamp": timestamp,
+        "signature": signature_b64
+    });
+    if let Some(code) = invite_code {
+        register_body["invite_code"] = serde_json::Value::String(code.to_string());
+    }
+
     let resp = client
         .post(&url)
-        .json(&serde_json::json!({
-            "public_key": public_key_hex,
-            "timestamp": timestamp,
-            "signature": signature_b64
-        }))
+        .json(&register_body)
         .send()
         .await
         .map_err(|e| format!("Failed to connect to Exemem API: {}", e))?;

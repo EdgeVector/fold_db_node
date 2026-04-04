@@ -18,6 +18,8 @@ const colors = {
 export default function DatabaseSetupScreen({ onComplete }) {
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState(null)
+  const [showInviteInput, setShowInviteInput] = useState(false)
+  const [inviteCode, setInviteCode] = useState('')
 
 
   const handleLocalSetup = async () => {
@@ -55,11 +57,22 @@ export default function DatabaseSetupScreen({ onComplete }) {
   }
 
   const handleCloudSetup = async () => {
+    if (!showInviteInput) {
+      setShowInviteInput(true)
+      return
+    }
+    if (!inviteCode.trim()) {
+      setError('Invite code is required')
+      return
+    }
     setLoading(true)
     setError(null)
     try {
-      // Register this node's public key with Exemem (one-click, no email)
-      const resp = await fetch('/api/auth/register', { method: 'POST' })
+      const resp = await fetch('/api/auth/register', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ invite_code: inviteCode.trim() }),
+      })
       const data = await resp.json()
 
       if (!data.ok) {
@@ -173,6 +186,60 @@ export default function DatabaseSetupScreen({ onComplete }) {
             </p>
           </button>
         </div>
+
+        {showInviteInput && !loading && (
+          <div style={{ marginTop: '24px', maxWidth: '300px', margin: '24px auto 0', textAlign: 'left' }}>
+            <label style={{ fontSize: '12px', color: colors.dim, display: 'block', marginBottom: '4px' }}>
+              Invite Code
+            </label>
+            <input
+              type="text"
+              value={inviteCode}
+              onChange={(e) => setInviteCode(e.target.value.toUpperCase())}
+              placeholder="EXM-XXXX-XXXX"
+              maxLength={13}
+              style={{
+                width: '100%', padding: '8px 12px', fontSize: '14px',
+                fontFamily: "'IBM Plex Mono', monospace", letterSpacing: '2px',
+                background: colors.bgElevated, border: `1px solid ${colors.border}`,
+                color: colors.textBright, outline: 'none', boxSizing: 'border-box',
+              }}
+              onFocus={e => { e.currentTarget.style.borderColor = colors.blue }}
+              onBlur={e => { e.currentTarget.style.borderColor = colors.border }}
+              autoFocus
+            />
+            <p style={{ fontSize: '11px', color: colors.dim, marginTop: '4px' }}>
+              Get an invite code from an existing Exemem user.
+            </p>
+            <div style={{ display: 'flex', gap: '8px', marginTop: '12px' }}>
+              <button
+                onClick={() => { setShowInviteInput(false); setInviteCode(''); setError(null) }}
+                style={{
+                  flex: 1, padding: '8px', fontSize: '12px', cursor: 'pointer',
+                  background: 'transparent', border: `1px solid ${colors.border}`,
+                  color: colors.dim, fontFamily: "'IBM Plex Mono', monospace",
+                }}
+              >
+                Back
+              </button>
+              <button
+                onClick={handleCloudSetup}
+                disabled={!inviteCode.trim()}
+                style={{
+                  flex: 1, padding: '8px', fontSize: '12px', fontWeight: 700,
+                  cursor: inviteCode.trim() ? 'pointer' : 'not-allowed',
+                  background: inviteCode.trim() ? colors.blue : colors.bgElevated,
+                  border: `1px solid ${inviteCode.trim() ? colors.blue : colors.border}`,
+                  color: inviteCode.trim() ? colors.bg : colors.dim,
+                  fontFamily: "'IBM Plex Mono', monospace",
+                  opacity: inviteCode.trim() ? 1 : 0.5,
+                }}
+              >
+                Continue
+              </button>
+            </div>
+          </div>
+        )}
 
         {loading && (
           <div style={{ marginTop: '24px', color: colors.dim, fontSize: '13px' }}>

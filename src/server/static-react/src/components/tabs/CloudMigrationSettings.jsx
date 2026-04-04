@@ -6,6 +6,7 @@ export default function CloudMigrationSettings({ onClose }) {
   const backupSkipped = localStorage.getItem('folddb_cloud_backup_skipped') === '1'
   const [registering, setRegistering] = useState(false)
   const [error, setError] = useState(null)
+  const [inviteCode, setInviteCode] = useState('')
 
   // Storage tier state (cloud mode only)
   const [isCloudMode, setIsCloudMode] = useState(false)
@@ -61,11 +62,19 @@ export default function CloudMigrationSettings({ onClose }) {
   }, [])
 
   const handleEnableCloud = async () => {
+    if (!inviteCode.trim()) {
+      setError('Invite code is required')
+      return
+    }
     setRegistering(true)
     setError(null)
     try {
-      // Register this node's public key with Exemem (one-click, no email)
-      const resp = await fetch('/api/auth/register', { method: 'POST' })
+      // Register this node's public key with Exemem
+      const resp = await fetch('/api/auth/register', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ invite_code: inviteCode.trim() }),
+      })
       const data = await resp.json()
 
       if (!data.ok) {
@@ -269,6 +278,21 @@ export default function CloudMigrationSettings({ onClose }) {
         </div>
       </div>
 
+      {/* Invite code input */}
+      <div>
+        <label className="text-xs text-gruvbox-dim block mb-1">Invite Code</label>
+        <input
+          type="text"
+          value={inviteCode}
+          onChange={(e) => setInviteCode(e.target.value.toUpperCase())}
+          placeholder="EXM-XXXX-XXXX"
+          className="w-full px-3 py-2 text-sm font-mono tracking-wider border border-border rounded-md bg-surface text-gruvbox-bright placeholder-gruvbox-dim focus:outline-none focus:border-gruvbox-blue"
+          maxLength={13}
+          disabled={registering}
+        />
+        <p className="text-xs text-gruvbox-dim mt-1">Get an invite code from an existing Exemem user.</p>
+      </div>
+
       {error && (
         <div className="flex items-start gap-3 p-3 border border-gruvbox-red bg-gruvbox-red/5 rounded-md">
           <span className="text-gruvbox-red text-sm flex-shrink-0">!</span>
@@ -276,7 +300,7 @@ export default function CloudMigrationSettings({ onClose }) {
         </div>
       )}
 
-      {/* One-click enable button */}
+      {/* Enable button */}
       <div className="flex justify-end gap-3 pt-4 border-t border-border">
         {onClose && (
           <button
@@ -289,7 +313,7 @@ export default function CloudMigrationSettings({ onClose }) {
         )}
         <button
           onClick={handleEnableCloud}
-          disabled={registering}
+          disabled={registering || !inviteCode.trim()}
           className="px-6 py-2 text-xs font-bold border border-gruvbox-green text-surface bg-gruvbox-green hover:bg-gruvbox-green/90 rounded-md transition-colors cursor-pointer disabled:opacity-50 disabled:cursor-not-allowed flex items-center gap-2"
         >
           {registering ? (
