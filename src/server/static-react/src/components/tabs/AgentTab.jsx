@@ -75,6 +75,7 @@ function AgentTab() {
   const [thinkingSeconds, setThinkingSeconds] = useState(0);
   const thinkingTimerRef = useRef(null);
   const conversationEndRef = useRef(null);
+  const messagesContainerRef = useRef(null);
   const lastToolContextRef = useRef(null); // last scan/query result for attaching to next request
 
   // AI config inline form state
@@ -170,9 +171,13 @@ function AgentTab() {
     }
   }, [phase, phaseConf.welcome]);
 
-  // Auto-scroll
+  // Auto-scroll: scroll to top for the first message (welcome), bottom for subsequent
   useEffect(() => {
-    conversationEndRef.current?.scrollIntoView({ behavior: 'smooth' });
+    if (messages.length <= 1 && messagesContainerRef.current) {
+      messagesContainerRef.current.scrollTop = 0;
+    } else {
+      conversationEndRef.current?.scrollIntoView({ behavior: 'smooth' });
+    }
   }, [messages]);
 
   function makeMsg(type, content, data = null) {
@@ -310,7 +315,7 @@ function AgentTab() {
       </div>
 
       {/* Messages */}
-      <div className="flex-1 overflow-y-auto p-6 space-y-3">
+      <div ref={messagesContainerRef} className="flex-1 overflow-y-auto p-6 space-y-3">
         {messages.length === 0 ? (
           <div className="flex flex-col items-center justify-center h-full text-secondary">
             <p className="text-base mb-2">{phaseConf.heading}</p>
