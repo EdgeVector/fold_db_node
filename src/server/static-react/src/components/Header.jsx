@@ -71,7 +71,8 @@ function Header({ onSettingsClick, onAiSettingsClick, onCloudSettingsClick }) {
     const fetchInvites = async () => {
       try {
         const res = await orgClient.getPendingInvites();
-        if (res.data) setPendingInvites(res.data);
+        const invites = res.data?.invites || res.data || [];
+        if (Array.isArray(invites)) setPendingInvites(invites);
       } catch {
         // fail silently for telemetry
       }
