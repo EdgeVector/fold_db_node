@@ -802,6 +802,7 @@ impl FoldHttpServer {
     }
 
     fn configure_org_routes(cfg: &mut web::ServiceConfig) {
+        use super::routes::conflict as conflict_routes;
         use super::routes::org as org_routes;
 
         cfg.service(
@@ -826,6 +827,18 @@ impl FoldHttpServer {
                 .route(
                     "/{org_hash}/invite",
                     web::post().to(org_routes::generate_invite),
+                )
+                .route(
+                    "/{org_hash}/conflicts",
+                    web::get().to(conflict_routes::list_conflicts),
+                )
+                .route(
+                    "/{org_hash}/conflicts/{conflict_id}",
+                    web::get().to(conflict_routes::get_conflict),
+                )
+                .route(
+                    "/{org_hash}/conflicts/{conflict_id}/resolve",
+                    web::post().to(conflict_routes::resolve_conflict),
                 ),
         );
     }
