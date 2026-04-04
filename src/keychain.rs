@@ -57,8 +57,7 @@ pub fn store_credentials(creds: &ExememCredentials) -> Result<(), String> {
 
     #[cfg(not(unix))]
     {
-        fs::write(&path, &json)
-            .map_err(|e| format!("Failed to write credentials: {}", e))?;
+        fs::write(&path, &json).map_err(|e| format!("Failed to write credentials: {}", e))?;
     }
 
     Ok(())
@@ -85,15 +84,12 @@ pub fn load_credentials() -> Result<Option<ExememCredentials>, String> {
 pub fn delete_credentials() -> Result<(), String> {
     let path = credentials_path()?;
     if path.exists() {
-        fs::remove_file(&path)
-            .map_err(|e| format!("Failed to delete credentials: {}", e))?;
+        fs::remove_file(&path).map_err(|e| format!("Failed to delete credentials: {}", e))?;
     }
     Ok(())
 }
 
 /// Check if credentials exist without loading them.
 pub fn has_credentials() -> bool {
-    credentials_path()
-        .map(|p| p.exists())
-        .unwrap_or(false)
+    credentials_path().map(|p| p.exists()).unwrap_or(false)
 }
