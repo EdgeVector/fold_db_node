@@ -28,7 +28,6 @@
 //! }
 //! ```
 
-pub mod conflict;
 pub mod discovery;
 pub mod feed;
 pub mod ingestion;
