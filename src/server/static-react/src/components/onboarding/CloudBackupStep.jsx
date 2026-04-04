@@ -5,13 +5,23 @@ export default function CloudBackupStep({ onNext, onSkip }) {
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState(null)
   const [success, setSuccess] = useState(false)
+  const [inviteCode, setInviteCode] = useState('')
 
   const handleEnable = async () => {
+    if (!inviteCode.trim()) {
+      setError('Invite code is required')
+      return
+    }
+
     setLoading(true)
     setError(null)
     try {
       // Register this node's public key with Exemem (one-click, no email)
-      const resp = await fetch('/api/auth/register', { method: 'POST' })
+      const resp = await fetch('/api/auth/register', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ invite_code: inviteCode.trim() }),
+      })
       const data = await resp.json()
 
       if (!data.ok) {
@@ -69,6 +79,20 @@ export default function CloudBackupStep({ onNext, onSkip }) {
         You get 1 GB of free storage to start.
       </p>
 
+      <div className="mb-3">
+        <label className="text-xs text-secondary block mb-1">Invite Code</label>
+        <input
+          type="text"
+          value={inviteCode}
+          onChange={(e) => setInviteCode(e.target.value.toUpperCase())}
+          placeholder="EXM-XXXX-XXXX"
+          className="input-field w-full font-mono tracking-wider"
+          maxLength={13}
+          disabled={loading}
+        />
+        <p className="text-xs text-secondary mt-1">Get an invite code from an existing Exemem user.</p>
+      </div>
+
       {error && (
         <p className="text-gruvbox-red text-sm mt-3">{error}</p>
       )}
@@ -76,7 +100,7 @@ export default function CloudBackupStep({ onNext, onSkip }) {
       <div className="flex gap-2 mt-4">
         <button
           onClick={handleEnable}
-          disabled={loading}
+          disabled={loading || !inviteCode.trim()}
           className="btn-primary flex-1 text-center"
         >
           {loading ? 'Enabling...' : 'Enable Cloud Backup'}
