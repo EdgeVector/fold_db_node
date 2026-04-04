@@ -235,7 +235,10 @@ pub fn run_setup_wizard() -> Result<NodeConfig, CliError> {
     fs::write(config_dir.join("node_config.json"), &config_json)
         .map_err(|e| CliError::new(format!("Failed to write node_config.json: {}", e)))?;
 
-    eprintln!("Config saved to {}", config_dir.join("node_config.json").display());
+    eprintln!(
+        "Config saved to {}",
+        config_dir.join("node_config.json").display()
+    );
     eprintln!();
 
     Ok(config)
