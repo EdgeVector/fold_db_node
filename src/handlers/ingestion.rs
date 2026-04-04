@@ -197,13 +197,7 @@ pub async fn process_json(
         crate::handlers::org::require_exemem(node)?;
 
         // Verify the org exists locally
-        let sled_db = {
-            let db_guard = node.get_fold_db().await.handler_err("lock database")?;
-            db_guard
-                .sled_db()
-                .cloned()
-                .ok_or_else(|| HandlerError::Internal("No sled database".to_string()))?
-        };
+        let sled_db = crate::handlers::org::get_sled_db(node).await?;
         let org = fold_db::org::operations::get_org(&sled_db, org_hash)
             .handler_err("check org membership")?;
         if org.is_none() {

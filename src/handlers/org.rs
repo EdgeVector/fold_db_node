@@ -58,7 +58,7 @@ pub struct AddMemberRequest {
 }
 
 /// Get the sled::Db from a FoldNode, falling back to a local metadata db if unavailable.
-async fn get_sled_db(node: &FoldNode) -> Result<sled::Db, crate::handlers::HandlerError> {
+pub async fn get_sled_db(node: &FoldNode) -> Result<sled::Db, crate::handlers::HandlerError> {
     let db_guard = node.get_fold_db().await.handler_err("lock database")?;
     if let Some(db) = db_guard.sled_db().cloned() {
         Ok(db)
