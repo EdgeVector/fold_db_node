@@ -55,15 +55,81 @@ impl Default for OllamaGenerationParams {
 pub struct OllamaConfig {
     pub model: String,
     pub base_url: String,
+    #[serde(default = "default_vision_model")]
+    pub vision_model: String,
+    #[serde(default = "default_ocr_model")]
+    pub ocr_model: String,
     #[serde(default)]
     pub generation_params: OllamaGenerationParams,
+}
+
+fn default_vision_model() -> String {
+    models::OLLAMA_VISION.to_string()
+}
+
+fn default_ocr_model() -> String {
+    models::OLLAMA_OCR.to_string()
+}
+
+/// Pick a text model default based on available system RAM.
+fn default_text_model() -> String {
+    let ram_gb = system_ram_gb();
+    if ram_gb >= 64 {
+        models::OLLAMA_DEFAULT.to_string() // llama3.3 (70B)
+    } else if ram_gb >= 32 {
+        "llama3.1:8b".to_string()
+    } else {
+        "llama3.2:3b".to_string()
+    }
+}
+
+/// Detect total system RAM in GB. Returns 16 if detection fails.
+fn system_ram_gb() -> u64 {
+    #[cfg(target_os = "macos")]
+    {
+        std::process::Command::new("sysctl")
+            .arg("-n")
+            .arg("hw.memsize")
+            .output()
+            .ok()
+            .and_then(|o| {
+                String::from_utf8_lossy(&o.stdout)
+                    .trim()
+                    .parse::<u64>()
+                    .ok()
+            })
+            .map(|bytes| bytes / (1024 * 1024 * 1024))
+            .unwrap_or(16)
+    }
+    #[cfg(target_os = "linux")]
+    {
+        std::fs::read_to_string("/proc/meminfo")
+            .ok()
+            .and_then(|s| {
+                s.lines()
+                    .find(|l| l.starts_with("MemTotal:"))
+                    .and_then(|l| {
+                        l.split_whitespace()
+                            .nth(1)
+                            .and_then(|kb| kb.parse::<u64>().ok())
+                    })
+            })
+            .map(|kb| kb / (1024 * 1024))
+            .unwrap_or(16)
+    }
+    #[cfg(not(any(target_os = "macos", target_os = "linux")))]
+    {
+        16
+    }
 }
 
 impl Default for OllamaConfig {
     fn default() -> Self {
         Self {
-            model: models::OLLAMA_DEFAULT.to_string(),
+            model: default_text_model(),
             base_url: models::OLLAMA_DEFAULT_URL.to_string(),
+            vision_model: default_vision_model(),
+            ocr_model: default_ocr_model(),
             generation_params: OllamaGenerationParams::default(),
         }
     }
@@ -241,6 +307,12 @@ impl IngestionConfig {
             if let Ok(v) = env::var("OLLAMA_BASE_URL") {
                 config.ollama.base_url = v;
             }
+            if let Ok(v) = env::var("OLLAMA_VISION_MODEL") {
+                config.ollama.vision_model = v;
+            }
+            if let Ok(v) = env::var("OLLAMA_OCR_MODEL") {
+                config.ollama.ocr_model = v;
+            }
             if let Ok(v) = env::var("ANTHROPIC_MODEL") {
                 config.anthropic.model = v;
             }
@@ -382,7 +454,10 @@ mod tests {
         assert_eq!(config.provider, AIProvider::Anthropic);
         assert_eq!(config.anthropic.model, models::ANTHROPIC_SONNET);
         assert_eq!(config.anthropic.base_url, models::ANTHROPIC_API_URL);
-        assert_eq!(config.ollama.model, models::OLLAMA_DEFAULT);
+        // Text model depends on system RAM — just verify it's non-empty
+        assert!(!config.ollama.model.is_empty());
+        assert_eq!(config.ollama.vision_model, models::OLLAMA_VISION);
+        assert_eq!(config.ollama.ocr_model, models::OLLAMA_OCR);
         assert_eq!(config.ollama.base_url, models::OLLAMA_DEFAULT_URL);
         assert_eq!(
             config.ollama.generation_params.num_ctx,

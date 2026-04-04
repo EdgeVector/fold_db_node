@@ -3,6 +3,41 @@ import { ingestionClient } from '../../api/clients'
 import { useAppSelector, useAppDispatch } from '../../store/hooks'
 import { selectIngestionConfig, saveIngestionConfig } from '../../store/ingestionSlice'
 
+// Smart model recommendations based on environment
+const isLocalOllama = (url) => {
+  if (!url) return true
+  try {
+    const host = new URL(url).hostname
+    return host === 'localhost' || host === '127.0.0.1' || host === '::1'
+  } catch { return true }
+}
+
+const getRecommendedModels = (ollamaUrl) => {
+  if (isLocalOllama(ollamaUrl)) {
+    const ram = navigator.deviceMemory || 16
+    return {
+      text: ram >= 64 ? 'llama3.3' : ram >= 32 ? 'llama3.1:8b' : 'llama3.2:3b',
+      vision: 'qwen3-vl:2b',
+      ocr: 'glm-ocr:latest',
+    }
+  }
+  return { text: 'llama3.3', vision: 'qwen3-vl:4b-instruct', ocr: 'glm-ocr:latest' }
+}
+
+const buildModelOptions = (installedModels, recommended) => {
+  const isInstalled = installedModels.some(m => m.name === recommended)
+  const options = []
+  if (!isInstalled) {
+    options.push({ name: recommended, label: `${recommended} — Recommended (not installed)` })
+  }
+  for (const m of installedModels) {
+    const sizeStr = m.size ? ` (${(m.size / 1e9).toFixed(1)} GB)` : ''
+    const tag = m.name === recommended ? ' — Recommended' : ''
+    options.push({ name: m.name, label: `${m.name}${sizeStr}${tag}` })
+  }
+  return options
+}
+
 // Ollama generation parameter defaults and bounds (single source of truth)
 const OLLAMA_PARAMS = {
   num_ctx:           { default: 16384, min: 2048, max: 250000, step: 1024 },
@@ -32,7 +67,10 @@ function useAiConfig({ configSaveStatus, setConfigSaveStatus, onClose }) {
   const savedConfig = useAppSelector(selectIngestionConfig)
   const [aiProvider, setAiProvider] = useState('Anthropic')
   const [ollamaModel, setOllamaModel] = useState('')
+  const [ollamaVisionModel, setOllamaVisionModel] = useState('qwen3-vl:2b')
+  const [ollamaOcrModel, setOllamaOcrModel] = useState('glm-ocr:latest')
   const [ollamaBaseUrl, setOllamaBaseUrl] = useState('http://localhost:11434')
+  const [recommended, setRecommended] = useState(() => getRecommendedModels('http://localhost:11434'))
   const [anthropicApiKey, setAnthropicApiKey] = useState('')
   const [hasAnthropicEnvKey, setHasAnthropicEnvKey] = useState(false)
   const [anthropicModel, setAnthropicModel] = useState('claude-sonnet-4-20250514')
@@ -91,6 +129,9 @@ function useAiConfig({ configSaveStatus, setConfigSaveStatus, onClose }) {
     }
   }, [])
 
+  // Update recommendations when URL changes (local vs remote)
+  useEffect(() => { setRecommended(getRecommendedModels(ollamaBaseUrl)) }, [ollamaBaseUrl])
+
   // Fetch Ollama models when provider is Ollama and URL changes (debounced)
   useEffect(() => {
     if (aiProvider !== 'Ollama') return
@@ -102,8 +143,13 @@ function useAiConfig({ configSaveStatus, setConfigSaveStatus, onClose }) {
   // Initialize form state from Redux store
   useEffect(() => {
     if (savedConfig) {
-      setOllamaModel(savedConfig.ollama?.model || 'llama3.3')
-      setOllamaBaseUrl(savedConfig.ollama?.base_url || 'http://localhost:11434')
+      const url = savedConfig.ollama?.base_url || 'http://localhost:11434'
+      const rec = getRecommendedModels(url)
+      setOllamaModel(savedConfig.ollama?.model || rec.text)
+      setOllamaVisionModel(savedConfig.ollama?.vision_model || rec.vision)
+      setOllamaOcrModel(savedConfig.ollama?.ocr_model || rec.ocr)
+      setOllamaBaseUrl(url)
+      setRecommended(rec)
       const gp = savedConfig.ollama?.generation_params
       if (gp) {
         setOllamaNumCtx(gp.num_ctx ?? OLLAMA_PARAMS.num_ctx.default)
@@ -135,6 +181,8 @@ function useAiConfig({ configSaveStatus, setConfigSaveStatus, onClose }) {
         provider: aiProvider,
         ollama: {
           model: ollamaModel,
+          vision_model: ollamaVisionModel,
+          ocr_model: ollamaOcrModel,
           base_url: ollamaBaseUrl,
           generation_params: {
             num_ctx: ollamaNumCtx,
@@ -184,10 +232,10 @@ function useAiConfig({ configSaveStatus, setConfigSaveStatus, onClose }) {
               <>
                 {ollamaModelsLoading ? (
                   <div className="input flex items-center text-sm text-secondary">Loading models...</div>
-                ) : ollamaModels.length > 0 ? (
+                ) : ollamaModels.length > 0 || !ollamaModelsError ? (
                   <select value={ollamaModel} onChange={(e) => setOllamaModel(e.target.value)} className="select">
-                    {ollamaModels.map(m => (
-                      <option key={m.name} value={m.name}>{m.name} ({(m.size / 1e9).toFixed(1)} GB)</option>
+                    {buildModelOptions(ollamaModels, recommended.text).map(o => (
+                      <option key={o.name} value={o.name}>{o.label}</option>
                     ))}
                   </select>
                 ) : (
@@ -195,15 +243,15 @@ function useAiConfig({ configSaveStatus, setConfigSaveStatus, onClose }) {
                     type="text"
                     value={ollamaModel}
                     onChange={(e) => setOllamaModel(e.target.value)}
-                    placeholder="e.g. llama3.3"
+                    placeholder={`e.g. ${recommended.text}`}
                     className="input"
                   />
                 )}
                 {ollamaModelsError && (
                   <p className="text-xs text-gruvbox-red mt-1">{ollamaModelsError}</p>
                 )}
-                {ollamaModel && !ollamaModelsError && (
-                  <p className="text-xs text-secondary mt-1">Pull model: <code className="text-gruvbox-blue">ollama pull {ollamaModel}</code></p>
+                {ollamaModel && !ollamaModelsError && !ollamaModels.some(m => m.name === ollamaModel) && (
+                  <p className="text-xs text-gruvbox-yellow mt-1">Not installed. Run: <code className="text-gruvbox-blue">ollama pull {ollamaModel}</code></p>
                 )}
               </>
             )}
@@ -221,17 +269,58 @@ function useAiConfig({ configSaveStatus, setConfigSaveStatus, onClose }) {
         )}
 
         {aiProvider === 'Ollama' && (
-          <div>
-            <label className="label">Ollama URL</label>
-            <input
-              type="text"
-              value={ollamaBaseUrl}
-              onChange={(e) => setOllamaBaseUrl(e.target.value)}
-              placeholder="http://localhost:11434"
-              className="input"
-            />
-            <p className="text-xs text-secondary mt-1">Use a LAN address for a remote instance (e.g. http://192.168.1.100:11434)</p>
-          </div>
+          <>
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+              <div>
+                <label className="label">Vision Model <span className="text-xs text-secondary">(images)</span></label>
+                {ollamaModels.length > 0 || !ollamaModelsError ? (
+                  <select value={ollamaVisionModel} onChange={(e) => setOllamaVisionModel(e.target.value)} className="select">
+                    {buildModelOptions(ollamaModels, recommended.vision).map(o => (
+                      <option key={o.name} value={o.name}>{o.label}</option>
+                    ))}
+                  </select>
+                ) : (
+                  <input type="text" value={ollamaVisionModel} onChange={(e) => setOllamaVisionModel(e.target.value)} placeholder={`e.g. ${recommended.vision}`} className="input" />
+                )}
+                <p className="text-xs text-secondary mt-1">Used for image captioning and classification</p>
+                {ollamaVisionModel && !ollamaModelsError && !ollamaModels.some(m => m.name === ollamaVisionModel) && (
+                  <p className="text-xs text-gruvbox-yellow mt-1">Not installed. Run: <code className="text-gruvbox-blue">ollama pull {ollamaVisionModel}</code></p>
+                )}
+              </div>
+              <div>
+                <label className="label">OCR Model <span className="text-xs text-secondary">(documents)</span></label>
+                {ollamaModels.length > 0 || !ollamaModelsError ? (
+                  <select value={ollamaOcrModel} onChange={(e) => setOllamaOcrModel(e.target.value)} className="select">
+                    {buildModelOptions(ollamaModels, recommended.ocr).map(o => (
+                      <option key={o.name} value={o.name}>{o.label}</option>
+                    ))}
+                  </select>
+                ) : (
+                  <input type="text" value={ollamaOcrModel} onChange={(e) => setOllamaOcrModel(e.target.value)} placeholder={`e.g. ${recommended.ocr}`} className="input" />
+                )}
+                <p className="text-xs text-secondary mt-1">Used for text extraction from scanned docs and PDFs</p>
+                {ollamaOcrModel && !ollamaModelsError && !ollamaModels.some(m => m.name === ollamaOcrModel) && (
+                  <p className="text-xs text-gruvbox-yellow mt-1">Not installed. Run: <code className="text-gruvbox-blue">ollama pull {ollamaOcrModel}</code></p>
+                )}
+              </div>
+            </div>
+            <div>
+              <label className="label">Ollama URL</label>
+              <input
+                type="text"
+                value={ollamaBaseUrl}
+                onChange={(e) => setOllamaBaseUrl(e.target.value)}
+                placeholder="http://localhost:11434"
+                className="input"
+              />
+              <p className="text-xs text-secondary mt-1">
+                {isLocalOllama(ollamaBaseUrl)
+                  ? 'Local instance. Use a LAN address for a remote server (e.g. http://192.168.1.100:11434)'
+                  : 'Remote instance — recommending larger models'
+                }
+              </p>
+            </div>
+          </>
         )}
 
         <div>
