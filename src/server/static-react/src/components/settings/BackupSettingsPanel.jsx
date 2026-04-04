@@ -8,6 +8,7 @@ function BackupSettingsPanel() {
   const [loading, setLoading] = useState(true)
   const [syncing, setSyncing] = useState(false)
   const [triggerResult, setTriggerResult] = useState(null)
+  const [hasCredentials, setHasCredentials] = useState(false)
   const pollRef = useRef(null)
   const resultTimeoutRef = useRef(null)
 
@@ -22,6 +23,21 @@ function BackupSettingsPanel() {
     } finally {
       setLoading(false)
     }
+  }, [])
+
+  // Detect if user has Exemem credentials (signed up but sync may not be running)
+  useEffect(() => {
+    const hasLocalCreds = localStorage.getItem('exemem_api_url') && localStorage.getItem('exemem_api_key')
+    if (hasLocalCreds) {
+      setHasCredentials(true)
+      return
+    }
+    fetch('/api/auth/credentials')
+      .then(r => r.json())
+      .then(data => {
+        if (data.ok && data.has_credentials) setHasCredentials(true)
+      })
+      .catch(() => {})
   }, [])
 
   useEffect(() => {
@@ -74,6 +90,8 @@ function BackupSettingsPanel() {
   const syncState = status?.state
   const pendingCount = status?.pending_count ?? 0
   const encryptionActive = status?.encryption_active ?? false
+  // Cloud mode = sync engine running OR credentials exist (signed up but needs restart)
+  const cloudMode = enabled || hasCredentials
 
   return (
     <div className="space-y-6">
@@ -85,15 +103,19 @@ function BackupSettingsPanel() {
             <p className="text-xs text-secondary mt-1">
               {enabled
                 ? 'Your data is being synced to Exemem cloud storage with end-to-end encryption.'
-                : 'Cloud backup is not configured. Sign up for Exemem above to enable backup sync.'}
+                : hasCredentials
+                  ? 'Cloud backup is enabled but sync is not active. Restart the server to start syncing.'
+                  : 'Cloud backup is not configured. Sign up for Exemem above to enable backup sync.'}
             </p>
           </div>
           <div className={`px-3 py-1 rounded-full text-xs font-medium ${
             enabled
               ? 'bg-gruvbox-green/20 text-gruvbox-green'
-              : 'bg-gruvbox-red/20 text-gruvbox-red'
+              : hasCredentials
+                ? 'bg-gruvbox-yellow/20 text-gruvbox-yellow'
+                : 'bg-gruvbox-red/20 text-gruvbox-red'
           }`}>
-            {enabled ? 'Enabled' : 'Disabled'}
+            {enabled ? 'Enabled' : hasCredentials ? 'Restart Required' : 'Disabled'}
           </div>
         </div>
       </div>
@@ -163,7 +185,9 @@ function BackupSettingsPanel() {
         </button>
         {!enabled && (
           <p className="text-xs text-secondary mt-2">
-            Enable cloud storage to use manual backup.
+            {hasCredentials
+              ? 'Restart the server to activate cloud sync.'
+              : 'Enable cloud storage to use manual backup.'}
           </p>
         )}
       </div>

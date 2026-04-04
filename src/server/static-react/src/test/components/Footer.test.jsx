@@ -4,9 +4,19 @@
  * Tests the Footer component rendering and content display.
  */
 
-import { describe, it, expect } from 'vitest';
-import { render, screen } from '@testing-library/react';
+import { describe, it, expect, vi, beforeEach } from 'vitest';
+import { render, screen, waitFor } from '@testing-library/react';
 import Footer from '../../components/Footer.jsx';
+
+vi.mock('../../api/clients/systemClient', () => ({
+  systemClient: {
+    getDatabaseConfig: vi.fn().mockResolvedValue({ data: { type: 'local' } }),
+  },
+}));
+
+beforeEach(() => {
+  localStorage.clear();
+});
 
 describe('Footer Component', () => {
   it('renders footer with structure', () => {
@@ -29,10 +39,21 @@ describe('Footer Component', () => {
     expect(screen.getByText(/v\d+\.\d+\.\d+/i)).toBeInTheDocument();
   });
 
-  it('displays Local Mode indicator', () => {
+  it('displays Local Mode indicator by default', () => {
     render(<Footer />);
 
     expect(screen.getByText('Local Mode')).toBeInTheDocument();
+  });
+
+  it('displays Cloud Mode when exemem credentials exist in localStorage', async () => {
+    localStorage.setItem('exemem_api_url', 'https://example.com');
+    localStorage.setItem('exemem_api_key', 'test-key');
+
+    render(<Footer />);
+
+    await waitFor(() => {
+      expect(screen.getByText('Cloud Mode')).toBeInTheDocument();
+    });
   });
 
   it('has proper layout structure', () => {
