@@ -349,6 +349,149 @@ fn sign_payload(private_key_b64: &str, payload: &str) -> Result<String, String> 
     Ok(fold_db::security::KeyUtils::signature_to_base64(&signature))
 }
 
+// ============================================================================
+// Recovery phrase (BIP39 mnemonic for device transfer)
+// ============================================================================
+
+/// GET /api/auth/recovery-phrase
+/// Returns the node's Ed25519 private key as 24 BIP39 mnemonic words.
+/// Local-only endpoint — the key never leaves the device over the network.
+pub async fn get_recovery_phrase(data: web::Data<AppState>) -> HttpResponse {
+    let private_key_b64 = match data.node_manager.get_base_config().await.private_key {
+        Some(pk) => pk,
+        None => {
+            return HttpResponse::InternalServerError().json(serde_json::json!({
+                "ok": false,
+                "error": "Node private key not available"
+            }));
+        }
+    };
+
+    use base64::Engine;
+    let seed_bytes = match base64::engine::general_purpose::STANDARD.decode(&private_key_b64) {
+        Ok(bytes) if bytes.len() == 32 => bytes,
+        _ => {
+            return HttpResponse::InternalServerError().json(serde_json::json!({
+                "ok": false,
+                "error": "Invalid private key format"
+            }));
+        }
+    };
+
+    let mnemonic = match bip39::Mnemonic::from_entropy(&seed_bytes) {
+        Ok(m) => m,
+        Err(e) => {
+            return HttpResponse::InternalServerError().json(serde_json::json!({
+                "ok": false,
+                "error": format!("Failed to generate mnemonic: {}", e)
+            }));
+        }
+    };
+
+    let words: Vec<&str> = mnemonic.words().collect();
+
+    HttpResponse::Ok().json(serde_json::json!({
+        "ok": true,
+        "words": words
+    }))
+}
+
+/// POST /api/auth/restore
+/// Restore node identity from a 24-word BIP39 recovery phrase.
+/// Derives Ed25519 keypair, writes identity, registers with Exemem.
+pub async fn restore_from_phrase(
+    data: web::Data<AppState>,
+    body: web::Json<serde_json::Value>,
+) -> HttpResponse {
+    let words = match body.get("words").and_then(|v| v.as_str()) {
+        Some(w) => w.trim().to_string(),
+        None => {
+            return HttpResponse::BadRequest().json(serde_json::json!({
+                "ok": false,
+                "error": "Missing 'words' field"
+            }));
+        }
+    };
+
+    // Parse mnemonic
+    let mnemonic = match bip39::Mnemonic::parse(&words) {
+        Ok(m) => m,
+        Err(e) => {
+            return HttpResponse::BadRequest().json(serde_json::json!({
+                "ok": false,
+                "error": format!("Invalid recovery phrase: {}", e)
+            }));
+        }
+    };
+
+    let entropy = mnemonic.to_entropy();
+    if entropy.len() != 32 {
+        return HttpResponse::BadRequest().json(serde_json::json!({
+            "ok": false,
+            "error": format!("Recovery phrase must encode 32 bytes, got {}", entropy.len())
+        }));
+    }
+
+    // Derive Ed25519 keypair from seed
+    let key_pair = match fold_db::security::Ed25519KeyPair::from_secret_key(&entropy) {
+        Ok(kp) => kp,
+        Err(e) => {
+            return HttpResponse::InternalServerError().json(serde_json::json!({
+                "ok": false,
+                "error": format!("Failed to derive keypair: {}", e)
+            }));
+        }
+    };
+
+    use base64::Engine;
+    let private_key_b64 = base64::engine::general_purpose::STANDARD.encode(&entropy);
+    let public_key_b64 =
+        base64::engine::general_purpose::STANDARD.encode(key_pair.public_key_bytes());
+
+    // Write identity to disk
+    let identity_path = "config/node_identity.json";
+    let identity_json = serde_json::json!({
+        "private_key": private_key_b64,
+        "public_key": public_key_b64,
+    });
+
+    if let Err(e) = std::fs::write(
+        identity_path,
+        serde_json::to_string_pretty(&identity_json).unwrap(),
+    ) {
+        return HttpResponse::InternalServerError().json(serde_json::json!({
+            "ok": false,
+            "error": format!("Failed to write identity: {}", e)
+        }));
+    }
+
+    // Update the in-memory config so signed_register uses the restored key
+    let mut base_config = data.node_manager.get_base_config().await;
+    base_config.public_key = Some(public_key_b64.clone());
+    base_config.private_key = Some(private_key_b64.clone());
+    data.node_manager
+        .update_config(crate::server::node_manager::NodeManagerConfig { base_config })
+        .await;
+
+    // Register with Exemem (idempotent — returns fresh token for existing users)
+    match signed_register(&data, None).await {
+        Ok(json) => {
+            let mut response = json;
+            if let Some(obj) = response.as_object_mut() {
+                obj.insert(
+                    "api_url".to_string(),
+                    serde_json::Value::String(exemem_api_url()),
+                );
+            }
+            HttpResponse::Ok().json(response)
+        }
+        Err(e) => HttpResponse::InternalServerError().json(serde_json::json!({
+            "ok": false,
+            "error": e
+        })),
+    }
+}
+
 /// Decode a base64 string to hex. Returns None on invalid base64.
 fn base64_to_hex(b64: &str) -> Option<String> {
     use base64::Engine;

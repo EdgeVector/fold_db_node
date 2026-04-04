@@ -857,7 +857,12 @@ impl FoldHttpServer {
                 .route(
                     "/register",
                     web::post().to(auth_routes::register_with_exemem),
-                ),
+                )
+                .route(
+                    "/recovery-phrase",
+                    web::get().to(auth_routes::get_recovery_phrase),
+                )
+                .route("/restore", web::post().to(auth_routes::restore_from_phrase)),
         );
     }
 }

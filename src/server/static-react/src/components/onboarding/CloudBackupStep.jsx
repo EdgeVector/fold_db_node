@@ -6,6 +6,8 @@ export default function CloudBackupStep({ onNext, onSkip }) {
   const [error, setError] = useState(null)
   const [success, setSuccess] = useState(false)
   const [inviteCode, setInviteCode] = useState('')
+  const [recoveryWords, setRecoveryWords] = useState(null)
+  const [savedConfirmed, setSavedConfirmed] = useState(false)
 
   const handleEnable = async () => {
     if (!inviteCode.trim()) {
@@ -16,7 +18,6 @@ export default function CloudBackupStep({ onNext, onSkip }) {
     setLoading(true)
     setError(null)
     try {
-      // Register this node's public key with Exemem (one-click, no email)
       const resp = await fetch('/api/auth/register', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
@@ -28,11 +29,9 @@ export default function CloudBackupStep({ onNext, onSkip }) {
         throw new Error(data.error || 'Registration failed')
       }
 
-      // Store cloud credentials for subscription client
       localStorage.setItem('exemem_api_url', data.api_url)
       localStorage.setItem('exemem_api_key', data.api_key)
 
-      // Switch database to Exemem mode
       await systemClient.applySetup({
         storage: {
           type: 'exemem',
@@ -41,12 +40,63 @@ export default function CloudBackupStep({ onNext, onSkip }) {
         }
       })
 
+      // Fetch recovery phrase
+      const phraseResp = await fetch('/api/auth/recovery-phrase')
+      const phraseData = await phraseResp.json()
+      if (phraseData.ok) {
+        setRecoveryWords(phraseData.words)
+      }
+
       setSuccess(true)
     } catch (e) {
       setError(e?.message || String(e))
     } finally {
       setLoading(false)
     }
+  }
+
+  if (success && recoveryWords) {
+    return (
+      <div>
+        <h2 className="text-sm font-bold mb-1">
+          <span className="text-gruvbox-green">RECOVERY PHRASE</span>{' '}
+          <span className="text-secondary">Save these 24 words</span>
+        </h2>
+        <p className="text-xs text-secondary mb-3">
+          This is the only way to restore your account on a new device.
+          Write it down and store it somewhere safe.
+        </p>
+
+        <div className="grid grid-cols-3 gap-2 p-3 border border-border rounded-md bg-surface-elevated font-mono text-xs">
+          {recoveryWords.map((word, i) => (
+            <div key={i} className="flex items-center gap-1">
+              <span className="text-tertiary w-5 text-right">{i + 1}.</span>
+              <span className="text-primary">{word}</span>
+            </div>
+          ))}
+        </div>
+
+        <label className="flex items-center gap-2 mt-4 text-xs text-secondary cursor-pointer">
+          <input
+            type="checkbox"
+            checked={savedConfirmed}
+            onChange={(e) => setSavedConfirmed(e.target.checked)}
+            className="accent-gruvbox-green"
+          />
+          I have saved my recovery phrase
+        </label>
+
+        <div className="flex gap-2 mt-4">
+          <button
+            onClick={onNext}
+            disabled={!savedConfirmed}
+            className="btn-primary flex-1 text-center"
+          >
+            Continue
+          </button>
+        </div>
+      </div>
+    )
   }
 
   if (success) {
