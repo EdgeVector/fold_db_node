@@ -862,10 +862,7 @@ impl FoldHttpServer {
                     "/recovery-phrase",
                     web::get().to(auth_routes::get_recovery_phrase),
                 )
-                .route(
-                    "/restore",
-                    web::post().to(auth_routes::restore_from_phrase),
-                ),
+                .route("/restore", web::post().to(auth_routes::restore_from_phrase)),
         );
     }
 }

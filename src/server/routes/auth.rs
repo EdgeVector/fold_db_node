@@ -444,8 +444,7 @@ pub async fn restore_from_phrase(
     };
 
     use base64::Engine;
-    let private_key_b64 =
-        base64::engine::general_purpose::STANDARD.encode(&entropy);
+    let private_key_b64 = base64::engine::general_purpose::STANDARD.encode(&entropy);
     let public_key_b64 =
         base64::engine::general_purpose::STANDARD.encode(key_pair.public_key_bytes());
 
@@ -456,7 +455,10 @@ pub async fn restore_from_phrase(
         "public_key": public_key_b64,
     });
 
-    if let Err(e) = std::fs::write(identity_path, serde_json::to_string_pretty(&identity_json).unwrap()) {
+    if let Err(e) = std::fs::write(
+        identity_path,
+        serde_json::to_string_pretty(&identity_json).unwrap(),
+    ) {
         return HttpResponse::InternalServerError().json(serde_json::json!({
             "ok": false,
             "error": format!("Failed to write identity: {}", e)
@@ -468,9 +470,7 @@ pub async fn restore_from_phrase(
     base_config.public_key = Some(public_key_b64.clone());
     base_config.private_key = Some(private_key_b64.clone());
     data.node_manager
-        .update_config(crate::server::node_manager::NodeManagerConfig {
-            base_config,
-        })
+        .update_config(crate::server::node_manager::NodeManagerConfig { base_config })
         .await;
 
     // Register with Exemem (idempotent — returns fresh token for existing users)
