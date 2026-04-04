@@ -21,9 +21,9 @@ export default function AllSetStep({ onFinish, completedSteps }) {
   useEffect(() => {
     async function detectStorage() {
       try {
-        const resp = await fetch('/api/system/config')
+        const resp = await fetch('/api/system/database-config')
         const data = await resp.json()
-        const dbType = data?.database?.type
+        const dbType = data?.data?.type || data?.type
         if (dbType === 'exemem') setStorageMode('Cloud (Exemem)')
         else if (dbType === 'local') setStorageMode('Local')
         else if (dbType) setStorageMode(dbType)
