@@ -377,6 +377,24 @@ impl NodeManager {
         Ok(public_key)
     }
 
+    /// Get a clone of the Sled database handle from the currently loaded shared node.
+    ///
+    /// Sled's `Db` is internally `Arc`-wrapped, so cloning shares the same open
+    /// database with no lock conflict. This is used by bootstrap-after-restore to
+    /// get a Sled handle that survives node invalidation.
+    ///
+    /// Returns None if no node is loaded yet.
+    pub async fn get_sled_db(&self) -> Option<sled::Db> {
+        let shared = self.shared_local_node.lock().await;
+        if let Some(node_arc) = shared.as_ref() {
+            let node = node_arc.read().await;
+            if let Ok(fold_db) = node.get_fold_db().await {
+                return fold_db.sled_db().cloned();
+            }
+        }
+        None
+    }
+
     /// Check if any active node exists in the cache.
     ///
     /// In local mode, checks the shared local node.
