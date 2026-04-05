@@ -488,6 +488,25 @@ pub async fn restore_from_phrase(
                     serde_json::Value::String(exemem_api_url()),
                 );
             }
+
+            // Spawn background bootstrap if we got Exemem credentials.
+            // This downloads the latest snapshot + replays write logs from R2
+            // so the restored node has the full database, not just the identity.
+            if let (Some(api_key), Some(_user_hash)) = (
+                response.get("api_key").and_then(|v| v.as_str()),
+                response.get("user_hash").and_then(|v| v.as_str()),
+            ) {
+                let api_url = exemem_api_url();
+                let api_key = api_key.to_string();
+                let node_manager = data.node_manager.clone();
+
+                tokio::spawn(async move {
+                    if let Err(e) = bootstrap_from_cloud(&api_url, &api_key, &node_manager).await {
+                        log::error!("Background bootstrap after restore failed: {}", e);
+                    }
+                });
+            }
+
             HttpResponse::Ok().json(response)
         }
         Err(e) => HttpResponse::InternalServerError().json(serde_json::json!({
@@ -495,6 +514,72 @@ pub async fn restore_from_phrase(
             "error": e
         })),
     }
+}
+
+/// Bootstrap the local database from cloud storage (R2/S3).
+///
+/// Creates a temporary SyncEngine with the given Exemem credentials,
+/// downloads the latest snapshot, and replays any write logs after it.
+/// This restores the full database state on a new/recovered device.
+async fn bootstrap_from_cloud(
+    api_url: &str,
+    api_key: &str,
+    node_manager: &std::sync::Arc<crate::server::node_manager::NodeManager>,
+) -> Result<(), String> {
+    log::info!("Starting database bootstrap from cloud after identity restore");
+
+    // Load E2E encryption keys (needed to decrypt the snapshot + logs)
+    let folddb_home = crate::utils::paths::folddb_home()
+        .map_err(|e| format!("Cannot resolve FOLDDB_HOME: {e}"))?;
+    let e2e_key_path = folddb_home.join("e2e.key");
+    let e2e_keys = fold_db::crypto::E2eKeys::load_or_generate(&e2e_key_path)
+        .await
+        .map_err(|e| format!("Failed to load E2E keys: {e}"))?;
+
+    // Resolve the storage path (same logic as factory/node_manager)
+    let config = node_manager.get_base_config().await;
+    let data_dir = config.get_storage_path();
+    let data_dir_str = data_dir
+        .to_str()
+        .ok_or_else(|| "Invalid storage path".to_string())?;
+
+    // Build sync components
+    let sync_setup = fold_db::sync::SyncSetup::from_exemem(api_url, api_key, data_dir_str);
+    let sync_crypto: std::sync::Arc<dyn fold_db::crypto::CryptoProvider> = std::sync::Arc::new(
+        fold_db::crypto::LocalCryptoProvider::from_key(e2e_keys.encryption_key()),
+    );
+
+    let http = std::sync::Arc::new(reqwest::Client::new());
+    let s3 = fold_db::sync::s3::S3Client::new(http.clone());
+    let auth = fold_db::sync::auth::AuthClient::new(http, sync_setup.auth_url, sync_setup.auth);
+
+    // Open the local Sled database as a NamespacedStore for the engine
+    let db =
+        sled::open(&data_dir).map_err(|e| format!("Failed to open sled for bootstrap: {e}"))?;
+    let base_store: std::sync::Arc<dyn fold_db::storage::traits::NamespacedStore> =
+        std::sync::Arc::new(fold_db::storage::SledNamespacedStore::new(db));
+
+    let engine = std::sync::Arc::new(fold_db::sync::SyncEngine::new(
+        sync_setup.device_id,
+        sync_crypto,
+        s3,
+        auth,
+        base_store,
+        fold_db::sync::SyncConfig::default(),
+    ));
+
+    // Run bootstrap (download snapshot + replay logs)
+    let final_seq = engine
+        .bootstrap()
+        .await
+        .map_err(|e| format!("Bootstrap failed: {e}"))?;
+
+    log::info!(
+        "Database bootstrap complete after restore: final sequence = {}",
+        final_seq
+    );
+
+    Ok(())
 }
 
 /// Decode a base64 string to hex. Returns None on invalid base64.
