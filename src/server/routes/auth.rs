@@ -518,10 +518,11 @@ pub async fn restore_from_phrase(
 
 /// Bootstrap the local database from cloud storage (R2/S3).
 ///
-/// Reuses the Sled database from the running server's FoldDB instance
-/// (via `NodeManager`) instead of opening a new one. Sled uses exclusive
-/// file locks, so opening a second instance at the same path would fail
-/// with "could not acquire lock".
+/// Opens Sled directly with a retry loop instead of going through NodeManager.
+/// After `restore_from_phrase()`, `invalidate_all_nodes()` drops the shared node,
+/// but the old Sled handle may not be fully released yet (Arc references from
+/// in-flight requests). We retry `sled::open()` up to 10 times with 500ms delays
+/// to wait for the old handle to drop.
 ///
 /// Downloads the latest snapshot and replays any write logs after it,
 /// restoring the full database state on a new/recovered device.
@@ -557,36 +558,45 @@ async fn bootstrap_from_cloud(
     let s3 = fold_db::sync::s3::S3Client::new(http.clone());
     let auth = fold_db::sync::auth::AuthClient::new(http, sync_setup.auth_url, sync_setup.auth);
 
-    // Get the Sled database from the running server's FoldDB instance.
-    // We need the user_hash to look up the node. Derive it from the public key
-    // that was just restored into the config.
-    let public_key = config
-        .public_key
-        .ok_or_else(|| "Node public key not available for bootstrap".to_string())?;
-    let user_hash = crate::utils::crypto::user_hash_from_pubkey(&public_key);
-
-    let node_arc = node_manager
-        .get_node(&user_hash)
-        .await
-        .map_err(|e| format!("Failed to get node for bootstrap: {e}"))?;
-
-    let node = node_arc.read().await;
-    let fold_db = node
-        .get_fold_db()
-        .await
-        .map_err(|e| format!("Failed to lock FoldDB for bootstrap: {e}"))?;
-
-    let sled_db = fold_db
-        .sled_db()
-        .ok_or_else(|| {
-            "No Sled database available for bootstrap (not in local/exemem mode)".to_string()
+    // Open Sled directly with retry. After invalidate_all_nodes(), the old FoldDB's
+    // Sled handle will be released once all in-flight Arc references drop. We retry
+    // to wait for that to happen.
+    let sled_path = data_dir.join("db");
+    let sled_db = {
+        let max_retries: u32 = 10;
+        let retry_delay = std::time::Duration::from_millis(500);
+        let mut last_err = String::new();
+        let mut db = None;
+        for attempt in 1..=max_retries {
+            match sled::open(&sled_path) {
+                Ok(opened) => {
+                    if attempt > 1 {
+                        log::info!("Sled lock acquired on attempt {}/{}", attempt, max_retries);
+                    }
+                    db = Some(opened);
+                    break;
+                }
+                Err(e) => {
+                    last_err = format!("{e}");
+                    log::warn!(
+                        "Sled lock not yet available (attempt {}/{}): {}",
+                        attempt,
+                        max_retries,
+                        e
+                    );
+                    tokio::time::sleep(retry_delay).await;
+                }
+            }
+        }
+        db.ok_or_else(|| {
+            format!(
+                "Failed to open Sled at {} after {} attempts: {}",
+                sled_path.display(),
+                max_retries,
+                last_err
+            )
         })?
-        .clone();
-
-    // Drop the FoldDB lock before running bootstrap (which does async I/O).
-    // The sled::Db clone is safe — Sled uses internal Arc-based reference counting.
-    drop(fold_db);
-    drop(node);
+    };
 
     let base_store: std::sync::Arc<dyn fold_db::storage::traits::NamespacedStore> =
         std::sync::Arc::new(fold_db::storage::SledNamespacedStore::new(sled_db));
