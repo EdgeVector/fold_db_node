@@ -1023,7 +1023,13 @@ fn js_to_json(content: &str, file_name: &str) -> IngestionResult<Value> {
         serde_json::from_str(&json_string)
             .map_err(|e| IngestionError::InvalidInput(format!("Failed to parse JSON: {}", e)))
     } else {
-        Ok(extract_code_metadata(content, file_name, "js"))
+        let meta = extract_code_metadata(content, file_name, "js");
+        // If no symbols extracted (simple scripts), fall back to text content
+        if meta.as_array().is_some_and(|a| a.is_empty()) {
+            Ok(wrap_text_content(content, file_name, "js"))
+        } else {
+            Ok(meta)
+        }
     }
 }
 
@@ -1039,7 +1045,16 @@ fn parse_content_by_ext(content: &str, file_name: &str, ext: &str) -> IngestionR
                 .map_err(|e| IngestionError::InvalidInput(format!("Failed to parse JSON: {}", e)))
         }
         "txt" | "md" => Ok(wrap_text_content(content, file_name, ext)),
-        e if CODE_EXTS.contains(&e) => Ok(extract_code_metadata(content, file_name, e)),
+        e if CODE_EXTS.contains(&e) => {
+            let meta = extract_code_metadata(content, file_name, e);
+            // If no symbols were extracted (e.g., simple scripts without functions/classes),
+            // fall back to wrapping the file as text content so it's still ingestible.
+            if meta.as_array().is_some_and(|a| a.is_empty()) {
+                Ok(wrap_text_content(content, file_name, e))
+            } else {
+                Ok(meta)
+            }
+        }
         e if CONFIG_EXTS.contains(&e) => Ok(wrap_text_content(content, file_name, e)),
         _ => Err(IngestionError::InvalidInput(format!(
             "Unsupported file type: {}",

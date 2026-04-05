@@ -376,6 +376,55 @@ pub fn apply_heuristic_filtering(file_tree: &[String]) -> Vec<FileRecommendation
             let is_data_export =
                 lower.contains("export") || lower.contains("backup") || lower.contains("takeout");
 
+            // Text/data files are ingestible personal data
+            let is_text_data = matches!(
+                ext.as_str(),
+                "json" | "txt" | "md" | "markdown" | "toml" | "yaml" | "yml" | "xml" | "html"
+            );
+
+            // Code files — ingestible as personal projects/work
+            let is_code = matches!(
+                ext.as_str(),
+                "js" | "jsx"
+                    | "ts"
+                    | "tsx"
+                    | "py"
+                    | "rs"
+                    | "go"
+                    | "java"
+                    | "kt"
+                    | "rb"
+                    | "c"
+                    | "cpp"
+                    | "h"
+                    | "hpp"
+                    | "cs"
+                    | "swift"
+                    | "sh"
+                    | "bash"
+                    | "zsh"
+                    | "sql"
+                    | "r"
+                    | "lua"
+                    | "pl"
+                    | "php"
+                    | "scala"
+                    | "zig"
+                    | "hs"
+            );
+
+            // Config/dotfiles
+            let is_config = matches!(ext.as_str(), "ini" | "cfg" | "conf" | "properties" | "env")
+                || lower.ends_with("rc")
+                || lower.contains(".bashrc")
+                || lower.contains(".zshrc");
+
+            // SVG diagrams
+            let is_svg = ext == "svg";
+
+            // CSS stylesheets
+            let is_css = ext == "css";
+
             let (should_ingest, category, reason) = if is_personal_doc {
                 (true, "personal_data", "Personal document file")
             } else if is_media && is_data_export {
@@ -384,6 +433,16 @@ pub fn apply_heuristic_filtering(file_tree: &[String]) -> Vec<FileRecommendation
                 (true, "personal_data", "Data export file")
             } else if is_media {
                 (true, "media", "Media file")
+            } else if is_text_data {
+                (true, "personal_data", "Text/data file")
+            } else if is_code {
+                (true, "code", "Source code file")
+            } else if is_config {
+                (true, "config", "Configuration file")
+            } else if is_svg {
+                (true, "media", "SVG diagram/image")
+            } else if is_css {
+                (true, "code", "Stylesheet")
             } else {
                 (false, "unknown", "Could not classify without AI")
             };
@@ -560,8 +619,9 @@ mod tests {
         assert!(recs[1].should_ingest);
         assert_eq!(recs[1].category, "media");
 
-        // .py → unknown, should_ingest = false
-        assert!(!recs[2].should_ingest);
+        // .py → code, should_ingest = true
+        assert!(recs[2].should_ingest);
+        assert_eq!(recs[2].category, "code");
 
         // CSV → personal_data, should_ingest
         assert!(recs[3].should_ingest);

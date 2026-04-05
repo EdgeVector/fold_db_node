@@ -36,9 +36,11 @@ pub struct AddSchemaResponse {
 impl SchemaServiceClient {
     /// Create a new schema service client
     pub fn new(schema_service_url: &str) -> Self {
-        // Create client with timeout to prevent hanging
+        // Create client with timeout to prevent hanging.
+        // Schema creation can involve LLM field classification (Anthropic Haiku or Ollama),
+        // which takes 5-60s per field under load — allow enough headroom.
         let client = reqwest::Client::builder()
-            .timeout(std::time::Duration::from_secs(30))
+            .timeout(std::time::Duration::from_secs(120))
             .connect_timeout(std::time::Duration::from_secs(10))
             .no_proxy()
             .build()
