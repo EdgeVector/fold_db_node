@@ -192,9 +192,34 @@ impl AnthropicConfig {
     }
 }
 
+/// Per-use-case provider/model override.
+///
+/// When `provider` is `None`, the use case inherits from the parent config.
+/// When set, it uses its own provider and model independently.
+#[derive(Debug, Clone, Serialize, Deserialize, Default, utoipa::ToSchema)]
+pub struct UseCaseOverride {
+    /// Provider for this use case. `None` = inherit from parent.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub provider: Option<AIProvider>,
+    /// Ollama model override. `None` = inherit from parent's ollama.model.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub ollama_model: Option<String>,
+    /// Anthropic model override. `None` = inherit from parent's anthropic.model.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub anthropic_model: Option<String>,
+}
+
+impl UseCaseOverride {
+    /// Returns true if any field is set (not fully inheriting).
+    pub fn is_set(&self) -> bool {
+        self.provider.is_some() || self.ollama_model.is_some() || self.anthropic_model.is_some()
+    }
+}
+
 /// Configuration for the ingestion module.
 #[derive(Debug, Clone, Serialize, Deserialize, utoipa::ToSchema)]
 pub struct IngestionConfig {
+    /// Primary AI provider (used for ingestion schema analysis).
     pub provider: AIProvider,
     pub ollama: OllamaConfig,
     #[serde(default)]
@@ -203,6 +228,11 @@ pub struct IngestionConfig {
     pub max_retries: u32,
     pub timeout_seconds: u64,
     pub auto_execute_mutations: bool,
+
+    /// Override for LLM query (natural language search, chat, agent).
+    /// When unset, inherits from the primary provider/model above.
+    #[serde(default)]
+    pub query: UseCaseOverride,
 }
 
 impl Default for IngestionConfig {
@@ -215,7 +245,34 @@ impl Default for IngestionConfig {
             max_retries: 3,
             timeout_seconds: 300,
             auto_execute_mutations: true,
+            query: UseCaseOverride::default(),
         }
+    }
+}
+
+impl IngestionConfig {
+    /// Build an effective config for the LLM query use case.
+    ///
+    /// If `self.query` has overrides, they take precedence over the primary config.
+    /// Otherwise returns a clone of self (query inherits from ingestion).
+    pub fn query_config(&self) -> Self {
+        if !self.query.is_set() {
+            return self.clone();
+        }
+
+        let mut config = self.clone();
+
+        if let Some(ref provider) = self.query.provider {
+            config.provider = provider.clone();
+        }
+        if let Some(ref model) = self.query.ollama_model {
+            config.ollama.model = model.clone();
+        }
+        if let Some(ref model) = self.query.anthropic_model {
+            config.anthropic.model = model.clone();
+        }
+
+        config
     }
 }
 
@@ -285,6 +342,7 @@ impl IngestionConfig {
                 config.provider = saved.provider;
                 config.ollama = saved.ollama;
                 config.anthropic = saved.anthropic;
+                config.query = saved.query;
                 true
             }
         };
@@ -432,6 +490,9 @@ pub struct SavedConfig {
     pub ollama: OllamaConfig,
     #[serde(default)]
     pub anthropic: AnthropicConfig,
+    /// Per-use-case overrides. When set, query uses its own provider/model.
+    #[serde(default)]
+    pub query: UseCaseOverride,
 }
 
 // ---- env var helpers ----
