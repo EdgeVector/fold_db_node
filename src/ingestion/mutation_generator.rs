@@ -124,10 +124,12 @@ pub fn generate_mutations(
                     field_name
                 );
             } else {
+                // Expected for optional fields — a schema may have fields that
+                // not every record in a batch contains (e.g., "birthday" in contacts).
                 log_feature!(
                     LogFeature::Ingestion,
-                    warn,
-                    "Mapper references missing JSON field: {}",
+                    debug,
+                    "Mapper references missing JSON field: {} (field may be optional)",
                     json_field
                 );
             }
@@ -185,15 +187,19 @@ pub fn generate_mutations(
 
         // If hash was extracted but range is missing (e.g., null range field),
         // provide a timestamp fallback so HashRange mutations are still indexed.
+        // For Hash-only schemas (no range_field in keys_and_values), this is
+        // expected — only warn when a range was actually expected.
         let key_value = if key_value.hash.is_some() && key_value.range.is_none() {
             let ts = Utc::now().format(RANGE_KEY_TIMESTAMP_FMT).to_string();
-            log_feature!(
-                LogFeature::Ingestion,
-                warn,
-                "Range key missing for schema '{}', using timestamp '{}' as fallback",
-                schema_name,
-                ts
-            );
+            if keys_and_values.contains_key("range_field") {
+                log_feature!(
+                    LogFeature::Ingestion,
+                    warn,
+                    "Range key missing for schema '{}', using timestamp '{}' as fallback",
+                    schema_name,
+                    ts
+                );
+            }
             KeyValue::new(key_value.hash, Some(ts))
         } else {
             key_value
