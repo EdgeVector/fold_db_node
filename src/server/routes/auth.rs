@@ -545,18 +545,17 @@ async fn bootstrap_from_cloud(
 
     // Build sync components
     let sync_setup = fold_db::sync::SyncSetup::from_exemem(api_url, api_key, data_dir_str);
-    let sync_crypto: std::sync::Arc<dyn fold_db::crypto::CryptoProvider> =
-        std::sync::Arc::new(fold_db::crypto::LocalCryptoProvider::from_key(
-            e2e_keys.encryption_key(),
-        ));
+    let sync_crypto: std::sync::Arc<dyn fold_db::crypto::CryptoProvider> = std::sync::Arc::new(
+        fold_db::crypto::LocalCryptoProvider::from_key(e2e_keys.encryption_key()),
+    );
 
     let http = std::sync::Arc::new(reqwest::Client::new());
     let s3 = fold_db::sync::s3::S3Client::new(http.clone());
     let auth = fold_db::sync::auth::AuthClient::new(http, sync_setup.auth_url, sync_setup.auth);
 
     // Open the local Sled database as a NamespacedStore for the engine
-    let db = sled::open(&data_dir)
-        .map_err(|e| format!("Failed to open sled for bootstrap: {e}"))?;
+    let db =
+        sled::open(&data_dir).map_err(|e| format!("Failed to open sled for bootstrap: {e}"))?;
     let base_store: std::sync::Arc<dyn fold_db::storage::traits::NamespacedStore> =
         std::sync::Arc::new(fold_db::storage::SledNamespacedStore::new(db));
 
