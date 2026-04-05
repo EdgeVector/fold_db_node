@@ -203,7 +203,7 @@ impl IngestionService {
             if dropped > 0 {
                 log_feature!(
                     LogFeature::Ingestion,
-                    warn,
+                    debug,
                     "Dropped {} mutation mapper(s) for schema '{}' — target fields not in runtime_fields",
                     dropped,
                     schema_name
