@@ -561,7 +561,7 @@ async fn bootstrap_from_cloud(
     // Open Sled directly with retry. After invalidate_all_nodes(), the old FoldDB's
     // Sled handle will be released once all in-flight Arc references drop. We retry
     // to wait for that to happen.
-    let sled_path = data_dir.join("db");
+    let sled_path = data_dir.clone();
     let sled_db = {
         let max_retries: u32 = 10;
         let retry_delay = std::time::Duration::from_millis(500);
