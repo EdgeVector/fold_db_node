@@ -470,6 +470,11 @@ pub async fn restore_from_phrase(
         }));
     }
 
+    // Ensure the shared local node exists (opens Sled) before we grab the handle.
+    // On a fresh node where no request has been served yet, get_sled_db() returns
+    // None because the node has not been created yet.
+    let _ = data.node_manager.ensure_default_identity().await;
+
     // Grab the Sled database handle BEFORE update_config() invalidates all nodes.
     // Sled's Db is Arc-wrapped internally, so this clone keeps the database open
     // even after invalidation clears the shared node. This avoids the Sled
@@ -516,6 +521,8 @@ pub async fn restore_from_phrase(
                         log::error!("Background bootstrap after restore failed: {}", e);
                     }
                 });
+            } else {
+                log::warn!("Bootstrap after restore skipped: missing api_key, user_hash, or sled_db handle");
             }
 
             HttpResponse::Ok().json(response)
