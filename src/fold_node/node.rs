@@ -764,7 +764,6 @@ impl FoldNode {
                         label: membership.org_name.clone(),
                         prefix: membership.org_hash.clone(),
                         crypto: provider.clone(),
-                        is_org: true,
                     });
                     org_crypto_pairs.push((membership.org_hash.clone(), provider));
                 }

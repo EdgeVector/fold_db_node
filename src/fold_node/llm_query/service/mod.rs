@@ -21,9 +21,13 @@ pub struct LlmQueryService {
 }
 
 impl LlmQueryService {
-    /// Create a new LLM query service
+    /// Create a new LLM query service.
+    ///
+    /// Uses `config.query_config()` to apply per-use-case provider/model overrides.
+    /// If no query overrides are set, inherits from the primary ingestion config.
     pub fn new(config: IngestionConfig) -> Result<Self, String> {
-        let (backend, init_error) = build_backend(&config);
+        let effective = config.query_config();
+        let (backend, init_error) = build_backend(&effective);
         let backend = backend.ok_or_else(|| {
             init_error.unwrap_or_else(|| "AI backend initialization failed".to_string())
         })?;
