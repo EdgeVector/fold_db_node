@@ -518,9 +518,13 @@ pub async fn restore_from_phrase(
 
 /// Bootstrap the local database from cloud storage (R2/S3).
 ///
-/// Creates a temporary SyncEngine with the given Exemem credentials,
-/// downloads the latest snapshot, and replays any write logs after it.
-/// This restores the full database state on a new/recovered device.
+/// Reuses the Sled database from the running server's FoldDB instance
+/// (via `NodeManager`) instead of opening a new one. Sled uses exclusive
+/// file locks, so opening a second instance at the same path would fail
+/// with "could not acquire lock".
+///
+/// Downloads the latest snapshot and replays any write logs after it,
+/// restoring the full database state on a new/recovered device.
 async fn bootstrap_from_cloud(
     api_url: &str,
     api_key: &str,
@@ -553,11 +557,39 @@ async fn bootstrap_from_cloud(
     let s3 = fold_db::sync::s3::S3Client::new(http.clone());
     let auth = fold_db::sync::auth::AuthClient::new(http, sync_setup.auth_url, sync_setup.auth);
 
-    // Open the local Sled database as a NamespacedStore for the engine
-    let db =
-        sled::open(&data_dir).map_err(|e| format!("Failed to open sled for bootstrap: {e}"))?;
+    // Get the Sled database from the running server's FoldDB instance.
+    // We need the user_hash to look up the node. Derive it from the public key
+    // that was just restored into the config.
+    let public_key = config
+        .public_key
+        .ok_or_else(|| "Node public key not available for bootstrap".to_string())?;
+    let user_hash = crate::utils::crypto::user_hash_from_pubkey(&public_key);
+
+    let node_arc = node_manager
+        .get_node(&user_hash)
+        .await
+        .map_err(|e| format!("Failed to get node for bootstrap: {e}"))?;
+
+    let node = node_arc.read().await;
+    let fold_db = node
+        .get_fold_db()
+        .await
+        .map_err(|e| format!("Failed to lock FoldDB for bootstrap: {e}"))?;
+
+    let sled_db = fold_db
+        .sled_db()
+        .ok_or_else(|| {
+            "No Sled database available for bootstrap (not in local/exemem mode)".to_string()
+        })?
+        .clone();
+
+    // Drop the FoldDB lock before running bootstrap (which does async I/O).
+    // The sled::Db clone is safe — Sled uses internal Arc-based reference counting.
+    drop(fold_db);
+    drop(node);
+
     let base_store: std::sync::Arc<dyn fold_db::storage::traits::NamespacedStore> =
-        std::sync::Arc::new(fold_db::storage::SledNamespacedStore::new(db));
+        std::sync::Arc::new(fold_db::storage::SledNamespacedStore::new(sled_db));
 
     let engine = std::sync::Arc::new(fold_db::sync::SyncEngine::new(
         sync_setup.device_id,
