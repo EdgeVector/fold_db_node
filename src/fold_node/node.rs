@@ -3,7 +3,7 @@ use fold_db::log_feature;
 use fold_db::logging::features::LogFeature;
 use fold_db::storage::traits::TypedStore;
 use serde::{Deserialize, Serialize};
-use std::collections::HashMap;
+
 use std::sync::Arc;
 use tokio::sync::Mutex;
 
@@ -15,7 +15,7 @@ use fold_db::fold_db_core::FoldDB;
 use fold_db::org::operations as org_ops;
 use fold_db::org::OrgMembership;
 use fold_db::security::{PublicKeyInfo, SecurityConfig, SecurityManager};
-use fold_db::sync::org_sync::{member_id_from_public_key, SyncPartitioner};
+use fold_db::sync::org_sync::SyncPartitioner;
 
 /// Result of loading a view (and its dependencies) from the schema service.
 #[derive(Debug, Default, Serialize)]
@@ -754,27 +754,19 @@ impl FoldNode {
             return;
         }
 
-        // Derive member_id from the node's public key
-        let pub_key_bytes = match BASE64.decode(&self.public_key) {
-            Ok(bytes) => bytes,
-            Err(e) => {
-                log_feature!(
-                    LogFeature::Database,
-                    error,
-                    "Failed to decode node public key for member_id: {}",
-                    e
-                );
-                return;
-            }
-        };
-        let member_id = member_id_from_public_key(&pub_key_bytes);
-
-        // Build per-org crypto providers from each org's E2E secret
-        let mut org_crypto: HashMap<String, Arc<dyn CryptoProvider>> = HashMap::new();
+        // Build sync targets and crypto providers for each org
+        let mut org_targets = Vec::new();
+        let mut org_crypto_pairs: Vec<(String, Arc<dyn CryptoProvider>)> = Vec::new();
         for membership in &memberships {
             match Self::crypto_provider_for_org(membership) {
                 Ok(provider) => {
-                    org_crypto.insert(membership.org_hash.clone(), provider);
+                    org_targets.push(fold_db::sync::org_sync::SyncTarget {
+                        label: membership.org_name.clone(),
+                        prefix: membership.org_hash.clone(),
+                        crypto: provider.clone(),
+                        is_org: true,
+                    });
+                    org_crypto_pairs.push((membership.org_hash.clone(), provider));
                 }
                 Err(e) => {
                     log_feature!(
@@ -793,13 +785,12 @@ impl FoldNode {
         log_feature!(
             LogFeature::Database,
             info,
-            "Configuring org sync: {} org(s), member_id={}",
-            memberships.len(),
-            member_id
+            "Configuring org sync: {} org(s)",
+            memberships.len()
         );
 
         sync_engine
-            .configure_org_sync(partitioner, member_id, org_crypto.clone())
+            .configure_org_sync(partitioner, org_targets)
             .await;
 
         // Register org crypto providers on the encrypting store so org-scoped
@@ -808,15 +799,15 @@ impl FoldNode {
             Ok(guard) => guard,
             Err(_) => return,
         };
-        for (org_hash, crypto) in &org_crypto {
+        for (org_hash, crypto) in &org_crypto_pairs {
             db_guard
                 .register_org_crypto(org_hash, Arc::clone(crypto))
                 .await;
         }
         drop(db_guard);
 
-        // Load persisted cursors so incremental org downloads resume from where they left off
-        sync_engine.load_org_cursors().await;
+        // Load persisted cursors so incremental downloads resume
+        sync_engine.load_download_cursors().await;
     }
 
     /// Create a CryptoProvider from an org's E2E secret (base64-encoded 32-byte key).
