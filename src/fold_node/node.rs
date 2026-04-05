@@ -799,8 +799,21 @@ impl FoldNode {
         );
 
         sync_engine
-            .configure_org_sync(partitioner, member_id, org_crypto)
+            .configure_org_sync(partitioner, member_id, org_crypto.clone())
             .await;
+
+        // Register org crypto providers on the encrypting store so org-scoped
+        // keys are encrypted/decrypted with the org's shared E2E key.
+        let db_guard = match self.db.try_lock() {
+            Ok(guard) => guard,
+            Err(_) => return,
+        };
+        for (org_hash, crypto) in &org_crypto {
+            db_guard
+                .register_org_crypto(org_hash, Arc::clone(crypto))
+                .await;
+        }
+        drop(db_guard);
 
         // Load persisted cursors so incremental org downloads resume from where they left off
         sync_engine.load_org_cursors().await;
