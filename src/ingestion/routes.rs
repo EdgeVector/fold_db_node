@@ -270,9 +270,7 @@ pub async fn get_all_progress(progress_tracker: web::Data<ProgressTracker>) -> i
     tag = "ingestion",
     responses((status = 200, description = "Progress summary counts"))
 )]
-pub async fn get_progress_summary(
-    progress_tracker: web::Data<ProgressTracker>,
-) -> impl Responder {
+pub async fn get_progress_summary(progress_tracker: web::Data<ProgressTracker>) -> impl Responder {
     let user_hash = match crate::server::routes::require_user_context() {
         Ok(hash) => hash,
         Err(response) => return response,
@@ -287,7 +285,11 @@ pub async fn get_progress_summary(
         };
 
     let empty = Vec::new();
-    let jobs = response.data.as_ref().map(|d| &d.progress).unwrap_or(&empty);
+    let jobs = response
+        .data
+        .as_ref()
+        .map(|d| &d.progress)
+        .unwrap_or(&empty);
     let total = jobs.len();
     let done = jobs.iter().filter(|j| j.is_complete).count();
     let failed = jobs.iter().filter(|j| j.is_complete && j.is_failed).count();
