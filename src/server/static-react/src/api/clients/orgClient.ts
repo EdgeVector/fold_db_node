@@ -31,7 +31,12 @@ export class OrgClient {
     });
   }
 
-  // Define other methods if necessary:
+  async declineInvite(orgHash: string): Promise<EnhancedApiResponse<void>> {
+    return this.client.post(`/org/invites/${orgHash}/decline`, undefined, {
+      timeout: API_TIMEOUTS.STANDARD,
+    });
+  }
+
   async listOrgs(): Promise<EnhancedApiResponse<Record<string, unknown>[]>> {
     return this.client.get('/org', {
       timeout: API_TIMEOUTS.STANDARD,

@@ -839,6 +839,10 @@ impl FoldHttpServer {
                 .route(
                     "/{org_hash}/invite",
                     web::post().to(org_routes::generate_invite),
+                )
+                .route(
+                    "/invites/{org_hash}/decline",
+                    web::post().to(org_routes::decline_invite),
                 ),
         );
     }

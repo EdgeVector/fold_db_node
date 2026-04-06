@@ -29,9 +29,22 @@ export default function PendingInvitesModal({ isOpen, onClose, pendingInvites, s
     }
   };
 
-  const handleDecline = (invite) => {
-    // Currently, this just removes it from the UI so it stops alerting them this session
-    setPendingInvites(prev => prev.filter(inv => inv.org_hash !== invite.org_hash));
+  const handleDecline = async (invite) => {
+    try {
+      setLoadingIds(prev => new Set(prev).add(invite.org_hash));
+      setError(null);
+      await orgClient.declineInvite(invite.org_hash);
+      setPendingInvites(prev => prev.filter(inv => inv.org_hash !== invite.org_hash));
+    } catch (err) {
+      console.error('Failed to decline invite', err);
+      setError(err.message || 'Failed to decline. Try again.');
+    } finally {
+      setLoadingIds(prev => {
+        const next = new Set(prev);
+        next.delete(invite.org_hash);
+        return next;
+      });
+    }
   };
 
   return (

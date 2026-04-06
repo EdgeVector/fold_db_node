@@ -81,3 +81,10 @@ pub async fn get_pending_invites(state: web::Data<AppState>) -> impl Responder {
     let (user_hash, node) = node_or_return!(state);
     handler_result_to_response(org_handlers::get_pending_invites(&user_hash, &node).await)
 }
+
+/// POST /api/org/invites/{org_hash}/decline — decline an org invite
+pub async fn decline_invite(path: web::Path<String>, state: web::Data<AppState>) -> impl Responder {
+    let (user_hash, node) = node_or_return!(state);
+    let org_hash = path.into_inner();
+    handler_result_to_response(org_handlers::decline_invite(&org_hash, &user_hash, &node).await)
+}
