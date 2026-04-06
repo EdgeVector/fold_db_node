@@ -109,7 +109,10 @@ pub async fn magic_link_verify(body: web::Json<MagicLinkVerifyRequest>) -> HttpR
                                 encryption_key: String::new(),
                             };
                             if let Err(e) = keychain::store_credentials(&creds) {
-                                log::warn!("Failed to store credentials locally: {}", e);
+                                return HttpResponse::InternalServerError().json(serde_json::json!({
+                                    "ok": false,
+                                    "error": format!("Login succeeded but failed to persist credentials locally: {e}")
+                                }));
                             }
                         }
                     }
@@ -328,9 +331,9 @@ async fn signed_register(
             api_key: api_key.to_string(),
             encryption_key: String::new(),
         };
-        if let Err(e) = keychain::store_credentials(&creds) {
-            log::warn!("Failed to store credentials locally: {}", e);
-        }
+        keychain::store_credentials(&creds).map_err(|e| {
+            format!("Registration succeeded but failed to persist credentials locally: {e}")
+        })?;
     }
 
     Ok(json)
