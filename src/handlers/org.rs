@@ -252,15 +252,16 @@ pub async fn add_member(
     org_ops::add_member(&sled_db, org_hash, member).handler_err("add member")?;
 
     if let Some(client) = get_auth_client(node) {
+        let target_user_hash = crate::utils::crypto::user_hash_from_pubkey(&req.node_public_key);
         client
-            .add_member(org_hash, &req.node_public_key, "Member")
+            .add_member(org_hash, &target_user_hash, "Member")
             .await
             .handler_err("sync add_member to cloud")?;
 
         // Upload encrypted invite to the target's S3 inbox
         let file_name = format!("{}.enc", org_hash);
         let presigned = client
-            .presign_inbox_upload(&req.node_public_key, &file_name)
+            .presign_inbox_upload(&target_user_hash, &file_name)
             .await
             .handler_err("presign inbox upload")?;
         let http = std::sync::Arc::new(reqwest::Client::new());
