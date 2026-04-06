@@ -410,7 +410,9 @@ impl IngestionService {
         }
 
         // Flush resolved schemas to the shared cross-file cache
-        schema_cache.commit();
+        schema_cache
+            .commit()
+            .map_err(IngestionError::SchemaCreationError)?;
 
         // Mutation generation + execution for each item
         let metadata = Self::build_ingestion_metadata(&request.file_hash, tracker.progress_id());

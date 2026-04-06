@@ -90,10 +90,23 @@ impl SchemaCache {
     }
 
     /// Flush all local entries to the shared cross-file cache.
-    pub(super) fn commit(&self) {
-        if let Ok(mut shared) = self.shared.write() {
-            for (hash, cached) in &self.local {
-                shared.insert(hash.clone(), cached.clone());
+    /// Returns Err if the lock is poisoned (entries not flushed).
+    pub(super) fn commit(&self) -> Result<(), String> {
+        match self.shared.write() {
+            Ok(mut shared) => {
+                for (hash, cached) in &self.local {
+                    shared.insert(hash.clone(), cached.clone());
+                }
+                Ok(())
+            }
+            Err(e) => {
+                let msg = format!(
+                    "Schema cache lock poisoned — {} local entries NOT flushed: {}",
+                    self.local.len(),
+                    e
+                );
+                log::error!("{}", msg);
+                Err(msg)
             }
         }
     }
@@ -225,9 +238,12 @@ impl IngestionService {
             // Recursively resolve schemas for the representative's children (depth-first)
             // Children are never images themselves, so pass None for source_file_name
             for child_group in &rep_decomp.children {
+                let representative = child_group.items.first().ok_or_else(|| {
+                    IngestionError::InvalidInput("Empty child group in decomposition".to_string())
+                })?;
                 Box::pin(self.resolve_schema_for_structure(
                     &child_group.structure_hash,
-                    &child_group.items[0],
+                    representative,
                     schema_cache,
                     node,
                     depth + 1,
@@ -310,9 +326,12 @@ impl IngestionService {
         // Recursively collect children (depth-first)
         if depth < MAX_DECOMPOSITION_DEPTH {
             for child_group in &rep_decomp.children {
+                let representative = child_group.items.first().ok_or_else(|| {
+                    IngestionError::InvalidInput("Empty child group in decomposition".to_string())
+                })?;
                 Box::pin(self.collect_ai_proposals_recursive(
                     &child_group.structure_hash,
-                    &child_group.items[0],
+                    representative,
                     proposals,
                     schema_cache,
                     depth + 1,
@@ -372,9 +391,12 @@ impl IngestionService {
         // Recursively resolve children first (depth-first)
         if depth < MAX_DECOMPOSITION_DEPTH {
             for child_group in &rep_decomp.children {
+                let representative = child_group.items.first().ok_or_else(|| {
+                    IngestionError::InvalidInput("Empty child group in decomposition".to_string())
+                })?;
                 Box::pin(self.resolve_schemas_with_reuse(
                     &child_group.structure_hash,
-                    &child_group.items[0],
+                    representative,
                     schema_cache,
                     proposals,
                     batch_result,
