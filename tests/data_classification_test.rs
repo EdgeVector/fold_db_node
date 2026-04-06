@@ -96,11 +96,16 @@ async fn new_fields_without_classification_use_llm_or_error() {
             }
         }
         Err(e) => {
-            // No ANTHROPIC_API_KEY — schema service correctly refuses
+            // No ANTHROPIC_API_KEY — schema service correctly refuses.
+            // When Ollama is running locally, the classify call may hit Ollama
+            // (which returns 404 for a model that isn't installed) instead of
+            // erroring about the missing API key. Both are valid failures.
             let err_msg = e.to_string();
             assert!(
-                err_msg.contains("ANTHROPIC_API_KEY"),
-                "error should mention missing API key, got: {}",
+                err_msg.contains("ANTHROPIC_API_KEY")
+                    || err_msg.contains("Ollama classification")
+                    || err_msg.contains("classify"),
+                "error should mention classification failure, got: {}",
                 err_msg
             );
         }

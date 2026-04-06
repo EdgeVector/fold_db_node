@@ -85,6 +85,11 @@ function useAiConfig({ configSaveStatus, setConfigSaveStatus, onClose }) {
   const [ollamaModelsLoading, setOllamaModelsLoading] = useState(false)
   const [ollamaModelsError, setOllamaModelsError] = useState(null)
   const [showAdvanced, setShowAdvanced] = useState(false)
+  // Query override (separate provider/model for LLM search/chat)
+  const [queryOverrideEnabled, setQueryOverrideEnabled] = useState(false)
+  const [queryProvider, setQueryProvider] = useState('Anthropic')
+  const [queryOllamaModel, setQueryOllamaModel] = useState('')
+  const [queryAnthropicModel, setQueryAnthropicModel] = useState('claude-sonnet-4-20250514')
   // Ollama generation parameters
   const [ollamaNumCtx, setOllamaNumCtx] = useState(OLLAMA_PARAMS.num_ctx.default)
   const [ollamaTemperature, setOllamaTemperature] = useState(OLLAMA_PARAMS.temperature.default)
@@ -178,6 +183,16 @@ function useAiConfig({ configSaveStatus, setConfigSaveStatus, onClose }) {
       setAnthropicModel(savedConfig.anthropic?.model || 'claude-sonnet-4-20250514')
       setAnthropicBaseUrl(savedConfig.anthropic?.base_url || 'https://api.anthropic.com')
       setAiProvider(savedConfig.provider || 'Anthropic')
+      // Query override
+      const q = savedConfig.query
+      if (q && (q.provider || q.ollama_model || q.anthropic_model)) {
+        setQueryOverrideEnabled(true)
+        setQueryProvider(q.provider || savedConfig.provider || 'Anthropic')
+        setQueryOllamaModel(q.ollama_model || '')
+        setQueryAnthropicModel(q.anthropic_model || 'claude-sonnet-4-20250514')
+      } else {
+        setQueryOverrideEnabled(false)
+      }
     }
   }, [savedConfig])
 
@@ -202,6 +217,11 @@ function useAiConfig({ configSaveStatus, setConfigSaveStatus, onClose }) {
           },
         },
         anthropic: { api_key: anthropicApiKey, model: anthropicModel, base_url: anthropicBaseUrl },
+        query: queryOverrideEnabled ? {
+          provider: queryProvider,
+          ollama_model: queryProvider === 'Ollama' ? queryOllamaModel || undefined : undefined,
+          anthropic_model: queryProvider === 'Anthropic' ? queryAnthropicModel || undefined : undefined,
+        } : {},
       }
       await dispatch(saveIngestionConfig(config)).unwrap()
       setConfigSaveStatus({ success: true, message: 'Configuration saved successfully' })
@@ -328,6 +348,42 @@ function useAiConfig({ configSaveStatus, setConfigSaveStatus, onClose }) {
             </div>
           </>
         )}
+
+        <div className="border-t border-border pt-3">
+          <label className="label flex items-center gap-2">
+            <input type="checkbox" checked={queryOverrideEnabled} onChange={(e) => setQueryOverrideEnabled(e.target.checked)} className="checkbox" />
+            Use different model for Search & Chat
+          </label>
+          <p className="text-xs text-secondary mt-1">When enabled, natural language search and chat use a separate provider/model from ingestion.</p>
+          {queryOverrideEnabled && (
+            <div className="mt-2 grid grid-cols-1 md:grid-cols-2 gap-4 pl-4 border-l-2 border-border">
+              <div>
+                <label className="label">Query Provider</label>
+                <select value={queryProvider} onChange={(e) => setQueryProvider(e.target.value)} className="select">
+                  <option value="Anthropic">Anthropic</option>
+                  <option value="Ollama">Ollama</option>
+                </select>
+              </div>
+              <div>
+                <label className="label">Query Model</label>
+                {queryProvider === 'Anthropic' ? (
+                  <select value={queryAnthropicModel} onChange={(e) => setQueryAnthropicModel(e.target.value)} className="select">
+                    <option value="claude-sonnet-4-20250514">Claude Sonnet 4</option>
+                    <option value="claude-haiku-4-5-20251001">Claude Haiku 4.5</option>
+                  </select>
+                ) : ollamaModels.length > 0 ? (
+                  <select value={queryOllamaModel} onChange={(e) => setQueryOllamaModel(e.target.value)} className="select">
+                    {buildModelOptions(ollamaModels, recommended.text).map(o => (
+                      <option key={o.name} value={o.name}>{o.label}</option>
+                    ))}
+                  </select>
+                ) : (
+                  <input type="text" value={queryOllamaModel} onChange={(e) => setQueryOllamaModel(e.target.value)} placeholder={`e.g. ${recommended.text}`} className="input" />
+                )}
+              </div>
+            </div>
+          )}
+        </div>
 
         <div>
           <button onClick={() => setShowAdvanced(!showAdvanced)} className="text-sm text-secondary hover:text-primary flex items-center gap-1">

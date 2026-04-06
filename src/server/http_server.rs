@@ -467,6 +467,10 @@ impl FoldHttpServer {
             web::get().to(ingestion_routes::get_all_progress),
         )
         .route(
+            "/ingestion/progress/summary",
+            web::get().to(ingestion_routes::get_progress_summary),
+        )
+        .route(
             "/ingestion/progress/{id}",
             web::get().to(ingestion_routes::get_progress),
         )
