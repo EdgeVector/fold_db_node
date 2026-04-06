@@ -368,12 +368,12 @@ pub fn validate_schema_has_descriptive_name(schema_val: &Value) -> IngestionResu
     }
 
     if fold_db::schema_service::name_validator::is_generic_name(name) {
-        return Err(IngestionError::ai_response_validation_error(format!(
-            "Schema descriptive_name '{}' is too generic (e.g., 'Document Collection'). \
-             The name must describe the CONTENT TOPIC — read the actual data and name it \
-             specifically (e.g., 'Family Vacation Photos', 'Technical Architecture Notes').",
+        log_feature!(
+            LogFeature::Ingestion,
+            warn,
+            "Schema descriptive_name '{}' is generic — schema service will attempt correction",
             name
-        )));
+        );
     }
 
     Ok(())
