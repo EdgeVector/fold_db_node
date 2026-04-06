@@ -49,7 +49,9 @@ jobs:
 
       - name: Run ingestion test
         id: ingestion
+        shell: bash
         run: |
+          set -o pipefail
           ./scripts/test-sample-ingestion.sh \
             --provider "${{ github.event.inputs.provider || 'Anthropic' }}" \
             --max-wait 30 2>&1 | tee /tmp/ingestion-output.txt
