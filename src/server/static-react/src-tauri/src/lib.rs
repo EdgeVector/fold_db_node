@@ -114,19 +114,15 @@ async fn install_update(app: tauri::AppHandle) -> Result<(), String> {
         .ok_or_else(|| "No update available".to_string())?;
 
     let mut started = false;
-    update.download_and_install(|event, _body| {
-        match event {
-            tauri_plugin_updater::DownloadEvent::Started { content_length } => {
-                if !started {
-                    eprintln!("[FoldDB] Downloading update ({} bytes)", content_length.unwrap_or(0));
-                    started = true;
-                }
-            }
-            tauri_plugin_updater::DownloadEvent::Finished => {
-                eprintln!("[FoldDB] Update downloaded, installing...");
-            }
-            _ => {}
+    update.download_and_install(|chunk_size, content_length| {
+        if !started {
+            eprintln!("[FoldDB] Downloading update ({} bytes)", content_length.unwrap_or(0));
+            started = true;
+        } else {
+            eprintln!("[FoldDB] Downloaded {} bytes", chunk_size);
         }
+    }, || {
+        eprintln!("[FoldDB] Download finished, installing...");
     }).await.map_err(|e| format!("Install failed: {}", e))?;
 
     // Restart the app to apply the update
