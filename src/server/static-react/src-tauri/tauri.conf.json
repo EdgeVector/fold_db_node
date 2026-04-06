@@ -19,7 +19,7 @@
       "endpoints": [
         "https://github.com/EdgeVector/fold_db_node/releases/latest/download/latest.json"
       ],
-      "pubkey": ""
+      "pubkey": "dW50cnVzdGVkIGNvbW1lbnQ6IG1pbmlzaWduIHB1YmxpYyBrZXk6IDczN0M0ODQ1OEYzRjYwMTEKUldRUllEK1BSVWg4YzlnZXpuRlJjMStnT1RtcW5iWXJwN1FkaEhreS9EbEYzQW9zbUR0SUcvUzAK"
     }
   },
   "bundle": {
