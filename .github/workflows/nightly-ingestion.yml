@@ -1,0 +1,59 @@
+name: Nightly Ingestion Test
+
+on:
+  schedule:
+    # 4am UTC = 9pm PT (previous day)
+    - cron: '0 4 * * *'
+  workflow_dispatch:
+    inputs:
+      provider:
+        description: 'AI Provider (Anthropic or Ollama)'
+        required: false
+        default: 'Anthropic'
+
+concurrency:
+  group: nightly-ingestion
+  cancel-in-progress: true
+
+jobs:
+  ingestion-test:
+    name: Sample Data Ingestion
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+
+    env:
+      RUSTFLAGS: -C linker=clang -C link-arg=-fuse-ld=mold
+      ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Install mold linker
+        run: sudo apt-get update && sudo apt-get install -y mold
+
+      - name: Install Rust
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Configure git for private dependencies
+        run: git config --global url."https://x-access-token:${{ secrets.PRIVATE_DEPS_TOKEN }}@github.com/".insteadOf "https://github.com/"
+
+      - name: Cache Rust artifacts
+        uses: Swatinem/rust-cache@v2
+
+      - name: Stub frontend dist for RustEmbed
+        run: mkdir -p src/server/static-react/dist && echo '<html></html>' > src/server/static-react/dist/index.html
+
+      - name: Build binaries
+        run: cargo build --bin folddb_server --bin schema_service
+
+      - name: Run ingestion test
+        run: ./scripts/test-sample-ingestion.sh --provider "${{ github.event.inputs.provider || 'Anthropic' }}" --max-wait 30
+
+      - name: Upload logs on failure
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: ingestion-test-logs
+          path: /tmp/tmp.*/server.log
+          retention-days: 7
