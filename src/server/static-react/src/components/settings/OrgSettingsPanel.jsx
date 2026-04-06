@@ -1,18 +1,62 @@
-import React, { useState, useEffect } from 'react'
+import React, { useState, useEffect, useRef } from 'react'
 import { defaultApiClient } from '../../api/core/client'
+import { systemClient } from '../../api/clients/systemClient'
+
+function formatRelativeTime(epochMs) {
+  if (!epochMs) return null
+  const diff = Date.now() - epochMs
+  if (diff < 60000) return 'just now'
+  if (diff < 3600000) return `${Math.floor(diff / 60000)}m ago`
+  if (diff < 86400000) return `${Math.floor(diff / 3600000)}h ago`
+  return `${Math.floor(diff / 86400000)}d ago`
+}
 
 export default function OrgSettingsPanel() {
   const [orgs, setOrgs] = useState([])
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState(null)
-  
+  const [nodePublicKey, setNodePublicKey] = useState(null)
+  const [keyCopied, setKeyCopied] = useState(false)
+  const [orgSyncStatuses, setOrgSyncStatuses] = useState({})
+
   const [newOrgName, setNewOrgName] = useState('')
   const [newMemberKey, setNewMemberKey] = useState('')
   const [newMemberName, setNewMemberName] = useState('')
 
+  const syncPollRef = useRef(null)
+
   useEffect(() => {
     fetchOrgs()
+    systemClient.getNodePublicKey().then(res => {
+      if (res.data?.public_key) setNodePublicKey(res.data.public_key)
+    }).catch(() => {})
   }, [])
+
+  // Poll org sync statuses every 10 seconds
+  useEffect(() => {
+    if (orgs.length === 0) return
+    const fetchAllSyncStatuses = () => {
+      orgs.forEach(org => {
+        defaultApiClient.get(`/sync/org/${org.org_hash}/status`)
+          .then(res => {
+            const data = res.data || res
+            setOrgSyncStatuses(prev => ({ ...prev, [org.org_hash]: data }))
+          })
+          .catch(() => {})
+      })
+    }
+    fetchAllSyncStatuses()
+    syncPollRef.current = setInterval(fetchAllSyncStatuses, 10000)
+    return () => { if (syncPollRef.current) clearInterval(syncPollRef.current) }
+  }, [orgs])
+
+  const handleCopyKey = async () => {
+    if (nodePublicKey) {
+      await navigator.clipboard.writeText(nodePublicKey)
+      setKeyCopied(true)
+      setTimeout(() => setKeyCopied(false), 2000)
+    }
+  }
 
   const fetchOrgs = async () => {
     try {
@@ -69,6 +113,24 @@ export default function OrgSettingsPanel() {
 
   return (
     <div className="p-4 flex flex-col gap-6">
+      {/* Your Node Public Key */}
+      <div className="flex flex-col gap-2">
+        <h3 className="text-sm font-medium text-text-primary">Your Node Public Key</h3>
+        <p className="text-xs text-text-muted">Share this with org admins so they can add you as a member.</p>
+        <div className="flex items-center gap-2">
+          <code className="flex-1 text-xs font-mono text-text-primary bg-bg-surface border border-border rounded px-3 py-2 break-all select-all">
+            {nodePublicKey || 'Loading...'}
+          </code>
+          <button
+            onClick={handleCopyKey}
+            disabled={!nodePublicKey}
+            className="btn-secondary whitespace-nowrap text-xs"
+          >
+            {keyCopied ? 'Copied!' : 'Copy'}
+          </button>
+        </div>
+      </div>
+
       <div className="flex flex-col gap-2">
         <h3 className="text-lg font-medium text-text-primary">Organizations</h3>
         <p className="text-sm text-text-muted">
@@ -95,8 +157,45 @@ export default function OrgSettingsPanel() {
                   <h4 className="font-medium text-text-primary">{org.org_name}</h4>
                   <p className="text-xs text-text-muted font-mono">{org.org_hash.substring(0, 16)}...</p>
                 </div>
-                <div className="px-2 py-1 bg-primary/20 text-primary text-xs rounded uppercase font-semibold">
-                  {org.role}
+                <div className="flex items-center gap-2">
+                  {(() => {
+                    const syncStatus = orgSyncStatuses[org.org_hash]
+                    if (!syncStatus) return null
+                    const lastSyncRelative = formatRelativeTime(syncStatus.last_sync_at)
+                    if (syncStatus.last_error) {
+                      return (
+                        <div className="flex flex-col items-end">
+                          <span className="px-2 py-0.5 text-xs rounded-full bg-red-900/30 text-red-400 border border-red-500/50">
+                            Error
+                          </span>
+                          <span className="text-xs text-red-400 truncate max-w-[200px]" title={syncStatus.last_error}>
+                            {syncStatus.last_error}
+                          </span>
+                        </div>
+                      )
+                    }
+                    if (syncStatus.pending_count > 0) {
+                      return (
+                        <div className="flex flex-col items-end">
+                          <span className="px-2 py-0.5 text-xs rounded-full bg-yellow-900/30 text-yellow-400 border border-yellow-500/50">
+                            Syncing ({syncStatus.pending_count} pending)
+                          </span>
+                          {lastSyncRelative && <span className="text-xs text-text-muted">Last synced {lastSyncRelative}</span>}
+                        </div>
+                      )
+                    }
+                    return (
+                      <div className="flex flex-col items-end">
+                        <span className="px-2 py-0.5 text-xs rounded-full bg-green-900/30 text-green-400 border border-green-500/50">
+                          Synced
+                        </span>
+                        {lastSyncRelative && <span className="text-xs text-text-muted">Last synced {lastSyncRelative}</span>}
+                      </div>
+                    )
+                  })()}
+                  <div className="px-2 py-1 bg-primary/20 text-primary text-xs rounded uppercase font-semibold">
+                    {org.role}
+                  </div>
                 </div>
               </div>
               

@@ -312,6 +312,9 @@ function SchemaTab({ onResult, onSchemaUpdated }) {
               <span className={`px-2 py-1 text-xs font-medium rounded-full ${getStateColor(state)}`}>
                 {state}
               </span>
+              {schema.org_hash && (
+                <span className="badge badge-info">Org</span>
+              )}
               {rangeSchemaInfo && (
                 <span className="badge badge-info">Range Schema</span>
               )}

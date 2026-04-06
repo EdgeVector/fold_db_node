@@ -39,7 +39,8 @@ function Header({ onSettingsClick, onAiSettingsClick, onCloudSettingsClick }) {
   const [storageSize, setStorageSize] = useState(null)
   const [storageQuota, setStorageQuota] = useState(null)
   const [schemaEnv, setSchemaEnv] = useState(null)
-  
+  const [nodePublicKey, setNodePublicKey] = useState(null)
+
   // Pending Invites State
   const [pendingInvites, setPendingInvites] = useState([])
   const [isInvitesModalOpen, setIsInvitesModalOpen] = useState(false)
@@ -55,6 +56,9 @@ function Header({ onSettingsClick, onAiSettingsClick, onCloudSettingsClick }) {
     systemClient.getSystemStatus().then(res => {
       if (res.data) setSchemaEnv(classifySchemaEnv(res.data.schema_service_url))
     }).catch(() => { /* best-effort - header info is non-critical */ })
+    systemClient.getNodePublicKey().then(res => {
+      if (res.data?.public_key) setNodePublicKey(res.data.public_key)
+    }).catch(() => {})
     // Fetch cloud storage quota if connected
     const hasCloud = localStorage.getItem('exemem_api_url') && localStorage.getItem('exemem_api_key')
     if (hasCloud) {
@@ -95,12 +99,14 @@ function Header({ onSettingsClick, onAiSettingsClick, onCloudSettingsClick }) {
   const formattedQuota = storageQuota ? formatBytes(storageQuota) : null
   const quotaWarning = storageQuota && storageSize ? (storageSize / storageQuota) > 0.8 : false
 
-  const truncatedId = user?.id ? `${user.id.slice(0, 8)}...` : null
+  const displayKey = nodePublicKey || user?.id
+  const truncatedDisplay = displayKey ? `${displayKey.slice(0, 8)}...` : null
   const [idCopied, setIdCopied] = useState(false)
 
   const handleCopyId = async () => {
-    if (user?.id) {
-      await navigator.clipboard.writeText(user.id)
+    const valueToCopy = nodePublicKey || user?.id
+    if (valueToCopy) {
+      await navigator.clipboard.writeText(valueToCopy)
       setIdCopied(true)
       setTimeout(() => setIdCopied(false), 2000)
     }
@@ -140,14 +146,14 @@ function Header({ onSettingsClick, onAiSettingsClick, onCloudSettingsClick }) {
             <SyncStatusIndicator onCloudSettingsClick={onCloudSettingsClick} />
           </div>
 
-          {/* Node ID — truncated with copy */}
-          {isAuthenticated && truncatedId && (
+          {/* Node Public Key — truncated with copy */}
+          {isAuthenticated && truncatedDisplay && (
             <button
               onClick={handleCopyId}
               className="inline-flex items-center gap-1 px-2 py-0.5 rounded text-xs font-mono text-tertiary bg-transparent border border-border cursor-pointer hover:text-secondary hover:border-secondary transition-colors"
-              title={`Node ID: ${user.id}\nClick to copy`}
+              title={`Public Key: ${displayKey}\nClick to copy`}
             >
-              {idCopied ? 'Copied!' : truncatedId}
+              {idCopied ? 'Copied!' : truncatedDisplay}
             </button>
           )}
 
