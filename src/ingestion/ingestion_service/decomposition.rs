@@ -510,6 +510,20 @@ impl IngestionService {
         let mut total_gen: usize = 0;
         let mut total_exec: usize = 0;
 
+        // Extract parent scalar key fields to inject into children.
+        // When {"user_id": "alice", "posts": [...]} decomposes, each post
+        // needs user_id so it can be used as a key field for deduplication.
+        let parent_key_fields: Vec<(String, Value)> = item_decomp
+            .parent
+            .as_object()
+            .map(|obj| {
+                obj.iter()
+                    .filter(|(_, v)| v.is_string() || v.is_number())
+                    .map(|(k, v)| (format!("parent_{}", k), v.clone()))
+                    .collect()
+            })
+            .unwrap_or_default();
+
         // Recursively process each child group's items and collect references.
         let mut child_references: HashMap<String, Vec<Value>> = HashMap::new();
 
@@ -527,8 +541,21 @@ impl IngestionService {
                 let mut refs_for_field = Vec::new();
 
                 for child_item in &child_group.items {
+                    // Inject parent key fields so children can reference the parent
+                    let child_item = if !parent_key_fields.is_empty() {
+                        let mut enriched = child_item.clone();
+                        if let Some(obj) = enriched.as_object_mut() {
+                            for (key, val) in &parent_key_fields {
+                                obj.entry(key.clone()).or_insert_with(|| val.clone());
+                            }
+                        }
+                        enriched
+                    } else {
+                        child_item.clone()
+                    };
+
                     let (gen, exec, child_key_value) = Box::pin(self.ingest_decomposed_item(
-                        child_item,
+                        &child_item,
                         &child_group.structure_hash,
                         schema_cache,
                         node,

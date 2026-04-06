@@ -112,6 +112,13 @@ impl IngestionService {
         } else {
             flattened_data.clone()
         };
+        // enriched_data needs to be mutable for content_hash injection below
+        let mut enriched_data = enriched_data;
+
+        // Inject content_hash AFTER AI analysis so the AI doesn't treat it as a
+        // user data field. content_hash prevents key collisions in mutations when
+        // multiple items share the same title (e.g., dated journal entries).
+        super::inject_content_hashes(&mut enriched_data);
 
         // Mutation generation
         tracker

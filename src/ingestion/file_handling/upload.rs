@@ -594,14 +594,25 @@ pub async fn upload_file(
 
     // Clean up the unencrypted temp file now that conversion is complete.
     // The encrypted copy is already stored; leaving plaintext on disk is a data leak.
-    if let Err(e) = tokio::fs::remove_file(&form_data.file_path).await {
-        log_feature!(
-            LogFeature::Ingestion,
-            warn,
-            "Failed to clean up temp processing file {:?}: {}",
-            form_data.file_path,
-            e
-        );
+    // Retry deletion to handle transient filesystem locks (e.g., antivirus scanners).
+    for attempt in 0..3u32 {
+        match tokio::fs::remove_file(&form_data.file_path).await {
+            Ok(()) => break,
+            Err(e) if e.kind() == std::io::ErrorKind::NotFound => break, // already gone
+            Err(e) => {
+                if attempt == 2 {
+                    log_feature!(
+                        LogFeature::Ingestion,
+                        error,
+                        "SECURITY: failed to delete temp file {:?} after 3 attempts: {} — unencrypted data may persist on disk",
+                        form_data.file_path,
+                        e
+                    );
+                } else {
+                    tokio::time::sleep(std::time::Duration::from_millis(100)).await;
+                }
+            }
+        }
     }
 
     log_feature!(
