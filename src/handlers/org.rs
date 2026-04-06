@@ -163,6 +163,23 @@ pub async fn join_org(
     // Reconfigure org sync with the joined org
     node.configure_org_sync_if_needed().await;
 
+    // Notify cloud that we accepted (status → active) and clean up inbox
+    if let Some(client) = get_auth_client(node) {
+        let org_hash = &membership.org_hash;
+        if let Err(e) = client.accept_invite(org_hash).await {
+            log::warn!("Failed to sync accept_invite to cloud: {}", e);
+        }
+        // Delete the invite from S3 inbox
+        let file_name = format!("{}.enc", org_hash);
+        if let Ok(presigned) = client.presign_inbox_delete(&file_name).await {
+            let http = std::sync::Arc::new(reqwest::Client::new());
+            let s3 = fold_db::sync::s3::S3Client::new(http);
+            if let Err(e) = s3.delete(&presigned).await {
+                log::warn!("Failed to delete invite from inbox: {}", e);
+            }
+        }
+    }
+
     Ok(ApiResponse::success_with_user(
         JoinOrgResponse { org: membership },
         user_hash,
@@ -407,6 +424,37 @@ pub async fn get_pending_invites(
         user_hash,
     ))
 }
+/// Decline an org invitation. Updates DDB status to "declined" and deletes
+/// the encrypted invite from the S3 inbox so it doesn't reappear on poll.
+pub async fn decline_invite(
+    org_hash: &str,
+    user_hash: &str,
+    node: &FoldNode,
+) -> HandlerResult<serde_json::Value> {
+    let client = require_exemem(node)?;
+
+    // Update DDB membership status → declined
+    client
+        .decline_invite(org_hash)
+        .await
+        .handler_err("decline invite")?;
+
+    // Delete the invite from S3 inbox
+    let file_name = format!("{}.enc", org_hash);
+    if let Ok(presigned) = client.presign_inbox_delete(&file_name).await {
+        let http = std::sync::Arc::new(reqwest::Client::new());
+        let s3 = fold_db::sync::s3::S3Client::new(http);
+        if let Err(e) = s3.delete(&presigned).await {
+            log::warn!("Failed to delete declined invite from inbox: {}", e);
+        }
+    }
+
+    Ok(ApiResponse::success_with_user(
+        serde_json::json!({"declined": org_hash}),
+        user_hash,
+    ))
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
