@@ -25,6 +25,7 @@ import FeedTab from './components/tabs/FeedTab'
 import SharedMomentsTab from './components/tabs/SharedMomentsTab'
 import AppleImportTab from './components/tabs/AppleImportTab'
 import MyProfileTab from './components/tabs/MyProfileTab'
+import ConflictsTab from './components/tabs/ConflictsTab'
 import SettingsModal from './components/SettingsModal'
 import OnboardingWizard, { ONBOARDING_STORAGE_KEY } from './components/onboarding/OnboardingWizard'
 
@@ -64,6 +65,7 @@ const HASH_TO_TAB = {
   feed: 'feed',
   'shared-moments': 'shared-moments',
   'my-profile': 'my-profile',
+  conflicts: 'conflicts',
 }
 
 function resolveTabFromHash() {
@@ -237,6 +239,8 @@ export function AppContent() {
         return <SharedMomentsTab onResult={handleOperationResult} />
       case 'my-profile':
         return <MyProfileTab onResult={handleOperationResult} />
+      case 'conflicts':
+        return <ConflictsTab />
       default:
         return null
     }
