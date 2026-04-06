@@ -153,8 +153,11 @@ impl NodeManager {
             }
         }
 
-        // Load or generate a random identity keypair (persisted to disk)
-        let keypair = Self::load_or_generate_identity(user_id).await?;
+        // Use the default identity keypair so the node's keys match the
+        // public key exposed by auto-identity. Per-user-hash identities
+        // caused a mismatch: invites encrypted with the "default" pubkey
+        // couldn't be decrypted by a node holding a user-hash-keyed keypair.
+        let keypair = Self::load_or_generate_identity("default").await?;
 
         // Set identity on config
         node_config =
