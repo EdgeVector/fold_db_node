@@ -215,9 +215,9 @@ impl IngestionService {
         // semantic schema names (e.g., "recipes" instead of "document_content").
         enrich_with_source_context(&mut flattened_data, request.source_file_name.as_deref());
 
-        // Inject content_hash for document/note data to prevent key collisions
-        // when multiple items share the same title (e.g., dated journal entries).
-        inject_content_hashes(&mut flattened_data);
+        // NOTE: content_hash injection happens AFTER AI analysis, inside the
+        // flat/decomposed path handlers. Injecting before AI would cause the model
+        // to treat content_hash as a user data field and include it in the schema.
 
         // Decide code path based on data shape
         let has_nested_children = self.check_has_nested_children(&flattened_data);
@@ -341,20 +341,45 @@ impl IngestionService {
             .values()
             .filter_map(|p| extract_lookup_entry(&p.ai_response))
             .collect();
-        let batch_result = node
-            .batch_check_schema_reuse(&entries)
-            .await
-            .unwrap_or_else(|e| {
+        let batch_result = {
+            let mut last_err = None;
+            let mut result = None;
+            for attempt in 0..3u32 {
+                match node.batch_check_schema_reuse(&entries).await {
+                    Ok(r) => {
+                        result = Some(r);
+                        break;
+                    }
+                    Err(e) => {
+                        log_feature!(
+                            LogFeature::Ingestion,
+                            warn,
+                            "Batch schema reuse check attempt {}/3 failed: {}",
+                            attempt + 1,
+                            e
+                        );
+                        last_err = Some(e);
+                        if attempt < 2 {
+                            tokio::time::sleep(std::time::Duration::from_millis(
+                                500 * 2u64.pow(attempt),
+                            ))
+                            .await;
+                        }
+                    }
+                }
+            }
+            result.unwrap_or_else(|| {
                 log_feature!(
                     LogFeature::Ingestion,
-                    warn,
-                    "Batch schema reuse check failed, falling back to creation: {}",
-                    e
+                    error,
+                    "Batch schema reuse check failed after 3 attempts ({}), creating new schemas",
+                    last_err.map(|e| e.to_string()).unwrap_or_default()
                 );
                 BatchSchemaReuseResponse {
                     matches: HashMap::new(),
                 }
-            });
+            })
+        };
 
         // Resolve schemas using batch results (reuse fast path or create slow path)
         self.resolve_schemas_with_reuse(
@@ -391,9 +416,13 @@ impl IngestionService {
         let metadata = Self::build_ingestion_metadata(&request.file_hash, tracker.progress_id());
 
         for (idx, item) in items.iter().enumerate() {
+            // Inject content_hash AFTER AI analysis (schema already resolved above).
+            let mut item = item.clone();
+            inject_content_hashes(&mut item);
+
             let (gen, exec, _key_value) = self
                 .ingest_decomposed_item(
-                    item,
+                    &item,
                     &top_level_hash,
                     &mut schema_cache,
                     node,
@@ -660,9 +689,23 @@ pub(crate) async fn generate_mutations_for_item(
     use crate::ingestion::mutation_generator;
 
     // Flatten nested objects into dot-notation keys so that mapper paths like
-    // "budget_breakdown.flights" resolve correctly. Without this, only top-level
-    // scalar fields are preserved and nested objects are silently dropped.
+    // "budget_breakdown.flights" resolve correctly. E.g., {"a": {"b": 1}} → {"a.b": 1}.
+    // The AI prompt tells models to use dot-notation for nested fields and include the
+    // parent in mutation_mappers, so this flattening aligns with what the AI produces.
     let fields_and_values: HashMap<String, Value> = mutation_generator::flatten_json_object(obj);
+
+    if log::log_enabled!(log::Level::Debug) {
+        let nested_count = obj.values().filter(|v| v.is_object()).count();
+        if nested_count > 0 {
+            log_feature!(
+                LogFeature::Ingestion,
+                debug,
+                "Flattened {} nested object(s) to dot-notation for schema '{}'",
+                nested_count,
+                schema_name
+            );
+        }
+    }
 
     let keys_and_values =
         extract_key_values_from_data(&fields_and_values, schema_name, schema_manager).await?;
@@ -730,7 +773,7 @@ fn inject_content_hash(obj: &mut serde_json::Map<String, Value>) {
 }
 
 /// Apply `inject_content_hash` to every object in an array or a single object.
-fn inject_content_hashes(data: &mut Value) {
+pub(super) fn inject_content_hashes(data: &mut Value) {
     match data {
         Value::Array(arr) => {
             for item in arr.iter_mut() {
