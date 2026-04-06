@@ -39,8 +39,20 @@ impl IngestionService {
         let base_prompt = analyze_and_build_prompt(json_data)?;
         let max_validation_attempts = self.config.max_retries.clamp(1, 3);
         let mut last_error = None;
+        // Overall deadline prevents retry sequences from accumulating indefinitely.
+        // Individual calls have their own timeout, but retries + backoff can exceed it.
+        let deadline =
+            std::time::Instant::now() + std::time::Duration::from_secs(self.config.timeout_seconds);
 
         for attempt in 1..=max_validation_attempts {
+            if std::time::Instant::now() > deadline {
+                return Err(IngestionError::ai_response_validation_error(format!(
+                    "AI recommendation deadline exceeded ({}s) after {} attempts",
+                    self.config.timeout_seconds,
+                    attempt - 1
+                )));
+            }
+
             // On retries, append the previous validation error so the model
             // can correct its output instead of repeating the same mistake.
             let prompt = match &last_error {
