@@ -262,6 +262,48 @@ pub async fn get_all_progress(progress_tracker: web::Data<ProgressTracker>) -> i
     }
 }
 
+/// Lightweight progress summary — just counts, no per-job details.
+/// Use this for polling in scripts instead of the full progress endpoint.
+#[utoipa::path(
+    get,
+    path = "/api/ingestion/progress/summary",
+    tag = "ingestion",
+    responses((status = 200, description = "Progress summary counts"))
+)]
+pub async fn get_progress_summary(progress_tracker: web::Data<ProgressTracker>) -> impl Responder {
+    let user_hash = match crate::server::routes::require_user_context() {
+        Ok(hash) => hash,
+        Err(response) => return response,
+    };
+
+    let response =
+        match crate::handlers::ingestion::get_all_progress(&user_hash, progress_tracker.get_ref())
+            .await
+        {
+            Ok(r) => r,
+            Err(e) => return handler_error_to_response(e),
+        };
+
+    let empty = Vec::new();
+    let jobs = response
+        .data
+        .as_ref()
+        .map(|d| &d.progress)
+        .unwrap_or(&empty);
+    let total = jobs.len();
+    let done = jobs.iter().filter(|j| j.is_complete).count();
+    let failed = jobs.iter().filter(|j| j.is_complete && j.is_failed).count();
+    let passed = done - failed;
+
+    HttpResponse::Ok().json(serde_json::json!({
+        "total": total,
+        "done": done,
+        "passed": passed,
+        "failed": failed,
+        "running": total - done,
+    }))
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
