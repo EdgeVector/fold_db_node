@@ -896,6 +896,13 @@ async fn serve_embedded_asset(req: HttpRequest) -> HttpResponse {
         HttpResponse::Ok()
             .content_type(mime.as_ref())
             .body(content.data.into_owned())
+    } else if path.starts_with("/api/") {
+        // API routes that don't match any registered handler should return 404,
+        // not the SPA index.html (which makes debugging confusing).
+        HttpResponse::NotFound().json(serde_json::json!({
+            "ok": false,
+            "error": format!("No route matches {}", path)
+        }))
     } else {
         // SPA fallback: return index.html for unmatched routes
         match Asset::get("/index.html") {
