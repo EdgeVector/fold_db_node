@@ -91,10 +91,18 @@ pub fn decompose(data: &Value) -> DecompositionResult {
 
         let structure_hash = compute_structure_hash(representative);
 
+        let objects: Vec<Value> = arr.iter().filter(|v| v.is_object()).cloned().collect();
+        let non_objects = arr.len() - objects.len();
+        if non_objects > 0 {
+            log::warn!(
+                "Decomposition: field '{}' has {} non-object element(s) in array of {} — dropped (only objects are decomposed)",
+                field_name, non_objects, arr.len()
+            );
+        }
         children.push(ChildGroup {
             field_name,
             structure_hash,
-            items: arr.iter().filter(|v| v.is_object()).cloned().collect(),
+            items: objects,
         });
     }
 
