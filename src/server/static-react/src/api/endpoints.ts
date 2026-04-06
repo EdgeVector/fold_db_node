@@ -85,6 +85,8 @@ const API_ENDPOINTS_MANUAL = {
   GET_ATOM_CONTENT: (uuid: string) => `/atom/${uuid}`,
   MIGRATE_TO_CLOUD: "/system/migrate-to-cloud",
   SOCIAL_FEED: "/feed",
+  LIST_CONFLICTS: "/conflicts",
+  RESOLVE_CONFLICT: (id: string) => `/conflicts/${id}/resolve`,
 } as const;
 
 // Export merged endpoints (generated + manual + sync)
