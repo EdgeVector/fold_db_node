@@ -48,12 +48,99 @@ jobs:
         run: cargo build --bin folddb_server --bin schema_service
 
       - name: Run ingestion test
-        run: ./scripts/test-sample-ingestion.sh --provider "${{ github.event.inputs.provider || 'Anthropic' }}" --max-wait 30
+        id: ingestion
+        run: |
+          ./scripts/test-sample-ingestion.sh \
+            --provider "${{ github.event.inputs.provider || 'Anthropic' }}" \
+            --max-wait 30 2>&1 | tee /tmp/ingestion-output.txt
+
+      - name: Save failure context
+        if: failure()
+        run: |
+          {
+            echo "## Test Output"
+            echo '```'
+            cat /tmp/ingestion-output.txt 2>/dev/null || echo "No output"
+            echo '```'
+            echo ""
+            echo "## Server Log (last 100 lines)"
+            echo '```'
+            tail -100 /tmp/tmp.*/server.log 2>/dev/null || echo "No server log"
+            echo '```'
+            echo ""
+            echo "## Schema Service Log (last 50 lines)"
+            echo '```'
+            tail -50 /tmp/tmp.*/schema_service.log 2>/dev/null || echo "No schema log"
+            echo '```'
+          } > /tmp/failure-context.txt
 
       - name: Upload logs on failure
         if: failure()
         uses: actions/upload-artifact@v4
         with:
           name: ingestion-test-logs
-          path: /tmp/tmp.*/server.log
+          path: |
+            /tmp/ingestion-output.txt
+            /tmp/failure-context.txt
+            /tmp/tmp.*/server.log
+            /tmp/tmp.*/schema_service.log
           retention-days: 7
+
+  auto-fix:
+    name: Claude Code Auto-Fix
+    needs: ingestion-test
+    if: failure()
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+
+    permissions:
+      contents: write
+      pull-requests: write
+      issues: write
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Download failure logs
+        uses: actions/download-artifact@v4
+        with:
+          name: ingestion-test-logs
+          path: /tmp/failure-logs
+
+      - name: Prepare failure context
+        run: |
+          {
+            echo "The nightly sample data ingestion test failed."
+            echo ""
+            cat /tmp/failure-logs/failure-context.txt 2>/dev/null || echo "No context file"
+          } > /tmp/claude-prompt-context.txt
+
+      - name: Run Claude Code to fix
+        uses: anthropics/claude-code-action@beta
+        with:
+          anthropic_api_key: ${{ secrets.ANTHROPIC_API_KEY }}
+          prompt: |
+            The nightly ingestion integration test failed. This test runs
+            scripts/test-sample-ingestion.sh which starts a FoldDB node,
+            smart-folder-ingests all files in sample_data/, and asserts
+            100% success.
+
+            Read the failure context below, diagnose the root cause, fix it,
+            and create a PR. The fix should be in the Rust code, not in the
+            test script (unless the script has a bug).
+
+            Key files:
+            - scripts/test-sample-ingestion.sh (the test)
+            - src/ingestion/ (ingestion pipeline)
+            - src/ingestion/smart_folder/ (smart folder scan + ingest)
+            - src/ingestion/ai/ (AI backend, prompt, response parsing)
+            - src/ingestion/mutation_generator.rs (field mapping)
+            - src/fold_node/schema_client.rs (schema service client)
+
+            Failure context:
+            $(cat /tmp/claude-prompt-context.txt)
+          allowed_tools: "Bash,Read,Write,Edit,Glob,Grep"
+          timeout_minutes: 25
