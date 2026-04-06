@@ -438,6 +438,11 @@ impl FoldHttpServer {
             .route(
                 "/process-results/{progress_id}",
                 web::get().to(query_routes::get_process_results),
+            )
+            .route("/conflicts", web::get().to(query_routes::get_conflicts))
+            .route(
+                "/conflicts/{conflict_id}/resolve",
+                web::post().to(query_routes::resolve_conflict),
             );
     }
 

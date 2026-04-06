@@ -184,6 +184,78 @@ pub async fn get_process_results(
     ))
 }
 
+/// Summary of a sync conflict for API responses.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ConflictSummary {
+    pub id: String,
+    pub molecule_uuid: String,
+    pub conflict_key: String,
+    pub winner_atom: String,
+    pub loser_atom: String,
+    pub detected_at: String,
+}
+
+handler_response! {
+    /// Response for listing sync conflicts
+    pub struct ConflictsResponse {
+        pub conflicts: Vec<ConflictSummary>,
+    }
+}
+
+/// List unresolved sync conflicts.
+pub async fn get_conflicts(
+    molecule_uuid: Option<&str>,
+    user_hash: &str,
+    node: &FoldNode,
+) -> HandlerResult<ConflictsResponse> {
+    let db_guard = get_db_guard(node).await?;
+    let db_ops = db_guard.get_db_ops();
+
+    let conflicts = db_ops
+        .get_unresolved_conflicts(molecule_uuid, None)
+        .await
+        .handler_err("load conflicts")?;
+
+    let summaries: Vec<ConflictSummary> = conflicts
+        .into_iter()
+        .map(|c| ConflictSummary {
+            id: c.id,
+            molecule_uuid: c.molecule_uuid,
+            conflict_key: c.conflict_key,
+            winner_atom: c.winner_atom,
+            loser_atom: c.loser_atom,
+            detected_at: c.detected_at.to_rfc3339(),
+        })
+        .collect();
+
+    Ok(ApiResponse::success_with_user(
+        ConflictsResponse {
+            conflicts: summaries,
+        },
+        user_hash,
+    ))
+}
+
+/// Resolve (acknowledge) a sync conflict by ID.
+pub async fn resolve_conflict(
+    conflict_id: &str,
+    user_hash: &str,
+    node: &FoldNode,
+) -> HandlerResult<serde_json::Value> {
+    let db_guard = get_db_guard(node).await?;
+    let db_ops = db_guard.get_db_ops();
+
+    db_ops
+        .resolve_conflict(conflict_id, None)
+        .await
+        .handler_err("resolve conflict")?;
+
+    Ok(ApiResponse::success_with_user(
+        serde_json::json!({"resolved": conflict_id}),
+        user_hash,
+    ))
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

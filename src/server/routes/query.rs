@@ -283,3 +283,59 @@ pub async fn get_process_results(
         query_handlers::get_process_results(&progress_id, &user_hash, &node).await,
     )
 }
+
+/// Optional query parameter for filtering conflicts by molecule.
+#[derive(Debug, Deserialize)]
+pub struct ConflictQuery {
+    pub molecule_uuid: Option<String>,
+}
+
+/// List unresolved sync conflicts.
+#[utoipa::path(
+    get,
+    path = "/api/conflicts",
+    tag = "query",
+    params(
+        ("molecule_uuid" = Option<String>, Query, description = "Filter by molecule UUID")
+    ),
+    responses(
+        (status = 200, description = "List of unresolved sync conflicts"),
+        (status = 500, description = "Server error")
+    )
+)]
+pub async fn get_conflicts(
+    query: web::Query<ConflictQuery>,
+    state: web::Data<AppState>,
+) -> impl Responder {
+    let (user_hash, node) = node_or_return!(state);
+
+    handler_result_to_response(
+        query_handlers::get_conflicts(query.molecule_uuid.as_deref(), &user_hash, &node).await,
+    )
+}
+
+/// Resolve (acknowledge) a sync conflict.
+#[utoipa::path(
+    post,
+    path = "/api/conflicts/{conflict_id}/resolve",
+    tag = "query",
+    params(
+        ("conflict_id" = String, Path, description = "Conflict ID to resolve")
+    ),
+    responses(
+        (status = 200, description = "Conflict resolved"),
+        (status = 404, description = "Conflict not found"),
+        (status = 500, description = "Server error")
+    )
+)]
+pub async fn resolve_conflict(
+    path: web::Path<String>,
+    state: web::Data<AppState>,
+) -> impl Responder {
+    let conflict_id = path.into_inner();
+    let (user_hash, node) = node_or_return!(state);
+
+    handler_result_to_response(
+        query_handlers::resolve_conflict(&conflict_id, &user_hash, &node).await,
+    )
+}
