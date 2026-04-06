@@ -93,18 +93,24 @@ async fn main() {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use base64::Engine;
+
+    fn b64(bytes: &[u8]) -> String {
+        base64::engine::general_purpose::STANDARD.encode(bytes)
+    }
 
     #[test]
     fn user_hash_derivation() {
-        let hash = user_hash_from_pubkey("test_public_key");
+        let key = b64(&[0x42u8; 32]);
+        let hash = user_hash_from_pubkey(&key);
         assert_eq!(hash.len(), 32);
-        assert_eq!(hash, user_hash_from_pubkey("test_public_key"));
+        assert_eq!(hash, user_hash_from_pubkey(&key));
     }
 
     #[test]
     fn user_hash_deterministic() {
-        let h1 = user_hash_from_pubkey("key_a");
-        let h2 = user_hash_from_pubkey("key_b");
+        let h1 = user_hash_from_pubkey(&b64(&[0x01u8; 32]));
+        let h2 = user_hash_from_pubkey(&b64(&[0x02u8; 32]));
         assert_ne!(h1, h2);
     }
 }
