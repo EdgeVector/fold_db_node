@@ -333,7 +333,7 @@ impl IngestionService {
         org_hash: &str,
         node: &FoldNode,
     ) -> IngestionResult<String> {
-        let org_schema_name = format!("{}:{}", &org_hash[..12.min(org_hash.len())], schema_name);
+        let org_schema_name = format!("{}:{}", org_hash, schema_name);
 
         let schema_manager = get_schema_manager(node).await?;
 
@@ -383,7 +383,7 @@ impl IngestionService {
             info,
             "Registered org-scoped schema '{}' for org {}",
             org_schema_name,
-            &org_hash[..12.min(org_hash.len())]
+            org_hash
         );
 
         Ok(org_schema_name)
