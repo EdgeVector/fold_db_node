@@ -708,14 +708,7 @@ impl FoldNode {
     /// Called automatically at startup and should be called again when the
     /// node creates, joins, or leaves an org.
     pub async fn configure_org_sync_if_needed(&self) {
-        let db_guard = match self.db.try_lock() {
-            Ok(guard) => guard,
-            Err(_) => {
-                // DB is locked (e.g., during init); skip org sync config.
-                // It will be retried when an org is created/joined.
-                return;
-            }
-        };
+        let db_guard = self.db.lock().await;
 
         // Check if sync is enabled
         let sync_engine = match db_guard.sync_engine() {
@@ -764,7 +757,6 @@ impl FoldNode {
                         label: membership.org_name.clone(),
                         prefix: membership.org_hash.clone(),
                         crypto: provider.clone(),
-                        is_org: true,
                     });
                     org_crypto_pairs.push((membership.org_hash.clone(), provider));
                 }
@@ -795,10 +787,7 @@ impl FoldNode {
 
         // Register org crypto providers on the encrypting store so org-scoped
         // keys are encrypted/decrypted with the org's shared E2E key.
-        let db_guard = match self.db.try_lock() {
-            Ok(guard) => guard,
-            Err(_) => return,
-        };
+        let db_guard = self.db.lock().await;
         for (org_hash, crypto) in &org_crypto_pairs {
             db_guard
                 .register_org_crypto(org_hash, Arc::clone(crypto))
