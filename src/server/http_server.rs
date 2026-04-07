@@ -780,6 +780,14 @@ impl FoldHttpServer {
                 .route(
                     "/invite/fetch",
                     web::get().to(trust_routes::fetch_shared_invite),
+                )
+                .route(
+                    "/invite/send-verified",
+                    web::post().to(trust_routes::send_verified_invite),
+                )
+                .route(
+                    "/invite/verify",
+                    web::post().to(trust_routes::verify_invite_code),
                 ),
         )
         .route(

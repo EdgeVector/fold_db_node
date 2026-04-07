@@ -536,4 +536,75 @@ impl DiscoveryPublisher {
             .map(|s| s.to_string())
             .ok_or_else(|| "Response missing token".to_string())
     }
+
+    /// Send an email-verified trust invite. Emails a verification code to the recipient.
+    pub async fn send_verified_invite(
+        &self,
+        token: &str,
+        recipient_email: &str,
+        sender_name: &str,
+    ) -> Result<String, String> {
+        let response = self
+            .http_client
+            .post(format!("{}/discover/trust-invite/send", self.discovery_url))
+            .header("Authorization", format!("Bearer {}", self.auth_token))
+            .json(&serde_json::json!({
+                "token": token,
+                "recipient_email": recipient_email,
+                "sender_name": sender_name,
+            }))
+            .send()
+            .await
+            .map_err(|e| format!("Failed to send verified invite: {e}"))?;
+
+        if !response.status().is_success() {
+            let status = response.status();
+            let body = response.text().await.unwrap_or_default();
+            return Err(format!("Send verified invite failed ({status}): {body}"));
+        }
+
+        let resp: serde_json::Value = response
+            .json()
+            .await
+            .map_err(|e| format!("Failed to parse response: {e}"))?;
+
+        resp.get("invite_id")
+            .and_then(|v| v.as_str())
+            .map(|s| s.to_string())
+            .ok_or_else(|| "Response missing invite_id".to_string())
+    }
+
+    /// Verify a code and fetch the trust invite token.
+    pub async fn verify_invite_code(&self, invite_id: &str, code: &str) -> Result<String, String> {
+        let response = self
+            .http_client
+            .post(format!(
+                "{}/discover/trust-invite/verify",
+                self.discovery_url
+            ))
+            .header("Authorization", format!("Bearer {}", self.auth_token))
+            .json(&serde_json::json!({
+                "invite_id": invite_id,
+                "code": code,
+            }))
+            .send()
+            .await
+            .map_err(|e| format!("Failed to verify invite code: {e}"))?;
+
+        if !response.status().is_success() {
+            let status = response.status();
+            let body = response.text().await.unwrap_or_default();
+            return Err(format!("Verify invite code failed ({status}): {body}"));
+        }
+
+        let resp: serde_json::Value = response
+            .json()
+            .await
+            .map_err(|e| format!("Failed to parse response: {e}"))?;
+
+        resp.get("token")
+            .and_then(|v| v.as_str())
+            .map(|s| s.to_string())
+            .ok_or_else(|| "Response missing token".to_string())
+    }
 }

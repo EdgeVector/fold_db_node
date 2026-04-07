@@ -201,6 +201,30 @@ export async function fetchSharedInvite(
   return client.get<{ ok: boolean; token: string }>(`/trust/invite/fetch?id=${encodeURIComponent(inviteId)}`);
 }
 
+// ===== Email-Verified Trust Invites =====
+
+export async function sendVerifiedInvite(
+  token: string,
+  recipientEmail: string,
+  senderName: string,
+): Promise<EnhancedApiResponse<{ ok: boolean; invite_id: string }>> {
+  return client.post<{ ok: boolean; invite_id: string }>("/trust/invite/send-verified", {
+    token,
+    recipient_email: recipientEmail,
+    sender_name: senderName,
+  });
+}
+
+export async function verifyInviteCode(
+  inviteId: string,
+  code: string,
+): Promise<EnhancedApiResponse<{ ok: boolean; token: string }>> {
+  return client.post<{ ok: boolean; token: string }>("/trust/invite/verify", {
+    invite_id: inviteId,
+    code,
+  });
+}
+
 // ===== Audit Log =====
 
 export async function getAuditLog(
