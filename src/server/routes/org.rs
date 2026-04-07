@@ -96,7 +96,5 @@ pub async fn get_cloud_members(
 ) -> impl Responder {
     let (user_hash, node) = node_or_return!(state);
     let org_hash = path.into_inner();
-    handler_result_to_response(
-        org_handlers::get_cloud_members(&org_hash, &user_hash, &node).await,
-    )
+    handler_result_to_response(org_handlers::get_cloud_members(&org_hash, &user_hash, &node).await)
 }
