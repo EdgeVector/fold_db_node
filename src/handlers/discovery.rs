@@ -263,16 +263,23 @@ pub async fn opt_out(
         .await
         .handler_err("remove discovery opt-in")?;
 
-    // Tell the discovery service to remove published vectors
+    // Derive pseudonyms locally and send to discovery service for deletion.
+    // No server-side pseudonym-to-user mapping — privacy by design.
     let publisher = DiscoveryPublisher::new(
         master_key.to_vec(),
         discovery_url.to_string(),
         auth_token.to_string(),
     );
-    publisher
-        .unpublish_schema(&req.schema_name)
+    let pseudonyms = publisher
+        .derive_schema_pseudonyms(&*store, &req.schema_name)
         .await
-        .handler_err("unpublish from discovery service")?;
+        .handler_err("derive pseudonyms for opt-out")?;
+    if !pseudonyms.is_empty() {
+        publisher
+            .unpublish_pseudonyms(pseudonyms)
+            .await
+            .handler_err("unpublish from discovery service")?;
+    }
 
     let configs = config::list_opt_ins(&*store)
         .await

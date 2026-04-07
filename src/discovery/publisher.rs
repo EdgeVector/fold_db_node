@@ -84,7 +84,6 @@ impl DiscoveryPublisher {
             .map_err(|e| format!("Failed to scan embeddings: {}", e))?;
 
         let mut upload_entries = Vec::new();
-        let mut owner_entries = Vec::new();
         let mut skipped = 0;
 
         for (_key_bytes, value_bytes) in &raw_entries {
@@ -170,11 +169,6 @@ impl DiscoveryPublisher {
                 fragment_type,
                 public_key,
             });
-
-            owner_entries.push(OwnerEntry {
-                pseudonym: pseudo,
-                schema_name: config.schema_name.clone(),
-            });
         }
 
         if upload_entries.is_empty() {
@@ -189,7 +183,7 @@ impl DiscoveryPublisher {
         let total = upload_entries.len();
         let request = DiscoveryUploadRequest {
             entries: upload_entries,
-            owner_entries,
+            owner_entries: Vec::new(), // no longer stored server-side (privacy)
         };
 
         let response = self
@@ -223,11 +217,43 @@ impl DiscoveryPublisher {
         })
     }
 
-    /// Remove all published records for a schema.
-    pub async fn unpublish_schema(&self, schema_name: &str) -> Result<(), String> {
-        let request = DiscoveryOptOutRequest {
-            schema_name: schema_name.to_string(),
-        };
+    /// Derive all pseudonyms for a schema's embeddings (for client-side opt-out).
+    pub async fn derive_schema_pseudonyms(
+        &self,
+        embedding_store: &dyn KvStore,
+        schema_name: &str,
+    ) -> Result<Vec<uuid::Uuid>, String> {
+        let prefix = format!("{}{}:", EMB_PREFIX, schema_name);
+        let raw_entries = embedding_store
+            .scan_prefix(prefix.as_bytes())
+            .await
+            .map_err(|e| format!("Failed to scan embeddings: {e}"))?;
+
+        let mut pseudonyms = Vec::new();
+        for (_key_bytes, value_bytes) in &raw_entries {
+            let stored: StoredEmbedding = match serde_json::from_slice(value_bytes) {
+                Ok(s) => s,
+                Err(_) => continue,
+            };
+            if stored.embedding.is_empty() {
+                continue;
+            }
+            let embedding_bytes: Vec<u8> = stored
+                .embedding
+                .iter()
+                .flat_map(|f| f.to_le_bytes())
+                .collect();
+            let content_hash = pseudonym::content_hash_bytes(&embedding_bytes);
+            pseudonyms.push(pseudonym::derive_pseudonym(&self.master_key, &content_hash));
+        }
+        Ok(pseudonyms)
+    }
+
+    /// Remove published records by pseudonym list (client-side enumeration).
+    /// No server-side pseudonym-to-user mapping — client derives pseudonyms
+    /// locally from master_key and sends the list directly.
+    pub async fn unpublish_pseudonyms(&self, pseudonyms: Vec<uuid::Uuid>) -> Result<(), String> {
+        let request = DiscoveryOptOutRequest { pseudonyms };
 
         let response = self
             .http_client

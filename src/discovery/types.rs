@@ -20,18 +20,14 @@ pub struct DiscoveryUploadEntry {
     pub public_key: Option<String>,
 }
 
-/// Owner mapping sent alongside upload entries.
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct OwnerEntry {
-    pub pseudonym: Uuid,
-    pub schema_name: String,
-}
-
 /// Batch upload request to the discovery service.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct DiscoveryUploadRequest {
     pub entries: Vec<DiscoveryUploadEntry>,
-    pub owner_entries: Vec<OwnerEntry>,
+    /// Deprecated: no longer stored server-side (privacy by design).
+    /// Kept for API backwards compatibility — server ignores this field.
+    #[serde(default)]
+    pub owner_entries: Vec<serde_json::Value>,
 }
 
 /// Response from upload endpoint.
@@ -81,9 +77,11 @@ pub struct DiscoveryConnectRequest {
 }
 
 /// Opt-out request to the discovery service.
+/// Client sends the list of pseudonyms to delete (derived locally from master_key).
+/// No server-side pseudonym-to-user mapping exists.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct DiscoveryOptOutRequest {
-    pub schema_name: String,
+    pub pseudonyms: Vec<uuid::Uuid>,
 }
 
 /// An encrypted message from the discovery bulletin board.
