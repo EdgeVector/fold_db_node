@@ -78,6 +78,8 @@ pub struct SmartFolderIngestRequest {
     pub force_reingest: bool,
     /// Max files to process concurrently (default: 4, clamped 1..=8).
     pub max_concurrent: Option<usize>,
+    /// Optional org hash — when set, ingested data is stored under the org.
+    pub org_hash: Option<String>,
 }
 
 /// Response from initiating an async scan
@@ -394,6 +396,7 @@ pub async fn smart_folder_ingest(
         encryption_key,
         force_reingest,
         max_concurrent,
+        request.org_hash.clone(),
     );
 
     HttpResponse::Accepted().json(BatchFolderResponse {

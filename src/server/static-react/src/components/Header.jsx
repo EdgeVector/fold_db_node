@@ -6,9 +6,11 @@ import { BROWSER_CONFIG } from '../constants/config'
 import { systemClient } from '../api/clients/systemClient'
 import { getSubscriptionStatus, formatBytes } from '../api/clients/subscriptionClient'
 import { orgClient } from '../api/clients/orgClient'
+import { defaultApiClient } from '../api/core/client'
 import HeaderProgress from './HeaderProgress'
 import AnimatedLogo from './AnimatedLogo'
 import SyncStatusIndicator from './SyncStatusIndicator'
+import OrgSyncWarning from './OrgSyncWarning'
 import PendingInvitesModal from './PendingInvitesModal'
 import { EnvelopeIcon } from '@heroicons/react/24/outline'
 
@@ -87,6 +89,39 @@ function Header({ onSettingsClick, onAiSettingsClick, onCloudSettingsClick }) {
     return () => clearInterval(interval);
   }, [isAuthenticated]);
 
+  // Track org sync errors for header warning
+  const [orgSyncError, setOrgSyncError] = useState(false)
+  useEffect(() => {
+    if (!isAuthenticated) return
+    let cancelled = false
+    const checkOrgSync = async () => {
+      try {
+        const hash = localStorage.getItem('fold_user_hash')
+        if (!hash) return
+        const res = await defaultApiClient.get('/org')
+        const data = res.data || res
+        const orgList = data.orgs || []
+        if (orgList.length === 0) { setOrgSyncError(false); return }
+        const statuses = await Promise.all(
+          orgList.map(org =>
+            defaultApiClient.get(`/sync/org/${org.org_hash}/status`).catch(() => null)
+          )
+        )
+        if (cancelled) return
+        const hasError = statuses.some(s => {
+          const d = s?.data || s
+          return d?.last_error
+        })
+        setOrgSyncError(hasError)
+      } catch {
+        // best-effort
+      }
+    }
+    checkOrgSync()
+    const interval = setInterval(checkOrgSync, 30000)
+    return () => { cancelled = true; clearInterval(interval) }
+  }, [isAuthenticated])
+
   const handleLogout = () => {
     dispatch(logoutUser())
     localStorage.removeItem(BROWSER_CONFIG.STORAGE_KEYS.USER_ID)
@@ -144,6 +179,7 @@ function Header({ onSettingsClick, onAiSettingsClick, onCloudSettingsClick }) {
               </button>
             )}
             <SyncStatusIndicator onCloudSettingsClick={onCloudSettingsClick} />
+            {orgSyncError && <OrgSyncWarning onClick={onSettingsClick} />}
           </div>
 
           {/* Node Public Key — truncated with copy */}

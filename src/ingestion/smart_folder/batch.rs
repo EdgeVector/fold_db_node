@@ -125,6 +125,7 @@ pub(crate) fn spawn_batch_coordinator(
     encryption_key: [u8; 32],
     force_reingest: bool,
     max_concurrent: usize,
+    org_hash: Option<String>,
 ) {
     let progress_tracker = progress_tracker.clone();
     let node_arc = node_arc.clone();
@@ -150,6 +151,7 @@ pub(crate) fn spawn_batch_coordinator(
                             let tracker = progress_tracker.clone();
                             let enc_key = encryption_key;
                             let task_uid = batch_user_id.clone();
+                            let task_org_hash = org_hash.clone();
                             join_set.spawn(async move {
                                 fold_db::logging::core::run_with_user(&task_uid, async move {
                                     let progress_service = ProgressService::new(tracker);
@@ -163,6 +165,7 @@ pub(crate) fn spawn_batch_coordinator(
                                         &storage,
                                         &enc_key,
                                         force_reingest,
+                                        task_org_hash.as_deref(),
                                     )
                                     .await;
                                     (file, result)

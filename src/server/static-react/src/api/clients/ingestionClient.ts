@@ -388,6 +388,7 @@ export class UnifiedIngestionClient {
     spendLimit?: number,
     fileCosts?: number[],
     forceReingest = false,
+    orgHash?: string,
   ): Promise<EnhancedApiResponse<SmartFolderIngestResponse>> {
     return this.client.post<SmartFolderIngestResponse>(
       "/ingestion/smart-folder/ingest",
@@ -398,6 +399,7 @@ export class UnifiedIngestionClient {
         spend_limit: spendLimit ?? null,
         file_costs: fileCosts ?? null,
         force_reingest: forceReingest,
+        ...(orgHash ? { org_hash: orgHash } : {}),
       },
       {
         timeout: API_TIMEOUTS.AI_PROCESSING,

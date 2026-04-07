@@ -1,6 +1,7 @@
 import { useState, useEffect, useRef, useCallback } from 'react'
 import { toErrorMessage } from '../../utils/schemaUtils'
 import { ingestionClient } from '../../api/clients'
+import { defaultApiClient } from '../../api/core/client'
 import { useFolderAutocomplete } from '../../hooks/useFolderAutocomplete'
 import { useScanPolling } from '../../hooks/useScanPolling'
 import { useBatchMonitor } from '../../hooks/useBatchMonitor'
@@ -55,6 +56,24 @@ function SmartFolderTab({ onResult: onResultProp }) {
   const [fileProgressIds, setFileProgressIds] = useState(() => restored?.fileProgressIds || [])
   const [scanProgressId, setScanProgressId] = useState(() => restored?.scanProgressId || null)
   const [includeAlreadyIngested, setIncludeAlreadyIngested] = useState(() => !!restored?.includeAlreadyIngested)
+
+  // Org selector state
+  const [orgs, setOrgs] = useState([])
+  const [selectedOrg, setSelectedOrg] = useState('')
+  useEffect(() => {
+    const fetchOrgs = () => {
+      const hash = localStorage.getItem('fold_user_hash')
+      if (!hash) {
+        setTimeout(fetchOrgs, 1000)
+        return
+      }
+      defaultApiClient.get('/org').then(res => {
+        const data = res.data || res
+        setOrgs(data.orgs || [])
+      }).catch(() => {})
+    }
+    fetchOrgs()
+  }, [])
 
   // Ref for batchStatus so handleBack can read it without a stale closure
   const batchStatusRef = useRef(null)
@@ -144,7 +163,7 @@ function SmartFolderTab({ onResult: onResultProp }) {
     try {
       const limit = spendLimit ? parseFloat(spendLimit) : undefined
       const response = await ingestionClient.smartFolderIngest(
-        folderPath.trim(), filePaths, true, limit, fileCosts, includeAlreadyIngested
+        folderPath.trim(), filePaths, true, limit, fileCosts, includeAlreadyIngested, selectedOrg || undefined
       )
       if (response.success) {
         setBatchId(response.data.batch_id)
@@ -158,7 +177,7 @@ function SmartFolderTab({ onResult: onResultProp }) {
     } finally {
       setIsIngesting(false)
     }
-  }, [scanResult, includeAlreadyIngested, spendLimit, folderPath, onResult])
+  }, [scanResult, includeAlreadyIngested, spendLimit, folderPath, selectedOrg, onResult])
 
   const handleResume = useCallback(async (limit) => {
     if (!batchId) return
@@ -219,10 +238,36 @@ function SmartFolderTab({ onResult: onResultProp }) {
   })
   batchStatusRef.current = batchStatus
 
+  const selectedOrgName = orgs.find(o => o.org_hash === selectedOrg)?.org_name
+
   // --- Render ---
 
   return (
     <div className="space-y-4">
+      {orgs.length > 0 && !batchId && (
+        <div className="flex items-center justify-between">
+          <div className="flex items-center gap-3">
+            <select
+              value={selectedOrg}
+              onChange={(e) => setSelectedOrg(e.target.value)}
+              className="input-field text-sm py-1 px-2"
+            >
+              <option value="">Personal</option>
+              {orgs.map(org => (
+                <option key={org.org_hash} value={org.org_hash}>
+                  {org.org_name}
+                </option>
+              ))}
+            </select>
+            {selectedOrg && (
+              <span className="text-xs text-text-muted bg-primary/10 text-primary px-2 py-1 rounded">
+                Ingesting into: {selectedOrgName}
+              </span>
+            )}
+          </div>
+        </div>
+      )}
+
       {!scanResult && !batchId && (
         <FolderInput
           folderPath={folderPath}
