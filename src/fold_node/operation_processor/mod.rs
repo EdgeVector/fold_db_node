@@ -5,6 +5,7 @@ use tokio::sync::OwnedMutexGuard;
 use super::FoldNode;
 
 mod admin_ops;
+mod identity_ops;
 mod mutation_ops;
 mod query_ops;
 mod schema_ops;
