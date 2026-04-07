@@ -22,7 +22,6 @@ use base64::{engine::general_purpose, Engine as _};
 /// Exempt entries appear first so they win over any overlapping protected entry.
 /// GET requests are excluded by the method check, so only POST/PUT/PATCH paths
 /// that should be exempt need exempt entries here.
-#[allow(dead_code)] // Used when signature enforcement is re-enabled (see is_protected_write TODO)
 const PREFIX_RULES: &[(&str, bool)] = &[
     // Exempt (not protected)
     ("/api/system/auto-identity", false),
@@ -53,12 +52,25 @@ const PREFIX_RULES: &[(&str, bool)] = &[
 ];
 
 pub fn is_protected_write(method: &actix_web::http::Method, path: &str) -> bool {
-    // Signature enforcement is currently disabled while the frontend signing
-    // pipeline is being stabilised. The interceptor silently drops signatures
-    // when the private key has not yet been loaded into the Redux store,
-    // causing every protected write to fail with 401.
-    // TODO: Re-enable once frontend reliably signs all protected requests.
-    let _ = (method, path);
+    // Only POST/PUT/PATCH can be protected writes
+    if !matches!(
+        *method,
+        actix_web::http::Method::POST
+            | actix_web::http::Method::PUT
+            | actix_web::http::Method::PATCH
+    ) {
+        return false;
+    }
+
+    // Check prefix rules — first match wins. Exempt entries appear before
+    // protected entries so they take priority for overlapping paths.
+    for &(prefix, is_protected) in PREFIX_RULES {
+        if path.starts_with(prefix) {
+            return is_protected;
+        }
+    }
+
+    // Default: not protected (unknown paths pass through unsigned)
     false
 }
 
@@ -222,20 +234,39 @@ where
 mod tests {
     use super::*;
 
-    // Signature enforcement is currently disabled (is_protected_write returns false
-    // for all paths). These tests verify the disabled state. When re-enabled,
-    // update is_protected_write to use PREFIX_RULES and flip the assertions below.
-
     #[test]
-    fn test_is_protected_write_all_disabled() {
-        // While enforcement is disabled, nothing is protected
-        assert!(!is_protected_write(
+    fn test_protected_write_mutations_require_signature() {
+        assert!(is_protected_write(
             &actix_web::http::Method::POST,
             "/api/mutation"
         ));
+        assert!(is_protected_write(
+            &actix_web::http::Method::POST,
+            "/api/schema/my_schema/approve"
+        ));
+        assert!(is_protected_write(
+            &actix_web::http::Method::POST,
+            "/api/ingestion/process"
+        ));
+        assert!(is_protected_write(
+            &actix_web::http::Method::POST,
+            "/api/llm-query/chat"
+        ));
+        assert!(is_protected_write(
+            &actix_web::http::Method::POST,
+            "/api/system/setup"
+        ));
+        assert!(is_protected_write(
+            &actix_web::http::Method::POST,
+            "/api/schemas/load"
+        ));
+    }
+
+    #[test]
+    fn test_exempt_paths_not_protected() {
         assert!(!is_protected_write(
-            &actix_web::http::Method::GET,
-            "/api/mutation"
+            &actix_web::http::Method::POST,
+            "/api/system/auto-identity"
         ));
         assert!(!is_protected_write(
             &actix_web::http::Method::POST,
@@ -243,35 +274,35 @@ mod tests {
         ));
         assert!(!is_protected_write(
             &actix_web::http::Method::POST,
-            "/api/schema/my_schema/approve"
+            "/api/security/something"
         ));
         assert!(!is_protected_write(
             &actix_web::http::Method::POST,
-            "/api/llm-query/chat"
+            "/api/ingestion/smart-folder/scan"
         ));
+    }
+
+    #[test]
+    fn test_get_requests_never_protected() {
         assert!(!is_protected_write(
-            &actix_web::http::Method::POST,
-            "/api/system/auto-identity"
-        ));
-        assert!(!is_protected_write(
-            &actix_web::http::Method::POST,
-            "/api/schemas/load"
-        ));
-        assert!(!is_protected_write(
-            &actix_web::http::Method::POST,
-            "/api/ingestion/process"
-        ));
-        assert!(!is_protected_write(
-            &actix_web::http::Method::POST,
-            "/api/system/setup"
+            &actix_web::http::Method::GET,
+            "/api/mutation"
         ));
         assert!(!is_protected_write(
             &actix_web::http::Method::GET,
-            "/api/schemas"
+            "/api/schema/my_schema/approve"
+        ));
+    }
+
+    #[test]
+    fn test_unknown_paths_not_protected() {
+        assert!(!is_protected_write(
+            &actix_web::http::Method::POST,
+            "/api/unknown/path"
         ));
         assert!(!is_protected_write(
             &actix_web::http::Method::POST,
-            "/api/ingestion/status"
+            "/completely/unknown"
         ));
     }
 }

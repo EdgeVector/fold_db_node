@@ -203,16 +203,53 @@ pub async fn perform_smart_folder_scan_with_progress(
         );
 
         if !ambiguous.is_empty() {
-            // TODO: Re-enable LLM classification once Ollama concurrency is sorted out.
-            // For now, use heuristic filtering which is instant and doesn't hit Ollama.
-            report(
-                30,
-                format!(
-                    "Classifying {} ambiguous files with heuristics...",
-                    ambiguous.len(),
-                ),
-            );
-            resolved.extend(apply_heuristic_filtering(&ambiguous));
+            // Try LLM classification for ambiguous files; fall back to heuristics if unavailable.
+            let ambiguous_recs = if let Some(svc) = service {
+                report(
+                    30,
+                    format!(
+                        "Classifying {} ambiguous files with AI...",
+                        ambiguous.len(),
+                    ),
+                );
+                let tree_display = build_directory_tree_string(&ambiguous);
+                let prompt = create_smart_folder_prompt(&tree_display, &ambiguous);
+                match call_llm_for_file_analysis(&prompt, svc).await {
+                    Ok(response) => {
+                        match parse_llm_file_recommendations(&response, &ambiguous) {
+                            Ok(recs) => recs,
+                            Err(e) => {
+                                log_feature!(
+                                    LogFeature::Ingestion,
+                                    warn,
+                                    "LLM classification response unparseable: {}. Falling back to heuristics.",
+                                    e
+                                );
+                                apply_heuristic_filtering(&ambiguous)
+                            }
+                        }
+                    }
+                    Err(e) => {
+                        log_feature!(
+                            LogFeature::Ingestion,
+                            warn,
+                            "LLM classification unavailable: {}. Falling back to heuristics.",
+                            e
+                        );
+                        apply_heuristic_filtering(&ambiguous)
+                    }
+                }
+            } else {
+                report(
+                    30,
+                    format!(
+                        "Classifying {} ambiguous files with heuristics (no AI service)...",
+                        ambiguous.len(),
+                    ),
+                );
+                apply_heuristic_filtering(&ambiguous)
+            };
+            resolved.extend(ambiguous_recs);
         }
 
         resolved

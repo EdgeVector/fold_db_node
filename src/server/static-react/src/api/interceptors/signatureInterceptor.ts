@@ -13,12 +13,20 @@ import type { RequestConfig } from "../core/types";
 /** Write methods that should be signed */
 const SIGN_METHODS = new Set(["POST", "PUT", "PATCH"]);
 
-/** Paths that are explicitly exempt from signing.
- *  Currently ALL paths are exempt because the backend does not verify
- *  signatures yet. When FOLD_REQUIRE_SIGNATURES is enabled server-side,
- *  remove paths from this list to start enforcing signatures on them. */
+/** Paths that are exempt from signing (matching backend PREFIX_RULES exempt entries) */
 const EXEMPT_PATHS = [
-  "/api/",
+  "/api/system/auto-identity",
+  "/api/query",
+  "/api/system/private-key",
+  "/api/system/public-key",
+  "/api/system/status",
+  "/api/system/database-status",
+  "/api/system/onboarding-complete",
+  "/api/system/complete-path",
+  "/api/system/list-directory",
+  "/api/ingestion/smart-folder/",
+  "/api/security/",
+  "/api/openapi.json",
 ];
 
 function isExemptPath(url: string): boolean {
