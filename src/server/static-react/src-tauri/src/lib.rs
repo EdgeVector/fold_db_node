@@ -319,6 +319,11 @@ async fn start_fold_server(port: u16) -> Result<EmbeddedServerHandle, String> {
         .join(".folddb");
     std::env::set_var("FOLD_CONFIG_DIR", &config_dir);
 
+    // Set FOLDDB_HOME so all path resolution uses ~/.folddb/ instead of
+    // relative paths that resolve into the read-only .app bundle.
+    std::env::set_var("FOLDDB_HOME", &config_dir);
+    eprintln!("[FoldDB] FOLDDB_HOME: {:?}", config_dir);
+
     // Load node configuration (no DB access — just reads config file)
     let mut config = load_node_config(None, None)
         .map_err(|e| format!("Failed to load config: {}", e))?;
@@ -327,11 +332,7 @@ async fn start_fold_server(port: u16) -> Result<EmbeddedServerHandle, String> {
     config = config.with_identity(&pub_key, &priv_key);
     config.database = DatabaseConfig::Local { path: data_dir };
 
-    if let Ok(schema_url) = std::env::var("FOLD_SCHEMA_SERVICE_URL") {
-        config.schema_service_url = Some(schema_url);
-    } else {
-        config.schema_service_url = Some("https://axo709qs11.execute-api.us-east-1.amazonaws.com".to_string());
-    }
+    config.schema_service_url = Some(fold_db_node::endpoints::schema_service_url());
 
     // Build NodeManagerConfig — no FoldNode created yet
     let node_manager_config = NodeManagerConfig {

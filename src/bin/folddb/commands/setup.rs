@@ -7,9 +7,11 @@ use serde::{Deserialize, Serialize};
 use std::fs;
 use std::path::PathBuf;
 
-const DEFAULT_SCHEMA_SERVICE_URL: &str = "https://y0q3m6vk75.execute-api.us-west-2.amazonaws.com";
+// Use the centralized endpoint registry for the default schema service URL.
+fn default_schema_service_url() -> String {
+    fold_db_node::endpoints::schema_service_url()
+}
 
-const DEFAULT_EXEMEM_API_URL: &str = "https://api.exemem.com";
 
 #[derive(Serialize, Deserialize)]
 struct NodeIdentity {
@@ -159,7 +161,7 @@ pub fn run_setup_wizard() -> Result<NodeConfig, CliError> {
         1 => {
             let api_url: String = Input::new()
                 .with_prompt("Exemem API URL")
-                .default(DEFAULT_EXEMEM_API_URL.to_string())
+                .default(fold_db_node::endpoints::exemem_api_url())
                 .interact_text()
                 .map_err(|e| CliError::new(format!("Input cancelled: {}", e)))?;
 
@@ -202,7 +204,7 @@ pub fn run_setup_wizard() -> Result<NodeConfig, CliError> {
     // --- Schema service URL ---
     let schema_url: String = Input::new()
         .with_prompt("Schema service URL")
-        .default(DEFAULT_SCHEMA_SERVICE_URL.to_string())
+        .default(default_schema_service_url())
         .interact_text()
         .map_err(|e| CliError::new(format!("Input cancelled: {}", e)))?;
 

@@ -5,8 +5,7 @@ use crate::keychain;
 use crate::server::http_server::AppState;
 
 pub(crate) fn exemem_api_url() -> String {
-    std::env::var("EXEMEM_API_URL")
-        .unwrap_or_else(|_| "https://ygyu7ritx8.execute-api.us-west-2.amazonaws.com".to_string())
+    crate::endpoints::exemem_api_url()
 }
 
 // ============================================================================

@@ -285,7 +285,7 @@ export default function CloudMigrationSettings({ onClose }) {
                   // Proxy through node — need to forward to Exemem API
                   const creds = await fetch('/api/auth/credentials').then(r => r.json())
                   if (!creds.ok) { setError('No session'); return }
-                  const apiUrl = localStorage.getItem('exemem_api_url') || 'https://ygyu7ritx8.execute-api.us-west-2.amazonaws.com'
+                  const apiUrl = localStorage.getItem('exemem_api_url') || ''
                   const createResp = await fetch(`${apiUrl}/api/auth/invite-codes`, {
                     method: 'POST',
                     headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${creds.session_token}` },
@@ -317,7 +317,7 @@ export default function CloudMigrationSettings({ onClose }) {
                 try {
                   const creds = await fetch('/api/auth/credentials').then(r => r.json())
                   if (!creds.ok) return
-                  const apiUrl = localStorage.getItem('exemem_api_url') || 'https://ygyu7ritx8.execute-api.us-west-2.amazonaws.com'
+                  const apiUrl = localStorage.getItem('exemem_api_url') || ''
                   const resp = await fetch(`${apiUrl}/api/auth/invite-codes`, {
                     headers: { 'Authorization': `Bearer ${creds.session_token}` },
                   })
