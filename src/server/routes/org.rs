@@ -88,3 +88,15 @@ pub async fn decline_invite(path: web::Path<String>, state: web::Data<AppState>)
     let org_hash = path.into_inner();
     handler_result_to_response(org_handlers::decline_invite(&org_hash, &user_hash, &node).await)
 }
+
+/// GET /api/org/{org_hash}/cloud-members — fetch cloud member list
+pub async fn get_cloud_members(
+    path: web::Path<String>,
+    state: web::Data<AppState>,
+) -> impl Responder {
+    let (user_hash, node) = node_or_return!(state);
+    let org_hash = path.into_inner();
+    handler_result_to_response(
+        org_handlers::get_cloud_members(&org_hash, &user_hash, &node).await,
+    )
+}

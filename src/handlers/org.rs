@@ -337,6 +337,34 @@ pub async fn generate_invite(
     ))
 }
 
+handler_response! {
+    /// Response for cloud member list
+    pub struct CloudMembersResponse {
+        pub members: Vec<serde_json::Value>,
+    }
+}
+
+/// Fetch the current member list from the Exemem cloud for an org.
+/// This returns the authoritative cloud membership (user_hash, role, status)
+/// which may include members added after this node joined.
+pub async fn get_cloud_members(
+    org_hash: &str,
+    user_hash: &str,
+    node: &FoldNode,
+) -> HandlerResult<CloudMembersResponse> {
+    let client = require_exemem(node)?;
+
+    let members = client
+        .list_members(org_hash)
+        .await
+        .handler_err("fetch cloud members")?;
+
+    Ok(ApiResponse::success_with_user(
+        CloudMembersResponse { members },
+        user_hash,
+    ))
+}
+
 /// Delete an organization from local storage.
 pub async fn delete_org(
     org_hash: &str,

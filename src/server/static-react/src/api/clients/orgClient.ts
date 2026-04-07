@@ -2,6 +2,12 @@ import { ApiClient, getSharedClient } from '../core/client';
 import { API_TIMEOUTS, API_RETRIES } from '../../constants/api';
 import type { EnhancedApiResponse } from '../core/types';
 
+export interface CloudMember {
+  user_hash: string;
+  role: string;
+  status: string;
+}
+
 export interface OrgInviteBundle {
   org_hash: string;
   org_name?: string;
@@ -40,6 +46,13 @@ export class OrgClient {
   async listOrgs(): Promise<EnhancedApiResponse<Record<string, unknown>[]>> {
     return this.client.get('/org', {
       timeout: API_TIMEOUTS.STANDARD,
+    });
+  }
+
+  async getCloudMembers(orgHash: string): Promise<EnhancedApiResponse<CloudMember[]>> {
+    return this.client.get(`/org/${orgHash}/cloud-members`, {
+      timeout: API_TIMEOUTS.STANDARD,
+      retries: API_RETRIES.STANDARD,
     });
   }
 }
