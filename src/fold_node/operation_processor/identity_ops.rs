@@ -159,6 +159,7 @@ impl OperationProcessor {
             connected_at: Utc::now(),
             pseudonym: None,
             revoked: false,
+            roles: std::collections::HashMap::new(),
         };
 
         let mut book = ContactBook::load()
