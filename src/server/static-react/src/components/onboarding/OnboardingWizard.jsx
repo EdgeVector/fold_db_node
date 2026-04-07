@@ -1,5 +1,6 @@
 import { useState, useCallback } from 'react'
 import { markOnboardingComplete } from '../../api/clients/systemClient'
+import IdentityStep from './IdentityStep'
 import ConfigureAiStep from './ConfigureAiStep'
 import AppleDataStep from './AppleDataStep'
 import CloudBackupStep from './CloudBackupStep'
@@ -7,11 +8,12 @@ import DiscoveryStep from './DiscoveryStep'
 import AllSetStep from './AllSetStep'
 
 const STEPS = [
-  { id: 'welcome', label: 'AI Setup', number: 1 },
-  { id: 'apple-data', label: 'Apple Data', number: 2 },
-  { id: 'cloud-backup', label: 'Cloud Backup', number: 3 },
-  { id: 'discovery', label: 'Community', number: 4 },
-  { id: 'all-set', label: 'All Set', number: 5 },
+  { id: 'identity', label: 'Identity', number: 1 },
+  { id: 'welcome', label: 'AI Setup', number: 2 },
+  { id: 'apple-data', label: 'Apple Data', number: 3 },
+  { id: 'cloud-backup', label: 'Cloud Backup', number: 4 },
+  { id: 'discovery', label: 'Community', number: 5 },
+  { id: 'all-set', label: 'All Set', number: 6 },
 ]
 
 export const ONBOARDING_STORAGE_KEY = 'folddb_onboarding_complete'
@@ -53,7 +55,7 @@ function ProgressIndicator({ currentStep, steps }) {
 }
 
 export default function OnboardingWizard({ onComplete }) {
-  const [currentStep, setCurrentStep] = useState('welcome')
+  const [currentStep, setCurrentStep] = useState('identity')
   const [completedSteps, setCompletedSteps] = useState(new Set())
 
   const markCompleted = useCallback((stepId) => {
@@ -75,6 +77,16 @@ export default function OnboardingWizard({ onComplete }) {
 
   const renderStep = () => {
     switch (currentStep) {
+      case 'identity':
+        return (
+          <IdentityStep
+            onNext={() => {
+              markCompleted('identity')
+              goToStep('welcome')
+            }}
+            onSkip={() => goToStep('welcome')}
+          />
+        )
       case 'welcome':
         return (
           <ConfigureAiStep
