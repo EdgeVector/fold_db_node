@@ -221,6 +221,7 @@ pub async fn process_json(
         .await;
 
     // Clone what we need for the background task
+    let is_org_ingestion = request.org_hash.is_some();
     let node_clone = node.clone();
     let progress_id_clone = progress_id.clone();
     let user_hash_clone = user_hash.to_string();
@@ -248,6 +249,10 @@ pub async fn process_json(
                             "Background ingestion failed: {:?}",
                             response.errors
                         );
+                    } else if is_org_ingestion {
+                        // Trigger immediate sync so org data uploads right away
+                        // instead of waiting for the next timer-based sync cycle.
+                        node_clone.trigger_immediate_sync().await;
                     }
                 }
                 Err(e) => {

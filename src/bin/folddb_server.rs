@@ -144,6 +144,31 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         std::fs::create_dir_all(&config_path)?;
         std::env::set_var("FOLD_CONFIG_DIR", &config_path);
 
+        // If credentials.json exists, override the api_key in the Exemem config.
+        // After registration the new API key is saved to credentials.json but
+        // node_config.json still has the bootstrap key. Loading from credentials
+        // ensures we use the correct key after restart.
+        if let fold_db::storage::config::DatabaseConfig::Exemem {
+            ref mut api_key, ..
+        } = config.database
+        {
+            let folddb_home = fold_db_node::utils::paths::folddb_home()
+                .unwrap_or_else(|_| PathBuf::from(".folddb"));
+            let creds_path = folddb_home.join("credentials.json");
+            if creds_path.exists() {
+                if let Ok(creds_str) = std::fs::read_to_string(&creds_path) {
+                    if let Ok(creds) = serde_json::from_str::<serde_json::Value>(&creds_str) {
+                        if let Some(key) = creds.get("api_key").and_then(|v| v.as_str()) {
+                            log::info!(
+                                "Loaded API key from credentials.json (overriding node_config)"
+                            );
+                            *api_key = key.to_string();
+                        }
+                    }
+                }
+            }
+        }
+
         // Propagate storage path so the Exemem factory finds the right Sled directory
         std::env::set_var("FOLD_STORAGE_PATH", config.get_storage_path());
 
