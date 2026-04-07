@@ -21,15 +21,12 @@ describe('StructuredResults', () => {
     expect(screen.getByText(/Ranges:/)).toBeInTheDocument()
   })
 
-  it('expands hash and range to reveal fields', () => {
+  it('auto-expands hash groups and allows expanding ranges to reveal fields', () => {
     render(<StructuredResults results={sample} pageSize={10} />)
-    // Expand first hash
-    const hashBtn = screen.getByRole('button', { name: /hash: H1/ })
-    fireEvent.click(hashBtn)
-    // Expand first range
-    const rangeBtn = screen.getByRole('button', { name: /range: R1/ })
-    fireEvent.click(rangeBtn)
-    // See a field
+    // Hash groups are auto-expanded, so range buttons should be visible
+    const rangeBtns = screen.getAllByRole('button', { name: /range: R1/ })
+    fireEvent.click(rangeBtns[0])
+    // See a field from H1.R1
     expect(screen.getByText('a')).toBeInTheDocument()
   })
 

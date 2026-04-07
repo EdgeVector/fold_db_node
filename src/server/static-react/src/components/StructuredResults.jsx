@@ -1,4 +1,4 @@
-import { useMemo, useState, useCallback } from 'react'
+import { useMemo, useState, useCallback, useEffect } from 'react'
 import {
   extractData,
   summarizeCounts,
@@ -205,6 +205,17 @@ export default function StructuredResults({ results, pageSize = DEFAULT_PAGE_SIZ
 
   const [hashOpen, setHashOpen] = useState(() => new Set())
   const [rangeOpen, setRangeOpen] = useState(() => new Set())
+
+  // Auto-expand all hash groups when results change
+  useEffect(() => {
+    setHashOpen(new Set(allHashes))
+    const windows = new Map()
+    allHashes.forEach((h) => {
+      const total = getSortedRangeKeys(data, h).length
+      windows.set(h, { start: 0, count: Math.min(pageSize, total) })
+    })
+    setRangeWindows(windows)
+  }, [allHashes, data, pageSize])
   const [hashWindow, setHashWindow] = useState({ start: 0, count: pageSize })
   const [rangeWindows, setRangeWindows] = useState(() => new Map())
 

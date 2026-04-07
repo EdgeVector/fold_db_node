@@ -329,8 +329,7 @@ function SchemaTab({ onResult, onSchemaUpdated }) {
                   className="btn-secondary btn-sm flex items-center gap-1"
                   onClick={(e) => {
                     e.stopPropagation();
-                    window.dispatchEvent(new window.CustomEvent('folddb:query-schema', { detail: { schemaName: schema.name } }));
-                    window.location.hash = 'query';
+                    window.location.hash = `query?schema=${encodeURIComponent(schema.name)}`;
                   }}
                   title="Query this schema"
                 >
