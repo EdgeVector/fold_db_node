@@ -83,8 +83,27 @@ impl TrustInvite {
         })
     }
 
-    /// Verify the invite's signature against the claimed public key.
+    /// Maximum invite age before it's considered expired (30 days).
+    const MAX_AGE_SECS: i64 = 30 * 24 * 60 * 60;
+
+    /// Verify the invite's signature and check it hasn't expired.
     pub fn verify(&self) -> Result<bool, String> {
+        // Check expiry: reject invites older than MAX_AGE_SECS
+        let age = Utc::now()
+            .signed_duration_since(self.created_at)
+            .num_seconds();
+        if age > Self::MAX_AGE_SECS {
+            return Err(format!(
+                "Trust invite expired ({} days old, max {})",
+                age / 86400,
+                Self::MAX_AGE_SECS / 86400
+            ));
+        }
+        if age < -300 {
+            // Clock skew tolerance: reject invites from >5min in the future
+            return Err("Trust invite timestamp is in the future".to_string());
+        }
+
         let pub_key = Ed25519PublicKey::from_base64(&self.sender_pub_key)
             .map_err(|e| format!("Invalid sender public key: {e}"))?;
 
