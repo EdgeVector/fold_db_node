@@ -50,6 +50,11 @@ export default function AllSetStep({ onFinish, completedSteps }) {
       <div className="card p-4 mb-4">
         <h3 className="text-xs font-bold text-secondary uppercase tracking-widest mb-3">Your Node</h3>
         <FingerprintItem
+          label="Identity"
+          value={completedSteps?.has('identity') ? 'Set' : 'Skipped'}
+          color={completedSteps?.has('identity') ? 'text-gruvbox-green' : 'text-secondary'}
+        />
+        <FingerprintItem
           label="AI Provider"
           value={aiConfigured ? aiProvider || 'Configured' : 'Not configured'}
           color={aiConfigured ? 'text-gruvbox-green' : 'text-gruvbox-yellow'}

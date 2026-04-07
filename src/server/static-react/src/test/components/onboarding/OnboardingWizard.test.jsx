@@ -5,6 +5,16 @@ import OnboardingWizard, { ONBOARDING_STORAGE_KEY } from '../../../components/on
 import { renderWithRedux } from '../../utils/testHelpers.jsx';
 
 // Mock child step components to isolate wizard logic
+vi.mock('../../../components/onboarding/IdentityStep', () => ({
+  default: ({ onNext, onSkip }) => (
+    <div data-testid="identity-step">
+      Identity Step
+      <button data-testid="identity-next" onClick={onNext}>Next</button>
+      <button data-testid="identity-skip" onClick={onSkip}>Skip</button>
+    </div>
+  ),
+}));
+
 vi.mock('../../../components/onboarding/ConfigureAiStep', () => ({
   default: ({ onNext, onSkip }) => (
     <div data-testid="ai-step">
@@ -71,14 +81,15 @@ describe('OnboardingWizard', () => {
     return renderWithRedux(<OnboardingWizard onComplete={onComplete} />);
   };
 
-  it('renders the first step (AI Setup) by default', () => {
+  it('renders the first step (Identity) by default', () => {
     renderWizard();
-    expect(screen.getByTestId('ai-step')).toBeTruthy();
+    expect(screen.getByTestId('identity-step')).toBeTruthy();
     expect(screen.getByText('FoldDB')).toBeTruthy();
   });
 
-  it('shows progress indicator with 5 steps', () => {
+  it('shows progress indicator with 6 steps', () => {
     renderWizard();
+    expect(screen.getByText('Identity')).toBeTruthy();
     expect(screen.getByText('AI Setup')).toBeTruthy();
     expect(screen.getByText('Apple Data')).toBeTruthy();
     expect(screen.getByText('Cloud Backup')).toBeTruthy();
@@ -89,25 +100,33 @@ describe('OnboardingWizard', () => {
   it('navigates through all steps via Next buttons', () => {
     renderWizard();
 
-    // Step 1: AI Setup -> Apple Data
+    // Step 1: Identity -> AI Setup
+    fireEvent.click(screen.getByTestId('identity-next'));
+    expect(screen.getByTestId('ai-step')).toBeTruthy();
+
+    // Step 2: AI Setup -> Apple Data
     fireEvent.click(screen.getByTestId('ai-next'));
     expect(screen.getByTestId('apple-step')).toBeTruthy();
 
-    // Step 2: Apple Data -> Cloud Backup
+    // Step 3: Apple Data -> Cloud Backup
     fireEvent.click(screen.getByTestId('apple-next'));
     expect(screen.getByTestId('cloud-step')).toBeTruthy();
 
-    // Step 3: Cloud Backup -> Discovery
+    // Step 4: Cloud Backup -> Discovery
     fireEvent.click(screen.getByTestId('cloud-next'));
     expect(screen.getByTestId('discovery-step')).toBeTruthy();
 
-    // Step 4: Discovery -> All Set
+    // Step 5: Discovery -> All Set
     fireEvent.click(screen.getByTestId('discovery-next'));
     expect(screen.getByTestId('allset-step')).toBeTruthy();
   });
 
   it('allows skipping steps', () => {
     renderWizard();
+
+    // Skip Identity step
+    fireEvent.click(screen.getByTestId('identity-skip'));
+    expect(screen.getByTestId('ai-step')).toBeTruthy();
 
     // Skip AI step
     fireEvent.click(screen.getByTestId('ai-skip'));
@@ -121,6 +140,8 @@ describe('OnboardingWizard', () => {
   it('tracks completed steps vs skipped', () => {
     renderWizard();
 
+    // Complete Identity step
+    fireEvent.click(screen.getByTestId('identity-next'));
     // Complete AI step (Next)
     fireEvent.click(screen.getByTestId('ai-next'));
     // Skip Apple step
@@ -130,15 +151,16 @@ describe('OnboardingWizard', () => {
     // Skip Discovery
     fireEvent.click(screen.getByTestId('discovery-skip'));
 
-    // AllSet step should show 2 completed (welcome + cloud-backup)
+    // AllSet step should show 3 completed (identity + welcome + cloud-backup)
     expect(screen.getByTestId('allset-step')).toBeTruthy();
-    expect(screen.getByTestId('completed-count').textContent).toBe('2');
+    expect(screen.getByTestId('completed-count').textContent).toBe('3');
   });
 
   it('calls onComplete and saves to localStorage on finish', () => {
     renderWizard();
 
-    // Navigate to All Set
+    // Navigate to All Set by skipping everything
+    fireEvent.click(screen.getByTestId('identity-skip'));
     fireEvent.click(screen.getByTestId('ai-skip'));
     fireEvent.click(screen.getByTestId('apple-skip'));
     fireEvent.click(screen.getByTestId('cloud-skip'));
