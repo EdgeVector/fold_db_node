@@ -7,6 +7,8 @@ import {
   createTrustInvite,
   previewTrustInvite,
   acceptTrustInvite,
+  shareTrustInvite,
+  fetchSharedInvite,
   getAuditLog,
 } from '../../api/clients/trustClient'
 
@@ -31,6 +33,10 @@ function TrustTab({ onResult }) {
   const [creatingInvite, setCreatingInvite] = useState(false)
   const [inviteToken, setInviteToken] = useState(null)
   const [copied, setCopied] = useState(false)
+  const [sharing, setSharing] = useState(false)
+  const [sharedInviteId, setSharedInviteId] = useState(null)
+  const [fetchId, setFetchId] = useState('')
+  const [fetching, setFetching] = useState(false)
 
   // Invite acceptance
   const [acceptToken, setAcceptToken] = useState('')
@@ -167,6 +173,49 @@ function TrustTab({ onResult }) {
       navigator.clipboard.writeText(inviteToken)
       setCopied(true)
       setTimeout(() => setCopied(false), 2000)
+    }
+  }
+
+  const handleShareViaLink = async () => {
+    if (!inviteToken) return
+    setSharing(true)
+    setError(null)
+    try {
+      const response = await shareTrustInvite(inviteToken)
+      if (response.success && response.data) {
+        setSharedInviteId(response.data.invite_id)
+      } else {
+        setError(response.error || 'Failed to share invite via Exemem')
+      }
+    } catch (err) {
+      setError(err.message || 'Failed to share invite (is cloud backup enabled?)')
+    } finally {
+      setSharing(false)
+    }
+  }
+
+  const handleFetchById = async () => {
+    if (!fetchId.trim()) return
+    setFetching(true)
+    setError(null)
+    try {
+      const response = await fetchSharedInvite(fetchId.trim())
+      if (response.success && response.data?.token) {
+        setAcceptToken(response.data.token)
+        setFetchId('')
+        // Auto-preview
+        const previewResp = await previewTrustInvite(response.data.token)
+        if (previewResp.success && previewResp.data) {
+          setPreview(previewResp.data)
+          setAcceptDistance(String(previewResp.data.proposed_distance))
+        }
+      } else {
+        setError(response.error || 'Invite not found or already claimed')
+      }
+    } catch (err) {
+      setError(err.message || 'Failed to fetch invite')
+    } finally {
+      setFetching(false)
     }
   }
 
@@ -420,8 +469,37 @@ function TrustTab({ onResult }) {
                   </button>
                 </div>
                 <p className="text-xs text-tertiary mt-1">
-                  Share this token with the person you want to trust. It contains your name and public key.
+                  Share this token directly, or use "Share via Link" to upload it to Exemem for easy sharing.
                 </p>
+                <div className="flex gap-2 mt-2">
+                  <button
+                    className="btn btn-sm"
+                    onClick={handleShareViaLink}
+                    disabled={sharing}
+                  >
+                    {sharing ? 'Uploading...' : 'Share via Link'}
+                  </button>
+                </div>
+                {sharedInviteId && (
+                  <div className="mt-2 p-2 bg-surface-secondary border border-gruvbox-green/30 rounded">
+                    <p className="text-xs text-gruvbox-green font-medium mb-1">Shared via Exemem</p>
+                    <div className="flex gap-2 items-center">
+                      <span className="text-xs text-secondary">Invite ID:</span>
+                      <code className="text-xs text-primary font-mono">{sharedInviteId}</code>
+                      <button
+                        className="btn btn-sm text-xs"
+                        onClick={() => {
+                          navigator.clipboard.writeText(sharedInviteId)
+                        }}
+                      >
+                        Copy ID
+                      </button>
+                    </div>
+                    <p className="text-xs text-tertiary mt-1">
+                      Share this short ID instead of the full token. One-time use, expires in 7 days.
+                    </p>
+                  </div>
+                )}
               </div>
             )}
           </div>
@@ -430,8 +508,28 @@ function TrustTab({ onResult }) {
           <div className="border border-border rounded-lg p-4 bg-surface">
             <h3 className="text-sm font-medium text-primary mb-1">Accept a Trust Invite</h3>
             <p className="text-xs text-secondary mb-3">
-              Paste a trust invite token from someone who wants to connect with you.
+              Enter a short invite ID (shared via link) or paste a full invite token.
             </p>
+
+            {/* Fetch by invite ID */}
+            <div className="flex gap-2 mb-3">
+              <input
+                className="input flex-1 font-mono text-xs"
+                type="text"
+                placeholder="Invite ID (e.g. abc123def456)"
+                value={fetchId}
+                onChange={(e) => setFetchId(e.target.value)}
+              />
+              <button
+                className="btn btn-sm"
+                onClick={handleFetchById}
+                disabled={fetching || !fetchId.trim()}
+              >
+                {fetching ? 'Fetching...' : 'Fetch'}
+              </button>
+            </div>
+
+            <div className="text-xs text-tertiary text-center mb-3">— or paste a full token —</div>
             <div className="flex gap-2 mb-3">
               <input
                 className="input flex-1 font-mono text-xs"

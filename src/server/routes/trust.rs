@@ -647,3 +647,99 @@ pub async fn revoke_contact(path: web::Path<String>, state: web::Data<AppState>)
         .await,
     )
 }
+
+// ===== Trust invite relay (via Exemem discovery service) =====
+
+/// POST /api/trust/invite/share — upload invite token to Exemem relay, return short ID
+pub async fn share_trust_invite(
+    body: web::Json<serde_json::Value>,
+    state: web::Data<AppState>,
+) -> impl Responder {
+    let (user_hash, _node) = node_or_return!(state);
+
+    let (url, key, token) = match get_discovery_config_and_token() {
+        Ok(cfg) => cfg,
+        Err(e) => {
+            return actix_web::HttpResponse::ServiceUnavailable()
+                .json(serde_json::json!({"error": e}));
+        }
+    };
+
+    let publisher = crate::discovery::publisher::DiscoveryPublisher::new(key, url, token);
+
+    let invite_token = match body.get("token").and_then(|v| v.as_str()) {
+        Some(t) => t.to_string(),
+        None => {
+            return actix_web::HttpResponse::BadRequest()
+                .json(serde_json::json!({"error": "Missing 'token' field"}));
+        }
+    };
+
+    match publisher.store_trust_invite(&invite_token).await {
+        Ok(invite_id) => actix_web::HttpResponse::Ok().json(ApiResponse::success_with_user(
+            serde_json::json!({
+                "invite_id": invite_id,
+                "shared": true,
+            }),
+            user_hash,
+        )),
+        Err(e) => {
+            actix_web::HttpResponse::InternalServerError().json(serde_json::json!({"error": e}))
+        }
+    }
+}
+
+/// GET /api/trust/invite/fetch?id=xxx — fetch invite token from Exemem relay by ID
+pub async fn fetch_shared_invite(
+    query: web::Query<std::collections::HashMap<String, String>>,
+    state: web::Data<AppState>,
+) -> impl Responder {
+    let (_user_hash, _node) = node_or_return!(state);
+
+    let (url, key, token) = match get_discovery_config_and_token() {
+        Ok(cfg) => cfg,
+        Err(e) => {
+            return actix_web::HttpResponse::ServiceUnavailable()
+                .json(serde_json::json!({"error": e}));
+        }
+    };
+
+    let publisher = crate::discovery::publisher::DiscoveryPublisher::new(key, url, token);
+
+    let invite_id = match query.get("id") {
+        Some(id) => id.clone(),
+        None => {
+            return actix_web::HttpResponse::BadRequest()
+                .json(serde_json::json!({"error": "Missing 'id' query parameter"}));
+        }
+    };
+
+    match publisher.fetch_trust_invite(&invite_id).await {
+        Ok(token) => {
+            actix_web::HttpResponse::Ok().json(serde_json::json!({"ok": true, "token": token}))
+        }
+        Err(e) => actix_web::HttpResponse::NotFound().json(serde_json::json!({"error": e})),
+    }
+}
+
+/// Helper: get discovery URL, master key, and auth token from env/credentials.
+fn get_discovery_config_and_token() -> Result<(String, Vec<u8>, String), String> {
+    let url = std::env::var("DISCOVERY_SERVICE_URL")
+        .map_err(|_| "Discovery service not configured (DISCOVERY_SERVICE_URL)".to_string())?;
+    let key_hex = std::env::var("DISCOVERY_MASTER_KEY")
+        .map_err(|_| "Discovery master key not configured".to_string())?;
+    let key = hex::decode(&key_hex).map_err(|_| "Invalid DISCOVERY_MASTER_KEY hex".to_string())?;
+
+    let token = std::env::var("DISCOVERY_AUTH_TOKEN")
+        .or_else(|_| {
+            crate::keychain::load_credentials()
+                .ok()
+                .flatten()
+                .map(|c| c.session_token)
+                .filter(|t| !t.is_empty())
+                .ok_or_else(|| "no token".to_string())
+        })
+        .map_err(|_| "No auth token available for discovery service".to_string())?;
+
+    Ok((url, key, token))
+}

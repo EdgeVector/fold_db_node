@@ -187,6 +187,20 @@ export async function acceptTrustInvite(
   });
 }
 
+// ===== Trust Invite Relay (via Exemem) =====
+
+export async function shareTrustInvite(
+  token: string,
+): Promise<EnhancedApiResponse<{ invite_id: string; shared: boolean }>> {
+  return client.post<{ invite_id: string; shared: boolean }>("/trust/invite/share", { token });
+}
+
+export async function fetchSharedInvite(
+  inviteId: string,
+): Promise<EnhancedApiResponse<{ ok: boolean; token: string }>> {
+  return client.get<{ ok: boolean; token: string }>(`/trust/invite/fetch?id=${encodeURIComponent(inviteId)}`);
+}
+
 // ===== Audit Log =====
 
 export async function getAuditLog(
