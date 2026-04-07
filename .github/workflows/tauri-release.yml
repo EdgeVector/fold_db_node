@@ -193,10 +193,11 @@ jobs:
         with:
           path: artifacts
 
-      - name: Generate checksums
+      - name: Collect DMGs and generate checksums
         run: |
-          cd artifacts
-          find . -type f -name '*.dmg' -exec cp {} . \;
+          mkdir -p release
+          find artifacts -type f -name '*.dmg' -exec cp {} release/ \;
+          cd release
           shasum -a 256 *.dmg > SHA256SUMS.txt
           cat SHA256SUMS.txt
 
@@ -205,5 +206,5 @@ jobs:
         with:
           generate_release_notes: true
           files: |
-            artifacts/*.dmg
-            artifacts/SHA256SUMS.txt
+            release/*.dmg
+            release/SHA256SUMS.txt
