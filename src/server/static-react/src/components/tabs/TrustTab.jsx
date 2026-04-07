@@ -1,4 +1,5 @@
 import { useState, useEffect, useCallback } from 'react'
+import { QRCodeSVG } from 'qrcode.react'
 import {
   getIdentityCard,
   setIdentityCard,
@@ -9,6 +10,8 @@ import {
   acceptTrustInvite,
   shareTrustInvite,
   fetchSharedInvite,
+  sendVerifiedInvite,
+  verifyInviteCode,
   getAuditLog,
 } from '../../api/clients/trustClient'
 
@@ -33,10 +36,19 @@ function TrustTab({ onResult }) {
   const [creatingInvite, setCreatingInvite] = useState(false)
   const [inviteToken, setInviteToken] = useState(null)
   const [copied, setCopied] = useState(false)
+  const [showQr, setShowQr] = useState(false)
   const [sharing, setSharing] = useState(false)
   const [sharedInviteId, setSharedInviteId] = useState(null)
   const [fetchId, setFetchId] = useState('')
   const [fetching, setFetching] = useState(false)
+
+  // Email verification
+  const [recipientEmail, setRecipientEmail] = useState('')
+  const [sendingEmail, setSendingEmail] = useState(false)
+  const [emailSentId, setEmailSentId] = useState(null)
+  const [verifyId, setVerifyId] = useState('')
+  const [verifyCode, setVerifyCode] = useState('')
+  const [verifying, setVerifying] = useState(false)
 
   // Invite acceptance
   const [acceptToken, setAcceptToken] = useState('')
@@ -216,6 +228,56 @@ function TrustTab({ onResult }) {
       setError(err.message || 'Failed to fetch invite')
     } finally {
       setFetching(false)
+    }
+  }
+
+  const handleSendViaEmail = async () => {
+    if (!recipientEmail.trim() || !inviteToken || !identityCard) return
+    setSendingEmail(true)
+    setError(null)
+    try {
+      const response = await sendVerifiedInvite(
+        inviteToken,
+        recipientEmail.trim(),
+        identityCard.display_name,
+      )
+      if (response.success && response.data) {
+        setEmailSentId(response.data.invite_id)
+        if (onResult) onResult({ success: true, data: { message: `Verification code sent to ${recipientEmail}` } })
+      } else {
+        setError(response.error || 'Failed to send verification email')
+      }
+    } catch (err) {
+      setError(err.message || 'Failed to send email (is cloud backup enabled?)')
+    } finally {
+      setSendingEmail(false)
+    }
+  }
+
+  const handleVerifyCode = async () => {
+    if (!verifyId.trim() || !verifyCode.trim()) return
+    setVerifying(true)
+    setError(null)
+    try {
+      const response = await verifyInviteCode(verifyId.trim(), verifyCode.trim())
+      if (response.success && response.data?.token) {
+        setAcceptToken(response.data.token)
+        setVerifyId('')
+        setVerifyCode('')
+        // Auto-preview
+        const previewResp = await previewTrustInvite(response.data.token)
+        if (previewResp.success && previewResp.data) {
+          setPreview(previewResp.data)
+          setAcceptDistance(String(previewResp.data.proposed_distance))
+        }
+        if (onResult) onResult({ success: true, data: { message: 'Code verified! Review the invite below.' } })
+      } else {
+        setError(response.error || 'Invalid verification code')
+      }
+    } catch (err) {
+      setError(err.message || 'Verification failed')
+    } finally {
+      setVerifying(false)
     }
   }
 
@@ -469,7 +531,7 @@ function TrustTab({ onResult }) {
                   </button>
                 </div>
                 <p className="text-xs text-tertiary mt-1">
-                  Share this token directly, or use "Share via Link" to upload it to Exemem for easy sharing.
+                  Share this token directly, use "Share via Link" to upload to Exemem, or show a QR code for in-person sharing.
                 </p>
                 <div className="flex gap-2 mt-2">
                   <button
@@ -479,7 +541,21 @@ function TrustTab({ onResult }) {
                   >
                     {sharing ? 'Uploading...' : 'Share via Link'}
                   </button>
+                  <button
+                    className="btn btn-sm"
+                    onClick={() => setShowQr(!showQr)}
+                  >
+                    {showQr ? 'Hide QR' : 'Show QR Code'}
+                  </button>
                 </div>
+                {showQr && (
+                  <div className="mt-3 p-4 bg-white rounded-lg inline-block">
+                    <QRCodeSVG value={inviteToken} size={200} level="M" />
+                    <p className="text-xs text-gray-500 mt-2 text-center max-w-[200px]">
+                      Only show this in person — anyone who scans it can claim the invite.
+                    </p>
+                  </div>
+                )}
                 {sharedInviteId && (
                   <div className="mt-2 p-2 bg-surface-secondary border border-gruvbox-green/30 rounded">
                     <p className="text-xs text-gruvbox-green font-medium mb-1">Shared via Exemem</p>
@@ -500,6 +576,36 @@ function TrustTab({ onResult }) {
                     </p>
                   </div>
                 )}
+              {/* Send via email */}
+              <div className="mt-3 pt-3 border-t border-border">
+                <h4 className="text-xs font-medium text-secondary mb-2">Send via Email</h4>
+                <p className="text-xs text-tertiary mb-2">
+                  Enter the recipient's email. They'll receive a verification code to claim the invite.
+                </p>
+                <div className="flex gap-2">
+                  <input
+                    className="input flex-1 text-xs"
+                    type="email"
+                    placeholder="recipient@example.com"
+                    value={recipientEmail}
+                    onChange={(e) => setRecipientEmail(e.target.value)}
+                  />
+                  <button
+                    className="btn btn-sm"
+                    onClick={handleSendViaEmail}
+                    disabled={sendingEmail || !recipientEmail.trim()}
+                  >
+                    {sendingEmail ? 'Sending...' : 'Send'}
+                  </button>
+                </div>
+                {emailSentId && (
+                  <div className="mt-2 p-2 bg-surface-secondary border border-gruvbox-green/30 rounded">
+                    <p className="text-xs text-gruvbox-green">
+                      Verification code sent to {recipientEmail}. They need to enter the code in their FoldDB.
+                    </p>
+                  </div>
+                )}
+              </div>
               </div>
             )}
           </div>
@@ -508,10 +614,40 @@ function TrustTab({ onResult }) {
           <div className="border border-border rounded-lg p-4 bg-surface">
             <h3 className="text-sm font-medium text-primary mb-1">Accept a Trust Invite</h3>
             <p className="text-xs text-secondary mb-3">
-              Enter a short invite ID (shared via link) or paste a full invite token.
+              Received a verification code via email? Enter the invite ID and code below.
+              Or enter a short invite ID, or paste a full token.
             </p>
 
-            {/* Fetch by invite ID */}
+            {/* Verify with code (email flow) */}
+            <div className="mb-4 p-3 border border-border rounded bg-surface-secondary">
+              <h4 className="text-xs font-medium text-secondary mb-2">Verify with Email Code</h4>
+              <div className="flex gap-2 mb-2">
+                <input
+                  className="input flex-1 font-mono text-xs"
+                  type="text"
+                  placeholder="Invite ID"
+                  value={verifyId}
+                  onChange={(e) => setVerifyId(e.target.value)}
+                />
+                <input
+                  className="input w-28 font-mono text-xs text-center"
+                  type="text"
+                  placeholder="6-digit code"
+                  maxLength={6}
+                  value={verifyCode}
+                  onChange={(e) => setVerifyCode(e.target.value.replace(/\D/g, ''))}
+                />
+                <button
+                  className="btn btn-sm"
+                  onClick={handleVerifyCode}
+                  disabled={verifying || !verifyId.trim() || verifyCode.length !== 6}
+                >
+                  {verifying ? 'Verifying...' : 'Verify'}
+                </button>
+              </div>
+            </div>
+
+            {/* Fetch by invite ID (no code) */}
             <div className="flex gap-2 mb-3">
               <input
                 className="input flex-1 font-mono text-xs"
