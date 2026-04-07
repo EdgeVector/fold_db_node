@@ -1,6 +1,7 @@
 import React, { useState, useEffect, useRef } from 'react'
 import { defaultApiClient } from '../../api/core/client'
 import { systemClient } from '../../api/clients/systemClient'
+import { orgClient } from '../../api/clients/orgClient'
 
 function formatRelativeTime(epochMs) {
   if (!epochMs) return null
@@ -23,9 +24,12 @@ export default function OrgSettingsPanel() {
   const [newOrgName, setNewOrgName] = useState('')
   const [newMemberKey, setNewMemberKey] = useState('')
   const [newMemberName, setNewMemberName] = useState('')
+  const [cloudMembers, setCloudMembers] = useState({})
+  const [syncNotification, setSyncNotification] = useState(null)
 
   const syncPollRef = useRef(null)
   const retryRef = useRef(false)
+  const lastDownloadCursorsRef = useRef({})
 
   useEffect(() => {
     const doFetch = () => {
@@ -43,7 +47,7 @@ export default function OrgSettingsPanel() {
     }).catch(() => {})
   }, [])
 
-  // Poll org sync statuses every 10 seconds
+  // Poll org sync statuses every 10 seconds and fetch cloud members
   useEffect(() => {
     if (orgs.length === 0) return
     const fetchAllSyncStatuses = () => {
@@ -52,12 +56,35 @@ export default function OrgSettingsPanel() {
           .then(res => {
             const data = res.data || res
             setOrgSyncStatuses(prev => ({ ...prev, [org.org_hash]: data }))
+            // Detect new data synced by tracking download cursor changes
+            const cursor = data.download_cursor || data.last_download_seq || 0
+            const prevCursor = lastDownloadCursorsRef.current[org.org_hash]
+            if (prevCursor !== undefined && cursor > prevCursor) {
+              setSyncNotification(`New org data synced for "${org.org_name}"`)
+              setTimeout(() => setSyncNotification(null), 5000)
+            }
+            lastDownloadCursorsRef.current[org.org_hash] = cursor
+          })
+          .catch(() => {})
+      })
+    }
+    const fetchAllCloudMembers = () => {
+      orgs.forEach(org => {
+        orgClient.getCloudMembers(org.org_hash)
+          .then(res => {
+            const data = res.data || res
+            const members = data.members || []
+            setCloudMembers(prev => ({ ...prev, [org.org_hash]: members }))
           })
           .catch(() => {})
       })
     }
     fetchAllSyncStatuses()
-    syncPollRef.current = setInterval(fetchAllSyncStatuses, 10000)
+    fetchAllCloudMembers()
+    syncPollRef.current = setInterval(() => {
+      fetchAllSyncStatuses()
+      fetchAllCloudMembers()
+    }, 10000)
     return () => { if (syncPollRef.current) clearInterval(syncPollRef.current) }
   }, [orgs])
 
@@ -140,9 +167,9 @@ export default function OrgSettingsPanel() {
   return (
     <div className="p-4 flex flex-col gap-6">
       {/* Your Node Public Key */}
-      <div className="flex flex-col gap-2">
-        <h3 className="text-sm font-medium text-text-primary">Your Node Public Key</h3>
-        <p className="text-xs text-text-muted">Share this with org admins so they can add you as a member.</p>
+      <div className="flex flex-col gap-2 p-4 border border-primary/30 rounded-md bg-primary/5">
+        <h3 className="text-sm font-semibold text-text-primary">Your Node Public Key</h3>
+        <p className="text-xs text-text-muted">Share this key with an org admin to get invited to their organization.</p>
         <div className="flex items-center gap-2">
           <code className="flex-1 text-xs font-mono text-text-primary bg-bg-surface border border-border rounded px-3 py-2 break-all select-all">
             {nodePublicKey || 'Loading...'}
@@ -150,10 +177,22 @@ export default function OrgSettingsPanel() {
           <button
             onClick={handleCopyKey}
             disabled={!nodePublicKey}
-            className="btn-secondary whitespace-nowrap text-xs"
+            className="btn-primary whitespace-nowrap text-xs px-4"
           >
-            {keyCopied ? 'Copied!' : 'Copy'}
+            {keyCopied ? 'Copied!' : 'Copy Key'}
           </button>
+          {typeof navigator !== 'undefined' && navigator.share && (
+            <button
+              onClick={() => navigator.share({
+                title: 'My FoldDB Public Key',
+                text: nodePublicKey
+              }).catch(() => {})}
+              disabled={!nodePublicKey}
+              className="btn-secondary whitespace-nowrap text-xs"
+            >
+              Share
+            </button>
+          )}
         </div>
       </div>
 
@@ -173,6 +212,12 @@ export default function OrgSettingsPanel() {
       {error && (
         <div className="p-3 bg-red-900/30 border border-red-500/50 text-red-400 rounded-md text-sm">
           {error}
+        </div>
+      )}
+
+      {syncNotification && (
+        <div className="p-3 bg-blue-900/30 border border-blue-500/50 text-blue-400 rounded-md text-sm animate-pulse">
+          {syncNotification}
         </div>
       )}
 
@@ -232,7 +277,14 @@ export default function OrgSettingsPanel() {
               </div>
               
               <div className="p-3">
-                <h5 className="text-sm font-medium mb-2 text-text-primary">Members ({org.members?.length || 0})</h5>
+                <h5 className="text-sm font-medium mb-2 text-text-primary">
+                  Members ({org.members?.length || 0})
+                  {cloudMembers[org.org_hash] && cloudMembers[org.org_hash].length > (org.members?.length || 0) && (
+                    <span className="ml-2 text-xs text-text-muted font-normal">
+                      ({cloudMembers[org.org_hash].length} in cloud)
+                    </span>
+                  )}
+                </h5>
                 <ul className="flex flex-col gap-2 mb-4">
                   {org.members?.map(m => (
                     <li key={m.node_public_key} className="flex justify-between items-center text-sm p-2 bg-bg-surface border border-border/50 rounded">
@@ -241,7 +293,7 @@ export default function OrgSettingsPanel() {
                         <span className="text-xs text-text-muted font-mono ml-2">{m.node_public_key.substring(0, 10)}...</span>
                       </div>
                       {org.role === 'Admin' && (
-                        <button 
+                        <button
                           onClick={() => handleRemoveMember(org.org_hash, m.node_public_key)}
                           className="text-red-400 hover:text-red-300 text-xs px-2 py-1 bg-red-400/10 hover:bg-red-400/20 rounded transition-colors"
                         >
@@ -251,6 +303,31 @@ export default function OrgSettingsPanel() {
                     </li>
                   ))}
                 </ul>
+
+                {/* Cloud members not in local list */}
+                {cloudMembers[org.org_hash] && (() => {
+                  const localKeys = new Set((org.members || []).map(m => m.node_public_key))
+                  // Cloud members have user_hash, not node_public_key — show those not matched locally
+                  const cloudOnly = cloudMembers[org.org_hash].filter(cm =>
+                    !Array.from(localKeys).some(k => k === cm.user_hash) && cm.status === 'active'
+                  )
+                  if (cloudOnly.length === 0) return null
+                  return (
+                    <div className="mb-4">
+                      <h6 className="text-xs font-medium text-text-muted mb-1">Cloud-only members</h6>
+                      <ul className="flex flex-col gap-1">
+                        {cloudOnly.map(cm => (
+                          <li key={cm.user_hash} className="flex justify-between items-center text-sm p-2 bg-bg-surface border border-border/30 rounded opacity-75">
+                            <div>
+                              <span className="text-xs text-text-muted font-mono">{cm.user_hash.substring(0, 16)}...</span>
+                              <span className="ml-2 text-xs px-1.5 py-0.5 rounded bg-primary/10 text-primary">{cm.role}</span>
+                            </div>
+                          </li>
+                        ))}
+                      </ul>
+                    </div>
+                  )
+                })()}
 
                 {org.role === 'Admin' && (
                   <form onSubmit={(e) => handleAddMember(e, org.org_hash)} className="flex gap-2 items-end mt-4 pt-4 border-t border-border/50">

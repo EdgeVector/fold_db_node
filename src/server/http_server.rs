@@ -837,6 +837,10 @@ impl FoldHttpServer {
                     web::delete().to(org_routes::remove_member),
                 )
                 .route(
+                    "/{org_hash}/cloud-members",
+                    web::get().to(org_routes::get_cloud_members),
+                )
+                .route(
                     "/{org_hash}/invite",
                     web::post().to(org_routes::generate_invite),
                 )
