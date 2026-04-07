@@ -207,28 +207,23 @@ pub async fn perform_smart_folder_scan_with_progress(
             let ambiguous_recs = if let Some(svc) = service {
                 report(
                     30,
-                    format!(
-                        "Classifying {} ambiguous files with AI...",
-                        ambiguous.len(),
-                    ),
+                    format!("Classifying {} ambiguous files with AI...", ambiguous.len(),),
                 );
                 let tree_display = build_directory_tree_string(&ambiguous);
                 let prompt = create_smart_folder_prompt(&tree_display, &ambiguous);
                 match call_llm_for_file_analysis(&prompt, svc).await {
-                    Ok(response) => {
-                        match parse_llm_file_recommendations(&response, &ambiguous) {
-                            Ok(recs) => recs,
-                            Err(e) => {
-                                log_feature!(
+                    Ok(response) => match parse_llm_file_recommendations(&response, &ambiguous) {
+                        Ok(recs) => recs,
+                        Err(e) => {
+                            log_feature!(
                                     LogFeature::Ingestion,
                                     warn,
                                     "LLM classification response unparseable: {}. Falling back to heuristics.",
                                     e
                                 );
-                                apply_heuristic_filtering(&ambiguous)
-                            }
+                            apply_heuristic_filtering(&ambiguous)
                         }
-                    }
+                    },
                     Err(e) => {
                         log_feature!(
                             LogFeature::Ingestion,
