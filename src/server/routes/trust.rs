@@ -835,3 +835,79 @@ pub async fn verify_invite_code(
         Err(e) => actix_web::HttpResponse::BadRequest().json(serde_json::json!({"error": e})),
     }
 }
+
+// ===== Sharing roles endpoints =====
+
+/// GET /api/sharing/roles — list all role definitions
+pub async fn list_sharing_roles(state: web::Data<AppState>) -> impl Responder {
+    let (_user_hash, _node) = node_or_return!(state);
+    let config = crate::trust::sharing_roles::SharingRoleConfig::load().unwrap_or_default();
+    actix_web::HttpResponse::Ok().json(serde_json::json!({"roles": config.roles}))
+}
+
+#[derive(Debug, Deserialize)]
+pub struct AssignRoleRequest {
+    pub role_name: String,
+}
+
+/// POST /api/contacts/{key}/role — assign a role to a contact
+pub async fn assign_contact_role(
+    path: web::Path<String>,
+    body: web::Json<AssignRoleRequest>,
+    state: web::Data<AppState>,
+) -> impl Responder {
+    let public_key = path.into_inner();
+    let (user_hash, node) = node_or_return!(state);
+    let op = OperationProcessor::new(node.clone());
+    handler_result_to_response(
+        async {
+            op.assign_role_to_contact(&public_key, &body.role_name)
+                .await
+                .handler_err("assign role")?;
+            Ok(ApiResponse::success_with_user(
+                serde_json::json!({"assigned": true, "role": body.role_name}),
+                user_hash,
+            ))
+        }
+        .await,
+    )
+}
+
+/// DELETE /api/contacts/{key}/role/{domain} — remove role from contact in domain
+pub async fn remove_contact_role(
+    path: web::Path<(String, String)>,
+    state: web::Data<AppState>,
+) -> impl Responder {
+    let (public_key, domain) = path.into_inner();
+    let (user_hash, node) = node_or_return!(state);
+    let op = OperationProcessor::new(node.clone());
+    handler_result_to_response(
+        async {
+            op.remove_role_from_contact(&public_key, &domain)
+                .await
+                .handler_err("remove role")?;
+            Ok(ApiResponse::success_with_user(
+                serde_json::json!({"removed": true, "domain": domain}),
+                user_hash,
+            ))
+        }
+        .await,
+    )
+}
+
+/// GET /api/sharing/audit/{key} — audit what a contact can see
+pub async fn sharing_audit(path: web::Path<String>, state: web::Data<AppState>) -> impl Responder {
+    let public_key = path.into_inner();
+    let (user_hash, node) = node_or_return!(state);
+    let op = OperationProcessor::new(node.clone());
+    handler_result_to_response(
+        async {
+            let result = op
+                .audit_contact_access(&public_key)
+                .await
+                .handler_err("sharing audit")?;
+            Ok(ApiResponse::success_with_user(result, user_hash))
+        }
+        .await,
+    )
+}

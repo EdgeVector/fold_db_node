@@ -1,7 +1,9 @@
 use fold_db::access::{AuditAction, AuditEvent};
+use fold_db::schema::types::field::Field;
 use fold_db::schema::SchemaError;
 
 use crate::trust::contact_book::ContactBook;
+use crate::trust::sharing_audit::{AccessibleSchema, SharingAuditResult};
 use crate::trust::sharing_roles::SharingRoleConfig;
 
 use super::OperationProcessor;
@@ -196,6 +198,97 @@ impl OperationProcessor {
             .map_err(|e| SchemaError::InvalidData(format!("Failed to save contacts: {e}")))?;
 
         Ok(())
+    }
+
+    // ===== Sharing Audit =====
+
+    /// Compute what a contact can access across all schemas and domains.
+    /// Returns readable/writable fields per schema based on the contact's
+    /// trust distances in each domain vs. field access policies.
+    pub async fn audit_contact_access(
+        &self,
+        public_key: &str,
+    ) -> Result<SharingAuditResult, SchemaError> {
+        let db = self.get_db().await.map_err(to_schema_err)?;
+        let owner = self.node.get_node_public_key().to_string();
+
+        // 1. Resolve distances across all domains
+        let domains = db.db_ops.list_trust_domains().await?;
+        let mut domain_distances = std::collections::HashMap::new();
+        for domain in &domains {
+            let graph = db.db_ops.load_trust_graph_for_domain(domain).await?;
+            if let Some(dist) = graph.resolve(public_key, &owner) {
+                domain_distances.insert(domain.clone(), dist);
+            }
+        }
+
+        // 2. Get contact info
+        let book = ContactBook::load()
+            .map_err(|e| SchemaError::InvalidData(format!("Failed to load contacts: {e}")))?;
+        let contact = book.get(public_key).filter(|c| !c.revoked);
+        let display_name = contact.map(|c| c.display_name.clone()).unwrap_or_default();
+        let domain_roles = contact.map(|c| c.roles.clone()).unwrap_or_default();
+
+        // 3. For each approved schema, check which fields are accessible
+        let schemas = db
+            .schema_manager
+            .get_schemas_with_states()
+            .map_err(|e| SchemaError::InvalidData(format!("Failed to list schemas: {e}")))?;
+        let mut accessible_schemas = Vec::new();
+        let mut total_readable = 0usize;
+        let mut total_writable = 0usize;
+
+        for sws in &schemas {
+            if sws.state != fold_db::schema::SchemaState::Approved {
+                continue;
+            }
+            let schema = &sws.schema;
+
+            // Determine the schema's trust domain
+            let schema_domain = schema.trust_domain.as_deref().unwrap_or("personal");
+
+            let mut readable = Vec::new();
+            let mut writable = Vec::new();
+
+            for (field_name, field) in &schema.runtime_fields {
+                if let Some(policy) = &field.common().access_policy {
+                    let domain = &policy.trust_domain;
+                    if let Some(&dist) = domain_distances.get(domain) {
+                        if policy.trust_distance.can_read(dist) {
+                            readable.push(field_name.clone());
+                        }
+                        if policy.trust_distance.can_write(dist) {
+                            writable.push(field_name.clone());
+                        }
+                    }
+                } else {
+                    // No policy = legacy = granted (for now)
+                    readable.push(field_name.clone());
+                    writable.push(field_name.clone());
+                }
+            }
+
+            if !readable.is_empty() {
+                total_readable += readable.len();
+                total_writable += writable.len();
+                accessible_schemas.push(AccessibleSchema {
+                    schema_name: schema.name.clone(),
+                    trust_domain: schema_domain.to_string(),
+                    readable_fields: readable,
+                    writable_fields: writable,
+                });
+            }
+        }
+
+        Ok(SharingAuditResult {
+            contact_public_key: public_key.to_string(),
+            contact_display_name: display_name,
+            domain_distances,
+            domain_roles,
+            accessible_schemas,
+            total_readable,
+            total_writable,
+        })
     }
 
     // ===== Stub operations (not yet implemented) =====
