@@ -26,6 +26,7 @@ import SharedMomentsTab from './components/tabs/SharedMomentsTab'
 import AppleImportTab from './components/tabs/AppleImportTab'
 import MyProfileTab from './components/tabs/MyProfileTab'
 import ConflictsTab from './components/tabs/ConflictsTab'
+import TrustTab from './components/tabs/TrustTab'
 import SettingsModal from './components/SettingsModal'
 import OnboardingWizard, { ONBOARDING_STORAGE_KEY } from './components/onboarding/OnboardingWizard'
 
@@ -66,6 +67,7 @@ const HASH_TO_TAB = {
   'shared-moments': 'shared-moments',
   'my-profile': 'my-profile',
   conflicts: 'conflicts',
+  trust: 'trust',
 }
 
 function resolveTabFromHash() {
@@ -241,6 +243,8 @@ export function AppContent() {
         return <MyProfileTab onResult={handleOperationResult} />
       case 'conflicts':
         return <ConflictsTab />
+      case 'trust':
+        return <TrustTab onResult={handleOperationResult} />
       default:
         return null
     }
