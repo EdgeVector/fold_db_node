@@ -12,7 +12,6 @@ fn default_schema_service_url() -> String {
     fold_db_node::endpoints::schema_service_url()
 }
 
-
 #[derive(Serialize, Deserialize)]
 struct NodeIdentity {
     private_key: String,

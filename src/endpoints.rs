@@ -22,30 +22,28 @@ impl Environment {
 
 /// Schema service URL.
 pub fn schema_service_url() -> String {
-    std::env::var("FOLD_SCHEMA_SERVICE_URL").unwrap_or_else(|_| {
-        match Environment::from_env() {
-            Environment::Dev => "https://y0q3m6vk75.execute-api.us-west-2.amazonaws.com".to_string(),
-            Environment::Prod => "https://axo709qs11.execute-api.us-east-1.amazonaws.com".to_string(),
-        }
+    std::env::var("FOLD_SCHEMA_SERVICE_URL").unwrap_or_else(|_| match Environment::from_env() {
+        Environment::Dev => "https://y0q3m6vk75.execute-api.us-west-2.amazonaws.com".to_string(),
+        Environment::Prod => "https://axo709qs11.execute-api.us-east-1.amazonaws.com".to_string(),
     })
 }
 
 /// Exemem API URL (auth, sync, etc.).
 pub fn exemem_api_url() -> String {
-    std::env::var("EXEMEM_API_URL").unwrap_or_else(|_| {
-        match Environment::from_env() {
-            Environment::Dev => "https://ygyu7ritx8.execute-api.us-west-2.amazonaws.com".to_string(),
-            Environment::Prod => "https://jdsx4ixk2i.execute-api.us-east-1.amazonaws.com".to_string(),
-        }
+    std::env::var("EXEMEM_API_URL").unwrap_or_else(|_| match Environment::from_env() {
+        Environment::Dev => "https://ygyu7ritx8.execute-api.us-west-2.amazonaws.com".to_string(),
+        Environment::Prod => "https://jdsx4ixk2i.execute-api.us-east-1.amazonaws.com".to_string(),
     })
 }
 
 /// Discovery service URL.
 pub fn discovery_service_url() -> String {
-    std::env::var("DISCOVERY_SERVICE_URL").unwrap_or_else(|_| {
-        match Environment::from_env() {
-            Environment::Dev => "https://ygyu7ritx8.execute-api.us-west-2.amazonaws.com/api".to_string(),
-            Environment::Prod => "https://jdsx4ixk2i.execute-api.us-east-1.amazonaws.com/api".to_string(),
+    std::env::var("DISCOVERY_SERVICE_URL").unwrap_or_else(|_| match Environment::from_env() {
+        Environment::Dev => {
+            "https://ygyu7ritx8.execute-api.us-west-2.amazonaws.com/api".to_string()
+        }
+        Environment::Prod => {
+            "https://jdsx4ixk2i.execute-api.us-east-1.amazonaws.com/api".to_string()
         }
     })
 }
