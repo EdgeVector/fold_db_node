@@ -460,13 +460,35 @@ function SchemaTab({ onResult, onSchemaUpdated }) {
   }
 
   const approvedSchemas = useAppSelector(selectApprovedSchemas)
+  const [schemaFilter, setSchemaFilter] = useState('all') // 'all' | 'personal' | 'org'
+
+  const filteredSchemas = approvedSchemas.filter(s => {
+    if (schemaFilter === 'personal') return !s.org_hash
+    if (schemaFilter === 'org') return !!s.org_hash
+    return true
+  })
 
   return (
     <div className="space-y-4">
-      {approvedSchemas.length > 0 ? (
-        approvedSchemas.map(renderSchema)
+      <div className="flex items-center gap-2">
+        {['all', 'personal', 'org'].map(f => (
+          <button
+            key={f}
+            onClick={() => setSchemaFilter(f)}
+            className={`px-3 py-1 text-xs rounded-full border ${
+              schemaFilter === f
+                ? 'border-primary text-primary bg-primary/10'
+                : 'border-border text-secondary hover:text-primary'
+            }`}
+          >
+            {f.charAt(0).toUpperCase() + f.slice(1)}
+          </button>
+        ))}
+      </div>
+      {filteredSchemas.length > 0 ? (
+        filteredSchemas.map(renderSchema)
       ) : (
-        <p className="text-secondary">No approved schemas found.</p>
+        <p className="text-secondary">No {schemaFilter === 'all' ? 'approved' : schemaFilter} schemas found.</p>
       )}
     </div>
   )

@@ -171,6 +171,7 @@ pub(crate) fn spawn_file_ingestion_tasks(
                     &upload_storage,
                     &encryption_key,
                     force_reingest,
+                    None,
                 )
                 .await
                 {
@@ -205,6 +206,7 @@ pub(crate) async fn process_single_file_via_smart_folder(
     upload_storage: &fold_db::storage::UploadStorage,
     encryption_key: &[u8; 32],
     force_reingest: bool,
+    org_hash: Option<&str>,
 ) -> Result<(), String> {
     // Try native parser first (handles json, js/Twitter, csv, txt, md),
     // fall back to file_to_markdown for unsupported types (images, PDFs, etc.)
@@ -315,7 +317,7 @@ pub(crate) async fn process_single_file_via_smart_folder(
         file_hash: Some(file_hash),
         source_folder: file_path.parent().map(|p| p.to_string_lossy().to_string()),
         image_descriptive_name,
-        org_hash: None,
+        org_hash: org_hash.map(|s| s.to_string()),
     };
 
     service
