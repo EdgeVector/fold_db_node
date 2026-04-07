@@ -196,7 +196,7 @@ jobs:
       - name: Generate checksums
         run: |
           cd artifacts
-          find . -name '*.dmg' -exec cp {} . \;
+          find . -type f -name '*.dmg' -exec cp {} . \;
           shasum -a 256 *.dmg > SHA256SUMS.txt
           cat SHA256SUMS.txt
 
