@@ -1,27 +1,26 @@
 //! End-to-end integration tests for sharing roles, domain-aware trust,
 //! and the sharing audit system.
 
-use fold_db::access::types::{
-    FieldAccessPolicy, TrustDistancePolicy, DOMAIN_HEALTH, DOMAIN_PERSONAL,
-};
+use fold_db::access::types::{FieldAccessPolicy, TrustDistancePolicy};
 use fold_db::schema::types::declarative_schemas::DeclarativeSchemaDefinition;
 use fold_db::schema::types::field::Field;
 use fold_db::schema::types::key_config::KeyConfig;
-use fold_db::schema::types::operations::{MutationType, Query};
 use fold_db::schema::types::schema::DeclarativeSchemaType as SchemaType;
-use fold_db::schema::types::{KeyValue, Mutation};
 use fold_db::schema::SchemaState;
 use fold_db::security::Ed25519KeyPair;
 use fold_db_node::fold_node::{FoldNode, NodeConfig, OperationProcessor};
-use serde_json::json;
+
 use std::collections::HashMap;
 use tempfile::tempdir;
 
 async fn setup_node() -> (OperationProcessor, FoldNode, String) {
-    let temp_dir = tempdir().unwrap();
+    let temp_dir = tempdir().expect("tempdir");
+    let path = temp_dir.path().to_path_buf();
+    // Set FOLDDB_HOME so contact book/roles/etc. use this test's temp dir
+    std::env::set_var("FOLDDB_HOME", &path);
     let keypair = Ed25519KeyPair::generate().unwrap();
     let pub_key = keypair.public_key_base64();
-    let config = NodeConfig::new(temp_dir.into_path())
+    let config = NodeConfig::new(path)
         .with_schema_service_url("test://mock")
         .with_identity(&pub_key, &keypair.secret_key_base64());
     let node = FoldNode::new(config).await.unwrap();
@@ -182,7 +181,7 @@ async fn test_role_removal_revokes_domain_trust() {
 
 #[tokio::test]
 async fn test_sharing_audit_with_domain_policies() {
-    let (op, node, pub_key) = setup_node().await;
+    let (op, node, _pub_key) = setup_node().await;
 
     // Create schemas with different domain policies
     load_schema_with_policy(&node, "PersonalNotes", "personal", 3).await;
