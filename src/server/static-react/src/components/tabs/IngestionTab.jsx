@@ -14,10 +14,19 @@ function IngestionTab({ onResult }) {
   const [selectedOrg, setSelectedOrg] = useState('')
 
   useEffect(() => {
-    defaultApiClient.get('/org').then(res => {
-      const data = res.data || res
-      setOrgs(data.orgs || [])
-    }).catch(() => {})
+    const fetchOrgs = () => {
+      const hash = localStorage.getItem('fold_user_hash')
+      if (!hash) {
+        // Auth not ready yet, retry in 1 second
+        setTimeout(fetchOrgs, 1000)
+        return
+      }
+      defaultApiClient.get('/org').then(res => {
+        const data = res.data || res
+        setOrgs(data.orgs || [])
+      }).catch(() => {})
+    }
+    fetchOrgs()
   }, [])
 
   const processIngestion = async () => {

@@ -15,6 +15,7 @@ export default function OrgSettingsPanel() {
   const [orgs, setOrgs] = useState([])
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState(null)
+  const [successMsg, setSuccessMsg] = useState(null)
   const [nodePublicKey, setNodePublicKey] = useState(null)
   const [keyCopied, setKeyCopied] = useState(false)
   const [orgSyncStatuses, setOrgSyncStatuses] = useState({})
@@ -24,9 +25,19 @@ export default function OrgSettingsPanel() {
   const [newMemberName, setNewMemberName] = useState('')
 
   const syncPollRef = useRef(null)
+  const retryRef = useRef(false)
 
   useEffect(() => {
-    fetchOrgs()
+    const doFetch = () => {
+      const hash = localStorage.getItem('fold_user_hash')
+      if (!hash) {
+        // Auth not ready yet, retry in 1 second
+        const timer = setTimeout(doFetch, 1000)
+        return () => clearTimeout(timer)
+      }
+      fetchOrgs()
+    }
+    doFetch()
     systemClient.getNodePublicKey().then(res => {
       if (res.data?.public_key) setNodePublicKey(res.data.public_key)
     }).catch(() => {})
@@ -58,13 +69,24 @@ export default function OrgSettingsPanel() {
     }
   }
 
+  const showSuccess = (msg) => {
+    setSuccessMsg(msg)
+    setTimeout(() => setSuccessMsg(null), 3000)
+  }
+
   const fetchOrgs = async () => {
     try {
       setLoading(true)
       const res = await defaultApiClient.get('/org')
       const data = res.data || res
-      setOrgs(data.orgs || [])
+      const orgList = data.orgs || []
+      setOrgs(orgList)
       setError(null)
+      // If we got 0 orgs and no error, auth might not be ready — retry once
+      if (orgList.length === 0 && !retryRef.current) {
+        retryRef.current = true
+        setTimeout(fetchOrgs, 2000)
+      }
     } catch (err) {
       setError(err.message || 'Failed to fetch organizations')
     } finally {
@@ -76,8 +98,10 @@ export default function OrgSettingsPanel() {
     e.preventDefault()
     if (!newOrgName.trim()) return
     try {
-      await defaultApiClient.post('/org', { name: newOrgName })
+      const orgName = newOrgName
+      await defaultApiClient.post('/org', { name: orgName })
       setNewOrgName('')
+      showSuccess(`Organization "${orgName}" created!`)
       fetchOrgs()
     } catch (err) {
       setError(err.message || 'Failed to create org')
@@ -88,12 +112,14 @@ export default function OrgSettingsPanel() {
     e.preventDefault()
     if (!newMemberKey.trim() || !newMemberName.trim()) return
     try {
+      const memberName = newMemberName
       await defaultApiClient.post(`/org/${orgHash}/members`, {
         node_public_key: newMemberKey,
-        display_name: newMemberName
+        display_name: memberName
       })
       setNewMemberKey('')
       setNewMemberName('')
+      showSuccess(`Invite sent to ${memberName}!`)
       fetchOrgs()
     } catch (err) {
       setError(err.message || 'Failed to add member')
@@ -137,6 +163,12 @@ export default function OrgSettingsPanel() {
           Manage your data-sharing organizations and memberships.
         </p>
       </div>
+
+      {successMsg && (
+        <div className="p-3 bg-green-900/30 border border-green-500/50 text-green-400 rounded-md text-sm">
+          {successMsg}
+        </div>
+      )}
 
       {error && (
         <div className="p-3 bg-red-900/30 border border-red-500/50 text-red-400 rounded-md text-sm">
