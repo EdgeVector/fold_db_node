@@ -180,9 +180,22 @@ impl NodeManager {
         // lock conflicts in multi-node setups.
         std::env::set_var("FOLD_STORAGE_PATH", node_config.get_storage_path());
 
+        // Build auth-refresh callback for Exemem mode so the sync engine can
+        // automatically recover from expired tokens (401) by re-registering.
+        let auth_refresh = if matches!(&node_config.database, DatabaseConfig::Exemem { .. }) {
+            Some(crate::server::routes::auth::build_auth_refresh_callback())
+        } else {
+            None
+        };
+
         // Create FoldDB with user context set
         let db = fold_db::logging::core::run_with_user(user_id, async {
-            factory::create_fold_db(&node_config.database, &e2e_keys).await
+            factory::create_fold_db_with_auth_refresh(
+                &node_config.database,
+                &e2e_keys,
+                auth_refresh,
+            )
+            .await
         })
         .await
         .map_err(|e| NodeManagerError::StorageError(e.to_string()))?;
