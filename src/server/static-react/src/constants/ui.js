@@ -39,6 +39,8 @@ export const DEFAULT_TABS = [
   // Network
   { id: "discovery", label: "Discovery", icon: "🌐", group: "advanced" },
   { id: "discovery-browse", label: "Browse Network", icon: "🔎", group: "advanced" },
+  // Access control
+  { id: "trust", label: "Trust Graph", icon: "🔑", group: "advanced" },
   // Sync
   { id: "conflicts", label: "Sync Conflicts", icon: "⚡", group: "advanced" },
 ];
