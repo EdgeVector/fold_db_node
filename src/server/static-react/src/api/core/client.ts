@@ -678,6 +678,8 @@ export function createApiClient(config?: ApiClientConfig): ApiClient {
   if (!config || Object.keys(config).length === 0) {
     return getSharedClient();
   }
-  // Custom config gets a new instance
-  return new ApiClient(config);
+  // Custom config gets a new instance with signature interceptor
+  const client = new ApiClient(config);
+  client.addRequestInterceptor(createSignatureInterceptor());
+  return client;
 }
