@@ -77,7 +77,7 @@ export default function OrgSettingsPanel() {
   const fetchOrgs = async () => {
     try {
       setLoading(true)
-      const res = await defaultApiClient.get('/org')
+      const res = await defaultApiClient.get('/org', { cacheable: false })
       const data = res.data || res
       const orgList = data.orgs || []
       setOrgs(orgList)

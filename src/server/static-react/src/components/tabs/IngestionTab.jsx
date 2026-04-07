@@ -21,7 +21,7 @@ function IngestionTab({ onResult }) {
         setTimeout(fetchOrgs, 1000)
         return
       }
-      defaultApiClient.get('/org').then(res => {
+      defaultApiClient.get('/org', { cacheable: false }).then(res => {
         const data = res.data || res
         setOrgs(data.orgs || [])
       }).catch(() => {})
