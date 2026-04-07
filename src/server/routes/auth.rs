@@ -339,6 +339,118 @@ async fn signed_register(
     Ok(json)
 }
 
+// ============================================================================
+// Standalone auth refresh (no AppState dependency)
+// ============================================================================
+
+/// Refresh Exemem credentials by re-registering with the node's Ed25519 keypair.
+///
+/// This is a standalone function that does NOT depend on `AppState` or any HTTP
+/// server context. It loads the node identity from the persisted identity file,
+/// signs a register request, calls the Exemem CLI register endpoint, stores the
+/// new credentials locally, and returns a `SyncAuth` for the sync engine.
+///
+/// Used as the `AuthRefreshCallback` for the sync engine so it can automatically
+/// recover from 401 errors (e.g., expired session tokens).
+async fn refresh_auth_standalone() -> Result<fold_db::sync::auth::SyncAuth, String> {
+    // 1. Load the node's persisted identity (Ed25519 keypair)
+    let folddb_home = crate::utils::paths::folddb_home()
+        .map_err(|e| format!("Cannot resolve FOLDDB_HOME: {e}"))?;
+    let identity_path = folddb_home.join("config").join("node_identity.json");
+
+    let identity_json = std::fs::read_to_string(&identity_path)
+        .map_err(|e| format!("Failed to read node identity for auth refresh: {e}"))?;
+
+    #[derive(serde::Deserialize)]
+    struct Identity {
+        private_key: String,
+        public_key: String,
+    }
+    let identity: Identity = serde_json::from_str(&identity_json)
+        .map_err(|e| format!("Failed to parse node identity: {e}"))?;
+
+    // 2. Decode public key from base64 to hex (CLI register expects hex)
+    let public_key_hex = base64_to_hex(&identity.public_key)
+        .ok_or_else(|| "Failed to decode public key from base64".to_string())?;
+
+    // 3. Sign "{public_key_hex}:{timestamp}"
+    let timestamp = chrono::Utc::now().timestamp();
+    let payload = format!("{}:{}", public_key_hex, timestamp);
+    let signature_b64 = sign_payload(&identity.private_key, &payload)?;
+
+    // 4. POST to Exemem CLI register endpoint
+    let api_url = exemem_api_url();
+    let url = format!("{}/api/auth/cli/register", api_url);
+    let register_body = serde_json::json!({
+        "public_key": public_key_hex,
+        "timestamp": timestamp,
+        "signature": signature_b64
+    });
+
+    let client = reqwest::Client::new();
+    let resp = client
+        .post(&url)
+        .json(&register_body)
+        .send()
+        .await
+        .map_err(|e| format!("Auth refresh: failed to connect to Exemem API: {e}"))?;
+
+    let text = resp
+        .text()
+        .await
+        .map_err(|e| format!("Auth refresh: failed to read response: {e}"))?;
+
+    let json: serde_json::Value = serde_json::from_str(&text)
+        .map_err(|_| format!("Auth refresh: invalid JSON response: {text}"))?;
+
+    if !json.get("ok").and_then(|v| v.as_bool()).unwrap_or(false) {
+        let error = json
+            .get("error")
+            .and_then(|v| v.as_str())
+            .unwrap_or("Unknown error");
+        return Err(format!("Auth refresh: register failed: {error}"));
+    }
+
+    // 5. Extract and store new credentials
+    let session_token = json
+        .get("session_token")
+        .and_then(|v| v.as_str())
+        .ok_or_else(|| "Auth refresh: missing session_token in response".to_string())?;
+    let api_key = json
+        .get("api_key")
+        .and_then(|v| v.as_str())
+        .ok_or_else(|| "Auth refresh: missing api_key in response".to_string())?;
+    let user_hash = json
+        .get("user_hash")
+        .and_then(|v| v.as_str())
+        .ok_or_else(|| "Auth refresh: missing user_hash in response".to_string())?;
+
+    let creds = crate::keychain::ExememCredentials {
+        user_hash: user_hash.to_string(),
+        session_token: session_token.to_string(),
+        api_key: api_key.to_string(),
+        encryption_key: String::new(),
+    };
+    crate::keychain::store_credentials(&creds)
+        .map_err(|e| format!("Auth refresh: failed to store credentials: {e}"))?;
+
+    log::info!("Sync auth refreshed successfully via re-registration");
+
+    // Return the new session token as the sync auth credential
+    Ok(fold_db::sync::auth::SyncAuth::BearerToken(
+        session_token.to_string(),
+    ))
+}
+
+/// Build an `AuthRefreshCallback` for the sync engine.
+///
+/// The returned callback re-registers with the Exemem API using the node's
+/// persisted Ed25519 keypair, stores the new credentials locally, and returns
+/// the fresh `SyncAuth` token. No `AppState` or HTTP server context required.
+pub fn build_auth_refresh_callback() -> fold_db::sync::AuthRefreshCallback {
+    std::sync::Arc::new(|| Box::pin(refresh_auth_standalone()))
+}
+
 /// Sign a payload with the node's Ed25519 private key.
 /// Returns the base64-encoded signature.
 fn sign_payload(private_key_b64: &str, payload: &str) -> Result<String, String> {

@@ -173,8 +173,23 @@ impl FoldNode {
             }
         }
 
-        let db =
-            fold_db::fold_db_core::factory::create_fold_db(&config.database, &e2e_keys).await?;
+        // Build auth-refresh callback for Exemem mode so the sync engine can
+        // automatically recover from expired tokens (401) by re-registering.
+        let auth_refresh = if matches!(
+            &config.database,
+            fold_db::storage::config::DatabaseConfig::Exemem { .. }
+        ) {
+            Some(crate::server::routes::auth::build_auth_refresh_callback())
+        } else {
+            None
+        };
+
+        let db = fold_db::fold_db_core::factory::create_fold_db_with_auth_refresh(
+            &config.database,
+            &e2e_keys,
+            auth_refresh,
+        )
+        .await?;
         let node = Self::assemble(config, db, private_key, public_key, e2e_keys).await?;
         log_feature!(
             LogFeature::Database,
