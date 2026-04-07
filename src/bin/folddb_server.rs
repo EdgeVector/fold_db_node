@@ -1,5 +1,5 @@
 use clap::Parser;
-use fold_db::constants::{DEFAULT_HTTP_PORT, DEFAULT_SCHEMA_SERVICE_URL};
+use fold_db::constants::DEFAULT_HTTP_PORT;
 use fold_db_node::{
     fold_node::config::load_node_config,
     server::{
@@ -115,7 +115,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             path: data_path.clone(),
         };
         config.schema_service_url =
-            Some(schema_service_url.unwrap_or_else(|| DEFAULT_SCHEMA_SERVICE_URL.to_string()));
+            Some(schema_service_url.unwrap_or_else(fold_db_node::endpoints::schema_service_url));
 
         // Let ingestion config saves go to ~/.folddb/config
         std::env::set_var("FOLD_CONFIG_DIR", &config_path);
