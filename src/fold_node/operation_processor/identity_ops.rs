@@ -1,11 +1,53 @@
 use chrono::Utc;
 use fold_db::schema::SchemaError;
+use std::collections::HashSet;
+use std::path::PathBuf;
+use std::sync::Mutex;
 
 use crate::trust::contact_book::{Contact, ContactBook, TrustDirection};
 use crate::trust::identity_card::IdentityCard;
 use crate::trust::trust_invite::TrustInvite;
+use crate::utils::paths::folddb_home;
 
 use super::OperationProcessor;
+
+/// Track consumed invite nonces to prevent replay. Persisted to disk.
+static CONSUMED_NONCES: Mutex<Option<HashSet<String>>> = Mutex::new(None);
+
+const CONSUMED_NONCES_FILE: &str = "config/consumed_nonces.json";
+
+fn load_consumed_nonces() -> HashSet<String> {
+    let mut guard = CONSUMED_NONCES.lock().unwrap_or_else(|p| p.into_inner());
+    if let Some(ref set) = *guard {
+        return set.clone();
+    }
+    let path = folddb_home()
+        .map(|h| h.join(CONSUMED_NONCES_FILE))
+        .unwrap_or_else(|_| PathBuf::from(CONSUMED_NONCES_FILE));
+    let set = if path.exists() {
+        std::fs::read_to_string(&path)
+            .ok()
+            .and_then(|s| serde_json::from_str(&s).ok())
+            .unwrap_or_default()
+    } else {
+        HashSet::new()
+    };
+    *guard = Some(set.clone());
+    set
+}
+
+fn save_consumed_nonce(nonce: &str) {
+    let mut guard = CONSUMED_NONCES.lock().unwrap_or_else(|p| p.into_inner());
+    let set = guard.get_or_insert_with(HashSet::new);
+    set.insert(nonce.to_string());
+    let path = folddb_home()
+        .map(|h| h.join(CONSUMED_NONCES_FILE))
+        .unwrap_or_else(|_| PathBuf::from(CONSUMED_NONCES_FILE));
+    if let Some(parent) = path.parent() {
+        let _ = std::fs::create_dir_all(parent);
+    }
+    let _ = std::fs::write(&path, serde_json::to_string(set).unwrap_or_default());
+}
 
 /// Identity card and contact book operations.
 impl OperationProcessor {
@@ -71,7 +113,7 @@ impl OperationProcessor {
         accept_distance: Option<u64>,
         trust_back: bool,
     ) -> Result<Option<TrustInvite>, SchemaError> {
-        // Verify the invite signature
+        // Verify the invite signature and expiry
         let valid = invite
             .verify()
             .map_err(|e| SchemaError::InvalidData(format!("Failed to verify invite: {e}")))?;
@@ -81,17 +123,32 @@ impl OperationProcessor {
             ));
         }
 
+        // Replay prevention: check nonce hasn't been consumed
+        let consumed = load_consumed_nonces();
+        if consumed.contains(&invite.nonce) {
+            return Err(SchemaError::PermissionDenied(
+                "Trust invite has already been used (replay detected)".to_string(),
+            ));
+        }
+
+        // Validate accept_distance: must be >= 1 (distance 0 is owner-only)
         let distance = accept_distance.unwrap_or(invite.proposed_distance);
+        if distance == 0 {
+            return Err(SchemaError::InvalidData(
+                "Trust distance must be >= 1 (distance 0 is reserved for the owner)".to_string(),
+            ));
+        }
 
         // Add to trust graph
         self.grant_trust(&invite.sender_pub_key, distance).await?;
 
+        // Mark nonce as consumed
+        save_consumed_nonce(&invite.nonce);
+
         // Add to contact book
-        let direction = if trust_back {
-            TrustDirection::Mutual
-        } else {
-            TrustDirection::Incoming
-        };
+        // Direction is Outgoing (you trust them) — becomes Mutual only when
+        // the other side also accepts your reciprocal invite.
+        let direction = TrustDirection::Outgoing;
 
         let contact = Contact {
             public_key: invite.sender_pub_key.clone(),
