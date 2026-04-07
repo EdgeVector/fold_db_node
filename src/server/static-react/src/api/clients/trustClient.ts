@@ -260,7 +260,7 @@ export async function assignRoleToContact(
   roleName: string,
 ): Promise<EnhancedApiResponse<{ assigned: boolean; role: string }>> {
   return client.post<{ assigned: boolean; role: string }>(
-    `/contacts/${encodeURIComponent(publicKey)}/role`,
+    `/sharing/assign/${encodeURIComponent(publicKey)}`,
     { role_name: roleName },
   );
 }
@@ -270,7 +270,7 @@ export async function removeRoleFromContact(
   domain: string,
 ): Promise<EnhancedApiResponse<{ removed: boolean; domain: string }>> {
   return client.delete<{ removed: boolean; domain: string }>(
-    `/contacts/${encodeURIComponent(publicKey)}/role/${encodeURIComponent(domain)}`,
+    `/sharing/remove/${encodeURIComponent(publicKey)}/${encodeURIComponent(domain)}`,
   );
 }
 
