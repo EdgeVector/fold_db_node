@@ -8,14 +8,17 @@ export default function PendingInvitesModal({ isOpen, onClose, pendingInvites, s
 
   if (!isOpen) return null;
 
+  // Use org_public_key as the unique identifier since org_hash is not in the invite bundle
+  const inviteId = (invite) => invite.org_public_key || invite.org_name;
+
   const handleAccept = async (invite) => {
+    const id = inviteId(invite);
     try {
-      setLoadingIds(prev => new Set(prev).add(invite.org_hash));
+      setLoadingIds(prev => new Set(prev).add(id));
       setError(null);
       const res = await orgClient.joinOrg(invite);
       if (res.data) {
-        // remove accepted invite from list
-        setPendingInvites(prev => prev.filter(inv => inv.org_hash !== invite.org_hash));
+        setPendingInvites(prev => prev.filter(inv => inviteId(inv) !== id));
       }
     } catch (err) {
       console.error('Failed to accept invite', err);
@@ -23,25 +26,30 @@ export default function PendingInvitesModal({ isOpen, onClose, pendingInvites, s
     } finally {
       setLoadingIds(prev => {
         const next = new Set(prev);
-        next.delete(invite.org_hash);
+        next.delete(id);
         return next;
       });
     }
   };
 
   const handleDecline = async (invite) => {
+    const id = inviteId(invite);
     try {
-      setLoadingIds(prev => new Set(prev).add(invite.org_hash));
+      setLoadingIds(prev => new Set(prev).add(id));
       setError(null);
-      await orgClient.declineInvite(invite.org_hash);
-      setPendingInvites(prev => prev.filter(inv => inv.org_hash !== invite.org_hash));
+      // declineInvite needs org_hash, but the invite bundle only has org_public_key.
+      // The backend join response returns org_hash, but for decline we need to derive it.
+      // For now, pass the org_public_key — the backend will need to handle this.
+      // TODO: add org_hash to the invite bundle on the backend
+      await orgClient.declineInvite(invite.org_hash || invite.org_public_key);
+      setPendingInvites(prev => prev.filter(inv => inviteId(inv) !== id));
     } catch (err) {
       console.error('Failed to decline invite', err);
       setError(err.message || 'Failed to decline. Try again.');
     } finally {
       setLoadingIds(prev => {
         const next = new Set(prev);
-        next.delete(invite.org_hash);
+        next.delete(id);
         return next;
       });
     }
@@ -50,7 +58,7 @@ export default function PendingInvitesModal({ isOpen, onClose, pendingInvites, s
   return (
     <div className="fixed inset-0 bg-background/80 backdrop-blur-sm z-50 flex items-center justify-center p-4">
       <div className="bg-surface border border-border rounded-xl shadow-xl max-w-md w-full overflow-hidden flex flex-col max-h-[85vh]">
-        
+
         {/* Header */}
         <div className="px-6 py-4 border-b border-border flex items-center justify-between sticky top-0 bg-surface">
           <div className="flex items-center gap-3">
@@ -62,7 +70,7 @@ export default function PendingInvitesModal({ isOpen, onClose, pendingInvites, s
               <p className="text-sm text-secondary">Secure end-to-end encrypted invites</p>
             </div>
           </div>
-          <button 
+          <button
             onClick={onClose}
             className="p-2 text-tertiary hover:text-primary rounded-lg hover:bg-surface-hover transition-colors"
           >
@@ -89,9 +97,10 @@ export default function PendingInvitesModal({ isOpen, onClose, pendingInvites, s
           ) : (
             <div className="space-y-4">
               {pendingInvites.map((invite) => {
-                const isLoading = loadingIds.has(invite.org_hash);
+                const id = inviteId(invite);
+                const isLoading = loadingIds.has(id);
                 return (
-                  <div key={invite.org_hash} className="p-4 rounded-xl border border-border bg-surface-hover transition-all">
+                  <div key={id} className="p-4 rounded-xl border border-border bg-surface-hover transition-all">
                     <div className="flex items-start justify-between gap-4 mb-4">
                       <div className="flex items-center gap-3">
                         <div className="p-2 bg-background rounded-lg border border-border">
@@ -100,12 +109,12 @@ export default function PendingInvitesModal({ isOpen, onClose, pendingInvites, s
                         <div>
                           <h4 className="text-primary font-medium">{invite.org_name || 'Unknown Organization'}</h4>
                           <p className="text-xs text-tertiary font-mono truncate max-w-[200px]">
-                            {invite.org_hash.slice(0, 8)}...
+                            {(invite.org_public_key || '').slice(0, 12)}...
                           </p>
                         </div>
                       </div>
                     </div>
-                    
+
                     <div className="text-sm text-secondary space-y-1 mb-5 bg-background p-3 rounded-lg border border-border font-mono">
                       <div><span className="text-tertiary">Role:</span> {invite.invited_role || 'member'}</div>
                       <div><span className="text-tertiary">From:</span> {invite.invited_by?.slice(0,8) || 'admin'}...</div>
