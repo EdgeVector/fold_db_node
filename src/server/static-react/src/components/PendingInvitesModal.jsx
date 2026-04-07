@@ -8,8 +8,8 @@ export default function PendingInvitesModal({ isOpen, onClose, pendingInvites, s
 
   if (!isOpen) return null;
 
-  // Use org_public_key as the unique identifier since org_hash is not in the invite bundle
-  const inviteId = (invite) => invite.org_public_key || invite.org_name;
+  // Prefer org_hash (now included in OrgInviteBundle) as the unique identifier
+  const inviteId = (invite) => invite.org_hash || invite.org_public_key || invite.org_name;
 
   const handleAccept = async (invite) => {
     const id = inviteId(invite);
@@ -18,7 +18,14 @@ export default function PendingInvitesModal({ isOpen, onClose, pendingInvites, s
       setError(null);
       const res = await orgClient.joinOrg(invite);
       if (res.data) {
-        setPendingInvites(prev => prev.filter(inv => inviteId(inv) !== id));
+        setPendingInvites(prev => {
+          const remaining = prev.filter(inv => inviteId(inv) !== id);
+          if (remaining.length === 0) {
+            // Auto-close modal when last invite is accepted
+            setTimeout(() => onClose(), 500);
+          }
+          return remaining;
+        });
       }
     } catch (err) {
       console.error('Failed to accept invite', err);
@@ -37,12 +44,15 @@ export default function PendingInvitesModal({ isOpen, onClose, pendingInvites, s
     try {
       setLoadingIds(prev => new Set(prev).add(id));
       setError(null);
-      // declineInvite needs org_hash, but the invite bundle only has org_public_key.
-      // The backend join response returns org_hash, but for decline we need to derive it.
-      // For now, pass the org_public_key — the backend will need to handle this.
-      // TODO: add org_hash to the invite bundle on the backend
+      // org_hash is now included in OrgInviteBundle; fall back to org_public_key for older invites
       await orgClient.declineInvite(invite.org_hash || invite.org_public_key);
-      setPendingInvites(prev => prev.filter(inv => inviteId(inv) !== id));
+      setPendingInvites(prev => {
+        const remaining = prev.filter(inv => inviteId(inv) !== id);
+        if (remaining.length === 0) {
+          setTimeout(() => onClose(), 500);
+        }
+        return remaining;
+      });
     } catch (err) {
       console.error('Failed to decline invite', err);
       setError(err.message || 'Failed to decline. Try again.');
