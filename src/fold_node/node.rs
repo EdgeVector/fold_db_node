@@ -823,6 +823,23 @@ impl FoldNode {
         Ok(Arc::new(LocalCryptoProvider::from_key(key)))
     }
 
+    /// Trigger an immediate sync cycle.
+    ///
+    /// Used after operations like org join where waiting for the timer-based
+    /// sync would leave the user seeing stale/empty data.
+    pub async fn trigger_immediate_sync(&self) {
+        let db_guard = self.db.lock().await;
+        let sync_engine = match db_guard.sync_engine() {
+            Some(engine) => Arc::clone(engine),
+            None => return,
+        };
+        drop(db_guard);
+
+        if let Err(e) = sync_engine.sync().await {
+            log::warn!("Immediate sync trigger failed: {}", e);
+        }
+    }
+
     /// Get the org sync status for a specific organization.
     ///
     /// Returns sync state, pending count, member list, and last sync time
