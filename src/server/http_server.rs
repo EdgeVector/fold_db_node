@@ -772,6 +772,14 @@ impl FoldHttpServer {
                 .route(
                     "/invite/preview",
                     web::post().to(trust_routes::preview_trust_invite),
+                )
+                .route(
+                    "/invite/share",
+                    web::post().to(trust_routes::share_trust_invite),
+                )
+                .route(
+                    "/invite/fetch",
+                    web::get().to(trust_routes::fetch_shared_invite),
                 ),
         )
         .route(

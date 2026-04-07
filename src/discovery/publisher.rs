@@ -475,4 +475,65 @@ impl DiscoveryPublisher {
 
         Ok(poll_response.requests)
     }
+
+    // ===== Trust Invite Relay =====
+
+    /// Upload a trust invite token to the discovery service, returning a short invite ID.
+    pub async fn store_trust_invite(&self, token: &str) -> Result<String, String> {
+        let response = self
+            .http_client
+            .post(format!("{}/discover/trust-invite", self.discovery_url))
+            .header("Authorization", format!("Bearer {}", self.auth_token))
+            .json(&serde_json::json!({ "token": token }))
+            .send()
+            .await
+            .map_err(|e| format!("Failed to store trust invite: {e}"))?;
+
+        if !response.status().is_success() {
+            let status = response.status();
+            let body = response.text().await.unwrap_or_default();
+            return Err(format!("Store trust invite failed ({status}): {body}"));
+        }
+
+        let resp: serde_json::Value = response
+            .json()
+            .await
+            .map_err(|e| format!("Failed to parse response: {e}"))?;
+
+        resp.get("invite_id")
+            .and_then(|v| v.as_str())
+            .map(|s| s.to_string())
+            .ok_or_else(|| "Response missing invite_id".to_string())
+    }
+
+    /// Fetch a trust invite token from the discovery service by ID. One-time use.
+    pub async fn fetch_trust_invite(&self, invite_id: &str) -> Result<String, String> {
+        let url = format!(
+            "{}/discover/trust-invite?id={}",
+            self.discovery_url, invite_id
+        );
+        let response = self
+            .http_client
+            .get(&url)
+            .header("Authorization", format!("Bearer {}", self.auth_token))
+            .send()
+            .await
+            .map_err(|e| format!("Failed to fetch trust invite: {e}"))?;
+
+        if !response.status().is_success() {
+            let status = response.status();
+            let body = response.text().await.unwrap_or_default();
+            return Err(format!("Fetch trust invite failed ({status}): {body}"));
+        }
+
+        let resp: serde_json::Value = response
+            .json()
+            .await
+            .map_err(|e| format!("Failed to parse response: {e}"))?;
+
+        resp.get("token")
+            .and_then(|v| v.as_str())
+            .map(|s| s.to_string())
+            .ok_or_else(|| "Response missing token".to_string())
+    }
 }
