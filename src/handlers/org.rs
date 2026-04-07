@@ -163,6 +163,9 @@ pub async fn join_org(
     // Reconfigure org sync with the joined org
     node.configure_org_sync_if_needed().await;
 
+    // Trigger immediate sync so org data downloads right away
+    node.trigger_immediate_sync().await;
+
     // Notify cloud that we accepted (status → active) and clean up inbox
     if let Some(client) = get_auth_client(node) {
         let org_hash = &membership.org_hash;
