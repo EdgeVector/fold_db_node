@@ -6,6 +6,7 @@ pub mod ingestion;
 pub mod keychain;
 pub mod schema_service;
 pub mod server;
+pub mod trust;
 pub mod utils;
 
 // Re-export core library for convenience

@@ -359,6 +359,7 @@ impl FoldHttpServer {
                 .configure(Self::configure_security_routes)
                 .configure(Self::configure_discovery_routes)
                 .configure(Self::configure_trust_routes)
+                .configure(Self::configure_identity_routes)
                 .configure(Self::configure_capability_routes)
                 .configure(Self::configure_feed_routes)
                 .configure(Self::configure_remote_routes)
@@ -762,7 +763,16 @@ impl FoldHttpServer {
                 .route("/grants", web::get().to(trust_routes::list_trust_grants))
                 .route("/override", web::put().to(trust_routes::set_trust_override))
                 .route("/resolve/{key}", web::get().to(trust_routes::resolve_trust))
-                .route("/audit", web::get().to(trust_routes::get_audit_log)),
+                .route("/audit", web::get().to(trust_routes::get_audit_log))
+                .route("/invite", web::post().to(trust_routes::create_trust_invite))
+                .route(
+                    "/invite/accept",
+                    web::post().to(trust_routes::accept_trust_invite),
+                )
+                .route(
+                    "/invite/preview",
+                    web::post().to(trust_routes::preview_trust_invite),
+                ),
         )
         .route(
             "/schema/{name}/field/{field}/policy",
@@ -775,6 +785,22 @@ impl FoldHttpServer {
         .route(
             "/schema/{name}/policies",
             web::get().to(trust_routes::get_all_field_policies),
+        );
+    }
+
+    fn configure_identity_routes(cfg: &mut web::ServiceConfig) {
+        use crate::server::routes::trust as trust_routes;
+
+        cfg.service(
+            web::scope("/identity")
+                .route("/card", web::get().to(trust_routes::get_identity_card))
+                .route("/card", web::put().to(trust_routes::set_identity_card)),
+        )
+        .service(
+            web::scope("/contacts")
+                .route("", web::get().to(trust_routes::list_contacts))
+                .route("/{key}", web::get().to(trust_routes::get_contact))
+                .route("/{key}", web::delete().to(trust_routes::revoke_contact)),
         );
     }
 

@@ -2,6 +2,7 @@ use crate::fold_node::OperationProcessor;
 use crate::handlers::{ApiResponse, IntoHandlerError};
 use crate::server::http_server::AppState;
 use crate::server::routes::{handler_result_to_response, node_or_return};
+use crate::trust::trust_invite::TrustInvite;
 use actix_web::{web, Responder};
 use serde::{Deserialize, Serialize};
 
@@ -406,6 +407,248 @@ pub async fn get_payment_gate(
                 .handler_err("get payment gate")?;
             Ok(ApiResponse::success_with_user(
                 serde_json::json!({"schema_name": schema_name, "payment_gate": gate}),
+                user_hash,
+            ))
+        }
+        .await,
+    )
+}
+
+// ===== Identity card endpoints =====
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct SetIdentityCardRequest {
+    pub display_name: String,
+    #[serde(default)]
+    pub contact_hint: Option<String>,
+}
+
+/// GET /api/identity/card — get the current identity card
+pub async fn get_identity_card(state: web::Data<AppState>) -> impl Responder {
+    let (user_hash, node) = node_or_return!(state);
+    let op = OperationProcessor::new(node.clone());
+    handler_result_to_response(
+        async {
+            let card = op.get_identity_card().handler_err("get identity card")?;
+            Ok(ApiResponse::success_with_user(
+                serde_json::json!({ "identity_card": card }),
+                user_hash,
+            ))
+        }
+        .await,
+    )
+}
+
+/// PUT /api/identity/card — set or update the identity card
+pub async fn set_identity_card(
+    body: web::Json<SetIdentityCardRequest>,
+    state: web::Data<AppState>,
+) -> impl Responder {
+    let (user_hash, node) = node_or_return!(state);
+    let op = OperationProcessor::new(node.clone());
+    let req = body.into_inner();
+    handler_result_to_response(
+        async {
+            op.set_identity_card(req.display_name, req.contact_hint)
+                .handler_err("set identity card")?;
+            Ok(ApiResponse::success_with_user(
+                serde_json::json!({"saved": true}),
+                user_hash,
+            ))
+        }
+        .await,
+    )
+}
+
+// ===== Contact book endpoints =====
+
+/// GET /api/contacts — list all active contacts
+pub async fn list_contacts(state: web::Data<AppState>) -> impl Responder {
+    let (user_hash, node) = node_or_return!(state);
+    let op = OperationProcessor::new(node.clone());
+    handler_result_to_response(
+        async {
+            let contacts = op.list_contacts().handler_err("list contacts")?;
+            Ok(ApiResponse::success_with_user(
+                serde_json::json!({ "contacts": contacts }),
+                user_hash,
+            ))
+        }
+        .await,
+    )
+}
+
+/// GET /api/contacts/{key} — get a specific contact
+pub async fn get_contact(
+    path: web::Path<String>,
+    state: web::Data<AppState>,
+) -> impl Responder {
+    let public_key = path.into_inner();
+    let (user_hash, node) = node_or_return!(state);
+    let op = OperationProcessor::new(node.clone());
+    handler_result_to_response(
+        async {
+            let contact = op
+                .get_contact(&public_key)
+                .handler_err("get contact")?;
+            Ok(ApiResponse::success_with_user(
+                serde_json::json!({ "contact": contact }),
+                user_hash,
+            ))
+        }
+        .await,
+    )
+}
+
+// ===== Trust invite endpoints =====
+
+#[derive(Debug, Clone, Deserialize)]
+pub struct CreateInviteRequest {
+    pub proposed_distance: u64,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+pub struct AcceptInviteRequest {
+    /// The trust invite token (base64url).
+    pub token: String,
+    /// Override the proposed distance (optional).
+    #[serde(default)]
+    pub accept_distance: Option<u64>,
+    /// Whether to trust back (create reciprocal invite).
+    #[serde(default)]
+    pub trust_back: bool,
+}
+
+/// POST /api/trust/invite — create a signed trust invite token
+pub async fn create_trust_invite(
+    body: web::Json<CreateInviteRequest>,
+    state: web::Data<AppState>,
+) -> impl Responder {
+    let (user_hash, node) = node_or_return!(state);
+    let op = OperationProcessor::new(node.clone());
+    handler_result_to_response(
+        async {
+            let invite = op
+                .create_trust_invite(body.proposed_distance)
+                .handler_err("create trust invite")?;
+            let token = invite
+                .to_token()
+                .map_err(fold_db::schema::SchemaError::InvalidData)
+                .handler_err("encode invite token")?;
+            Ok(ApiResponse::success_with_user(
+                serde_json::json!({
+                    "invite": invite,
+                    "token": token,
+                }),
+                user_hash,
+            ))
+        }
+        .await,
+    )
+}
+
+/// POST /api/trust/invite/accept — accept a trust invite token
+pub async fn accept_trust_invite(
+    body: web::Json<AcceptInviteRequest>,
+    state: web::Data<AppState>,
+) -> impl Responder {
+    let (user_hash, node) = node_or_return!(state);
+    let op = OperationProcessor::new(node.clone());
+    let req = body.into_inner();
+    handler_result_to_response(
+        async {
+            let invite = TrustInvite::from_token(&req.token)
+                .map_err(fold_db::schema::SchemaError::InvalidData)
+                .handler_err("decode invite token")?;
+
+            let reciprocal = op
+                .accept_trust_invite(&invite, req.accept_distance, req.trust_back)
+                .await
+                .handler_err("accept trust invite")?;
+
+            let reciprocal_token = match &reciprocal {
+                Some(inv) => Some(
+                    inv.to_token()
+                        .map_err(fold_db::schema::SchemaError::InvalidData)
+                        .handler_err("encode reciprocal token")?,
+                ),
+                None => None,
+            };
+
+            Ok(ApiResponse::success_with_user(
+                serde_json::json!({
+                    "accepted": true,
+                    "sender": {
+                        "display_name": invite.sender_identity.display_name,
+                        "contact_hint": invite.sender_identity.contact_hint,
+                        "public_key": invite.sender_pub_key,
+                    },
+                    "reciprocal_invite": reciprocal,
+                    "reciprocal_token": reciprocal_token,
+                }),
+                user_hash,
+            ))
+        }
+        .await,
+    )
+}
+
+/// POST /api/trust/invite/preview — preview a trust invite without accepting
+pub async fn preview_trust_invite(
+    body: web::Json<serde_json::Value>,
+    state: web::Data<AppState>,
+) -> impl Responder {
+    let (_user_hash, _node) = node_or_return!(state);
+    handler_result_to_response(
+        async {
+            let token = body
+                .get("token")
+                .and_then(|v| v.as_str())
+                .ok_or_else(|| {
+                    fold_db::schema::SchemaError::InvalidData("Missing 'token' field".to_string())
+                })
+                .handler_err("parse preview request")?;
+
+            let invite = TrustInvite::from_token(token)
+                .map_err(fold_db::schema::SchemaError::InvalidData)
+                .handler_err("decode invite token")?;
+
+            let valid = invite
+                .verify()
+                .map_err(fold_db::schema::SchemaError::InvalidData)
+                .handler_err("verify invite")?;
+
+            Ok(ApiResponse::success(serde_json::json!({
+                "valid": valid,
+                "sender": {
+                    "display_name": invite.sender_identity.display_name,
+                    "contact_hint": invite.sender_identity.contact_hint,
+                    "public_key": invite.sender_pub_key,
+                    "fingerprint": invite.fingerprint(),
+                },
+                "proposed_distance": invite.proposed_distance,
+                "created_at": invite.created_at,
+            })))
+        }
+        .await,
+    )
+}
+
+/// DELETE /api/contacts/{key} — revoke trust and remove contact
+pub async fn revoke_contact(
+    path: web::Path<String>,
+    state: web::Data<AppState>,
+) -> impl Responder {
+    let public_key = path.into_inner();
+    let (user_hash, node) = node_or_return!(state);
+    let op = OperationProcessor::new(node.clone());
+    handler_result_to_response(
+        async {
+            op.revoke_contact(&public_key)
+                .await
+                .handler_err("revoke contact")?;
+            Ok(ApiResponse::success_with_user(
+                serde_json::json!({"revoked": true}),
                 user_hash,
             ))
         }

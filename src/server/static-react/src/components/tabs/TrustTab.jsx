@@ -1,52 +1,76 @@
 import { useState, useEffect, useCallback } from 'react'
 import {
-  listTrustGrants,
-  grantTrust,
-  revokeTrust,
-  setTrustOverride,
-  resolveTrustDistance,
+  getIdentityCard,
+  setIdentityCard,
+  listContacts,
+  revokeContact,
+  createTrustInvite,
+  previewTrustInvite,
+  acceptTrustInvite,
   getAuditLog,
 } from '../../api/clients/trustClient'
 
 function TrustTab({ onResult }) {
-  const [grants, setGrants] = useState([])
-  const [auditEvents, setAuditEvents] = useState([])
-  const [loading, setLoading] = useState(true)
+  const [activeSection, setActiveSection] = useState('contacts')
   const [error, setError] = useState(null)
-  const [activeSection, setActiveSection] = useState('grants')
 
-  // Grant form
-  const [newPublicKey, setNewPublicKey] = useState('')
-  const [newDistance, setNewDistance] = useState('')
-  const [granting, setGranting] = useState(false)
+  // Identity card
+  const [identityCard, setIdentityCardState] = useState(null)
+  const [identityLoading, setIdentityLoading] = useState(true)
+  const [editName, setEditName] = useState('')
+  const [editHint, setEditHint] = useState('')
+  const [savingIdentity, setSavingIdentity] = useState(false)
 
-  // Override form
-  const [overrideKey, setOverrideKey] = useState('')
-  const [overrideDistance, setOverrideDistance] = useState('')
-  const [settingOverride, setSettingOverride] = useState(false)
-
-  // Resolve form
-  const [resolveKey, setResolveKey] = useState('')
-  const [resolveResult, setResolveResult] = useState(null)
-  const [resolving, setResolving] = useState(false)
-
-  // Revoke state
+  // Contacts
+  const [contacts, setContacts] = useState([])
+  const [contactsLoading, setContactsLoading] = useState(true)
   const [revoking, setRevoking] = useState(null)
 
-  const fetchGrants = useCallback(async () => {
-    setLoading(true)
-    setError(null)
+  // Invite creation
+  const [inviteDistance, setInviteDistance] = useState('1')
+  const [creatingInvite, setCreatingInvite] = useState(false)
+  const [inviteToken, setInviteToken] = useState(null)
+  const [copied, setCopied] = useState(false)
+
+  // Invite acceptance
+  const [acceptToken, setAcceptToken] = useState('')
+  const [preview, setPreview] = useState(null)
+  const [previewing, setPreviewing] = useState(false)
+  const [accepting, setAccepting] = useState(false)
+  const [acceptDistance, setAcceptDistance] = useState('')
+  const [trustBack, setTrustBack] = useState(true)
+
+  // Audit log
+  const [auditEvents, setAuditEvents] = useState([])
+
+  // ===== Fetch data =====
+
+  const fetchIdentity = useCallback(async () => {
+    setIdentityLoading(true)
     try {
-      const response = await listTrustGrants()
+      const response = await getIdentityCard()
       if (response.success && response.data) {
-        setGrants(response.data.grants || [])
-      } else {
-        setError(response.error || 'Failed to load trust grants')
+        const card = response.data.identity_card
+        setIdentityCardState(card)
+        if (card) {
+          setEditName(card.display_name)
+          setEditHint(card.contact_hint || '')
+        }
       }
-    } catch (err) {
-      setError(err.message || 'Failed to load trust grants')
-    } finally {
-      setLoading(false)
+    } catch { /* ignore */ } finally {
+      setIdentityLoading(false)
+    }
+  }, [])
+
+  const fetchContacts = useCallback(async () => {
+    setContactsLoading(true)
+    try {
+      const response = await listContacts()
+      if (response.success && response.data) {
+        setContacts(response.data.contacts || [])
+      }
+    } catch { /* ignore */ } finally {
+      setContactsLoading(false)
     }
   }, [])
 
@@ -56,109 +80,143 @@ function TrustTab({ onResult }) {
       if (response.success && response.data) {
         setAuditEvents(response.data.events || [])
       }
-    } catch {
-      // Audit log is supplementary, don't block on errors
-    }
+    } catch { /* ignore */ }
   }, [])
 
   useEffect(() => {
-    fetchGrants()
+    fetchIdentity()
+    fetchContacts()
     fetchAuditLog()
-  }, [fetchGrants, fetchAuditLog])
+  }, [fetchIdentity, fetchContacts, fetchAuditLog])
 
-  const handleGrant = async (e) => {
+  // ===== Identity card handlers =====
+
+  const handleSaveIdentity = async (e) => {
     e.preventDefault()
-    if (!newPublicKey.trim() || newDistance === '') return
-    const dist = parseInt(newDistance, 10)
-    if (isNaN(dist) || dist < 0) {
-      setError('Distance must be a non-negative integer')
-      return
-    }
-    setGranting(true)
+    if (!editName.trim()) return
+    setSavingIdentity(true)
     setError(null)
     try {
-      const response = await grantTrust(newPublicKey.trim(), dist)
+      const response = await setIdentityCard(editName.trim(), editHint.trim() || null)
       if (response.success) {
-        setNewPublicKey('')
-        setNewDistance('')
-        await fetchGrants()
-        await fetchAuditLog()
-        if (onResult) onResult({ success: true, data: { message: 'Trust granted' } })
+        setIdentityCardState({ display_name: editName.trim(), contact_hint: editHint.trim() || null })
+        if (onResult) onResult({ success: true, data: { message: 'Identity card saved' } })
       } else {
-        setError(response.error || 'Failed to grant trust')
+        setError(response.error || 'Failed to save identity card')
       }
     } catch (err) {
-      setError(err.message || 'Failed to grant trust')
+      setError(err.message || 'Failed to save identity card')
     } finally {
-      setGranting(false)
+      setSavingIdentity(false)
     }
   }
+
+  // ===== Contact handlers =====
 
   const handleRevoke = async (publicKey) => {
     setRevoking(publicKey)
     setError(null)
     try {
-      const response = await revokeTrust(publicKey)
+      const response = await revokeContact(publicKey)
       if (response.success) {
-        await fetchGrants()
+        await fetchContacts()
         await fetchAuditLog()
-        if (onResult) onResult({ success: true, data: { message: 'Trust revoked' } })
+        if (onResult) onResult({ success: true, data: { message: 'Contact revoked' } })
       } else {
-        setError(response.error || 'Failed to revoke trust')
+        setError(response.error || 'Failed to revoke contact')
       }
     } catch (err) {
-      setError(err.message || 'Failed to revoke trust')
+      setError(err.message || 'Failed to revoke contact')
     } finally {
       setRevoking(null)
     }
   }
 
-  const handleOverride = async (e) => {
+  // ===== Invite handlers =====
+
+  const handleCreateInvite = async (e) => {
     e.preventDefault()
-    if (!overrideKey.trim() || overrideDistance === '') return
-    const dist = parseInt(overrideDistance, 10)
-    if (isNaN(dist) || dist < 0) {
-      setError('Distance must be a non-negative integer')
+    const dist = parseInt(inviteDistance, 10)
+    if (isNaN(dist) || dist < 1) {
+      setError('Distance must be a positive integer')
       return
     }
-    setSettingOverride(true)
+    if (!identityCard) {
+      setError('Please set your identity card first (go to Identity tab)')
+      return
+    }
+    setCreatingInvite(true)
     setError(null)
+    setInviteToken(null)
     try {
-      const response = await setTrustOverride(overrideKey.trim(), dist)
-      if (response.success) {
-        setOverrideKey('')
-        setOverrideDistance('')
-        await fetchGrants()
-        if (onResult) onResult({ success: true, data: { message: 'Override set' } })
+      const response = await createTrustInvite(dist)
+      if (response.success && response.data) {
+        setInviteToken(response.data.token)
       } else {
-        setError(response.error || 'Failed to set override')
+        setError(response.error || 'Failed to create invite')
       }
     } catch (err) {
-      setError(err.message || 'Failed to set override')
+      setError(err.message || 'Failed to create invite')
     } finally {
-      setSettingOverride(false)
+      setCreatingInvite(false)
     }
   }
 
-  const handleResolve = async (e) => {
-    e.preventDefault()
-    if (!resolveKey.trim()) return
-    setResolving(true)
-    setResolveResult(null)
-    setError(null)
-    try {
-      const response = await resolveTrustDistance(resolveKey.trim())
-      if (response.success && response.data) {
-        setResolveResult(response.data)
-      } else {
-        setError(response.error || 'Failed to resolve trust distance')
-      }
-    } catch (err) {
-      setError(err.message || 'Failed to resolve trust distance')
-    } finally {
-      setResolving(false)
+  const handleCopyToken = () => {
+    if (inviteToken) {
+      navigator.clipboard.writeText(inviteToken)
+      setCopied(true)
+      setTimeout(() => setCopied(false), 2000)
     }
   }
+
+  const handlePreviewInvite = async () => {
+    if (!acceptToken.trim()) return
+    setPreviewing(true)
+    setError(null)
+    setPreview(null)
+    try {
+      const response = await previewTrustInvite(acceptToken.trim())
+      if (response.success && response.data) {
+        setPreview(response.data)
+        setAcceptDistance(String(response.data.proposed_distance))
+      } else {
+        setError(response.error || 'Invalid invite token')
+      }
+    } catch (err) {
+      setError(err.message || 'Failed to preview invite')
+    } finally {
+      setPreviewing(false)
+    }
+  }
+
+  const handleAcceptInvite = async () => {
+    if (!acceptToken.trim()) return
+    setAccepting(true)
+    setError(null)
+    try {
+      const dist = acceptDistance ? parseInt(acceptDistance, 10) : undefined
+      const response = await acceptTrustInvite(acceptToken.trim(), dist, trustBack)
+      if (response.success && response.data) {
+        setAcceptToken('')
+        setPreview(null)
+        await fetchContacts()
+        await fetchAuditLog()
+        const msg = trustBack
+          ? `Accepted and trusted back ${response.data.sender.display_name}`
+          : `Accepted invite from ${response.data.sender.display_name}`
+        if (onResult) onResult({ success: true, data: { message: msg } })
+      } else {
+        setError(response.error || 'Failed to accept invite')
+      }
+    } catch (err) {
+      setError(err.message || 'Failed to accept invite')
+    } finally {
+      setAccepting(false)
+    }
+  }
+
+  // ===== Helpers =====
 
   const truncateKey = (key) => {
     if (!key) return ''
@@ -167,10 +225,16 @@ function TrustTab({ onResult }) {
   }
 
   const formatTimestamp = (isoString) => {
-    try {
-      return new Date(isoString).toLocaleString()
-    } catch {
-      return isoString
+    try { return new Date(isoString).toLocaleString() }
+    catch { return isoString }
+  }
+
+  const directionBadge = (direction) => {
+    switch (direction) {
+      case 'mutual': return <span className="badge badge-success text-xs">mutual</span>
+      case 'outgoing': return <span className="badge badge-info text-xs">you trust them</span>
+      case 'incoming': return <span className="badge badge-warning text-xs">they trust you</span>
+      default: return null
     }
   }
 
@@ -178,11 +242,20 @@ function TrustTab({ onResult }) {
     if (!action) return 'Unknown'
     if (action.TrustGrant) return `Grant trust to ${truncateKey(action.TrustGrant.user_id)} at distance ${action.TrustGrant.distance}`
     if (action.TrustRevoke) return `Revoke trust for ${truncateKey(action.TrustRevoke.user_id)}`
-    if (action.Read) return `Read ${action.Read.schema_name} [${action.Read.fields?.join(', ')}]`
-    if (action.Write) return `Write ${action.Write.schema_name} [${action.Write.fields?.join(', ')}]`
-    if (action.AccessDenied) return `Access denied: ${action.AccessDenied.schema_name} — ${action.AccessDenied.reason}`
+    if (action.Read) return `Read ${action.Read.schema_name}`
+    if (action.Write) return `Write ${action.Write.schema_name}`
+    if (action.AccessDenied) return `Access denied: ${action.AccessDenied.schema_name}`
     return JSON.stringify(action)
   }
+
+  // ===== Sections =====
+
+  const sections = [
+    { id: 'contacts', label: 'Contacts' },
+    { id: 'invite', label: 'Add Contact' },
+    { id: 'identity', label: 'My Identity' },
+    { id: 'audit', label: 'Audit Log' },
+  ]
 
   return (
     <div className="p-6 max-w-4xl mx-auto">
@@ -190,14 +263,12 @@ function TrustTab({ onResult }) {
         <div>
           <h2 className="text-lg font-medium text-primary">Trust Graph</h2>
           <p className="text-sm text-secondary mt-1">
-            Manage which public keys your node trusts and at what distance.
-            Trust distance controls read/write access to your data.
+            Manage trusted contacts, share trust invites, and control who can access your data.
           </p>
         </div>
         <button
           className="btn btn-sm"
-          onClick={() => { fetchGrants(); fetchAuditLog() }}
-          disabled={loading}
+          onClick={() => { fetchContacts(); fetchAuditLog(); fetchIdentity() }}
         >
           Refresh
         </button>
@@ -205,11 +276,7 @@ function TrustTab({ onResult }) {
 
       {/* Section tabs */}
       <div className="flex gap-1 mb-6 border-b border-border">
-        {[
-          { id: 'grants', label: 'Trust Grants' },
-          { id: 'resolve', label: 'Resolve Distance' },
-          { id: 'audit', label: 'Audit Log' },
-        ].map(({ id, label }) => (
+        {sections.map(({ id, label }) => (
           <button
             key={id}
             className={`px-4 py-2 text-sm border-b-2 transition-colors ${
@@ -220,6 +287,9 @@ function TrustTab({ onResult }) {
             onClick={() => setActiveSection(id)}
           >
             {label}
+            {id === 'contacts' && contacts.length > 0 && (
+              <span className="ml-1.5 text-xs text-tertiary">({contacts.length})</span>
+            )}
           </button>
         ))}
       </div>
@@ -228,203 +298,267 @@ function TrustTab({ onResult }) {
       {error && (
         <div className="card card-error mb-4">
           <p className="text-sm">{error}</p>
-          <button
-            className="text-xs underline mt-1"
-            onClick={() => setError(null)}
-          >
-            Dismiss
-          </button>
+          <button className="text-xs underline mt-1" onClick={() => setError(null)}>Dismiss</button>
         </div>
       )}
 
-      {/* === GRANTS SECTION === */}
-      {activeSection === 'grants' && (
+      {/* ===== CONTACTS ===== */}
+      {activeSection === 'contacts' && (
         <>
-          {/* Grant trust form */}
-          <div className="border border-border rounded-lg p-4 mb-6 bg-surface">
-            <h3 className="text-sm font-medium text-primary mb-3">Grant Trust</h3>
-            <form onSubmit={handleGrant} className="flex gap-3 items-end">
-              <div className="flex-1">
-                <label className="block text-xs text-secondary mb-1">Public Key</label>
-                <input
-                  className="input w-full"
-                  type="text"
-                  placeholder="Base64-encoded public key..."
-                  value={newPublicKey}
-                  onChange={(e) => setNewPublicKey(e.target.value)}
-                />
-              </div>
-              <div className="w-32">
-                <label className="block text-xs text-secondary mb-1">Distance</label>
-                <input
-                  className="input w-full"
-                  type="number"
-                  min="0"
-                  placeholder="1"
-                  value={newDistance}
-                  onChange={(e) => setNewDistance(e.target.value)}
-                />
-              </div>
-              <button
-                type="submit"
-                className="btn"
-                disabled={granting || !newPublicKey.trim() || newDistance === ''}
-              >
-                {granting ? 'Granting...' : 'Grant'}
-              </button>
-            </form>
-          </div>
+          {/* Identity card warning */}
+          {!identityLoading && !identityCard && (
+            <div className="bg-gruvbox-yellow/15 border border-gruvbox-yellow/30 rounded-lg p-4 mb-4">
+              <p className="text-sm text-gruvbox-yellow">
+                Set your display name in the <button className="underline font-medium" onClick={() => setActiveSection('identity')}>My Identity</button> tab
+                before sharing trust invites.
+              </p>
+            </div>
+          )}
 
-          {/* Override form */}
-          <div className="border border-border rounded-lg p-4 mb-6 bg-surface">
-            <h3 className="text-sm font-medium text-primary mb-1">Set Distance Override</h3>
-            <p className="text-xs text-secondary mb-3">
-              Overrides take precedence over graph-computed shortest path.
-            </p>
-            <form onSubmit={handleOverride} className="flex gap-3 items-end">
-              <div className="flex-1">
-                <label className="block text-xs text-secondary mb-1">Public Key</label>
-                <input
-                  className="input w-full"
-                  type="text"
-                  placeholder="Base64-encoded public key..."
-                  value={overrideKey}
-                  onChange={(e) => setOverrideKey(e.target.value)}
-                />
-              </div>
-              <div className="w-32">
-                <label className="block text-xs text-secondary mb-1">Distance</label>
-                <input
-                  className="input w-full"
-                  type="number"
-                  min="0"
-                  placeholder="1"
-                  value={overrideDistance}
-                  onChange={(e) => setOverrideDistance(e.target.value)}
-                />
-              </div>
-              <button
-                type="submit"
-                className="btn"
-                disabled={settingOverride || !overrideKey.trim() || overrideDistance === ''}
-              >
-                {settingOverride ? 'Setting...' : 'Set Override'}
-              </button>
-            </form>
-          </div>
-
-          {/* Loading */}
-          {loading && (
+          {contactsLoading && (
             <div className="text-center py-12">
               <div className="w-6 h-6 border-2 border-border border-t-primary rounded-full animate-spin mx-auto mb-3" />
-              <p className="text-secondary text-sm">Loading trust grants...</p>
+              <p className="text-secondary text-sm">Loading contacts...</p>
             </div>
           )}
 
-          {/* Empty state */}
-          {!loading && grants.length === 0 && (
+          {!contactsLoading && contacts.length === 0 && (
             <div className="text-center py-12 border border-border rounded-lg">
-              <p className="text-secondary text-lg mb-2">No trust grants</p>
-              <p className="text-tertiary text-sm">
-                Your node does not trust any other public keys yet.
-                Use the form above to grant trust.
+              <p className="text-secondary text-lg mb-2">No trusted contacts</p>
+              <p className="text-tertiary text-sm mb-4">
+                Share a trust invite or accept one to add your first contact.
               </p>
+              <button className="btn" onClick={() => setActiveSection('invite')}>
+                Add Contact
+              </button>
             </div>
           )}
 
-          {/* Grants list */}
-          {!loading && grants.length > 0 && (
-            <>
-              <p className="text-sm text-secondary mb-3">
-                {grants.length} trusted key{grants.length !== 1 ? 's' : ''}
-              </p>
-              <div className="space-y-2">
-                {grants.map((grant) => (
-                  <div
-                    key={grant.public_key}
-                    className="border border-border rounded-lg p-4 bg-surface flex items-center justify-between gap-4"
-                  >
+          {!contactsLoading && contacts.length > 0 && (
+            <div className="space-y-2">
+              {contacts.map((contact) => (
+                <div
+                  key={contact.public_key}
+                  className="border border-border rounded-lg p-4 bg-surface"
+                >
+                  <div className="flex items-start justify-between gap-4">
                     <div className="flex-1 min-w-0">
-                      <div className="flex items-center gap-3">
-                        <code
-                          className="text-sm text-primary break-all"
-                          title={grant.public_key}
-                        >
-                          {truncateKey(grant.public_key)}
-                        </code>
-                        <span className="badge badge-info text-xs flex-shrink-0">
-                          distance: {grant.distance}
+                      <div className="flex items-center gap-2 mb-1">
+                        <span className="text-sm font-medium text-primary">
+                          {contact.display_name}
                         </span>
+                        {directionBadge(contact.direction)}
+                        <span className="badge badge-info text-xs">
+                          distance: {contact.trust_distance}
+                        </span>
+                      </div>
+                      {contact.contact_hint && (
+                        <p className="text-xs text-secondary mb-1">{contact.contact_hint}</p>
+                      )}
+                      <div className="flex items-center gap-3 text-xs text-tertiary">
+                        <code title={contact.public_key}>{truncateKey(contact.public_key)}</code>
+                        <span>Connected {formatTimestamp(contact.connected_at)}</span>
                       </div>
                     </div>
                     <button
                       className="btn btn-sm text-gruvbox-red border-gruvbox-red/30 hover:bg-gruvbox-red/10"
-                      onClick={() => handleRevoke(grant.public_key)}
-                      disabled={revoking === grant.public_key}
+                      onClick={() => handleRevoke(contact.public_key)}
+                      disabled={revoking === contact.public_key}
                     >
-                      {revoking === grant.public_key ? 'Revoking...' : 'Revoke'}
+                      {revoking === contact.public_key ? 'Revoking...' : 'Revoke'}
                     </button>
                   </div>
-                ))}
-              </div>
-            </>
+                </div>
+              ))}
+            </div>
           )}
         </>
       )}
 
-      {/* === RESOLVE SECTION === */}
-      {activeSection === 'resolve' && (
-        <div>
+      {/* ===== ADD CONTACT (INVITE) ===== */}
+      {activeSection === 'invite' && (
+        <>
+          {/* Create invite */}
           <div className="border border-border rounded-lg p-4 mb-6 bg-surface">
-            <h3 className="text-sm font-medium text-primary mb-1">Resolve Trust Distance</h3>
+            <h3 className="text-sm font-medium text-primary mb-1">Share a Trust Invite</h3>
             <p className="text-xs text-secondary mb-3">
-              Compute the effective trust distance for a public key, considering
-              graph paths and overrides.
+              Generate a trust invite token to share with someone. They can paste it into their FoldDB to connect with you.
             </p>
-            <form onSubmit={handleResolve} className="flex gap-3 items-end">
-              <div className="flex-1">
-                <label className="block text-xs text-secondary mb-1">Public Key</label>
+            <form onSubmit={handleCreateInvite} className="flex gap-3 items-end mb-3">
+              <div className="w-40">
+                <label className="block text-xs text-secondary mb-1">Proposed Distance</label>
                 <input
                   className="input w-full"
-                  type="text"
-                  placeholder="Base64-encoded public key..."
-                  value={resolveKey}
-                  onChange={(e) => setResolveKey(e.target.value)}
+                  type="number"
+                  min="1"
+                  value={inviteDistance}
+                  onChange={(e) => setInviteDistance(e.target.value)}
                 />
               </div>
               <button
                 type="submit"
                 className="btn"
-                disabled={resolving || !resolveKey.trim()}
+                disabled={creatingInvite || !identityCard}
               >
-                {resolving ? 'Resolving...' : 'Resolve'}
+                {creatingInvite ? 'Creating...' : 'Generate Invite'}
               </button>
             </form>
+
+            {inviteToken && (
+              <div className="mt-3">
+                <label className="block text-xs text-secondary mb-1">Your Trust Invite Token</label>
+                <div className="flex gap-2">
+                  <input
+                    className="input flex-1 font-mono text-xs"
+                    type="text"
+                    value={inviteToken}
+                    readOnly
+                    onClick={(e) => e.target.select()}
+                  />
+                  <button className="btn btn-sm" onClick={handleCopyToken}>
+                    {copied ? 'Copied!' : 'Copy'}
+                  </button>
+                </div>
+                <p className="text-xs text-tertiary mt-1">
+                  Share this token with the person you want to trust. It contains your name and public key.
+                </p>
+              </div>
+            )}
           </div>
 
-          {resolveResult && (
-            <div className="border border-border rounded-lg p-4 bg-surface">
-              <h3 className="text-sm font-medium text-primary mb-3">Result</h3>
-              <div className="flex items-center gap-3">
-                <code className="text-sm text-primary" title={resolveResult.public_key}>
-                  {truncateKey(resolveResult.public_key)}
-                </code>
-                {resolveResult.distance !== null && resolveResult.distance !== undefined ? (
-                  <span className="badge badge-success text-xs">
-                    distance: {resolveResult.distance}
+          {/* Accept invite */}
+          <div className="border border-border rounded-lg p-4 bg-surface">
+            <h3 className="text-sm font-medium text-primary mb-1">Accept a Trust Invite</h3>
+            <p className="text-xs text-secondary mb-3">
+              Paste a trust invite token from someone who wants to connect with you.
+            </p>
+            <div className="flex gap-2 mb-3">
+              <input
+                className="input flex-1 font-mono text-xs"
+                type="text"
+                placeholder="Paste trust invite token..."
+                value={acceptToken}
+                onChange={(e) => { setAcceptToken(e.target.value); setPreview(null) }}
+              />
+              <button
+                className="btn btn-sm"
+                onClick={handlePreviewInvite}
+                disabled={previewing || !acceptToken.trim()}
+              >
+                {previewing ? 'Loading...' : 'Preview'}
+              </button>
+            </div>
+
+            {preview && (
+              <div className="border border-border rounded-lg p-4 bg-surface-secondary">
+                <div className="flex items-center gap-2 mb-3">
+                  {preview.valid ? (
+                    <span className="badge badge-success text-xs">verified</span>
+                  ) : (
+                    <span className="badge badge-error text-xs">invalid signature</span>
+                  )}
+                  <span className="text-xs text-tertiary">
+                    Fingerprint: <code>{preview.sender.fingerprint}</code>
                   </span>
-                ) : (
-                  <span className="badge badge-error text-xs">
-                    unreachable
-                  </span>
+                </div>
+
+                <p className="text-sm text-primary font-medium mb-1">
+                  {preview.sender.display_name}
+                </p>
+                {preview.sender.contact_hint && (
+                  <p className="text-xs text-secondary mb-2">{preview.sender.contact_hint}</p>
+                )}
+                <p className="text-xs text-tertiary mb-3">
+                  Wants to trust you at distance {preview.proposed_distance}
+                </p>
+
+                {preview.valid && (
+                  <div className="flex items-end gap-3">
+                    <div className="w-32">
+                      <label className="block text-xs text-secondary mb-1">Your Distance</label>
+                      <input
+                        className="input w-full"
+                        type="number"
+                        min="1"
+                        value={acceptDistance}
+                        onChange={(e) => setAcceptDistance(e.target.value)}
+                      />
+                    </div>
+                    <label className="flex items-center gap-2 text-sm text-secondary cursor-pointer">
+                      <input
+                        type="checkbox"
+                        checked={trustBack}
+                        onChange={(e) => setTrustBack(e.target.checked)}
+                        className="rounded"
+                      />
+                      Trust back
+                    </label>
+                    <button
+                      className="btn"
+                      onClick={handleAcceptInvite}
+                      disabled={accepting}
+                    >
+                      {accepting ? 'Accepting...' : (trustBack ? 'Accept & Trust Back' : 'Accept Only')}
+                    </button>
+                  </div>
                 )}
               </div>
+            )}
+          </div>
+        </>
+      )}
+
+      {/* ===== MY IDENTITY ===== */}
+      {activeSection === 'identity' && (
+        <div className="border border-border rounded-lg p-4 bg-surface">
+          <h3 className="text-sm font-medium text-primary mb-1">Identity Card</h3>
+          <p className="text-xs text-secondary mb-4">
+            Your display name and contact hint are shared only with people you send trust invites to.
+            This information stays on your device and is never synced to Exemem.
+          </p>
+
+          {identityLoading ? (
+            <div className="text-center py-8">
+              <div className="w-6 h-6 border-2 border-border border-t-primary rounded-full animate-spin mx-auto" />
             </div>
+          ) : (
+            <form onSubmit={handleSaveIdentity} className="space-y-4">
+              <div>
+                <label className="block text-xs text-secondary mb-1">Display Name *</label>
+                <input
+                  className="input w-full"
+                  type="text"
+                  placeholder="Your name..."
+                  value={editName}
+                  onChange={(e) => setEditName(e.target.value)}
+                />
+              </div>
+              <div>
+                <label className="block text-xs text-secondary mb-1">Contact Hint (optional)</label>
+                <input
+                  className="input w-full"
+                  type="text"
+                  placeholder="Email, phone, or handle for verification..."
+                  value={editHint}
+                  onChange={(e) => setEditHint(e.target.value)}
+                />
+                <p className="text-xs text-tertiary mt-1">
+                  Helps others verify it's really you when they receive your trust invite.
+                </p>
+              </div>
+              <button
+                type="submit"
+                className="btn"
+                disabled={savingIdentity || !editName.trim()}
+              >
+                {savingIdentity ? 'Saving...' : (identityCard ? 'Update' : 'Save')}
+              </button>
+            </form>
           )}
         </div>
       )}
 
-      {/* === AUDIT SECTION === */}
+      {/* ===== AUDIT LOG ===== */}
       {activeSection === 'audit' && (
         <div>
           {auditEvents.length === 0 && (
@@ -448,16 +582,9 @@ function TrustTab({ onResult }) {
                       <p className="text-sm text-primary">
                         {formatAuditAction(event.action)}
                       </p>
-                      <div className="flex items-center gap-3 mt-1">
-                        <span className="text-xs text-tertiary">
-                          {formatTimestamp(event.timestamp)}
-                        </span>
-                        {event.trust_distance !== null && event.trust_distance !== undefined && (
-                          <span className="text-xs text-secondary">
-                            trust distance: {event.trust_distance}
-                          </span>
-                        )}
-                      </div>
+                      <span className="text-xs text-tertiary">
+                        {formatTimestamp(event.timestamp)}
+                      </span>
                     </div>
                     <span className={`badge text-xs ${event.decision_granted ? 'badge-success' : 'badge-warning'}`}>
                       {event.decision_granted ? 'granted' : 'denied'}
