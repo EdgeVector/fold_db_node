@@ -46,8 +46,8 @@ impl IdentityCard {
         }
         let data = std::fs::read_to_string(path)
             .map_err(|e| format!("Failed to read identity card: {e}"))?;
-        let card: Self =
-            serde_json::from_str(&data).map_err(|e| format!("Failed to parse identity card: {e}"))?;
+        let card: Self = serde_json::from_str(&data)
+            .map_err(|e| format!("Failed to parse identity card: {e}"))?;
         Ok(Some(card))
     }
 
@@ -64,8 +64,7 @@ impl IdentityCard {
         }
         let data = serde_json::to_string_pretty(self)
             .map_err(|e| format!("Failed to serialize identity card: {e}"))?;
-        std::fs::write(path, data)
-            .map_err(|e| format!("Failed to write identity card: {e}"))?;
+        std::fs::write(path, data).map_err(|e| format!("Failed to write identity card: {e}"))?;
         Ok(())
     }
 

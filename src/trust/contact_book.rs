@@ -133,10 +133,7 @@ impl ContactBook {
 
     /// List all active (non-revoked) contacts.
     pub fn active_contacts(&self) -> Vec<&Contact> {
-        self.contacts
-            .values()
-            .filter(|c| !c.revoked)
-            .collect()
+        self.contacts.values().filter(|c| !c.revoked).collect()
     }
 }
 
@@ -208,9 +205,15 @@ mod tests {
     fn test_mark_mutual() {
         let mut book = ContactBook::new();
         book.upsert_contact(test_contact("pk_alice", "Alice", 1));
-        assert_eq!(book.get("pk_alice").unwrap().direction, TrustDirection::Outgoing);
+        assert_eq!(
+            book.get("pk_alice").unwrap().direction,
+            TrustDirection::Outgoing
+        );
 
         book.mark_mutual("pk_alice");
-        assert_eq!(book.get("pk_alice").unwrap().direction, TrustDirection::Mutual);
+        assert_eq!(
+            book.get("pk_alice").unwrap().direction,
+            TrustDirection::Mutual
+        );
     }
 }

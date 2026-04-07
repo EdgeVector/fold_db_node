@@ -47,10 +47,7 @@ impl OperationProcessor {
     // ===== Trust Invites =====
 
     /// Create a signed trust invite token for direct sharing.
-    pub fn create_trust_invite(
-        &self,
-        proposed_distance: u64,
-    ) -> Result<TrustInvite, SchemaError> {
+    pub fn create_trust_invite(&self, proposed_distance: u64) -> Result<TrustInvite, SchemaError> {
         let identity = IdentityCard::load()
             .map_err(|e| SchemaError::InvalidData(format!("Failed to load identity card: {e}")))?
             .ok_or_else(|| {

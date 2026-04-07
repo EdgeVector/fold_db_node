@@ -1,0 +1,25 @@
+{
+  "provider": "Anthropic",
+  "ollama": {
+    "model": "llama3.1:8b",
+    "base_url": "http://localhost:11434",
+    "vision_model": "qwen3-vl:2b",
+    "ocr_model": "glm-ocr:latest",
+    "generation_params": {
+      "num_ctx": 16384,
+      "temperature": 0.8,
+      "top_p": 0.95,
+      "top_k": 0,
+      "num_predict": 16384,
+      "repeat_penalty": 1.0,
+      "presence_penalty": 0.0,
+      "min_p": 0.0
+    }
+  },
+  "anthropic": {
+    "api_key": "",
+    "model": "claude-sonnet-4-20250514",
+    "base_url": "https://api.anthropic.com"
+  },
+  "query": {}
+}

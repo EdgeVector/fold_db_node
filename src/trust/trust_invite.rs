@@ -106,8 +106,8 @@ impl TrustInvite {
 
     /// Encode the invite as a URL-safe base64 token for direct sharing.
     pub fn to_token(&self) -> Result<String, String> {
-        let json = serde_json::to_vec(self)
-            .map_err(|e| format!("Failed to serialize invite: {e}"))?;
+        let json =
+            serde_json::to_vec(self).map_err(|e| format!("Failed to serialize invite: {e}"))?;
         Ok(URL_SAFE_NO_PAD.encode(&json))
     }
 
@@ -126,7 +126,10 @@ impl TrustInvite {
             .decode(&self.sender_pub_key)
             .unwrap_or_default();
         let hash = Sha256::digest(&pub_bytes);
-        format!("{:x}", &hash[..4].iter().fold(0u32, |acc, &b| acc << 8 | b as u32))
+        format!(
+            "{:x}",
+            &hash[..4].iter().fold(0u32, |acc, &b| acc << 8 | b as u32)
+        )
     }
 }
 

@@ -479,18 +479,13 @@ pub async fn list_contacts(state: web::Data<AppState>) -> impl Responder {
 }
 
 /// GET /api/contacts/{key} — get a specific contact
-pub async fn get_contact(
-    path: web::Path<String>,
-    state: web::Data<AppState>,
-) -> impl Responder {
+pub async fn get_contact(path: web::Path<String>, state: web::Data<AppState>) -> impl Responder {
     let public_key = path.into_inner();
     let (user_hash, node) = node_or_return!(state);
     let op = OperationProcessor::new(node.clone());
     handler_result_to_response(
         async {
-            let contact = op
-                .get_contact(&public_key)
-                .handler_err("get contact")?;
+            let contact = op.get_contact(&public_key).handler_err("get contact")?;
             Ok(ApiResponse::success_with_user(
                 serde_json::json!({ "contact": contact }),
                 user_hash,
@@ -635,10 +630,7 @@ pub async fn preview_trust_invite(
 }
 
 /// DELETE /api/contacts/{key} — revoke trust and remove contact
-pub async fn revoke_contact(
-    path: web::Path<String>,
-    state: web::Data<AppState>,
-) -> impl Responder {
+pub async fn revoke_contact(path: web::Path<String>, state: web::Data<AppState>) -> impl Responder {
     let public_key = path.into_inner();
     let (user_hash, node) = node_or_return!(state);
     let op = OperationProcessor::new(node.clone());
