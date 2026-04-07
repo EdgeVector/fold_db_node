@@ -36,6 +36,18 @@ function QueryTab({ onResult }) {
     refetchSchemas();
   }, [refetchSchemas]);
 
+  // Listen for schema-to-query navigation from SchemaTab
+  useEffect(() => {
+    const handler = (e) => {
+      const schemaName = e.detail?.schemaName;
+      if (schemaName) {
+        handleSchemaChange(schemaName);
+      }
+    };
+    window.addEventListener('folddb:query-schema', handler);
+    return () => window.removeEventListener('folddb:query-schema', handler);
+  }, [handleSchemaChange]);
+
   // Execution state management
   const [isExecuting, setIsExecuting] = useState(false);
 

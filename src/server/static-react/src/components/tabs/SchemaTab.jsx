@@ -10,6 +10,7 @@ import {
   fetchSchemas
 } from '../../store/schemaSlice'
 import SchemaName from '../shared/SchemaName'
+import { MagnifyingGlassIcon } from '@heroicons/react/24/outline'
 import { SCHEMA_BADGE_COLORS } from '../../constants/ui'
 import { toErrorMessage } from '../../utils/schemaUtils'
 import { getAllFieldPolicies, setFieldPolicy as setFieldPolicyApi } from '../../api/clients/sharingClient'
@@ -323,6 +324,20 @@ function SchemaTab({ onResult, onSchemaUpdated }) {
               )}
             </div>
             <div className="flex items-center space-x-2">
+              {state.toLowerCase() === 'approved' && (
+                <button
+                  className="btn-secondary btn-sm flex items-center gap-1"
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    window.dispatchEvent(new window.CustomEvent('folddb:query-schema', { detail: { schemaName: schema.name } }));
+                    window.location.hash = 'query';
+                  }}
+                  title="Query this schema"
+                >
+                  <MagnifyingGlassIcon className="w-3.5 h-3.5" />
+                  Query
+                </button>
+              )}
               {state.toLowerCase() === 'available' && (
                 <button
                   className="btn-secondary btn-sm"

@@ -15,8 +15,8 @@ export default function SchemaName({ schema, name, className = 'font-mono text-s
     <>
       <span className={className}>{displayName}</span>
       {differs && (
-        <span className="text-xs text-tertiary" title={schemaName}>
-          ({truncateHash(schemaName)})
+        <span className="ml-1.5 text-[10px] text-tertiary font-mono opacity-60" title={schemaName}>
+          {truncateHash(schemaName)}
         </span>
       )}
     </>

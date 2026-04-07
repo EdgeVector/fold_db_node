@@ -1,4 +1,4 @@
-import { useState, useEffect } from 'react'
+import { useState, useEffect, useRef } from 'react'
 import { useAppDispatch, useAppSelector } from '../store/hooks'
 import { logoutUser, autoLogin } from '../store/authSlice'
 import { selectIngestionConfig, selectAiProvider, selectActiveModel, selectIsAiConfigured } from '../store/ingestionSlice'
@@ -46,6 +46,8 @@ function Header({ onSettingsClick, onAiSettingsClick, onCloudSettingsClick }) {
   // Pending Invites State
   const [pendingInvites, setPendingInvites] = useState([])
   const [isInvitesModalOpen, setIsInvitesModalOpen] = useState(false)
+  // Cooldown: skip poll cycles after accepting/declining to let S3 propagate deletes
+  const inviteCooldownRef = useRef(0)
 
   useEffect(() => {
     systemClient.getDatabaseConfig().then(res => {
@@ -75,6 +77,11 @@ function Header({ onSettingsClick, onAiSettingsClick, onCloudSettingsClick }) {
   useEffect(() => {
     if (!isAuthenticated) return;
     const fetchInvites = async () => {
+      // Skip poll if in cooldown (after accept/decline, let S3 propagate)
+      if (inviteCooldownRef.current > 0) {
+        inviteCooldownRef.current -= 1;
+        return;
+      }
       try {
         const res = await orgClient.getPendingInvites();
         const invites = res.data?.invites || res.data || [];
@@ -212,11 +219,21 @@ function Header({ onSettingsClick, onAiSettingsClick, onCloudSettingsClick }) {
         </div>
       </div>
       
-      <PendingInvitesModal 
-        isOpen={isInvitesModalOpen} 
+      <PendingInvitesModal
+        isOpen={isInvitesModalOpen}
         onClose={() => setIsInvitesModalOpen(false)}
         pendingInvites={pendingInvites}
-        setPendingInvites={setPendingInvites}
+        setPendingInvites={(updater) => {
+          // Wrap setState to activate cooldown when invites are removed
+          setPendingInvites(prev => {
+            const next = typeof updater === 'function' ? updater(prev) : updater;
+            if (next.length < prev.length) {
+              // Skip next 2 poll cycles (~120s) to let S3 propagate the delete
+              inviteCooldownRef.current = 2;
+            }
+            return next;
+          });
+        }}
       />
     </header>
   )
