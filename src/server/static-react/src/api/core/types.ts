@@ -47,6 +47,7 @@ export interface RequestOptions {
   requestId?: string;
   abortSignal?: AbortSignal;
   priority?: 'low' | 'normal' | 'high';
+  headers?: Record<string, string>;
 }
 
 // API Client Configuration

@@ -272,7 +272,7 @@ export class ApiClient implements ApiClientInstance {
     let config: RequestConfig = {
       url: this.buildUrl(endpoint),
       method,
-      headers: { ...this.config.defaultHeaders },
+      headers: { ...this.config.defaultHeaders, ...options.headers },
       body: data,
       timeout: options.timeout || this.config.timeout,
       retries:
