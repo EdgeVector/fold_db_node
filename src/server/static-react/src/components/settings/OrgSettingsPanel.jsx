@@ -121,9 +121,21 @@ export default function OrgSettingsPanel() {
     }
   }
 
+  const handleDeleteOrg = async (orgHash, orgName) => {
+    if (!window.confirm(`Delete organization "${orgName}"? This will remove all org data from your node.`)) return
+    try {
+      await defaultApiClient.delete(`/org/${orgHash}`)
+      showSuccess(`Organization "${orgName}" deleted`)
+      fetchOrgs()
+    } catch (err) {
+      setError(err.message || 'Failed to delete organization')
+    }
+  }
+
   const handleCreateOrg = async (e) => {
     e.preventDefault()
     if (!newOrgName.trim()) return
+    if (!window.confirm(`Create organization "${newOrgName.trim()}"?`)) return
     try {
       const orgName = newOrgName
       await defaultApiClient.post('/org', { name: orgName })
@@ -273,6 +285,14 @@ export default function OrgSettingsPanel() {
                   <div className="px-2 py-1 bg-primary/20 text-primary text-xs rounded uppercase font-semibold">
                     {org.role}
                   </div>
+                  {org.role === 'Admin' && (
+                    <button
+                      onClick={() => handleDeleteOrg(org.org_hash, org.org_name)}
+                      className="text-red-400 hover:text-red-300 text-xs px-2 py-1 bg-red-400/10 hover:bg-red-400/20 rounded transition-colors"
+                    >
+                      Delete
+                    </button>
+                  )}
                 </div>
               </div>
               
@@ -318,8 +338,9 @@ export default function OrgSettingsPanel() {
                       <ul className="flex flex-col gap-1">
                         {cloudOnly.map(cm => (
                           <li key={cm.user_hash} className="flex justify-between items-center text-sm p-2 bg-bg-surface border border-border/30 rounded opacity-75">
-                            <div>
-                              <span className="text-xs text-text-muted font-mono">{cm.user_hash.substring(0, 16)}...</span>
+                            <div className="flex items-center">
+                              <span className="font-medium text-text-primary">Cloud Member</span>
+                              <span className="text-xs text-text-muted font-mono ml-2">{cm.user_hash.substring(0, 12)}...</span>
                               <span className="ml-2 text-xs px-1.5 py-0.5 rounded bg-primary/10 text-primary">{cm.role}</span>
                             </div>
                           </li>

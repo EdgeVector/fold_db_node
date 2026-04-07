@@ -36,17 +36,17 @@ function QueryTab({ onResult }) {
     refetchSchemas();
   }, [refetchSchemas]);
 
-  // Listen for schema-to-query navigation from SchemaTab
+  // Parse schema parameter from URL hash on mount (set by SchemaTab Query button)
   useEffect(() => {
-    const handler = (e) => {
-      const schemaName = e.detail?.schemaName;
-      if (schemaName) {
-        handleSchemaChange(schemaName);
-      }
-    };
-    window.addEventListener('folddb:query-schema', handler);
-    return () => window.removeEventListener('folddb:query-schema', handler);
-  }, [handleSchemaChange]);
+    const hash = window.location.hash;
+    const match = hash.match(/[?&]schema=([^&]+)/);
+    if (match) {
+      const schemaName = decodeURIComponent(match[1]);
+      handleSchemaChange(schemaName);
+      // Clean up the URL
+      window.location.hash = 'query';
+    }
+  }, []); // eslint-disable-line react-hooks/exhaustive-deps
 
   // Execution state management
   const [isExecuting, setIsExecuting] = useState(false);
