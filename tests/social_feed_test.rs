@@ -298,8 +298,7 @@ async fn test_feed_strips_non_public_fields() {
         if let Some(field) = schema.runtime_fields.get_mut("caption") {
             field.common_mut().access_policy = Some(FieldAccessPolicy {
                 trust_distance: TrustDistancePolicy::owner_only(),
-                capabilities: vec![],
-                security_label: None,
+                ..Default::default()
             });
         }
 

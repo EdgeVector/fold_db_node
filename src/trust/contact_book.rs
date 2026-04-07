@@ -46,6 +46,10 @@ pub struct Contact {
     /// Whether trust has been revoked (kept for history).
     #[serde(default)]
     pub revoked: bool,
+    /// Roles assigned to this contact, keyed by domain.
+    /// e.g., {"personal": "friend", "health": "trainer"}
+    #[serde(default, skip_serializing_if = "HashMap::is_empty")]
+    pub roles: HashMap<String, String>,
 }
 
 /// The contact book — all known trust contacts.
@@ -152,6 +156,7 @@ mod tests {
             connected_at: Utc::now(),
             pseudonym: None,
             revoked: false,
+            roles: HashMap::new(),
         }
     }
 
@@ -194,6 +199,7 @@ mod tests {
             connected_at: Utc::now(),
             pseudonym: None,
             revoked: false,
+            roles: HashMap::new(),
         });
         let alice = book.get("pk_alice").unwrap();
         assert_eq!(alice.display_name, "Alice Chen");

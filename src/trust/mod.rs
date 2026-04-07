@@ -7,4 +7,5 @@
 
 pub mod contact_book;
 pub mod identity_card;
+pub mod sharing_roles;
 pub mod trust_invite;
