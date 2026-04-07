@@ -827,15 +827,15 @@ impl FoldHttpServer {
         cfg.service(
             web::scope("/sharing")
                 .route("/roles", web::get().to(trust_routes::list_sharing_roles))
-                .route("/audit/{key}", web::get().to(trust_routes::sharing_audit)),
-        )
-        .route(
-            "/contacts/{key}/role",
-            web::post().to(trust_routes::assign_contact_role),
-        )
-        .route(
-            "/contacts/{key}/role/{domain}",
-            web::delete().to(trust_routes::remove_contact_role),
+                .route("/audit/{key}", web::get().to(trust_routes::sharing_audit))
+                .route(
+                    "/assign/{key}",
+                    web::post().to(trust_routes::assign_contact_role),
+                )
+                .route(
+                    "/remove/{key}/{domain}",
+                    web::delete().to(trust_routes::remove_contact_role),
+                ),
         );
     }
 
