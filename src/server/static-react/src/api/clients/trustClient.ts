@@ -225,6 +225,61 @@ export async function verifyInviteCode(
   });
 }
 
+// ===== Sharing Roles =====
+
+export interface SharingRole {
+  name: string;
+  domain: string;
+  distance: number;
+  description: string;
+}
+
+export interface AccessibleSchema {
+  schema_name: string;
+  trust_domain: string;
+  readable_fields: string[];
+  writable_fields: string[];
+}
+
+export interface SharingAuditResult {
+  contact_public_key: string;
+  contact_display_name: string;
+  domain_distances: Record<string, number>;
+  domain_roles: Record<string, string>;
+  accessible_schemas: AccessibleSchema[];
+  total_readable: number;
+  total_writable: number;
+}
+
+export async function listSharingRoles(): Promise<EnhancedApiResponse<{ roles: Record<string, SharingRole> }>> {
+  return client.get<{ roles: Record<string, SharingRole> }>("/sharing/roles");
+}
+
+export async function assignRoleToContact(
+  publicKey: string,
+  roleName: string,
+): Promise<EnhancedApiResponse<{ assigned: boolean; role: string }>> {
+  return client.post<{ assigned: boolean; role: string }>(
+    `/contacts/${encodeURIComponent(publicKey)}/role`,
+    { role_name: roleName },
+  );
+}
+
+export async function removeRoleFromContact(
+  publicKey: string,
+  domain: string,
+): Promise<EnhancedApiResponse<{ removed: boolean; domain: string }>> {
+  return client.delete<{ removed: boolean; domain: string }>(
+    `/contacts/${encodeURIComponent(publicKey)}/role/${encodeURIComponent(domain)}`,
+  );
+}
+
+export async function auditContactAccess(
+  publicKey: string,
+): Promise<EnhancedApiResponse<SharingAuditResult>> {
+  return client.get<SharingAuditResult>(`/sharing/audit/${encodeURIComponent(publicKey)}`);
+}
+
 // ===== Audit Log =====
 
 export async function getAuditLog(

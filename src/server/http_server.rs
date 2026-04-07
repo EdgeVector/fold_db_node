@@ -360,6 +360,7 @@ impl FoldHttpServer {
                 .configure(Self::configure_discovery_routes)
                 .configure(Self::configure_trust_routes)
                 .configure(Self::configure_identity_routes)
+                .configure(Self::configure_sharing_routes)
                 .configure(Self::configure_capability_routes)
                 .configure(Self::configure_feed_routes)
                 .configure(Self::configure_remote_routes)
@@ -817,6 +818,24 @@ impl FoldHttpServer {
                 .route("", web::get().to(trust_routes::list_contacts))
                 .route("/{key}", web::get().to(trust_routes::get_contact))
                 .route("/{key}", web::delete().to(trust_routes::revoke_contact)),
+        );
+    }
+
+    fn configure_sharing_routes(cfg: &mut web::ServiceConfig) {
+        use crate::server::routes::trust as trust_routes;
+
+        cfg.service(
+            web::scope("/sharing")
+                .route("/roles", web::get().to(trust_routes::list_sharing_roles))
+                .route("/audit/{key}", web::get().to(trust_routes::sharing_audit)),
+        )
+        .route(
+            "/contacts/{key}/role",
+            web::post().to(trust_routes::assign_contact_role),
+        )
+        .route(
+            "/contacts/{key}/role/{domain}",
+            web::delete().to(trust_routes::remove_contact_role),
         );
     }
 

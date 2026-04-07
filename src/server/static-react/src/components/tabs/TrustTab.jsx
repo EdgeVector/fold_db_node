@@ -12,6 +12,10 @@ import {
   fetchSharedInvite,
   sendVerifiedInvite,
   verifyInviteCode,
+  listSharingRoles,
+  assignRoleToContact,
+  removeRoleFromContact,
+  auditContactAccess,
   getAuditLog,
 } from '../../api/clients/trustClient'
 
@@ -30,6 +34,13 @@ function TrustTab({ onResult }) {
   const [contacts, setContacts] = useState([])
   const [contactsLoading, setContactsLoading] = useState(true)
   const [revoking, setRevoking] = useState(null)
+
+  // Roles & audit
+  const [availableRoles, setAvailableRoles] = useState({})
+  const [selectedContact, setSelectedContact] = useState(null)
+  const [auditResult, setAuditResult] = useState(null)
+  const [auditLoading, setAuditLoading] = useState(false)
+  const [assigningRole, setAssigningRole] = useState(false)
 
   // Invite creation
   const [inviteDistance, setInviteDistance] = useState('1')
@@ -101,11 +112,71 @@ function TrustTab({ onResult }) {
     } catch { /* ignore */ }
   }, [])
 
+  const fetchRoles = useCallback(async () => {
+    try {
+      const response = await listSharingRoles()
+      if (response.success && response.data) {
+        setAvailableRoles(response.data.roles || {})
+      }
+    } catch { /* ignore */ }
+  }, [])
+
   useEffect(() => {
     fetchIdentity()
     fetchContacts()
     fetchAuditLog()
-  }, [fetchIdentity, fetchContacts, fetchAuditLog])
+    fetchRoles()
+  }, [fetchIdentity, fetchContacts, fetchAuditLog, fetchRoles])
+
+  // ===== Role & audit handlers =====
+
+  const handleAssignRole = async (publicKey, roleName) => {
+    setAssigningRole(true)
+    setError(null)
+    try {
+      const response = await assignRoleToContact(publicKey, roleName)
+      if (response.success) {
+        await fetchContacts()
+        if (selectedContact === publicKey) handleAudit(publicKey)
+        if (onResult) onResult({ success: true, data: { message: `Role "${roleName}" assigned` } })
+      } else {
+        setError(response.error || 'Failed to assign role')
+      }
+    } catch (err) {
+      setError(err.message || 'Failed to assign role')
+    } finally {
+      setAssigningRole(false)
+    }
+  }
+
+  const handleRemoveRole = async (publicKey, domain) => {
+    setError(null)
+    try {
+      const response = await removeRoleFromContact(publicKey, domain)
+      if (response.success) {
+        await fetchContacts()
+        if (selectedContact === publicKey) handleAudit(publicKey)
+      } else {
+        setError(response.error || 'Failed to remove role')
+      }
+    } catch (err) {
+      setError(err.message || 'Failed to remove role')
+    }
+  }
+
+  const handleAudit = async (publicKey) => {
+    setSelectedContact(publicKey)
+    setAuditLoading(true)
+    setAuditResult(null)
+    try {
+      const response = await auditContactAccess(publicKey)
+      if (response.success && response.data) {
+        setAuditResult(response.data)
+      }
+    } catch { /* ignore */ } finally {
+      setAuditLoading(false)
+    }
+  }
 
   // ===== Identity card handlers =====
 
@@ -459,10 +530,17 @@ function TrustTab({ onResult }) {
                           {contact.display_name}
                         </span>
                         {directionBadge(contact.direction)}
-                        <span className="badge badge-info text-xs">
-                          distance: {contact.trust_distance}
-                        </span>
                       </div>
+                      {/* Role badges */}
+                      {contact.roles && Object.keys(contact.roles).length > 0 && (
+                        <div className="flex flex-wrap gap-1 mb-1">
+                          {Object.entries(contact.roles).map(([domain, role]) => (
+                            <span key={domain} className="badge badge-info text-xs">
+                              {role} ({domain})
+                            </span>
+                          ))}
+                        </div>
+                      )}
                       {contact.contact_hint && (
                         <p className="text-xs text-secondary mb-1">{contact.contact_hint}</p>
                       )}
@@ -471,14 +549,104 @@ function TrustTab({ onResult }) {
                         <span>Connected {formatTimestamp(contact.connected_at)}</span>
                       </div>
                     </div>
-                    <button
-                      className="btn btn-sm text-gruvbox-red border-gruvbox-red/30 hover:bg-gruvbox-red/10"
-                      onClick={() => handleRevoke(contact.public_key)}
-                      disabled={revoking === contact.public_key}
-                    >
-                      {revoking === contact.public_key ? 'Revoking...' : 'Revoke'}
-                    </button>
+                    <div className="flex gap-1 flex-shrink-0">
+                      <button
+                        className="btn btn-sm"
+                        onClick={() => {
+                          if (selectedContact === contact.public_key) {
+                            setSelectedContact(null)
+                            setAuditResult(null)
+                          } else {
+                            handleAudit(contact.public_key)
+                          }
+                        }}
+                      >
+                        {selectedContact === contact.public_key ? 'Close' : 'Manage'}
+                      </button>
+                      <button
+                        className="btn btn-sm text-gruvbox-red border-gruvbox-red/30 hover:bg-gruvbox-red/10"
+                        onClick={() => handleRevoke(contact.public_key)}
+                        disabled={revoking === contact.public_key}
+                      >
+                        {revoking === contact.public_key ? '...' : 'Revoke'}
+                      </button>
+                    </div>
                   </div>
+
+                  {/* Expanded contact detail: role assignment + audit */}
+                  {selectedContact === contact.public_key && (
+                    <div className="mt-3 pt-3 border-t border-border">
+                      {/* Role assignment */}
+                      <h4 className="text-xs font-medium text-secondary mb-2">Assign Roles</h4>
+                      <div className="flex flex-wrap gap-2 mb-3">
+                        {Object.values(availableRoles).map((role) => {
+                          const isActive = contact.roles?.[role.domain] === role.name
+                          return (
+                            <button
+                              key={role.name}
+                              className={`text-xs px-2 py-1 rounded border transition-colors ${
+                                isActive
+                                  ? 'bg-gruvbox-blue/20 border-gruvbox-blue text-gruvbox-blue'
+                                  : 'border-border text-secondary hover:border-gruvbox-blue hover:text-primary'
+                              }`}
+                              onClick={() => {
+                                if (isActive) {
+                                  handleRemoveRole(contact.public_key, role.domain)
+                                } else {
+                                  handleAssignRole(contact.public_key, role.name)
+                                }
+                              }}
+                              disabled={assigningRole}
+                              title={`${role.description} (${role.domain} domain, distance ${role.distance})`}
+                            >
+                              {role.name.replace(/_/g, ' ')}
+                            </button>
+                          )
+                        })}
+                      </div>
+
+                      {/* Sharing audit */}
+                      <h4 className="text-xs font-medium text-secondary mb-2">
+                        What {contact.display_name} can see
+                      </h4>
+                      {auditLoading && (
+                        <div className="text-center py-4">
+                          <div className="w-4 h-4 border-2 border-border border-t-primary rounded-full animate-spin mx-auto" />
+                        </div>
+                      )}
+                      {auditResult && !auditLoading && (
+                        <div>
+                          {auditResult.accessible_schemas.length === 0 ? (
+                            <p className="text-xs text-tertiary">No data accessible. Assign a role to start sharing.</p>
+                          ) : (
+                            <>
+                              <p className="text-xs text-secondary mb-2">
+                                {auditResult.total_readable} readable field{auditResult.total_readable !== 1 ? 's' : ''} across {auditResult.accessible_schemas.length} schema{auditResult.accessible_schemas.length !== 1 ? 's' : ''}
+                              </p>
+                              <div className="space-y-1 max-h-48 overflow-y-auto">
+                                {auditResult.accessible_schemas.map((schema) => (
+                                  <div key={schema.schema_name} className="text-xs p-2 bg-surface-secondary rounded">
+                                    <div className="flex items-center gap-2">
+                                      <span className="font-medium text-primary">{schema.schema_name}</span>
+                                      <span className="text-tertiary">({schema.trust_domain})</span>
+                                    </div>
+                                    <span className="text-gruvbox-green">
+                                      {schema.readable_fields.length} readable
+                                    </span>
+                                    {schema.writable_fields.length > 0 && (
+                                      <span className="text-gruvbox-yellow ml-2">
+                                        {schema.writable_fields.length} writable
+                                      </span>
+                                    )}
+                                  </div>
+                                ))}
+                              </div>
+                            </>
+                          )}
+                        </div>
+                      )}
+                    </div>
+                  )}
                 </div>
               ))}
             </div>
