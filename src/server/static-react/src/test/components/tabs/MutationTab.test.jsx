@@ -27,11 +27,6 @@ vi.mock('../../../api', () => ({
   }))
 }))
 
-// Mock crypto operations
-vi.mock('../../../utils/cryptoUtils', () => ({
-  validateRangeKey: vi.fn(() => ({ isValid: true }))
-}))
-
 // Mock Redux hooks
 const mockDispatch = vi.fn()
 vi.mock('react-redux', async (importOriginal) => {
