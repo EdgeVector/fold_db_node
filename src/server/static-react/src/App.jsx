@@ -35,7 +35,7 @@ import LogSidebar from './components/LogSidebar'
 import ErrorBoundary from './components/ErrorBoundary'
 import { useApprovedSchemas } from './hooks/useApprovedSchemas.js'
 import { useAppSelector, useAppDispatch } from './store/hooks'
-import { restoreSession, autoLogin } from './store/authSlice'
+import { restoreSession, autoLogin, loadSystemPublicKey } from './store/authSlice'
 import { fetchIngestionConfig, selectIngestionConfig, selectIsAiConfigured, selectAiProvider } from './store/ingestionSlice'
 import { DEFAULT_TAB } from './constants'
 import { BROWSER_CONFIG } from './constants/config'
@@ -126,6 +126,11 @@ export function AppContent() {
 
     // No stored credentials — auto-login with node's public key identity
     dispatch(autoLogin())
+  }, [dispatch])
+
+  // Load the system public key for display in Key Management tab
+  useEffect(() => {
+    dispatch(loadSystemPublicKey())
   }, [dispatch])
 
   // Check database status after authenticated

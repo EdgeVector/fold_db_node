@@ -2,6 +2,7 @@ import { createSlice, createAsyncThunk, PayloadAction } from "@reduxjs/toolkit";
 import {
   getAutoIdentity,
 } from "../api/clients/systemClient";
+import { getSystemPublicKey } from "../api/clients/securityClient";
 import { BROWSER_CONFIG } from "../constants/config";
 
 export interface KeyAuthenticationState {
@@ -55,6 +56,27 @@ export const autoLogin = createAsyncThunk(
     } catch (err) {
       return rejectWithValue(
         err instanceof Error ? err.message : "Failed to auto-login",
+      );
+    }
+  },
+);
+
+// Async thunk for loading the system public key for display
+export const loadSystemPublicKey = createAsyncThunk(
+  "auth/loadSystemPublicKey",
+  async (_, { rejectWithValue }) => {
+    try {
+      const response = await getSystemPublicKey();
+      if (response.success && response.data?.public_key) {
+        return {
+          systemPublicKey: response.data.public_key,
+          systemKeyId: response.data.public_key_id || null,
+        };
+      }
+      return rejectWithValue("No public key returned");
+    } catch (err) {
+      return rejectWithValue(
+        err instanceof Error ? err.message : "Failed to load system public key",
       );
     }
   },
@@ -203,6 +225,11 @@ const authSlice = createSlice({
       .addCase(verifyMagicLink.rejected, (state, action) => {
         state.isLoading = false;
         state.error = action.payload as string;
+      })
+      // loadSystemPublicKey cases
+      .addCase(loadSystemPublicKey.fulfilled, (state, action) => {
+        state.systemPublicKey = action.payload.systemPublicKey;
+        state.systemKeyId = action.payload.systemKeyId;
       });
   },
 });
