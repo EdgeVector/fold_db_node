@@ -192,11 +192,33 @@ pub async fn proxy_query(
                 timestamp,
             };
 
-            // Forward to remote node
+            // First, get the remote node's user_hash so we access the right data
             let client = reqwest::Client::new();
-            let url = format!("{}/api/remote/query", req.remote_url.trim_end_matches('/'));
+            let base = req.remote_url.trim_end_matches('/');
+            let identity_resp = client
+                .get(format!("{}/api/system/auto-identity", base))
+                .timeout(std::time::Duration::from_secs(10))
+                .send()
+                .await
+                .map_err(|e| {
+                    crate::handlers::HandlerError::Internal(format!(
+                        "Failed to get remote identity: {e}"
+                    ))
+                })?;
+            let identity: serde_json::Value = identity_resp.json().await.map_err(|e| {
+                crate::handlers::HandlerError::Internal(format!("Invalid identity response: {e}"))
+            })?;
+            let remote_hash = identity
+                .get("user_hash")
+                .and_then(|v| v.as_str())
+                .unwrap_or("unknown")
+                .to_string();
+
+            // Forward to remote node with the correct user hash
+            let url = format!("{}/api/remote/query", base);
             let resp = client
                 .post(&url)
+                .header("X-User-Hash", &remote_hash)
                 .json(&remote_req)
                 .timeout(std::time::Duration::from_secs(30))
                 .send()
@@ -244,8 +266,29 @@ pub async fn browse_remote(
                 "{}/api/remote/node-info",
                 req.remote_url.trim_end_matches('/')
             );
+            // Get the remote node's user_hash first
+            let identity_resp = client
+                .get(format!(
+                    "{}/api/system/auto-identity",
+                    req.remote_url.trim_end_matches('/')
+                ))
+                .timeout(std::time::Duration::from_secs(10))
+                .send()
+                .await
+                .map_err(|e| {
+                    crate::handlers::HandlerError::Internal(format!(
+                        "Failed to reach remote node: {e}"
+                    ))
+                })?;
+            let identity: serde_json::Value = identity_resp.json().await.unwrap_or_default();
+            let remote_hash = identity
+                .get("user_hash")
+                .and_then(|v| v.as_str())
+                .unwrap_or("unknown");
+
             let resp = client
                 .get(&url)
+                .header("X-User-Hash", remote_hash)
                 .timeout(std::time::Duration::from_secs(10))
                 .send()
                 .await
