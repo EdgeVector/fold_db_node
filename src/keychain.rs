@@ -1,16 +1,22 @@
 //! Cross-platform credential storage.
 //!
-//! Stores Exemem credentials as a JSON file at `$FOLDDB_HOME/credentials.json`
-//! (defaults to `~/.folddb/credentials.json`).
-//! No OS-specific APIs (keychain, credential manager) — works on macOS, Linux,
-//! Windows, Docker, and CI.
+//! Stores Exemem credentials at `$FOLDDB_HOME/credentials.json` (or `.enc`
+//! when the `os-keychain` feature is enabled).
+//!
+//! - **`os-keychain` enabled** (release builds): credentials are encrypted at
+//!   rest with a master key stored in the OS keychain (macOS Keychain / Windows
+//!   Credential Manager / Linux Secret Service).
+//! - **`os-keychain` disabled** (dev mode): credentials are stored as plaintext
+//!   JSON with 0o600 file permissions, matching the SSH key security model.
 
 use crate::utils::paths::folddb_home;
 use serde::{Deserialize, Serialize};
-use std::fs;
 use std::path::PathBuf;
 
+#[cfg(not(feature = "os-keychain"))]
 const CREDENTIALS_FILE: &str = "credentials.json";
+#[cfg(feature = "os-keychain")]
+const CREDENTIALS_FILE: &str = "credentials.enc";
 
 /// Credentials stored locally
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -26,11 +32,41 @@ fn credentials_path() -> Result<PathBuf, String> {
     Ok(folddb_home()?.join(CREDENTIALS_FILE))
 }
 
-/// Store Exemem credentials to disk.
+// ============================================================
+// os-keychain ENABLED — encrypt credentials via OS keychain
+// ============================================================
+
+#[cfg(feature = "os-keychain")]
+pub fn store_credentials(creds: &ExememCredentials) -> Result<(), String> {
+    let path = credentials_path()?;
+    let json = serde_json::to_string_pretty(creds)
+        .map_err(|e| format!("Failed to serialize credentials: {}", e))?;
+    crate::secure_store::encrypt_and_write(&path, json.as_bytes())
+}
+
+#[cfg(feature = "os-keychain")]
+pub fn load_credentials() -> Result<Option<ExememCredentials>, String> {
+    let path = credentials_path()?;
+    if !path.exists() {
+        return Ok(None);
+    }
+    let plaintext = crate::secure_store::read_and_decrypt(&path)?;
+    let json = String::from_utf8(plaintext)
+        .map_err(|e| format!("Decrypted credentials are not valid UTF-8: {}", e))?;
+    let creds: ExememCredentials = serde_json::from_str(&json)
+        .map_err(|e| format!("Failed to deserialize credentials: {}", e))?;
+    Ok(Some(creds))
+}
+
+// ============================================================
+// os-keychain DISABLED — plaintext JSON (dev mode)
+// ============================================================
+
+#[cfg(not(feature = "os-keychain"))]
 pub fn store_credentials(creds: &ExememCredentials) -> Result<(), String> {
     let path = credentials_path()?;
     if let Some(parent) = path.parent() {
-        fs::create_dir_all(parent)
+        std::fs::create_dir_all(parent)
             .map_err(|e| format!("Failed to create credentials directory: {}", e))?;
     }
 
@@ -57,14 +93,13 @@ pub fn store_credentials(creds: &ExememCredentials) -> Result<(), String> {
 
     #[cfg(not(unix))]
     {
-        fs::write(&path, &json).map_err(|e| format!("Failed to write credentials: {}", e))?;
+        std::fs::write(&path, &json).map_err(|e| format!("Failed to write credentials: {}", e))?;
     }
 
     Ok(())
 }
 
-/// Load Exemem credentials from disk.
-/// Returns None if no credentials are stored.
+#[cfg(not(feature = "os-keychain"))]
 pub fn load_credentials() -> Result<Option<ExememCredentials>, String> {
     let path = credentials_path()?;
     if !path.exists() {
@@ -72,7 +107,7 @@ pub fn load_credentials() -> Result<Option<ExememCredentials>, String> {
     }
 
     let json =
-        fs::read_to_string(&path).map_err(|e| format!("Failed to read credentials: {}", e))?;
+        std::fs::read_to_string(&path).map_err(|e| format!("Failed to read credentials: {}", e))?;
 
     let creds: ExememCredentials = serde_json::from_str(&json)
         .map_err(|e| format!("Failed to deserialize credentials: {}", e))?;
@@ -84,7 +119,16 @@ pub fn load_credentials() -> Result<Option<ExememCredentials>, String> {
 pub fn delete_credentials() -> Result<(), String> {
     let path = credentials_path()?;
     if path.exists() {
-        fs::remove_file(&path).map_err(|e| format!("Failed to delete credentials: {}", e))?;
+        std::fs::remove_file(&path).map_err(|e| format!("Failed to delete credentials: {}", e))?;
+    }
+    // Also clean up the other filename variant if it exists (e.g. after toggling the feature)
+    let alt_path = folddb_home()?.join(if cfg!(feature = "os-keychain") {
+        "credentials.json"
+    } else {
+        "credentials.enc"
+    });
+    if alt_path.exists() {
+        let _ = std::fs::remove_file(&alt_path);
     }
     Ok(())
 }
