@@ -911,3 +911,16 @@ pub async fn sharing_audit(path: web::Path<String>, state: web::Data<AppState>) 
         .await,
     )
 }
+
+/// GET /api/sharing/posture — overview of the node's sharing posture
+pub async fn sharing_posture(state: web::Data<AppState>) -> impl Responder {
+    let (user_hash, node) = node_or_return!(state);
+    let op = OperationProcessor::new(node.clone());
+    handler_result_to_response(
+        async {
+            let result = op.sharing_posture().await.handler_err("sharing posture")?;
+            Ok(ApiResponse::success_with_user(result, user_hash))
+        }
+        .await,
+    )
+}

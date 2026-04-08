@@ -9,6 +9,28 @@ use std::collections::HashMap;
 use super::OperationProcessor;
 
 impl OperationProcessor {
+    /// Execute a mutation with access control.
+    /// Builds AccessContext from caller's public key and checks write permissions.
+    pub async fn execute_mutation_op_with_access(
+        &self,
+        mutation: Mutation,
+        caller_pub_key: &str,
+    ) -> FoldDbResult<String> {
+        let access_context = self.build_access_context(caller_pub_key).await?;
+
+        let mut db = self.get_db().await?;
+        let mut ids = db
+            .mutation_manager
+            .write_mutations_with_access(vec![mutation], &access_context, None)
+            .await
+            .map_err(Self::mutation_write_error)?;
+
+        ids.pop()
+            .ok_or_else(|| Self::mutation_write_error("Batch mutation returned no IDs"))
+    }
+}
+
+impl OperationProcessor {
     /// Map a mutation write error to FoldDbError with logging.
     fn mutation_write_error(e: impl std::fmt::Display) -> FoldDbError {
         log_feature!(

@@ -45,7 +45,8 @@ pub async fn execute_mutation(
     execute_mutations_batch(vec![mutation], user_hash, node).await
 }
 
-/// Execute a single mutation from components (used by HTTP server)
+/// Execute a single mutation from components (used by HTTP server).
+/// Access control: checks write permissions via the caller's trust distances.
 pub async fn execute_mutation_from_components(
     schema: String,
     fields_and_values: HashMap<String, Value>,
@@ -55,9 +56,17 @@ pub async fn execute_mutation_from_components(
     node: &FoldNode,
 ) -> HandlerResult<SingleMutationResponse> {
     let processor = OperationProcessor::new(node.clone());
+    let caller_pub_key = node.get_node_public_key().to_string();
 
+    let mutation = Mutation::new(
+        schema,
+        fields_and_values,
+        key_value,
+        caller_pub_key.clone(),
+        mutation_type,
+    );
     let mutation_id = processor
-        .execute_mutation(schema, fields_and_values, key_value, mutation_type)
+        .execute_mutation_op_with_access(mutation, &caller_pub_key)
         .await
         .handler_err("execute mutation")?;
 
