@@ -145,6 +145,19 @@ pub fn tool_definitions() -> Vec<Value> {
     ]
 }
 
+/// Extract the meaningful content from an API response, stripping the wrapper.
+/// API responses come as {"ok": true, "data": {...}} or {"ok": true, "results": [...]}
+/// or sometimes just the raw content. This returns just the payload.
+fn unwrap_response(resp: &Value) -> &Value {
+    if resp.get("ok").is_some() {
+        resp.get("data")
+            .or_else(|| resp.get("results"))
+            .unwrap_or(resp)
+    } else {
+        resp
+    }
+}
+
 /// Dispatch a tool call to the appropriate HTTP endpoint.
 pub async fn dispatch(
     tool_name: &str,
@@ -154,12 +167,12 @@ pub async fn dispatch(
     match tool_name {
         "folddb_status" => {
             let resp = client.get("/api/system/status").await?;
-            Ok(serde_json::to_string_pretty(&resp)?)
+            Ok(serde_json::to_string_pretty(unwrap_response(&resp))?)
         }
 
         "folddb_schema_list" => {
             let resp = client.get("/api/schemas").await?;
-            Ok(serde_json::to_string_pretty(&resp)?)
+            Ok(serde_json::to_string_pretty(unwrap_response(&resp))?)
         }
 
         "folddb_schema_get" => {
@@ -170,7 +183,7 @@ pub async fn dispatch(
             let resp = client
                 .get(&format!("/api/schema/{}", urlencoding::encode(name)))
                 .await?;
-            Ok(serde_json::to_string_pretty(&resp)?)
+            Ok(serde_json::to_string_pretty(unwrap_response(&resp))?)
         }
 
         "folddb_query" => {
@@ -213,7 +226,7 @@ pub async fn dispatch(
                     urlencoding::encode(term)
                 ))
                 .await?;
-            Ok(serde_json::to_string_pretty(&resp)?)
+            Ok(serde_json::to_string_pretty(unwrap_response(&resp))?)
         }
 
         "folddb_mutate" => {
@@ -249,7 +262,7 @@ pub async fn dispatch(
             }
 
             let resp = client.post("/api/mutation", &body).await?;
-            Ok(serde_json::to_string_pretty(&resp)?)
+            Ok(serde_json::to_string_pretty(unwrap_response(&resp))?)
         }
 
         "folddb_ingest" => {
@@ -266,7 +279,7 @@ pub async fn dispatch(
             }
 
             let resp = client.post("/api/ingestion/process", &body).await?;
-            Ok(serde_json::to_string_pretty(&resp)?)
+            Ok(serde_json::to_string_pretty(unwrap_response(&resp))?)
         }
 
         "folddb_ask" => {
@@ -281,7 +294,7 @@ pub async fn dispatch(
             }
 
             let resp = client.post("/api/llm-query/agent", &body).await?;
-            Ok(serde_json::to_string_pretty(&resp)?)
+            Ok(serde_json::to_string_pretty(unwrap_response(&resp))?)
         }
 
         _ => Err(McpError::ToolError(format!("Unknown tool: {}", tool_name))),

@@ -255,9 +255,15 @@ impl FoldHttpServer {
 
         // Start the HTTP server
         let server = ActixHttpServer::new(move || {
-            // Create CORS middleware
+            // CORS — restrict to localhost origins only.
+            // This is the primary CSRF protection: prevents external webpages
+            // from making requests to the local FoldDB server.
             let cors = Cors::default()
-                .allow_any_origin()
+                .allowed_origin("http://localhost:5173")
+                .allowed_origin("http://localhost:9001")
+                .allowed_origin("http://127.0.0.1:5173")
+                .allowed_origin("http://127.0.0.1:9001")
+                .allowed_origin("tauri://localhost")
                 .allow_any_method()
                 .allow_any_header()
                 .max_age(3600);
