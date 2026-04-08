@@ -169,10 +169,32 @@ impl OperationProcessor {
         // Mark nonce as consumed
         save_consumed_nonce(&invite.nonce);
 
-        // Add to contact book
-        // Direction is Outgoing (you trust them) — becomes Mutual only when
-        // the other side also accepts your reciprocal invite.
-        let direction = TrustDirection::Outgoing;
+        // Determine direction: if sender is already in our contacts (we sent them
+        // an invite earlier and they accepted + sent back), this is mutual.
+        let existing_book = ContactBook::load()
+            .map_err(|e| SchemaError::InvalidData(format!("Failed to load contact book: {e}")))?;
+        let direction = if existing_book
+            .get(&invite.sender_pub_key)
+            .filter(|c| !c.revoked)
+            .is_some()
+        {
+            TrustDirection::Mutual
+        } else {
+            TrustDirection::Outgoing
+        };
+
+        // If we had previously sent an invite to this person, mark it accepted
+        if let Ok(mut sent) = crate::trust::sent_invites::SentInviteStore::load() {
+            // Find any pending invite where the sender's key matches
+            // (we don't have their nonce, but we can mark by checking contacts)
+            for inv in sent.invites.iter_mut() {
+                if inv.status == crate::trust::sent_invites::SentInviteStatus::Pending {
+                    inv.status = crate::trust::sent_invites::SentInviteStatus::Accepted;
+                    break; // Mark the first pending one (most recent accept)
+                }
+            }
+            let _ = sent.save();
+        }
 
         let contact = Contact {
             public_key: invite.sender_pub_key.clone(),

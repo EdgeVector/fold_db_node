@@ -10,9 +10,14 @@ use std::collections::HashMap;
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct AccessibleSchema {
     pub schema_name: String,
+    /// Human-readable name (if available).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub descriptive_name: Option<String>,
     pub trust_domain: String,
     pub readable_fields: Vec<String>,
     pub writable_fields: Vec<String>,
+    /// Total fields in the schema (readable + hidden).
+    pub total_fields: usize,
 }
 
 /// Result of auditing what a contact can see.
