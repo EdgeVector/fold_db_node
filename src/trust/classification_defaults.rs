@@ -63,6 +63,14 @@ impl Default for ClassificationDefaultsConfig {
         // Identity: restrictive in personal domain
         add(&mut defaults, "4:identity", "personal", 0);
         add(&mut defaults, "3:identity", "personal", 1);
+        add(&mut defaults, "2:identity", "personal", 2);
+        add(&mut defaults, "1:identity", "personal", 3);
+
+        // Location: moderate restriction in personal domain
+        add(&mut defaults, "3:location", "personal", 1);
+        add(&mut defaults, "2:location", "personal", 2);
+        add(&mut defaults, "1:location", "personal", 3);
+        add(&mut defaults, "0:location", "personal", 5);
 
         // General/personal: graduated
         add(&mut defaults, "0:general", "personal", u64::MAX); // public
