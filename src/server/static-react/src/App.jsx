@@ -27,6 +27,7 @@ import AppleImportTab from './components/tabs/AppleImportTab'
 import MyProfileTab from './components/tabs/MyProfileTab'
 import ConflictsTab from './components/tabs/ConflictsTab'
 import TrustTab from './components/tabs/TrustTab'
+import RemoteQueryTab from './components/tabs/RemoteQueryTab'
 import SettingsModal from './components/SettingsModal'
 import OnboardingWizard, { ONBOARDING_STORAGE_KEY } from './components/onboarding/OnboardingWizard'
 
@@ -68,6 +69,7 @@ const HASH_TO_TAB = {
   'my-profile': 'my-profile',
   conflicts: 'conflicts',
   trust: 'trust',
+  'remote-query': 'remote-query',
 }
 
 function resolveTabFromHash() {
@@ -245,6 +247,8 @@ export function AppContent() {
         return <ConflictsTab />
       case 'trust':
         return <TrustTab onResult={handleOperationResult} />
+      case 'remote-query':
+        return <RemoteQueryTab onResult={handleOperationResult} />
       default:
         return null
     }

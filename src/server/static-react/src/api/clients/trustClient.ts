@@ -356,6 +356,36 @@ export async function undeclineInvite(
   return client.delete<{ undeclined: boolean }>(`/trust/invite/declined/${encodeURIComponent(nonce)}`);
 }
 
+// ===== Remote Query =====
+
+export interface RemoteNodeInfo {
+  public_key: string;
+  node_id: string;
+  shared_schemas: string[];
+}
+
+export interface RemoteQueryResult {
+  results: Record<string, unknown>[];
+}
+
+export async function browseRemoteNode(
+  remoteUrl: string,
+): Promise<EnhancedApiResponse<RemoteNodeInfo>> {
+  return client.post<RemoteNodeInfo>("/remote/browse", { remote_url: remoteUrl });
+}
+
+export async function proxyQueryRemote(
+  remoteUrl: string,
+  schemaName: string,
+  fields: string[],
+): Promise<EnhancedApiResponse<RemoteQueryResult>> {
+  return client.post<RemoteQueryResult>("/remote/proxy-query", {
+    remote_url: remoteUrl,
+    schema_name: schemaName,
+    fields,
+  });
+}
+
 // ===== Audit Log =====
 
 export async function getAuditLog(

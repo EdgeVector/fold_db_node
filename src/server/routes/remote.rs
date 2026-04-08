@@ -6,9 +6,11 @@ use actix_web::{web, Responder};
 use fold_db::schema::types::operations::Query;
 use serde::{Deserialize, Serialize};
 
+use base64::Engine as _;
+
 /// Request for a remote (node-to-node) query.
 /// The caller signs the payload with their Ed25519 private key.
-#[derive(Debug, Clone, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct RemoteQueryRequest {
     /// Schema or view name to query
     pub schema_name: String,
@@ -129,4 +131,136 @@ fn verify_ed25519_signature(
     } else {
         Err("Signature verification failed".to_string())
     }
+}
+
+// ===== Proxy endpoints (local node signs and forwards to remote) =====
+
+/// Request to query a remote node through the local node as proxy.
+#[derive(Debug, Clone, Deserialize)]
+pub struct ProxyQueryRequest {
+    /// URL of the remote node (e.g., "http://192.168.1.10:9001")
+    pub remote_url: String,
+    /// Schema name to query on the remote node
+    pub schema_name: String,
+    /// Fields to return
+    pub fields: Vec<String>,
+}
+
+/// Request to browse a remote node's available schemas.
+#[derive(Debug, Clone, Deserialize)]
+pub struct BrowseRemoteRequest {
+    /// URL of the remote node
+    pub remote_url: String,
+}
+
+/// POST /api/remote/proxy-query — query a remote node (local node signs the request)
+pub async fn proxy_query(
+    body: web::Json<ProxyQueryRequest>,
+    state: web::Data<AppState>,
+) -> impl Responder {
+    let (user_hash, node) = node_or_return!(state);
+    let req = body.into_inner();
+
+    handler_result_to_response(
+        async {
+            let private_key = node.get_node_private_key();
+            let public_key = node.get_node_public_key();
+
+            // Build the payload to sign
+            let timestamp = chrono::Utc::now().timestamp();
+            let payload = format!("{}:{}:{}", req.schema_name, req.fields.join(","), timestamp);
+
+            // Sign with node's Ed25519 key
+            let secret_bytes = base64::engine::general_purpose::STANDARD
+                .decode(private_key)
+                .map_err(|e| {
+                    crate::handlers::HandlerError::Internal(format!("Invalid private key: {e}"))
+                })?;
+            let keypair = fold_db::security::Ed25519KeyPair::from_secret_key(&secret_bytes)
+                .map_err(|e| {
+                    crate::handlers::HandlerError::Internal(format!("Failed to load keypair: {e}"))
+                })?;
+            let signature = keypair.sign(payload.as_bytes());
+            let sig_b64 = fold_db::security::KeyUtils::signature_to_base64(&signature);
+
+            // Build the remote request
+            let remote_req = RemoteQueryRequest {
+                schema_name: req.schema_name,
+                fields: req.fields,
+                signature: sig_b64,
+                public_key: public_key.to_string(),
+                timestamp,
+            };
+
+            // Forward to remote node
+            let client = reqwest::Client::new();
+            let url = format!("{}/api/remote/query", req.remote_url.trim_end_matches('/'));
+            let resp = client
+                .post(&url)
+                .json(&remote_req)
+                .timeout(std::time::Duration::from_secs(30))
+                .send()
+                .await
+                .map_err(|e| {
+                    crate::handlers::HandlerError::Internal(format!(
+                        "Failed to reach remote node: {e}"
+                    ))
+                })?;
+
+            let status = resp.status();
+            let body: serde_json::Value = resp.json().await.map_err(|e| {
+                crate::handlers::HandlerError::Internal(format!("Invalid response: {e}"))
+            })?;
+
+            if !status.is_success() {
+                let err = body
+                    .get("error")
+                    .and_then(|v| v.as_str())
+                    .unwrap_or("Unknown error");
+                return Err(crate::handlers::HandlerError::Internal(format!(
+                    "Remote node returned {}: {}",
+                    status, err
+                )));
+            }
+
+            Ok(ApiResponse::success_with_user(body, user_hash))
+        }
+        .await,
+    )
+}
+
+/// POST /api/remote/browse — browse a remote node's available schemas
+pub async fn browse_remote(
+    body: web::Json<BrowseRemoteRequest>,
+    state: web::Data<AppState>,
+) -> impl Responder {
+    let (user_hash, _node) = node_or_return!(state);
+    let req = body.into_inner();
+
+    handler_result_to_response(
+        async {
+            let client = reqwest::Client::new();
+            let url = format!(
+                "{}/api/remote/node-info",
+                req.remote_url.trim_end_matches('/')
+            );
+            let resp = client
+                .get(&url)
+                .timeout(std::time::Duration::from_secs(10))
+                .send()
+                .await
+                .map_err(|e| {
+                    crate::handlers::HandlerError::Internal(format!(
+                        "Failed to reach remote node: {e}"
+                    ))
+                })?;
+
+            let body: serde_json::Value = resp.json().await.map_err(|e| {
+                crate::handlers::HandlerError::Internal(format!("Invalid response: {e}"))
+            })?;
+
+            Ok(ApiResponse::success_with_user(body, user_hash))
+        }
+        .await,
+    )
 }
