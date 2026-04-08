@@ -17,6 +17,7 @@ import {
   removeRoleFromContact,
   auditContactAccess,
   getSharingPosture,
+  declineTrustInvite,
   getAuditLog,
 } from '../../api/clients/trustClient'
 
@@ -914,6 +915,21 @@ function TrustTab({ onResult }) {
                       disabled={accepting}
                     >
                       {accepting ? 'Accepting...' : (trustBack ? 'Accept & Trust Back' : 'Accept Only')}
+                    </button>
+                    <button
+                      className="btn btn-sm text-gruvbox-red border-gruvbox-red/30 hover:bg-gruvbox-red/10"
+                      onClick={async () => {
+                        try {
+                          const resp = await declineTrustInvite(acceptToken)
+                          if (resp.success) {
+                            setAcceptToken('')
+                            setPreview(null)
+                            if (onResult) onResult({ success: true, data: { message: `Declined invite from ${resp.data?.sender || 'unknown'}` } })
+                          }
+                        } catch { /* ignore */ }
+                      }}
+                    >
+                      Decline
                     </button>
                   </div>
                 )}

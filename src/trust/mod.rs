@@ -7,6 +7,7 @@
 
 pub mod classification_defaults;
 pub mod contact_book;
+pub mod declined_invites;
 pub mod identity_card;
 pub mod sharing_audit;
 pub mod sharing_roles;

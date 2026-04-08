@@ -1019,3 +1019,93 @@ pub async fn get_schema_policies(
         .await,
     )
 }
+
+// ===== Decline invites =====
+
+/// POST /api/trust/invite/decline — decline a trust invite (record locally)
+pub async fn decline_trust_invite(
+    body: web::Json<serde_json::Value>,
+    state: web::Data<AppState>,
+) -> impl Responder {
+    let (_user_hash, _node) = node_or_return!(state);
+    handler_result_to_response(
+        async {
+            let token = body
+                .get("token")
+                .and_then(|v| v.as_str())
+                .ok_or_else(|| {
+                    fold_db::schema::SchemaError::InvalidData("Missing 'token' field".to_string())
+                })
+                .handler_err("parse decline request")?;
+
+            let invite = TrustInvite::from_token(token)
+                .map_err(fold_db::schema::SchemaError::InvalidData)
+                .handler_err("decode invite token")?;
+
+            let mut store = crate::trust::declined_invites::DeclinedInviteStore::load()
+                .map_err(fold_db::schema::SchemaError::InvalidData)
+                .handler_err("load declined invites")?;
+
+            store.decline(crate::trust::declined_invites::DeclinedInvite {
+                sender_pub_key: invite.sender_pub_key.clone(),
+                sender_display_name: invite.sender_identity.display_name.clone(),
+                sender_contact_hint: invite.sender_identity.contact_hint.clone(),
+                proposed_distance: invite.proposed_distance,
+                declined_at: chrono::Utc::now(),
+                nonce: invite.nonce.clone(),
+            });
+
+            store
+                .save()
+                .map_err(fold_db::schema::SchemaError::InvalidData)
+                .handler_err("save declined invites")?;
+
+            Ok(ApiResponse::success(serde_json::json!({
+                "declined": true,
+                "sender": invite.sender_identity.display_name,
+            })))
+        }
+        .await,
+    )
+}
+
+/// GET /api/trust/invite/declined — list all declined invites
+pub async fn list_declined_invites(state: web::Data<AppState>) -> impl Responder {
+    let (_user_hash, _node) = node_or_return!(state);
+    handler_result_to_response(
+        async {
+            let store = crate::trust::declined_invites::DeclinedInviteStore::load()
+                .map_err(fold_db::schema::SchemaError::InvalidData)
+                .handler_err("load declined invites")?;
+            Ok(ApiResponse::success(
+                serde_json::json!({"declined_invites": store.invites}),
+            ))
+        }
+        .await,
+    )
+}
+
+/// DELETE /api/trust/invite/declined/{nonce} — undo a decline (change mind)
+pub async fn undecline_invite(
+    path: web::Path<String>,
+    state: web::Data<AppState>,
+) -> impl Responder {
+    let nonce = path.into_inner();
+    let (_user_hash, _node) = node_or_return!(state);
+    handler_result_to_response(
+        async {
+            let mut store = crate::trust::declined_invites::DeclinedInviteStore::load()
+                .map_err(fold_db::schema::SchemaError::InvalidData)
+                .handler_err("load declined invites")?;
+            let removed = store.undecline(&nonce);
+            store
+                .save()
+                .map_err(fold_db::schema::SchemaError::InvalidData)
+                .handler_err("save declined invites")?;
+            Ok(ApiResponse::success(
+                serde_json::json!({"undeclined": removed}),
+            ))
+        }
+        .await,
+    )
+}

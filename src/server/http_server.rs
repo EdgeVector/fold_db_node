@@ -789,6 +789,18 @@ impl FoldHttpServer {
                 .route(
                     "/invite/verify",
                     web::post().to(trust_routes::verify_invite_code),
+                )
+                .route(
+                    "/invite/decline",
+                    web::post().to(trust_routes::decline_trust_invite),
+                )
+                .route(
+                    "/invite/declined",
+                    web::get().to(trust_routes::list_declined_invites),
+                )
+                .route(
+                    "/invite/declined/{nonce}",
+                    web::delete().to(trust_routes::undecline_invite),
                 ),
         )
         .route(
