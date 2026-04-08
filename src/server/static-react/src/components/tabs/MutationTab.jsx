@@ -7,8 +7,10 @@ import { mutationClient } from '../../api'
 import { MUTATION_TYPE_API_MAP, BUTTON_TEXT, FORM_LABELS, RANGE_SCHEMA_CONFIG } from '../../constants/ui.js'
 import {
   isRangeSchema,
+  isHashRangeSchema,
   formatRangeMutation,
-  getRangeKey
+  getRangeKey,
+  getHashKey
 } from '../../utils/rangeSchemaHelpers'
 import { useAppSelector } from '../../store/hooks'
 import { selectApprovedSchemas } from '../../store/schemaSlice'
@@ -21,13 +23,15 @@ function MutationTab({ onResult }) {
   const [mutationType, setMutationType] = useState('Insert')
   const [result, setResult] = useState(null)
   const [rangeKeyValue, setRangeKeyValue] = useState('')
-
+  const [hashKeyValue, setHashKeyValue] = useState('')
 
   const handleSchemaChange = (schemaName) => {
     setSelectedSchema(schemaName)
     setMutationData({})
     setMutationType('Insert')
     setRangeKeyValue('')
+    setHashKeyValue('')
+    setResult(null)
   }
 
   const handleFieldChange = (fieldName, value) => {
@@ -37,81 +41,86 @@ function MutationTab({ onResult }) {
   const handleSubmit = async (e) => {
     e.preventDefault()
     if (!selectedSchema) return
-    
+
     const selectedSchemaObj = schemas.find(s => s.name === selectedSchema)
     const normalizedMutationType = mutationType
       ? (MUTATION_TYPE_API_MAP[mutationType] || mutationType.toLowerCase())
       : ''
-    if (!normalizedMutationType) {
-      return
-    }
+    if (!normalizedMutationType) return
+
     let mutation
 
-    // Backend handles all validation
-    if (isRangeSchema(selectedSchemaObj)) {
+    if (isHashRangeSchema(selectedSchemaObj)) {
+      // HashRange: use formatRangeMutation but also include the hash key
+      mutation = formatRangeMutation(selectedSchemaObj, mutationType, rangeKeyValue, mutationData)
+      // formatRangeMutation sets key_value.range — add hash key
+      if (!mutation.key_value) mutation.key_value = {}
+      mutation.key_value.hash = hashKeyValue.trim() || null
+      mutation.key_value.range = rangeKeyValue.trim() || null
+    } else if (isRangeSchema(selectedSchemaObj)) {
       mutation = formatRangeMutation(selectedSchemaObj, mutationType, rangeKeyValue, mutationData)
     } else {
+      // Single schema — hash key only
       mutation = {
         type: 'mutation',
         schema: selectedSchema,
         mutation_type: normalizedMutationType,
         fields_and_values: mutationData,
-        key_value: { hash: null, range: null }
+        key_value: { hash: hashKeyValue.trim() || null, range: null }
       }
     }
 
     try {
       // Send the mutation directly to the API (no signing required)
       const response = await mutationClient.executeMutation(mutation)
-      
+
       if (!response.success) {
         throw new Error(response.error || 'Mutation failed')
       }
-      
-      const data = response
-      
-      // Note: Removed response.ok check since response is ApiResponse, not fetch Response
-      // The API client already handles HTTP errors and the response.success check above handles failures
-      
-      setResult(data)
-      onResult(data)
-      if (data.success) {
-        setMutationData({})
-        setRangeKeyValue('')
-      }
+
+      setResult({ success: true, data: response.data || response })
+      onResult(response)
+      setMutationData({})
+      setRangeKeyValue('')
+      setHashKeyValue('')
     } catch (error) {
-      const errData = { error: `Network error: ${error instanceof Error ? error.message : String(error)}`, details: error }
+      const errMsg = error instanceof Error ? error.message : String(error)
+      const errData = { success: false, error: errMsg }
       setResult(errData)
       onResult(errData)
     }
   }
 
   const selectedSchemaObj = selectedSchema ? schemas.find(s => s.name === selectedSchema) : null
-  const isCurrentSchemaRangeSchema = selectedSchemaObj ? isRangeSchema(selectedSchemaObj) : false
+  const isCurrentSchemaRange = selectedSchemaObj ? isRangeSchema(selectedSchemaObj) : false
+  const isCurrentSchemaHashRange = selectedSchemaObj ? isHashRangeSchema(selectedSchemaObj) : false
+  const hashKey = selectedSchemaObj ? getHashKey(selectedSchemaObj) : null
   const rangeKey = selectedSchemaObj ? getRangeKey(selectedSchemaObj) : null
-  
+
   // Convert declarative schema fields array to object format for MutationEditor
-  // For range schemas, filter out the range key (it's shown separately in Range Schema Configuration)
+  // Filter out key fields (they're shown separately in Key Configuration)
   const getFieldsForMutation = () => {
     if (!selectedSchemaObj || !Array.isArray(selectedSchemaObj.fields)) return {}
-    
-    const fieldsToShow = isCurrentSchemaRangeSchema 
-      ? selectedSchemaObj.fields.filter(field => field !== rangeKey)
-      : selectedSchemaObj.fields
-    
+
+    const keyFields = [hashKey, rangeKey].filter(Boolean)
+    const fieldsToShow = selectedSchemaObj.fields.filter(field => !keyFields.includes(field))
+
     return fieldsToShow.reduce((acc, fieldName) => {
       acc[fieldName] = {}
       return acc
     }, {})
   }
-  
+
   const selectedSchemaFields = getFieldsForMutation()
+
+  const needsHashKey = isCurrentSchemaHashRange || (!isCurrentSchemaRange && hashKey)
+  const needsRangeKey = isCurrentSchemaHashRange || isCurrentSchemaRange
 
   const isMutationDisabled =
     !selectedSchema ||
     !mutationType ||
     Object.keys(mutationData).length === 0 ||
-    (isCurrentSchemaRangeSchema && !rangeKeyValue.trim())
+    (needsRangeKey && !rangeKeyValue.trim())
 
   return (
     <div>
@@ -123,20 +132,35 @@ function MutationTab({ onResult }) {
           onTypeChange={setMutationType}
         />
 
-        {selectedSchema && isCurrentSchemaRangeSchema && (
+        {selectedSchema && (needsHashKey || needsRangeKey) && (
           <div className={RANGE_SCHEMA_CONFIG.backgroundColor}>
-            <h3 className="text-lg font-medium text-primary mb-4">Range Schema Configuration</h3>
-            <TextField
-              name="rangeKey"
-              label={`${rangeKey} (${RANGE_SCHEMA_CONFIG.label})`}
-              value={rangeKeyValue}
-              onChange={setRangeKeyValue}
-              placeholder={`Enter ${rangeKey} value`}
-              required={true}
-              error={undefined}
-              helpText={FORM_LABELS.rangeKeyRequired}
-              debounced={true}
-            />
+            <h3 className="text-lg font-medium text-primary mb-4">Key Configuration</h3>
+            {needsHashKey && (
+              <TextField
+                name="hashKey"
+                label={`${hashKey || 'hash'} (hash key)`}
+                value={hashKeyValue}
+                onChange={setHashKeyValue}
+                placeholder={`Enter ${hashKey || 'hash key'} value`}
+                required={false}
+                error={undefined}
+                helpText="Hash key for record grouping"
+                debounced={true}
+              />
+            )}
+            {needsRangeKey && (
+              <TextField
+                name="rangeKey"
+                label={`${rangeKey || 'range'} (${RANGE_SCHEMA_CONFIG.label})`}
+                value={rangeKeyValue}
+                onChange={setRangeKeyValue}
+                placeholder={`Enter ${rangeKey || 'range key'} value`}
+                required={true}
+                error={undefined}
+                helpText={FORM_LABELS.rangeKeyRequired}
+                debounced={true}
+              />
+            )}
           </div>
         )}
 
@@ -146,7 +170,7 @@ function MutationTab({ onResult }) {
             mutationType={mutationType}
             mutationData={mutationData}
             onFieldChange={handleFieldChange}
-            isRangeSchema={isCurrentSchemaRangeSchema}
+            isRangeSchema={isCurrentSchemaRange || isCurrentSchemaHashRange}
           />
         )}
 
