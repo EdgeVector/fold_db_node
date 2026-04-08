@@ -1109,3 +1109,21 @@ pub async fn undecline_invite(
         .await,
     )
 }
+
+// ===== Sent invites =====
+
+/// GET /api/trust/invite/sent — list all sent invites with status
+pub async fn list_sent_invites(state: web::Data<AppState>) -> impl Responder {
+    let (_user_hash, _node) = node_or_return!(state);
+    handler_result_to_response(
+        async {
+            let store = crate::trust::sent_invites::SentInviteStore::load()
+                .map_err(fold_db::schema::SchemaError::InvalidData)
+                .handler_err("load sent invites")?;
+            Ok(ApiResponse::success(
+                serde_json::json!({"sent_invites": store.invites}),
+            ))
+        }
+        .await,
+    )
+}
