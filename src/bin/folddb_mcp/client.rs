@@ -41,19 +41,26 @@ impl FoldDbClient {
             ))
         })?;
 
-        // Fetch private key
+        // Fetch private key (needs x-user-hash header)
         let pk_resp: Value = http
             .get(format!("{}/api/system/private-key", base_url))
+            .header("x-user-hash", "mcp_bootstrap")
             .send()
             .await?
             .json()
             .await?;
 
+        // Response format: {"private_key": "<base64>", "success": true, ...}
+        // Also handle wrapped format: {"ok": true, "data": {"key": "<base64>"}}
         let key_b64 = pk_resp
-            .pointer("/data/key")
+            .get("private_key")
+            .or_else(|| pk_resp.pointer("/data/key"))
             .and_then(|v| v.as_str())
             .ok_or_else(|| {
-                McpError::Signing("Failed to extract private key from response".to_string())
+                McpError::Signing(format!(
+                    "Failed to extract private key from response: {}",
+                    pk_resp
+                ))
             })?;
 
         let key_bytes = BASE64
@@ -70,16 +77,22 @@ impl FoldDbClient {
         // Fetch public key and derive user_hash
         let pub_resp: Value = http
             .get(format!("{}/api/system/public-key", base_url))
+            .header("x-user-hash", "mcp_bootstrap")
             .send()
             .await?
             .json()
             .await?;
 
+        // Response format: {"public_key": "<base64>", "success": true, ...}
         let pub_b64 = pub_resp
-            .pointer("/data/key")
+            .get("public_key")
+            .or_else(|| pub_resp.pointer("/data/key"))
             .and_then(|v| v.as_str())
             .ok_or_else(|| {
-                McpError::Signing("Failed to extract public key from response".to_string())
+                McpError::Signing(format!(
+                    "Failed to extract public key from response: {}",
+                    pub_resp
+                ))
             })?;
 
         let pub_bytes = BASE64
