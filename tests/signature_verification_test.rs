@@ -116,4 +116,3 @@ async fn test_wrong_key_rejected() {
     let result = verifier.verify_message(&signed).unwrap();
     assert!(!result.is_valid, "Should fail when signed with wrong key");
 }
-

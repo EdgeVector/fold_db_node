@@ -44,21 +44,16 @@ impl FoldDbClient {
             .ok_or_else(|| {
                 McpError::Io(std::io::Error::new(
                     std::io::ErrorKind::InvalidData,
-                    format!(
-                        "Failed to extract public key from response: {}",
-                        pub_resp
-                    ),
+                    format!("Failed to extract public key from response: {}", pub_resp),
                 ))
             })?;
 
-        let pub_bytes = BASE64
-            .decode(pub_b64)
-            .map_err(|e| {
-                McpError::Io(std::io::Error::new(
-                    std::io::ErrorKind::InvalidData,
-                    format!("Invalid base64 in public key: {}", e),
-                ))
-            })?;
+        let pub_bytes = BASE64.decode(pub_b64).map_err(|e| {
+            McpError::Io(std::io::Error::new(
+                std::io::ErrorKind::InvalidData,
+                format!("Invalid base64 in public key: {}", e),
+            ))
+        })?;
 
         let user_hash = derive_user_hash(&pub_bytes);
 
