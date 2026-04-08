@@ -75,10 +75,8 @@ export {
   UnifiedSecurityClient,
   createSecurityClient,
   securityClient,
-  verifyMessage,
   getSystemPublicKey,
   validatePublicKeyFormat,
-  validateSignedMessage,
   getSecurityStatus
 } from './clients/securityClient';
 
@@ -109,7 +107,6 @@ export { API_ENDPOINTS } from './endpoints';
 // ============================================================================
 
 export type { Schema } from '../types/schema';
-export type { SignedMessage } from '../types/cryptography';
 export type { VerificationResponse } from '../types/api';
 
 // ============================================================================

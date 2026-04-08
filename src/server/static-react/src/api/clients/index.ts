@@ -25,10 +25,8 @@ export {
   securityClient,
   UnifiedSecurityClient,
   createSecurityClient,
-  verifyMessage,
   getSystemPublicKey,
   validatePublicKeyFormat,
-  validateSignedMessage,
   getSecurityStatus,
 } from "./securityClient";
 
@@ -80,7 +78,6 @@ export type {
 
 export type {
   SystemKeyResponse,
-  KeyValidationResult,
   SecurityStatus,
 } from "./securityClient";
 

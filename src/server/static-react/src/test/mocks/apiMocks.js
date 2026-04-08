@@ -862,11 +862,7 @@ export const createMockSpecializedClients = (_baseClient) => {
     },
 
     security: {
-      getSystemPublicKey: vi.fn().mockResolvedValue(mockAuthData),
-      verifyMessage: vi.fn().mockResolvedValue({
-        success: true,
-        data: { valid: true }
-      })
+      getSystemPublicKey: vi.fn().mockResolvedValue(mockAuthData)
     }
   };
 };

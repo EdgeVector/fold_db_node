@@ -337,7 +337,7 @@ describe('App Component', () => {
         const dispatchSpy = vi.spyOn(store, 'dispatch');
         renderWithRedux(<AppContent />, { store });
 
-        // Wait for DB status to resolve, then initializeSystemKey dispatches
+        // Wait for DB status to resolve
         await waitFor(() => {
           expect(dispatchSpy).toHaveBeenCalled();
         });

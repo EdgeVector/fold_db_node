@@ -241,6 +241,5 @@ export interface MutationApiClient {
 }
 
 export interface SecurityApiClient {
-  verifyMessage(signedMessage: SignedMessage): Promise<EnhancedApiResponse<VerificationData>>;
   getSystemPublicKey(): Promise<EnhancedApiResponse<SystemKeyData>>;
 }
