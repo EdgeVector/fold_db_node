@@ -924,3 +924,98 @@ pub async fn sharing_posture(state: web::Data<AppState>) -> impl Responder {
         .await,
     )
 }
+
+/// POST /api/sharing/apply-defaults — apply classification-based access policies
+/// to all approved schemas that have unprotected fields.
+pub async fn apply_defaults_all(state: web::Data<AppState>) -> impl Responder {
+    let (user_hash, node) = node_or_return!(state);
+    let op = OperationProcessor::new(node.clone());
+    handler_result_to_response(
+        async {
+            let db = op.get_db_public().await.handler_err("get database")?;
+            let schemas = db
+                .schema_manager
+                .get_schemas_with_states()
+                .handler_err("list schemas")?;
+            drop(db);
+
+            let mut total_applied = 0usize;
+            let mut schemas_updated = 0usize;
+
+            for sws in &schemas {
+                if sws.state != fold_db::schema::SchemaState::Approved {
+                    continue;
+                }
+                match op.apply_classification_defaults(&sws.schema.name).await {
+                    Ok(count) if count > 0 => {
+                        total_applied += count;
+                        schemas_updated += 1;
+                    }
+                    _ => {}
+                }
+            }
+
+            Ok(ApiResponse::success_with_user(
+                serde_json::json!({
+                    "schemas_updated": schemas_updated,
+                    "fields_updated": total_applied,
+                }),
+                user_hash,
+            ))
+        }
+        .await,
+    )
+}
+
+/// PUT /api/sharing/policy/{schema}/{field} — set field access policy (unsigned)
+/// This route is under /sharing/ which is NOT protected by the signature middleware,
+/// unlike /api/schema/{name}/field/{field}/policy which requires signed messages.
+pub async fn set_field_policy_unsigned(
+    path: web::Path<(String, String)>,
+    body: web::Json<SetFieldPolicyRequest>,
+    state: web::Data<AppState>,
+) -> impl Responder {
+    let (schema_name, field_name) = path.into_inner();
+    let (user_hash, node) = node_or_return!(state);
+    let op = OperationProcessor::new(node.clone());
+    handler_result_to_response(
+        async {
+            op.set_field_access_policy(&schema_name, &field_name, body.into_inner().policy)
+                .await
+                .handler_err("set field policy")?;
+            Ok(ApiResponse::success_with_user(
+                serde_json::json!({"policy_set": true}),
+                user_hash,
+            ))
+        }
+        .await,
+    )
+}
+
+/// GET /api/sharing/policies/{schema} — get all field policies for a schema (unsigned)
+pub async fn get_schema_policies(
+    path: web::Path<String>,
+    state: web::Data<AppState>,
+) -> impl Responder {
+    let schema_name = path.into_inner();
+    let (user_hash, node) = node_or_return!(state);
+    let op = OperationProcessor::new(node.clone());
+    handler_result_to_response(
+        async {
+            let policies = op
+                .get_all_field_policies(&schema_name)
+                .await
+                .handler_err("get policies")?;
+            let policies_json =
+                serde_json::to_value(&policies).handler_err("serialize policies")?;
+            Ok(ApiResponse::success_with_user(
+                serde_json::json!({
+                    "schema_name": schema_name,
+                    "field_policies": policies_json,
+                }),
+                user_hash,
+            ))
+        }
+        .await,
+    )
+}
