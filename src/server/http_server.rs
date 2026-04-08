@@ -896,7 +896,9 @@ impl FoldHttpServer {
         cfg.service(
             web::scope("/remote")
                 .route("/query", web::post().to(remote_routes::remote_query))
-                .route("/node-info", web::get().to(remote_routes::node_info)),
+                .route("/node-info", web::get().to(remote_routes::node_info))
+                .route("/proxy-query", web::post().to(remote_routes::proxy_query))
+                .route("/browse", web::post().to(remote_routes::browse_remote)),
         );
     }
 

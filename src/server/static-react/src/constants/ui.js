@@ -41,6 +41,7 @@ export const DEFAULT_TABS = [
   { id: "discovery-browse", label: "Browse Network", icon: "🔎", group: "advanced" },
   // Access control
   { id: "trust", label: "Trust Graph", icon: "🔑", group: "advanced" },
+  { id: "remote-query", label: "Remote Query", icon: "🔗", group: "advanced" },
   // Sync
   { id: "conflicts", label: "Sync Conflicts", icon: "⚡", group: "advanced" },
 ];
