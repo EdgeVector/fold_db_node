@@ -26,21 +26,6 @@ export function setupEd25519Mock() {
 }
 
 /**
- * Creates a mock for the signing utilities with consistent signature format
- */
-export function createSigningMocks() {
-  return {
-    createSignedMessage: vi.fn(async (payload, publicKeyId, _privateKey) => ({
-      payload: btoa(JSON.stringify(payload)),
-      signature: 'AwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwM=',
-      public_key_id: publicKeyId,
-      timestamp: Math.floor(Date.now() / 1000)
-    }))
-  }
-}
-
-
-/**
  * Creates common fetch mock for security API endpoints
  */
 export function createSecurityFetchMock() {

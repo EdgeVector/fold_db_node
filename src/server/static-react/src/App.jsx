@@ -35,7 +35,7 @@ import LogSidebar from './components/LogSidebar'
 import ErrorBoundary from './components/ErrorBoundary'
 import { useApprovedSchemas } from './hooks/useApprovedSchemas.js'
 import { useAppSelector, useAppDispatch } from './store/hooks'
-import { initializeSystemKey, restoreSession, autoLogin } from './store/authSlice'
+import { restoreSession, autoLogin } from './store/authSlice'
 import { fetchIngestionConfig, selectIngestionConfig, selectIsAiConfigured, selectAiProvider } from './store/ingestionSlice'
 import { DEFAULT_TAB } from './constants'
 import { BROWSER_CONFIG } from './constants/config'
@@ -153,13 +153,6 @@ export function AppContent() {
       })
       .finally(() => setDbStatusLoading(false))
   }, [isAuthenticated])
-
-  // Initialize system key ONLY after authenticated and DB initialized
-  useEffect(() => {
-    if (isAuthenticated && dbStatus?.initialized) {
-      dispatch(initializeSystemKey())
-    }
-  }, [dispatch, isAuthenticated, dbStatus?.initialized])
 
 
 

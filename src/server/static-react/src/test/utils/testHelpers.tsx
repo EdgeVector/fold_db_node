@@ -13,7 +13,6 @@ export const createAuthenticatedState = () => ({
     isAuthenticated: true,
     systemPublicKey: 'mock-public-key-base64',
     systemKeyId: 'mock-key-id',
-    privateKey: 'AQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQE=', // Base64-encoded mock key
     publicKeyId: 'mock-public-key-id',
     isLoading: false,
     error: null,
@@ -41,7 +40,6 @@ export const createUnauthenticatedState = () => ({
     isAuthenticated: false,
     systemPublicKey: null,
     systemKeyId: null,
-    privateKey: null,
     publicKeyId: null,
     isLoading: false,
     error: null,

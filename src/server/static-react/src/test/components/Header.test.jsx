@@ -5,7 +5,6 @@ import { renderWithRedux } from '../utils/testHelpers.jsx'
 
 const createAuthState = (overrides = {}) => ({
   isAuthenticated: false,
-  privateKey: null,
   systemKeyId: null,
   publicKey: null,
   loading: false,

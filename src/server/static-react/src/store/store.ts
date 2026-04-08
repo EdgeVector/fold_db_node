@@ -16,8 +16,6 @@ export const store = configureStore({
       serializableCheck: {
         // Ignore these action types in serializability checks
         ignoredActions: [
-          "auth/validatePrivateKey/fulfilled",
-          "auth/setPrivateKey",
           // Schema async thunk actions that may contain non-serializable data
           "schemas/fetchSchemas/fulfilled",
           "schemas/approveSchema/fulfilled",
@@ -27,11 +25,10 @@ export const store = configureStore({
         ],
         // Ignore these field paths in all actions
         ignoredActionsPaths: [
-          "payload.privateKey",
           "payload.schemas.definition",
         ],
         // Ignore these paths in the state
-        ignoredPaths: ["auth.privateKey", "schemas.schemas.*.definition"],
+        ignoredPaths: ["schemas.schemas.*.definition"],
       },
     }),
   devTools: import.meta.env.DEV,

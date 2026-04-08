@@ -1,5 +1,4 @@
 use super::middleware::auth::UserContextMiddleware;
-use super::middleware::signature::SignatureVerificationMiddleware;
 use super::node_manager::NodeManager;
 use super::routes::log as log_routes;
 use super::routes::{
@@ -268,7 +267,6 @@ impl FoldHttpServer {
                 web::JsonConfig::default().error_handler(http_errors::json_error_handler);
 
             App::new()
-                .wrap(SignatureVerificationMiddleware)
                 .wrap(cors)
                 .wrap(UserContextMiddleware)
                 .app_data(app_state.clone())
@@ -585,10 +583,6 @@ impl FoldHttpServer {
         cfg.route(
             "/system/status",
             web::get().to(system_routes::get_system_status),
-        )
-        .route(
-            "/system/private-key",
-            web::get().to(system_routes::get_node_private_key),
         )
         .route(
             "/system/public-key",

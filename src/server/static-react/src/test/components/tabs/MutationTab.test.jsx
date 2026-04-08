@@ -29,7 +29,6 @@ vi.mock('../../../api', () => ({
 
 // Mock crypto operations
 vi.mock('../../../utils/cryptoUtils', () => ({
-  signPayload: vi.fn(() => Promise.resolve('signed-payload-hash')),
   validateRangeKey: vi.fn(() => ({ isValid: true }))
 }))
 

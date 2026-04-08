@@ -117,13 +117,3 @@ async fn test_wrong_key_rejected() {
     assert!(!result.is_valid, "Should fail when signed with wrong key");
 }
 
-/// Test that write endpoints are protected now that signature enforcement is enabled.
-#[test]
-fn test_write_endpoints_enforcement_enabled() {
-    use fold_db_node::server::middleware::signature::is_protected_write;
-
-    assert!(
-        is_protected_write(&actix_web::http::Method::POST, "/api/mutation"),
-        "Signature enforcement should be enabled for mutation endpoints"
-    );
-}

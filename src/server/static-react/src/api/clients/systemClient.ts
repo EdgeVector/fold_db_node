@@ -54,7 +54,6 @@ export interface SystemStatusResponse {
 
 export interface NodeKeyResponse {
   success: boolean;
-  private_key?: string;
   public_key?: string;
   message: string;
 }
@@ -199,19 +198,6 @@ export class UnifiedSystemClient {
       retries: API_RETRIES.STANDARD,
       cacheable: false,
     });
-  }
-
-  // Get the node's private key (no auth required)
-  async getNodePrivateKey(): Promise<EnhancedApiResponse<NodeKeyResponse>> {
-    return this.client.get<NodeKeyResponse>(
-      API_ENDPOINTS.GET_NODE_PRIVATE_KEY,
-      {
-        requiresAuth: false, // No authentication required for UI access
-        timeout: API_TIMEOUTS.STANDARD,
-        retries: API_RETRIES.STANDARD,
-        cacheable: false, // Never cache private keys
-      },
-    );
   }
 
   // Get the node's public key (public, can be shared)
@@ -411,8 +397,6 @@ export const getLogs = systemClient.getLogs.bind(systemClient);
 export const resetDatabase = systemClient.resetDatabase.bind(systemClient);
 export const getAutoIdentity = systemClient.getAutoIdentity.bind(systemClient);
 export const getSystemStatus = systemClient.getSystemStatus.bind(systemClient);
-export const getNodePrivateKey =
-  systemClient.getNodePrivateKey.bind(systemClient);
 export const getNodePublicKey =
   systemClient.getNodePublicKey.bind(systemClient);
 export const getSyncStatus = systemClient.getSyncStatus.bind(systemClient);

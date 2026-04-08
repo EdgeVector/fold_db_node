@@ -52,9 +52,6 @@ export { default as aiQueryReducer } from "./store/aiQuerySlice";
 
 // Auth actions and thunks
 export {
-  initializeSystemKey,
-  validatePrivateKey,
-  refreshSystemKey,
   autoLogin,
   clearAuthentication,
   setError,

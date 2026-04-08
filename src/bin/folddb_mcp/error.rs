@@ -4,7 +4,6 @@ use std::fmt;
 pub enum McpError {
     Http(reqwest::Error),
     Json(serde_json::Error),
-    Signing(String),
     ServerNotRunning(String),
     Io(std::io::Error),
     ToolError(String),
@@ -15,7 +14,6 @@ impl fmt::Display for McpError {
         match self {
             Self::Http(e) => write!(f, "HTTP error: {}", e),
             Self::Json(e) => write!(f, "JSON error: {}", e),
-            Self::Signing(msg) => write!(f, "Signing error: {}", msg),
             Self::ServerNotRunning(msg) => write!(f, "Server not running: {}", msg),
             Self::Io(e) => write!(f, "IO error: {}", e),
             Self::ToolError(msg) => write!(f, "Tool error: {}", msg),

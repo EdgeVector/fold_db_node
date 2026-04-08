@@ -14,7 +14,6 @@ use utoipa::OpenApi;
         crate::server::routes::query::get_indexing_status,
         crate::server::routes::security::get_system_public_key,
         crate::server::routes::system::get_system_status,
-        crate::server::routes::system::get_node_private_key,
         crate::server::routes::system::get_node_public_key,
         crate::server::routes::admin::reset_database,
         crate::server::routes::config::get_database_config,

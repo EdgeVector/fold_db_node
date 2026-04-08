@@ -120,20 +120,6 @@ pub async fn get_sync_status(
     Ok(ApiResponse::success_with_user(response, user_hash))
 }
 
-pub async fn get_node_private_key(
-    user_hash: &str,
-    node: &FoldNode,
-) -> HandlerResult<NodeKeyResponse> {
-    Ok(ApiResponse::success_with_user(
-        NodeKeyResponse {
-            success: true,
-            key: node.get_node_private_key().to_string(),
-            message: "Node private key retrieved successfully".to_string(),
-        },
-        user_hash,
-    ))
-}
-
 pub async fn get_node_public_key(
     user_hash: &str,
     node: &FoldNode,
