@@ -13,7 +13,6 @@ vi.mock('../store/store', () => ({
     getState: vi.fn(() => ({
       auth: {
         isAuthenticated: false,
-        privateKey: null,
         systemKeyId: null,
         publicKey: null,
         loading: false,

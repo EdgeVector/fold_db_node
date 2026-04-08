@@ -195,7 +195,7 @@ pub async fn dispatch(
                 body["sort_order"] = sort_order.clone();
             }
 
-            let resp = client.post_unsigned("/api/query", &body).await?;
+            let resp = client.post("/api/query", &body).await?;
             // Extract results array from {"ok": true, "results": [...]}
             let empty = json!([]);
             let results = resp.get("results").unwrap_or(&empty);
@@ -248,7 +248,7 @@ pub async fn dispatch(
                 body["key_value"] = key_value.clone();
             }
 
-            let resp = client.post_signed("/api/mutation", &body).await?;
+            let resp = client.post("/api/mutation", &body).await?;
             Ok(serde_json::to_string_pretty(&resp)?)
         }
 
@@ -265,7 +265,7 @@ pub async fn dispatch(
                 body["source_file_name"] = source_file_name.clone();
             }
 
-            let resp = client.post_signed("/api/ingestion/process", &body).await?;
+            let resp = client.post("/api/ingestion/process", &body).await?;
             Ok(serde_json::to_string_pretty(&resp)?)
         }
 
@@ -280,7 +280,7 @@ pub async fn dispatch(
                 body["session_id"] = session_id.clone();
             }
 
-            let resp = client.post_signed("/api/llm-query/agent", &body).await?;
+            let resp = client.post("/api/llm-query/agent", &body).await?;
             Ok(serde_json::to_string_pretty(&resp)?)
         }
 

@@ -41,7 +41,6 @@ export const API_ENDPOINTS_DERIVED = {
   LOAD_SCHEMAS: "/schemas/load",
   GET_SYSTEM_PUBLIC_KEY: "/security/system-key",
   GET_DATABASE_CONFIG: "/system/database-config",
-  GET_NODE_PRIVATE_KEY: "/system/private-key",
   GET_NODE_PUBLIC_KEY: "/system/public-key",
   RESET_DATABASE: "/system/reset-database",
   RESET_SCHEMA_SERVICE: "/system/reset-schema-service",

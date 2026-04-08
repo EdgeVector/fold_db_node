@@ -23,8 +23,6 @@ import {
   isRetryableError,
 } from "./errors";
 
-import { createSignatureInterceptor } from "../interceptors/signatureInterceptor";
-
 import type {
   ApiClientConfig,
   RequestOptions,
@@ -662,8 +660,6 @@ export function getSharedClient(): ApiClient {
       enableLogging: true,
       enableMetrics: true,
     });
-    // Register signature interceptor to sign write requests
-    sharedClient.addRequestInterceptor(createSignatureInterceptor());
   }
   return sharedClient;
 }
@@ -678,8 +674,7 @@ export function createApiClient(config?: ApiClientConfig): ApiClient {
   if (!config || Object.keys(config).length === 0) {
     return getSharedClient();
   }
-  // Custom config gets a new instance with signature interceptor
+  // Custom config gets a new instance
   const client = new ApiClient(config);
-  client.addRequestInterceptor(createSignatureInterceptor());
   return client;
 }

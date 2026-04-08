@@ -37,7 +37,6 @@ export function createTestStore(preloadedState = {}) {
   const defaultState = {
     auth: {
       isAuthenticated: false,
-      privateKey: null,
       systemKeyId: null,
       publicKey: null,
       loading: false,
@@ -77,8 +76,6 @@ export function createTestStore(preloadedState = {}) {
         serializableCheck: {
           // Ignore these action types
           ignoredActions: [
-            'auth/validatePrivateKey/fulfilled',
-            'auth/setPrivateKey',
             'schemas/fetchSchemas/fulfilled',
             'schemas/approveSchema/fulfilled',
             'schemas/blockSchema/fulfilled',
@@ -87,9 +84,9 @@ export function createTestStore(preloadedState = {}) {
             'persist/PERSIST'
           ],
           // Ignore these field paths in all actions
-          ignoredActionsPaths: ['payload.privateKey', 'payload.schemas.definition'],
+          ignoredActionsPaths: ['payload.schemas.definition'],
           // Ignore these paths in the state
-          ignoredPaths: ['auth.privateKey', 'schemas.schemas.*.definition'],
+          ignoredPaths: ['schemas.schemas.*.definition'],
         },
         immutableCheck: false
       })
@@ -273,7 +270,6 @@ export const createMockSchemaList = (count = 3, baseProps = {}) => {
  */
 export const createMockAuthState = (overrides = {}) => ({
   isAuthenticated: true,
-  privateKey: 'mock_private_key_' + Math.random().toString(36).substr(2, 9),
   systemKeyId: 'mock_system_key_id',
   publicKey: 'mock_public_key',
   loading: false,
