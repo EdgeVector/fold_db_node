@@ -864,7 +864,8 @@ impl FoldHttpServer {
                 .route(
                     "/policies/{schema}",
                     web::get().to(trust_routes::get_schema_policies),
-                ),
+                )
+                .route("/exemem-status", web::get().to(trust_routes::exemem_status)),
         );
     }
 

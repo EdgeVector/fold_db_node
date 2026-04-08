@@ -748,12 +748,33 @@ fn get_discovery_config_and_token() -> Result<(String, Vec<u8>, String), String>
             crate::keychain::load_credentials()
                 .ok()
                 .flatten()
-                .map(|c| c.session_token)
-                .filter(|t| !t.is_empty())
+                .and_then(|c| {
+                    let t = &c.session_token;
+                    if t.is_empty() {
+                        return None;
+                    }
+                    // Check if token is expired
+                    let parts: Vec<&str> = t.split('.').collect();
+                    if parts.len() >= 3 {
+                        if let Ok(expiry) = parts[2].parse::<i64>() {
+                            let now = chrono::Utc::now().timestamp();
+                            if now > expiry {
+                                log::warn!(
+                                    "Exemem session token expired ({} seconds ago). \
+                                     Re-authenticate in Settings to refresh.",
+                                    now - expiry
+                                );
+                                return None;
+                            }
+                        }
+                    }
+                    Some(t.clone())
+                })
                 .ok_or_else(|| "no token".to_string())
         })
         .map_err(|_| {
-            "Not signed in to Exemem. Enable cloud backup in Settings to use email invites."
+            "Exemem session expired or not signed in. \
+             Re-authenticate in Settings > Cloud Backup to refresh."
                 .to_string()
         })?;
 
@@ -1150,4 +1171,42 @@ pub async fn list_sent_invites(state: web::Data<AppState>) -> impl Responder {
         }
         .await,
     )
+}
+
+/// GET /api/sharing/exemem-status — check Exemem connectivity and token validity
+pub async fn exemem_status(state: web::Data<AppState>) -> impl Responder {
+    let (_user_hash, _node) = node_or_return!(state);
+
+    let config_result = get_discovery_config_and_token();
+    match config_result {
+        Err(msg) => actix_web::HttpResponse::Ok().json(serde_json::json!({
+            "connected": false,
+            "reason": msg,
+        })),
+        Ok((url, _key, token)) => {
+            // Check token expiry
+            let parts: Vec<&str> = token.split('.').collect();
+            let token_info = if parts.len() >= 3 {
+                if let Ok(expiry) = parts[2].parse::<i64>() {
+                    let now = chrono::Utc::now().timestamp();
+                    let remaining = expiry - now;
+                    if remaining <= 0 {
+                        serde_json::json!({"valid": false, "expired_ago_secs": -remaining})
+                    } else {
+                        serde_json::json!({"valid": true, "expires_in_secs": remaining})
+                    }
+                } else {
+                    serde_json::json!({"valid": true, "format": "unknown"})
+                }
+            } else {
+                serde_json::json!({"valid": true, "format": "opaque"})
+            };
+
+            actix_web::HttpResponse::Ok().json(serde_json::json!({
+                "connected": true,
+                "discovery_url": url,
+                "token": token_info,
+            }))
+        }
+    }
 }
