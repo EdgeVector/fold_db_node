@@ -271,11 +271,14 @@ impl OperationProcessor {
             if !readable.is_empty() {
                 total_readable += readable.len();
                 total_writable += writable.len();
+                let total_fields = schema.runtime_fields.len();
                 accessible_schemas.push(AccessibleSchema {
                     schema_name: schema.name.clone(),
+                    descriptive_name: schema.descriptive_name.clone(),
                     trust_domain: schema_domain.to_string(),
                     readable_fields: readable,
                     writable_fields: writable,
+                    total_fields,
                 });
             }
         }

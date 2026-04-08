@@ -96,7 +96,7 @@ impl ContactBook {
         Ok(())
     }
 
-    /// Add or update a contact.
+    /// Add or update a contact. Preserves existing roles on update.
     pub fn upsert_contact(&mut self, contact: Contact) {
         let key = contact.public_key.clone();
         if let Some(existing) = self.contacts.get_mut(&key) {
@@ -104,8 +104,13 @@ impl ContactBook {
             existing.contact_hint = contact.contact_hint;
             existing.trust_distance = contact.trust_distance;
             existing.direction = contact.direction;
+            existing.connected_at = contact.connected_at;
             if contact.pseudonym.is_some() {
                 existing.pseudonym = contact.pseudonym;
+            }
+            // Preserve existing roles — don't overwrite with empty map
+            if !contact.roles.is_empty() {
+                existing.roles = contact.roles;
             }
             existing.revoked = false;
         } else {

@@ -724,11 +724,17 @@ pub async fn fetch_shared_invite(
 
 /// Helper: get discovery URL, master key, and auth token from env/credentials.
 fn get_discovery_config_and_token() -> Result<(String, Vec<u8>, String), String> {
-    let url = std::env::var("DISCOVERY_SERVICE_URL")
-        .map_err(|_| "Discovery service not configured (DISCOVERY_SERVICE_URL)".to_string())?;
-    let key_hex = std::env::var("DISCOVERY_MASTER_KEY")
-        .map_err(|_| "Discovery master key not configured".to_string())?;
-    let key = hex::decode(&key_hex).map_err(|_| "Invalid DISCOVERY_MASTER_KEY hex".to_string())?;
+    let url = std::env::var("DISCOVERY_SERVICE_URL").map_err(|_| {
+        "Email invites and link sharing require Exemem cloud backup. \
+         Enable cloud backup in Settings to use these features."
+            .to_string()
+    })?;
+    let key_hex = std::env::var("DISCOVERY_MASTER_KEY").map_err(|_| {
+        "Email invites and link sharing require Exemem cloud backup. \
+         Enable cloud backup in Settings to use these features."
+            .to_string()
+    })?;
+    let key = hex::decode(&key_hex).map_err(|_| "Invalid discovery configuration".to_string())?;
 
     let token = std::env::var("DISCOVERY_AUTH_TOKEN")
         .or_else(|_| {
@@ -739,7 +745,10 @@ fn get_discovery_config_and_token() -> Result<(String, Vec<u8>, String), String>
                 .filter(|t| !t.is_empty())
                 .ok_or_else(|| "no token".to_string())
         })
-        .map_err(|_| "No auth token available for discovery service".to_string())?;
+        .map_err(|_| {
+            "Not signed in to Exemem. Enable cloud backup in Settings to use email invites."
+                .to_string()
+        })?;
 
     Ok((url, key, token))
 }
