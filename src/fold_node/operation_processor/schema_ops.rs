@@ -24,10 +24,36 @@ impl OperationProcessor {
         }
     }
 
-    /// Approve a schema.
+    /// Approve a schema and apply classification-based default access policies.
     pub async fn approve_schema(&self, schema_name: &str) -> FoldDbResult<()> {
         let db = self.get_db().await?;
-        Ok(db.schema_manager.approve(schema_name).await?)
+        db.schema_manager.approve(schema_name).await?;
+        drop(db); // Release lock before apply_classification_defaults acquires it
+
+        // Auto-apply access policies based on data classification
+        match self.apply_classification_defaults(schema_name).await {
+            Ok(applied) => {
+                if applied > 0 {
+                    fold_db::log_feature!(
+                        fold_db::logging::features::LogFeature::Schema,
+                        info,
+                        "Applied access policies to {} fields in '{}'",
+                        applied,
+                        schema_name
+                    );
+                }
+            }
+            Err(e) => {
+                fold_db::log_feature!(
+                    fold_db::logging::features::LogFeature::Schema,
+                    warn,
+                    "Failed to apply classification defaults to '{}': {}",
+                    schema_name,
+                    e
+                );
+            }
+        }
+        Ok(())
     }
 
     /// Block a schema.

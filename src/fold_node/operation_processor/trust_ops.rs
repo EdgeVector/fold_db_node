@@ -291,36 +291,144 @@ impl OperationProcessor {
         })
     }
 
-    // ===== Stub operations (not yet implemented) =====
+    // ===== Field access policy operations =====
 
+    /// Set the access policy on a specific field. Persists to disk.
     pub async fn set_field_access_policy(
         &self,
-        _schema_name: &str,
-        _field_name: &str,
-        _policy: serde_json::Value,
+        schema_name: &str,
+        field_name: &str,
+        policy: serde_json::Value,
     ) -> Result<(), SchemaError> {
-        Err(SchemaError::InvalidData(
-            "Not yet implemented in this node".to_string(),
-        ))
+        let db = self.get_db().await.map_err(to_schema_err)?;
+        let mut schema = db
+            .schema_manager
+            .get_schema(schema_name)
+            .await?
+            .ok_or_else(|| SchemaError::InvalidData(format!("Schema '{schema_name}' not found")))?;
+
+        let field = schema.runtime_fields.get_mut(field_name).ok_or_else(|| {
+            SchemaError::InvalidData(format!("Field '{field_name}' not found in '{schema_name}'"))
+        })?;
+
+        let parsed: fold_db::access::FieldAccessPolicy = serde_json::from_value(policy)
+            .map_err(|e| SchemaError::InvalidData(format!("Invalid access policy: {e}")))?;
+
+        field.common_mut().access_policy = Some(parsed);
+        db.schema_manager.update_schema(&schema).await?;
+        Ok(())
     }
 
+    /// Get access policies for all fields in a schema.
     pub async fn get_all_field_policies(
         &self,
-        _schema_name: &str,
+        schema_name: &str,
     ) -> Result<std::collections::HashMap<String, Option<serde_json::Value>>, SchemaError> {
-        Err(SchemaError::InvalidData(
-            "Not yet implemented in this node".to_string(),
-        ))
+        let db = self.get_db().await.map_err(to_schema_err)?;
+        let schema = db
+            .schema_manager
+            .get_schema(schema_name)
+            .await?
+            .ok_or_else(|| SchemaError::InvalidData(format!("Schema '{schema_name}' not found")))?;
+
+        let mut policies = std::collections::HashMap::new();
+        for (field_name, field) in &schema.runtime_fields {
+            let policy_json = field
+                .common()
+                .access_policy
+                .as_ref()
+                .and_then(|p| serde_json::to_value(p).ok());
+            policies.insert(field_name.clone(), policy_json);
+        }
+        Ok(policies)
     }
 
+    /// Get the access policy for a specific field.
     pub async fn get_field_access_policy(
         &self,
-        _schema_name: &str,
-        _field_name: &str,
+        schema_name: &str,
+        field_name: &str,
     ) -> Result<Option<serde_json::Value>, SchemaError> {
-        Err(SchemaError::InvalidData(
-            "Not yet implemented in this node".to_string(),
-        ))
+        let db = self.get_db().await.map_err(to_schema_err)?;
+        let schema = db
+            .schema_manager
+            .get_schema(schema_name)
+            .await?
+            .ok_or_else(|| SchemaError::InvalidData(format!("Schema '{schema_name}' not found")))?;
+
+        let field = schema.runtime_fields.get(field_name).ok_or_else(|| {
+            SchemaError::InvalidData(format!("Field '{field_name}' not found in '{schema_name}'"))
+        })?;
+
+        Ok(field
+            .common()
+            .access_policy
+            .as_ref()
+            .and_then(|p| serde_json::to_value(p).ok()))
+    }
+
+    /// Apply classification-based default access policies to all fields in a schema
+    /// that don't already have explicit policies.
+    pub async fn apply_classification_defaults(
+        &self,
+        schema_name: &str,
+    ) -> Result<usize, SchemaError> {
+        let config = crate::trust::classification_defaults::ClassificationDefaultsConfig::load()
+            .unwrap_or_default();
+
+        let db = self.get_db().await.map_err(to_schema_err)?;
+        let mut schema = db
+            .schema_manager
+            .get_schema(schema_name)
+            .await?
+            .ok_or_else(|| SchemaError::InvalidData(format!("Schema '{schema_name}' not found")))?;
+
+        // Determine default domain from schema-level trust_domain or classification
+        let schema_domain = schema.trust_domain.clone();
+
+        let mut applied = 0usize;
+        let field_names: Vec<String> = schema.runtime_fields.keys().cloned().collect();
+
+        for field_name in &field_names {
+            let field = schema.runtime_fields.get(field_name).unwrap();
+            if field.common().access_policy.is_some() {
+                continue; // Already has explicit policy
+            }
+
+            // Look up classification for this field
+            let classification = schema.field_data_classifications.get(field_name);
+            let default = if let Some(cls) = classification {
+                config.lookup(cls.sensitivity_level, &cls.data_domain)
+            } else {
+                // No classification — use schema-level domain or personal default
+                let domain = schema_domain.as_deref().unwrap_or("personal");
+                crate::trust::classification_defaults::ClassificationDefault {
+                    trust_domain: domain.to_string(),
+                    read_max: 3, // moderate default
+                    write_max: 0,
+                }
+            };
+
+            let policy = fold_db::access::FieldAccessPolicy {
+                trust_domain: default.trust_domain,
+                trust_distance: fold_db::access::TrustDistancePolicy::new(
+                    default.read_max,
+                    default.write_max,
+                ),
+                ..Default::default()
+            };
+
+            if let Some(field_mut) = schema.runtime_fields.get_mut(field_name) {
+                field_mut.common_mut().access_policy = Some(policy);
+                applied += 1;
+            }
+        }
+
+        if applied > 0 {
+            db.schema_manager.update_schema(&schema).await?;
+        }
+
+        Ok(applied)
     }
 
     pub async fn issue_capability(

@@ -1,4 +1,5 @@
 use crate::fold_node::response_types::QueryResultMap;
+use fold_db::access::AccessContext;
 use fold_db::db_operations::IndexResult;
 use fold_db::error::{FoldDbError, FoldDbResult};
 use fold_db::schema::types::field::Field;
@@ -34,6 +35,89 @@ impl OperationProcessor {
     pub async fn execute_query_json(&self, query: Query) -> FoldDbResult<Vec<Value>> {
         self.execute_query_json_internal(query, HashSet::new())
             .await
+    }
+
+    /// Build an AccessContext for a caller by resolving their trust distances
+    /// across all domains from this node's trust graphs.
+    pub async fn build_access_context(&self, caller_pub_key: &str) -> FoldDbResult<AccessContext> {
+        let db = self.get_db().await?;
+        let owner = self.node.get_node_public_key().to_string();
+
+        // If the caller IS the owner, return owner context
+        if caller_pub_key == owner {
+            return Ok(AccessContext::owner(caller_pub_key));
+        }
+
+        // Resolve distances in all domains
+        let domains = db
+            .db_ops
+            .list_trust_domains()
+            .await
+            .map_err(FoldDbError::Schema)?;
+        let mut trust_distances = HashMap::new();
+        for domain in &domains {
+            let graph = db
+                .db_ops
+                .load_trust_graph_for_domain(domain)
+                .await
+                .map_err(FoldDbError::Schema)?;
+            if let Some(dist) = graph.resolve(caller_pub_key, &owner) {
+                trust_distances.insert(domain.clone(), dist);
+            }
+        }
+
+        Ok(AccessContext::remote_multi(caller_pub_key, trust_distances))
+    }
+
+    /// Execute a query with access control. Builds AccessContext from the caller's
+    /// public key by resolving their trust distances across all domains.
+    /// Fields where the caller lacks access are filtered out.
+    pub async fn execute_query_json_with_access(
+        &self,
+        query: Query,
+        caller_pub_key: &str,
+    ) -> FoldDbResult<Vec<Value>> {
+        let access_context = self.build_access_context(caller_pub_key).await?;
+        let sort_order = query.sort_order.clone();
+        let value_filters = query.value_filters.clone();
+
+        // Use query_with_access for access-controlled results
+        let db = self.get_db().await?;
+        let result_map = db
+            .query_executor
+            .query_with_access(query, &access_context, None)
+            .await?;
+        let records_map = fold_db::fold_db_core::query::records_from_field_map(&result_map);
+
+        let mut results: Vec<Value> = records_map
+            .into_iter()
+            .map(|(key, record)| {
+                serde_json::json!({
+                    "key": key,
+                    "fields": record.fields,
+                    "metadata": record.metadata
+                })
+            })
+            .collect();
+
+        // Apply sort order
+        if let Some(ref order) = sort_order {
+            results.sort_by(|a, b| {
+                let a_range = a["key"]["range"].as_str().unwrap_or("");
+                let b_range = b["key"]["range"].as_str().unwrap_or("");
+                match order {
+                    SortOrder::Asc => a_range.cmp(b_range),
+                    SortOrder::Desc => b_range.cmp(a_range),
+                }
+            });
+        }
+
+        // Apply value filters
+        if let Some(ref filters) = value_filters {
+            results.retain(|record| Self::record_matches_value_filters(record, filters));
+        }
+
+        Ok(results)
     }
 
     /// Internal implementation that threads a visited-schema set to detect circular references.
