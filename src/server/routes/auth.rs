@@ -357,8 +357,10 @@ async fn refresh_auth_standalone() -> Result<fold_db::sync::auth::SyncAuth, Stri
         .map_err(|e| format!("Cannot resolve FOLDDB_HOME: {e}"))?;
     let identity_path = folddb_home.join("config").join("node_identity.json");
 
-    let identity_json = std::fs::read_to_string(&identity_path)
+    let identity_bytes = crate::sensitive_io::read_sensitive(&identity_path)
         .map_err(|e| format!("Failed to read node identity for auth refresh: {e}"))?;
+    let identity_json = String::from_utf8(identity_bytes)
+        .map_err(|e| format!("Node identity is not valid UTF-8: {e}"))?;
 
     #[derive(serde::Deserialize)]
     struct Identity {
@@ -566,17 +568,16 @@ pub async fn restore_from_phrase(
     let identity_path = crate::utils::paths::folddb_home()
         .map(|h| h.join("config").join("node_identity.json"))
         .unwrap_or_else(|_| std::path::PathBuf::from("config/node_identity.json"));
-    if let Some(parent) = identity_path.parent() {
-        let _ = std::fs::create_dir_all(parent);
-    }
     let identity_json = serde_json::json!({
         "private_key": private_key_b64,
         "public_key": public_key_b64,
     });
 
-    if let Err(e) = std::fs::write(
+    if let Err(e) = crate::sensitive_io::write_sensitive(
         &identity_path,
-        serde_json::to_string_pretty(&identity_json).unwrap(),
+        serde_json::to_string_pretty(&identity_json)
+            .unwrap()
+            .as_bytes(),
     ) {
         return HttpResponse::InternalServerError().json(serde_json::json!({
             "ok": false,

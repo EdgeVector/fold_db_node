@@ -267,8 +267,10 @@ async fn start_fold_server(port: u16) -> Result<EmbeddedServerHandle, String> {
         .join("node_identity.json");
 
     let (pub_key, priv_key) = if identity_path.exists() {
-        let content = std::fs::read_to_string(&identity_path)
+        let bytes = fold_db_node::sensitive_io::read_sensitive(&identity_path)
             .map_err(|e| format!("Failed to read identity: {}", e))?;
+        let content = String::from_utf8(bytes)
+            .map_err(|e| format!("Identity file is not valid UTF-8: {}", e))?;
         let identity: serde_json::Value = serde_json::from_str(&content)
             .map_err(|e| format!("Failed to parse identity: {}", e))?;
         let priv_k = identity["private_key"].as_str()
@@ -286,8 +288,11 @@ async fn start_fold_server(port: u16) -> Result<EmbeddedServerHandle, String> {
             "private_key": priv_k,
             "public_key": pub_k,
         });
-        std::fs::write(&identity_path, serde_json::to_string_pretty(&identity).unwrap())
-            .map_err(|e| format!("Failed to save identity: {}", e))?;
+        fold_db_node::sensitive_io::write_sensitive(
+            &identity_path,
+            serde_json::to_string_pretty(&identity).unwrap().as_bytes(),
+        )
+        .map_err(|e| format!("Failed to save identity: {}", e))?;
         eprintln!("[FoldDB] Generated and saved new node identity");
         (pub_k, priv_k)
     };

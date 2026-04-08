@@ -55,6 +55,11 @@ The script handles process cleanup, building, schema service startup, and fronte
 - Schema service: http://localhost:9002
 - UI: http://localhost:5173
 
+## Feature Flags
+
+- `os-keychain` — Encrypts node identity, E2E key, and credentials at rest using an OS keychain master key. Enabled in Tauri release builds. Disabled by default for dev/test (plaintext with 0o600 permissions).
+- `aws-backend` — Enables DynamoDB backend (inherited from fold_db).
+
 ## Coding Standards
 
 Follow the same standards as fold_db:
@@ -64,3 +69,4 @@ Follow the same standards as fold_db:
 - No fallbacks — they hide broken code
 - Always write tests
 - Use `TODO` format for incomplete implementations
+- Platform-specific APIs (e.g., OS keychain) must be behind feature flags

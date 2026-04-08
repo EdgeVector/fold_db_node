@@ -100,9 +100,31 @@ impl FoldNode {
                 .map_err(|e| FoldDbError::Config(format!("Cannot resolve FOLDDB_HOME: {e}")))?
         };
         let e2e_key_path = base.join("e2e.key");
-        fold_db::crypto::E2eKeys::load_or_generate(&e2e_key_path)
-            .await
-            .map_err(|e| FoldDbError::Config(format!("Failed to load E2E keys: {}", e)))
+
+        if e2e_key_path.exists() {
+            // Read (and decrypt if os-keychain) the existing key
+            let bytes = crate::sensitive_io::read_sensitive(&e2e_key_path)
+                .map_err(|e| FoldDbError::Config(format!("Failed to read E2E key: {}", e)))?;
+            if bytes.len() != 32 {
+                return Err(FoldDbError::Config(format!(
+                    "E2E key file has invalid length: {} (expected 32)",
+                    bytes.len()
+                )));
+            }
+            let mut secret = [0u8; 32];
+            secret.copy_from_slice(&bytes);
+            Ok(fold_db::crypto::E2eKeys::from_secret(&secret))
+        } else {
+            // Generate a new key and write it (encrypted if os-keychain)
+            let mut secret = [0u8; 32];
+            use rand::RngCore;
+            rand::rngs::OsRng.fill_bytes(&mut secret);
+            crate::sensitive_io::write_sensitive(&e2e_key_path, &secret)
+                .map_err(|e| FoldDbError::Config(format!("Failed to write E2E key: {}", e)))?;
+            log::info!("Generated new E2E key at {}", e2e_key_path.display());
+            log::warn!("Back up your E2E key! Without it, encrypted data cannot be recovered.");
+            Ok(fold_db::crypto::E2eKeys::from_secret(&secret))
+        }
     }
 
     /// Resolve identity and load E2E keys — shared init for both constructors.
@@ -1005,8 +1027,11 @@ fn load_persisted_identity() -> FoldDbResult<Option<(String, String)>> {
         .map(|h| h.join("config").join("node_identity.json"))
         .unwrap_or_else(|_| std::path::PathBuf::from("config/node_identity.json"));
     if config_path.exists() {
-        let content = std::fs::read_to_string(&config_path).map_err(|e| {
+        let bytes = crate::sensitive_io::read_sensitive(&config_path).map_err(|e| {
             FoldDbError::Config(format!("Failed to read node_identity.json: {}", e))
+        })?;
+        let content = String::from_utf8(bytes).map_err(|e| {
+            FoldDbError::Config(format!("node_identity.json is not valid UTF-8: {}", e))
         })?;
 
         match serde_json::from_str::<NodeIdentity>(&content) {

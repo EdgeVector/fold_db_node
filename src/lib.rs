@@ -5,6 +5,9 @@ pub mod handlers;
 pub mod ingestion;
 pub mod keychain;
 pub mod schema_service;
+#[cfg(feature = "os-keychain")]
+pub mod secure_store;
+pub mod sensitive_io;
 pub mod server;
 pub mod trust;
 pub mod utils;
