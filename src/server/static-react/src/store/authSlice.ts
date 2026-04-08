@@ -67,9 +67,9 @@ export const loadSystemPublicKey = createAsyncThunk(
   async (_, { rejectWithValue }) => {
     try {
       const response = await getNodePublicKey();
-      if (response.success && response.data?.key) {
+      if (response.success && response.data?.public_key) {
         return {
-          systemPublicKey: response.data.key,
+          systemPublicKey: response.data.public_key,
           systemKeyId: null,
         };
       }
