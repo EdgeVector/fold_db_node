@@ -29,16 +29,19 @@ handler_response! {
     }
 }
 
-/// Execute a query
+/// Execute a query with access control.
+/// The caller's public key is used to resolve trust distances across domains.
+/// Fields where the caller lacks access are filtered from results.
 pub async fn execute_query(
     query: Query,
     user_hash: &str,
     node: &FoldNode,
 ) -> HandlerResult<QueryResponse> {
     let processor = OperationProcessor::new(node.clone());
+    let caller_pub_key = node.get_node_public_key().to_string();
 
     let results = processor
-        .execute_query_json(query)
+        .execute_query_json_with_access(query, &caller_pub_key)
         .await
         .handler_err("execute query")?;
     let results_json = serde_json::Value::Array(results);
