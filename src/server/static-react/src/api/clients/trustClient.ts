@@ -315,6 +315,33 @@ export async function getSchemaFieldPolicies(
   );
 }
 
+// ===== Declined Invites =====
+
+export interface DeclinedInvite {
+  sender_pub_key: string;
+  sender_display_name: string;
+  sender_contact_hint?: string | null;
+  proposed_distance: number;
+  declined_at: string;
+  nonce: string;
+}
+
+export async function declineTrustInvite(
+  token: string,
+): Promise<EnhancedApiResponse<{ declined: boolean; sender: string }>> {
+  return client.post<{ declined: boolean; sender: string }>("/trust/invite/decline", { token });
+}
+
+export async function listDeclinedInvites(): Promise<EnhancedApiResponse<{ declined_invites: DeclinedInvite[] }>> {
+  return client.get<{ declined_invites: DeclinedInvite[] }>("/trust/invite/declined");
+}
+
+export async function undeclineInvite(
+  nonce: string,
+): Promise<EnhancedApiResponse<{ undeclined: boolean }>> {
+  return client.delete<{ undeclined: boolean }>(`/trust/invite/declined/${encodeURIComponent(nonce)}`);
+}
+
 // ===== Audit Log =====
 
 export async function getAuditLog(
