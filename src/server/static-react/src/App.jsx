@@ -1,4 +1,4 @@
-import { useState, useEffect } from 'react'
+import React, { useState, useEffect, useRef } from 'react'
 import { FoldDbProvider } from './components/FoldDbProvider'
 import Header from './components/Header'
 import Footer from './components/Footer'
@@ -188,8 +188,14 @@ export function AppContent() {
     }
   }
 
+  const resultsRef = useRef(null)
+
   const handleOperationResult = (result) => {
     setResults(result)
+    // Scroll results into view after rendering
+    setTimeout(() => {
+      resultsRef.current?.scrollIntoView({ behavior: 'smooth', block: 'start' })
+    }, 100)
   }
 
   const handleSchemaUpdated = () => {
@@ -382,7 +388,7 @@ export function AppContent() {
                 />
               )}
               {results && !isIngestionResult(results) && (
-                <div className="mt-6">
+                <div className="mt-6" ref={resultsRef}>
                   <div className="text-xs uppercase tracking-widest text-tertiary mb-3">
                     Results
                   </div>
