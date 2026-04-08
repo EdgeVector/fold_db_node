@@ -385,13 +385,20 @@ function TrustTab({ onResult }) {
       const dist = acceptDistance ? parseInt(acceptDistance, 10) : undefined
       const response = await acceptTrustInvite(acceptToken.trim(), dist, trustBack)
       if (response.success && response.data) {
+        const senderKey = response.data.sender?.public_key
         setAcceptToken('')
         setPreview(null)
         await fetchContacts()
         await fetchAuditLog()
+        // Switch to contacts and open the new contact for role assignment
+        if (senderKey) {
+          setActiveSection('contacts')
+          setSelectedContact(senderKey)
+          handleAudit(senderKey)
+        }
         const msg = trustBack
-          ? `Accepted and trusted back ${response.data.sender.display_name}`
-          : `Accepted invite from ${response.data.sender.display_name}`
+          ? `Accepted ${response.data.sender.display_name} — assign a role below`
+          : `Accepted invite from ${response.data.sender.display_name} — assign a role below`
         if (onResult) onResult({ success: true, data: { message: msg } })
       } else {
         setError(response.error || 'Failed to accept invite')
@@ -931,6 +938,32 @@ function TrustTab({ onResult }) {
                   <div className="text-xs text-secondary">Unprotected fields</div>
                 </div>
               </div>
+              {posture.total_unprotected_fields > 0 && (
+                <div className="bg-gruvbox-yellow/15 border border-gruvbox-yellow/30 rounded-lg p-4">
+                  <p className="text-sm text-gruvbox-yellow font-medium mb-1">
+                    {posture.total_unprotected_fields} fields have no access policy
+                  </p>
+                  <p className="text-xs text-secondary mb-3">
+                    Anyone you trust in any domain can see these fields. Apply default policies based on data classification to protect them.
+                  </p>
+                  <button
+                    className="btn btn-sm"
+                    onClick={async () => {
+                      try {
+                        const resp = await fetch('/api/sharing/apply-defaults', { method: 'POST' })
+                        const data = await resp.json()
+                        if (data.ok !== false) {
+                          const d = data.data || data
+                          if (onResult) onResult({ success: true, data: { message: `Applied policies to ${d.fields_updated} fields across ${d.schemas_updated} schemas` } })
+                          getSharingPosture().then(r => { if (r.success && r.data) setPosture(r.data) }).catch(() => {})
+                        }
+                      } catch { /* ignore */ }
+                    }}
+                  >
+                    Apply Default Policies
+                  </button>
+                </div>
+              )}
               {posture.domains.length > 0 && (
                 <div className="border border-border rounded-lg p-4 bg-surface">
                   <h3 className="text-sm font-medium text-primary mb-3">Trust Domains</h3>

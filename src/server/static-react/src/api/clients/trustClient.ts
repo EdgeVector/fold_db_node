@@ -292,6 +292,29 @@ export async function getSharingPosture(): Promise<EnhancedApiResponse<SharingPo
   return client.get<SharingPosture>("/sharing/posture");
 }
 
+export async function applyDefaultPolicies(): Promise<EnhancedApiResponse<{ schemas_updated: number; fields_updated: number }>> {
+  return client.post<{ schemas_updated: number; fields_updated: number }>("/sharing/apply-defaults");
+}
+
+export async function setFieldPolicy(
+  schemaName: string,
+  fieldName: string,
+  policy: Record<string, unknown>,
+): Promise<EnhancedApiResponse<{ policy_set: boolean }>> {
+  return client.put<{ policy_set: boolean }>(
+    `/sharing/policy/${encodeURIComponent(schemaName)}/${encodeURIComponent(fieldName)}`,
+    { policy },
+  );
+}
+
+export async function getSchemaFieldPolicies(
+  schemaName: string,
+): Promise<EnhancedApiResponse<{ schema_name: string; field_policies: Record<string, unknown> }>> {
+  return client.get<{ schema_name: string; field_policies: Record<string, unknown> }>(
+    `/sharing/policies/${encodeURIComponent(schemaName)}`,
+  );
+}
+
 // ===== Audit Log =====
 
 export async function getAuditLog(

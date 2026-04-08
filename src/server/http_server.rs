@@ -836,7 +836,19 @@ impl FoldHttpServer {
                     "/remove/{key}/{domain}",
                     web::delete().to(trust_routes::remove_contact_role),
                 )
-                .route("/posture", web::get().to(trust_routes::sharing_posture)),
+                .route("/posture", web::get().to(trust_routes::sharing_posture))
+                .route(
+                    "/apply-defaults",
+                    web::post().to(trust_routes::apply_defaults_all),
+                )
+                .route(
+                    "/policy/{schema}/{field}",
+                    web::put().to(trust_routes::set_field_policy_unsigned),
+                )
+                .route(
+                    "/policies/{schema}",
+                    web::get().to(trust_routes::get_schema_policies),
+                ),
         );
     }
 
