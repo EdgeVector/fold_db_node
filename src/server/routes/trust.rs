@@ -943,10 +943,14 @@ pub async fn sharing_posture(state: web::Data<AppState>) -> impl Responder {
 }
 
 /// POST /api/sharing/apply-defaults — apply classification-based access policies
-/// to all approved schemas that have unprotected fields.
-pub async fn apply_defaults_all(state: web::Data<AppState>) -> impl Responder {
+/// to all approved schemas. Query param ?force=true overwrites existing policies.
+pub async fn apply_defaults_all(
+    query: web::Query<std::collections::HashMap<String, String>>,
+    state: web::Data<AppState>,
+) -> impl Responder {
     let (user_hash, node) = node_or_return!(state);
     let op = OperationProcessor::new(node.clone());
+    let force = query.get("force").map(|v| v == "true").unwrap_or(false);
     handler_result_to_response(
         async {
             let db = op.get_db_public().await.handler_err("get database")?;
@@ -963,7 +967,10 @@ pub async fn apply_defaults_all(state: web::Data<AppState>) -> impl Responder {
                 if sws.state != fold_db::schema::SchemaState::Approved {
                     continue;
                 }
-                match op.apply_classification_defaults(&sws.schema.name).await {
+                match op
+                    .apply_classification_defaults_with_force(&sws.schema.name, force)
+                    .await
+                {
                     Ok(count) if count > 0 => {
                         total_applied += count;
                         schemas_updated += 1;

@@ -431,9 +431,12 @@ impl OperationProcessor {
 
     /// Apply classification-based default access policies to all fields in a schema
     /// that don't already have explicit policies.
-    pub async fn apply_classification_defaults(
+    /// Apply classification-based default access policies to fields.
+    /// If `force` is true, overwrites existing policies (reset to defaults).
+    pub async fn apply_classification_defaults_with_force(
         &self,
         schema_name: &str,
+        force: bool,
     ) -> Result<usize, SchemaError> {
         let config = crate::trust::classification_defaults::ClassificationDefaultsConfig::load()
             .unwrap_or_default();
@@ -452,13 +455,15 @@ impl OperationProcessor {
         let field_names: Vec<String> = schema.runtime_fields.keys().cloned().collect();
 
         for field_name in &field_names {
-            // Skip if persisted policy exists (these survive restart)
-            if schema.field_access_policies.contains_key(field_name) {
-                continue;
-            }
-            let field = schema.runtime_fields.get(field_name).unwrap();
-            if field.common().access_policy.is_some() {
-                continue; // Already has explicit policy (runtime-only)
+            if !force {
+                // Skip if persisted policy exists (these survive restart)
+                if schema.field_access_policies.contains_key(field_name) {
+                    continue;
+                }
+                let field = schema.runtime_fields.get(field_name).unwrap();
+                if field.common().access_policy.is_some() {
+                    continue; // Already has explicit policy (runtime-only)
+                }
             }
 
             // Look up classification for this field
@@ -499,6 +504,15 @@ impl OperationProcessor {
         }
 
         Ok(applied)
+    }
+
+    /// Apply classification defaults without overwriting existing policies.
+    pub async fn apply_classification_defaults(
+        &self,
+        schema_name: &str,
+    ) -> Result<usize, SchemaError> {
+        self.apply_classification_defaults_with_force(schema_name, false)
+            .await
     }
 
     pub async fn issue_capability(

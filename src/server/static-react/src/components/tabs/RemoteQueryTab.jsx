@@ -110,29 +110,35 @@ function RemoteQueryTab({ onResult }) {
           </div>
 
           <h3 className="text-sm font-medium text-primary mb-2">
-            Available Schemas ({nodeInfo.shared_schemas?.length || 0})
+            Available Schemas ({nodeInfo.schemas?.length || nodeInfo.shared_schemas?.length || 0})
           </h3>
 
           {nodeInfo.shared_schemas?.length === 0 && (
             <p className="text-xs text-tertiary">No schemas available on this node.</p>
           )}
 
-          {nodeInfo.shared_schemas?.length > 0 && (
+          {(nodeInfo.schemas?.length || nodeInfo.shared_schemas?.length) > 0 && (
             <>
               <div className="space-y-1 max-h-48 overflow-y-auto mb-3">
-                {nodeInfo.shared_schemas.map((schema) => (
-                  <button
-                    key={schema}
-                    className={`w-full text-left px-3 py-2 text-xs rounded transition-colors ${
-                      selectedSchema === schema
-                        ? 'bg-gruvbox-blue/20 text-gruvbox-blue border border-gruvbox-blue/30'
-                        : 'bg-surface-secondary text-primary hover:bg-gruvbox-elevated'
-                    }`}
-                    onClick={() => setSelectedSchema(schema)}
-                  >
-                    {schema.length > 40 ? schema.slice(0, 40) + '...' : schema}
-                  </button>
-                ))}
+                {(nodeInfo.schemas || nodeInfo.shared_schemas?.map(s => ({name: s}))).map((schema) => {
+                  const name = typeof schema === 'string' ? schema : schema.name
+                  const desc = typeof schema === 'object' ? schema.descriptive_name : null
+                  const display = desc || (name.length > 40 ? name.slice(0, 40) + '...' : name)
+                  return (
+                    <button
+                      key={name}
+                      className={`w-full text-left px-3 py-2 text-xs rounded transition-colors ${
+                        selectedSchema === name
+                          ? 'bg-gruvbox-blue/20 text-gruvbox-blue border border-gruvbox-blue/30'
+                          : 'bg-surface-secondary text-primary hover:bg-gruvbox-elevated'
+                      }`}
+                      onClick={() => setSelectedSchema(name)}
+                    >
+                      {display}
+                      {desc && <span className="text-tertiary ml-1 text-[10px]">({name.slice(0, 8)}...)</span>}
+                    </button>
+                  )
+                })}
               </div>
 
               <button

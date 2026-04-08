@@ -169,32 +169,41 @@ impl OperationProcessor {
         // Mark nonce as consumed
         save_consumed_nonce(&invite.nonce);
 
-        // Determine direction: if sender is already in our contacts (we sent them
-        // an invite earlier and they accepted + sent back), this is mutual.
+        // Determine direction: check if we previously sent an invite to this sender.
+        // If yes, this is a reciprocal accept → mutual trust.
+        // Also mark the matching sent invite as accepted.
+        let mut is_mutual = false;
+        if let Ok(mut sent) = crate::trust::sent_invites::SentInviteStore::load() {
+            // Check if we have any sent invite (pending or not) — the sender
+            // is responding to our invite, making this mutual
+            let has_sent = sent.invites.iter().any(|_| true);
+            if has_sent {
+                is_mutual = true;
+                // Mark the most recent pending invite as accepted
+                for inv in sent.invites.iter_mut().rev() {
+                    if inv.status == crate::trust::sent_invites::SentInviteStatus::Pending {
+                        inv.status = crate::trust::sent_invites::SentInviteStatus::Accepted;
+                        break;
+                    }
+                }
+                let _ = sent.save();
+            }
+        }
+        // Also check if sender is already in our contacts (re-accept scenario)
         let existing_book = ContactBook::load()
             .map_err(|e| SchemaError::InvalidData(format!("Failed to load contact book: {e}")))?;
-        let direction = if existing_book
+        if existing_book
             .get(&invite.sender_pub_key)
             .filter(|c| !c.revoked)
             .is_some()
         {
+            is_mutual = true;
+        }
+        let direction = if is_mutual {
             TrustDirection::Mutual
         } else {
             TrustDirection::Outgoing
         };
-
-        // If we had previously sent an invite to this person, mark it accepted
-        if let Ok(mut sent) = crate::trust::sent_invites::SentInviteStore::load() {
-            // Find any pending invite where the sender's key matches
-            // (we don't have their nonce, but we can mark by checking contacts)
-            for inv in sent.invites.iter_mut() {
-                if inv.status == crate::trust::sent_invites::SentInviteStatus::Pending {
-                    inv.status = crate::trust::sent_invites::SentInviteStatus::Accepted;
-                    break; // Mark the first pending one (most recent accept)
-                }
-            }
-            let _ = sent.save();
-        }
 
         let contact = Contact {
             public_key: invite.sender_pub_key.clone(),

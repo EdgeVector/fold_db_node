@@ -24,12 +24,23 @@ pub struct RemoteQueryRequest {
     pub timestamp: i64,
 }
 
+/// Schema info for remote browsing.
+#[derive(Debug, Clone, Serialize)]
+pub struct SharedSchemaInfo {
+    pub name: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub descriptive_name: Option<String>,
+}
+
 /// Node info response (unauthenticated).
 #[derive(Debug, Clone, Serialize)]
 pub struct NodeInfoResponse {
     pub public_key: String,
     pub node_id: String,
+    /// Schema names (for backwards compat)
     pub shared_schemas: Vec<String>,
+    /// Schemas with descriptive names
+    pub schemas: Vec<SharedSchemaInfo>,
 }
 
 /// POST /api/remote/query — execute a query from a remote node
@@ -97,15 +108,23 @@ pub async fn node_info(state: web::Data<AppState>) -> impl Responder {
                 .await
                 .map_err(|e| crate::handlers::HandlerError::Internal(e.to_string()))?;
 
-            // List all schema names (access control removed from fold_db)
-            let schemas = db.schema_manager.get_schemas().handler_err("get schemas")?;
-            let shared_schemas: Vec<String> = schemas.into_keys().collect();
+            // List schemas with descriptive names
+            let all_schemas = db.schema_manager.get_schemas().handler_err("get schemas")?;
+            let shared_schemas: Vec<String> = all_schemas.keys().cloned().collect();
+            let schemas: Vec<SharedSchemaInfo> = all_schemas
+                .values()
+                .map(|s| SharedSchemaInfo {
+                    name: s.name.clone(),
+                    descriptive_name: s.descriptive_name.clone(),
+                })
+                .collect();
 
             Ok(ApiResponse::success_with_user(
                 NodeInfoResponse {
                     public_key,
                     node_id,
                     shared_schemas,
+                    schemas,
                 },
                 user_hash,
             ))
