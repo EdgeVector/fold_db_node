@@ -371,7 +371,12 @@ impl OperationProcessor {
         let parsed: fold_db::access::FieldAccessPolicy = serde_json::from_value(policy)
             .map_err(|e| SchemaError::InvalidData(format!("Invalid access policy: {e}")))?;
 
-        field.common_mut().access_policy = Some(parsed);
+        // Set on runtime field (immediate effect)
+        field.common_mut().access_policy = Some(parsed.clone());
+        // Also persist in field_access_policies (survives restart)
+        schema
+            .field_access_policies
+            .insert(field_name.to_string(), parsed);
         db.schema_manager.update_schema(&schema).await?;
         Ok(())
     }
@@ -447,9 +452,13 @@ impl OperationProcessor {
         let field_names: Vec<String> = schema.runtime_fields.keys().cloned().collect();
 
         for field_name in &field_names {
+            // Skip if persisted policy exists (these survive restart)
+            if schema.field_access_policies.contains_key(field_name) {
+                continue;
+            }
             let field = schema.runtime_fields.get(field_name).unwrap();
             if field.common().access_policy.is_some() {
-                continue; // Already has explicit policy
+                continue; // Already has explicit policy (runtime-only)
             }
 
             // Look up classification for this field
@@ -476,7 +485,11 @@ impl OperationProcessor {
             };
 
             if let Some(field_mut) = schema.runtime_fields.get_mut(field_name) {
-                field_mut.common_mut().access_policy = Some(policy);
+                field_mut.common_mut().access_policy = Some(policy.clone());
+                // Also persist so it survives restart
+                schema
+                    .field_access_policies
+                    .insert(field_name.clone(), policy);
                 applied += 1;
             }
         }
