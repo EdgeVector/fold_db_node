@@ -84,11 +84,22 @@ impl FoldNode {
         }
     }
 
-    /// Load or generate E2E encryption keys from the standard path.
-    async fn load_e2e_keys() -> FoldDbResult<fold_db::crypto::E2eKeys> {
-        let folddb_home = crate::utils::paths::folddb_home()
-            .map_err(|e| FoldDbError::Config(format!("Cannot resolve FOLDDB_HOME: {e}")))?;
-        let e2e_key_path = folddb_home.join("e2e.key");
+    /// Load or generate E2E encryption keys.
+    ///
+    /// Uses the node's `config_dir` parent (i.e. the FOLDDB_HOME equivalent)
+    /// when set, otherwise falls back to `$FOLDDB_HOME` / `~/.folddb`.
+    async fn load_e2e_keys(config: &NodeConfig) -> FoldDbResult<fold_db::crypto::E2eKeys> {
+        let base = if let Some(config_dir) = &config.config_dir {
+            // config_dir is e.g. /tmp/xxx/config — parent is the FOLDDB_HOME equivalent
+            config_dir
+                .parent()
+                .map(|p| p.to_path_buf())
+                .unwrap_or_else(|| config_dir.clone())
+        } else {
+            crate::utils::paths::folddb_home()
+                .map_err(|e| FoldDbError::Config(format!("Cannot resolve FOLDDB_HOME: {e}")))?
+        };
+        let e2e_key_path = base.join("e2e.key");
         fold_db::crypto::E2eKeys::load_or_generate(&e2e_key_path)
             .await
             .map_err(|e| FoldDbError::Config(format!("Failed to load E2E keys: {}", e)))
@@ -99,7 +110,7 @@ impl FoldNode {
         config: &NodeConfig,
     ) -> FoldDbResult<(String, String, fold_db::crypto::E2eKeys)> {
         let (private_key, public_key) = Self::resolve_identity(config)?;
-        let e2e_keys = Self::load_e2e_keys().await?;
+        let e2e_keys = Self::load_e2e_keys(config).await?;
         Ok((private_key, public_key, e2e_keys))
     }
 
@@ -592,6 +603,11 @@ impl FoldNode {
     /// Gets the node's public key.
     pub fn get_node_public_key(&self) -> &str {
         &self.public_key
+    }
+
+    /// Resolve the config directory from the node's configuration.
+    pub fn get_config_dir(&self) -> Result<std::path::PathBuf, String> {
+        self.config.get_config_dir()
     }
 
     /// Get the E2E encryption key for encrypting files before storage.

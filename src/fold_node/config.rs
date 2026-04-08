@@ -35,6 +35,12 @@ pub struct NodeConfig {
     /// Explicitly provided node private key (Base64)
     #[serde(default)]
     pub private_key: Option<String>,
+    /// Explicit config directory override.
+    /// When set, trust modules (contact book, sharing roles, etc.) use this
+    /// instead of resolving `$FOLDDB_HOME`. This eliminates env-var races in
+    /// parallel tests.
+    #[serde(default)]
+    pub config_dir: Option<PathBuf>,
 }
 
 fn default_network_listen_address() -> String {
@@ -51,6 +57,7 @@ impl Default for NodeConfig {
             schema_service_url: None,
             public_key: None,
             private_key: None,
+            config_dir: None,
         }
     }
 }
@@ -68,6 +75,7 @@ impl NodeConfig {
             schema_service_url: None,
             public_key: None,
             private_key: None,
+            config_dir: None,
         }
     }
 
@@ -110,6 +118,27 @@ impl NodeConfig {
         self.public_key = Some(public_key.to_string());
         self.private_key = Some(private_key.to_string());
         self
+    }
+
+    /// Set an explicit config directory. Trust modules (contact book, sharing
+    /// roles, classification defaults) will read/write files here instead of
+    /// resolving `$FOLDDB_HOME`.
+    pub fn with_config_dir(mut self, dir: PathBuf) -> Self {
+        self.config_dir = Some(dir);
+        self
+    }
+
+    /// Resolve the config directory.
+    ///
+    /// Priority:
+    /// 1. Explicit `config_dir` on this config (set via `with_config_dir`)
+    /// 2. `$FOLDDB_HOME/config`
+    /// 3. `~/.folddb/config`
+    pub fn get_config_dir(&self) -> Result<PathBuf, String> {
+        if let Some(dir) = &self.config_dir {
+            return Ok(dir.clone());
+        }
+        Ok(crate::utils::paths::folddb_home()?.join("config"))
     }
 }
 

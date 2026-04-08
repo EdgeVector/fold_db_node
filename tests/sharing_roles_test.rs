@@ -9,23 +9,29 @@ use fold_db::schema::types::schema::DeclarativeSchemaType as SchemaType;
 use fold_db::schema::SchemaState;
 use fold_db::security::Ed25519KeyPair;
 use fold_db_node::fold_node::{FoldNode, NodeConfig, OperationProcessor};
+use fold_db_node::trust::contact_book::ContactBook;
 
 use std::collections::HashMap;
-use tempfile::tempdir;
+use std::path::PathBuf;
+use tempfile::TempDir;
 
-async fn setup_node() -> (OperationProcessor, FoldNode, String) {
-    let temp_dir = tempdir().expect("tempdir");
+/// Each test gets its own temp directory. The `config_dir` on `NodeConfig`
+/// routes contact book / sharing roles to that directory — no global
+/// `FOLDDB_HOME` env var needed, so tests can run in parallel safely.
+async fn setup_node() -> (OperationProcessor, FoldNode, String, PathBuf, TempDir) {
+    let temp_dir = TempDir::new().expect("tempdir");
     let path = temp_dir.path().to_path_buf();
-    // Set FOLDDB_HOME so contact book/roles/etc. use this test's temp dir
-    std::env::set_var("FOLDDB_HOME", &path);
+    let config_dir = path.join("config");
+    std::fs::create_dir_all(&config_dir).expect("create config dir");
     let keypair = Ed25519KeyPair::generate().unwrap();
     let pub_key = keypair.public_key_base64();
     let config = NodeConfig::new(path)
         .with_schema_service_url("test://mock")
-        .with_identity(&pub_key, &keypair.secret_key_base64());
+        .with_identity(&pub_key, &keypair.secret_key_base64())
+        .with_config_dir(config_dir.clone());
     let node = FoldNode::new(config).await.unwrap();
     let processor = OperationProcessor::new(node.clone());
-    (processor, node, pub_key)
+    (processor, node, pub_key, config_dir, temp_dir)
 }
 
 async fn load_schema_with_policy(node: &FoldNode, name: &str, trust_domain: &str, read_max: u64) {
@@ -78,7 +84,8 @@ async fn load_schema_with_policy(node: &FoldNode, name: &str, trust_domain: &str
 
 #[tokio::test]
 async fn test_role_assignment_grants_domain_trust() {
-    let (op, node, _pub_key) = setup_node().await;
+    let (op, node, _pub_key, config_dir, _tmp) = setup_node().await;
+    let book_path = config_dir.join("contact_book.json");
 
     // Create a contact (simulating an accepted trust invite)
     let contact_key = Ed25519KeyPair::generate().unwrap().public_key_base64();
@@ -87,7 +94,7 @@ async fn test_role_assignment_grants_domain_trust() {
     op.grant_trust(&contact_key, 3).await.unwrap();
 
     // Add to contact book
-    let mut book = fold_db_node::trust::contact_book::ContactBook::load().unwrap_or_default();
+    let mut book = ContactBook::load_from(&book_path).unwrap_or_default();
     book.upsert_contact(fold_db_node::trust::contact_book::Contact {
         public_key: contact_key.clone(),
         display_name: "Test Doctor".to_string(),
@@ -99,7 +106,7 @@ async fn test_role_assignment_grants_domain_trust() {
         revoked: false,
         roles: HashMap::new(),
     });
-    book.save().unwrap();
+    book.save_to(&book_path).unwrap();
 
     // Assign "doctor" role
     op.assign_role_to_contact(&contact_key, "doctor")
@@ -122,7 +129,7 @@ async fn test_role_assignment_grants_domain_trust() {
     );
 
     // Verify: contact book should have the role recorded
-    let book = fold_db_node::trust::contact_book::ContactBook::load().unwrap();
+    let book = ContactBook::load_from(&book_path).unwrap();
     let contact = book.get(&contact_key).unwrap();
     assert_eq!(
         contact.roles.get("medical").map(|s| s.as_str()),
@@ -132,12 +139,13 @@ async fn test_role_assignment_grants_domain_trust() {
 
 #[tokio::test]
 async fn test_role_removal_revokes_domain_trust() {
-    let (op, node, _pub_key) = setup_node().await;
+    let (op, node, _pub_key, config_dir, _tmp) = setup_node().await;
+    let book_path = config_dir.join("contact_book.json");
 
     let contact_key = Ed25519KeyPair::generate().unwrap().public_key_base64();
     op.grant_trust(&contact_key, 3).await.unwrap();
 
-    let mut book = fold_db_node::trust::contact_book::ContactBook::load().unwrap_or_default();
+    let mut book = ContactBook::load_from(&book_path).unwrap_or_default();
     book.upsert_contact(fold_db_node::trust::contact_book::Contact {
         public_key: contact_key.clone(),
         display_name: "Trainer".to_string(),
@@ -149,7 +157,7 @@ async fn test_role_removal_revokes_domain_trust() {
         revoked: false,
         roles: HashMap::new(),
     });
-    book.save().unwrap();
+    book.save_to(&book_path).unwrap();
 
     // Assign then remove
     op.assign_role_to_contact(&contact_key, "trainer")
@@ -174,14 +182,15 @@ async fn test_role_removal_revokes_domain_trust() {
     );
 
     // Verify: role removed from contact book
-    let book = fold_db_node::trust::contact_book::ContactBook::load().unwrap();
+    let book = ContactBook::load_from(&book_path).unwrap();
     let contact = book.get(&contact_key).unwrap();
     assert!(!contact.roles.contains_key("health"));
 }
 
 #[tokio::test]
 async fn test_sharing_audit_with_domain_policies() {
-    let (op, node, _pub_key) = setup_node().await;
+    let (op, node, _pub_key, config_dir, _tmp) = setup_node().await;
+    let book_path = config_dir.join("contact_book.json");
 
     // Create schemas with different domain policies
     load_schema_with_policy(&node, "PersonalNotes", "personal", 3).await;
@@ -191,7 +200,7 @@ async fn test_sharing_audit_with_domain_policies() {
     // Create a contact with friend role (personal domain, distance 3)
     let friend_key = Ed25519KeyPair::generate().unwrap().public_key_base64();
     op.grant_trust(&friend_key, 3).await.unwrap();
-    let mut book = fold_db_node::trust::contact_book::ContactBook::load().unwrap_or_default();
+    let mut book = ContactBook::load_from(&book_path).unwrap_or_default();
     book.upsert_contact(fold_db_node::trust::contact_book::Contact {
         public_key: friend_key.clone(),
         display_name: "Bob".to_string(),
@@ -203,7 +212,7 @@ async fn test_sharing_audit_with_domain_policies() {
         revoked: false,
         roles: HashMap::new(),
     });
-    book.save().unwrap();
+    book.save_to(&book_path).unwrap();
 
     // Assign friend role (personal domain, distance 3)
     op.assign_role_to_contact(&friend_key, "friend")
@@ -269,14 +278,15 @@ async fn test_sharing_audit_with_domain_policies() {
 
 #[tokio::test]
 async fn test_multiple_roles_across_domains() {
-    let (op, node, _pub_key) = setup_node().await;
+    let (op, node, _pub_key, config_dir, _tmp) = setup_node().await;
+    let book_path = config_dir.join("contact_book.json");
 
     load_schema_with_policy(&node, "Notes", "personal", 3).await;
     load_schema_with_policy(&node, "Fitness", "health", 2).await;
     load_schema_with_policy(&node, "Taxes", "financial", 1).await;
 
     let contact_key = Ed25519KeyPair::generate().unwrap().public_key_base64();
-    let mut book = fold_db_node::trust::contact_book::ContactBook::load().unwrap_or_default();
+    let mut book = ContactBook::load_from(&book_path).unwrap_or_default();
     book.upsert_contact(fold_db_node::trust::contact_book::Contact {
         public_key: contact_key.clone(),
         display_name: "Multi-Role".to_string(),
@@ -288,7 +298,7 @@ async fn test_multiple_roles_across_domains() {
         revoked: false,
         roles: HashMap::new(),
     });
-    book.save().unwrap();
+    book.save_to(&book_path).unwrap();
 
     // Assign roles across multiple domains
     op.assign_role_to_contact(&contact_key, "friend")

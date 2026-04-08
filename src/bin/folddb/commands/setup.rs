@@ -235,6 +235,7 @@ pub fn run_setup_wizard() -> Result<NodeConfig, CliError> {
         schema_service_url: Some(schema_url),
         public_key: Some(identity.public_key),
         private_key: Some(identity.private_key),
+        config_dir: None,
     };
 
     // Persist config
