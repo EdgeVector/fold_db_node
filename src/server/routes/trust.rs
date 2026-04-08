@@ -6,6 +6,13 @@ use crate::trust::trust_invite::TrustInvite;
 use actix_web::{web, Responder};
 use serde::{Deserialize, Serialize};
 
+/// Fix base64 public keys that get mangled by URL path decoding.
+/// Actix decodes `%2B` → `+` correctly, but some clients/proxies
+/// decode `+` → space. This reverses that corruption.
+fn fix_pubkey_from_path(key: &str) -> String {
+    key.replace(' ', "+")
+}
+
 // ===== Request/Response types =====
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -80,7 +87,7 @@ pub async fn grant_trust(
 
 /// DELETE /api/trust/revoke/{key} — revoke trust for a public key
 pub async fn revoke_trust(path: web::Path<String>, state: web::Data<AppState>) -> impl Responder {
-    let public_key = path.into_inner();
+    let public_key = fix_pubkey_from_path(&path.into_inner());
     let (user_hash, node) = node_or_return!(state);
     let op = OperationProcessor::new(node.clone());
     handler_result_to_response(
@@ -143,7 +150,7 @@ pub async fn set_trust_override(
 
 /// GET /api/trust/resolve/{key} — check resolved distance for a key
 pub async fn resolve_trust(path: web::Path<String>, state: web::Data<AppState>) -> impl Responder {
-    let public_key = path.into_inner();
+    let public_key = fix_pubkey_from_path(&path.into_inner());
     let (user_hash, node) = node_or_return!(state);
     let op = OperationProcessor::new(node.clone());
     handler_result_to_response(
@@ -480,7 +487,7 @@ pub async fn list_contacts(state: web::Data<AppState>) -> impl Responder {
 
 /// GET /api/contacts/{key} — get a specific contact
 pub async fn get_contact(path: web::Path<String>, state: web::Data<AppState>) -> impl Responder {
-    let public_key = path.into_inner();
+    let public_key = fix_pubkey_from_path(&path.into_inner());
     let (user_hash, node) = node_or_return!(state);
     let op = OperationProcessor::new(node.clone());
     handler_result_to_response(
@@ -631,7 +638,7 @@ pub async fn preview_trust_invite(
 
 /// DELETE /api/contacts/{key} — revoke trust and remove contact
 pub async fn revoke_contact(path: web::Path<String>, state: web::Data<AppState>) -> impl Responder {
-    let public_key = path.into_inner();
+    let public_key = fix_pubkey_from_path(&path.into_inner());
     let (user_hash, node) = node_or_return!(state);
     let op = OperationProcessor::new(node.clone());
     handler_result_to_response(
@@ -865,7 +872,7 @@ pub async fn assign_contact_role(
     body: web::Json<AssignRoleRequest>,
     state: web::Data<AppState>,
 ) -> impl Responder {
-    let public_key = path.into_inner();
+    let public_key = fix_pubkey_from_path(&path.into_inner());
     let (user_hash, node) = node_or_return!(state);
     let op = OperationProcessor::new(node.clone());
     handler_result_to_response(
@@ -887,7 +894,8 @@ pub async fn remove_contact_role(
     path: web::Path<(String, String)>,
     state: web::Data<AppState>,
 ) -> impl Responder {
-    let (public_key, domain) = path.into_inner();
+    let (pk_raw, domain) = path.into_inner();
+    let public_key = fix_pubkey_from_path(&pk_raw);
     let (user_hash, node) = node_or_return!(state);
     let op = OperationProcessor::new(node.clone());
     handler_result_to_response(
@@ -906,7 +914,7 @@ pub async fn remove_contact_role(
 
 /// GET /api/sharing/audit/{key} — audit what a contact can see
 pub async fn sharing_audit(path: web::Path<String>, state: web::Data<AppState>) -> impl Responder {
-    let public_key = path.into_inner();
+    let public_key = fix_pubkey_from_path(&path.into_inner());
     let (user_hash, node) = node_or_return!(state);
     let op = OperationProcessor::new(node.clone());
     handler_result_to_response(
