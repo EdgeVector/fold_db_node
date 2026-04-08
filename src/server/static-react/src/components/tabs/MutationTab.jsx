@@ -51,12 +51,17 @@ function MutationTab({ onResult }) {
     let mutation
 
     if (isHashRangeSchema(selectedSchemaObj)) {
-      // HashRange: use formatRangeMutation but also include the hash key
-      mutation = formatRangeMutation(selectedSchemaObj, mutationType, rangeKeyValue, mutationData)
-      // formatRangeMutation sets key_value.range — add hash key
-      if (!mutation.key_value) mutation.key_value = {}
-      mutation.key_value.hash = hashKeyValue.trim() || null
-      mutation.key_value.range = rangeKeyValue.trim() || null
+      // HashRange: plain values with hash + range key
+      mutation = {
+        type: 'mutation',
+        schema: selectedSchema,
+        mutation_type: normalizedMutationType,
+        fields_and_values: mutationData,
+        key_value: {
+          hash: hashKeyValue.trim() || null,
+          range: rangeKeyValue.trim() || null
+        }
+      }
     } else if (isRangeSchema(selectedSchemaObj)) {
       mutation = formatRangeMutation(selectedSchemaObj, mutationType, rangeKeyValue, mutationData)
     } else {
