@@ -208,7 +208,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let node_manager = NodeManager::new(node_manager_config);
 
     // Start the HTTP server
-    let bind_address = format!("0.0.0.0:{}", http_port);
+    let bind_address = format!("127.0.0.1:{}", http_port);
     let http_server = FoldHttpServer::new(node_manager, &bind_address).await?;
 
     http_server
