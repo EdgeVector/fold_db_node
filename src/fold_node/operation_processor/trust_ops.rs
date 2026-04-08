@@ -291,6 +291,60 @@ impl OperationProcessor {
         })
     }
 
+    /// Get an overview of the node's sharing posture: how many schemas per domain,
+    /// how many contacts have access, total exposed fields.
+    pub async fn sharing_posture(&self) -> Result<serde_json::Value, SchemaError> {
+        let db = self.get_db().await.map_err(to_schema_err)?;
+        let owner = self.node.get_node_public_key().to_string();
+
+        // Count schemas per trust domain
+        let schemas = db
+            .schema_manager
+            .get_schemas_with_states()
+            .map_err(|e| SchemaError::InvalidData(format!("Failed to list schemas: {e}")))?;
+
+        let mut domain_schemas: std::collections::HashMap<String, usize> =
+            std::collections::HashMap::new();
+        let mut total_policy_fields = 0usize;
+        let mut total_unprotected_fields = 0usize;
+
+        for sws in &schemas {
+            if sws.state != fold_db::schema::SchemaState::Approved {
+                continue;
+            }
+            let domain = sws.schema.trust_domain.as_deref().unwrap_or("personal");
+            *domain_schemas.entry(domain.to_string()).or_insert(0) += 1;
+
+            for field in sws.schema.runtime_fields.values() {
+                if field.common().access_policy.is_some() {
+                    total_policy_fields += 1;
+                } else {
+                    total_unprotected_fields += 1;
+                }
+            }
+        }
+
+        // Count contacts per domain
+        let domains = db.db_ops.list_trust_domains().await?;
+        let mut domain_contacts: std::collections::HashMap<String, usize> =
+            std::collections::HashMap::new();
+        for domain in &domains {
+            let graph = db.db_ops.load_trust_graph_for_domain(domain).await?;
+            let grants = graph.assignments_from(&owner);
+            if !grants.is_empty() {
+                domain_contacts.insert(domain.clone(), grants.len());
+            }
+        }
+
+        Ok(serde_json::json!({
+            "domains": domains,
+            "schemas_per_domain": domain_schemas,
+            "contacts_per_domain": domain_contacts,
+            "total_policy_fields": total_policy_fields,
+            "total_unprotected_fields": total_unprotected_fields,
+        }))
+    }
+
     // ===== Field access policy operations =====
 
     /// Set the access policy on a specific field. Persists to disk.

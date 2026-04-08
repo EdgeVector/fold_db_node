@@ -280,6 +280,18 @@ export async function auditContactAccess(
   return client.get<SharingAuditResult>(`/sharing/audit/${encodeURIComponent(publicKey)}`);
 }
 
+export interface SharingPosture {
+  domains: string[];
+  schemas_per_domain: Record<string, number>;
+  contacts_per_domain: Record<string, number>;
+  total_policy_fields: number;
+  total_unprotected_fields: number;
+}
+
+export async function getSharingPosture(): Promise<EnhancedApiResponse<SharingPosture>> {
+  return client.get<SharingPosture>("/sharing/posture");
+}
+
 // ===== Audit Log =====
 
 export async function getAuditLog(
