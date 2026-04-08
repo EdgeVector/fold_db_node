@@ -101,8 +101,22 @@ impl OperationProcessor {
         let private_key = self.node.get_node_private_key();
         let public_key = self.node.get_node_public_key();
 
-        TrustInvite::create(private_key, public_key, &identity, proposed_distance)
-            .map_err(|e| SchemaError::InvalidData(format!("Failed to create trust invite: {e}")))
+        let invite = TrustInvite::create(private_key, public_key, &identity, proposed_distance)
+            .map_err(|e| SchemaError::InvalidData(format!("Failed to create trust invite: {e}")))?;
+
+        // Record in sent invites
+        if let Ok(mut store) = crate::trust::sent_invites::SentInviteStore::load() {
+            store.record(crate::trust::sent_invites::SentInvite {
+                nonce: invite.nonce.clone(),
+                recipient_hint: "unknown".to_string(),
+                proposed_distance,
+                created_at: invite.created_at,
+                status: crate::trust::sent_invites::SentInviteStatus::Pending,
+            });
+            let _ = store.save();
+        }
+
+        Ok(invite)
     }
 
     /// Accept a trust invite: verify signature, add to trust graph and contact book.
@@ -129,6 +143,16 @@ impl OperationProcessor {
             return Err(SchemaError::PermissionDenied(
                 "Trust invite has already been used (replay detected)".to_string(),
             ));
+        }
+
+        // Check if this invite was previously declined
+        if let Ok(declined) = crate::trust::declined_invites::DeclinedInviteStore::load() {
+            if declined.is_declined(&invite.nonce) {
+                return Err(SchemaError::InvalidData(
+                    "This invite was previously declined. Remove the decline first to accept."
+                        .to_string(),
+                ));
+            }
         }
 
         // Validate accept_distance: must be >= 1 (distance 0 is owner-only)

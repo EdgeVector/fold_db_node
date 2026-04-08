@@ -315,6 +315,20 @@ export async function getSchemaFieldPolicies(
   );
 }
 
+// ===== Sent Invites =====
+
+export interface SentInvite {
+  nonce: string;
+  recipient_hint: string;
+  proposed_distance: number;
+  created_at: string;
+  status: "pending" | "accepted" | "expired";
+}
+
+export async function listSentInvites(): Promise<EnhancedApiResponse<{ sent_invites: SentInvite[] }>> {
+  return client.get<{ sent_invites: SentInvite[] }>("/trust/invite/sent");
+}
+
 // ===== Declined Invites =====
 
 export interface DeclinedInvite {

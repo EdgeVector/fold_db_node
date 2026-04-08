@@ -71,6 +71,7 @@ function TrustTab({ onResult }) {
   const [preview, setPreview] = useState(null)
   const [previewing, setPreviewing] = useState(false)
   const [accepting, setAccepting] = useState(false)
+  const [reciprocalToken, setReciprocalToken] = useState(null)
   const [acceptDistance, setAcceptDistance] = useState('')
   const [trustBack, setTrustBack] = useState(true)
 
@@ -387,6 +388,9 @@ function TrustTab({ onResult }) {
       const response = await acceptTrustInvite(acceptToken.trim(), dist, trustBack)
       if (response.success && response.data) {
         const senderKey = response.data.sender?.public_key
+        if (response.data.reciprocal_token) {
+          setReciprocalToken(response.data.reciprocal_token)
+        }
         setAcceptToken('')
         setPreview(null)
         await fetchContacts()
@@ -791,6 +795,36 @@ function TrustTab({ onResult }) {
               </div>
             )}
           </div>
+
+          {/* Reciprocal token (after accepting with trust-back) */}
+          {reciprocalToken && (
+            <div className="border border-gruvbox-green/30 rounded-lg p-4 mb-6 bg-surface">
+              <h3 className="text-sm font-medium text-gruvbox-green mb-1">Send this back to your contact</h3>
+              <p className="text-xs text-secondary mb-2">
+                You accepted with trust-back. Share this token with the sender so they can add you to their contacts too.
+              </p>
+              <div className="flex gap-2">
+                <input
+                  className="input flex-1 font-mono text-xs"
+                  type="text"
+                  value={reciprocalToken}
+                  readOnly
+                  onClick={(e) => e.target.select()}
+                />
+                <button className="btn btn-sm" onClick={() => {
+                  navigator.clipboard.writeText(reciprocalToken)
+                }}>
+                  Copy
+                </button>
+              </div>
+              <button
+                className="text-xs text-tertiary mt-2 underline cursor-pointer bg-transparent border-none"
+                onClick={() => setReciprocalToken(null)}
+              >
+                Dismiss
+              </button>
+            </div>
+          )}
 
           {/* Accept invite */}
           <div className="border border-border rounded-lg p-4 bg-surface">

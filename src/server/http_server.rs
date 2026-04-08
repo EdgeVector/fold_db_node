@@ -801,6 +801,10 @@ impl FoldHttpServer {
                 .route(
                     "/invite/declined/{nonce}",
                     web::delete().to(trust_routes::undecline_invite),
+                )
+                .route(
+                    "/invite/sent",
+                    web::get().to(trust_routes::list_sent_invites),
                 ),
         )
         .route(
