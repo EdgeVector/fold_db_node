@@ -330,27 +330,6 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
-    "/api/system/private-key": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        /**
-         * Get the node's private key
-         * @description This endpoint returns the node's private key for use by the UI.
-         *     The private key is generated automatically when the node is created.
-         */
-        get: operations["get_node_private_key"];
-        put?: never;
-        post?: never;
-        delete?: never;
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
     "/api/system/public-key": {
         parameters: {
             query?: never;
@@ -1244,26 +1223,6 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content?: never;
-            };
-        };
-    };
-    get_node_private_key: {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        requestBody?: never;
-        responses: {
-            /** @description Node private key */
-            200: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": unknown;
-                };
             };
         };
     };
