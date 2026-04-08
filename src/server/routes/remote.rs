@@ -65,18 +65,17 @@ pub async fn remote_query(
             verify_ed25519_signature(&payload, &req.signature, &req.public_key)
                 .map_err(crate::handlers::HandlerError::Unauthorized)?;
 
-            // 3. Execute query
-            let db = op.get_db_public().await.handler_err("get database")?;
+            // 3. Execute query with access control (domain-aware)
             let query = Query::new(req.schema_name.clone(), req.fields);
-            let results = db
-                .query_executor
-                .query(query)
+            let results = op
+                .execute_query_json_with_access(query, &req.public_key)
                 .await
                 .handler_err("execute remote query")?;
 
-            // Convert results to JSON
-            let results_json = serde_json::to_value(&results).handler_err("serialize results")?;
-            Ok(ApiResponse::success_with_user(results_json, user_hash))
+            Ok(ApiResponse::success_with_user(
+                serde_json::json!({"results": results}),
+                user_hash,
+            ))
         }
         .await,
     )
