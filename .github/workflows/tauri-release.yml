@@ -91,6 +91,13 @@ jobs:
         working-directory: src/server/static-react
         run: npm run build
 
+      - name: Build folddb_mcp sidecar
+        run: |
+          cargo build --release --bin folddb_mcp --target ${{ matrix.target }}
+          mkdir -p src/server/static-react/src-tauri/binaries
+          cp target/${{ matrix.target }}/release/folddb_mcp \
+            src/server/static-react/src-tauri/binaries/folddb_mcp-${{ matrix.target }}
+
       - name: Build Tauri app
         working-directory: src/server/static-react
         env:

@@ -196,7 +196,10 @@ pub async fn dispatch(
             }
 
             let resp = client.post_unsigned("/api/query", &body).await?;
-            Ok(serde_json::to_string_pretty(&resp)?)
+            // Extract results array from {"ok": true, "results": [...]}
+            let empty = json!([]);
+            let results = resp.get("results").unwrap_or(&empty);
+            Ok(serde_json::to_string_pretty(results)?)
         }
 
         "folddb_search" => {
