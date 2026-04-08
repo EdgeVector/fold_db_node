@@ -2,7 +2,7 @@ import { createSlice, createAsyncThunk, PayloadAction } from "@reduxjs/toolkit";
 import {
   getAutoIdentity,
 } from "../api/clients/systemClient";
-import { getSystemPublicKey } from "../api/clients/securityClient";
+import { getNodePublicKey } from "../api/clients/systemClient";
 import { BROWSER_CONFIG } from "../constants/config";
 
 export interface KeyAuthenticationState {
@@ -66,11 +66,11 @@ export const loadSystemPublicKey = createAsyncThunk(
   "auth/loadSystemPublicKey",
   async (_, { rejectWithValue }) => {
     try {
-      const response = await getSystemPublicKey();
-      if (response.success && response.data?.public_key) {
+      const response = await getNodePublicKey();
+      if (response.success && response.data?.key) {
         return {
-          systemPublicKey: response.data.public_key,
-          systemKeyId: response.data.public_key_id || null,
+          systemPublicKey: response.data.key,
+          systemKeyId: null,
         };
       }
       return rejectWithValue("No public key returned");
