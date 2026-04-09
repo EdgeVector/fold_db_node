@@ -696,16 +696,20 @@ async fn bootstrap_from_cloud(
 ) -> Result<(), String> {
     log::info!("Starting database bootstrap from cloud after identity restore");
 
-    // Load E2E encryption keys (needed to decrypt the snapshot + logs)
-    let folddb_home = crate::utils::paths::folddb_home()
-        .map_err(|e| format!("Cannot resolve FOLDDB_HOME: {e}"))?;
-    let e2e_key_path = folddb_home.join("e2e.key");
-    let e2e_keys = fold_db::crypto::E2eKeys::load_or_generate(&e2e_key_path)
-        .await
-        .map_err(|e| format!("Failed to load E2E keys: {e}"))?;
-
-    // Resolve the storage path (same logic as factory/node_manager)
+    // Derive E2E encryption keys from the restored identity (one key for everything)
     let config = node_manager.get_base_config().await;
+    let e2e_keys = if let Some(ref priv_key) = config.private_key {
+        let seed = crate::fold_node::FoldNode::extract_ed25519_seed(priv_key)
+            .map_err(|e| format!("Failed to extract seed: {e}"))?;
+        fold_db::crypto::E2eKeys::from_ed25519_seed(&seed)
+            .map_err(|e| format!("Failed to derive E2E keys: {e}"))?
+    } else {
+        let folddb_home = crate::utils::paths::folddb_home()
+            .map_err(|e| format!("Cannot resolve FOLDDB_HOME: {e}"))?;
+        fold_db::crypto::E2eKeys::load_or_generate(&folddb_home.join("e2e.key"))
+            .await
+            .map_err(|e| format!("Failed to load E2E keys: {e}"))?
+    };
     let data_dir = config.get_storage_path();
     let data_dir_str = data_dir
         .to_str()
