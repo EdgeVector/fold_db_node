@@ -119,6 +119,10 @@ fn to_json(output: &CommandOutput) -> Value {
         CommandOutput::Message(msg) => {
             json!({ "ok": true, "message": msg })
         }
+        CommandOutput::RawJson(json) => {
+            // Pass through daemon response directly
+            json.clone()
+        }
         CommandOutput::Completions(_) => {
             json!({ "ok": true, "message": "Completions written to stdout" })
         }

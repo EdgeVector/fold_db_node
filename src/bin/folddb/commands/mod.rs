@@ -1,3 +1,6 @@
+// Note: some command modules below are no longer called from main.rs dispatch
+// (data commands now go through HTTP). They're retained for the cloud-recovery
+// feature branch and as reference for the HTTP endpoint contracts.
 #[cfg(target_os = "macos")]
 pub mod apple;
 pub mod ask;
@@ -73,6 +76,8 @@ pub enum CommandOutput {
     ResetComplete,
     Completions(String),
     Message(String),
+    /// Raw JSON from daemon HTTP API — passed through to output
+    RawJson(serde_json::Value),
     #[cfg(target_os = "macos")]
     AppleIngestSuccess {
         source: String,
