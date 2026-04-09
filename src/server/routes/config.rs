@@ -1,5 +1,4 @@
 use crate::fold_node::config::NodeConfig;
-use fold_db::{CloudCredentials, NodeConfigStore};
 use crate::server::http_server::AppState;
 use crate::server::node_manager::NodeManagerConfig;
 use crate::utils::crypto::user_hash_from_pubkey;
@@ -7,6 +6,7 @@ use actix_web::{web, HttpResponse, Responder};
 use fold_db::log_feature;
 use fold_db::logging::features::LogFeature;
 use fold_db::storage::config::DatabaseConfig;
+use fold_db::{CloudCredentials, NodeConfigStore};
 use serde::{Deserialize, Serialize};
 use serde_json::json;
 use std::path::Path;

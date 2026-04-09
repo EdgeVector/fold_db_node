@@ -6,9 +6,9 @@
 use crate::fold_node::node::FoldNode;
 use crate::handlers::handler_response;
 use crate::handlers::response::{ApiResponse, HandlerResult, IntoHandlerError};
-use fold_db::NodeConfigStore;
 use fold_db::org::operations as org_ops;
 use fold_db::org::types::{OrgInviteBundle, OrgMemberInfo, OrgMembership};
+use fold_db::NodeConfigStore;
 use serde::Deserialize;
 
 handler_response! {

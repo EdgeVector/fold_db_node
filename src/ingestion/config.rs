@@ -1,9 +1,9 @@
 //! Configuration for the ingestion module
 
-use fold_db::{AiConfig, NodeConfigStore};
 use fold_db::llm_registry::models;
 use fold_db::log_feature;
 use fold_db::logging::features::LogFeature;
+use fold_db::{AiConfig, NodeConfigStore};
 use serde::{Deserialize, Serialize};
 use std::env;
 
@@ -454,9 +454,7 @@ impl IngestionConfig {
                 || config.anthropic.api_key == "***configured***"
             {
                 // Preserve existing key in Sled if not explicitly set
-                store
-                    .get_ai_config()
-                    .and_then(|c| c.anthropic_key)
+                store.get_ai_config().and_then(|c| c.anthropic_key)
             } else {
                 Some(config.anthropic.api_key.clone())
             },
@@ -488,9 +486,7 @@ impl IngestionConfig {
                 base_url: ai
                     .ollama_url
                     .unwrap_or_else(|| models::OLLAMA_DEFAULT_URL.to_string()),
-                vision_model: ai
-                    .ollama_vision_model
-                    .unwrap_or_else(default_vision_model),
+                vision_model: ai.ollama_vision_model.unwrap_or_else(default_vision_model),
                 ocr_model: default_ocr_model(),
                 generation_params: OllamaGenerationParams::default(),
             },

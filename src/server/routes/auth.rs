@@ -2,8 +2,8 @@ use actix_web::{web, HttpResponse};
 use serde::{Deserialize, Serialize};
 
 use crate::keychain;
-use fold_db::{CloudCredentials, NodeConfigStore};
 use crate::server::http_server::AppState;
+use fold_db::{CloudCredentials, NodeConfigStore};
 
 pub(crate) fn exemem_api_url() -> String {
     crate::endpoints::exemem_api_url()
