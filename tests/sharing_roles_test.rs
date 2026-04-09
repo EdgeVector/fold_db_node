@@ -103,6 +103,8 @@ async fn test_role_assignment_grants_domain_trust() {
         direction: fold_db_node::trust::contact_book::TrustDirection::Outgoing,
         connected_at: chrono::Utc::now(),
         pseudonym: None,
+        messaging_pseudonym: None,
+        messaging_public_key: None,
         revoked: false,
         roles: HashMap::new(),
     });
@@ -154,6 +156,8 @@ async fn test_role_removal_revokes_domain_trust() {
         direction: fold_db_node::trust::contact_book::TrustDirection::Outgoing,
         connected_at: chrono::Utc::now(),
         pseudonym: None,
+        messaging_pseudonym: None,
+        messaging_public_key: None,
         revoked: false,
         roles: HashMap::new(),
     });
@@ -209,6 +213,8 @@ async fn test_sharing_audit_with_domain_policies() {
         direction: fold_db_node::trust::contact_book::TrustDirection::Outgoing,
         connected_at: chrono::Utc::now(),
         pseudonym: None,
+        messaging_pseudonym: None,
+        messaging_public_key: None,
         revoked: false,
         roles: HashMap::new(),
     });
@@ -295,6 +301,8 @@ async fn test_multiple_roles_across_domains() {
         direction: fold_db_node::trust::contact_book::TrustDirection::Outgoing,
         connected_at: chrono::Utc::now(),
         pseudonym: None,
+        messaging_pseudonym: None,
+        messaging_public_key: None,
         revoked: false,
         roles: HashMap::new(),
     });
