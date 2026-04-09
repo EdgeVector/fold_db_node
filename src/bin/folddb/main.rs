@@ -5,7 +5,7 @@ mod output;
 mod update_check;
 
 use clap::Parser;
-use cli::Cli;
+use cli::{Cli, Command, DaemonCommand};
 use error::CliError;
 use fold_db::storage::DatabaseConfig;
 use fold_db_node::fold_node::{load_node_config, FoldNode, OperationProcessor};
@@ -28,6 +28,33 @@ async fn main() {
     } else {
         OutputMode::Human
     };
+
+    // Daemon commands don't need a FoldNode — handle them early
+    if let Command::Daemon { ref action } = cli.command {
+        let dev = cli.dev;
+        let result = match action {
+            DaemonCommand::Start { port } => {
+                commands::daemon::start(*port, dev)
+                    .await
+                    .map(commands::CommandOutput::Message)
+            }
+            DaemonCommand::Stop => {
+                commands::daemon::stop().map(commands::CommandOutput::Message)
+            }
+            DaemonCommand::Status => {
+                commands::daemon::status()
+                    .await
+                    .map(commands::CommandOutput::Message)
+            }
+        };
+        match result {
+            Ok(output) => {
+                self::output::render(&output, mode);
+                return;
+            }
+            Err(e) => e.exit(json_mode),
+        }
+    }
 
     let config_path = cli.config.clone();
 
@@ -82,6 +109,7 @@ async fn main() {
         mode,
         config_path.as_deref(),
         cli.verbose,
+        cli.dev,
     )
     .await
     {

@@ -68,6 +68,7 @@ async-trait = "0.1"
 thiserror = "1.0"
 keyring = { version = "3", optional = true }
 colored = "3.1.1"
+libc = "0.2"
 
 # OpenAPI generation
 utoipa = { version = "4", features = ["actix_extras"] }

@@ -234,11 +234,8 @@ pub fn render(output: &CommandOutput) {
             );
         }
 
-        CommandOutput::MigrateComplete => {
-            println!(
-                "{} Database migration to cloud complete",
-                style("\u{2713}").green().bold()
-            );
+        CommandOutput::Message(msg) => {
+            println!("{}", msg);
         }
 
         CommandOutput::Completions(script) => {
@@ -304,7 +301,7 @@ mod tests {
 
     #[test]
     fn human_migrate_complete() {
-        render(&CommandOutput::MigrateComplete);
+        render(&CommandOutput::Message("test message".to_string()));
     }
 
     #[test]

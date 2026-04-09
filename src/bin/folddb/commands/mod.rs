@@ -2,6 +2,7 @@
 pub mod apple;
 pub mod ask;
 pub mod completions;
+pub mod daemon;
 pub mod ingest;
 pub mod mutate;
 pub mod query;
@@ -10,7 +11,7 @@ pub mod search;
 pub mod setup;
 pub mod system;
 
-use crate::cli::{Command, ConfigCommand};
+use crate::cli::{Command, ConfigCommand, DaemonCommand};
 use crate::error::CliError;
 use crate::output::OutputMode;
 use fold_db::db_operations::native_index::IndexResult;
@@ -68,8 +69,8 @@ pub enum CommandOutput {
     Config(DatabaseConfig),
     ConfigPath(String),
     ResetComplete,
-    MigrateComplete,
     Completions(String),
+    Message(String),
     #[cfg(target_os = "macos")]
     AppleIngestSuccess {
         source: String,
@@ -86,6 +87,7 @@ pub async fn dispatch(
     mode: OutputMode,
     config_path: Option<&str>,
     verbose: bool,
+    dev: bool,
 ) -> Result<CommandOutput, CliError> {
     match command {
         Command::Schema { action } => schema::run(action, processor, mode).await,
@@ -104,17 +106,41 @@ pub async fn dispatch(
         } => ask::run(query, user_hash, *max_iterations, processor, mode).await,
         Command::Status => system::status(processor, user_hash).await,
         Command::Config { action } => {
-            system::config(
-                action.as_ref().unwrap_or(&ConfigCommand::Show),
-                processor,
-                config_path,
-            )
-            .await
+            let action = action.as_ref().unwrap_or(&ConfigCommand::Show);
+            match action {
+                ConfigCommand::Set { key, value } => {
+                    system::config_set(key, value, config_path).await
+                }
+                _ => system::config(action, processor, config_path).await,
+            }
+        }
+        Command::Daemon { action } => match action {
+            DaemonCommand::Start { port } => {
+                let msg = daemon::start(*port, dev).await?;
+                Ok(CommandOutput::Message(msg))
+            }
+            DaemonCommand::Stop => {
+                let msg = daemon::stop()?;
+                Ok(CommandOutput::Message(msg))
+            }
+            DaemonCommand::Status => {
+                let msg = daemon::status().await?;
+                Ok(CommandOutput::Message(msg))
+            }
+        },
+        Command::Cloud { action: _ } => {
+            // TODO: implement cloud enable/disable/status
+            Err(CliError::new("Cloud commands not yet implemented"))
+        }
+        Command::RecoveryPhrase => {
+            // TODO: implement recovery phrase display
+            Err(CliError::new("Recovery phrase command not yet implemented"))
+        }
+        Command::Restore => {
+            // TODO: implement restore from recovery phrase
+            Err(CliError::new("Restore command not yet implemented"))
         }
         Command::Reset { confirm } => system::reset(*confirm, processor, user_hash, mode).await,
-        Command::MigrateToCloud { api_url, api_key } => {
-            system::migrate_to_cloud(api_url, api_key, processor).await
-        }
         Command::Completions { shell } => completions::run(*shell, verbose),
     }
 }
