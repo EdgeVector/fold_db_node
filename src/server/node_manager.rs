@@ -153,15 +153,13 @@ impl NodeManager {
             }
         }
 
-        // Use the default identity keypair so the node's keys match the
-        // public key exposed by auto-identity. Per-user-hash identities
-        // caused a mismatch: invites encrypted with the "default" pubkey
-        // couldn't be decrypted by a node holding a user-hash-keyed keypair.
-        let keypair = Self::load_or_generate_identity("default").await?;
-
-        // Set identity on config
-        node_config =
-            node_config.with_identity(&keypair.public_key_base64(), &keypair.secret_key_base64());
+        // Use keys from config if already set (from node_config.json or Sled).
+        // Only generate a default identity if none is configured.
+        if node_config.public_key.is_none() || node_config.private_key.is_none() {
+            let keypair = Self::load_or_generate_identity("default").await?;
+            node_config = node_config
+                .with_identity(&keypair.public_key_base64(), &keypair.secret_key_base64());
+        }
 
         // Load or generate E2E encryption keys
         let folddb_home = crate::utils::paths::folddb_home().map_err(|e| {
