@@ -521,11 +521,8 @@ EOF
     # Wire up discovery service (same API Gateway as Exemem)
     export DISCOVERY_SERVICE_URL="${EXEMEM_API_URL}/api"
 
-    # Ensure node identity exists so we can derive the discovery master key
-    echo "Ensuring node identity..."
-    FOLDDB_HOME="$FOLDDB_HOME" cargo run --quiet --bin ensure_identity > /dev/null 2>&1 || true
-
-    # Derive DISCOVERY_MASTER_KEY from node's private key (deterministic)
+    # Derive DISCOVERY_MASTER_KEY from node's private key if identity exists
+    # Identity is created during registration, not on startup
     IDENTITY_FILE="$FOLDDB_HOME/config/node_identity.json"
     if [ -f "$IDENTITY_FILE" ]; then
         NODE_PRIV_KEY=$(python3 -c "import json; print(json.load(open('$IDENTITY_FILE'))['private_key'])" 2>/dev/null || echo "")
@@ -535,14 +532,19 @@ EOF
     fi
 
     echo "Exemem API: $EXEMEM_API_URL"
-    echo "Discovery: $([ -n "$DISCOVERY_MASTER_KEY" ] && echo "configured" || echo "no node identity yet")"
+    echo "Discovery: $([ -n "$DISCOVERY_MASTER_KEY" ] && echo "configured" || echo "no identity yet — register to create one")"
 else
     echo "Setting up CLOUD configuration (DynamoDB storage)..."
 
-    # Get node identity
-    echo "Ensuring node identity..."
-    USER_ID=$(FOLDDB_HOME="$FOLDDB_HOME" cargo run --quiet --bin ensure_identity)
-    echo "Node Identity (User ID): $USER_ID"
+    # Read node identity (created during registration, not on startup)
+    IDENTITY_FILE="$FOLDDB_HOME/config/node_identity.json"
+    if [ -f "$IDENTITY_FILE" ]; then
+        USER_ID=$(python3 -c "import json; print(json.load(open('$IDENTITY_FILE'))['public_key'])" 2>/dev/null || echo "")
+        echo "Node Identity: $USER_ID"
+    else
+        echo "No node identity found — register to create one"
+        USER_ID=""
+    fi
 
     echo "Region: $REGION"
     echo "Table prefix: $TABLE_NAME"

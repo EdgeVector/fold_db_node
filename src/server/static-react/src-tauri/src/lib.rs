@@ -260,7 +260,9 @@ async fn start_fold_server(port: u16) -> Result<EmbeddedServerHandle, String> {
 
     eprintln!("[FoldDB] Using data directory: {:?}", data_dir);
 
-    // Load or generate node identity (persisted across launches)
+    // Load node identity from file if it exists.
+    // Identity is created during registration, not on startup.
+    // If no identity exists, the node starts without one (onboarding flow).
     let identity_path = dirs::home_dir()
         .ok_or_else(|| "Could not determine home directory".to_string())?
         .join(".folddb")
@@ -280,21 +282,12 @@ async fn start_fold_server(port: u16) -> Result<EmbeddedServerHandle, String> {
         eprintln!("[FoldDB] Loaded existing node identity");
         (pub_k, priv_k)
     } else {
+        eprintln!("[FoldDB] No identity found — node will start in onboarding mode");
+        // Generate a temporary identity for local-only operation.
+        // This will be replaced when the user registers with Exemem.
         let keypair = Ed25519KeyPair::generate()
             .map_err(|e| format!("Failed to generate keypair: {}", e))?;
-        let pub_k = keypair.public_key_base64();
-        let priv_k = keypair.secret_key_base64();
-        let identity = serde_json::json!({
-            "private_key": priv_k,
-            "public_key": pub_k,
-        });
-        fold_db_node::sensitive_io::write_sensitive(
-            &identity_path,
-            serde_json::to_string_pretty(&identity).unwrap().as_bytes(),
-        )
-        .map_err(|e| format!("Failed to save identity: {}", e))?;
-        eprintln!("[FoldDB] Generated and saved new node identity");
-        (pub_k, priv_k)
+        (keypair.public_key_base64(), keypair.secret_key_base64())
     };
 
     // Set NODE_CONFIG to a writable path so persist_node_config() can save.
