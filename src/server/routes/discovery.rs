@@ -3,34 +3,61 @@ use crate::server::http_server::AppState;
 use crate::server::routes::{handler_error_to_response, require_node_read};
 use actix_web::{web, HttpRequest, HttpResponse, Responder};
 
-/// Helper to get discovery config from environment.
+/// Helper to get discovery config.
+/// Checks env vars first, then falls back to deriving from Sled config store.
 /// Returns (discovery_url, master_key) or an error response.
 fn get_discovery_config() -> Result<(String, Vec<u8>), HttpResponse> {
-    let url = std::env::var("DISCOVERY_SERVICE_URL").map_err(|_| {
+    let not_configured = || {
         HttpResponse::ServiceUnavailable().json(serde_json::json!({
             "ok": false,
-            "error": "Discovery service not configured. Set DISCOVERY_SERVICE_URL.",
+            "error": "Discovery not available. Register with Exemem to enable.",
             "code": "DISCOVERY_NOT_CONFIGURED"
         }))
-    })?;
+    };
 
-    let key_hex = std::env::var("DISCOVERY_MASTER_KEY").map_err(|_| {
-        HttpResponse::ServiceUnavailable().json(serde_json::json!({
-            "ok": false,
-            "error": "Discovery master key not configured. Set DISCOVERY_MASTER_KEY.",
-            "code": "DISCOVERY_NOT_CONFIGURED"
-        }))
-    })?;
+    // Try env vars first (explicit override)
+    if let (Ok(url), Ok(key_hex)) = (
+        std::env::var("DISCOVERY_SERVICE_URL"),
+        std::env::var("DISCOVERY_MASTER_KEY"),
+    ) {
+        let key = hex::decode(&key_hex).map_err(|_| {
+            HttpResponse::InternalServerError().json(serde_json::json!({
+                "ok": false,
+                "error": "Invalid DISCOVERY_MASTER_KEY (expected hex-encoded bytes).",
+                "code": "INVALID_CONFIG"
+            }))
+        })?;
+        return Ok((url, key));
+    }
 
-    let key = hex::decode(&key_hex).map_err(|_| {
-        HttpResponse::InternalServerError().json(serde_json::json!({
-            "ok": false,
-            "error": "Invalid DISCOVERY_MASTER_KEY (expected hex-encoded bytes).",
-            "code": "INVALID_CONFIG"
-        }))
-    })?;
+    // Fall back: derive from Sled config store
+    // Discovery URL = cloud api_url + "/api" (same API gateway)
+    // Master key = SHA256(node private key)
+    let data_path = crate::utils::paths::folddb_home()
+        .ok()
+        .map(|h| h.join("data"))
+        .or_else(|| {
+            std::env::var("FOLD_STORAGE_PATH")
+                .ok()
+                .map(std::path::PathBuf::from)
+        });
 
-    Ok((url, key))
+    if let Some(path) = data_path {
+        if let Ok(db) = sled::open(&path) {
+            if let Ok(store) = fold_db::NodeConfigStore::new(&db) {
+                if let (Some(cloud), Some(identity)) =
+                    (store.get_cloud_config(), store.get_identity())
+                {
+                    use sha2::{Digest, Sha256};
+                    let url = format!("{}/api", cloud.api_url);
+                    let key = Sha256::digest(identity.private_key.as_bytes()).to_vec();
+                    return Ok((url, key));
+                }
+            }
+        }
+    }
+
+    Err(not_configured())
 }
 
 /// Extract the auth token from env var, local credential store, or the incoming request's
