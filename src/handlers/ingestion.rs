@@ -194,7 +194,7 @@ pub async fn process_json(
         }
 
         // Require Exemem config for org ingestion
-        crate::handlers::org::require_exemem(node)?;
+        crate::handlers::org::require_exemem(node).await?;
 
         // Verify the org exists locally
         let sled_db = crate::handlers::org::get_sled_db(node).await?;

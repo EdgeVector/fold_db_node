@@ -1,5 +1,6 @@
 //! Configuration for the ingestion module
 
+use crate::node_config_store::{AiConfig, NodeConfigStore};
 use fold_db::llm_registry::models;
 use fold_db::log_feature;
 use fold_db::logging::features::LogFeature;
@@ -436,6 +437,74 @@ impl IngestionConfig {
         let content = serde_json::to_string_pretty(&to_save)?;
         std::fs::write(&config_path, content)?;
         Ok(())
+    }
+
+    /// Save AI config to the Sled-backed NodeConfigStore.
+    pub fn save_to_sled(
+        store: &NodeConfigStore,
+        config: &SavedConfig,
+    ) -> Result<(), Box<dyn std::error::Error>> {
+        let provider_str = match config.provider {
+            AIProvider::Anthropic => "anthropic",
+            AIProvider::Ollama => "ollama",
+        };
+        let ai = AiConfig {
+            provider: provider_str.to_string(),
+            anthropic_key: if config.anthropic.api_key.is_empty()
+                || config.anthropic.api_key == "***configured***"
+            {
+                // Preserve existing key in Sled if not explicitly set
+                store
+                    .get_ai_config()
+                    .and_then(|c| c.anthropic_key)
+            } else {
+                Some(config.anthropic.api_key.clone())
+            },
+            anthropic_model: Some(config.anthropic.model.clone()),
+            anthropic_base_url: Some(config.anthropic.base_url.clone()),
+            ollama_model: Some(config.ollama.model.clone()),
+            ollama_url: Some(config.ollama.base_url.clone()),
+            ollama_vision_model: Some(config.ollama.vision_model.clone()),
+        };
+        store
+            .set_ai_config(&ai)
+            .map_err(|e| format!("Failed to write AI config to Sled: {e}"))?;
+        Ok(())
+    }
+
+    /// Load AI config from the Sled-backed NodeConfigStore.
+    ///
+    /// Returns `None` if the store has no AI config (not yet migrated).
+    pub fn load_from_sled(store: &NodeConfigStore) -> Option<SavedConfig> {
+        let ai = store.get_ai_config()?;
+        let provider = match ai.provider.as_str() {
+            "ollama" => AIProvider::Ollama,
+            _ => AIProvider::Anthropic,
+        };
+        Some(SavedConfig {
+            provider,
+            ollama: OllamaConfig {
+                model: ai.ollama_model.unwrap_or_else(default_text_model),
+                base_url: ai
+                    .ollama_url
+                    .unwrap_or_else(|| models::OLLAMA_DEFAULT_URL.to_string()),
+                vision_model: ai
+                    .ollama_vision_model
+                    .unwrap_or_else(default_vision_model),
+                ocr_model: default_ocr_model(),
+                generation_params: OllamaGenerationParams::default(),
+            },
+            anthropic: AnthropicConfig {
+                api_key: ai.anthropic_key.unwrap_or_default(),
+                model: ai
+                    .anthropic_model
+                    .unwrap_or_else(|| models::ANTHROPIC_SONNET.to_string()),
+                base_url: ai
+                    .anthropic_base_url
+                    .unwrap_or_else(|| models::ANTHROPIC_API_URL.to_string()),
+            },
+            query: UseCaseOverride::default(),
+        })
     }
 
     fn config_file_path() -> Option<std::path::PathBuf> {

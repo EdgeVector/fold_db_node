@@ -8,6 +8,7 @@ use std::sync::Arc;
 use tokio::sync::Mutex;
 
 use crate::fold_node::config::NodeConfig;
+use crate::node_config_store::{AiConfig, CloudCredentials, NodeConfigStore, NodeIdentity};
 use fold_db::constants::SINGLE_PUBLIC_KEY_ID;
 use fold_db::crypto::{CryptoProvider, LocalCryptoProvider};
 use fold_db::error::{FoldDbError, FoldDbResult};
@@ -187,6 +188,9 @@ impl FoldNode {
         };
 
         Self::log_schema_service(&config);
+
+        // Migrate config files to Sled config store (one-time, idempotent)
+        migrate_config_files_to_sled(&node).await;
 
         // Configure org sync if the sync engine is enabled and orgs exist
         node.configure_org_sync_if_needed().await;
@@ -1015,8 +1019,144 @@ mod tests {
     }
 }
 
+// =========================================================================
+// Config file → Sled migration (Phase 4)
+// =========================================================================
+
+/// Migrate config files to the Sled-backed NodeConfigStore.
+///
+/// This is a one-time, idempotent migration. If the Sled config store already
+/// has data, we skip entirely. Otherwise we read the legacy JSON config files
+/// and write their contents into Sled.
+async fn migrate_config_files_to_sled(node: &FoldNode) {
+    let db_guard = match node.get_fold_db().await {
+        Ok(g) => g,
+        Err(_) => return,
+    };
+
+    // TODO: Once the fold_db PR merges, replace this with:
+    //   let store = match db_guard.config_store() { Some(s) => s, None => return };
+    // For now, open the Sled tree directly via the stub.
+    let sled_db = match db_guard.sled_db() {
+        Some(db) => db.clone(),
+        None => return,
+    };
+    let store = match NodeConfigStore::open(&sled_db) {
+        Ok(s) => s,
+        Err(e) => {
+            log::warn!("Failed to open node_config tree for migration: {}", e);
+            return;
+        }
+    };
+
+    if !store.is_empty() {
+        return; // Already migrated
+    }
+
+    // Drop the db guard before doing file I/O
+    drop(db_guard);
+
+    let folddb_home = match crate::utils::paths::folddb_home() {
+        Ok(h) => h,
+        Err(_) => return,
+    };
+
+    let mut migrated_any = false;
+
+    // 1. Migrate node identity
+    let identity_path = folddb_home.join("config").join("node_identity.json");
+    if identity_path.exists() {
+        if let Ok(bytes) = crate::sensitive_io::read_sensitive(&identity_path) {
+            if let Ok(content) = String::from_utf8(bytes) {
+                #[derive(serde::Deserialize)]
+                struct IdFile {
+                    private_key: String,
+                    public_key: String,
+                }
+                if let Ok(id) = serde_json::from_str::<IdFile>(&content) {
+                    let identity = NodeIdentity {
+                        private_key: id.private_key,
+                        public_key: id.public_key,
+                    };
+                    if let Err(e) = store.set_identity(&identity) {
+                        log::warn!("Failed to migrate node identity to Sled: {}", e);
+                    } else {
+                        migrated_any = true;
+                    }
+                }
+            }
+        }
+    }
+
+    // 2. Migrate cloud credentials
+    if let Ok(Some(creds)) = crate::keychain::load_credentials() {
+        let cloud = CloudCredentials {
+            api_url: crate::endpoints::exemem_api_url(),
+            api_key: creds.api_key,
+            session_token: Some(creds.session_token),
+            user_hash: Some(creds.user_hash),
+        };
+        if let Err(e) = store.set_cloud_config(&cloud) {
+            log::warn!("Failed to migrate cloud credentials to Sled: {}", e);
+        } else {
+            migrated_any = true;
+        }
+    }
+
+    // 3. Migrate AI/ingestion config
+    let ingestion_path = folddb_home.join("config").join("ingestion_config.json");
+    if ingestion_path.exists() {
+        if let Ok(content) = std::fs::read_to_string(&ingestion_path) {
+            if let Ok(saved) =
+                serde_json::from_str::<crate::ingestion::config::SavedConfig>(&content)
+            {
+                let provider_str = match saved.provider {
+                    crate::ingestion::config::AIProvider::Anthropic => "anthropic",
+                    crate::ingestion::config::AIProvider::Ollama => "ollama",
+                };
+                let ai = AiConfig {
+                    provider: provider_str.to_string(),
+                    anthropic_key: if saved.anthropic.api_key.is_empty() {
+                        None
+                    } else {
+                        Some(saved.anthropic.api_key)
+                    },
+                    anthropic_model: Some(saved.anthropic.model),
+                    anthropic_base_url: Some(saved.anthropic.base_url),
+                    ollama_model: Some(saved.ollama.model),
+                    ollama_url: Some(saved.ollama.base_url),
+                    ollama_vision_model: Some(saved.ollama.vision_model),
+                };
+                if let Err(e) = store.set_ai_config(&ai) {
+                    log::warn!("Failed to migrate AI config to Sled: {}", e);
+                } else {
+                    migrated_any = true;
+                }
+            }
+        }
+    }
+
+    // 4. Migrate identity card
+    if let Ok(Some(card)) = crate::trust::identity_card::IdentityCard::load() {
+        if let Err(e) = store.set_display_name(&card.display_name) {
+            log::warn!("Failed to migrate display_name to Sled: {}", e);
+        } else {
+            migrated_any = true;
+        }
+        if let Some(ref hint) = card.contact_hint {
+            if let Err(e) = store.set_contact_hint(hint) {
+                log::warn!("Failed to migrate contact_hint to Sled: {}", e);
+            }
+        }
+    }
+
+    if migrated_any {
+        log::info!("Migrated config files to Sled config store");
+    }
+}
+
 #[derive(serde::Deserialize)]
-struct NodeIdentity {
+struct PersistedNodeIdentity {
     private_key: String,
     public_key: String,
 }
@@ -1034,7 +1174,7 @@ fn load_persisted_identity() -> FoldDbResult<Option<(String, String)>> {
             FoldDbError::Config(format!("node_identity.json is not valid UTF-8: {}", e))
         })?;
 
-        match serde_json::from_str::<NodeIdentity>(&content) {
+        match serde_json::from_str::<PersistedNodeIdentity>(&content) {
             Ok(identity) => Ok(Some((identity.private_key, identity.public_key))),
             Err(e) => {
                 log::warn!(

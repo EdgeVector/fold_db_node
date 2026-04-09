@@ -6,6 +6,7 @@
 use crate::fold_node::node::FoldNode;
 use crate::handlers::handler_response;
 use crate::handlers::response::{ApiResponse, HandlerResult, IntoHandlerError};
+use crate::node_config_store::NodeConfigStore;
 use fold_db::org::operations as org_ops;
 use fold_db::org::types::{OrgInviteBundle, OrgMemberInfo, OrgMembership};
 use serde::Deserialize;
@@ -68,8 +69,29 @@ pub async fn get_sled_db(node: &FoldNode) -> Result<sled::Db, crate::handlers::H
     }
 }
 
-/// Helper to get an AuthClient if the node is configured for Exemem syncing.
-fn get_auth_client(node: &FoldNode) -> Option<fold_db::sync::auth::AuthClient> {
+/// Helper to get an AuthClient by reading cloud credentials from the Sled config store.
+///
+/// Falls back to the legacy `DatabaseConfig::Exemem` fields if the Sled store
+/// is not available or empty (pre-migration nodes).
+async fn get_auth_client(node: &FoldNode) -> Option<fold_db::sync::auth::AuthClient> {
+    // Try Sled config store first
+    if let Ok(db_guard) = node.get_fold_db().await {
+        if let Some(sled_db) = db_guard.sled_db().cloned() {
+            drop(db_guard);
+            if let Ok(store) = NodeConfigStore::open(&sled_db) {
+                if let Some(cloud) = store.get_cloud_config() {
+                    let http = std::sync::Arc::new(reqwest::Client::new());
+                    return Some(fold_db::sync::auth::AuthClient::new(
+                        http,
+                        cloud.api_url,
+                        fold_db::sync::auth::SyncAuth::ApiKey(cloud.api_key),
+                    ));
+                }
+            }
+        }
+    }
+
+    // Fallback: legacy DatabaseConfig::Exemem
     if let fold_db::storage::config::DatabaseConfig::Exemem {
         api_url, api_key, ..
     } = &node.config.database
@@ -86,10 +108,10 @@ fn get_auth_client(node: &FoldNode) -> Option<fold_db::sync::auth::AuthClient> {
 }
 
 /// Require Exemem cloud configuration, returning the AuthClient or a BadRequest error.
-pub fn require_exemem(
+pub async fn require_exemem(
     node: &FoldNode,
 ) -> Result<fold_db::sync::auth::AuthClient, crate::handlers::HandlerError> {
-    get_auth_client(node).ok_or_else(|| {
+    get_auth_client(node).await.ok_or_else(|| {
         crate::handlers::HandlerError::BadRequest(
             "Organizations require an Exemem account. Configure Exemem cloud sync to create or join orgs.".to_string(),
         )
@@ -104,7 +126,7 @@ pub async fn create_org(
     user_hash: &str,
     node: &FoldNode,
 ) -> HandlerResult<CreateOrgResponse> {
-    let client = require_exemem(node)?;
+    let client = require_exemem(node).await?;
     let sled_db = get_sled_db(node).await?;
 
     let creator_public_key = node.get_node_public_key().to_string();
@@ -151,7 +173,7 @@ pub async fn join_org(
     user_hash: &str,
     node: &FoldNode,
 ) -> HandlerResult<JoinOrgResponse> {
-    require_exemem(node)?;
+    require_exemem(node).await?;
     let sled_db = get_sled_db(node).await?;
 
     let my_public_key = node.get_node_public_key().to_string();
@@ -167,7 +189,7 @@ pub async fn join_org(
     node.trigger_immediate_sync().await;
 
     // Notify cloud that we accepted (status → active) and clean up inbox
-    if let Some(client) = get_auth_client(node) {
+    if let Some(client) = get_auth_client(node).await {
         let org_hash = &membership.org_hash;
         if let Err(e) = client.accept_invite(org_hash).await {
             log::warn!("Failed to sync accept_invite to cloud: {}", e);
@@ -254,7 +276,7 @@ pub async fn add_member(
 
     org_ops::add_member(&sled_db, org_hash, member).handler_err("add member")?;
 
-    if let Some(client) = get_auth_client(node) {
+    if let Some(client) = get_auth_client(node).await {
         let target_user_hash = crate::utils::crypto::user_hash_from_pubkey(&req.node_public_key);
         client
             .add_member(org_hash, &target_user_hash, "Member")
@@ -307,7 +329,7 @@ pub async fn remove_member(
             .map_err(|e| log::error!("Failed to purge org schemas after removal: {}", e));
     }
 
-    if let Some(client) = get_auth_client(node) {
+    if let Some(client) = get_auth_client(node).await {
         client
             .remove_member(org_hash, node_public_key)
             .await
@@ -352,7 +374,7 @@ pub async fn get_cloud_members(
     user_hash: &str,
     node: &FoldNode,
 ) -> HandlerResult<CloudMembersResponse> {
-    let client = require_exemem(node)?;
+    let client = require_exemem(node).await?;
 
     let members = client
         .list_members(org_hash)
@@ -408,7 +430,7 @@ pub async fn get_pending_invites(
 ) -> HandlerResult<PendingInvitesResponse> {
     let mut invites = Vec::new();
 
-    if let Some(client) = get_auth_client(node) {
+    if let Some(client) = get_auth_client(node).await {
         let http = std::sync::Arc::new(reqwest::Client::new());
         let s3_client = fold_db::sync::s3::S3Client::new(http);
 
@@ -463,7 +485,7 @@ pub async fn decline_invite(
     user_hash: &str,
     node: &FoldNode,
 ) -> HandlerResult<serde_json::Value> {
-    let client = require_exemem(node)?;
+    let client = require_exemem(node).await?;
 
     // Update DDB membership status → declined
     client

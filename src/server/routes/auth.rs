@@ -2,6 +2,7 @@ use actix_web::{web, HttpResponse};
 use serde::{Deserialize, Serialize};
 
 use crate::keychain;
+use crate::node_config_store::{CloudCredentials, NodeConfigStore};
 use crate::server::http_server::AppState;
 
 pub(crate) fn exemem_api_url() -> String {
@@ -333,6 +334,21 @@ async fn signed_register(
         keychain::store_credentials(&creds).map_err(|e| {
             format!("Registration succeeded but failed to persist credentials locally: {e}")
         })?;
+
+        // Also write to Sled config store for Phase 5 consumers
+        if let Some(sled_db) = data.node_manager.get_sled_db().await {
+            if let Ok(store) = NodeConfigStore::open(&sled_db) {
+                let cloud_creds = CloudCredentials {
+                    api_url: exemem_api_url(),
+                    api_key: api_key.to_string(),
+                    session_token: Some(session_token.to_string()),
+                    user_hash: Some(user_hash.to_string()),
+                };
+                if let Err(e) = store.set_cloud_config(&cloud_creds) {
+                    log::warn!("Failed to write cloud credentials to Sled: {}", e);
+                }
+            }
+        }
     }
 
     Ok(json)
@@ -434,6 +450,19 @@ async fn refresh_auth_standalone() -> Result<fold_db::sync::auth::SyncAuth, Stri
     };
     crate::keychain::store_credentials(&creds)
         .map_err(|e| format!("Auth refresh: failed to store credentials: {e}"))?;
+
+    // Also update session_token + api_key in the Sled config store.
+    // refresh_auth_standalone has no node/AppState access, so we open the
+    // Sled tree directly at the known data path.
+    let data_path = folddb_home.join("data");
+    if let Ok(db) = sled::open(&data_path) {
+        if let Ok(tree) = db.open_tree("node_config") {
+            let _ = tree.insert("cloud:session_token", session_token.as_bytes());
+            let _ = tree.insert("cloud:api_key", api_key.as_bytes());
+            let _ = tree.insert("cloud:user_hash", user_hash.as_bytes());
+            let _ = tree.flush();
+        }
+    }
 
     log::info!("Sync auth refreshed successfully via re-registration");
 
