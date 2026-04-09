@@ -345,7 +345,7 @@ impl DiscoveryPublisher {
 
         let response = self
             .http_client
-            .post(format!("{}/discover/connect", self.discovery_url))
+            .post(format!("{}/messaging/connect", self.discovery_url))
             .header("Authorization", format!("Bearer {}", self.auth_token))
             .json(&request)
             .send()
@@ -370,7 +370,7 @@ impl DiscoveryPublisher {
         since: Option<&str>,
         target_pseudonyms: Option<&[Uuid]>,
     ) -> Result<Vec<EncryptedMessage>, String> {
-        let mut url = format!("{}/discover/messages", self.discovery_url);
+        let mut url = format!("{}/messaging/messages", self.discovery_url);
         let mut params = Vec::new();
         if let Some(since_ts) = since {
             params.push(format!("since={}", since_ts));
@@ -479,7 +479,7 @@ impl DiscoveryPublisher {
     pub async fn poll_requests(&self) -> Result<Vec<IncomingConnectionRequest>, String> {
         let response = self
             .http_client
-            .get(format!("{}/discover/requests", self.discovery_url))
+            .get(format!("{}/messaging/requests", self.discovery_url))
             .header("Authorization", format!("Bearer {}", self.auth_token))
             .send()
             .await
@@ -508,7 +508,7 @@ impl DiscoveryPublisher {
     pub async fn store_trust_invite(&self, token: &str) -> Result<String, String> {
         let response = self
             .http_client
-            .post(format!("{}/discover/trust-invite", self.discovery_url))
+            .post(format!("{}/messaging/trust-invite", self.discovery_url))
             .header("Authorization", format!("Bearer {}", self.auth_token))
             .json(&serde_json::json!({ "token": token }))
             .send()
@@ -535,7 +535,7 @@ impl DiscoveryPublisher {
     /// Fetch a trust invite token from the discovery service by ID. One-time use.
     pub async fn fetch_trust_invite(&self, invite_id: &str) -> Result<String, String> {
         let url = format!(
-            "{}/discover/trust-invite?id={}",
+            "{}/messaging/trust-invite?id={}",
             self.discovery_url, invite_id
         );
         let response = self
@@ -572,7 +572,10 @@ impl DiscoveryPublisher {
     ) -> Result<String, String> {
         let response = self
             .http_client
-            .post(format!("{}/discover/trust-invite/send", self.discovery_url))
+            .post(format!(
+                "{}/messaging/trust-invite/send",
+                self.discovery_url
+            ))
             .header("Authorization", format!("Bearer {}", self.auth_token))
             .json(&serde_json::json!({
                 "token": token,
@@ -605,7 +608,7 @@ impl DiscoveryPublisher {
         let response = self
             .http_client
             .post(format!(
-                "{}/discover/trust-invite/verify",
+                "{}/messaging/trust-invite/verify",
                 self.discovery_url
             ))
             .header("Authorization", format!("Bearer {}", self.auth_token))
