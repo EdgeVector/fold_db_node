@@ -327,6 +327,9 @@ pub async fn remove_member(
             .purge_org_schemas(org_hash)
             .await
             .map_err(|e| log::error!("Failed to purge org schemas after removal: {}", e));
+
+        // Reconfigure sync targets without the removed org
+        node.configure_org_sync_if_needed().await;
     }
 
     if let Some(client) = get_auth_client(node).await {
@@ -340,6 +343,16 @@ pub async fn remove_member(
         serde_json::json!({"ok": true}),
         user_hash,
     ))
+}
+
+/// Leave an organization (remove self).
+pub async fn leave_org(
+    org_hash: &str,
+    user_hash: &str,
+    node: &FoldNode,
+) -> HandlerResult<serde_json::Value> {
+    let node_public_key = node.get_node_public_key();
+    remove_member(org_hash, node_public_key, user_hash, node).await
 }
 
 /// Generate an invite bundle for an organization.
