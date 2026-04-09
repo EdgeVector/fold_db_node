@@ -96,10 +96,6 @@ name = "folddb_server"
 path = "src/bin/folddb_server.rs"
 
 [[bin]]
-name = "ensure_identity"
-path = "src/bin/ensure_identity.rs"
-
-[[bin]]
 name = "schema_service"
 path = "src/bin/schema_service.rs"
 
