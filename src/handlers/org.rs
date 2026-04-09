@@ -319,7 +319,8 @@ pub async fn remove_member(
     org_ops::remove_member(&sled_db, org_hash, node_public_key).handler_err("remove member")?;
 
     // If we are removing ourselves, purge the org data and schemas locally
-    if node_public_key == node.get_node_public_key() {
+    let is_self_removal = node_public_key == node.get_node_public_key();
+    if is_self_removal {
         let fold_db = node.get_fold_db().await.handler_err("get fold_db")?;
         let db_ops = fold_db.get_db_ops();
         let _ = db_ops
@@ -331,8 +332,10 @@ pub async fn remove_member(
             .purge_org_schemas(org_hash)
             .await
             .map_err(|e| log::error!("Failed to purge org schemas after removal: {}", e));
+        // Drop the FoldDB guard BEFORE configure_org_sync_if_needed,
+        // which also acquires the db mutex.
+        drop(fold_db);
 
-        // Reconfigure sync targets without the removed org
         node.configure_org_sync_if_needed().await;
     }
 
@@ -415,19 +418,22 @@ pub async fn delete_org(
     org_ops::delete_org(&sled_db, org_hash).handler_err("delete org")?;
 
     // Purge local data and schemas since the org is completely gone
-    let fold_db = node.get_fold_db().await.handler_err("get fold_db")?;
-    let db_ops = fold_db.get_db_ops();
-    let _ = db_ops
-        .purge_org_data(org_hash)
-        .await
-        .map_err(|e| log::error!("Failed to purge org data after deletion: {}", e));
-    let _ = fold_db
-        .schema_manager
-        .purge_org_schemas(org_hash)
-        .await
-        .map_err(|e| log::error!("Failed to purge org schemas after deletion: {}", e));
+    {
+        let fold_db = node.get_fold_db().await.handler_err("get fold_db")?;
+        let db_ops = fold_db.get_db_ops();
+        let _ = db_ops
+            .purge_org_data(org_hash)
+            .await
+            .map_err(|e| log::error!("Failed to purge org data after deletion: {}", e));
+        let _ = fold_db
+            .schema_manager
+            .purge_org_schemas(org_hash)
+            .await
+            .map_err(|e| log::error!("Failed to purge org schemas after deletion: {}", e));
+        // fold_db guard dropped here before configure_org_sync_if_needed
+    }
 
-    // Reconfigure org sync without the deleted org
+    // Reconfigure org sync without the deleted org (acquires db mutex)
     node.configure_org_sync_if_needed().await;
 
     Ok(ApiResponse::success_with_user(
