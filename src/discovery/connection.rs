@@ -134,6 +134,86 @@ pub fn decrypt_connection_message(
     serde_json::from_slice(&plaintext).map_err(|e| format!("Failed to deserialize payload: {}", e))
 }
 
+/// Encrypt any serializable payload for a target's X25519 public key.
+///
+/// Same crypto as `encrypt_connection_message` but works with any serializable type.
+/// Format: `[ephemeral_public_key: 32B] [nonce: 12B] [ciphertext+tag]`
+pub fn encrypt_message<T: Serialize>(
+    target_public_key: &[u8; 32],
+    payload: &T,
+) -> Result<Vec<u8>, String> {
+    let target_pk = PublicKey::from(*target_public_key);
+
+    let ephemeral_secret = StaticSecret::random_from_rng(OsRng);
+    let ephemeral_public = PublicKey::from(&ephemeral_secret);
+
+    let shared_secret = ephemeral_secret.diffie_hellman(&target_pk);
+
+    let hk = Hkdf::<Sha256>::new(None, shared_secret.as_bytes());
+    let mut aes_key = [0u8; 32];
+    hk.expand(b"connection-request-aes", &mut aes_key)
+        .map_err(|e| format!("HKDF expand failed: {}", e))?;
+
+    let plaintext =
+        serde_json::to_vec(payload).map_err(|e| format!("Failed to serialize payload: {}", e))?;
+
+    let cipher =
+        Aes256Gcm::new_from_slice(&aes_key).map_err(|e| format!("Invalid AES key: {}", e))?;
+
+    let mut nonce_bytes = [0u8; 12];
+    OsRng.fill_bytes(&mut nonce_bytes);
+    let nonce = Nonce::from_slice(&nonce_bytes);
+
+    let ciphertext = cipher
+        .encrypt(nonce, plaintext.as_slice())
+        .map_err(|e| format!("Encryption failed: {}", e))?;
+
+    let mut output = Vec::with_capacity(32 + 12 + ciphertext.len());
+    output.extend_from_slice(ephemeral_public.as_bytes());
+    output.extend_from_slice(&nonce_bytes);
+    output.extend_from_slice(&ciphertext);
+
+    Ok(output)
+}
+
+/// Decrypt a message and return the raw JSON value.
+///
+/// Same crypto as `decrypt_connection_message` but returns `serde_json::Value`
+/// so callers can inspect `message_type` and deserialize to the appropriate type.
+pub fn decrypt_message_raw(
+    our_secret: &StaticSecret,
+    encrypted: &[u8],
+) -> Result<serde_json::Value, String> {
+    if encrypted.len() < 32 + 12 + 16 {
+        return Err("Encrypted message too short".to_string());
+    }
+
+    let mut epk_bytes = [0u8; 32];
+    epk_bytes.copy_from_slice(&encrypted[..32]);
+    let ephemeral_public = PublicKey::from(epk_bytes);
+
+    let shared_secret = our_secret.diffie_hellman(&ephemeral_public);
+
+    let hk = Hkdf::<Sha256>::new(None, shared_secret.as_bytes());
+    let mut aes_key = [0u8; 32];
+    hk.expand(b"connection-request-aes", &mut aes_key)
+        .map_err(|e| format!("HKDF expand failed: {}", e))?;
+
+    let nonce_bytes = &encrypted[32..44];
+    let ciphertext = &encrypted[44..];
+
+    let cipher =
+        Aes256Gcm::new_from_slice(&aes_key).map_err(|e| format!("Invalid AES key: {}", e))?;
+
+    let nonce = Nonce::from_slice(nonce_bytes);
+
+    let plaintext = cipher
+        .decrypt(nonce, ciphertext)
+        .map_err(|_| "Decryption failed (wrong key or tampered message)".to_string())?;
+
+    serde_json::from_slice(&plaintext).map_err(|e| format!("Failed to deserialize payload: {}", e))
+}
+
 /// A decrypted, locally stored connection request.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct LocalConnectionRequest {
@@ -370,5 +450,51 @@ mod tests {
         let result = decrypt_connection_message(&wrong_secret, &encrypted);
 
         assert!(result.is_err());
+    }
+
+    #[test]
+    fn test_generic_encrypt_decrypt_roundtrip() {
+        let master_key = [0x42u8; 32];
+        let target_pseudonym = Uuid::new_v4();
+
+        let (secret, public) = derive_pseudonym_keypair(&master_key, &target_pseudonym);
+
+        // Use encrypt_message with a ConnectionPayload (same type, generic function)
+        let payload = ConnectionPayload {
+            message_type: "request".to_string(),
+            message: "Generic test".to_string(),
+            sender_public_key: "pk".to_string(),
+            sender_pseudonym: Uuid::new_v4().to_string(),
+            reply_public_key: "rpk".to_string(),
+        };
+
+        let encrypted = encrypt_message(public.as_bytes(), &payload).unwrap();
+        let raw = decrypt_message_raw(&secret, &encrypted).unwrap();
+
+        assert_eq!(raw["message_type"].as_str().unwrap(), "request");
+        assert_eq!(raw["message"].as_str().unwrap(), "Generic test");
+    }
+
+    #[test]
+    fn test_generic_encrypt_arbitrary_type() {
+        let master_key = [0x42u8; 32];
+        let target_pseudonym = Uuid::new_v4();
+
+        let (secret, public) = derive_pseudonym_keypair(&master_key, &target_pseudonym);
+
+        // Encrypt an arbitrary JSON object
+        let payload = serde_json::json!({
+            "message_type": "query_request",
+            "request_id": "test-123",
+            "schema_name": "notes",
+            "fields": ["title", "body"],
+        });
+
+        let encrypted = encrypt_message(public.as_bytes(), &payload).unwrap();
+        let raw = decrypt_message_raw(&secret, &encrypted).unwrap();
+
+        assert_eq!(raw["message_type"].as_str().unwrap(), "query_request");
+        assert_eq!(raw["request_id"].as_str().unwrap(), "test-123");
+        assert_eq!(raw["schema_name"].as_str().unwrap(), "notes");
     }
 }

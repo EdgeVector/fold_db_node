@@ -866,10 +866,24 @@ impl FoldHttpServer {
 
         cfg.service(
             web::scope("/remote")
+                // Inbound: handle queries from other nodes (kept for direct connections)
                 .route("/query", web::post().to(remote_routes::remote_query))
                 .route("/node-info", web::get().to(remote_routes::node_info))
-                .route("/proxy-query", web::post().to(remote_routes::proxy_query))
-                .route("/browse", web::post().to(remote_routes::browse_remote)),
+                // Outbound: async queries via messaging service
+                .route("/async-query", web::post().to(remote_routes::async_query))
+                .route("/async-browse", web::post().to(remote_routes::async_browse))
+                .route(
+                    "/async-queries",
+                    web::get().to(remote_routes::list_async_queries),
+                )
+                .route(
+                    "/async-query/{id}",
+                    web::get().to(remote_routes::get_async_query),
+                )
+                .route(
+                    "/async-query/{id}",
+                    web::delete().to(remote_routes::delete_async_query),
+                ),
         );
     }
 

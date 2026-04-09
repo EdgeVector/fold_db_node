@@ -43,6 +43,14 @@ pub struct Contact {
     /// Discovery pseudonym, if the connection came from discovery.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub pseudonym: Option<String>,
+    /// Bulletin board pseudonym for async messaging (UUID string).
+    /// Set when the contact exchanges messaging keys (e.g., via discovery connection).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub messaging_pseudonym: Option<String>,
+    /// X25519 public key for encrypting async messages (base64).
+    /// Set alongside `messaging_pseudonym`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub messaging_public_key: Option<String>,
     /// Whether trust has been revoked (kept for history).
     #[serde(default)]
     pub revoked: bool,
@@ -108,6 +116,13 @@ impl ContactBook {
             if contact.pseudonym.is_some() {
                 existing.pseudonym = contact.pseudonym;
             }
+            // Preserve messaging fields — only overwrite if new values provided
+            if contact.messaging_pseudonym.is_some() {
+                existing.messaging_pseudonym = contact.messaging_pseudonym;
+            }
+            if contact.messaging_public_key.is_some() {
+                existing.messaging_public_key = contact.messaging_public_key;
+            }
             // Preserve existing roles — don't overwrite with empty map
             if !contact.roles.is_empty() {
                 existing.roles = contact.roles;
@@ -160,6 +175,8 @@ mod tests {
             direction: TrustDirection::Outgoing,
             connected_at: Utc::now(),
             pseudonym: None,
+            messaging_pseudonym: None,
+            messaging_public_key: None,
             revoked: false,
             roles: HashMap::new(),
         }
@@ -203,6 +220,8 @@ mod tests {
             direction: TrustDirection::Mutual,
             connected_at: Utc::now(),
             pseudonym: None,
+            messaging_pseudonym: None,
+            messaging_public_key: None,
             revoked: false,
             roles: HashMap::new(),
         });

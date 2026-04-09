@@ -62,6 +62,41 @@ jobs:
       - name: Run doc tests
         run: cargo test --workspace --doc
 
+  # CLI integration tests — separate job to avoid OOM (main job compiles
+  # unit tests which consume most of the 7GB runner memory).
+  cli-integration-tests:
+    name: CLI Integration Tests
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Install mold linker
+        run: sudo apt-get install -y mold
+
+      - name: Install Rust
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Configure git for private dependencies
+        run: git config --global url."https://${{ secrets.GH_PAT }}@github.com/".insteadOf "https://github.com/"
+        if: env.GH_PAT != ''
+        env:
+          GH_PAT: ${{ secrets.GH_PAT }}
+
+      - name: Cache Rust artifacts
+        uses: Swatinem/rust-cache@v2
+
+      - name: Stub frontend dist for rust_embed
+        run: mkdir -p src/server/static-react/dist && echo '<html></html>' > src/server/static-react/dist/index.html
+
+      - name: Add swap space
+        run: |
+          sudo fallocate -l 4G /swap2
+          sudo chmod 600 /swap2
+          sudo mkswap /swap2
+          sudo swapon /swap2
+
       - name: Run CLI integration tests
         run: cargo test --test cli_integration_test -- --nocapture
 

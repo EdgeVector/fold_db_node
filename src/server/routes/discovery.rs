@@ -113,6 +113,43 @@ async fn try_refresh_token(state: &web::Data<AppState>) -> Option<String> {
     }
 }
 
+/// Resolve discovery config for use in other route modules.
+/// Returns (discovery_url, master_key, auth_token) or a HandlerError.
+pub async fn resolve_discovery_config(
+    node: &crate::fold_node::node::FoldNode,
+    req: Option<&HttpRequest>,
+) -> Result<(String, Vec<u8>, String), crate::handlers::HandlerError> {
+    let (url, key) = get_discovery_config().map_err(|_| {
+        crate::handlers::HandlerError::Internal("Discovery not configured".to_string())
+    })?;
+
+    // Try to get auth token from env, keychain, or dummy for the request
+    let token = if let Some(r) = req {
+        get_auth_token(r).map_err(|_| {
+            crate::handlers::HandlerError::Unauthorized("No auth token available".to_string())
+        })?
+    } else {
+        // Without a request, try env var and keychain
+        std::env::var("DISCOVERY_AUTH_TOKEN")
+            .ok()
+            .or_else(|| {
+                crate::keychain::load_credentials()
+                    .ok()
+                    .flatten()
+                    .filter(|c| !c.session_token.is_empty())
+                    .map(|c| c.session_token)
+            })
+            .ok_or_else(|| {
+                crate::handlers::HandlerError::Unauthorized(
+                    "No auth token available".to_string(),
+                )
+            })?
+    };
+
+    let _ = node; // may be used in future for node-specific config
+    Ok((url, key, token))
+}
+
 /// GET /api/discovery/opt-ins — List all discovery opt-in configs.
 pub async fn list_opt_ins(state: web::Data<AppState>) -> impl Responder {
     let (_user_hash, node) = match require_node_read(&state).await {
