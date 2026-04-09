@@ -12,110 +12,6 @@ pub fn render(output: &CommandOutput) {
 
 fn to_json(output: &CommandOutput) -> Value {
     match output {
-        CommandOutput::SchemaList(schemas) => {
-            let val = serde_json::to_value(schemas).unwrap_or(Value::Null);
-            json!({ "ok": true, "schemas": val })
-        }
-        CommandOutput::SchemaGet(schema) => {
-            let val = serde_json::to_value(schema).unwrap_or(Value::Null);
-            json!({ "ok": true, "schema": val })
-        }
-        CommandOutput::SchemaApproved { name } => {
-            json!({
-                "ok": true,
-                "schema": name,
-            })
-        }
-        CommandOutput::SchemaBlocked { name } => {
-            json!({ "ok": true, "schema": name })
-        }
-        CommandOutput::SchemaLoaded {
-            available,
-            loaded,
-            failed,
-        } => {
-            json!({
-                "ok": true,
-                "available": available,
-                "loaded": loaded,
-                "failed": failed,
-            })
-        }
-        CommandOutput::QueryResults(results) => {
-            json!({ "ok": true, "results": results })
-        }
-        CommandOutput::SearchResults(results) => {
-            let val = serde_json::to_value(results).unwrap_or(Value::Null);
-            json!({ "ok": true, "results": val })
-        }
-        CommandOutput::MutationSuccess { id } => {
-            json!({ "ok": true, "id": id })
-        }
-        CommandOutput::MutationBatch { ids } => {
-            json!({ "ok": true, "ids": ids })
-        }
-        CommandOutput::IngestSuccess { count, ids } => {
-            json!({ "ok": true, "ingested": count, "ids": ids })
-        }
-        CommandOutput::SmartScan(response) => {
-            let val = serde_json::to_value(response).unwrap_or(Value::Null);
-            json!({ "ok": true, "scan": val })
-        }
-        CommandOutput::SmartIngestResults {
-            total,
-            succeeded,
-            failed,
-            results,
-        } => {
-            json!({
-                "ok": *succeeded > 0,
-                "total": total,
-                "succeeded": succeeded,
-                "failed": failed,
-                "results": results,
-            })
-        }
-        CommandOutput::AskAnswer { answer, tool_calls } => {
-            let tool_calls_json: Vec<Value> = tool_calls
-                .iter()
-                .map(|tc| {
-                    json!({
-                        "tool": tc.tool,
-                        "params": tc.params,
-                        "result": tc.result,
-                    })
-                })
-                .collect();
-            json!({
-                "ok": true,
-                "answer": answer,
-                "tool_calls": tool_calls_json,
-            })
-        }
-        CommandOutput::Status {
-            pub_key,
-            user_hash,
-            db_config,
-            indexing_status,
-        } => {
-            json!({
-                "ok": true,
-                "node_public_key": pub_key,
-                "user_hash": user_hash,
-                "database_config": serde_json::to_value(db_config).unwrap_or(Value::Null),
-                "indexing_status": serde_json::to_value(indexing_status).unwrap_or(Value::Null),
-            })
-        }
-        CommandOutput::Config(config) => {
-            let val = serde_json::to_value(config).unwrap_or(Value::Null);
-            json!({ "ok": true, "config": val })
-        }
-        CommandOutput::ConfigPath(path) => {
-            json!({ "ok": true, "path": path })
-        }
-        CommandOutput::ResetComplete => {
-            json!({ "ok": true, "message": "Database reset complete" })
-        }
         CommandOutput::Message(msg) => {
             json!({ "ok": true, "message": msg })
         }
@@ -125,22 +21,6 @@ fn to_json(output: &CommandOutput) -> Value {
         }
         CommandOutput::Completions(_) => {
             json!({ "ok": true, "message": "Completions written to stdout" })
-        }
-
-        #[cfg(target_os = "macos")]
-        CommandOutput::AppleIngestSuccess {
-            source,
-            total,
-            ingested,
-            ids,
-        } => {
-            json!({
-                "ok": *ingested > 0,
-                "source": source,
-                "total": total,
-                "ingested": ingested,
-                "ids": ids,
-            })
         }
     }
 }
@@ -156,76 +36,8 @@ mod tests {
     }
 
     #[test]
-    fn json_schema_list() {
-        assert_ok(&CommandOutput::SchemaList(vec![]));
-    }
-
-    #[test]
-    fn json_schema_approved() {
-        assert_ok(&CommandOutput::SchemaApproved {
-            name: "test".into(),
-        });
-    }
-
-    #[test]
-    fn json_schema_blocked() {
-        assert_ok(&CommandOutput::SchemaBlocked {
-            name: "test".into(),
-        });
-    }
-
-    #[test]
-    fn json_schema_loaded() {
-        assert_ok(&CommandOutput::SchemaLoaded {
-            available: 5,
-            loaded: 3,
-            failed: vec!["x".into()],
-        });
-    }
-
-    #[test]
-    fn json_query_results() {
-        assert_ok(&CommandOutput::QueryResults(vec![]));
-    }
-
-    #[test]
-    fn json_search_results() {
-        assert_ok(&CommandOutput::SearchResults(vec![]));
-    }
-
-    #[test]
-    fn json_mutation_success() {
-        assert_ok(&CommandOutput::MutationSuccess { id: "abc".into() });
-    }
-
-    #[test]
-    fn json_mutation_batch() {
-        assert_ok(&CommandOutput::MutationBatch {
-            ids: vec!["a".into()],
-        });
-    }
-
-    #[test]
-    fn json_ingest_success() {
-        assert_ok(&CommandOutput::IngestSuccess {
-            count: 1,
-            ids: vec!["a".into()],
-        });
-    }
-
-    #[test]
-    fn json_reset_complete() {
-        assert_ok(&CommandOutput::ResetComplete);
-    }
-
-    #[test]
-    fn json_migrate_complete() {
+    fn json_message() {
         assert_ok(&CommandOutput::Message("test message".to_string()));
-    }
-
-    #[test]
-    fn json_config_path() {
-        assert_ok(&CommandOutput::ConfigPath("/tmp/config.toml".into()));
     }
 
     #[test]
