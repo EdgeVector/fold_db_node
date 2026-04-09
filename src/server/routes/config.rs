@@ -6,6 +6,7 @@ use actix_web::{web, HttpResponse, Responder};
 use fold_db::log_feature;
 use fold_db::logging::features::LogFeature;
 use fold_db::storage::config::DatabaseConfig;
+use fold_db::{CloudCredentials, NodeConfigStore};
 use serde::{Deserialize, Serialize};
 use serde_json::json;
 use std::path::Path;
@@ -271,6 +272,21 @@ pub async fn apply_setup(
                     user_hash: None,
                 };
                 changes.push("storage (exemem)");
+
+                // Write to Sled config store so consumers can read from Sled
+                if let Some(sled_db) = state.node_manager.get_sled_db().await {
+                    if let Ok(store) = NodeConfigStore::new(&sled_db) {
+                        let creds = CloudCredentials {
+                            api_url: api_url.clone(),
+                            api_key: api_key.clone(),
+                            session_token: None,
+                            user_hash: None,
+                        };
+                        if let Err(e) = store.set_cloud_config(&creds) {
+                            log::warn!("Failed to write cloud config to Sled: {}", e);
+                        }
+                    }
+                }
             }
         }
     }

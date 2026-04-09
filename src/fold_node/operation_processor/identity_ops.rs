@@ -59,15 +59,30 @@ impl OperationProcessor {
             .map_err(|e| SchemaError::InvalidData(format!("Failed to load identity card: {e}")))
     }
 
-    /// Set or update the identity card.
+    /// Set or update the identity card (file + Sled).
     pub fn set_identity_card(
         &self,
         display_name: String,
         contact_hint: Option<String>,
     ) -> Result<(), SchemaError> {
         let card = IdentityCard::new(display_name, contact_hint);
+        // Save to file (backward compat)
         card.save()
-            .map_err(|e| SchemaError::InvalidData(format!("Failed to save identity card: {e}")))
+            .map_err(|e| SchemaError::InvalidData(format!("Failed to save identity card: {e}")))?;
+
+        // Also save to Sled config store (best-effort)
+        if let Ok(folddb_home) = folddb_home() {
+            let data_path = folddb_home.join("data");
+            if let Ok(db) = sled::open(&data_path) {
+                if let Ok(store) = fold_db::NodeConfigStore::new(&db) {
+                    if let Err(e) = card.save_to_sled(&store) {
+                        log::warn!("Failed to save identity card to Sled: {}", e);
+                    }
+                }
+            }
+        }
+
+        Ok(())
     }
 
     // ===== Contact Book =====

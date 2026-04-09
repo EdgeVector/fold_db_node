@@ -163,7 +163,39 @@ pub async fn save_ingestion_config(
         "Received ingestion config save request"
     );
 
-    match crate::ingestion::config::IngestionConfig::save_to_file(&request.into_inner()) {
+    let saved_config = request.into_inner();
+
+    // Write to Sled config store (best-effort alongside file save)
+    if let Some(sled_db) = ingestion_service
+        .read()
+        .await
+        .as_ref()
+        .and_then(|_| None::<sled::Db>)
+    {
+        // This branch is unreachable with the current stub; when fold_db
+        // exposes config_store() on FoldDB, use that instead.
+        let _ = sled_db;
+    }
+    // For now, try opening the Sled tree at the known data path
+    if let Ok(folddb_home) = crate::utils::paths::folddb_home() {
+        let data_path = folddb_home.join("data");
+        if let Ok(db) = sled::open(&data_path) {
+            if let Ok(store) = fold_db::NodeConfigStore::new(&db) {
+                if let Err(e) =
+                    crate::ingestion::config::IngestionConfig::save_to_sled(&store, &saved_config)
+                {
+                    log_feature!(
+                        LogFeature::Ingestion,
+                        warn,
+                        "Failed to save AI config to Sled: {}",
+                        e
+                    );
+                }
+            }
+        }
+    }
+
+    match crate::ingestion::config::IngestionConfig::save_to_file(&saved_config) {
         Ok(()) => {
             // Reload the IngestionService so the new config takes effect immediately.
             let reload_config = crate::ingestion::config::IngestionConfig::load_or_default();

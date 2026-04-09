@@ -3,6 +3,7 @@
 //! Stored at `$FOLDDB_HOME/config/identity_card.json`. Never synced to Exemem.
 //! Only shared inside E2E-encrypted trust invites with specific peers.
 
+use fold_db::NodeConfigStore;
 use serde::{Deserialize, Serialize};
 use std::path::{Path, PathBuf};
 
@@ -65,6 +66,31 @@ impl IdentityCard {
         let data = serde_json::to_string_pretty(self)
             .map_err(|e| format!("Failed to serialize identity card: {e}"))?;
         std::fs::write(path, data).map_err(|e| format!("Failed to write identity card: {e}"))?;
+        Ok(())
+    }
+
+    /// Load the identity card from the Sled config store.
+    ///
+    /// Returns `None` if the store has no display_name (not yet migrated).
+    pub fn load_from_sled(store: &NodeConfigStore) -> Option<Self> {
+        let display_name = store.get_display_name()?;
+        let contact_hint = store.get_contact_hint();
+        Some(Self {
+            display_name,
+            contact_hint,
+        })
+    }
+
+    /// Save the identity card to the Sled config store.
+    pub fn save_to_sled(&self, store: &NodeConfigStore) -> Result<(), String> {
+        store
+            .set_display_name(&self.display_name)
+            .map_err(|e| format!("Failed to save display_name to Sled: {e}"))?;
+        if let Some(ref hint) = self.contact_hint {
+            store
+                .set_contact_hint(hint)
+                .map_err(|e| format!("Failed to save contact_hint to Sled: {e}"))?;
+        }
         Ok(())
     }
 
