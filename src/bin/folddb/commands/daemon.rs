@@ -54,8 +54,12 @@ pub async fn check_daemon_health(port: u16) -> bool {
     client.get(url).send().await.is_ok()
 }
 
-fn default_port() -> u16 {
-    9001
+/// Resolve the daemon port from FOLDDB_PORT env var or default 9001.
+pub fn default_port() -> u16 {
+    std::env::var("FOLDDB_PORT")
+        .ok()
+        .and_then(|p| p.parse().ok())
+        .unwrap_or(9001)
 }
 
 /// Check if a port is already in use by trying to bind to it

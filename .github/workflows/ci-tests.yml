@@ -62,7 +62,10 @@ jobs:
       - name: Run doc tests
         run: cargo test --workspace --doc
 
-  # Integration tests disabled — tweets ingestion test is flaky with a 5-minute
+      - name: Run CLI integration tests
+        run: cargo test --test cli_integration_test -- --nocapture
+
+  # Heavy integration tests disabled — tweets ingestion test is flaky with a 5-minute
   # timeout and fails consistently in CI. The nightly ingestion workflow
   # (nightly-ingestion.yml) covers this more reliably with a full server.
   # TODO: Re-enable once tests are stabilized.

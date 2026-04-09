@@ -9,7 +9,6 @@ default = []
 ts-bindings = ["fold_db/ts-bindings"]
 os-keychain = ["dep:keyring"]
 test-utils = ["fold_db/test-utils"]
-cli-integration-tests = []  # Enable CLI integration tests (requires daemon running)
 transform-wasm = ["fold_db/transform-wasm"]
 
 [dependencies]
@@ -80,7 +79,7 @@ geohash = "0.13"
 
 [dev-dependencies]
 tokio = { version = "1.0", features = ["macros", "rt-multi-thread", "full"] }
-reqwest = { version = "0.11", features = ["json"] }
+reqwest = { version = "0.11", features = ["json", "blocking"] }
 assert_cmd = "2"
 predicates = "3"
 actix-web = "4.3"
