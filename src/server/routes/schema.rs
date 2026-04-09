@@ -105,6 +105,55 @@ pub async fn get_schema(path: web::Path<String>, state: web::Data<AppState>) -> 
     )
 }
 
+/// Create a schema from a JSON definition.
+///
+/// Accepts a declarative schema JSON and loads it directly into the database,
+/// bypassing the schema service. The schema is created in Approved state and
+/// immediately available for queries and mutations.
+#[utoipa::path(
+    post,
+    path = "/api/schema",
+    tag = "schemas",
+    request_body = serde_json::Value,
+    responses(
+        (status = 200, description = "Schema created successfully"),
+        (status = 400, description = "Invalid schema JSON"),
+        (status = 500, description = "Server error")
+    )
+)]
+pub async fn create_schema(
+    body: web::Json<serde_json::Value>,
+    state: web::Data<AppState>,
+) -> impl Responder {
+    let (user_hash, node) = node_or_return!(state);
+    handler_result_to_response(
+        async {
+            let json_str =
+                serde_json::to_string(&body.into_inner()).handler_err("serialize schema")?;
+            let mut db = node.get_fold_db().await.handler_err("get fold_db")?;
+            db.load_schema_from_json(&json_str)
+                .await
+                .handler_err("load schema")?;
+            // Auto-approve so it's immediately usable
+            let name = serde_json::from_str::<serde_json::Value>(&json_str)
+                .ok()
+                .and_then(|v| v.get("name").and_then(|n| n.as_str()).map(String::from))
+                .unwrap_or_default();
+            if !name.is_empty() {
+                db.schema_manager
+                    .set_schema_state(&name, fold_db::schema::SchemaState::Approved)
+                    .await
+                    .handler_err("approve schema")?;
+            }
+            Ok(ApiResponse::success_with_user(
+                serde_json::json!({"ok": true, "schema": name}),
+                user_hash,
+            ))
+        }
+        .await,
+    )
+}
+
 /// Approve a schema for queries and mutations
 #[utoipa::path(
     post,
