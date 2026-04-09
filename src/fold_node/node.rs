@@ -85,13 +85,16 @@ impl FoldNode {
         }
     }
 
-    /// Load or generate E2E encryption keys.
+    /// Load E2E encryption keys.
     ///
-    /// Uses the node's `config_dir` parent (i.e. the FOLDDB_HOME equivalent)
-    /// when set, otherwise falls back to `$FOLDDB_HOME` / `~/.folddb`.
-    async fn load_e2e_keys(config: &NodeConfig) -> FoldDbResult<fold_db::crypto::E2eKeys> {
+    /// If a legacy `e2e.key` file exists, uses it (backward compatibility).
+    /// Otherwise, derives encryption keys from the Ed25519 identity seed —
+    /// one key for everything (identity + encryption).
+    async fn load_e2e_keys(
+        config: &NodeConfig,
+        private_key_b64: &str,
+    ) -> FoldDbResult<fold_db::crypto::E2eKeys> {
         let base = if let Some(config_dir) = &config.config_dir {
-            // config_dir is e.g. /tmp/xxx/config — parent is the FOLDDB_HOME equivalent
             config_dir
                 .parent()
                 .map(|p| p.to_path_buf())
@@ -103,7 +106,7 @@ impl FoldNode {
         let e2e_key_path = base.join("e2e.key");
 
         if e2e_key_path.exists() {
-            // Read (and decrypt if os-keychain) the existing key
+            // Legacy: read existing e2e.key file
             let bytes = crate::sensitive_io::read_sensitive(&e2e_key_path)
                 .map_err(|e| FoldDbError::Config(format!("Failed to read E2E key: {}", e)))?;
             if bytes.len() != 32 {
@@ -114,18 +117,35 @@ impl FoldNode {
             }
             let mut secret = [0u8; 32];
             secret.copy_from_slice(&bytes);
+            log::info!("Loaded legacy e2e.key file (will be migrated in future)");
             Ok(fold_db::crypto::E2eKeys::from_secret(&secret))
         } else {
-            // Generate a new key and write it (encrypted if os-keychain)
-            let mut secret = [0u8; 32];
-            use rand::RngCore;
-            rand::rngs::OsRng.fill_bytes(&mut secret);
-            crate::sensitive_io::write_sensitive(&e2e_key_path, &secret)
-                .map_err(|e| FoldDbError::Config(format!("Failed to write E2E key: {}", e)))?;
-            log::info!("Generated new E2E key at {}", e2e_key_path.display());
-            log::warn!("Back up your E2E key! Without it, encrypted data cannot be recovered.");
-            Ok(fold_db::crypto::E2eKeys::from_secret(&secret))
+            // Derive from Ed25519 identity — one key for everything
+            let seed = Self::extract_ed25519_seed(private_key_b64)?;
+            let keys = fold_db::crypto::E2eKeys::from_ed25519_seed(&seed)
+                .map_err(|e| FoldDbError::Config(format!("Failed to derive E2E keys: {}", e)))?;
+            log::info!("E2E keys derived from node identity (no separate e2e.key)");
+            Ok(keys)
         }
+    }
+
+    /// Extract the 32-byte Ed25519 seed from a base64-encoded private key.
+    pub fn extract_ed25519_seed(private_key_b64: &str) -> FoldDbResult<[u8; 32]> {
+        use base64::Engine;
+        let bytes = base64::engine::general_purpose::STANDARD
+            .decode(private_key_b64)
+            .map_err(|e| FoldDbError::Config(format!("Invalid private key base64: {}", e)))?;
+        // Ed25519 secret keys are either 32 bytes (seed) or 64 bytes (seed + public)
+        if bytes.len() != 32 && bytes.len() != 64 {
+            return Err(FoldDbError::Config(format!(
+                "Ed25519 private key has unexpected length: {} (expected 32 or 64)",
+                bytes.len()
+            )));
+        }
+        let seed_bytes = &bytes[..32];
+        let mut seed = [0u8; 32];
+        seed.copy_from_slice(seed_bytes);
+        Ok(seed)
     }
 
     /// Resolve identity and load E2E keys — shared init for both constructors.
@@ -133,7 +153,7 @@ impl FoldNode {
         config: &NodeConfig,
     ) -> FoldDbResult<(String, String, fold_db::crypto::E2eKeys)> {
         let (private_key, public_key) = Self::resolve_identity(config)?;
-        let e2e_keys = Self::load_e2e_keys(config).await?;
+        let e2e_keys = Self::load_e2e_keys(config, &private_key).await?;
         Ok((private_key, public_key, e2e_keys))
     }
 
