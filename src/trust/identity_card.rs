@@ -20,14 +20,46 @@ pub struct IdentityCard {
     /// Optional contact hint for verification (email, phone, handle, etc.).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub contact_hint: Option<String>,
+    /// Optional birthday for verification (MM-DD format).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub birthday: Option<String>,
 }
 
 impl IdentityCard {
-    pub fn new(display_name: String, contact_hint: Option<String>) -> Self {
+    pub fn new(
+        display_name: String,
+        contact_hint: Option<String>,
+        birthday: Option<String>,
+    ) -> Self {
         Self {
             display_name,
             contact_hint,
+            birthday,
         }
+    }
+
+    /// Validate birthday format (MM-DD). Returns error message if invalid.
+    pub fn validate_birthday(input: &str) -> Result<(), String> {
+        if input.is_empty() {
+            return Ok(());
+        }
+        let parts: Vec<&str> = input.split('-').collect();
+        if parts.len() != 2 {
+            return Err("Expected MM-DD format (e.g. 03-15)".to_string());
+        }
+        let month: u32 = parts[0]
+            .parse()
+            .map_err(|_| "Month must be a number".to_string())?;
+        let day: u32 = parts[1]
+            .parse()
+            .map_err(|_| "Day must be a number".to_string())?;
+        if !(1..=12).contains(&month) {
+            return Err(format!("Month {} out of range (01-12)", month));
+        }
+        if !(1..=31).contains(&day) {
+            return Err(format!("Day {} out of range (01-31)", day));
+        }
+        Ok(())
     }
 
     /// Resolve the path to the identity card file.
@@ -75,9 +107,11 @@ impl IdentityCard {
     pub fn load_from_sled(store: &NodeConfigStore) -> Option<Self> {
         let display_name = store.get_display_name()?;
         let contact_hint = store.get_contact_hint();
+        let birthday = store.get_birthday();
         Some(Self {
             display_name,
             contact_hint,
+            birthday,
         })
     }
 
@@ -90,6 +124,11 @@ impl IdentityCard {
             store
                 .set_contact_hint(hint)
                 .map_err(|e| format!("Failed to save contact_hint to Sled: {e}"))?;
+        }
+        if let Some(ref bday) = self.birthday {
+            store
+                .set_birthday(bday)
+                .map_err(|e| format!("Failed to save birthday to Sled: {e}"))?;
         }
         Ok(())
     }
@@ -115,12 +154,17 @@ mod tests {
         let tmp = TempDir::new().unwrap();
         let path = tmp.path().join("identity_card.json");
 
-        let card = IdentityCard::new("Alice".to_string(), Some("alice@example.com".to_string()));
+        let card = IdentityCard::new(
+            "Alice".to_string(),
+            Some("alice@example.com".to_string()),
+            Some("03-15".to_string()),
+        );
         card.save_to(&path).unwrap();
 
         let loaded = IdentityCard::load_from(&path).unwrap().unwrap();
         assert_eq!(loaded.display_name, "Alice");
         assert_eq!(loaded.contact_hint.as_deref(), Some("alice@example.com"));
+        assert_eq!(loaded.birthday.as_deref(), Some("03-15"));
     }
 
     #[test]
@@ -131,15 +175,43 @@ mod tests {
     }
 
     #[test]
-    fn test_identity_card_without_contact_hint() {
+    fn test_identity_card_without_optional_fields() {
         let tmp = TempDir::new().unwrap();
         let path = tmp.path().join("identity_card.json");
 
-        let card = IdentityCard::new("Bob".to_string(), None);
+        let card = IdentityCard::new("Bob".to_string(), None, None);
         card.save_to(&path).unwrap();
 
         let loaded = IdentityCard::load_from(&path).unwrap().unwrap();
         assert_eq!(loaded.display_name, "Bob");
         assert!(loaded.contact_hint.is_none());
+        assert!(loaded.birthday.is_none());
+    }
+
+    #[test]
+    fn test_validate_birthday() {
+        assert!(IdentityCard::validate_birthday("").is_ok());
+        assert!(IdentityCard::validate_birthday("03-15").is_ok());
+        assert!(IdentityCard::validate_birthday("12-31").is_ok());
+        assert!(IdentityCard::validate_birthday("01-01").is_ok());
+        assert!(IdentityCard::validate_birthday("13-01").is_err());
+        assert!(IdentityCard::validate_birthday("00-15").is_err());
+        assert!(IdentityCard::validate_birthday("03-32").is_err());
+        assert!(IdentityCard::validate_birthday("not-a-date").is_err());
+        assert!(IdentityCard::validate_birthday("3-5").is_ok()); // permissive parsing
+    }
+
+    #[test]
+    fn test_backward_compat_no_birthday() {
+        let tmp = TempDir::new().unwrap();
+        let path = tmp.path().join("identity_card.json");
+
+        // Old format without birthday field
+        let json = r#"{"display_name": "Alice", "contact_hint": "alice@example.com"}"#;
+        std::fs::write(&path, json).unwrap();
+
+        let loaded = IdentityCard::load_from(&path).unwrap().unwrap();
+        assert_eq!(loaded.display_name, "Alice");
+        assert!(loaded.birthday.is_none());
     }
 }
