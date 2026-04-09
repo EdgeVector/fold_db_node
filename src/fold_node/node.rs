@@ -219,23 +219,14 @@ impl FoldNode {
     }
 
     /// Creates a new FoldNode with the specified configuration.
-    pub async fn new(#[allow(unused_mut)] mut config: NodeConfig) -> FoldDbResult<Self> {
+    pub async fn new(config: NodeConfig) -> FoldDbResult<Self> {
         let (private_key, public_key, e2e_keys) = Self::resolve_identity_and_keys(&config).await?;
 
-        // Update config with public key as user_id if not set (for DynamoDB)
-        #[cfg(feature = "aws-backend")]
-        if let crate::fold_node::config::DatabaseConfig::Cloud(ref mut d) = config.database {
-            if d.user_id.is_none() {
-                d.user_id = Some(public_key.clone());
-            }
-        }
+        // Legacy DynamoDB Cloud backend has been removed — no user_id patching needed.
 
         // Build auth-refresh callback for Exemem mode so the sync engine can
         // automatically recover from expired tokens (401) by re-registering.
-        let auth_refresh = if matches!(
-            &config.database,
-            fold_db::storage::config::DatabaseConfig::Exemem { .. }
-        ) {
+        let auth_refresh = if config.database.has_cloud_sync() {
             Some(crate::server::routes::auth::build_auth_refresh_callback())
         } else {
             None

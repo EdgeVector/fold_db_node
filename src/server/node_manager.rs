@@ -16,7 +16,6 @@ use crate::utils::crypto::user_hash_from_pubkey;
 use base64::Engine as _;
 use fold_db::fold_db_core::factory;
 use fold_db::security::Ed25519KeyPair;
-use fold_db::storage::config::DatabaseConfig;
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 use std::collections::HashMap;
@@ -66,11 +65,8 @@ pub struct NodeManager {
 impl NodeManager {
     /// Create a new NodeManager
     pub fn new(config: NodeManagerConfig) -> Self {
-        // Both Local and Exemem use local Sled storage (Exemem adds S3 sync on top)
-        let is_local_mode = matches!(
-            config.base_config.database,
-            DatabaseConfig::Local { .. } | DatabaseConfig::Exemem { .. }
-        );
+        // DatabaseConfig always uses local Sled storage (cloud_sync adds S3 sync on top)
+        let is_local_mode = true;
         Self {
             config: RwLock::new(config),
             nodes: Arc::new(Mutex::new(HashMap::new())),
@@ -141,17 +137,8 @@ impl NodeManager {
         // Clone the base config and set user_id
         let mut node_config = self.config.read().await.base_config.clone();
 
-        // Set user_id in database config
-        match &mut node_config.database {
-            #[cfg(feature = "aws-backend")]
-            DatabaseConfig::Cloud(ref mut cloud_config) => {
-                cloud_config.user_id = Some(user_id.to_string());
-            }
-            DatabaseConfig::Local { .. } | DatabaseConfig::Exemem { .. } => {
-                // Local/Exemem storage doesn't need user_id in config
-                // User isolation is handled differently
-            }
-        }
+        // DatabaseConfig is always local Sled storage; user isolation is handled differently.
+        // No per-user config mutation needed.
 
         // Use keys from config if already set (from node_config.json or Sled).
         // Only generate a default identity if none is configured.
@@ -214,7 +201,7 @@ impl NodeManager {
 
         // Build auth-refresh callback for Exemem mode so the sync engine can
         // automatically recover from expired tokens (401) by re-registering.
-        let auth_refresh = if matches!(&node_config.database, DatabaseConfig::Exemem { .. }) {
+        let auth_refresh = if node_config.database.has_cloud_sync() {
             Some(crate::server::routes::auth::build_auth_refresh_callback())
         } else {
             None
@@ -352,10 +339,8 @@ impl NodeManager {
     /// Update the configuration and invalidate all cached nodes
     /// The next request will create fresh nodes with the new config
     pub async fn update_config(&self, new_config: NodeManagerConfig) {
-        let new_is_local = matches!(
-            new_config.base_config.database,
-            DatabaseConfig::Local { .. } | DatabaseConfig::Exemem { .. }
-        );
+        // DatabaseConfig is always local Sled storage
+        let new_is_local = true;
 
         {
             let mut config = self.config.write().await;

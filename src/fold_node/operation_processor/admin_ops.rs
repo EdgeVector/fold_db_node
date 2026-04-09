@@ -98,54 +98,16 @@ impl OperationProcessor {
             }
         }
 
-        match &config.database {
-            #[cfg(feature = "aws-backend")]
-            DatabaseConfig::Cloud(cloud_config) => {
-                let aws_config = aws_config::defaults(aws_config::BehaviorVersion::latest())
-                    .region(aws_sdk_dynamodb::config::Region::new(
-                        cloud_config.region.clone(),
-                    ))
-                    .load()
-                    .await;
-                let client = std::sync::Arc::new(aws_sdk_dynamodb::Client::new(&aws_config));
-
-                let uid = user_id_override
-                    .map(|s| s.to_string())
-                    .or_else(fold_db::logging::core::get_current_user_id)
-                    .or_else(|| cloud_config.user_id.clone())
-                    .unwrap_or_else(|| self.node.get_node_public_key().to_string());
-
-                log::info!(
-                    "Resetting database for user_id={} using scan-free DynamoDbResetManager",
-                    uid
-                );
-
-                let manager = fold_db::storage::reset_manager::DynamoDbResetManager::new(
-                    client.clone(),
-                    cloud_config.tables.clone(),
-                );
-
-                if let Err(e) = manager.reset_user(&uid).await {
-                    log::error!("Failed to reset user data: {}", e);
-                    return Err(FoldDbError::Other(format!(
-                        "Failed to reset user data: {}",
-                        e
-                    )));
-                }
+        // All configs use local Sled storage — reset by removing and recreating the directory
+        if db_path.exists() {
+            if let Err(e) = std::fs::remove_dir_all(&db_path) {
+                log::error!("Failed to delete database folder: {}", e);
+                return Err(FoldDbError::Io(e));
             }
-            // Both Local and Exemem use local Sled storage
-            DatabaseConfig::Local { .. } | DatabaseConfig::Exemem { .. } => {
-                if db_path.exists() {
-                    if let Err(e) = std::fs::remove_dir_all(&db_path) {
-                        log::error!("Failed to delete database folder: {}", e);
-                        return Err(FoldDbError::Io(e));
-                    }
-                }
-                if let Err(e) = std::fs::create_dir_all(&db_path) {
-                    log::error!("Failed to recreate database folder: {}", e);
-                    return Err(FoldDbError::Io(e));
-                }
-            }
+        }
+        if let Err(e) = std::fs::create_dir_all(&db_path) {
+            log::error!("Failed to recreate database folder: {}", e);
+            return Err(FoldDbError::Io(e));
         }
 
         Ok(())
@@ -287,7 +249,7 @@ impl OperationProcessor {
     /// local Sled database. The data is already encrypted locally — we just need
     /// to force an initial sync to upload everything to S3.
     ///
-    /// The caller should update the config to `DatabaseConfig::Exemem` and
+    /// The caller should update the config to enable `cloud_sync` and
     /// restart the node after this completes.
     pub async fn migrate_to_cloud(&self, api_url: &str, api_key: &str) -> FoldDbResult<()> {
         log::info!("Starting cloud sync setup: {}", api_url);

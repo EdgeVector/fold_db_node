@@ -71,7 +71,7 @@ pub async fn get_sled_db(node: &FoldNode) -> Result<sled::Db, crate::handlers::H
 
 /// Helper to get an AuthClient by reading cloud credentials from the Sled config store.
 ///
-/// Falls back to the legacy `DatabaseConfig::Exemem` fields if the Sled store
+/// Falls back to the `DatabaseConfig.cloud_sync` fields if the Sled store
 /// is not available or empty (pre-migration nodes).
 async fn get_auth_client(node: &FoldNode) -> Option<fold_db::sync::auth::AuthClient> {
     // Try Sled config store first
@@ -91,16 +91,13 @@ async fn get_auth_client(node: &FoldNode) -> Option<fold_db::sync::auth::AuthCli
         }
     }
 
-    // Fallback: legacy DatabaseConfig::Exemem
-    if let fold_db::storage::config::DatabaseConfig::Exemem {
-        api_url, api_key, ..
-    } = &node.config.database
-    {
+    // Fallback: read cloud_sync config directly from DatabaseConfig
+    if let Some(ref cloud_sync) = node.config.database.cloud_sync {
         let http = std::sync::Arc::new(reqwest::Client::new());
         Some(fold_db::sync::auth::AuthClient::new(
             http,
-            api_url.clone(),
-            fold_db::sync::auth::SyncAuth::ApiKey(api_key.clone()),
+            cloud_sync.api_url.clone(),
+            fold_db::sync::auth::SyncAuth::ApiKey(cloud_sync.api_key.clone()),
         ))
     } else {
         None

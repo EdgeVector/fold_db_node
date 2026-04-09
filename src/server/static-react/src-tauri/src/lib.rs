@@ -328,7 +328,7 @@ async fn start_fold_server(port: u16) -> Result<EmbeddedServerHandle, String> {
 
     // Set identity, database path, and schema service
     config = config.with_identity(&pub_key, &priv_key);
-    config.database = DatabaseConfig::Local { path: data_dir };
+    config.database = DatabaseConfig::local(data_dir);
 
     config.schema_service_url = Some(fold_db_node::endpoints::schema_service_url());
 

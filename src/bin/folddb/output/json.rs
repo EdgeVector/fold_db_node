@@ -116,8 +116,8 @@ fn to_json(output: &CommandOutput) -> Value {
         CommandOutput::ResetComplete => {
             json!({ "ok": true, "message": "Database reset complete" })
         }
-        CommandOutput::MigrateComplete => {
-            json!({ "ok": true, "message": "Database migration to cloud complete" })
+        CommandOutput::Message(msg) => {
+            json!({ "ok": true, "message": msg })
         }
         CommandOutput::Completions(_) => {
             json!({ "ok": true, "message": "Completions written to stdout" })
@@ -216,7 +216,7 @@ mod tests {
 
     #[test]
     fn json_migrate_complete() {
-        assert_ok(&CommandOutput::MigrateComplete);
+        assert_ok(&CommandOutput::Message("test message".to_string()));
     }
 
     #[test]

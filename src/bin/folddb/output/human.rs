@@ -203,15 +203,14 @@ pub fn render(output: &CommandOutput) {
         } => {
             println!("{}  {}", style("Node Public Key:").bold(), pub_key);
             println!("{}        {}", style("User Hash:").bold(), user_hash);
-            let db_str = match db_config {
-                fold_db::DatabaseConfig::Local { path } => {
-                    format!("Local ({})", path.display())
-                }
-                #[cfg(feature = "aws-backend")]
-                fold_db::DatabaseConfig::Cloud(_) => "Cloud".to_string(),
-                fold_db::DatabaseConfig::Exemem { api_url, .. } => {
-                    format!("Exemem ({})", api_url)
-                }
+            let db_str = if let Some(cloud) = &db_config.cloud_sync {
+                format!(
+                    "Exemem ({}) — local: {}",
+                    cloud.api_url,
+                    db_config.path.display()
+                )
+            } else {
+                format!("Local ({})", db_config.path.display())
             };
             println!("{}         {}", style("Database:").bold(), db_str);
             let idx_str = format!(
@@ -239,11 +238,8 @@ pub fn render(output: &CommandOutput) {
             );
         }
 
-        CommandOutput::MigrateComplete => {
-            println!(
-                "{} Database migration to cloud complete",
-                style("\u{2713}").green().bold()
-            );
+        CommandOutput::Message(msg) => {
+            println!("{}", msg);
         }
 
         CommandOutput::Completions(script) => {
@@ -309,7 +305,7 @@ mod tests {
 
     #[test]
     fn human_migrate_complete() {
-        render(&CommandOutput::MigrateComplete);
+        render(&CommandOutput::Message("test message".to_string()));
     }
 
     #[test]

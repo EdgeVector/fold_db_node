@@ -15,6 +15,10 @@ pub struct Cli {
     #[arg(short, long, global = true)]
     pub verbose: bool,
 
+    /// Use dev environment (dev schema service + dev Exemem API)
+    #[arg(long, global = true)]
+    pub dev: bool,
+
     /// Path to node config file (also reads NODE_CONFIG env var)
     #[arg(long, global = true)]
     pub config: Option<String>,
@@ -98,22 +102,29 @@ pub enum Command {
         action: Option<ConfigCommand>,
     },
 
+    /// Manage the background daemon
+    Daemon {
+        #[command(subcommand)]
+        action: DaemonCommand,
+    },
+
+    /// Manage cloud backup sync
+    Cloud {
+        #[command(subcommand)]
+        action: CloudCommand,
+    },
+
+    /// Display your 24-word recovery phrase
+    RecoveryPhrase,
+
+    /// Restore node from a 24-word recovery phrase
+    Restore,
+
     /// Reset the database (destructive)
     Reset {
         /// Skip interactive confirmation
         #[arg(long)]
         confirm: bool,
-    },
-
-    /// Migrate the local database to the cloud
-    MigrateToCloud {
-        /// Target cloud API URL
-        #[arg(long)]
-        api_url: String,
-
-        /// Target cloud API Key
-        #[arg(long)]
-        api_key: String,
     },
 
     /// Generate shell completions
@@ -254,6 +265,37 @@ pub enum ConfigCommand {
     Show,
     /// Print the config file path
     Path,
+    /// Set a configuration value
+    Set {
+        /// Configuration key (e.g. "env")
+        key: String,
+        /// Configuration value (e.g. "dev" or "prod")
+        value: String,
+    },
+}
+
+#[derive(Subcommand, Debug)]
+pub enum DaemonCommand {
+    /// Start the daemon in the background
+    Start {
+        /// Port to listen on (default: 9001)
+        #[arg(long, default_value = "9001")]
+        port: u16,
+    },
+    /// Stop the running daemon
+    Stop,
+    /// Show daemon status
+    Status,
+}
+
+#[derive(Subcommand, Debug)]
+pub enum CloudCommand {
+    /// Enable cloud backup (register with Exemem)
+    Enable,
+    /// Disable cloud backup (keep local data)
+    Disable,
+    /// Show cloud sync status
+    Status,
 }
 
 #[cfg(test)]
@@ -793,6 +835,15 @@ mod tests {
             vec!["folddb", "config"],
             vec!["folddb", "config", "show"],
             vec!["folddb", "config", "path"],
+            vec!["folddb", "config", "set", "env", "dev"],
+            vec!["folddb", "daemon", "start"],
+            vec!["folddb", "daemon", "stop"],
+            vec!["folddb", "daemon", "status"],
+            vec!["folddb", "cloud", "enable"],
+            vec!["folddb", "cloud", "disable"],
+            vec!["folddb", "cloud", "status"],
+            vec!["folddb", "recovery-phrase"],
+            vec!["folddb", "restore"],
             vec!["folddb", "reset"],
             vec!["folddb", "completions", "bash"],
         ];

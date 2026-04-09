@@ -76,21 +76,8 @@ impl FoldHttpServer {
     /// Returns a `FoldDbError` if:
     /// * There is an error starting the HTTP server
     pub async fn new(node_manager: NodeManager, bind_address: &str) -> FoldDbResult<Self> {
-        // Extract DynamoDB logs config from base config if using DynamoDB backend
-        let base_config = node_manager.get_base_config().await;
-        let logs_config = {
-            match &base_config.database {
-                #[cfg(feature = "aws-backend")]
-                crate::fold_node::config::DatabaseConfig::Cloud(d) => {
-                    // Note: user_id is NOT set here - it comes from per-request headers
-                    Some((d.tables.logs.clone(), d.region.clone(), None))
-                }
-                _ => None,
-            }
-        };
-
-        // Initialize the enhanced logging system with Cloud config if available
-        fold_db::logging::LoggingSystem::init_with_fallback(logs_config).await;
+        // Initialize the enhanced logging system (no DynamoDB backend)
+        fold_db::logging::LoggingSystem::init_with_fallback(None).await;
 
         Ok(Self {
             node_manager: Arc::new(node_manager),
@@ -221,28 +208,8 @@ impl FoldHttpServer {
             crate::ingestion::apple_import::sync_scheduler::create_sync_config_state();
         let sync_config_data = web::Data::new(sync_config_state);
 
-        // Create progress tracker based on database config
-        let progress_tracker = {
-            #[cfg(feature = "aws-backend")]
-            {
-                let run_base_config = self.node_manager.get_base_config().await;
-                if let crate::fold_node::config::DatabaseConfig::Cloud(cloud_config) =
-                    &run_base_config.database
-                {
-                    fold_db::progress::create_tracker(Some((
-                        cloud_config.tables.process.clone(),
-                        cloud_config.region.clone(),
-                    )))
-                    .await
-                } else {
-                    fold_db::progress::create_tracker(None).await
-                }
-            }
-            #[cfg(not(feature = "aws-backend"))]
-            {
-                fold_db::progress::create_tracker(None).await
-            }
-        };
+        // Create progress tracker (always local, no DynamoDB backend)
+        let progress_tracker = fold_db::progress::create_tracker(None).await;
         let progress_tracker_data = web::Data::new(progress_tracker);
 
         // Spawn Apple auto-sync background scheduler
