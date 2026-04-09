@@ -83,3 +83,4 @@ vendor/
 snapshots/
 .claude/worktrees/
 src/server/static-react/config/
+.folddb-node*
