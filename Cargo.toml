@@ -9,6 +9,7 @@ default = []
 ts-bindings = ["fold_db/ts-bindings"]
 os-keychain = ["dep:keyring"]
 test-utils = ["fold_db/test-utils"]
+cli-integration-tests = []  # Enable CLI integration tests (requires daemon running)
 transform-wasm = ["fold_db/transform-wasm"]
 
 [dependencies]

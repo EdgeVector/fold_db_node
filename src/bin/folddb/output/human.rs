@@ -242,6 +242,13 @@ pub fn render(output: &CommandOutput) {
             println!("{}", msg);
         }
 
+        CommandOutput::RawJson(json) => {
+            println!(
+                "{}",
+                serde_json::to_string_pretty(json).unwrap_or_else(|_| json.to_string())
+            );
+        }
+
         CommandOutput::Completions(script) => {
             print!("{}", script);
         }
