@@ -177,16 +177,18 @@ impl OperationProcessor {
         file_path: &std::path::Path,
         auto_execute: bool,
     ) -> FoldDbResult<crate::ingestion::IngestionResponse> {
-        self.ingest_single_file_with_tracker(file_path, auto_execute, None)
+        self.ingest_single_file_with_tracker(file_path, auto_execute, None, None)
             .await
     }
 
-    /// Like `ingest_single_file` but accepts an optional external `ProgressTracker`.
+    /// Like `ingest_single_file` but accepts an optional external `ProgressTracker`
+    /// and optional `org_hash` for org-scoped ingestion.
     pub async fn ingest_single_file_with_tracker(
         &self,
         file_path: &std::path::Path,
         auto_execute: bool,
         external_tracker: Option<crate::ingestion::ProgressTracker>,
+        org_hash: Option<String>,
     ) -> FoldDbResult<crate::ingestion::IngestionResponse> {
         use crate::ingestion::file_handling::json_processor::convert_file_to_json;
         use crate::ingestion::progress::ProgressService;
@@ -215,7 +217,7 @@ impl OperationProcessor {
             file_hash: None,
             source_folder: file_path.parent().map(|p| p.to_string_lossy().to_string()),
             image_descriptive_name: None,
-            org_hash: None,
+            org_hash,
         };
 
         let service =

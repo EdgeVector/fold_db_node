@@ -115,8 +115,12 @@ impl LlmQueryService {
         self.parse_followup_analysis(&response)
     }
 
-    /// Build the system prompt with tool definitions for the agent
-    fn build_agent_system_prompt(&self, schemas: &[SchemaWithState]) -> String {
+    /// Build the system prompt with tool definitions, schema context, and org memberships.
+    fn build_agent_system_prompt_with_orgs(
+        &self,
+        schemas: &[SchemaWithState],
+        orgs: &[fold_db::org::OrgMembership],
+    ) -> String {
         let now = chrono::Local::now();
         let mut prompt = format!(
             "{}Current date and time: {}\n\n",
@@ -197,6 +201,7 @@ impl LlmQueryService {
             "- folder_path (string, required): The same folder path used in scan_folder\n",
         );
         prompt.push_str("- files (array of strings, required): Relative file paths from the scan results (use the 'path' field from recommended_files)\n");
+        prompt.push_str("- org_hash (string, optional): Organization hash — when provided, data is ingested into the org's shared space instead of personal storage. Only use when the user explicitly asks to ingest into an org.\n");
         prompt.push_str("Returns: total files processed, succeeded count, failed count, per-file results with schema_used.\n");
         prompt.push_str("Example: {\"tool\": \"ingest_files\", \"params\": {\"folder_path\": \"sample_data\", \"files\": [\"contacts/address_book.json\", \"journal/2025-01-15.txt\"]}}\n\n");
 
@@ -387,6 +392,18 @@ impl LlmQueryService {
             prompt.push_str("  - Fields: ");
             let field_names: Vec<String> = schema.schema.runtime_fields.keys().cloned().collect();
             prompt.push_str(&field_names.join(", "));
+            prompt.push('\n');
+        }
+
+        if !orgs.is_empty() {
+            prompt.push_str("\n## Organizations\n\n");
+            prompt.push_str("This node is a member of the following organizations. When the user asks to ingest data \"for the team\" or \"into the org\", use the org_hash parameter on ingest_files.\n\n");
+            for org in orgs {
+                prompt.push_str(&format!(
+                    "- **{}** (hash: `{}`, role: {:?})\n",
+                    org.org_name, org.org_hash, org.role
+                ));
+            }
             prompt.push('\n');
         }
 

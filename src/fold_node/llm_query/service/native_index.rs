@@ -310,6 +310,10 @@ impl LlmQueryService {
                 let files = params.get("files").and_then(|f| f.as_array()).ok_or(
                     "ingest_files tool requires 'files' parameter (array of relative paths)",
                 )?;
+                let org_hash = params
+                    .get("org_hash")
+                    .and_then(|h| h.as_str())
+                    .map(|s| s.to_string());
 
                 let base_expanded = expand_home_path(folder_path_raw);
                 let base = base_expanded.as_path();
@@ -382,6 +386,7 @@ impl LlmQueryService {
                             &full_path,
                             true,
                             progress_tracker.cloned(),
+                            org_hash.clone(),
                         )
                         .await
                     {
@@ -923,8 +928,17 @@ impl LlmQueryService {
             conversation_context.push_str("\n## Current Turn\n");
         }
 
-        // Build the initial system prompt with tool definitions
-        let system_prompt = self.build_agent_system_prompt(schemas);
+        // Load org memberships for context
+        let orgs = {
+            let db_guard = node.get_fold_db().await.ok();
+            db_guard
+                .and_then(|g| g.sled_db().cloned())
+                .map(|sled| fold_db::org::operations::list_orgs(&sled).unwrap_or_default())
+                .unwrap_or_default()
+        };
+
+        // Build the initial system prompt with tool definitions and org context
+        let system_prompt = self.build_agent_system_prompt_with_orgs(schemas, &orgs);
         let today = chrono::Local::now().format("%A, %B %-d, %Y").to_string();
 
         log::info!(
