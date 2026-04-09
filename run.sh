@@ -384,6 +384,13 @@ if [ -z "$FOLDDB_HOME" ]; then
 fi
 export FOLDDB_HOME
 
+# Export EXEMEM_ENV so the Rust process picks up the correct environment.
+# --dev flag → dev; --exemem without --dev → dev (safe default for local development).
+# Production deployments set EXEMEM_ENV=prod explicitly in their environment.
+if [ "$DEV_MODE" = true ] || [ "$EXEMEM_MODE" = true ]; then
+    export EXEMEM_ENV="${EXEMEM_ENV:-dev}"
+fi
+
 # ============================================================================
 # Main Script
 # ============================================================================

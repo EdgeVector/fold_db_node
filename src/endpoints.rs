@@ -1,7 +1,7 @@
 //! Centralized endpoint registry for Exemem services.
 //!
 //! All external service URLs are defined here with dev/prod variants.
-//! The active environment is selected by `EXEMEM_ENV` (default: "prod").
+//! The active environment is selected by `EXEMEM_ENV` (default: "dev").
 
 /// Service environment — dev or prod.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -11,11 +11,23 @@ pub enum Environment {
 }
 
 impl Environment {
-    /// Resolve from `EXEMEM_ENV` env var. Defaults to Prod.
+    /// Resolve from `EXEMEM_ENV` env var. Defaults to Dev to prevent
+    /// accidental production registration during development.
     pub fn from_env() -> Self {
         match std::env::var("EXEMEM_ENV").as_deref() {
+            Ok("prod") | Ok("production") => Self::Prod,
             Ok("dev") | Ok("development") => Self::Dev,
-            _ => Self::Prod,
+            Ok(other) => {
+                log::error!(
+                    "EXEMEM_ENV has unknown value '{}', defaulting to dev",
+                    other
+                );
+                Self::Dev
+            }
+            Err(_) => {
+                log::warn!("EXEMEM_ENV not set, defaulting to dev");
+                Self::Dev
+            }
         }
     }
 }
