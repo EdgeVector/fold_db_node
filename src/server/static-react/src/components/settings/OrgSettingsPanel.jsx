@@ -137,8 +137,13 @@ export default function OrgSettingsPanel() {
     if (!newOrgName.trim()) return
     if (!window.confirm(`Create organization "${newOrgName.trim()}"?`)) return
     try {
+      setError(null)
       const orgName = newOrgName
-      await defaultApiClient.post('/org', { name: orgName })
+      const res = await defaultApiClient.post('/org', { name: orgName })
+      if (res.success === false || res.error) {
+        setError(res.error || 'Failed to create organization')
+        return
+      }
       setNewOrgName('')
       showSuccess(`Organization "${orgName}" created!`)
       fetchOrgs()
