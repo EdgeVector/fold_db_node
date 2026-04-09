@@ -204,7 +204,11 @@ pub fn render(output: &CommandOutput) {
             println!("{}  {}", style("Node Public Key:").bold(), pub_key);
             println!("{}        {}", style("User Hash:").bold(), user_hash);
             let db_str = if let Some(cloud) = &db_config.cloud_sync {
-                format!("Exemem ({}) — local: {}", cloud.api_url, db_config.path.display())
+                format!(
+                    "Exemem ({}) — local: {}",
+                    cloud.api_url,
+                    db_config.path.display()
+                )
             } else {
                 format!("Local ({})", db_config.path.display())
             };

@@ -54,27 +54,24 @@ pub async fn config_set(
             match value {
                 "dev" | "prod" => {}
                 _ => {
-                    return Err(
-                        CliError::new(format!("Invalid env value: '{}'. Must be 'dev' or 'prod'", value))
-                    );
+                    return Err(CliError::new(format!(
+                        "Invalid env value: '{}'. Must be 'dev' or 'prod'",
+                        value
+                    )));
                 }
             }
 
             // Read existing config, update env field, write back
             let path = resolve_config_path(config_path)?;
-            let contents = std::fs::read_to_string(&path).map_err(|e| {
-                CliError::new(format!("Failed to read config: {}", e))
-            })?;
-            let mut config: serde_json::Value = serde_json::from_str(&contents).map_err(|e| {
-                CliError::new(format!("Failed to parse config: {}", e))
-            })?;
+            let contents = std::fs::read_to_string(&path)
+                .map_err(|e| CliError::new(format!("Failed to read config: {}", e)))?;
+            let mut config: serde_json::Value = serde_json::from_str(&contents)
+                .map_err(|e| CliError::new(format!("Failed to parse config: {}", e)))?;
             config["env"] = serde_json::Value::String(value.to_string());
-            let updated = serde_json::to_string_pretty(&config).map_err(|e| {
-                CliError::new(format!("Failed to serialize config: {}", e))
-            })?;
-            std::fs::write(&path, updated).map_err(|e| {
-                CliError::new(format!("Failed to write config: {}", e))
-            })?;
+            let updated = serde_json::to_string_pretty(&config)
+                .map_err(|e| CliError::new(format!("Failed to serialize config: {}", e)))?;
+            std::fs::write(&path, updated)
+                .map_err(|e| CliError::new(format!("Failed to write config: {}", e)))?;
 
             let msg = format!("Set env = {}", value);
             // Warn if daemon is running

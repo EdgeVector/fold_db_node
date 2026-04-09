@@ -33,19 +33,13 @@ async fn main() {
     if let Command::Daemon { ref action } = cli.command {
         let dev = cli.dev;
         let result = match action {
-            DaemonCommand::Start { port } => {
-                commands::daemon::start(*port, dev)
-                    .await
-                    .map(commands::CommandOutput::Message)
-            }
-            DaemonCommand::Stop => {
-                commands::daemon::stop().map(commands::CommandOutput::Message)
-            }
-            DaemonCommand::Status => {
-                commands::daemon::status()
-                    .await
-                    .map(commands::CommandOutput::Message)
-            }
+            DaemonCommand::Start { port } => commands::daemon::start(*port, dev)
+                .await
+                .map(commands::CommandOutput::Message),
+            DaemonCommand::Stop => commands::daemon::stop().map(commands::CommandOutput::Message),
+            DaemonCommand::Status => commands::daemon::status()
+                .await
+                .map(commands::CommandOutput::Message),
         };
         match result {
             Ok(output) => {

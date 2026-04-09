@@ -62,7 +62,10 @@ fn default_port() -> u16 {
 pub async fn start(port: u16, dev: bool) -> Result<String, CliError> {
     if let Some(pid) = read_running_pid() {
         if check_daemon_health(port).await {
-            return Ok(format!("Daemon already running (PID {}, port {})", pid, port));
+            return Ok(format!(
+                "Daemon already running (PID {}, port {})",
+                pid, port
+            ));
         }
         stop_process(pid);
         let _ = fs::remove_file(pid_file());
@@ -141,17 +144,15 @@ pub async fn start(port: u16, dev: bool) -> Result<String, CliError> {
     stop_process(pid);
     let _ = fs::remove_file(pid_file());
     let log_tail = read_log_tail(&log_path);
-    Err(CliError::new(format!(
-        "Daemon failed to start within {}s",
-        timeout
-    ))
-    .with_hint(format!("Last log output:\n{}", log_tail)))
+    Err(
+        CliError::new(format!("Daemon failed to start within {}s", timeout))
+            .with_hint(format!("Last log output:\n{}", log_tail)),
+    )
 }
 
 /// Stop the daemon
 pub fn stop() -> Result<String, CliError> {
-    let pid =
-        read_running_pid().ok_or_else(|| CliError::new("Daemon not running"))?;
+    let pid = read_running_pid().ok_or_else(|| CliError::new("Daemon not running"))?;
 
     stop_process(pid);
 

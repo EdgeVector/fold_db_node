@@ -51,9 +51,13 @@ pub async fn get_database_config(state: web::Data<AppState>) -> impl Responder {
 
     let db_config = DatabaseConfigDto {
         path: config.database.path.to_string_lossy().to_string(),
-        cloud_sync: config.database.cloud_sync.as_ref().map(|cs| CloudSyncConfigDto {
-            api_url: cs.api_url.clone(),
-        }),
+        cloud_sync: config
+            .database
+            .cloud_sync
+            .as_ref()
+            .map(|cs| CloudSyncConfigDto {
+                api_url: cs.api_url.clone(),
+            }),
     };
 
     HttpResponse::Ok().json(db_config)
@@ -221,10 +225,8 @@ pub async fn apply_setup(
                     session_token: None,
                     user_hash: None,
                 };
-                config.database = DatabaseConfig::with_cloud_sync(
-                    config.database.path.clone(),
-                    cloud_sync,
-                );
+                config.database =
+                    DatabaseConfig::with_cloud_sync(config.database.path.clone(), cloud_sync);
                 changes.push("storage (exemem)");
 
                 // Write to Sled config store so consumers can read from Sled
