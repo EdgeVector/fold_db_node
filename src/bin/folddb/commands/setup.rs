@@ -27,14 +27,6 @@ struct ExememRegisterResponse {
     #[serde(default)]
     api_key: Option<String>,
     #[serde(default)]
-    deposit_address: Option<String>,
-    #[serde(default)]
-    network: Option<String>,
-    #[serde(default)]
-    chain_id: Option<u64>,
-    #[serde(default)]
-    token: Option<String>,
-    #[serde(default)]
     message: Option<String>,
 }
 
@@ -176,18 +168,9 @@ pub fn run_setup_wizard() -> Result<NodeConfig, CliError> {
                 CliError::new("Registration response missing api_key".to_string())
             })?;
             let user_hash = resp.user_hash.unwrap_or_default();
-            let deposit_address = resp.deposit_address.unwrap_or_default();
-            let network = resp.network.unwrap_or_default();
-            let chain_id = resp.chain_id.unwrap_or(0);
-            let token = resp.token.unwrap_or_default();
 
             eprintln!("Account created successfully!");
-            eprintln!("  User hash:        {}", user_hash);
-            eprintln!("  Network:          {} (chain {})", network, chain_id);
-            eprintln!("  Payment token:    {}", token);
-            eprintln!();
-            eprintln!("Fund your account by sending {} on {} to:", token, network);
-            eprintln!("  {}", deposit_address);
+            eprintln!("  User hash: {}", user_hash);
             eprintln!();
 
             DatabaseConfig::Exemem {
