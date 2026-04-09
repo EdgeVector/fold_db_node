@@ -228,6 +228,8 @@ impl OperationProcessor {
             direction,
             connected_at: Utc::now(),
             pseudonym: None,
+            messaging_pseudonym: None,
+            messaging_public_key: None,
             revoked: false,
             roles: std::collections::HashMap::new(),
         };

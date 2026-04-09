@@ -62,7 +62,46 @@ jobs:
       - name: Run doc tests
         run: cargo test --workspace --doc
 
-  # Integration tests disabled — tweets ingestion test is flaky with a 5-minute
+  # CLI integration tests — separate job to avoid OOM (main job compiles
+  # unit tests which consume most of the 7GB runner memory).
+  cli-integration-tests:
+    name: CLI Integration Tests
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+
+    env:
+      RUSTFLAGS: -C linker=clang -C link-arg=-fuse-ld=mold
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Install mold linker
+        run: sudo apt-get update && sudo apt-get install -y mold
+
+      - name: Install Rust
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Configure git for private dependencies
+        run: git config --global url."https://x-access-token:${{ secrets.PRIVATE_DEPS_TOKEN }}@github.com/".insteadOf "https://github.com/"
+
+      - name: Cache Rust artifacts
+        uses: Swatinem/rust-cache@v2
+
+      - name: Stub frontend dist for rust_embed
+        run: mkdir -p src/server/static-react/dist && echo '<html></html>' > src/server/static-react/dist/index.html
+
+      - name: Add swap space
+        run: |
+          sudo fallocate -l 4G /swap2
+          sudo chmod 600 /swap2
+          sudo mkswap /swap2
+          sudo swapon /swap2
+
+      - name: Run CLI integration tests
+        run: cargo test --test cli_integration_test -- --nocapture
+
+  # Heavy integration tests disabled — tweets ingestion test is flaky with a 5-minute
   # timeout and fails consistently in CI. The nightly ingestion workflow
   # (nightly-ingestion.yml) covers this more reliably with a full server.
   # TODO: Re-enable once tests are stabilized.

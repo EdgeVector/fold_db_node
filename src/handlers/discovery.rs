@@ -4,6 +4,7 @@
 
 use crate::discovery::calendar_sharing::{self, EventFingerprint, PeerEventSet, SharedEvent};
 use crate::discovery::config::{self, DiscoveryOptIn};
+use crate::discovery::async_query::{self, QueryRequestPayload, QueryResponsePayload, SchemaListRequestPayload, SchemaListResponsePayload, SchemaInfo};
 use crate::discovery::connection::{
     self, ConnectionPayload, LocalConnectionRequest, LocalSentRequest,
 };
@@ -629,8 +630,8 @@ pub async fn poll_and_decrypt_requests(
             Err(_) => continue,
         };
 
-        let payload = match connection::decrypt_connection_message(&secret, &encrypted_bytes) {
-            Ok(p) => p,
+        let raw = match connection::decrypt_message_raw(&secret, &encrypted_bytes) {
+            Ok(v) => v,
             Err(e) => {
                 log::debug!(
                     "Failed to decrypt message {} for target {}: {}",
@@ -642,20 +643,33 @@ pub async fn poll_and_decrypt_requests(
             }
         };
 
-        // Check if we already have this request stored
-        let request_id = format!("msg-{}", msg.message_id);
-        let existing = store
-            .get(format!("discovery:conn_req:{}", request_id).as_bytes())
-            .await
-            .ok()
-            .flatten();
+        let message_type = raw
+            .get("message_type")
+            .and_then(|v| v.as_str())
+            .unwrap_or("");
 
+        // De-duplication: check if we already processed this message
+        let dedup_key = format!("msg_processed:{}", msg.message_id);
+        let existing = store.get(dedup_key.as_bytes()).await.ok().flatten();
         if existing.is_some() {
-            continue; // Already processed
+            continue;
         }
 
-        match payload.message_type.as_str() {
+        // Mark as processed (store a small marker)
+        let _ = store
+            .put(dedup_key.as_bytes(), b"1".to_vec())
+            .await;
+
+        match message_type {
             "request" => {
+                let payload: ConnectionPayload = match serde_json::from_value(raw) {
+                    Ok(p) => p,
+                    Err(e) => {
+                        log::warn!("Failed to parse connection request: {}", e);
+                        continue;
+                    }
+                };
+                let request_id = format!("msg-{}", msg.message_id);
                 let local_req = LocalConnectionRequest {
                     request_id: request_id.clone(),
                     message_id: msg.message_id.clone(),
@@ -673,10 +687,16 @@ pub async fn poll_and_decrypt_requests(
                 }
             }
             "accept" => {
-                // Someone accepted our connection request — update our sent request
+                let payload: ConnectionPayload = match serde_json::from_value(raw) {
+                    Ok(p) => p,
+                    Err(e) => {
+                        log::warn!("Failed to parse connection accept: {}", e);
+                        continue;
+                    }
+                };
                 if let Err(e) = connection::update_sent_request_status(
                     &*store,
-                    &payload.sender_pseudonym, // the acceptor's pseudonym was our target
+                    &payload.sender_pseudonym,
                     "accepted",
                 )
                 .await
@@ -685,6 +705,13 @@ pub async fn poll_and_decrypt_requests(
                 }
             }
             "decline" => {
+                let payload: ConnectionPayload = match serde_json::from_value(raw) {
+                    Ok(p) => p,
+                    Err(e) => {
+                        log::warn!("Failed to parse connection decline: {}", e);
+                        continue;
+                    }
+                };
                 if let Err(e) = connection::update_sent_request_status(
                     &*store,
                     &payload.sender_pseudonym,
@@ -695,8 +722,48 @@ pub async fn poll_and_decrypt_requests(
                     log::warn!("Failed to update sent request: {}", e);
                 }
             }
+            "query_request" => {
+                let payload: QueryRequestPayload = match serde_json::from_value(raw) {
+                    Ok(p) => p,
+                    Err(e) => {
+                        log::warn!("Failed to parse query request: {}", e);
+                        continue;
+                    }
+                };
+                handle_incoming_query(node, &payload, master_key, &publisher).await;
+            }
+            "query_response" => {
+                let payload: QueryResponsePayload = match serde_json::from_value(raw) {
+                    Ok(p) => p,
+                    Err(e) => {
+                        log::warn!("Failed to parse query response: {}", e);
+                        continue;
+                    }
+                };
+                handle_incoming_query_response(&*store, &payload).await;
+            }
+            "schema_list_request" => {
+                let payload: SchemaListRequestPayload = match serde_json::from_value(raw) {
+                    Ok(p) => p,
+                    Err(e) => {
+                        log::warn!("Failed to parse schema list request: {}", e);
+                        continue;
+                    }
+                };
+                handle_incoming_schema_list_request(node, &payload, master_key, &publisher).await;
+            }
+            "schema_list_response" => {
+                let payload: SchemaListResponsePayload = match serde_json::from_value(raw) {
+                    Ok(p) => p,
+                    Err(e) => {
+                        log::warn!("Failed to parse schema list response: {}", e);
+                        continue;
+                    }
+                };
+                handle_incoming_schema_list_response(&*store, &payload).await;
+            }
             _ => {
-                log::warn!("Unknown message type: {}", payload.message_type);
+                log::warn!("Unknown message type: {}", message_type);
             }
         }
     }
@@ -709,6 +776,227 @@ pub async fn poll_and_decrypt_requests(
     Ok(ApiResponse::success(ConnectionRequestsResponse {
         requests,
     }))
+}
+
+// ===== Async query auto-processing helpers =====
+
+/// Handle an incoming query request: execute the query and send results back.
+async fn handle_incoming_query(
+    node: &FoldNode,
+    payload: &QueryRequestPayload,
+    master_key: &[u8],
+    publisher: &DiscoveryPublisher,
+) {
+    use crate::fold_node::OperationProcessor;
+    use fold_db::schema::types::operations::Query;
+
+    log::info!(
+        "Processing incoming query request {} for schema '{}'",
+        payload.request_id,
+        payload.schema_name
+    );
+
+    let op = OperationProcessor::new(node.clone());
+    let query = Query::new(payload.schema_name.clone(), payload.fields.clone());
+
+    // Execute with access control using sender's Ed25519 key
+    let (success, results, error) =
+        match op.execute_query_json_with_access(query, &payload.sender_public_key).await {
+            Ok(results) => (true, Some(results), None),
+            Err(e) => (false, None, Some(format!("Query failed: {}", e))),
+        };
+
+    // Derive our reply pseudonym + X25519 key
+    let hash = crate::discovery::pseudonym::content_hash("connection-sender");
+    let our_pseudonym = crate::discovery::pseudonym::derive_pseudonym(master_key, &hash);
+    let our_reply_pk = connection::get_pseudonym_public_key_b64(master_key, &our_pseudonym);
+
+    let response = QueryResponsePayload {
+        message_type: "query_response".to_string(),
+        request_id: payload.request_id.clone(),
+        success,
+        results,
+        error,
+        sender_pseudonym: our_pseudonym.to_string(),
+        reply_public_key: our_reply_pk,
+    };
+
+    // Encrypt with requester's reply public key and send back
+    let reply_pk_bytes = match B64.decode(&payload.reply_public_key) {
+        Ok(b) if b.len() == 32 => {
+            let mut arr = [0u8; 32];
+            arr.copy_from_slice(&b);
+            arr
+        }
+        _ => {
+            log::warn!("Invalid reply public key in query request {}", payload.request_id);
+            return;
+        }
+    };
+
+    let encrypted = match connection::encrypt_message(&reply_pk_bytes, &response) {
+        Ok(e) => e,
+        Err(e) => {
+            log::warn!("Failed to encrypt query response: {}", e);
+            return;
+        }
+    };
+
+    let sender_pseudonym: uuid::Uuid = match payload.sender_pseudonym.parse() {
+        Ok(u) => u,
+        Err(_) => {
+            log::warn!("Invalid sender pseudonym in query request");
+            return;
+        }
+    };
+
+    let encrypted_b64 = B64.encode(&encrypted);
+    if let Err(e) = publisher
+        .connect(sender_pseudonym, encrypted_b64, Some(our_pseudonym))
+        .await
+    {
+        log::warn!("Failed to send query response: {}", e);
+    }
+}
+
+/// Handle an incoming query response: update local async query with results.
+async fn handle_incoming_query_response(
+    store: &dyn fold_db::storage::traits::KvStore,
+    payload: &QueryResponsePayload,
+) {
+    log::info!(
+        "Received query response for request {}",
+        payload.request_id
+    );
+
+    let results = if payload.success {
+        payload
+            .results
+            .as_ref()
+            .map(|r| serde_json::to_value(r).unwrap_or_default())
+    } else {
+        None
+    };
+
+    if let Err(e) = async_query::update_async_query_result(
+        store,
+        &payload.request_id,
+        results,
+        payload.error.clone(),
+    )
+    .await
+    {
+        log::warn!("Failed to update async query result: {}", e);
+    }
+}
+
+/// Handle an incoming schema list request: list schemas and send back.
+async fn handle_incoming_schema_list_request(
+    node: &FoldNode,
+    payload: &SchemaListRequestPayload,
+    master_key: &[u8],
+    publisher: &DiscoveryPublisher,
+) {
+    use crate::fold_node::OperationProcessor;
+
+    log::info!(
+        "Processing incoming schema list request {}",
+        payload.request_id
+    );
+
+    let op = OperationProcessor::new(node.clone());
+    let db = match op.get_db_public().await {
+        Ok(db) => db,
+        Err(e) => {
+            log::warn!("Failed to get database for schema list: {}", e);
+            return;
+        }
+    };
+
+    let schemas: Vec<SchemaInfo> = match db.schema_manager.get_schemas() {
+        Ok(all_schemas) => all_schemas
+            .values()
+            .map(|s| SchemaInfo {
+                name: s.name.clone(),
+                descriptive_name: s.descriptive_name.clone(),
+            })
+            .collect(),
+        Err(e) => {
+            log::warn!("Failed to get schemas: {}", e);
+            return;
+        }
+    };
+
+    let hash = crate::discovery::pseudonym::content_hash("connection-sender");
+    let our_pseudonym = crate::discovery::pseudonym::derive_pseudonym(master_key, &hash);
+    let our_reply_pk = connection::get_pseudonym_public_key_b64(master_key, &our_pseudonym);
+
+    let response = SchemaListResponsePayload {
+        message_type: "schema_list_response".to_string(),
+        request_id: payload.request_id.clone(),
+        schemas,
+        sender_pseudonym: our_pseudonym.to_string(),
+        reply_public_key: our_reply_pk,
+    };
+
+    let reply_pk_bytes = match B64.decode(&payload.reply_public_key) {
+        Ok(b) if b.len() == 32 => {
+            let mut arr = [0u8; 32];
+            arr.copy_from_slice(&b);
+            arr
+        }
+        _ => {
+            log::warn!("Invalid reply public key in schema list request");
+            return;
+        }
+    };
+
+    let encrypted = match connection::encrypt_message(&reply_pk_bytes, &response) {
+        Ok(e) => e,
+        Err(e) => {
+            log::warn!("Failed to encrypt schema list response: {}", e);
+            return;
+        }
+    };
+
+    let sender_pseudonym: uuid::Uuid = match payload.sender_pseudonym.parse() {
+        Ok(u) => u,
+        Err(_) => {
+            log::warn!("Invalid sender pseudonym in schema list request");
+            return;
+        }
+    };
+
+    let encrypted_b64 = B64.encode(&encrypted);
+    if let Err(e) = publisher
+        .connect(sender_pseudonym, encrypted_b64, Some(our_pseudonym))
+        .await
+    {
+        log::warn!("Failed to send schema list response: {}", e);
+    }
+}
+
+/// Handle an incoming schema list response: update local async query.
+async fn handle_incoming_schema_list_response(
+    store: &dyn fold_db::storage::traits::KvStore,
+    payload: &SchemaListResponsePayload,
+) {
+    log::info!(
+        "Received schema list response for request {}",
+        payload.request_id
+    );
+
+    let results = serde_json::to_value(&payload.schemas).unwrap_or_default();
+    if let Err(e) = async_query::update_async_query_result(
+        store,
+        &payload.request_id,
+        Some(results),
+        None,
+    )
+    .await
+    {
+        log::warn!("Failed to update schema list result: {}", e);
+    }
 }
 
 /// Respond to a connection request (accept or decline).

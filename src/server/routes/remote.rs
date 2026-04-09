@@ -152,29 +152,30 @@ fn verify_ed25519_signature(
     }
 }
 
-// ===== Proxy endpoints (local node signs and forwards to remote) =====
+// ===== Async query endpoints (via messaging service bulletin board) =====
 
-/// Request to query a remote node through the local node as proxy.
+/// Request to submit an async query to a contact.
 #[derive(Debug, Clone, Deserialize)]
-pub struct ProxyQueryRequest {
-    /// URL of the remote node (e.g., "http://192.168.1.10:9001")
-    pub remote_url: String,
-    /// Schema name to query on the remote node
+pub struct AsyncQueryRequest {
+    /// Ed25519 public key of the contact to query
+    pub contact_public_key: String,
+    /// Schema name to query
     pub schema_name: String,
-    /// Fields to return
+    /// Fields to return (empty = all authorized)
+    #[serde(default)]
     pub fields: Vec<String>,
 }
 
-/// Request to browse a remote node's available schemas.
+/// Request to browse a contact's schemas asynchronously.
 #[derive(Debug, Clone, Deserialize)]
-pub struct BrowseRemoteRequest {
-    /// URL of the remote node
-    pub remote_url: String,
+pub struct AsyncBrowseRequest {
+    /// Ed25519 public key of the contact
+    pub contact_public_key: String,
 }
 
-/// POST /api/remote/proxy-query — query a remote node (local node signs the request)
-pub async fn proxy_query(
-    body: web::Json<ProxyQueryRequest>,
+/// POST /api/remote/async-query — submit an async query to a contact via messaging
+pub async fn async_query(
+    body: web::Json<AsyncQueryRequest>,
     state: web::Data<AppState>,
 ) -> impl Responder {
     let (user_hash, node) = node_or_return!(state);
@@ -182,146 +183,351 @@ pub async fn proxy_query(
 
     handler_result_to_response(
         async {
-            let private_key = node.get_node_private_key();
+            use crate::discovery::async_query::{LocalAsyncQuery, QueryRequestPayload};
+            use crate::discovery::connection;
+            use crate::trust::contact_book::ContactBook;
+
+            // Load contact and verify messaging info
+            let book = ContactBook::load().map_err(|e| {
+                crate::handlers::HandlerError::Internal(format!("Failed to load contacts: {e}"))
+            })?;
+            let contact = book.get(&req.contact_public_key).ok_or_else(|| {
+                crate::handlers::HandlerError::BadRequest("Contact not found".into())
+            })?;
+            if contact.revoked {
+                return Err(crate::handlers::HandlerError::BadRequest(
+                    "Contact has been revoked".into(),
+                ));
+            }
+            let messaging_pseudonym = contact.messaging_pseudonym.as_ref().ok_or_else(|| {
+                crate::handlers::HandlerError::BadRequest(
+                    "Contact does not have messaging enabled. Connect via discovery first.".into(),
+                )
+            })?;
+            let messaging_public_key = contact.messaging_public_key.as_ref().ok_or_else(|| {
+                crate::handlers::HandlerError::BadRequest(
+                    "Contact does not have a messaging public key".into(),
+                )
+            })?;
+
+            // Get discovery config for publisher
+            let (discovery_url, master_key, auth_token) =
+                crate::server::routes::discovery::resolve_discovery_config(&node, None).await?;
+
+            // Derive our sender pseudonym + X25519 key
+            let hash = crate::discovery::pseudonym::content_hash("connection-sender");
+            let our_pseudonym =
+                crate::discovery::pseudonym::derive_pseudonym(&master_key, &hash);
+            let our_reply_pk =
+                connection::get_pseudonym_public_key_b64(&master_key, &our_pseudonym);
+
+            let request_id = uuid::Uuid::new_v4().to_string();
             let public_key = node.get_node_public_key();
 
-            // Build the payload to sign
-            let timestamp = chrono::Utc::now().timestamp();
-            let payload = format!("{}:{}:{}", req.schema_name, req.fields.join(","), timestamp);
-
-            // Sign with node's Ed25519 key
-            let secret_bytes = base64::engine::general_purpose::STANDARD
-                .decode(private_key)
-                .map_err(|e| {
-                    crate::handlers::HandlerError::Internal(format!("Invalid private key: {e}"))
-                })?;
-            let keypair = fold_db::security::Ed25519KeyPair::from_secret_key(&secret_bytes)
-                .map_err(|e| {
-                    crate::handlers::HandlerError::Internal(format!("Failed to load keypair: {e}"))
-                })?;
-            let signature = keypair.sign(payload.as_bytes());
-            let sig_b64 = fold_db::security::KeyUtils::signature_to_base64(&signature);
-
-            // Build the remote request
-            let remote_req = RemoteQueryRequest {
-                schema_name: req.schema_name,
-                fields: req.fields,
-                signature: sig_b64,
-                public_key: public_key.to_string(),
-                timestamp,
+            let payload = QueryRequestPayload {
+                message_type: "query_request".to_string(),
+                request_id: request_id.clone(),
+                schema_name: req.schema_name.clone(),
+                fields: req.fields.clone(),
+                sender_public_key: public_key.to_string(),
+                sender_pseudonym: our_pseudonym.to_string(),
+                reply_public_key: our_reply_pk,
             };
 
-            // First, get the remote node's user_hash so we access the right data
-            let client = reqwest::Client::new();
-            let base = req.remote_url.trim_end_matches('/');
-            let identity_resp = client
-                .get(format!("{}/api/system/auto-identity", base))
-                .timeout(std::time::Duration::from_secs(10))
-                .send()
-                .await
+            // Encrypt with contact's X25519 messaging key
+            let pk_bytes = base64::engine::general_purpose::STANDARD
+                .decode(messaging_public_key)
                 .map_err(|e| {
                     crate::handlers::HandlerError::Internal(format!(
-                        "Failed to get remote identity: {e}"
+                        "Invalid messaging public key: {e}"
                     ))
                 })?;
-            let identity: serde_json::Value = identity_resp.json().await.map_err(|e| {
-                crate::handlers::HandlerError::Internal(format!("Invalid identity response: {e}"))
-            })?;
-            let remote_hash = identity
-                .get("user_hash")
-                .and_then(|v| v.as_str())
-                .unwrap_or("unknown")
-                .to_string();
-
-            // Forward to remote node with the correct user hash
-            let url = format!("{}/api/remote/query", base);
-            let resp = client
-                .post(&url)
-                .header("X-User-Hash", &remote_hash)
-                .json(&remote_req)
-                .timeout(std::time::Duration::from_secs(30))
-                .send()
-                .await
-                .map_err(|e| {
-                    crate::handlers::HandlerError::Internal(format!(
-                        "Failed to reach remote node: {e}"
-                    ))
-                })?;
-
-            let status = resp.status();
-            let body: serde_json::Value = resp.json().await.map_err(|e| {
-                crate::handlers::HandlerError::Internal(format!("Invalid response: {e}"))
-            })?;
-
-            if !status.is_success() {
-                let err = body
-                    .get("error")
-                    .and_then(|v| v.as_str())
-                    .unwrap_or("Unknown error");
-                return Err(crate::handlers::HandlerError::Internal(format!(
-                    "Remote node returned {}: {}",
-                    status, err
-                )));
+            if pk_bytes.len() != 32 {
+                return Err(crate::handlers::HandlerError::Internal(
+                    "Messaging public key must be 32 bytes".into(),
+                ));
             }
+            let mut pk_arr = [0u8; 32];
+            pk_arr.copy_from_slice(&pk_bytes);
 
-            Ok(ApiResponse::success_with_user(body, user_hash))
+            let encrypted = connection::encrypt_message(&pk_arr, &payload).map_err(|e| {
+                crate::handlers::HandlerError::Internal(format!("Encryption failed: {e}"))
+            })?;
+            let encrypted_b64 =
+                base64::engine::general_purpose::STANDARD.encode(&encrypted);
+
+            // Send via messaging service
+            let target: uuid::Uuid = messaging_pseudonym.parse().map_err(|_| {
+                crate::handlers::HandlerError::Internal(
+                    "Invalid messaging pseudonym UUID".into(),
+                )
+            })?;
+            let publisher = crate::discovery::publisher::DiscoveryPublisher::new(
+                master_key,
+                discovery_url,
+                auth_token,
+            );
+            publisher
+                .connect(target, encrypted_b64, Some(our_pseudonym))
+                .await
+                .map_err(|e| {
+                    crate::handlers::HandlerError::Internal(format!(
+                        "Failed to send query: {e}"
+                    ))
+                })?;
+
+            // Save locally
+            let db = node.get_fold_db().await.map_err(|e| {
+                crate::handlers::HandlerError::Internal(format!("Failed to access database: {e}"))
+            })?;
+            let store = db.get_db_ops().metadata_store().inner().clone();
+            let local_query = LocalAsyncQuery {
+                request_id: request_id.clone(),
+                contact_public_key: req.contact_public_key,
+                contact_display_name: contact.display_name.clone(),
+                schema_name: Some(req.schema_name),
+                fields: req.fields,
+                query_type: "query".to_string(),
+                status: "pending".to_string(),
+                created_at: chrono::Utc::now().to_rfc3339(),
+                completed_at: None,
+                results: None,
+                error: None,
+            };
+            crate::discovery::async_query::save_async_query(&*store, &local_query)
+                .await
+                .map_err(|e| {
+                    crate::handlers::HandlerError::Internal(format!(
+                        "Failed to save query: {e}"
+                    ))
+                })?;
+
+            Ok(ApiResponse::success_with_user(
+                serde_json::json!({"request_id": request_id}),
+                user_hash,
+            ))
         }
         .await,
     )
 }
 
-/// POST /api/remote/browse — browse a remote node's available schemas
-pub async fn browse_remote(
-    body: web::Json<BrowseRemoteRequest>,
+/// POST /api/remote/async-browse — request schema list from a contact via messaging
+pub async fn async_browse(
+    body: web::Json<AsyncBrowseRequest>,
     state: web::Data<AppState>,
 ) -> impl Responder {
-    let (user_hash, _node) = node_or_return!(state);
+    let (user_hash, node) = node_or_return!(state);
     let req = body.into_inner();
 
     handler_result_to_response(
         async {
-            let client = reqwest::Client::new();
-            let url = format!(
-                "{}/api/remote/node-info",
-                req.remote_url.trim_end_matches('/')
-            );
-            // Get the remote node's user_hash first
-            let identity_resp = client
-                .get(format!(
-                    "{}/api/system/auto-identity",
-                    req.remote_url.trim_end_matches('/')
-                ))
-                .timeout(std::time::Duration::from_secs(10))
-                .send()
-                .await
-                .map_err(|e| {
-                    crate::handlers::HandlerError::Internal(format!(
-                        "Failed to reach remote node: {e}"
-                    ))
-                })?;
-            let identity: serde_json::Value = identity_resp.json().await.unwrap_or_default();
-            let remote_hash = identity
-                .get("user_hash")
-                .and_then(|v| v.as_str())
-                .unwrap_or("unknown");
+            use crate::discovery::async_query::{LocalAsyncQuery, SchemaListRequestPayload};
+            use crate::discovery::connection;
+            use crate::trust::contact_book::ContactBook;
 
-            let resp = client
-                .get(&url)
-                .header("X-User-Hash", remote_hash)
-                .timeout(std::time::Duration::from_secs(10))
-                .send()
-                .await
-                .map_err(|e| {
-                    crate::handlers::HandlerError::Internal(format!(
-                        "Failed to reach remote node: {e}"
-                    ))
-                })?;
-
-            let body: serde_json::Value = resp.json().await.map_err(|e| {
-                crate::handlers::HandlerError::Internal(format!("Invalid response: {e}"))
+            let book = ContactBook::load().map_err(|e| {
+                crate::handlers::HandlerError::Internal(format!("Failed to load contacts: {e}"))
+            })?;
+            let contact = book.get(&req.contact_public_key).ok_or_else(|| {
+                crate::handlers::HandlerError::BadRequest("Contact not found".into())
+            })?;
+            if contact.revoked {
+                return Err(crate::handlers::HandlerError::BadRequest(
+                    "Contact has been revoked".into(),
+                ));
+            }
+            let messaging_pseudonym = contact.messaging_pseudonym.as_ref().ok_or_else(|| {
+                crate::handlers::HandlerError::BadRequest(
+                    "Contact does not have messaging enabled".into(),
+                )
+            })?;
+            let messaging_public_key = contact.messaging_public_key.as_ref().ok_or_else(|| {
+                crate::handlers::HandlerError::BadRequest(
+                    "Contact does not have a messaging public key".into(),
+                )
             })?;
 
-            Ok(ApiResponse::success_with_user(body, user_hash))
+            let (discovery_url, master_key, auth_token) =
+                crate::server::routes::discovery::resolve_discovery_config(&node, None).await?;
+
+            let hash = crate::discovery::pseudonym::content_hash("connection-sender");
+            let our_pseudonym =
+                crate::discovery::pseudonym::derive_pseudonym(&master_key, &hash);
+            let our_reply_pk =
+                connection::get_pseudonym_public_key_b64(&master_key, &our_pseudonym);
+
+            let request_id = uuid::Uuid::new_v4().to_string();
+            let public_key = node.get_node_public_key();
+
+            let payload = SchemaListRequestPayload {
+                message_type: "schema_list_request".to_string(),
+                request_id: request_id.clone(),
+                sender_public_key: public_key.to_string(),
+                sender_pseudonym: our_pseudonym.to_string(),
+                reply_public_key: our_reply_pk,
+            };
+
+            let pk_bytes = base64::engine::general_purpose::STANDARD
+                .decode(messaging_public_key)
+                .map_err(|e| {
+                    crate::handlers::HandlerError::Internal(format!(
+                        "Invalid messaging public key: {e}"
+                    ))
+                })?;
+            if pk_bytes.len() != 32 {
+                return Err(crate::handlers::HandlerError::Internal(
+                    "Messaging public key must be 32 bytes".into(),
+                ));
+            }
+            let mut pk_arr = [0u8; 32];
+            pk_arr.copy_from_slice(&pk_bytes);
+
+            let encrypted = connection::encrypt_message(&pk_arr, &payload).map_err(|e| {
+                crate::handlers::HandlerError::Internal(format!("Encryption failed: {e}"))
+            })?;
+            let encrypted_b64 =
+                base64::engine::general_purpose::STANDARD.encode(&encrypted);
+
+            let target: uuid::Uuid = messaging_pseudonym.parse().map_err(|_| {
+                crate::handlers::HandlerError::Internal(
+                    "Invalid messaging pseudonym UUID".into(),
+                )
+            })?;
+            let publisher = crate::discovery::publisher::DiscoveryPublisher::new(
+                master_key,
+                discovery_url,
+                auth_token,
+            );
+            publisher
+                .connect(target, encrypted_b64, Some(our_pseudonym))
+                .await
+                .map_err(|e| {
+                    crate::handlers::HandlerError::Internal(format!(
+                        "Failed to send schema list request: {e}"
+                    ))
+                })?;
+
+            let db = node.get_fold_db().await.map_err(|e| {
+                crate::handlers::HandlerError::Internal(format!("Failed to access database: {e}"))
+            })?;
+            let store = db.get_db_ops().metadata_store().inner().clone();
+            let local_query = LocalAsyncQuery {
+                request_id: request_id.clone(),
+                contact_public_key: req.contact_public_key,
+                contact_display_name: contact.display_name.clone(),
+                schema_name: None,
+                fields: vec![],
+                query_type: "schema_list".to_string(),
+                status: "pending".to_string(),
+                created_at: chrono::Utc::now().to_rfc3339(),
+                completed_at: None,
+                results: None,
+                error: None,
+            };
+            crate::discovery::async_query::save_async_query(&*store, &local_query)
+                .await
+                .map_err(|e| {
+                    crate::handlers::HandlerError::Internal(format!(
+                        "Failed to save query: {e}"
+                    ))
+                })?;
+
+            Ok(ApiResponse::success_with_user(
+                serde_json::json!({"request_id": request_id}),
+                user_hash,
+            ))
+        }
+        .await,
+    )
+}
+
+/// GET /api/remote/async-queries — list all async queries
+pub async fn list_async_queries(state: web::Data<AppState>) -> impl Responder {
+    let (user_hash, node) = node_or_return!(state);
+
+    handler_result_to_response(
+        async {
+            let db = node.get_fold_db().await.map_err(|e| {
+                crate::handlers::HandlerError::Internal(format!("Failed to access database: {e}"))
+            })?;
+            let store = db.get_db_ops().metadata_store().inner().clone();
+
+            let queries = crate::discovery::async_query::list_async_queries(&*store)
+                .await
+                .map_err(|e| {
+                    crate::handlers::HandlerError::Internal(format!(
+                        "Failed to list queries: {e}"
+                    ))
+                })?;
+
+            Ok(ApiResponse::success_with_user(
+                serde_json::json!({"queries": queries}),
+                user_hash,
+            ))
+        }
+        .await,
+    )
+}
+
+/// GET /api/remote/async-query/{id} — get a specific async query
+pub async fn get_async_query(
+    path: web::Path<String>,
+    state: web::Data<AppState>,
+) -> impl Responder {
+    let (user_hash, node) = node_or_return!(state);
+    let request_id = path.into_inner();
+
+    handler_result_to_response(
+        async {
+            let db = node.get_fold_db().await.map_err(|e| {
+                crate::handlers::HandlerError::Internal(format!("Failed to access database: {e}"))
+            })?;
+            let store = db.get_db_ops().metadata_store().inner().clone();
+
+            let query = crate::discovery::async_query::get_async_query(&*store, &request_id)
+                .await
+                .map_err(|e| {
+                    crate::handlers::HandlerError::Internal(format!(
+                        "Failed to get query: {e}"
+                    ))
+                })?
+                .ok_or_else(|| {
+                    crate::handlers::HandlerError::NotFound("Query not found".into())
+                })?;
+
+            Ok(ApiResponse::success_with_user(query, user_hash))
+        }
+        .await,
+    )
+}
+
+/// DELETE /api/remote/async-query/{id} — delete an async query
+pub async fn delete_async_query(
+    path: web::Path<String>,
+    state: web::Data<AppState>,
+) -> impl Responder {
+    let (user_hash, node) = node_or_return!(state);
+    let request_id = path.into_inner();
+
+    handler_result_to_response(
+        async {
+            let db = node.get_fold_db().await.map_err(|e| {
+                crate::handlers::HandlerError::Internal(format!("Failed to access database: {e}"))
+            })?;
+            let store = db.get_db_ops().metadata_store().inner().clone();
+
+            crate::discovery::async_query::delete_async_query(&*store, &request_id)
+                .await
+                .map_err(|e| {
+                    crate::handlers::HandlerError::Internal(format!(
+                        "Failed to delete query: {e}"
+                    ))
+                })?;
+
+            Ok(ApiResponse::success_with_user(
+                serde_json::json!({"ok": true}),
+                user_hash,
+            ))
         }
         .await,
     )
