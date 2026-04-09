@@ -428,21 +428,6 @@ pub(super) async fn reset_database(
                 );
             }
         }
-        #[cfg(feature = "aws-backend")]
-        SchemaStorage::Cloud { store } => {
-            if let Err(e) = store.clear_all_schemas().await {
-                log_feature!(
-                    LogFeature::Schema,
-                    error,
-                    "Failed to clear DynamoDB schemas: {}",
-                    e
-                );
-                return HttpResponse::InternalServerError().json(ResetResponse {
-                    success: false,
-                    message: format!("Failed to reset DynamoDB: {}", e),
-                });
-            }
-        }
     }
 
     log_feature!(

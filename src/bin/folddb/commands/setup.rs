@@ -1,7 +1,7 @@
 use crate::error::CliError;
 use dialoguer::{Input, Select};
 use fold_db::security::{Ed25519KeyPair, SecurityConfig};
-use fold_db::storage::DatabaseConfig;
+use fold_db::storage::{CloudSyncConfig, DatabaseConfig};
 use fold_db_node::fold_node::config::NodeConfig;
 use serde::{Deserialize, Serialize};
 use std::fs;
@@ -145,9 +145,7 @@ pub fn run_setup_wizard() -> Result<NodeConfig, CliError> {
                 .interact_text()
                 .map_err(|e| CliError::new(format!("Input cancelled: {}", e)))?;
 
-            DatabaseConfig::Local {
-                path: PathBuf::from(data_dir),
-            }
+            DatabaseConfig::local(PathBuf::from(data_dir))
         }
         1 => {
             let api_url: String = Input::new()
@@ -173,12 +171,18 @@ pub fn run_setup_wizard() -> Result<NodeConfig, CliError> {
             eprintln!("  User hash: {}", user_hash);
             eprintln!();
 
-            DatabaseConfig::Exemem {
-                api_url,
-                api_key,
-                session_token: None,
-                user_hash: None,
-            }
+            let default_path = fold_db_node::utils::paths::folddb_home()
+                .map(|h| h.join("data"))
+                .unwrap_or_else(|_| PathBuf::from("data"));
+            DatabaseConfig::with_cloud_sync(
+                default_path,
+                CloudSyncConfig {
+                    api_url,
+                    api_key,
+                    session_token: None,
+                    user_hash: None,
+                },
+            )
         }
         _ => unreachable!(),
     };
@@ -204,12 +208,7 @@ pub fn run_setup_wizard() -> Result<NodeConfig, CliError> {
         .map_err(|e| CliError::new(format!("Failed to write node_identity.json: {}", e)))?;
 
     // --- Build NodeConfig ---
-    let storage_path = match &database {
-        DatabaseConfig::Local { path } => Some(path.clone()),
-        _ => fold_db_node::utils::paths::folddb_home()
-            .map(|h| h.join("data"))
-            .ok(),
-    };
+    let storage_path = Some(database.path.clone());
     let config = NodeConfig {
         database,
         storage_path,

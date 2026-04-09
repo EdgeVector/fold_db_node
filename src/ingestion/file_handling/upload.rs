@@ -15,9 +15,6 @@ use fold_db::storage::UploadStorage;
 use futures_util::StreamExt;
 use serde_json::json;
 use std::path::PathBuf;
-#[cfg(feature = "aws-backend")]
-use tokio::fs;
-
 // ---- Multipart form data parsing ----
 
 /// Data extracted from multipart upload form
@@ -49,9 +46,6 @@ pub async fn parse_multipart(
     let mut auto_execute = true;
     let mut pub_key = "default".to_string();
     let mut progress_id = None;
-    #[cfg(feature = "aws-backend")]
-    let mut s3_file_path: Option<String> = None;
-
     while let Some(item) = payload.next().await {
         let mut field = match item {
             Ok(field) => field,
@@ -94,10 +88,6 @@ pub async fn parse_multipart(
                 already_exists = exists;
                 file_hash = Some(hash);
             }
-            #[cfg(feature = "aws-backend")]
-            Some("s3FilePath") => {
-                s3_file_path = read_field_text(&mut field).await;
-            }
             Some("autoExecute") => {
                 auto_execute = read_field_text(&mut field)
                     .await
@@ -114,34 +104,6 @@ pub async fn parse_multipart(
             }
             _ => {}
         }
-    }
-
-    // Handle S3 file path if provided (alternative to file upload)
-    #[cfg(feature = "aws-backend")]
-    if let Some(s3_path) = s3_file_path {
-        if file_path.is_some() {
-            log_feature!(
-                LogFeature::Ingestion,
-                error,
-                "Both file and s3FilePath provided - only one is allowed"
-            );
-            return Err(HttpResponse::BadRequest().json(json!({
-                "success": false,
-                "error": "Cannot provide both 'file' and 's3FilePath' - use one or the other"
-            })));
-        }
-
-        log_feature!(
-            LogFeature::Ingestion,
-            info,
-            "Processing S3 file path: {}",
-            s3_path
-        );
-
-        let (path, filename) = handle_s3_file_path(&s3_path, upload_storage).await?;
-        file_path = Some(path);
-        original_filename = Some(filename);
-        already_exists = false; // S3 files are not deduplicated (already in S3)
     }
 
     let file_path = match file_path {
@@ -335,124 +297,16 @@ async fn read_field_text(field: &mut actix_multipart::Field) -> Option<String> {
     String::from_utf8(bytes).ok()
 }
 
-/// Handle S3 file path input
-/// Downloads file from S3 to /tmp for processing
-/// Returns (local_path, filename)
-#[cfg(feature = "aws-backend")]
-async fn handle_s3_file_path(
-    s3_path: &str,
-    upload_storage: &UploadStorage,
-) -> Result<(PathBuf, String), HttpResponse> {
-    // Parse S3 path (format: s3://bucket/key or s3://bucket/prefix/key)
-    if !s3_path.starts_with("s3://") {
-        log_feature!(
-            LogFeature::Ingestion,
-            error,
-            "Invalid S3 path format: {}",
-            s3_path
-        );
-        return Err(HttpResponse::BadRequest().json(json!({
-            "success": false,
-            "error": format!("Invalid S3 path format. Expected 's3://bucket/key', got: {}", s3_path)
-        })));
-    }
-
-    let path_without_prefix = &s3_path[5..]; // Remove "s3://"
-    let parts: Vec<&str> = path_without_prefix.splitn(2, '/').collect();
-
-    if parts.len() != 2 {
-        log_feature!(
-            LogFeature::Ingestion,
-            error,
-            "Invalid S3 path structure: {}",
-            s3_path
-        );
-        return Err(HttpResponse::BadRequest().json(json!({
-            "success": false,
-            "error": format!("Invalid S3 path. Expected 's3://bucket/key', got: {}", s3_path)
-        })));
-    }
-
-    let bucket = parts[0];
-    let key = parts[1];
-
-    // Extract filename from key (last path segment) and sanitize against path traversal
-    let raw_filename = key.rsplit('/').next().unwrap_or(key).to_string();
-    // Strip any path separators or parent-directory traversal sequences
-    let filename: String = raw_filename.replace(['/', '\\'], "_").replace("..", "_");
-    if filename.is_empty() {
-        return Err(HttpResponse::BadRequest().json(json!({
-            "success": false,
-            "error": "S3 key produced an empty filename"
-        })));
-    }
-
-    log_feature!(
-        LogFeature::Ingestion,
-        info,
-        "Downloading S3 file: bucket={}, key={}, filename={}",
-        bucket,
-        key,
-        filename
-    );
-
-    // Download file from S3
-    let file_data = match upload_storage.download_from_s3_path(bucket, key).await {
-        Ok(data) => data,
-        Err(e) => {
-            log_feature!(
-                LogFeature::Ingestion,
-                error,
-                "Failed to download S3 file: {}",
-                e
-            );
-            return Err(HttpResponse::InternalServerError().json(json!({
-                "success": false,
-                "error": format!("Failed to download S3 file: {}", e)
-            })));
-        }
-    };
-
-    // Save to /tmp for processing (file converter needs local file)
-    // Use folddb_ prefix for easy identification and cleanup
-    let temp_path = std::env::temp_dir().join(format!("folddb_s3_{}", filename));
-    if let Err(e) = fs::write(&temp_path, &file_data).await {
-        log_feature!(
-            LogFeature::Ingestion,
-            error,
-            "Failed to write S3 file to /tmp: {}",
-            e
-        );
-        return Err(HttpResponse::InternalServerError().json(json!({
-            "success": false,
-            "error": format!("Failed to write file to temp directory: {}", e)
-        })));
-    }
-
-    log_feature!(
-        LogFeature::Ingestion,
-        info,
-        "S3 file downloaded to /tmp for processing: {:?}",
-        temp_path
-    );
-
-    Ok((temp_path, filename))
-}
-
 // ---- File upload handlers ----
 
 /// Process file upload and ingestion
 ///
-/// Accepts multipart/form-data with either:
-/// - file: Binary file to upload (traditional upload)
-/// - s3FilePath: S3 path (e.g., "s3://bucket/path/to/file.json") for files already in S3
+/// Accepts multipart/form-data with:
+/// - file: Binary file to upload
 ///
 /// Additional optional fields:
 /// - autoExecute: Boolean (default: true)
 /// - pubKey: String (default: "default")
-///
-/// Note: Provide either 'file' OR 's3FilePath', not both.
-/// If s3FilePath is used, the file is downloaded from S3 for processing but not re-uploaded.
 #[utoipa::path(
     post,
     path = "/api/ingestion/upload",

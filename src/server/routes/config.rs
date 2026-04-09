@@ -18,42 +18,15 @@ pub struct DatabaseConfigRequest {
 }
 
 #[derive(Deserialize, Serialize, utoipa::ToSchema, Debug, Clone)]
-#[serde(tag = "type")]
-pub enum DatabaseConfigDto {
-    #[serde(rename = "local")]
-    Local { path: String },
-    #[cfg(feature = "aws-backend")]
-    #[serde(rename = "cloud", alias = "dynamodb")]
-    Cloud(Box<CloudConfigDto>),
-    #[serde(rename = "exemem")]
-    Exemem { api_url: String },
+pub struct DatabaseConfigDto {
+    pub path: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub cloud_sync: Option<CloudSyncConfigDto>,
 }
 
-/// DTO for ExplicitTables
-#[derive(Deserialize, Serialize, utoipa::ToSchema, Debug, Clone, Default)]
-pub struct ExplicitTablesDto {
-    pub main: String,
-    pub metadata: String,
-    pub permissions: String,
-    pub schema_states: String,
-    pub schemas: String,
-    pub public_keys: String,
-    pub native_index: String,
-    pub process: String,
-    pub logs: String,
-    pub idempotency: String,
-}
-
-/// DTO for CloudConfig (formerly DynamoDbConfig)
-#[cfg(feature = "aws-backend")]
 #[derive(Deserialize, Serialize, utoipa::ToSchema, Debug, Clone)]
-pub struct CloudConfigDto {
-    pub region: String,
-    /// Explicit table names for all required namespaces
-    pub tables: ExplicitTablesDto,
-    pub auto_create: bool,
-    pub user_id: Option<String>,
-    pub file_storage_bucket: Option<String>,
+pub struct CloudSyncConfigDto {
+    pub api_url: String,
 }
 
 #[derive(Serialize, utoipa::ToSchema)]
@@ -76,32 +49,11 @@ pub async fn get_database_config(state: web::Data<AppState>) -> impl Responder {
     // Get the base configuration from NodeManager (not per-user)
     let config = state.node_manager.get_base_config().await;
 
-    let db_config = match &config.database {
-        DatabaseConfig::Local { path } => DatabaseConfigDto::Local {
-            path: path.to_string_lossy().to_string(),
-        },
-        #[cfg(feature = "aws-backend")]
-        DatabaseConfig::Cloud(config) => DatabaseConfigDto::Cloud(Box::new(CloudConfigDto {
-            region: config.region.clone(),
-            auto_create: config.auto_create,
-            user_id: config.user_id.clone(),
-            file_storage_bucket: config.file_storage_bucket.clone(),
-            tables: ExplicitTablesDto {
-                main: config.tables.main.clone(),
-                metadata: config.tables.metadata.clone(),
-                permissions: config.tables.permissions.clone(),
-                schema_states: config.tables.schema_states.clone(),
-                schemas: config.tables.schemas.clone(),
-                public_keys: config.tables.public_keys.clone(),
-                native_index: config.tables.native_index.clone(),
-                process: config.tables.process.clone(),
-                logs: config.tables.logs.clone(),
-                idempotency: config.tables.idempotency.clone(),
-            },
-        })),
-        DatabaseConfig::Exemem { api_url, .. } => DatabaseConfigDto::Exemem {
-            api_url: api_url.clone(),
-        },
+    let db_config = DatabaseConfigDto {
+        path: config.database.path.to_string_lossy().to_string(),
+        cloud_sync: config.database.cloud_sync.as_ref().map(|cs| CloudSyncConfigDto {
+            api_url: cs.api_url.clone(),
+        }),
     };
 
     HttpResponse::Ok().json(db_config)
@@ -259,18 +211,20 @@ pub async fn apply_setup(
     if let Some(ref storage) = req.storage {
         match storage {
             StorageSetup::Local { path } => {
-                config.database = DatabaseConfig::Local {
-                    path: std::path::PathBuf::from(path),
-                };
+                config.database = DatabaseConfig::local(std::path::PathBuf::from(path));
                 changes.push("storage (local)");
             }
             StorageSetup::Exemem { api_url, api_key } => {
-                config.database = DatabaseConfig::Exemem {
+                let cloud_sync = fold_db::storage::config::CloudSyncConfig {
                     api_url: api_url.clone(),
                     api_key: api_key.clone(),
                     session_token: None,
                     user_hash: None,
                 };
+                config.database = DatabaseConfig::with_cloud_sync(
+                    config.database.path.clone(),
+                    cloud_sync,
+                );
                 changes.push("storage (exemem)");
 
                 // Write to Sled config store so consumers can read from Sled

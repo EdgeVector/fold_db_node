@@ -66,9 +66,7 @@ impl NodeConfig {
     /// Create a new node configuration with the specified storage path
     pub fn new(storage_path: PathBuf) -> Self {
         Self {
-            database: DatabaseConfig::Local {
-                path: storage_path.clone(),
-            },
+            database: DatabaseConfig::local(storage_path.clone()),
             storage_path: Some(storage_path),
             network_listen_address: default_network_listen_address(),
             security_config: SecurityConfig::from_env(),
@@ -87,18 +85,9 @@ impl NodeConfig {
     /// instance gets its own Sled directory. Falls back to `"data"` for
     /// backwards compatibility when `storage_path` is absent.
     pub fn get_storage_path(&self) -> PathBuf {
-        match &self.database {
-            DatabaseConfig::Local { path } => path.clone(),
-            #[cfg(feature = "aws-backend")]
-            DatabaseConfig::Cloud(_) => self
-                .storage_path
-                .clone()
-                .unwrap_or_else(|| PathBuf::from("data")),
-            DatabaseConfig::Exemem { .. } => self
-                .storage_path
-                .clone()
-                .unwrap_or_else(|| PathBuf::from("data")),
-        }
+        self.storage_path
+            .clone()
+            .unwrap_or_else(|| self.database.path.clone())
     }
 
     /// Set the network listening address

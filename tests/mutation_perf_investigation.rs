@@ -8,8 +8,6 @@ use fold_db_node::ingestion::mutation_generator;
 mod common;
 use common::create_test_mutation;
 
-// Mock DynamoDB client if needed, or use local if feature not enabled
-#[cfg(feature = "aws-backend")]
 #[tokio::test(flavor = "multi_thread")]
 async fn test_mutation_performance_investigation() {
     println!("{}", "=".repeat(80));
@@ -21,11 +19,6 @@ async fn test_mutation_performance_investigation() {
 
     // 2. Local Backend Mutation Execution Performance
     _test_local_mutation_execution().await;
-
-    // 3. DynamoDB Backend Mutation Execution Performance (Mock/Simulated)
-    // We will conditionally run this if we can set up a mock or if configured
-    #[cfg(feature = "aws-backend")]
-    test_dynamodb_mutation_execution().await;
 }
 
 async fn _test_mutation_generation_performance() {
@@ -191,21 +184,3 @@ async fn _test_local_mutation_execution() {
     std::fs::remove_dir_all(&temp_dir).ok();
 }
 
-#[cfg(feature = "aws-backend")]
-async fn test_dynamodb_mutation_execution() {
-    println!("\n--- Phase 3: DynamoDB Mutation Execution Performance ---");
-
-    // NOTE: This usually requires LocalStack or real creds.
-    // If we are just unit testing logic, we might mock it.
-    // For this investigation, if the user has an environment that supports it, we try.
-    // Otherwise we might skip or fail gracefully.
-
-    if std::env::var("AWS_ACCESS_KEY_ID").is_err() {
-        println!("⚠️  Skipping DynamoDB test: AWS credentials not found");
-        return;
-    }
-
-    // Similar setup but with DynamoDB config
-    // ... implementation ...
-    println!("(DynamoDB test placeholder - requires env setup)");
-}

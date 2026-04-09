@@ -2,9 +2,6 @@ use clap::Parser;
 use fold_db::constants::DEFAULT_SCHEMA_SERVICE_PORT;
 use fold_db_node::schema_service::SchemaServiceServer;
 
-#[cfg(feature = "aws-backend")]
-use fold_db::storage::CloudConfig;
-
 /// Command line options for the schema service binary.
 #[derive(Parser, Debug)]
 #[command(author, version, about)]
@@ -21,37 +18,18 @@ struct Cli {
 /// Main entry point for the Schema Service.
 ///
 /// This service provides HTTP endpoints for schema discovery and retrieval.
-///
-/// # Storage Modes
-///
-/// The service supports two storage modes:
-/// 1. **Local Sled Storage (Default)**: Uses local sled database
-/// 2. **DynamoDB Storage (Serverless)**: Uses DynamoDB with no locking needed!
+/// Uses local Sled storage for schema persistence.
 ///
 /// # Command-Line Arguments
 ///
 /// * `--port <PORT>` - Port for the schema service (default: 9002)
-/// * `--db-path <PATH>` - Path to the sled database for local storage (default: schema_registry)
-///
-/// # Environment Variables (DynamoDB Mode)
-///
-/// To enable DynamoDB storage, set the following environment variables:
-/// * `FOLD_DYNAMODB_TABLE` - DynamoDB table name (required for DynamoDB mode)
-/// * `FOLD_DYNAMODB_REGION` - AWS region (required for DynamoDB mode)
-///
-/// If DynamoDB environment variables are set, DynamoDB storage will be used automatically.
-/// **No distributed locking needed** - identity hashes ensure idempotent writes!
-///
-/// # Returns
-///
-/// A `Result` indicating success or failure.
+/// * `--db-path <PATH>` - Path to the sled database (default: schema_registry)
 ///
 /// # Errors
 ///
 /// Returns an error if:
 /// * The database cannot be opened
 /// * The HTTP server cannot be started
-/// * DynamoDB configuration is invalid (when using DynamoDB mode)
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
     fold_db::logging::LoggingSystem::init_default().await.ok();
@@ -61,26 +39,6 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     let bind_address = format!("127.0.0.1:{}", port);
 
-    // Check if DynamoDB configuration is available from environment
-    #[cfg(feature = "aws-backend")]
-    let server = if let Ok(dynamodb_config) = CloudConfig::from_env() {
-        println!("🚀 Schema service starting with DynamoDB storage");
-        println!(
-            "   Tables: {} (main), {} (schemas), etc.",
-            dynamodb_config.tables.main, dynamodb_config.tables.schemas
-        );
-        println!("   Region: {}", dynamodb_config.region);
-        println!("   ✨ No locking needed - identity hashes ensure idempotent writes!");
-
-        SchemaServiceServer::new_with_cloud(dynamodb_config, &bind_address).await?
-    } else {
-        println!("🚀 Schema service starting with local sled storage");
-        println!("   Database path: {}", db_path);
-
-        SchemaServiceServer::new(db_path, &bind_address)?
-    };
-
-    #[cfg(not(feature = "aws-backend"))]
     let server = {
         println!("🚀 Schema service starting with local sled storage");
         println!("   Database path: {}", db_path);

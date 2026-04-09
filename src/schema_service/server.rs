@@ -9,9 +9,6 @@ use fold_db::logging::features::LogFeature;
 pub use super::state::{SchemaServiceState, SchemaStorage};
 pub use super::types::*;
 
-#[cfg(feature = "aws-backend")]
-pub use super::state::CloudConfig;
-
 // Route handlers (pub(super) visibility — accessible from sibling modules)
 use super::routes::{
     add_schema, add_view, batch_check_reuse, find_similar, find_similar_transforms,
@@ -30,17 +27,6 @@ impl SchemaServiceServer {
     /// Create a new schema service server with local sled storage
     pub fn new(db_path: String, bind_address: &str) -> FoldDbResult<Self> {
         let state = SchemaServiceState::new(db_path)?;
-
-        Ok(Self {
-            state: web::Data::new(state),
-            bind_address: bind_address.to_string(),
-        })
-    }
-
-    /// Create a new schema service server with Cloud backend
-    #[cfg(feature = "aws-backend")]
-    pub async fn new_with_cloud(config: CloudConfig, bind_address: &str) -> FoldDbResult<Self> {
-        let state = SchemaServiceState::new_with_cloud(config).await?;
 
         Ok(Self {
             state: web::Data::new(state),
@@ -220,8 +206,6 @@ mod tests {
 
                 assert_eq!(stored_schema.name, added_schema.name);
             }
-            #[cfg(feature = "aws-backend")]
-            _ => panic!("Expected Sled storage"),
         }
     }
 

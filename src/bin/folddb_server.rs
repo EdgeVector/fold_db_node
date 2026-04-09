@@ -111,9 +111,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         std::fs::create_dir_all(&data_path)?;
         std::fs::create_dir_all(&config_path)?;
 
-        config.database = fold_db::storage::config::DatabaseConfig::Local {
-            path: data_path.clone(),
-        };
+        config.database = fold_db::storage::config::DatabaseConfig::local(data_path.clone());
         config.schema_service_url =
             Some(schema_service_url.unwrap_or_else(fold_db_node::endpoints::schema_service_url));
 
@@ -133,7 +131,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     } else {
         // Config file exists — honour explicit CLI overrides only
         if let Some(dir) = data_dir {
-            config.database = fold_db::storage::config::DatabaseConfig::Local { path: dir };
+            config.database = fold_db::storage::config::DatabaseConfig::local(dir);
         }
         if let Some(url) = schema_service_url {
             config.schema_service_url = Some(url);
@@ -144,14 +142,11 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         std::fs::create_dir_all(&config_path)?;
         std::env::set_var("FOLD_CONFIG_DIR", &config_path);
 
-        // If credentials.json exists, override the api_key in the Exemem config.
+        // If credentials.json exists, override the api_key in the cloud sync config.
         // After registration the new API key is saved to credentials.json but
         // node_config.json still has the bootstrap key. Loading from credentials
         // ensures we use the correct key after restart.
-        if let fold_db::storage::config::DatabaseConfig::Exemem {
-            ref mut api_key, ..
-        } = config.database
-        {
+        if let Some(ref mut cloud_sync) = config.database.cloud_sync {
             let folddb_home = fold_db_node::utils::paths::folddb_home()
                 .unwrap_or_else(|_| PathBuf::from(".folddb"));
             let creds_path = folddb_home.join("credentials.json");
@@ -162,7 +157,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                             log::info!(
                                 "Loaded API key from credentials.json (overriding node_config)"
                             );
-                            *api_key = key.to_string();
+                            cloud_sync.api_key = key.to_string();
                         }
                     }
                 }
@@ -182,20 +177,9 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     }
 
     // Initialize logging system with environment configuration
-    #[allow(unused_mut)]
-    let mut log_config = fold_db::logging::config::LogConfig::from_env().unwrap_or_default();
+    let log_config = fold_db::logging::config::LogConfig::from_env().unwrap_or_default();
 
-    // If using DynamoDB backend, enable DynamoDB logging
-    #[cfg(feature = "aws-backend")]
-    if let fold_db_node::fold_node::config::DatabaseConfig::Cloud(ref mut db_config) =
-        config.database
-    {
-        if std::env::var("FOLD_LOG_DYNAMODB_ENABLED").is_err() {
-            log_config.outputs.dynamodb.enabled = true;
-            log_config.outputs.dynamodb.table_name = db_config.tables.logs.clone();
-            log_config.outputs.dynamodb.region = Some(db_config.region.clone());
-        }
-    }
+    // DynamoDB logging was only used with the legacy Cloud backend which has been removed.
 
     if let Err(e) = fold_db::logging::LoggingSystem::init_with_config(log_config).await {
         eprintln!("Failed to initialize logging system: {}", e);

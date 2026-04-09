@@ -121,7 +121,7 @@ async fn make_node(schema_service_url: &str) -> FoldNode {
 
     // Test-only keys (valid ed25519 keypair, base64-encoded)
     let config = NodeConfig {
-        database: DatabaseConfig::Local { path: db_path },
+        database: DatabaseConfig::local(db_path),
         schema_service_url: Some(schema_service_url.to_string()),
         private_key: Some("AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=".to_string()),
         public_key: Some("O2onvM62pC1io6jQKm8Nc2UyFXcd4kOmOsBIoYtZ2ik=".to_string()),
