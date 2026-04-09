@@ -369,9 +369,17 @@ async fn signed_register(
 /// recover from 401 errors (e.g., expired session tokens).
 async fn refresh_auth_standalone() -> Result<fold_db::sync::auth::SyncAuth, String> {
     // 1. Load the node's persisted identity (Ed25519 keypair)
+    //    Identity is at $FOLDDB_HOME/identity/{sha256("default")}.json
     let folddb_home = crate::utils::paths::folddb_home()
         .map_err(|e| format!("Cannot resolve FOLDDB_HOME: {e}"))?;
-    let identity_path = folddb_home.join("config").join("node_identity.json");
+
+    let identity_path = {
+        use sha2::{Digest, Sha256};
+        let mut hasher = Sha256::new();
+        hasher.update(b"default");
+        let hash_hex = format!("{:x}", hasher.finalize());
+        folddb_home.join("identity").join(format!("{hash_hex}.json"))
+    };
 
     let identity_bytes = crate::sensitive_io::read_sensitive(&identity_path)
         .map_err(|e| format!("Failed to read node identity for auth refresh: {e}"))?;
