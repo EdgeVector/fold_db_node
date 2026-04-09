@@ -140,9 +140,7 @@ pub async fn resolve_discovery_config(
                     .map(|c| c.session_token)
             })
             .ok_or_else(|| {
-                crate::handlers::HandlerError::Unauthorized(
-                    "No auth token available".to_string(),
-                )
+                crate::handlers::HandlerError::Unauthorized("No auth token available".to_string())
             })?
     };
 

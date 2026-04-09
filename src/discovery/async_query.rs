@@ -120,10 +120,7 @@ pub struct LocalAsyncQuery {
 }
 
 /// Save an async query to local store.
-pub async fn save_async_query(
-    store: &dyn KvStore,
-    query: &LocalAsyncQuery,
-) -> Result<(), String> {
+pub async fn save_async_query(store: &dyn KvStore, query: &LocalAsyncQuery) -> Result<(), String> {
     let key = format!("{}{}", ASYNC_QUERY_PREFIX, query.request_id);
     let value =
         serde_json::to_vec(query).map_err(|e| format!("Failed to serialize async query: {}", e))?;
@@ -279,6 +276,9 @@ mod tests {
         let json = serde_json::to_string(&payload).unwrap();
         let parsed: SchemaListResponsePayload = serde_json::from_str(&json).unwrap();
         assert_eq!(parsed.schemas.len(), 2);
-        assert_eq!(parsed.schemas[0].descriptive_name.as_deref(), Some("Personal Notes"));
+        assert_eq!(
+            parsed.schemas[0].descriptive_name.as_deref(),
+            Some("Personal Notes")
+        );
     }
 }
