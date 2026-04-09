@@ -20,14 +20,14 @@ struct NodeIdentity {
 
 /// Response from the Exemem CLI registration endpoint.
 #[derive(Deserialize)]
-struct ExememRegisterResponse {
-    ok: bool,
+pub struct ExememRegisterResponse {
+    pub ok: bool,
     #[serde(default)]
-    user_hash: Option<String>,
+    pub user_hash: Option<String>,
     #[serde(default)]
-    api_key: Option<String>,
+    pub api_key: Option<String>,
     #[serde(default)]
-    message: Option<String>,
+    pub message: Option<String>,
 }
 
 /// Check whether a persisted node identity exists at `$FOLDDB_HOME/config/node_identity.json`.
@@ -43,7 +43,7 @@ fn hex_encode(bytes: &[u8]) -> String {
 }
 
 /// Register the node's public key with the Exemem API.
-fn register_with_exemem(
+pub fn register_with_exemem(
     api_url: &str,
     public_key_hex: &str,
 ) -> Result<ExememRegisterResponse, CliError> {
@@ -95,7 +95,7 @@ fn register_with_exemem(
 }
 
 /// Derive BIP39 recovery phrase from an Ed25519 private key.
-fn derive_recovery_phrase(private_key_base64: &str) -> Result<Vec<String>, CliError> {
+pub fn derive_recovery_phrase(private_key_base64: &str) -> Result<Vec<String>, CliError> {
     use base64::Engine;
     let key_bytes = base64::engine::general_purpose::STANDARD
         .decode(private_key_base64)

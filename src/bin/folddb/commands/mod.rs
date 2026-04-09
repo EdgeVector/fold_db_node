@@ -1,11 +1,13 @@
 #[cfg(target_os = "macos")]
 pub mod apple;
 pub mod ask;
+pub mod cloud;
 pub mod completions;
 pub mod daemon;
 pub mod ingest;
 pub mod mutate;
 pub mod query;
+pub mod recovery;
 pub mod schema;
 pub mod search;
 pub mod setup;
@@ -128,18 +130,9 @@ pub async fn dispatch(
                 Ok(CommandOutput::Message(msg))
             }
         },
-        Command::Cloud { action: _ } => {
-            // TODO: implement cloud enable/disable/status
-            Err(CliError::new("Cloud commands not yet implemented"))
-        }
-        Command::RecoveryPhrase => {
-            // TODO: implement recovery phrase display
-            Err(CliError::new("Recovery phrase command not yet implemented"))
-        }
-        Command::Restore => {
-            // TODO: implement restore from recovery phrase
-            Err(CliError::new("Restore command not yet implemented"))
-        }
+        Command::Cloud { action } => cloud::run(action, processor, config_path).await,
+        Command::RecoveryPhrase => recovery::recovery_phrase(processor),
+        Command::Restore => recovery::restore().await,
         Command::Reset { confirm } => system::reset(*confirm, processor, user_hash, mode).await,
         Command::Completions { shell } => completions::run(*shell, verbose),
     }
