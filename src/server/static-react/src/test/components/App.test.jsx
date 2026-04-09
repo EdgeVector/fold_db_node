@@ -66,7 +66,7 @@ vi.mock('../../components/ResultsSection', () => ({
   )
 }));
 
-vi.mock('../../components/TabNavigation', () => ({
+vi.mock('../../components/Sidebar', () => ({
   default: ({ activeTab, onTabChange }) => (
     <div data-testid="tab-navigation">
       <button
@@ -215,6 +215,14 @@ vi.mock('../../components/tabs/AgentTab', () => ({
   default: ({ onTabChange }) => (
     <div data-testid="agent-tab">
       Agent Tab
+    </div>
+  )
+}));
+
+vi.mock('../../components/tabs/PeopleTab', () => ({
+  default: ({ onResult }) => (
+    <div data-testid="people-tab">
+      People Tab
     </div>
   )
 }));

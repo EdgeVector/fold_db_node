@@ -1,5 +1,6 @@
 import { useState, useEffect, useRef, useCallback } from 'react'
 import KeyManagementTab from './tabs/KeyManagementTab'
+import MyProfileTab from './tabs/MyProfileTab'
 import useAiConfig from './settings/AiConfigSettings'
 import SchemaServiceSettings from './settings/SchemaServiceSettings'
 import useDatabaseConfig from './settings/DatabaseSettings'
@@ -66,6 +67,7 @@ function SettingsModal({ isOpen, onClose, initialTab, onRelaunchOnboarding }) {
     { id: 'database', label: 'Database' },
     { id: 'org', label: 'Organizations' },
     { id: 'upgrade-cloud', label: 'Exemem' },
+    { id: 'profile', label: 'Profile' },
   ]
 
   const handleSave = () => {
@@ -109,6 +111,7 @@ function SettingsModal({ isOpen, onClose, initialTab, onRelaunchOnboarding }) {
               <BackupSettingsPanel />
             </div>
           )}
+          {activeTab === 'profile' && <MyProfileTab onResult={NOOP} />}
         </div>
 
         <div className="modal-footer">

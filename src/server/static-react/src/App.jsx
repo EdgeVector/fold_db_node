@@ -5,7 +5,8 @@ import Footer from './components/Footer'
 import UpdateBanner from './components/UpdateBanner'
 import ResultsSection from './components/ResultsSection'
 import IngestionReport from './components/IngestionReport'
-import TabNavigation from './components/TabNavigation'
+import Sidebar from './components/Sidebar'
+import PeopleTab from './components/tabs/PeopleTab'
 import SchemaTab from './components/tabs/SchemaTab'
 import QueryTab from './components/tabs/QueryTab'
 import LlmQueryTab from './components/tabs/LlmQueryTab'
@@ -63,13 +64,14 @@ const HASH_TO_TAB = {
   discovery: 'discovery',
   'discovery-browse': 'discovery-browse',
   views: 'views',
-  sharing: 'sharing',
+  people: 'people',
+  sharing: 'people',
+  trust: 'people', 'trust-graph': 'people',
+  feed: 'people',
+  'shared-moments': 'people',
+  'my-profile': 'people', profile: 'people',
   'apple-import': 'apple-import',
-  feed: 'feed',
-  'shared-moments': 'shared-moments',
-  'my-profile': 'my-profile', profile: 'my-profile',
   conflicts: 'conflicts',
-  trust: 'trust', 'trust-graph': 'trust',
   'remote-query': 'remote-query',
 }
 
@@ -250,6 +252,8 @@ export function AppContent() {
         return <MyProfileTab onResult={handleOperationResult} />
       case 'conflicts':
         return <ConflictsTab />
+      case 'people':
+        return <PeopleTab onResult={handleOperationResult} />
       case 'trust':
         return <TrustTab onResult={handleOperationResult} />
       case 'remote-query':
@@ -358,47 +362,46 @@ export function AppContent() {
       )}
 
       <div className="flex flex-1 overflow-hidden">
-        <div className="flex-1 flex flex-col overflow-hidden">
-          <TabNavigation
-            activeTab={activeTab}
-            onTabChange={handleTabChange}
-          />
+        <Sidebar
+          activeTab={activeTab}
+          onTabChange={handleTabChange}
+          onSettingsClick={() => { setSettingsInitialTab(null); setIsSettingsOpen(true) }}
+        />
 
-          <main className="flex-1 overflow-y-auto bg-surface-secondary">
-            <div className="max-w-5xl mx-auto p-6 bg-surface min-h-full">
-              {/* Schema Loading/Error States */}
-              {schemasError && (
-                <div className="mb-4 p-3 bg-surface border border-border border-l-4 border-l-gruvbox-red">
-                  <p className="text-gruvbox-red text-sm">{schemasError}</p>
-                </div>
-              )}
-
-              {/* Section Title */}
-              <div className="text-xs uppercase tracking-widest text-tertiary mb-3">
-                {activeTab.replace('-', ' ')}
+        <main className="flex-1 overflow-y-auto bg-surface-secondary">
+          <div className="max-w-5xl mx-auto p-6 bg-surface min-h-full">
+            {/* Schema Loading/Error States */}
+            {schemasError && (
+              <div className="mb-4 p-3 bg-surface border border-border border-l-4 border-l-gruvbox-red">
+                <p className="text-gruvbox-red text-sm">{schemasError}</p>
               </div>
+            )}
 
-              {/* Tab Content */}
-              {renderActiveTab()}
-
-              {/* Results */}
-              {results && isIngestionResult(results) && (
-                <IngestionReport
-                  ingestionResult={results}
-                  onDismiss={() => setResults(null)}
-                />
-              )}
-              {results && !isIngestionResult(results) && (
-                <div className="mt-6" ref={resultsRef}>
-                  <div className="text-xs uppercase tracking-widest text-tertiary mb-3">
-                    Results
-                  </div>
-                  <ResultsSection results={results} />
-                </div>
-              )}
+            {/* Section Title */}
+            <div className="text-xs uppercase tracking-widest text-tertiary mb-3">
+              {activeTab.replace('-', ' ')}
             </div>
-          </main>
-        </div>
+
+            {/* Tab Content */}
+            {renderActiveTab()}
+
+            {/* Results */}
+            {results && isIngestionResult(results) && (
+              <IngestionReport
+                ingestionResult={results}
+                onDismiss={() => setResults(null)}
+              />
+            )}
+            {results && !isIngestionResult(results) && (
+              <div className="mt-6" ref={resultsRef}>
+                <div className="text-xs uppercase tracking-widest text-tertiary mb-3">
+                  Results
+                </div>
+                <ResultsSection results={results} />
+              </div>
+            )}
+          </div>
+        </main>
 
         <LogSidebar />
       </div>
