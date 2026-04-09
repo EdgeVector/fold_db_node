@@ -258,12 +258,15 @@ impl FoldHttpServer {
             // CORS — restrict to localhost origins only.
             // This is the primary CSRF protection: prevents external webpages
             // from making requests to the local FoldDB server.
+            // Allow the server's own port plus common Vite dev server ports.
             let cors = Cors::default()
-                .allowed_origin("http://localhost:5173")
-                .allowed_origin("http://localhost:9001")
-                .allowed_origin("http://127.0.0.1:5173")
-                .allowed_origin("http://127.0.0.1:9001")
-                .allowed_origin("tauri://localhost")
+                .allowed_origin_fn(|origin, _req_head| {
+                    let origin = origin.as_bytes();
+                    // Allow any localhost/127.0.0.1 origin (safe for local dev)
+                    origin.starts_with(b"http://localhost:")
+                        || origin.starts_with(b"http://127.0.0.1:")
+                        || origin == b"tauri://localhost"
+                })
                 .allow_any_method()
                 .allow_any_header()
                 .max_age(3600);

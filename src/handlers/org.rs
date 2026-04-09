@@ -119,14 +119,14 @@ pub async fn require_exemem(
 }
 
 /// Create a new organization. The calling node becomes the admin.
-/// Requires Exemem cloud configuration — orgs need cloud sync for invite
-/// distribution and multi-device membership.
+/// Works in both local and Exemem modes. In Exemem mode, the org is also
+/// registered with the cloud backend for invite distribution and sync.
 pub async fn create_org(
     req: &CreateOrgRequest,
     user_hash: &str,
     node: &FoldNode,
 ) -> HandlerResult<CreateOrgResponse> {
-    let client = require_exemem(node).await?;
+    let cloud_client = get_auth_client(node).await;
     let sled_db = get_sled_db(node).await?;
 
     let creator_public_key = node.get_node_public_key().to_string();
@@ -148,11 +148,13 @@ pub async fn create_org(
     let invite_bundle = org_ops::generate_invite(&sled_db, &membership.org_hash)
         .handler_err("generate initial invite")?;
 
-    // Register the org on the Exemem backend
-    client
-        .create_org(&membership.org_hash)
-        .await
-        .handler_err("sync create_org to cloud")?;
+    // Register the org on the Exemem backend (if connected)
+    if let Some(client) = cloud_client {
+        client
+            .create_org(&membership.org_hash)
+            .await
+            .handler_err("sync create_org to cloud")?;
+    }
 
     // Reconfigure org sync with the new org
     node.configure_org_sync_if_needed().await;
@@ -167,13 +169,13 @@ pub async fn create_org(
 }
 
 /// Join an existing organization using an invite bundle.
-/// Requires Exemem cloud configuration — org data sync needs cloud connectivity.
+/// Works in both local and Exemem modes. In Exemem mode, cloud sync is
+/// configured and the invite is accepted on the backend.
 pub async fn join_org(
     invite: &OrgInviteBundle,
     user_hash: &str,
     node: &FoldNode,
 ) -> HandlerResult<JoinOrgResponse> {
-    require_exemem(node).await?;
     let sled_db = get_sled_db(node).await?;
 
     let my_public_key = node.get_node_public_key().to_string();
@@ -297,8 +299,10 @@ pub async fn add_member(
             .handler_err("upload invite to inbox")?;
     }
 
+    // Return the invite bundle so the UI can show it for manual sharing
+    // (especially useful in local mode where there's no cloud inbox)
     Ok(ApiResponse::success_with_user(
-        serde_json::json!({"ok": true}),
+        serde_json::json!({"ok": true, "invite_bundle": invite_bundle}),
         user_hash,
     ))
 }
