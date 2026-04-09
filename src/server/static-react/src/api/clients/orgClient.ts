@@ -49,6 +49,18 @@ export class OrgClient {
     });
   }
 
+  async leaveOrg(orgHash: string): Promise<EnhancedApiResponse<void>> {
+    return this.client.post(`/org/${orgHash}/leave`, undefined, {
+      timeout: API_TIMEOUTS.STANDARD,
+    });
+  }
+
+  async deleteOrg(orgHash: string): Promise<EnhancedApiResponse<void>> {
+    return this.client.delete(`/org/${orgHash}`, {
+      timeout: API_TIMEOUTS.STANDARD,
+    });
+  }
+
   async getCloudMembers(orgHash: string): Promise<EnhancedApiResponse<CloudMember[]>> {
     return this.client.get(`/org/${orgHash}/cloud-members`, {
       timeout: API_TIMEOUTS.STANDARD,

@@ -921,6 +921,7 @@ impl FoldHttpServer {
                 )
                 .route("/{org_hash}", web::get().to(org_routes::get_org))
                 .route("/{org_hash}", web::delete().to(org_routes::delete_org))
+                .route("/{org_hash}/leave", web::post().to(org_routes::leave_org))
                 .route(
                     "/{org_hash}/members",
                     web::post().to(org_routes::add_member),

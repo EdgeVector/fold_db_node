@@ -67,6 +67,13 @@ pub async fn remove_member(
     )
 }
 
+/// POST /api/org/{org_hash}/leave — leave an organization (remove self)
+pub async fn leave_org(path: web::Path<String>, state: web::Data<AppState>) -> impl Responder {
+    let (user_hash, node) = node_or_return!(state);
+    let org_hash = path.into_inner();
+    handler_result_to_response(org_handlers::leave_org(&org_hash, &user_hash, &node).await)
+}
+
 /// POST /api/org/{org_hash}/invite — generate an invite bundle
 pub async fn generate_invite(
     path: web::Path<String>,

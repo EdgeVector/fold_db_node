@@ -124,11 +124,22 @@ export default function OrgSettingsPanel() {
   const handleDeleteOrg = async (orgHash, orgName) => {
     if (!window.confirm(`Delete organization "${orgName}"? This will remove all org data from your node.`)) return
     try {
-      await defaultApiClient.delete(`/org/${orgHash}`)
+      await orgClient.deleteOrg(orgHash)
       showSuccess(`Organization "${orgName}" deleted`)
       fetchOrgs()
     } catch (err) {
       setError(err.message || 'Failed to delete organization')
+    }
+  }
+
+  const handleLeaveOrg = async (orgHash, orgName) => {
+    if (!window.confirm(`Leave organization "${orgName}"? All org data will be removed from your node.`)) return
+    try {
+      await orgClient.leaveOrg(orgHash)
+      showSuccess(`Left organization "${orgName}"`)
+      fetchOrgs()
+    } catch (err) {
+      setError(err.message || 'Failed to leave organization')
     }
   }
 
@@ -290,12 +301,19 @@ export default function OrgSettingsPanel() {
                   <div className="px-2 py-1 bg-primary/20 text-primary text-xs rounded uppercase font-semibold">
                     {org.role}
                   </div>
-                  {org.role === 'Admin' && (
+                  {org.role === 'Admin' ? (
                     <button
                       onClick={() => handleDeleteOrg(org.org_hash, org.org_name)}
                       className="text-red-400 hover:text-red-300 text-xs px-2 py-1 bg-red-400/10 hover:bg-red-400/20 rounded transition-colors"
                     >
                       Delete
+                    </button>
+                  ) : (
+                    <button
+                      onClick={() => handleLeaveOrg(org.org_hash, org.org_name)}
+                      className="text-red-400 hover:text-red-300 text-xs px-2 py-1 bg-red-400/10 hover:bg-red-400/20 rounded transition-colors"
+                    >
+                      Leave
                     </button>
                   )}
                 </div>
