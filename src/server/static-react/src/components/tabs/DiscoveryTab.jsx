@@ -549,10 +549,23 @@ function PeopleLikeYouPanel({ onResult }) {
   if (loading) return <p className="text-secondary text-sm">Finding people like you...</p>
 
   if (error) {
+    const isLocalMode = error.includes('503') || error.includes('DISCOVERY_MASTER_KEY') || error.includes('Service Unavailable')
     return (
       <div className="space-y-3">
-        <div className="text-sm text-gruvbox-red">{error}</div>
-        <button onClick={fetchProfiles} className="btn-secondary btn-sm">Retry</button>
+        {isLocalMode ? (
+          <div className="card p-6 text-center space-y-2 rounded">
+            <h3 className="text-base text-primary font-medium">Discovery requires Exemem Cloud</h3>
+            <p className="text-sm text-secondary">
+              Discovery connects you with other FoldDB users who share similar interests.
+              Enable cloud sync in Settings to use this feature.
+            </p>
+          </div>
+        ) : (
+          <>
+            <div className="text-sm text-gruvbox-red">{error}</div>
+            <button onClick={fetchProfiles} className="btn-secondary btn-sm">Retry</button>
+          </>
+        )}
       </div>
     )
   }
