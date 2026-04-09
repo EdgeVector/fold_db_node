@@ -112,9 +112,10 @@ fn config_show() {
     assert_eq!(json["ok"], true);
 
     let config = &json["config"];
-    assert_eq!(config["type"], "local");
+    // DatabaseConfig is now a struct: { path, cloud_sync? }
     // The path should point inside our temp dir
     let path_str = config["path"].as_str().expect("config.path is string");
+    assert!(config.get("cloud_sync").is_none() || config["cloud_sync"].is_null());
     assert!(
         path_str.contains(tmpdir.path().to_str().unwrap()),
         "config path '{}' should contain tmpdir '{}'",

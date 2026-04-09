@@ -65,7 +65,7 @@ impl OperationProcessor {
         display_name: String,
         contact_hint: Option<String>,
     ) -> Result<(), SchemaError> {
-        let card = IdentityCard::new(display_name, contact_hint);
+        let card = IdentityCard::new(display_name, contact_hint, None);
         // Save to file (backward compat)
         card.save()
             .map_err(|e| SchemaError::InvalidData(format!("Failed to save identity card: {e}")))?;

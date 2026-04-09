@@ -164,7 +164,11 @@ mod tests {
     #[test]
     fn test_create_and_verify() {
         let (priv_key, pub_key) = test_keypair();
-        let identity = IdentityCard::new("Alice".to_string(), Some("alice@test.com".to_string()));
+        let identity = IdentityCard::new(
+            "Alice".to_string(),
+            Some("alice@test.com".to_string()),
+            None,
+        );
 
         let invite = TrustInvite::create(&priv_key, &pub_key, &identity, 1).unwrap();
         assert!(invite.verify().unwrap());
@@ -175,7 +179,7 @@ mod tests {
     #[test]
     fn test_token_roundtrip() {
         let (priv_key, pub_key) = test_keypair();
-        let identity = IdentityCard::new("Bob".to_string(), None);
+        let identity = IdentityCard::new("Bob".to_string(), None, None);
 
         let invite = TrustInvite::create(&priv_key, &pub_key, &identity, 2).unwrap();
         let token = invite.to_token().unwrap();
@@ -189,7 +193,7 @@ mod tests {
     #[test]
     fn test_tampered_invite_fails_verification() {
         let (priv_key, pub_key) = test_keypair();
-        let identity = IdentityCard::new("Alice".to_string(), None);
+        let identity = IdentityCard::new("Alice".to_string(), None, None);
 
         let mut invite = TrustInvite::create(&priv_key, &pub_key, &identity, 1).unwrap();
         invite.proposed_distance = 999; // tamper
@@ -201,7 +205,7 @@ mod tests {
     fn test_wrong_key_fails_verification() {
         let (priv_key, pub_key) = test_keypair();
         let (_, other_pub_key) = test_keypair();
-        let identity = IdentityCard::new("Alice".to_string(), None);
+        let identity = IdentityCard::new("Alice".to_string(), None, None);
 
         let mut invite = TrustInvite::create(&priv_key, &pub_key, &identity, 1).unwrap();
         invite.sender_pub_key = other_pub_key; // claim different key

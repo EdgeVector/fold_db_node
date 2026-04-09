@@ -1,13 +1,13 @@
 use crate::error::CliError;
-use dialoguer::{Input, Select};
+use dialoguer::{Confirm, Input};
 use fold_db::security::{Ed25519KeyPair, SecurityConfig};
 use fold_db::storage::{CloudSyncConfig, DatabaseConfig};
 use fold_db_node::fold_node::config::NodeConfig;
+use fold_db_node::trust::identity_card::IdentityCard;
 use serde::{Deserialize, Serialize};
 use std::fs;
 use std::path::PathBuf;
 
-// Use the centralized endpoint registry for the default schema service URL.
 fn default_schema_service_url() -> String {
     fold_db_node::endpoints::schema_service_url()
 }
@@ -38,15 +38,11 @@ pub fn identity_file_exists() -> bool {
     path.exists()
 }
 
-/// Hex-encode a byte slice.
 fn hex_encode(bytes: &[u8]) -> String {
     bytes.iter().map(|b| format!("{:02x}", b)).collect()
 }
 
 /// Register the node's public key with the Exemem API.
-///
-/// Runs the blocking HTTP call on a dedicated thread to avoid panicking
-/// inside the tokio runtime.
 fn register_with_exemem(
     api_url: &str,
     public_key_hex: &str,
@@ -56,8 +52,6 @@ fn register_with_exemem(
         "public_key": public_key_hex,
     });
 
-    // Spawn on a separate OS thread so reqwest::blocking works even when a
-    // tokio runtime is active on the current thread.
     let result = std::thread::spawn(move || {
         let client = reqwest::blocking::Client::new();
         client
@@ -76,7 +70,6 @@ fn register_with_exemem(
         .map_err(|e| CliError::new(format!("Failed to read response body: {}", e)))?;
 
     if !status.is_success() {
-        // Try to extract a message from the JSON body, fall back to raw text
         let msg = serde_json::from_str::<serde_json::Value>(&body_text)
             .ok()
             .and_then(|v| v.get("message").and_then(|m| m.as_str()).map(String::from))
@@ -101,15 +94,35 @@ fn register_with_exemem(
     Ok(resp)
 }
 
+/// Derive BIP39 recovery phrase from an Ed25519 private key.
+fn derive_recovery_phrase(private_key_base64: &str) -> Result<Vec<String>, CliError> {
+    use base64::Engine;
+    let key_bytes = base64::engine::general_purpose::STANDARD
+        .decode(private_key_base64)
+        .map_err(|e| CliError::new(format!("Failed to decode private key: {}", e)))?;
+
+    // Use first 32 bytes as entropy for BIP39 (24 words = 256 bits)
+    let entropy = if key_bytes.len() >= 32 {
+        &key_bytes[..32]
+    } else {
+        return Err(CliError::new("Private key too short for recovery phrase"));
+    };
+
+    let mnemonic = bip39::Mnemonic::from_entropy(entropy)
+        .map_err(|e| CliError::new(format!("Failed to generate mnemonic: {}", e)))?;
+
+    Ok(mnemonic.words().map(|w| w.to_string()).collect())
+}
+
 /// Run the interactive setup wizard.
 ///
 /// Returns a fully populated `NodeConfig` with identity keys embedded.
 pub fn run_setup_wizard() -> Result<NodeConfig, CliError> {
     eprintln!();
-    eprintln!("Welcome to FoldDB setup!");
+    eprintln!("Welcome to FoldDB!");
     eprintln!();
 
-    // --- Generate identity first (needed for Exemem registration) ---
+    // --- Generate identity ---
     eprint!("Generating node identity...");
     let keypair = Ed25519KeyPair::generate()
         .map_err(|e| CliError::new(format!("Failed to generate keypair: {}", e)))?;
@@ -121,78 +134,116 @@ pub fn run_setup_wizard() -> Result<NodeConfig, CliError> {
         public_key: keypair.public_key_base64(),
     };
 
-    // --- Backend selection ---
-    let backends = &[
-        "Local (Sled - embedded, runs on this machine)",
-        "Exemem Cloud (local Sled + encrypted S3 sync)",
-    ];
-    let backend_idx = Select::new()
-        .with_prompt("Storage backend")
-        .items(backends)
-        .default(0)
-        .interact()
-        .map_err(|e| CliError::new(format!("Selection cancelled: {}", e)))?;
-
-    let database = match backend_idx {
-        0 => {
-            let default_path = fold_db_node::utils::paths::folddb_home()
-                .map(|h| h.join("data"))
-                .unwrap_or_else(|_| PathBuf::from("data"));
-
-            let data_dir: String = Input::new()
-                .with_prompt("Data directory")
-                .default(default_path.to_string_lossy().to_string())
-                .interact_text()
-                .map_err(|e| CliError::new(format!("Input cancelled: {}", e)))?;
-
-            DatabaseConfig::local(PathBuf::from(data_dir))
-        }
-        1 => {
-            let api_url: String = Input::new()
-                .with_prompt("Exemem API URL")
-                .default(fold_db_node::endpoints::exemem_api_url())
-                .interact_text()
-                .map_err(|e| CliError::new(format!("Input cancelled: {}", e)))?;
-
-            let public_key_hex = hex_encode(&keypair.public_key_bytes());
-
-            eprintln!();
-            eprint!("Registering with Exemem...");
-            let resp = register_with_exemem(&api_url, &public_key_hex)?;
-            eprintln!(" done.");
-            eprintln!();
-
-            let api_key = resp.api_key.ok_or_else(|| {
-                CliError::new("Registration response missing api_key".to_string())
-            })?;
-            let user_hash = resp.user_hash.unwrap_or_default();
-
-            eprintln!("Account created successfully!");
-            eprintln!("  User hash: {}", user_hash);
-            eprintln!();
-
-            let default_path = fold_db_node::utils::paths::folddb_home()
-                .map(|h| h.join("data"))
-                .unwrap_or_else(|_| PathBuf::from("data"));
-            DatabaseConfig::with_cloud_sync(
-                default_path,
-                CloudSyncConfig {
-                    api_url,
-                    api_key,
-                    session_token: None,
-                    user_hash: None,
-                },
-            )
-        }
-        _ => unreachable!(),
-    };
-
-    // --- Schema service URL ---
-    let schema_url: String = Input::new()
-        .with_prompt("Schema service URL")
-        .default(default_schema_service_url())
+    // --- Identity card: name, email, birthday ---
+    let name: String = Input::new()
+        .with_prompt("Your name")
         .interact_text()
         .map_err(|e| CliError::new(format!("Input cancelled: {}", e)))?;
+
+    let email: String = Input::new()
+        .with_prompt("Contact email (optional, press Enter to skip)")
+        .default(String::new())
+        .interact_text()
+        .map_err(|e| CliError::new(format!("Input cancelled: {}", e)))?;
+    let email = if email.is_empty() { None } else { Some(email) };
+
+    let birthday: String = Input::new()
+        .with_prompt("Birthday MM-DD (optional, press Enter to skip)")
+        .default(String::new())
+        .validate_with(|input: &String| {
+            if input.is_empty() {
+                Ok(())
+            } else {
+                IdentityCard::validate_birthday(input)
+            }
+        })
+        .interact_text()
+        .map_err(|e| CliError::new(format!("Input cancelled: {}", e)))?;
+    let birthday = if birthday.is_empty() {
+        None
+    } else {
+        Some(birthday)
+    };
+
+    eprintln!();
+    eprintln!("This info stays on your device. It's only shared when");
+    eprintln!("YOU invite someone to connect — never uploaded to any");
+    eprintln!("cloud service.");
+    eprintln!();
+
+    // Save identity card
+    let card = IdentityCard::new(name, email, birthday);
+    card.save()
+        .map_err(|e| CliError::new(format!("Failed to save identity card: {}", e)))?;
+
+    // --- Cloud backup ---
+    let enable_cloud = Confirm::new()
+        .with_prompt("Enable cloud backup?")
+        .default(false)
+        .interact()
+        .map_err(|e| CliError::new(format!("Input cancelled: {}", e)))?;
+
+    let default_path = fold_db_node::utils::paths::folddb_home()
+        .map(|h| h.join("data"))
+        .unwrap_or_else(|_| PathBuf::from("data"));
+
+    let database = if enable_cloud {
+        let invite_code: String = Input::new()
+            .with_prompt("Invite code")
+            .interact_text()
+            .map_err(|e| CliError::new(format!("Input cancelled: {}", e)))?;
+
+        let api_url = fold_db_node::endpoints::exemem_api_url();
+        let public_key_hex = hex_encode(&keypair.public_key_bytes());
+
+        eprintln!();
+        eprint!("Registering with Exemem...");
+        // TODO: pass invite_code to registration endpoint
+        let _ = &invite_code; // Will be used when API supports it
+        let resp = register_with_exemem(&api_url, &public_key_hex)?;
+        eprintln!(" done.");
+
+        let api_key = resp
+            .api_key
+            .ok_or_else(|| CliError::new("Registration response missing api_key".to_string()))?;
+
+        // Show recovery phrase
+        eprintln!();
+        eprintln!("Cloud backup enabled!");
+        eprintln!();
+
+        match derive_recovery_phrase(&identity.private_key) {
+            Ok(words) => {
+                eprintln!("\x1b[33m  RECOVERY PHRASE (save these 24 words):\x1b[0m");
+                eprintln!();
+                for (i, word) in words.iter().enumerate() {
+                    eprint!("  {:2}. {:<12}", i + 1, word);
+                    if (i + 1) % 4 == 0 {
+                        eprintln!();
+                    }
+                }
+                eprintln!();
+                eprintln!("  If you lose this device, these words are the");
+                eprintln!("  ONLY way to recover your data.");
+                eprintln!();
+            }
+            Err(e) => {
+                eprintln!("Warning: Could not generate recovery phrase: {}", e);
+            }
+        }
+
+        DatabaseConfig::with_cloud_sync(
+            default_path,
+            CloudSyncConfig {
+                api_url,
+                api_key,
+                session_token: None,
+                user_hash: resp.user_hash,
+            },
+        )
+    } else {
+        DatabaseConfig::local(default_path)
+    };
 
     // --- Persist identity ---
     let config_dir = fold_db_node::utils::paths::folddb_home()
@@ -214,7 +265,7 @@ pub fn run_setup_wizard() -> Result<NodeConfig, CliError> {
         storage_path,
         network_listen_address: "/ip4/0.0.0.0/tcp/0".to_string(),
         security_config: SecurityConfig::from_env(),
-        schema_service_url: Some(schema_url),
+        schema_service_url: Some(default_schema_service_url()),
         public_key: Some(identity.public_key),
         private_key: Some(identity.private_key),
         config_dir: None,
