@@ -392,7 +392,6 @@ impl FoldHttpServer {
     fn configure_schema_routes(cfg: &mut web::ServiceConfig) {
         cfg.route("/schemas", web::get().to(schema_routes::list_schemas))
             .route("/schemas/load", web::post().to(schema_routes::load_schemas))
-            .route("/schema", web::post().to(schema_routes::create_schema))
             .route("/schema/{name}", web::get().to(schema_routes::get_schema))
             .route(
                 "/schema/{name}/keys",
