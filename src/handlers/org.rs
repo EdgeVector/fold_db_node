@@ -88,7 +88,9 @@ async fn get_auth_client(node: &FoldNode) -> Option<fold_db::sync::auth::AuthCli
                         fold_db::sync::auth::SyncAuth::ApiKey(cloud.api_key)
                     };
                     return Some(fold_db::sync::auth::AuthClient::new(
-                        http, cloud.api_url, auth,
+                        http,
+                        cloud.api_url,
+                        auth,
                     ));
                 }
             }
@@ -104,9 +106,7 @@ async fn get_auth_client(node: &FoldNode) -> Option<fold_db::sync::auth::AuthCli
             .flatten()
             .filter(|c| !c.session_token.is_empty())
             .map(|c| fold_db::sync::auth::SyncAuth::BearerToken(c.session_token))
-            .unwrap_or_else(|| {
-                fold_db::sync::auth::SyncAuth::ApiKey(cloud_sync.api_key.clone())
-            });
+            .unwrap_or_else(|| fold_db::sync::auth::SyncAuth::ApiKey(cloud_sync.api_key.clone()));
         Some(fold_db::sync::auth::AuthClient::new(
             http,
             cloud_sync.api_url.clone(),

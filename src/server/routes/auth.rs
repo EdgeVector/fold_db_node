@@ -378,7 +378,9 @@ async fn refresh_auth_standalone() -> Result<fold_db::sync::auth::SyncAuth, Stri
         let mut hasher = Sha256::new();
         hasher.update(b"default");
         let hash_hex = format!("{:x}", hasher.finalize());
-        folddb_home.join("identity").join(format!("{hash_hex}.json"))
+        folddb_home
+            .join("identity")
+            .join(format!("{hash_hex}.json"))
     };
 
     let identity_bytes = crate::sensitive_io::read_sensitive(&identity_path)
