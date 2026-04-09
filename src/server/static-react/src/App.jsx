@@ -144,10 +144,12 @@ export function AppContent() {
       .then(response => {
         if (response.success && response.data) {
           setDbStatus(response.data)
-          // Show onboarding if backend says it hasn't been completed.
-          // This is authoritative — it's based on a marker file in the data dir,
-          // so --empty-db (which wipes the data dir) resets onboarding state.
-          if (!response.data.onboarding_complete) {
+          // Show onboarding if neither backend nor localStorage says it's complete.
+          // Backend marker file is authoritative (--empty-db wipes it to reset),
+          // but localStorage is the fallback for cases where the backend marker
+          // file wasn't written (API call failed, data dir cleaned without reset).
+          if (!response.data.onboarding_complete
+              && localStorage.getItem('folddb_onboarding_complete') !== '1') {
             setShowOnboarding(true)
           }
         } else {
