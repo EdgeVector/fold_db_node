@@ -92,7 +92,9 @@ export function AppContent() {
   )
   const [dbStatus, setDbStatus] = useState(null) // { initialized, has_saved_config }
   const [dbStatusLoading, setDbStatusLoading] = useState(true)
-  const [showOnboarding, setShowOnboarding] = useState(false)
+  const [showOnboarding, setShowOnboarding] = useState(
+    () => localStorage.getItem('folddb_onboarding_complete') !== '1'
+  )
 
   // Clear results whenever the active tab changes (covers all switch paths)
   useEffect(() => {
@@ -144,12 +146,6 @@ export function AppContent() {
       .then(response => {
         if (response.success && response.data) {
           setDbStatus(response.data)
-          // Show onboarding if backend says it hasn't been completed.
-          // This is authoritative — it's based on a marker file in the data dir,
-          // so --empty-db (which wipes the data dir) resets onboarding state.
-          if (!response.data.onboarding_complete) {
-            setShowOnboarding(true)
-          }
         } else {
           // If endpoint is unavailable (older backend), assume initialized
           setDbStatus({ initialized: true, has_saved_config: true, onboarding_complete: true })
