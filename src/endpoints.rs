@@ -18,7 +18,10 @@ impl Environment {
             Ok("prod") | Ok("production") => Self::Prod,
             Ok("dev") | Ok("development") => Self::Dev,
             Ok(other) => {
-                log::error!("EXEMEM_ENV has unknown value '{}', defaulting to dev", other);
+                log::error!(
+                    "EXEMEM_ENV has unknown value '{}', defaulting to dev",
+                    other
+                );
                 Self::Dev
             }
             Err(_) => {
