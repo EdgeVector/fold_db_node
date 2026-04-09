@@ -216,8 +216,7 @@ pub async fn async_query(
 
             // Derive our sender pseudonym + X25519 key
             let hash = crate::discovery::pseudonym::content_hash("connection-sender");
-            let our_pseudonym =
-                crate::discovery::pseudonym::derive_pseudonym(&master_key, &hash);
+            let our_pseudonym = crate::discovery::pseudonym::derive_pseudonym(&master_key, &hash);
             let our_reply_pk =
                 connection::get_pseudonym_public_key_b64(&master_key, &our_pseudonym);
 
@@ -253,14 +252,11 @@ pub async fn async_query(
             let encrypted = connection::encrypt_message(&pk_arr, &payload).map_err(|e| {
                 crate::handlers::HandlerError::Internal(format!("Encryption failed: {e}"))
             })?;
-            let encrypted_b64 =
-                base64::engine::general_purpose::STANDARD.encode(&encrypted);
+            let encrypted_b64 = base64::engine::general_purpose::STANDARD.encode(&encrypted);
 
             // Send via messaging service
             let target: uuid::Uuid = messaging_pseudonym.parse().map_err(|_| {
-                crate::handlers::HandlerError::Internal(
-                    "Invalid messaging pseudonym UUID".into(),
-                )
+                crate::handlers::HandlerError::Internal("Invalid messaging pseudonym UUID".into())
             })?;
             let publisher = crate::discovery::publisher::DiscoveryPublisher::new(
                 master_key,
@@ -271,9 +267,7 @@ pub async fn async_query(
                 .connect(target, encrypted_b64, Some(our_pseudonym))
                 .await
                 .map_err(|e| {
-                    crate::handlers::HandlerError::Internal(format!(
-                        "Failed to send query: {e}"
-                    ))
+                    crate::handlers::HandlerError::Internal(format!("Failed to send query: {e}"))
                 })?;
 
             // Save locally
@@ -297,9 +291,7 @@ pub async fn async_query(
             crate::discovery::async_query::save_async_query(&*store, &local_query)
                 .await
                 .map_err(|e| {
-                    crate::handlers::HandlerError::Internal(format!(
-                        "Failed to save query: {e}"
-                    ))
+                    crate::handlers::HandlerError::Internal(format!("Failed to save query: {e}"))
                 })?;
 
             Ok(ApiResponse::success_with_user(
@@ -351,8 +343,7 @@ pub async fn async_browse(
                 crate::server::routes::discovery::resolve_discovery_config(&node, None).await?;
 
             let hash = crate::discovery::pseudonym::content_hash("connection-sender");
-            let our_pseudonym =
-                crate::discovery::pseudonym::derive_pseudonym(&master_key, &hash);
+            let our_pseudonym = crate::discovery::pseudonym::derive_pseudonym(&master_key, &hash);
             let our_reply_pk =
                 connection::get_pseudonym_public_key_b64(&master_key, &our_pseudonym);
 
@@ -385,13 +376,10 @@ pub async fn async_browse(
             let encrypted = connection::encrypt_message(&pk_arr, &payload).map_err(|e| {
                 crate::handlers::HandlerError::Internal(format!("Encryption failed: {e}"))
             })?;
-            let encrypted_b64 =
-                base64::engine::general_purpose::STANDARD.encode(&encrypted);
+            let encrypted_b64 = base64::engine::general_purpose::STANDARD.encode(&encrypted);
 
             let target: uuid::Uuid = messaging_pseudonym.parse().map_err(|_| {
-                crate::handlers::HandlerError::Internal(
-                    "Invalid messaging pseudonym UUID".into(),
-                )
+                crate::handlers::HandlerError::Internal("Invalid messaging pseudonym UUID".into())
             })?;
             let publisher = crate::discovery::publisher::DiscoveryPublisher::new(
                 master_key,
@@ -427,9 +415,7 @@ pub async fn async_browse(
             crate::discovery::async_query::save_async_query(&*store, &local_query)
                 .await
                 .map_err(|e| {
-                    crate::handlers::HandlerError::Internal(format!(
-                        "Failed to save query: {e}"
-                    ))
+                    crate::handlers::HandlerError::Internal(format!("Failed to save query: {e}"))
                 })?;
 
             Ok(ApiResponse::success_with_user(
@@ -455,9 +441,7 @@ pub async fn list_async_queries(state: web::Data<AppState>) -> impl Responder {
             let queries = crate::discovery::async_query::list_async_queries(&*store)
                 .await
                 .map_err(|e| {
-                    crate::handlers::HandlerError::Internal(format!(
-                        "Failed to list queries: {e}"
-                    ))
+                    crate::handlers::HandlerError::Internal(format!("Failed to list queries: {e}"))
                 })?;
 
             Ok(ApiResponse::success_with_user(
@@ -487,13 +471,9 @@ pub async fn get_async_query(
             let query = crate::discovery::async_query::get_async_query(&*store, &request_id)
                 .await
                 .map_err(|e| {
-                    crate::handlers::HandlerError::Internal(format!(
-                        "Failed to get query: {e}"
-                    ))
+                    crate::handlers::HandlerError::Internal(format!("Failed to get query: {e}"))
                 })?
-                .ok_or_else(|| {
-                    crate::handlers::HandlerError::NotFound("Query not found".into())
-                })?;
+                .ok_or_else(|| crate::handlers::HandlerError::NotFound("Query not found".into()))?;
 
             Ok(ApiResponse::success_with_user(query, user_hash))
         }
@@ -519,9 +499,7 @@ pub async fn delete_async_query(
             crate::discovery::async_query::delete_async_query(&*store, &request_id)
                 .await
                 .map_err(|e| {
-                    crate::handlers::HandlerError::Internal(format!(
-                        "Failed to delete query: {e}"
-                    ))
+                    crate::handlers::HandlerError::Internal(format!("Failed to delete query: {e}"))
                 })?;
 
             Ok(ApiResponse::success_with_user(
