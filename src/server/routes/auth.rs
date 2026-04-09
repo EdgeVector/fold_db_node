@@ -2,7 +2,7 @@ use actix_web::{web, HttpResponse};
 use serde::{Deserialize, Serialize};
 
 use crate::keychain;
-use crate::node_config_store::{CloudCredentials, NodeConfigStore};
+use fold_db::{CloudCredentials, NodeConfigStore};
 use crate::server::http_server::AppState;
 
 pub(crate) fn exemem_api_url() -> String {
@@ -337,7 +337,7 @@ async fn signed_register(
 
         // Also write to Sled config store for Phase 5 consumers
         if let Some(sled_db) = data.node_manager.get_sled_db().await {
-            if let Ok(store) = NodeConfigStore::open(&sled_db) {
+            if let Ok(store) = NodeConfigStore::new(&sled_db) {
                 let cloud_creds = CloudCredentials {
                     api_url: exemem_api_url(),
                     api_key: api_key.to_string(),

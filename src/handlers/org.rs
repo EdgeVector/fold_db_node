@@ -6,7 +6,7 @@
 use crate::fold_node::node::FoldNode;
 use crate::handlers::handler_response;
 use crate::handlers::response::{ApiResponse, HandlerResult, IntoHandlerError};
-use crate::node_config_store::NodeConfigStore;
+use fold_db::NodeConfigStore;
 use fold_db::org::operations as org_ops;
 use fold_db::org::types::{OrgInviteBundle, OrgMemberInfo, OrgMembership};
 use serde::Deserialize;
@@ -78,7 +78,7 @@ async fn get_auth_client(node: &FoldNode) -> Option<fold_db::sync::auth::AuthCli
     if let Ok(db_guard) = node.get_fold_db().await {
         if let Some(sled_db) = db_guard.sled_db().cloned() {
             drop(db_guard);
-            if let Ok(store) = NodeConfigStore::open(&sled_db) {
+            if let Ok(store) = NodeConfigStore::new(&sled_db) {
                 if let Some(cloud) = store.get_cloud_config() {
                     let http = std::sync::Arc::new(reqwest::Client::new());
                     return Some(fold_db::sync::auth::AuthClient::new(

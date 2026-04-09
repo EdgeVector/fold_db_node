@@ -180,7 +180,7 @@ pub async fn save_ingestion_config(
     if let Ok(folddb_home) = crate::utils::paths::folddb_home() {
         let data_path = folddb_home.join("data");
         if let Ok(db) = sled::open(&data_path) {
-            if let Ok(store) = crate::node_config_store::NodeConfigStore::open(&db) {
+            if let Ok(store) = fold_db::NodeConfigStore::new(&db) {
                 if let Err(e) =
                     crate::ingestion::config::IngestionConfig::save_to_sled(&store, &saved_config)
                 {

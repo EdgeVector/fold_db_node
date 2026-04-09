@@ -1,5 +1,5 @@
 use crate::fold_node::config::NodeConfig;
-use crate::node_config_store::{CloudCredentials, NodeConfigStore};
+use fold_db::{CloudCredentials, NodeConfigStore};
 use crate::server::http_server::AppState;
 use crate::server::node_manager::NodeManagerConfig;
 use crate::utils::crypto::user_hash_from_pubkey;
@@ -275,7 +275,7 @@ pub async fn apply_setup(
 
                 // Write to Sled config store so consumers can read from Sled
                 if let Some(sled_db) = state.node_manager.get_sled_db().await {
-                    if let Ok(store) = NodeConfigStore::open(&sled_db) {
+                    if let Ok(store) = NodeConfigStore::new(&sled_db) {
                         let creds = CloudCredentials {
                             api_url: api_url.clone(),
                             api_key: api_key.clone(),

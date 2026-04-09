@@ -1,6 +1,6 @@
 //! Configuration for the ingestion module
 
-use crate::node_config_store::{AiConfig, NodeConfigStore};
+use fold_db::{AiConfig, NodeConfigStore};
 use fold_db::llm_registry::models;
 use fold_db::log_feature;
 use fold_db::logging::features::LogFeature;

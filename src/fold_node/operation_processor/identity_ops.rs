@@ -74,7 +74,7 @@ impl OperationProcessor {
         if let Ok(folddb_home) = folddb_home() {
             let data_path = folddb_home.join("data");
             if let Ok(db) = sled::open(&data_path) {
-                if let Ok(store) = crate::node_config_store::NodeConfigStore::open(&db) {
+                if let Ok(store) = fold_db::NodeConfigStore::new(&db) {
                     if let Err(e) = card.save_to_sled(&store) {
                         log::warn!("Failed to save identity card to Sled: {}", e);
                     }

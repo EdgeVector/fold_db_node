@@ -8,7 +8,7 @@ use std::sync::Arc;
 use tokio::sync::Mutex;
 
 use crate::fold_node::config::NodeConfig;
-use crate::node_config_store::{AiConfig, CloudCredentials, NodeConfigStore, NodeIdentity};
+use fold_db::{AiConfig, CloudCredentials, NodeConfigStore, NodeIdentity};
 use fold_db::constants::SINGLE_PUBLIC_KEY_ID;
 use fold_db::crypto::{CryptoProvider, LocalCryptoProvider};
 use fold_db::error::{FoldDbError, FoldDbResult};
@@ -1041,7 +1041,7 @@ async fn migrate_config_files_to_sled(node: &FoldNode) {
         Some(db) => db.clone(),
         None => return,
     };
-    let store = match NodeConfigStore::open(&sled_db) {
+    let store = match NodeConfigStore::new(&sled_db) {
         Ok(s) => s,
         Err(e) => {
             log::warn!("Failed to open node_config tree for migration: {}", e);

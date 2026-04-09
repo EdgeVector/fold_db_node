@@ -3,7 +3,7 @@
 //! Stored at `$FOLDDB_HOME/config/identity_card.json`. Never synced to Exemem.
 //! Only shared inside E2E-encrypted trust invites with specific peers.
 
-use crate::node_config_store::NodeConfigStore;
+use fold_db::NodeConfigStore;
 use serde::{Deserialize, Serialize};
 use std::path::{Path, PathBuf};
 
