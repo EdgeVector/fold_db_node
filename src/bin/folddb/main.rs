@@ -1,7 +1,3 @@
-// Data commands now dispatch through HTTP to the daemon.
-// Old direct-Sled command handlers are retained for the cloud-recovery branch.
-#![allow(dead_code)]
-
 mod cli;
 mod client;
 mod commands;

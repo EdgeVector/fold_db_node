@@ -58,6 +58,11 @@ fn default_port() -> u16 {
     9001
 }
 
+/// Check if a port is already in use by trying to bind to it
+fn is_port_in_use(port: u16) -> bool {
+    std::net::TcpListener::bind(("127.0.0.1", port)).is_err()
+}
+
 /// Start the daemon
 pub async fn start(port: u16, dev: bool) -> Result<String, CliError> {
     if let Some(pid) = read_running_pid() {
@@ -69,6 +74,12 @@ pub async fn start(port: u16, dev: bool) -> Result<String, CliError> {
         }
         stop_process(pid);
         let _ = fs::remove_file(pid_file());
+    }
+
+    // Check port availability before starting
+    if is_port_in_use(port) {
+        return Err(CliError::new(format!("Port {} is already in use", port))
+            .with_hint("Use --port to pick another port, or stop the process using this port"));
     }
 
     let home = folddb_home();
