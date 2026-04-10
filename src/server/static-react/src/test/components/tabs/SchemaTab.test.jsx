@@ -66,11 +66,11 @@ describe('SchemaTab Component', () => {
     })
   })
 
-  it('displays approved schemas', async () => {
+  it('displays local schemas and hides available (global) schemas', async () => {
     const schemaState = createTestSchemaState({
       schemas: {
         'schema1': { name: 'Schema1', state: 'Approved', fields: [] },
-        'schema2': { name: 'Schema2', state: 'Approved', fields: [] },
+        'schema2': { name: 'Schema2', state: 'Blocked', fields: [] },
         'schema3': { name: 'Schema3', state: 'Available', fields: [] }
       }
     })
@@ -79,12 +79,12 @@ describe('SchemaTab Component', () => {
       preloadedState: schemaState
     })
 
-    // Should display all schemas (all states shown by default)
+    // Should display only local schemas (approved/blocked), not available (global catalog)
     await waitFor(() => {
       expect(screen.getByText('Schema1')).toBeInTheDocument()
       expect(screen.getByText('Schema2')).toBeInTheDocument()
-      expect(screen.getByText('Schema3')).toBeInTheDocument()
     })
+    expect(screen.queryByText('Schema3')).not.toBeInTheDocument()
   })
 
   it('displays no approved schemas message when empty', async () => {

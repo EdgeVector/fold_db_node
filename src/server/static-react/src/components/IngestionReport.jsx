@@ -196,7 +196,7 @@ export default function IngestionReport({ ingestionResult, onDismiss }) {
                 {fieldCount(name) > 0 && (
                   <span className="text-xs text-tertiary">({fieldCount(name)} fields)</span>
                 )}
-                {schema && <StateBadge state={schema.state || 'available'} />}
+                {schema && <StateBadge state={schema.state || 'approved'} />}
               </button>
 
               {/* Keys list */}

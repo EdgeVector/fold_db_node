@@ -10,7 +10,6 @@ import {
 } from '../../store/schemaSlice'
 import SchemaName from '../shared/SchemaName'
 import { MagnifyingGlassIcon } from '@heroicons/react/24/outline'
-import { SCHEMA_BADGE_COLORS } from '../../constants/ui'
 import { toErrorMessage } from '../../utils/schemaUtils'
 import { getAllFieldPolicies, setFieldPolicy as setFieldPolicyApi } from '../../api/clients/sharingClient'
 
@@ -207,8 +206,7 @@ function SchemaTab({ onResult, onSchemaUpdated }) {
     const colors = {
       approved: 'badge badge-success',
       pending: 'badge badge-warning',
-      blocked: 'badge badge-error',
-      available: 'badge badge-info'
+      blocked: 'badge badge-error'
     }
     return colors[key] || 'bg-surface-secondary text-secondary border border-border'
   }
@@ -324,14 +322,6 @@ function SchemaTab({ onResult, onSchemaUpdated }) {
                 >
                   <MagnifyingGlassIcon className="w-3.5 h-3.5" />
                   Query
-                </button>
-              )}
-              {state.toLowerCase() === 'available' && (
-                <button
-                  className="btn-secondary btn-sm"
-                  onClick={(e) => { e.stopPropagation(); approveSchema(schema.name) }}
-                >
-                  Approve
                 </button>
               )}
               {state.toLowerCase() === 'approved' && (
@@ -463,9 +453,15 @@ function SchemaTab({ onResult, onSchemaUpdated }) {
   }
 
   const [schemaFilter, setSchemaFilter] = useState('all') // 'all' | 'personal' | 'org'
-  const [stateFilter, setStateFilter] = useState('all') // 'all' | 'approved' | 'available' | 'blocked'
+  const [stateFilter, setStateFilter] = useState('all') // 'all' | 'approved' | 'blocked'
 
-  const filteredSchemas = schemas.filter(s => {
+  // Only show local schemas (approved or blocked) — never show "available" (global catalog)
+  const localSchemas = schemas.filter(s => {
+    const state = (s.state || '').toLowerCase()
+    return state === 'approved' || state === 'blocked'
+  })
+
+  const filteredSchemas = localSchemas.filter(s => {
     // Owner filter
     if (schemaFilter === 'personal' && s.org_hash) return false
     if (schemaFilter === 'org' && !s.org_hash) return false
@@ -478,7 +474,7 @@ function SchemaTab({ onResult, onSchemaUpdated }) {
   })
 
   // Count schemas by state for the filter badges
-  const stateCounts = schemas.reduce((acc, s) => {
+  const stateCounts = localSchemas.reduce((acc, s) => {
     const state = (s.state || '').toLowerCase()
     acc[state] = (acc[state] || 0) + 1
     return acc
@@ -503,8 +499,8 @@ function SchemaTab({ onResult, onSchemaUpdated }) {
         ))}
         <span className="text-border mx-1">|</span>
         {/* State filter */}
-        {['all', 'approved', 'available', 'blocked'].map(f => {
-          const count = f === 'all' ? schemas.length : (stateCounts[f] || 0)
+        {['all', 'approved', 'blocked'].map(f => {
+          const count = f === 'all' ? localSchemas.length : (stateCounts[f] || 0)
           return (
             <button
               key={f}

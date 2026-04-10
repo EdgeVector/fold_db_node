@@ -67,7 +67,7 @@ export interface SyncStatusResponse {
 }
 
 export interface DatabaseConfigDto {
-  type: "local" | "dynamodb" | "s3";
+  type: "local" | "cloud" | "exemem";
   path?: string;
   table_name?: string;
   region?: string;

@@ -9,7 +9,7 @@ function Footer() {
     // Check database config from server
     systemClient.getDatabaseConfig().then(res => {
       if (res.data) {
-        const isCloud = res.data.type === 'cloud' || res.data.type === 'dynamodb' || res.data.type === 'exemem'
+        const isCloud = res.data.type === 'cloud' || res.data.type === 'exemem'
         setStorageMode(isCloud ? 'Cloud' : 'Local')
       }
     }).catch(() => {})
