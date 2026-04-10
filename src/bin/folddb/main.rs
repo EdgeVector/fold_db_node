@@ -3,6 +3,7 @@ mod client;
 mod commands;
 mod error;
 mod output;
+mod restore;
 mod update_check;
 
 use clap::Parser;
@@ -58,9 +59,11 @@ async fn main() {
             return;
         }
         Command::Restore => {
-            // Restore handled directly — doesn't need daemon
-            CliError::new("Restore command requires cloud-recovery feature (coming soon)")
-                .exit(json_mode);
+            match restore::run_restore().await {
+                Ok(out) => output::render(&out, mode),
+                Err(e) => e.exit(json_mode),
+            }
+            return;
         }
         _ => {}
     }
@@ -88,6 +91,17 @@ async fn main() {
             Ok(c) => c,
             Err(e) => e.exit(false),
         };
+    }
+
+    // Recovery phrase reads from local identity file — no daemon needed
+    if let Command::RecoveryPhrase = &cli.command {
+        match show_recovery_phrase() {
+            Ok(out) => {
+                output::render(&out, mode);
+                return;
+            }
+            Err(e) => e.exit(json_mode),
+        }
     }
 
     // Config set doesn't need daemon
@@ -212,9 +226,7 @@ async fn dispatch_http(
                 "Cloud enable/disable requires direct node access (not yet available via daemon)",
             )),
         },
-        Command::RecoveryPhrase => Err(CliError::new(
-            "Recovery phrase requires direct key access (run without daemon)",
-        )),
+        Command::RecoveryPhrase => unreachable!("Handled before daemon dispatch"),
         Command::Reset { confirm } => {
             if !confirm {
                 if mode == OutputMode::Json {
@@ -386,6 +398,41 @@ async fn dispatch_ingest(
             "Apple ingestion via daemon not yet supported",
         )),
     }
+}
+
+/// Show the 24-word recovery phrase derived from the local identity file.
+fn show_recovery_phrase() -> Result<commands::CommandOutput, CliError> {
+    let identity_path = fold_db_node::utils::paths::folddb_home()
+        .map(|h| h.join("config").join("node_identity.json"))
+        .map_err(|e| CliError::new(format!("Cannot find FOLDDB_HOME: {}", e)))?;
+
+    if !identity_path.exists() {
+        return Err(CliError::new("No identity found").with_hint("Run `folddb setup` first"));
+    }
+
+    let identity_json = std::fs::read_to_string(&identity_path)
+        .map_err(|e| CliError::new(format!("Failed to read identity: {}", e)))?;
+    let identity: serde_json::Value = serde_json::from_str(&identity_json)
+        .map_err(|e| CliError::new(format!("Failed to parse identity: {}", e)))?;
+    let private_key = identity["private_key"]
+        .as_str()
+        .ok_or_else(|| CliError::new("Identity file missing private_key"))?;
+
+    let words = commands::setup::derive_recovery_phrase(private_key)?;
+
+    let mut msg = String::new();
+    msg.push_str("\x1b[33m  RECOVERY PHRASE (save these 24 words):\x1b[0m\n\n");
+    for (i, word) in words.iter().enumerate() {
+        msg.push_str(&format!("  {:2}. {:<12}", i + 1, word));
+        if (i + 1) % 4 == 0 {
+            msg.push('\n');
+        }
+    }
+    msg.push_str(
+        "\n  If you lose this device, these words are the\n  ONLY way to recover your data.\n",
+    );
+
+    Ok(commands::CommandOutput::Message(msg))
 }
 
 #[cfg(test)]
