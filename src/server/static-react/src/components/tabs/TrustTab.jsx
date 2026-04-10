@@ -92,7 +92,9 @@ function TrustTab({ onResult }) {
           setEditHint(card.contact_hint || '')
         }
       }
-    } catch { /* ignore */ } finally {
+    } catch (err) {
+      console.error('Failed to load identity card:', err)
+    } finally {
       setIdentityLoading(false)
     }
   }, [])
@@ -104,7 +106,9 @@ function TrustTab({ onResult }) {
       if (response.success && response.data) {
         setContacts(response.data.contacts || [])
       }
-    } catch { /* ignore */ } finally {
+    } catch (err) {
+      console.error('Failed to load contacts:', err)
+    } finally {
       setContactsLoading(false)
     }
   }, [])
@@ -115,7 +119,9 @@ function TrustTab({ onResult }) {
       if (response.success && response.data) {
         setAuditEvents(response.data.events || [])
       }
-    } catch { /* ignore */ }
+    } catch (err) {
+      console.error('Failed to load audit log:', err)
+    }
   }, [])
 
   const fetchRoles = useCallback(async () => {
@@ -124,7 +130,9 @@ function TrustTab({ onResult }) {
       if (response.success && response.data) {
         setAvailableRoles(response.data.roles || {})
       }
-    } catch { /* ignore */ }
+    } catch (err) {
+      console.error('Failed to load sharing roles:', err)
+    }
   }, [])
 
   useEffect(() => {
@@ -180,7 +188,9 @@ function TrustTab({ onResult }) {
       if (response.success && response.data) {
         setAuditResult(response.data)
       }
-    } catch { /* ignore */ } finally {
+    } catch (err) {
+      setError(err?.message || 'Failed to audit contact access')
+    } finally {
       setAuditLoading(false)
     }
   }
@@ -974,7 +984,9 @@ function TrustTab({ onResult }) {
                             setPreview(null)
                             if (onResult) onResult({ success: true, data: { message: `Declined invite from ${resp.data?.sender || 'unknown'}` } })
                           }
-                        } catch { /* ignore */ }
+                        } catch (err) {
+                          setError(err?.message || 'Failed to decline invite')
+                        }
                       }}
                     >
                       Decline
@@ -1015,13 +1027,18 @@ function TrustTab({ onResult }) {
                     onClick={async () => {
                       try {
                         const resp = await fetch('/api/sharing/apply-defaults', { method: 'POST' })
+                        if (!resp.ok) throw new Error(`HTTP ${resp.status}`)
                         const data = await resp.json()
                         if (data.ok !== false) {
                           const d = data.data || data
                           if (onResult) onResult({ success: true, data: { message: `Applied policies to ${d.fields_updated} fields across ${d.schemas_updated} schemas` } })
                           getSharingPosture().then(r => { if (r.success && r.data) setPosture(r.data) }).catch(() => {})
+                        } else {
+                          setError(data.error || 'Failed to apply default policies')
                         }
-                      } catch { /* ignore */ }
+                      } catch (err) {
+                        setError(err?.message || 'Failed to apply default policies')
+                      }
                     }}
                   >
                     Apply Default Policies
