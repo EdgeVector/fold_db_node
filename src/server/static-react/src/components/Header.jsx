@@ -155,18 +155,18 @@ function Header({ onSettingsClick, onAiSettingsClick, onCloudSettingsClick }) {
   }
 
   return (
-    <header className="bg-surface border-b border-border px-8 py-3 flex-shrink-0">
-      <div className="flex items-center justify-between">
-        <div className="flex items-center gap-6">
-          <a href="/" className="flex items-center gap-2 text-lg font-medium tracking-tight text-primary no-underline hover:text-primary">
+    <header className="bg-surface border-b border-border px-4 sm:px-8 py-2 sm:py-3 flex-shrink-0">
+      <div className="flex items-center justify-between min-w-0">
+        <div className="flex items-center gap-3 sm:gap-6 min-w-0">
+          <a href="/" className="flex items-center gap-2 text-lg font-medium tracking-tight text-primary no-underline hover:text-primary flex-shrink-0">
             <AnimatedLogo size={72} />
-            FoldDB
+            <span className="hidden sm:inline">FoldDB</span>
           </a>
           <HeaderProgress />
         </div>
-        <div className="flex items-center gap-3">
+        <div className="flex items-center gap-1.5 sm:gap-3 min-w-0">
           {/* Status badges — compact pills instead of verbose text */}
-          <div className="flex items-center gap-1.5">
+          <div className="flex items-center gap-1 sm:gap-1.5">
             <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-xs font-medium bg-gruvbox-elevated border border-border text-secondary">
               {storageMode || '...'}
               {formattedSize && formattedQuota
@@ -189,11 +189,11 @@ function Header({ onSettingsClick, onAiSettingsClick, onCloudSettingsClick }) {
             {orgSyncError && <OrgSyncWarning onClick={onSettingsClick} />}
           </div>
 
-          {/* Node Public Key — truncated with copy */}
+          {/* Node Public Key — truncated with copy, hidden on mobile */}
           {isAuthenticated && truncatedDisplay && (
             <button
               onClick={handleCopyId}
-              className="inline-flex items-center gap-1 px-2 py-0.5 rounded text-xs font-mono text-tertiary bg-transparent border border-border cursor-pointer hover:text-secondary hover:border-secondary transition-colors"
+              className="hidden sm:inline-flex items-center gap-1 px-2 py-0.5 rounded text-xs font-mono text-tertiary bg-transparent border border-border cursor-pointer hover:text-secondary hover:border-secondary transition-colors"
               title={`Public Key: ${displayKey}\nClick to copy`}
             >
               {idCopied ? 'Copied!' : truncatedDisplay}

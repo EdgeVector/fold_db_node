@@ -350,13 +350,13 @@ export function AppContent() {
       )}
 
       {aiConfigured && aiProvider !== 'Ollama' && (
-        <div className="bg-gruvbox-yellow/15 border-b-2 border-gruvbox-yellow px-8 py-3 flex items-center justify-between">
-          <span className="text-gruvbox-yellow text-sm font-medium">
+        <div className="bg-gruvbox-yellow/15 border-b-2 border-gruvbox-yellow px-4 sm:px-8 py-2 sm:py-3 flex flex-col sm:flex-row items-start sm:items-center justify-between gap-2 sm:gap-4">
+          <span className="text-gruvbox-yellow text-xs sm:text-sm font-medium">
             Warning: AI is using {aiProvider} — personal data may be sent to external servers. Switch to a local LLM (Ollama) to keep data on your device.
           </span>
           <button
             onClick={() => { setSettingsInitialTab('ai'); setIsSettingsOpen(true) }}
-            className="bg-gruvbox-yellow text-surface text-sm px-4 py-1.5 border-none cursor-pointer hover:bg-gruvbox-orange transition-colors whitespace-nowrap ml-4"
+            className="bg-gruvbox-yellow text-surface text-xs sm:text-sm px-3 sm:px-4 py-1 sm:py-1.5 border-none cursor-pointer hover:bg-gruvbox-orange transition-colors whitespace-nowrap flex-shrink-0"
           >
             Switch to Local LLM
           </button>
