@@ -260,10 +260,13 @@ impl OperationProcessor {
         }
     }
 
-    /// Revoke trust for a contact: remove from trust graph and mark revoked in contact book.
+    /// Revoke trust for a contact: remove from ALL trust domains and mark revoked in contact book.
     pub async fn revoke_contact(&self, public_key: &str) -> Result<(), SchemaError> {
-        // Revoke in trust graph
-        self.revoke_trust(public_key).await?;
+        // Revoke from ALL domains — not just personal
+        let domains = self.list_trust_domains().await?;
+        for domain in &domains {
+            self.revoke_trust_for_domain(public_key, domain).await?;
+        }
 
         // Mark revoked in contact book
         let mut book = ContactBook::load()

@@ -25,8 +25,11 @@ async fn setup_node() -> (FoldNode, TempDir) {
     (node, temp_dir)
 }
 
-/// Helper: load the Photo schema into the node's database.
+/// Helper: load the Photo schema into the node's database with public access policies.
 async fn load_photo_schema(node: &FoldNode) {
+    use fold_db::access::types::{FieldAccessPolicy, TrustTier};
+    use fold_db::schema::types::field::Field;
+
     let schema_path = std::env::current_dir()
         .expect("Failed to get current directory")
         .join("tests/schemas_for_testing")
@@ -37,6 +40,33 @@ async fn load_photo_schema(node: &FoldNode) {
         .load_schema_from_file(&schema_path)
         .await
         .expect("Failed to load Photo schema");
+
+    // Set all fields to public-read so feed tests work
+    let mut schema = fold_db
+        .schema_manager
+        .get_schema("Photo")
+        .await
+        .expect("get schema")
+        .expect("Photo schema");
+
+    let public_policy = FieldAccessPolicy {
+        min_read_tier: TrustTier::Public,
+        min_write_tier: TrustTier::Owner,
+        ..Default::default()
+    };
+
+    let field_names: Vec<String> = schema.runtime_fields.keys().cloned().collect();
+    for name in &field_names {
+        if let Some(field) = schema.runtime_fields.get_mut(name) {
+            field.common_mut().access_policy = Some(public_policy.clone());
+        }
+    }
+
+    fold_db
+        .schema_manager
+        .update_schema(&schema)
+        .await
+        .expect("Failed to set public policies on Photo schema");
 }
 
 /// Helper: insert a photo record with a specific author pub_key.
