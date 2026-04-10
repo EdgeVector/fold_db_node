@@ -2,6 +2,7 @@ use console::style;
 use std::fmt;
 use std::process;
 
+#[derive(Debug)]
 pub struct CliError {
     pub message: String,
     pub hint: Option<String>,

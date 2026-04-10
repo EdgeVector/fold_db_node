@@ -193,6 +193,16 @@ impl FoldDbClient {
         self.post("/api/ingest", data).await
     }
 
+    /// Process records through the ingestion pipeline (used by Apple ingestion).
+    pub async fn ingest_process(&self, records: &[Value]) -> Result<Value, CliError> {
+        let payload = serde_json::json!({
+            "data": records,
+            "auto_execute": true,
+            "pub_key": "default",
+        });
+        self.post("/api/ingestion/process", &payload).await
+    }
+
     pub async fn smart_scan(
         &self,
         path: &str,
