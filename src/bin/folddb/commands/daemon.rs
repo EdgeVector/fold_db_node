@@ -236,6 +236,17 @@ pub async fn ensure_running(dev: bool) -> Result<u16, CliError> {
         return Ok(port);
     }
 
+    // Warn if PID file exists but health check failed on our port —
+    // daemon may be running on a different port
+    if let Some(pid) = read_running_pid() {
+        eprintln!(
+            "Warning: daemon PID {} exists but port {} is not responding.",
+            pid, port
+        );
+        eprintln!("The daemon may be running on a different port.");
+        eprintln!("Run `folddb daemon stop` first, or set FOLDDB_PORT to match.");
+    }
+
     let effective_dev = resolve_dev(dev);
     eprintln!("Starting daemon on :{}...", port);
     let msg = start(port, effective_dev).await?;

@@ -145,7 +145,7 @@ async fn main() {
         return;
     }
 
-    // Derive user hash from config
+    // Derive user hash from config — error if no public key (incomplete setup)
     let user_hash = cli
         .user_hash
         .clone()
@@ -155,7 +155,11 @@ async fn main() {
                 .public_key
                 .as_ref()
                 .map(|pk| user_hash_from_pubkey(pk))
-                .unwrap_or_else(|| "default".to_string())
+                .unwrap_or_else(|| {
+                    CliError::new("No public key configured — cannot derive user hash")
+                        .with_hint("Run `folddb setup` to configure your node")
+                        .exit(json_mode)
+                })
         });
 
     // Data commands go through the daemon HTTP API
