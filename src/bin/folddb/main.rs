@@ -1,3 +1,5 @@
+#[cfg(target_os = "macos")]
+mod apple;
 mod cli;
 mod client;
 mod commands;
@@ -398,11 +400,19 @@ async fn dispatch_ingest(
             }
         }
         #[cfg(target_os = "macos")]
-        cli::IngestCommand::AppleNotes { .. }
-        | cli::IngestCommand::ApplePhotos { .. }
-        | cli::IngestCommand::AppleReminders { .. } => Err(CliError::new(
-            "Apple ingestion via daemon not yet supported",
-        )),
+        cli::IngestCommand::AppleNotes { folder, batch_size } => {
+            apple::ingest_notes(client, folder.as_deref(), *batch_size).await
+        }
+        #[cfg(target_os = "macos")]
+        cli::IngestCommand::ApplePhotos {
+            album,
+            limit,
+            batch_size,
+        } => apple::ingest_photos(client, album.as_deref(), *limit, *batch_size).await,
+        #[cfg(target_os = "macos")]
+        cli::IngestCommand::AppleReminders { list } => {
+            apple::ingest_reminders(client, list.as_deref()).await
+        }
     }
 }
 
