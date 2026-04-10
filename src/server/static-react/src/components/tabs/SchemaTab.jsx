@@ -15,8 +15,7 @@ import { SCHEMA_BADGE_COLORS } from '../../constants/ui'
 import { toErrorMessage } from '../../utils/schemaUtils'
 import { getAllFieldPolicies, setFieldPolicy as setFieldPolicyApi } from '../../api/clients/sharingClient'
 
-// u64::MAX as a safe threshold — any value above 1e18 is treated as "public" (unbounded)
-const PUBLIC_THRESHOLD = 1e18
+const TRUST_TIERS = ['Public', 'Outer', 'Trusted', 'Inner', 'Owner']
 
 // ===== Access Policy Badge =====
 
@@ -25,22 +24,22 @@ function AccessBadge({ policy }) {
     return <span className="px-1.5 py-0.5 text-xs bg-surface-secondary text-secondary rounded font-mono">no policy</span>
   }
 
-  const readMax = policy.trust_distance?.read_max
-  const writeMax = policy.trust_distance?.write_max
+  const readTier = policy.min_read_tier
+  const writeTier = policy.min_write_tier
 
-  const readLabel = readMax === 0 ? 'owner' : readMax >= PUBLIC_THRESHOLD ? 'public' : `d${readMax}`
-  const writeLabel = writeMax === 0 ? 'owner' : writeMax >= PUBLIC_THRESHOLD ? 'public' : `d${writeMax}`
-
-  const readColor = readMax === 0 ? 'text-gruvbox-red' : readMax >= PUBLIC_THRESHOLD ? 'text-gruvbox-green' : 'text-gruvbox-yellow'
-  const writeColor = writeMax === 0 ? 'text-gruvbox-red' : 'text-gruvbox-yellow'
+  const tierColor = (tier) => {
+    if (tier === 'Owner') return 'text-gruvbox-red'
+    if (tier === 'Public') return 'text-gruvbox-green'
+    return 'text-gruvbox-yellow'
+  }
 
   return (
     <span className="inline-flex items-center gap-1 text-xs font-mono">
-      <span className={`px-1.5 py-0.5 rounded bg-surface-secondary ${readColor}`} title={`Read: trust distance <= ${readMax}`}>
-        R:{readLabel}
+      <span className={`px-1.5 py-0.5 rounded bg-surface-secondary ${tierColor(readTier)}`} title={`Read: ${readTier} tier`}>
+        R:{readTier}
       </span>
-      <span className={`px-1.5 py-0.5 rounded bg-surface-secondary ${writeColor}`} title={`Write: trust distance <= ${writeMax}`}>
-        W:{writeLabel}
+      <span className={`px-1.5 py-0.5 rounded bg-surface-secondary ${tierColor(writeTier)}`} title={`Write: ${writeTier} tier`}>
+        W:{writeTier}
       </span>
     </span>
   )
@@ -49,8 +48,8 @@ function AccessBadge({ policy }) {
 // ===== Field Policy Detail Panel =====
 
 function FieldPolicyPanel({ schemaName, fieldName, policy, onClose, onUpdate }) {
-  const [readMax, setReadMax] = useState(policy?.trust_distance?.read_max ?? 0)
-  const [writeMax, setWriteMax] = useState(policy?.trust_distance?.write_max ?? 0)
+  const [readTier, setReadTier] = useState(policy?.min_read_tier ?? 'Owner')
+  const [writeTier, setWriteTier] = useState(policy?.min_write_tier ?? 'Owner')
   const [saving, setSaving] = useState(false)
   const [preset, setPreset] = useState('')
 
@@ -58,13 +57,13 @@ function FieldPolicyPanel({ schemaName, fieldName, policy, onClose, onUpdate }) 
     setPreset(name)
     switch (name) {
       case 'owner-only':
-        setReadMax(0); setWriteMax(0); break
+        setReadTier('Owner'); setWriteTier('Owner'); break
       case 'public-read':
-        setReadMax(Number.MAX_SAFE_INTEGER); setWriteMax(0); break
+        setReadTier('Public'); setWriteTier('Owner'); break
       case 'trusted-read':
-        setReadMax(2); setWriteMax(0); break
+        setReadTier('Trusted'); setWriteTier('Owner'); break
       case 'trusted-rw':
-        setReadMax(2); setWriteMax(2); break
+        setReadTier('Trusted'); setWriteTier('Trusted'); break
     }
   }
 
@@ -72,9 +71,10 @@ function FieldPolicyPanel({ schemaName, fieldName, policy, onClose, onUpdate }) 
     setSaving(true)
     try {
       await setFieldPolicyApi(schemaName, fieldName, {
-        trust_distance: { read_max: readMax, write_max: writeMax },
+        trust_domain: policy?.trust_domain ?? 'personal',
+        min_read_tier: readTier,
+        min_write_tier: writeTier,
         capabilities: [],
-        security_label: null,
       })
       onUpdate()
     } catch (err) {
@@ -98,8 +98,8 @@ function FieldPolicyPanel({ schemaName, fieldName, policy, onClose, onUpdate }) 
         {[
           ['owner-only', 'Owner Only'],
           ['public-read', 'Public Read'],
-          ['trusted-read', 'Trusted Read (d=2)'],
-          ['trusted-rw', 'Trusted R+W (d=2)'],
+          ['trusted-read', 'Trusted Read'],
+          ['trusted-rw', 'Trusted R+W'],
         ].map(([key, label]) => (
           <button
             key={key}
@@ -116,46 +116,33 @@ function FieldPolicyPanel({ schemaName, fieldName, policy, onClose, onUpdate }) 
       {/* Manual controls */}
       <div className="grid grid-cols-2 gap-3">
         <div>
-          <label className="text-xs text-secondary block mb-1">Read Max Distance</label>
-          <input
-            type="number"
-            value={readMax > 1e18 ? 'public' : readMax}
-            onChange={(e) => {
-              const v = e.target.value
-              if (v === 'public') setReadMax(Number.MAX_SAFE_INTEGER)
-              else setReadMax(parseInt(v) || 0)
-            }}
-            min={0}
+          <label className="text-xs text-secondary block mb-1">Min Read Tier</label>
+          <select
+            value={readTier}
+            onChange={(e) => setReadTier(e.target.value)}
             className="w-full bg-gruvbox-elevated border border-border rounded px-2 py-1 text-sm text-primary"
-          />
-          <p className="text-xs text-secondary mt-0.5">0 = owner only</p>
+          >
+            {TRUST_TIERS.map(t => <option key={t} value={t}>{t}</option>)}
+          </select>
+          <p className="text-xs text-secondary mt-0.5">Owner = only you</p>
         </div>
         <div>
-          <label className="text-xs text-secondary block mb-1">Write Max Distance</label>
-          <input
-            type="number"
-            value={writeMax > 1e18 ? 'public' : writeMax}
-            onChange={(e) => {
-              const v = e.target.value
-              if (v === 'public') setWriteMax(Number.MAX_SAFE_INTEGER)
-              else setWriteMax(parseInt(v) || 0)
-            }}
-            min={0}
+          <label className="text-xs text-secondary block mb-1">Min Write Tier</label>
+          <select
+            value={writeTier}
+            onChange={(e) => setWriteTier(e.target.value)}
             className="w-full bg-gruvbox-elevated border border-border rounded px-2 py-1 text-sm text-primary"
-          />
-          <p className="text-xs text-secondary mt-0.5">0 = owner only</p>
+          >
+            {TRUST_TIERS.map(t => <option key={t} value={t}>{t}</option>)}
+          </select>
+          <p className="text-xs text-secondary mt-0.5">Owner = only you</p>
         </div>
       </div>
 
-      {/* Capability & label info */}
+      {/* Capability info */}
       {policy?.capabilities?.length > 0 && (
         <p className="text-xs text-secondary">
           {policy.capabilities.length} capability token(s) attached
-        </p>
-      )}
-      {policy?.security_label && (
-        <p className="text-xs text-secondary">
-          Security label: level {policy.security_label.level} ({policy.security_label.category})
         </p>
       )}
 

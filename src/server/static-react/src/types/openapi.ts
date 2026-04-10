@@ -490,11 +490,6 @@ export interface components {
         IngestionConfig: {
             /** @description Whether to auto-execute mutations after generation. */
             auto_execute_mutations: boolean;
-            /**
-             * Format: int32
-             * @description Default trust distance for mutations.
-             */
-            default_trust_distance: number;
             /** @description Whether ingestion is enabled. */
             enabled: boolean;
             /**
@@ -518,11 +513,6 @@ export interface components {
             data: unknown;
             /** @description Public key for mutations */
             pub_key?: string | null;
-            /**
-             * Format: int32
-             * @description Trust distance for mutations
-             */
-            trust_distance?: number | null;
         };
         /** @description Response from the ingestion process */
         IngestionResponse: {
