@@ -263,6 +263,16 @@ impl FoldDbClient {
         .await
     }
 
+    // --- Sync ---
+
+    pub async fn sync_status(&self) -> Result<Value, CliError> {
+        self.get("/api/sync/status").await
+    }
+
+    pub async fn sync_trigger(&self) -> Result<Value, CliError> {
+        self.post("/api/sync/trigger", &serde_json::json!({})).await
+    }
+
     // --- System ---
 
     pub async fn status(&self) -> Result<Value, CliError> {

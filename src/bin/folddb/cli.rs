@@ -300,6 +300,8 @@ pub enum CloudCommand {
     Disable,
     /// Show cloud sync status
     Status,
+    /// Trigger an immediate sync cycle
+    Sync,
 }
 
 #[cfg(test)]
@@ -651,6 +653,28 @@ mod tests {
     }
 
     #[test]
+    fn parse_cloud_sync() {
+        let cli = Cli::parse_from(["folddb", "cloud", "sync"]);
+        match cli.command {
+            Command::Cloud {
+                action: CloudCommand::Sync,
+            } => {}
+            _ => panic!("Expected Cloud Sync"),
+        }
+    }
+
+    #[test]
+    fn parse_cloud_status() {
+        let cli = Cli::parse_from(["folddb", "cloud", "status"]);
+        match cli.command {
+            Command::Cloud {
+                action: CloudCommand::Status,
+            } => {}
+            _ => panic!("Expected Cloud Status"),
+        }
+    }
+
+    #[test]
     fn parse_completions() {
         let cli = Cli::parse_from(["folddb", "completions", "bash"]);
         match cli.command {
@@ -848,6 +872,7 @@ mod tests {
             vec!["folddb", "cloud", "enable"],
             vec!["folddb", "cloud", "disable"],
             vec!["folddb", "cloud", "status"],
+            vec!["folddb", "cloud", "sync"],
             vec!["folddb", "recovery-phrase"],
             vec!["folddb", "restore"],
             vec!["folddb", "reset"],
