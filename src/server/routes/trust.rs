@@ -4,6 +4,7 @@ use crate::server::http_server::AppState;
 use crate::server::routes::{handler_result_to_response, node_or_return};
 use crate::trust::trust_invite::TrustInvite;
 use actix_web::{web, Responder};
+use fold_db::access::TrustTier;
 use serde::{Deserialize, Serialize};
 
 /// Fix base64 public keys that get mangled by URL path decoding.
@@ -18,13 +19,7 @@ fn fix_pubkey_from_path(key: &str) -> String {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct TrustGrantRequest {
     pub public_key: String,
-    pub distance: u64,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct TrustOverrideRequest {
-    pub public_key: String,
-    pub distance: u64,
+    pub role: String,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -35,13 +30,13 @@ pub struct TrustGrantsResponse {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct TrustGrantEntry {
     pub public_key: String,
-    pub distance: u64,
+    pub tier: TrustTier,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct TrustResolveResponse {
     pub public_key: String,
-    pub distance: Option<u64>,
+    pub tier: Option<TrustTier>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -64,7 +59,7 @@ pub struct AuditLogResponse {
 
 // ===== Trust management endpoints =====
 
-/// POST /api/trust/grant — assign trust to a public key at a distance
+/// POST /api/trust/grant — assign a role to a public key (role determines tier)
 pub async fn grant_trust(
     body: web::Json<TrustGrantRequest>,
     state: web::Data<AppState>,
@@ -73,11 +68,11 @@ pub async fn grant_trust(
     let op = OperationProcessor::new(node.clone());
     handler_result_to_response(
         async {
-            op.grant_trust(&body.public_key, body.distance)
+            op.assign_role_to_contact(&body.public_key, &body.role)
                 .await
                 .handler_err("grant trust")?;
             Ok(ApiResponse::success_with_user(
-                serde_json::json!({"granted": true}),
+                serde_json::json!({"granted": true, "role": body.role}),
                 user_hash,
             ))
         }
@@ -113,10 +108,7 @@ pub async fn list_trust_grants(state: web::Data<AppState>) -> impl Responder {
             let grants = op.list_trust_grants().await.handler_err("list grants")?;
             let entries: Vec<TrustGrantEntry> = grants
                 .into_iter()
-                .map(|(public_key, distance)| TrustGrantEntry {
-                    public_key,
-                    distance,
-                })
+                .map(|(public_key, tier)| TrustGrantEntry { public_key, tier })
                 .collect();
             Ok(ApiResponse::success_with_user(
                 TrustGrantsResponse { grants: entries },
@@ -127,43 +119,19 @@ pub async fn list_trust_grants(state: web::Data<AppState>) -> impl Responder {
     )
 }
 
-/// PUT /api/trust/override — set explicit distance override
-pub async fn set_trust_override(
-    body: web::Json<TrustOverrideRequest>,
-    state: web::Data<AppState>,
-) -> impl Responder {
-    let (user_hash, node) = node_or_return!(state);
-    let op = OperationProcessor::new(node.clone());
-    handler_result_to_response(
-        async {
-            op.set_trust_override(&body.public_key, body.distance)
-                .await
-                .handler_err("set override")?;
-            Ok(ApiResponse::success_with_user(
-                serde_json::json!({"override_set": true}),
-                user_hash,
-            ))
-        }
-        .await,
-    )
-}
-
-/// GET /api/trust/resolve/{key} — check resolved distance for a key
+/// GET /api/trust/resolve/{key} — check resolved trust tier for a key
 pub async fn resolve_trust(path: web::Path<String>, state: web::Data<AppState>) -> impl Responder {
     let public_key = fix_pubkey_from_path(&path.into_inner());
     let (user_hash, node) = node_or_return!(state);
     let op = OperationProcessor::new(node.clone());
     handler_result_to_response(
         async {
-            let distance = op
-                .resolve_trust_distance(&public_key)
+            let tier = op
+                .resolve_trust_tier(&public_key)
                 .await
                 .handler_err("resolve trust")?;
             Ok(ApiResponse::success_with_user(
-                TrustResolveResponse {
-                    public_key,
-                    distance,
-                },
+                TrustResolveResponse { public_key, tier },
                 user_hash,
             ))
         }
@@ -508,16 +476,16 @@ pub async fn get_contact(path: web::Path<String>, state: web::Data<AppState>) ->
 
 #[derive(Debug, Clone, Deserialize)]
 pub struct CreateInviteRequest {
-    pub proposed_distance: u64,
+    pub proposed_role: String,
 }
 
 #[derive(Debug, Clone, Deserialize)]
 pub struct AcceptInviteRequest {
     /// The trust invite token (base64url).
     pub token: String,
-    /// Override the proposed distance (optional).
+    /// Override the proposed role (optional).
     #[serde(default)]
-    pub accept_distance: Option<u64>,
+    pub accept_role: Option<String>,
     /// Whether to trust back (create reciprocal invite).
     #[serde(default)]
     pub trust_back: bool,
@@ -533,7 +501,7 @@ pub async fn create_trust_invite(
     handler_result_to_response(
         async {
             let invite = op
-                .create_trust_invite(body.proposed_distance)
+                .create_trust_invite(&body.proposed_role)
                 .handler_err("create trust invite")?;
             let token = invite
                 .to_token()
@@ -566,7 +534,7 @@ pub async fn accept_trust_invite(
                 .handler_err("decode invite token")?;
 
             let reciprocal = op
-                .accept_trust_invite(&invite, req.accept_distance, req.trust_back)
+                .accept_trust_invite(&invite, req.accept_role.as_deref(), req.trust_back)
                 .await
                 .handler_err("accept trust invite")?;
 
@@ -630,7 +598,7 @@ pub async fn preview_trust_invite(
                     "public_key": invite.sender_pub_key,
                     "fingerprint": invite.fingerprint(),
                 },
-                "proposed_distance": invite.proposed_distance,
+                "proposed_role": invite.proposed_role,
                 "created_at": invite.created_at,
             })))
         }
@@ -1097,7 +1065,7 @@ pub async fn decline_trust_invite(
                 sender_pub_key: invite.sender_pub_key.clone(),
                 sender_display_name: invite.sender_identity.display_name.clone(),
                 sender_contact_hint: invite.sender_identity.contact_hint.clone(),
-                proposed_distance: invite.proposed_distance,
+                proposed_role: invite.proposed_role.clone(),
                 declined_at: chrono::Utc::now(),
                 nonce: invite.nonce.clone(),
             });

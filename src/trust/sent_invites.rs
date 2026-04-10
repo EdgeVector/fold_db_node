@@ -27,8 +27,8 @@ pub struct SentInvite {
     pub nonce: String,
     /// Who we sent it to (if known — may be "unknown" for link shares).
     pub recipient_hint: String,
-    /// Proposed trust distance.
-    pub proposed_distance: u64,
+    /// Proposed role name.
+    pub proposed_role: String,
     /// When the invite was created.
     pub created_at: DateTime<Utc>,
     /// Current status.

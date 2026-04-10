@@ -6,6 +6,7 @@ use std::sync::Mutex;
 
 use crate::trust::contact_book::{Contact, ContactBook, TrustDirection};
 use crate::trust::identity_card::IdentityCard;
+use crate::trust::sharing_roles::SharingRoleConfig;
 use crate::trust::trust_invite::TrustInvite;
 use crate::utils::paths::folddb_home;
 
@@ -106,7 +107,8 @@ impl OperationProcessor {
     // ===== Trust Invites =====
 
     /// Create a signed trust invite token for direct sharing.
-    pub fn create_trust_invite(&self, proposed_distance: u64) -> Result<TrustInvite, SchemaError> {
+    /// The `proposed_role` is the role name (e.g., "friend", "doctor") to propose.
+    pub fn create_trust_invite(&self, proposed_role: &str) -> Result<TrustInvite, SchemaError> {
         let identity = IdentityCard::load()
             .map_err(|e| SchemaError::InvalidData(format!("Failed to load identity card: {e}")))?
             .ok_or_else(|| {
@@ -118,7 +120,7 @@ impl OperationProcessor {
         let private_key = self.node.get_node_private_key();
         let public_key = self.node.get_node_public_key();
 
-        let invite = TrustInvite::create(private_key, public_key, &identity, proposed_distance)
+        let invite = TrustInvite::create(private_key, public_key, &identity, proposed_role)
             .map_err(|e| SchemaError::InvalidData(format!("Failed to create trust invite: {e}")))?;
 
         // Record in sent invites
@@ -126,7 +128,7 @@ impl OperationProcessor {
             store.record(crate::trust::sent_invites::SentInvite {
                 nonce: invite.nonce.clone(),
                 recipient_hint: "unknown".to_string(),
-                proposed_distance,
+                proposed_role: proposed_role.to_string(),
                 created_at: invite.created_at,
                 status: crate::trust::sent_invites::SentInviteStatus::Pending,
             });
@@ -136,12 +138,13 @@ impl OperationProcessor {
         Ok(invite)
     }
 
-    /// Accept a trust invite: verify signature, add to trust graph and contact book.
+    /// Accept a trust invite: verify signature, look up role, add to trust map and contact book.
+    /// If `accept_role` is provided, use that role instead of the proposed_role from the invite.
     /// If `trust_back` is true, also creates a reciprocal invite.
     pub async fn accept_trust_invite(
         &self,
         invite: &TrustInvite,
-        accept_distance: Option<u64>,
+        accept_role: Option<&str>,
         trust_back: bool,
     ) -> Result<Option<TrustInvite>, SchemaError> {
         // Verify the invite signature and expiry
@@ -172,26 +175,30 @@ impl OperationProcessor {
             }
         }
 
-        // Validate accept_distance: must be >= 1 (distance 0 is owner-only)
-        let distance = accept_distance.unwrap_or(invite.proposed_distance);
-        if distance == 0 {
-            return Err(SchemaError::InvalidData(
-                "Trust distance must be >= 1 (distance 0 is reserved for the owner)".to_string(),
-            ));
-        }
+        // Resolve the role name: accept_role overrides the proposed_role from the invite
+        let role_name = accept_role.unwrap_or(&invite.proposed_role);
 
-        // Add to trust graph
-        self.grant_trust(&invite.sender_pub_key, distance).await?;
+        // Look up the role in SharingRoleConfig to get domain and tier
+        let roles_path = self.sharing_roles_path()?;
+        let config = SharingRoleConfig::load_from(&roles_path)
+            .map_err(|e| SchemaError::InvalidData(format!("Failed to load roles: {e}")))?;
+        let role = config
+            .get_role(role_name)
+            .ok_or_else(|| SchemaError::InvalidData(format!("Unknown role: {role_name}")))?;
+
+        // Grant trust in the role's domain at the role's tier
+        self.grant_trust_for_domain(&invite.sender_pub_key, &role.domain, role.tier)
+            .await?;
 
         // Mark nonce as consumed
         save_consumed_nonce(&invite.nonce);
 
         // Determine direction: check if we previously sent an invite to this sender.
-        // If yes, this is a reciprocal accept → mutual trust.
+        // If yes, this is a reciprocal accept -> mutual trust.
         // Also mark the matching sent invite as accepted.
         let mut is_mutual = false;
         if let Ok(mut sent) = crate::trust::sent_invites::SentInviteStore::load() {
-            // Check if we have any sent invite (pending or not) — the sender
+            // Check if we have any sent invite (pending or not) -- the sender
             // is responding to our invite, making this mutual
             let has_sent = sent.invites.iter().any(|_| true);
             if has_sent {
@@ -222,18 +229,20 @@ impl OperationProcessor {
             TrustDirection::Outgoing
         };
 
+        let mut roles = std::collections::HashMap::new();
+        roles.insert(role.domain.clone(), role_name.to_string());
+
         let contact = Contact {
             public_key: invite.sender_pub_key.clone(),
             display_name: invite.sender_identity.display_name.clone(),
             contact_hint: invite.sender_identity.contact_hint.clone(),
-            trust_distance: distance,
             direction,
             connected_at: Utc::now(),
             pseudonym: None,
             messaging_pseudonym: None,
             messaging_public_key: None,
             revoked: false,
-            roles: std::collections::HashMap::new(),
+            roles,
         };
 
         let mut book = ContactBook::load()
@@ -244,7 +253,7 @@ impl OperationProcessor {
 
         // Create reciprocal invite if requested
         if trust_back {
-            let reciprocal = self.create_trust_invite(distance)?;
+            let reciprocal = self.create_trust_invite(role_name)?;
             Ok(Some(reciprocal))
         } else {
             Ok(None)

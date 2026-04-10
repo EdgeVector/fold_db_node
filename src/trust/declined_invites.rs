@@ -21,8 +21,8 @@ pub struct DeclinedInvite {
     pub sender_display_name: String,
     /// The sender's contact hint.
     pub sender_contact_hint: Option<String>,
-    /// The proposed trust distance.
-    pub proposed_distance: u64,
+    /// The proposed role name.
+    pub proposed_role: String,
     /// When the invite was declined.
     pub declined_at: DateTime<Utc>,
     /// The invite's nonce (to identify duplicates).

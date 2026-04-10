@@ -37,8 +37,8 @@ impl OperationProcessor {
             .await
     }
 
-    /// Build an AccessContext for a caller by resolving their trust distances
-    /// across all domains from this node's trust graphs.
+    /// Build an AccessContext for a caller by resolving their trust tiers
+    /// across all domains from this node's trust maps.
     pub async fn build_access_context(&self, caller_pub_key: &str) -> FoldDbResult<AccessContext> {
         let db = self.get_db().await?;
         let owner = self.node.get_node_public_key().to_string();
@@ -48,25 +48,25 @@ impl OperationProcessor {
             return Ok(AccessContext::owner(caller_pub_key));
         }
 
-        // Resolve distances in all domains
+        // Resolve tiers in all domains
         let domains = db
             .db_ops
             .list_trust_domains()
             .await
             .map_err(FoldDbError::Schema)?;
-        let mut trust_distances = HashMap::new();
+        let mut trust_tiers = HashMap::new();
         for domain in &domains {
-            let graph = db
+            let map = db
                 .db_ops
-                .load_trust_graph_for_domain(domain)
+                .load_trust_map_for_domain(domain)
                 .await
                 .map_err(FoldDbError::Schema)?;
-            if let Some(dist) = graph.resolve(caller_pub_key, &owner) {
-                trust_distances.insert(domain.clone(), dist);
+            if let Some(&tier) = map.get(caller_pub_key) {
+                trust_tiers.insert(domain.clone(), tier);
             }
         }
 
-        Ok(AccessContext::remote_multi(caller_pub_key, trust_distances))
+        Ok(AccessContext::remote(caller_pub_key, trust_tiers))
     }
 
     /// Execute a query with access control. Builds AccessContext from the caller's

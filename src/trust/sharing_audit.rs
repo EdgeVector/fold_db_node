@@ -1,8 +1,9 @@
 //! Sharing audit — "What can Bob see?"
 //!
 //! Computes which schemas and fields a contact can access based on their
-//! trust distances across all domains and the access policies on fields.
+//! trust tiers across all domains and the access policies on fields.
 
+use fold_db::access::TrustTier;
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 
@@ -25,8 +26,8 @@ pub struct AccessibleSchema {
 pub struct SharingAuditResult {
     pub contact_public_key: String,
     pub contact_display_name: String,
-    /// Per-domain trust distances for this contact.
-    pub domain_distances: HashMap<String, u64>,
+    /// Per-domain trust tiers for this contact.
+    pub domain_tiers: HashMap<String, TrustTier>,
     /// Per-domain roles for this contact.
     pub domain_roles: HashMap<String, String>,
     /// Schemas this contact can access (at least one readable field).
