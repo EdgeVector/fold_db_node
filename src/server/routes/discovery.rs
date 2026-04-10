@@ -94,9 +94,10 @@ fn get_auth_token(req: &HttpRequest) -> Result<String, HttpResponse> {
     })
 }
 
-/// Check if a discovery handler error looks like a 401/auth failure.
-fn is_auth_error(err: &str) -> bool {
-    err.contains("401") || err.contains("Unauthorized") || err.contains("unauthorized")
+/// Check if a discovery handler error is an auth failure.
+/// Matches the HandlerError variant directly instead of fragile string matching.
+fn is_auth_error(err: &crate::handlers::HandlerError) -> bool {
+    matches!(err, crate::handlers::HandlerError::Unauthorized(_)) || err.to_string().contains("401")
 }
 
 /// Try to refresh the session token via signed register, then return the new token.
@@ -120,8 +121,14 @@ pub async fn resolve_discovery_config(
     node: &crate::fold_node::node::FoldNode,
     req: Option<&HttpRequest>,
 ) -> Result<(String, Vec<u8>, String), crate::handlers::HandlerError> {
-    let (url, key) = get_discovery_config().map_err(|_| {
-        crate::handlers::HandlerError::Internal("Discovery not configured".to_string())
+    let (url, key) = get_discovery_config().map_err(|resp| {
+        // Extract the error message from the HttpResponse body if possible
+        let msg = "Discovery not configured. Register with Exemem to enable (folddb cloud enable).";
+        if resp.status() == actix_web::http::StatusCode::INTERNAL_SERVER_ERROR {
+            crate::handlers::HandlerError::Internal(msg.to_string())
+        } else {
+            crate::handlers::HandlerError::ServiceUnavailable(msg.to_string())
+        }
     })?;
 
     // Try to get auth token from env, keychain, or dummy for the request
@@ -224,7 +231,7 @@ pub async fn publish(req: HttpRequest, state: web::Data<AppState>) -> impl Respo
 
     match discovery_handlers::publish(&node, &url, &auth_token, &key).await {
         Ok(response) => HttpResponse::Ok().json(response),
-        Err(e) if is_auth_error(&e.to_string()) => {
+        Err(e) if is_auth_error(&e) => {
             if let Some(new_token) = try_refresh_token(&state).await {
                 match discovery_handlers::publish(&node, &url, &new_token, &key).await {
                     Ok(response) => return HttpResponse::Ok().json(response),
@@ -260,7 +267,7 @@ pub async fn search(
 
     match discovery_handlers::search(&body, &node, &url, &auth_token, &key).await {
         Ok(response) => HttpResponse::Ok().json(response),
-        Err(e) if is_auth_error(&e.to_string()) => {
+        Err(e) if is_auth_error(&e) => {
             if let Some(new_token) = try_refresh_token(&state).await {
                 match discovery_handlers::search(&body, &node, &url, &new_token, &key).await {
                     Ok(response) => return HttpResponse::Ok().json(response),
@@ -296,7 +303,7 @@ pub async fn connect(
 
     match discovery_handlers::connect(&body, &node, &url, &auth_token, &key).await {
         Ok(response) => HttpResponse::Ok().json(response),
-        Err(e) if is_auth_error(&e.to_string()) => {
+        Err(e) if is_auth_error(&e) => {
             if let Some(new_token) = try_refresh_token(&state).await {
                 match discovery_handlers::connect(&body, &node, &url, &new_token, &key).await {
                     Ok(response) => return HttpResponse::Ok().json(response),
@@ -415,7 +422,7 @@ pub async fn browse_categories(req: HttpRequest, state: web::Data<AppState>) -> 
 
     match discovery_handlers::browse_categories(&url, &auth_token, &key).await {
         Ok(response) => HttpResponse::Ok().json(response),
-        Err(e) if is_auth_error(&e.to_string()) => {
+        Err(e) if is_auth_error(&e) => {
             // Try refreshing the token and retrying once
             if let Some(new_token) = try_refresh_token(&state).await {
                 match discovery_handlers::browse_categories(&url, &new_token, &key).await {
@@ -687,5 +694,37 @@ pub async fn moment_list(state: web::Data<AppState>) -> impl Responder {
     match discovery_handlers::moment_list(&node).await {
         Ok(response) => HttpResponse::Ok().json(response),
         Err(e) => handler_error_to_response(e),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::handlers::HandlerError;
+
+    #[test]
+    fn is_auth_error_matches_unauthorized_variant() {
+        let err = HandlerError::Unauthorized("token expired".to_string());
+        assert!(is_auth_error(&err));
+    }
+
+    #[test]
+    fn is_auth_error_matches_401_in_internal_error() {
+        let err = HandlerError::Internal(
+            "Failed to search discovery network: Discovery search failed with status 401: Unauthorized".to_string(),
+        );
+        assert!(is_auth_error(&err));
+    }
+
+    #[test]
+    fn is_auth_error_does_not_match_other_errors() {
+        let err = HandlerError::Internal("network timeout".to_string());
+        assert!(!is_auth_error(&err));
+    }
+
+    #[test]
+    fn is_auth_error_does_not_match_not_found() {
+        let err = HandlerError::NotFound("schema not found".to_string());
+        assert!(!is_auth_error(&err));
     }
 }
