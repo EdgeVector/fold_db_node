@@ -25,6 +25,10 @@ export default function CloudBackupStep({ onNext, onSkip }) {
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ invite_code: inviteCode.trim() }),
       })
+      if (!resp.ok) {
+        const errBody = await resp.text().catch(() => '')
+        throw new Error(errBody || `Registration failed (HTTP ${resp.status})`)
+      }
       const data = await resp.json()
 
       if (!data.ok) {
@@ -44,6 +48,9 @@ export default function CloudBackupStep({ onNext, onSkip }) {
 
       // Fetch recovery phrase
       const phraseResp = await fetch('/api/auth/recovery-phrase')
+      if (!phraseResp.ok) {
+        throw new Error(`Failed to fetch recovery phrase (HTTP ${phraseResp.status})`)
+      }
       const phraseData = await phraseResp.json()
       if (phraseData.ok) {
         setRecoveryWords(phraseData.words)
@@ -72,6 +79,10 @@ export default function CloudBackupStep({ onNext, onSkip }) {
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ words }),
       })
+      if (!resp.ok) {
+        const errBody = await resp.text().catch(() => '')
+        throw new Error(errBody || `Restore failed (HTTP ${resp.status})`)
+      }
       const data = await resp.json()
       if (!data.ok) throw new Error(data.error || 'Restore failed')
 
