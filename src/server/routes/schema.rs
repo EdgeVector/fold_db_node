@@ -124,9 +124,7 @@ pub async fn approve_schema(path: web::Path<String>, state: web::Data<AppState>)
     let op = OperationProcessor::new(node.clone());
     handler_result_to_response(
         async {
-            op.approve_schema(&schema_name)
-                .await
-                .typed_handler_err()?;
+            op.approve_schema(&schema_name).await.typed_handler_err()?;
             Ok(ApiResponse::success_with_user(
                 SchemaApproveResponse { approved: true },
                 user_hash,
@@ -155,9 +153,7 @@ pub async fn block_schema(path: web::Path<String>, state: web::Data<AppState>) -
     let op = OperationProcessor::new(node.clone());
     handler_result_to_response(
         async {
-            op.block_schema(&schema_name)
-                .await
-                .typed_handler_err()?;
+            op.block_schema(&schema_name).await.typed_handler_err()?;
             Ok(ApiResponse::success_with_user(
                 crate::handlers::response::SuccessResponse {
                     success: true,

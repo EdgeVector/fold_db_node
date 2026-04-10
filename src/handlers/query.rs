@@ -7,8 +7,7 @@ use crate::fold_node::node::FoldNode;
 use crate::fold_node::OperationProcessor;
 use crate::handlers::handler_response;
 use crate::handlers::response::{
-    get_db_guard, ApiResponse, HandlerError, HandlerResult, IntoHandlerError,
-    IntoTypedHandlerError,
+    get_db_guard, ApiResponse, HandlerError, HandlerResult, IntoHandlerError, IntoTypedHandlerError,
 };
 use fold_db::schema::types::operations::Query;
 use fold_db::storage::traits::TypedStore;

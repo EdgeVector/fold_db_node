@@ -20,7 +20,9 @@ pub use crate::discovery::types::{
 };
 use crate::fold_node::node::FoldNode;
 use crate::fold_node::OperationProcessor;
-use crate::handlers::response::{ApiResponse, HandlerError, HandlerResult, IntoHandlerError, IntoTypedHandlerError};
+use crate::handlers::response::{
+    ApiResponse, HandlerError, HandlerResult, IntoHandlerError, IntoTypedHandlerError,
+};
 use crate::trust::contact_book::{Contact, ContactBook, TrustDirection};
 use crate::trust::identity_card::IdentityCard;
 use crate::trust::sharing_roles::SharingRoleConfig;

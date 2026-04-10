@@ -6,8 +6,7 @@
 use crate::fold_node::llm_query::{conversation_store, types::*, LlmQueryService, SessionManager};
 use crate::fold_node::node::FoldNode;
 use crate::handlers::response::{
-    get_db_guard, ApiResponse, HandlerError, HandlerResult, IntoHandlerError,
-    IntoTypedHandlerError,
+    get_db_guard, ApiResponse, HandlerError, HandlerResult, IntoHandlerError, IntoTypedHandlerError,
 };
 use fold_db::log_feature;
 use fold_db::logging::features::LogFeature;

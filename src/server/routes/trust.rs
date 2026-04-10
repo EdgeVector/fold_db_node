@@ -87,9 +87,7 @@ pub async fn revoke_trust(path: web::Path<String>, state: web::Data<AppState>) -
     let op = OperationProcessor::new(node.clone());
     handler_result_to_response(
         async {
-            op.revoke_trust(&public_key)
-                .await
-                .typed_handler_err()?;
+            op.revoke_trust(&public_key).await.typed_handler_err()?;
             Ok(ApiResponse::success_with_user(
                 serde_json::json!({"revoked": true}),
                 user_hash,
@@ -613,9 +611,7 @@ pub async fn revoke_contact(path: web::Path<String>, state: web::Data<AppState>)
     let op = OperationProcessor::new(node.clone());
     handler_result_to_response(
         async {
-            op.revoke_contact(&public_key)
-                .await
-                .typed_handler_err()?;
+            op.revoke_contact(&public_key).await.typed_handler_err()?;
             Ok(ApiResponse::success_with_user(
                 serde_json::json!({"revoked": true}),
                 user_hash,

@@ -5,7 +5,9 @@
 use crate::fold_node::node::FoldNode;
 use crate::fold_node::OperationProcessor;
 use crate::handlers::handler_response;
-use crate::handlers::response::{ApiResponse, HandlerResult, IntoHandlerError, IntoTypedHandlerError};
+use crate::handlers::response::{
+    ApiResponse, HandlerResult, IntoHandlerError, IntoTypedHandlerError,
+};
 
 handler_response! {
     pub struct SystemStatusResponse {
