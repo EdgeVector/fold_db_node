@@ -428,6 +428,8 @@ pub struct SetIdentityCardRequest {
     pub display_name: String,
     #[serde(default)]
     pub contact_hint: Option<String>,
+    #[serde(default)]
+    pub birthday: Option<String>,
 }
 
 /// GET /api/identity/card — get the current identity card
@@ -456,7 +458,7 @@ pub async fn set_identity_card(
     let req = body.into_inner();
     handler_result_to_response(
         async {
-            op.set_identity_card(req.display_name, req.contact_hint)
+            op.set_identity_card(req.display_name, req.contact_hint, req.birthday)
                 .handler_err("set identity card")?;
             Ok(ApiResponse::success_with_user(
                 serde_json::json!({"saved": true}),

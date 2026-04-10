@@ -8,6 +8,7 @@ import type { EnhancedApiResponse } from "../core/types";
 export interface IdentityCard {
   display_name: string;
   contact_hint?: string | null;
+  birthday?: string | null;
 }
 
 export interface Contact {
@@ -96,10 +97,12 @@ export async function getIdentityCard(): Promise<EnhancedApiResponse<{ identity_
 export async function setIdentityCard(
   displayName: string,
   contactHint?: string | null,
+  birthday?: string | null,
 ): Promise<EnhancedApiResponse<{ saved: boolean }>> {
   return client.put<{ saved: boolean }>("/identity/card", {
     display_name: displayName,
     contact_hint: contactHint || null,
+    birthday: birthday || null,
   });
 }
 
