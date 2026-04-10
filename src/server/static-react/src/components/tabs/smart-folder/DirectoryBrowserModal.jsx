@@ -107,7 +107,7 @@ export default function DirectoryBrowserModal({ initialPath, onSelect, onClose }
               {directories.map((dir) => (
                 <li key={dir}>
                   <button
-                    className="w-full text-left px-3 py-1.5 text-sm font-mono rounded hover:bg-surface-hover truncate"
+                    className="w-full text-left px-3 py-1.5 text-sm font-mono rounded hover:bg-gruvbox-hover truncate"
                     onClick={() => navigateInto(dir)}
                   >
                     {dir}/

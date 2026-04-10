@@ -49,6 +49,7 @@ function FieldPolicyPanel({ schemaName, fieldName, policy, onClose, onUpdate }) 
   const [readTier, setReadTier] = useState(policy?.min_read_tier ?? 'Owner')
   const [writeTier, setWriteTier] = useState(policy?.min_write_tier ?? 'Owner')
   const [saving, setSaving] = useState(false)
+  const [saveError, setSaveError] = useState(null)
   const [preset, setPreset] = useState('')
 
   const applyPreset = (name) => {
@@ -67,6 +68,7 @@ function FieldPolicyPanel({ schemaName, fieldName, policy, onClose, onUpdate }) 
 
   const handleSave = async () => {
     setSaving(true)
+    setSaveError(null)
     try {
       await setFieldPolicyApi(schemaName, fieldName, {
         trust_domain: policy?.trust_domain ?? 'personal',
@@ -76,14 +78,15 @@ function FieldPolicyPanel({ schemaName, fieldName, policy, onClose, onUpdate }) 
       })
       onUpdate()
     } catch (err) {
-      console.error('Failed to save field policy:', err)
+      const msg = err instanceof Error ? err.message : String(err)
+      setSaveError(msg || 'Failed to save policy')
     } finally {
       setSaving(false)
     }
   }
 
   return (
-    <div className="mt-2 p-3 bg-surface-primary border border-border rounded-lg space-y-3">
+    <div className="mt-2 p-3 bg-surface border border-border rounded-lg space-y-3">
       <div className="flex items-center justify-between">
         <h4 className="text-sm font-semibold text-primary">
           Access Policy: {schemaName}.{fieldName}
@@ -144,10 +147,14 @@ function FieldPolicyPanel({ schemaName, fieldName, policy, onClose, onUpdate }) 
         </p>
       )}
 
+      {saveError && (
+        <p className="text-xs text-gruvbox-red">{saveError}</p>
+      )}
+
       <button
         onClick={handleSave}
         disabled={saving}
-        className="px-4 py-1.5 bg-accent text-surface-primary rounded text-sm font-medium disabled:opacity-50 hover:bg-accent/80"
+        className="px-4 py-1.5 bg-accent text-surface rounded text-sm font-medium disabled:opacity-50 hover:bg-accent/80"
       >
         {saving ? 'Saving...' : 'Save Policy'}
       </button>

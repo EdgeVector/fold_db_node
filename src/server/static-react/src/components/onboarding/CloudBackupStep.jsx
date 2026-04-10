@@ -117,7 +117,7 @@ export default function CloudBackupStep({ onNext, onSkip }) {
           onChange={(e) => setRestorePhrase(e.target.value.toLowerCase())}
           placeholder="Enter your 24-word recovery phrase..."
           rows={4}
-          className="input-field w-full font-mono text-xs"
+          className="input w-full font-mono text-xs"
           disabled={loading}
         />
 
@@ -219,7 +219,7 @@ export default function CloudBackupStep({ onNext, onSkip }) {
           value={inviteCode}
           onChange={(e) => setInviteCode(e.target.value.toUpperCase())}
           placeholder="EXM-XXXX-XXXX"
-          className="input-field w-full font-mono tracking-wider"
+          className="input w-full font-mono tracking-wider"
           disabled={loading}
         />
         <p className="text-xs text-secondary mt-1">Get an invite code from an existing Exemem user.</p>
