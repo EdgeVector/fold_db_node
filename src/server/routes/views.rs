@@ -1,6 +1,6 @@
 use crate::fold_node::OperationProcessor;
 use crate::fold_node::TransformView;
-use crate::handlers::{ApiResponse, HandlerError, IntoHandlerError};
+use crate::handlers::{ApiResponse, HandlerError, IntoHandlerError, IntoTypedHandlerError};
 use crate::server::http_server::AppState;
 use crate::server::routes::{handler_result_to_response, node_or_return};
 use actix_web::{web, Responder};
@@ -72,7 +72,7 @@ pub async fn list_views(state: web::Data<AppState>) -> impl Responder {
     let op = OperationProcessor::new(node.clone());
     handler_result_to_response(
         async {
-            let views: Vec<_> = op.list_views().await.handler_err("list views")?;
+            let views: Vec<_> = op.list_views().await.typed_handler_err()?;
             let count = views.len();
             let views_json = serde_json::to_value(&views).handler_err("serialize views")?;
             Ok(ApiResponse::success_with_user(
@@ -97,7 +97,7 @@ pub async fn get_view(path: web::Path<String>, state: web::Data<AppState>) -> im
             let view: TransformView = op
                 .get_view(&name)
                 .await
-                .handler_err("get view")?
+                .typed_handler_err()?
                 .ok_or_else(|| HandlerError::NotFound(format!("View not found: {}", name)))?;
             let view_json = serde_json::to_value(&view).handler_err("serialize view")?;
             Ok(ApiResponse::success_with_user(
@@ -122,7 +122,7 @@ pub async fn create_view(
                 .into_inner()
                 .into_transform_view()
                 .map_err(HandlerError::BadRequest)?;
-            op.create_view(view).await.handler_err("create view")?;
+            op.create_view(view).await.typed_handler_err()?;
             Ok(ApiResponse::success_with_user(
                 crate::handlers::response::SuccessResponse {
                     success: true,
@@ -142,7 +142,7 @@ pub async fn approve_view(path: web::Path<String>, state: web::Data<AppState>) -
     let op = OperationProcessor::new(node.clone());
     handler_result_to_response(
         async {
-            op.approve_view(&name).await.handler_err("approve view")?;
+            op.approve_view(&name).await.typed_handler_err()?;
             Ok(ApiResponse::success_with_user(
                 ViewApproveResponse { approved: true },
                 user_hash,
@@ -159,7 +159,7 @@ pub async fn block_view(path: web::Path<String>, state: web::Data<AppState>) -> 
     let op = OperationProcessor::new(node.clone());
     handler_result_to_response(
         async {
-            op.block_view(&name).await.handler_err("block view")?;
+            op.block_view(&name).await.typed_handler_err()?;
             Ok(ApiResponse::success_with_user(
                 crate::handlers::response::SuccessResponse {
                     success: true,
@@ -179,7 +179,7 @@ pub async fn load_view(path: web::Path<String>, state: web::Data<AppState>) -> i
     let op = OperationProcessor::new(node.clone());
     handler_result_to_response(
         async {
-            let result = op.load_view(&name).await.handler_err("load view")?;
+            let result = op.load_view(&name).await.typed_handler_err()?;
             let body = serde_json::to_value(&result).handler_err("serialize result")?;
             Ok(ApiResponse::success(body))
         }
@@ -194,7 +194,7 @@ pub async fn delete_view(path: web::Path<String>, state: web::Data<AppState>) ->
     let op = OperationProcessor::new(node.clone());
     handler_result_to_response(
         async {
-            op.delete_view(&name).await.handler_err("delete view")?;
+            op.delete_view(&name).await.typed_handler_err()?;
             Ok(ApiResponse::success_with_user(
                 crate::handlers::response::SuccessResponse {
                     success: true,

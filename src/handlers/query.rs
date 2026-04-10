@@ -114,7 +114,7 @@ pub async fn get_molecule_history(
     let events = db_ops
         .get_mutation_events(molecule_uuid, None)
         .await
-        .handler_err("load history")?;
+        .typed_handler_err()?;
 
     let summaries: Vec<MutationEventSummary> = events
         .into_iter()
@@ -179,7 +179,7 @@ pub async fn get_process_results(
     let results = node
         .get_process_results(progress_id)
         .await
-        .handler_err("get process results")?;
+        .typed_handler_err()?;
 
     Ok(ApiResponse::success_with_user(
         ProcessResultsResponse { results },
@@ -217,7 +217,7 @@ pub async fn get_conflicts(
     let conflicts = db_ops
         .get_unresolved_conflicts(molecule_uuid, None)
         .await
-        .handler_err("load conflicts")?;
+        .typed_handler_err()?;
 
     let summaries: Vec<ConflictSummary> = conflicts
         .into_iter()
@@ -251,7 +251,7 @@ pub async fn resolve_conflict(
     db_ops
         .resolve_conflict(conflict_id, None)
         .await
-        .handler_err("resolve conflict")?;
+        .typed_handler_err()?;
 
     Ok(ApiResponse::success_with_user(
         serde_json::json!({"resolved": conflict_id}),

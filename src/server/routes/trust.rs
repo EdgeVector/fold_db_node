@@ -1,5 +1,5 @@
 use crate::fold_node::OperationProcessor;
-use crate::handlers::{ApiResponse, IntoHandlerError};
+use crate::handlers::{ApiResponse, IntoHandlerError, IntoTypedHandlerError};
 use crate::server::http_server::AppState;
 use crate::server::routes::{handler_result_to_response, node_or_return};
 use crate::trust::trust_invite::TrustInvite;
@@ -70,7 +70,7 @@ pub async fn grant_trust(
         async {
             op.assign_role_to_contact(&body.public_key, &body.role)
                 .await
-                .handler_err("grant trust")?;
+                .typed_handler_err()?;
             Ok(ApiResponse::success_with_user(
                 serde_json::json!({"granted": true, "role": body.role}),
                 user_hash,
@@ -87,9 +87,7 @@ pub async fn revoke_trust(path: web::Path<String>, state: web::Data<AppState>) -
     let op = OperationProcessor::new(node.clone());
     handler_result_to_response(
         async {
-            op.revoke_trust(&public_key)
-                .await
-                .handler_err("revoke trust")?;
+            op.revoke_trust(&public_key).await.typed_handler_err()?;
             Ok(ApiResponse::success_with_user(
                 serde_json::json!({"revoked": true}),
                 user_hash,
@@ -105,7 +103,7 @@ pub async fn list_trust_grants(state: web::Data<AppState>) -> impl Responder {
     let op = OperationProcessor::new(node.clone());
     handler_result_to_response(
         async {
-            let grants = op.list_trust_grants().await.handler_err("list grants")?;
+            let grants = op.list_trust_grants().await.typed_handler_err()?;
             let entries: Vec<TrustGrantEntry> = grants
                 .into_iter()
                 .map(|(public_key, tier)| TrustGrantEntry { public_key, tier })
@@ -129,7 +127,7 @@ pub async fn resolve_trust(path: web::Path<String>, state: web::Data<AppState>) 
             let tier = op
                 .resolve_trust_tier(&public_key)
                 .await
-                .handler_err("resolve trust")?;
+                .typed_handler_err()?;
             Ok(ApiResponse::success_with_user(
                 TrustResolveResponse { public_key, tier },
                 user_hash,
@@ -154,7 +152,7 @@ pub async fn set_field_policy(
         async {
             op.set_field_access_policy(&schema_name, &field_name, body.into_inner().policy)
                 .await
-                .handler_err("set field policy")?;
+                .typed_handler_err()?;
             Ok(ApiResponse::success_with_user(
                 serde_json::json!({"policy_set": true}),
                 user_hash,
@@ -177,7 +175,7 @@ pub async fn get_field_policy(
             let policy = op
                 .get_field_access_policy(&schema_name, &field_name)
                 .await
-                .handler_err("get field policy")?;
+                .typed_handler_err()?;
             Ok(ApiResponse::success_with_user(
                 FieldPolicyResponse {
                     schema_name,
@@ -204,7 +202,7 @@ pub async fn get_all_field_policies(
             let policies = op
                 .get_all_field_policies(&schema_name)
                 .await
-                .handler_err("get all field policies")?;
+                .typed_handler_err()?;
             let policies_json =
                 serde_json::to_value(&policies).handler_err("serialize policies")?;
             Ok(ApiResponse::success_with_user(
@@ -231,7 +229,7 @@ pub async fn get_audit_log(
     let limit = query.limit.unwrap_or(100);
     handler_result_to_response(
         async {
-            let events = op.get_audit_log(limit).await.handler_err("get audit log")?;
+            let events = op.get_audit_log(limit).await.typed_handler_err()?;
             let count = events.as_array().map_or(0, |a| a.len());
             Ok(ApiResponse::success_with_user(
                 AuditLogResponse { events, count },
@@ -283,7 +281,7 @@ pub async fn issue_capability(
             });
             op.issue_capability(&req.schema_name, &req.field_name, constraint)
                 .await
-                .handler_err("issue capability")?;
+                .typed_handler_err()?;
             Ok(ApiResponse::success_with_user(
                 serde_json::json!({"issued": true}),
                 user_hash,
@@ -305,7 +303,7 @@ pub async fn revoke_capability(
         async {
             op.revoke_capability(&req.schema_name, &req.field_name, &req.public_key, req.kind)
                 .await
-                .handler_err("revoke capability")?;
+                .typed_handler_err()?;
             Ok(ApiResponse::success_with_user(
                 serde_json::json!({"revoked": true}),
                 user_hash,
@@ -328,7 +326,7 @@ pub async fn list_capabilities(
             let caps = op
                 .list_capabilities(&schema_name, &field_name)
                 .await
-                .handler_err("list capabilities")?;
+                .typed_handler_err()?;
             let caps_json = serde_json::to_value(&caps).handler_err("serialize capabilities")?;
             Ok(ApiResponse::success_with_user(caps_json, user_hash))
         }
@@ -356,7 +354,7 @@ pub async fn set_payment_gate(
         async {
             op.set_payment_gate(&schema_name, body.into_inner().gate)
                 .await
-                .handler_err("set payment gate")?;
+                .typed_handler_err()?;
             Ok(ApiResponse::success_with_user(
                 serde_json::json!({"payment_gate_set": true}),
                 user_hash,
@@ -379,7 +377,7 @@ pub async fn get_payment_gate(
             let gate = op
                 .get_payment_gate(&schema_name)
                 .await
-                .handler_err("get payment gate")?;
+                .typed_handler_err()?;
             Ok(ApiResponse::success_with_user(
                 serde_json::json!({"schema_name": schema_name, "payment_gate": gate}),
                 user_hash,
@@ -406,7 +404,7 @@ pub async fn get_identity_card(state: web::Data<AppState>) -> impl Responder {
     let op = OperationProcessor::new(node.clone());
     handler_result_to_response(
         async {
-            let card = op.get_identity_card().handler_err("get identity card")?;
+            let card = op.get_identity_card().typed_handler_err()?;
             Ok(ApiResponse::success_with_user(
                 serde_json::json!({ "identity_card": card }),
                 user_hash,
@@ -427,7 +425,7 @@ pub async fn set_identity_card(
     handler_result_to_response(
         async {
             op.set_identity_card(req.display_name, req.contact_hint, req.birthday)
-                .handler_err("set identity card")?;
+                .typed_handler_err()?;
             Ok(ApiResponse::success_with_user(
                 serde_json::json!({"saved": true}),
                 user_hash,
@@ -445,7 +443,7 @@ pub async fn list_contacts(state: web::Data<AppState>) -> impl Responder {
     let op = OperationProcessor::new(node.clone());
     handler_result_to_response(
         async {
-            let contacts = op.list_contacts().handler_err("list contacts")?;
+            let contacts = op.list_contacts().typed_handler_err()?;
             Ok(ApiResponse::success_with_user(
                 serde_json::json!({ "contacts": contacts }),
                 user_hash,
@@ -462,7 +460,7 @@ pub async fn get_contact(path: web::Path<String>, state: web::Data<AppState>) ->
     let op = OperationProcessor::new(node.clone());
     handler_result_to_response(
         async {
-            let contact = op.get_contact(&public_key).handler_err("get contact")?;
+            let contact = op.get_contact(&public_key).typed_handler_err()?;
             Ok(ApiResponse::success_with_user(
                 serde_json::json!({ "contact": contact }),
                 user_hash,
@@ -502,11 +500,11 @@ pub async fn create_trust_invite(
         async {
             let invite = op
                 .create_trust_invite(&body.proposed_role)
-                .handler_err("create trust invite")?;
+                .typed_handler_err()?;
             let token = invite
                 .to_token()
                 .map_err(fold_db::schema::SchemaError::InvalidData)
-                .handler_err("encode invite token")?;
+                .typed_handler_err()?;
             Ok(ApiResponse::success_with_user(
                 serde_json::json!({
                     "invite": invite,
@@ -531,18 +529,18 @@ pub async fn accept_trust_invite(
         async {
             let invite = TrustInvite::from_token(&req.token)
                 .map_err(fold_db::schema::SchemaError::InvalidData)
-                .handler_err("decode invite token")?;
+                .typed_handler_err()?;
 
             let reciprocal = op
                 .accept_trust_invite(&invite, req.accept_role.as_deref(), req.trust_back)
                 .await
-                .handler_err("accept trust invite")?;
+                .typed_handler_err()?;
 
             let reciprocal_token = match &reciprocal {
                 Some(inv) => Some(
                     inv.to_token()
                         .map_err(fold_db::schema::SchemaError::InvalidData)
-                        .handler_err("encode reciprocal token")?,
+                        .typed_handler_err()?,
                 ),
                 None => None,
             };
@@ -579,16 +577,16 @@ pub async fn preview_trust_invite(
                 .ok_or_else(|| {
                     fold_db::schema::SchemaError::InvalidData("Missing 'token' field".to_string())
                 })
-                .handler_err("parse preview request")?;
+                .typed_handler_err()?;
 
             let invite = TrustInvite::from_token(token)
                 .map_err(fold_db::schema::SchemaError::InvalidData)
-                .handler_err("decode invite token")?;
+                .typed_handler_err()?;
 
             let valid = invite
                 .verify()
                 .map_err(fold_db::schema::SchemaError::InvalidData)
-                .handler_err("verify invite")?;
+                .typed_handler_err()?;
 
             Ok(ApiResponse::success(serde_json::json!({
                 "valid": valid,
@@ -613,9 +611,7 @@ pub async fn revoke_contact(path: web::Path<String>, state: web::Data<AppState>)
     let op = OperationProcessor::new(node.clone());
     handler_result_to_response(
         async {
-            op.revoke_contact(&public_key)
-                .await
-                .handler_err("revoke contact")?;
+            op.revoke_contact(&public_key).await.typed_handler_err()?;
             Ok(ApiResponse::success_with_user(
                 serde_json::json!({"revoked": true}),
                 user_hash,
@@ -870,7 +866,7 @@ pub async fn assign_contact_role(
         async {
             op.assign_role_to_contact(&public_key, &body.role_name)
                 .await
-                .handler_err("assign role")?;
+                .typed_handler_err()?;
             Ok(ApiResponse::success_with_user(
                 serde_json::json!({"assigned": true, "role": body.role_name}),
                 user_hash,
@@ -893,7 +889,7 @@ pub async fn remove_contact_role(
         async {
             op.remove_role_from_contact(&public_key, &domain)
                 .await
-                .handler_err("remove role")?;
+                .typed_handler_err()?;
             Ok(ApiResponse::success_with_user(
                 serde_json::json!({"removed": true, "domain": domain}),
                 user_hash,
@@ -913,7 +909,7 @@ pub async fn sharing_audit(path: web::Path<String>, state: web::Data<AppState>) 
             let result = op
                 .audit_contact_access(&public_key)
                 .await
-                .handler_err("sharing audit")?;
+                .typed_handler_err()?;
             Ok(ApiResponse::success_with_user(result, user_hash))
         }
         .await,
@@ -926,7 +922,7 @@ pub async fn sharing_posture(state: web::Data<AppState>) -> impl Responder {
     let op = OperationProcessor::new(node.clone());
     handler_result_to_response(
         async {
-            let result = op.sharing_posture().await.handler_err("sharing posture")?;
+            let result = op.sharing_posture().await.typed_handler_err()?;
             Ok(ApiResponse::success_with_user(result, user_hash))
         }
         .await,
@@ -944,11 +940,11 @@ pub async fn apply_defaults_all(
     let force = query.get("force").map(|v| v == "true").unwrap_or(false);
     handler_result_to_response(
         async {
-            let db = op.get_db_public().await.handler_err("get database")?;
+            let db = op.get_db_public().await.typed_handler_err()?;
             let schemas = db
                 .schema_manager
                 .get_schemas_with_states()
-                .handler_err("list schemas")?;
+                .typed_handler_err()?;
             drop(db);
 
             let mut total_applied = 0usize;
@@ -997,7 +993,7 @@ pub async fn set_field_policy_unsigned(
         async {
             op.set_field_access_policy(&schema_name, &field_name, body.into_inner().policy)
                 .await
-                .handler_err("set field policy")?;
+                .typed_handler_err()?;
             Ok(ApiResponse::success_with_user(
                 serde_json::json!({"policy_set": true}),
                 user_hash,
@@ -1020,7 +1016,7 @@ pub async fn get_schema_policies(
             let policies = op
                 .get_all_field_policies(&schema_name)
                 .await
-                .handler_err("get policies")?;
+                .typed_handler_err()?;
             let policies_json =
                 serde_json::to_value(&policies).handler_err("serialize policies")?;
             Ok(ApiResponse::success_with_user(
@@ -1051,15 +1047,15 @@ pub async fn decline_trust_invite(
                 .ok_or_else(|| {
                     fold_db::schema::SchemaError::InvalidData("Missing 'token' field".to_string())
                 })
-                .handler_err("parse decline request")?;
+                .typed_handler_err()?;
 
             let invite = TrustInvite::from_token(token)
                 .map_err(fold_db::schema::SchemaError::InvalidData)
-                .handler_err("decode invite token")?;
+                .typed_handler_err()?;
 
             let mut store = crate::trust::declined_invites::DeclinedInviteStore::load()
                 .map_err(fold_db::schema::SchemaError::InvalidData)
-                .handler_err("load declined invites")?;
+                .typed_handler_err()?;
 
             store.decline(crate::trust::declined_invites::DeclinedInvite {
                 sender_pub_key: invite.sender_pub_key.clone(),
@@ -1073,7 +1069,7 @@ pub async fn decline_trust_invite(
             store
                 .save()
                 .map_err(fold_db::schema::SchemaError::InvalidData)
-                .handler_err("save declined invites")?;
+                .typed_handler_err()?;
 
             Ok(ApiResponse::success(serde_json::json!({
                 "declined": true,
@@ -1091,7 +1087,7 @@ pub async fn list_declined_invites(state: web::Data<AppState>) -> impl Responder
         async {
             let store = crate::trust::declined_invites::DeclinedInviteStore::load()
                 .map_err(fold_db::schema::SchemaError::InvalidData)
-                .handler_err("load declined invites")?;
+                .typed_handler_err()?;
             Ok(ApiResponse::success(
                 serde_json::json!({"declined_invites": store.invites}),
             ))
@@ -1111,12 +1107,12 @@ pub async fn undecline_invite(
         async {
             let mut store = crate::trust::declined_invites::DeclinedInviteStore::load()
                 .map_err(fold_db::schema::SchemaError::InvalidData)
-                .handler_err("load declined invites")?;
+                .typed_handler_err()?;
             let removed = store.undecline(&nonce);
             store
                 .save()
                 .map_err(fold_db::schema::SchemaError::InvalidData)
-                .handler_err("save declined invites")?;
+                .typed_handler_err()?;
             Ok(ApiResponse::success(
                 serde_json::json!({"undeclined": removed}),
             ))
@@ -1134,7 +1130,7 @@ pub async fn list_sent_invites(state: web::Data<AppState>) -> impl Responder {
         async {
             let store = crate::trust::sent_invites::SentInviteStore::load()
                 .map_err(fold_db::schema::SchemaError::InvalidData)
-                .handler_err("load sent invites")?;
+                .typed_handler_err()?;
             Ok(ApiResponse::success(
                 serde_json::json!({"sent_invites": store.invites}),
             ))

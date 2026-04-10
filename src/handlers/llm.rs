@@ -6,7 +6,7 @@
 use crate::fold_node::llm_query::{conversation_store, types::*, LlmQueryService, SessionManager};
 use crate::fold_node::node::FoldNode;
 use crate::handlers::response::{
-    get_db_guard, ApiResponse, HandlerError, HandlerResult, IntoHandlerError,
+    get_db_guard, ApiResponse, HandlerError, HandlerResult, IntoHandlerError, IntoTypedHandlerError,
 };
 use fold_db::log_feature;
 use fold_db::logging::features::LogFeature;
@@ -63,7 +63,7 @@ async fn get_schemas(node: &FoldNode) -> Result<Vec<SchemaWithState>, HandlerErr
     db_guard
         .schema_manager()
         .get_schemas_with_states()
-        .handler_err("get schemas")
+        .typed_handler_err()
 }
 
 // ============================================================================
@@ -249,7 +249,7 @@ pub async fn ai_native_index_query(
     let schemas: Vec<SchemaWithState> = db_guard
         .schema_manager()
         .get_schemas_with_states()
-        .handler_err("get schemas")?;
+        .typed_handler_err()?;
 
     let db_ops = db_guard.get_db_ops();
 

@@ -1,5 +1,5 @@
 use crate::fold_node::OperationProcessor;
-use crate::handlers::{ApiResponse, IntoHandlerError};
+use crate::handlers::{ApiResponse, IntoTypedHandlerError};
 use crate::server::http_server::AppState;
 use crate::server::routes::{handler_result_to_response, node_or_return};
 use actix_web::{web, Responder};
@@ -83,7 +83,7 @@ pub async fn remote_query(
             let results = op
                 .execute_query_json_with_access(query, &req.public_key)
                 .await
-                .handler_err("execute remote query")?;
+                .typed_handler_err()?;
 
             Ok(ApiResponse::success_with_user(
                 serde_json::json!({"results": results}),
@@ -102,14 +102,14 @@ pub async fn node_info(state: web::Data<AppState>) -> impl Responder {
     handler_result_to_response(
         async {
             let public_key = op.get_node_public_key();
-            let db = op.get_db_public().await.handler_err("get database")?;
+            let db = op.get_db_public().await.typed_handler_err()?;
             let node_id = db
                 .get_node_id()
                 .await
                 .map_err(|e| crate::handlers::HandlerError::Internal(e.to_string()))?;
 
             // List schemas with descriptive names
-            let all_schemas = db.schema_manager.get_schemas().handler_err("get schemas")?;
+            let all_schemas = db.schema_manager.get_schemas().typed_handler_err()?;
             let shared_schemas: Vec<String> = all_schemas.keys().cloned().collect();
             let schemas: Vec<SharedSchemaInfo> = all_schemas
                 .values()
