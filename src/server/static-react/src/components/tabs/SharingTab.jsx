@@ -46,7 +46,7 @@ function TrustSection({ onResult }) {
   const [grants, setGrants] = useState([])
   const [loading, setLoading] = useState(true)
   const [newKey, setNewKey] = useState('')
-  const [newDistance, setNewDistance] = useState(1)
+  const [newRole, setNewRole] = useState('friend')
 
   const fetchGrants = useCallback(async () => {
     try {
@@ -68,9 +68,9 @@ function TrustSection({ onResult }) {
     e.preventDefault()
     if (!newKey.trim()) return
     try {
-      await grantTrust(newKey.trim(), newDistance)
+      await grantTrust(newKey.trim(), newRole)
       setNewKey('')
-      setNewDistance(1)
+      setNewRole('friend')
       onResult?.({ success: true, data: { message: 'Trust granted' } })
       fetchGrants()
     } catch (err) {
@@ -106,14 +106,16 @@ function TrustSection({ onResult }) {
           </div>
           <div className="flex gap-2 items-end">
             <div>
-              <label className="text-xs text-secondary block mb-1">Trust Distance</label>
-              <input
-                type="number"
-                value={newDistance}
-                onChange={(e) => setNewDistance(parseInt(e.target.value) || 1)}
-                min={1}
-                className="w-28 bg-surface-primary border border-border rounded px-3 py-2 text-sm text-primary"
-              />
+              <label className="text-xs text-secondary block mb-1">Role</label>
+              <select
+                value={newRole}
+                onChange={(e) => setNewRole(e.target.value)}
+                className="w-40 bg-surface-primary border border-border rounded px-3 py-2 text-sm text-primary"
+              >
+                {['friend', 'family', 'doctor', 'trainer', 'accountant', 'collaborator'].map(r => (
+                  <option key={r} value={r}>{r}</option>
+                ))}
+              </select>
             </div>
             <button
               type="submit"
@@ -125,7 +127,7 @@ function TrustSection({ onResult }) {
           </div>
         </div>
         <p className="text-xs text-secondary">
-          Lower distance = more trusted. 0 = owner, 1 = direct trust.
+          Assign a role to determine trust level. Roles map to trust tiers automatically.
         </p>
       </form>
 
@@ -150,7 +152,7 @@ function TrustSection({ onResult }) {
                     {grant.public_key}
                   </code>
                   <span className="text-xs text-secondary">
-                    Distance: {grant.distance}
+                    Tier: {grant.tier}
                   </span>
                 </div>
                 <button

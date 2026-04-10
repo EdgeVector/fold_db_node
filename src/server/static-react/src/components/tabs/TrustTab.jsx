@@ -48,7 +48,7 @@ function TrustTab({ onResult }) {
   const [posture, setPosture] = useState(null)
 
   // Invite creation
-  const [inviteDistance, setInviteDistance] = useState('1')
+  const [inviteRole, setInviteRole] = useState('friend')
   const [creatingInvite, setCreatingInvite] = useState(false)
   const [inviteToken, setInviteToken] = useState(null)
   const [copied, setCopied] = useState(false)
@@ -72,7 +72,7 @@ function TrustTab({ onResult }) {
   const [previewing, setPreviewing] = useState(false)
   const [accepting, setAccepting] = useState(false)
   const [reciprocalToken, setReciprocalToken] = useState(null)
-  const [acceptDistance, setAcceptDistance] = useState('')
+  const [acceptRole, setAcceptRole] = useState('')
   const [trustBack, setTrustBack] = useState(true)
 
   // Audit log
@@ -232,9 +232,8 @@ function TrustTab({ onResult }) {
 
   const handleCreateInvite = async (e) => {
     e.preventDefault()
-    const dist = parseInt(inviteDistance, 10)
-    if (isNaN(dist) || dist < 1) {
-      setError('Distance must be a positive integer')
+    if (!inviteRole.trim()) {
+      setError('Please select a role')
       return
     }
     if (!identityCard) {
@@ -245,7 +244,7 @@ function TrustTab({ onResult }) {
     setError(null)
     setInviteToken(null)
     try {
-      const response = await createTrustInvite(dist)
+      const response = await createTrustInvite(inviteRole.trim())
       if (response.success && response.data) {
         setInviteToken(response.data.token)
       } else {
@@ -297,7 +296,7 @@ function TrustTab({ onResult }) {
         const previewResp = await previewTrustInvite(response.data.token)
         if (previewResp.success && previewResp.data) {
           setPreview(previewResp.data)
-          setAcceptDistance(String(previewResp.data.proposed_distance))
+          setAcceptRole(previewResp.data.proposed_role)
         }
       } else {
         setError(response.error || 'Invite not found or already claimed')
@@ -346,7 +345,7 @@ function TrustTab({ onResult }) {
         const previewResp = await previewTrustInvite(response.data.token)
         if (previewResp.success && previewResp.data) {
           setPreview(previewResp.data)
-          setAcceptDistance(String(previewResp.data.proposed_distance))
+          setAcceptRole(previewResp.data.proposed_role)
         }
         if (onResult) onResult({ success: true, data: { message: 'Code verified! Review the invite below.' } })
       } else {
@@ -368,7 +367,7 @@ function TrustTab({ onResult }) {
       const response = await previewTrustInvite(acceptToken.trim())
       if (response.success && response.data) {
         setPreview(response.data)
-        setAcceptDistance(String(response.data.proposed_distance))
+        setAcceptRole(response.data.proposed_role)
       } else {
         setError(response.error || 'Invalid invite token')
       }
@@ -384,8 +383,8 @@ function TrustTab({ onResult }) {
     setAccepting(true)
     setError(null)
     try {
-      const dist = acceptDistance ? parseInt(acceptDistance, 10) : undefined
-      const response = await acceptTrustInvite(acceptToken.trim(), dist, trustBack)
+      const roleOverride = acceptRole ? acceptRole : undefined
+      const response = await acceptTrustInvite(acceptToken.trim(), roleOverride, trustBack)
       if (response.success && response.data) {
         const senderKey = response.data.sender?.public_key
         if (response.data.reciprocal_token) {
@@ -439,7 +438,7 @@ function TrustTab({ onResult }) {
 
   const formatAuditAction = (action) => {
     if (!action) return 'Unknown'
-    if (action.TrustGrant) return `Grant trust to ${truncateKey(action.TrustGrant.user_id)} at distance ${action.TrustGrant.distance}`
+    if (action.TrustGrant) return `Grant trust to ${truncateKey(action.TrustGrant.user_id)} at tier ${action.TrustGrant.tier}`
     if (action.TrustRevoke) return `Revoke trust for ${truncateKey(action.TrustRevoke.user_id)}`
     if (action.Read) return `Read ${action.Read.schema_name}`
     if (action.Write) return `Write ${action.Write.schema_name}`
@@ -615,7 +614,7 @@ function TrustTab({ onResult }) {
                                 }
                               }}
                               disabled={assigningRole}
-                              title={`${role.description} (${role.domain} domain, distance ${role.distance})`}
+                              title={`${role.description} (${role.domain} domain, tier ${role.tier})`}
                             >
                               {role.name.replace(/_/g, ' ')}
                             </button>
@@ -683,14 +682,21 @@ function TrustTab({ onResult }) {
             </p>
             <form onSubmit={handleCreateInvite} className="flex gap-3 items-end mb-3">
               <div className="w-40">
-                <label className="block text-xs text-secondary mb-1">Proposed Distance</label>
-                <input
+                <label className="block text-xs text-secondary mb-1">Proposed Role</label>
+                <select
                   className="input w-full"
-                  type="number"
-                  min="1"
-                  value={inviteDistance}
-                  onChange={(e) => setInviteDistance(e.target.value)}
-                />
+                  value={inviteRole}
+                  onChange={(e) => setInviteRole(e.target.value)}
+                >
+                  {Object.values(availableRoles).length > 0
+                    ? Object.values(availableRoles).map((role) => (
+                        <option key={role.name} value={role.name}>{role.name.replace(/_/g, ' ')}</option>
+                      ))
+                    : ['friend', 'family', 'doctor', 'trainer', 'accountant', 'collaborator'].map(r => (
+                        <option key={r} value={r}>{r}</option>
+                      ))
+                  }
+                </select>
               </div>
               <button
                 type="submit"
@@ -919,20 +925,28 @@ function TrustTab({ onResult }) {
                   <p className="text-xs text-secondary mb-2">{preview.sender.contact_hint}</p>
                 )}
                 <p className="text-xs text-tertiary mb-3">
-                  Wants to trust you at distance {preview.proposed_distance}
+                  Wants to trust you as role: {preview.proposed_role}
                 </p>
 
                 {preview.valid && (
                   <div className="flex items-end gap-3">
-                    <div className="w-32">
-                      <label className="block text-xs text-secondary mb-1">Your Distance</label>
-                      <input
+                    <div className="w-40">
+                      <label className="block text-xs text-secondary mb-1">Your Role (override)</label>
+                      <select
                         className="input w-full"
-                        type="number"
-                        min="1"
-                        value={acceptDistance}
-                        onChange={(e) => setAcceptDistance(e.target.value)}
-                      />
+                        value={acceptRole}
+                        onChange={(e) => setAcceptRole(e.target.value)}
+                      >
+                        <option value="">Use proposed role</option>
+                        {Object.values(availableRoles).length > 0
+                          ? Object.values(availableRoles).map((role) => (
+                              <option key={role.name} value={role.name}>{role.name.replace(/_/g, ' ')}</option>
+                            ))
+                          : ['friend', 'family', 'doctor', 'trainer', 'accountant', 'collaborator'].map(r => (
+                              <option key={r} value={r}>{r}</option>
+                            ))
+                        }
+                      </select>
                     </div>
                     <label className="flex items-center gap-2 text-sm text-secondary cursor-pointer">
                       <input

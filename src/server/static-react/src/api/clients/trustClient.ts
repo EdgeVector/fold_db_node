@@ -5,6 +5,8 @@ import type { EnhancedApiResponse } from "../core/types";
 
 // ===== Types =====
 
+export type TrustTier = "Public" | "Outer" | "Trusted" | "Inner" | "Owner";
+
 export interface IdentityCard {
   display_name: string;
   contact_hint?: string | null;
@@ -15,16 +17,16 @@ export interface Contact {
   public_key: string;
   display_name: string;
   contact_hint?: string | null;
-  trust_distance: number;
   direction: "outgoing" | "incoming" | "mutual";
   connected_at: string;
   pseudonym?: string | null;
   revoked: boolean;
+  roles?: Record<string, string>;
 }
 
 export interface TrustGrantEntry {
   public_key: string;
-  distance: number;
+  tier: TrustTier;
 }
 
 export interface TrustGrantsResponse {
@@ -33,7 +35,7 @@ export interface TrustGrantsResponse {
 
 export interface TrustResolveResponse {
   public_key: string;
-  distance: number | null;
+  tier: TrustTier | null;
 }
 
 export interface AuditLogResponse {
@@ -46,14 +48,14 @@ export interface AuditEvent {
   timestamp: string;
   user_id: string;
   action: Record<string, unknown>;
-  trust_distance: number | null;
+  trust_tier: TrustTier | null;
   decision_granted: boolean;
 }
 
 export interface TrustInvite {
   sender_pub_key: string;
   sender_identity: IdentityCard;
-  proposed_distance: number;
+  proposed_role: string;
   nonce: string;
   created_at: string;
   signature: string;
@@ -67,7 +69,7 @@ export interface InvitePreview {
     public_key: string;
     fingerprint: string;
   };
-  proposed_distance: number;
+  proposed_role: string;
   created_at: string;
 }
 
@@ -132,11 +134,11 @@ export async function listTrustGrants(): Promise<EnhancedApiResponse<TrustGrants
 
 export async function grantTrust(
   publicKey: string,
-  distance: number,
-): Promise<EnhancedApiResponse<{ granted: boolean }>> {
-  return client.post<{ granted: boolean }>("/trust/grant", {
+  role: string,
+): Promise<EnhancedApiResponse<{ granted: boolean; role: string }>> {
+  return client.post<{ granted: boolean; role: string }>("/trust/grant", {
     public_key: publicKey,
-    distance,
+    role,
   });
 }
 
@@ -146,17 +148,7 @@ export async function revokeTrust(
   return client.delete<{ revoked: boolean }>(`/trust/revoke/${encodeURIComponent(publicKey)}`);
 }
 
-export async function setTrustOverride(
-  publicKey: string,
-  distance: number,
-): Promise<EnhancedApiResponse<{ override_set: boolean }>> {
-  return client.put<{ override_set: boolean }>("/trust/override", {
-    public_key: publicKey,
-    distance,
-  });
-}
-
-export async function resolveTrustDistance(
+export async function resolveTrustTier(
   publicKey: string,
 ): Promise<EnhancedApiResponse<TrustResolveResponse>> {
   return client.get<TrustResolveResponse>(`/trust/resolve/${encodeURIComponent(publicKey)}`);
@@ -165,10 +157,10 @@ export async function resolveTrustDistance(
 // ===== Trust Invites =====
 
 export async function createTrustInvite(
-  proposedDistance: number,
+  proposedRole: string,
 ): Promise<EnhancedApiResponse<{ invite: TrustInvite; token: string }>> {
   return client.post<{ invite: TrustInvite; token: string }>("/trust/invite", {
-    proposed_distance: proposedDistance,
+    proposed_role: proposedRole,
   });
 }
 
@@ -180,12 +172,12 @@ export async function previewTrustInvite(
 
 export async function acceptTrustInvite(
   token: string,
-  acceptDistance?: number,
+  acceptRole?: string,
   trustBack: boolean = true,
 ): Promise<EnhancedApiResponse<AcceptInviteResponse>> {
   return client.post<AcceptInviteResponse>("/trust/invite/accept", {
     token,
-    accept_distance: acceptDistance,
+    accept_role: acceptRole,
     trust_back: trustBack,
   });
 }
@@ -233,7 +225,7 @@ export async function verifyInviteCode(
 export interface SharingRole {
   name: string;
   domain: string;
-  distance: number;
+  tier: TrustTier;
   description: string;
 }
 
@@ -247,7 +239,7 @@ export interface AccessibleSchema {
 export interface SharingAuditResult {
   contact_public_key: string;
   contact_display_name: string;
-  domain_distances: Record<string, number>;
+  domain_tiers: Record<string, TrustTier>;
   domain_roles: Record<string, string>;
   accessible_schemas: AccessibleSchema[];
   total_readable: number;
@@ -323,7 +315,7 @@ export async function getSchemaFieldPolicies(
 export interface SentInvite {
   nonce: string;
   recipient_hint: string;
-  proposed_distance: number;
+  proposed_role: string;
   created_at: string;
   status: "pending" | "accepted" | "expired";
 }
@@ -338,7 +330,7 @@ export interface DeclinedInvite {
   sender_pub_key: string;
   sender_display_name: string;
   sender_contact_hint?: string | null;
-  proposed_distance: number;
+  proposed_role: string;
   declined_at: string;
   nonce: string;
 }

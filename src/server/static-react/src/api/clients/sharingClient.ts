@@ -4,9 +4,11 @@ import { getSharedClient } from '../core/client';
 
 // ===== Types =====
 
+export type TrustTier = "Public" | "Outer" | "Trusted" | "Inner" | "Owner";
+
 export interface TrustGrantEntry {
   public_key: string;
-  distance: number;
+  tier: TrustTier;
 }
 
 export interface TrustGrantsResponse {
@@ -15,16 +17,14 @@ export interface TrustGrantsResponse {
 
 export interface TrustResolveResponse {
   public_key: string;
-  distance: number | null;
+  tier: TrustTier | null;
 }
 
 export interface FieldAccessPolicy {
-  trust_distance: {
-    read_max: number;
-    write_max: number;
-  };
+  trust_domain: string;
+  min_read_tier: TrustTier;
+  min_write_tier: TrustTier;
   capabilities: CapabilityConstraint[];
-  security_label: SecurityLabel | null;
 }
 
 export interface CapabilityConstraint {
@@ -49,7 +49,7 @@ export interface AuditEvent {
   timestamp: string;
   user_id: string;
   action: Record<string, unknown>;
-  trust_distance: number | null;
+  trust_tier: TrustTier | null;
   decision_granted: boolean;
 }
 
@@ -70,8 +70,8 @@ const client = () => getSharedClient();
 
 // --- Trust management ---
 
-export async function grantTrust(public_key: string, distance: number): Promise<void> {
-  const resp = await client().post<{ granted: boolean }>('/trust/grant', { public_key, distance });
+export async function grantTrust(public_key: string, role: string): Promise<void> {
+  const resp = await client().post<{ granted: boolean }>('/trust/grant', { public_key, role });
   if (!resp.success) throw new Error(resp.error || 'Failed to grant trust');
 }
 
@@ -86,15 +86,10 @@ export async function listTrustGrants(): Promise<TrustGrantEntry[]> {
   return resp.data?.grants ?? [];
 }
 
-export async function setTrustOverride(public_key: string, distance: number): Promise<void> {
-  const resp = await client().put<{ override_set: boolean }>('/trust/override', { public_key, distance });
-  if (!resp.success) throw new Error(resp.error || 'Failed to set trust override');
-}
-
-export async function resolveTrust(public_key: string): Promise<number | null> {
+export async function resolveTrust(public_key: string): Promise<TrustTier | null> {
   const resp = await client().get<TrustResolveResponse>(`/trust/resolve/${encodeURIComponent(public_key)}`);
   if (!resp.success) throw new Error(resp.error || 'Failed to resolve trust');
-  return resp.data?.distance ?? null;
+  return resp.data?.tier ?? null;
 }
 
 // --- Field policies ---
