@@ -230,8 +230,8 @@ pub async fn apply_setup(
                 changes.push("storage (exemem)");
 
                 // Write to Sled config store so consumers can read from Sled
-                if let Some(sled_db) = state.node_manager.get_sled_db().await {
-                    if let Ok(store) = NodeConfigStore::new(&sled_db) {
+                if let Some(pool) = state.node_manager.get_sled_pool().await {
+                    if let Ok(store) = NodeConfigStore::new(pool) {
                         let creds = CloudCredentials {
                             api_url: api_url.clone(),
                             api_key: api_key.clone(),

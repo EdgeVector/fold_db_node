@@ -194,8 +194,8 @@ pub async fn process_json(
         }
 
         // Verify the org exists locally
-        let sled_db = crate::handlers::org::get_sled_db(node).await?;
-        let org = fold_db::org::operations::get_org(&sled_db, org_hash)
+        let pool = crate::handlers::org::get_sled_pool(node).await?;
+        let org = fold_db::org::operations::get_org(&pool, org_hash)
             .handler_err("check org membership")?;
         if org.is_none() {
             return Err(HandlerError::BadRequest(format!(

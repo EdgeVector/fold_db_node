@@ -107,7 +107,7 @@ impl IdentityCard {
     pub fn load_from_sled(store: &NodeConfigStore) -> Option<Self> {
         let display_name = store.get_display_name()?;
         let contact_hint = store.get_contact_hint();
-        let birthday = store.get_birthday();
+        let birthday = store.get("birthday");
         Some(Self {
             display_name,
             contact_hint,
@@ -127,7 +127,7 @@ impl IdentityCard {
         }
         if let Some(ref bday) = self.birthday {
             store
-                .set_birthday(bday)
+                .set("birthday", bday)
                 .map_err(|e| format!("Failed to save birthday to Sled: {e}"))?;
         }
         Ok(())

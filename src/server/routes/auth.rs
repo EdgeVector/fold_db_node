@@ -336,8 +336,8 @@ async fn signed_register(
         })?;
 
         // Also write to Sled config store for Phase 5 consumers
-        if let Some(sled_db) = data.node_manager.get_sled_db().await {
-            if let Ok(store) = NodeConfigStore::new(&sled_db) {
+        if let Some(pool) = data.node_manager.get_sled_pool().await {
+            if let Ok(store) = NodeConfigStore::new(pool) {
                 let cloud_creds = CloudCredentials {
                     api_url: exemem_api_url(),
                     api_key: api_key.to_string(),
@@ -619,11 +619,10 @@ pub async fn restore_from_phrase(
     // None because the node has not been created yet.
     let _ = data.node_manager.ensure_default_identity().await;
 
-    // Grab the Sled database handle BEFORE update_config() invalidates all nodes.
-    // Sled's Db is Arc-wrapped internally, so this clone keeps the database open
-    // even after invalidation clears the shared node. This avoids the Sled
-    // exclusive file lock issue that plagued PRs #196-#200.
-    let sled_db = data.node_manager.get_sled_db().await;
+    // Grab the SledPool BEFORE update_config() invalidates all nodes.
+    // The pool is Arc-wrapped, so this clone keeps the pool alive
+    // even after invalidation clears the shared node.
+    let sled_pool = data.node_manager.get_sled_pool().await;
 
     // Update the in-memory config so signed_register uses the restored key.
     // This calls invalidate_all_nodes(), clearing the shared node — but our
@@ -649,10 +648,10 @@ pub async fn restore_from_phrase(
             // Spawn background bootstrap if we got Exemem credentials and a Sled handle.
             // This downloads the latest snapshot + replays write logs from R2
             // so the restored node has the full database, not just the identity.
-            if let (Some(api_key), Some(_user_hash), Some(sled_db)) = (
+            if let (Some(api_key), Some(_user_hash), Some(sled_pool)) = (
                 response.get("api_key").and_then(|v| v.as_str()),
                 response.get("user_hash").and_then(|v| v.as_str()),
-                sled_db,
+                sled_pool,
             ) {
                 let api_url = exemem_api_url();
                 let api_key = api_key.to_string();
@@ -660,13 +659,13 @@ pub async fn restore_from_phrase(
 
                 tokio::spawn(async move {
                     if let Err(e) =
-                        bootstrap_from_cloud(&api_url, &api_key, &node_manager, sled_db).await
+                        bootstrap_from_cloud(&api_url, &api_key, &node_manager, sled_pool).await
                     {
                         log::error!("Background bootstrap after restore failed: {}", e);
                     }
                 });
             } else {
-                log::warn!("Bootstrap after restore skipped: missing api_key, user_hash, or sled_db handle");
+                log::warn!("Bootstrap after restore skipped: missing api_key, user_hash, or sled_pool handle");
             }
 
             HttpResponse::Ok().json(response)
@@ -680,11 +679,9 @@ pub async fn restore_from_phrase(
 
 /// Bootstrap the local database from cloud storage (R2/S3).
 ///
-/// Accepts a pre-cloned Sled `Db` handle from the running server's shared node.
-/// Sled's `Db` is internally `Arc`-wrapped, so cloning it shares the same open
-/// database — no exclusive file lock conflict. The caller grabs this handle
-/// BEFORE `update_config()` / `invalidate_all_nodes()` so it stays alive even
-/// after the shared node is cleared.
+/// Accepts a pre-cloned `Arc<SledPool>` from the running server's shared node.
+/// The caller grabs this pool BEFORE `update_config()` / `invalidate_all_nodes()`
+/// so it stays alive even after the shared node is cleared.
 ///
 /// Downloads the latest snapshot and replays any write logs after it,
 /// restoring the full database state on a new/recovered device.
@@ -692,7 +689,7 @@ async fn bootstrap_from_cloud(
     api_url: &str,
     api_key: &str,
     node_manager: &std::sync::Arc<crate::server::node_manager::NodeManager>,
-    sled_db: sled::Db,
+    sled_pool: std::sync::Arc<fold_db::storage::SledPool>,
 ) -> Result<(), String> {
     log::info!("Starting database bootstrap from cloud after identity restore");
 
@@ -725,11 +722,11 @@ async fn bootstrap_from_cloud(
     let s3 = fold_db::sync::s3::S3Client::new(http.clone());
     let auth = fold_db::sync::auth::AuthClient::new(http, sync_setup.auth_url, sync_setup.auth);
 
-    // Use the pre-cloned Sled handle directly — no sled::open() needed.
+    // Use the pre-cloned SledPool directly — no sled::open() needed.
     // This avoids the exclusive file lock issue since we share the same
-    // database instance the server already holds open.
+    // pool instance the server already holds open.
     let base_store: std::sync::Arc<dyn fold_db::storage::traits::NamespacedStore> =
-        std::sync::Arc::new(fold_db::storage::SledNamespacedStore::new(sled_db));
+        std::sync::Arc::new(fold_db::storage::SledNamespacedStore::new(sled_pool));
 
     let engine = std::sync::Arc::new(fold_db::sync::SyncEngine::new(
         sync_setup.device_id,

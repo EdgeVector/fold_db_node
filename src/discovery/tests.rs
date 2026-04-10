@@ -57,8 +57,9 @@ fn test_content_hash_bytes_deterministic() {
 // === Config Persistence Tests ===
 
 async fn make_store() -> Arc<dyn fold_db::storage::traits::KvStore> {
-    let db = sled::Config::new().temporary(true).open().unwrap();
-    let store = Arc::new(SledNamespacedStore::new(db));
+    let tmp = tempfile::tempdir().unwrap();
+    let pool = Arc::new(fold_db::storage::SledPool::new(tmp.path().to_path_buf()));
+    let store = Arc::new(SledNamespacedStore::new(pool));
     store.open_namespace("discovery_test").await.unwrap()
 }
 
@@ -158,8 +159,9 @@ async fn make_interest_stores() -> (
     Arc<dyn fold_db::storage::traits::KvStore>,
     Arc<dyn fold_db::storage::traits::KvStore>,
 ) {
-    let db = sled::Config::new().temporary(true).open().unwrap();
-    let store = Arc::new(SledNamespacedStore::new(db));
+    let tmp = tempfile::tempdir().unwrap();
+    let pool = Arc::new(fold_db::storage::SledPool::new(tmp.path().to_path_buf()));
+    let store = Arc::new(SledNamespacedStore::new(pool));
     let emb_store = store.open_namespace("embeddings").await.unwrap();
     let meta_store = store.open_namespace("metadata").await.unwrap();
     (emb_store, meta_store)

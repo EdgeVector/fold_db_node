@@ -47,10 +47,22 @@ pub fn register_with_exemem(
     api_url: &str,
     public_key_hex: &str,
 ) -> Result<ExememRegisterResponse, CliError> {
+    register_with_exemem_and_invite(api_url, public_key_hex, None)
+}
+
+/// Register with Exemem, optionally passing an invite code.
+pub fn register_with_exemem_and_invite(
+    api_url: &str,
+    public_key_hex: &str,
+    invite_code: Option<&str>,
+) -> Result<ExememRegisterResponse, CliError> {
     let url = format!("{}/api/auth/cli/register", api_url.trim_end_matches('/'));
-    let body = serde_json::json!({
+    let mut body = serde_json::json!({
         "public_key": public_key_hex,
     });
+    if let Some(code) = invite_code {
+        body["invite_code"] = serde_json::Value::String(code.to_string());
+    }
 
     let result = std::thread::spawn(move || {
         let client = reqwest::blocking::Client::new();
@@ -176,6 +188,54 @@ pub fn run_setup_wizard() -> Result<NodeConfig, CliError> {
     card.save()
         .map_err(|e| CliError::new(format!("Failed to save identity card: {}", e)))?;
 
+    // --- AI setup ---
+    eprintln!("Configure AI for data ingestion:");
+    let ai_providers = &["Anthropic (cloud)", "Ollama (local)", "Skip for now"];
+    let ai_idx = dialoguer::Select::new()
+        .with_prompt("AI provider")
+        .items(ai_providers)
+        .default(0)
+        .interact()
+        .map_err(|e| CliError::new(format!("Input cancelled: {}", e)))?;
+
+    let ai_config = match ai_idx {
+        0 => {
+            let api_key: String = Input::new()
+                .with_prompt("Anthropic API key")
+                .interact_text()
+                .map_err(|e| CliError::new(format!("Input cancelled: {}", e)))?;
+            Some(serde_json::json!({
+                "provider": "Anthropic",
+                "anthropic": {
+                    "api_key": api_key,
+                    "model": "claude-sonnet-4-20250514",
+                    "base_url": "https://api.anthropic.com"
+                }
+            }))
+        }
+        1 => {
+            let url: String = Input::new()
+                .with_prompt("Ollama URL")
+                .default("http://localhost:11434".to_string())
+                .interact_text()
+                .map_err(|e| CliError::new(format!("Input cancelled: {}", e)))?;
+            let model: String = Input::new()
+                .with_prompt("Ollama model")
+                .default("llama3.2".to_string())
+                .interact_text()
+                .map_err(|e| CliError::new(format!("Input cancelled: {}", e)))?;
+            Some(serde_json::json!({
+                "provider": "Ollama",
+                "ollama": {
+                    "model": model,
+                    "base_url": url
+                }
+            }))
+        }
+        _ => None,
+    };
+    eprintln!();
+
     // --- Cloud backup ---
     let enable_cloud = Confirm::new()
         .with_prompt("Enable cloud backup?")
@@ -198,9 +258,7 @@ pub fn run_setup_wizard() -> Result<NodeConfig, CliError> {
 
         eprintln!();
         eprint!("Registering with Exemem...");
-        // TODO: pass invite_code to registration endpoint
-        let _ = &invite_code; // Will be used when API supports it
-        let resp = register_with_exemem(&api_url, &public_key_hex)?;
+        let resp = register_with_exemem_and_invite(&api_url, &public_key_hex, Some(&invite_code))?;
         eprintln!(" done.");
 
         let api_key = resp
@@ -276,6 +334,22 @@ pub fn run_setup_wizard() -> Result<NodeConfig, CliError> {
         .map_err(|e| CliError::new(format!("Failed to serialize config: {}", e)))?;
     fs::write(config_dir.join("node_config.json"), &config_json)
         .map_err(|e| CliError::new(format!("Failed to write node_config.json: {}", e)))?;
+
+    // Save AI config if provided
+    if let Some(ai) = &ai_config {
+        let ai_config_path = config_dir.join("ingestion_config.json");
+        let ai_json = serde_json::to_string_pretty(ai)
+            .map_err(|e| CliError::new(format!("Failed to serialize AI config: {}", e)))?;
+        fs::write(&ai_config_path, ai_json)
+            .map_err(|e| CliError::new(format!("Failed to write AI config: {}", e)))?;
+        eprintln!("AI config saved.");
+    }
+
+    // Mark onboarding complete (consistent with UI wizard)
+    let marker_path = fold_db_node::utils::paths::folddb_home()
+        .map(|h| h.join("onboarding_complete"))
+        .unwrap_or_else(|_| PathBuf::from("onboarding_complete"));
+    let _ = fs::write(&marker_path, "1");
 
     eprintln!(
         "Config saved to {}",
