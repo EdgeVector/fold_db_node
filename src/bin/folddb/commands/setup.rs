@@ -134,16 +134,28 @@ pub fn run_setup_wizard() -> Result<NodeConfig, CliError> {
     eprintln!("Welcome to FoldDB!");
     eprintln!();
 
-    // --- Generate identity ---
-    eprint!("Generating node identity...");
-    let keypair = Ed25519KeyPair::generate()
-        .map_err(|e| CliError::new(format!("Failed to generate keypair: {}", e)))?;
-    eprintln!(" done.");
-    eprintln!();
-
-    let identity = NodeIdentity {
-        private_key: keypair.secret_key_base64(),
-        public_key: keypair.public_key_base64(),
+    // --- Generate or reuse identity ---
+    let identity = if identity_file_exists() {
+        // Resume from partial setup — reuse existing identity
+        eprintln!("Found existing identity. Resuming setup...");
+        eprintln!();
+        let identity_path = fold_db_node::utils::paths::folddb_home()
+            .map(|h| h.join("config").join("node_identity.json"))
+            .map_err(|e| CliError::new(format!("Cannot find identity: {}", e)))?;
+        let json = fs::read_to_string(&identity_path)
+            .map_err(|e| CliError::new(format!("Failed to read identity: {}", e)))?;
+        serde_json::from_str::<NodeIdentity>(&json)
+            .map_err(|e| CliError::new(format!("Failed to parse identity: {}", e)))?
+    } else {
+        eprint!("Generating node identity...");
+        let keypair = Ed25519KeyPair::generate()
+            .map_err(|e| CliError::new(format!("Failed to generate keypair: {}", e)))?;
+        eprintln!(" done.");
+        eprintln!();
+        NodeIdentity {
+            private_key: keypair.secret_key_base64(),
+            public_key: keypair.public_key_base64(),
+        }
     };
 
     // --- Identity card: name, email, birthday ---
@@ -254,7 +266,13 @@ pub fn run_setup_wizard() -> Result<NodeConfig, CliError> {
             .map_err(|e| CliError::new(format!("Input cancelled: {}", e)))?;
 
         let api_url = fold_db_node::endpoints::exemem_api_url();
-        let public_key_hex = hex_encode(&keypair.public_key_bytes());
+        let pub_key_bytes = {
+            use base64::Engine;
+            base64::engine::general_purpose::STANDARD
+                .decode(&identity.public_key)
+                .map_err(|e| CliError::new(format!("Failed to decode public key: {}", e)))?
+        };
+        let public_key_hex = hex_encode(&pub_key_bytes);
 
         eprintln!();
         eprint!("Registering with Exemem...");

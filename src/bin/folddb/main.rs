@@ -79,7 +79,7 @@ async fn main() {
     // All remaining commands need identity + config
     let config_path = cli.config.clone();
 
-    let config = match fold_db_node::fold_node::load_node_config(config_path.as_deref(), None) {
+    let mut config = match fold_db_node::fold_node::load_node_config(config_path.as_deref(), None) {
         Ok(c) => c,
         Err(e) => {
             CliError::new(format!("Failed to load config: {}", e))
@@ -88,14 +88,16 @@ async fn main() {
         }
     };
 
-    // If no identity configured, run the setup wizard
-    if config.public_key.is_none() && !commands::setup::identity_file_exists() {
+    // If identity is missing OR config is incomplete, run the setup wizard.
+    // This handles both fresh installs and partial setup failures.
+    let needs_setup = config.public_key.is_none();
+    if needs_setup {
         if json_mode {
             CliError::new("Not configured")
                 .with_hint("Run `folddb` interactively to set up")
                 .exit(json_mode);
         }
-        let _config = match commands::setup::run_setup_wizard() {
+        config = match commands::setup::run_setup_wizard() {
             Ok(c) => c,
             Err(e) => e.exit(false),
         };
@@ -109,6 +111,25 @@ async fn main() {
                 return;
             }
             Err(e) => e.exit(json_mode),
+        }
+    }
+
+    // Cloud enable/disable modify config directly — no daemon needed
+    if let Command::Cloud { action } = &cli.command {
+        let result = match action {
+            cli::CloudCommand::Enable => cloud_enable(&config, config_path.as_deref()).await,
+            cli::CloudCommand::Disable => cloud_disable(config_path.as_deref()),
+            cli::CloudCommand::Status => {
+                // Status goes through daemon HTTP (handled later)
+                None
+            }
+        };
+        if let Some(result) = result {
+            match result {
+                Ok(out) => output::render(&out, mode),
+                Err(e) => e.exit(json_mode),
+            }
+            return;
         }
     }
 
@@ -230,9 +251,7 @@ async fn dispatch_http(
                 };
                 Ok(commands::CommandOutput::Message(msg))
             }
-            _ => Err(CliError::new(
-                "Cloud enable/disable requires direct node access (not yet available via daemon)",
-            )),
+            _ => unreachable!("Cloud enable/disable handled before daemon dispatch"),
         },
         Command::RecoveryPhrase => unreachable!("Handled before daemon dispatch"),
         Command::Reset { confirm } => {
@@ -414,6 +433,155 @@ async fn dispatch_ingest(
             apple::ingest_reminders(client, list.as_deref()).await
         }
     }
+}
+
+/// Enable cloud backup — register with Exemem, update config file.
+async fn cloud_enable(
+    config: &fold_db_node::fold_node::config::NodeConfig,
+    config_path: Option<&str>,
+) -> Option<Result<commands::CommandOutput, CliError>> {
+    if config.database.has_cloud_sync() {
+        return Some(Ok(commands::CommandOutput::Message(
+            "Cloud backup is already enabled.".to_string(),
+        )));
+    }
+
+    let invite_code: String = match dialoguer::Input::new()
+        .with_prompt("Invite code")
+        .interact_text()
+    {
+        Ok(c) => c,
+        Err(e) => return Some(Err(CliError::new(format!("Input cancelled: {}", e)))),
+    };
+
+    let pub_key = match &config.public_key {
+        Some(k) => k.clone(),
+        None => {
+            return Some(Err(CliError::new("No public key in config")));
+        }
+    };
+    let pub_key_hex: String = pub_key
+        .as_bytes()
+        .iter()
+        .map(|b| format!("{:02x}", b))
+        .collect();
+
+    let api_url = fold_db_node::endpoints::exemem_api_url();
+
+    eprintln!();
+    eprint!("Registering with Exemem...");
+    let resp = match commands::setup::register_with_exemem_and_invite(
+        &api_url,
+        &pub_key_hex,
+        Some(&invite_code),
+    ) {
+        Ok(r) => r,
+        Err(e) => return Some(Err(e)),
+    };
+    eprintln!(" done.");
+
+    let api_key = match resp.api_key {
+        Some(k) => k,
+        None => return Some(Err(CliError::new("Registration response missing api_key"))),
+    };
+
+    // Update config file
+    let path = match commands::system::resolve_config_path(config_path) {
+        Ok(p) => p,
+        Err(e) => return Some(Err(e)),
+    };
+    let contents = match std::fs::read_to_string(&path) {
+        Ok(c) => c,
+        Err(e) => return Some(Err(CliError::new(format!("Failed to read config: {}", e)))),
+    };
+    let mut cfg: serde_json::Value = match serde_json::from_str(&contents) {
+        Ok(v) => v,
+        Err(e) => return Some(Err(CliError::new(format!("Failed to parse config: {}", e)))),
+    };
+
+    cfg["database"]["cloud_sync"] = serde_json::json!({
+        "api_url": api_url,
+        "api_key": api_key,
+        "user_hash": resp.user_hash,
+    });
+
+    let updated = serde_json::to_string_pretty(&cfg).unwrap();
+    if let Err(e) = std::fs::write(&path, updated) {
+        return Some(Err(CliError::new(format!("Failed to write config: {}", e))));
+    }
+
+    // Show recovery phrase
+    let private_key = config.private_key.as_deref().unwrap_or("");
+    let mut msg = "Cloud backup enabled!\n".to_string();
+    if let Ok(words) = commands::setup::derive_recovery_phrase(private_key) {
+        msg.push_str("\n\x1b[33m  RECOVERY PHRASE (save these 24 words):\x1b[0m\n\n");
+        for (i, word) in words.iter().enumerate() {
+            msg.push_str(&format!("  {:2}. {:<12}", i + 1, word));
+            if (i + 1) % 4 == 0 {
+                msg.push('\n');
+            }
+        }
+        msg.push_str(
+            "\n  If you lose this device, these words are the\n  ONLY way to recover your data.\n",
+        );
+    }
+
+    if commands::daemon::read_running_pid().is_some() {
+        msg.push_str("\nRestart daemon for changes to take effect: folddb daemon stop && folddb daemon start");
+    }
+
+    Some(Ok(commands::CommandOutput::Message(msg)))
+}
+
+/// Disable cloud backup — remove cloud_sync from config.
+fn cloud_disable(config_path: Option<&str>) -> Option<Result<commands::CommandOutput, CliError>> {
+    let confirmed = match dialoguer::Confirm::new()
+        .with_prompt("Disable cloud backup? Your data remains on this device")
+        .default(false)
+        .interact()
+    {
+        Ok(c) => c,
+        Err(e) => return Some(Err(CliError::new(format!("Input cancelled: {}", e)))),
+    };
+
+    if !confirmed {
+        return Some(Ok(commands::CommandOutput::Message(
+            "Cancelled.".to_string(),
+        )));
+    }
+
+    let path = match commands::system::resolve_config_path(config_path) {
+        Ok(p) => p,
+        Err(e) => return Some(Err(e)),
+    };
+    let contents = match std::fs::read_to_string(&path) {
+        Ok(c) => c,
+        Err(e) => return Some(Err(CliError::new(format!("Failed to read config: {}", e)))),
+    };
+    let mut cfg: serde_json::Value = match serde_json::from_str(&contents) {
+        Ok(v) => v,
+        Err(e) => return Some(Err(CliError::new(format!("Failed to parse config: {}", e)))),
+    };
+
+    if let Some(db) = cfg.get_mut("database") {
+        if let Some(obj) = db.as_object_mut() {
+            obj.remove("cloud_sync");
+        }
+    }
+
+    let updated = serde_json::to_string_pretty(&cfg).unwrap();
+    if let Err(e) = std::fs::write(&path, updated) {
+        return Some(Err(CliError::new(format!("Failed to write config: {}", e))));
+    }
+
+    let mut msg = "Cloud backup disabled. Your data remains on this device.".to_string();
+    if commands::daemon::read_running_pid().is_some() {
+        msg.push_str(
+            "\nRestart daemon for changes to take effect: folddb daemon stop && folddb daemon start",
+        );
+    }
+
+    Some(Ok(commands::CommandOutput::Message(msg)))
 }
 
 /// Show the 24-word recovery phrase derived from the local identity file.
