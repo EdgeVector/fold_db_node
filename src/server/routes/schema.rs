@@ -1,5 +1,5 @@
 use crate::fold_node::OperationProcessor;
-use crate::handlers::{ApiResponse, HandlerError, IntoHandlerError};
+use crate::handlers::{ApiResponse, HandlerError, IntoHandlerError, IntoTypedHandlerError};
 use crate::server::http_server::AppState;
 use crate::server::routes::{
     handler_error_to_response, handler_result_to_response, node_or_return,
@@ -52,7 +52,7 @@ pub async fn list_schemas(state: web::Data<AppState>) -> impl Responder {
     let op = OperationProcessor::new(node.clone());
     handler_result_to_response(
         async {
-            let schemas = op.list_schemas().await.handler_err("list schemas")?;
+            let schemas = op.list_schemas().await.typed_handler_err()?;
             let count = schemas.len();
             let schemas_json = serde_json::to_value(&schemas).handler_err("serialize schemas")?;
             Ok(ApiResponse::success_with_user(
@@ -90,7 +90,7 @@ pub async fn get_schema(path: web::Path<String>, state: web::Data<AppState>) -> 
             let schema_with_state = op
                 .get_schema(&name)
                 .await
-                .handler_err("get schema")?
+                .typed_handler_err()?
                 .ok_or_else(|| HandlerError::NotFound(format!("Schema not found: {}", name)))?;
             let schema_json =
                 serde_json::to_value(&schema_with_state).handler_err("serialize schema")?;
@@ -126,7 +126,7 @@ pub async fn approve_schema(path: web::Path<String>, state: web::Data<AppState>)
         async {
             op.approve_schema(&schema_name)
                 .await
-                .handler_err("approve schema")?;
+                .typed_handler_err()?;
             Ok(ApiResponse::success_with_user(
                 SchemaApproveResponse { approved: true },
                 user_hash,
@@ -157,7 +157,7 @@ pub async fn block_schema(path: web::Path<String>, state: web::Data<AppState>) -
         async {
             op.block_schema(&schema_name)
                 .await
-                .handler_err("block schema")?;
+                .typed_handler_err()?;
             Ok(ApiResponse::success_with_user(
                 crate::handlers::response::SuccessResponse {
                     success: true,
@@ -209,7 +209,7 @@ pub async fn list_schema_keys(
             let (keys, total_count) = op
                 .list_schema_keys(&name, offset, limit)
                 .await
-                .handler_err("list keys")?;
+                .typed_handler_err()?;
             Ok(ApiResponse::success_with_user(
                 SchemaKeysResponse { keys, total_count },
                 user_hash,

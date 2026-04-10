@@ -7,7 +7,7 @@
 use crate::fold_node::node::FoldNode;
 use crate::fold_node::OperationProcessor;
 use crate::handlers::handler_response;
-use crate::handlers::response::{ApiResponse, HandlerResult, IntoHandlerError};
+use crate::handlers::response::{ApiResponse, HandlerResult, IntoTypedHandlerError};
 use fold_db::fold_db_core::query::records_from_field_map;
 use fold_db::schema::types::operations::{Query, SortOrder};
 use serde::Deserialize;
@@ -67,7 +67,7 @@ pub async fn get_feed(
         Some(name) if !name.is_empty() => vec![name.clone()],
         _ => {
             // Query all registered schemas
-            let schemas = processor.list_schemas().await.handler_err("list schemas")?;
+            let schemas = processor.list_schemas().await.typed_handler_err()?;
             schemas.into_iter().map(|s| s.schema.name).collect()
         }
     };
@@ -80,7 +80,7 @@ pub async fn get_feed(
             let db = processor
                 .get_db_public()
                 .await
-                .handler_err("acquire database lock")?;
+                .typed_handler_err()?;
             let schema = match db.schema_manager.get_schema(schema_name).await {
                 Ok(Some(s)) => s,
                 // Skip schemas that don't exist or fail to load

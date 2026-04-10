@@ -156,6 +156,24 @@ impl From<fold_db::error::FoldDbError> for HandlerError {
     }
 }
 
+/// Convert SchemaError directly into HandlerError with proper status codes.
+///
+/// This handles the case where db_ops methods return `Result<_, SchemaError>`
+/// (e.g., `get_mutation_events`, `resolve_conflict`) instead of `FoldDbError`.
+impl From<fold_db::schema::types::SchemaError> for HandlerError {
+    fn from(err: fold_db::schema::types::SchemaError) -> Self {
+        match &err {
+            fold_db::schema::types::SchemaError::NotFound(_) => {
+                HandlerError::NotFound(err.to_string())
+            }
+            fold_db::schema::types::SchemaError::InvalidPermission(_) => {
+                HandlerError::Unauthorized(err.to_string())
+            }
+            _ => HandlerError::BadRequest(err.to_string()),
+        }
+    }
+}
+
 impl HandlerError {
     /// Convert to HTTP status code
     pub fn status_code(&self) -> u16 {
@@ -217,6 +235,12 @@ pub trait IntoTypedHandlerError<T> {
 }
 
 impl<T> IntoTypedHandlerError<T> for Result<T, fold_db::error::FoldDbError> {
+    fn typed_handler_err(self) -> Result<T, HandlerError> {
+        self.map_err(HandlerError::from)
+    }
+}
+
+impl<T> IntoTypedHandlerError<T> for Result<T, fold_db::schema::types::SchemaError> {
     fn typed_handler_err(self) -> Result<T, HandlerError> {
         self.map_err(HandlerError::from)
     }

@@ -20,7 +20,7 @@ pub use crate::discovery::types::{
 };
 use crate::fold_node::node::FoldNode;
 use crate::fold_node::OperationProcessor;
-use crate::handlers::response::{ApiResponse, HandlerError, HandlerResult, IntoHandlerError};
+use crate::handlers::response::{ApiResponse, HandlerError, HandlerResult, IntoHandlerError, IntoTypedHandlerError};
 use crate::trust::contact_book::{Contact, ContactBook, TrustDirection};
 use crate::trust::identity_card::IdentityCard;
 use crate::trust::sharing_roles::SharingRoleConfig;
@@ -1350,7 +1350,7 @@ pub async fn detect_interests(node: &FoldNode) -> HandlerResult<InterestProfile>
     let schemas: Vec<_> = db
         .schema_manager()
         .get_schemas()
-        .handler_err("get schemas")?
+        .typed_handler_err()?
         .into_values()
         .collect();
 

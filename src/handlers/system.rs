@@ -5,7 +5,7 @@
 use crate::fold_node::node::FoldNode;
 use crate::fold_node::OperationProcessor;
 use crate::handlers::handler_response;
-use crate::handlers::response::{ApiResponse, HandlerResult, IntoHandlerError};
+use crate::handlers::response::{ApiResponse, HandlerResult, IntoHandlerError, IntoTypedHandlerError};
 
 handler_response! {
     pub struct SystemStatusResponse {
@@ -57,7 +57,7 @@ pub async fn get_indexing_status(
     let status = OperationProcessor::new(node.clone())
         .get_indexing_status()
         .await
-        .handler_err("get indexing status")?;
+        .typed_handler_err()?;
     let status_json = serde_json::to_value(&status).handler_err("serialize indexing status")?;
     Ok(ApiResponse::success_with_user(
         IndexingStatusResponse {
@@ -90,7 +90,7 @@ pub async fn get_sync_status(
     user_hash: &str,
     node: &FoldNode,
 ) -> HandlerResult<SyncStatusResponse> {
-    let db = node.get_fold_db().await.handler_err("get database")?;
+    let db = node.get_fold_db().await.typed_handler_err()?;
     let enabled = db.is_sync_enabled();
     let response = if enabled {
         let state = db.sync_state().await;
