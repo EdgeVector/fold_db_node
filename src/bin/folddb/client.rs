@@ -17,8 +17,9 @@ impl FoldDbClient {
         Self {
             base_url: format!("http://127.0.0.1:{}", port),
             user_hash: user_hash.to_string(),
+            // 10 min timeout — LLM agent queries and large ingestion can be slow
             client: reqwest::Client::builder()
-                .timeout(std::time::Duration::from_secs(120))
+                .timeout(std::time::Duration::from_secs(600))
                 .build()
                 .unwrap(),
         }
@@ -69,10 +70,27 @@ impl FoldDbClient {
 
     async fn parse_response(&self, resp: reqwest::Response) -> Result<Value, CliError> {
         let status = resp.status();
+        let content_type = resp
+            .headers()
+            .get("content-type")
+            .and_then(|v| v.to_str().ok())
+            .unwrap_or("")
+            .to_string();
         let body = resp
             .text()
             .await
             .map_err(|e| CliError::new(format!("Failed to read response: {}", e)))?;
+
+        // Detect non-JSON responses (HTML error pages from proxy/crash)
+        if !content_type.contains("json") && body.trim_start().starts_with('<') {
+            let msg = if status.is_success() {
+                "Daemon returned HTML instead of JSON (possible misconfiguration)"
+            } else {
+                "Daemon returned an error page"
+            };
+            return Err(CliError::new(format!("{} (HTTP {})", msg, status))
+                .with_hint("Check daemon logs: ~/.folddb/server.log"));
+        }
 
         let json: Value =
             serde_json::from_str(&body).unwrap_or_else(|_| serde_json::json!({ "error": body }));
