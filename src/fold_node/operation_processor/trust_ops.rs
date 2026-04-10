@@ -1,4 +1,4 @@
-use fold_db::access::{AuditAction, AuditEvent};
+use fold_db::access::{AuditAction, AuditEvent, TrustTier};
 use fold_db::schema::types::field::Field;
 use fold_db::schema::SchemaError;
 
@@ -15,31 +15,37 @@ fn to_schema_err(e: fold_db::error::FoldDbError) -> SchemaError {
 
 /// Trust and access-control operations.
 ///
-/// Trust graph and audit log operations are backed by fold_db's access module.
+/// Trust map and audit log operations are backed by fold_db's access module.
 /// Field policies, capabilities, and payment gates are not yet implemented.
 impl OperationProcessor {
-    pub async fn load_trust_graph(&self) -> Result<serde_json::Value, SchemaError> {
+    pub async fn load_trust_maps(&self) -> Result<serde_json::Value, SchemaError> {
         let db = self.get_db().await.map_err(to_schema_err)?;
-        let graph = db.db_ops.load_trust_graph().await?;
-        serde_json::to_value(&graph)
-            .map_err(|e| SchemaError::InvalidData(format!("Failed to serialize trust graph: {e}")))
+        let domains = db.db_ops.list_trust_domains().await?;
+        let mut result = serde_json::Map::new();
+        for domain in &domains {
+            let map = db.db_ops.load_trust_map_for_domain(domain).await?;
+            let value = serde_json::to_value(&map).map_err(|e| {
+                SchemaError::InvalidData(format!("Failed to serialize trust map: {e}"))
+            })?;
+            result.insert(domain.clone(), value);
+        }
+        Ok(serde_json::Value::Object(result))
     }
 
     pub async fn grant_trust(
         &self,
         user_public_key: &str,
-        distance: u64,
+        tier: TrustTier,
     ) -> Result<(), SchemaError> {
         let db = self.get_db().await.map_err(to_schema_err)?;
-        let owner = self.node.get_node_public_key().to_string();
-        let mut graph = db.db_ops.load_trust_graph().await?;
-        graph.assign_trust(&owner, user_public_key, distance);
-        db.db_ops.store_trust_graph(&graph).await?;
+        let mut map = db.db_ops.load_trust_map().await?;
+        map.insert(user_public_key.to_string(), tier);
+        db.db_ops.store_trust_map(&map).await?;
         let event = AuditEvent::trust_event(
             user_public_key,
             AuditAction::TrustGrant {
                 user_id: user_public_key.to_string(),
-                distance,
+                tier,
             },
         );
         db.db_ops.append_audit_event(event).await?;
@@ -48,10 +54,9 @@ impl OperationProcessor {
 
     pub async fn revoke_trust(&self, user_public_key: &str) -> Result<(), SchemaError> {
         let db = self.get_db().await.map_err(to_schema_err)?;
-        let owner = self.node.get_node_public_key().to_string();
-        let mut graph = db.db_ops.load_trust_graph().await?;
-        graph.revoke_trust(&owner, user_public_key);
-        db.db_ops.store_trust_graph(&graph).await?;
+        let mut map = db.db_ops.load_trust_map().await?;
+        map.remove(user_public_key);
+        db.db_ops.store_trust_map(&map).await?;
         let event = AuditEvent::trust_event(
             user_public_key,
             AuditAction::TrustRevoke {
@@ -62,34 +67,19 @@ impl OperationProcessor {
         Ok(())
     }
 
-    pub async fn set_trust_override(
+    pub async fn resolve_trust_tier(
         &self,
         user_public_key: &str,
-        distance: u64,
-    ) -> Result<(), SchemaError> {
+    ) -> Result<Option<TrustTier>, SchemaError> {
         let db = self.get_db().await.map_err(to_schema_err)?;
-        let owner = self.node.get_node_public_key().to_string();
-        let mut graph = db.db_ops.load_trust_graph().await?;
-        graph.set_override(&owner, user_public_key, distance);
-        db.db_ops.store_trust_graph(&graph).await?;
-        Ok(())
+        let map = db.db_ops.load_trust_map().await?;
+        Ok(map.get(user_public_key).copied())
     }
 
-    pub async fn resolve_trust_distance(
-        &self,
-        user_public_key: &str,
-    ) -> Result<Option<u64>, SchemaError> {
+    pub async fn list_trust_grants(&self) -> Result<Vec<(String, TrustTier)>, SchemaError> {
         let db = self.get_db().await.map_err(to_schema_err)?;
-        let owner = self.node.get_node_public_key().to_string();
-        let graph = db.db_ops.load_trust_graph().await?;
-        Ok(graph.resolve(user_public_key, &owner))
-    }
-
-    pub async fn list_trust_grants(&self) -> Result<Vec<(String, u64)>, SchemaError> {
-        let db = self.get_db().await.map_err(to_schema_err)?;
-        let owner = self.node.get_node_public_key().to_string();
-        let graph = db.db_ops.load_trust_graph().await?;
-        Ok(graph.assignments_from(&owner))
+        let map = db.db_ops.load_trust_map().await?;
+        Ok(map.into_iter().collect())
     }
 
     // ===== Domain-aware trust operations =====
@@ -99,20 +89,17 @@ impl OperationProcessor {
         &self,
         user_public_key: &str,
         domain: &str,
-        distance: u64,
+        tier: TrustTier,
     ) -> Result<(), SchemaError> {
         let db = self.get_db().await.map_err(to_schema_err)?;
-        let owner = self.node.get_node_public_key().to_string();
-        let mut graph = db.db_ops.load_trust_graph_for_domain(domain).await?;
-        graph.assign_trust(&owner, user_public_key, distance);
-        db.db_ops
-            .store_trust_graph_for_domain(domain, &graph)
-            .await?;
+        let mut map = db.db_ops.load_trust_map_for_domain(domain).await?;
+        map.insert(user_public_key.to_string(), tier);
+        db.db_ops.store_trust_map_for_domain(domain, &map).await?;
         let event = AuditEvent::trust_event(
             user_public_key,
             AuditAction::TrustGrant {
                 user_id: user_public_key.to_string(),
-                distance,
+                tier,
             },
         );
         db.db_ops.append_audit_event(event).await?;
@@ -126,12 +113,9 @@ impl OperationProcessor {
         domain: &str,
     ) -> Result<(), SchemaError> {
         let db = self.get_db().await.map_err(to_schema_err)?;
-        let owner = self.node.get_node_public_key().to_string();
-        let mut graph = db.db_ops.load_trust_graph_for_domain(domain).await?;
-        graph.revoke_trust(&owner, user_public_key);
-        db.db_ops
-            .store_trust_graph_for_domain(domain, &graph)
-            .await?;
+        let mut map = db.db_ops.load_trust_map_for_domain(domain).await?;
+        map.remove(user_public_key);
+        db.db_ops.store_trust_map_for_domain(domain, &map).await?;
         let event = AuditEvent::trust_event(
             user_public_key,
             AuditAction::TrustRevoke {
@@ -142,7 +126,7 @@ impl OperationProcessor {
         Ok(())
     }
 
-    /// List all trust domains that have stored graphs.
+    /// List all trust domains that have stored maps.
     pub async fn list_trust_domains(&self) -> Result<Vec<String>, SchemaError> {
         let db = self.get_db().await.map_err(to_schema_err)?;
         db.db_ops.list_trust_domains().await
@@ -160,7 +144,7 @@ impl OperationProcessor {
     }
 
     /// Resolve the sharing roles file path from the node's config directory.
-    fn sharing_roles_path(&self) -> Result<std::path::PathBuf, SchemaError> {
+    pub(super) fn sharing_roles_path(&self) -> Result<std::path::PathBuf, SchemaError> {
         let config_dir = self
             .node
             .get_config_dir()
@@ -182,8 +166,8 @@ impl OperationProcessor {
             .get_role(role_name)
             .ok_or_else(|| SchemaError::InvalidData(format!("Unknown role: {role_name}")))?;
 
-        // Grant trust in the role's domain at the role's distance
-        self.grant_trust_for_domain(public_key, &role.domain, role.distance)
+        // Grant trust in the role's domain at the role's tier
+        self.grant_trust_for_domain(public_key, &role.domain, role.tier)
             .await?;
 
         // Update contact book with role assignment
@@ -225,21 +209,20 @@ impl OperationProcessor {
 
     /// Compute what a contact can access across all schemas and domains.
     /// Returns readable/writable fields per schema based on the contact's
-    /// trust distances in each domain vs. field access policies.
+    /// trust tiers in each domain vs. field access policies.
     pub async fn audit_contact_access(
         &self,
         public_key: &str,
     ) -> Result<SharingAuditResult, SchemaError> {
         let db = self.get_db().await.map_err(to_schema_err)?;
-        let owner = self.node.get_node_public_key().to_string();
 
-        // 1. Resolve distances across all domains
+        // 1. Resolve tiers across all domains
         let domains = db.db_ops.list_trust_domains().await?;
-        let mut domain_distances = std::collections::HashMap::new();
+        let mut domain_tiers = std::collections::HashMap::new();
         for domain in &domains {
-            let graph = db.db_ops.load_trust_graph_for_domain(domain).await?;
-            if let Some(dist) = graph.resolve(public_key, &owner) {
-                domain_distances.insert(domain.clone(), dist);
+            let map = db.db_ops.load_trust_map_for_domain(domain).await?;
+            if let Some(&tier) = map.get(public_key) {
+                domain_tiers.insert(domain.clone(), tier);
             }
         }
 
@@ -275,11 +258,11 @@ impl OperationProcessor {
             for (field_name, field) in &schema.runtime_fields {
                 if let Some(policy) = &field.common().access_policy {
                     let domain = &policy.trust_domain;
-                    if let Some(&dist) = domain_distances.get(domain) {
-                        if policy.trust_distance.can_read(dist) {
+                    if let Some(&tier) = domain_tiers.get(domain) {
+                        if tier >= policy.min_read_tier {
                             readable.push(field_name.clone());
                         }
-                        if policy.trust_distance.can_write(dist) {
+                        if tier >= policy.min_write_tier {
                             writable.push(field_name.clone());
                         }
                     }
@@ -308,7 +291,7 @@ impl OperationProcessor {
         Ok(SharingAuditResult {
             contact_public_key: public_key.to_string(),
             contact_display_name: display_name,
-            domain_distances,
+            domain_tiers,
             domain_roles,
             accessible_schemas,
             total_readable,
@@ -320,7 +303,6 @@ impl OperationProcessor {
     /// how many contacts have access, total exposed fields.
     pub async fn sharing_posture(&self) -> Result<serde_json::Value, SchemaError> {
         let db = self.get_db().await.map_err(to_schema_err)?;
-        let owner = self.node.get_node_public_key().to_string();
 
         // Count schemas per trust domain
         let schemas = db
@@ -354,10 +336,9 @@ impl OperationProcessor {
         let mut domain_contacts: std::collections::HashMap<String, usize> =
             std::collections::HashMap::new();
         for domain in &domains {
-            let graph = db.db_ops.load_trust_graph_for_domain(domain).await?;
-            let grants = graph.assignments_from(&owner);
-            if !grants.is_empty() {
-                domain_contacts.insert(domain.clone(), grants.len());
+            let map = db.db_ops.load_trust_map_for_domain(domain).await?;
+            if !map.is_empty() {
+                domain_contacts.insert(domain.clone(), map.len());
             }
         }
 
@@ -451,18 +432,14 @@ impl OperationProcessor {
             .and_then(|p| serde_json::to_value(p).ok()))
     }
 
-    /// Apply classification-based default access policies to all fields in a schema
-    /// that don't already have explicit policies.
     /// Apply classification-based default access policies to fields.
+    /// Uses DataClassification::default_trust_tier() and default_trust_domain() directly.
     /// If `force` is true, overwrites existing policies (reset to defaults).
     pub async fn apply_classification_defaults_with_force(
         &self,
         schema_name: &str,
         force: bool,
     ) -> Result<usize, SchemaError> {
-        let config = crate::trust::classification_defaults::ClassificationDefaultsConfig::load()
-            .unwrap_or_default();
-
         let db = self.get_db().await.map_err(to_schema_err)?;
         let mut schema = db
             .schema_manager
@@ -470,50 +447,41 @@ impl OperationProcessor {
             .await?
             .ok_or_else(|| SchemaError::InvalidData(format!("Schema '{schema_name}' not found")))?;
 
-        // Determine default domain from schema-level trust_domain or classification
         let schema_domain = schema.trust_domain.clone();
-
         let mut applied = 0usize;
         let field_names: Vec<String> = schema.runtime_fields.keys().cloned().collect();
 
         for field_name in &field_names {
             if !force {
-                // Skip if persisted policy exists (these survive restart)
                 if schema.field_access_policies.contains_key(field_name) {
                     continue;
                 }
                 let field = schema.runtime_fields.get(field_name).unwrap();
                 if field.common().access_policy.is_some() {
-                    continue; // Already has explicit policy (runtime-only)
+                    continue;
                 }
             }
 
-            // Look up classification for this field
             let classification = schema.field_data_classifications.get(field_name);
-            let default = if let Some(cls) = classification {
-                config.lookup(cls.sensitivity_level, &cls.data_domain)
-            } else {
-                // No classification — use schema-level domain or personal default
-                let domain = schema_domain.as_deref().unwrap_or("personal");
-                crate::trust::classification_defaults::ClassificationDefault {
-                    trust_domain: domain.to_string(),
-                    read_max: 3, // moderate default
-                    write_max: 0,
+            let policy = if let Some(cls) = classification {
+                fold_db::access::FieldAccessPolicy {
+                    trust_domain: cls.default_trust_domain().to_string(),
+                    min_read_tier: cls.default_trust_tier(),
+                    min_write_tier: TrustTier::Owner,
+                    capabilities: vec![],
                 }
-            };
-
-            let policy = fold_db::access::FieldAccessPolicy {
-                trust_domain: default.trust_domain,
-                trust_distance: fold_db::access::TrustDistancePolicy::new(
-                    default.read_max,
-                    default.write_max,
-                ),
-                ..Default::default()
+            } else {
+                let domain = schema_domain.as_deref().unwrap_or("personal");
+                fold_db::access::FieldAccessPolicy {
+                    trust_domain: domain.to_string(),
+                    min_read_tier: TrustTier::Inner, // moderate default
+                    min_write_tier: TrustTier::Owner,
+                    capabilities: vec![],
+                }
             };
 
             if let Some(field_mut) = schema.runtime_fields.get_mut(field_name) {
                 field_mut.common_mut().access_policy = Some(policy.clone());
-                // Also persist so it survives restart
                 schema
                     .field_access_policies
                     .insert(field_name.clone(), policy);

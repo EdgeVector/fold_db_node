@@ -34,8 +34,6 @@ pub struct Contact {
     /// Optional contact hint from their identity card.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub contact_hint: Option<String>,
-    /// Trust distance in your graph.
-    pub trust_distance: u64,
     /// Direction of trust.
     pub direction: TrustDirection,
     /// When the trust relationship was established.
@@ -110,7 +108,6 @@ impl ContactBook {
         if let Some(existing) = self.contacts.get_mut(&key) {
             existing.display_name = contact.display_name;
             existing.contact_hint = contact.contact_hint;
-            existing.trust_distance = contact.trust_distance;
             existing.direction = contact.direction;
             existing.connected_at = contact.connected_at;
             if contact.pseudonym.is_some() {
@@ -166,12 +163,11 @@ mod tests {
     use super::*;
     use tempfile::TempDir;
 
-    fn test_contact(key: &str, name: &str, distance: u64) -> Contact {
+    fn test_contact(key: &str, name: &str) -> Contact {
         Contact {
             public_key: key.to_string(),
             display_name: name.to_string(),
             contact_hint: None,
-            trust_distance: distance,
             direction: TrustDirection::Outgoing,
             connected_at: Utc::now(),
             pseudonym: None,
@@ -188,8 +184,8 @@ mod tests {
         let path = tmp.path().join("contacts.json");
 
         let mut book = ContactBook::new();
-        book.upsert_contact(test_contact("pk_alice", "Alice", 1));
-        book.upsert_contact(test_contact("pk_bob", "Bob", 2));
+        book.upsert_contact(test_contact("pk_alice", "Alice"));
+        book.upsert_contact(test_contact("pk_bob", "Bob"));
         book.save_to(&path).unwrap();
 
         let loaded = ContactBook::load_from(&path).unwrap();
@@ -200,7 +196,7 @@ mod tests {
     #[test]
     fn test_revoke_keeps_history() {
         let mut book = ContactBook::new();
-        book.upsert_contact(test_contact("pk_alice", "Alice", 1));
+        book.upsert_contact(test_contact("pk_alice", "Alice"));
         assert_eq!(book.active_contacts().len(), 1);
 
         book.revoke("pk_alice");
@@ -211,12 +207,11 @@ mod tests {
     #[test]
     fn test_upsert_updates_existing() {
         let mut book = ContactBook::new();
-        book.upsert_contact(test_contact("pk_alice", "Alice", 1));
+        book.upsert_contact(test_contact("pk_alice", "Alice"));
         book.upsert_contact(Contact {
             public_key: "pk_alice".to_string(),
             display_name: "Alice Chen".to_string(),
             contact_hint: Some("alice@example.com".to_string()),
-            trust_distance: 2,
             direction: TrustDirection::Mutual,
             connected_at: Utc::now(),
             pseudonym: None,
@@ -227,14 +222,13 @@ mod tests {
         });
         let alice = book.get("pk_alice").unwrap();
         assert_eq!(alice.display_name, "Alice Chen");
-        assert_eq!(alice.trust_distance, 2);
         assert_eq!(alice.direction, TrustDirection::Mutual);
     }
 
     #[test]
     fn test_mark_mutual() {
         let mut book = ContactBook::new();
-        book.upsert_contact(test_contact("pk_alice", "Alice", 1));
+        book.upsert_contact(test_contact("pk_alice", "Alice"));
         assert_eq!(
             book.get("pk_alice").unwrap().direction,
             TrustDirection::Outgoing

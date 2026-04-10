@@ -95,7 +95,7 @@ pub async fn get_feed(
                     use fold_db::schema::types::field::Field;
                     match &field.common().access_policy {
                         None => true,
-                        Some(policy) => policy.trust_distance.can_read(u64::MAX),
+                        Some(policy) => policy.min_read_tier == fold_db::access::TrustTier::Public,
                     }
                 })
                 .map(|(name, _)| name.clone())

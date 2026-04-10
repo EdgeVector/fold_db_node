@@ -732,7 +732,6 @@ impl FoldHttpServer {
                     web::delete().to(trust_routes::revoke_trust),
                 )
                 .route("/grants", web::get().to(trust_routes::list_trust_grants))
-                .route("/override", web::put().to(trust_routes::set_trust_override))
                 .route("/resolve/{key}", web::get().to(trust_routes::resolve_trust))
                 .route("/audit", web::get().to(trust_routes::get_audit_log))
                 .route("/invite", web::post().to(trust_routes::create_trust_invite))

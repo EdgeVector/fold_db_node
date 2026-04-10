@@ -1,9 +1,10 @@
-//! Sharing roles — user-facing abstraction over trust distances.
+//! Sharing roles — user-facing abstraction over trust tiers.
 //!
 //! Users assign roles ("friend", "doctor", "trainer") instead of managing
-//! raw distance numbers. Each role maps to a (domain, distance) pair.
+//! raw trust tiers. Each role maps to a (domain, tier) pair.
 //! Stored at `$FOLDDB_HOME/config/sharing_roles.json`.
 
+use fold_db::access::TrustTier;
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
@@ -12,12 +13,12 @@ use crate::utils::paths::folddb_home;
 
 const SHARING_ROLES_FILE: &str = "config/sharing_roles.json";
 
-/// A sharing role maps a user-friendly name to a (domain, distance) pair.
+/// A sharing role maps a user-friendly name to a (domain, tier) pair.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct SharingRole {
     pub name: String,
     pub domain: String,
-    pub distance: u64,
+    pub tier: TrustTier,
     pub description: String,
 }
 
@@ -34,14 +35,14 @@ impl Default for SharingRoleConfig {
         let add = |roles: &mut HashMap<String, SharingRole>,
                    name: &str,
                    domain: &str,
-                   distance: u64,
+                   tier: TrustTier,
                    desc: &str| {
             roles.insert(
                 name.to_string(),
                 SharingRole {
                     name: name.to_string(),
                     domain: domain.to_string(),
-                    distance,
+                    tier,
                     description: desc.to_string(),
                 },
             );
@@ -52,21 +53,21 @@ impl Default for SharingRoleConfig {
             &mut roles,
             "close_friend",
             "personal",
-            1,
+            TrustTier::Inner,
             "Can see most personal data",
         );
         add(
             &mut roles,
             "friend",
             "personal",
-            3,
+            TrustTier::Trusted,
             "Can see general personal data",
         );
         add(
             &mut roles,
             "acquaintance",
             "personal",
-            5,
+            TrustTier::Outer,
             "Minimal personal sharing",
         );
 
@@ -75,7 +76,7 @@ impl Default for SharingRoleConfig {
             &mut roles,
             "family",
             "family",
-            1,
+            TrustTier::Inner,
             "Can see family-related data",
         );
 
@@ -84,7 +85,7 @@ impl Default for SharingRoleConfig {
             &mut roles,
             "trainer",
             "health",
-            2,
+            TrustTier::Trusted,
             "Can see fitness and wellness data",
         );
 
@@ -93,7 +94,7 @@ impl Default for SharingRoleConfig {
             &mut roles,
             "doctor",
             "medical",
-            1,
+            TrustTier::Inner,
             "Can see medical records",
         );
 
@@ -102,7 +103,7 @@ impl Default for SharingRoleConfig {
             &mut roles,
             "financial_advisor",
             "financial",
-            1,
+            TrustTier::Inner,
             "Can see financial data",
         );
 
@@ -171,11 +172,11 @@ mod tests {
 
         let friend = config.get_role("friend").unwrap();
         assert_eq!(friend.domain, "personal");
-        assert_eq!(friend.distance, 3);
+        assert_eq!(friend.tier, TrustTier::Trusted);
 
         let doctor = config.get_role("doctor").unwrap();
         assert_eq!(doctor.domain, "medical");
-        assert_eq!(doctor.distance, 1);
+        assert_eq!(doctor.tier, TrustTier::Inner);
     }
 
     #[test]

@@ -1,8 +1,8 @@
 //! Trust invite — signed, self-contained payload for establishing trust.
 //!
 //! A trust invite contains the sender's Ed25519 pub key, identity card, and
-//! proposed trust distance. The payload is signed so the recipient can verify
-//! the sender controls the claimed key.
+//! proposed role (e.g., "friend", "doctor"). The payload is signed so the
+//! recipient can verify the sender controls the claimed key.
 //!
 //! Two delivery modes:
 //! 1. **Discovery**: Encrypted with peer's X25519 key, sent via bulletin board
@@ -23,8 +23,8 @@ pub struct TrustInvite {
     pub sender_pub_key: String,
     /// The sender's identity card (display name + optional contact hint).
     pub sender_identity: IdentityCard,
-    /// Proposed trust distance for the recipient to grant.
-    pub proposed_distance: u64,
+    /// Proposed role name for the recipient to grant (e.g., "friend", "doctor").
+    pub proposed_role: String,
     /// Random nonce for replay protection.
     pub nonce: String,
     /// When the invite was created.
@@ -38,7 +38,7 @@ pub struct TrustInvite {
 struct TrustInvitePayload<'a> {
     sender_pub_key: &'a str,
     sender_identity: &'a IdentityCard,
-    proposed_distance: u64,
+    proposed_role: &'a str,
     nonce: &'a str,
     created_at: &'a DateTime<Utc>,
 }
@@ -49,7 +49,7 @@ impl TrustInvite {
         private_key_base64: &str,
         public_key_base64: &str,
         identity: &IdentityCard,
-        proposed_distance: u64,
+        proposed_role: &str,
     ) -> Result<Self, String> {
         let secret_bytes = base64::engine::general_purpose::STANDARD
             .decode(private_key_base64)
@@ -63,7 +63,7 @@ impl TrustInvite {
         let payload = TrustInvitePayload {
             sender_pub_key: public_key_base64,
             sender_identity: identity,
-            proposed_distance,
+            proposed_role,
             nonce: &nonce,
             created_at: &created_at,
         };
@@ -76,7 +76,7 @@ impl TrustInvite {
         Ok(Self {
             sender_pub_key: public_key_base64.to_string(),
             sender_identity: identity.clone(),
-            proposed_distance,
+            proposed_role: proposed_role.to_string(),
             nonce,
             created_at,
             signature: signature_base64,
@@ -110,7 +110,7 @@ impl TrustInvite {
         let payload = TrustInvitePayload {
             sender_pub_key: &self.sender_pub_key,
             sender_identity: &self.sender_identity,
-            proposed_distance: self.proposed_distance,
+            proposed_role: &self.proposed_role,
             nonce: &self.nonce,
             created_at: &self.created_at,
         };
@@ -170,10 +170,10 @@ mod tests {
             None,
         );
 
-        let invite = TrustInvite::create(&priv_key, &pub_key, &identity, 1).unwrap();
+        let invite = TrustInvite::create(&priv_key, &pub_key, &identity, "close_friend").unwrap();
         assert!(invite.verify().unwrap());
         assert_eq!(invite.sender_identity.display_name, "Alice");
-        assert_eq!(invite.proposed_distance, 1);
+        assert_eq!(invite.proposed_role, "close_friend");
     }
 
     #[test]
@@ -181,13 +181,13 @@ mod tests {
         let (priv_key, pub_key) = test_keypair();
         let identity = IdentityCard::new("Bob".to_string(), None, None);
 
-        let invite = TrustInvite::create(&priv_key, &pub_key, &identity, 2).unwrap();
+        let invite = TrustInvite::create(&priv_key, &pub_key, &identity, "friend").unwrap();
         let token = invite.to_token().unwrap();
         let decoded = TrustInvite::from_token(&token).unwrap();
 
         assert!(decoded.verify().unwrap());
         assert_eq!(decoded.sender_identity.display_name, "Bob");
-        assert_eq!(decoded.proposed_distance, 2);
+        assert_eq!(decoded.proposed_role, "friend");
     }
 
     #[test]
@@ -195,8 +195,8 @@ mod tests {
         let (priv_key, pub_key) = test_keypair();
         let identity = IdentityCard::new("Alice".to_string(), None, None);
 
-        let mut invite = TrustInvite::create(&priv_key, &pub_key, &identity, 1).unwrap();
-        invite.proposed_distance = 999; // tamper
+        let mut invite = TrustInvite::create(&priv_key, &pub_key, &identity, "friend").unwrap();
+        invite.proposed_role = "doctor".to_string(); // tamper
 
         assert!(!invite.verify().unwrap());
     }
@@ -207,7 +207,7 @@ mod tests {
         let (_, other_pub_key) = test_keypair();
         let identity = IdentityCard::new("Alice".to_string(), None, None);
 
-        let mut invite = TrustInvite::create(&priv_key, &pub_key, &identity, 1).unwrap();
+        let mut invite = TrustInvite::create(&priv_key, &pub_key, &identity, "friend").unwrap();
         invite.sender_pub_key = other_pub_key; // claim different key
 
         assert!(!invite.verify().unwrap());

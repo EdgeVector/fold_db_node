@@ -1,7 +1,8 @@
 //! End-to-end integration tests for sharing roles, domain-aware trust,
 //! and the sharing audit system.
 
-use fold_db::access::types::{FieldAccessPolicy, TrustDistancePolicy};
+use fold_db::access::types::FieldAccessPolicy;
+use fold_db::access::TrustTier;
 use fold_db::schema::types::declarative_schemas::DeclarativeSchemaDefinition;
 use fold_db::schema::types::field::Field;
 use fold_db::schema::types::key_config::KeyConfig;
@@ -34,7 +35,12 @@ async fn setup_node() -> (OperationProcessor, FoldNode, String, PathBuf, TempDir
     (processor, node, pub_key, config_dir, temp_dir)
 }
 
-async fn load_schema_with_policy(node: &FoldNode, name: &str, trust_domain: &str, read_max: u64) {
+async fn load_schema_with_policy(
+    node: &FoldNode,
+    name: &str,
+    trust_domain: &str,
+    min_read_tier: TrustTier,
+) {
     let mut schema = DeclarativeSchemaDefinition::new(
         name.to_string(),
         SchemaType::HashRange,
@@ -66,7 +72,8 @@ async fn load_schema_with_policy(node: &FoldNode, name: &str, trust_domain: &str
     for (_field_name, field) in schema.runtime_fields.iter_mut() {
         field.common_mut().access_policy = Some(FieldAccessPolicy {
             trust_domain: trust_domain.to_string(),
-            trust_distance: TrustDistancePolicy::new(read_max, 0),
+            min_read_tier,
+            min_write_tier: TrustTier::Owner,
             ..Default::default()
         });
     }
@@ -91,7 +98,9 @@ async fn test_role_assignment_grants_domain_trust() {
     let contact_key = Ed25519KeyPair::generate().unwrap().public_key_base64();
 
     // Grant initial trust in personal domain
-    op.grant_trust(&contact_key, 3).await.unwrap();
+    op.grant_trust(&contact_key, TrustTier::Trusted)
+        .await
+        .unwrap();
 
     // Add to contact book
     let mut book = ContactBook::load_from(&book_path).unwrap_or_default();
@@ -99,7 +108,6 @@ async fn test_role_assignment_grants_domain_trust() {
         public_key: contact_key.clone(),
         display_name: "Test Doctor".to_string(),
         contact_hint: None,
-        trust_distance: 3,
         direction: fold_db_node::trust::contact_book::TrustDirection::Outgoing,
         connected_at: chrono::Utc::now(),
         pseudonym: None,
@@ -117,17 +125,16 @@ async fn test_role_assignment_grants_domain_trust() {
 
     // Verify: trust should be granted in medical domain
     let db = node.get_fold_db().await.unwrap();
-    let medical_graph = db
+    let medical_map = db
         .db_ops
-        .load_trust_graph_for_domain("medical")
+        .load_trust_map_for_domain("medical")
         .await
         .unwrap();
-    let owner = node.get_node_public_key();
-    let distance = medical_graph.resolve(&contact_key, owner);
+    let tier = medical_map.get(&contact_key);
     assert_eq!(
-        distance,
-        Some(1),
-        "Doctor role should grant distance 1 in medical domain"
+        tier,
+        Some(&TrustTier::Inner),
+        "Doctor role should grant Inner tier in medical domain"
     );
 
     // Verify: contact book should have the role recorded
@@ -145,14 +152,15 @@ async fn test_role_removal_revokes_domain_trust() {
     let book_path = config_dir.join("contact_book.json");
 
     let contact_key = Ed25519KeyPair::generate().unwrap().public_key_base64();
-    op.grant_trust(&contact_key, 3).await.unwrap();
+    op.grant_trust(&contact_key, TrustTier::Trusted)
+        .await
+        .unwrap();
 
     let mut book = ContactBook::load_from(&book_path).unwrap_or_default();
     book.upsert_contact(fold_db_node::trust::contact_book::Contact {
         public_key: contact_key.clone(),
         display_name: "Trainer".to_string(),
         contact_hint: None,
-        trust_distance: 3,
         direction: fold_db_node::trust::contact_book::TrustDirection::Outgoing,
         connected_at: chrono::Utc::now(),
         pseudonym: None,
@@ -173,14 +181,9 @@ async fn test_role_removal_revokes_domain_trust() {
 
     // Verify: trust should be revoked in health domain
     let db = node.get_fold_db().await.unwrap();
-    let health_graph = db
-        .db_ops
-        .load_trust_graph_for_domain("health")
-        .await
-        .unwrap();
-    let owner = node.get_node_public_key();
+    let health_map = db.db_ops.load_trust_map_for_domain("health").await.unwrap();
     assert_eq!(
-        health_graph.resolve(&contact_key, owner),
+        health_map.get(&contact_key),
         None,
         "Trust should be revoked after role removal"
     );
@@ -197,19 +200,20 @@ async fn test_sharing_audit_with_domain_policies() {
     let book_path = config_dir.join("contact_book.json");
 
     // Create schemas with different domain policies
-    load_schema_with_policy(&node, "PersonalNotes", "personal", 3).await;
-    load_schema_with_policy(&node, "HealthLog", "health", 2).await;
-    load_schema_with_policy(&node, "MedicalRecords", "medical", 1).await;
+    load_schema_with_policy(&node, "PersonalNotes", "personal", TrustTier::Trusted).await;
+    load_schema_with_policy(&node, "HealthLog", "health", TrustTier::Trusted).await;
+    load_schema_with_policy(&node, "MedicalRecords", "medical", TrustTier::Inner).await;
 
-    // Create a contact with friend role (personal domain, distance 3)
+    // Create a contact with friend role (personal domain, Trusted tier)
     let friend_key = Ed25519KeyPair::generate().unwrap().public_key_base64();
-    op.grant_trust(&friend_key, 3).await.unwrap();
+    op.grant_trust(&friend_key, TrustTier::Trusted)
+        .await
+        .unwrap();
     let mut book = ContactBook::load_from(&book_path).unwrap_or_default();
     book.upsert_contact(fold_db_node::trust::contact_book::Contact {
         public_key: friend_key.clone(),
         display_name: "Bob".to_string(),
         contact_hint: None,
-        trust_distance: 3,
         direction: fold_db_node::trust::contact_book::TrustDirection::Outgoing,
         connected_at: chrono::Utc::now(),
         pseudonym: None,
@@ -287,9 +291,9 @@ async fn test_multiple_roles_across_domains() {
     let (op, node, _pub_key, config_dir, _tmp) = setup_node().await;
     let book_path = config_dir.join("contact_book.json");
 
-    load_schema_with_policy(&node, "Notes", "personal", 3).await;
-    load_schema_with_policy(&node, "Fitness", "health", 2).await;
-    load_schema_with_policy(&node, "Taxes", "financial", 1).await;
+    load_schema_with_policy(&node, "Notes", "personal", TrustTier::Trusted).await;
+    load_schema_with_policy(&node, "Fitness", "health", TrustTier::Trusted).await;
+    load_schema_with_policy(&node, "Taxes", "financial", TrustTier::Inner).await;
 
     let contact_key = Ed25519KeyPair::generate().unwrap().public_key_base64();
     let mut book = ContactBook::load_from(&book_path).unwrap_or_default();
@@ -297,7 +301,6 @@ async fn test_multiple_roles_across_domains() {
         public_key: contact_key.clone(),
         display_name: "Multi-Role".to_string(),
         contact_hint: None,
-        trust_distance: 0,
         direction: fold_db_node::trust::contact_book::TrustDirection::Outgoing,
         connected_at: chrono::Utc::now(),
         pseudonym: None,
@@ -322,36 +325,15 @@ async fn test_multiple_roles_across_domains() {
     // Audit: should see all three schemas
     let audit = op.audit_contact_access(&contact_key).await.unwrap();
     assert_eq!(audit.accessible_schemas.len(), 3);
-    assert_eq!(audit.domain_distances.len(), 3);
-    assert!(audit.domain_distances.contains_key("personal"));
-    assert!(audit.domain_distances.contains_key("health"));
-    assert!(audit.domain_distances.contains_key("financial"));
-}
-
-#[tokio::test]
-async fn test_classification_defaults_config() {
-    use fold_db_node::trust::classification_defaults::ClassificationDefaultsConfig;
-
-    let config = ClassificationDefaultsConfig::default();
-
-    // Medical high sensitivity → medical domain, read_max 1
-    let medical = config.lookup(4, "medical");
-    assert_eq!(medical.trust_domain, "medical");
-    assert_eq!(medical.read_max, 1);
-
-    // General public → personal domain, unlimited
-    let public = config.lookup(0, "general");
-    assert_eq!(public.trust_domain, "personal");
-    assert_eq!(public.read_max, u64::MAX);
-
-    // Unknown domain → fallback to general at same sensitivity
-    let unknown = config.lookup(2, "unknown");
-    assert_eq!(unknown.trust_domain, "personal");
-    assert_eq!(unknown.read_max, 3);
+    assert_eq!(audit.domain_tiers.len(), 3);
+    assert!(audit.domain_tiers.contains_key("personal"));
+    assert!(audit.domain_tiers.contains_key("health"));
+    assert!(audit.domain_tiers.contains_key("financial"));
 }
 
 #[tokio::test]
 async fn test_sharing_roles_config() {
+    use fold_db::access::TrustTier;
     use fold_db_node::trust::sharing_roles::SharingRoleConfig;
 
     let config = SharingRoleConfig::default();
@@ -359,11 +341,11 @@ async fn test_sharing_roles_config() {
     // Verify default roles exist
     let doctor = config.get_role("doctor").unwrap();
     assert_eq!(doctor.domain, "medical");
-    assert_eq!(doctor.distance, 1);
+    assert_eq!(doctor.tier, TrustTier::Inner);
 
     let friend = config.get_role("friend").unwrap();
     assert_eq!(friend.domain, "personal");
-    assert_eq!(friend.distance, 3);
+    assert_eq!(friend.tier, TrustTier::Trusted);
 
     // Verify roles_for_domain
     let personal_roles = config.roles_for_domain("personal");

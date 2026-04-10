@@ -282,9 +282,10 @@ async fn test_feed_strips_non_public_fields() {
     let (node, _tmp) = setup_node().await;
     load_photo_schema(&node).await;
 
-    // Set one field's access policy to owner-only (read_max = 0)
+    // Set one field's access policy to owner-only
     {
-        use fold_db::access::types::{FieldAccessPolicy, TrustDistancePolicy};
+        use fold_db::access::types::FieldAccessPolicy;
+        use fold_db::access::TrustTier;
         use fold_db::schema::types::field::Field;
 
         let db = node.get_fold_db().await.expect("Failed to get FoldDB");
@@ -297,7 +298,8 @@ async fn test_feed_strips_non_public_fields() {
 
         if let Some(field) = schema.runtime_fields.get_mut("caption") {
             field.common_mut().access_policy = Some(FieldAccessPolicy {
-                trust_distance: TrustDistancePolicy::owner_only(),
+                min_read_tier: TrustTier::Owner,
+                min_write_tier: TrustTier::Owner,
                 ..Default::default()
             });
         }
