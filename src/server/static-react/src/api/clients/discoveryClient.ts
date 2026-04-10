@@ -183,7 +183,7 @@ export class DiscoveryClient {
   async listOptIns(): Promise<EnhancedApiResponse<{ configs: DiscoveryOptIn[] }>> {
     return this.client.get('/discovery/opt-ins', {
       timeout: API_TIMEOUTS.STANDARD,
-      retries: API_RETRIES.STANDARD,
+      retries: API_RETRIES.NONE, // No retries — 503 in local mode is deterministic
     });
   }
 
@@ -224,7 +224,7 @@ export class DiscoveryClient {
   async browseCategories(): Promise<EnhancedApiResponse<BrowseCategoriesResponse>> {
     return this.client.get('/discovery/browse/categories', {
       timeout: API_TIMEOUTS.STANDARD,
-      retries: API_RETRIES.STANDARD,
+      retries: API_RETRIES.NONE, // No retries — 503 in local mode is deterministic
     });
   }
 
@@ -293,7 +293,7 @@ export class DiscoveryClient {
   async getSimilarProfiles(): Promise<EnhancedApiResponse<SimilarProfilesResponse>> {
     return this.client.get('/discovery/similar-profiles', {
       timeout: API_TIMEOUTS.LONG,
-      retries: API_RETRIES.STANDARD,
+      retries: API_RETRIES.NONE, // No retries — 503 in local mode is deterministic
     });
   }
 
@@ -326,7 +326,7 @@ export class DiscoveryClient {
   async getSharedEvents(): Promise<EnhancedApiResponse<SharedEventsResponse>> {
     return this.client.get('/discovery/shared-events', {
       timeout: API_TIMEOUTS.STANDARD,
-      retries: API_RETRIES.STANDARD,
+      retries: API_RETRIES.NONE, // No retries — 503 in local mode is deterministic
     });
   }
 
@@ -389,7 +389,7 @@ export class DiscoveryClient {
   async listSharedMoments(): Promise<EnhancedApiResponse<{ moments: SharedMoment[] }>> {
     return this.client.get('/discovery/moments', {
       timeout: API_TIMEOUTS.STANDARD,
-      retries: API_RETRIES.STANDARD,
+      retries: API_RETRIES.NONE, // No retries — 503 in local mode is deterministic
     });
   }
 }

@@ -208,6 +208,20 @@ impl<T, E: fmt::Display> IntoHandlerError<T> for Result<T, E> {
     }
 }
 
+/// Extension trait for converting FoldDbError results using the typed From conversion.
+///
+/// Unlike `.handler_err()` which wraps every error as Internal(500), this preserves
+/// the error classification: SchemaNotFound -> 404, Permission -> 401, etc.
+pub trait IntoTypedHandlerError<T> {
+    fn typed_handler_err(self) -> Result<T, HandlerError>;
+}
+
+impl<T> IntoTypedHandlerError<T> for Result<T, fold_db::error::FoldDbError> {
+    fn typed_handler_err(self) -> Result<T, HandlerError> {
+        self.map_err(HandlerError::from)
+    }
+}
+
 /// Acquire the FoldDB guard from a node, mapping errors to HandlerError::Internal.
 ///
 /// Replaces the repeated pattern:

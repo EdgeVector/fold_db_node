@@ -6,7 +6,7 @@
 use crate::fold_node::node::FoldNode;
 use crate::fold_node::OperationProcessor;
 use crate::handlers::handler_response;
-use crate::handlers::response::{ApiResponse, HandlerResult, IntoHandlerError};
+use crate::handlers::response::{ApiResponse, HandlerResult, IntoTypedHandlerError};
 use fold_db::schema::types::key_value::KeyValue;
 use fold_db::schema::types::operations::{Mutation, MutationType};
 use serde_json::Value;
@@ -68,7 +68,7 @@ pub async fn execute_mutation_from_components(
     let mutation_id = processor
         .execute_mutation_op_with_access(mutation, &caller_pub_key)
         .await
-        .handler_err("execute mutation")?;
+        .typed_handler_err()?;
 
     Ok(ApiResponse::success_with_user(
         SingleMutationResponse {
@@ -87,10 +87,7 @@ pub async fn execute_mutations_batch(
 ) -> HandlerResult<MutationResponse> {
     let count = mutations.len();
 
-    let mutation_ids = node
-        .mutate_batch(mutations)
-        .await
-        .handler_err("execute mutations")?;
+    let mutation_ids = node.mutate_batch(mutations).await.typed_handler_err()?;
 
     // Wait for background tasks (indexing) to complete
     node.wait_for_background_tasks(DEFAULT_BACKGROUND_TASK_TIMEOUT)
@@ -117,7 +114,7 @@ pub async fn execute_mutations_batch_from_json(
     let mutation_ids = processor
         .execute_mutations_batch(mutations_data)
         .await
-        .handler_err("execute batch mutations")?;
+        .typed_handler_err()?;
 
     Ok(ApiResponse::success_with_user(
         MutationResponse {

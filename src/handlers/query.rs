@@ -7,7 +7,7 @@ use crate::fold_node::node::FoldNode;
 use crate::fold_node::OperationProcessor;
 use crate::handlers::handler_response;
 use crate::handlers::response::{
-    get_db_guard, ApiResponse, HandlerError, HandlerResult, IntoHandlerError,
+    get_db_guard, ApiResponse, HandlerError, HandlerResult, IntoHandlerError, IntoTypedHandlerError,
 };
 use fold_db::schema::types::operations::Query;
 use fold_db::storage::traits::TypedStore;
@@ -43,7 +43,7 @@ pub async fn execute_query(
     let results = processor
         .execute_query_json_with_access(query, &caller_pub_key)
         .await
-        .handler_err("execute query")?;
+        .typed_handler_err()?;
     let results_json = serde_json::Value::Array(results);
 
     Ok(ApiResponse::success_with_user(
@@ -65,7 +65,7 @@ pub async fn native_index_search(
     let results = processor
         .native_index_search(query_string)
         .await
-        .handler_err("search native index")?;
+        .typed_handler_err()?;
     let results_json = serde_json::to_value(&results).handler_err("serialize search results")?;
     Ok(ApiResponse::success_with_user(
         IndexSearchResponse {
