@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
 import { useApprovedSchemas } from '../../hooks/useApprovedSchemas.js'
 import { discoveryClient } from '../../api/clients/discoveryClient'
+import { listSharingRoles } from '../../api/clients/trustClient'
 import { toErrorMessage } from '../../utils/schemaUtils'
 
 /** Derive a category from schema field_interest_categories.
@@ -313,6 +314,8 @@ function ConnectionRequestsPanel({ onResult }) {
   const [requests, setRequests] = useState([])
   const [loading, setLoading] = useState(true)
   const [responding, setResponding] = useState(null)
+  const [availableRoles, setAvailableRoles] = useState({})
+  const [selectedRoles, setSelectedRoles] = useState({})
 
   const fetchRequests = useCallback(async () => {
     try {
@@ -325,12 +328,22 @@ function ConnectionRequestsPanel({ onResult }) {
     }
   }, [])
 
-  useEffect(() => { fetchRequests() }, [fetchRequests])
+  const fetchRoles = useCallback(async () => {
+    try {
+      const response = await listSharingRoles()
+      if (response.success && response.data) {
+        setAvailableRoles(response.data.roles || {})
+      }
+    } catch { /* ignore */ }
+  }, [])
+
+  useEffect(() => { fetchRequests(); fetchRoles() }, [fetchRequests, fetchRoles])
 
   const handleRespond = async (requestId, action) => {
     setResponding(requestId)
     try {
-      const res = await discoveryClient.respondToRequest(requestId, action)
+      const role = action === 'accept' ? (selectedRoles[requestId] || 'acquaintance') : undefined
+      const res = await discoveryClient.respondToRequest(requestId, action, undefined, role)
       if (res.success) {
         setRequests(prev =>
           prev.map(r => r.request_id === requestId ? res.data.request : r)
@@ -376,7 +389,21 @@ function ConnectionRequestsPanel({ onResult }) {
                     {new Date(r.created_at).toLocaleDateString()}
                   </span>
                 </div>
-                <div className="flex gap-2">
+                <div className="flex gap-2 items-center">
+                  <select
+                    className="input input-sm text-xs"
+                    value={selectedRoles[r.request_id] || 'acquaintance'}
+                    onChange={(e) => setSelectedRoles(prev => ({ ...prev, [r.request_id]: e.target.value }))}
+                  >
+                    {Object.values(availableRoles).length > 0
+                      ? Object.values(availableRoles).map((role) => (
+                          <option key={role.name} value={role.name}>{role.name.replace(/_/g, ' ')}</option>
+                        ))
+                      : ['acquaintance', 'friend', 'close_friend', 'family', 'trainer', 'doctor', 'financial_advisor'].map(r => (
+                          <option key={r} value={r}>{r.replace(/_/g, ' ')}</option>
+                        ))
+                    }
+                  </select>
                   <button
                     onClick={() => handleRespond(r.request_id, 'accept')}
                     disabled={responding === r.request_id}

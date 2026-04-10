@@ -9,7 +9,7 @@ use crate::discovery::async_query::{
 use crate::discovery::calendar_sharing::{self, EventFingerprint, PeerEventSet, SharedEvent};
 use crate::discovery::config::{self, DiscoveryOptIn};
 use crate::discovery::connection::{
-    self, ConnectionPayload, LocalConnectionRequest, LocalSentRequest,
+    self, ConnectionPayload, IdentityCardPayload, LocalConnectionRequest, LocalSentRequest,
 };
 use crate::discovery::interests::{self, InterestProfile};
 use crate::discovery::moments;
@@ -19,7 +19,11 @@ pub use crate::discovery::types::{
     MomentHashReceiveRequest, MomentOptInRequest, MomentOptOutRequest, PhotoMetadata,
 };
 use crate::fold_node::node::FoldNode;
+use crate::fold_node::OperationProcessor;
 use crate::handlers::response::{ApiResponse, HandlerError, HandlerResult, IntoHandlerError};
+use crate::trust::contact_book::{Contact, ContactBook, TrustDirection};
+use crate::trust::identity_card::IdentityCard;
+use crate::trust::sharing_roles::SharingRoleConfig;
 use base64::{engine::general_purpose::STANDARD as B64, Engine};
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
@@ -76,6 +80,8 @@ pub struct RespondToRequestPayload {
     /// "accept" or "decline"
     pub action: String,
     pub message: Option<String>,
+    /// Sharing role to assign on accept (defaults to "acquaintance")
+    pub role: Option<String>,
 }
 
 #[derive(Debug, Clone, Deserialize)]
@@ -492,6 +498,7 @@ pub async fn connect(
         sender_public_key: sender_pk_b64.clone(),
         sender_pseudonym: sender_pseudonym.to_string(),
         reply_public_key: sender_pk_b64,
+        identity_card: None,
     };
 
     let encrypted = connection::encrypt_connection_message(&target_pk, &payload)
@@ -703,6 +710,18 @@ pub async fn poll_and_decrypt_requests(
                 .await
                 {
                     log::warn!("Failed to update sent request: {}", e);
+                }
+
+                // Auto-create trust relationship from accepted connection
+                if payload.identity_card.is_some() {
+                    if let Err(e) =
+                        process_accepted_connection(node, &payload, "acquaintance").await
+                    {
+                        log::warn!(
+                            "Failed to auto-create trust from accepted connection: {}",
+                            e
+                        );
+                    }
                 }
             }
             "decline" => {
@@ -998,6 +1017,56 @@ async fn handle_incoming_schema_list_response(
     }
 }
 
+/// Process an accepted connection: create trust relationship and contact on our side.
+/// Called when the polling loop receives an "accept" message with an identity card.
+async fn process_accepted_connection(
+    node: &FoldNode,
+    acceptance: &ConnectionPayload,
+    default_role: &str,
+) -> Result<(), HandlerError> {
+    let identity = acceptance
+        .identity_card
+        .as_ref()
+        .ok_or_else(|| HandlerError::Internal("No identity card in acceptance".to_string()))?;
+
+    let op = OperationProcessor::new(node.clone());
+    let roles_path = op
+        .sharing_roles_path()
+        .map_err(|e| HandlerError::Internal(format!("Failed to resolve roles path: {e}")))?;
+    let config = SharingRoleConfig::load_from(&roles_path)
+        .map_err(|e| HandlerError::Internal(format!("Failed to load roles: {e}")))?;
+    let role = config
+        .get_role(default_role)
+        .ok_or_else(|| HandlerError::Internal(format!("Unknown role: {default_role}")))?;
+
+    op.grant_trust_for_domain(&identity.node_public_key, &role.domain, role.tier)
+        .await
+        .map_err(|e: fold_db::schema::SchemaError| {
+            HandlerError::Internal(format!("Failed to grant trust: {e}"))
+        })?;
+
+    let contact = Contact::from_discovery(
+        identity.node_public_key.clone(),
+        identity.display_name.clone(),
+        identity.contact_hint.clone(),
+        TrustDirection::Outgoing,
+        Some(acceptance.sender_pseudonym.clone()),
+        Some(acceptance.reply_public_key.clone()),
+        role.domain.clone(),
+        default_role.to_string(),
+    );
+    let book_path = op
+        .contact_book_path()
+        .map_err(|e| HandlerError::Internal(format!("Failed to resolve contacts path: {e}")))?;
+    let mut book = ContactBook::load_from(&book_path)
+        .map_err(|e| HandlerError::Internal(format!("Failed to load contacts: {e}")))?;
+    book.upsert_contact(contact);
+    book.save_to(&book_path)
+        .map_err(|e| HandlerError::Internal(format!("Failed to save contacts: {e}")))?;
+
+    Ok(())
+}
+
 /// Respond to a connection request (accept or decline).
 pub async fn respond_to_request(
     req: &RespondToRequestPayload,
@@ -1012,6 +1081,34 @@ pub async fn respond_to_request(
         ));
     }
 
+    // If accepting, require identity card and validate role upfront
+    let identity_card = if req.action == "accept" {
+        let card = IdentityCard::load()
+            .map_err(|e| HandlerError::Internal(format!("Failed to load identity card: {e}")))?
+            .ok_or_else(|| {
+                HandlerError::BadRequest(
+                    "Cannot accept connection: identity card not set up. Please set your display name first.".to_string(),
+                )
+            })?;
+        Some(card)
+    } else {
+        None
+    };
+
+    let role_name = req.role.as_deref().unwrap_or("acquaintance");
+    let op = OperationProcessor::new(node.clone());
+    let roles_path = op
+        .sharing_roles_path()
+        .map_err(|e| HandlerError::Internal(format!("Failed to resolve roles path: {e}")))?;
+    let config = SharingRoleConfig::load_from(&roles_path)
+        .map_err(|e| HandlerError::Internal(format!("Failed to load roles: {e}")))?;
+
+    if req.action == "accept" {
+        config
+            .get_role(role_name)
+            .ok_or_else(|| HandlerError::BadRequest(format!("Unknown role: {role_name}")))?;
+    }
+
     let db = node
         .get_fold_db()
         .await
@@ -1023,8 +1120,41 @@ pub async fn respond_to_request(
         .await
         .handler_err("update request status")?;
 
-    // If accepting, send an encrypted response back to the requester
+    // If accepting: grant trust, create contact, send encrypted response
     if req.action == "accept" {
+        let role = config.get_role(role_name).unwrap(); // validated above
+
+        // Grant trust for the sender's public key
+        op.grant_trust_for_domain(&updated.sender_public_key, &role.domain, role.tier)
+            .await
+            .map_err(|e: fold_db::schema::SchemaError| {
+                HandlerError::Internal(format!("Failed to grant trust: {e}"))
+            })?;
+
+        // Create contact (direction = Incoming because they initiated the request)
+        let contact = Contact::from_discovery(
+            updated.sender_public_key.clone(),
+            format!(
+                "Discovery contact ({})",
+                &updated.sender_pseudonym[..8.min(updated.sender_pseudonym.len())]
+            ),
+            None,
+            TrustDirection::Incoming,
+            Some(updated.sender_pseudonym.clone()),
+            Some(updated.reply_public_key.clone()),
+            role.domain.clone(),
+            role_name.to_string(),
+        );
+        let book_path = op
+            .contact_book_path()
+            .map_err(|e| HandlerError::Internal(format!("Failed to resolve contacts path: {e}")))?;
+        let mut book = ContactBook::load_from(&book_path)
+            .map_err(|e| HandlerError::Internal(format!("Failed to load contacts: {e}")))?;
+        book.upsert_contact(contact);
+        book.save_to(&book_path)
+            .map_err(|e| HandlerError::Internal(format!("Failed to save contacts: {e}")))?;
+
+        // Build and send encrypted acceptance message with identity card
         let reply_pk_bytes = B64
             .decode(&updated.reply_public_key)
             .map_err(|e| HandlerError::Internal(format!("Invalid reply public key: {}", e)))?;
@@ -1036,13 +1166,13 @@ pub async fn respond_to_request(
         let mut reply_pk = [0u8; 32];
         reply_pk.copy_from_slice(&reply_pk_bytes);
 
-        // Derive our response pseudonym and public key
         let our_pseudonym: uuid::Uuid = updated
             .target_pseudonym
             .parse()
             .map_err(|_| HandlerError::Internal("Invalid target pseudonym UUID".to_string()))?;
         let our_pk_b64 = connection::get_pseudonym_public_key_b64(master_key, &our_pseudonym);
 
+        let card = identity_card.unwrap(); // validated above
         let response_payload = ConnectionPayload {
             message_type: "accept".to_string(),
             message: req
@@ -1052,6 +1182,11 @@ pub async fn respond_to_request(
             sender_public_key: our_pk_b64.clone(),
             sender_pseudonym: updated.target_pseudonym.clone(),
             reply_public_key: our_pk_b64,
+            identity_card: Some(IdentityCardPayload {
+                display_name: card.display_name,
+                contact_hint: card.contact_hint,
+                node_public_key: node.get_node_public_key().to_string(),
+            }),
         };
 
         let encrypted = connection::encrypt_connection_message(&reply_pk, &response_payload)

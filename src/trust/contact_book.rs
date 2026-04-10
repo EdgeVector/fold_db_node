@@ -58,6 +58,36 @@ pub struct Contact {
     pub roles: HashMap<String, String>,
 }
 
+impl Contact {
+    /// Create a contact from a discovery connection acceptance.
+    #[allow(clippy::too_many_arguments)]
+    pub fn from_discovery(
+        public_key: String,
+        display_name: String,
+        contact_hint: Option<String>,
+        direction: TrustDirection,
+        pseudonym: Option<String>,
+        messaging_public_key: Option<String>,
+        role_domain: String,
+        role_name: String,
+    ) -> Self {
+        let mut roles = HashMap::new();
+        roles.insert(role_domain, role_name);
+        Self {
+            public_key,
+            display_name,
+            contact_hint,
+            direction,
+            connected_at: Utc::now(),
+            pseudonym,
+            messaging_pseudonym: None,
+            messaging_public_key,
+            revoked: false,
+            roles,
+        }
+    }
+}
+
 /// The contact book — all known trust contacts.
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
 pub struct ContactBook {

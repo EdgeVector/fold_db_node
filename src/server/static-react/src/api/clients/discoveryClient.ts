@@ -250,11 +250,13 @@ export class DiscoveryClient {
     request_id: string,
     action: 'accept' | 'decline',
     message?: string,
+    role?: string,
   ): Promise<EnhancedApiResponse<{ request: LocalConnectionRequest }>> {
     return this.client.post('/discovery/connection-requests/respond', {
       request_id,
       action,
       message,
+      role,
     }, {
       timeout: API_TIMEOUTS.LONG,
     });
