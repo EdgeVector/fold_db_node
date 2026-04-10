@@ -62,7 +62,7 @@ describe('SchemaTab Component', () => {
     })
 
     await waitFor(() => {
-      expect(screen.getByText('No approved schemas found.')).toBeInTheDocument()
+      expect(screen.getByText('No schemas match the current filters.')).toBeInTheDocument()
     })
   })
 
@@ -79,10 +79,11 @@ describe('SchemaTab Component', () => {
       preloadedState: schemaState
     })
 
-    // Should display 2 approved schemas (schema1 and schema2)
+    // Should display all schemas (all states shown by default)
     await waitFor(() => {
       expect(screen.getByText('Schema1')).toBeInTheDocument()
       expect(screen.getByText('Schema2')).toBeInTheDocument()
+      expect(screen.getByText('Schema3')).toBeInTheDocument()
     })
   })
 
@@ -92,7 +93,7 @@ describe('SchemaTab Component', () => {
     })
 
     await waitFor(() => {
-      expect(screen.getByText('No approved schemas found.')).toBeInTheDocument()
+      expect(screen.getByText('No schemas match the current filters.')).toBeInTheDocument()
     })
   })
 

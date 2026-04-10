@@ -6,12 +6,10 @@
  */
 
 import { useState, useCallback } from 'react';
-import { useQueryState } from '../../hooks/useQueryState.js';
 import FieldWrapper from '../form/FieldWrapper';
 import SelectField from '../form/SelectField';
 import RangeField from '../form/RangeField';
 import { FORM_LABELS } from '../../constants/ui.js';
-import { SCHEMA_ERROR_MESSAGES } from '../../constants/redux.js';
 import { getHashKey, getRangeKey } from '../../utils/rangeSchemaHelpers.js';
 import { buildSchemaOptions, getFieldNames } from '../../utils/schemaUtils';
 
@@ -54,31 +52,18 @@ function QueryForm({
   className = ''
 }) {
   const [validationErrors, setValidationErrors] = useState({});
-  const { clearState } = useQueryState();
-
-  /**
-   * No validation - backend handles all checks
-   */
-  const _validateForm = useCallback(() => {
-    setValidationErrors({});
-    return true; // Always valid - backend validates
-  }, []);
 
   /**
    * Handle schema change with validation
    */
   const handleSchemaChange = useCallback((value) => {
     onSchemaChange(value);
-    // Clear query state when schema changes
-    if (clearState) {
-      clearState();
-    }
     // Clear schema validation error
     setValidationErrors(prev => {
       const { schema: _schema, ...rest } = prev;
       return rest;
     });
-  }, [onSchemaChange, clearState]);
+  }, [onSchemaChange]);
 
   /**
    * Handle field toggle with validation

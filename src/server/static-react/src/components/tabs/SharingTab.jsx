@@ -157,7 +157,7 @@ function TrustSection({ onResult }) {
                 </div>
                 <button
                   onClick={() => handleRevoke(grant.public_key)}
-                  className="ml-2 px-3 py-1 text-xs bg-red-900/30 text-red-400 rounded hover:bg-red-900/50"
+                  className="ml-2 px-3 py-1 text-xs bg-gruvbox-red/20 text-gruvbox-red rounded hover:bg-gruvbox-red/30"
                 >
                   Revoke
                 </button>
@@ -175,19 +175,20 @@ function TrustSection({ onResult }) {
 function AuditSection() {
   const [events, setEvents] = useState([])
   const [loading, setLoading] = useState(true)
+  const [error, setError] = useState(null)
 
   useEffect(() => {
-    async function fetch() {
+    async function fetchData() {
       try {
         const result = await getAuditLog(50)
         setEvents(result)
-      } catch {
-        // silently fail — audit may not have events yet
+      } catch (err) {
+        setError(err.message || 'Failed to load audit log')
       } finally {
         setLoading(false)
       }
     }
-    fetch()
+    fetchData()
   }, [])
 
   const formatAction = (action) => {
@@ -206,6 +207,8 @@ function AuditSection() {
       </h3>
       {loading ? (
         <p className="text-secondary text-sm">Loading...</p>
+      ) : error ? (
+        <p className="text-gruvbox-red text-sm">{error}</p>
       ) : events.length === 0 ? (
         <p className="text-secondary text-sm">No audit events recorded yet.</p>
       ) : (
@@ -217,7 +220,7 @@ function AuditSection() {
             >
               <span
                 className={`w-2 h-2 rounded-full flex-shrink-0 ${
-                  event.decision_granted ? 'bg-green-500' : 'bg-red-500'
+                  event.decision_granted ? 'bg-gruvbox-green' : 'bg-gruvbox-red'
                 }`}
               />
               <span className="text-secondary w-36 flex-shrink-0">

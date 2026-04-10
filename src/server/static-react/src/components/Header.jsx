@@ -52,7 +52,7 @@ function Header({ onSettingsClick, onAiSettingsClick, onCloudSettingsClick }) {
   useEffect(() => {
     systemClient.getDatabaseConfig().then(res => {
       if (res.data) {
-        const isCloud = res.data.type === 'cloud' || res.data.type === 'dynamodb' || res.data.type === 'exemem'
+        const isCloud = res.data.type === 'cloud' || res.data.type === 'exemem'
         setStorageMode(isCloud ? 'Cloud' : 'Local')
         if (res.data.storage_size_bytes) setStorageSize(res.data.storage_size_bytes)
       }

@@ -105,7 +105,7 @@ function ConversationList({ onSelectConversation, onNewConversation }) {
 
         {!isLoading && error && (
           <div className="flex items-center justify-center h-full text-secondary">
-            <p className="text-sm text-red-400">Failed to load conversations: {error}</p>
+            <p className="text-sm text-gruvbox-red">Failed to load conversations: {error}</p>
           </div>
         )}
 

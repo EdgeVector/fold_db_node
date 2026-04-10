@@ -246,7 +246,7 @@ export default function OrgSettingsPanel() {
       </div>
 
       {successMsg && (
-        <div className="p-3 bg-green-900/30 border border-green-500/50 text-green-400 rounded-md text-sm">
+        <div className="p-3 bg-gruvbox-green/10 border border-gruvbox-green/30 text-gruvbox-green rounded-md text-sm">
           {successMsg}
         </div>
       )}
@@ -269,13 +269,13 @@ export default function OrgSettingsPanel() {
       )}
 
       {error && (
-        <div className="p-3 bg-red-900/30 border border-red-500/50 text-red-400 rounded-md text-sm">
+        <div className="p-3 bg-gruvbox-red/10 border border-gruvbox-red/30 text-gruvbox-red rounded-md text-sm">
           {error}
         </div>
       )}
 
       {syncNotification && (
-        <div className="p-3 bg-blue-900/30 border border-blue-500/50 text-blue-400 rounded-md text-sm animate-pulse">
+        <div className="p-3 bg-gruvbox-blue/10 border border-gruvbox-blue/30 text-gruvbox-blue rounded-md text-sm animate-pulse">
           {syncNotification}
         </div>
       )}
@@ -301,10 +301,10 @@ export default function OrgSettingsPanel() {
                     if (syncStatus.last_error) {
                       return (
                         <div className="flex flex-col items-end">
-                          <span className="px-2 py-0.5 text-xs rounded-full bg-red-900/30 text-red-400 border border-red-500/50">
+                          <span className="px-2 py-0.5 text-xs rounded-full bg-gruvbox-red/10 text-gruvbox-red border border-gruvbox-red/30">
                             Error
                           </span>
-                          <span className="text-xs text-red-400 truncate max-w-[200px]" title={syncStatus.last_error}>
+                          <span className="text-xs text-gruvbox-red truncate max-w-[200px]" title={syncStatus.last_error}>
                             {syncStatus.last_error}
                           </span>
                         </div>
@@ -313,7 +313,7 @@ export default function OrgSettingsPanel() {
                     if (syncStatus.pending_count > 0) {
                       return (
                         <div className="flex flex-col items-end">
-                          <span className="px-2 py-0.5 text-xs rounded-full bg-yellow-900/30 text-yellow-400 border border-yellow-500/50">
+                          <span className="px-2 py-0.5 text-xs rounded-full bg-gruvbox-yellow/10 text-gruvbox-yellow border border-gruvbox-yellow/30">
                             Syncing ({syncStatus.pending_count} pending)
                           </span>
                           {lastSyncRelative && <span className="text-xs text-text-muted">Last synced {lastSyncRelative}</span>}
@@ -335,14 +335,14 @@ export default function OrgSettingsPanel() {
                   {org.role === 'Admin' ? (
                     <button
                       onClick={() => handleDeleteOrg(org.org_hash, org.org_name)}
-                      className="text-red-400 hover:text-red-300 text-xs px-2 py-1 bg-red-400/10 hover:bg-red-400/20 rounded transition-colors"
+                      className="text-gruvbox-red hover:text-gruvbox-red/80 text-xs px-2 py-1 bg-gruvbox-red/10 hover:bg-gruvbox-red/20 rounded transition-colors"
                     >
                       Delete
                     </button>
                   ) : (
                     <button
                       onClick={() => handleLeaveOrg(org.org_hash, org.org_name)}
-                      className="text-red-400 hover:text-red-300 text-xs px-2 py-1 bg-red-400/10 hover:bg-red-400/20 rounded transition-colors"
+                      className="text-gruvbox-red hover:text-gruvbox-red/80 text-xs px-2 py-1 bg-gruvbox-red/10 hover:bg-gruvbox-red/20 rounded transition-colors"
                     >
                       Leave
                     </button>
@@ -369,7 +369,7 @@ export default function OrgSettingsPanel() {
                       {org.role === 'Admin' && (
                         <button
                           onClick={() => handleRemoveMember(org.org_hash, m.node_public_key)}
-                          className="text-red-400 hover:text-red-300 text-xs px-2 py-1 bg-red-400/10 hover:bg-red-400/20 rounded transition-colors"
+                          className="text-gruvbox-red hover:text-gruvbox-red/80 text-xs px-2 py-1 bg-gruvbox-red/10 hover:bg-gruvbox-red/20 rounded transition-colors"
                         >
                           Remove
                         </button>
