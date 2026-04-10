@@ -87,10 +87,7 @@ pub async fn execute_mutations_batch(
 ) -> HandlerResult<MutationResponse> {
     let count = mutations.len();
 
-    let mutation_ids = node
-        .mutate_batch(mutations)
-        .await
-        .typed_handler_err()?;
+    let mutation_ids = node.mutate_batch(mutations).await.typed_handler_err()?;
 
     // Wait for background tasks (indexing) to complete
     node.wait_for_background_tasks(DEFAULT_BACKGROUND_TASK_TIMEOUT)
