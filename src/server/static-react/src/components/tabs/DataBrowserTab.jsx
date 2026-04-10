@@ -38,7 +38,7 @@ export default function DataBrowserTab() {
   const schemaList = useMemo(() => {
     if (!Array.isArray(schemas)) return []
     return [...schemas]
-      .filter((s) => s.state !== 'Blocked' && s.state !== 'removed')
+      .filter((s) => s.state !== 'blocked' && s.state !== 'available')
       .sort((a, b) =>
         (a.descriptive_name || a.name || '').localeCompare(b.descriptive_name || b.name || '')
       )
@@ -154,7 +154,7 @@ export default function DataBrowserTab() {
               <SchemaTypeBadge schemaType={schema.schema_type} />
               <span className="text-xs text-tertiary">({fieldCount(schema)} fields)</span>
               {data && <span className="text-xs text-tertiary">({data.total_count} {data.total_count === 1 ? 'record' : 'records'})</span>}
-              <StateBadge state={schema.state || 'available'} />
+              <StateBadge state={schema.state || 'approved'} />
             </button>
 
             {/* Keys list */}

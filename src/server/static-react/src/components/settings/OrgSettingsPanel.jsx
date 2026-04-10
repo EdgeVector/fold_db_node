@@ -204,16 +204,16 @@ export default function OrgSettingsPanel() {
     }
   }
 
-  if (loading) return <div className="p-4 text-text-muted">Loading organizations...</div>
+  if (loading) return <div className="p-4 text-secondary">Loading organizations...</div>
 
   return (
     <div className="p-4 flex flex-col gap-6">
       {/* Your Node Public Key */}
       <div className="flex flex-col gap-2 p-4 border border-primary/30 rounded-md bg-primary/5">
-        <h3 className="text-sm font-semibold text-text-primary">Your Node Public Key</h3>
-        <p className="text-xs text-text-muted">Share this key with an org admin to get invited to their organization.</p>
+        <h3 className="text-sm font-semibold text-primary">Your Node Public Key</h3>
+        <p className="text-xs text-secondary">Share this key with an org admin to get invited to their organization.</p>
         <div className="flex items-center gap-2">
-          <code className="flex-1 text-xs font-mono text-text-primary bg-bg-surface border border-border rounded px-3 py-2 break-all select-all">
+          <code className="flex-1 text-xs font-mono text-primary bg-surface border border-border rounded px-3 py-2 break-all select-all">
             {nodePublicKey || 'Loading...'}
           </code>
           <button
@@ -239,8 +239,8 @@ export default function OrgSettingsPanel() {
       </div>
 
       <div className="flex flex-col gap-2">
-        <h3 className="text-lg font-medium text-text-primary">Organizations</h3>
-        <p className="text-sm text-text-muted">
+        <h3 className="text-lg font-medium text-primary">Organizations</h3>
+        <p className="text-sm text-secondary">
           Manage your data-sharing organizations and memberships.
         </p>
       </div>
@@ -254,17 +254,17 @@ export default function OrgSettingsPanel() {
       {pendingInvite && (
         <div className="p-3 bg-primary/10 border border-primary/30 rounded-md flex flex-col gap-2">
           <div className="flex justify-between items-center">
-            <span className="text-sm font-medium text-text-primary">Invite for {pendingInvite.org_name}</span>
+            <span className="text-sm font-medium text-primary">Invite for {pendingInvite.org_name}</span>
             <div className="flex gap-2">
               <button onClick={handleCopyInvite} className="btn-primary text-xs px-3">
                 Copy Invite
               </button>
-              <button onClick={() => setPendingInvite(null)} className="text-xs text-text-muted hover:text-text-primary">
+              <button onClick={() => setPendingInvite(null)} className="text-xs text-secondary hover:text-primary">
                 Dismiss
               </button>
             </div>
           </div>
-          <p className="text-xs text-text-muted">Share this invite with the new member so they can join from their node.</p>
+          <p className="text-xs text-secondary">Share this invite with the new member so they can join from their node.</p>
         </div>
       )}
 
@@ -282,16 +282,16 @@ export default function OrgSettingsPanel() {
 
       {orgs.length === 0 ? (
         <div className="p-6 border border-border border-dashed rounded-md flex flex-col items-center justify-center gap-4 text-center">
-          <p className="text-text-muted">You are not a member of any organization.</p>
+          <p className="text-secondary">You are not a member of any organization.</p>
         </div>
       ) : (
         <div className="flex flex-col gap-4">
           {orgs.map(org => (
-            <div key={org.org_hash} className="border border-border rounded-md overflow-hidden bg-bg-surface">
-              <div className="p-3 border-b border-border bg-bg-surface-elevated flex justify-between items-center">
+            <div key={org.org_hash} className="border border-border rounded-md overflow-hidden bg-surface">
+              <div className="p-3 border-b border-border bg-surface-secondary flex justify-between items-center">
                 <div>
-                  <h4 className="font-medium text-text-primary">{org.org_name}</h4>
-                  <p className="text-xs text-text-muted font-mono">{org.org_hash.substring(0, 16)}...</p>
+                  <h4 className="font-medium text-primary">{org.org_name}</h4>
+                  <p className="text-xs text-secondary font-mono">{org.org_hash.substring(0, 16)}...</p>
                 </div>
                 <div className="flex items-center gap-2">
                   {(() => {
@@ -316,7 +316,7 @@ export default function OrgSettingsPanel() {
                           <span className="px-2 py-0.5 text-xs rounded-full bg-gruvbox-yellow/10 text-gruvbox-yellow border border-gruvbox-yellow/30">
                             Syncing ({syncStatus.pending_count} pending)
                           </span>
-                          {lastSyncRelative && <span className="text-xs text-text-muted">Last synced {lastSyncRelative}</span>}
+                          {lastSyncRelative && <span className="text-xs text-secondary">Last synced {lastSyncRelative}</span>}
                         </div>
                       )
                     }
@@ -325,7 +325,7 @@ export default function OrgSettingsPanel() {
                         <span className="px-2 py-0.5 text-xs rounded-full bg-green-900/30 text-green-400 border border-green-500/50">
                           Synced
                         </span>
-                        {lastSyncRelative && <span className="text-xs text-text-muted">Last synced {lastSyncRelative}</span>}
+                        {lastSyncRelative && <span className="text-xs text-secondary">Last synced {lastSyncRelative}</span>}
                       </div>
                     )
                   })()}
@@ -351,20 +351,20 @@ export default function OrgSettingsPanel() {
               </div>
               
               <div className="p-3">
-                <h5 className="text-sm font-medium mb-2 text-text-primary">
+                <h5 className="text-sm font-medium mb-2 text-primary">
                   Members ({org.members?.length || 0})
                   {cloudMembers[org.org_hash] && cloudMembers[org.org_hash].length > (org.members?.length || 0) && (
-                    <span className="ml-2 text-xs text-text-muted font-normal">
+                    <span className="ml-2 text-xs text-secondary font-normal">
                       ({cloudMembers[org.org_hash].length} in cloud)
                     </span>
                   )}
                 </h5>
                 <ul className="flex flex-col gap-2 mb-4">
                   {org.members?.map(m => (
-                    <li key={m.node_public_key} className="flex justify-between items-center text-sm p-2 bg-bg-surface border border-border/50 rounded">
+                    <li key={m.node_public_key} className="flex justify-between items-center text-sm p-2 bg-surface border border-border/50 rounded">
                       <div>
                         <span className="font-medium">{m.display_name}</span>
-                        <span className="text-xs text-text-muted font-mono ml-2">{m.node_public_key.substring(0, 10)}...</span>
+                        <span className="text-xs text-secondary font-mono ml-2">{m.node_public_key.substring(0, 10)}...</span>
                       </div>
                       {org.role === 'Admin' && (
                         <button
@@ -388,13 +388,13 @@ export default function OrgSettingsPanel() {
                   if (cloudOnly.length === 0) return null
                   return (
                     <div className="mb-4">
-                      <h6 className="text-xs font-medium text-text-muted mb-1">Cloud-only members</h6>
+                      <h6 className="text-xs font-medium text-secondary mb-1">Cloud-only members</h6>
                       <ul className="flex flex-col gap-1">
                         {cloudOnly.map(cm => (
-                          <li key={cm.user_hash} className="flex justify-between items-center text-sm p-2 bg-bg-surface border border-border/30 rounded opacity-75">
+                          <li key={cm.user_hash} className="flex justify-between items-center text-sm p-2 bg-surface border border-border/30 rounded opacity-75">
                             <div className="flex items-center">
-                              <span className="font-medium text-text-primary">Cloud Member</span>
-                              <span className="text-xs text-text-muted font-mono ml-2">{cm.user_hash.substring(0, 12)}...</span>
+                              <span className="font-medium text-primary">Cloud Member</span>
+                              <span className="text-xs text-secondary font-mono ml-2">{cm.user_hash.substring(0, 12)}...</span>
                               <span className="ml-2 text-xs px-1.5 py-0.5 rounded bg-primary/10 text-primary">{cm.role}</span>
                             </div>
                           </li>
@@ -407,7 +407,7 @@ export default function OrgSettingsPanel() {
                 {org.role === 'Admin' && (
                   <form onSubmit={(e) => handleAddMember(e, org.org_hash)} className="flex gap-2 items-end mt-4 pt-4 border-t border-border/50">
                     <div className="flex-1 flex flex-col gap-1">
-                      <label className="text-xs text-text-muted">Member Name</label>
+                      <label className="text-xs text-secondary">Member Name</label>
                       <input 
                         type="text" 
                         value={newMemberName}
@@ -418,7 +418,7 @@ export default function OrgSettingsPanel() {
                       />
                     </div>
                     <div className="flex-[2] flex flex-col gap-1">
-                      <label className="text-xs text-text-muted">Public Key (User Hash)</label>
+                      <label className="text-xs text-secondary">Public Key (User Hash)</label>
                       <input 
                         type="text" 
                         value={newMemberKey}
@@ -440,7 +440,7 @@ export default function OrgSettingsPanel() {
       )}
 
       <div className="mt-4 pt-4 border-t border-border">
-        <h4 className="text-sm font-medium mb-3 text-text-primary">Create New Organization</h4>
+        <h4 className="text-sm font-medium mb-3 text-primary">Create New Organization</h4>
         <form onSubmit={handleCreateOrg} className="flex gap-2">
           <input 
             type="text" 

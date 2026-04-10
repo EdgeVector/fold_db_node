@@ -95,7 +95,7 @@ function IngestionTab({ onResult }) {
           )}
           <label className="flex items-center gap-2 text-sm cursor-pointer">
             <input type="checkbox" checked={autoExecute} onChange={(e) => setAutoExecute(e.target.checked)} className="checkbox" />
-            <span className="text-secondary">Auto-execute</span>
+            <span className="text-secondary" title="Automatically save ingested data to your database after processing">Auto-save</span>
           </label>
         </div>
       </div>
@@ -109,7 +109,7 @@ function IngestionTab({ onResult }) {
 
       <div className="flex justify-end items-center gap-3">
         {selectedOrg && (
-          <span className="text-xs text-text-muted bg-primary/10 text-primary px-2 py-1 rounded">
+          <span className="text-xs text-secondary bg-primary/10 text-primary px-2 py-1 rounded">
             Ingesting into: {selectedOrgName}
           </span>
         )}

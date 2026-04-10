@@ -267,7 +267,7 @@ function SmartFolderTab({ onResult: onResultProp }) {
               ))}
             </select>
             {selectedOrg && (
-              <span className="text-xs text-text-muted bg-primary/10 text-primary px-2 py-1 rounded">
+              <span className="text-xs text-secondary bg-primary/10 text-primary px-2 py-1 rounded">
                 Ingesting into: {selectedOrgName}
               </span>
             )}
