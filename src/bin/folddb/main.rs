@@ -558,8 +558,30 @@ async fn cloud_enable(
         );
     }
 
+    // Mark onboarding complete (consistent with UI and setup wizard)
+    if let Ok(home) = fold_db_node::utils::paths::folddb_home() {
+        let marker = home.join("data").join(".onboarding_complete");
+        if let Some(parent) = marker.parent() {
+            let _ = std::fs::create_dir_all(parent);
+        }
+        let _ = std::fs::write(&marker, "1");
+    }
+
+    // If daemon is running, offer to restart it so cloud sync starts immediately
     if commands::daemon::read_running_pid().is_some() {
-        msg.push_str("\nRestart daemon for changes to take effect: folddb daemon stop && folddb daemon start");
+        let restart = dialoguer::Confirm::new()
+            .with_prompt("Restart daemon now to activate cloud sync?")
+            .default(true)
+            .interact()
+            .unwrap_or(false);
+        if restart {
+            let _ = commands::daemon::stop();
+            msg.push_str("\nDaemon stopped. Starting with new config...");
+            // Start will happen when user runs next command or explicitly starts
+            msg.push_str("\nRun `folddb daemon start` to start syncing.");
+        } else {
+            msg.push_str("\nRestart daemon when ready: folddb daemon stop && folddb daemon start");
+        }
     }
 
     Some(Ok(commands::CommandOutput::Message(msg)))
@@ -568,7 +590,7 @@ async fn cloud_enable(
 /// Disable cloud backup — remove cloud_sync from config.
 fn cloud_disable(config_path: Option<&str>) -> Option<Result<commands::CommandOutput, CliError>> {
     let confirmed = match dialoguer::Confirm::new()
-        .with_prompt("Disable cloud backup? Your data remains on this device")
+        .with_prompt("Disable cloud backup? Your local data is preserved, but data already synced to Exemem servers will remain there")
         .default(false)
         .interact()
     {
@@ -606,11 +628,23 @@ fn cloud_disable(config_path: Option<&str>) -> Option<Result<commands::CommandOu
         return Some(Err(CliError::new(format!("Failed to write config: {}", e))));
     }
 
-    let mut msg = "Cloud backup disabled. Your data remains on this device.".to_string();
+    let mut msg = "Cloud backup disabled. Your local data is preserved.\nNote: data already synced to Exemem servers is not deleted.".to_string();
+
+    // If daemon is running, offer to restart it so sync stops immediately
     if commands::daemon::read_running_pid().is_some() {
-        msg.push_str(
-            "\nRestart daemon for changes to take effect: folddb daemon stop && folddb daemon start",
-        );
+        let restart = dialoguer::Confirm::new()
+            .with_prompt("Restart daemon now to stop cloud sync?")
+            .default(true)
+            .interact()
+            .unwrap_or(false);
+        if restart {
+            let _ = commands::daemon::stop();
+            msg.push_str(
+                "\nDaemon stopped. Run `folddb daemon start` to restart without cloud sync.",
+            );
+        } else {
+            msg.push_str("\nRestart daemon when ready: folddb daemon stop && folddb daemon start");
+        }
     }
 
     Some(Ok(commands::CommandOutput::Message(msg)))
