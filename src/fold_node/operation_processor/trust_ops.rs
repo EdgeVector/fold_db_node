@@ -267,9 +267,7 @@ impl OperationProcessor {
                         }
                     }
                 } else {
-                    // No policy = legacy = granted (for now)
-                    readable.push(field_name.clone());
-                    writable.push(field_name.clone());
+                    // No policy = owner-only default (not granted to contacts)
                 }
             }
 
@@ -474,7 +472,7 @@ impl OperationProcessor {
                 let domain = schema_domain.as_deref().unwrap_or("personal");
                 fold_db::access::FieldAccessPolicy {
                     trust_domain: domain.to_string(),
-                    min_read_tier: TrustTier::Inner, // moderate default
+                    min_read_tier: TrustTier::Owner, // private until classified
                     min_write_tier: TrustTier::Owner,
                     capabilities: vec![],
                 }

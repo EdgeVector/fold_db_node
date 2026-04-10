@@ -94,7 +94,7 @@ pub async fn get_feed(
                 .filter(|(_, field)| {
                     use fold_db::schema::types::field::Field;
                     match &field.common().access_policy {
-                        None => true,
+                        None => false, // No policy = owner-only, not public
                         Some(policy) => policy.min_read_tier == fold_db::access::TrustTier::Public,
                     }
                 })
