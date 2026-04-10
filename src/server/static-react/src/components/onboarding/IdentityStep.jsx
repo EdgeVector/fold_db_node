@@ -4,6 +4,7 @@ import { getIdentityCard, setIdentityCard } from '../../api/clients/trustClient'
 export default function IdentityStep({ onNext, onSkip }) {
   const [displayName, setDisplayName] = useState('')
   const [contactHint, setContactHint] = useState('')
+  const [birthday, setBirthday] = useState('')
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState(null)
   const [existingCard, setExistingCard] = useState(null)
@@ -15,6 +16,7 @@ export default function IdentityStep({ onNext, onSkip }) {
         setExistingCard(card)
         setDisplayName(card.display_name)
         setContactHint(card.contact_hint || '')
+        setBirthday(card.birthday || '')
       }
     }).catch(() => {})
   }, [])
@@ -27,7 +29,7 @@ export default function IdentityStep({ onNext, onSkip }) {
     setLoading(true)
     setError(null)
     try {
-      const resp = await setIdentityCard(displayName.trim(), contactHint.trim() || null)
+      const resp = await setIdentityCard(displayName.trim(), contactHint.trim() || null, birthday.trim() || null)
       if (resp.success) {
         onNext()
       } else {
@@ -78,6 +80,21 @@ export default function IdentityStep({ onNext, onSkip }) {
         />
         <p className="text-xs text-tertiary mt-1">
           Helps others verify it's really you when they receive your trust invite.
+        </p>
+      </div>
+
+      <div className="mb-3">
+        <label className="text-xs text-secondary block mb-1">Birthday MM-DD (optional)</label>
+        <input
+          type="text"
+          value={birthday}
+          onChange={(e) => setBirthday(e.target.value)}
+          placeholder="03-15"
+          className="input-field w-full"
+          disabled={loading}
+        />
+        <p className="text-xs text-tertiary mt-1">
+          For peer verification when connecting.
         </p>
       </div>
 
