@@ -104,12 +104,14 @@ export function useQueryBuilder({
     return false;
   }, [selectedSchemaObj, providedIsRangeSchema]);
 
-  // No frontend validation - backend is authoritative
+  // Minimal frontend validation — prevent submitting with no schema selected
   const validationErrors = useMemo(() => {
-    return [];
-  }, []);
+    const errors: string[] = [];
+    if (!schema) errors.push('No schema selected');
+    return errors;
+  }, [schema]);
 
-  const isValid = true; // Always valid - backend validates
+  const isValid = !!schema; // Require a schema; backend validates everything else
 
   // Build query object
   const query = useMemo(() => {

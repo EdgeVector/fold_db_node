@@ -87,12 +87,14 @@ function SettingsModal({ isOpen, onClose, initialTab, onRelaunchOnboarding }) {
           </button>
         </div>
 
-        <div className="flex border-b border-border px-6">
+        <div className="flex border-b border-border px-6 overflow-x-auto" role="tablist">
           {tabs.map(t => (
             <button
               key={t.id}
+              role="tab"
+              aria-selected={activeTab === t.id}
               onClick={() => setActiveTab(t.id)}
-              className={`tab ${activeTab === t.id ? 'tab-active' : ''}`}
+              className={`tab whitespace-nowrap ${activeTab === t.id ? 'tab-active' : ''}`}
             >
               {t.label}
             </button>
