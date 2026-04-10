@@ -495,7 +495,7 @@ function TrustTab({ onResult }) {
 
       {/* Error */}
       {error && (
-        <div className="card card-error mb-4">
+        <div className="card card-error mb-4 p-4">
           <p className="text-sm">{error}</p>
           <button className="text-xs underline mt-1" onClick={() => setError(null)}>Dismiss</button>
         </div>

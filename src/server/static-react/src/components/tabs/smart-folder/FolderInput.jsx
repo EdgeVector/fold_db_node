@@ -89,7 +89,7 @@ export default function FolderInput({
                 <li
                   key={path}
                   className={`px-3 py-1.5 cursor-pointer text-sm font-mono truncate ${
-                    i === selectedIndex ? 'bg-accent text-on-accent' : 'hover:bg-surface-hover'
+                    i === selectedIndex ? 'bg-accent text-surface' : 'hover:bg-gruvbox-hover'
                   }`}
                   onMouseDown={(e) => { e.preventDefault(); acceptSuggestion(path) }}
                   onMouseEnter={() => setSelectedIndex(i)}

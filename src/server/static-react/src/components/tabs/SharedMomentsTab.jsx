@@ -89,7 +89,7 @@ function OptInCard({ optIn, onOptOut }) {
       <button
         onClick={handleOptOut}
         disabled={removing}
-        className="btn btn-sm btn-ghost text-gruvbox-red"
+        className="btn btn-sm btn-secondary text-gruvbox-red"
       >
         {removing ? 'Removing...' : 'Remove'}
       </button>
@@ -239,7 +239,7 @@ export default function SharedMomentsTab({ onResult }) {
           </h3>
           <button
             onClick={() => setShowAddPeer(!showAddPeer)}
-            className="btn btn-sm btn-ghost"
+            className="btn btn-sm btn-secondary"
           >
             {showAddPeer ? 'Cancel' : '+ Add Peer'}
           </button>

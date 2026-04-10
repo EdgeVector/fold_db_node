@@ -116,7 +116,7 @@ export default function PendingInvitesModal({ isOpen, onClose, pendingInvites, s
           </div>
           <button
             onClick={onClose}
-            className="p-2 text-tertiary hover:text-primary rounded-lg hover:bg-surface-hover transition-colors"
+            className="p-2 text-tertiary hover:text-primary rounded-lg hover:bg-gruvbox-hover transition-colors"
             aria-label="Close inbox"
           >
             <XMarkIcon className="w-5 h-5" />
@@ -133,7 +133,7 @@ export default function PendingInvitesModal({ isOpen, onClose, pendingInvites, s
 
           {pendingInvites.length === 0 ? (
             <div className="text-center py-8">
-              <div className="inline-flex justify-center items-center w-12 h-12 rounded-full bg-surface-hover text-tertiary mb-3">
+              <div className="inline-flex justify-center items-center w-12 h-12 rounded-full bg-gruvbox-hover text-tertiary mb-3">
                 <EnvelopeIcon className="w-6 h-6" />
               </div>
               <h3 className="text-primary font-medium">Your inbox is empty</h3>
@@ -145,7 +145,7 @@ export default function PendingInvitesModal({ isOpen, onClose, pendingInvites, s
                 const id = inviteId(invite);
                 const isLoading = loadingIds.has(id);
                 return (
-                  <div key={id} className="p-4 rounded-xl border border-border bg-surface-hover transition-all">
+                  <div key={id} className="p-4 rounded-xl border border-border bg-gruvbox-hover transition-all">
                     <div className="flex items-start justify-between gap-4 mb-4">
                       <div className="flex items-center gap-3">
                         <div className="p-2 bg-background rounded-lg border border-border">

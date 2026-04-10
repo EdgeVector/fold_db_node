@@ -257,7 +257,7 @@ function SmartFolderTab({ onResult: onResultProp }) {
             <select
               value={selectedOrg}
               onChange={(e) => setSelectedOrg(e.target.value)}
-              className="input-field text-sm py-1 px-2"
+              className="input text-sm py-1 px-2"
             >
               <option value="">Personal</option>
               {orgs.map(org => (

@@ -329,7 +329,7 @@ function AgentTab() {
                 <button
                   key={s.label}
                   onClick={() => s.text.endsWith(' ') ? setInputText(s.text) : handleSubmit(s.text)}
-                  className="border border-border rounded-lg px-4 py-2 text-sm text-secondary hover:bg-surface-hover cursor-pointer bg-transparent"
+                  className="border border-border rounded-lg px-4 py-2 text-sm text-secondary hover:bg-gruvbox-hover cursor-pointer bg-transparent"
                 >
                   {s.label}
                 </button>

@@ -83,7 +83,7 @@ function AutoSyncSettings() {
 
   if (loading) {
     return (
-      <div className="bg-surface-primary border border-border rounded-lg p-4 mb-4">
+      <div className="bg-surface border border-border rounded-lg p-4 mb-4">
         <p className="text-xs text-secondary">Loading sync settings...</p>
       </div>
     )
@@ -92,7 +92,7 @@ function AutoSyncSettings() {
   if (!config) return null
 
   return (
-    <div className="bg-surface-primary border border-border rounded-lg p-4 mb-4">
+    <div className="bg-surface border border-border rounded-lg p-4 mb-4">
       <div className="flex items-center justify-between mb-3">
         <div className="flex items-center gap-2">
           <span className="text-lg">{"\u{1F504}"}</span>
@@ -261,7 +261,7 @@ function SourceCard({ source, enabled, onToggle, status, progress, message, resu
   const isError = status === 'error'
 
   return (
-    <div className={`bg-surface-primary border rounded-lg p-4 ${
+    <div className={`bg-surface border rounded-lg p-4 ${
       isError ? 'border-red-500/40' : 'border-border'
     }`}>
       <div className="flex items-center justify-between mb-1">
@@ -462,7 +462,7 @@ export default function AppleImportTab({ onResult: _onResult }) {
   if (!available) {
     return (
       <div className="p-4">
-        <div className="bg-surface-primary border border-border rounded-lg p-6 text-center">
+        <div className="bg-surface border border-border rounded-lg p-6 text-center">
           <p className="text-secondary text-sm">
             Apple Import is only available on macOS.
           </p>

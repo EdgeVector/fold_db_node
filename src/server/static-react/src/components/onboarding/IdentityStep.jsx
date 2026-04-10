@@ -63,7 +63,7 @@ export default function IdentityStep({ onNext, onSkip }) {
           value={displayName}
           onChange={(e) => setDisplayName(e.target.value)}
           placeholder="Your name"
-          className="input-field w-full"
+          className="input w-full"
           disabled={loading}
         />
       </div>
@@ -75,7 +75,7 @@ export default function IdentityStep({ onNext, onSkip }) {
           value={contactHint}
           onChange={(e) => setContactHint(e.target.value)}
           placeholder="Email, phone, or handle for verification"
-          className="input-field w-full"
+          className="input w-full"
           disabled={loading}
         />
         <p className="text-xs text-tertiary mt-1">
@@ -90,7 +90,7 @@ export default function IdentityStep({ onNext, onSkip }) {
           value={birthday}
           onChange={(e) => setBirthday(e.target.value)}
           placeholder="03-15"
-          className="input-field w-full"
+          className="input w-full"
           disabled={loading}
         />
         <p className="text-xs text-tertiary mt-1">

@@ -413,7 +413,7 @@ export default function OrgSettingsPanel() {
                         value={newMemberName}
                         onChange={e => setNewMemberName(e.target.value)}
                         placeholder="Alice"
-                        className="input-field text-sm"
+                        className="input text-sm"
                         required
                       />
                     </div>
@@ -424,7 +424,7 @@ export default function OrgSettingsPanel() {
                         value={newMemberKey}
                         onChange={e => setNewMemberKey(e.target.value)}
                         placeholder="Base64 Public Key"
-                        className="input-field text-sm font-mono"
+                        className="input text-sm font-mono"
                         required
                       />
                     </div>
@@ -447,7 +447,7 @@ export default function OrgSettingsPanel() {
             value={newOrgName}
             onChange={e => setNewOrgName(e.target.value)}
             placeholder="Organization Name"
-            className="input-field flex-1"
+            className="input flex-1"
             required
           />
           <button type="submit" className="btn-primary">

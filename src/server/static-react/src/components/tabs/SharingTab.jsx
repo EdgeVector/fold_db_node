@@ -101,7 +101,7 @@ function TrustSection({ onResult }) {
               value={newKey}
               onChange={(e) => setNewKey(e.target.value)}
               placeholder="Public key (base64)"
-              className="w-full bg-surface-primary border border-border rounded px-3 py-2 text-sm text-primary placeholder-secondary"
+              className="w-full bg-surface border border-border rounded px-3 py-2 text-sm text-primary placeholder-secondary"
             />
           </div>
           <div className="flex gap-2 items-end">
@@ -110,7 +110,7 @@ function TrustSection({ onResult }) {
               <select
                 value={newRole}
                 onChange={(e) => setNewRole(e.target.value)}
-                className="w-40 bg-surface-primary border border-border rounded px-3 py-2 text-sm text-primary"
+                className="w-40 bg-surface border border-border rounded px-3 py-2 text-sm text-primary"
               >
                 {['friend', 'family', 'doctor', 'trainer', 'accountant', 'collaborator'].map(r => (
                   <option key={r} value={r}>{r}</option>
@@ -120,7 +120,7 @@ function TrustSection({ onResult }) {
             <button
               type="submit"
               disabled={!newKey.trim()}
-              className="px-4 py-2 bg-accent text-surface-primary rounded text-sm font-medium disabled:opacity-50 hover:bg-accent/80"
+              className="px-4 py-2 bg-accent text-surface rounded text-sm font-medium disabled:opacity-50 hover:bg-accent/80"
             >
               Grant
             </button>
@@ -145,7 +145,7 @@ function TrustSection({ onResult }) {
             {grants.map((grant) => (
               <div
                 key={grant.public_key}
-                className="flex items-center justify-between bg-surface-primary rounded px-3 py-2"
+                className="flex items-center justify-between bg-surface rounded px-3 py-2"
               >
                 <div className="flex-1 min-w-0">
                   <code className="text-xs text-primary truncate block">
@@ -216,7 +216,7 @@ function AuditSection() {
           {[...events].reverse().map((event) => (
             <div
               key={event.id}
-              className="flex items-center gap-3 px-3 py-2 text-xs bg-surface-primary rounded"
+              className="flex items-center gap-3 px-3 py-2 text-xs bg-surface rounded"
             >
               <span
                 className={`w-2 h-2 rounded-full flex-shrink-0 ${
@@ -278,12 +278,12 @@ function NodeInfoSection() {
         <div>
           <label className="text-xs text-secondary block mb-1">Node ID</label>
           <div className="flex items-center gap-2">
-            <code className="text-xs text-primary bg-surface-primary px-2 py-1 rounded flex-1 truncate">
+            <code className="text-xs text-primary bg-surface px-2 py-1 rounded flex-1 truncate">
               {info.node_id}
             </code>
             <button
               onClick={() => copyToClipboard(info.node_id, 'node_id')}
-              className="px-2 py-1 text-xs bg-surface-primary border border-border rounded hover:bg-gruvbox-elevated"
+              className="px-2 py-1 text-xs bg-surface border border-border rounded hover:bg-gruvbox-elevated"
             >
               {copied === 'node_id' ? 'Copied' : 'Copy'}
             </button>
@@ -293,12 +293,12 @@ function NodeInfoSection() {
         <div>
           <label className="text-xs text-secondary block mb-1">Public Key</label>
           <div className="flex items-center gap-2">
-            <code className="text-xs text-primary bg-surface-primary px-2 py-1 rounded flex-1 truncate">
+            <code className="text-xs text-primary bg-surface px-2 py-1 rounded flex-1 truncate">
               {info.public_key}
             </code>
             <button
               onClick={() => copyToClipboard(info.public_key, 'public_key')}
-              className="px-2 py-1 text-xs bg-surface-primary border border-border rounded hover:bg-gruvbox-elevated"
+              className="px-2 py-1 text-xs bg-surface border border-border rounded hover:bg-gruvbox-elevated"
             >
               {copied === 'public_key' ? 'Copied' : 'Copy'}
             </button>
