@@ -40,7 +40,7 @@ import { restoreSession, autoLogin, loadSystemPublicKey } from './store/authSlic
 import { fetchIngestionConfig, selectIngestionConfig, selectIsAiConfigured, selectAiProvider } from './store/ingestionSlice'
 import { DEFAULT_TAB } from './constants'
 import { BROWSER_CONFIG } from './constants/config'
-import { getDatabaseStatus, markOnboardingComplete } from './api/clients/systemClient'
+import { getDatabaseStatus } from './api/clients/systemClient'
 import DatabaseSetupScreen from './components/DatabaseSetupScreen'
 
 function isIngestionResult(results) {

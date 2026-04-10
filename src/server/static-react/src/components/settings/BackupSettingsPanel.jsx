@@ -91,7 +91,7 @@ function BackupSettingsPanel() {
   const pendingCount = status?.pending_count ?? 0
   const encryptionActive = status?.encryption_active ?? false
   // Cloud mode = sync engine running OR credentials exist (signed up but needs restart)
-  const cloudMode = enabled || hasCredentials
+  const _cloudMode = enabled || hasCredentials
 
   return (
     <div className="space-y-6">

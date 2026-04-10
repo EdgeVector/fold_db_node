@@ -1,5 +1,5 @@
 
-function MutationEditor({ fields, mutationType, mutationData, onFieldChange, isRangeSchema }) {
+function MutationEditor({ fields, mutationType: _mutationType, mutationData, onFieldChange, isRangeSchema }) {
   const renderField = (fieldName, field) => {
     // Fields are writable by default unless explicitly marked as non-writable
     const isWritable = field.writable !== false

@@ -395,7 +395,7 @@ function useSourceImport(sourceKey, importFn) {
   return { status, progress, message, result, start, reset }
 }
 
-export default function AppleImportTab({ onResult }) {
+export default function AppleImportTab({ onResult: _onResult }) {
   const [available, setAvailable] = useState(null) // null = loading, true/false
   const [enabled, setEnabled] = useState({ notes: true, photos: true, calendar: false, reminders: true })
   const [photosLimit, setPhotosLimit] = useState(50)

@@ -1,7 +1,7 @@
 import { useState, useCallback } from 'react'
 import { browseRemoteNode, proxyQueryRemote } from '../../api/clients/trustClient'
 
-function RemoteQueryTab({ onResult }) {
+function RemoteQueryTab({ onResult: _onResult }) {
   const [remoteUrl, setRemoteUrl] = useState('')
   const [nodeInfo, setNodeInfo] = useState(null)
   const [browsing, setBrowsing] = useState(false)
@@ -120,7 +120,7 @@ function RemoteQueryTab({ onResult }) {
           {(nodeInfo.schemas?.length || nodeInfo.shared_schemas?.length) > 0 && (
             <>
               <div className="space-y-1 max-h-48 overflow-y-auto mb-3">
-                {(nodeInfo.schemas || nodeInfo.shared_schemas?.map(s => ({name: s}))).map((schema) => {
+                {(nodeInfo.schemas || (nodeInfo.shared_schemas ?? []).map(s => ({name: s}))).map((schema) => {
                   const name = typeof schema === 'string' ? schema : schema.name
                   const desc = typeof schema === 'object' ? schema.descriptive_name : null
                   const display = desc || (name.length > 40 ? name.slice(0, 40) + '...' : name)

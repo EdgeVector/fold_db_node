@@ -34,7 +34,11 @@ export default [
         module: 'readonly',
         exports: 'readonly',
         process: 'readonly',
-        URL: 'readonly'
+        URL: 'readonly',
+        URLSearchParams: 'readonly',
+        btoa: 'readonly',
+        atob: 'readonly',
+        ResizeObserver: 'readonly',
       },
       parserOptions: {
         ecmaVersion: 'latest',
@@ -125,6 +129,10 @@ export default [
         Element: 'readonly',
         TextEncoder: 'readonly',
         crypto: 'readonly',
+        URLSearchParams: 'readonly',
+        btoa: 'readonly',
+        atob: 'readonly',
+        ResizeObserver: 'readonly',
         // Node.js globals
         global: 'readonly',
         require: 'readonly',

@@ -506,6 +506,8 @@ function PeopleLikeYouPanel({ onResult }) {
   const [connectingTo, setConnectingTo] = useState(null)
   const [connectMessage, setConnectMessage] = useState('')
   const intervalRef = useRef(null)
+  // Track whether we've hit a local-mode error to stop polling
+  const localModeRef = useRef(false)
 
   const fetchProfiles = useCallback(async () => {
     try {
@@ -515,18 +517,32 @@ function PeopleLikeYouPanel({ onResult }) {
         setCategoriesUsed(res.data?.user_categories_used || 0)
         setError(null)
       } else {
-        setError(res.error || 'Failed to load similar profiles')
+        const msg = res.error || 'Failed to load similar profiles'
+        setError(msg)
+        if (isLocalModeError(msg)) {
+          localModeRef.current = true
+          clearInterval(intervalRef.current)
+        }
       }
     } catch (e) {
-      setError(toErrorMessage(e) || 'Network error')
+      const msg = toErrorMessage(e) || 'Network error'
+      setError(msg)
+      if (isLocalModeError(msg)) {
+        localModeRef.current = true
+        clearInterval(intervalRef.current)
+      }
     } finally {
       setLoading(false)
     }
   }, [])
 
   useEffect(() => {
-    fetchProfiles()
-    intervalRef.current = setInterval(fetchProfiles, REFRESH_INTERVAL_MS)
+    fetchProfiles().then(() => {
+      // Only start polling if not in local mode
+      if (!localModeRef.current) {
+        intervalRef.current = setInterval(fetchProfiles, REFRESH_INTERVAL_MS)
+      }
+    })
     return () => clearInterval(intervalRef.current)
   }, [fetchProfiles])
 
@@ -549,23 +565,11 @@ function PeopleLikeYouPanel({ onResult }) {
   if (loading) return <p className="text-secondary text-sm">Finding people like you...</p>
 
   if (error) {
-    const isLocalMode = error.includes('503') || error.includes('DISCOVERY_MASTER_KEY') || error.includes('Service Unavailable') || error.includes('Discovery not available') || error.includes('Register with Exemem')
+    if (isLocalModeError(error)) return <LocalModeNotice />
     return (
       <div className="space-y-3">
-        {isLocalMode ? (
-          <div className="card p-6 text-center space-y-2 rounded">
-            <h3 className="text-base text-primary font-medium">Discovery requires Exemem Cloud</h3>
-            <p className="text-sm text-secondary">
-              Discovery connects you with other FoldDB users who share similar interests.
-              Enable cloud sync in Settings to use this feature.
-            </p>
-          </div>
-        ) : (
-          <>
-            <div className="text-sm text-gruvbox-red">{error}</div>
-            <button onClick={fetchProfiles} className="btn-secondary btn-sm">Retry</button>
-          </>
-        )}
+        <div className="text-sm text-gruvbox-red">{error}</div>
+        <button onClick={fetchProfiles} className="btn-secondary btn-sm">Retry</button>
       </div>
     )
   }
@@ -675,13 +679,19 @@ function InterestsPanel({ onResult }) {
   const [profile, setProfile] = useState(null)
   const [loading, setLoading] = useState(true)
   const [detecting, setDetecting] = useState(false)
+  const [loadError, setLoadError] = useState(null)
 
   const loadInterests = useCallback(async () => {
     try {
       const res = await discoveryClient.getInterests()
       if (res.success) {
         setProfile(res.data)
+        setLoadError(null)
+      } else {
+        setLoadError(res.error || 'Failed to load interests')
       }
+    } catch (e) {
+      setLoadError(toErrorMessage(e) || 'Network error')
     } finally {
       setLoading(false)
     }
@@ -720,6 +730,16 @@ function InterestsPanel({ onResult }) {
   }
 
   if (loading) return <p className="text-secondary text-sm">Loading interests...</p>
+
+  if (loadError) {
+    if (isLocalModeError(loadError)) return <LocalModeNotice />
+    return (
+      <div className="space-y-3">
+        <div className="text-sm text-gruvbox-red">{loadError}</div>
+        <button onClick={loadInterests} className="btn-secondary btn-sm">Retry</button>
+      </div>
+    )
+  }
 
   const categories = profile?.categories || []
   const hasProfile = profile && profile.seed_version > 0
@@ -772,24 +792,46 @@ function InterestsPanel({ onResult }) {
   )
 }
 
+function isLocalModeError(msg) {
+  return msg && (msg.includes('503') || msg.includes('DISCOVERY_MASTER_KEY') || msg.includes('Service Unavailable') || msg.includes('Discovery not available') || msg.includes('Register with Exemem'))
+}
+
+function LocalModeNotice() {
+  return (
+    <div className="card p-6 text-center space-y-2 rounded">
+      <h3 className="text-base text-primary font-medium">Discovery requires Exemem Cloud</h3>
+      <p className="text-sm text-secondary">
+        Discovery connects you with other FoldDB users who share similar interests.
+        Enable cloud sync in Settings to use this feature.
+      </p>
+    </div>
+  )
+}
+
 function SharedEventsPanel({ onResult }) {
   const [status, setStatus] = useState(null)
   const [sharedEvents, setSharedEvents] = useState([])
   const [loading, setLoading] = useState(true)
   const [toggling, setToggling] = useState(false)
+  const [error, setError] = useState(null)
 
   const loadData = useCallback(async () => {
     try {
       const statusRes = await discoveryClient.getCalendarSharingStatus()
       if (statusRes.success) {
         setStatus(statusRes.data)
+        setError(null)
         if (statusRes.data?.opted_in) {
           const eventsRes = await discoveryClient.getSharedEvents()
           if (eventsRes.success) {
             setSharedEvents(eventsRes.data?.shared_events || [])
           }
         }
+      } else {
+        setError(statusRes.error || 'Failed to load calendar sharing status')
       }
+    } catch (e) {
+      setError(toErrorMessage(e) || 'Network error')
     } finally {
       setLoading(false)
     }
@@ -825,6 +867,16 @@ function SharedEventsPanel({ onResult }) {
   }
 
   if (loading) return <p className="text-secondary text-sm">Loading calendar sharing...</p>
+
+  if (error) {
+    if (isLocalModeError(error)) return <LocalModeNotice />
+    return (
+      <div className="space-y-3">
+        <div className="text-sm text-gruvbox-red">{error}</div>
+        <button onClick={loadData} className="btn-secondary btn-sm">Retry</button>
+      </div>
+    )
+  }
 
   const optedIn = status?.opted_in || false
 

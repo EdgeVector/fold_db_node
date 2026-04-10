@@ -6,13 +6,6 @@ import { TrashIcon } from '@heroicons/react/24/solid'
 function useDatabaseConfig({ configSaveStatus, setConfigSaveStatus, onClose }) {
   const [dbType, setDbType] = useState('local')
   const [dbPath, setDbPath] = useState('data')
-  const [dynamoTableName, setDynamoTableName] = useState('FoldDBStorage')
-  const [dynamoRegion, setDynamoRegion] = useState('us-west-2')
-  const [dynamoUserId, setDynamoUserId] = useState('')
-  const [s3Bucket, setS3Bucket] = useState('')
-  const [s3Region, setS3Region] = useState('us-east-1')
-  const [s3Prefix, setS3Prefix] = useState('folddb')
-  const [s3LocalPath, setS3LocalPath] = useState('/tmp/folddb-data')
   const [isResetting, setIsResetting] = useState(false)
   const [resetResult, setResetResult] = useState(null)
   const pollIntervalRef = useRef(null)
@@ -38,8 +31,6 @@ function useDatabaseConfig({ configSaveStatus, setConfigSaveStatus, onClose }) {
         const c = response.data
         setDbType(c.type)
         if (c.type === 'local') setDbPath(c.path || 'data')
-        else if (c.type === 'dynamodb') { setDynamoTableName(c.table_name || 'FoldDBStorage'); setDynamoRegion(c.region || 'us-west-2'); setDynamoUserId(c.user_id || '') }
-        else if (c.type === 's3') { setS3Bucket(c.bucket || ''); setS3Region(c.region || 'us-east-1'); setS3Prefix(c.prefix || 'folddb'); setS3LocalPath(c.local_path || '/tmp/folddb-data') }
       }
     } catch (error) { console.error('Failed to load database config:', error) }
   }
@@ -48,12 +39,10 @@ function useDatabaseConfig({ configSaveStatus, setConfigSaveStatus, onClose }) {
     try {
       let config
       if (dbType === 'local') config = { type: 'local', path: dbPath }
-      else if (dbType === 'dynamodb') {
-        if (!dynamoTableName || !dynamoRegion) { setConfigSaveStatus({ success: false, message: 'Table name and region required' }); statusTimeoutRef.current = setTimeout(() => setConfigSaveStatus(null), 3000); return }
-        config = { type: 'dynamodb', table_name: dynamoTableName, region: dynamoRegion, user_id: dynamoUserId || undefined }
-      } else if (dbType === 's3') {
-        if (!s3Bucket || !s3Region) { setConfigSaveStatus({ success: false, message: 'Bucket and region required' }); statusTimeoutRef.current = setTimeout(() => setConfigSaveStatus(null), 3000); return }
-        config = { type: 's3', bucket: s3Bucket, region: s3Region, prefix: s3Prefix || 'folddb', local_path: s3LocalPath || '/tmp/folddb-data' }
+      else {
+        setConfigSaveStatus({ success: false, message: 'Only local (Sled) storage is supported' })
+        statusTimeoutRef.current = setTimeout(() => setConfigSaveStatus(null), 3000)
+        return
       }
       const response = await updateDatabaseConfig(config)
       if (response.success) {
@@ -93,40 +82,15 @@ function useDatabaseConfig({ configSaveStatus, setConfigSaveStatus, onClose }) {
 
         <div>
           <label className="label">Storage Type</label>
-          <select value={dbType} onChange={(e) => setDbType(e.target.value)} className="select">
-            <option value="local">Local (Sled)</option>
-            {/* DynamoDB and S3 are internal/legacy options — only show if already selected */}
-            {dbType === 'dynamodb' && <option value="dynamodb">DynamoDB</option>}
-            {dbType === 's3' && <option value="s3">S3</option>}
-          </select>
+          <div className="text-sm text-primary font-medium py-2">Local (Sled)</div>
+          <p className="text-xs text-secondary">FoldDB uses local Sled storage. To enable cloud backup, go to the Exemem tab.</p>
         </div>
 
-        {dbType === 'local' && (
-          <div>
-            <label className="label">Path</label>
-            <input type="text" value={dbPath} onChange={(e) => setDbPath(e.target.value)} placeholder="data" className="input" />
-            <p className="text-xs text-secondary mt-1">Local filesystem path for the database</p>
-          </div>
-        )}
-
-        {dbType === 'dynamodb' && (
-          <div className="space-y-3">
-            <div><label className="label">Table Name *</label><input type="text" value={dynamoTableName} onChange={(e) => setDynamoTableName(e.target.value)} className="input" /></div>
-            <div><label className="label">AWS Region *</label><input type="text" value={dynamoRegion} onChange={(e) => setDynamoRegion(e.target.value)} className="input" /></div>
-            <div><label className="label">User ID (Optional)</label><input type="text" value={dynamoUserId} onChange={(e) => setDynamoUserId(e.target.value)} className="input" /></div>
-            <div className="card card-warning p-3"><p className="text-xs text-gruvbox-yellow"><strong>Note:</strong> Ensure AWS credentials are configured.</p></div>
-          </div>
-        )}
-
-        {dbType === 's3' && (
-          <div className="space-y-3">
-            <div><label className="label">S3 Bucket *</label><input type="text" value={s3Bucket} onChange={(e) => setS3Bucket(e.target.value)} className="input" /></div>
-            <div><label className="label">AWS Region *</label><input type="text" value={s3Region} onChange={(e) => setS3Region(e.target.value)} className="input" /></div>
-            <div><label className="label">S3 Prefix</label><input type="text" value={s3Prefix} onChange={(e) => setS3Prefix(e.target.value)} className="input" /></div>
-            <div><label className="label">Local Cache Path</label><input type="text" value={s3LocalPath} onChange={(e) => setS3LocalPath(e.target.value)} className="input" /></div>
-            <div className="card card-warning p-3"><p className="text-xs text-gruvbox-yellow"><strong>Note:</strong> Ensure AWS credentials are configured.</p></div>
-          </div>
-        )}
+        <div>
+          <label className="label">Path</label>
+          <input type="text" value={dbPath} onChange={(e) => setDbPath(e.target.value)} placeholder="data" className="input" />
+          <p className="text-xs text-secondary mt-1">Local filesystem path for the database</p>
+        </div>
 
         <div className="mt-8 pt-6 border-t border-gruvbox-red">
           <div className="flex items-center gap-2 mb-3">
