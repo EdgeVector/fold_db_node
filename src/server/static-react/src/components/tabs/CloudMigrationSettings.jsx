@@ -33,8 +33,10 @@ export default function CloudMigrationSettings({ onClose }) {
       let keychainCreds = false
       try {
         const resp = await fetch('/api/auth/credentials')
-        const data = await resp.json()
-        keychainCreds = data.ok && data.has_credentials
+        if (resp.ok) {
+          const data = await resp.json()
+          keychainCreds = data.ok && data.has_credentials
+        }
         setHasCredentials(keychainCreds)
       } catch {
         setHasCredentials(false)
@@ -79,6 +81,10 @@ export default function CloudMigrationSettings({ onClose }) {
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ invite_code: inviteCode.trim() }),
       })
+      if (!resp.ok) {
+        const errBody = await resp.text().catch(() => '')
+        throw new Error(errBody || `Registration failed (HTTP ${resp.status})`)
+      }
       const data = await resp.json()
 
       if (!data.ok) {
@@ -210,6 +216,10 @@ export default function CloudMigrationSettings({ onClose }) {
             onClick={async () => {
               try {
                 const resp = await fetch('/api/auth/credentials')
+                if (!resp.ok) {
+                  setError(`Failed to get credentials (HTTP ${resp.status})`)
+                  return
+                }
                 const data = await resp.json()
                 if (!data.ok || !data.session_token) {
                   setError('No active session. Try re-enabling cloud backup.')
@@ -242,6 +252,7 @@ export default function CloudMigrationSettings({ onClose }) {
                 if (showRecovery) { setShowRecovery(false); setRecoveryWords(null); return }
                 try {
                   const resp = await fetch('/api/auth/recovery-phrase')
+                  if (!resp.ok) throw new Error(`HTTP ${resp.status}`)
                   const data = await resp.json()
                   if (data.ok) { setRecoveryWords(data.words); setShowRecovery(true) }
                   else setError(data.error || 'Failed to get recovery phrase')
@@ -276,27 +287,26 @@ export default function CloudMigrationSettings({ onClose }) {
             <button
               onClick={async () => {
                 setCreatingCode(true)
+                setError(null)
                 try {
-                  await fetch('/api/auth/invite-codes', {
-                    method: 'POST',
-                    headers: { 'Content-Type': 'application/json' },
-                    body: '{}',
-                  })
-                  // Proxy through node — need to forward to Exemem API
-                  const creds = await fetch('/api/auth/credentials').then(r => r.json())
-                  if (!creds.ok) { setError('No session'); return }
+                  const credsResp = await fetch('/api/auth/credentials')
+                  if (!credsResp.ok) throw new Error(`Failed to get credentials (HTTP ${credsResp.status})`)
+                  const creds = await credsResp.json()
+                  if (!creds.ok || !creds.session_token) { setError('No active session. Re-enable cloud backup.'); return }
                   const apiUrl = localStorage.getItem('exemem_api_url') || ''
                   const createResp = await fetch(`${apiUrl}/api/auth/invite-codes`, {
                     method: 'POST',
                     headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${creds.session_token}` },
                     body: '{}',
                   })
+                  if (!createResp.ok) throw new Error(`Failed to create invite code (HTTP ${createResp.status})`)
                   const createData = await createResp.json()
                   if (createData.ok) {
                     // Refresh the list
                     const listResp = await fetch(`${apiUrl}/api/auth/invite-codes`, {
                       headers: { 'Authorization': `Bearer ${creds.session_token}` },
                     })
+                    if (!listResp.ok) throw new Error(`Failed to list invite codes (HTTP ${listResp.status})`)
                     const listData = await listResp.json()
                     if (listData.ok) setInviteCodes(listData.codes)
                   } else {
@@ -315,15 +325,18 @@ export default function CloudMigrationSettings({ onClose }) {
             <button
               onClick={async () => {
                 try {
-                  const creds = await fetch('/api/auth/credentials').then(r => r.json())
-                  if (!creds.ok) return
+                  const credsResp = await fetch('/api/auth/credentials')
+                  if (!credsResp.ok) { setError(`Failed to get credentials (HTTP ${credsResp.status})`); return }
+                  const creds = await credsResp.json()
+                  if (!creds.ok || !creds.session_token) return
                   const apiUrl = localStorage.getItem('exemem_api_url') || ''
                   const resp = await fetch(`${apiUrl}/api/auth/invite-codes`, {
                     headers: { 'Authorization': `Bearer ${creds.session_token}` },
                   })
+                  if (!resp.ok) { setError(`Failed to load invite codes (HTTP ${resp.status})`); return }
                   const data = await resp.json()
                   if (data.ok) setInviteCodes(data.codes)
-                } catch { /* ignore */ }
+                } catch (e) { setError(e?.message || 'Failed to load invite codes') }
               }}
               className="text-xs text-gruvbox-blue underline cursor-pointer bg-transparent border-none"
             >
