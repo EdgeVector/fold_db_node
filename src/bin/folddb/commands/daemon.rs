@@ -62,6 +62,24 @@ pub fn default_port() -> u16 {
         .unwrap_or(9001)
 }
 
+/// Check if dev mode is persisted in the config file (via `config set env dev`).
+pub fn is_dev_in_config() -> bool {
+    let config_path = folddb_home().join("config").join("node_config.json");
+    std::fs::read_to_string(config_path)
+        .ok()
+        .and_then(|s| serde_json::from_str::<serde_json::Value>(&s).ok())
+        .and_then(|v| v.get("env").and_then(|e| e.as_str()).map(|s| s == "dev"))
+        .unwrap_or(false)
+}
+
+/// Resolve whether to use dev mode: explicit --dev flag wins, else check config.
+pub fn resolve_dev(explicit_dev: bool) -> bool {
+    if explicit_dev {
+        return true;
+    }
+    is_dev_in_config()
+}
+
 /// Check if a port is already in use by trying to bind to it
 fn is_port_in_use(port: u16) -> bool {
     std::net::TcpListener::bind(("127.0.0.1", port)).is_err()
@@ -212,15 +230,15 @@ pub async fn status() -> Result<String, CliError> {
 
 /// Ensure the daemon is running, starting it if necessary.
 /// Returns the port the daemon is listening on.
-#[allow(dead_code)]
 pub async fn ensure_running(dev: bool) -> Result<u16, CliError> {
     let port = default_port();
     if check_daemon_health(port).await {
         return Ok(port);
     }
 
+    let effective_dev = resolve_dev(dev);
     eprintln!("Starting daemon on :{}...", port);
-    let msg = start(port, dev).await?;
+    let msg = start(port, effective_dev).await?;
     eprintln!("{}", msg);
     Ok(port)
 }
@@ -250,6 +268,39 @@ pub fn install() -> Result<String, CliError> {
     let home = folddb_home();
     let log_path = log_file();
     let port = default_port();
+    let dev = is_dev_in_config();
+
+    // Build program arguments — include --schema-service-url if dev mode persisted
+    let mut args = format!(
+        r#"    <array>
+        <string>{binary}</string>
+        <string>--port</string>
+        <string>{port}</string>"#,
+        binary = server_bin.display(),
+        port = port,
+    );
+    if dev {
+        args.push_str(
+            r#"
+        <string>--schema-service-url</string>
+        <string>https://y0q3m6vk75.execute-api.us-west-2.amazonaws.com</string>"#,
+        );
+    }
+    args.push_str("\n    </array>");
+
+    // Include EXEMEM_ENV if dev mode
+    let mut env_vars = format!(
+        r#"        <key>FOLDDB_HOME</key>
+        <string>{home}</string>"#,
+        home = home.display(),
+    );
+    if dev {
+        env_vars.push_str(
+            r#"
+        <key>EXEMEM_ENV</key>
+        <string>dev</string>"#,
+        );
+    }
 
     let plist = format!(
         r#"<?xml version="1.0" encoding="UTF-8"?>
@@ -259,15 +310,10 @@ pub fn install() -> Result<String, CliError> {
     <key>Label</key>
     <string>{label}</string>
     <key>ProgramArguments</key>
-    <array>
-        <string>{binary}</string>
-        <string>--port</string>
-        <string>{port}</string>
-    </array>
+{args}
     <key>EnvironmentVariables</key>
     <dict>
-        <key>FOLDDB_HOME</key>
-        <string>{home}</string>
+{env_vars}
     </dict>
     <key>RunAtLoad</key>
     <true/>
@@ -280,9 +326,8 @@ pub fn install() -> Result<String, CliError> {
 </dict>
 </plist>"#,
         label = LAUNCHD_LABEL,
-        binary = server_bin.display(),
-        port = port,
-        home = home.display(),
+        args = args,
+        env_vars = env_vars,
         log = log_path.display(),
     );
 
