@@ -549,7 +549,7 @@ function PeopleLikeYouPanel({ onResult }) {
   if (loading) return <p className="text-secondary text-sm">Finding people like you...</p>
 
   if (error) {
-    const isLocalMode = error.includes('503') || error.includes('DISCOVERY_MASTER_KEY') || error.includes('Service Unavailable')
+    const isLocalMode = error.includes('503') || error.includes('DISCOVERY_MASTER_KEY') || error.includes('Service Unavailable') || error.includes('Discovery not available') || error.includes('Register with Exemem')
     return (
       <div className="space-y-3">
         {isLocalMode ? (
