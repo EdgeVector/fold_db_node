@@ -363,10 +363,14 @@ pub fn run_setup_wizard() -> Result<NodeConfig, CliError> {
         eprintln!("AI config saved.");
     }
 
-    // Mark onboarding complete (consistent with UI wizard)
+    // Mark onboarding complete — must match the path the server checks:
+    // FOLDDB_HOME/data/.onboarding_complete (lives in data dir so --empty-db resets it)
     let marker_path = fold_db_node::utils::paths::folddb_home()
-        .map(|h| h.join("onboarding_complete"))
-        .unwrap_or_else(|_| PathBuf::from("onboarding_complete"));
+        .map(|h| h.join("data").join(".onboarding_complete"))
+        .unwrap_or_else(|_| PathBuf::from(".onboarding_complete"));
+    if let Some(parent) = marker_path.parent() {
+        let _ = fs::create_dir_all(parent);
+    }
     let _ = fs::write(&marker_path, "1");
 
     eprintln!(

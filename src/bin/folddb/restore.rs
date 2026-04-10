@@ -146,6 +146,8 @@ fn try_register_and_configure(
             std::fs::write(config_path, config_json)
                 .map_err(|e| CliError::new(format!("Failed to write config: {}", e)))?;
 
+            mark_onboarding_complete();
+
             Ok("Identity restored with cloud backup enabled.\nRun `folddb daemon start` to begin syncing.".to_string())
         }
         Err(_e) => {
@@ -171,7 +173,20 @@ fn try_register_and_configure(
             std::fs::write(config_path, config_json)
                 .map_err(|e| CliError::new(format!("Failed to write config: {}", e)))?;
 
+            mark_onboarding_complete();
+
             Ok("Identity restored (local only).\nCloud registration failed — run `folddb cloud enable` to retry.".to_string())
         }
+    }
+}
+
+/// Write the onboarding_complete marker so the UI doesn't re-prompt for setup.
+fn mark_onboarding_complete() {
+    if let Ok(home) = fold_db_node::utils::paths::folddb_home() {
+        let marker = home.join("data").join(".onboarding_complete");
+        if let Some(parent) = marker.parent() {
+            let _ = std::fs::create_dir_all(parent);
+        }
+        let _ = std::fs::write(&marker, "1");
     }
 }
