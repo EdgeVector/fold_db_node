@@ -2,9 +2,12 @@
 //!
 //! Framework-agnostic handlers for discovery network operations.
 
+use crate::discovery::async_query::{
+    self, QueryRequestPayload, QueryResponsePayload, SchemaInfo, SchemaListRequestPayload,
+    SchemaListResponsePayload,
+};
 use crate::discovery::calendar_sharing::{self, EventFingerprint, PeerEventSet, SharedEvent};
 use crate::discovery::config::{self, DiscoveryOptIn};
-use crate::discovery::async_query::{self, QueryRequestPayload, QueryResponsePayload, SchemaListRequestPayload, SchemaListResponsePayload, SchemaInfo};
 use crate::discovery::connection::{
     self, ConnectionPayload, LocalConnectionRequest, LocalSentRequest,
 };
@@ -656,9 +659,7 @@ pub async fn poll_and_decrypt_requests(
         }
 
         // Mark as processed (store a small marker)
-        let _ = store
-            .put(dedup_key.as_bytes(), b"1".to_vec())
-            .await;
+        let _ = store.put(dedup_key.as_bytes(), b"1".to_vec()).await;
 
         match message_type {
             "request" => {
@@ -800,11 +801,13 @@ async fn handle_incoming_query(
     let query = Query::new(payload.schema_name.clone(), payload.fields.clone());
 
     // Execute with access control using sender's Ed25519 key
-    let (success, results, error) =
-        match op.execute_query_json_with_access(query, &payload.sender_public_key).await {
-            Ok(results) => (true, Some(results), None),
-            Err(e) => (false, None, Some(format!("Query failed: {}", e))),
-        };
+    let (success, results, error) = match op
+        .execute_query_json_with_access(query, &payload.sender_public_key)
+        .await
+    {
+        Ok(results) => (true, Some(results), None),
+        Err(e) => (false, None, Some(format!("Query failed: {}", e))),
+    };
 
     // Derive our reply pseudonym + X25519 key
     let hash = crate::discovery::pseudonym::content_hash("connection-sender");
@@ -829,7 +832,10 @@ async fn handle_incoming_query(
             arr
         }
         _ => {
-            log::warn!("Invalid reply public key in query request {}", payload.request_id);
+            log::warn!(
+                "Invalid reply public key in query request {}",
+                payload.request_id
+            );
             return;
         }
     };
@@ -864,10 +870,7 @@ async fn handle_incoming_query_response(
     store: &dyn fold_db::storage::traits::KvStore,
     payload: &QueryResponsePayload,
 ) {
-    log::info!(
-        "Received query response for request {}",
-        payload.request_id
-    );
+    log::info!("Received query response for request {}", payload.request_id);
 
     let results = if payload.success {
         payload
@@ -987,13 +990,9 @@ async fn handle_incoming_schema_list_response(
     );
 
     let results = serde_json::to_value(&payload.schemas).unwrap_or_default();
-    if let Err(e) = async_query::update_async_query_result(
-        store,
-        &payload.request_id,
-        Some(results),
-        None,
-    )
-    .await
+    if let Err(e) =
+        async_query::update_async_query_result(store, &payload.request_id, Some(results), None)
+            .await
     {
         log::warn!("Failed to update schema list result: {}", e);
     }
