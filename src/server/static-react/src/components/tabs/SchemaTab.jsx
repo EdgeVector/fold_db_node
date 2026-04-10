@@ -15,6 +15,9 @@ import { SCHEMA_BADGE_COLORS } from '../../constants/ui'
 import { toErrorMessage } from '../../utils/schemaUtils'
 import { getAllFieldPolicies, setFieldPolicy as setFieldPolicyApi } from '../../api/clients/sharingClient'
 
+// u64::MAX as a safe threshold — any value above 1e18 is treated as "public" (unbounded)
+const PUBLIC_THRESHOLD = 1e18
+
 // ===== Access Policy Badge =====
 
 function AccessBadge({ policy }) {
@@ -25,10 +28,10 @@ function AccessBadge({ policy }) {
   const readMax = policy.trust_distance?.read_max
   const writeMax = policy.trust_distance?.write_max
 
-  const readLabel = readMax === 0 ? 'owner' : readMax >= 18446744073709551615 ? 'public' : `d${readMax}`
-  const writeLabel = writeMax === 0 ? 'owner' : writeMax >= 18446744073709551615 ? 'public' : `d${writeMax}`
+  const readLabel = readMax === 0 ? 'owner' : readMax >= PUBLIC_THRESHOLD ? 'public' : `d${readMax}`
+  const writeLabel = writeMax === 0 ? 'owner' : writeMax >= PUBLIC_THRESHOLD ? 'public' : `d${writeMax}`
 
-  const readColor = readMax === 0 ? 'text-gruvbox-red' : readMax >= 18446744073709551615 ? 'text-gruvbox-green' : 'text-gruvbox-yellow'
+  const readColor = readMax === 0 ? 'text-gruvbox-red' : readMax >= PUBLIC_THRESHOLD ? 'text-gruvbox-green' : 'text-gruvbox-yellow'
   const writeColor = writeMax === 0 ? 'text-gruvbox-red' : 'text-gruvbox-yellow'
 
   return (
@@ -57,7 +60,7 @@ function FieldPolicyPanel({ schemaName, fieldName, policy, onClose, onUpdate }) 
       case 'owner-only':
         setReadMax(0); setWriteMax(0); break
       case 'public-read':
-        setReadMax(18446744073709551615); setWriteMax(0); break
+        setReadMax(Number.MAX_SAFE_INTEGER); setWriteMax(0); break
       case 'trusted-read':
         setReadMax(2); setWriteMax(0); break
       case 'trusted-rw':
@@ -119,7 +122,7 @@ function FieldPolicyPanel({ schemaName, fieldName, policy, onClose, onUpdate }) 
             value={readMax > 1e18 ? 'public' : readMax}
             onChange={(e) => {
               const v = e.target.value
-              if (v === 'public') setReadMax(18446744073709551615)
+              if (v === 'public') setReadMax(Number.MAX_SAFE_INTEGER)
               else setReadMax(parseInt(v) || 0)
             }}
             min={0}
@@ -134,7 +137,7 @@ function FieldPolicyPanel({ schemaName, fieldName, policy, onClose, onUpdate }) 
             value={writeMax > 1e18 ? 'public' : writeMax}
             onChange={(e) => {
               const v = e.target.value
-              if (v === 'public') setWriteMax(18446744073709551615)
+              if (v === 'public') setWriteMax(Number.MAX_SAFE_INTEGER)
               else setWriteMax(parseInt(v) || 0)
             }}
             min={0}

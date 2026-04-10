@@ -31,7 +31,7 @@ export default function DirectoryBrowserModal({ initialPath, onSelect, onClose }
         setDirectories([])
         setError(response.data?.error || 'Failed to list directory')
       }
-    } catch (e) {
+    } catch {
       setDirectories([])
       setError('Failed to list directory')
     } finally {

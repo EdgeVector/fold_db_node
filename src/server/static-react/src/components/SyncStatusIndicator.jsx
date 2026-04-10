@@ -1,4 +1,4 @@
-import { useState, useEffect, useCallback } from 'react'
+import { useState, useCallback } from 'react'
 import { systemClient } from '../api/clients/systemClient'
 import { usePolling } from '../hooks/usePolling'
 

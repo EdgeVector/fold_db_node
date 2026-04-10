@@ -12,7 +12,7 @@ export default function CloudMigrationSettings({ onClose }) {
   const [isCloudMode, setIsCloudMode] = useState(false)
   const [storageInfo, setStorageInfo] = useState(null)
   const [upgrading, setUpgrading] = useState(false)
-  const [hasCredentials, setHasCredentials] = useState(null)
+  const [_hasCredentials, setHasCredentials] = useState(null)
   const [recoveryWords, setRecoveryWords] = useState(null)
   const [showRecovery, setShowRecovery] = useState(false)
   const [inviteCodes, setInviteCodes] = useState(null)
@@ -277,7 +277,7 @@ export default function CloudMigrationSettings({ onClose }) {
               onClick={async () => {
                 setCreatingCode(true)
                 try {
-                  const resp = await fetch('/api/auth/invite-codes', {
+                  await fetch('/api/auth/invite-codes', {
                     method: 'POST',
                     headers: { 'Content-Type': 'application/json' },
                     body: '{}',

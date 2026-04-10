@@ -93,31 +93,39 @@ function TrustSection({ onResult }) {
       {/* Grant form */}
       <form onSubmit={handleGrant} className="bg-gruvbox-elevated rounded-lg p-4 space-y-3">
         <h3 className="text-sm font-semibold text-primary">Grant Trust</h3>
-        <div className="flex gap-2">
-          <input
-            type="text"
-            value={newKey}
-            onChange={(e) => setNewKey(e.target.value)}
-            placeholder="Public key (base64)"
-            className="flex-1 bg-surface-primary border border-border rounded px-3 py-2 text-sm text-primary placeholder-secondary"
-          />
-          <input
-            type="number"
-            value={newDistance}
-            onChange={(e) => setNewDistance(parseInt(e.target.value) || 1)}
-            min={1}
-            className="w-20 bg-surface-primary border border-border rounded px-3 py-2 text-sm text-primary"
-          />
-          <button
-            type="submit"
-            disabled={!newKey.trim()}
-            className="px-4 py-2 bg-accent text-surface-primary rounded text-sm font-medium disabled:opacity-50 hover:bg-accent/80"
-          >
-            Grant
-          </button>
+        <div className="space-y-2">
+          <div>
+            <label className="text-xs text-secondary block mb-1">Public Key</label>
+            <input
+              type="text"
+              value={newKey}
+              onChange={(e) => setNewKey(e.target.value)}
+              placeholder="Public key (base64)"
+              className="w-full bg-surface-primary border border-border rounded px-3 py-2 text-sm text-primary placeholder-secondary"
+            />
+          </div>
+          <div className="flex gap-2 items-end">
+            <div>
+              <label className="text-xs text-secondary block mb-1">Trust Distance</label>
+              <input
+                type="number"
+                value={newDistance}
+                onChange={(e) => setNewDistance(parseInt(e.target.value) || 1)}
+                min={1}
+                className="w-28 bg-surface-primary border border-border rounded px-3 py-2 text-sm text-primary"
+              />
+            </div>
+            <button
+              type="submit"
+              disabled={!newKey.trim()}
+              className="px-4 py-2 bg-accent text-surface-primary rounded text-sm font-medium disabled:opacity-50 hover:bg-accent/80"
+            >
+              Grant
+            </button>
+          </div>
         </div>
         <p className="text-xs text-secondary">
-          Distance: lower = more trusted. 0 = owner, 1 = direct trust.
+          Lower distance = more trusted. 0 = owner, 1 = direct trust.
         </p>
       </form>
 

@@ -40,7 +40,7 @@ function Header({ onSettingsClick, onAiSettingsClick, onCloudSettingsClick }) {
   const [storageMode, setStorageMode] = useState(null)
   const [storageSize, setStorageSize] = useState(null)
   const [storageQuota, setStorageQuota] = useState(null)
-  const [schemaEnv, setSchemaEnv] = useState(null)
+  const [_schemaEnv, setSchemaEnv] = useState(null)
   const [nodePublicKey, setNodePublicKey] = useState(null)
 
   // Pending Invites State
@@ -129,7 +129,8 @@ function Header({ onSettingsClick, onAiSettingsClick, onCloudSettingsClick }) {
     return () => { cancelled = true; clearInterval(interval) }
   }, [isAuthenticated])
 
-  const handleLogout = () => {
+  // Logout handler — kept for future use when multi-user switching is added
+  const _handleLogout = () => {
     dispatch(logoutUser())
     localStorage.removeItem(BROWSER_CONFIG.STORAGE_KEYS.USER_ID)
     localStorage.removeItem(BROWSER_CONFIG.STORAGE_KEYS.USER_HASH)
