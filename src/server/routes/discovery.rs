@@ -43,8 +43,9 @@ fn get_discovery_config() -> Result<(String, Vec<u8>), HttpResponse> {
         });
 
     if let Some(path) = data_path {
-        if let Ok(db) = sled::open(&path) {
-            if let Ok(store) = fold_db::NodeConfigStore::new(&db) {
+        {
+            let pool = std::sync::Arc::new(fold_db::storage::SledPool::new(path));
+            if let Ok(store) = fold_db::NodeConfigStore::new(pool) {
                 if let (Some(cloud), Some(identity)) =
                     (store.get_cloud_config(), store.get_identity())
                 {

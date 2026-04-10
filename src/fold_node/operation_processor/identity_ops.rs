@@ -73,8 +73,9 @@ impl OperationProcessor {
         // Also save to Sled config store (best-effort)
         if let Ok(folddb_home) = folddb_home() {
             let data_path = folddb_home.join("data");
-            if let Ok(db) = sled::open(&data_path) {
-                if let Ok(store) = fold_db::NodeConfigStore::new(&db) {
+            {
+                let pool = std::sync::Arc::new(fold_db::storage::SledPool::new(data_path));
+                if let Ok(store) = fold_db::NodeConfigStore::new(pool) {
                     if let Err(e) = card.save_to_sled(&store) {
                         log::warn!("Failed to save identity card to Sled: {}", e);
                     }
