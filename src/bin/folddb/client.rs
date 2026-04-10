@@ -194,6 +194,7 @@ impl FoldDbClient {
     }
 
     /// Process records through the ingestion pipeline (used by Apple ingestion).
+    #[cfg(target_os = "macos")]
     pub async fn ingest_process(&self, records: &[Value]) -> Result<Value, CliError> {
         let payload = serde_json::json!({
             "data": records,
