@@ -286,6 +286,10 @@ pub enum DaemonCommand {
     Stop,
     /// Show daemon status
     Status,
+    /// Install as a system service (auto-start on login)
+    Install,
+    /// Uninstall the system service
+    Uninstall,
 }
 
 #[derive(Subcommand, Debug)]
@@ -839,6 +843,8 @@ mod tests {
             vec!["folddb", "daemon", "start"],
             vec!["folddb", "daemon", "stop"],
             vec!["folddb", "daemon", "status"],
+            vec!["folddb", "daemon", "install"],
+            vec!["folddb", "daemon", "uninstall"],
             vec!["folddb", "cloud", "enable"],
             vec!["folddb", "cloud", "disable"],
             vec!["folddb", "cloud", "status"],

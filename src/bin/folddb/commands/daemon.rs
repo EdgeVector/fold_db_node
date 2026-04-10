@@ -225,6 +225,149 @@ pub async fn ensure_running(dev: bool) -> Result<u16, CliError> {
     Ok(port)
 }
 
+// ---------------------------------------------------------------------------
+// Service install/uninstall
+// ---------------------------------------------------------------------------
+
+const LAUNCHD_LABEL: &str = "com.folddb.daemon";
+
+fn launchd_plist_path() -> PathBuf {
+    dirs::home_dir()
+        .unwrap_or_else(|| PathBuf::from("."))
+        .join("Library/LaunchAgents")
+        .join(format!("{}.plist", LAUNCHD_LABEL))
+}
+
+/// Install a launchd LaunchAgent so the daemon auto-starts on login.
+pub fn install() -> Result<String, CliError> {
+    if cfg!(not(target_os = "macos")) {
+        return Err(CliError::new(
+            "Service install is only supported on macOS (launchd)",
+        ));
+    }
+
+    let server_bin = find_server_binary()?;
+    let home = folddb_home();
+    let log_path = log_file();
+    let port = default_port();
+
+    let plist = format!(
+        r#"<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+    <key>Label</key>
+    <string>{label}</string>
+    <key>ProgramArguments</key>
+    <array>
+        <string>{binary}</string>
+        <string>--port</string>
+        <string>{port}</string>
+    </array>
+    <key>EnvironmentVariables</key>
+    <dict>
+        <key>FOLDDB_HOME</key>
+        <string>{home}</string>
+    </dict>
+    <key>RunAtLoad</key>
+    <true/>
+    <key>KeepAlive</key>
+    <true/>
+    <key>StandardOutPath</key>
+    <string>{log}</string>
+    <key>StandardErrorPath</key>
+    <string>{log}</string>
+</dict>
+</plist>"#,
+        label = LAUNCHD_LABEL,
+        binary = server_bin.display(),
+        port = port,
+        home = home.display(),
+        log = log_path.display(),
+    );
+
+    let plist_path = launchd_plist_path();
+    if let Some(parent) = plist_path.parent() {
+        fs::create_dir_all(parent)
+            .map_err(|e| CliError::new(format!("Failed to create LaunchAgents dir: {}", e)))?;
+    }
+
+    // Unload first if already installed
+    if plist_path.exists() {
+        let _ = std::process::Command::new("launchctl")
+            .arg("unload")
+            .arg(&plist_path)
+            .output();
+    }
+
+    fs::write(&plist_path, plist)
+        .map_err(|e| CliError::new(format!("Failed to write plist: {}", e)))?;
+
+    let output = std::process::Command::new("launchctl")
+        .arg("load")
+        .arg(&plist_path)
+        .output()
+        .map_err(|e| CliError::new(format!("Failed to run launchctl load: {}", e)))?;
+
+    if !output.status.success() {
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        return Err(CliError::new(format!("launchctl load failed: {}", stderr)));
+    }
+
+    Ok(format!(
+        "Service installed at {}\nDaemon will auto-start on login (port {})",
+        plist_path.display(),
+        port
+    ))
+}
+
+/// Uninstall the launchd LaunchAgent.
+pub fn uninstall() -> Result<String, CliError> {
+    let plist_path = launchd_plist_path();
+
+    if !plist_path.exists() {
+        return Ok("Service not installed.".to_string());
+    }
+
+    let output = std::process::Command::new("launchctl")
+        .arg("unload")
+        .arg(&plist_path)
+        .output()
+        .map_err(|e| CliError::new(format!("Failed to run launchctl unload: {}", e)))?;
+
+    if !output.status.success() {
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        return Err(CliError::new(format!(
+            "launchctl unload failed: {}",
+            stderr
+        )));
+    }
+
+    fs::remove_file(&plist_path)
+        .map_err(|e| CliError::new(format!("Failed to remove plist: {}", e)))?;
+
+    Ok("Service uninstalled. Daemon will no longer auto-start.".to_string())
+}
+
+fn find_server_binary() -> Result<PathBuf, CliError> {
+    let current_exe = std::env::current_exe()
+        .map_err(|e| CliError::new(format!("Cannot determine executable path: {}", e)))?;
+    let bin_dir = current_exe
+        .parent()
+        .unwrap_or_else(|| std::path::Path::new("."));
+    let server_bin = bin_dir.join("folddb_server");
+
+    if !server_bin.exists() {
+        return Err(CliError::new(format!(
+            "folddb_server binary not found at {}",
+            server_bin.display()
+        ))
+        .with_hint("Build with: cargo build --bin folddb_server"));
+    }
+
+    Ok(server_bin)
+}
+
 fn read_log_tail(path: &std::path::Path) -> String {
     fs::read_to_string(path)
         .unwrap_or_default()
