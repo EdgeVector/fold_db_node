@@ -66,8 +66,8 @@ export default function PendingInvitesModal({ isOpen, onClose, pendingInvites, s
   };
 
   return (
-    <div className="fixed inset-0 bg-background/80 backdrop-blur-sm z-50 flex items-center justify-center p-4">
-      <div className="bg-surface border border-border rounded-xl shadow-xl max-w-md w-full overflow-hidden flex flex-col max-h-[85vh]">
+    <div className="fixed inset-0 bg-background/80 backdrop-blur-sm z-50 flex items-center justify-center p-4" onClick={onClose}>
+      <div className="bg-surface border border-border rounded-xl shadow-xl max-w-md w-full overflow-hidden flex flex-col max-h-[85vh]" onClick={(e) => e.stopPropagation()}>
 
         {/* Header */}
         <div className="px-6 py-4 border-b border-border flex items-center justify-between sticky top-0 bg-surface">
@@ -83,6 +83,7 @@ export default function PendingInvitesModal({ isOpen, onClose, pendingInvites, s
           <button
             onClick={onClose}
             className="p-2 text-tertiary hover:text-primary rounded-lg hover:bg-surface-hover transition-colors"
+            aria-label="Close inbox"
           >
             <XMarkIcon className="w-5 h-5" />
           </button>

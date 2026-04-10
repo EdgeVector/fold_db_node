@@ -95,8 +95,9 @@ function useDatabaseConfig({ configSaveStatus, setConfigSaveStatus, onClose }) {
           <label className="label">Storage Type</label>
           <select value={dbType} onChange={(e) => setDbType(e.target.value)} className="select">
             <option value="local">Local (Sled)</option>
-            <option value="dynamodb">DynamoDB</option>
-            <option value="s3">S3</option>
+            {/* DynamoDB and S3 are internal/legacy options — only show if already selected */}
+            {dbType === 'dynamodb' && <option value="dynamodb">DynamoDB</option>}
+            {dbType === 's3' && <option value="s3">S3</option>}
           </select>
         </div>
 
