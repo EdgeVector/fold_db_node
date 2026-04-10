@@ -32,6 +32,17 @@ pub fn derive_pseudonym_keypair(master_key: &[u8], pseudonym: &Uuid) -> (StaticS
     (secret, public)
 }
 
+/// Identity information included in accept messages so the requester
+/// can create a trust relationship using the acceptor's real node key.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct IdentityCardPayload {
+    pub display_name: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub contact_hint: Option<String>,
+    /// The node's Ed25519 public key (base64) — used for trust, NOT the pseudonym key
+    pub node_public_key: String,
+}
+
 /// Plaintext payload inside an encrypted connection message.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ConnectionPayload {
@@ -45,6 +56,9 @@ pub struct ConnectionPayload {
     pub sender_pseudonym: String,
     /// Sender's reply public key (base64) — encrypt responses with this
     pub reply_public_key: String,
+    /// Identity card (included in accept messages for trust creation)
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub identity_card: Option<IdentityCardPayload>,
 }
 
 /// Encrypt a connection payload for a target's X25519 public key.
@@ -419,6 +433,7 @@ mod tests {
             sender_public_key: "sender_pk_base64".to_string(),
             sender_pseudonym: Uuid::new_v4().to_string(),
             reply_public_key: "reply_pk_base64".to_string(),
+            identity_card: None,
         };
 
         let encrypted = encrypt_connection_message(public.as_bytes(), &payload).unwrap();
@@ -444,6 +459,7 @@ mod tests {
             sender_public_key: "pk".to_string(),
             sender_pseudonym: Uuid::new_v4().to_string(),
             reply_public_key: "rpk".to_string(),
+            identity_card: None,
         };
 
         let encrypted = encrypt_connection_message(public.as_bytes(), &payload).unwrap();
@@ -466,6 +482,7 @@ mod tests {
             sender_public_key: "pk".to_string(),
             sender_pseudonym: Uuid::new_v4().to_string(),
             reply_public_key: "rpk".to_string(),
+            identity_card: None,
         };
 
         let encrypted = encrypt_message(public.as_bytes(), &payload).unwrap();

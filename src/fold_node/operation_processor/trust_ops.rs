@@ -135,7 +135,7 @@ impl OperationProcessor {
     // ===== Role-based trust operations =====
 
     /// Resolve the contact book file path from the node's config directory.
-    fn contact_book_path(&self) -> Result<std::path::PathBuf, SchemaError> {
+    pub(crate) fn contact_book_path(&self) -> Result<std::path::PathBuf, SchemaError> {
         let config_dir = self
             .node
             .get_config_dir()
@@ -144,7 +144,7 @@ impl OperationProcessor {
     }
 
     /// Resolve the sharing roles file path from the node's config directory.
-    pub(super) fn sharing_roles_path(&self) -> Result<std::path::PathBuf, SchemaError> {
+    pub(crate) fn sharing_roles_path(&self) -> Result<std::path::PathBuf, SchemaError> {
         let config_dir = self
             .node
             .get_config_dir()
