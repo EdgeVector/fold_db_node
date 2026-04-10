@@ -319,15 +319,15 @@ pub async fn remove_member(
     if is_self_removal {
         let fold_db = node.get_fold_db().await.handler_err("get fold_db")?;
         let db_ops = fold_db.get_db_ops();
-        let _ = db_ops
+        db_ops
             .purge_org_data(org_hash)
             .await
-            .map_err(|e| log::error!("Failed to purge org data after removal: {}", e));
-        let _ = fold_db
+            .handler_err("purge org data after removal")?;
+        fold_db
             .schema_manager
             .purge_org_schemas(org_hash)
             .await
-            .map_err(|e| log::error!("Failed to purge org schemas after removal: {}", e));
+            .handler_err("purge org schemas after removal")?;
         // Drop the FoldDB guard BEFORE configure_org_sync_if_needed,
         // which also acquires the db mutex.
         drop(fold_db);
@@ -416,15 +416,15 @@ pub async fn delete_org(
     {
         let fold_db = node.get_fold_db().await.handler_err("get fold_db")?;
         let db_ops = fold_db.get_db_ops();
-        let _ = db_ops
+        db_ops
             .purge_org_data(org_hash)
             .await
-            .map_err(|e| log::error!("Failed to purge org data after deletion: {}", e));
-        let _ = fold_db
+            .handler_err("purge org data after deletion")?;
+        fold_db
             .schema_manager
             .purge_org_schemas(org_hash)
             .await
-            .map_err(|e| log::error!("Failed to purge org schemas after deletion: {}", e));
+            .handler_err("purge org schemas after deletion")?;
         // fold_db guard dropped here before configure_org_sync_if_needed
     }
 
@@ -453,38 +453,58 @@ pub async fn get_pending_invites(
         let s3_client = fold_db::sync::s3::S3Client::new(http);
 
         // 1. List objects in inbox/org_invites/
-        let objects = match client.list_objects("inbox/org_invites/").await {
-            Ok(objs) => objs,
-            Err(e) => {
-                log::warn!("Could not list inbox: {}", e);
-                return Ok(ApiResponse::success_with_user(
-                    PendingInvitesResponse { invites },
-                    user_hash,
-                ));
-            }
-        };
+        let objects = client
+            .list_objects("inbox/org_invites/")
+            .await
+            .handler_err("list inbox objects")?;
 
         for obj in objects {
             if obj.key.ends_with(".enc") {
-                let file_name = obj.key.split('/').next_back().unwrap();
+                let file_name = match obj.key.split('/').next_back() {
+                    Some(name) => name,
+                    None => {
+                        log::error!("Unexpected empty S3 key in inbox listing");
+                        continue;
+                    }
+                };
 
                 // 2. Request download URL
-                if let Ok(presigned) = client.presign_inbox_download(file_name).await {
-                    // 3. Download encrypted blob
-                    if let Ok(Some(encrypted_bytes)) = s3_client.download(&presigned).await {
-                        // 4. Decrypt using node's secret key
-                        let my_sec = node.get_node_private_key();
-                        if let Ok(plaintext) =
-                            fold_db::crypto::inbox::open_box_base64(my_sec, &encrypted_bytes)
-                        {
-                            if let Ok(bundle) =
-                                serde_json::from_slice::<OrgInviteBundle>(&plaintext)
-                            {
-                                invites.push(bundle);
-                            }
-                        } else {
-                            log::warn!("Failed to decrypt invite: {}", file_name);
+                let presigned = match client.presign_inbox_download(file_name).await {
+                    Ok(p) => p,
+                    Err(e) => {
+                        log::error!("Failed to presign download for invite {}: {}", file_name, e);
+                        continue;
+                    }
+                };
+                // 3. Download encrypted blob
+                let encrypted_bytes = match s3_client.download(&presigned).await {
+                    Ok(Some(bytes)) => bytes,
+                    Ok(None) => {
+                        log::error!(
+                            "Invite {} exists in listing but download returned empty",
+                            file_name
+                        );
+                        continue;
+                    }
+                    Err(e) => {
+                        log::error!("Failed to download invite {}: {}", file_name, e);
+                        continue;
+                    }
+                };
+                // 4. Decrypt using node's secret key
+                let my_sec = node.get_node_private_key();
+                let plaintext =
+                    match fold_db::crypto::inbox::open_box_base64(my_sec, &encrypted_bytes) {
+                        Ok(p) => p,
+                        Err(e) => {
+                            log::error!("Failed to decrypt invite {}: {}", file_name, e);
+                            continue;
                         }
+                    };
+                match serde_json::from_slice::<OrgInviteBundle>(&plaintext) {
+                    Ok(bundle) => invites.push(bundle),
+                    Err(e) => {
+                        log::error!("Failed to deserialize invite {}: {}", file_name, e);
                     }
                 }
             }
