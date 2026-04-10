@@ -22,6 +22,7 @@ export default function AllSetStep({ onFinish, completedSteps }) {
     async function detectStorage() {
       try {
         const resp = await fetch('/api/system/database-config')
+        if (!resp.ok) throw new Error(`HTTP ${resp.status}`)
         const data = await resp.json()
         const dbType = data?.data?.type || data?.type
         if (dbType === 'exemem') setStorageMode('Cloud (Exemem)')

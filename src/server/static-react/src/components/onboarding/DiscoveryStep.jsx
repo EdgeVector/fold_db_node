@@ -31,6 +31,7 @@ export default function DiscoveryStep({ onNext, onSkip }) {
   const [interests, setInterests] = useState(new Set())
   const [optingIn, setOptingIn] = useState(false)
   const [done, setDone] = useState(false)
+  const [error, setError] = useState(null)
 
   useEffect(() => {
     discoveryClient.listOptIns()
@@ -53,9 +54,12 @@ export default function DiscoveryStep({ onNext, onSkip }) {
       return
     }
     setOptingIn(true)
+    setError(null)
 
     // Opt in approved schemas whose inferred categories match selected interests
     const schemasToOptIn = (approvedSchemas || []).slice(0, 5) // limit to first 5
+    let succeeded = 0
+    let lastError = null
     for (const schema of schemasToOptIn) {
       try {
         const category = [...interests][0] // Use first interest as category
@@ -64,9 +68,16 @@ export default function DiscoveryStep({ onNext, onSkip }) {
           category,
           include_preview: false,
         })
-      } catch {
-        // Best effort
+        succeeded++
+      } catch (e) {
+        lastError = e
       }
+    }
+
+    if (succeeded === 0 && schemasToOptIn.length > 0) {
+      setError(`Failed to share schemas with the network: ${lastError?.message || 'Unknown error'}`)
+      setOptingIn(false)
+      return
     }
 
     setDone(true)
@@ -154,6 +165,10 @@ export default function DiscoveryStep({ onNext, onSkip }) {
             </p>
           )}
         </div>
+      )}
+
+      {error && (
+        <p className="text-gruvbox-red text-sm mb-4">{error}</p>
       )}
 
       <div className="flex gap-2 mt-4">
