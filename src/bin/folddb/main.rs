@@ -44,6 +44,12 @@ async fn main() {
                 DaemonCommand::Status => commands::daemon::status()
                     .await
                     .map(commands::CommandOutput::Message),
+                DaemonCommand::Install => {
+                    commands::daemon::install().map(commands::CommandOutput::Message)
+                }
+                DaemonCommand::Uninstall => {
+                    commands::daemon::uninstall().map(commands::CommandOutput::Message)
+                }
             };
             match result {
                 Ok(out) => output::render(&out, mode),
