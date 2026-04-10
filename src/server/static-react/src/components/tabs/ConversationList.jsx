@@ -69,9 +69,10 @@ function ConversationList({ onSelectConversation, onNewConversation }) {
 
       setSessions(summaries);
     } catch (err) {
-      // Schema not found or network error — show empty state for schema errors
+      // Schema not found (404) or network error — show empty state for schema errors
+      const status = err?.status;
       const message = err?.message || String(err);
-      if (message.includes('not found') || message.includes('schema')) {
+      if (status === 404 || message.includes('not found') || message.includes('schema')) {
         setSessions([]);
       } else {
         setError(message);

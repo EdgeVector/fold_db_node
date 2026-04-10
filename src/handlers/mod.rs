@@ -42,4 +42,6 @@ pub mod system;
 
 // Re-export commonly used types
 pub(crate) use response::handler_response;
-pub use response::{get_db_guard, ApiResponse, HandlerError, HandlerResult, IntoHandlerError};
+pub use response::{
+    get_db_guard, ApiResponse, HandlerError, HandlerResult, IntoHandlerError, IntoTypedHandlerError,
+};
