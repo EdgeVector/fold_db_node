@@ -639,7 +639,9 @@ fn cloud_disable(config_path: Option<&str>) -> Option<Result<commands::CommandOu
             .unwrap_or(false);
         if restart {
             let _ = commands::daemon::stop();
-            msg.push_str("\nDaemon stopped. Run `folddb daemon start` to restart without cloud sync.");
+            msg.push_str(
+                "\nDaemon stopped. Run `folddb daemon start` to restart without cloud sync.",
+            );
         } else {
             msg.push_str("\nRestart daemon when ready: folddb daemon stop && folddb daemon start");
         }
