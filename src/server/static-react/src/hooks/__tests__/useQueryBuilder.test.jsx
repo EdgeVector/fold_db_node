@@ -89,12 +89,12 @@ describe('useQueryBuilder Hook', () => {
   };
 
   describe('initialization', () => {
-    it('should initialize with empty query and no errors when no schema selected (no validation)', () => {
+    it('should initialize with empty query and validation error when no schema selected', () => {
       const { result } = renderUseQueryBuilder();
 
       expect(result.current.query).toEqual({});
-      expect(result.current.validationErrors).toEqual([]);
-      expect(result.current.isValid).toBe(true); // Always valid - no frontend validation
+      expect(result.current.validationErrors).toEqual(['No schema selected']);
+      expect(result.current.isValid).toBe(false); // Invalid without a schema
     });
 
     it('should not provide build and validate functions (removed)', () => {
@@ -106,7 +106,7 @@ describe('useQueryBuilder Hook', () => {
   });
 
   describe('schema validation (removed - backend validates)', () => {
-    it('should always be valid when schema is not selected (no frontend validation)', () => {
+    it('should be invalid when schema is not selected', () => {
       const { result } = renderUseQueryBuilder({
         schema: '',
         queryState: {
@@ -115,8 +115,8 @@ describe('useQueryBuilder Hook', () => {
         }
       });
 
-      expect(result.current.validationErrors).toEqual([]);
-      expect(result.current.isValid).toBe(true); // Always valid - backend validates
+      expect(result.current.validationErrors).toEqual(['No schema selected']);
+      expect(result.current.isValid).toBe(false); // Invalid without a schema
     });
 
     it('should always be valid when selected schema is not found (no frontend validation)', () => {
@@ -527,7 +527,7 @@ describe('useQueryBuilder Hook', () => {
         }
       });
 
-      expect(result.current.validationErrors).toEqual([]); // No validation
+      expect(result.current.validationErrors).toEqual(['No schema selected']);
     });
 
     it('should handle null filters and orderBy', () => {

@@ -1,10 +1,44 @@
-import { useState } from 'react';
+import { useState, useEffect, useRef, useCallback } from 'react';
 import { EnvelopeIcon, CheckIcon, XMarkIcon, BuildingOfficeIcon } from '@heroicons/react/24/outline';
 import { orgClient } from '../api/clients/orgClient';
 
 export default function PendingInvitesModal({ isOpen, onClose, pendingInvites, setPendingInvites }) {
   const [loadingIds, setLoadingIds] = useState(new Set());
   const [error, setError] = useState(null);
+  const modalRef = useRef(null);
+  const previousFocusRef = useRef(null);
+
+  // Focus trap and restore
+  useEffect(() => {
+    if (!isOpen) return;
+    previousFocusRef.current = document.activeElement;
+    const modal = modalRef.current;
+    if (modal) {
+      const firstFocusable = modal.querySelector('button, [href], input, select, textarea, [tabindex]:not([tabindex="-1"])');
+      if (firstFocusable) firstFocusable.focus();
+    }
+    return () => {
+      if (previousFocusRef.current && typeof previousFocusRef.current.focus === 'function') {
+        previousFocusRef.current.focus();
+      }
+    };
+  }, [isOpen]);
+
+  const handleKeyDown = useCallback((e) => {
+    if (e.key === 'Escape') { onClose(); return; }
+    if (e.key !== 'Tab') return;
+    const modal = modalRef.current;
+    if (!modal) return;
+    const focusable = modal.querySelectorAll('button, [href], input, select, textarea, [tabindex]:not([tabindex="-1"])');
+    if (focusable.length === 0) return;
+    const first = focusable[0];
+    const last = focusable[focusable.length - 1];
+    if (e.shiftKey && document.activeElement === first) {
+      e.preventDefault(); last.focus();
+    } else if (!e.shiftKey && document.activeElement === last) {
+      e.preventDefault(); first.focus();
+    }
+  }, [onClose]);
 
   if (!isOpen) return null;
 
@@ -66,8 +100,8 @@ export default function PendingInvitesModal({ isOpen, onClose, pendingInvites, s
   };
 
   return (
-    <div className="fixed inset-0 bg-background/80 backdrop-blur-sm z-50 flex items-center justify-center p-4" onClick={onClose}>
-      <div className="bg-surface border border-border rounded-xl shadow-xl max-w-md w-full overflow-hidden flex flex-col max-h-[85vh]" onClick={(e) => e.stopPropagation()}>
+    <div className="fixed inset-0 bg-background/80 backdrop-blur-sm z-50 flex items-center justify-center p-4" onClick={onClose} onKeyDown={handleKeyDown}>
+      <div ref={modalRef} role="dialog" aria-modal="true" aria-label="Pending Invitations" className="bg-surface border border-border rounded-xl shadow-xl max-w-md w-full overflow-hidden flex flex-col max-h-[85vh]" onClick={(e) => e.stopPropagation()}>
 
         {/* Header */}
         <div className="px-6 py-4 border-b border-border flex items-center justify-between sticky top-0 bg-surface">

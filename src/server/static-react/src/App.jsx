@@ -381,7 +381,7 @@ export function AppContent() {
 
             {/* Section Title */}
             <div className="text-xs uppercase tracking-widest text-tertiary mb-3">
-              {activeTab.replace('-', ' ')}
+              {activeTab.replaceAll('-', ' ')}
             </div>
 
             {/* Tab Content */}
