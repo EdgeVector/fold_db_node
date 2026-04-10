@@ -61,18 +61,25 @@ function SmartFolderTab({ onResult: onResultProp }) {
   const [orgs, setOrgs] = useState([])
   const [selectedOrg, setSelectedOrg] = useState('')
   useEffect(() => {
+    let cancelled = false
+    let retries = 0
+    const maxRetries = 5
     const fetchOrgs = () => {
+      if (cancelled) return
       const hash = localStorage.getItem('fold_user_hash')
       if (!hash) {
-        setTimeout(fetchOrgs, 1000)
+        retries++
+        if (retries < maxRetries) setTimeout(fetchOrgs, 1000)
         return
       }
       defaultApiClient.get('/org').then(res => {
+        if (cancelled) return
         const data = res.data || res
         setOrgs(data.orgs || [])
       }).catch(() => {})
     }
     fetchOrgs()
+    return () => { cancelled = true }
   }, [])
 
   // Ref for batchStatus so handleBack can read it without a stale closure

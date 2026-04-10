@@ -112,7 +112,7 @@ function ReferenceValue({ reference }) {
           {loading ? 'Loading...' : fetched ? (expanded ? 'Hide' : 'Show') : 'Fetch'}
         </button>
       </div>
-      {error && <div className="text-xs text-red-500">{error}</div>}
+      {error && <div className="text-xs text-gruvbox-red">{error}</div>}
       {fetched && expanded && (
         <div className="ml-4 border-l border-border pl-2">
           {Array.isArray(fetched) ? fetched.map((item, i) => (
@@ -175,9 +175,11 @@ export function FieldsTable({ fields }) {
         <tbody>
           {entries.map(([k, v]) => (
             <tr key={k} className="bg-surface">
-              <td className="align-top text-xs font-medium text-primary pr-4 whitespace-nowrap">{k}</td>
-              <td className="align-top text-xs text-primary">
-                {renderFieldValue(v)}
+              <td className="align-top text-xs font-medium text-primary pr-4 whitespace-nowrap max-w-[200px] truncate" title={k}>{k}</td>
+              <td className="align-top text-xs text-primary max-w-[500px]">
+                <div className="max-h-48 overflow-y-auto overflow-x-hidden">
+                  {renderFieldValue(v)}
+                </div>
               </td>
             </tr>
           ))}

@@ -4,7 +4,6 @@ import { getRangeSchemaInfo, getHashRangeSchemaInfo } from '../../utils/rangeSch
 import { useAppSelector, useAppDispatch } from '../../store/hooks'
 import {
   selectAllSchemas,
-  selectApprovedSchemas,
   approveSchema as approveSchemaAction,
   blockSchema as blockSchemaAction,
   fetchSchemas
@@ -463,18 +462,32 @@ function SchemaTab({ onResult, onSchemaUpdated }) {
     )
   }
 
-  const approvedSchemas = useAppSelector(selectApprovedSchemas)
   const [schemaFilter, setSchemaFilter] = useState('all') // 'all' | 'personal' | 'org'
+  const [stateFilter, setStateFilter] = useState('all') // 'all' | 'approved' | 'available' | 'blocked'
 
-  const filteredSchemas = approvedSchemas.filter(s => {
-    if (schemaFilter === 'personal') return !s.org_hash
-    if (schemaFilter === 'org') return !!s.org_hash
+  const filteredSchemas = schemas.filter(s => {
+    // Owner filter
+    if (schemaFilter === 'personal' && s.org_hash) return false
+    if (schemaFilter === 'org' && !s.org_hash) return false
+    // State filter
+    if (stateFilter !== 'all') {
+      const normalizedState = (s.state || '').toLowerCase()
+      if (normalizedState !== stateFilter) return false
+    }
     return true
   })
 
+  // Count schemas by state for the filter badges
+  const stateCounts = schemas.reduce((acc, s) => {
+    const state = (s.state || '').toLowerCase()
+    acc[state] = (acc[state] || 0) + 1
+    return acc
+  }, {})
+
   return (
     <div className="space-y-4">
-      <div className="flex items-center gap-2">
+      <div className="flex flex-wrap items-center gap-2">
+        {/* Owner filter */}
         {['all', 'personal', 'org'].map(f => (
           <button
             key={f}
@@ -488,11 +501,29 @@ function SchemaTab({ onResult, onSchemaUpdated }) {
             {f.charAt(0).toUpperCase() + f.slice(1)}
           </button>
         ))}
+        <span className="text-border mx-1">|</span>
+        {/* State filter */}
+        {['all', 'approved', 'available', 'blocked'].map(f => {
+          const count = f === 'all' ? schemas.length : (stateCounts[f] || 0)
+          return (
+            <button
+              key={f}
+              onClick={() => setStateFilter(f)}
+              className={`px-3 py-1 text-xs rounded-full border ${
+                stateFilter === f
+                  ? 'border-primary text-primary bg-primary/10'
+                  : 'border-border text-secondary hover:text-primary'
+              }`}
+            >
+              {f.charAt(0).toUpperCase() + f.slice(1)} ({count})
+            </button>
+          )
+        })}
       </div>
       {filteredSchemas.length > 0 ? (
         filteredSchemas.map(renderSchema)
       ) : (
-        <p className="text-secondary">No {schemaFilter === 'all' ? 'approved' : schemaFilter} schemas found.</p>
+        <p className="text-secondary">No schemas match the current filters.</p>
       )}
     </div>
   )

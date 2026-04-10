@@ -98,7 +98,7 @@ export default function DirectoryBrowserModal({ initialPath, onSelect, onClose }
 
         <div className="modal-body" style={{ minHeight: '16rem', maxHeight: '24rem' }}>
           {loading && <p className="text-sm text-secondary">Loading...</p>}
-          {error && <p className="text-sm text-red-400">{error}</p>}
+          {error && <p className="text-sm text-gruvbox-red">{error}</p>}
           {!loading && !error && directories.length === 0 && (
             <p className="text-sm text-secondary">No subdirectories found.</p>
           )}

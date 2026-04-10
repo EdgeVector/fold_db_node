@@ -307,7 +307,7 @@ function SourceCard({ source, enabled, onToggle, status, progress, message, resu
 
       {isDone && (
         <div className="flex items-center gap-2 mt-1">
-          <span className="text-green-500 text-xs">&#10003;</span>
+          <span className="text-gruvbox-green text-xs">&#10003;</span>
           <span className="text-xs text-primary">{message}</span>
           {result && (
             <span className="text-xs text-secondary">
@@ -319,8 +319,8 @@ function SourceCard({ source, enabled, onToggle, status, progress, message, resu
 
       {isError && (
         <div className="flex items-center gap-2 mt-1">
-          <span className="text-red-500 text-xs">&#10007;</span>
-          <span className="text-xs text-red-400">{message}</span>
+          <span className="text-gruvbox-red text-xs">&#10007;</span>
+          <span className="text-xs text-gruvbox-red">{message}</span>
         </div>
       )}
     </div>
