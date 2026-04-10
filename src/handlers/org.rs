@@ -181,13 +181,8 @@ pub async fn join_org(
     let membership = org_ops::join_org(&sled_db, invite, &my_public_key, &my_display_name)
         .handler_err("join org")?;
 
-    // Reconfigure org sync with the joined org
-    node.configure_org_sync_if_needed().await;
-
-    // Trigger immediate sync so org data downloads right away
-    node.trigger_immediate_sync().await;
-
-    // Notify cloud that we accepted (status → active) and clean up inbox
+    // Notify cloud FIRST that we accepted (status → active), so the storage
+    // backend recognizes us as a member before we try to download org data.
     if let Some(client) = get_auth_client(node).await {
         let org_hash = &membership.org_hash;
         if let Err(e) = client.accept_invite(org_hash).await {
@@ -203,6 +198,10 @@ pub async fn join_org(
             }
         }
     }
+
+    // Now configure sync and trigger download — cloud already knows we're a member
+    node.configure_org_sync_if_needed().await;
+    node.trigger_immediate_sync().await;
 
     Ok(ApiResponse::success_with_user(
         JoinOrgResponse { org: membership },

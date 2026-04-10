@@ -26,6 +26,7 @@ export default function OrgSettingsPanel() {
   const [newMemberName, setNewMemberName] = useState('')
   const [cloudMembers, setCloudMembers] = useState({})
   const [syncNotification, setSyncNotification] = useState(null)
+  const [pendingInvite, setPendingInvite] = useState(null)
 
   const syncPollRef = useRef(null)
   const retryRef = useRef(false)
@@ -168,16 +169,29 @@ export default function OrgSettingsPanel() {
     if (!newMemberKey.trim() || !newMemberName.trim()) return
     try {
       const memberName = newMemberName
-      await defaultApiClient.post(`/org/${orgHash}/members`, {
+      const res = await defaultApiClient.post(`/org/${orgHash}/members`, {
         node_public_key: newMemberKey,
         display_name: memberName
       })
       setNewMemberKey('')
       setNewMemberName('')
-      showSuccess(`Invite sent to ${memberName}!`)
+      // Show invite bundle for manual sharing (especially useful in local mode)
+      const invite = res.invite_bundle || res.data?.invite_bundle
+      if (invite) {
+        setPendingInvite(invite)
+      }
+      showSuccess(`Member added! ${invite ? 'Share the invite below.' : `Invite sent to ${memberName}!`}`)
       fetchOrgs()
     } catch (err) {
       setError(err.message || 'Failed to add member')
+    }
+  }
+
+  const handleCopyInvite = async () => {
+    if (pendingInvite) {
+      await navigator.clipboard.writeText(JSON.stringify(pendingInvite))
+      showSuccess('Invite copied to clipboard!')
+      setPendingInvite(null)
     }
   }
 
@@ -234,6 +248,23 @@ export default function OrgSettingsPanel() {
       {successMsg && (
         <div className="p-3 bg-green-900/30 border border-green-500/50 text-green-400 rounded-md text-sm">
           {successMsg}
+        </div>
+      )}
+
+      {pendingInvite && (
+        <div className="p-3 bg-primary/10 border border-primary/30 rounded-md flex flex-col gap-2">
+          <div className="flex justify-between items-center">
+            <span className="text-sm font-medium text-text-primary">Invite for {pendingInvite.org_name}</span>
+            <div className="flex gap-2">
+              <button onClick={handleCopyInvite} className="btn-primary text-xs px-3">
+                Copy Invite
+              </button>
+              <button onClick={() => setPendingInvite(null)} className="text-xs text-text-muted hover:text-text-primary">
+                Dismiss
+              </button>
+            </div>
+          </div>
+          <p className="text-xs text-text-muted">Share this invite with the new member so they can join from their node.</p>
         </div>
       )}
 
