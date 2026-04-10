@@ -285,13 +285,12 @@ impl OperationProcessor {
         let s3 = fold_db::sync::s3::S3Client::new(http.clone());
         let auth = fold_db::sync::auth::AuthClient::new(http, sync_setup.auth_url, sync_setup.auth);
 
-        // Open the existing Sled database to snapshot it
+        // Get SledPool from the running database for snapshot
         let config = self.node.config.clone();
         let db_path = config.get_storage_path();
-        let db = sled::open(&db_path)
-            .map_err(|e| FoldDbError::Config(format!("Failed to open sled for sync: {e}")))?;
+        let pool = std::sync::Arc::new(fold_db::storage::SledPool::new(db_path));
         let base_store: std::sync::Arc<dyn fold_db::storage::traits::NamespacedStore> =
-            std::sync::Arc::new(fold_db::storage::SledNamespacedStore::new(db));
+            std::sync::Arc::new(fold_db::storage::SledNamespacedStore::new(pool));
 
         let engine = std::sync::Arc::new(fold_db::sync::SyncEngine::new(
             sync_setup.device_id,

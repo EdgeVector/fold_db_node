@@ -179,8 +179,9 @@ pub async fn save_ingestion_config(
     // For now, try opening the Sled tree at the known data path
     if let Ok(folddb_home) = crate::utils::paths::folddb_home() {
         let data_path = folddb_home.join("data");
-        if let Ok(db) = sled::open(&data_path) {
-            if let Ok(store) = fold_db::NodeConfigStore::new(&db) {
+        {
+            let pool = std::sync::Arc::new(fold_db::storage::SledPool::new(data_path));
+            if let Ok(store) = fold_db::NodeConfigStore::new(pool) {
                 if let Err(e) =
                     crate::ingestion::config::IngestionConfig::save_to_sled(&store, &saved_config)
                 {

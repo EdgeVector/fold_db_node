@@ -932,8 +932,8 @@ impl LlmQueryService {
         let orgs = {
             let db_guard = node.get_fold_db().await.ok();
             db_guard
-                .and_then(|g| g.sled_db().cloned())
-                .map(|sled| fold_db::org::operations::list_orgs(&sled).unwrap_or_default())
+                .and_then(|g| g.sled_pool().cloned())
+                .map(|pool| fold_db::org::operations::list_orgs(&pool).unwrap_or_default())
                 .unwrap_or_default()
         };
 

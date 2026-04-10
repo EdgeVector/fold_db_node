@@ -785,15 +785,15 @@ impl FoldNode {
         };
 
         // Load org memberships from Sled
-        let sled_db = match db_guard.sled_db() {
-            Some(db) => db.clone(),
+        let pool = match db_guard.sled_pool() {
+            Some(p) => p.clone(),
             None => return,
         };
 
         // Drop the db guard before async work
         drop(db_guard);
 
-        let memberships = match org_ops::list_orgs(&sled_db) {
+        let memberships = match org_ops::list_orgs(&pool) {
             Ok(orgs) => orgs,
             Err(e) => {
                 log_feature!(
@@ -920,15 +920,15 @@ impl FoldNode {
             None => return Ok(None),
         };
 
-        let sled_db = match db_guard.sled_db() {
-            Some(db) => db.clone(),
+        let pool = match db_guard.sled_pool() {
+            Some(p) => p.clone(),
             None => return Ok(None),
         };
 
         drop(db_guard);
 
         // Get the org membership
-        let membership = org_ops::get_org(&sled_db, org_hash)?;
+        let membership = org_ops::get_org(&pool, org_hash)?;
         let membership = match membership {
             Some(m) => m,
             None => {
@@ -1048,11 +1048,11 @@ async fn migrate_config_files_to_sled(node: &FoldNode) {
     // TODO: Once the fold_db PR merges, replace this with:
     //   let store = match db_guard.config_store() { Some(s) => s, None => return };
     // For now, open the Sled tree directly via the stub.
-    let sled_db = match db_guard.sled_db() {
-        Some(db) => db.clone(),
+    let pool = match db_guard.sled_pool() {
+        Some(p) => p.clone(),
         None => return,
     };
-    let store = match NodeConfigStore::new(&sled_db) {
+    let store = match NodeConfigStore::new(pool) {
         Ok(s) => s,
         Err(e) => {
             log::warn!("Failed to open node_config tree for migration: {}", e);
