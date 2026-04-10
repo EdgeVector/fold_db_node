@@ -119,8 +119,8 @@ async fn main() {
         let result = match action {
             cli::CloudCommand::Enable => cloud_enable(&config, config_path.as_deref()).await,
             cli::CloudCommand::Disable => cloud_disable(config_path.as_deref()),
-            cli::CloudCommand::Status => {
-                // Status goes through daemon HTTP (handled later)
+            cli::CloudCommand::Status | cli::CloudCommand::Sync => {
+                // Status and Sync go through daemon HTTP (handled later)
                 None
             }
         };
@@ -243,17 +243,45 @@ async fn dispatch_http(
         }
         Command::Cloud { action } => match action {
             cli::CloudCommand::Status => {
-                let json = client.database_config().await?;
-                let has_sync = json.get("cloud_sync").is_some() && !json["cloud_sync"].is_null();
-                let msg = if has_sync {
-                    format!(
-                        "Cloud sync: enabled\nEndpoint: {}",
-                        json["cloud_sync"]["api_url"].as_str().unwrap_or("unknown")
-                    )
-                } else {
-                    "Cloud sync: disabled".to_string()
-                };
+                let config_json = client.database_config().await?;
+                let has_cloud =
+                    config_json.get("cloud_sync").is_some() && !config_json["cloud_sync"].is_null();
+
+                if !has_cloud {
+                    return Ok(commands::CommandOutput::Message(
+                        "Cloud sync: disabled".to_string(),
+                    ));
+                }
+
+                let endpoint = config_json["cloud_sync"]["api_url"]
+                    .as_str()
+                    .unwrap_or("unknown");
+
+                // Fetch live sync engine status
+                let sync_json = client.sync_status().await?;
+                let state = sync_json["state"].as_str().unwrap_or("unknown");
+                let pending = sync_json["pending_count"].as_u64();
+                let encrypted = sync_json["encryption_active"].as_bool().unwrap_or(false);
+
+                let mut msg = format!("Cloud sync: enabled\nEndpoint:   {}", endpoint);
+                msg.push_str(&format!("\nState:      {}", state));
+                if let Some(count) = pending {
+                    msg.push_str(&format!("\nPending:    {} entries", count));
+                }
+                msg.push_str(&format!(
+                    "\nEncryption: {}",
+                    if encrypted { "active" } else { "inactive" }
+                ));
+
                 Ok(commands::CommandOutput::Message(msg))
+            }
+            cli::CloudCommand::Sync => {
+                let json = client.sync_trigger().await?;
+                let message = json["message"]
+                    .as_str()
+                    .unwrap_or("Sync triggered")
+                    .to_string();
+                Ok(commands::CommandOutput::Message(message))
             }
             _ => unreachable!("Cloud enable/disable handled before daemon dispatch"),
         },
