@@ -54,37 +54,6 @@ export const APP_CONFIG = {
 };
 
 // ============================================================================
-// ENVIRONMENT CONFIGURATION
-// ============================================================================
-
-/**
- * Environment-specific settings
- */
-export const ENVIRONMENT_CONFIG = {
-  DEVELOPMENT: {
-    API_BASE_URL: '/api',
-    ENABLE_DEBUG_LOGGING: true,
-    ENABLE_MOCK_DATA: false,
-    CACHE_TTL_MS: 60000 // 1 minute for development
-  },
-  
-  PRODUCTION: {
-    API_BASE_URL: '/api',
-    ENABLE_DEBUG_LOGGING: false,
-    ENABLE_MOCK_DATA: false,
-    CACHE_TTL_MS: 300000 // 5 minutes for production
-  }
-};
-
-/**
- * Get current environment configuration
- */
-export const getCurrentEnvironmentConfig = () => {
-  const env = process.env.NODE_ENV || 'development';
-  return ENVIRONMENT_CONFIG[env.toUpperCase()] || ENVIRONMENT_CONFIG.DEVELOPMENT;
-};
-
-// ============================================================================
 // BROWSER AND DEVICE CONFIGURATION
 // ============================================================================
 
@@ -115,43 +84,10 @@ export const BROWSER_CONFIG = {
 };
 
 // ============================================================================
-// SECURITY CONFIGURATION
-// ============================================================================
-
-/**
- * Security-related configuration constants
- */
-export const SECURITY_CONFIG = {
-  // Cryptographic settings
-  CRYPTO: {
-    KEY_SIZE_BITS: 2048,
-    SIGNATURE_ALGORITHM: 'SHA-256',
-    ENCODING: 'base64'
-  },
-  
-  // Request security
-  REQUEST: {
-    MAX_PAYLOAD_SIZE: 1048576, // 1MB
-    TIMEOUT_MS: 30000,
-    RETRY_ATTEMPTS: 3
-  },
-  
-  // Content Security Policy
-  CSP: {
-    ALLOWED_ORIGINS: ['self'],
-    ALLOWED_SCRIPTS: ['self', 'unsafe-inline'],
-    ALLOWED_STYLES: ['self', 'unsafe-inline']
-  }
-};
-
-// ============================================================================
 // DEFAULT EXPORT
 // ============================================================================
 
 export default {
   APP_CONFIG,
-  ENVIRONMENT_CONFIG,
   BROWSER_CONFIG,
-  SECURITY_CONFIG,
-  getCurrentEnvironmentConfig
 };

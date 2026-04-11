@@ -9,8 +9,6 @@ import {
   APP_CONFIG,
   VALIDATION_RULES,
   VALIDATION_MESSAGES,
-  ERROR_CODES,
-  ERROR_MESSAGES,
   SCHEMA_STATES,
   DEFAULT_TAB,
 } from "../index";
@@ -56,21 +54,6 @@ describe("Constants Integration Tests", () => {
     test("Styling is now managed by CSS classes", () => {
       // COLORS and LAYOUT were removed - styling now in minimal-theme.css
       expect(true).toBe(true);
-    });
-  });
-
-  describe("Error Constants", () => {
-    test("ERROR_CODES should contain all error types", () => {
-      expect(ERROR_CODES).toBeDefined();
-      expect(ERROR_CODES.SCHEMA_NOT_APPROVED).toBe("SCHEMA_NOT_APPROVED");
-      expect(ERROR_CODES.RANGE_KEY_REQUIRED).toBe("RANGE_KEY_REQUIRED");
-      expect(ERROR_CODES.AUTH_REQUIRED).toBe("AUTH_REQUIRED");
-    });
-
-    test("ERROR_MESSAGES should map to ERROR_CODES", () => {
-      expect(ERROR_MESSAGES).toBeDefined();
-      expect(ERROR_MESSAGES[ERROR_CODES.SCHEMA_NOT_APPROVED]).toBeDefined();
-      expect(ERROR_MESSAGES[ERROR_CODES.RANGE_KEY_REQUIRED]).toBeDefined();
     });
   });
 
@@ -147,9 +130,8 @@ describe("Constants Usage Patterns", () => {
   });
 
   describe("Error Handling Integration", () => {
-    test("Error constants should support error recovery", () => {
-      expect(ERROR_CODES.SCHEMA_NOT_APPROVED).toBeTruthy();
-      expect(ERROR_MESSAGES[ERROR_CODES.SCHEMA_NOT_APPROVED]).toBeTruthy();
+    test("Validation messages should support error display", () => {
+      expect(VALIDATION_MESSAGES.SCHEMA_NOT_APPROVED).toBeTruthy();
     });
   });
 });
