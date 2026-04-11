@@ -10,11 +10,12 @@ const SIDEBAR_ITEMS = [
   { id: 'file-upload', label: 'Files', icon: '\u{1F4C4}', group: 'IMPORT' },
   { id: 'people', label: 'People', icon: '\u{1F465}', group: 'SOCIAL' },
   { id: 'discovery', label: 'Discover', icon: '\u{1F310}', group: 'SOCIAL' },
+  { id: 'settings', label: 'Settings', icon: '\u2699\uFE0F', group: 'SYSTEM' },
 ]
 
-const GROUPS = ['MAIN', 'DATA', 'IMPORT', 'SOCIAL']
+const GROUPS = ['MAIN', 'DATA', 'IMPORT', 'SOCIAL', 'SYSTEM']
 
-function Sidebar({ activeTab, onTabChange, onSettingsClick }) {
+function Sidebar({ activeTab, onTabChange }) {
   const [mobileOpen, setMobileOpen] = useState(false)
   const grouped = {}
   for (const group of GROUPS) {
@@ -80,14 +81,7 @@ function Sidebar({ activeTab, onTabChange, onSettingsClick }) {
         </div>
 
         <div className="border-t border-border">
-          <button
-            onClick={() => { onSettingsClick(); setMobileOpen(false) }}
-            className="w-full text-left px-4 py-2 text-sm flex items-center gap-2 text-secondary hover:text-primary hover:bg-surface-secondary transition-colors"
-          >
-            <span>{'\u2699\uFE0F'}</span>
-            <span>Settings</span>
-          </button>
-          <div className="px-4 pb-3 text-[10px] text-tertiary">
+          <div className="px-4 pb-3 pt-2 text-[10px] text-tertiary">
             v{version}
           </div>
         </div>

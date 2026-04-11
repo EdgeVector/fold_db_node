@@ -2,7 +2,7 @@
 export { FoldDbProvider } from "./components/FoldDbProvider";
 export { default as ResultsSection } from "./components/ResultsSection";
 export { default as TabNavigation } from "./components/TabNavigation";
-export { default as SettingsModal } from "./components/SettingsModal";
+export { default as SettingsTab } from "./components/tabs/SettingsTab";
 export { default as LogSidebar } from "./components/LogSidebar";
 export { default as Header } from "./components/Header";
 export { default as Footer } from "./components/Footer";

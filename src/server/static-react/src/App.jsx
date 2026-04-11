@@ -29,7 +29,7 @@ import MyProfileTab from './components/tabs/MyProfileTab'
 import ConflictsTab from './components/tabs/ConflictsTab'
 import TrustTab from './components/tabs/TrustTab'
 import RemoteQueryTab from './components/tabs/RemoteQueryTab'
-import SettingsModal from './components/SettingsModal'
+import SettingsTab from './components/tabs/SettingsTab'
 import OnboardingWizard, { ONBOARDING_STORAGE_KEY } from './components/onboarding/OnboardingWizard'
 
 import LogSidebar from './components/LogSidebar'
@@ -73,6 +73,7 @@ const HASH_TO_TAB = {
   'apple-import': 'apple-import',
   conflicts: 'conflicts',
   'remote-query': 'remote-query',
+  settings: 'settings',
 }
 
 function resolveTabFromHash() {
@@ -84,8 +85,7 @@ function resolveTabFromHash() {
 
 export function AppContent() {
   const [activeTab, setActiveTab] = useState(() => resolveTabFromHash() || DEFAULT_TAB)
-  const [isSettingsOpen, setIsSettingsOpen] = useState(false)
-  const [settingsInitialTab, setSettingsInitialTab] = useState(null)
+  const [settingsSubTab, setSettingsSubTab] = useState(null)
   const [results, setResults] = useState(null)
   const [setupDismissed, setSetupDismissed] = useState(
     () => localStorage.getItem('folddb_setup_dismissed') === '1'
@@ -187,10 +187,17 @@ export function AppContent() {
 
   const handleTabChange = (tab) => {
     setActiveTab(tab)
+    // Clear settings sub-tab when navigating away from settings
+    if (tab !== 'settings') setSettingsSubTab(null)
     // Update URL hash to match active tab
     if (typeof window !== 'undefined') {
       window.location.hash = tab;
     }
+  }
+
+  const navigateToSettings = (subTab) => {
+    setSettingsSubTab(subTab || null)
+    handleTabChange('settings')
   }
 
   const resultsRef = useRef(null)
@@ -260,6 +267,14 @@ export function AppContent() {
         return <TrustTab onResult={handleOperationResult} />
       case 'remote-query':
         return <RemoteQueryTab onResult={handleOperationResult} />
+      case 'settings':
+        return (
+          <SettingsTab
+            onResult={handleOperationResult}
+            initialSubTab={settingsSubTab}
+            onRelaunchOnboarding={() => { setShowOnboarding(true) }}
+          />
+        )
       default:
         return null
     }
@@ -312,17 +327,11 @@ export function AppContent() {
   return (
     <div className="h-screen flex flex-col bg-surface overflow-hidden">
       <Header
-        onSettingsClick={() => { setSettingsInitialTab(null); setIsSettingsOpen(true) }}
-        onAiSettingsClick={() => { setSettingsInitialTab('ai'); setIsSettingsOpen(true) }}
-        onCloudSettingsClick={() => { setSettingsInitialTab('upgrade-cloud'); setIsSettingsOpen(true) }}
+        onSettingsClick={() => navigateToSettings(null)}
+        onAiSettingsClick={() => navigateToSettings('ai')}
+        onCloudSettingsClick={() => navigateToSettings('upgrade-cloud')}
       />
       <UpdateBanner />
-      <SettingsModal
-        isOpen={isSettingsOpen}
-        onClose={() => setIsSettingsOpen(false)}
-        initialTab={settingsInitialTab}
-        onRelaunchOnboarding={() => { setIsSettingsOpen(false); setShowOnboarding(true) }}
-      />
 
       {showSetupBanner && (
         <div className="bg-gruvbox-elevated border-b border-border px-8 py-3 flex items-center justify-between">
@@ -331,7 +340,7 @@ export function AppContent() {
           </span>
           <div className="flex items-center gap-3">
             <button
-              onClick={() => setIsSettingsOpen(true)}
+              onClick={() => navigateToSettings('ai')}
               className="bg-gruvbox-blue text-surface text-sm px-4 py-1.5 border-none cursor-pointer hover:bg-gruvbox-green transition-colors"
             >
               Configure AI
@@ -355,7 +364,7 @@ export function AppContent() {
             Warning: AI is using {aiProvider} — personal data may be sent to external servers. Switch to a local LLM (Ollama) to keep data on your device.
           </span>
           <button
-            onClick={() => { setSettingsInitialTab('ai'); setIsSettingsOpen(true) }}
+            onClick={() => navigateToSettings('ai')}
             className="bg-gruvbox-yellow text-surface text-xs sm:text-sm px-3 sm:px-4 py-1 sm:py-1.5 border-none cursor-pointer hover:bg-gruvbox-orange transition-colors whitespace-nowrap flex-shrink-0"
           >
             Switch to Local LLM
@@ -367,7 +376,6 @@ export function AppContent() {
         <Sidebar
           activeTab={activeTab}
           onTabChange={handleTabChange}
-          onSettingsClick={() => { setSettingsInitialTab(null); setIsSettingsOpen(true) }}
         />
 
         <main className="flex-1 overflow-y-auto bg-surface-secondary">
