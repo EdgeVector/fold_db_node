@@ -383,10 +383,11 @@ fi
 export FOLDDB_HOME
 
 # Export EXEMEM_ENV so the Rust process picks up the correct environment.
-# --dev flag → dev; --exemem without --dev → dev (safe default for local development).
-# Production deployments set EXEMEM_ENV=prod explicitly in their environment.
-if [ "$DEV_MODE" = true ] || [ "$EXEMEM_MODE" = true ]; then
+# Default is prod. --dev flag overrides to dev.
+if [ "$DEV_MODE" = true ]; then
     export EXEMEM_ENV="${EXEMEM_ENV:-dev}"
+else
+    export EXEMEM_ENV="${EXEMEM_ENV:-prod}"
 fi
 
 # ============================================================================
@@ -448,7 +449,7 @@ fi
 if [ "$LOCAL_MODE" = true ]; then
     echo "Setting up LOCAL configuration (Sled storage)..."
     # Determine schema_service_url for config
-    CONFIG_SCHEMA_URL="https://y0q3m6vk75.execute-api.us-west-2.amazonaws.com"
+    CONFIG_SCHEMA_URL="https://axo709qs11.execute-api.us-east-1.amazonaws.com"
 
     cat > "$CONFIG_FILE" <<EOF
 {
@@ -478,8 +479,11 @@ elif [ "$EXEMEM_MODE" = true ]; then
         exit 1
     fi
 
-    EXEMEM_API_URL="https://ygyu7ritx8.execute-api.us-west-2.amazonaws.com"
-    CONFIG_SCHEMA_URL="https://y0q3m6vk75.execute-api.us-west-2.amazonaws.com"
+    EXEMEM_API_URL="https://jdsx4ixk2i.execute-api.us-east-1.amazonaws.com"
+    if [ "$DEV_MODE" = true ]; then
+        EXEMEM_API_URL="https://ygyu7ritx8.execute-api.us-west-2.amazonaws.com"
+    fi
+    CONFIG_SCHEMA_URL="https://axo709qs11.execute-api.us-east-1.amazonaws.com"
 
     # Build optional JSON fields
     if [ -n "$EXEMEM_SESSION_TOKEN" ]; then
@@ -534,7 +538,7 @@ EOF
 else
     # Default: local Sled storage (same as --local)
     echo "Setting up LOCAL configuration (Sled storage)..."
-    CONFIG_SCHEMA_URL="https://y0q3m6vk75.execute-api.us-west-2.amazonaws.com"
+    CONFIG_SCHEMA_URL="https://axo709qs11.execute-api.us-east-1.amazonaws.com"
 
     cat > "$CONFIG_FILE" <<EOF
 {
@@ -571,10 +575,15 @@ install_frontend_deps
 load_api_keys
 
 # Schema service setup
-# Prod: https://axo709qs11.execute-api.us-east-1.amazonaws.com (TODO: schema.folddb.com once DNS configured)
+# Prod: https://axo709qs11.execute-api.us-east-1.amazonaws.com (TODO: schema.folddb.com once DNS fixed)
 # Dev:  https://y0q3m6vk75.execute-api.us-west-2.amazonaws.com
-SCHEMA_SERVICE_URL="https://y0q3m6vk75.execute-api.us-west-2.amazonaws.com"
+SCHEMA_SERVICE_URL="https://axo709qs11.execute-api.us-east-1.amazonaws.com"
 SCHEMA_SERVICE_PID=""
+
+if [ "$DEV_MODE" = true ]; then
+    SCHEMA_SERVICE_URL="https://y0q3m6vk75.execute-api.us-west-2.amazonaws.com"
+    echo "Using DEV schema service"
+fi
 
 if [ "$LOCAL_SCHEMA" = true ]; then
     SCHEMA_SERVICE_URL="http://127.0.0.1:${SCHEMA_PORT}"
