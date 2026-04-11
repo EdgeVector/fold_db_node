@@ -9,14 +9,14 @@ set -e
 #   ./run.sh [OPTIONS]
 #
 # Options:
-#   --local          Use local Sled storage (default: cloud/DynamoDB)
+#   --local          Use local Sled storage (default, kept for compatibility)
 #   --exemem         Exemem cloud sync mode (local Sled + encrypted sync)
 #   --local-schema   Run local schema service (for offline development)
 #   --dev            Use dev schema service (default: prod)
 #   --reset-db       Reset database from test_db template
 #   --empty-db       Start with empty database
 #   --demo           Use isolated demo directories ($FOLDDB_HOME/demo-data, demo-config)
-#   --region=REGION  AWS region for cloud mode (default: us-west-2)
+#   --region=REGION  Legacy flag, ignored
 #   --home <path>    Set FOLDDB_HOME (default: .folddb relative to CWD)
 #   --port <port>    HTTP server port (default: 9001)
 #   --schema-port <port>  Schema service port (default: 9002)
@@ -25,8 +25,8 @@ set -e
 #   FOLDDB_HOME      Where all instance-specific state lives (default: .folddb)
 #
 # Examples:
-#   ./run.sh                           # Cloud mode with prod schema service
-#   ./run.sh --dev                     # Cloud mode with dev schema service
+#   ./run.sh                           # Local Sled mode with prod schema service
+#   ./run.sh --dev                     # Local Sled mode with dev schema service
 #   ./run.sh --local                   # Local storage with global schema service
 #   ./run.sh --local --local-schema    # Fully offline development
 #   ./run.sh --local --empty-db        # Local with fresh database
@@ -304,8 +304,6 @@ DEV_MODE=false
 RESET_DB=false
 EMPTY_DB=false
 DEMO_MODE=false
-REGION="us-west-2"
-TABLE_NAME="FoldDBStorage"
 HTTP_PORT="${FOLDDB_PORT:-9001}"
 SCHEMA_PORT="9002"
 
@@ -333,7 +331,7 @@ for arg in "$@"; do
             DEMO_MODE=true
             ;;
         --region=*)
-            REGION="${arg#*=}"
+            # Legacy flag, ignored
             ;;
         --home)
             # Handled below via positional peek
@@ -534,45 +532,15 @@ EOF
     echo "Exemem API: $EXEMEM_API_URL"
     echo "Discovery: $([ -n "$DISCOVERY_MASTER_KEY" ] && echo "configured" || echo "no identity yet — register to create one")"
 else
-    echo "Setting up CLOUD configuration (DynamoDB storage)..."
-
-    # Read node identity (created during registration, not on startup)
-    IDENTITY_FILE="$FOLDDB_HOME/config/node_identity.json"
-    if [ -f "$IDENTITY_FILE" ]; then
-        USER_ID=$(python3 -c "import json; print(json.load(open('$IDENTITY_FILE'))['public_key'])" 2>/dev/null || echo "")
-        echo "Node Identity: $USER_ID"
-    else
-        echo "No node identity found — register to create one"
-        USER_ID=""
-    fi
-
-    echo "Region: $REGION"
-    echo "Table prefix: $TABLE_NAME"
-
+    # Default: local Sled storage (same as --local)
+    echo "Setting up LOCAL configuration (Sled storage)..."
     CONFIG_SCHEMA_URL="https://y0q3m6vk75.execute-api.us-west-2.amazonaws.com"
 
     cat > "$CONFIG_FILE" <<EOF
 {
   "database": {
-    "type": "cloud",
-    "region": "$REGION",
-    "tables": {
-      "main": "${TABLE_NAME}-main",
-      "metadata": "${TABLE_NAME}-metadata",
-      "permissions": "${TABLE_NAME}-node_id_schema_permissions",
-      "transforms": "${TABLE_NAME}-transforms",
-      "orchestrator": "${TABLE_NAME}-orchestrator_state",
-      "schema_states": "${TABLE_NAME}-schema_states",
-      "schemas": "${TABLE_NAME}-schemas",
-      "public_keys": "${TABLE_NAME}-public_keys",
-      "transform_queue": "${TABLE_NAME}-transform_queue_tree",
-      "native_index": "${TABLE_NAME}-native_index",
-      "process": "${TABLE_NAME}-process",
-      "logs": "${TABLE_NAME}-logs",
-      "idempotency": "${TABLE_NAME}-idempotency"
-    },
-    "auto_create": true,
-    "user_id": "$USER_ID"
+    "type": "local",
+    "path": "$FOLDDB_HOME/data"
   },
   "storage_path": "$FOLDDB_HOME/data",
   "default_trust_distance": 1,
@@ -584,16 +552,8 @@ else
   "schema_service_url": "$CONFIG_SCHEMA_URL"
 }
 EOF
-
-    # Export DynamoDB config for ProgressStore
-    export FOLD_DYNAMODB_TABLE_PREFIX="$TABLE_NAME"
-    export FOLD_DYNAMODB_REGION="$REGION"
-    export FOLD_DYNAMODB_USER_ID="$USER_ID"
-
-    CARGO_FEATURES="aws-backend"
-    SERVER_TIMEOUT=180
-
-    echo "Note: Ensure AWS credentials are configured"
+    CARGO_FEATURES=""
+    SERVER_TIMEOUT=60
 fi
 
 echo "Configuration saved to $CONFIG_FILE"
@@ -645,18 +605,15 @@ echo ""
 echo "=========================================="
 echo "FoldDB Development Server Running"
 echo "=========================================="
-if [ "$LOCAL_MODE" = true ]; then
-    STORAGE_LABEL="LOCAL (Sled)"
-elif [ "$EXEMEM_MODE" = true ]; then
+if [ "$EXEMEM_MODE" = true ]; then
     STORAGE_LABEL="EXEMEM (Sled + cloud sync)"
 else
-    STORAGE_LABEL="CLOUD (DynamoDB)"
+    STORAGE_LABEL="LOCAL (Sled)"
 fi
 echo "Storage: $STORAGE_LABEL"
 echo "FOLDDB_HOME: $FOLDDB_HOME"
 echo "HTTP Port: $HTTP_PORT"
 echo "Schema Service: DEV - $SCHEMA_SERVICE_URL"
-[ "$LOCAL_MODE" = false ] && [ "$EXEMEM_MODE" = false ] && echo "AWS Region: $REGION"
 echo "=========================================="
 
 # Start Vite dev server (foreground — on_exit trap handles cleanup)
