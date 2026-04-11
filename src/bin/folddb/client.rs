@@ -282,6 +282,16 @@ impl FoldDbClient {
         self.post("/api/org/join", invite_bundle).await
     }
 
+    // --- Setup ---
+
+    pub async fn apply_setup(&self, storage: &Value) -> Result<Value, CliError> {
+        self.post(
+            "/api/system/setup",
+            &serde_json::json!({ "storage": storage }),
+        )
+        .await
+    }
+
     // --- Sync ---
 
     pub async fn sync_status(&self) -> Result<Value, CliError> {
