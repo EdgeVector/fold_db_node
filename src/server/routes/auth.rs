@@ -349,9 +349,79 @@ async fn signed_register(
                 }
             }
         }
+
+        // Update node_config.json so the API key survives restarts.
+        // Without this, the config file retains the old (deactivated) key and
+        // overwrites the fresh Sled credentials on next startup.
+        update_config_api_key(api_key, &exemem_api_url());
     }
 
     Ok(json)
+}
+
+/// Update the api_key in node_config.json so it survives restarts.
+/// Reads the file, updates the database.api_key field, writes back atomically.
+fn update_config_api_key(new_api_key: &str, api_url: &str) {
+    let config_path = std::env::var("NODE_CONFIG")
+        .ok()
+        .or_else(|| {
+            crate::utils::paths::folddb_home().ok().map(|h| {
+                h.join("config/node_config.json")
+                    .to_string_lossy()
+                    .to_string()
+            })
+        })
+        .unwrap_or_else(|| "config/node_config.json".to_string());
+
+    let path = std::path::Path::new(&config_path);
+    if !path.exists() {
+        return;
+    }
+
+    let content = match std::fs::read_to_string(path) {
+        Ok(c) => c,
+        Err(e) => {
+            log::warn!("Failed to read node config for API key update: {}", e);
+            return;
+        }
+    };
+
+    let mut config: serde_json::Value = match serde_json::from_str(&content) {
+        Ok(v) => v,
+        Err(e) => {
+            log::warn!("Failed to parse node config for API key update: {}", e);
+            return;
+        }
+    };
+
+    // Update the api_key in the database section
+    if let Some(db) = config.get_mut("database") {
+        if let Some(obj) = db.as_object_mut() {
+            obj.insert("api_key".to_string(), serde_json::json!(new_api_key));
+            obj.insert("api_url".to_string(), serde_json::json!(api_url));
+            // Ensure type is exemem
+            if !obj.contains_key("type") {
+                obj.insert("type".to_string(), serde_json::json!("exemem"));
+            }
+        }
+    }
+
+    // Atomic write: temp file + rename
+    let tmp_path = path.with_extension("json.tmp");
+    match serde_json::to_string_pretty(&config) {
+        Ok(updated) => {
+            if let Err(e) = std::fs::write(&tmp_path, &updated) {
+                log::warn!("Failed to write temp config: {}", e);
+                return;
+            }
+            if let Err(e) = std::fs::rename(&tmp_path, path) {
+                log::warn!("Failed to rename temp config: {}", e);
+                return;
+            }
+            log::info!("Updated node_config.json with fresh API key");
+        }
+        Err(e) => log::warn!("Failed to serialize config: {}", e),
+    }
 }
 
 // ============================================================================
@@ -479,6 +549,9 @@ async fn refresh_auth_standalone() -> Result<fold_db::sync::auth::SyncAuth, Stri
             let _ = tree.flush();
         }
     }
+
+    // Also update node_config.json so the fresh key survives restarts
+    update_config_api_key(api_key, &api_url);
 
     log::info!("Sync auth refreshed successfully via re-registration");
 
