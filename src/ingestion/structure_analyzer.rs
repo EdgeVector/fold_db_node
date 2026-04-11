@@ -4,7 +4,6 @@
 //! that capture all possible fields across multiple objects.
 
 use serde_json::Value;
-use std::collections::HashMap;
 
 /// Analyzes JSON structure and creates a superset representation
 /// that includes all fields found across all top-level elements
@@ -126,80 +125,34 @@ impl StructureAnalyzer {
         }
     }
 
-    /// Get statistics about the structure analysis
+    /// Get lightweight statistics about the structure analysis.
     ///
-    /// Returns information about the number of elements analyzed,
-    /// unique fields found, and type variations.
+    /// Returns the number of top-level elements and unique field names.
+    /// Only computes what callers actually need (element count + unique fields).
     pub fn get_analysis_stats(json_data: &Value) -> StructureStats {
         match json_data {
             Value::Array(array) => {
-                let mut field_counts: HashMap<String, usize> = HashMap::new();
-                let mut type_variations: HashMap<String, HashMap<String, usize>> = HashMap::new();
-
+                let mut unique: std::collections::HashSet<&str> =
+                    std::collections::HashSet::new();
                 for item in array {
                     if let Some(obj) = item.as_object() {
-                        for (key, value) in obj {
-                            let type_name = Self::json_type_name(value).to_string();
-
-                            // Count field occurrences
-                            *field_counts.entry(key.clone()).or_insert(0) += 1;
-
-                            // Track type variations per field
-                            type_variations
-                                .entry(key.clone())
-                                .or_default()
-                                .entry(type_name)
-                                .and_modify(|count| *count += 1)
-                                .or_insert(1);
+                        for key in obj.keys() {
+                            unique.insert(key.as_str());
                         }
                     }
                 }
-
                 StructureStats {
                     total_elements: array.len(),
-                    unique_fields: field_counts.len(),
-                    field_counts,
-                    type_variations,
+                    unique_fields: unique.len(),
                 }
             }
-            Value::Object(obj) => {
-                let mut field_counts: HashMap<String, usize> = HashMap::new();
-                let mut type_variations: HashMap<String, HashMap<String, usize>> = HashMap::new();
-
-                for (key, value) in obj {
-                    let type_name = Self::json_type_name(value).to_string();
-                    field_counts.insert(key.clone(), 1);
-                    type_variations.insert(key.clone(), {
-                        let mut map = HashMap::new();
-                        map.insert(type_name, 1);
-                        map
-                    });
-                }
-
-                StructureStats {
-                    total_elements: 1,
-                    unique_fields: obj.len(),
-                    field_counts,
-                    type_variations,
-                }
-            }
+            Value::Object(obj) => StructureStats {
+                total_elements: 1,
+                unique_fields: obj.len(),
+            },
             _ => StructureStats {
                 total_elements: 1,
                 unique_fields: 1,
-                field_counts: {
-                    let mut map = HashMap::new();
-                    map.insert("value".to_string(), 1);
-                    map
-                },
-                type_variations: {
-                    let mut map = HashMap::new();
-                    map.insert("value".to_string(), {
-                        let mut type_map = HashMap::new();
-                        type_map.insert(Self::json_type_name(json_data).to_string(), 1);
-                        type_map
-                    });
-                    map
-                },
             },
         }
     }
@@ -212,32 +165,6 @@ pub struct StructureStats {
     pub total_elements: usize,
     /// Number of unique fields found
     pub unique_fields: usize,
-    /// Count of occurrences for each field
-    pub field_counts: HashMap<String, usize>,
-    /// Type variations for each field
-    pub type_variations: HashMap<String, HashMap<String, usize>>,
-}
-
-impl StructureStats {
-    /// Get fields that appear in all elements (100% coverage)
-    #[cfg(test)]
-    pub fn get_common_fields(&self) -> Vec<String> {
-        self.field_counts
-            .iter()
-            .filter(|(_, &count)| count == self.total_elements)
-            .map(|(field, _)| field.clone())
-            .collect()
-    }
-
-    /// Get fields that appear in some but not all elements (partial coverage)
-    #[cfg(test)]
-    pub fn get_partial_fields(&self) -> Vec<String> {
-        self.field_counts
-            .iter()
-            .filter(|(_, &count)| count > 0 && count < self.total_elements)
-            .map(|(field, _)| field.clone())
-            .collect()
-    }
 }
 
 #[cfg(test)]
