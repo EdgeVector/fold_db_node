@@ -2,7 +2,7 @@ import React from 'react'
 import { screen, fireEvent, waitFor } from '@testing-library/react'
 import { describe, it, expect, beforeEach, vi } from 'vitest'
 import SchemaTab from '../../../components/tabs/SchemaTab'
-import { renderWithRedux, createTestSchemaState } from '../../utils/testStore.jsx'
+import { renderWithRedux, createTestSchemaState } from '../../utils/testUtilities.jsx'
 
 // Mock schemaClient
 vi.mock('../../../api/clients/schemaClient', () => ({

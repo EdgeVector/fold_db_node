@@ -8,7 +8,7 @@ import { describe, it, expect, beforeEach, vi } from 'vitest';
 import { screen, fireEvent } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import QueryForm from '../../../components/query/QueryForm';
-import { renderWithRedux, createAuthenticatedState } from '../../utils/testHelpers';
+import { renderWithRedux, createAuthenticatedState } from '../../utils/testUtilities.jsx';
 
 describe('QueryForm Component', () => {
   let mockProps;

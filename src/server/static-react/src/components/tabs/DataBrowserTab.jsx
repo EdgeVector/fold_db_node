@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useState, Fragment } from 'react'
+import { useCallback, useMemo, useState, Fragment } from 'react'
 import { useAppSelector } from '../../store/hooks'
 import { selectAllSchemas } from '../../store/schemaSlice'
 import { useOrgNames } from '../../hooks/useOrgNames'

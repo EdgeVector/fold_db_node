@@ -2,7 +2,7 @@ import React from 'react'
 import { screen, fireEvent, waitFor } from '@testing-library/react'
 import { describe, it, expect, beforeEach, vi } from 'vitest'
 import MyProfileTab from '../../../components/tabs/MyProfileTab'
-import { renderWithRedux } from '../../utils/testStore.jsx'
+import { renderWithRedux } from '../../utils/testUtilities.jsx'
 
 vi.mock('../../../api/clients/discoveryClient', () => {
   const getInterests = vi.fn()

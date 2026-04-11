@@ -1,7 +1,11 @@
 import { screen, fireEvent } from '@testing-library/react'
 import { describe, it, expect, vi } from 'vitest'
 import Header from '../../components/Header'
-import { renderWithRedux } from '../utils/testHelpers.jsx'
+import { renderWithRedux } from '../utils/testUtilities.jsx'
+import ingestionReducer from '../../store/ingestionSlice'
+
+// Header uses selectIngestionConfig, so include the ingestion reducer
+const extraReducers = { ingestion: ingestionReducer }
 
 const createAuthState = (overrides = {}) => ({
   isAuthenticated: false,
@@ -20,7 +24,7 @@ describe('Header Component', () => {
 
   it('renders header with correct title', () => {
     renderWithRedux(<Header onSettingsClick={vi.fn()} />, {
-      preloadedState: defaultPreloadedState
+      preloadedState: defaultPreloadedState, extraReducers
     })
 
     // Header shows "FoldDB"
@@ -29,7 +33,7 @@ describe('Header Component', () => {
 
   it('has header styling', () => {
     renderWithRedux(<Header onSettingsClick={vi.fn()} />, {
-      preloadedState: defaultPreloadedState
+      preloadedState: defaultPreloadedState, extraReducers
     })
 
     const header = screen.getByRole('banner')
@@ -38,7 +42,7 @@ describe('Header Component', () => {
 
   it('has proper semantic structure', () => {
     renderWithRedux(<Header onSettingsClick={vi.fn()} />, {
-      preloadedState: defaultPreloadedState
+      preloadedState: defaultPreloadedState, extraReducers
     })
 
     const header = screen.getByRole('banner')
@@ -51,7 +55,7 @@ describe('Header Component', () => {
 
   it('has proper layout classes', () => {
     renderWithRedux(<Header onSettingsClick={vi.fn()} />, {
-      preloadedState: defaultPreloadedState
+      preloadedState: defaultPreloadedState, extraReducers
     })
 
     const container = screen.getByRole('banner').firstChild
@@ -60,7 +64,7 @@ describe('Header Component', () => {
 
   it('title link has logo styling', () => {
     renderWithRedux(<Header onSettingsClick={vi.fn()} />, {
-      preloadedState: defaultPreloadedState
+      preloadedState: defaultPreloadedState, extraReducers
     })
 
     const link = screen.getByRole('link')
@@ -69,7 +73,7 @@ describe('Header Component', () => {
 
   it('displays settings button', () => {
     renderWithRedux(<Header onSettingsClick={vi.fn()} />, {
-      preloadedState: defaultPreloadedState
+      preloadedState: defaultPreloadedState, extraReducers
     })
 
     const settingsButton = screen.getByRole('button', { name: /settings/i })
@@ -78,7 +82,7 @@ describe('Header Component', () => {
 
   it('displays status indicators', () => {
     renderWithRedux(<Header onSettingsClick={vi.fn()} />, {
-      preloadedState: defaultPreloadedState
+      preloadedState: defaultPreloadedState, extraReducers
     })
 
     // Shows placeholder while loading storage mode
@@ -88,7 +92,7 @@ describe('Header Component', () => {
   it('calls onSettingsClick when settings button is clicked', () => {
     const mockSettingsClick = vi.fn()
     renderWithRedux(<Header onSettingsClick={mockSettingsClick} />, {
-      preloadedState: defaultPreloadedState
+      preloadedState: defaultPreloadedState, extraReducers
     })
 
     const settingsButton = screen.getByRole('button', { name: /settings/i })
@@ -102,7 +106,7 @@ describe('Header Component', () => {
       auth: createAuthState({ isAuthenticated: true, user: { id: 'testuser123456' } })
     }
     renderWithRedux(<Header onSettingsClick={vi.fn()} />, {
-      preloadedState: authenticatedState
+      preloadedState: authenticatedState, extraReducers
     })
 
     // Node ID is truncated to first 8 chars with copy-on-click

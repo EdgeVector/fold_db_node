@@ -2,7 +2,7 @@ import React from 'react'
 import { screen, fireEvent } from '@testing-library/react'
 import { describe, it, expect, beforeEach, vi } from 'vitest'
 import MutationTab from '../../../components/tabs/MutationTab'
-import { renderWithRedux, createTestSchemaState } from '../../utils/testStore.jsx'
+import { renderWithRedux, createTestSchemaState } from '../../utils/testUtilities.jsx'
 
 // Mock the API client
 vi.mock('../../../api', () => ({

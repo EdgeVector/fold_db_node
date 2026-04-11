@@ -12,7 +12,7 @@ import QueryActions from '../../components/query/QueryActions.jsx';
 import QueryForm from '../../components/query/QueryForm.jsx';
 import QueryBuilder from '../../components/query/QueryBuilder.jsx';
 import QueryPreview from '../../components/query/QueryPreview.jsx';
-import { renderWithRedux, createTestStore, createAuthenticatedState } from '../utils/testHelpers.jsx';
+import { renderWithRedux, createTestStore, createAuthenticatedState } from '../utils/testUtilities.jsx';
 
 // Mock the query hooks
 vi.mock('../../hooks/useQueryState.js', () => ({

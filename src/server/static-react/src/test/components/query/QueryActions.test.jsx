@@ -8,7 +8,7 @@ import { describe, it, expect, beforeEach, vi } from 'vitest';
 import { screen, waitFor } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import QueryActions from '../../../components/query/QueryActions';
-import { renderWithRedux, createAuthenticatedState } from '../../utils/testHelpers';
+import { renderWithRedux, createAuthenticatedState } from '../../utils/testUtilities.jsx';
 
 describe('QueryActions Component', () => {
   let mockProps;
