@@ -2487,7 +2487,7 @@ async fn process_data_share(
         let mutation = fold_db::schema::types::Mutation::new(
             record.schema_name.clone(),
             record.fields.clone(),
-            key,
+            key.clone(),
             payload.sender_public_key.clone(),
             fold_db::schema::types::operations::MutationType::Create,
         );
@@ -2522,6 +2522,35 @@ async fn process_data_share(
                     if let Err(e) = upload_storage.save_file(file_name, &file_bytes, None).await {
                         log::warn!("Failed to save shared file '{}': {}", file_name, e);
                     }
+
+                    // 4. Run face detection on shared photos
+                    #[cfg(feature = "face-detection")]
+                    {
+                        let db_ops = db.get_db_ops();
+                        if let Some(native_idx) = db_ops.native_index_manager() {
+                            if native_idx.has_face_processor() {
+                                match native_idx
+                                    .index_faces(&record.schema_name, &key, &file_bytes)
+                                    .await
+                                {
+                                    Ok(count) if count > 0 => {
+                                        log::info!(
+                                            "Detected {} face(s) in shared photo '{}'",
+                                            count,
+                                            file_name
+                                        );
+                                    }
+                                    Ok(_) => {}
+                                    Err(e) => {
+                                        log::warn!(
+                                            "Face detection failed on shared photo: {}",
+                                            e
+                                        );
+                                    }
+                                }
+                            }
+                        }
+                    }
                 }
                 Err(e) => {
                     log::warn!("Failed to decode shared file data: {}", e);
@@ -2530,5 +2559,95 @@ async fn process_data_share(
         }
     }
 
+    // 5. Store a notification for the UI
+    let notification = serde_json::json!({
+        "type": "data_share_received",
+        "sender_display_name": payload.sender_display_name,
+        "sender_public_key": payload.sender_public_key,
+        "records_received": payload.records.len(),
+        "schema_names": payload.records.iter().map(|r| r.schema_name.clone()).collect::<Vec<_>>(),
+        "received_at": chrono::Utc::now().to_rfc3339(),
+    });
+
+    let notif_key = format!(
+        "notification:{}:{}",
+        chrono::Utc::now().timestamp_millis(),
+        uuid::Uuid::new_v4()
+    );
+    let store = get_metadata_store(&db);
+    if let Err(e) = store
+        .put(
+            notif_key.as_bytes(),
+            serde_json::to_vec(&notification).unwrap_or_default(),
+        )
+        .await
+    {
+        log::warn!("Failed to store data share notification: {}", e);
+    }
+
+    log::info!(
+        "Received {} records from {} (schemas: {})",
+        payload.records.len(),
+        payload.sender_display_name,
+        payload
+            .records
+            .iter()
+            .map(|r| r.schema_name.as_str())
+            .collect::<Vec<_>>()
+            .join(", ")
+    );
+
     Ok(())
+}
+
+// === Notification handlers ===
+
+/// List all notifications stored in the metadata store.
+pub async fn list_notifications(
+    node: &FoldNode,
+) -> HandlerResult<serde_json::Value> {
+    let db = node
+        .get_fold_db()
+        .map_err(|e| HandlerError::Internal(format!("Failed to access database: {e}")))?;
+    let store = get_metadata_store(&db);
+
+    let entries = store
+        .scan_prefix(b"notification:")
+        .await
+        .map_err(|e| HandlerError::Internal(format!("Failed to scan notifications: {e}")))?;
+
+    let notifications: Vec<serde_json::Value> = entries
+        .iter()
+        .filter_map(|(key, value)| {
+            let key_str = String::from_utf8_lossy(key);
+            let mut notif: serde_json::Value = serde_json::from_slice(value).ok()?;
+            notif
+                .as_object_mut()?
+                .insert("id".to_string(), serde_json::json!(key_str));
+            Some(notif)
+        })
+        .collect();
+
+    Ok(ApiResponse::success(serde_json::json!({
+        "notifications": notifications,
+        "count": notifications.len(),
+    })))
+}
+
+/// Dismiss (delete) a single notification by its ID.
+pub async fn dismiss_notification(
+    node: &FoldNode,
+    notification_id: &str,
+) -> HandlerResult<serde_json::Value> {
+    let db = node
+        .get_fold_db()
+        .map_err(|e| HandlerError::Internal(format!("Failed to access database: {e}")))?;
+    let store = get_metadata_store(&db);
+
+    store
+        .delete(notification_id.as_bytes())
+        .await
+        .map_err(|e| HandlerError::Internal(format!("Failed to dismiss notification: {e}")))?;
+
+    Ok(ApiResponse::success(serde_json::json!({"dismissed": true})))
 }

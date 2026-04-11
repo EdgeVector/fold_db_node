@@ -711,6 +711,16 @@ impl FoldHttpServer {
                 // Data sharing
                 .route("/share", web::post().to(discovery_routes::share_data)),
         );
+
+        // Notification routes (top-level, not under /discovery)
+        cfg.service(
+            web::scope("/notifications")
+                .route("", web::get().to(discovery_routes::list_notifications))
+                .route(
+                    "/{id}",
+                    web::delete().to(discovery_routes::dismiss_notification),
+                ),
+        );
     }
 
     fn configure_trust_routes(cfg: &mut web::ServiceConfig) {
