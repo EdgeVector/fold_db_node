@@ -653,7 +653,8 @@ impl IngestionService {
             }
             // Classify photo visibility using AI
             crate::ingestion::file_handling::json_processor::classify_and_set_visibility(
-                &mut parent, self,
+                &mut parent,
+                self,
             )
             .await;
         }
