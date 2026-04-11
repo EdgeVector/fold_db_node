@@ -12,7 +12,7 @@ import SchemaName from '../shared/SchemaName'
 import { MagnifyingGlassIcon } from '@heroicons/react/24/outline'
 import { toErrorMessage } from '../../utils/schemaUtils'
 import { getAllFieldPolicies, setFieldPolicy as setFieldPolicyApi } from '../../api/clients/sharingClient'
-import { orgClient } from '../../api/clients/orgClient'
+import { useOrgNames } from '../../hooks/useOrgNames'
 
 const TRUST_TIERS = ['Public', 'Outer', 'Trusted', 'Inner', 'Owner']
 
@@ -175,18 +175,10 @@ function SchemaTab({ onResult, onSchemaUpdated }) {
   const [fieldPolicies, setFieldPolicies] = useState({})
   // Which field's detail panel is open: "schemaName.fieldName" or null
   const [activePolicyField, setActivePolicyField] = useState(null)
-  // Map of org_hash → org_name for display
-  const [orgNames, setOrgNames] = useState({})
+  const orgNames = useOrgNames()
 
   useEffect(() => {
     dispatch(fetchSchemas({ forceRefresh: true }))
-    orgClient.listOrgs().then(res => {
-      const data = res.data || res
-      const orgs = data.orgs || []
-      const map = {}
-      for (const org of orgs) map[org.org_hash] = org.org_name
-      setOrgNames(map)
-    }).catch(() => {})
     return () => { if (highlightTimerRef.current) clearTimeout(highlightTimerRef.current) }
   }, [dispatch])
 

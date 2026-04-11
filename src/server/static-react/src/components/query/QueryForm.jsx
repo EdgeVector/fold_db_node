@@ -45,6 +45,7 @@ function QueryForm({
   onRangeSchemaFilterChange,
   onHashKeyChange,
   approvedSchemas,
+  orgNames,
   schemasLoading,
   isRangeSchema,
   isHashRangeSchema,
@@ -97,7 +98,7 @@ function QueryForm({
           name="schema"
           value={queryState?.selectedSchema || ''}
           onChange={handleSchemaChange}
-          options={buildSchemaOptions(approvedSchemas)}
+          options={buildSchemaOptions(approvedSchemas, orgNames)}
           placeholder="Select a schema..."
           emptyMessage={FORM_LABELS.schemaEmpty || 'No schemas available'}
           loading={schemasLoading}

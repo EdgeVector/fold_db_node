@@ -19,14 +19,21 @@ export function getSchemaDisplayName(schema) {
 
 /**
  * Build a schema options array for SelectField dropdowns.
+ * When orgNames map is provided, org schemas show their org name in the label.
  * @param {Object[]} schemas - Array of schema objects
+ * @param {Object} [orgNames] - Map of org_hash → org_name
  * @returns {{ value: string, label: string }[]}
  */
-export function buildSchemaOptions(schemas) {
-  return (schemas || []).map(schema => ({
-    value: schema.name,
-    label: getSchemaDisplayName(schema),
-  }))
+export function buildSchemaOptions(schemas, orgNames) {
+  return (schemas || [])
+    .map(schema => {
+      let label = getSchemaDisplayName(schema)
+      if (orgNames && schema.org_hash && orgNames[schema.org_hash]) {
+        label = `${label}  [${orgNames[schema.org_hash]}]`
+      }
+      return { value: schema.name, label }
+    })
+    .sort((a, b) => a.label.localeCompare(b.label))
 }
 
 /**
