@@ -84,3 +84,4 @@ snapshots/
 .claude/worktrees/
 src/server/static-react/config/
 .folddb-node*
+snapshots/dogfood_multi_node/

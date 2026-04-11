@@ -1174,22 +1174,23 @@ pub async fn respond_to_request(
             .ok_or_else(|| HandlerError::BadRequest(format!("Unknown role: {role_name}")))?;
     }
 
-    let db = node
-        .get_fold_db()
-        .await
-        .map_err(|e| HandlerError::Internal(format!("Failed to access database: {}", e)))?;
-    let store = get_metadata_store(&db);
-
-    // Update local status
-    let updated = connection::update_request_status(&*store, &req.request_id, &req.action)
-        .await
-        .handler_err("update request status")?;
+    // Update local request status (acquire + release FoldDB lock in a block)
+    let updated = {
+        let db = node
+            .get_fold_db()
+            .await
+            .map_err(|e| HandlerError::Internal(format!("Failed to access database: {}", e)))?;
+        let store = get_metadata_store(&db);
+        connection::update_request_status(&*store, &req.request_id, &req.action)
+            .await
+            .handler_err("update request status")?
+    }; // FoldDB lock released here
 
     // If accepting: grant trust, create contact, send encrypted response
     if req.action == "accept" {
         let role = config.get_role(role_name).unwrap(); // validated above
 
-        // Grant trust for the sender's public key
+        // Grant trust (acquires its own FoldDB lock internally)
         op.grant_trust_for_domain(&updated.sender_public_key, &role.domain, role.tier)
             .await
             .map_err(|e: fold_db::schema::SchemaError| {
