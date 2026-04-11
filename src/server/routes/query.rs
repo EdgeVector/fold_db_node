@@ -116,34 +116,6 @@ pub async fn execute_mutation(
     }
 }
 
-/// Execute multiple mutations in a batch for improved performance.
-#[utoipa::path(
-    post,
-    path = "/api/mutations/batch",
-    tag = "query",
-    request_body = Vec<serde_json::Value>,
-    responses(
-        (status = 200, description = "Array of mutation IDs"),
-        (status = 400, description = "Bad request"),
-        (status = 500, description = "Server error")
-    )
-)]
-pub async fn execute_mutations_batch(
-    mutations_data: web::Json<Vec<Value>>,
-    state: web::Data<AppState>,
-) -> impl Responder {
-    let (user_hash, node) = node_or_return!(state);
-
-    handler_result_to_response(
-        crate::handlers::mutation::execute_mutations_batch_from_json(
-            mutations_data.into_inner(),
-            &user_hash,
-            &node,
-        )
-        .await,
-    )
-}
-
 /// Search the native word index for a term.
 #[utoipa::path(
     get,

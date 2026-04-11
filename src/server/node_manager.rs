@@ -1,14 +1,11 @@
-//! Multi-tenant Node Manager
+//! Node Manager
 //!
-//! Manages FoldDB nodes for different tenants, caching them for reuse.
-//! This enables lazy node initialization - nodes are only created when
-//! a user makes their first request, avoiding DynamoDB access during startup.
+//! Manages the FoldDB node, caching it for reuse.
+//! This enables lazy node initialization - the node is only created when
+//! a user makes their first request.
 //!
-//! # Storage Mode Behavior
-//!
-//! - **Cloud mode (DynamoDB)**: Creates separate nodes per user with user_id isolation
-//! - **Local mode (Sled)**: Shares a single node across all users (single-tenant)
-//!   This avoids Sled lock conflicts since only one process can hold the lock.
+//! FoldDB always uses local Sled storage (with optional cloud sync on top).
+//! A single shared node is used for all requests to avoid Sled lock conflicts.
 
 use crate::fold_node::config::NodeConfig;
 use crate::fold_node::FoldNode;
@@ -18,7 +15,6 @@ use fold_db::fold_db_core::factory;
 use fold_db::security::Ed25519KeyPair;
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
-use std::collections::HashMap;
 use std::sync::Arc;
 use tokio::sync::{Mutex, RwLock};
 
@@ -49,84 +45,36 @@ pub struct NodeManagerConfig {
     pub base_config: NodeConfig,
 }
 
-/// Manages FoldDB nodes for different tenants
+/// Manages the FoldDB node instance
 pub struct NodeManager {
-    /// Configuration for creating new nodes (wrapped in RwLock for live reconfiguration)
+    /// Configuration for creating the node (wrapped in RwLock for live reconfiguration)
     config: RwLock<NodeManagerConfig>,
-    /// Cache of active nodes (user_id -> Node)
-    nodes: Arc<Mutex<HashMap<String, Arc<RwLock<FoldNode>>>>>,
-    /// Shared node for local mode (single-tenant)
-    /// In local Sled mode, we share one node to avoid lock conflicts
-    shared_local_node: Arc<Mutex<Option<Arc<RwLock<FoldNode>>>>>,
-    /// Whether we're in local mode (wrapped in RwLock for live reconfiguration)
-    is_local_mode: RwLock<bool>,
+    /// Shared node (single-tenant, avoids Sled lock conflicts)
+    shared_node: Arc<Mutex<Option<Arc<RwLock<FoldNode>>>>>,
 }
 
 impl NodeManager {
     /// Create a new NodeManager
     pub fn new(config: NodeManagerConfig) -> Self {
-        // DatabaseConfig always uses local Sled storage (cloud_sync adds S3 sync on top)
-        let is_local_mode = true;
         Self {
             config: RwLock::new(config),
-            nodes: Arc::new(Mutex::new(HashMap::new())),
-            shared_local_node: Arc::new(Mutex::new(None)),
-            is_local_mode: RwLock::new(is_local_mode),
+            shared_node: Arc::new(Mutex::new(None)),
         }
     }
 
-    /// Get a node for a specific user, creating one if it doesn't exist
+    /// Get the node, creating one if it doesn't exist.
     ///
-    /// In local mode (Sled), returns a shared node for all users to avoid lock conflicts.
-    /// In cloud mode (DynamoDB), creates/returns a per-user node with user_id isolation.
+    /// Returns a shared node for all requests. Uses a mutex to ensure only one
+    /// node is ever created, avoiding race conditions where multiple concurrent
+    /// requests could try to create the node simultaneously.
     pub async fn get_node(&self, user_id: &str) -> Result<Arc<RwLock<FoldNode>>, NodeManagerError> {
-        // Local mode: use shared single node to avoid Sled lock conflicts
-        if *self.is_local_mode.read().await {
-            return self.get_shared_local_node(user_id).await;
-        }
+        let mut shared = self.shared_node.lock().await;
 
-        // Cloud mode: per-user nodes with DynamoDB partition isolation
-        // Check cache first
-        {
-            let nodes = self.nodes.lock().await;
-            if let Some(node) = nodes.get(user_id) {
-                return Ok(node.clone());
-            }
-        }
-
-        // Create new node
-        let node = self.create_node(user_id).await?;
-
-        // Cache it
-        {
-            let mut nodes = self.nodes.lock().await;
-            nodes.insert(user_id.to_string(), node.clone());
-        }
-
-        Ok(node)
-    }
-
-    /// Get or create the shared local node (for Sled mode)
-    ///
-    /// Uses a mutex to ensure only one node is ever created, avoiding race conditions
-    /// where multiple concurrent requests could try to create the node simultaneously.
-    async fn get_shared_local_node(
-        &self,
-        user_id: &str,
-    ) -> Result<Arc<RwLock<FoldNode>>, NodeManagerError> {
-        // Hold the lock for the entire check-and-create operation to avoid races
-        let mut shared = self.shared_local_node.lock().await;
-
-        // If we already have a shared node, return it
         if let Some(node) = shared.as_ref() {
             return Ok(node.clone());
         }
 
-        // Create the shared node while still holding the lock
-        // This ensures only one thread creates the node
         let node = self.create_node(user_id).await?;
-
-        // Store it as the shared node
         *shared = Some(node.clone());
 
         Ok(node)
@@ -313,60 +261,37 @@ impl NodeManager {
         }
     }
 
-    /// Invalidate (remove) a node from the cache
-    /// This forces a reload/recreation on the next access
-    pub async fn invalidate_node(&self, user_id: &str) {
-        let mut nodes = self.nodes.lock().await;
-        nodes.remove(user_id);
-
-        // Also clear the shared local node so it gets re-created
-        if *self.is_local_mode.read().await {
-            let mut shared = self.shared_local_node.lock().await;
-            *shared = None;
-        }
-    }
-
-    /// Invalidate all cached nodes
-    /// Used when configuration changes require all nodes to be recreated
-    pub async fn invalidate_all_nodes(&self) {
-        let mut nodes = self.nodes.lock().await;
-        nodes.clear();
-
-        let mut shared = self.shared_local_node.lock().await;
+    /// Invalidate (remove) the cached node.
+    /// This forces a recreation on the next access.
+    pub async fn invalidate_node(&self, _user_id: &str) {
+        let mut shared = self.shared_node.lock().await;
         *shared = None;
     }
 
-    /// Update the configuration and invalidate all cached nodes
-    /// The next request will create fresh nodes with the new config
-    pub async fn update_config(&self, new_config: NodeManagerConfig) {
-        // DatabaseConfig is always local Sled storage
-        let new_is_local = true;
+    /// Invalidate the cached node.
+    /// Used when configuration changes require the node to be recreated.
+    pub async fn invalidate_all_nodes(&self) {
+        let mut shared = self.shared_node.lock().await;
+        *shared = None;
+    }
 
+    /// Update the configuration and invalidate the cached node.
+    /// The next request will create a fresh node with the new config.
+    pub async fn update_config(&self, new_config: NodeManagerConfig) {
         {
             let mut config = self.config.write().await;
             *config = new_config;
-        }
-        {
-            let mut is_local = self.is_local_mode.write().await;
-            *is_local = new_is_local;
         }
 
         self.invalidate_all_nodes().await;
     }
 
-    /// Set a pre-existing node in the cache
-    /// This is useful for embedded scenarios where the node is created externally
-    pub async fn set_node(&self, user_id: &str, node: FoldNode) {
+    /// Set a pre-existing node.
+    /// This is useful for embedded scenarios where the node is created externally.
+    pub async fn set_node(&self, _user_id: &str, node: FoldNode) {
         let node_arc = Arc::new(RwLock::new(node));
-
-        // In local mode, also set the shared_local_node so get_node finds it
-        if *self.is_local_mode.read().await {
-            let mut shared = self.shared_local_node.lock().await;
-            *shared = Some(node_arc.clone());
-        }
-
-        let mut nodes = self.nodes.lock().await;
-        nodes.insert(user_id.to_string(), node_arc);
+        let mut shared = self.shared_node.lock().await;
+        *shared = Some(node_arc);
     }
 
     /// Get the base configuration (returns a clone since config is behind RwLock)
@@ -410,7 +335,7 @@ impl NodeManager {
         Ok(public_key)
     }
 
-    /// Get a clone of the SledPool from the currently loaded shared node.
+    /// Get a clone of the SledPool from the currently loaded node.
     ///
     /// The pool is `Arc`-wrapped, so cloning shares the same pool instance.
     /// This is used by bootstrap-after-restore to get a Sled handle that
@@ -418,7 +343,7 @@ impl NodeManager {
     ///
     /// Returns None if no node is loaded yet.
     pub async fn get_sled_pool(&self) -> Option<std::sync::Arc<fold_db::storage::SledPool>> {
-        let shared = self.shared_local_node.lock().await;
+        let shared = self.shared_node.lock().await;
         if let Some(node_arc) = shared.as_ref() {
             let node = node_arc.read().await;
             if let Ok(fold_db) = node.get_fold_db().await {
@@ -428,17 +353,9 @@ impl NodeManager {
         None
     }
 
-    /// Check if any active node exists in the cache.
-    ///
-    /// In local mode, checks the shared local node.
-    /// In cloud mode, checks if any per-user node has been created.
+    /// Check if an active node exists.
     pub async fn has_active_node(&self) -> bool {
-        if *self.is_local_mode.read().await {
-            let shared = self.shared_local_node.lock().await;
-            shared.is_some()
-        } else {
-            let nodes = self.nodes.lock().await;
-            !nodes.is_empty()
-        }
+        let shared = self.shared_node.lock().await;
+        shared.is_some()
     }
 }
