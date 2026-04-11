@@ -300,7 +300,7 @@ function AgentTab() {
     <div className="flex flex-col h-[600px]">
       {/* Status bar */}
       <div className="flex items-center justify-between px-6 py-2 border-b border-border text-xs text-tertiary">
-        <span>{aiProvider} ({activeModel}) {phase === 'has_data' ? `\u00b7 ${schemas.length} schema(s)` : '\u00b7 no data yet'}</span>
+        <span>{aiProvider} ({activeModel}) {phase === 'has_data' ? `\u00b7 ${schemas.length} ${schemas.length === 1 ? 'schema' : 'schemas'}` : '\u00b7 no data yet'}</span>
         <button
           onClick={() => {
             setMessages([]);

@@ -150,7 +150,7 @@ function SchemaServiceSettings() {
 
       <div className="card card-info p-3">
         <p className="text-xs text-secondary">
-          <strong>Tip:</strong> Use <code className="text-gruvbox-blue">./run.sh --dev</code> to start with the dev schema service, or <code className="text-gruvbox-blue">./run.sh --local-schema</code> for fully offline development.
+          The schema service manages schema definitions and prevents duplicates across FoldDB instances.
         </p>
       </div>
     </div>

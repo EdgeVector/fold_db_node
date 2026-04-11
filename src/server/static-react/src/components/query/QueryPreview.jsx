@@ -49,7 +49,7 @@ const formatQueryDisplay = (query, queryState) => {
   }
 
   const display = {
-    schema: combined.schema || combined.selectedSchema,
+    schema: combined.schema || combined.schema_name || combined.selectedSchema,
     fields: fields,
     fieldValues: fieldValues,
     filters: combined.filters || {}, // Include filters from test mocks

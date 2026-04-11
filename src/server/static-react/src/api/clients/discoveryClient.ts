@@ -196,12 +196,14 @@ export class DiscoveryClient {
   async optOut(schema_name: string): Promise<EnhancedApiResponse<{ configs: DiscoveryOptIn[] }>> {
     return this.client.post('/discovery/opt-out', { schema_name }, {
       timeout: API_TIMEOUTS.STANDARD,
+      retries: API_RETRIES.NONE,
     });
   }
 
   async publish(): Promise<EnhancedApiResponse<PublishResult>> {
     return this.client.post('/discovery/publish', {}, {
-      timeout: API_TIMEOUTS.LONG,
+      timeout: API_TIMEOUTS.MUTATION,
+      retries: API_RETRIES.NONE,
     });
   }
 
@@ -217,7 +219,8 @@ export class DiscoveryClient {
       category_filter: category_filter || undefined,
       offset: offset || undefined,
     }, {
-      timeout: API_TIMEOUTS.LONG,
+      timeout: API_TIMEOUTS.MUTATION,
+      retries: API_RETRIES.NONE,
     });
   }
 
@@ -236,13 +239,15 @@ export class DiscoveryClient {
       target_pseudonym,
       message,
     }, {
-      timeout: API_TIMEOUTS.LONG,
+      timeout: API_TIMEOUTS.MUTATION,
+      retries: API_RETRIES.NONE,
     });
   }
 
   async getConnectionRequests(): Promise<EnhancedApiResponse<{ requests: LocalConnectionRequest[] }>> {
     return this.client.get('/discovery/connection-requests', {
-      timeout: API_TIMEOUTS.LONG,
+      timeout: API_TIMEOUTS.MUTATION,
+      retries: API_RETRIES.NONE, // No retries — 503 in local mode is deterministic
     });
   }
 
@@ -258,25 +263,28 @@ export class DiscoveryClient {
       message,
       role,
     }, {
-      timeout: API_TIMEOUTS.LONG,
+      timeout: API_TIMEOUTS.MUTATION,
     });
   }
 
   async getSentRequests(): Promise<EnhancedApiResponse<{ requests: LocalSentRequest[] }>> {
     return this.client.get('/discovery/sent-requests', {
       timeout: API_TIMEOUTS.STANDARD,
+      retries: API_RETRIES.NONE, // No retries — 503 in local mode is deterministic
     });
   }
 
   async pollRequests(): Promise<EnhancedApiResponse<{ requests: ConnectionRequest[] }>> {
     return this.client.get('/discovery/requests', {
       timeout: API_TIMEOUTS.STANDARD,
+      retries: API_RETRIES.NONE, // No retries — 503 in local mode is deterministic
     });
   }
 
   async getInterests(): Promise<EnhancedApiResponse<InterestProfile>> {
     return this.client.get('/discovery/interests', {
       timeout: API_TIMEOUTS.STANDARD,
+      retries: API_RETRIES.NONE, // No retries — 503 in local mode is deterministic
     });
   }
 
@@ -288,13 +296,13 @@ export class DiscoveryClient {
 
   async detectInterests(): Promise<EnhancedApiResponse<InterestProfile>> {
     return this.client.post('/discovery/interests/detect', {}, {
-      timeout: API_TIMEOUTS.LONG,
+      timeout: API_TIMEOUTS.MUTATION,
     });
   }
 
   async getSimilarProfiles(): Promise<EnhancedApiResponse<SimilarProfilesResponse>> {
     return this.client.get('/discovery/similar-profiles', {
-      timeout: API_TIMEOUTS.LONG,
+      timeout: API_TIMEOUTS.MUTATION,
       retries: API_RETRIES.NONE, // No retries — 503 in local mode is deterministic
     });
   }
@@ -304,6 +312,7 @@ export class DiscoveryClient {
   async getCalendarSharingStatus(): Promise<EnhancedApiResponse<CalendarSharingStatus>> {
     return this.client.get('/discovery/calendar-sharing/status', {
       timeout: API_TIMEOUTS.STANDARD,
+      retries: API_RETRIES.NONE, // No retries — 503 in local mode is deterministic
     });
   }
 
@@ -321,7 +330,7 @@ export class DiscoveryClient {
 
   async syncCalendarEvents(events: CalendarEventInput[]): Promise<EnhancedApiResponse<{ synced_count: number }>> {
     return this.client.post('/discovery/calendar-sharing/sync', { events }, {
-      timeout: API_TIMEOUTS.LONG,
+      timeout: API_TIMEOUTS.MUTATION,
     });
   }
 
@@ -337,6 +346,7 @@ export class DiscoveryClient {
   async listMomentOptIns(): Promise<EnhancedApiResponse<{ opt_ins: MomentOptIn[] }>> {
     return this.client.get('/discovery/moments/opt-ins', {
       timeout: API_TIMEOUTS.STANDARD,
+      retries: API_RETRIES.NONE, // No retries — 503 in local mode is deterministic
     });
   }
 
@@ -366,7 +376,7 @@ export class DiscoveryClient {
     photos: PhotoMetadata[],
   ): Promise<EnhancedApiResponse<MomentScanResult>> {
     return this.client.post('/discovery/moments/scan', photos, {
-      timeout: API_TIMEOUTS.LONG,
+      timeout: API_TIMEOUTS.MUTATION,
     });
   }
 
@@ -384,7 +394,7 @@ export class DiscoveryClient {
 
   async momentDetect(): Promise<EnhancedApiResponse<MomentDetectResult>> {
     return this.client.post('/discovery/moments/detect', {}, {
-      timeout: API_TIMEOUTS.LONG,
+      timeout: API_TIMEOUTS.MUTATION,
     });
   }
 
