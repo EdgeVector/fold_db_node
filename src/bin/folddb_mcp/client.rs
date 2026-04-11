@@ -1,9 +1,16 @@
+use std::process::Command;
+
 use base64::engine::general_purpose::STANDARD as BASE64;
 use base64::Engine;
 use serde_json::Value;
 use sha2::{Digest, Sha256};
 
 use crate::error::McpError;
+
+/// Maximum number of retries when auto-starting the daemon.
+const DAEMON_START_RETRIES: u32 = 5;
+/// Delay between retries in milliseconds.
+const DAEMON_RETRY_DELAY_MS: u64 = 2000;
 
 /// HTTP client that talks to the FoldDB server.
 pub struct FoldDbClient {
@@ -14,18 +21,44 @@ pub struct FoldDbClient {
 
 impl FoldDbClient {
     /// Connect to the running FoldDB server, fetch public key, derive identity.
+    /// If the daemon is not running, attempts to auto-start it via `folddb daemon start`.
     pub async fn connect(port: u16) -> Result<Self, McpError> {
         let base_url = format!("http://127.0.0.1:{}", port);
         let http = reqwest::Client::new();
 
-        // Health check
+        // Health check — if it fails, try to auto-start the daemon
         let status_url = format!("{}/api/system/status", base_url);
-        http.get(&status_url).send().await.map_err(|e| {
-            McpError::ServerNotRunning(format!(
-                "Cannot reach FoldDB at {}. Is the app running? ({})",
-                base_url, e
-            ))
-        })?;
+        if http.get(&status_url).send().await.is_err() {
+            eprintln!(
+                "[folddb-mcp] Daemon not running on port {}. Attempting to auto-start...",
+                port
+            );
+            Self::try_start_daemon(port)?;
+
+            // Retry health check with backoff
+            let mut connected = false;
+            for attempt in 1..=DAEMON_START_RETRIES {
+                tokio::time::sleep(std::time::Duration::from_millis(DAEMON_RETRY_DELAY_MS)).await;
+                if http.get(&status_url).send().await.is_ok() {
+                    eprintln!(
+                        "[folddb-mcp] Daemon started successfully (attempt {}/{})",
+                        attempt, DAEMON_START_RETRIES
+                    );
+                    connected = true;
+                    break;
+                }
+                eprintln!(
+                    "[folddb-mcp] Waiting for daemon to start (attempt {}/{})",
+                    attempt, DAEMON_START_RETRIES
+                );
+            }
+            if !connected {
+                return Err(McpError::ServerNotRunning(format!(
+                    "Failed to start FoldDB daemon on port {} after {} retries",
+                    port, DAEMON_START_RETRIES
+                )));
+            }
+        }
 
         // Fetch public key and derive user_hash
         let pub_resp: Value = http
@@ -67,6 +100,41 @@ impl FoldDbClient {
             base_url,
             user_hash,
         })
+    }
+
+    /// Attempt to start the FoldDB daemon via the CLI.
+    fn try_start_daemon(port: u16) -> Result<(), McpError> {
+        // Resolve the folddb binary — prefer sibling binary next to folddb_mcp
+        let folddb_bin = std::env::current_exe()
+            .ok()
+            .and_then(|p| p.parent().map(|dir| dir.join("folddb")))
+            .filter(|p| p.exists())
+            .unwrap_or_else(|| std::path::PathBuf::from("folddb"));
+
+        eprintln!(
+            "[folddb-mcp] Starting daemon: {} daemon start --port {}",
+            folddb_bin.display(),
+            port
+        );
+
+        Command::new(&folddb_bin)
+            .args(["daemon", "start", "--port", &port.to_string()])
+            .stdin(std::process::Stdio::null())
+            .stdout(std::process::Stdio::null())
+            .stderr(std::process::Stdio::null())
+            .spawn()
+            .map_err(|e| {
+                McpError::Io(std::io::Error::new(
+                    e.kind(),
+                    format!(
+                        "Failed to spawn '{}': {}",
+                        folddb_bin.display(),
+                        e
+                    ),
+                ))
+            })?;
+
+        Ok(())
     }
 
     /// GET request.
