@@ -66,7 +66,8 @@ jobs:
           cargo build --release --target ${{ matrix.target }} \
             --bin folddb \
             --bin folddb_server \
-            --bin schema_service
+            --bin schema_service \
+            --bin folddb_mcp
 
       - name: Package binaries
         run: |
@@ -74,6 +75,7 @@ jobs:
           cp target/${{ matrix.target }}/release/folddb dist/
           cp target/${{ matrix.target }}/release/folddb_server dist/
           cp target/${{ matrix.target }}/release/schema_service dist/
+          cp target/${{ matrix.target }}/release/folddb_mcp dist/
           tar -czf ${{ matrix.name }}.tar.gz -C dist .
 
       - name: Upload artifact

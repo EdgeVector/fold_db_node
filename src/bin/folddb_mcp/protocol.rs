@@ -1,7 +1,9 @@
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
+use crate::client::FoldDbClient;
 use crate::error;
+use crate::error::McpError;
 use crate::tools;
 
 #[derive(Deserialize, Debug)]
@@ -63,7 +65,8 @@ pub fn handle_initialize(id: Value) -> JsonRpcResponse {
         serde_json::json!({
             "protocolVersion": "2024-11-05",
             "capabilities": {
-                "tools": {}
+                "tools": {},
+                "resources": {}
             },
             "serverInfo": {
                 "name": "folddb",
@@ -71,6 +74,108 @@ pub fn handle_initialize(id: Value) -> JsonRpcResponse {
             }
         }),
     )
+}
+
+/// Build the response for `resources/list` — enumerate all schemas as resources.
+pub async fn handle_resources_list(id: Value, client: &FoldDbClient) -> JsonRpcResponse {
+    match fetch_schema_resources(client).await {
+        Ok(resources) => {
+            JsonRpcResponse::success(id, serde_json::json!({ "resources": resources }))
+        }
+        Err(e) => JsonRpcResponse::error(
+            Some(id),
+            error::INTERNAL_ERROR,
+            format!("Failed to list resources: {}", e),
+        ),
+    }
+}
+
+/// Build the response for `resources/read` — fetch a single schema definition.
+pub async fn handle_resources_read(
+    id: Value,
+    params: &Value,
+    client: &FoldDbClient,
+) -> JsonRpcResponse {
+    let uri = match params.get("uri").and_then(|v| v.as_str()) {
+        Some(u) => u,
+        None => {
+            return JsonRpcResponse::error(
+                Some(id),
+                error::INVALID_PARAMS,
+                "Missing required parameter: uri",
+            );
+        }
+    };
+
+    let schema_name = match uri.strip_prefix("folddb://schema/") {
+        Some(name) => name,
+        None => {
+            return JsonRpcResponse::error(
+                Some(id),
+                error::INVALID_PARAMS,
+                format!("Invalid resource URI: {}", uri),
+            );
+        }
+    };
+
+    match client
+        .get(&format!("/api/schema/{}", urlencoding::encode(schema_name)))
+        .await
+    {
+        Ok(resp) => {
+            let payload = if resp.get("ok").is_some() {
+                resp.get("data").unwrap_or(&resp)
+            } else {
+                &resp
+            };
+            let text = serde_json::to_string_pretty(payload).unwrap_or_else(|_| resp.to_string());
+            JsonRpcResponse::success(
+                id,
+                serde_json::json!({
+                    "contents": [{
+                        "uri": uri,
+                        "mimeType": "application/json",
+                        "text": text
+                    }]
+                }),
+            )
+        }
+        Err(e) => JsonRpcResponse::error(
+            Some(id),
+            error::INTERNAL_ERROR,
+            format!("Failed to read resource: {}", e),
+        ),
+    }
+}
+
+/// Fetch schemas from the FoldDB API and convert them to MCP resource descriptors.
+async fn fetch_schema_resources(client: &FoldDbClient) -> Result<Vec<Value>, McpError> {
+    let resp = client.get("/api/schemas").await?;
+    let empty = Value::Array(vec![]);
+    let schemas = if resp.get("ok").is_some() {
+        resp.get("data")
+            .and_then(|d| d.get("schemas"))
+            .unwrap_or(&empty)
+    } else {
+        resp.get("schemas").unwrap_or(&empty)
+    };
+
+    let mut resources = Vec::new();
+    if let Some(arr) = schemas.as_array() {
+        for schema in arr {
+            let name = schema
+                .get("name")
+                .and_then(|v| v.as_str())
+                .unwrap_or("unknown");
+            resources.push(serde_json::json!({
+                "uri": format!("folddb://schema/{}", name),
+                "name": name,
+                "description": format!("Schema definition for '{}'", name),
+                "mimeType": "application/json"
+            }));
+        }
+    }
+    Ok(resources)
 }
 
 /// Build the response for `tools/list`
@@ -102,6 +207,15 @@ pub async fn route(
         "tools/list" => {
             let id = request.id?;
             Some(handle_tools_list(id))
+        }
+        "resources/list" => {
+            let id = request.id?;
+            Some(handle_resources_list(id, client).await)
+        }
+        "resources/read" => {
+            let id = request.id?;
+            let params = request.params.unwrap_or(Value::Null);
+            Some(handle_resources_read(id, &params, client).await)
         }
         "tools/call" => {
             let id = request.id?;
@@ -153,6 +267,7 @@ mod tests {
         let result = resp.result.unwrap();
         assert_eq!(result["protocolVersion"], "2024-11-05");
         assert!(result["capabilities"]["tools"].is_object());
+        assert!(result["capabilities"]["resources"].is_object());
         assert_eq!(result["serverInfo"]["name"], "folddb");
     }
 
