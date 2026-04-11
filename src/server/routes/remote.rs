@@ -173,6 +173,102 @@ pub struct AsyncBrowseRequest {
     pub contact_public_key: String,
 }
 
+/// Validated contact info needed to send an async message.
+struct ContactMessagingInfo {
+    messaging_pseudonym: String,
+    messaging_pk_bytes: [u8; 32],
+    display_name: String,
+}
+
+/// Validate a contact for async messaging: load, check revocation, extract messaging keys.
+fn validate_contact_for_messaging(
+    contact_public_key: &str,
+) -> Result<ContactMessagingInfo, crate::handlers::HandlerError> {
+    use crate::trust::contact_book::ContactBook;
+
+    let book = ContactBook::load().map_err(|e| {
+        crate::handlers::HandlerError::Internal(format!("Failed to load contacts: {e}"))
+    })?;
+    let contact = book.get(contact_public_key).ok_or_else(|| {
+        crate::handlers::HandlerError::BadRequest("Contact not found".into())
+    })?;
+    if contact.revoked {
+        return Err(crate::handlers::HandlerError::BadRequest(
+            "Contact has been revoked".into(),
+        ));
+    }
+    let messaging_pseudonym = contact
+        .messaging_pseudonym
+        .as_ref()
+        .ok_or_else(|| {
+            crate::handlers::HandlerError::BadRequest(
+                "Contact does not have messaging enabled. Connect via discovery first.".into(),
+            )
+        })?
+        .clone();
+    let messaging_public_key = contact.messaging_public_key.as_ref().ok_or_else(|| {
+        crate::handlers::HandlerError::BadRequest(
+            "Contact does not have a messaging public key".into(),
+        )
+    })?;
+
+    let pk_bytes = base64::engine::general_purpose::STANDARD
+        .decode(messaging_public_key)
+        .map_err(|e| {
+            crate::handlers::HandlerError::Internal(format!("Invalid messaging public key: {e}"))
+        })?;
+    if pk_bytes.len() != 32 {
+        return Err(crate::handlers::HandlerError::Internal(
+            "Messaging public key must be 32 bytes".into(),
+        ));
+    }
+    let mut pk_arr = [0u8; 32];
+    pk_arr.copy_from_slice(&pk_bytes);
+
+    Ok(ContactMessagingInfo {
+        messaging_pseudonym,
+        messaging_pk_bytes: pk_arr,
+        display_name: contact.display_name.to_string(),
+    })
+}
+
+/// Encrypt a payload and send it to a contact via the messaging service bulletin board.
+/// Returns the sender pseudonym used (needed for local query tracking).
+async fn encrypt_and_send_to_contact<P: serde::Serialize>(
+    node: &crate::fold_node::node::FoldNode,
+    contact: &ContactMessagingInfo,
+    payload: &P,
+) -> Result<String, crate::handlers::HandlerError> {
+    use crate::discovery::connection;
+
+    let (discovery_url, master_key, auth_token) =
+        crate::server::routes::discovery::resolve_discovery_config(node, None).await?;
+
+    let hash = crate::discovery::pseudonym::content_hash("connection-sender");
+    let our_pseudonym = crate::discovery::pseudonym::derive_pseudonym(&master_key, &hash);
+
+    let encrypted = connection::encrypt_message(&contact.messaging_pk_bytes, payload)
+        .map_err(|e| crate::handlers::HandlerError::Internal(format!("Encryption failed: {e}")))?;
+    let encrypted_b64 = base64::engine::general_purpose::STANDARD.encode(&encrypted);
+
+    let target: uuid::Uuid = contact.messaging_pseudonym.parse().map_err(|_| {
+        crate::handlers::HandlerError::Internal("Invalid messaging pseudonym UUID".into())
+    })?;
+    let publisher = crate::discovery::publisher::DiscoveryPublisher::new(
+        master_key,
+        discovery_url,
+        auth_token,
+    );
+    publisher
+        .connect(target, encrypted_b64, Some(our_pseudonym.clone()))
+        .await
+        .map_err(|e| {
+            crate::handlers::HandlerError::Internal(format!("Failed to send message: {e}"))
+        })?;
+
+    Ok(our_pseudonym.to_string())
+}
+
 /// POST /api/remote/async-query — submit an async query to a contact via messaging
 pub async fn async_query(
     body: web::Json<AsyncQueryRequest>,
@@ -185,36 +281,11 @@ pub async fn async_query(
         async {
             use crate::discovery::async_query::{LocalAsyncQuery, QueryRequestPayload};
             use crate::discovery::connection;
-            use crate::trust::contact_book::ContactBook;
 
-            // Load contact and verify messaging info
-            let book = ContactBook::load().map_err(|e| {
-                crate::handlers::HandlerError::Internal(format!("Failed to load contacts: {e}"))
-            })?;
-            let contact = book.get(&req.contact_public_key).ok_or_else(|| {
-                crate::handlers::HandlerError::BadRequest("Contact not found".into())
-            })?;
-            if contact.revoked {
-                return Err(crate::handlers::HandlerError::BadRequest(
-                    "Contact has been revoked".into(),
-                ));
-            }
-            let messaging_pseudonym = contact.messaging_pseudonym.as_ref().ok_or_else(|| {
-                crate::handlers::HandlerError::BadRequest(
-                    "Contact does not have messaging enabled. Connect via discovery first.".into(),
-                )
-            })?;
-            let messaging_public_key = contact.messaging_public_key.as_ref().ok_or_else(|| {
-                crate::handlers::HandlerError::BadRequest(
-                    "Contact does not have a messaging public key".into(),
-                )
-            })?;
+            let contact = validate_contact_for_messaging(&req.contact_public_key)?;
 
-            // Get discovery config for publisher
-            let (discovery_url, master_key, auth_token) =
+            let (discovery_url, master_key, _auth_token) =
                 crate::server::routes::discovery::resolve_discovery_config(&node, None).await?;
-
-            // Derive our sender pseudonym + X25519 key
             let hash = crate::discovery::pseudonym::content_hash("connection-sender");
             let our_pseudonym = crate::discovery::pseudonym::derive_pseudonym(&master_key, &hash);
             let our_reply_pk =
@@ -233,44 +304,8 @@ pub async fn async_query(
                 reply_public_key: our_reply_pk,
             };
 
-            // Encrypt with contact's X25519 messaging key
-            let pk_bytes = base64::engine::general_purpose::STANDARD
-                .decode(messaging_public_key)
-                .map_err(|e| {
-                    crate::handlers::HandlerError::Internal(format!(
-                        "Invalid messaging public key: {e}"
-                    ))
-                })?;
-            if pk_bytes.len() != 32 {
-                return Err(crate::handlers::HandlerError::Internal(
-                    "Messaging public key must be 32 bytes".into(),
-                ));
-            }
-            let mut pk_arr = [0u8; 32];
-            pk_arr.copy_from_slice(&pk_bytes);
+            encrypt_and_send_to_contact(&node, &contact, &payload).await?;
 
-            let encrypted = connection::encrypt_message(&pk_arr, &payload).map_err(|e| {
-                crate::handlers::HandlerError::Internal(format!("Encryption failed: {e}"))
-            })?;
-            let encrypted_b64 = base64::engine::general_purpose::STANDARD.encode(&encrypted);
-
-            // Send via messaging service
-            let target: uuid::Uuid = messaging_pseudonym.parse().map_err(|_| {
-                crate::handlers::HandlerError::Internal("Invalid messaging pseudonym UUID".into())
-            })?;
-            let publisher = crate::discovery::publisher::DiscoveryPublisher::new(
-                master_key,
-                discovery_url,
-                auth_token,
-            );
-            publisher
-                .connect(target, encrypted_b64, Some(our_pseudonym))
-                .await
-                .map_err(|e| {
-                    crate::handlers::HandlerError::Internal(format!("Failed to send query: {e}"))
-                })?;
-
-            // Save locally
             let db = node.get_fold_db().map_err(|e| {
                 crate::handlers::HandlerError::Internal(format!("Failed to access database: {e}"))
             })?;
@@ -315,33 +350,11 @@ pub async fn async_browse(
         async {
             use crate::discovery::async_query::{LocalAsyncQuery, SchemaListRequestPayload};
             use crate::discovery::connection;
-            use crate::trust::contact_book::ContactBook;
 
-            let book = ContactBook::load().map_err(|e| {
-                crate::handlers::HandlerError::Internal(format!("Failed to load contacts: {e}"))
-            })?;
-            let contact = book.get(&req.contact_public_key).ok_or_else(|| {
-                crate::handlers::HandlerError::BadRequest("Contact not found".into())
-            })?;
-            if contact.revoked {
-                return Err(crate::handlers::HandlerError::BadRequest(
-                    "Contact has been revoked".into(),
-                ));
-            }
-            let messaging_pseudonym = contact.messaging_pseudonym.as_ref().ok_or_else(|| {
-                crate::handlers::HandlerError::BadRequest(
-                    "Contact does not have messaging enabled".into(),
-                )
-            })?;
-            let messaging_public_key = contact.messaging_public_key.as_ref().ok_or_else(|| {
-                crate::handlers::HandlerError::BadRequest(
-                    "Contact does not have a messaging public key".into(),
-                )
-            })?;
+            let contact = validate_contact_for_messaging(&req.contact_public_key)?;
 
-            let (discovery_url, master_key, auth_token) =
+            let (discovery_url, master_key, _auth_token) =
                 crate::server::routes::discovery::resolve_discovery_config(&node, None).await?;
-
             let hash = crate::discovery::pseudonym::content_hash("connection-sender");
             let our_pseudonym = crate::discovery::pseudonym::derive_pseudonym(&master_key, &hash);
             let our_reply_pk =
@@ -358,42 +371,7 @@ pub async fn async_browse(
                 reply_public_key: our_reply_pk,
             };
 
-            let pk_bytes = base64::engine::general_purpose::STANDARD
-                .decode(messaging_public_key)
-                .map_err(|e| {
-                    crate::handlers::HandlerError::Internal(format!(
-                        "Invalid messaging public key: {e}"
-                    ))
-                })?;
-            if pk_bytes.len() != 32 {
-                return Err(crate::handlers::HandlerError::Internal(
-                    "Messaging public key must be 32 bytes".into(),
-                ));
-            }
-            let mut pk_arr = [0u8; 32];
-            pk_arr.copy_from_slice(&pk_bytes);
-
-            let encrypted = connection::encrypt_message(&pk_arr, &payload).map_err(|e| {
-                crate::handlers::HandlerError::Internal(format!("Encryption failed: {e}"))
-            })?;
-            let encrypted_b64 = base64::engine::general_purpose::STANDARD.encode(&encrypted);
-
-            let target: uuid::Uuid = messaging_pseudonym.parse().map_err(|_| {
-                crate::handlers::HandlerError::Internal("Invalid messaging pseudonym UUID".into())
-            })?;
-            let publisher = crate::discovery::publisher::DiscoveryPublisher::new(
-                master_key,
-                discovery_url,
-                auth_token,
-            );
-            publisher
-                .connect(target, encrypted_b64, Some(our_pseudonym))
-                .await
-                .map_err(|e| {
-                    crate::handlers::HandlerError::Internal(format!(
-                        "Failed to send schema list request: {e}"
-                    ))
-                })?;
+            encrypt_and_send_to_contact(&node, &contact, &payload).await?;
 
             let db = node.get_fold_db().map_err(|e| {
                 crate::handlers::HandlerError::Internal(format!("Failed to access database: {e}"))

@@ -535,6 +535,8 @@ impl FoldHttpServer {
     }
 
     fn configure_system_routes(cfg: &mut web::ServiceConfig) {
+        use super::routes::sync as sync_routes;
+
         cfg.route(
             "/system/status",
             web::get().to(system_routes::get_system_status),
@@ -545,7 +547,7 @@ impl FoldHttpServer {
         )
         .route(
             "/system/sync-status",
-            web::get().to(system_routes::get_sync_status),
+            web::get().to(sync_routes::get_sync_status),
         )
         .route(
             "/system/reset-database",
