@@ -189,9 +189,9 @@ fn validate_contact_for_messaging(
     let book = ContactBook::load().map_err(|e| {
         crate::handlers::HandlerError::Internal(format!("Failed to load contacts: {e}"))
     })?;
-    let contact = book.get(contact_public_key).ok_or_else(|| {
-        crate::handlers::HandlerError::BadRequest("Contact not found".into())
-    })?;
+    let contact = book
+        .get(contact_public_key)
+        .ok_or_else(|| crate::handlers::HandlerError::BadRequest("Contact not found".into()))?;
     if contact.revoked {
         return Err(crate::handlers::HandlerError::BadRequest(
             "Contact has been revoked".into(),
@@ -232,13 +232,26 @@ fn validate_contact_for_messaging(
     })
 }
 
-/// Encrypt a payload and send it to a contact via the messaging service bulletin board.
-/// Returns the sender pseudonym used (needed for local query tracking).
-async fn encrypt_and_send_to_contact<P: serde::Serialize>(
+/// Sender identity derived from discovery config.
+struct SenderInfo {
+    pseudonym: uuid::Uuid,
+    reply_public_key: String,
+    discovery_url: String,
+    master_key: Vec<u8>,
+    auth_token: String,
+}
+
+impl SenderInfo {
+    fn pseudonym_str(&self) -> String {
+        self.pseudonym.to_string()
+    }
+}
+
+/// Resolve discovery config and derive sender identity (pseudonym + reply key).
+/// Callers use this to build the message payload, then call `send_encrypted_message`.
+async fn resolve_sender_info(
     node: &crate::fold_node::node::FoldNode,
-    contact: &ContactMessagingInfo,
-    payload: &P,
-) -> Result<String, crate::handlers::HandlerError> {
+) -> Result<SenderInfo, crate::handlers::HandlerError> {
     use crate::discovery::connection;
 
     let (discovery_url, master_key, auth_token) =
@@ -246,6 +259,24 @@ async fn encrypt_and_send_to_contact<P: serde::Serialize>(
 
     let hash = crate::discovery::pseudonym::content_hash("connection-sender");
     let our_pseudonym = crate::discovery::pseudonym::derive_pseudonym(&master_key, &hash);
+    let reply_public_key = connection::get_pseudonym_public_key_b64(&master_key, &our_pseudonym);
+
+    Ok(SenderInfo {
+        pseudonym: our_pseudonym,
+        reply_public_key,
+        discovery_url,
+        master_key,
+        auth_token,
+    })
+}
+
+/// Encrypt a payload and send it to a contact via the messaging service bulletin board.
+async fn send_encrypted_message<P: serde::Serialize>(
+    sender: &SenderInfo,
+    contact: &ContactMessagingInfo,
+    payload: &P,
+) -> Result<(), crate::handlers::HandlerError> {
+    use crate::discovery::connection;
 
     let encrypted = connection::encrypt_message(&contact.messaging_pk_bytes, payload)
         .map_err(|e| crate::handlers::HandlerError::Internal(format!("Encryption failed: {e}")))?;
@@ -255,18 +286,18 @@ async fn encrypt_and_send_to_contact<P: serde::Serialize>(
         crate::handlers::HandlerError::Internal("Invalid messaging pseudonym UUID".into())
     })?;
     let publisher = crate::discovery::publisher::DiscoveryPublisher::new(
-        master_key,
-        discovery_url,
-        auth_token,
+        sender.master_key.clone(),
+        sender.discovery_url.clone(),
+        sender.auth_token.clone(),
     );
     publisher
-        .connect(target, encrypted_b64, Some(our_pseudonym.clone()))
+        .connect(target, encrypted_b64, Some(sender.pseudonym))
         .await
         .map_err(|e| {
             crate::handlers::HandlerError::Internal(format!("Failed to send message: {e}"))
         })?;
 
-    Ok(our_pseudonym.to_string())
+    Ok(())
 }
 
 /// POST /api/remote/async-query — submit an async query to a contact via messaging
@@ -280,16 +311,9 @@ pub async fn async_query(
     handler_result_to_response(
         async {
             use crate::discovery::async_query::{LocalAsyncQuery, QueryRequestPayload};
-            use crate::discovery::connection;
 
             let contact = validate_contact_for_messaging(&req.contact_public_key)?;
-
-            let (discovery_url, master_key, _auth_token) =
-                crate::server::routes::discovery::resolve_discovery_config(&node, None).await?;
-            let hash = crate::discovery::pseudonym::content_hash("connection-sender");
-            let our_pseudonym = crate::discovery::pseudonym::derive_pseudonym(&master_key, &hash);
-            let our_reply_pk =
-                connection::get_pseudonym_public_key_b64(&master_key, &our_pseudonym);
+            let sender = resolve_sender_info(&node).await?;
 
             let request_id = uuid::Uuid::new_v4().to_string();
             let public_key = node.get_node_public_key();
@@ -300,11 +324,11 @@ pub async fn async_query(
                 schema_name: req.schema_name.clone(),
                 fields: req.fields.clone(),
                 sender_public_key: public_key.to_string(),
-                sender_pseudonym: our_pseudonym.to_string(),
-                reply_public_key: our_reply_pk,
+                sender_pseudonym: sender.pseudonym_str(),
+                reply_public_key: sender.reply_public_key.clone(),
             };
 
-            encrypt_and_send_to_contact(&node, &contact, &payload).await?;
+            send_encrypted_message(&sender, &contact, &payload).await?;
 
             let db = node.get_fold_db().map_err(|e| {
                 crate::handlers::HandlerError::Internal(format!("Failed to access database: {e}"))
@@ -349,16 +373,9 @@ pub async fn async_browse(
     handler_result_to_response(
         async {
             use crate::discovery::async_query::{LocalAsyncQuery, SchemaListRequestPayload};
-            use crate::discovery::connection;
 
             let contact = validate_contact_for_messaging(&req.contact_public_key)?;
-
-            let (discovery_url, master_key, _auth_token) =
-                crate::server::routes::discovery::resolve_discovery_config(&node, None).await?;
-            let hash = crate::discovery::pseudonym::content_hash("connection-sender");
-            let our_pseudonym = crate::discovery::pseudonym::derive_pseudonym(&master_key, &hash);
-            let our_reply_pk =
-                connection::get_pseudonym_public_key_b64(&master_key, &our_pseudonym);
+            let sender = resolve_sender_info(&node).await?;
 
             let request_id = uuid::Uuid::new_v4().to_string();
             let public_key = node.get_node_public_key();
@@ -367,11 +384,11 @@ pub async fn async_browse(
                 message_type: "schema_list_request".to_string(),
                 request_id: request_id.clone(),
                 sender_public_key: public_key.to_string(),
-                sender_pseudonym: our_pseudonym.to_string(),
-                reply_public_key: our_reply_pk,
+                sender_pseudonym: sender.pseudonym_str(),
+                reply_public_key: sender.reply_public_key.clone(),
             };
 
-            encrypt_and_send_to_contact(&node, &contact, &payload).await?;
+            send_encrypted_message(&sender, &contact, &payload).await?;
 
             let db = node.get_fold_db().map_err(|e| {
                 crate::handlers::HandlerError::Internal(format!("Failed to access database: {e}"))
