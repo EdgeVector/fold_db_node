@@ -189,7 +189,7 @@ async fn main() {
 async fn dispatch_http(
     command: &Command,
     client: &FoldDbClient,
-    _user_hash: &str,
+    user_hash: &str,
     mode: OutputMode,
     config_path: Option<&str>,
 ) -> Result<commands::CommandOutput, CliError> {
@@ -221,8 +221,72 @@ async fn dispatch_http(
             Ok(commands::CommandOutput::RawJson(json))
         }
         Command::Status => {
-            let json = client.status().await?;
-            Ok(commands::CommandOutput::RawJson(json))
+            if mode == OutputMode::Json {
+                let json = client.status().await?;
+                return Ok(commands::CommandOutput::RawJson(json));
+            }
+            // Human-readable status: gather info from multiple endpoints
+            let status = client.status().await.ok();
+            let sync = client.sync_status().await.ok();
+            let orgs = client.org_list().await.ok();
+            let schemas = client.schema_list().await.ok();
+
+            let version = status
+                .as_ref()
+                .and_then(|s| s.pointer("/data/version").or_else(|| s.get("version")))
+                .and_then(|v| v.as_str())
+                .unwrap_or("unknown");
+
+            let mut msg = format!("FoldDB v{}\n", version);
+
+            // Node key
+            msg.push_str(&format!(
+                "Node:       {}\n",
+                &user_hash[..16.min(user_hash.len())]
+            ));
+
+            // Cloud sync
+            if let Some(ref s) = sync {
+                let enabled = s.get("enabled").and_then(|v| v.as_bool()).unwrap_or(false);
+                if enabled {
+                    let state = s.get("state").and_then(|v| v.as_str()).unwrap_or("unknown");
+                    let pending = s.get("pending_count").and_then(|v| v.as_u64()).unwrap_or(0);
+                    msg.push_str(&format!("Cloud sync: {} ({} pending)\n", state, pending));
+                } else {
+                    msg.push_str("Cloud sync: disabled\n");
+                }
+            }
+
+            // Schemas
+            if let Some(ref s) = schemas {
+                let count = s
+                    .pointer("/data/count")
+                    .or_else(|| s.get("count"))
+                    .and_then(|v| v.as_u64())
+                    .unwrap_or(0);
+                msg.push_str(&format!("Schemas:    {}\n", count));
+            }
+
+            // Orgs
+            if let Some(ref o) = orgs {
+                let org_list = o
+                    .pointer("/data/orgs")
+                    .or_else(|| o.get("orgs"))
+                    .and_then(|v| v.as_array());
+                if let Some(list) = org_list {
+                    if list.is_empty() {
+                        msg.push_str("Orgs:       none\n");
+                    } else {
+                        let names: Vec<&str> = list
+                            .iter()
+                            .filter_map(|org| org.get("org_name").and_then(|n| n.as_str()))
+                            .collect();
+                        msg.push_str(&format!("Orgs:       {}\n", names.join(", ")));
+                    }
+                }
+            }
+
+            Ok(commands::CommandOutput::Message(msg.trim_end().to_string()))
         }
         Command::Config { action } => {
             let action = action.as_ref().unwrap_or(&cli::ConfigCommand::Show);
