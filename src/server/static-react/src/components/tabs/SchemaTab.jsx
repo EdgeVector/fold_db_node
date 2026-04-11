@@ -12,6 +12,7 @@ import SchemaName from '../shared/SchemaName'
 import { MagnifyingGlassIcon } from '@heroicons/react/24/outline'
 import { toErrorMessage } from '../../utils/schemaUtils'
 import { getAllFieldPolicies, setFieldPolicy as setFieldPolicyApi } from '../../api/clients/sharingClient'
+import { orgClient } from '../../api/clients/orgClient'
 
 const TRUST_TIERS = ['Public', 'Outer', 'Trusted', 'Inner', 'Owner']
 
@@ -174,9 +175,18 @@ function SchemaTab({ onResult, onSchemaUpdated }) {
   const [fieldPolicies, setFieldPolicies] = useState({})
   // Which field's detail panel is open: "schemaName.fieldName" or null
   const [activePolicyField, setActivePolicyField] = useState(null)
+  // Map of org_hash → org_name for display
+  const [orgNames, setOrgNames] = useState({})
 
   useEffect(() => {
     dispatch(fetchSchemas({ forceRefresh: true }))
+    orgClient.listOrgs().then(res => {
+      const data = res.data || res
+      const orgs = data.orgs || []
+      const map = {}
+      for (const org of orgs) map[org.org_hash] = org.org_name
+      setOrgNames(map)
+    }).catch(() => {})
     return () => { if (highlightTimerRef.current) clearTimeout(highlightTimerRef.current) }
   }, [dispatch])
 
@@ -308,7 +318,9 @@ function SchemaTab({ onResult, onSchemaUpdated }) {
                 {state}
               </span>
               {schema.org_hash && (
-                <span className="badge badge-info">Org</span>
+                <span className="badge badge-info" title={schema.org_hash}>
+                  {orgNames[schema.org_hash] || 'Org'}
+                </span>
               )}
               {rangeSchemaInfo && (
                 <span className="badge badge-info">Range Schema</span>
