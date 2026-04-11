@@ -82,23 +82,17 @@ async fn setup_node_with_medical_schema() -> (FoldNode, TempDir) {
     let node = FoldNode::new(config).await.expect("create FoldNode");
 
     // Load the medical_records schema into FoldDB
-    let medical_schema_json = json!({
-        "name": "medical_records",
-        "descriptive_name": "Medical Records",
-        "key": { "range_field": "name" },
-        "fields": ["name", "age", "diagnosis", "rx_list", "blood_type"],
-        "field_classifications": {
-            "name": ["low"],
-            "age": ["low"],
-            "diagnosis": ["high", "medical", "hipaa"],
-            "rx_list": ["high", "medical"],
-            "blood_type": ["low"]
-        }
-    });
+    let medical_schema_json = fold_db::test_helpers::TestSchemaBuilder::new("medical_records")
+        .descriptive_name("Medical Records")
+        .fields(&["age", "diagnosis", "rx_list", "blood_type"])
+        .range_key("name")
+        .classify("diagnosis", 3, "medical")
+        .classify("rx_list", 3, "medical")
+        .build_json();
 
     let fold_db = node.get_fold_db().expect("get FoldDB");
     fold_db
-        .load_schema_from_json(&medical_schema_json.to_string())
+        .load_schema_from_json(&medical_schema_json)
         .await
         .expect("load medical_records schema");
 

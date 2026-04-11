@@ -117,20 +117,14 @@ async fn _test_local_mutation_execution() {
     let node = FoldNode::new(config).await.expect("Failed to create node");
 
     // Load schema
-    let schema_json = r#"{
-        "name": "PerfSchema",
-        "schema_type": "Single",
-        "fields": ["id", "content"],
-        "field_classifications": {
-            "id": ["word"],
-            "content": ["word"]
-        },
-        "key": { "hash_field": "id" }
-    }"#;
+    let schema_json = fold_db::test_helpers::TestSchemaBuilder::new("PerfSchema")
+        .fields(&["id", "content"])
+        .hash_key("id")
+        .build_json();
 
     {
         let db = node.get_fold_db().expect("Failed to get DB");
-        db.load_schema_from_json(schema_json)
+        db.load_schema_from_json(&schema_json)
             .await
             .expect("Failed to load schema");
         db.schema_manager()
@@ -140,7 +134,7 @@ async fn _test_local_mutation_execution() {
     }
 
     let schema_value: serde_json::Value =
-        serde_json::from_str(schema_json).expect("Failed to parse schema");
+        serde_json::from_str(&schema_json).expect("Failed to parse schema");
 
     // Prepare mutations
     let count = 100;
