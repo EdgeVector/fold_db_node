@@ -10,6 +10,7 @@ use fold_db::org::operations as org_ops;
 use fold_db::org::types::{OrgInviteBundle, OrgMemberInfo, OrgMembership};
 use fold_db::NodeConfigStore;
 use serde::Deserialize;
+use std::sync::Arc;
 
 handler_response! {
     /// Response for org creation (returns membership + invite bundle)
@@ -98,7 +99,7 @@ async fn get_auth_client(node: &FoldNode) -> Option<fold_db::sync::auth::AuthCli
             drop(db_guard);
             if let Ok(store) = NodeConfigStore::new(pool) {
                 if let Some(cloud) = store.get_cloud_config() {
-                    let http = std::sync::Arc::new(reqwest::Client::new());
+                    let http = shared_http_client();
                     let auth = prefer_session_token(cloud.session_token.as_deref(), &cloud.api_key);
                     return Some(fold_db::sync::auth::AuthClient::new(
                         http,
@@ -112,7 +113,7 @@ async fn get_auth_client(node: &FoldNode) -> Option<fold_db::sync::auth::AuthCli
 
     // Fallback: read cloud_sync config directly from DatabaseConfig
     if let Some(ref cloud_sync) = node.config.database.cloud_sync {
-        let http = std::sync::Arc::new(reqwest::Client::new());
+        let http = shared_http_client();
         // Try keychain for fresh session token before falling back to config API key
         let session_token = crate::keychain::load_credentials()
             .ok()
@@ -212,13 +213,7 @@ pub async fn join_org(
         }
         // Delete the invite from S3 inbox
         let file_name = format!("{}.enc", org_hash);
-        if let Ok(presigned) = client.presign_inbox_delete(&file_name).await {
-            let http = std::sync::Arc::new(reqwest::Client::new());
-            let s3 = fold_db::sync::s3::S3Client::new(http);
-            if let Err(e) = s3.delete(&presigned).await {
-                log::warn!("Failed to delete invite from inbox: {}", e);
-            }
-        }
+        delete_inbox_file(&client, &file_name).await;
     }
 
     // Now configure sync and trigger download — cloud already knows we're a member
@@ -272,7 +267,7 @@ pub async fn add_member(
     req: &AddMemberRequest,
     user_hash: &str,
     node: &FoldNode,
-) -> HandlerResult<serde_json::Value> {
+) -> HandlerResult<AddMemberResponse> {
     let pool = get_sled_pool(node).await?;
 
     let member = OrgMemberInfo {
@@ -309,8 +304,7 @@ pub async fn add_member(
             .presign_inbox_upload(&target_user_hash, &file_name)
             .await
             .handler_err("presign inbox upload")?;
-        let http = std::sync::Arc::new(reqwest::Client::new());
-        let s3_client = fold_db::sync::s3::S3Client::new(http);
+        let s3_client = fold_db::sync::s3::S3Client::new(shared_http_client());
         s3_client
             .upload(&presigned, encrypted_invite)
             .await
@@ -320,7 +314,10 @@ pub async fn add_member(
     // Return the invite bundle so the UI can show it for manual sharing
     // (especially useful in local mode where there's no cloud inbox)
     Ok(ApiResponse::success_with_user(
-        serde_json::json!({"ok": true, "invite_bundle": invite_bundle}),
+        AddMemberResponse {
+            ok: true,
+            invite_bundle,
+        },
         user_hash,
     ))
 }
@@ -331,7 +328,7 @@ pub async fn remove_member(
     node_public_key: &str,
     user_hash: &str,
     node: &FoldNode,
-) -> HandlerResult<serde_json::Value> {
+) -> HandlerResult<OkResponse> {
     let pool = get_sled_pool(node).await?;
 
     org_ops::remove_member(&pool, org_hash, node_public_key).handler_err("remove member")?;
@@ -365,7 +362,7 @@ pub async fn remove_member(
     }
 
     Ok(ApiResponse::success_with_user(
-        serde_json::json!({"ok": true}),
+        OkResponse { ok: true },
         user_hash,
     ))
 }
@@ -375,7 +372,7 @@ pub async fn leave_org(
     org_hash: &str,
     user_hash: &str,
     node: &FoldNode,
-) -> HandlerResult<serde_json::Value> {
+) -> HandlerResult<OkResponse> {
     let node_public_key = node.get_node_public_key();
     remove_member(org_hash, node_public_key, user_hash, node).await
 }
@@ -397,9 +394,49 @@ pub async fn generate_invite(
 }
 
 handler_response! {
+    /// Response for adding a member
+    pub struct AddMemberResponse {
+        pub ok: bool,
+        pub invite_bundle: OrgInviteBundle,
+    }
+}
+
+handler_response! {
+    /// Response for removing a member or deleting an org
+    pub struct OkResponse {
+        pub ok: bool,
+    }
+}
+
+handler_response! {
+    /// Response for declining an invite
+    pub struct DeclineInviteResponse {
+        pub declined: String,
+    }
+}
+
+handler_response! {
     /// Response for cloud member list
     pub struct CloudMembersResponse {
         pub members: Vec<serde_json::Value>,
+    }
+}
+
+/// Shared HTTP client for org operations. Avoids creating a new connection pool per request.
+fn shared_http_client() -> Arc<reqwest::Client> {
+    Arc::new(reqwest::Client::new())
+}
+
+/// Delete an encrypted file from the S3 inbox.
+async fn delete_inbox_file(
+    client: &fold_db::sync::auth::AuthClient,
+    file_name: &str,
+) {
+    if let Ok(presigned) = client.presign_inbox_delete(file_name).await {
+        let s3 = fold_db::sync::s3::S3Client::new(shared_http_client());
+        if let Err(e) = s3.delete(&presigned).await {
+            log::warn!("Failed to delete {} from inbox: {}", file_name, e);
+        }
     }
 }
 
@@ -429,7 +466,7 @@ pub async fn delete_org(
     org_hash: &str,
     user_hash: &str,
     node: &FoldNode,
-) -> HandlerResult<serde_json::Value> {
+) -> HandlerResult<OkResponse> {
     let pool = get_sled_pool(node).await?;
 
     org_ops::delete_org(&pool, org_hash).handler_err("delete org")?;
@@ -454,7 +491,7 @@ pub async fn delete_org(
     node.configure_org_sync_if_needed().await;
 
     Ok(ApiResponse::success_with_user(
-        serde_json::json!({"ok": true}),
+        OkResponse { ok: true },
         user_hash,
     ))
 }
@@ -471,8 +508,7 @@ pub async fn get_pending_invites(
     let mut invites = Vec::new();
 
     if let Some(client) = get_auth_client(node).await {
-        let http = std::sync::Arc::new(reqwest::Client::new());
-        let s3_client = fold_db::sync::s3::S3Client::new(http);
+        let s3_client = fold_db::sync::s3::S3Client::new(shared_http_client());
 
         // 1. List objects in inbox/org_invites/
         let objects = client
@@ -544,7 +580,7 @@ pub async fn decline_invite(
     org_hash: &str,
     user_hash: &str,
     node: &FoldNode,
-) -> HandlerResult<serde_json::Value> {
+) -> HandlerResult<DeclineInviteResponse> {
     let client = require_exemem(node).await?;
 
     // Update DDB membership status → declined
@@ -555,16 +591,12 @@ pub async fn decline_invite(
 
     // Delete the invite from S3 inbox
     let file_name = format!("{}.enc", org_hash);
-    if let Ok(presigned) = client.presign_inbox_delete(&file_name).await {
-        let http = std::sync::Arc::new(reqwest::Client::new());
-        let s3 = fold_db::sync::s3::S3Client::new(http);
-        if let Err(e) = s3.delete(&presigned).await {
-            log::warn!("Failed to delete declined invite from inbox: {}", e);
-        }
-    }
+    delete_inbox_file(&client, &file_name).await;
 
     Ok(ApiResponse::success_with_user(
-        serde_json::json!({"declined": org_hash}),
+        DeclineInviteResponse {
+            declined: org_hash.to_string(),
+        },
         user_hash,
     ))
 }

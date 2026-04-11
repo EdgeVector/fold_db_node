@@ -314,7 +314,7 @@ impl FoldHttpServer {
                 .configure(Self::configure_trust_routes)
                 .configure(Self::configure_identity_routes)
                 .configure(Self::configure_sharing_routes)
-                .configure(Self::configure_capability_routes)
+                // Capability tokens and payment gates are not yet implemented — routes removed
                 .configure(Self::configure_feed_routes)
                 .configure(Self::configure_remote_routes)
                 .configure(Self::configure_auth_routes)
@@ -818,35 +818,13 @@ impl FoldHttpServer {
                 )
                 .route(
                     "/policy/{schema}/{field}",
-                    web::put().to(trust_routes::set_field_policy_unsigned),
+                    web::put().to(trust_routes::set_field_policy),
                 )
                 .route(
                     "/policies/{schema}",
-                    web::get().to(trust_routes::get_schema_policies),
+                    web::get().to(trust_routes::get_all_field_policies),
                 )
                 .route("/exemem-status", web::get().to(trust_routes::exemem_status)),
-        );
-    }
-
-    fn configure_capability_routes(cfg: &mut web::ServiceConfig) {
-        use crate::server::routes::trust as trust_routes;
-
-        cfg.service(
-            web::scope("/capabilities")
-                .route("/issue", web::post().to(trust_routes::issue_capability))
-                .route("/revoke", web::delete().to(trust_routes::revoke_capability))
-                .route(
-                    "/list/{schema}/{field}",
-                    web::get().to(trust_routes::list_capabilities),
-                ),
-        )
-        .route(
-            "/schema/{name}/payment-gate",
-            web::put().to(trust_routes::set_payment_gate),
-        )
-        .route(
-            "/schema/{name}/payment-gate",
-            web::get().to(trust_routes::get_payment_gate),
         );
     }
 
