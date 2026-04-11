@@ -26,14 +26,6 @@ fn expand_tilde(raw: &str) -> Result<PathBuf, String> {
     }
 }
 
-/// Returns true if the given path string points to an existing directory.
-pub fn is_existing_directory(p: &str) -> bool {
-    match expand_tilde(p) {
-        Ok(path) => path.is_dir(),
-        Err(_) => false,
-    }
-}
-
 /// Request body for filesystem path completion
 #[derive(Deserialize)]
 pub struct PathCompleteRequest {

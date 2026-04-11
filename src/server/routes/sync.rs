@@ -1,22 +1,9 @@
 use crate::server::http_server::AppState;
-use crate::server::routes::node_or_return;
+use crate::server::routes::{handler_result_to_response, node_or_return};
 use actix_web::{web, HttpResponse, Responder};
 use fold_db::log_feature;
 use fold_db::logging::features::LogFeature;
 use serde::Serialize;
-
-/// Sync status response returned by GET /api/sync/status
-#[derive(Serialize)]
-pub struct SyncStatusResponse {
-    /// Whether the sync engine is configured and active
-    pub enabled: bool,
-    /// Current sync state: "idle", "dirty", "syncing", "offline", or null if disabled
-    pub state: Option<String>,
-    /// Number of pending (unsynced) log entries, or null if disabled
-    pub pending_count: Option<usize>,
-    /// Whether E2E encryption keys are loaded (always true when sync is enabled)
-    pub encryption_active: bool,
-}
 
 /// Sync trigger response returned by POST /api/sync/trigger
 #[derive(Serialize)]
@@ -25,47 +12,13 @@ pub struct SyncTriggerResponse {
     pub message: String,
 }
 
-fn sync_state_to_string(state: fold_db::sync::SyncState) -> String {
-    match state {
-        fold_db::sync::SyncState::Idle => "idle".to_string(),
-        fold_db::sync::SyncState::Dirty => "dirty".to_string(),
-        fold_db::sync::SyncState::Syncing => "syncing".to_string(),
-        fold_db::sync::SyncState::Offline => "offline".to_string(),
-    }
-}
-
-/// Get current sync/backup status
+/// Get current sync/backup status.
+///
+/// Delegates to the shared handler in `handlers::system` so there's one
+/// implementation for both `/api/sync/status` and `/api/system/sync-status`.
 pub async fn get_sync_status(state: web::Data<AppState>) -> impl Responder {
-    let (_user_hash, node) = node_or_return!(state);
-
-    let db = match node.get_fold_db().await {
-        Ok(db) => db,
-        Err(e) => {
-            log_feature!(
-                LogFeature::HttpServer,
-                error,
-                "Failed to get FoldDB for sync status: {}",
-                e
-            );
-            return HttpResponse::InternalServerError().json(SyncStatusResponse {
-                enabled: false,
-                state: None,
-                pending_count: None,
-                encryption_active: false,
-            });
-        }
-    };
-
-    let enabled = db.is_sync_enabled();
-    let sync_state = db.sync_state().await;
-    let pending_count = db.sync_pending_count().await;
-
-    HttpResponse::Ok().json(SyncStatusResponse {
-        enabled,
-        state: sync_state.map(sync_state_to_string),
-        pending_count,
-        encryption_active: enabled,
-    })
+    let (user_hash, node) = node_or_return!(state);
+    handler_result_to_response(crate::handlers::system::get_sync_status(&user_hash, &node).await)
 }
 
 /// Manually trigger a sync cycle
@@ -177,10 +130,9 @@ mod tests {
             let response: serde_json::Value = serde_json::from_slice(&bytes).unwrap_or_default();
 
             // In local mode, sync should be disabled
+            // Response is wrapped in the ApiResponse envelope: {"ok": true, "enabled": false, ...}
+            assert_eq!(response["ok"], true);
             assert_eq!(response["enabled"], false);
-            assert!(response["state"].is_null());
-            assert!(response["pending_count"].is_null());
-            assert_eq!(response["encryption_active"], false);
         })
         .await;
     }

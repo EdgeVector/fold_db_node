@@ -9,7 +9,6 @@ use super::routes::{
 };
 use super::static_assets::Asset;
 use crate::fold_node::llm_query;
-use crate::fold_node::FoldNode;
 use crate::ingestion::routes as ingestion_routes;
 use crate::utils::http_errors;
 use fold_db::error::{FoldDbError, FoldDbResult};
@@ -20,7 +19,6 @@ use fold_db::logging::features::LogFeature;
 
 use actix_web::{web, App, HttpRequest, HttpResponse, HttpServer as ActixHttpServer};
 use std::sync::Arc;
-use tokio::sync::RwLock;
 
 /// HTTP server for the Fold node.
 ///
@@ -30,19 +28,10 @@ use tokio::sync::RwLock;
 ///
 /// # Architecture
 ///
-/// The server now uses a lazy per-user node initialization pattern:
-/// - On startup: Only configuration is loaded, no DynamoDB access
-/// - On first request for a user: Node is created with user context
-/// - Subsequent requests: Node is cached and reused
-///
-/// This aligns with Lambda's multi-tenant architecture.
-///
-/// # Features
-///
-/// * Static file serving for the UI
-/// * REST API endpoints for schemas, queries, and mutations
-/// * Sample data management
-/// * One-click loading of sample data
+/// The server uses lazy node initialization:
+/// - On startup: Only configuration is loaded
+/// - On first request: Node is created and cached
+/// - Subsequent requests: Cached node is reused
 pub struct FoldHttpServer {
     /// The node manager for lazy per-user node creation
     node_manager: Arc<NodeManager>,
@@ -76,7 +65,6 @@ impl FoldHttpServer {
     /// Returns a `FoldDbError` if:
     /// * There is an error starting the HTTP server
     pub async fn new(node_manager: NodeManager, bind_address: &str) -> FoldDbResult<Self> {
-        // Initialize the enhanced logging system (no DynamoDB backend)
         fold_db::logging::LoggingSystem::init_with_fallback(None).await;
 
         Ok(Self {
@@ -200,7 +188,6 @@ impl FoldHttpServer {
             crate::ingestion::apple_import::sync_scheduler::create_sync_config_state();
         let sync_config_data = web::Data::new(sync_config_state);
 
-        // Create progress tracker (always local, no DynamoDB backend)
         let progress_tracker = fold_db::progress::create_tracker(None).await;
         let progress_tracker_data = web::Data::new(progress_tracker);
 
@@ -998,15 +985,3 @@ async fn serve_embedded_asset(req: HttpRequest) -> HttpResponse {
     }
 }
 
-// Helper function to get a node for a request
-// This is used by route handlers
-pub async fn get_node_for_request(
-    app_state: &web::Data<AppState>,
-    user_id: &str,
-) -> Result<Arc<RwLock<FoldNode>>, FoldDbError> {
-    app_state
-        .node_manager
-        .get_node(user_id)
-        .await
-        .map_err(|e| FoldDbError::Config(format!("Failed to get node for user: {}", e)))
-}
