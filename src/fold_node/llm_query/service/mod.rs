@@ -162,8 +162,7 @@ impl LlmQueryService {
         prompt.push_str("List organizations this node belongs to.\n");
         prompt.push_str("Parameters: none\n");
         prompt.push_str("Returns: array of orgs with org_name, org_hash, and role.\n");
-        prompt
-            .push_str("Example: {\"tool\": \"list_orgs\", \"params\": {}}\n\n");
+        prompt.push_str("Example: {\"tool\": \"list_orgs\", \"params\": {}}\n\n");
 
         prompt.push_str("### get_schema\n");
         prompt.push_str(

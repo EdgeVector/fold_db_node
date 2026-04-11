@@ -254,8 +254,7 @@ impl LlmQueryService {
                     .map_err(|e| format!("Failed to get database: {}", e))?;
                 let orgs = fold_db::org::operations::list_orgs(&pool)
                     .map_err(|e| format!("Failed to list orgs: {}", e))?;
-                serde_json::to_value(&orgs)
-                    .map_err(|e| format!("Failed to serialize orgs: {}", e))
+                serde_json::to_value(&orgs).map_err(|e| format!("Failed to serialize orgs: {}", e))
             }
 
             "get_schema" => {
