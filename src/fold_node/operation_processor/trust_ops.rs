@@ -15,8 +15,8 @@ fn to_schema_err(e: fold_db::error::FoldDbError) -> SchemaError {
 
 /// Trust and access-control operations.
 ///
-/// Trust map and audit log operations are backed by fold_db's access module.
-/// Field policies, capabilities, and payment gates are not yet implemented.
+/// Trust map, audit log, and field access policy operations are backed by
+/// fold_db's access module.
 impl OperationProcessor {
     pub async fn load_trust_maps(&self) -> Result<serde_json::Value, SchemaError> {
         let db = self.get_db().await.map_err(to_schema_err)?;
@@ -501,64 +501,6 @@ impl OperationProcessor {
     ) -> Result<usize, SchemaError> {
         self.apply_classification_defaults_with_force(schema_name, false)
             .await
-    }
-
-    pub async fn issue_capability(
-        &self,
-        _schema_name: &str,
-        _field_name: &str,
-        _constraint: serde_json::Value,
-    ) -> Result<(), SchemaError> {
-        Err(SchemaError::InvalidData(
-            "Not yet implemented in this node".to_string(),
-        ))
-    }
-
-    pub async fn revoke_capability(
-        &self,
-        _schema_name: &str,
-        _field_name: &str,
-        _public_key: &str,
-        _kind: serde_json::Value,
-    ) -> Result<bool, SchemaError> {
-        Err(SchemaError::InvalidData(
-            "Not yet implemented in this node".to_string(),
-        ))
-    }
-
-    pub async fn list_capabilities(
-        &self,
-        _schema_name: &str,
-        _field_name: &str,
-    ) -> Result<Vec<serde_json::Value>, SchemaError> {
-        Err(SchemaError::InvalidData(
-            "Not yet implemented in this node".to_string(),
-        ))
-    }
-
-    pub async fn set_payment_gate(
-        &self,
-        _schema_name: &str,
-        _gate: serde_json::Value,
-    ) -> Result<(), SchemaError> {
-        Err(SchemaError::InvalidData(
-            "Not yet implemented in this node".to_string(),
-        ))
-    }
-
-    pub async fn get_payment_gate(
-        &self,
-        _schema_name: &str,
-    ) -> Result<Option<serde_json::Value>, SchemaError> {
-        Err(SchemaError::InvalidData(
-            "Not yet implemented in this node".to_string(),
-        ))
-    }
-
-    pub async fn remove_payment_gate(&self, _schema_name: &str) -> Result<bool, SchemaError> {
-        Err(SchemaError::InvalidData(
-            "Not yet implemented in this node".to_string(),
-        ))
     }
 
     pub async fn get_audit_log(&self, limit: usize) -> Result<serde_json::Value, SchemaError> {

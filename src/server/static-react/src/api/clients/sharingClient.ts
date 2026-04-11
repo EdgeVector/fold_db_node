@@ -38,12 +38,6 @@ export interface SecurityLabel {
   category: string;
 }
 
-export interface PaymentGate {
-  Linear?: { base: number; per_distance: number };
-  Exponential?: { base: number; growth: number };
-  Fixed?: number;
-}
-
 export interface AuditEvent {
   id: string;
   timestamp: string;
@@ -132,24 +126,6 @@ export async function getAllFieldPolicies(
   return resp.data?.field_policies ?? {};
 }
 
-// --- Payment gates ---
-
-export async function setPaymentGate(schemaName: string, gate: PaymentGate): Promise<void> {
-  const resp = await client().put<{ payment_gate_set: boolean }>(
-    `/schema/${encodeURIComponent(schemaName)}/payment-gate`,
-    { gate }
-  );
-  if (!resp.success) throw new Error(resp.error || 'Failed to set payment gate');
-}
-
-export async function getPaymentGate(schemaName: string): Promise<PaymentGate | null> {
-  const resp = await client().get<{ schema_name: string; payment_gate: PaymentGate | null }>(
-    `/schema/${encodeURIComponent(schemaName)}/payment-gate`
-  );
-  if (!resp.success) throw new Error(resp.error || 'Failed to get payment gate');
-  return resp.data?.payment_gate ?? null;
-}
-
 // --- Audit log ---
 
 export async function getAuditLog(limit: number = 100): Promise<AuditEvent[]> {
@@ -166,32 +142,3 @@ export async function getNodeInfo(): Promise<NodeInfoResponse> {
   return resp.data!;
 }
 
-// --- Capabilities ---
-
-export async function issueCapability(
-  schema_name: string,
-  field_name: string,
-  public_key: string,
-  kind: 'Read' | 'Write',
-  quota: number
-): Promise<void> {
-  const resp = await client().post<{ issued: boolean }>('/capabilities/issue', {
-    schema_name,
-    field_name,
-    public_key,
-    kind,
-    quota,
-  });
-  if (!resp.success) throw new Error(resp.error || 'Failed to issue capability');
-}
-
-export async function listCapabilities(
-  schemaName: string,
-  fieldName: string
-): Promise<CapabilityConstraint[]> {
-  const resp = await client().get<CapabilityConstraint[]>(
-    `/capabilities/list/${encodeURIComponent(schemaName)}/${encodeURIComponent(fieldName)}`
-  );
-  if (!resp.success) throw new Error(resp.error || 'Failed to list capabilities');
-  return resp.data ?? [];
-}
