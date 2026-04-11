@@ -984,4 +984,3 @@ async fn serve_embedded_asset(req: HttpRequest) -> HttpResponse {
         }
     }
 }
-
