@@ -481,90 +481,13 @@ pub async fn revoke_contact(path: web::Path<String>, state: web::Data<AppState>)
 
 // ===== Trust invite relay (via Exemem discovery service) =====
 
-/// POST /api/trust/invite/share — upload invite token to Exemem relay, return short ID
-pub async fn share_trust_invite(
-    body: web::Json<serde_json::Value>,
-    state: web::Data<AppState>,
-) -> impl Responder {
-    let (user_hash, _node) = node_or_return!(state);
-
-    let (url, key, token) = match get_discovery_config_and_token() {
-        Ok(cfg) => cfg,
-        Err(e) => {
-            return actix_web::HttpResponse::ServiceUnavailable()
-                .json(serde_json::json!({"error": e}));
-        }
-    };
-
-    let publisher = crate::discovery::publisher::DiscoveryPublisher::new(key, url, token);
-
-    let invite_token = match body.get("token").and_then(|v| v.as_str()) {
-        Some(t) => t.to_string(),
-        None => {
-            return actix_web::HttpResponse::BadRequest()
-                .json(serde_json::json!({"error": "Missing 'token' field"}));
-        }
-    };
-
-    match publisher.store_trust_invite(&invite_token).await {
-        Ok(invite_id) => actix_web::HttpResponse::Ok().json(ApiResponse::success_with_user(
-            serde_json::json!({
-                "invite_id": invite_id,
-                "shared": true,
-            }),
-            user_hash,
-        )),
-        Err(e) => {
-            actix_web::HttpResponse::InternalServerError().json(serde_json::json!({"error": e}))
-        }
-    }
-}
-
-/// GET /api/trust/invite/fetch?id=xxx — fetch invite token from Exemem relay by ID
-pub async fn fetch_shared_invite(
-    query: web::Query<std::collections::HashMap<String, String>>,
-    state: web::Data<AppState>,
-) -> impl Responder {
-    let (_user_hash, _node) = node_or_return!(state);
-
-    let (url, key, token) = match get_discovery_config_and_token() {
-        Ok(cfg) => cfg,
-        Err(e) => {
-            return actix_web::HttpResponse::ServiceUnavailable()
-                .json(serde_json::json!({"error": e}));
-        }
-    };
-
-    let publisher = crate::discovery::publisher::DiscoveryPublisher::new(key, url, token);
-
-    let invite_id = match query.get("id") {
-        Some(id) => id.clone(),
-        None => {
-            return actix_web::HttpResponse::BadRequest()
-                .json(serde_json::json!({"error": "Missing 'id' query parameter"}));
-        }
-    };
-
-    match publisher.fetch_trust_invite(&invite_id).await {
-        Ok(token) => {
-            actix_web::HttpResponse::Ok().json(serde_json::json!({"ok": true, "token": token}))
-        }
-        Err(e) => actix_web::HttpResponse::NotFound().json(serde_json::json!({"error": e})),
-    }
-}
-
 /// Helper: get discovery URL, master key, and auth token from env/credentials.
 fn get_discovery_config_and_token() -> Result<(String, Vec<u8>, String), String> {
-    let url = std::env::var("DISCOVERY_SERVICE_URL").map_err(|_| {
-        "Email invites and link sharing require Exemem cloud backup. \
-         Enable cloud backup in Settings to use these features."
-            .to_string()
-    })?;
-    let key_hex = std::env::var("DISCOVERY_MASTER_KEY").map_err(|_| {
-        "Email invites and link sharing require Exemem cloud backup. \
-         Enable cloud backup in Settings to use these features."
-            .to_string()
-    })?;
+    let cloud_required_msg = "Email invites and link sharing require Exemem cloud backup. \
+         Enable cloud backup in Settings to use these features.";
+    let url = std::env::var("DISCOVERY_SERVICE_URL").map_err(|_| cloud_required_msg.to_string())?;
+    let key_hex =
+        std::env::var("DISCOVERY_MASTER_KEY").map_err(|_| cloud_required_msg.to_string())?;
     let key = hex::decode(&key_hex).map_err(|_| "Invalid discovery configuration".to_string())?;
 
     let token = std::env::var("DISCOVERY_AUTH_TOKEN")
@@ -605,43 +528,104 @@ fn get_discovery_config_and_token() -> Result<(String, Vec<u8>, String), String>
     Ok((url, key, token))
 }
 
+/// Build a DiscoveryPublisher from env config, returning 503 on failure.
+fn require_publisher(
+) -> Result<crate::discovery::publisher::DiscoveryPublisher, actix_web::HttpResponse> {
+    let (url, key, token) = get_discovery_config_and_token().map_err(|e| {
+        actix_web::HttpResponse::ServiceUnavailable().json(serde_json::json!({"error": e}))
+    })?;
+    Ok(crate::discovery::publisher::DiscoveryPublisher::new(
+        key, url, token,
+    ))
+}
+
+/// Extract a required string field from a JSON body, returning 400 on absence.
+fn require_json_str<'a>(
+    body: &'a serde_json::Value,
+    field: &str,
+) -> Result<&'a str, actix_web::HttpResponse> {
+    body.get(field).and_then(|v| v.as_str()).ok_or_else(|| {
+        actix_web::HttpResponse::BadRequest()
+            .json(serde_json::json!({"error": format!("Missing '{}' field", field)}))
+    })
+}
+
+/// POST /api/trust/invite/share — upload invite token to Exemem relay, return short ID
+pub async fn share_trust_invite(
+    body: web::Json<serde_json::Value>,
+    state: web::Data<AppState>,
+) -> impl Responder {
+    let (user_hash, _node) = node_or_return!(state);
+    let publisher = match require_publisher() {
+        Ok(p) => p,
+        Err(r) => return r,
+    };
+    let invite_token = match require_json_str(&body, "token") {
+        Ok(t) => t.to_string(),
+        Err(r) => return r,
+    };
+
+    match publisher.store_trust_invite(&invite_token).await {
+        Ok(invite_id) => actix_web::HttpResponse::Ok().json(ApiResponse::success_with_user(
+            serde_json::json!({
+                "invite_id": invite_id,
+                "shared": true,
+            }),
+            user_hash,
+        )),
+        Err(e) => {
+            actix_web::HttpResponse::InternalServerError().json(serde_json::json!({"error": e}))
+        }
+    }
+}
+
+/// GET /api/trust/invite/fetch?id=xxx — fetch invite token from Exemem relay by ID
+pub async fn fetch_shared_invite(
+    query: web::Query<std::collections::HashMap<String, String>>,
+    state: web::Data<AppState>,
+) -> impl Responder {
+    let (_user_hash, _node) = node_or_return!(state);
+    let publisher = match require_publisher() {
+        Ok(p) => p,
+        Err(r) => return r,
+    };
+    let invite_id = match query.get("id") {
+        Some(id) => id.clone(),
+        None => {
+            return actix_web::HttpResponse::BadRequest()
+                .json(serde_json::json!({"error": "Missing 'id' query parameter"}));
+        }
+    };
+
+    match publisher.fetch_trust_invite(&invite_id).await {
+        Ok(token) => {
+            actix_web::HttpResponse::Ok().json(serde_json::json!({"ok": true, "token": token}))
+        }
+        Err(e) => actix_web::HttpResponse::NotFound().json(serde_json::json!({"error": e})),
+    }
+}
+
 /// POST /api/trust/invite/send-verified — send invite with email verification
 pub async fn send_verified_invite(
     body: web::Json<serde_json::Value>,
     state: web::Data<AppState>,
 ) -> impl Responder {
     let (user_hash, _node) = node_or_return!(state);
-
-    let (url, key, token) = match get_discovery_config_and_token() {
-        Ok(cfg) => cfg,
-        Err(e) => {
-            return actix_web::HttpResponse::ServiceUnavailable()
-                .json(serde_json::json!({"error": e}));
-        }
+    let publisher = match require_publisher() {
+        Ok(p) => p,
+        Err(r) => return r,
     };
-
-    let publisher = crate::discovery::publisher::DiscoveryPublisher::new(key, url, token);
-
-    let invite_token = match body.get("token").and_then(|v| v.as_str()) {
-        Some(t) => t.to_string(),
-        None => {
-            return actix_web::HttpResponse::BadRequest()
-                .json(serde_json::json!({"error": "Missing 'token' field"}));
-        }
+    let invite_token = match require_json_str(&body, "token") {
+        Ok(t) => t.to_string(),
+        Err(r) => return r,
     };
-    let recipient_email = match body.get("recipient_email").and_then(|v| v.as_str()) {
-        Some(e) => e.to_string(),
-        None => {
-            return actix_web::HttpResponse::BadRequest()
-                .json(serde_json::json!({"error": "Missing 'recipient_email' field"}));
-        }
+    let recipient_email = match require_json_str(&body, "recipient_email") {
+        Ok(e) => e.to_string(),
+        Err(r) => return r,
     };
-    let sender_name = match body.get("sender_name").and_then(|v| v.as_str()) {
-        Some(n) => n.to_string(),
-        None => {
-            return actix_web::HttpResponse::BadRequest()
-                .json(serde_json::json!({"error": "Missing 'sender_name' field"}));
-        }
+    let sender_name = match require_json_str(&body, "sender_name") {
+        Ok(n) => n.to_string(),
+        Err(r) => return r,
     };
 
     match publisher
@@ -664,30 +648,17 @@ pub async fn verify_invite_code(
     state: web::Data<AppState>,
 ) -> impl Responder {
     let (_user_hash, _node) = node_or_return!(state);
-
-    let (url, key, token) = match get_discovery_config_and_token() {
-        Ok(cfg) => cfg,
-        Err(e) => {
-            return actix_web::HttpResponse::ServiceUnavailable()
-                .json(serde_json::json!({"error": e}));
-        }
+    let publisher = match require_publisher() {
+        Ok(p) => p,
+        Err(r) => return r,
     };
-
-    let publisher = crate::discovery::publisher::DiscoveryPublisher::new(key, url, token);
-
-    let invite_id = match body.get("invite_id").and_then(|v| v.as_str()) {
-        Some(id) => id.to_string(),
-        None => {
-            return actix_web::HttpResponse::BadRequest()
-                .json(serde_json::json!({"error": "Missing 'invite_id' field"}));
-        }
+    let invite_id = match require_json_str(&body, "invite_id") {
+        Ok(id) => id.to_string(),
+        Err(r) => return r,
     };
-    let code = match body.get("code").and_then(|v| v.as_str()) {
-        Some(c) => c.to_string(),
-        None => {
-            return actix_web::HttpResponse::BadRequest()
-                .json(serde_json::json!({"error": "Missing 'code' field"}));
-        }
+    let code = match require_json_str(&body, "code") {
+        Ok(c) => c.to_string(),
+        Err(r) => return r,
     };
 
     match publisher.verify_invite_code(&invite_id, &code).await {

@@ -1,5 +1,5 @@
 use fold_db::access::{AuditAction, AuditEvent, TrustTier};
-use fold_db::schema::types::field::Field;
+use fold_db::schema::types::Field;
 use fold_db::schema::SchemaError;
 
 use crate::trust::contact_book::ContactBook;

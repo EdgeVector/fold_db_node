@@ -422,9 +422,12 @@ handler_response! {
     }
 }
 
-/// Shared HTTP client for org operations. Avoids creating a new connection pool per request.
+/// Shared HTTP client for org operations. Uses a single connection pool across all requests.
 fn shared_http_client() -> Arc<reqwest::Client> {
-    Arc::new(reqwest::Client::new())
+    use std::sync::LazyLock;
+    static CLIENT: LazyLock<Arc<reqwest::Client>> =
+        LazyLock::new(|| Arc::new(reqwest::Client::new()));
+    Arc::clone(&CLIENT)
 }
 
 /// Delete an encrypted file from the S3 inbox.
@@ -492,9 +495,11 @@ pub async fn delete_org(
         user_hash,
     ))
 }
-#[derive(Debug, serde::Serialize)]
-pub struct PendingInvitesResponse {
-    pub invites: Vec<OrgInviteBundle>,
+handler_response! {
+    /// Response for pending org invites
+    pub struct PendingInvitesResponse {
+        pub invites: Vec<OrgInviteBundle>,
+    }
 }
 
 /// Fetch pending org invitations from the S3 inbox.
