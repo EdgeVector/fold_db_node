@@ -90,9 +90,6 @@ function BackupSettingsPanel() {
   const syncState = status?.state
   const pendingCount = status?.pending_count ?? 0
   const encryptionActive = status?.encryption_active ?? false
-  // Cloud mode = sync engine running OR credentials exist (signed up but needs restart)
-  const _cloudMode = enabled || hasCredentials
-
   return (
     <div className="space-y-6">
       {/* Backup Enable/Disable Status */}
@@ -104,7 +101,7 @@ function BackupSettingsPanel() {
               {enabled
                 ? 'Your data is being synced to Exemem cloud storage with end-to-end encryption.'
                 : hasCredentials
-                  ? 'Cloud backup is enabled but sync is not active. Restart the server to start syncing.'
+                  ? 'Cloud backup is registered. Sync should activate shortly.'
                   : 'Cloud backup is not configured. Sign up for Exemem above to enable backup sync.'}
             </p>
           </div>
@@ -115,7 +112,7 @@ function BackupSettingsPanel() {
                 ? 'bg-gruvbox-yellow/20 text-gruvbox-yellow'
                 : 'bg-gruvbox-red/20 text-gruvbox-red'
           }`}>
-            {enabled ? 'Enabled' : hasCredentials ? 'Restart Required' : 'Disabled'}
+            {enabled ? 'Enabled' : hasCredentials ? 'Starting...' : 'Disabled'}
           </div>
         </div>
       </div>
@@ -183,11 +180,9 @@ function BackupSettingsPanel() {
             </>
           )}
         </button>
-        {!enabled && (
+        {!enabled && !hasCredentials && (
           <p className="text-xs text-secondary mt-2">
-            {hasCredentials
-              ? 'Restart the server to activate cloud sync.'
-              : 'Enable cloud storage to use manual backup.'}
+            Enable cloud storage to use manual backup.
           </p>
         )}
       </div>
