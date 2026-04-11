@@ -108,6 +108,12 @@ impl DiscoveryPublisher {
                 stored.field_name.clone()
             };
 
+            // Skip face embeddings in the text loop — handled separately below
+            if field_name == "__face__" {
+                // Face embeddings are published in the face-specific pass below
+                continue;
+            }
+
             // Anonymity gate: check field privacy before publishing
             let privacy_class = config
                 .field_privacy
@@ -168,7 +174,46 @@ impl DiscoveryPublisher {
                 content_preview: preview,
                 fragment_type,
                 public_key,
+                embedding_space: "text".to_string(),
             });
+        }
+
+        // Second pass: face embeddings (only if publish_faces is enabled)
+        if config.publish_faces {
+            for (_key_bytes, value_bytes) in &raw_entries {
+                let stored: StoredEmbedding = match serde_json::from_slice(value_bytes) {
+                    Ok(s) => s,
+                    Err(_) => continue,
+                };
+
+                if stored.embedding.is_empty() || stored.field_name != "__face__" {
+                    continue;
+                }
+
+                // Face embeddings skip the text anonymity gate (NER/entropy not applicable)
+                let embedding_bytes: Vec<u8> = stored
+                    .embedding
+                    .iter()
+                    .flat_map(|f| f.to_le_bytes())
+                    .collect();
+                let content_hash = pseudonym::content_hash_bytes(&embedding_bytes);
+                let pseudo = pseudonym::derive_pseudonym(&self.master_key, &content_hash);
+
+                let public_key = Some(connection::get_pseudonym_public_key_b64(
+                    &self.master_key,
+                    &pseudo,
+                ));
+
+                upload_entries.push(DiscoveryUploadEntry {
+                    pseudonym: pseudo,
+                    embedding: stored.embedding,
+                    category: config.category.clone(),
+                    content_preview: None,
+                    fragment_type: "face".to_string(),
+                    public_key,
+                    embedding_space: "face".to_string(),
+                });
+            }
         }
 
         if upload_entries.is_empty() {
@@ -284,8 +329,15 @@ impl DiscoveryPublisher {
         category_filter: Option<String>,
         offset: Option<usize>,
     ) -> Result<Vec<DiscoverySearchResult>, String> {
-        self.search_with_threshold(query_embedding, top_k, category_filter, offset, None)
-            .await
+        self.search_with_threshold(
+            query_embedding,
+            top_k,
+            category_filter,
+            offset,
+            None,
+            "text".to_string(),
+        )
+        .await
     }
 
     pub async fn search_with_threshold(
@@ -295,6 +347,7 @@ impl DiscoveryPublisher {
         category_filter: Option<String>,
         offset: Option<usize>,
         similarity_threshold: Option<f32>,
+        embedding_space: String,
     ) -> Result<Vec<DiscoverySearchResult>, String> {
         let request = DiscoverySearchRequest {
             embedding: query_embedding,
@@ -302,6 +355,7 @@ impl DiscoveryPublisher {
             category_filter,
             similarity_threshold,
             offset,
+            embedding_space,
         };
 
         let response = self

@@ -19,6 +19,7 @@ export interface OptInRequest {
   include_preview?: boolean;
   preview_max_chars?: number;
   preview_excluded_fields?: string[];
+  publish_faces?: boolean;
 }
 
 export interface PublishResult {
@@ -171,6 +172,22 @@ export interface MomentScanResult {
 export interface MomentDetectResult {
   new_moments_found: number;
   moments: SharedMoment[];
+}
+
+// Face Discovery types
+
+export interface FaceEntry {
+  face_index: number;
+  bbox: [number, number, number, number]; // x1, y1, x2, y2 normalized
+  confidence: number;
+}
+
+export interface FaceSearchResult {
+  pseudonym: string;
+  similarity: number;
+  face_index: number;
+  schema_name: string;
+  record_key: string;
 }
 
 export class DiscoveryClient {
@@ -402,6 +419,38 @@ export class DiscoveryClient {
     return this.client.get('/discovery/moments', {
       timeout: API_TIMEOUTS.STANDARD,
       retries: API_RETRIES.NONE, // No retries — 503 in local mode is deterministic
+    });
+  }
+
+  // Face Discovery
+
+  async listFaces(
+    schema: string,
+    key: string,
+  ): Promise<EnhancedApiResponse<{ faces: FaceEntry[] }>> {
+    return this.client.get(
+      `/discovery/faces/${encodeURIComponent(schema)}/${encodeURIComponent(key)}`,
+      {
+        timeout: API_TIMEOUTS.STANDARD,
+        retries: API_RETRIES.NONE,
+      },
+    );
+  }
+
+  async faceSearch(
+    sourceSchema: string,
+    sourceKey: string,
+    faceIndex: number = 0,
+    topK: number = 20,
+  ): Promise<EnhancedApiResponse<{ results: FaceSearchResult[] }>> {
+    return this.client.post('/discovery/face-search', {
+      source_schema: sourceSchema,
+      source_key: sourceKey,
+      face_index: faceIndex,
+      top_k: topK,
+    }, {
+      timeout: API_TIMEOUTS.MUTATION,
+      retries: API_RETRIES.NONE,
     });
   }
 }

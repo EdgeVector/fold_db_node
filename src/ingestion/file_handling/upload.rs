@@ -446,6 +446,19 @@ pub async fn upload_file(
         None
     };
 
+    // TODO(face-detection): Hook face detection here once schema/key are known.
+    // At this point we have the raw image bytes (in memory during save_uploaded_file)
+    // but the schema_name and record key are determined later during async ingestion
+    // (process_json_with_node_and_progress). The face detection call should happen
+    // after the record is stored:
+    //   native_idx.index_faces(schema_name, &key, &image_bytes).await
+    // Options:
+    //   1. Pass image bytes through IngestionRequest so the ingestion pipeline can
+    //      call index_faces after the record is created.
+    //   2. Re-read the encrypted file from UploadStorage after ingestion, decrypt,
+    //      and run face detection as a post-ingestion step.
+    // The file_hash in form_data can be used to retrieve the image later.
+
     // Clean up the unencrypted temp file now that conversion is complete.
     // The encrypted copy is already stored; leaving plaintext on disk is a data leak.
     // Retry deletion to handle transient filesystem locks (e.g., antivirus scanners).

@@ -10,6 +10,7 @@ ts-bindings = ["fold_db/ts-bindings"]
 os-keychain = ["dep:keyring"]
 test-utils = ["fold_db/test-utils"]
 transform-wasm = ["fold_db/transform-wasm"]
+face-detection = ["fold_db/face-detection"]
 
 [dependencies]
 # Core database library

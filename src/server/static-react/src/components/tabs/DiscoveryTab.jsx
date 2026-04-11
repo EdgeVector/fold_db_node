@@ -97,6 +97,8 @@ function CategoryCard({
   toggling,
   expanded,
   onExpandToggle,
+  publishFaces,
+  onPublishFacesToggle,
 }) {
   const allOptedIn = schemas.every(s => optedInNames.has(s.name))
   const someOptedIn = schemas.some(s => optedInNames.has(s.name))
@@ -156,6 +158,20 @@ function CategoryCard({
           <div className="text-xs text-tertiary mt-1">
             Embedding vectors of these fields will be published — raw text is never shared.
           </div>
+
+          {/* Publish face embeddings opt-in */}
+          <label className="flex items-center gap-2 mt-2 cursor-pointer">
+            <input
+              type="checkbox"
+              checked={publishFaces}
+              onChange={(e) => onPublishFacesToggle(category, e.target.checked)}
+              disabled={toggling}
+              className="accent-gruvbox-green"
+            />
+            <span className="text-xs text-secondary">
+              Publish face embeddings (detected faces in photos will be searchable on the network)
+            </span>
+          </label>
         </div>
       )}
     </div>
@@ -304,6 +320,171 @@ function SearchPanel({ onResult }) {
       )}
 
       {results.length === 0 && !searching && !error && query && (
+        <div className="text-sm text-secondary text-center py-4">No results found</div>
+      )}
+    </div>
+  )
+}
+
+function FaceSearchPanel({ onResult }) {
+  const [sourceSchema, setSourceSchema] = useState('')
+  const [sourceKey, setSourceKey] = useState('')
+  const [faceIndex, setFaceIndex] = useState(0)
+  const [results, setResults] = useState([])
+  const [searching, setSearching] = useState(false)
+  const [error, setError] = useState(null)
+  const [connectingTo, setConnectingTo] = useState(null)
+  const [connectMessage, setConnectMessage] = useState('')
+
+  const handleSearch = useCallback(async () => {
+    if (!sourceSchema.trim() || !sourceKey.trim()) return
+    setSearching(true)
+    setError(null)
+    try {
+      const res = await discoveryClient.faceSearch(sourceSchema, sourceKey, faceIndex)
+      if (res.success) {
+        setResults(res.data?.results || [])
+        onResult({ success: true, data: res.data })
+      } else {
+        setError(res.error || 'Face search failed')
+        onResult({ error: res.error || 'Face search failed' })
+      }
+    } catch (e) {
+      const msg = toErrorMessage(e)
+      setError(msg || 'Network error')
+      onResult({ error: msg || 'Network error' })
+    } finally {
+      setSearching(false)
+    }
+  }, [sourceSchema, sourceKey, faceIndex, onResult])
+
+  const handleConnect = async (pseudonym) => {
+    if (!connectMessage.trim()) return
+    try {
+      const res = await discoveryClient.connect(pseudonym, connectMessage)
+      if (res.success) {
+        setConnectingTo(null)
+        setConnectMessage('')
+        onResult({ success: true, data: { message: 'Connection request sent' } })
+      } else {
+        onResult({ error: res.error || 'Connect failed' })
+      }
+    } catch (e) {
+      onResult({ error: toErrorMessage(e) || 'Network error' })
+    }
+  }
+
+  return (
+    <div className="space-y-3">
+      <div className="card-info p-3 rounded text-xs space-y-1.5">
+        <div className="font-semibold text-gruvbox-blue">Face Search</div>
+        <p className="text-secondary">
+          Search the discovery network by face. Enter the schema name and record key of a photo
+          with detected faces, then specify which face to search by (0 = first face).
+        </p>
+      </div>
+
+      <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
+        <div>
+          <label className="text-xs text-secondary block mb-1">Schema Name</label>
+          <input
+            type="text"
+            value={sourceSchema}
+            onChange={(e) => setSourceSchema(e.target.value)}
+            placeholder="e.g. photos"
+            className="input w-full"
+          />
+        </div>
+        <div>
+          <label className="text-xs text-secondary block mb-1">Record Key</label>
+          <input
+            type="text"
+            value={sourceKey}
+            onChange={(e) => setSourceKey(e.target.value)}
+            placeholder="e.g. IMG_1234"
+            className="input w-full"
+          />
+        </div>
+      </div>
+
+      <div className="flex gap-2 items-end">
+        <div>
+          <label className="text-xs text-secondary block mb-1">Face Index</label>
+          <input
+            type="number"
+            min={0}
+            value={faceIndex}
+            onChange={(e) => setFaceIndex(parseInt(e.target.value, 10) || 0)}
+            className="input w-24"
+          />
+        </div>
+        <button
+          onClick={handleSearch}
+          disabled={searching || !sourceSchema.trim() || !sourceKey.trim()}
+          className="btn-primary"
+        >
+          {searching ? 'Searching...' : 'Search by Face'}
+        </button>
+      </div>
+
+      {error && <div className="text-sm text-gruvbox-red">{error}</div>}
+
+      {results.length > 0 && (
+        <div className="space-y-2">
+          <div className="text-xs text-secondary">{results.length} results</div>
+          {results.map((r, i) => (
+            <div key={i} className="border border-border rounded p-3">
+              <div className="flex items-center justify-between">
+                <div className="flex items-center gap-2">
+                  <span className="badge badge-info">face #{r.face_index}</span>
+                  <span className="text-xs text-secondary">
+                    similarity: {(r.similarity * 100).toFixed(1)}%
+                  </span>
+                </div>
+                {connectingTo === r.pseudonym ? (
+                  <div className="flex gap-1 items-center">
+                    <input
+                      type="text"
+                      value={connectMessage}
+                      onChange={(e) => setConnectMessage(e.target.value)}
+                      placeholder="Message..."
+                      className="input text-xs w-48"
+                    />
+                    <button
+                      onClick={() => handleConnect(r.pseudonym)}
+                      disabled={!connectMessage.trim()}
+                      className="btn-primary btn-sm"
+                    >
+                      Send
+                    </button>
+                    <button
+                      onClick={() => { setConnectingTo(null); setConnectMessage('') }}
+                      className="btn-secondary btn-sm"
+                    >
+                      Cancel
+                    </button>
+                  </div>
+                ) : (
+                  <button
+                    onClick={() => setConnectingTo(r.pseudonym)}
+                    className="btn-secondary btn-sm"
+                  >
+                    Connect
+                  </button>
+                )}
+              </div>
+              <div className="text-xs text-secondary mt-1">
+                {r.schema_name} / {r.record_key}
+              </div>
+              <div className="text-xs text-tertiary mt-1 font-mono truncate">
+                {r.pseudonym}
+              </div>
+            </div>
+          ))}
+        </div>
+      )}
+
+      {results.length === 0 && !searching && !error && sourceSchema && sourceKey && (
         <div className="text-sm text-secondary text-center py-4">No results found</div>
       )}
     </div>
@@ -1011,6 +1192,7 @@ export default function DiscoveryTab({ onResult }) {
   const [expandedCategories, setExpandedCategories] = useState(new Set())
   const [toggling, setToggling] = useState(false)
   const [lastPublishResult, setLastPublishResult] = useState(null)
+  const [publishFacesCategories, setPublishFacesCategories] = useState(new Set())
 
   const optedInNames = new Set(configs.map(c => c.schema_name))
 
@@ -1046,6 +1228,15 @@ export default function DiscoveryTab({ onResult }) {
 
   useEffect(() => { loadConfigs() }, [loadConfigs])
 
+  const handlePublishFacesToggle = (category, enabled) => {
+    setPublishFacesCategories(prev => {
+      const next = new Set(prev)
+      if (enabled) next.add(category)
+      else next.delete(category)
+      return next
+    })
+  }
+
   const handleToggleCategory = async (category, schemas, enable) => {
     setToggling(true)
     setError(null)
@@ -1058,6 +1249,7 @@ export default function DiscoveryTab({ onResult }) {
               schema_name: s.name,
               category,
               include_preview: false,
+              publish_faces: publishFacesCategories.has(category),
             })
             if (res.success) {
               setConfigs(res.data?.configs || [])
@@ -1100,6 +1292,7 @@ export default function DiscoveryTab({ onResult }) {
                 schema_name: s.name,
                 category: cat,
                 include_preview: false,
+                publish_faces: publishFacesCategories.has(cat),
               })
               if (res.success) setConfigs(res.data?.configs || [])
             }
@@ -1180,6 +1373,7 @@ export default function DiscoveryTab({ onResult }) {
           { id: 'interests', label: 'Your Interests' },
           { id: 'manage', label: 'Interest Categories' },
           { id: 'search', label: 'Search Network' },
+          { id: 'face-search', label: 'Face Search' },
           { id: 'requests', label: 'Received' },
           { id: 'sent', label: 'Sent' },
         ].map(s => (
@@ -1260,6 +1454,8 @@ export default function DiscoveryTab({ onResult }) {
                     toggling={toggling}
                     expanded={expandedCategories.has(cat)}
                     onExpandToggle={() => toggleExpand(cat)}
+                    publishFaces={publishFacesCategories.has(cat)}
+                    onPublishFacesToggle={handlePublishFacesToggle}
                   />
                 ))}
               </div>
@@ -1291,6 +1487,11 @@ export default function DiscoveryTab({ onResult }) {
       {/* Search Section */}
       {activeSection === 'search' && (
         <SearchPanel onResult={onResult} />
+      )}
+
+      {/* Face Search Section */}
+      {activeSection === 'face-search' && (
+        <FaceSearchPanel onResult={onResult} />
       )}
 
       {/* Received Connection Requests */}
