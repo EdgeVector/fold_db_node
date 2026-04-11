@@ -227,7 +227,7 @@ pub struct SimilarProfilesResponse {
 
 /// Get the metadata KV store from a FoldDB guard.
 fn get_metadata_store(
-    db: &tokio::sync::OwnedMutexGuard<fold_db::fold_db_core::FoldDB>,
+    db: &fold_db::fold_db_core::FoldDB,
 ) -> std::sync::Arc<dyn fold_db::storage::traits::KvStore> {
     db.get_db_ops().metadata_store().inner().clone()
 }
@@ -236,7 +236,6 @@ fn get_metadata_store(
 pub async fn list_opt_ins(node: &FoldNode) -> HandlerResult<DiscoveryOptInListResponse> {
     let db = node
         .get_fold_db()
-        .await
         .map_err(|e| HandlerError::Internal(format!("Failed to access database: {}", e)))?;
     let store = get_metadata_store(&db);
 
@@ -254,7 +253,6 @@ pub async fn opt_in(
 ) -> HandlerResult<DiscoveryOptInListResponse> {
     let db = node
         .get_fold_db()
-        .await
         .map_err(|e| HandlerError::Internal(format!("Failed to access database: {}", e)))?;
     let store = get_metadata_store(&db);
 
@@ -295,7 +293,6 @@ pub async fn opt_out(
 ) -> HandlerResult<DiscoveryOptInListResponse> {
     let db = node
         .get_fold_db()
-        .await
         .map_err(|e| HandlerError::Internal(format!("Failed to access database: {}", e)))?;
     let store = get_metadata_store(&db);
 
@@ -338,7 +335,6 @@ pub async fn publish(
 ) -> HandlerResult<DiscoveryPublishResponse> {
     let db = node
         .get_fold_db()
-        .await
         .map_err(|e| HandlerError::Internal(format!("Failed to access database: {}", e)))?;
 
     let db_ops = db.get_db_ops();
@@ -426,7 +422,6 @@ pub async fn search(
     // Generate embedding from query text
     let db = node
         .get_fold_db()
-        .await
         .map_err(|e| HandlerError::Internal(format!("Failed to access database: {}", e)))?;
 
     let db_ops = db.get_db_ops();
@@ -503,7 +498,6 @@ pub async fn connect(
     // 2. Pick a sender pseudonym — use first published pseudonym we have
     let db = node
         .get_fold_db()
-        .await
         .map_err(|e| HandlerError::Internal(format!("Failed to access database: {}", e)))?;
     let store = get_metadata_store(&db);
     let configs = config::list_opt_ins(&*store)
@@ -576,7 +570,6 @@ pub async fn poll_and_decrypt_requests(
 
     let db = node
         .get_fold_db()
-        .await
         .map_err(|e| HandlerError::Internal(format!("Failed to access database: {}", e)))?;
     let db_ops = db.get_db_ops();
     let store = get_metadata_store(&db);
@@ -992,7 +985,7 @@ async fn handle_incoming_schema_list_request(
     );
 
     let op = OperationProcessor::new(node.clone());
-    let db = match op.get_db_public().await {
+    let db = match op.get_db_public() {
         Ok(db) => db,
         Err(e) => {
             log::warn!("Failed to get database for schema list: {}", e);
@@ -1176,7 +1169,6 @@ pub async fn respond_to_request(
 
     let db = node
         .get_fold_db()
-        .await
         .map_err(|e| HandlerError::Internal(format!("Failed to access database: {}", e)))?;
     let store = get_metadata_store(&db);
 
@@ -1286,7 +1278,6 @@ pub async fn list_connection_requests(
 ) -> HandlerResult<ConnectionRequestsResponse> {
     let db = node
         .get_fold_db()
-        .await
         .map_err(|e| HandlerError::Internal(format!("Failed to access database: {}", e)))?;
     let store = get_metadata_store(&db);
 
@@ -1303,7 +1294,6 @@ pub async fn list_connection_requests(
 pub async fn list_sent_requests(node: &FoldNode) -> HandlerResult<SentRequestsResponse> {
     let db = node
         .get_fold_db()
-        .await
         .map_err(|e| HandlerError::Internal(format!("Failed to access database: {}", e)))?;
     let store = get_metadata_store(&db);
 
@@ -1364,7 +1354,6 @@ pub async fn browse_categories(
 pub async fn get_interests(node: &FoldNode) -> HandlerResult<InterestProfile> {
     let db = node
         .get_fold_db()
-        .await
         .map_err(|e| HandlerError::Internal(format!("Failed to access database: {}", e)))?;
     let store = get_metadata_store(&db);
 
@@ -1391,7 +1380,6 @@ pub async fn toggle_interest(
 ) -> HandlerResult<InterestProfile> {
     let db = node
         .get_fold_db()
-        .await
         .map_err(|e| HandlerError::Internal(format!("Failed to access database: {}", e)))?;
     let store = get_metadata_store(&db);
 
@@ -1406,7 +1394,6 @@ pub async fn toggle_interest(
 pub async fn detect_interests(node: &FoldNode) -> HandlerResult<InterestProfile> {
     let db = node
         .get_fold_db()
-        .await
         .map_err(|e| HandlerError::Internal(format!("Failed to access database: {}", e)))?;
 
     let db_ops = db.get_db_ops();
@@ -1443,7 +1430,6 @@ pub async fn similar_profiles(
 ) -> HandlerResult<SimilarProfilesResponse> {
     let db = node
         .get_fold_db()
-        .await
         .map_err(|e| HandlerError::Internal(format!("Failed to access database: {}", e)))?;
 
     let db_ops = db.get_db_ops();
@@ -1638,7 +1624,6 @@ pub async fn calendar_sharing_status(
 ) -> HandlerResult<CalendarSharingStatusResponse> {
     let db = node
         .get_fold_db()
-        .await
         .map_err(|e| HandlerError::Internal(format!("Failed to access database: {}", e)))?;
     let store = get_metadata_store(&db);
 
@@ -1667,7 +1652,6 @@ pub async fn calendar_sharing_opt_in(
 ) -> HandlerResult<CalendarSharingStatusResponse> {
     let db = node
         .get_fold_db()
-        .await
         .map_err(|e| HandlerError::Internal(format!("Failed to access database: {}", e)))?;
     let store = get_metadata_store(&db);
 
@@ -1696,7 +1680,6 @@ pub async fn calendar_sharing_opt_out(
 ) -> HandlerResult<CalendarSharingStatusResponse> {
     let db = node
         .get_fold_db()
-        .await
         .map_err(|e| HandlerError::Internal(format!("Failed to access database: {}", e)))?;
     let store = get_metadata_store(&db);
 
@@ -1718,7 +1701,6 @@ pub async fn sync_calendar_events(
 ) -> HandlerResult<SyncCalendarEventsResponse> {
     let db = node
         .get_fold_db()
-        .await
         .map_err(|e| HandlerError::Internal(format!("Failed to access database: {}", e)))?;
     let store = get_metadata_store(&db);
 
@@ -1762,7 +1744,6 @@ pub async fn store_peer_events(
 ) -> HandlerResult<SyncCalendarEventsResponse> {
     let db = node
         .get_fold_db()
-        .await
         .map_err(|e| HandlerError::Internal(format!("Failed to access database: {}", e)))?;
     let store = get_metadata_store(&db);
 
@@ -1806,7 +1787,6 @@ pub async fn store_peer_events(
 pub async fn get_shared_events(node: &FoldNode) -> HandlerResult<SharedEventsResponse> {
     let db = node
         .get_fold_db()
-        .await
         .map_err(|e| HandlerError::Internal(format!("Failed to access database: {}", e)))?;
     let store = get_metadata_store(&db);
 
@@ -1894,7 +1874,6 @@ pub async fn moment_opt_in(
 ) -> HandlerResult<MomentOptInListResponse> {
     let db = node
         .get_fold_db()
-        .await
         .map_err(|e| HandlerError::Internal(format!("Failed to access database: {}", e)))?;
     let store = get_metadata_store(&db);
 
@@ -1922,7 +1901,6 @@ pub async fn moment_opt_out(
 ) -> HandlerResult<MomentOptInListResponse> {
     let db = node
         .get_fold_db()
-        .await
         .map_err(|e| HandlerError::Internal(format!("Failed to access database: {}", e)))?;
     let store = get_metadata_store(&db);
 
@@ -1941,7 +1919,6 @@ pub async fn moment_opt_out(
 pub async fn moment_opt_in_list(node: &FoldNode) -> HandlerResult<MomentOptInListResponse> {
     let db = node
         .get_fold_db()
-        .await
         .map_err(|e| HandlerError::Internal(format!("Failed to access database: {}", e)))?;
     let store = get_metadata_store(&db);
 
@@ -1960,7 +1937,6 @@ pub async fn moment_scan(
 ) -> HandlerResult<MomentScanResponse> {
     let db = node
         .get_fold_db()
-        .await
         .map_err(|e| HandlerError::Internal(format!("Failed to access database: {}", e)))?;
     let store = get_metadata_store(&db);
 
@@ -2040,7 +2016,6 @@ pub async fn moment_receive_hashes(
 ) -> HandlerResult<()> {
     let db = node
         .get_fold_db()
-        .await
         .map_err(|e| HandlerError::Internal(format!("Failed to access database: {}", e)))?;
     let store = get_metadata_store(&db);
 
@@ -2072,7 +2047,6 @@ pub async fn moment_receive_hashes(
 pub async fn moment_detect(node: &FoldNode) -> HandlerResult<MomentDetectResponse> {
     let db = node
         .get_fold_db()
-        .await
         .map_err(|e| HandlerError::Internal(format!("Failed to access database: {}", e)))?;
     let store = get_metadata_store(&db);
 
@@ -2105,7 +2079,6 @@ pub async fn moment_detect(node: &FoldNode) -> HandlerResult<MomentDetectRespons
 pub async fn moment_list(node: &FoldNode) -> HandlerResult<SharedMomentsResponse> {
     let db = node
         .get_fold_db()
-        .await
         .map_err(|e| HandlerError::Internal(format!("Failed to access database: {}", e)))?;
     let store = get_metadata_store(&db);
 
@@ -2150,7 +2123,6 @@ pub async fn list_faces(
 ) -> HandlerResult<ListFacesResponse> {
     let db = node
         .get_fold_db()
-        .await
         .map_err(|e| HandlerError::Internal(format!("Failed to access database: {}", e)))?;
 
     let db_ops = db.get_db_ops();
@@ -2181,7 +2153,6 @@ pub async fn face_search(
 
     let db = node
         .get_fold_db()
-        .await
         .map_err(|e| HandlerError::Internal(format!("Failed to access database: {}", e)))?;
 
     let db_ops = db.get_db_ops();
@@ -2295,7 +2266,6 @@ pub async fn send_data_share(
     // 3. Load each record
     let db = node
         .get_fold_db()
-        .await
         .map_err(|e| HandlerError::Internal(format!("Failed to access database: {}", e)))?;
 
     let mut shared_records = Vec::with_capacity(req.records.len());
@@ -2459,9 +2429,8 @@ async fn process_data_share(
     node: &FoldNode,
     payload: &DataSharePayload,
 ) -> Result<(), HandlerError> {
-    let mut db = node
+    let db = node
         .get_fold_db()
-        .await
         .map_err(|e| HandlerError::Internal(format!("Failed to get db: {e}")))?;
 
     for record in &payload.records {

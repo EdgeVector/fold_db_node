@@ -218,7 +218,6 @@ pub async fn run_interest_detection(
     let node_guard = node.read().await;
     let db = node_guard
         .get_fold_db()
-        .await
         .map_err(|e| format!("Failed to access database: {}", e))?;
 
     let db_ops = db.get_db_ops();

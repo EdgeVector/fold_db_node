@@ -769,7 +769,7 @@ pub async fn apply_defaults_all(
     let force = query.get("force").map(|v| v == "true").unwrap_or(false);
     handler_result_to_response(
         async {
-            let db = op.get_db_public().await.typed_handler_err()?;
+            let db = op.get_db_public().typed_handler_err()?;
             let schemas = db
                 .schema_manager
                 .get_schemas_with_states()

@@ -273,7 +273,7 @@ impl IngestionService {
         mutation_keys: &[fold_db::schema::types::KeyValue],
         node: &FoldNode,
     ) {
-        let db = match node.get_fold_db().await {
+        let db = match node.get_fold_db() {
             Ok(db) => db,
             Err(e) => {
                 log_feature!(

@@ -37,7 +37,7 @@ async fn load_test_schema(node: &FoldNode) {
         "fields": ["email", "name", "phone"]
     }"#;
 
-    let mut db = node.get_fold_db().await.unwrap();
+    let db = node.get_fold_db().unwrap();
     db.load_schema_from_json(schema_json).await.unwrap();
     db.schema_manager().approve("TestContact").await.unwrap();
 }
@@ -53,7 +53,7 @@ async fn load_range_schema(node: &FoldNode) {
         "fields": ["timestamp", "message", "level"]
     }"#;
 
-    let mut db = node.get_fold_db().await.unwrap();
+    let db = node.get_fold_db().unwrap();
     db.load_schema_from_json(schema_json).await.unwrap();
     db.schema_manager().approve("EventLog").await.unwrap();
 }

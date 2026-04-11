@@ -250,13 +250,12 @@ impl<T> IntoTypedHandlerError<T> for Result<T, fold_db::schema::types::SchemaErr
 ///
 /// Replaces the repeated pattern:
 /// ```ignore
-/// node.get_fold_db().await
+/// node.get_fold_db()
 ///     .map_err(|e| HandlerError::Internal(format!("Failed to access database: {}", e)))?
 /// ```
-pub async fn get_db_guard(
+pub fn get_db_guard(
     node: &crate::fold_node::node::FoldNode,
-) -> Result<tokio::sync::OwnedMutexGuard<fold_db::fold_db_core::FoldDB>, HandlerError> {
+) -> Result<std::sync::Arc<fold_db::fold_db_core::FoldDB>, HandlerError> {
     node.get_fold_db()
-        .await
         .map_err(|e| HandlerError::Internal(format!("Failed to access database: {}", e)))
 }

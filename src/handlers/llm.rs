@@ -59,7 +59,7 @@ fn warn_session_err(result: Result<(), String>, action: &str) {
 
 /// Fetch all schemas with states from the database.
 async fn get_schemas(node: &FoldNode) -> Result<Vec<SchemaWithState>, HandlerError> {
-    let db_guard = get_db_guard(node).await?;
+    let db_guard = get_db_guard(node)?;
     db_guard
         .schema_manager()
         .get_schemas_with_states()
@@ -243,7 +243,7 @@ pub async fn ai_native_index_query(
         .handler_err("create session")?;
 
     // Get FoldDb for both schema access and hydration queries
-    let db_guard = get_db_guard(node).await?;
+    let db_guard = get_db_guard(node)?;
 
     // Get available schemas
     let schemas: Vec<SchemaWithState> = db_guard

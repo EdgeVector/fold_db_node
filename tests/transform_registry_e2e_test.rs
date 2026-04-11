@@ -96,7 +96,7 @@ async fn setup_node_with_medical_schema() -> (FoldNode, TempDir) {
         }
     });
 
-    let mut fold_db = node.get_fold_db().await.expect("get FoldDB");
+    let fold_db = node.get_fold_db().expect("get FoldDB");
     fold_db
         .load_schema_from_json(&medical_schema_json.to_string())
         .await

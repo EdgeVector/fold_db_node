@@ -49,13 +49,13 @@ impl OperationProcessor {
         &self,
     ) -> FoldDbResult<fold_db::fold_db_core::infrastructure::event_statistics::EventStatistics>
     {
-        let db = self.get_db().await?;
+        let db = self.get_db()?;
         Ok(db.get_event_statistics())
     }
 
     /// Get indexing status.
     pub async fn get_indexing_status(&self) -> FoldDbResult<IndexingStatus> {
-        let db = self.get_db().await?;
+        let db = self.get_db()?;
         Ok(db.get_indexing_status().await)
     }
 
@@ -93,7 +93,7 @@ impl OperationProcessor {
         let db_path = config.get_storage_path();
 
         // Drop the database guard to release Sled locks before deleting files
-        if let Ok(db) = self.get_db().await {
+        if let Ok(db) = self.get_db() {
             drop(db);
         }
 

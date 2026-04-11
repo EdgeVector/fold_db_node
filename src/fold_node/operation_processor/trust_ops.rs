@@ -19,7 +19,7 @@ fn to_schema_err(e: fold_db::error::FoldDbError) -> SchemaError {
 /// fold_db's access module.
 impl OperationProcessor {
     pub async fn load_trust_maps(&self) -> Result<serde_json::Value, SchemaError> {
-        let db = self.get_db().await.map_err(to_schema_err)?;
+        let db = self.get_db().map_err(to_schema_err)?;
         let domains = db.db_ops.list_trust_domains().await?;
         let mut result = serde_json::Map::new();
         for domain in &domains {
@@ -37,7 +37,7 @@ impl OperationProcessor {
         user_public_key: &str,
         tier: TrustTier,
     ) -> Result<(), SchemaError> {
-        let db = self.get_db().await.map_err(to_schema_err)?;
+        let db = self.get_db().map_err(to_schema_err)?;
         let mut map = db.db_ops.load_trust_map().await?;
         map.insert(user_public_key.to_string(), tier);
         db.db_ops.store_trust_map(&map).await?;
@@ -53,7 +53,7 @@ impl OperationProcessor {
     }
 
     pub async fn revoke_trust(&self, user_public_key: &str) -> Result<(), SchemaError> {
-        let db = self.get_db().await.map_err(to_schema_err)?;
+        let db = self.get_db().map_err(to_schema_err)?;
         let mut map = db.db_ops.load_trust_map().await?;
         map.remove(user_public_key);
         db.db_ops.store_trust_map(&map).await?;
@@ -71,13 +71,13 @@ impl OperationProcessor {
         &self,
         user_public_key: &str,
     ) -> Result<Option<TrustTier>, SchemaError> {
-        let db = self.get_db().await.map_err(to_schema_err)?;
+        let db = self.get_db().map_err(to_schema_err)?;
         let map = db.db_ops.load_trust_map().await?;
         Ok(map.get(user_public_key).copied())
     }
 
     pub async fn list_trust_grants(&self) -> Result<Vec<(String, TrustTier)>, SchemaError> {
-        let db = self.get_db().await.map_err(to_schema_err)?;
+        let db = self.get_db().map_err(to_schema_err)?;
         let map = db.db_ops.load_trust_map().await?;
         Ok(map.into_iter().collect())
     }
@@ -91,7 +91,7 @@ impl OperationProcessor {
         domain: &str,
         tier: TrustTier,
     ) -> Result<(), SchemaError> {
-        let db = self.get_db().await.map_err(to_schema_err)?;
+        let db = self.get_db().map_err(to_schema_err)?;
         let mut map = db.db_ops.load_trust_map_for_domain(domain).await?;
         map.insert(user_public_key.to_string(), tier);
         db.db_ops.store_trust_map_for_domain(domain, &map).await?;
@@ -112,7 +112,7 @@ impl OperationProcessor {
         user_public_key: &str,
         domain: &str,
     ) -> Result<(), SchemaError> {
-        let db = self.get_db().await.map_err(to_schema_err)?;
+        let db = self.get_db().map_err(to_schema_err)?;
         let mut map = db.db_ops.load_trust_map_for_domain(domain).await?;
         map.remove(user_public_key);
         db.db_ops.store_trust_map_for_domain(domain, &map).await?;
@@ -128,7 +128,7 @@ impl OperationProcessor {
 
     /// List all trust domains that have stored maps.
     pub async fn list_trust_domains(&self) -> Result<Vec<String>, SchemaError> {
-        let db = self.get_db().await.map_err(to_schema_err)?;
+        let db = self.get_db().map_err(to_schema_err)?;
         db.db_ops.list_trust_domains().await
     }
 
@@ -214,7 +214,7 @@ impl OperationProcessor {
         &self,
         public_key: &str,
     ) -> Result<SharingAuditResult, SchemaError> {
-        let db = self.get_db().await.map_err(to_schema_err)?;
+        let db = self.get_db().map_err(to_schema_err)?;
 
         // 1. Resolve tiers across all domains
         let domains = db.db_ops.list_trust_domains().await?;
@@ -300,7 +300,7 @@ impl OperationProcessor {
     /// Get an overview of the node's sharing posture: how many schemas per domain,
     /// how many contacts have access, total exposed fields.
     pub async fn sharing_posture(&self) -> Result<serde_json::Value, SchemaError> {
-        let db = self.get_db().await.map_err(to_schema_err)?;
+        let db = self.get_db().map_err(to_schema_err)?;
 
         // Count schemas per trust domain
         let schemas = db
@@ -358,7 +358,7 @@ impl OperationProcessor {
         field_name: &str,
         policy: serde_json::Value,
     ) -> Result<(), SchemaError> {
-        let db = self.get_db().await.map_err(to_schema_err)?;
+        let db = self.get_db().map_err(to_schema_err)?;
         let mut schema = db
             .schema_manager
             .get_schema(schema_name)
@@ -387,7 +387,7 @@ impl OperationProcessor {
         &self,
         schema_name: &str,
     ) -> Result<std::collections::HashMap<String, Option<serde_json::Value>>, SchemaError> {
-        let db = self.get_db().await.map_err(to_schema_err)?;
+        let db = self.get_db().map_err(to_schema_err)?;
         let schema = db
             .schema_manager
             .get_schema(schema_name)
@@ -412,7 +412,7 @@ impl OperationProcessor {
         schema_name: &str,
         field_name: &str,
     ) -> Result<Option<serde_json::Value>, SchemaError> {
-        let db = self.get_db().await.map_err(to_schema_err)?;
+        let db = self.get_db().map_err(to_schema_err)?;
         let schema = db
             .schema_manager
             .get_schema(schema_name)
@@ -438,7 +438,7 @@ impl OperationProcessor {
         schema_name: &str,
         force: bool,
     ) -> Result<usize, SchemaError> {
-        let db = self.get_db().await.map_err(to_schema_err)?;
+        let db = self.get_db().map_err(to_schema_err)?;
         let mut schema = db
             .schema_manager
             .get_schema(schema_name)
@@ -504,7 +504,7 @@ impl OperationProcessor {
     }
 
     pub async fn get_audit_log(&self, limit: usize) -> Result<serde_json::Value, SchemaError> {
-        let db = self.get_db().await.map_err(to_schema_err)?;
+        let db = self.get_db().map_err(to_schema_err)?;
         let log = db.db_ops.load_audit_log().await?;
         let recent = log.recent(limit);
         serde_json::to_value(recent)

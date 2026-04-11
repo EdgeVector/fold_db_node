@@ -129,7 +129,7 @@ async fn _test_local_mutation_execution() {
     }"#;
 
     {
-        let mut db = node.get_fold_db().await.expect("Failed to get DB");
+        let db = node.get_fold_db().expect("Failed to get DB");
         db.load_schema_from_json(schema_json)
             .await
             .expect("Failed to load schema");

@@ -75,7 +75,7 @@ async fn run_mutation_performance_test() {
     let schema_json = std::fs::read_to_string(schema_path).expect("Failed to read schema file");
 
     {
-        let mut db_guard = node.get_fold_db().await.expect("Failed to get database");
+        let db_guard = node.get_fold_db().expect("Failed to get database");
         db_guard
             .load_schema_from_json(&schema_json)
             .await
@@ -84,7 +84,7 @@ async fn run_mutation_performance_test() {
 
     // Approve the schema
     {
-        let db_guard = node.get_fold_db().await.expect("Failed to get database");
+        let db_guard = node.get_fold_db().expect("Failed to get database");
         db_guard
             .schema_manager()
             .approve("BlogPost")

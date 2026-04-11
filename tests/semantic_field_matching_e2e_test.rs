@@ -204,7 +204,7 @@ async fn test_semantic_field_matching_full_pipeline() {
 
     // Load and approve Schema A locally
     {
-        let db = node.get_fold_db().await.unwrap();
+        let db = node.get_fold_db().unwrap();
         let json_a = serde_json::to_string(&resp_a.schema).unwrap();
         db.schema_manager
             .load_schema_from_json(&json_a)
@@ -302,7 +302,7 @@ async fn test_semantic_field_matching_full_pipeline() {
 
     // 6. Load and approve Schema B locally, block Schema A
     {
-        let db = node.get_fold_db().await.unwrap();
+        let db = node.get_fold_db().unwrap();
         let json_b = serde_json::to_string(&resp_b.schema).unwrap();
         db.schema_manager
             .load_schema_from_json(&json_b)

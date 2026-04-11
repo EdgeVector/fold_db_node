@@ -144,7 +144,7 @@ async fn test_hash_mutation_keys_queryable() {
     // Load schema manually
     let schema_json = image_schema_json(schema_name);
     {
-        let db = node.get_fold_db().await.unwrap();
+        let db = node.get_fold_db().unwrap();
         let json_str = serde_json::to_string(&schema_json).unwrap();
         db.schema_manager
             .load_schema_from_json(&json_str)
@@ -231,7 +231,7 @@ async fn test_hashrange_mutation_partial_key_errors() {
     // Load HashRange schema
     let schema_json = hashrange_image_schema_json(schema_name);
     {
-        let db = node.get_fold_db().await.unwrap();
+        let db = node.get_fold_db().unwrap();
         let json_str = serde_json::to_string(&schema_json).unwrap();
         db.schema_manager
             .load_schema_from_json(&json_str)
@@ -420,7 +420,7 @@ async fn test_image_ingestion_pipeline_produces_keys() {
 
     // Step 3: Load and approve locally
     {
-        let db = node.get_fold_db().await.unwrap();
+        let db = node.get_fold_db().unwrap();
         let json_str = serde_json::to_string(&add_response.schema).unwrap();
         db.schema_manager
             .load_schema_from_json(&json_str)

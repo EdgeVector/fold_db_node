@@ -236,7 +236,7 @@ async fn test_schema_expansion_on_fresh_db() {
     // Load and approve Schema A locally
     let schema_json = serde_json::to_string(&add_resp.schema).unwrap();
     {
-        let db_1 = node_1.get_fold_db().await.unwrap();
+        let db_1 = node_1.get_fold_db().unwrap();
         db_1.schema_manager
             .load_schema_from_json(&schema_json)
             .await
@@ -278,7 +278,7 @@ async fn test_schema_expansion_on_fresh_db() {
 
     // Verify Schema A is NOT loaded in this fresh DB
     {
-        let db_2 = node_2.get_fold_db().await.unwrap();
+        let db_2 = node_2.get_fold_db().unwrap();
         let a_metadata = db_2.schema_manager.get_schema_metadata(&schema_a_name);
         assert!(
             a_metadata.map(|opt| opt.is_none()).unwrap_or(true),
@@ -316,7 +316,7 @@ async fn test_schema_expansion_on_fresh_db() {
     // The ingestion service would fetch the old schema from the schema service first.
     // Simulate what create_new_schema_with_node does:
     {
-        let db_2 = node_2.get_fold_db().await.unwrap();
+        let db_2 = node_2.get_fold_db().unwrap();
 
         // 1. Fetch old schema from schema service (the fix we're testing)
         let client = fold_db_node::fold_node::SchemaServiceClient::new(&schema_url);
@@ -379,7 +379,7 @@ async fn test_schema_expansion_on_fresh_db() {
 
     // Verify Schema A is blocked by checking all schemas (including blocked)
     {
-        let db_2 = node_2.get_fold_db().await.unwrap();
+        let db_2 = node_2.get_fold_db().unwrap();
         let all_schemas = db_2.schema_manager.get_schemas_with_states().unwrap();
         let blocked: Vec<_> = all_schemas
             .iter()
@@ -473,7 +473,7 @@ async fn test_expansion_without_old_schema_warns_but_succeeds() {
 
     // Load Schema B WITHOUT loading old Schema A first (testing defense-in-depth)
     {
-        let db_2 = node_2.get_fold_db().await.unwrap();
+        let db_2 = node_2.get_fold_db().unwrap();
         let schema_b_json = serde_json::to_string(&add_resp.schema).unwrap();
         db_2.schema_manager
             .load_schema_from_json(&schema_b_json)

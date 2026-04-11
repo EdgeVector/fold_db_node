@@ -52,7 +52,7 @@ fn build_schema() -> DeclarativeSchemaDefinition {
 }
 
 async fn ensure_schema(node: &FoldNode) {
-    let schema_manager = match node.get_fold_db().await {
+    let schema_manager = match node.get_fold_db() {
         Ok(guard) => guard.schema_manager().clone(),
         Err(e) => {
             log::error!("Failed to get FoldDB for conversation schema: {}", e);

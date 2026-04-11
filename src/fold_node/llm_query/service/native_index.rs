@@ -580,7 +580,6 @@ impl LlmQueryService {
 
                 let db = node
                     .get_fold_db()
-                    .await
                     .map_err(|e| format!("Failed to access database: {}", e))?;
                 let store = db.get_db_ops().metadata_store().inner().clone();
 
@@ -604,7 +603,6 @@ impl LlmQueryService {
 
                 let db = node
                     .get_fold_db()
-                    .await
                     .map_err(|e| format!("Failed to access database: {}", e))?;
                 let store = db.get_db_ops().metadata_store().inner().clone();
 
@@ -621,7 +619,6 @@ impl LlmQueryService {
             "discovery_status" => {
                 let db = node
                     .get_fold_db()
-                    .await
                     .map_err(|e| format!("Failed to access database: {}", e))?;
                 let store = db.get_db_ops().metadata_store().inner().clone();
 
@@ -940,7 +937,7 @@ impl LlmQueryService {
 
         // Load org memberships for context
         let orgs = {
-            let db_guard = node.get_fold_db().await.ok();
+            let db_guard = node.get_fold_db().ok();
             db_guard
                 .and_then(|g| g.sled_pool().cloned())
                 .map(|pool| fold_db::org::operations::list_orgs(&pool).unwrap_or_default())

@@ -18,7 +18,7 @@ impl OperationProcessor {
     ) -> FoldDbResult<String> {
         let access_context = self.build_access_context(caller_pub_key).await?;
 
-        let mut db = self.get_db().await?;
+        let db = self.get_db()?;
         let mut ids = db
             .mutation_manager
             .write_mutations_with_access(vec![mutation], &access_context, None)
@@ -51,7 +51,7 @@ impl OperationProcessor {
             mutation.schema_name
         );
 
-        let mut db = self.get_db().await?;
+        let db = self.get_db()?;
         let mut ids = db
             .mutation_manager
             .write_mutations_batch_async(vec![mutation])
@@ -91,7 +91,7 @@ impl OperationProcessor {
         &self,
         mutations: Vec<Mutation>,
     ) -> FoldDbResult<Vec<String>> {
-        let mut db = self.get_db().await?;
+        let db = self.get_db()?;
         let mutation_ids = db
             .mutation_manager
             .write_mutations_batch_async(mutations)

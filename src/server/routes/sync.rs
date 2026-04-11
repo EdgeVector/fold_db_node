@@ -25,7 +25,7 @@ pub async fn get_sync_status(state: web::Data<AppState>) -> impl Responder {
 pub async fn trigger_sync(state: web::Data<AppState>) -> impl Responder {
     let (_user_hash, node) = node_or_return!(state);
 
-    let db = match node.get_fold_db().await {
+    let db = match node.get_fold_db() {
         Ok(db) => db,
         Err(e) => {
             log_feature!(
