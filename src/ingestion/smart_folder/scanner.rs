@@ -215,7 +215,7 @@ pub const CONFIG_EXTS: &[&str] = &["yaml", "yml", "toml", "xml"];
 
 /// Image file extensions (photos, paintings, diagrams).
 pub const IMAGE_EXTS: &[&str] = &[
-    "jpg", "jpeg", "png", "gif", "bmp", "webp", "tiff", "tif", "svg", "heic", "heif",
+    "jpg", "jpeg", "png", "gif", "bmp", "webp", "tiff", "tif", "svg", "heic", "heif", "avif",
 ];
 
 /// Returns true if the file has an extension we can ingest.

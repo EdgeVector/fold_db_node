@@ -60,19 +60,10 @@ pub(crate) async fn classify_image_directories(
     let svc = match service {
         Some(s) => s,
         None => {
-            match crate::ingestion::ingestion_service::IngestionService::from_env() {
-                Ok(_) => {
-                    // We can't hold an owned service across await, just skip classification
-                    log::info!("No ingestion service provided for image classification, keeping all images");
-                    return Ok(Vec::new());
-                }
-                Err(_) => {
-                    log::info!(
-                        "No LLM available for image directory classification, keeping all images"
-                    );
-                    return Ok(Vec::new());
-                }
-            }
+            log::info!(
+                "No ingestion service provided for image classification, keeping all images"
+            );
+            return Ok(Vec::new());
         }
     };
 
