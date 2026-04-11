@@ -67,6 +67,8 @@ export type {
   PublishResult,
   SearchResult,
   ConnectionRequest,
+  FaceEntry,
+  FaceSearchResult,
 } from "./discoveryClient";
 
 // Type exports for convenience

@@ -717,6 +717,15 @@ impl FoldHttpServer {
                 .route(
                     "/moments/detect",
                     web::post().to(discovery_routes::moment_detect),
+                )
+                // Face discovery routes
+                .route(
+                    "/face-search",
+                    web::post().to(discovery_routes::face_search),
+                )
+                .route(
+                    "/faces/{schema}/{key}",
+                    web::get().to(discovery_routes::list_faces),
                 ),
         );
     }

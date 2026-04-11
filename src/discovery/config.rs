@@ -16,6 +16,17 @@ pub struct DiscoveryOptIn {
     #[serde(default)]
     pub field_privacy: HashMap<String, FieldPrivacyClass>,
     pub opted_in_at: chrono::DateTime<chrono::Utc>,
+    /// Whether to publish face embeddings from photos in this schema.
+    #[serde(default)]
+    pub publish_faces: bool,
+    /// Minimum trust tier required for someone to discover your face embeddings.
+    /// 0=Public, 1=Outer, 2=Trusted, 3=Inner, 4=Owner. Default: Inner (3).
+    #[serde(default = "default_face_visibility")]
+    pub face_visibility: u8,
+}
+
+fn default_face_visibility() -> u8 {
+    3 // Inner — only direct contacts can find your faces
 }
 
 impl DiscoveryOptIn {
@@ -28,6 +39,8 @@ impl DiscoveryOptIn {
             preview_excluded_fields: Vec::new(),
             field_privacy: HashMap::new(),
             opted_in_at: chrono::Utc::now(),
+            publish_faces: false,
+            face_visibility: default_face_visibility(),
         }
     }
 

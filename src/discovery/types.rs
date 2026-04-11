@@ -5,6 +5,10 @@ fn default_fragment_type() -> String {
     "field".to_string()
 }
 
+fn default_embedding_space() -> String {
+    "text".to_string()
+}
+
 /// A single entry to upload to the discovery service.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct DiscoveryUploadEntry {
@@ -18,6 +22,9 @@ pub struct DiscoveryUploadEntry {
     /// X25519 public key for this pseudonym (base64-encoded, 32 bytes)
     #[serde(skip_serializing_if = "Option::is_none")]
     pub public_key: Option<String>,
+    /// Embedding space identifier: "text" (384-dim) or "face" (512-dim).
+    #[serde(default = "default_embedding_space")]
+    pub embedding_space: String,
 }
 
 /// Batch upload request to the discovery service.
@@ -49,6 +56,9 @@ pub struct DiscoverySearchRequest {
     pub similarity_threshold: Option<f32>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub offset: Option<usize>,
+    /// Embedding space to search: "text" (384-dim) or "face" (512-dim).
+    #[serde(default = "default_embedding_space")]
+    pub embedding_space: String,
 }
 
 /// A single search result from the discovery service.
