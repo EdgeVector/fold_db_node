@@ -17,6 +17,7 @@ fn test_connection_payload_with_identity_card() {
             contact_hint: Some("alice@example.com".to_string()),
             node_public_key: "node_pk_alice".to_string(),
         }),
+        preferred_role: None,
     };
     let json = serde_json::to_string(&payload).unwrap();
     let deserialized: ConnectionPayload = serde_json::from_str(&json).unwrap();
@@ -48,6 +49,7 @@ fn test_connection_payload_backward_compat() {
     assert_eq!(payload.sender_pseudonym, "ps");
     assert_eq!(payload.reply_public_key, "rpk");
     assert!(payload.identity_card.is_none());
+    assert!(payload.preferred_role.is_none());
 }
 
 #[test]

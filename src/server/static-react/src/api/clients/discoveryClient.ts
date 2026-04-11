@@ -65,6 +65,7 @@ export interface LocalSentRequest {
   message: string;
   status: string;
   created_at: string;
+  preferred_role?: string;
 }
 
 export interface InterestCategory {
@@ -188,6 +189,7 @@ export interface FaceSearchResult {
   face_index: number;
   schema_name: string;
   record_key: string;
+  min_trust_tier?: number;
 }
 
 export class DiscoveryClient {
@@ -251,10 +253,12 @@ export class DiscoveryClient {
   async connect(
     target_pseudonym: string,
     message: string,
+    preferredRole?: string,
   ): Promise<EnhancedApiResponse<void>> {
     return this.client.post('/discovery/connect', {
       target_pseudonym,
       message,
+      preferred_role: preferredRole || undefined,
     }, {
       timeout: API_TIMEOUTS.MUTATION,
       retries: API_RETRIES.NONE,

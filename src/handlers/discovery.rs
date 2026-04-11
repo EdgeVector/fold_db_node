@@ -74,6 +74,8 @@ pub struct SearchRequest {
 pub struct ConnectRequest {
     pub target_pseudonym: uuid::Uuid,
     pub message: String,
+    /// Role the requester wants to assign the acceptor (default: "acquaintance")
+    pub preferred_role: Option<String>,
 }
 
 #[derive(Debug, Clone, Deserialize)]
@@ -501,6 +503,7 @@ pub async fn connect(
         sender_pseudonym: sender_pseudonym.to_string(),
         reply_public_key: sender_pk_b64,
         identity_card: None,
+        preferred_role: req.preferred_role.clone(),
     };
 
     let encrypted = connection::encrypt_connection_message(&target_pk, &payload)
@@ -522,6 +525,7 @@ pub async fn connect(
         message: req.message.clone(),
         status: "pending".to_string(),
         created_at: chrono::Utc::now().to_rfc3339(),
+        preferred_role: req.preferred_role.clone(),
     };
     connection::save_sent_request(&*store, &sent)
         .await
@@ -704,21 +708,30 @@ pub async fn poll_and_decrypt_requests(
                         continue;
                     }
                 };
-                if let Err(e) = connection::update_sent_request_status(
+                let sent_request = match connection::update_sent_request_status(
                     &*store,
                     &payload.sender_pseudonym,
                     "accepted",
                 )
                 .await
                 {
-                    log::warn!("Failed to update sent request: {}", e);
-                }
+                    Ok(req) => req,
+                    Err(e) => {
+                        log::warn!("Failed to update sent request: {}", e);
+                        None
+                    }
+                };
+
+                // Use the preferred_role from the original sent request, falling
+                // back to "acquaintance" if unset or if the sent request wasn't found.
+                let role = sent_request
+                    .as_ref()
+                    .and_then(|r| r.preferred_role.as_deref())
+                    .unwrap_or("acquaintance");
 
                 // Auto-create trust relationship from accepted connection
                 if payload.identity_card.is_some() {
-                    if let Err(e) =
-                        process_accepted_connection(node, &payload, "acquaintance").await
-                    {
+                    if let Err(e) = process_accepted_connection(node, &payload, role).await {
                         log::warn!(
                             "Failed to auto-create trust from accepted connection: {}",
                             e
@@ -741,7 +754,7 @@ pub async fn poll_and_decrypt_requests(
                 )
                 .await
                 {
-                    log::warn!("Failed to update sent request: {}", e);
+                    log::warn!("Failed to update sent request: {e}");
                 }
             }
             "query_request" => {
@@ -1189,6 +1202,7 @@ pub async fn respond_to_request(
                 contact_hint: card.contact_hint,
                 node_public_key: node.get_node_public_key().to_string(),
             }),
+            preferred_role: None, // accept messages don't carry a role preference
         };
 
         let encrypted = connection::encrypt_connection_message(&reply_pk, &response_payload)

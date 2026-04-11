@@ -88,6 +88,34 @@ function PrivacyGuarantees() {
   )
 }
 
+/** Map numeric trust tier to human-readable label. */
+const TRUST_TIER_LABELS = {
+  0: 'Public',
+  1: 'Outer',
+  2: 'Trusted',
+  3: 'Inner',
+  4: 'Owner',
+}
+
+function trustTierLabel(tier) {
+  return TRUST_TIER_LABELS[tier] ?? `Tier ${tier}`
+}
+
+/** Inline role selector for the connect flow. */
+function RoleSelect({ value, onChange }) {
+  return (
+    <select
+      value={value}
+      onChange={(e) => onChange(e.target.value)}
+      className="input text-xs w-32"
+    >
+      <option value="acquaintance">Acquaintance</option>
+      <option value="friend">Friend</option>
+      <option value="inner_circle">Inner Circle</option>
+    </select>
+  )
+}
+
 function CategoryCard({
   category,
   schemas,
@@ -207,6 +235,7 @@ function SearchPanel({ onResult }) {
   const [error, setError] = useState(null)
   const [connectingTo, setConnectingTo] = useState(null)
   const [connectMessage, setConnectMessage] = useState('')
+  const [connectRole, setConnectRole] = useState('acquaintance')
 
   const handleSearch = useCallback(async () => {
     if (!query.trim()) return
@@ -233,10 +262,11 @@ function SearchPanel({ onResult }) {
   const handleConnect = async (pseudonym) => {
     if (!connectMessage.trim()) return
     try {
-      const res = await discoveryClient.connect(pseudonym, connectMessage)
+      const res = await discoveryClient.connect(pseudonym, connectMessage, connectRole !== 'acquaintance' ? connectRole : undefined)
       if (res.success) {
         setConnectingTo(null)
         setConnectMessage('')
+        setConnectRole('acquaintance')
         onResult({ success: true, data: { message: 'Connection request sent' } })
       } else {
         onResult({ error: res.error || 'Connect failed' })
@@ -278,6 +308,7 @@ function SearchPanel({ onResult }) {
                 </div>
                 {connectingTo === r.pseudonym ? (
                   <div className="flex gap-1 items-center">
+                    <RoleSelect value={connectRole} onChange={setConnectRole} />
                     <input
                       type="text"
                       value={connectMessage}
@@ -293,7 +324,7 @@ function SearchPanel({ onResult }) {
                       Send
                     </button>
                     <button
-                      onClick={() => { setConnectingTo(null); setConnectMessage('') }}
+                      onClick={() => { setConnectingTo(null); setConnectMessage(''); setConnectRole('acquaintance') }}
                       className="btn-secondary btn-sm"
                     >
                       Cancel
@@ -335,6 +366,7 @@ function FaceSearchPanel({ onResult }) {
   const [error, setError] = useState(null)
   const [connectingTo, setConnectingTo] = useState(null)
   const [connectMessage, setConnectMessage] = useState('')
+  const [connectRole, setConnectRole] = useState('acquaintance')
 
   const handleSearch = useCallback(async () => {
     if (!sourceSchema.trim() || !sourceKey.trim()) return
@@ -361,10 +393,11 @@ function FaceSearchPanel({ onResult }) {
   const handleConnect = async (pseudonym) => {
     if (!connectMessage.trim()) return
     try {
-      const res = await discoveryClient.connect(pseudonym, connectMessage)
+      const res = await discoveryClient.connect(pseudonym, connectMessage, connectRole !== 'acquaintance' ? connectRole : undefined)
       if (res.success) {
         setConnectingTo(null)
         setConnectMessage('')
+        setConnectRole('acquaintance')
         onResult({ success: true, data: { message: 'Connection request sent' } })
       } else {
         onResult({ error: res.error || 'Connect failed' })
@@ -440,9 +473,15 @@ function FaceSearchPanel({ onResult }) {
                   <span className="text-xs text-secondary">
                     similarity: {(r.similarity * 100).toFixed(1)}%
                   </span>
+                  {r.min_trust_tier != null && r.min_trust_tier > 0 && (
+                    <span className="badge badge-warning text-xs">
+                      requires {trustTierLabel(r.min_trust_tier)}
+                    </span>
+                  )}
                 </div>
                 {connectingTo === r.pseudonym ? (
                   <div className="flex gap-1 items-center">
+                    <RoleSelect value={connectRole} onChange={setConnectRole} />
                     <input
                       type="text"
                       value={connectMessage}
@@ -458,7 +497,7 @@ function FaceSearchPanel({ onResult }) {
                       Send
                     </button>
                     <button
-                      onClick={() => { setConnectingTo(null); setConnectMessage('') }}
+                      onClick={() => { setConnectingTo(null); setConnectMessage(''); setConnectRole('acquaintance') }}
                       className="btn-secondary btn-sm"
                     >
                       Cancel
@@ -713,6 +752,7 @@ function PeopleLikeYouPanel({ onResult }) {
   const [error, setError] = useState(null)
   const [connectingTo, setConnectingTo] = useState(null)
   const [connectMessage, setConnectMessage] = useState('')
+  const [connectRole, setConnectRole] = useState('acquaintance')
   const intervalRef = useRef(null)
   // Track whether we've hit a local-mode error to stop polling
   const localModeRef = useRef(false)
@@ -757,10 +797,11 @@ function PeopleLikeYouPanel({ onResult }) {
   const handleConnect = async (pseudonym) => {
     if (!connectMessage.trim()) return
     try {
-      const res = await discoveryClient.connect(pseudonym, connectMessage)
+      const res = await discoveryClient.connect(pseudonym, connectMessage, connectRole !== 'acquaintance' ? connectRole : undefined)
       if (res.success) {
         setConnectingTo(null)
         setConnectMessage('')
+        setConnectRole('acquaintance')
         onResult({ success: true, data: { message: 'Connection request sent' } })
       } else {
         onResult({ error: res.error || 'Connect failed' })
@@ -836,6 +877,7 @@ function PeopleLikeYouPanel({ onResult }) {
             </div>
             {connectingTo === p.pseudonym ? (
               <div className="flex gap-1 items-center">
+                <RoleSelect value={connectRole} onChange={setConnectRole} />
                 <input
                   type="text"
                   value={connectMessage}
@@ -852,7 +894,7 @@ function PeopleLikeYouPanel({ onResult }) {
                   Send
                 </button>
                 <button
-                  onClick={() => { setConnectingTo(null); setConnectMessage('') }}
+                  onClick={() => { setConnectingTo(null); setConnectMessage(''); setConnectRole('acquaintance') }}
                   className="btn-secondary btn-sm"
                 >
                   Cancel
