@@ -717,6 +717,10 @@ impl FoldHttpServer {
             web::scope("/notifications")
                 .route("", web::get().to(discovery_routes::list_notifications))
                 .route(
+                    "/count",
+                    web::get().to(discovery_routes::notification_count),
+                )
+                .route(
                     "/{id}",
                     web::delete().to(discovery_routes::dismiss_notification),
                 ),

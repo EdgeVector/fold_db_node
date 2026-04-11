@@ -186,10 +186,8 @@ export interface FaceEntry {
 export interface FaceSearchResult {
   pseudonym: string;
   similarity: number;
-  face_index: number;
-  schema_name: string;
-  record_key: string;
-  min_trust_tier?: number;
+  category: string;
+  content_preview?: string;
 }
 
 export class DiscoveryClient {
@@ -480,6 +478,10 @@ export class DiscoveryClient {
 
   async dismissNotification(id: string): Promise<EnhancedApiResponse<{ dismissed: boolean }>> {
     return this.client.delete(`/notifications/${encodeURIComponent(id)}`);
+  }
+
+  async notificationCount(): Promise<EnhancedApiResponse<{ count: number }>> {
+    return this.client.get('/notifications/count');
   }
 }
 

@@ -469,15 +469,10 @@ function FaceSearchPanel({ onResult }) {
             <div key={i} className="border border-border rounded p-3">
               <div className="flex items-center justify-between">
                 <div className="flex items-center gap-2">
-                  <span className="badge badge-info">face #{r.face_index}</span>
+                  <span className="badge badge-info">{r.category}</span>
                   <span className="text-xs text-secondary">
                     similarity: {(r.similarity * 100).toFixed(1)}%
                   </span>
-                  {r.min_trust_tier != null && r.min_trust_tier > 0 && (
-                    <span className="badge badge-warning text-xs">
-                      requires {trustTierLabel(r.min_trust_tier)}
-                    </span>
-                  )}
                 </div>
                 {connectingTo === r.pseudonym ? (
                   <div className="flex gap-1 items-center">
@@ -512,9 +507,11 @@ function FaceSearchPanel({ onResult }) {
                   </button>
                 )}
               </div>
-              <div className="text-xs text-secondary mt-1">
-                {r.schema_name} / {r.record_key}
-              </div>
+              {r.content_preview && (
+                <div className="text-xs text-secondary mt-1">
+                  {r.content_preview}
+                </div>
+              )}
               <div className="text-xs text-tertiary mt-1 font-mono truncate">
                 {r.pseudonym}
               </div>
