@@ -372,10 +372,7 @@ async fn dispatch_org(
                         let name = org["org_name"].as_str().unwrap_or("unnamed");
                         let hash = org["org_hash"].as_str().unwrap_or("?");
                         let role = org["role"].as_str().unwrap_or("Member");
-                        msg.push_str(&format!(
-                            "\n  {} ({})\n    Hash: {}\n",
-                            name, role, hash
-                        ));
+                        msg.push_str(&format!("\n  {} ({})\n    Hash: {}\n", name, role, hash));
                     }
                     Ok(commands::CommandOutput::Message(msg))
                 }
@@ -393,9 +390,7 @@ async fn dispatch_org(
             let mut msg = format!("Organization \"{}\" created!", name);
             if let Some(bundle) = invite {
                 msg.push_str("\n\nInvite bundle (share with members):\n");
-                msg.push_str(
-                    &serde_json::to_string(bundle).unwrap_or_else(|_| "{}".to_string()),
-                );
+                msg.push_str(&serde_json::to_string(bundle).unwrap_or_else(|_| "{}".to_string()));
             }
             Ok(commands::CommandOutput::Message(msg))
         }
