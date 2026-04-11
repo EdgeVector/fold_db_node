@@ -77,7 +77,10 @@ pub async fn get_sled_pool(
 ///
 /// Session tokens are refreshed more frequently and survive API key rotation,
 /// so they are preferred when available.
-fn prefer_session_token(session_token: Option<&str>, api_key: &str) -> fold_db::sync::auth::SyncAuth {
+fn prefer_session_token(
+    session_token: Option<&str>,
+    api_key: &str,
+) -> fold_db::sync::auth::SyncAuth {
     match session_token {
         Some(t) if !t.is_empty() => fold_db::sync::auth::SyncAuth::BearerToken(t.to_string()),
         _ => fold_db::sync::auth::SyncAuth::ApiKey(api_key.to_string()),
