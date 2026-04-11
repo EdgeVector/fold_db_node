@@ -185,6 +185,24 @@ async fn main() {
     }
 }
 
+/// Format a Unix timestamp as relative time (e.g. "2m ago", "3h ago").
+fn format_relative_time(unix_secs: u64) -> String {
+    let now = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .unwrap_or_default()
+        .as_secs();
+    let diff = now.saturating_sub(unix_secs);
+    if diff < 60 {
+        "just now".to_string()
+    } else if diff < 3600 {
+        format!("{}m ago", diff / 60)
+    } else if diff < 86400 {
+        format!("{}h ago", diff / 3600)
+    } else {
+        format!("{}d ago", diff / 86400)
+    }
+}
+
 /// Dispatch commands through the daemon HTTP API
 async fn dispatch_http(
     command: &Command,
@@ -251,7 +269,24 @@ async fn dispatch_http(
                 if enabled {
                     let state = s.get("state").and_then(|v| v.as_str()).unwrap_or("unknown");
                     let pending = s.get("pending_count").and_then(|v| v.as_u64()).unwrap_or(0);
-                    msg.push_str(&format!("Cloud sync: {} ({} pending)\n", state, pending));
+                    let last_sync = s
+                        .get("last_sync_at")
+                        .and_then(|v| v.as_u64())
+                        .map(format_relative_time);
+                    let last_error = s
+                        .get("last_error")
+                        .and_then(|v| v.as_str())
+                        .filter(|e| !e.is_empty());
+                    if let Some(err) = last_error {
+                        msg.push_str(&format!("Cloud sync: ERROR — {}\n", err));
+                    } else if let Some(ref t) = last_sync {
+                        msg.push_str(&format!(
+                            "Cloud sync: {} ({} pending, synced {})\n",
+                            state, pending, t
+                        ));
+                    } else {
+                        msg.push_str(&format!("Cloud sync: {} ({} pending)\n", state, pending));
+                    }
                 } else {
                     msg.push_str("Cloud sync: disabled\n");
                 }
@@ -327,15 +362,24 @@ async fn dispatch_http(
                 let pending = sync_json["pending_count"].as_u64();
                 let encrypted = sync_json["encryption_active"].as_bool().unwrap_or(false);
 
+                let last_sync = sync_json["last_sync_at"].as_u64().map(format_relative_time);
+                let last_error = sync_json["last_error"].as_str().filter(|e| !e.is_empty());
+
                 let mut msg = format!("Cloud sync: enabled\nEndpoint:   {}", endpoint);
                 msg.push_str(&format!("\nState:      {}", state));
                 if let Some(count) = pending {
                     msg.push_str(&format!("\nPending:    {} entries", count));
                 }
+                if let Some(t) = last_sync {
+                    msg.push_str(&format!("\nLast sync:  {}", t));
+                }
                 msg.push_str(&format!(
                     "\nEncryption: {}",
                     if encrypted { "active" } else { "inactive" }
                 ));
+                if let Some(err) = last_error {
+                    msg.push_str(&format!("\nLast error: {}", err));
+                }
 
                 Ok(commands::CommandOutput::Message(msg))
             }
