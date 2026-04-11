@@ -471,6 +471,31 @@ export class DiscoveryClient {
       retries: API_RETRIES.NONE,
     });
   }
+
+  // Notifications
+
+  async listNotifications(): Promise<EnhancedApiResponse<NotificationsResponse>> {
+    return this.client.get('/notifications');
+  }
+
+  async dismissNotification(id: string): Promise<EnhancedApiResponse<{ dismissed: boolean }>> {
+    return this.client.delete(`/notifications/${encodeURIComponent(id)}`);
+  }
+}
+
+export interface Notification {
+  id: string;
+  type: string;
+  sender_display_name: string;
+  sender_public_key: string;
+  records_received: number;
+  schema_names: string[];
+  received_at: string;
+}
+
+export interface NotificationsResponse {
+  notifications: Notification[];
+  count: number;
 }
 
 export const discoveryClient = new DiscoveryClient();
