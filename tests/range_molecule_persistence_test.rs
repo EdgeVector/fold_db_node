@@ -13,6 +13,7 @@ use fold_db::schema::types::field::Field;
 use fold_db::schema::types::key_value::KeyValue;
 use fold_db::schema::types::operations::Query;
 use fold_db::schema::SchemaState;
+use fold_db::test_helpers::TestSchemaBuilder;
 use fold_db::MutationType;
 use fold_db_node::fold_node::config::NodeConfig;
 use fold_db_node::fold_node::FoldNode;
@@ -23,12 +24,11 @@ use tempfile::TempDir;
 
 mod common;
 
-fn file_records_schema_json() -> serde_json::Value {
-    json!({
-        "name": "FileRecords",
-        "key": { "range_field": "source_file" },
-        "fields": ["source_file", "content", "file_type"]
-    })
+fn file_records_schema_json() -> String {
+    TestSchemaBuilder::new("FileRecords")
+        .fields(&["content", "file_type"])
+        .range_key("source_file")
+        .build_json()
 }
 
 /// Helper: create a FoldNode backed by the given path.
@@ -42,7 +42,7 @@ async fn create_node(db_path: &str) -> FoldNode {
 
 /// Helper: load the FileRecords schema and approve it.
 async fn setup_schema(node: &FoldNode) {
-    let schema_str = serde_json::to_string(&file_records_schema_json()).unwrap();
+    let schema_str = file_records_schema_json();
     let fold_db = node.get_fold_db().expect("get fold_db");
     fold_db
         .schema_manager()
@@ -137,7 +137,7 @@ async fn schema_reload_from_json_preserves_molecules() {
 
     // Simulate what ingestion does for the SECOND file: reload schema from JSON.
     // Before the fix, this replaced the cached schema's molecule state.
-    let schema_str = serde_json::to_string(&file_records_schema_json()).unwrap();
+    let schema_str = file_records_schema_json();
     {
         let fold_db = node.get_fold_db().expect("get fold_db");
         fold_db
@@ -170,7 +170,7 @@ async fn mutations_work_after_simulated_restart() {
     let db_path = temp_dir.path().to_str().expect("path");
     let fold_db = FoldDB::new(db_path).await.expect("create FoldDB");
 
-    let schema_str = serde_json::to_string(&file_records_schema_json()).unwrap();
+    let schema_str = file_records_schema_json();
     fold_db
         .schema_manager()
         .load_schema_from_json(&schema_str)
@@ -184,7 +184,7 @@ async fn mutations_work_after_simulated_restart() {
 
     // Write first mutation normally
     let mutation1 = common::create_test_mutation(
-        &file_records_schema_json(),
+        &serde_json::from_str::<serde_json::Value>(&file_records_schema_json()).unwrap(),
         json!({
             "schema_name": "FileRecords",
             "pub_key": "test_user",
@@ -253,7 +253,7 @@ async fn mutations_work_after_simulated_restart() {
 
     // Write second mutation — this must refresh the molecule from DB before writing
     let mutation2 = common::create_test_mutation(
-        &file_records_schema_json(),
+        &serde_json::from_str::<serde_json::Value>(&file_records_schema_json()).unwrap(),
         json!({
             "schema_name": "FileRecords",
             "pub_key": "test_user",

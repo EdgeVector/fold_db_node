@@ -1,4 +1,5 @@
 use actix_web::{web, App, HttpResponse, HttpServer};
+use fold_db::schema::types::data_classification::DataClassification;
 use fold_db::schema::types::field_value_type::FieldValueType;
 use fold_db::schema::types::key_config::KeyConfig;
 use fold_db::schema::types::operations::Query;
@@ -80,10 +81,15 @@ fn make_test_schema(name: &str, fields: &[&str]) -> Schema {
         None,
     );
     schema.descriptive_name = Some(name.to_string());
+    let default_classification =
+        DataClassification::new(0, "general".to_string()).expect("valid classification");
     for field in fields {
         schema
             .field_types
             .insert(field.to_string(), FieldValueType::Any);
+        schema
+            .field_data_classifications
+            .insert(field.to_string(), default_classification.clone());
     }
     schema
 }

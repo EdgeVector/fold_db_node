@@ -1,6 +1,7 @@
 use fold_db::logging::core::run_with_user;
 use fold_db::schema::types::operations::MutationType;
 use fold_db::schema::types::KeyValue;
+use fold_db::test_helpers::TestSchemaBuilder;
 use fold_db_node::fold_node::node::FoldNode;
 use fold_db_node::fold_node::OperationProcessor;
 mod common;
@@ -17,22 +18,13 @@ async fn test_indexing_progress_tracking() {
     let node = FoldNode::new(config).await.unwrap();
 
     // Create a schema
-    let schema_json = r#"{
-        "name": "test_schema",
-        "type": "Single",
-        "key": {
-            "fields": ["id"],
-            "primary": true
-        },
-        "fields": ["id", "content"],
-        "field_classifications": {
-            "content": ["word"]
-        }
-    }"#;
+    let schema_json = TestSchemaBuilder::new("test_schema")
+        .fields(&["id", "content"])
+        .build_json();
 
     {
         let db = node.get_fold_db().unwrap();
-        db.load_schema_from_json(schema_json).await.unwrap();
+        db.load_schema_from_json(&schema_json).await.unwrap();
         db.schema_manager().approve("test_schema").await.unwrap();
     }
 

@@ -10,5 +10,12 @@
     "content": ["word"],
     "author": ["name:person", "word"],
     "tags": ["hashtag", "word"]
+  },
+  "field_data_classifications": {
+    "title": { "sensitivity_level": 0, "data_domain": "general" },
+    "content": { "sensitivity_level": 0, "data_domain": "general" },
+    "author": { "sensitivity_level": 1, "data_domain": "identity" },
+    "publish_date": { "sensitivity_level": 0, "data_domain": "general" },
+    "tags": { "sensitivity_level": 0, "data_domain": "general" }
   }
 }

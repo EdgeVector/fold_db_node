@@ -10,6 +10,7 @@ mod common;
 use fold_db::logging::core::run_with_user;
 use fold_db::schema::types::operations::MutationType;
 use fold_db::schema::types::{KeyValue, Mutation};
+use fold_db::test_helpers::TestSchemaBuilder;
 use fold_db_node::fold_node::node::FoldNode;
 use serde_json::json;
 use std::collections::HashMap;
@@ -28,33 +29,25 @@ async fn create_test_node() -> (FoldNode, String) {
 
 /// Helper: load and approve a simple Hash-key schema into the node.
 async fn load_test_schema(node: &FoldNode) {
-    let schema_json = r#"{
-        "name": "TestContact",
-        "type": "Single",
-        "key": {
-            "hash_field": "email"
-        },
-        "fields": ["email", "name", "phone"]
-    }"#;
+    let schema_json = TestSchemaBuilder::new("TestContact")
+        .fields(&["name", "phone"])
+        .hash_key("email")
+        .build_json();
 
     let db = node.get_fold_db().unwrap();
-    db.load_schema_from_json(schema_json).await.unwrap();
+    db.load_schema_from_json(&schema_json).await.unwrap();
     db.schema_manager().approve("TestContact").await.unwrap();
 }
 
 /// Helper: load and approve a Range-key schema into the node.
 async fn load_range_schema(node: &FoldNode) {
-    let schema_json = r#"{
-        "name": "EventLog",
-        "type": "Single",
-        "key": {
-            "range_field": "timestamp"
-        },
-        "fields": ["timestamp", "message", "level"]
-    }"#;
+    let schema_json = TestSchemaBuilder::new("EventLog")
+        .fields(&["message", "level"])
+        .range_key("timestamp")
+        .build_json();
 
     let db = node.get_fold_db().unwrap();
-    db.load_schema_from_json(schema_json).await.unwrap();
+    db.load_schema_from_json(&schema_json).await.unwrap();
     db.schema_manager().approve("EventLog").await.unwrap();
 }
 

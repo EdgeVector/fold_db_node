@@ -7,6 +7,7 @@
 use crate::fold_node::llm_query::types::ToolCallRecord;
 use crate::fold_node::node::FoldNode;
 use chrono::Utc;
+use fold_db::schema::types::data_classification::DataClassification;
 use fold_db::schema::types::{
     DeclarativeSchemaDefinition, KeyConfig, KeyValue, Mutation, MutationType, SchemaType,
 };
@@ -17,6 +18,14 @@ use std::collections::HashMap;
 const AI_CONVERSATIONS_SCHEMA: &str = "ai_conversations";
 
 fn build_schema() -> DeclarativeSchemaDefinition {
+    let fields = vec![
+        "session_id".to_string(),
+        "timestamp".to_string(),
+        "query".to_string(),
+        "answer".to_string(),
+        "tool_calls_json".to_string(),
+    ];
+
     let mut schema = DeclarativeSchemaDefinition::new(
         AI_CONVERSATIONS_SCHEMA.to_string(),
         SchemaType::HashRange,
@@ -24,13 +33,7 @@ fn build_schema() -> DeclarativeSchemaDefinition {
             Some("session_id".to_string()),
             Some("timestamp".to_string()),
         )),
-        Some(vec![
-            "session_id".to_string(),
-            "timestamp".to_string(),
-            "query".to_string(),
-            "answer".to_string(),
-            "tool_calls_json".to_string(),
-        ]),
+        Some(fields.clone()),
         None,
         None,
     );
@@ -47,6 +50,15 @@ fn build_schema() -> DeclarativeSchemaDefinition {
     schema
         .field_classifications
         .insert("answer".to_string(), vec!["word".to_string()]);
+
+    // All fields must have DataClassification to pass validation
+    let default_classification =
+        DataClassification::new(0, "general".to_string()).expect("valid classification");
+    for field in &fields {
+        schema
+            .field_data_classifications
+            .insert(field.clone(), default_classification.clone());
+    }
 
     schema
 }
