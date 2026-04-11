@@ -457,6 +457,20 @@ export class DiscoveryClient {
       retries: API_RETRIES.NONE,
     });
   }
+  // Data Sharing
+
+  async shareData(
+    recipientPublicKey: string,
+    records: Array<{ schema_name: string; record_key: string }>,
+  ): Promise<EnhancedApiResponse<{ shared: number }>> {
+    return this.client.post('/discovery/share', {
+      recipient_public_key: recipientPublicKey,
+      records,
+    }, {
+      timeout: API_TIMEOUTS.MUTATION,
+      retries: API_RETRIES.NONE,
+    });
+  }
 }
 
 export const discoveryClient = new DiscoveryClient();

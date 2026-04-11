@@ -753,6 +753,46 @@ pub async fn face_search(
     }
 }
 
+// === Data Sharing Routes ===
+
+/// POST /api/discovery/share — Send records to a contact via the encrypted bulletin board.
+pub async fn share_data(
+    req: HttpRequest,
+    body: web::Json<discovery_handlers::DataShareRequest>,
+    state: web::Data<AppState>,
+) -> impl Responder {
+    let (_user_hash, node) = match require_node_read(&state).await {
+        Ok(res) => res,
+        Err(response) => return response,
+    };
+
+    let (url, key) = match get_discovery_config() {
+        Ok(c) => c,
+        Err(response) => return response,
+    };
+
+    let auth_token = match get_auth_token(&req) {
+        Ok(t) => t,
+        Err(response) => return response,
+    };
+
+    match discovery_handlers::send_data_share(&body, &node, &url, &auth_token, &key).await {
+        Ok(response) => HttpResponse::Ok().json(response),
+        Err(e) if is_auth_error(&e) => {
+            if let Some(new_token) = try_refresh_token(&state).await {
+                match discovery_handlers::send_data_share(&body, &node, &url, &new_token, &key)
+                    .await
+                {
+                    Ok(response) => return HttpResponse::Ok().json(response),
+                    Err(e) => return handler_error_to_response(e),
+                }
+            }
+            handler_error_to_response(e)
+        }
+        Err(e) => handler_error_to_response(e),
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

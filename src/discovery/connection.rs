@@ -400,6 +400,48 @@ pub fn get_pseudonym_public_key_b64(master_key: &[u8], pseudonym: &Uuid) -> Stri
     B64.encode(public.as_bytes())
 }
 
+/// A batch of records shared via the encrypted bulletin board.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct DataSharePayload {
+    /// Always "data_share"
+    pub message_type: String,
+    /// Sender's node public key (Ed25519, base64) — used as the mutation pub_key
+    pub sender_public_key: String,
+    /// Sender's display name
+    pub sender_display_name: String,
+    /// The records being shared
+    pub records: Vec<SharedRecord>,
+}
+
+/// A single shared record — schema + field values + optional file data.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct SharedRecord {
+    /// Schema name (e.g., "Photography")
+    pub schema_name: String,
+    /// Schema definition as JSON (for creating the schema on the recipient if it doesn't exist)
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub schema_definition: Option<serde_json::Value>,
+    /// The record's field values
+    pub fields: std::collections::HashMap<String, serde_json::Value>,
+    /// Record key
+    pub key: SharedRecordKey,
+    /// Optional base64-encoded file data (e.g., photo bytes)
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub file_data_base64: Option<String>,
+    /// Original filename (for file_data)
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub file_name: Option<String>,
+}
+
+/// Key for a shared record.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct SharedRecordKey {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub hash: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub range: Option<String>,
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
