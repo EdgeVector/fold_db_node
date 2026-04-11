@@ -191,7 +191,7 @@ async fn test_smart_folder_ingest_and_query() {
     // Create IngestionService + ProgressService
     let ingestion_service =
         IngestionService::from_env().expect("Failed to create ingestion service");
-    let progress_tracker = create_progress_tracker(None).await;
+    let progress_tracker = create_progress_tracker().await;
     let progress_service = ProgressService::new(progress_tracker);
 
     // ── Phase 2: Scan ───────────────────────────────────────────────────

@@ -223,7 +223,7 @@ async fn test_schema_names_are_semantic_not_hashes() {
 
     let ingestion_service =
         IngestionService::from_env().expect("Failed to create ingestion service");
-    let progress_tracker = create_progress_tracker(None).await;
+    let progress_tracker = create_progress_tracker().await;
     let progress_service = ProgressService::new(progress_tracker);
 
     let sample_dir = Path::new(env!("CARGO_MANIFEST_DIR")).join("sample_data");
@@ -380,7 +380,7 @@ async fn test_text_files_get_distinct_schemas() {
 
     let ingestion_service =
         IngestionService::from_env().expect("Failed to create ingestion service");
-    let progress_tracker = create_progress_tracker(None).await;
+    let progress_tracker = create_progress_tracker().await;
     let progress_service = ProgressService::new(progress_tracker);
 
     let sample_dir = Path::new(env!("CARGO_MANIFEST_DIR")).join("sample_data");

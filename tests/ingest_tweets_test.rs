@@ -198,7 +198,7 @@ async fn test_ingest_tweets_js() {
         IngestionService::from_env().expect("Failed to create ingestion service");
 
     // 5. Create progress tracking
-    let progress_tracker = create_progress_tracker(None).await;
+    let progress_tracker = create_progress_tracker().await;
     let progress_service = ProgressService::new(progress_tracker);
 
     // 6. Build ingestion request

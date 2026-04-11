@@ -116,7 +116,14 @@ fn try_register_and_configure(
     match crate::commands::setup::register_with_exemem(&api_url, &pub_key_hex) {
         Ok(resp) => {
             eprintln!(" done.");
-            let api_key = resp.api_key.unwrap_or_default();
+            let api_key = match resp.api_key {
+                Some(k) if !k.is_empty() => k,
+                _ => {
+                    return Err(CliError::new(
+                        "Registration succeeded but no API key returned. Contact support.",
+                    ));
+                }
+            };
 
             let data_path = fold_db_node::utils::paths::folddb_home()
                 .map(|h| h.join("data"))
@@ -148,10 +155,14 @@ fn try_register_and_configure(
 
             mark_onboarding_complete();
 
-            Ok("Identity restored with cloud backup enabled.\nRun `folddb daemon start` to begin syncing.".to_string())
+            let mut msg = "Identity restored with cloud backup enabled.\n\
+                Your data will be downloaded from Exemem cloud on first sync."
+                .to_string();
+            msg.push_str("\nRun `folddb daemon start` to begin syncing.");
+            Ok(msg)
         }
-        Err(_e) => {
-            eprintln!(" failed (will use local-only mode).");
+        Err(e) => {
+            eprintln!(" failed: {} (will use local-only mode).", e);
 
             let data_path = fold_db_node::utils::paths::folddb_home()
                 .map(|h| h.join("data"))
