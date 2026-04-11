@@ -394,6 +394,7 @@ async fn dispatch_http(
             _ => unreachable!("Cloud enable/disable handled before daemon dispatch"),
         },
         Command::Org { action } => dispatch_org(action, client, mode).await,
+        Command::Discovery { action } => dispatch_discovery(action, client, mode).await,
         Command::RecoveryPhrase => unreachable!("Handled before daemon dispatch"),
         Command::Reset { confirm } => {
             if !confirm {
@@ -550,6 +551,84 @@ async fn dispatch_org(
             Ok(commands::CommandOutput::Message(format!(
                 "Joined \"{}\"! Org data will sync shortly.",
                 org_name
+            )))
+        }
+    }
+}
+
+async fn dispatch_discovery(
+    action: &cli::DiscoveryCommand,
+    client: &FoldDbClient,
+    mode: OutputMode,
+) -> Result<commands::CommandOutput, CliError> {
+    match action {
+        cli::DiscoveryCommand::Status => {
+            if mode == OutputMode::Json {
+                let json = client.discovery_opt_ins().await?;
+                return Ok(commands::CommandOutput::RawJson(json));
+            }
+            // Human-readable: show opt-ins and interests
+            let opt_ins = client.discovery_opt_ins().await.ok();
+            let interests = client.discovery_interests().await.ok();
+
+            let mut msg = String::new();
+
+            // Opt-ins
+            if let Some(ref o) = opt_ins {
+                let configs = o
+                    .pointer("/data/configs")
+                    .or_else(|| o.get("configs"))
+                    .and_then(|v| v.as_array());
+                match configs {
+                    Some(list) if !list.is_empty() => {
+                        msg.push_str(&format!("Shared schemas ({}):\n", list.len()));
+                        for c in list {
+                            let name = c["schema_name"].as_str().unwrap_or("?");
+                            let cat = c["category"].as_str().unwrap_or("uncategorized");
+                            msg.push_str(&format!("  {} [{}]\n", name, cat));
+                        }
+                    }
+                    _ => msg.push_str("No schemas shared with the discovery network.\n"),
+                }
+            }
+
+            // Interests
+            if let Some(ref i) = interests {
+                let categories = i
+                    .pointer("/data/categories")
+                    .or_else(|| i.get("categories"))
+                    .and_then(|v| v.as_array());
+                if let Some(cats) = categories {
+                    let enabled: Vec<&str> = cats
+                        .iter()
+                        .filter(|c| c["enabled"].as_bool().unwrap_or(false))
+                        .filter_map(|c| c["name"].as_str())
+                        .collect();
+                    if !enabled.is_empty() {
+                        msg.push_str(&format!("\nInterests: {}", enabled.join(", ")));
+                    }
+                }
+            }
+
+            if msg.is_empty() {
+                msg = "Discovery not configured. Enable cloud backup first.".to_string();
+            }
+
+            Ok(commands::CommandOutput::Message(msg.trim_end().to_string()))
+        }
+        cli::DiscoveryCommand::Publish => {
+            let json = client.discovery_publish().await?;
+            if mode == OutputMode::Json {
+                return Ok(commands::CommandOutput::RawJson(json));
+            }
+            let published = json
+                .pointer("/data/published_count")
+                .or_else(|| json.get("published_count"))
+                .and_then(|v| v.as_u64())
+                .unwrap_or(0);
+            Ok(commands::CommandOutput::Message(format!(
+                "Published {} schema(s) to the discovery network.",
+                published
             )))
         }
     }
