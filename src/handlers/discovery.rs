@@ -1261,10 +1261,19 @@ pub async fn respond_to_request(
             discovery_url.to_string(),
             auth_token.to_string(),
         );
-        publisher
+        // Fire-and-forget: trust and contact are already created above.
+        // If the messaging send fails (timeout, Lambda cold start), the
+        // requester won't get the acceptance message but the trust relationship
+        // is established. They can re-poll later.
+        if let Err(e) = publisher
             .connect(sender_pseudonym, encrypted_b64, Some(our_pseudonym))
             .await
-            .handler_err("send acceptance response")?;
+        {
+            log::warn!(
+                "Failed to send acceptance message (trust still created): {}",
+                e
+            );
+        }
     }
 
     Ok(ApiResponse::success(RespondToRequestResponse {
