@@ -28,6 +28,9 @@ export default function OrgSettingsPanel() {
   const [syncNotification, setSyncNotification] = useState(null)
   const [pendingInvite, setPendingInvite] = useState(null)
 
+  const [pendingInvites, setPendingInvites] = useState([])
+  const [joiningOrg, setJoiningOrg] = useState(null)
+
   const syncPollRef = useRef(null)
   const retryRef = useRef(false)
   const lastDownloadCursorsRef = useRef({})
@@ -45,7 +48,8 @@ export default function OrgSettingsPanel() {
     doFetch()
     systemClient.getNodePublicKey().then(res => {
       if (res.data?.public_key) setNodePublicKey(res.data.public_key)
-    }).catch(() => {})
+    }).catch(err => console.error('Failed to load node public key:', err))
+    fetchPendingInvites()
   }, [])
 
   // Poll org sync statuses every 10 seconds and fetch cloud members
@@ -66,7 +70,7 @@ export default function OrgSettingsPanel() {
             }
             lastDownloadCursorsRef.current[org.org_hash] = cursor
           })
-          .catch(() => {})
+          .catch(err => console.warn(`Failed to poll sync status for org ${org.org_hash}:`, err))
       })
     }
     const fetchAllCloudMembers = () => {
@@ -77,7 +81,7 @@ export default function OrgSettingsPanel() {
             const members = data.members || []
             setCloudMembers(prev => ({ ...prev, [org.org_hash]: members }))
           })
-          .catch(() => {})
+          .catch(err => console.warn(`Failed to poll cloud members for org ${org.org_hash}:`, err))
       })
     }
     fetchAllSyncStatuses()
@@ -195,6 +199,40 @@ export default function OrgSettingsPanel() {
     }
   }
 
+  const fetchPendingInvites = async () => {
+    try {
+      const res = await orgClient.getPendingInvites()
+      const data = res.data || res
+      setPendingInvites(data.invites || [])
+    } catch (err) {
+      console.warn('Failed to fetch pending invites:', err)
+    }
+  }
+
+  const handleJoinOrg = async (invite) => {
+    setJoiningOrg(invite.org_hash)
+    try {
+      await orgClient.joinOrg(invite)
+      showSuccess(`Joined organization "${invite.org_name || invite.org_hash}"!`)
+      fetchOrgs()
+      fetchPendingInvites()
+    } catch (err) {
+      setError(err.message || 'Failed to join organization')
+    } finally {
+      setJoiningOrg(null)
+    }
+  }
+
+  const handleDeclineInvite = async (orgHash) => {
+    try {
+      await orgClient.declineInvite(orgHash)
+      showSuccess('Invite declined')
+      fetchPendingInvites()
+    } catch (err) {
+      setError(err.message || 'Failed to decline invite')
+    }
+  }
+
   const handleRemoveMember = async (orgHash, nodePublicKey) => {
     try {
       await defaultApiClient.delete(`/org/${orgHash}/members/${encodeURIComponent(nodePublicKey)}`)
@@ -237,6 +275,38 @@ export default function OrgSettingsPanel() {
           )}
         </div>
       </div>
+
+      {/* Pending Invites */}
+      {pendingInvites.length > 0 && (
+        <div className="flex flex-col gap-2 p-4 border border-gruvbox-yellow/30 rounded-md bg-gruvbox-yellow/5">
+          <h3 className="text-sm font-semibold text-gruvbox-yellow">Pending Invitations ({pendingInvites.length})</h3>
+          <div className="flex flex-col gap-2">
+            {pendingInvites.map(invite => (
+              <div key={invite.org_hash} className="flex justify-between items-center p-3 border border-border rounded-md bg-surface">
+                <div>
+                  <span className="font-medium text-primary">{invite.org_name || invite.org_hash.substring(0, 16)}</span>
+                  <span className="text-xs text-secondary ml-2">from {invite.invited_by?.substring(0, 10) || 'unknown'}...</span>
+                </div>
+                <div className="flex gap-2">
+                  <button
+                    onClick={() => handleJoinOrg(invite)}
+                    disabled={joiningOrg === invite.org_hash}
+                    className="btn-primary text-xs px-3"
+                  >
+                    {joiningOrg === invite.org_hash ? 'Joining...' : 'Accept'}
+                  </button>
+                  <button
+                    onClick={() => handleDeclineInvite(invite.org_hash)}
+                    className="text-gruvbox-red hover:text-gruvbox-red/80 text-xs px-2 py-1 bg-gruvbox-red/10 hover:bg-gruvbox-red/20 rounded transition-colors"
+                  >
+                    Decline
+                  </button>
+                </div>
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
 
       <div className="flex flex-col gap-2">
         <h3 className="text-lg font-medium text-primary">Organizations</h3>
