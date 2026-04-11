@@ -378,7 +378,9 @@ fn org_invites_returns_response() {
         .success();
     let output = String::from_utf8_lossy(&assert.get_output().stdout);
     assert!(
-        output.contains("invitation") || output.contains("pending") || output.contains("No pending"),
+        output.contains("invitation")
+            || output.contains("pending")
+            || output.contains("No pending"),
         "org invites should show invite info: {}",
         output
     );
@@ -435,10 +437,7 @@ fn cloud_sync_in_local_mode_fails() {
 #[test]
 fn status_human_shows_version() {
     let daemon = get_daemon();
-    let assert = cli_with_daemon(daemon)
-        .arg("status")
-        .assert()
-        .success();
+    let assert = cli_with_daemon(daemon).arg("status").assert().success();
     let output = String::from_utf8_lossy(&assert.get_output().stdout);
     assert!(
         output.contains("FoldDB v"),
@@ -450,10 +449,7 @@ fn status_human_shows_version() {
 #[test]
 fn status_human_shows_node_hash() {
     let daemon = get_daemon();
-    let assert = cli_with_daemon(daemon)
-        .arg("status")
-        .assert()
-        .success();
+    let assert = cli_with_daemon(daemon).arg("status").assert().success();
     let output = String::from_utf8_lossy(&assert.get_output().stdout);
     assert!(
         output.contains("Node:"),
@@ -470,6 +466,7 @@ fn status_json_mode_returns_raw_json() {
         .assert()
         .success();
     let output = String::from_utf8_lossy(&assert.get_output().stdout);
-    let json: Value = serde_json::from_str(&output).expect("--json status should return valid JSON");
+    let json: Value =
+        serde_json::from_str(&output).expect("--json status should return valid JSON");
     assert!(json.get("data").is_some() || json.get("status").is_some());
 }
