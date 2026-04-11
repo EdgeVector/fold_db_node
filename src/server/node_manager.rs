@@ -147,6 +147,20 @@ impl NodeManager {
         // lock conflicts in multi-node setups.
         std::env::set_var("FOLD_STORAGE_PATH", node_config.get_storage_path());
 
+        // Inject per-device credentials from credentials.json into the DatabaseConfig.
+        // credentials.json is the single source of truth for api_key and session_token.
+        // The config file may have a stale key; Sled must not store per-device secrets.
+        if node_config.database.has_cloud_sync() {
+            if let Ok(Some(creds)) = crate::keychain::load_credentials() {
+                if let Some(ref mut cloud) = node_config.database.cloud_sync {
+                    cloud.api_key = creds.api_key;
+                    if !creds.session_token.is_empty() {
+                        cloud.session_token = Some(creds.session_token);
+                    }
+                }
+            }
+        }
+
         // Build auth-refresh callback for Exemem mode so the sync engine can
         // automatically recover from expired tokens (401) by re-registering.
         let auth_refresh = if node_config.database.has_cloud_sync() {
