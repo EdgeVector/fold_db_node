@@ -16,7 +16,7 @@ const SUB_TABS = [
   { id: 'schema-service', label: 'Schema Service' },
   { id: 'database', label: 'Database' },
   { id: 'org', label: 'Organizations' },
-  { id: 'upgrade-cloud', label: 'Exemem' },
+  { id: 'upgrade-cloud', label: 'Cloud Features' },
   { id: 'profile', label: 'Profile' },
 ]
 
@@ -73,7 +73,7 @@ export default function SettingsTab({ onResult, initialSubTab, onRelaunchOnboard
       case 'upgrade-cloud':
         return (
           <div className="space-y-6">
-            <CloudMigrationSettings onClose={NOOP} />
+            <CloudMigrationSettings />
             <BackupSettingsPanel />
           </div>
         )
