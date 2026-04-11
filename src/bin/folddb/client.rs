@@ -282,6 +282,21 @@ impl FoldDbClient {
         self.post("/api/org/join", invite_bundle).await
     }
 
+    // --- Discovery ---
+
+    pub async fn discovery_opt_ins(&self) -> Result<Value, CliError> {
+        self.get("/api/discovery/opt-ins").await
+    }
+
+    pub async fn discovery_interests(&self) -> Result<Value, CliError> {
+        self.get("/api/discovery/interests").await
+    }
+
+    pub async fn discovery_publish(&self) -> Result<Value, CliError> {
+        self.post("/api/discovery/publish", &serde_json::json!({}))
+            .await
+    }
+
     // --- Setup ---
 
     pub async fn apply_setup(&self, storage: &Value) -> Result<Value, CliError> {

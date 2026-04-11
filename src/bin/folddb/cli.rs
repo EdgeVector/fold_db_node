@@ -120,6 +120,12 @@ pub enum Command {
         action: OrgCommand,
     },
 
+    /// Manage discovery network
+    Discovery {
+        #[command(subcommand)]
+        action: DiscoveryCommand,
+    },
+
     /// Display your 24-word recovery phrase
     RecoveryPhrase,
 
@@ -326,6 +332,14 @@ pub enum OrgCommand {
         /// Invite bundle JSON (reads stdin if omitted)
         invite_json: Option<String>,
     },
+}
+
+#[derive(Subcommand, Debug)]
+pub enum DiscoveryCommand {
+    /// Show discovery opt-ins and interests
+    Status,
+    /// Publish opted-in schemas to the discovery network
+    Publish,
 }
 
 #[cfg(test)]
@@ -901,6 +915,8 @@ mod tests {
             vec!["folddb", "org", "create", "TestOrg"],
             vec!["folddb", "org", "invites"],
             vec!["folddb", "org", "join", "{}"],
+            vec!["folddb", "discovery", "status"],
+            vec!["folddb", "discovery", "publish"],
             vec!["folddb", "recovery-phrase"],
             vec!["folddb", "restore"],
             vec!["folddb", "reset"],
