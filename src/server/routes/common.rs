@@ -56,7 +56,7 @@ pub fn require_user_context() -> Result<String, HttpResponse> {
 ///
 /// This is the key function for lazy per-user node initialization.
 /// Nodes are created on first request and cached for subsequent requests.
-pub async fn get_node_for_user(
+async fn get_node_for_user(
     state: &web::Data<AppState>,
     user_id: &str,
 ) -> Result<Arc<RwLock<FoldNode>>, HttpResponse> {

@@ -261,14 +261,7 @@ impl NodeManager {
         }
     }
 
-    /// Invalidate (remove) the cached node.
-    /// This forces a recreation on the next access.
-    pub async fn invalidate_node(&self, _user_id: &str) {
-        let mut shared = self.shared_node.lock().await;
-        *shared = None;
-    }
-
-    /// Invalidate the cached node.
+    /// Invalidate the cached node, forcing recreation on next access.
     /// Used when configuration changes require the node to be recreated.
     pub async fn invalidate_all_nodes(&self) {
         let mut shared = self.shared_node.lock().await;

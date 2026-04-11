@@ -230,7 +230,7 @@ pub async fn reset_database(
                 return;
             }
 
-            node_manager.invalidate_node(&uid).await;
+            node_manager.invalidate_all_nodes().await;
 
             log_feature!(
                 LogFeature::HttpServer,

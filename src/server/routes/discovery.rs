@@ -1,6 +1,6 @@
 use crate::handlers::discovery as discovery_handlers;
 use crate::server::http_server::AppState;
-use crate::server::routes::{handler_error_to_response, require_node_read};
+use crate::server::routes::{handler_error_to_response, node_or_return};
 use actix_web::{web, HttpRequest, HttpResponse, Responder};
 
 /// Helper to get discovery config.
@@ -158,10 +158,7 @@ pub async fn resolve_discovery_config(
 
 /// GET /api/discovery/opt-ins — List all discovery opt-in configs.
 pub async fn list_opt_ins(state: web::Data<AppState>) -> impl Responder {
-    let (_user_hash, node) = match require_node_read(&state).await {
-        Ok(res) => res,
-        Err(response) => return response,
-    };
+    let (_user_hash, node) = node_or_return!(state);
 
     match discovery_handlers::list_opt_ins(&node).await {
         Ok(response) => HttpResponse::Ok().json(response),
@@ -174,10 +171,7 @@ pub async fn opt_in(
     body: web::Json<discovery_handlers::OptInRequest>,
     state: web::Data<AppState>,
 ) -> impl Responder {
-    let (_user_hash, node) = match require_node_read(&state).await {
-        Ok(res) => res,
-        Err(response) => return response,
-    };
+    let (_user_hash, node) = node_or_return!(state);
 
     match discovery_handlers::opt_in(&body, &node).await {
         Ok(response) => HttpResponse::Ok().json(response),
@@ -191,10 +185,7 @@ pub async fn opt_out(
     body: web::Json<discovery_handlers::OptOutRequest>,
     state: web::Data<AppState>,
 ) -> impl Responder {
-    let (_user_hash, node) = match require_node_read(&state).await {
-        Ok(res) => res,
-        Err(response) => return response,
-    };
+    let (_user_hash, node) = node_or_return!(state);
 
     let (url, key) = match get_discovery_config() {
         Ok(c) => c,
@@ -214,10 +205,7 @@ pub async fn opt_out(
 
 /// POST /api/discovery/publish — Publish embeddings for all opted-in schemas.
 pub async fn publish(req: HttpRequest, state: web::Data<AppState>) -> impl Responder {
-    let (_user_hash, node) = match require_node_read(&state).await {
-        Ok(res) => res,
-        Err(response) => return response,
-    };
+    let (_user_hash, node) = node_or_return!(state);
 
     let (url, key) = match get_discovery_config() {
         Ok(c) => c,
@@ -250,10 +238,7 @@ pub async fn search(
     body: web::Json<discovery_handlers::SearchRequest>,
     state: web::Data<AppState>,
 ) -> impl Responder {
-    let (_user_hash, node) = match require_node_read(&state).await {
-        Ok(res) => res,
-        Err(response) => return response,
-    };
+    let (_user_hash, node) = node_or_return!(state);
 
     let (url, key) = match get_discovery_config() {
         Ok(c) => c,
@@ -286,10 +271,7 @@ pub async fn connect(
     body: web::Json<discovery_handlers::ConnectRequest>,
     state: web::Data<AppState>,
 ) -> impl Responder {
-    let (_user_hash, node) = match require_node_read(&state).await {
-        Ok(res) => res,
-        Err(response) => return response,
-    };
+    let (_user_hash, node) = node_or_return!(state);
 
     let (url, key) = match get_discovery_config() {
         Ok(c) => c,
@@ -318,10 +300,7 @@ pub async fn connect(
 
 /// GET /api/discovery/connection-requests — Poll, decrypt, and list received connection requests.
 pub async fn connection_requests(req: HttpRequest, state: web::Data<AppState>) -> impl Responder {
-    let (_user_hash, node) = match require_node_read(&state).await {
-        Ok(res) => res,
-        Err(response) => return response,
-    };
+    let (_user_hash, node) = node_or_return!(state);
 
     let (url, key) = match get_discovery_config() {
         Ok(c) => c,
@@ -345,10 +324,7 @@ pub async fn respond_to_request(
     body: web::Json<discovery_handlers::RespondToRequestPayload>,
     state: web::Data<AppState>,
 ) -> impl Responder {
-    let (_user_hash, node) = match require_node_read(&state).await {
-        Ok(res) => res,
-        Err(response) => return response,
-    };
+    let (_user_hash, node) = node_or_return!(state);
 
     let (url, key) = match get_discovery_config() {
         Ok(c) => c,
@@ -368,10 +344,7 @@ pub async fn respond_to_request(
 
 /// GET /api/discovery/sent-requests — List sent connection requests with status.
 pub async fn sent_requests(state: web::Data<AppState>) -> impl Responder {
-    let (_user_hash, node) = match require_node_read(&state).await {
-        Ok(res) => res,
-        Err(response) => return response,
-    };
+    let (_user_hash, node) = node_or_return!(state);
 
     match discovery_handlers::list_sent_requests(&node).await {
         Ok(response) => HttpResponse::Ok().json(response),
@@ -381,10 +354,7 @@ pub async fn sent_requests(state: web::Data<AppState>) -> impl Responder {
 
 /// GET /api/discovery/requests — Legacy: Poll for incoming connection requests.
 pub async fn poll_requests(req: HttpRequest, state: web::Data<AppState>) -> impl Responder {
-    let (_user_hash, _node) = match require_node_read(&state).await {
-        Ok(res) => res,
-        Err(response) => return response,
-    };
+    let (_user_hash, _node) = node_or_return!(state);
 
     let (url, key) = match get_discovery_config() {
         Ok(c) => c,
@@ -405,10 +375,7 @@ pub async fn poll_requests(req: HttpRequest, state: web::Data<AppState>) -> impl
 /// GET /api/discovery/browse/categories — Browse available categories on the network.
 /// Retries once with a refreshed token on 401.
 pub async fn browse_categories(req: HttpRequest, state: web::Data<AppState>) -> impl Responder {
-    let (_user_hash, _node) = match require_node_read(&state).await {
-        Ok(res) => res,
-        Err(response) => return response,
-    };
+    let (_user_hash, _node) = node_or_return!(state);
 
     let (url, key) = match get_discovery_config() {
         Ok(c) => c,
@@ -438,10 +405,7 @@ pub async fn browse_categories(req: HttpRequest, state: web::Data<AppState>) -> 
 
 /// GET /api/discovery/interests — Get detected interest categories.
 pub async fn get_interests(state: web::Data<AppState>) -> impl Responder {
-    let (_user_hash, node) = match require_node_read(&state).await {
-        Ok(res) => res,
-        Err(response) => return response,
-    };
+    let (_user_hash, node) = node_or_return!(state);
 
     match discovery_handlers::get_interests(&node).await {
         Ok(response) => HttpResponse::Ok().json(response),
@@ -454,10 +418,7 @@ pub async fn toggle_interest(
     body: web::Json<discovery_handlers::ToggleInterestRequest>,
     state: web::Data<AppState>,
 ) -> impl Responder {
-    let (_user_hash, node) = match require_node_read(&state).await {
-        Ok(res) => res,
-        Err(response) => return response,
-    };
+    let (_user_hash, node) = node_or_return!(state);
 
     match discovery_handlers::toggle_interest(&body, &node).await {
         Ok(response) => HttpResponse::Ok().json(response),
@@ -467,10 +428,7 @@ pub async fn toggle_interest(
 
 /// POST /api/discovery/interests/detect — Manually trigger interest detection.
 pub async fn detect_interests(state: web::Data<AppState>) -> impl Responder {
-    let (_user_hash, node) = match require_node_read(&state).await {
-        Ok(res) => res,
-        Err(response) => return response,
-    };
+    let (_user_hash, node) = node_or_return!(state);
 
     match discovery_handlers::detect_interests(&node).await {
         Ok(response) => HttpResponse::Ok().json(response),
@@ -480,10 +438,7 @@ pub async fn detect_interests(state: web::Data<AppState>) -> impl Responder {
 
 /// GET /api/discovery/similar-profiles — Find users with similar interest fingerprints.
 pub async fn similar_profiles(req: HttpRequest, state: web::Data<AppState>) -> impl Responder {
-    let (_user_hash, node) = match require_node_read(&state).await {
-        Ok(res) => res,
-        Err(response) => return response,
-    };
+    let (_user_hash, node) = node_or_return!(state);
 
     let (url, key) = match get_discovery_config() {
         Ok(c) => c,
@@ -505,10 +460,7 @@ pub async fn similar_profiles(req: HttpRequest, state: web::Data<AppState>) -> i
 
 /// GET /api/discovery/calendar-sharing/status — Get calendar sharing opt-in status.
 pub async fn calendar_sharing_status(state: web::Data<AppState>) -> impl Responder {
-    let (_user_hash, node) = match require_node_read(&state).await {
-        Ok(res) => res,
-        Err(response) => return response,
-    };
+    let (_user_hash, node) = node_or_return!(state);
 
     match discovery_handlers::calendar_sharing_status(&node).await {
         Ok(response) => HttpResponse::Ok().json(response),
@@ -518,10 +470,7 @@ pub async fn calendar_sharing_status(state: web::Data<AppState>) -> impl Respond
 
 /// POST /api/discovery/calendar-sharing/opt-in — Enable calendar sharing.
 pub async fn calendar_sharing_opt_in(state: web::Data<AppState>) -> impl Responder {
-    let (_user_hash, node) = match require_node_read(&state).await {
-        Ok(res) => res,
-        Err(response) => return response,
-    };
+    let (_user_hash, node) = node_or_return!(state);
 
     match discovery_handlers::calendar_sharing_opt_in(&node).await {
         Ok(response) => HttpResponse::Ok().json(response),
@@ -531,10 +480,7 @@ pub async fn calendar_sharing_opt_in(state: web::Data<AppState>) -> impl Respond
 
 /// POST /api/discovery/calendar-sharing/opt-out — Disable calendar sharing.
 pub async fn calendar_sharing_opt_out(state: web::Data<AppState>) -> impl Responder {
-    let (_user_hash, node) = match require_node_read(&state).await {
-        Ok(res) => res,
-        Err(response) => return response,
-    };
+    let (_user_hash, node) = node_or_return!(state);
 
     match discovery_handlers::calendar_sharing_opt_out(&node).await {
         Ok(response) => HttpResponse::Ok().json(response),
@@ -547,10 +493,7 @@ pub async fn sync_calendar_events(
     body: web::Json<discovery_handlers::SyncCalendarEventsRequest>,
     state: web::Data<AppState>,
 ) -> impl Responder {
-    let (_user_hash, node) = match require_node_read(&state).await {
-        Ok(res) => res,
-        Err(response) => return response,
-    };
+    let (_user_hash, node) = node_or_return!(state);
 
     match discovery_handlers::sync_calendar_events(&body, &node).await {
         Ok(response) => HttpResponse::Ok().json(response),
@@ -563,10 +506,7 @@ pub async fn store_peer_events(
     body: web::Json<discovery_handlers::StorePeerEventsRequest>,
     state: web::Data<AppState>,
 ) -> impl Responder {
-    let (_user_hash, node) = match require_node_read(&state).await {
-        Ok(res) => res,
-        Err(response) => return response,
-    };
+    let (_user_hash, node) = node_or_return!(state);
 
     match discovery_handlers::store_peer_events(&body, &node).await {
         Ok(response) => HttpResponse::Ok().json(response),
@@ -576,10 +516,7 @@ pub async fn store_peer_events(
 
 /// GET /api/discovery/shared-events — Detect and return shared events with connections.
 pub async fn get_shared_events(state: web::Data<AppState>) -> impl Responder {
-    let (_user_hash, node) = match require_node_read(&state).await {
-        Ok(res) => res,
-        Err(response) => return response,
-    };
+    let (_user_hash, node) = node_or_return!(state);
 
     match discovery_handlers::get_shared_events(&node).await {
         Ok(response) => HttpResponse::Ok().json(response),
@@ -591,10 +528,7 @@ pub async fn get_shared_events(state: web::Data<AppState>) -> impl Responder {
 
 /// GET /api/discovery/moments/opt-ins — List all moment sharing opt-ins.
 pub async fn moment_opt_in_list(state: web::Data<AppState>) -> impl Responder {
-    let (_user_hash, node) = match require_node_read(&state).await {
-        Ok(res) => res,
-        Err(response) => return response,
-    };
+    let (_user_hash, node) = node_or_return!(state);
 
     match discovery_handlers::moment_opt_in_list(&node).await {
         Ok(response) => HttpResponse::Ok().json(response),
@@ -607,10 +541,7 @@ pub async fn moment_opt_in(
     body: web::Json<discovery_handlers::MomentOptInRequest>,
     state: web::Data<AppState>,
 ) -> impl Responder {
-    let (_user_hash, node) = match require_node_read(&state).await {
-        Ok(res) => res,
-        Err(response) => return response,
-    };
+    let (_user_hash, node) = node_or_return!(state);
 
     match discovery_handlers::moment_opt_in(&body, &node).await {
         Ok(response) => HttpResponse::Ok().json(response),
@@ -623,10 +554,7 @@ pub async fn moment_opt_out(
     body: web::Json<discovery_handlers::MomentOptOutRequest>,
     state: web::Data<AppState>,
 ) -> impl Responder {
-    let (_user_hash, node) = match require_node_read(&state).await {
-        Ok(res) => res,
-        Err(response) => return response,
-    };
+    let (_user_hash, node) = node_or_return!(state);
 
     match discovery_handlers::moment_opt_out(&body, &node).await {
         Ok(response) => HttpResponse::Ok().json(response),
@@ -639,10 +567,7 @@ pub async fn moment_scan(
     body: web::Json<Vec<discovery_handlers::PhotoMetadata>>,
     state: web::Data<AppState>,
 ) -> impl Responder {
-    let (_user_hash, node) = match require_node_read(&state).await {
-        Ok(res) => res,
-        Err(response) => return response,
-    };
+    let (_user_hash, node) = node_or_return!(state);
 
     let (_url, key) = match get_discovery_config() {
         Ok(c) => c,
@@ -660,10 +585,7 @@ pub async fn moment_receive_hashes(
     body: web::Json<discovery_handlers::MomentHashReceiveRequest>,
     state: web::Data<AppState>,
 ) -> impl Responder {
-    let (_user_hash, node) = match require_node_read(&state).await {
-        Ok(res) => res,
-        Err(response) => return response,
-    };
+    let (_user_hash, node) = node_or_return!(state);
 
     match discovery_handlers::moment_receive_hashes(&body, &node).await {
         Ok(response) => HttpResponse::Ok().json(response),
@@ -673,10 +595,7 @@ pub async fn moment_receive_hashes(
 
 /// POST /api/discovery/moments/detect — Detect shared moments from exchanged hashes.
 pub async fn moment_detect(state: web::Data<AppState>) -> impl Responder {
-    let (_user_hash, node) = match require_node_read(&state).await {
-        Ok(res) => res,
-        Err(response) => return response,
-    };
+    let (_user_hash, node) = node_or_return!(state);
 
     match discovery_handlers::moment_detect(&node).await {
         Ok(response) => HttpResponse::Ok().json(response),
@@ -686,10 +605,7 @@ pub async fn moment_detect(state: web::Data<AppState>) -> impl Responder {
 
 /// GET /api/discovery/moments — List all detected shared moments.
 pub async fn moment_list(state: web::Data<AppState>) -> impl Responder {
-    let (_user_hash, node) = match require_node_read(&state).await {
-        Ok(res) => res,
-        Err(response) => return response,
-    };
+    let (_user_hash, node) = node_or_return!(state);
 
     match discovery_handlers::moment_list(&node).await {
         Ok(response) => HttpResponse::Ok().json(response),
@@ -704,10 +620,7 @@ pub async fn list_faces(
     path: web::Path<(String, String)>,
     state: web::Data<AppState>,
 ) -> impl Responder {
-    let (_user_hash, node) = match require_node_read(&state).await {
-        Ok(res) => res,
-        Err(response) => return response,
-    };
+    let (_user_hash, node) = node_or_return!(state);
 
     let (schema, key) = path.into_inner();
 
@@ -723,10 +636,7 @@ pub async fn face_search(
     body: web::Json<discovery_handlers::FaceSearchRequest>,
     state: web::Data<AppState>,
 ) -> impl Responder {
-    let (_user_hash, node) = match require_node_read(&state).await {
-        Ok(res) => res,
-        Err(response) => return response,
-    };
+    let (_user_hash, node) = node_or_return!(state);
 
     let (url, key) = match get_discovery_config() {
         Ok(c) => c,
@@ -761,10 +671,7 @@ pub async fn share_data(
     body: web::Json<discovery_handlers::DataShareRequest>,
     state: web::Data<AppState>,
 ) -> impl Responder {
-    let (_user_hash, node) = match require_node_read(&state).await {
-        Ok(res) => res,
-        Err(response) => return response,
-    };
+    let (_user_hash, node) = node_or_return!(state);
 
     let (url, key) = match get_discovery_config() {
         Ok(c) => c,
