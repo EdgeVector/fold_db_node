@@ -187,7 +187,7 @@ impl OperationProcessor {
 
         let progress_tracker = match external_tracker {
             Some(t) => t,
-            None => crate::ingestion::create_progress_tracker(None).await,
+            None => crate::ingestion::create_progress_tracker().await,
         };
         let progress_service = ProgressService::new(progress_tracker);
         progress_service

@@ -187,7 +187,7 @@ async fn test_smart_folder_tweets_ingest_and_query() {
 
     let ingestion_service =
         IngestionService::from_env().expect("Failed to create ingestion service");
-    let progress_tracker = create_progress_tracker(None).await;
+    let progress_tracker = create_progress_tracker().await;
     let progress_service = ProgressService::new(progress_tracker);
 
     // ── Phase 1: SmartFolder Scan ────────────────────────────────────────────

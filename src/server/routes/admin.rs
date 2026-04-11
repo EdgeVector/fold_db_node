@@ -367,7 +367,7 @@ mod tests {
     async fn test_reset_database_without_confirmation() {
         let temp_dir = tempdir().unwrap();
         let state = create_test_state(&temp_dir).await;
-        let progress_tracker = web::Data::new(fold_db::progress::create_tracker(None).await);
+        let progress_tracker = web::Data::new(fold_db::progress::create_tracker().await);
 
         let req_body = ResetDatabaseRequest { confirm: false };
         let req = test::TestRequest::post()
@@ -384,7 +384,7 @@ mod tests {
     async fn test_reset_database_with_confirmation() {
         let temp_dir = tempdir().unwrap();
         let state = create_test_state(&temp_dir).await;
-        let progress_tracker = web::Data::new(fold_db::progress::create_tracker(None).await);
+        let progress_tracker = web::Data::new(fold_db::progress::create_tracker().await);
 
         fold_db::logging::core::run_with_user("test_user", async move {
             let req_body = ResetDatabaseRequest { confirm: true };

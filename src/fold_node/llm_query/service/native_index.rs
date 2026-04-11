@@ -732,7 +732,7 @@ impl LlmQueryService {
 
                 let tracker = match progress_tracker {
                     Some(t) => t.clone(),
-                    None => crate::ingestion::create_progress_tracker(None).await,
+                    None => crate::ingestion::create_progress_tracker().await,
                 };
                 let progress_service = crate::ingestion::progress::ProgressService::new(tracker);
                 progress_service

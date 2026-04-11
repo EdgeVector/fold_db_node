@@ -203,7 +203,7 @@ async fn test_paintings_use_single_schema() {
     // 3. Create a SHARED ingestion service (so the schema_creation_lock works)
     let ingestion_service =
         Arc::new(IngestionService::from_env().expect("Failed to create ingestion service"));
-    let progress_tracker = create_progress_tracker(None).await;
+    let progress_tracker = create_progress_tracker().await;
     let progress_service = ProgressService::new(progress_tracker);
 
     // 4. Ingest each painting sequentially

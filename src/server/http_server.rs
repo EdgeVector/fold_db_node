@@ -188,7 +188,7 @@ impl FoldHttpServer {
             crate::ingestion::apple_import::sync_scheduler::create_sync_config_state();
         let sync_config_data = web::Data::new(sync_config_state);
 
-        let progress_tracker = fold_db::progress::create_tracker(None).await;
+        let progress_tracker = fold_db::progress::create_tracker().await;
         let progress_tracker_data = web::Data::new(progress_tracker);
 
         // Spawn Apple auto-sync background scheduler
