@@ -1,6 +1,7 @@
-import { useCallback, useMemo, useState, Fragment } from 'react'
+import { useCallback, useEffect, useMemo, useState, Fragment } from 'react'
 import { useAppSelector } from '../../store/hooks'
 import { selectAllSchemas } from '../../store/schemaSlice'
+import { orgClient } from '../../api/clients/orgClient'
 import { schemaClient } from '../../api/clients/schemaClient'
 import { mutationClient } from '../../api/clients'
 import { FieldsTable } from '../StructuredResults'
@@ -29,6 +30,18 @@ export default function DataBrowserTab() {
   const [schemaKeys, setSchemaKeys] = useState({})       // { name: { keys, total_count } }
   const [schemaLoading, setSchemaLoading] = useState({})  // { name: bool }
   const [schemaErrors, setSchemaErrors] = useState({})    // { name: string }
+
+  // Org hash → name map
+  const [orgNames, setOrgNames] = useState({})
+  useEffect(() => {
+    orgClient.listOrgs().then(res => {
+      const data = res.data || res
+      const orgs = data.orgs || []
+      const map = {}
+      for (const org of orgs) map[org.org_hash] = org.org_name
+      setOrgNames(map)
+    }).catch(() => {})
+  }, [])
 
   // Key-level expand state + cached records
   const [expandedKeys, setExpandedKeys] = useState(() => new Set())
@@ -152,6 +165,11 @@ export default function DataBrowserTab() {
               <span className="text-xs text-secondary">{isOpen ? '▾' : '▸'}</span>
               <SchemaName schema={schema} name={name} />
               <SchemaTypeBadge schemaType={schema.schema_type} />
+              {schema.org_hash && (
+                <span className="px-1.5 py-0.5 text-xs rounded bg-gruvbox-blue/15 text-gruvbox-blue" title={schema.org_hash}>
+                  {orgNames[schema.org_hash] || 'Org'}
+                </span>
+              )}
               <span className="text-xs text-tertiary">({fieldCount(schema)} fields)</span>
               {data && <span className="text-xs text-tertiary">({data.total_count} {data.total_count === 1 ? 'record' : 'records'})</span>}
               <StateBadge state={schema.state || 'approved'} />
