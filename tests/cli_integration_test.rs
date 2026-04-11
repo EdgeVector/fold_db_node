@@ -147,6 +147,29 @@ fn cli() -> Command {
     cmd
 }
 
+/// Return a `Command` pre-configured to talk to a daemon (human-readable mode).
+fn cli_with_daemon(daemon: &DaemonFixture) -> Command {
+    let mut cmd = Command::cargo_bin("folddb").expect("find folddb binary");
+    cmd.arg("--config")
+        .arg(&daemon.config_path)
+        .env("FOLDDB_PORT", daemon.port.to_string())
+        .env("FOLDDB_HOME", daemon._tmpdir.path())
+        .env("NODE_CONFIG", &daemon.config_path);
+    cmd
+}
+
+/// Return a `Command` pre-configured to talk to a daemon (JSON mode).
+fn cli_json_with_daemon(daemon: &DaemonFixture) -> Command {
+    let mut cmd = Command::cargo_bin("folddb").expect("find folddb binary");
+    cmd.arg("--json")
+        .arg("--config")
+        .arg(&daemon.config_path)
+        .env("FOLDDB_PORT", daemon.port.to_string())
+        .env("FOLDDB_HOME", daemon._tmpdir.path())
+        .env("NODE_CONFIG", &daemon.config_path);
+    cmd
+}
+
 fn parse_stdout(output: &std::process::Output) -> Value {
     let stdout = String::from_utf8_lossy(&output.stdout);
     serde_json::from_str(&stdout).unwrap_or_else(|e| {
@@ -309,4 +332,141 @@ fn dev_flag_parses() {
 
     let output = cmd.output().expect("run --dev daemon status");
     assert!(output.status.success());
+}
+
+// ---------------------------------------------------------------------------
+// Org commands
+// ---------------------------------------------------------------------------
+
+#[test]
+fn org_list_returns_json() {
+    let daemon = get_daemon();
+    let assert = cli_with_daemon(daemon)
+        .arg("org")
+        .arg("list")
+        .assert()
+        .success();
+    let output = String::from_utf8_lossy(&assert.get_output().stdout);
+    // Should show either "No organizations" or a list
+    assert!(
+        output.contains("organization") || output.contains("No organizations"),
+        "org list should show org info or empty message: {}",
+        output
+    );
+}
+
+#[test]
+fn org_list_json_mode() {
+    let daemon = get_daemon();
+    let assert = cli_json_with_daemon(daemon)
+        .arg("org")
+        .arg("list")
+        .assert()
+        .success();
+    let output = String::from_utf8_lossy(&assert.get_output().stdout);
+    let json: Value = serde_json::from_str(&output).expect("org list should return valid JSON");
+    assert!(json.get("ok").is_some() || json.get("data").is_some());
+}
+
+#[test]
+fn org_invites_returns_response() {
+    let daemon = get_daemon();
+    let assert = cli_with_daemon(daemon)
+        .arg("org")
+        .arg("invites")
+        .assert()
+        .success();
+    let output = String::from_utf8_lossy(&assert.get_output().stdout);
+    assert!(
+        output.contains("invitation")
+            || output.contains("pending")
+            || output.contains("No pending"),
+        "org invites should show invite info: {}",
+        output
+    );
+}
+
+#[test]
+fn org_join_invalid_json_fails() {
+    let daemon = get_daemon();
+    cli_with_daemon(daemon)
+        .arg("org")
+        .arg("join")
+        .arg("not-valid-json")
+        .assert()
+        .failure()
+        .stderr(predicate::str::contains("Invalid invite JSON"));
+}
+
+// ---------------------------------------------------------------------------
+// Cloud commands
+// ---------------------------------------------------------------------------
+
+#[test]
+fn cloud_status_returns_response() {
+    let daemon = get_daemon();
+    let assert = cli_with_daemon(daemon)
+        .arg("cloud")
+        .arg("status")
+        .assert()
+        .success();
+    let output = String::from_utf8_lossy(&assert.get_output().stdout);
+    // In local mode, should show "disabled"
+    assert!(
+        output.contains("sync") || output.contains("Cloud") || output.contains("disabled"),
+        "cloud status should show sync info: {}",
+        output
+    );
+}
+
+#[test]
+fn cloud_sync_in_local_mode_fails() {
+    let daemon = get_daemon();
+    // In local mode (no cloud config), sync trigger should fail
+    cli_with_daemon(daemon)
+        .arg("cloud")
+        .arg("sync")
+        .assert()
+        .failure();
+}
+
+// ---------------------------------------------------------------------------
+// Rich status command
+// ---------------------------------------------------------------------------
+
+#[test]
+fn status_human_shows_version() {
+    let daemon = get_daemon();
+    let assert = cli_with_daemon(daemon).arg("status").assert().success();
+    let output = String::from_utf8_lossy(&assert.get_output().stdout);
+    assert!(
+        output.contains("FoldDB v"),
+        "human status should show version: {}",
+        output
+    );
+}
+
+#[test]
+fn status_human_shows_node_hash() {
+    let daemon = get_daemon();
+    let assert = cli_with_daemon(daemon).arg("status").assert().success();
+    let output = String::from_utf8_lossy(&assert.get_output().stdout);
+    assert!(
+        output.contains("Node:"),
+        "human status should show node hash: {}",
+        output
+    );
+}
+
+#[test]
+fn status_json_mode_returns_raw_json() {
+    let daemon = get_daemon();
+    let assert = cli_json_with_daemon(daemon)
+        .arg("status")
+        .assert()
+        .success();
+    let output = String::from_utf8_lossy(&assert.get_output().stdout);
+    let json: Value =
+        serde_json::from_str(&output).expect("--json status should return valid JSON");
+    assert!(json.get("data").is_some() || json.get("status").is_some());
 }
