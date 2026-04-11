@@ -46,7 +46,7 @@ mod tests {
             .join("tests/schemas_for_testing")
             .join(schema_filename);
 
-        let mut fold_db = node.get_fold_db().await.expect("Failed to get FoldDB");
+        let fold_db = node.get_fold_db().expect("Failed to get FoldDB");
         fold_db
             .load_schema_from_file(&schema_path)
             .await

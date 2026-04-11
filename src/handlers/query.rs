@@ -107,7 +107,7 @@ pub async fn get_molecule_history(
     user_hash: &str,
     node: &FoldNode,
 ) -> HandlerResult<MoleculeHistoryResponse> {
-    let db_guard = get_db_guard(node).await?;
+    let db_guard = get_db_guard(node)?;
 
     let db_ops = db_guard.get_db_ops();
 
@@ -142,7 +142,7 @@ pub async fn get_atom_content(
     user_hash: &str,
     node: &FoldNode,
 ) -> HandlerResult<AtomContentResponse> {
-    let db_guard = get_db_guard(node).await?;
+    let db_guard = get_db_guard(node)?;
 
     let db_ops = db_guard.get_db_ops();
 
@@ -211,7 +211,7 @@ pub async fn get_conflicts(
     user_hash: &str,
     node: &FoldNode,
 ) -> HandlerResult<ConflictsResponse> {
-    let db_guard = get_db_guard(node).await?;
+    let db_guard = get_db_guard(node)?;
     let db_ops = db_guard.get_db_ops();
 
     let conflicts = db_ops
@@ -245,7 +245,7 @@ pub async fn resolve_conflict(
     user_hash: &str,
     node: &FoldNode,
 ) -> HandlerResult<serde_json::Value> {
-    let db_guard = get_db_guard(node).await?;
+    let db_guard = get_db_guard(node)?;
     let db_ops = db_guard.get_db_ops();
 
     db_ops

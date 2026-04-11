@@ -353,7 +353,7 @@ impl NodeManager {
         let shared = self.shared_node.lock().await;
         if let Some(node_arc) = shared.as_ref() {
             let node = node_arc.read().await;
-            if let Ok(fold_db) = node.get_fold_db().await {
+            if let Ok(fold_db) = node.get_fold_db() {
                 return fold_db.sled_pool().cloned();
             }
         }

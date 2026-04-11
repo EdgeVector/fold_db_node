@@ -47,7 +47,7 @@ async fn test_node_new_loads_schemas_for_testing() {
         .expect("Failed to create FoldNode with mock schema service");
 
     // Get the fold_db to verify it was created successfully
-    let fold_db = node.get_fold_db().await.expect("Failed to get FoldDB");
+    let fold_db = node.get_fold_db().expect("Failed to get FoldDB");
     let schema_manager = fold_db.schema_manager();
 
     // Verify that NO schemas were auto-loaded (mock service doesn't load schemas)

@@ -78,7 +78,7 @@ async fn load_schema_with_policy(
         });
     }
 
-    let db = node.get_fold_db().await.unwrap();
+    let db = node.get_fold_db().unwrap();
     db.schema_manager
         .load_schema_internal(schema)
         .await
@@ -124,7 +124,7 @@ async fn test_role_assignment_grants_domain_trust() {
         .unwrap();
 
     // Verify: trust should be granted in medical domain
-    let db = node.get_fold_db().await.unwrap();
+    let db = node.get_fold_db().unwrap();
     let medical_map = db
         .db_ops
         .load_trust_map_for_domain("medical")
@@ -180,7 +180,7 @@ async fn test_role_removal_revokes_domain_trust() {
         .unwrap();
 
     // Verify: trust should be revoked in health domain
-    let db = node.get_fold_db().await.unwrap();
+    let db = node.get_fold_db().unwrap();
     let health_map = db.db_ops.load_trust_map_for_domain("health").await.unwrap();
     assert_eq!(
         health_map.get(&contact_key),

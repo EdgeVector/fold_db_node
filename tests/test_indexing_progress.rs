@@ -31,7 +31,7 @@ async fn test_indexing_progress_tracking() {
     }"#;
 
     {
-        let mut db = node.get_fold_db().await.unwrap();
+        let db = node.get_fold_db().unwrap();
         db.load_schema_from_json(schema_json).await.unwrap();
         db.schema_manager().approve("test_schema").await.unwrap();
     }
@@ -65,7 +65,7 @@ async fn test_indexing_progress_tracking() {
     // Indexing is now rules-based and inline (happens synchronously during mutation write).
     // Field names are always indexed during write_mutations_batch_async.
     // Verify by searching for indexed field names.
-    let db = node.get_fold_db().await.unwrap();
+    let db = node.get_fold_db().unwrap();
 
     // Field name "content" should be indexed (inline field-name indexing)
     let field_results = db

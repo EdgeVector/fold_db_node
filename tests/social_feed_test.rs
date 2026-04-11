@@ -35,7 +35,7 @@ async fn load_photo_schema(node: &FoldNode) {
         .join("tests/schemas_for_testing")
         .join("Photo.json");
 
-    let mut fold_db = node.get_fold_db().await.expect("Failed to get FoldDB");
+    let fold_db = node.get_fold_db().expect("Failed to get FoldDB");
     fold_db
         .load_schema_from_file(&schema_path)
         .await
@@ -318,7 +318,7 @@ async fn test_feed_strips_non_public_fields() {
         use fold_db::access::TrustTier;
         use fold_db::schema::types::field::Field;
 
-        let db = node.get_fold_db().await.expect("Failed to get FoldDB");
+        let db = node.get_fold_db().expect("Failed to get FoldDB");
         let mut schema = db
             .schema_manager
             .get_schema("Photo")

@@ -43,7 +43,7 @@ async fn create_node(db_path: &str) -> FoldNode {
 /// Helper: load the FileRecords schema and approve it.
 async fn setup_schema(node: &FoldNode) {
     let schema_str = serde_json::to_string(&file_records_schema_json()).unwrap();
-    let fold_db = node.get_fold_db().await.expect("get fold_db");
+    let fold_db = node.get_fold_db().expect("get fold_db");
     fold_db
         .schema_manager()
         .load_schema_from_json(&schema_str)
@@ -139,7 +139,7 @@ async fn schema_reload_from_json_preserves_molecules() {
     // Before the fix, this replaced the cached schema's molecule state.
     let schema_str = serde_json::to_string(&file_records_schema_json()).unwrap();
     {
-        let fold_db = node.get_fold_db().await.expect("get fold_db");
+        let fold_db = node.get_fold_db().expect("get fold_db");
         fold_db
             .schema_manager()
             .load_schema_from_json(&schema_str)
@@ -168,7 +168,7 @@ async fn schema_reload_from_json_preserves_molecules() {
 async fn mutations_work_after_simulated_restart() {
     let temp_dir = TempDir::new().expect("temp dir");
     let db_path = temp_dir.path().to_str().expect("path");
-    let mut fold_db = FoldDB::new(db_path).await.expect("create FoldDB");
+    let fold_db = FoldDB::new(db_path).await.expect("create FoldDB");
 
     let schema_str = serde_json::to_string(&file_records_schema_json()).unwrap();
     fold_db
@@ -309,7 +309,7 @@ async fn molecule_uuid_stays_consistent_across_batches() {
     write_file_mutation(&processor, "a.txt", "Content A", "text").await;
 
     let mol_uuid_first = {
-        let fold_db = node.get_fold_db().await.expect("get fold_db");
+        let fold_db = node.get_fold_db().expect("get fold_db");
         let db_ops = &fold_db.get_db_ops();
         let schema = db_ops
             .get_schema("FileRecords")
@@ -329,7 +329,7 @@ async fn molecule_uuid_stays_consistent_across_batches() {
     write_file_mutation(&processor, "b.txt", "Content B", "text").await;
 
     let mol_uuid_second = {
-        let fold_db = node.get_fold_db().await.expect("get fold_db");
+        let fold_db = node.get_fold_db().expect("get fold_db");
         let db_ops = &fold_db.get_db_ops();
         let schema = db_ops
             .get_schema("FileRecords")

@@ -63,7 +63,7 @@ pub struct AddMemberRequest {
 pub async fn get_sled_pool(
     node: &FoldNode,
 ) -> Result<std::sync::Arc<fold_db::storage::SledPool>, crate::handlers::HandlerError> {
-    let db_guard = node.get_fold_db().await.handler_err("lock database")?;
+    let db_guard = node.get_fold_db().handler_err("lock database")?;
     if let Some(pool) = db_guard.sled_pool().cloned() {
         Ok(pool)
     } else {
@@ -93,7 +93,7 @@ async fn get_auth_client(node: &FoldNode) -> Option<fold_db::sync::auth::AuthCli
     };
 
     // Get api_url: try Sled config store first, then DatabaseConfig
-    let api_url = if let Ok(db_guard) = node.get_fold_db().await {
+    let api_url = if let Ok(db_guard) = node.get_fold_db() {
         if let Some(pool) = db_guard.sled_pool().cloned() {
             drop(db_guard);
             NodeConfigStore::new(pool)
@@ -324,7 +324,7 @@ pub async fn remove_member(
     // If we are removing ourselves, purge the org data and schemas locally
     let is_self_removal = node_public_key == node.get_node_public_key();
     if is_self_removal {
-        let fold_db = node.get_fold_db().await.handler_err("get fold_db")?;
+        let fold_db = node.get_fold_db().handler_err("get fold_db")?;
         let db_ops = fold_db.get_db_ops();
         db_ops
             .purge_org_data(org_hash)
@@ -461,7 +461,7 @@ pub async fn delete_org(
 
     // Purge local data and schemas since the org is completely gone
     {
-        let fold_db = node.get_fold_db().await.handler_err("get fold_db")?;
+        let fold_db = node.get_fold_db().handler_err("get fold_db")?;
         let db_ops = fold_db.get_db_ops();
         db_ops
             .purge_org_data(org_hash)

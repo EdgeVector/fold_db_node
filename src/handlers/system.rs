@@ -93,7 +93,7 @@ pub async fn get_sync_status(
     node: &FoldNode,
 ) -> HandlerResult<SyncStatusResponse> {
     use crate::fold_node::node::sync_state_label;
-    let db = node.get_fold_db().await.typed_handler_err()?;
+    let db = node.get_fold_db().typed_handler_err()?;
     let response = match db.sync_status().await {
         Some(status) => SyncStatusResponse {
             enabled: true,

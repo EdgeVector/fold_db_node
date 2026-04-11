@@ -33,7 +33,7 @@ async fn test_exact_range_key_filtering_with_blogpost() {
         .join("BlogPost.json");
 
     {
-        let mut fold_db = node.get_fold_db().await.expect("Failed to get FoldDB");
+        let fold_db = node.get_fold_db().expect("Failed to get FoldDB");
         fold_db
             .load_schema_from_file(&blogpost_schema_path)
             .await
@@ -282,7 +282,7 @@ async fn test_range_key_set_in_query_object() {
         .join("BlogPost.json");
 
     {
-        let mut fold_db = node.get_fold_db().await.expect("Failed to get FoldDB");
+        let fold_db = node.get_fold_db().expect("Failed to get FoldDB");
         fold_db
             .load_schema_from_file(&blogpost_schema_path)
             .await

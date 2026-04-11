@@ -1,6 +1,7 @@
+use std::sync::Arc;
+
 use fold_db::error::FoldDbResult;
 use fold_db::fold_db_core::FoldDB;
-use tokio::sync::OwnedMutexGuard;
 
 use super::FoldNode;
 
@@ -26,14 +27,14 @@ impl OperationProcessor {
         Self { node }
     }
 
-    /// Acquire the FoldDB mutex guard. Shorthand for `self.node.get_fold_db().await`.
-    async fn get_db(&self) -> FoldDbResult<OwnedMutexGuard<FoldDB>> {
-        self.node.get_fold_db().await
+    /// Get the FoldDB instance. Shorthand for `self.node.get_fold_db()`.
+    fn get_db(&self) -> FoldDbResult<Arc<FoldDB>> {
+        self.node.get_fold_db()
     }
 
-    /// Public accessor for the FoldDB guard. Used by remote query endpoint.
-    pub async fn get_db_public(&self) -> FoldDbResult<OwnedMutexGuard<FoldDB>> {
-        self.node.get_fold_db().await
+    /// Public accessor for the FoldDB instance. Used by remote query endpoint.
+    pub fn get_db_public(&self) -> FoldDbResult<Arc<FoldDB>> {
+        self.node.get_fold_db()
     }
 }
 
@@ -68,7 +69,7 @@ mod tests {
     /// Helper: create a schema, load it, and approve it so mutations work.
     async fn load_and_approve_schema(node: &FoldNode, mut schema: DeclarativeSchemaDefinition) {
         schema.populate_runtime_fields().unwrap();
-        let db = node.get_fold_db().await.unwrap();
+        let db = node.get_fold_db().unwrap();
         db.schema_manager
             .load_schema_internal(schema)
             .await
@@ -76,7 +77,7 @@ mod tests {
     }
 
     async fn approve_schema(node: &FoldNode, name: &str) {
-        let db = node.get_fold_db().await.unwrap();
+        let db = node.get_fold_db().unwrap();
         db.schema_manager
             .set_schema_state(name, SchemaState::Approved)
             .await

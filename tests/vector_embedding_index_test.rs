@@ -25,7 +25,6 @@ async fn load_schema(node: &FoldNode, filename: &str) {
         .join("tests/schemas_for_testing")
         .join(filename);
     node.get_fold_db()
-        .await
         .unwrap()
         .load_schema_from_file(&path)
         .await

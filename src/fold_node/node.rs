@@ -5,7 +5,6 @@ use fold_db::storage::traits::TypedStore;
 use serde::{Deserialize, Serialize};
 
 use std::sync::Arc;
-use tokio::sync::Mutex;
 
 use crate::fold_node::config::NodeConfig;
 use fold_db::constants::SINGLE_PUBLIC_KEY_ID;
@@ -52,7 +51,7 @@ pub struct ViewLoadResult {
 #[derive(Clone)]
 pub struct FoldNode {
     /// The underlying database instance for data storage and operations
-    pub(super) db: Arc<Mutex<FoldDB>>,
+    pub(super) db: Arc<FoldDB>,
     /// Configuration settings for this node
     pub config: NodeConfig,
     /// Unique identifier for this node
@@ -183,7 +182,7 @@ impl FoldNode {
     /// Assemble a FoldNode from resolved components.
     async fn assemble(
         config: NodeConfig,
-        db: Arc<Mutex<FoldDB>>,
+        db: Arc<FoldDB>,
         private_key: String,
         public_key: String,
         e2e_keys: fold_db::crypto::E2eKeys,
@@ -260,7 +259,7 @@ impl FoldNode {
     }
 
     /// Creates a new FoldNode with a pre-created FoldDB instance.
-    pub async fn new_with_db(config: NodeConfig, db: Arc<Mutex<FoldDB>>) -> FoldDbResult<Self> {
+    pub async fn new_with_db(config: NodeConfig, db: Arc<FoldDB>) -> FoldDbResult<Self> {
         let (private_key, public_key, e2e_keys) = Self::resolve_identity_and_keys(&config).await?;
         let node = Self::assemble(config, db, private_key, public_key, e2e_keys).await?;
         log_feature!(
@@ -271,11 +270,9 @@ impl FoldNode {
         Ok(node)
     }
 
-    /// Creates a new FoldNode with a pre-created FoldDB and explicit E2E keys.
-    ///
-    /// Get a reference to the underlying FoldDB instance
-    pub async fn get_fold_db(&self) -> FoldDbResult<tokio::sync::OwnedMutexGuard<FoldDB>> {
-        Ok(self.db.clone().lock_owned().await)
+    /// Get a reference to the underlying FoldDB instance.
+    pub fn get_fold_db(&self) -> FoldDbResult<Arc<FoldDB>> {
+        Ok(Arc::clone(&self.db))
     }
 
     /// Gets the unique identifier for this node.
@@ -385,9 +382,9 @@ impl FoldNode {
 
         // All fetches succeeded — now register everything in dependency order
         // (collected_views is in leaf-first order from recursion)
-        let db = self.db.lock().await;
         for schema_json in &result.schemas_to_load {
-            db.schema_manager
+            self.db
+                .schema_manager
                 .load_schema_from_json(schema_json)
                 .await
                 .map_err(|e| {
@@ -395,7 +392,8 @@ impl FoldNode {
                 })?;
         }
         for view in &result.views_to_register {
-            db.schema_manager
+            self.db
+                .schema_manager
                 .register_view(view.clone())
                 .await
                 .map_err(|e| {
@@ -442,12 +440,9 @@ impl FoldNode {
             }
 
             // Already loaded locally → skip
-            {
-                let db = self.db.lock().await;
-                if db.schema_manager.get_view(name)?.is_some() {
-                    result.already_loaded.push(name.to_string());
-                    return Ok(());
-                }
+            if self.db.schema_manager.get_view(name)?.is_some() {
+                result.already_loaded.push(name.to_string());
+                return Ok(());
             }
 
             // Already queued for registration in this batch → skip
@@ -475,22 +470,20 @@ impl FoldNode {
                 })?;
 
             // Ensure output schema is loaded locally
+            if self
+                .db
+                .schema_manager
+                .get_schema(&stored_view.output_schema_name)
+                .await?
+                .is_none()
             {
-                let db = self.db.lock().await;
-                if db
-                    .schema_manager
-                    .get_schema(&stored_view.output_schema_name)
-                    .await?
-                    .is_none()
-                {
-                    let schema_json = serde_json::to_string(&output_schema).map_err(|e| {
-                        FoldDbError::Config(format!("Failed to serialize output schema: {}", e))
-                    })?;
-                    result.schemas_to_load.push(schema_json);
-                    result
-                        .loaded_schemas
-                        .push(stored_view.output_schema_name.clone());
-                }
+                let schema_json = serde_json::to_string(&output_schema).map_err(|e| {
+                    FoldDbError::Config(format!("Failed to serialize output schema: {}", e))
+                })?;
+                result.schemas_to_load.push(schema_json);
+                result
+                    .loaded_schemas
+                    .push(stored_view.output_schema_name.clone());
             }
 
             // Resolve input dependencies
@@ -498,11 +491,8 @@ impl FoldNode {
                 let source = &query.schema_name;
 
                 // Already loaded locally as schema or view?
-                let is_local = {
-                    let db = self.db.lock().await;
-                    db.schema_manager.get_schema(source).await?.is_some()
-                        || db.schema_manager.get_view(source)?.is_some()
-                };
+                let is_local = self.db.schema_manager.get_schema(source).await?.is_some()
+                    || self.db.schema_manager.get_view(source)?.is_some();
                 if is_local {
                     result.already_loaded.push(source.clone());
                     continue;
@@ -576,8 +566,8 @@ impl FoldNode {
         &self,
         mutations: Vec<fold_db::schema::types::operations::Mutation>,
     ) -> FoldDbResult<Vec<String>> {
-        let mut db = self.db.lock().await;
-        Ok(db
+        Ok(self
+            .db
             .mutation_manager
             .write_mutations_batch_async(mutations)
             .await?)
@@ -585,34 +575,27 @@ impl FoldNode {
 
     async fn init_internals(
         config: &NodeConfig,
-        db: &Arc<Mutex<FoldDB>>,
+        db: &Arc<FoldDB>,
     ) -> FoldDbResult<(String, Arc<SecurityManager>, SecurityConfig)> {
         // Retrieve or generate the persistent node_id from fold_db
-        let node_id = {
-            let guard = db.lock().await;
-            guard
-                .get_node_id()
-                .await
-                .map_err(|e| FoldDbError::Config(format!("Failed to get node_id: {}", e)))?
-        };
+        let node_id = db
+            .get_node_id()
+            .await
+            .map_err(|e| FoldDbError::Config(format!("Failed to get node_id: {}", e)))?;
 
         // Initialize security manager with node configuration
         let security_config = config.security_config.clone();
 
-        let security_manager = {
-            let guard = db.lock().await;
+        let db_ops = db.db_ops.clone();
 
-            let db_ops = guard.db_ops.clone();
-
-            Arc::new(
-                SecurityManager::new_with_persistence(
-                    config.security_config.clone(),
-                    Arc::clone(&db_ops),
-                )
-                .await
-                .map_err(|e| FoldDbError::SecurityError(e.to_string()))?,
+        let security_manager = Arc::new(
+            SecurityManager::new_with_persistence(
+                config.security_config.clone(),
+                Arc::clone(&db_ops),
             )
-        };
+            .await
+            .map_err(|e| FoldDbError::SecurityError(e.to_string()))?,
+        );
 
         Ok((node_id, security_manager, security_config))
     }
@@ -672,41 +655,35 @@ impl FoldNode {
     /// Get the unified progress tracker
     /// This is the single source of truth for all job progress (ingestion, indexing, reset, etc.)
     /// Local deployments use Sled storage, cloud deployments use DynamoDB
-    pub async fn get_progress_tracker(&self) -> fold_db::progress::ProgressTracker {
-        let db = self.db.lock().await;
-        db.get_progress_tracker()
+    pub fn get_progress_tracker(&self) -> fold_db::progress::ProgressTracker {
+        self.db.get_progress_tracker()
     }
 
     /// Get the current indexing status
     pub async fn get_indexing_status(
         &self,
     ) -> fold_db::fold_db_core::orchestration::IndexingStatus {
-        let db = self.db.lock().await;
-        db.get_indexing_status().await
+        self.db.get_indexing_status().await
     }
 
     /// Check if indexing is currently in progress
     pub async fn is_indexing(&self) -> bool {
-        let db = self.db.lock().await;
-        db.is_indexing().await
+        self.db.is_indexing().await
     }
 
     /// Wait for all pending background tasks to complete
     pub async fn wait_for_background_tasks(&self, timeout: std::time::Duration) -> bool {
-        let db = self.db.lock().await;
-        db.wait_for_background_tasks(timeout).await
+        self.db.wait_for_background_tasks(timeout).await
     }
 
     /// Increment pending task count manually
-    pub async fn increment_pending_tasks(&self) {
-        let db = self.db.lock().await;
-        db.increment_pending_tasks();
+    pub fn increment_pending_tasks(&self) {
+        self.db.increment_pending_tasks();
     }
 
     /// Decrement pending task count manually
-    pub async fn decrement_pending_tasks(&self) {
-        let db = self.db.lock().await;
-        db.decrement_pending_tasks();
+    pub fn decrement_pending_tasks(&self) {
+        self.db.decrement_pending_tasks();
     }
 
     /// Check if a file has already been ingested by a specific user.
@@ -718,8 +695,8 @@ impl FoldNode {
         file_hash: &str,
     ) -> Option<FileIngestionRecord> {
         let key = format!("file:{}:{}", pub_key, file_hash);
-        let db = self.db.lock().await;
-        db.db_ops
+        self.db
+            .db_ops
             .idempotency_store()
             .get_item::<FileIngestionRecord>(&key)
             .await
@@ -735,8 +712,8 @@ impl FoldNode {
         record: FileIngestionRecord,
     ) -> FoldDbResult<()> {
         let key = format!("file:{}:{}", pub_key, file_hash);
-        let db = self.db.lock().await;
-        db.db_ops
+        self.db
+            .db_ops
             .idempotency_store()
             .put_item(&key, &record)
             .await
@@ -751,12 +728,12 @@ impl FoldNode {
         &self,
         progress_id: &str,
     ) -> FoldDbResult<Vec<MutationOutcome>> {
-        let db = self.db.lock().await;
         let prefix = format!("{}:mut:", progress_id);
         let items: Vec<(
             String,
             fold_db::fold_db_core::infrastructure::process_results_subscriber::ProcessMutationResult,
-        )> = db
+        )> = self
+            .db
             .db_ops
             .process_results_store()
             .scan_items_with_prefix(&prefix)
@@ -788,22 +765,17 @@ impl FoldNode {
     /// Called automatically at startup and should be called again when the
     /// node creates, joins, or leaves an org.
     pub async fn configure_org_sync_if_needed(&self) {
-        let db_guard = self.db.lock().await;
-
         // Check if sync is enabled
-        let sync_engine = match db_guard.sync_engine() {
-            Some(engine) => Arc::clone(engine),
+        let sync_engine = match self.db.sync_engine() {
+            Some(engine) => engine,
             None => return, // Sync not configured (local mode)
         };
 
         // Load org memberships from Sled
-        let pool = match db_guard.sled_pool() {
+        let pool = match self.db.sled_pool() {
             Some(p) => p.clone(),
             None => return,
         };
-
-        // Drop the db guard before async work
-        drop(db_guard);
 
         let memberships = match org_ops::list_orgs(&pool) {
             Ok(orgs) => orgs,
@@ -867,13 +839,11 @@ impl FoldNode {
 
         // Register org crypto providers on the encrypting store so org-scoped
         // keys are encrypted/decrypted with the org's shared E2E key.
-        let db_guard = self.db.lock().await;
         for (org_hash, crypto) in &org_crypto_pairs {
-            db_guard
+            self.db
                 .register_org_crypto(org_hash, Arc::clone(crypto))
                 .await;
         }
-        drop(db_guard);
 
         // Load persisted cursors so incremental downloads resume
         sync_engine.load_download_cursors().await;
@@ -908,12 +878,10 @@ impl FoldNode {
     /// Used after operations like org join where waiting for the timer-based
     /// sync would leave the user seeing stale/empty data.
     pub async fn trigger_immediate_sync(&self) {
-        let db_guard = self.db.lock().await;
-        let sync_engine = match db_guard.sync_engine() {
-            Some(engine) => Arc::clone(engine),
+        let sync_engine = match self.db.sync_engine() {
+            Some(engine) => engine,
             None => return,
         };
-        drop(db_guard);
 
         if let Err(e) = sync_engine.sync().await {
             log::warn!("Immediate sync trigger failed: {}", e);
@@ -925,19 +893,15 @@ impl FoldNode {
     /// Returns sync state, pending count, member list, and last sync time
     /// for the specified org, or None if sync is not enabled.
     pub async fn get_org_sync_status(&self, org_hash: &str) -> FoldDbResult<Option<OrgSyncStatus>> {
-        let db_guard = self.db.lock().await;
-
-        let sync_engine = match db_guard.sync_engine() {
-            Some(engine) => Arc::clone(engine),
+        let sync_engine = match self.db.sync_engine() {
+            Some(engine) => engine,
             None => return Ok(None),
         };
 
-        let pool = match db_guard.sled_pool() {
+        let pool = match self.db.sled_pool() {
             Some(p) => p.clone(),
             None => return Ok(None),
         };
-
-        drop(db_guard);
 
         // Get the org membership
         let membership = org_ops::get_org(&pool, org_hash)?;
@@ -1065,12 +1029,12 @@ mod tests {
 /// has data, we skip entirely. Otherwise we read the legacy JSON config files
 /// and write their contents into Sled.
 async fn migrate_config_files_to_sled(node: &FoldNode) {
-    let db_guard = match node.get_fold_db().await {
-        Ok(g) => g,
+    let db = match node.get_fold_db() {
+        Ok(db) => db,
         Err(_) => return,
     };
 
-    let pool = match db_guard.sled_pool() {
+    let pool = match db.sled_pool() {
         Some(p) => p.clone(),
         None => return,
     };
@@ -1085,9 +1049,6 @@ async fn migrate_config_files_to_sled(node: &FoldNode) {
     if !store.is_empty() {
         return; // Already migrated
     }
-
-    // Drop the db guard before doing file I/O
-    drop(db_guard);
 
     let folddb_home = match crate::utils::paths::folddb_home() {
         Ok(h) => h,
