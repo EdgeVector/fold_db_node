@@ -92,10 +92,9 @@ impl OperationProcessor {
         let config = self.node.config.clone();
         let db_path = config.get_storage_path();
 
+        // Drop the database guard to release Sled locks before deleting files
         if let Ok(db) = self.get_db().await {
-            if let Err(e) = db.close() {
-                log::warn!("Failed to close database during reset: {}", e);
-            }
+            drop(db);
         }
 
         // All configs use local Sled storage — reset by removing and recreating the directory
