@@ -335,17 +335,16 @@ async fn signed_register(
             format!("Registration succeeded but failed to persist credentials locally: {e}")
         })?;
 
-        // Also write to Sled config store for Phase 5 consumers
+        // Write ONLY api_url and user_hash to Sled (safe to sync across devices).
+        // Per-device secrets (api_key, session_token) stay in credentials.json only.
         if let Some(pool) = data.node_manager.get_sled_pool().await {
             if let Ok(store) = NodeConfigStore::new(pool) {
                 let cloud_creds = CloudCredentials {
                     api_url: exemem_api_url(),
-                    api_key: api_key.to_string(),
-                    session_token: Some(session_token.to_string()),
                     user_hash: Some(user_hash.to_string()),
                 };
                 if let Err(e) = store.set_cloud_config(&cloud_creds) {
-                    log::warn!("Failed to write cloud credentials to Sled: {}", e);
+                    log::warn!("Failed to write cloud config to Sled: {}", e);
                 }
             }
         }
@@ -467,18 +466,8 @@ async fn refresh_auth_standalone() -> Result<fold_db::sync::auth::SyncAuth, Stri
     crate::keychain::store_credentials(&creds)
         .map_err(|e| format!("Auth refresh: failed to store credentials: {e}"))?;
 
-    // Also update session_token + api_key in the Sled config store.
-    // refresh_auth_standalone has no node/AppState access, so we open the
-    // Sled tree directly at the known data path.
-    let data_path = folddb_home.join("data");
-    if let Ok(db) = sled::open(&data_path) {
-        if let Ok(tree) = db.open_tree("node_config") {
-            let _ = tree.insert("cloud:session_token", session_token.as_bytes());
-            let _ = tree.insert("cloud:api_key", api_key.as_bytes());
-            let _ = tree.insert("cloud:user_hash", user_hash.as_bytes());
-            let _ = tree.flush();
-        }
-    }
+    // Per-device secrets (api_key, session_token) are stored ONLY in credentials.json.
+    // We do NOT write them to Sled (which syncs across devices) or node_config.json.
 
     log::info!("Sync auth refreshed successfully via re-registration");
 

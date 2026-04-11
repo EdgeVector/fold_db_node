@@ -74,61 +74,49 @@ pub async fn get_sled_pool(
     }
 }
 
-/// Build a `SyncAuth` that prefers a session token over an API key.
+/// Helper to get an AuthClient.
 ///
-/// Session tokens are refreshed more frequently and survive API key rotation,
-/// so they are preferred when available.
-fn prefer_session_token(
-    session_token: Option<&str>,
-    api_key: &str,
-) -> fold_db::sync::auth::SyncAuth {
-    match session_token {
-        Some(t) if !t.is_empty() => fold_db::sync::auth::SyncAuth::BearerToken(t.to_string()),
-        _ => fold_db::sync::auth::SyncAuth::ApiKey(api_key.to_string()),
-    }
-}
-
-/// Helper to get an AuthClient by reading cloud credentials from the Sled config store.
-///
-/// Falls back to the `DatabaseConfig.cloud_sync` fields if the Sled store
-/// is not available or empty (pre-migration nodes).
+/// Reads api_url from Sled config store or DatabaseConfig. Auth credentials
+/// (session_token, api_key) come from credentials.json — the single source
+/// of truth for per-device secrets.
 async fn get_auth_client(node: &FoldNode) -> Option<fold_db::sync::auth::AuthClient> {
-    // Try Sled config store first
-    if let Ok(db_guard) = node.get_fold_db().await {
+    // Load per-device credentials from credentials.json
+    let creds = crate::keychain::load_credentials().ok().flatten()?;
+
+    // Build auth: prefer session_token over api_key
+    let auth = if !creds.session_token.is_empty() {
+        fold_db::sync::auth::SyncAuth::BearerToken(creds.session_token)
+    } else if !creds.api_key.is_empty() {
+        fold_db::sync::auth::SyncAuth::ApiKey(creds.api_key)
+    } else {
+        return None;
+    };
+
+    // Get api_url: try Sled config store first, then DatabaseConfig
+    let api_url = if let Ok(db_guard) = node.get_fold_db().await {
         if let Some(pool) = db_guard.sled_pool().cloned() {
             drop(db_guard);
-            if let Ok(store) = NodeConfigStore::new(pool) {
-                if let Some(cloud) = store.get_cloud_config() {
-                    let http = shared_http_client();
-                    let auth = prefer_session_token(cloud.session_token.as_deref(), &cloud.api_key);
-                    return Some(fold_db::sync::auth::AuthClient::new(
-                        http,
-                        cloud.api_url,
-                        auth,
-                    ));
-                }
-            }
+            NodeConfigStore::new(pool)
+                .ok()
+                .and_then(|store| store.get_cloud_config())
+                .map(|cloud| cloud.api_url)
+        } else {
+            drop(db_guard);
+            None
         }
-    }
-
-    // Fallback: read cloud_sync config directly from DatabaseConfig
-    if let Some(ref cloud_sync) = node.config.database.cloud_sync {
-        let http = shared_http_client();
-        // Try keychain for fresh session token before falling back to config API key
-        let session_token = crate::keychain::load_credentials()
-            .ok()
-            .flatten()
-            .filter(|c| !c.session_token.is_empty())
-            .map(|c| c.session_token);
-        let auth = prefer_session_token(session_token.as_deref(), &cloud_sync.api_key);
-        Some(fold_db::sync::auth::AuthClient::new(
-            http,
-            cloud_sync.api_url.clone(),
-            auth,
-        ))
     } else {
         None
     }
+    .or_else(|| {
+        node.config
+            .database
+            .cloud_sync
+            .as_ref()
+            .map(|cs| cs.api_url.clone())
+    })?;
+
+    let http = shared_http_client();
+    Some(fold_db::sync::auth::AuthClient::new(http, api_url, auth))
 }
 
 /// Require Exemem cloud configuration, returning the AuthClient or a BadRequest error.

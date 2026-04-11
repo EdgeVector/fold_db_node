@@ -222,7 +222,19 @@ impl FoldNode {
     pub async fn new(config: NodeConfig) -> FoldDbResult<Self> {
         let (private_key, public_key, e2e_keys) = Self::resolve_identity_and_keys(&config).await?;
 
-        // Legacy DynamoDB Cloud backend has been removed — no user_id patching needed.
+        // Inject per-device credentials from credentials.json into the DatabaseConfig.
+        // credentials.json is the single source of truth for api_key and session_token.
+        let mut config = config;
+        if config.database.has_cloud_sync() {
+            if let Ok(Some(creds)) = crate::keychain::load_credentials() {
+                if let Some(ref mut cloud) = config.database.cloud_sync {
+                    cloud.api_key = creds.api_key;
+                    if !creds.session_token.is_empty() {
+                        cloud.session_token = Some(creds.session_token);
+                    }
+                }
+            }
+        }
 
         // Build auth-refresh callback for Exemem mode so the sync engine can
         // automatically recover from expired tokens (401) by re-registering.
@@ -1109,16 +1121,15 @@ async fn migrate_config_files_to_sled(node: &FoldNode) {
         }
     }
 
-    // 2. Migrate cloud credentials
+    // 2. Migrate cloud config (api_url + user_hash only — per-device secrets
+    //    stay in credentials.json and are NOT written to Sled)
     if let Ok(Some(creds)) = crate::keychain::load_credentials() {
         let cloud = CloudCredentials {
             api_url: crate::endpoints::exemem_api_url(),
-            api_key: creds.api_key,
-            session_token: Some(creds.session_token),
             user_hash: Some(creds.user_hash),
         };
         if let Err(e) = store.set_cloud_config(&cloud) {
-            log::warn!("Failed to migrate cloud credentials to Sled: {}", e);
+            log::warn!("Failed to migrate cloud config to Sled: {}", e);
         } else {
             migrated_any = true;
         }

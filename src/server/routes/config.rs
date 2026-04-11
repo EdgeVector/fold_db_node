@@ -229,13 +229,12 @@ pub async fn apply_setup(
                     DatabaseConfig::with_cloud_sync(config.database.path.clone(), cloud_sync);
                 changes.push("storage (exemem)");
 
-                // Write to Sled config store so consumers can read from Sled
+                // Write ONLY api_url to Sled (safe to sync). Per-device secrets
+                // (api_key, session_token) are stored in credentials.json only.
                 if let Some(pool) = state.node_manager.get_sled_pool().await {
                     if let Ok(store) = NodeConfigStore::new(pool) {
                         let creds = CloudCredentials {
                             api_url: api_url.clone(),
-                            api_key: api_key.clone(),
-                            session_token: None,
                             user_hash: None,
                         };
                         if let Err(e) = store.set_cloud_config(&creds) {
