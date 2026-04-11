@@ -428,10 +428,7 @@ fn shared_http_client() -> Arc<reqwest::Client> {
 }
 
 /// Delete an encrypted file from the S3 inbox.
-async fn delete_inbox_file(
-    client: &fold_db::sync::auth::AuthClient,
-    file_name: &str,
-) {
+async fn delete_inbox_file(client: &fold_db::sync::auth::AuthClient, file_name: &str) {
     if let Ok(presigned) = client.presign_inbox_delete(file_name).await {
         let s3 = fold_db::sync::s3::S3Client::new(shared_http_client());
         if let Err(e) = s3.delete(&presigned).await {
