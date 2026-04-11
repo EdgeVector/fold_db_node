@@ -326,9 +326,14 @@ async fn start_fold_server(port: u16) -> Result<EmbeddedServerHandle, String> {
     let mut config = load_node_config(None, None)
         .map_err(|e| format!("Failed to load config: {}", e))?;
 
-    // Set identity, database path, and schema service
+    // Set identity and schema service
     config = config.with_identity(&pub_key, &priv_key);
-    config.database = DatabaseConfig::local(data_dir);
+
+    // Preserve cloud_sync config if the user enabled cloud backup via the UI.
+    // Only override to local if the loaded config has no cloud_sync.
+    if !config.database.has_cloud_sync() {
+        config.database = DatabaseConfig::local(data_dir);
+    }
 
     config.schema_service_url = Some(fold_db_node::endpoints::schema_service_url());
 
