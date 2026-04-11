@@ -59,6 +59,11 @@ pub struct ConnectionPayload {
     /// Identity card (included in accept messages for trust creation)
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub identity_card: Option<IdentityCardPayload>,
+    /// Role the requester wants to assign to the acceptor (default: "acquaintance").
+    /// Only meaningful in "request" messages; carried through to the requester's
+    /// `process_accepted_connection` when the accept comes back.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub preferred_role: Option<String>,
 }
 
 /// Encrypt a connection payload for a target's X25519 public key.
@@ -254,6 +259,9 @@ pub struct LocalSentRequest {
     /// "pending", "accepted", "declined"
     pub status: String,
     pub created_at: String,
+    /// Role the requester chose to assign the acceptor (default: "acquaintance")
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub preferred_role: Option<String>,
 }
 
 /// Save a received connection request to local Sled store.
@@ -356,11 +364,13 @@ pub async fn list_sent_requests(store: &dyn KvStore) -> Result<Vec<LocalSentRequ
 }
 
 /// Update a sent request status (e.g., when we receive an acceptance).
+/// Returns the updated `LocalSentRequest` if one was found, so callers
+/// can inspect `preferred_role` etc.
 pub async fn update_sent_request_status(
     store: &dyn KvStore,
     target_pseudonym: &str,
     status: &str,
-) -> Result<(), String> {
+) -> Result<Option<LocalSentRequest>, String> {
     let entries = store
         .scan_prefix(CONN_SENT_PREFIX.as_bytes())
         .await
@@ -376,12 +386,12 @@ pub async fn update_sent_request_status(
                     .put(&key, updated)
                     .await
                     .map_err(|e| format!("Failed to update: {}", e))?;
-                return Ok(());
+                return Ok(Some(req));
             }
         }
     }
 
-    Ok(())
+    Ok(None)
 }
 
 /// Get the base64-encoded X25519 public key for a pseudonym.
@@ -434,6 +444,7 @@ mod tests {
             sender_pseudonym: Uuid::new_v4().to_string(),
             reply_public_key: "reply_pk_base64".to_string(),
             identity_card: None,
+            preferred_role: None,
         };
 
         let encrypted = encrypt_connection_message(public.as_bytes(), &payload).unwrap();
@@ -460,6 +471,7 @@ mod tests {
             sender_pseudonym: Uuid::new_v4().to_string(),
             reply_public_key: "rpk".to_string(),
             identity_card: None,
+            preferred_role: None,
         };
 
         let encrypted = encrypt_connection_message(public.as_bytes(), &payload).unwrap();
@@ -483,6 +495,7 @@ mod tests {
             sender_pseudonym: Uuid::new_v4().to_string(),
             reply_public_key: "rpk".to_string(),
             identity_card: None,
+            preferred_role: None,
         };
 
         let encrypted = encrypt_message(public.as_bytes(), &payload).unwrap();
