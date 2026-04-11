@@ -1,4 +1,4 @@
-import { useState, useEffect, useRef } from 'react'
+import { useState, useEffect, useRef, useCallback } from 'react'
 import { useAppDispatch, useAppSelector } from '../store/hooks'
 import { logoutUser, autoLogin } from '../store/authSlice'
 import { selectIngestionConfig, selectAiProvider, selectActiveModel, selectIsAiConfigured } from '../store/ingestionSlice'
@@ -12,7 +12,9 @@ import AnimatedLogo from './AnimatedLogo'
 import SyncStatusIndicator from './SyncStatusIndicator'
 import OrgSyncWarning from './OrgSyncWarning'
 import PendingInvitesModal from './PendingInvitesModal'
-import { EnvelopeIcon, Cog6ToothIcon } from '@heroicons/react/24/outline'
+import NotificationsModal from './NotificationsModal'
+import { EnvelopeIcon, BellIcon, Cog6ToothIcon } from '@heroicons/react/24/outline'
+import { discoveryClient } from '../api/clients/discoveryClient'
 
 import { friendlyModelName } from '../utils/modelNames'
 
@@ -48,6 +50,10 @@ function Header({ onSettingsClick, onAiSettingsClick, onCloudSettingsClick }) {
   // Pending Invites State
   const [pendingInvites, setPendingInvites] = useState([])
   const [isInvitesModalOpen, setIsInvitesModalOpen] = useState(false)
+
+  // Notifications State
+  const [notifCount, setNotifCount] = useState(0)
+  const [isNotifModalOpen, setIsNotifModalOpen] = useState(false)
   // Cooldown: skip poll cycles after accepting/declining to let S3 propagate deletes
   const inviteCooldownRef = useRef(0)
 
@@ -97,6 +103,25 @@ function Header({ onSettingsClick, onAiSettingsClick, onCloudSettingsClick }) {
     const interval = setInterval(fetchInvites, 60000);
     return () => clearInterval(interval);
   }, [isAuthenticated]);
+
+  // Poll notification count
+  const refreshNotifCount = useCallback(async () => {
+    try {
+      const res = await discoveryClient.notificationCount();
+      if (res.success && res.data) {
+        setNotifCount(res.data.count || 0);
+      }
+    } catch {
+      // fail silently for telemetry
+    }
+  }, []);
+
+  useEffect(() => {
+    if (!isAuthenticated) return;
+    refreshNotifCount();
+    const interval = setInterval(refreshNotifCount, 30000);
+    return () => clearInterval(interval);
+  }, [isAuthenticated, refreshNotifCount]);
 
   // Track org sync errors for header warning
   const [orgSyncError, setOrgSyncError] = useState(false)
@@ -206,6 +231,20 @@ function Header({ onSettingsClick, onAiSettingsClick, onCloudSettingsClick }) {
           {/* Action buttons */}
           <div className="relative">
             <button
+              onClick={() => setIsNotifModalOpen(true)}
+              className="p-2 text-tertiary hover:text-primary transition-colors bg-transparent border-none cursor-pointer flex items-center justify-center"
+              title="Notifications"
+            >
+              <BellIcon className="w-5 h-5" />
+              {notifCount > 0 && (
+                <span className="absolute -top-1 -right-1 min-w-[16px] h-4 px-1 text-[10px] font-bold bg-gruvbox-red text-white rounded-full border border-surface flex items-center justify-center">
+                  {notifCount > 99 ? '99+' : notifCount}
+                </span>
+              )}
+            </button>
+          </div>
+          <div className="relative">
+            <button
               onClick={() => setIsInvitesModalOpen(true)}
               className="p-2 text-tertiary hover:text-primary transition-colors bg-transparent border-none cursor-pointer flex items-center justify-center"
               title="Inbox"
@@ -223,6 +262,10 @@ function Header({ onSettingsClick, onAiSettingsClick, onCloudSettingsClick }) {
         </div>
       </div>
       
+      <NotificationsModal
+        isOpen={isNotifModalOpen}
+        onClose={() => { setIsNotifModalOpen(false); refreshNotifCount(); }}
+      />
       <PendingInvitesModal
         isOpen={isInvitesModalOpen}
         onClose={() => setIsInvitesModalOpen(false)}

@@ -6,6 +6,8 @@ import { schemaClient } from '../../api/clients/schemaClient'
 import { mutationClient } from '../../api/clients'
 import { FieldsTable } from '../StructuredResults'
 import SchemaName from '../shared/SchemaName'
+import ShareRecordModal from '../ShareRecordModal'
+import { ArrowUpTrayIcon } from '@heroicons/react/24/outline'
 import { getFieldNames, toggleSetItem } from '../../utils/schemaUtils'
 import {
   keyId,
@@ -37,6 +39,7 @@ export default function DataBrowserTab() {
   const [expandedKeys, setExpandedKeys] = useState(() => new Set())
   const [keyRecords, setKeyRecords] = useState({})        // { compositeId: { fields, metadata } }
   const [keyLoading, setKeyLoading] = useState({})        // { compositeId: bool }
+  const [shareTarget, setShareTarget] = useState(null)
 
   const schemaList = useMemo(() => {
     if (!Array.isArray(schemas)) return []
@@ -188,16 +191,26 @@ export default function DataBrowserTab() {
 
                   return (
                     <div key={id} className="border-b border-border last:border-b-0">
-                      <button
-                        type="button"
-                        className="w-full flex items-center gap-2 px-2 py-1.5 text-left hover:bg-surface transition-colors"
-                        onClick={() => toggleKey(name, kv, schema)}
-                      >
-                        <span className="text-xs text-secondary">{isKeyOpen ? '▾' : '▸'}</span>
-                        <span className="text-xs font-mono text-primary">{keyLabel(kv)}</span>
-                        <VersionBadge version={maxVersion} />
-                        {kLoading && <span className="text-xs text-secondary">(loading...)</span>}
-                      </button>
+                      <div className="flex items-center">
+                        <button
+                          type="button"
+                          className="flex-1 flex items-center gap-2 px-2 py-1.5 text-left hover:bg-surface transition-colors"
+                          onClick={() => toggleKey(name, kv, schema)}
+                        >
+                          <span className="text-xs text-secondary">{isKeyOpen ? '▾' : '▸'}</span>
+                          <span className="text-xs font-mono text-primary">{keyLabel(kv)}</span>
+                          <VersionBadge version={maxVersion} />
+                          {kLoading && <span className="text-xs text-secondary">(loading...)</span>}
+                        </button>
+                        <button
+                          type="button"
+                          className="p-1 text-tertiary hover:text-primary transition-colors bg-transparent border-none cursor-pointer"
+                          title="Share with contact"
+                          onClick={(e) => { e.stopPropagation(); setShareTarget({ schema: name, key: kv }); }}
+                        >
+                          <ArrowUpTrayIcon className="w-4 h-4" />
+                        </button>
+                      </div>
 
                       {isKeyOpen && (
                         <div className="pl-6 pb-2">
@@ -234,6 +247,14 @@ export default function DataBrowserTab() {
           </div>
         )
       })}
+      {shareTarget && (
+        <ShareRecordModal
+          schemaName={shareTarget.schema}
+          recordKey={shareTarget.key}
+          isOpen={!!shareTarget}
+          onClose={() => setShareTarget(null)}
+        />
+      )}
     </div>
   )
 }
