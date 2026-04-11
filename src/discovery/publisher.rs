@@ -53,7 +53,7 @@ impl DiscoveryPublisher {
             master_key,
             discovery_url,
             http_client: reqwest::Client::builder()
-                .timeout(std::time::Duration::from_secs(15))
+                .timeout(std::time::Duration::from_secs(30))
                 .connect_timeout(std::time::Duration::from_secs(10))
                 .build()
                 .unwrap_or_else(|_| reqwest::Client::new()),
