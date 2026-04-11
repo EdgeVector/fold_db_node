@@ -466,6 +466,39 @@ pub async fn connect(
     auth_token: &str,
     master_key: &[u8],
 ) -> HandlerResult<()> {
+    // Check if already connected to this pseudonym
+    let op = OperationProcessor::new(node.clone());
+    let book_path = op
+        .contact_book_path()
+        .map_err(|e| HandlerError::Internal(format!("Failed to resolve contacts path: {e}")))?;
+    let contact_book = ContactBook::load_from(&book_path).unwrap_or_default();
+    let target_str = req.target_pseudonym.to_string();
+    if contact_book.active_contacts().iter().any(|c| {
+        c.pseudonym.as_deref() == Some(target_str.as_str())
+            || c.messaging_pseudonym.as_deref() == Some(target_str.as_str())
+    }) {
+        return Err(HandlerError::BadRequest(
+            "Already connected to this peer".to_string(),
+        ));
+    }
+
+    // Check if there's already a pending sent request to this pseudonym
+    let db = node
+        .get_fold_db()
+        .map_err(|e| HandlerError::Internal(format!("Failed to access database: {e}")))?;
+    let store = get_metadata_store(&db);
+    let sent_requests = connection::list_sent_requests(&*store)
+        .await
+        .handler_err("list sent requests")?;
+    if sent_requests
+        .iter()
+        .any(|r| r.target_pseudonym == target_str && r.status == "pending")
+    {
+        return Err(HandlerError::BadRequest(
+            "Connection request already pending for this peer".to_string(),
+        ));
+    }
+
     let publisher = DiscoveryPublisher::new(
         master_key.to_vec(),
         discovery_url.to_string(),
@@ -2474,6 +2507,21 @@ async fn process_data_share(
                         record.schema_name,
                         e
                     );
+                    // Ensure schema is approved even if it already existed
+                    if let Err(approve_err) = db
+                        .schema_manager
+                        .set_schema_state(
+                            &record.schema_name,
+                            fold_db::schema::SchemaState::Approved,
+                        )
+                        .await
+                    {
+                        log::warn!(
+                            "Failed to approve existing schema '{}': {}",
+                            record.schema_name,
+                            approve_err
+                        );
+                    }
                 }
             }
         }
@@ -2626,6 +2674,21 @@ pub async fn list_notifications(node: &FoldNode) -> HandlerResult<serde_json::Va
     Ok(ApiResponse::success(serde_json::json!({
         "notifications": notifications,
         "count": notifications.len(),
+    })))
+}
+
+/// Return the count of notifications without loading all bodies.
+pub async fn notification_count(node: &FoldNode) -> HandlerResult<serde_json::Value> {
+    let db = node
+        .get_fold_db()
+        .map_err(|e| HandlerError::Internal(format!("Failed to access database: {e}")))?;
+    let store = get_metadata_store(&db);
+    let entries = store
+        .scan_prefix(b"notification:")
+        .await
+        .map_err(|e| HandlerError::Internal(format!("Failed to scan notifications: {e}")))?;
+    Ok(ApiResponse::success(serde_json::json!({
+        "count": entries.len(),
     })))
 }
 
