@@ -132,8 +132,7 @@ impl StructureAnalyzer {
     pub fn get_analysis_stats(json_data: &Value) -> StructureStats {
         match json_data {
             Value::Array(array) => {
-                let mut unique: std::collections::HashSet<&str> =
-                    std::collections::HashSet::new();
+                let mut unique: std::collections::HashSet<&str> = std::collections::HashSet::new();
                 for item in array {
                     if let Some(obj) = item.as_object() {
                         for key in obj.keys() {
