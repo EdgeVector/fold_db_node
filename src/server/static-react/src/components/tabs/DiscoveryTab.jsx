@@ -554,7 +554,9 @@ function ConnectionRequestsPanel({ onResult }) {
       if (response.success && response.data) {
         setAvailableRoles(response.data.roles || {})
       }
-    } catch { /* ignore */ }
+    } catch (err) {
+      console.error('Failed to load sharing roles:', err)
+    }
   }, [])
 
   useEffect(() => { fetchRequests(); fetchRoles() }, [fetchRequests, fetchRoles])
@@ -1394,11 +1396,10 @@ export default function DiscoveryTab({ onResult }) {
     return (
       <div className="space-y-4">
         <div className="card p-6 text-center rounded">
-          <h3 className="text-lg text-primary mb-2">Discovery Not Configured</h3>
+          <h3 className="text-lg text-primary mb-2">Discovery Not Available</h3>
           <p className="text-secondary text-sm">
-            Set <code className="text-gruvbox-yellow">DISCOVERY_SERVICE_URL</code> and{' '}
-            <code className="text-gruvbox-yellow">DISCOVERY_MASTER_KEY</code> environment
-            variables to enable network discovery.
+            Discovery requires an Exemem cloud account. Enable cloud backup in
+            Settings to join the discovery network and find users with similar data.
           </p>
         </div>
       </div>
