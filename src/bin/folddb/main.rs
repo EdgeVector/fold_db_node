@@ -733,20 +733,30 @@ async fn cloud_enable(
         let _ = std::fs::write(&marker, "1");
     }
 
-    // If daemon is running, offer to restart it so cloud sync starts immediately
+    // If daemon is running, apply config live via HTTP (same mechanism the UI uses)
     if commands::daemon::read_running_pid().is_some() {
-        let restart = dialoguer::Confirm::new()
-            .with_prompt("Restart daemon now to activate cloud sync?")
-            .default(true)
-            .interact()
-            .unwrap_or(false);
-        if restart {
-            let _ = commands::daemon::stop();
-            msg.push_str("\nDaemon stopped. Starting with new config...");
-            // Start will happen when user runs next command or explicitly starts
-            msg.push_str("\nRun `folddb daemon start` to start syncing.");
-        } else {
-            msg.push_str("\nRestart daemon when ready: folddb daemon stop && folddb daemon start");
+        let port = commands::daemon::default_port();
+        let user_hash_str = fold_db_node::utils::crypto::user_hash_from_pubkey(
+            config.public_key.as_deref().unwrap_or(""),
+        );
+        let client = FoldDbClient::new(port, &user_hash_str);
+        match client
+            .apply_setup(&serde_json::json!({
+                "type": "exemem",
+                "api_url": api_url,
+                "api_key": api_key,
+            }))
+            .await
+        {
+            Ok(_) => {
+                msg.push_str("\nCloud sync activated — syncing will start shortly.");
+            }
+            Err(e) => {
+                msg.push_str(&format!("\nConfig saved but failed to apply live: {}", e));
+                msg.push_str(
+                    "\nRestart daemon to activate: folddb daemon stop && folddb daemon start",
+                );
+            }
         }
     }
 
