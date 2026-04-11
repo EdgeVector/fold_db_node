@@ -2368,11 +2368,9 @@ pub async fn send_data_share(
 
         let file_data_base64 = if let Some(ref hash) = file_hash {
             // Try to read the file from upload storage
-            let upload_storage_config =
-                fold_db::storage::config::UploadStorageConfig::from_env().unwrap_or_default();
-            let upload_path = match upload_storage_config {
-                fold_db::storage::config::UploadStorageConfig::Local { path } => path,
-            };
+            let upload_path = std::env::var("FOLDDB_UPLOAD_PATH")
+                .map(std::path::PathBuf::from)
+                .unwrap_or_else(|_| std::path::PathBuf::from("data/uploads"));
             let upload_storage = fold_db::storage::UploadStorage::local(upload_path);
             match upload_storage.read_file(hash, None).await {
                 Ok(bytes) => Some(B64.encode(&bytes)),
@@ -2534,12 +2532,9 @@ async fn process_data_share(
                         .or_else(|| record.fields.get("file_hash").and_then(|v| v.as_str()))
                         .unwrap_or("shared_file");
 
-                    let upload_storage_config =
-                        fold_db::storage::config::UploadStorageConfig::from_env()
-                            .unwrap_or_default();
-                    let upload_path = match upload_storage_config {
-                        fold_db::storage::config::UploadStorageConfig::Local { path } => path,
-                    };
+                    let upload_path = std::env::var("FOLDDB_UPLOAD_PATH")
+                        .map(std::path::PathBuf::from)
+                        .unwrap_or_else(|_| std::path::PathBuf::from("data/uploads"));
                     let upload_storage = fold_db::storage::UploadStorage::local(upload_path);
 
                     if let Err(e) = upload_storage.save_file(file_name, &file_bytes, None).await {

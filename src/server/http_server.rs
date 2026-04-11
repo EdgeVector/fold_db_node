@@ -104,23 +104,15 @@ impl FoldHttpServer {
         // Load schemas from schema service if configured
         self.load_schemas_if_configured().await?;
 
-        // Initialize upload storage from environment config
-        let upload_storage_config = fold_db::storage::config::UploadStorageConfig::from_env()
-            .unwrap_or_else(|e| {
-                log_feature!(
-                    LogFeature::HttpServer,
-                    warn,
-                    "Failed to load upload storage config from env: {}. Using default.",
-                    e
-                );
-                fold_db::storage::config::UploadStorageConfig::default()
+        // Initialize upload storage — use FOLDDB_UPLOAD_PATH env or default to data/uploads
+        let upload_path = std::env::var("FOLDDB_UPLOAD_PATH")
+            .map(std::path::PathBuf::from)
+            .unwrap_or_else(|_| {
+                crate::utils::paths::folddb_home()
+                    .map(|h| h.join("data").join("uploads"))
+                    .unwrap_or_else(|_| std::path::PathBuf::from("data/uploads"))
             });
-
-        let upload_storage = match upload_storage_config {
-            fold_db::storage::config::UploadStorageConfig::Local { path } => {
-                fold_db::storage::UploadStorage::local(path)
-            }
-        };
+        let upload_storage = fold_db::storage::UploadStorage::local(upload_path);
 
         log_feature!(
             LogFeature::HttpServer,

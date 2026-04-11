@@ -248,6 +248,16 @@ impl LlmQueryService {
                     .map_err(|e| format!("Failed to serialize schemas: {}", e))
             }
 
+            "list_orgs" => {
+                let pool = crate::handlers::org::get_sled_pool(node)
+                    .await
+                    .map_err(|e| format!("Failed to get database: {}", e))?;
+                let orgs = fold_db::org::operations::list_orgs(&pool)
+                    .map_err(|e| format!("Failed to list orgs: {}", e))?;
+                serde_json::to_value(&orgs)
+                    .map_err(|e| format!("Failed to serialize orgs: {}", e))
+            }
+
             "get_schema" => {
                 let name = params
                     .get("name")
@@ -1056,6 +1066,7 @@ impl LlmQueryService {
                         "query" => "Querying database...",
                         "scan_folder" => "Scanning folder...",
                         "list_schemas" => "Listing schemas...",
+                        "list_orgs" => "Listing organizations...",
                         "create_view" => "Compiling WASM view...",
                         "update_record" => "Updating record...",
                         "web_search" => "Searching the web...",

@@ -291,7 +291,7 @@ async fn mutations_work_after_simulated_restart() {
         "Both files should be in the molecule after simulated restart"
     );
 
-    fold_db.close().expect("close");
+    drop(fold_db);
 }
 
 /// Test that the molecule UUID stays consistent across multiple batches
