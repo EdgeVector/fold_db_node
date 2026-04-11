@@ -11,8 +11,10 @@ import QueryForm from '../query/QueryForm';
 import QueryActions from '../query/QueryActions';
 import QueryPreview from '../query/QueryPreview';
 import { getSchemaDisplayName } from '../../utils/schemaUtils';
+import { useOrgNames } from '../../hooks/useOrgNames';
 
 function QueryTab({ onResult }) {
+  const orgNames = useOrgNames()
   // Query state management
   const {
     state: queryState,
@@ -118,6 +120,7 @@ function QueryTab({ onResult }) {
             onRangeSchemaFilterChange={setRangeSchemaFilter}
             onHashKeyChange={setHashKeyValue}
             approvedSchemas={approvedSchemas}
+            orgNames={orgNames}
             schemasLoading={schemasLoading}
             isRangeSchema={isRangeSchema}
             isHashRangeSchema={isHashRangeSchema}

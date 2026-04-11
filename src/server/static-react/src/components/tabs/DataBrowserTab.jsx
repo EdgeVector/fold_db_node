@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useMemo, useState, Fragment } from 'react'
 import { useAppSelector } from '../../store/hooks'
 import { selectAllSchemas } from '../../store/schemaSlice'
-import { orgClient } from '../../api/clients/orgClient'
+import { useOrgNames } from '../../hooks/useOrgNames'
 import { schemaClient } from '../../api/clients/schemaClient'
 import { mutationClient } from '../../api/clients'
 import { FieldsTable } from '../StructuredResults'
@@ -31,17 +31,7 @@ export default function DataBrowserTab() {
   const [schemaLoading, setSchemaLoading] = useState({})  // { name: bool }
   const [schemaErrors, setSchemaErrors] = useState({})    // { name: string }
 
-  // Org hash → name map
-  const [orgNames, setOrgNames] = useState({})
-  useEffect(() => {
-    orgClient.listOrgs().then(res => {
-      const data = res.data || res
-      const orgs = data.orgs || []
-      const map = {}
-      for (const org of orgs) map[org.org_hash] = org.org_name
-      setOrgNames(map)
-    }).catch(() => {})
-  }, [])
+  const orgNames = useOrgNames()
 
   // Key-level expand state + cached records
   const [expandedKeys, setExpandedKeys] = useState(() => new Set())
