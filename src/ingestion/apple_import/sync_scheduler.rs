@@ -219,6 +219,7 @@ async fn sync_notes(
             source_folder: None,
             image_descriptive_name: None,
             org_hash: None,
+            image_bytes: None,
         };
 
         if let Err(e) = crate::handlers::ingestion::process_json(
@@ -289,6 +290,7 @@ async fn sync_reminders(
         source_folder: None,
         image_descriptive_name: None,
         org_hash: None,
+        image_bytes: None,
     };
 
     if let Err(e) =
@@ -380,6 +382,9 @@ async fn sync_photos(
                     }
                 }
 
+                // Read image bytes for face detection before ingestion
+                let image_bytes = std::fs::read(&file_path).ok();
+
                 let request = IngestionRequest {
                     data: json_value,
                     auto_execute: true,
@@ -390,6 +395,7 @@ async fn sync_photos(
                     source_folder: None,
                     image_descriptive_name: descriptive_name,
                     org_hash: None,
+                    image_bytes,
                 };
 
                 if let Err(e) = crate::handlers::ingestion::process_json(

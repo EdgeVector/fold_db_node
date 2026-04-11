@@ -715,6 +715,7 @@ impl LlmQueryService {
                     source_folder: None,
                     image_descriptive_name: None,
                     org_hash: None,
+                    image_bytes: None,
                 };
 
                 let service = crate::ingestion::ingestion_service::IngestionService::from_env()

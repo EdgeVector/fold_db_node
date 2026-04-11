@@ -155,6 +155,7 @@ async fn run_apple_notes_import(
             source_folder: None,
             image_descriptive_name: None,
             org_hash: None,
+            image_bytes: None,
         };
 
         match crate::handlers::ingestion::process_json(
@@ -346,6 +347,7 @@ async fn run_apple_reminders_import(
         source_folder: None,
         image_descriptive_name: None,
         org_hash: None,
+        image_bytes: None,
     };
 
     let ingested = match crate::handlers::ingestion::process_json(
@@ -555,6 +557,9 @@ async fn run_apple_photos_import(
                     }
                 }
 
+                // Read image bytes for face detection
+                let image_bytes = std::fs::read(&file_path).ok();
+
                 // Feed into ingestion pipeline
                 let request = IngestionRequest {
                     data: json_value,
@@ -566,6 +571,7 @@ async fn run_apple_photos_import(
                     source_folder: None,
                     image_descriptive_name: descriptive_name,
                     org_hash: None,
+                    image_bytes,
                 };
 
                 match crate::handlers::ingestion::process_json(
@@ -757,6 +763,7 @@ async fn run_apple_calendar_import(
             source_folder: None,
             image_descriptive_name: None,
             org_hash: None,
+            image_bytes: None,
         };
 
         match crate::handlers::ingestion::process_json(

@@ -305,6 +305,13 @@ pub(crate) async fn process_single_file_via_smart_folder(
         }
     }
 
+    // Pass raw image bytes for face detection
+    let image_bytes = file_path
+        .file_name()
+        .and_then(|n| n.to_str())
+        .filter(|name| crate::ingestion::is_image_file(name))
+        .map(|_| raw_bytes.clone());
+
     let request = IngestionRequest {
         data,
         auto_execute,
@@ -318,6 +325,7 @@ pub(crate) async fn process_single_file_via_smart_folder(
         source_folder: file_path.parent().map(|p| p.to_string_lossy().to_string()),
         image_descriptive_name,
         org_hash: org_hash.map(|s| s.to_string()),
+        image_bytes,
     };
 
     service

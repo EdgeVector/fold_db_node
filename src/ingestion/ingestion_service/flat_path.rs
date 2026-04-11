@@ -156,12 +156,27 @@ impl IngestionService {
 
         let mutations_len = mutations.len();
 
+        // Collect mutation keys before they are moved into execute — needed for
+        // face detection which runs after mutations are stored.
+        #[cfg(feature = "face-detection")]
+        let mutation_keys: Vec<fold_db::schema::types::KeyValue> =
+            mutations.iter().map(|m| m.key_value.clone()).collect();
+
         let mutations_executed = if request.auto_execute {
             self.execute_mutations_with_tracking(mutations, node, tracker)
                 .await?
         } else {
             0
         };
+
+        // Run face detection on images after mutations are stored.
+        #[cfg(feature = "face-detection")]
+        if mutations_executed > 0 {
+            if let Some(ref image_bytes) = request.image_bytes {
+                self.run_face_detection(image_bytes, &schema_name, &mutation_keys, node)
+                    .await;
+            }
+        }
 
         Ok((
             schema_name,
@@ -287,5 +302,72 @@ impl IngestionService {
         let schemas_written = super::schemas_written_from(&mutations);
 
         Ok((mutations, schemas_written))
+    }
+
+    /// Run face detection on an image after its mutations have been stored.
+    /// Indexes face embeddings for each unique mutation key so face search
+    /// can locate the source record.
+    #[cfg(feature = "face-detection")]
+    async fn run_face_detection(
+        &self,
+        image_bytes: &[u8],
+        schema_name: &str,
+        mutation_keys: &[fold_db::schema::types::KeyValue],
+        node: &FoldNode,
+    ) {
+        let db = match node.get_fold_db().await {
+            Ok(db) => db,
+            Err(e) => {
+                log_feature!(
+                    LogFeature::Ingestion,
+                    warn,
+                    "Failed to acquire FoldDB for face detection: {}",
+                    e
+                );
+                return;
+            }
+        };
+
+        let db_ops = db.get_db_ops();
+        let native_idx = match db_ops.native_index_manager() {
+            Some(mgr) => mgr,
+            None => return,
+        };
+
+        if !native_idx.has_face_processor() {
+            return;
+        }
+
+        // Deduplicate keys — multiple mutations may share the same key
+        let mut seen = std::collections::HashSet::new();
+        for key in mutation_keys {
+            if !seen.insert(key) {
+                continue;
+            }
+            match native_idx.index_faces(schema_name, key, image_bytes).await {
+                Ok(count) => {
+                    if count > 0 {
+                        log_feature!(
+                            LogFeature::Ingestion,
+                            info,
+                            "Face detection: indexed {} face(s) for schema='{}' key={:?}",
+                            count,
+                            schema_name,
+                            key
+                        );
+                    }
+                }
+                Err(e) => {
+                    log_feature!(
+                        LogFeature::Ingestion,
+                        warn,
+                        "Face detection failed for schema='{}' key={:?}: {}",
+                        schema_name,
+                        key,
+                        e
+                    );
+                }
+            }
+        }
     }
 }
