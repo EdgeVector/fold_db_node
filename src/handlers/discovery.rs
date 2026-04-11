@@ -2542,10 +2542,7 @@ async fn process_data_share(
                                     }
                                     Ok(_) => {}
                                     Err(e) => {
-                                        log::warn!(
-                                            "Face detection failed on shared photo: {}",
-                                            e
-                                        );
+                                        log::warn!("Face detection failed on shared photo: {}", e);
                                     }
                                 }
                             }
@@ -2603,9 +2600,7 @@ async fn process_data_share(
 // === Notification handlers ===
 
 /// List all notifications stored in the metadata store.
-pub async fn list_notifications(
-    node: &FoldNode,
-) -> HandlerResult<serde_json::Value> {
+pub async fn list_notifications(node: &FoldNode) -> HandlerResult<serde_json::Value> {
     let db = node
         .get_fold_db()
         .map_err(|e| HandlerError::Internal(format!("Failed to access database: {e}")))?;
