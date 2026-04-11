@@ -73,6 +73,17 @@ pub async fn get_sled_pool(
     }
 }
 
+/// Build a `SyncAuth` that prefers a session token over an API key.
+///
+/// Session tokens are refreshed more frequently and survive API key rotation,
+/// so they are preferred when available.
+fn prefer_session_token(session_token: Option<&str>, api_key: &str) -> fold_db::sync::auth::SyncAuth {
+    match session_token {
+        Some(t) if !t.is_empty() => fold_db::sync::auth::SyncAuth::BearerToken(t.to_string()),
+        _ => fold_db::sync::auth::SyncAuth::ApiKey(api_key.to_string()),
+    }
+}
+
 /// Helper to get an AuthClient by reading cloud credentials from the Sled config store.
 ///
 /// Falls back to the `DatabaseConfig.cloud_sync` fields if the Sled store
@@ -85,16 +96,7 @@ async fn get_auth_client(node: &FoldNode) -> Option<fold_db::sync::auth::AuthCli
             if let Ok(store) = NodeConfigStore::new(pool) {
                 if let Some(cloud) = store.get_cloud_config() {
                     let http = std::sync::Arc::new(reqwest::Client::new());
-                    // Prefer session token (refreshed) over API key (may be rotated)
-                    let auth = if let Some(ref token) = cloud.session_token {
-                        if !token.is_empty() {
-                            fold_db::sync::auth::SyncAuth::BearerToken(token.clone())
-                        } else {
-                            fold_db::sync::auth::SyncAuth::ApiKey(cloud.api_key.clone())
-                        }
-                    } else {
-                        fold_db::sync::auth::SyncAuth::ApiKey(cloud.api_key.clone())
-                    };
+                    let auth = prefer_session_token(cloud.session_token.as_deref(), &cloud.api_key);
                     return Some(fold_db::sync::auth::AuthClient::new(
                         http,
                         cloud.api_url,
@@ -109,12 +111,12 @@ async fn get_auth_client(node: &FoldNode) -> Option<fold_db::sync::auth::AuthCli
     if let Some(ref cloud_sync) = node.config.database.cloud_sync {
         let http = std::sync::Arc::new(reqwest::Client::new());
         // Try keychain for fresh session token before falling back to config API key
-        let auth = crate::keychain::load_credentials()
+        let session_token = crate::keychain::load_credentials()
             .ok()
             .flatten()
             .filter(|c| !c.session_token.is_empty())
-            .map(|c| fold_db::sync::auth::SyncAuth::BearerToken(c.session_token))
-            .unwrap_or_else(|| fold_db::sync::auth::SyncAuth::ApiKey(cloud_sync.api_key.clone()));
+            .map(|c| c.session_token);
+        let auth = prefer_session_token(session_token.as_deref(), &cloud_sync.api_key);
         Some(fold_db::sync::auth::AuthClient::new(
             http,
             cloud_sync.api_url.clone(),

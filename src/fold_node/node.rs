@@ -952,12 +952,25 @@ impl FoldNode {
             org_hash: org_hash.to_string(),
             org_name: membership.org_name,
             sync_enabled: has_org,
-            state: format!("{:?}", status.state).to_lowercase(),
+            state: sync_state_label(&status.state).to_string(),
             pending_count: status.pending_count,
             last_sync_at: status.last_sync_at,
             last_error: status.last_error,
             members,
         }))
+    }
+}
+
+/// Convert a `SyncState` to a stable string label for API responses.
+///
+/// Uses explicit match arms (not Debug formatting) so the API contract
+/// is independent of how the enum prints in debug output.
+pub fn sync_state_label(state: &fold_db::sync::SyncState) -> &'static str {
+    match state {
+        fold_db::sync::SyncState::Idle => "idle",
+        fold_db::sync::SyncState::Dirty => "dirty",
+        fold_db::sync::SyncState::Syncing => "syncing",
+        fold_db::sync::SyncState::Offline => "offline",
     }
 }
 
@@ -1045,9 +1058,6 @@ async fn migrate_config_files_to_sled(node: &FoldNode) {
         Err(_) => return,
     };
 
-    // TODO: Once the fold_db PR merges, replace this with:
-    //   let store = match db_guard.config_store() { Some(s) => s, None => return };
-    // For now, open the Sled tree directly via the stub.
     let pool = match db_guard.sled_pool() {
         Some(p) => p.clone(),
         None => return,

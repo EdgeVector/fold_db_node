@@ -92,32 +92,23 @@ pub async fn get_sync_status(
     user_hash: &str,
     node: &FoldNode,
 ) -> HandlerResult<SyncStatusResponse> {
+    use crate::fold_node::node::sync_state_label;
     let db = node.get_fold_db().await.typed_handler_err()?;
-    let enabled = db.is_sync_enabled();
-    let response = if enabled {
-        let state = db.sync_state().await;
-        let pending = db.sync_pending_count().await;
-        let state_str = state.map(|s| match s {
-            fold_db::sync::SyncState::Idle => "idle",
-            fold_db::sync::SyncState::Dirty => "dirty",
-            fold_db::sync::SyncState::Syncing => "syncing",
-            fold_db::sync::SyncState::Offline => "offline",
-        });
-        SyncStatusResponse {
+    let response = match db.sync_status().await {
+        Some(status) => SyncStatusResponse {
             enabled: true,
-            state: state_str.map(String::from),
-            pending_count: pending,
-            last_sync_at: None,
-            last_error: None,
-        }
-    } else {
-        SyncStatusResponse {
+            state: Some(sync_state_label(&status.state).to_string()),
+            pending_count: Some(status.pending_count),
+            last_sync_at: status.last_sync_at,
+            last_error: status.last_error,
+        },
+        None => SyncStatusResponse {
             enabled: false,
             state: None,
             pending_count: None,
             last_sync_at: None,
             last_error: None,
-        }
+        },
     };
     Ok(ApiResponse::success_with_user(response, user_hash))
 }
