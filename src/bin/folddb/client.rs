@@ -263,6 +263,25 @@ impl FoldDbClient {
         .await
     }
 
+    // --- Organizations ---
+
+    pub async fn org_list(&self) -> Result<Value, CliError> {
+        self.get("/api/org").await
+    }
+
+    pub async fn org_create(&self, name: &str) -> Result<Value, CliError> {
+        self.post("/api/org", &serde_json::json!({ "name": name }))
+            .await
+    }
+
+    pub async fn org_pending_invites(&self) -> Result<Value, CliError> {
+        self.get("/api/org/invites/pending").await
+    }
+
+    pub async fn org_join(&self, invite_bundle: &Value) -> Result<Value, CliError> {
+        self.post("/api/org/join", invite_bundle).await
+    }
+
     // --- Sync ---
 
     pub async fn sync_status(&self) -> Result<Value, CliError> {

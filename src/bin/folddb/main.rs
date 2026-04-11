@@ -285,6 +285,7 @@ async fn dispatch_http(
             }
             _ => unreachable!("Cloud enable/disable handled before daemon dispatch"),
         },
+        Command::Org { action } => dispatch_org(action, client, mode).await,
         Command::RecoveryPhrase => unreachable!("Handled before daemon dispatch"),
         Command::Reset { confirm } => {
             if !confirm {
@@ -341,6 +342,112 @@ async fn dispatch_schema(
         cli::SchemaCommand::Load => {
             let json = client.schema_load().await?;
             Ok(commands::CommandOutput::RawJson(json))
+        }
+    }
+}
+
+async fn dispatch_org(
+    action: &cli::OrgCommand,
+    client: &FoldDbClient,
+    mode: OutputMode,
+) -> Result<commands::CommandOutput, CliError> {
+    match action {
+        cli::OrgCommand::List => {
+            let json = client.org_list().await?;
+            if mode == OutputMode::Json {
+                return Ok(commands::CommandOutput::RawJson(json));
+            }
+            let orgs = json
+                .get("data")
+                .and_then(|d| d.get("orgs"))
+                .or_else(|| json.get("orgs"))
+                .and_then(|v| v.as_array());
+            match orgs {
+                Some(list) if list.is_empty() => Ok(commands::CommandOutput::Message(
+                    "No organizations. Create one with: folddb org create <name>".to_string(),
+                )),
+                Some(list) => {
+                    let mut msg = format!("{} organization(s):\n", list.len());
+                    for org in list {
+                        let name = org["org_name"].as_str().unwrap_or("unnamed");
+                        let hash = org["org_hash"].as_str().unwrap_or("?");
+                        let role = org["role"].as_str().unwrap_or("Member");
+                        msg.push_str(&format!(
+                            "\n  {} ({})\n    Hash: {}\n",
+                            name, role, hash
+                        ));
+                    }
+                    Ok(commands::CommandOutput::Message(msg))
+                }
+                None => Ok(commands::CommandOutput::RawJson(json)),
+            }
+        }
+        cli::OrgCommand::Create { name } => {
+            let json = client.org_create(name).await?;
+            if mode == OutputMode::Json {
+                return Ok(commands::CommandOutput::RawJson(json));
+            }
+            let invite = json
+                .pointer("/data/invite_bundle")
+                .or_else(|| json.get("invite_bundle"));
+            let mut msg = format!("Organization \"{}\" created!", name);
+            if let Some(bundle) = invite {
+                msg.push_str("\n\nInvite bundle (share with members):\n");
+                msg.push_str(
+                    &serde_json::to_string(bundle).unwrap_or_else(|_| "{}".to_string()),
+                );
+            }
+            Ok(commands::CommandOutput::Message(msg))
+        }
+        cli::OrgCommand::Invites => {
+            let json = client.org_pending_invites().await?;
+            if mode == OutputMode::Json {
+                return Ok(commands::CommandOutput::RawJson(json));
+            }
+            let invites = json
+                .get("data")
+                .and_then(|d| d.get("invites"))
+                .or_else(|| json.get("invites"))
+                .and_then(|v| v.as_array());
+            match invites {
+                Some(list) if list.is_empty() => Ok(commands::CommandOutput::Message(
+                    "No pending invitations.".to_string(),
+                )),
+                Some(list) => {
+                    let mut msg = format!("{} pending invitation(s):\n", list.len());
+                    for inv in list {
+                        let name = inv["org_name"].as_str().unwrap_or("unnamed");
+                        let hash = inv["org_hash"].as_str().unwrap_or("?");
+                        msg.push_str(&format!("\n  {} ({})", name, &hash[..16.min(hash.len())]));
+                    }
+                    msg.push_str("\n\nAccept with: folddb org join '<invite_json>'");
+                    Ok(commands::CommandOutput::Message(msg))
+                }
+                None => Ok(commands::CommandOutput::RawJson(json)),
+            }
+        }
+        cli::OrgCommand::Join { invite_json } => {
+            let json_str = match invite_json {
+                Some(s) => s.clone(),
+                None => {
+                    // Read from stdin
+                    let mut buf = String::new();
+                    std::io::Read::read_to_string(&mut std::io::stdin(), &mut buf)
+                        .map_err(|e| CliError::new(format!("Failed to read stdin: {}", e)))?;
+                    buf
+                }
+            };
+            let bundle: serde_json::Value = serde_json::from_str(&json_str)
+                .map_err(|e| CliError::new(format!("Invalid invite JSON: {}", e)))?;
+            let json = client.org_join(&bundle).await?;
+            if mode == OutputMode::Json {
+                return Ok(commands::CommandOutput::RawJson(json));
+            }
+            let org_name = bundle["org_name"].as_str().unwrap_or("the organization");
+            Ok(commands::CommandOutput::Message(format!(
+                "Joined \"{}\"! Org data will sync shortly.",
+                org_name
+            )))
         }
     }
 }
