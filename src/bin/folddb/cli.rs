@@ -114,6 +114,12 @@ pub enum Command {
         action: CloudCommand,
     },
 
+    /// Manage organizations
+    Org {
+        #[command(subcommand)]
+        action: OrgCommand,
+    },
+
     /// Display your 24-word recovery phrase
     RecoveryPhrase,
 
@@ -302,6 +308,24 @@ pub enum CloudCommand {
     Status,
     /// Trigger an immediate sync cycle
     Sync,
+}
+
+#[derive(Subcommand, Debug)]
+pub enum OrgCommand {
+    /// List organizations you belong to
+    List,
+    /// Create a new organization
+    Create {
+        /// Organization name
+        name: String,
+    },
+    /// Show pending org invitations
+    Invites,
+    /// Join an org using an invite bundle (JSON from stdin or argument)
+    Join {
+        /// Invite bundle JSON (reads stdin if omitted)
+        invite_json: Option<String>,
+    },
 }
 
 #[cfg(test)]
@@ -873,6 +897,10 @@ mod tests {
             vec!["folddb", "cloud", "disable"],
             vec!["folddb", "cloud", "status"],
             vec!["folddb", "cloud", "sync"],
+            vec!["folddb", "org", "list"],
+            vec!["folddb", "org", "create", "TestOrg"],
+            vec!["folddb", "org", "invites"],
+            vec!["folddb", "org", "join", "{}"],
             vec!["folddb", "recovery-phrase"],
             vec!["folddb", "restore"],
             vec!["folddb", "reset"],
