@@ -40,7 +40,7 @@ function useDatabaseConfig({ configSaveStatus, setConfigSaveStatus, onClose }) {
       let config
       if (dbType === 'local') config = { type: 'local', path: dbPath }
       else {
-        setConfigSaveStatus({ success: false, message: 'Only local (Sled) storage is supported' })
+        setConfigSaveStatus({ success: false, message: 'Only local storage is supported' })
         statusTimeoutRef.current = setTimeout(() => setConfigSaveStatus(null), 3000)
         return
       }
@@ -78,12 +78,12 @@ function useDatabaseConfig({ configSaveStatus, setConfigSaveStatus, onClose }) {
     saveDatabaseConfig,
     content: (
       <div className="space-y-4">
-        <p className="text-sm text-secondary mb-4">Choose the storage backend. Changes require a server restart.</p>
+        <p className="text-sm text-secondary mb-4">Configure your database storage location. Changes require a restart.</p>
 
         <div>
           <label className="label">Storage Type</label>
-          <div className="text-sm text-primary font-medium py-2">Local (Sled)</div>
-          <p className="text-xs text-secondary">FoldDB uses local Sled storage. To enable cloud backup, go to the Exemem tab.</p>
+          <div className="text-sm text-primary font-medium py-2">Local Storage</div>
+          <p className="text-xs text-secondary">FoldDB stores your data locally on this device. To enable cloud backup, go to the Exemem tab.</p>
         </div>
 
         <div>

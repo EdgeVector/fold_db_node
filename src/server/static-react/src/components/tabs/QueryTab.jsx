@@ -10,6 +10,7 @@ import { useQueryBuilder } from '../../hooks/useQueryBuilder';
 import QueryForm from '../query/QueryForm';
 import QueryActions from '../query/QueryActions';
 import QueryPreview from '../query/QueryPreview';
+import { getSchemaDisplayName } from '../../utils/schemaUtils';
 
 function QueryTab({ onResult }) {
   // Query state management
@@ -140,6 +141,7 @@ function QueryTab({ onResult }) {
         <div className="lg:col-span-1">
           <QueryPreview
             query={query}
+            queryState={{ schema: selectedSchemaObj ? getSchemaDisplayName(selectedSchemaObj) : '' }}
             showJson={false} // Can be toggled for debugging
             title="Query Preview"
           />
