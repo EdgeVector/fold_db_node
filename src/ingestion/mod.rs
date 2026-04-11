@@ -99,6 +99,12 @@ pub struct IngestionRequest {
     /// applied locally so mutations get org-prefixed storage keys.
     #[serde(default)]
     pub org_hash: Option<String>,
+    /// Raw image bytes for face detection. Populated by the upload handler for
+    /// image files so the ingestion pipeline can run face indexing after mutations
+    /// are stored (the temp file is deleted before ingestion runs).
+    #[serde(skip)]
+    #[cfg_attr(feature = "ts-bindings", ts(skip))]
+    pub image_bytes: Option<Vec<u8>>,
 }
 
 /// Response from the ingestion process

@@ -263,6 +263,7 @@ async fn test_smart_folder_tweets_ingest_and_query() {
         source_folder: Some(scan_dir.path().to_string_lossy().to_string()),
         image_descriptive_name: None,
         org_hash: None,
+        image_bytes: None,
     };
 
     let pid = progress_id.clone();

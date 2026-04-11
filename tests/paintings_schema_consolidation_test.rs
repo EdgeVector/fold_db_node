@@ -243,6 +243,7 @@ async fn test_paintings_use_single_schema() {
             source_folder: Some(paintings_dir.to_string_lossy().to_string()),
             image_descriptive_name: None,
             org_hash: None,
+            image_bytes: None,
         };
 
         let svc = ingestion_service.clone();
