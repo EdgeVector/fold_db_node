@@ -166,17 +166,6 @@ pub async fn save_ingestion_config(
     let saved_config = request.into_inner();
 
     // Write to Sled config store (best-effort alongside file save)
-    if let Some(sled_db) = ingestion_service
-        .read()
-        .await
-        .as_ref()
-        .and_then(|_| None::<sled::Db>)
-    {
-        // This branch is unreachable with the current stub; when fold_db
-        // exposes config_store() on FoldDB, use that instead.
-        let _ = sled_db;
-    }
-    // For now, try opening the Sled tree at the known data path
     if let Ok(folddb_home) = crate::utils::paths::folddb_home() {
         let data_path = folddb_home.join("data");
         {
