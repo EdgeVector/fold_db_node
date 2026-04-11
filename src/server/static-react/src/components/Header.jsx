@@ -12,7 +12,9 @@ import AnimatedLogo from './AnimatedLogo'
 import SyncStatusIndicator from './SyncStatusIndicator'
 import OrgSyncWarning from './OrgSyncWarning'
 import PendingInvitesModal from './PendingInvitesModal'
-import { EnvelopeIcon } from '@heroicons/react/24/outline'
+import { EnvelopeIcon, Cog6ToothIcon } from '@heroicons/react/24/outline'
+
+import { friendlyModelName } from '../utils/modelNames'
 
 function classifySchemaEnv(url) {
   if (!url) return { label: 'None', color: 'text-gruvbox-yellow' }
@@ -181,7 +183,7 @@ function Header({ onSettingsClick, onAiSettingsClick, onCloudSettingsClick }) {
                   ${aiReady
                     ? 'bg-gruvbox-elevated border-gruvbox-green/30 text-gruvbox-green hover:border-gruvbox-green'
                     : 'bg-gruvbox-elevated border-gruvbox-red/30 text-gruvbox-red hover:border-gruvbox-red'}`}
-                title={aiReady ? `${aiProvider} · ${activeModel}` : 'AI not configured — click to set up'}
+                title={aiReady ? `${aiProvider} · ${friendlyModelName(activeModel)}` : 'AI not configured — click to set up'}
               >
                 {aiReady ? `AI: ${aiProvider}` : 'AI: off'}
               </button>
@@ -214,8 +216,9 @@ function Header({ onSettingsClick, onAiSettingsClick, onCloudSettingsClick }) {
               )}
             </button>
           </div>
-          <button onClick={onSettingsClick} className="btn-secondary" title="Settings">
-            Settings
+          <button onClick={onSettingsClick} className="btn-secondary flex items-center gap-1.5" title="Settings">
+            <Cog6ToothIcon className="w-4 h-4 sm:hidden" />
+            <span className="hidden sm:inline">Settings</span>
           </button>
         </div>
       </div>
