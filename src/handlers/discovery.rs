@@ -56,6 +56,8 @@ pub struct OptInRequest {
             fold_db::db_operations::native_index::anonymity::FieldPrivacyClass,
         >,
     >,
+    #[serde(default)]
+    pub publish_faces: bool,
 }
 
 #[derive(Debug, Clone, Deserialize)]
@@ -268,6 +270,8 @@ pub async fn opt_in(
     if let Some(ref field_privacy) = req.field_privacy {
         opt_in_config = opt_in_config.with_field_privacy(field_privacy.clone());
     }
+
+    opt_in_config.publish_faces = req.publish_faces;
 
     config::save_opt_in(&*store, &opt_in_config)
         .await
