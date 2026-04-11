@@ -24,10 +24,7 @@
 
 export {
   APP_CONFIG,
-  ENVIRONMENT_CONFIG,
   BROWSER_CONFIG,
-  SECURITY_CONFIG,
-  getCurrentEnvironmentConfig,
 } from "./config.js";
 
 // ============================================================================
@@ -41,38 +38,6 @@ export {
   SUCCESS_MESSAGES,
   VALIDATION_CONFIG,
 } from "./validation.js";
-
-// ============================================================================
-// TESTING EXPORTS
-// ============================================================================
-
-export {
-  TEST_TIMEOUT_DEFAULT_MS,
-  COVERAGE_THRESHOLD_PERCENT,
-  INTEGRATION_TEST_RETRY_COUNT,
-  MOCK_API_DELAY_MS,
-  TEST_VALIDATION_BATCH_SIZE,
-  FINAL_VALIDATION_TIMEOUT_MS,
-  COMMIT_MESSAGE_MIN_LENGTH,
-  TEST_SUITE_RETRY_COUNT,
-  DEPLOYMENT_VALIDATION_TIMEOUT_MS,
-  TASK_COMPLETION_BATCH_SIZE,
-  TEST_CONFIG,
-  TEST_ENVIRONMENT,
-} from "./testing";
-
-// ============================================================================
-// ERROR EXPORTS
-// ============================================================================
-
-export {
-  ERROR_CODES,
-  ERROR_MESSAGES,
-  ERROR_CATEGORIES,
-  ERROR_CODE_CATEGORIES,
-  ERROR_RECOVERY_STRATEGIES,
-  ERROR_UTILS,
-} from "./errors";
 
 // ============================================================================
 // API EXPORTS (from existing files)

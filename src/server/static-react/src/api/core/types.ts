@@ -8,21 +8,6 @@ import type { ApiResponse } from '../../types/api';
 // Re-export existing ApiResponse for backward compatibility
 export type { ApiResponse };
 
-// API Error Class Interface
-export interface ApiErrorInterface extends Error {
-  status: number;
-  response?: Response | Record<string, unknown>;
-  isNetworkError: boolean;
-  isTimeoutError: boolean;
-  isRetryable: boolean;
-  requestId?: string;
-  timestamp: number;
-  code?: string;
-  details?: Record<string, unknown>;
-  toUserMessage(): string;
-  toJSON(): Record<string, unknown>;
-}
-
 // Enhanced API Response with metadata
 export interface EnhancedApiResponse<T = unknown> extends ApiResponse<T> {
   status: number;
@@ -71,9 +56,6 @@ export type RequestInterceptor = (config: RequestConfig) => RequestConfig | Prom
 // Response Interceptor Function
 export type ResponseInterceptor<T = unknown> = (response: EnhancedApiResponse<T>) => EnhancedApiResponse<T> | Promise<EnhancedApiResponse<T>>;
 
-// Error Interceptor Function
-export type ErrorInterceptor = (error: ApiErrorInterface) => ApiErrorInterface | Promise<ApiErrorInterface>;
-
 // Internal Request Configuration
 export interface RequestConfig {
   url: string;
@@ -98,15 +80,6 @@ export interface CacheEntry<T = unknown> {
   timestamp: number;
   ttl: number;
   key: string;
-}
-
-// Retry Configuration
-export interface RetryConfig {
-  attempts: number;
-  delay: number;
-  backoffMultiplier: number;
-  maxDelay: number;
-  retryableStatusCodes: number[];
 }
 
 // Request Metrics Interface
@@ -141,29 +114,6 @@ export interface BatchResponse<T = unknown> {
   status: number;
 }
 
-// API Error Interface
-export interface ApiErrorDetails {
-  message: string;
-  status: number;
-  code?: string;
-  details?: Record<string, unknown>;
-  response?: Response | Record<string, unknown>;
-  isNetworkError: boolean;
-  isTimeoutError: boolean;
-  isRetryable: boolean;
-  requestId?: string;
-  timestamp: number;
-}
-
-// Schema State Validation Result
-export interface SchemaStateValidation {
-  isValid: boolean;
-  schemaName: string;
-  currentState: string;
-  operation: string;
-  error?: string;
-}
-
 // Client Instance Interface
 export interface ApiClientInstance {
   get<T>(endpoint: string, options?: RequestOptions): Promise<EnhancedApiResponse<T>>;
@@ -185,44 +135,6 @@ export interface ApiClientInstance {
   // Metrics
   getMetrics(): RequestMetrics[];
   clearMetrics(): void;
-}
-
-// Schema data types for better type safety
-export interface SchemaData {
-  name: string;
-  state: 'available' | 'approved' | 'blocked';
-  fields?: Record<string, unknown>;
-  metadata?: Record<string, unknown>;
-}
-
-export interface SchemaStatusData {
-  schemas: SchemaData[];
-  totalCount: number;
-  approvedCount: number;
-  availableCount: number;
-  blockedCount: number;
-}
-
-export interface MutationData {
-  schema: string;
-  operation: string;
-  data: Record<string, unknown>;
-}
-
-export interface QueryData {
-  schema: string;
-  query: Record<string, unknown>;
-}
-
-export interface VerificationData {
-  isValid: boolean;
-  publicKeyId?: string;
-  error?: string;
-}
-
-export interface SystemKeyData {
-  publicKey: string;
-  keyId: string;
 }
 
 // Domain-specific client interfaces for type safety

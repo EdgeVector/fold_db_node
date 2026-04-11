@@ -28,18 +28,6 @@ export const SCHEMA_FETCH_RETRY_ATTEMPTS = 3;
  */
 export const SCHEMA_OPERATION_TIMEOUT_MS = 10000;
 
-/**
- * Maximum number of schemas to process in a single Redux batch
- * Used for performance optimization with large schema lists
- */
-export const REDUX_BATCH_SIZE = 50;
-
-/**
- * Storage key for schema state persistence
- * Used with Redux Persist for maintaining schema state across sessions
- */
-export const SCHEMA_STATE_PERSIST_KEY = "folddb_schemas";
-
 // ============================================================================
 // REDUX ACTION TYPE CONSTANTS
 // ============================================================================
@@ -67,75 +55,8 @@ export const SCHEMA_ACTION_TYPES = {
 };
 
 // ============================================================================
-// SCHEMA STATE KEY CONSTANTS
-// ============================================================================
-
-/**
- * State keys for schema slice structure
- */
-export const SCHEMA_STATE_KEYS = {
-  SCHEMAS: "schemas",
-  LOADING: "loading",
-  ERRORS: "errors",
-  LAST_FETCHED: "lastFetched",
-  CACHE: "cache",
-  ACTIVE_SCHEMA: "activeSchema",
-  OPERATIONS: "operations",
-};
-
-/**
- * Nested state keys for loading states
- */
-export const SCHEMA_LOADING_KEYS = {
-  FETCH: "fetch",
-  OPERATIONS: "operations",
-};
-
-/**
- * Nested state keys for error states
- */
-export const SCHEMA_ERROR_KEYS = {
-  FETCH: "fetch",
-  OPERATIONS: "operations",
-};
-
-/**
- * Cache-related state keys
- */
-export const SCHEMA_CACHE_KEYS = {
-  TTL: "ttl",
-  VERSION: "version",
-  LAST_UPDATED: "lastUpdated",
-};
-
-// ============================================================================
 // DEFAULT STATE VALUES
 // ============================================================================
-
-/**
- * Default loading state structure
- */
-export const DEFAULT_LOADING_STATE = {
-  [SCHEMA_LOADING_KEYS.FETCH]: false,
-  [SCHEMA_LOADING_KEYS.OPERATIONS]: {},
-};
-
-/**
- * Default error state structure
- */
-export const DEFAULT_ERROR_STATE = {
-  [SCHEMA_ERROR_KEYS.FETCH]: null,
-  [SCHEMA_ERROR_KEYS.OPERATIONS]: {},
-};
-
-/**
- * Default cache configuration
- */
-export const DEFAULT_CACHE_STATE = {
-  [SCHEMA_CACHE_KEYS.TTL]: SCHEMA_CACHE_TTL_MS,
-  [SCHEMA_CACHE_KEYS.VERSION]: "1.0.0",
-  [SCHEMA_CACHE_KEYS.LAST_UPDATED]: null,
-};
 
 /**
  * Complete default schema state
@@ -227,82 +148,3 @@ export const SCHEMA_OPERATION_REQUIREMENTS = {
  */
 export const READABLE_SCHEMA_STATES = [SCHEMA_STATES.APPROVED];
 
-/**
- * Schema states that allow write operations (SCHEMA-002 compliance)
- */
-export const WRITABLE_SCHEMA_STATES = [SCHEMA_STATES.APPROVED];
-
-// ============================================================================
-// PERFORMANCE AND OPTIMIZATION CONSTANTS
-// ============================================================================
-
-/**
- * Debounce delay for schema search operations (ms)
- */
-export const SCHEMA_SEARCH_DEBOUNCE_MS = 300;
-
-/**
- * Maximum number of concurrent schema operations
- */
-export const MAX_CONCURRENT_OPERATIONS = 3;
-
-/**
- * Retry delay for failed operations (ms)
- */
-export const OPERATION_RETRY_DELAY_MS = 1000;
-
-/**
- * Maximum payload size for schema data (bytes)
- */
-export const MAX_SCHEMA_PAYLOAD_SIZE = 1024 * 1024; // 1MB
-
-// ============================================================================
-// SELECTOR MEMOIZATION CONSTANTS
-// ============================================================================
-
-/**
- * Cache size for memoized selectors
- */
-export const SELECTOR_CACHE_SIZE = 100;
-
-/**
- * Equality check options for selector optimization
- */
-export const SELECTOR_EQUALITY_OPTIONS = {
-  maxSize: SELECTOR_CACHE_SIZE,
-  equalityCheck: "shallow",
-};
-
-// ============================================================================
-// MIDDLEWARE CONFIGURATION CONSTANTS
-// ============================================================================
-
-/**
- * Redux middleware configuration for schema operations
- */
-export const SCHEMA_MIDDLEWARE_CONFIG = {
-  // Logging configuration
-  ENABLE_ACTION_LOGGING: process.env.NODE_ENV === "development",
-  ENABLE_STATE_LOGGING: process.env.NODE_ENV === "development",
-
-  // Performance monitoring
-  ENABLE_PERFORMANCE_TRACKING: true,
-  PERFORMANCE_THRESHOLD_MS: 100,
-
-  // Error handling
-  ENABLE_ERROR_REPORTING: true,
-  ERROR_RETRY_ATTEMPTS: SCHEMA_FETCH_RETRY_ATTEMPTS,
-};
-
-/**
- * Development-only constants
- */
-export const DEV_CONSTANTS = {
-  // Mock data for testing
-  MOCK_SCHEMA_COUNT: 10,
-  MOCK_OPERATION_DELAY_MS: 500,
-
-  // Debug flags
-  ENABLE_REDUX_DEVTOOLS: process.env.NODE_ENV === "development",
-  ENABLE_TIME_TRAVEL_DEBUGGING: process.env.NODE_ENV === "development",
-};
