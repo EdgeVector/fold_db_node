@@ -726,7 +726,9 @@ impl FoldHttpServer {
                 .route(
                     "/faces/{schema}/{key}",
                     web::get().to(discovery_routes::list_faces),
-                ),
+                )
+                // Data sharing
+                .route("/share", web::post().to(discovery_routes::share_data)),
         );
     }
 

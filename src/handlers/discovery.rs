@@ -9,7 +9,8 @@ use crate::discovery::async_query::{
 use crate::discovery::calendar_sharing::{self, EventFingerprint, PeerEventSet, SharedEvent};
 use crate::discovery::config::{self, DiscoveryOptIn};
 use crate::discovery::connection::{
-    self, ConnectionPayload, IdentityCardPayload, LocalConnectionRequest, LocalSentRequest,
+    self, ConnectionPayload, DataSharePayload, IdentityCardPayload, LocalConnectionRequest,
+    LocalSentRequest, SharedRecord, SharedRecordKey,
 };
 use crate::discovery::interests::{self, InterestProfile};
 use crate::discovery::moments;
@@ -92,6 +93,28 @@ pub struct RespondToRequestPayload {
 pub struct ToggleInterestRequest {
     pub category: String,
     pub enabled: bool,
+}
+
+// === Data Sharing types ===
+
+#[derive(Debug, Clone, Deserialize)]
+pub struct DataShareRequest {
+    /// Public key of the contact to share with (from contact book)
+    pub recipient_public_key: String,
+    /// Records to share (batch)
+    pub records: Vec<DataShareRecordRequest>,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+pub struct DataShareRecordRequest {
+    pub schema_name: String,
+    /// The range key to look up the record
+    pub record_key: String,
+}
+
+#[derive(Debug, Clone, Serialize)]
+pub struct DataShareResponse {
+    pub shared: usize,
 }
 
 // === Response types ===
@@ -796,6 +819,29 @@ pub async fn poll_and_decrypt_requests(
                     }
                 };
                 handle_incoming_schema_list_response(&*store, &payload).await;
+            }
+            "data_share" => {
+                let payload: DataSharePayload = match serde_json::from_value(raw) {
+                    Ok(p) => p,
+                    Err(e) => {
+                        log::warn!("Failed to parse data share: {}", e);
+                        continue;
+                    }
+                };
+
+                if let Err(e) = process_data_share(node, &payload).await {
+                    log::warn!(
+                        "Failed to process data share from {}: {}",
+                        payload.sender_display_name,
+                        e
+                    );
+                } else {
+                    log::info!(
+                        "Received {} records from {}",
+                        payload.records.len(),
+                        payload.sender_display_name
+                    );
+                }
             }
             _ => {
                 log::warn!("Unknown message type: {}", message_type);
@@ -2169,4 +2215,343 @@ pub async fn face_search(
     Ok(ApiResponse::success(DiscoveryNetworkSearchResponse {
         results,
     }))
+}
+
+// ===== Data Sharing =====
+
+/// Send records to a contact via the encrypted bulletin board.
+///
+/// Loads each record's schema definition and field values, optionally includes
+/// file data (base64-encoded), encrypts the batch with the contact's messaging
+/// public key, and posts to the bulletin board.
+pub async fn send_data_share(
+    req: &DataShareRequest,
+    node: &FoldNode,
+    discovery_url: &str,
+    auth_token: &str,
+    master_key: &[u8],
+) -> HandlerResult<DataShareResponse> {
+    // 1. Look up recipient in contact book
+    let op = OperationProcessor::new(node.clone());
+    let book_path = op
+        .contact_book_path()
+        .map_err(|e| HandlerError::Internal(format!("Failed to resolve contacts path: {e}")))?;
+    let book = ContactBook::load_from(&book_path)
+        .map_err(|e| HandlerError::Internal(format!("Failed to load contacts: {e}")))?;
+
+    let contact = book.get(&req.recipient_public_key).ok_or_else(|| {
+        HandlerError::NotFound(format!(
+            "Contact not found for public key: {}",
+            &req.recipient_public_key
+        ))
+    })?;
+
+    if contact.revoked {
+        return Err(HandlerError::BadRequest(
+            "Cannot share data with a revoked contact".to_string(),
+        ));
+    }
+
+    let messaging_pk_b64 = contact.messaging_public_key.as_ref().ok_or_else(|| {
+        HandlerError::BadRequest(
+            "Contact has no messaging public key. They may not have been connected via discovery."
+                .to_string(),
+        )
+    })?;
+
+    let messaging_pseudonym = contact.messaging_pseudonym.as_ref().ok_or_else(|| {
+        HandlerError::BadRequest(
+            "Contact has no messaging pseudonym. Cannot send bulletin board messages.".to_string(),
+        )
+    })?;
+
+    let target_pseudonym: uuid::Uuid = messaging_pseudonym.parse().map_err(|_| {
+        HandlerError::Internal("Invalid messaging pseudonym UUID in contact".to_string())
+    })?;
+
+    let messaging_pk_bytes = B64.decode(messaging_pk_b64).map_err(|e| {
+        HandlerError::Internal(format!("Invalid messaging public key encoding: {}", e))
+    })?;
+    if messaging_pk_bytes.len() != 32 {
+        return Err(HandlerError::Internal(
+            "Messaging public key must be 32 bytes".to_string(),
+        ));
+    }
+    let mut target_pk = [0u8; 32];
+    target_pk.copy_from_slice(&messaging_pk_bytes);
+
+    // 2. Get sender identity
+    let sender_public_key = node.get_node_public_key().to_string();
+    let sender_display_name = IdentityCard::load()
+        .ok()
+        .flatten()
+        .map(|c| c.display_name)
+        .unwrap_or_else(|| "Unknown".to_string());
+
+    // 3. Load each record
+    let db = node
+        .get_fold_db()
+        .await
+        .map_err(|e| HandlerError::Internal(format!("Failed to access database: {}", e)))?;
+
+    let mut shared_records = Vec::with_capacity(req.records.len());
+
+    for record_req in &req.records {
+        // Load schema definition
+        let schema_def = match db
+            .schema_manager
+            .get_schema_metadata(&record_req.schema_name)
+        {
+            Ok(Some(schema)) => serde_json::to_value(&schema).ok(),
+            _ => None,
+        };
+
+        // Query the record
+        let query = fold_db::schema::types::operations::Query::new(
+            record_req.schema_name.clone(),
+            vec![], // all fields
+        );
+        let result_map = db.query_executor.query(query).await;
+        let records_map = match result_map {
+            Ok(rm) => fold_db::fold_db_core::query::records_from_field_map(&rm),
+            Err(e) => {
+                log::warn!(
+                    "Failed to query records for schema '{}': {}",
+                    record_req.schema_name,
+                    e
+                );
+                continue;
+            }
+        };
+
+        // Find the matching record by key
+        let matching_record = records_map.iter().find(|(key, _)| {
+            key.range
+                .as_deref()
+                .map(|r| r == record_req.record_key)
+                .unwrap_or(false)
+                || key
+                    .hash
+                    .as_deref()
+                    .map(|h| h == record_req.record_key)
+                    .unwrap_or(false)
+        });
+
+        let (key, record) = match matching_record {
+            Some((k, r)) => (k, r),
+            None => {
+                log::warn!(
+                    "Record not found for key '{}' in schema '{}'",
+                    record_req.record_key,
+                    record_req.schema_name
+                );
+                continue;
+            }
+        };
+
+        // Convert fields to HashMap<String, Value>
+        let fields: HashMap<String, serde_json::Value> = record
+            .fields
+            .iter()
+            .map(|(k, v)| (k.clone(), v.clone()))
+            .collect();
+
+        // Check for file data (look for file_hash or source_file_name in fields)
+        let file_hash = fields
+            .get("file_hash")
+            .and_then(|v| v.as_str())
+            .map(|s| s.to_string());
+        let file_name = fields
+            .get("source_file_name")
+            .and_then(|v| v.as_str())
+            .map(|s| s.to_string());
+
+        let file_data_base64 = if let Some(ref hash) = file_hash {
+            // Try to read the file from upload storage
+            let upload_storage_config =
+                fold_db::storage::config::UploadStorageConfig::from_env().unwrap_or_default();
+            let upload_path = match upload_storage_config {
+                fold_db::storage::config::UploadStorageConfig::Local { path } => path,
+            };
+            let upload_storage = fold_db::storage::UploadStorage::local(upload_path);
+            match upload_storage.read_file(hash, None).await {
+                Ok(bytes) => Some(B64.encode(&bytes)),
+                Err(e) => {
+                    log::debug!("Could not read file '{}' for sharing: {}", hash, e);
+                    None
+                }
+            }
+        } else {
+            None
+        };
+
+        shared_records.push(SharedRecord {
+            schema_name: record_req.schema_name.clone(),
+            schema_definition: schema_def,
+            fields,
+            key: SharedRecordKey {
+                hash: key.hash.clone(),
+                range: key.range.clone(),
+            },
+            file_data_base64,
+            file_name,
+        });
+    }
+
+    // Release DB lock before network call
+    drop(db);
+
+    let shared_count = shared_records.len();
+
+    if shared_records.is_empty() {
+        return Err(HandlerError::BadRequest(
+            "No records found to share".to_string(),
+        ));
+    }
+
+    // 4. Build the data share payload
+    let payload = DataSharePayload {
+        message_type: "data_share".to_string(),
+        sender_public_key,
+        sender_display_name,
+        records: shared_records,
+    };
+
+    // 5. Encrypt with recipient's messaging public key
+    let encrypted = connection::encrypt_message(&target_pk, &payload)
+        .map_err(|e| HandlerError::Internal(format!("Encryption failed: {}", e)))?;
+
+    let encrypted_b64 = B64.encode(&encrypted);
+
+    // 6. Post to bulletin board
+    let sender_pseudonym = {
+        let hash = crate::discovery::pseudonym::content_hash("connection-sender");
+        crate::discovery::pseudonym::derive_pseudonym(master_key, &hash)
+    };
+
+    let publisher = DiscoveryPublisher::new(
+        master_key.to_vec(),
+        discovery_url.to_string(),
+        auth_token.to_string(),
+    );
+
+    publisher
+        .connect(target_pseudonym, encrypted_b64, Some(sender_pseudonym))
+        .await
+        .handler_err("send data share message")?;
+
+    log::info!(
+        "Shared {} records with contact (pseudonym {})",
+        shared_count,
+        target_pseudonym
+    );
+
+    Ok(ApiResponse::success(DataShareResponse {
+        shared: shared_count,
+    }))
+}
+
+/// Process a received data share: create schemas if needed, write mutations,
+/// and save any included file data.
+async fn process_data_share(
+    node: &FoldNode,
+    payload: &DataSharePayload,
+) -> Result<(), HandlerError> {
+    let mut db = node
+        .get_fold_db()
+        .await
+        .map_err(|e| HandlerError::Internal(format!("Failed to get db: {e}")))?;
+
+    for record in &payload.records {
+        // 1. Create schema if it doesn't exist
+        if let Some(ref schema_def) = record.schema_definition {
+            let schema_json = serde_json::to_string(schema_def)
+                .map_err(|e| HandlerError::Internal(format!("Schema serialization: {e}")))?;
+
+            // Try to load schema — if it already exists, load_schema_from_json returns an error (that's fine)
+            match db.schema_manager.load_schema_from_json(&schema_json).await {
+                Ok(_) => {
+                    log::info!("Created schema '{}' from data share", record.schema_name);
+                    // Auto-approve shared schemas so mutations can be written
+                    if let Err(e) = db
+                        .schema_manager
+                        .set_schema_state(
+                            &record.schema_name,
+                            fold_db::schema::SchemaState::Approved,
+                        )
+                        .await
+                    {
+                        log::warn!(
+                            "Failed to approve shared schema '{}': {}",
+                            record.schema_name,
+                            e
+                        );
+                    }
+                }
+                Err(e) => {
+                    log::debug!(
+                        "Schema '{}' load result (may already exist): {}",
+                        record.schema_name,
+                        e
+                    );
+                }
+            }
+        }
+
+        // 2. Write the mutation with the sender's pub_key
+        let key = fold_db::schema::types::key_value::KeyValue::new(
+            record.key.hash.clone(),
+            record.key.range.clone(),
+        );
+
+        let mutation = fold_db::schema::types::Mutation::new(
+            record.schema_name.clone(),
+            record.fields.clone(),
+            key,
+            payload.sender_public_key.clone(),
+            fold_db::schema::types::operations::MutationType::Create,
+        );
+
+        if let Err(e) = db
+            .mutation_manager
+            .write_mutations_batch_async(vec![mutation])
+            .await
+        {
+            log::warn!(
+                "Failed to write shared record for schema '{}': {}",
+                record.schema_name,
+                e
+            );
+        }
+
+        // 3. If file data is included, save it to upload storage
+        if let Some(ref file_b64) = record.file_data_base64 {
+            match B64.decode(file_b64) {
+                Ok(file_bytes) => {
+                    let file_name = record
+                        .file_name
+                        .as_deref()
+                        .or_else(|| record.fields.get("file_hash").and_then(|v| v.as_str()))
+                        .unwrap_or("shared_file");
+
+                    let upload_storage_config =
+                        fold_db::storage::config::UploadStorageConfig::from_env()
+                            .unwrap_or_default();
+                    let upload_path = match upload_storage_config {
+                        fold_db::storage::config::UploadStorageConfig::Local { path } => path,
+                    };
+                    let upload_storage = fold_db::storage::UploadStorage::local(upload_path);
+
+                    if let Err(e) = upload_storage.save_file(file_name, &file_bytes, None).await {
+                        log::warn!("Failed to save shared file '{}': {}", file_name, e);
+                    }
+                }
+                Err(e) => {
+                    log::warn!("Failed to decode shared file data: {}", e);
+                }
+            }
+        }
+    }
+
+    Ok(())
 }
