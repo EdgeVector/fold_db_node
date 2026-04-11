@@ -42,13 +42,12 @@ vi.mock('../../components/Header', () => ({
   )
 }));
 
-vi.mock('../../components/SettingsModal', () => ({
-  default: ({ isOpen, onClose }) => isOpen ? (
-    <div data-testid="settings-modal">
-      Settings Modal
-      <button data-testid="close-settings" onClick={onClose}>Close</button>
+vi.mock('../../components/tabs/SettingsTab', () => ({
+  default: ({ onResult, initialSubTab }) => (
+    <div data-testid="settings-tab">
+      Settings Tab {initialSubTab && `(${initialSubTab})`}
     </div>
-  ) : null
+  )
 }));
 
 vi.mock('../../components/Footer', () => ({
@@ -122,6 +121,13 @@ vi.mock('../../components/Sidebar', () => ({
         className={activeTab === 'mutation' ? 'active' : ''}
       >
         Mutation
+      </button>
+      <button
+        data-testid="tab-settings"
+        onClick={() => onTabChange('settings')}
+        className={activeTab === 'settings' ? 'active' : ''}
+      >
+        Settings
       </button>
     </div>
   )
