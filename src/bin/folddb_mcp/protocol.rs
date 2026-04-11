@@ -77,15 +77,11 @@ pub fn handle_initialize(id: Value) -> JsonRpcResponse {
 }
 
 /// Build the response for `resources/list` — enumerate all schemas as resources.
-pub async fn handle_resources_list(
-    id: Value,
-    client: &FoldDbClient,
-) -> JsonRpcResponse {
+pub async fn handle_resources_list(id: Value, client: &FoldDbClient) -> JsonRpcResponse {
     match fetch_schema_resources(client).await {
-        Ok(resources) => JsonRpcResponse::success(
-            id,
-            serde_json::json!({ "resources": resources }),
-        ),
+        Ok(resources) => {
+            JsonRpcResponse::success(id, serde_json::json!({ "resources": resources }))
+        }
         Err(e) => JsonRpcResponse::error(
             Some(id),
             error::INTERNAL_ERROR,
@@ -123,10 +119,7 @@ pub async fn handle_resources_read(
     };
 
     match client
-        .get(&format!(
-            "/api/schema/{}",
-            urlencoding::encode(schema_name)
-        ))
+        .get(&format!("/api/schema/{}", urlencoding::encode(schema_name)))
         .await
     {
         Ok(resp) => {
@@ -135,8 +128,7 @@ pub async fn handle_resources_read(
             } else {
                 &resp
             };
-            let text = serde_json::to_string_pretty(payload)
-                .unwrap_or_else(|_| resp.to_string());
+            let text = serde_json::to_string_pretty(payload).unwrap_or_else(|_| resp.to_string());
             JsonRpcResponse::success(
                 id,
                 serde_json::json!({

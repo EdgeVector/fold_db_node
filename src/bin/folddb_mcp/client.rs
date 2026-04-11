@@ -126,11 +126,7 @@ impl FoldDbClient {
             .map_err(|e| {
                 McpError::Io(std::io::Error::new(
                     e.kind(),
-                    format!(
-                        "Failed to spawn '{}': {}",
-                        folddb_bin.display(),
-                        e
-                    ),
+                    format!("Failed to spawn '{}': {}", folddb_bin.display(), e),
                 ))
             })?;
 
