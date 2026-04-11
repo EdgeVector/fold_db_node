@@ -2,7 +2,7 @@ import React from 'react';
 import { screen, fireEvent, waitFor } from '@testing-library/react';
 import { vi, describe, it, expect, beforeEach, afterEach } from 'vitest';
 import OnboardingWizard, { ONBOARDING_STORAGE_KEY } from '../../../components/onboarding/OnboardingWizard';
-import { renderWithRedux } from '../../utils/testHelpers.jsx';
+import { renderWithRedux } from '../../utils/testUtilities.jsx';
 
 // Mock child step components to isolate wizard logic
 vi.mock('../../../components/onboarding/IdentityStep', () => ({

@@ -2,8 +2,13 @@ import React from 'react';
 import { screen, fireEvent, waitFor } from '@testing-library/react';
 import { vi, describe, it, expect, beforeEach } from 'vitest';
 import App, { AppContent } from '../../App.jsx';
-import { renderWithRedux, createTestStore } from '../utils/testHelpers.jsx';
+import { renderWithRedux, createTestStore } from '../utils/testUtilities.jsx';
+import ingestionReducer from '../../store/ingestionSlice';
 import { DEFAULT_TAB } from '../../constants';
+
+// Helper to create a store with the ingestion slice included
+const createAppTestStore = (preloadedState = {}) =>
+  createTestStore(preloadedState, { extraReducers: { ingestion: ingestionReducer } });
 
 // Mock auth slice actions to prevent loading state interference
 // Return thunks that dispatch no-op actions that won't match any reducer cases
@@ -276,7 +281,7 @@ describe('App Component', () => {
 
     describe('Initial Rendering', () => {
       it('renders all main layout components', async () => {
-        const store = createTestStore({
+        const store = createAppTestStore({
           auth: {
             isAuthenticated: true,
             systemPublicKey: 'test-key',
@@ -303,7 +308,7 @@ describe('App Component', () => {
       });
 
       it('initializes with default tab (agent)', async () => {
-        const store = createTestStore({
+        const store = createAppTestStore({
           auth: {
             isAuthenticated: true,
             systemPublicKey: 'test-key',
@@ -327,7 +332,7 @@ describe('App Component', () => {
       });
 
       it('dispatches actions on mount', async () => {
-        const store = createTestStore({
+        const store = createAppTestStore({
           auth: {
             isAuthenticated: true,
             systemPublicKey: 'test-key',
@@ -355,7 +360,7 @@ describe('App Component', () => {
 
     describe('Tab Navigation', () => {
       it('renders correct tab content based on activeTab', async () => {
-        const store = createTestStore({
+        const store = createAppTestStore({
           auth: {
             isAuthenticated: true,
             systemPublicKey: 'test-key',
@@ -391,7 +396,7 @@ describe('App Component', () => {
       });
 
       it('clears results when switching tabs', async () => {
-        const store = createTestStore({
+        const store = createAppTestStore({
           auth: {
             isAuthenticated: true,
             systemPublicKey: 'test-key',
@@ -437,7 +442,7 @@ describe('App Component', () => {
         mockApprovedSchemas.isLoading = false;
         mockApprovedSchemas.error = 'Failed to load schemas';
 
-        const store = createTestStore({
+        const store = createAppTestStore({
           auth: {
             isAuthenticated: true,
             systemPublicKey: 'test-key',
@@ -463,7 +468,7 @@ describe('App Component', () => {
 
     describe('User Interactions', () => {
       it('handles operation results from child components', async () => {
-        const store = createTestStore({
+        const store = createAppTestStore({
           auth: {
             isAuthenticated: true,
             systemPublicKey: 'test-key',
@@ -496,7 +501,7 @@ describe('App Component', () => {
       });
 
       it('handles schema updates from SchemaTab', async () => {
-        const store = createTestStore({
+        const store = createAppTestStore({
           auth: {
             isAuthenticated: true,
             systemPublicKey: 'test-key',
@@ -530,7 +535,7 @@ describe('App Component', () => {
 
     describe('Integration with Child Components', () => {
       it('passes correct props to TabNavigation', async () => {
-        const store = createTestStore({
+        const store = createAppTestStore({
           auth: {
             isAuthenticated: true,
             systemPublicKey: 'test-key',
@@ -557,7 +562,7 @@ describe('App Component', () => {
       });
 
       it('renders different tab components correctly', async () => {
-        const store = createTestStore({
+        const store = createAppTestStore({
           auth: {
             isAuthenticated: true,
             systemPublicKey: 'test-key',
@@ -592,7 +597,7 @@ describe('App Component', () => {
       });
 
       it('passes operation results to ResultsSection', async () => {
-        const store = createTestStore({
+        const store = createAppTestStore({
           auth: {
             isAuthenticated: true,
             systemPublicKey: 'test-key',
@@ -629,7 +634,7 @@ describe('App Component', () => {
 
     describe('Error Handling', () => {
       it('handles missing tab gracefully', () => {
-        const store = createTestStore({
+        const store = createAppTestStore({
           auth: {
             isAuthenticated: false,
             systemPublicKey: null,
@@ -652,7 +657,7 @@ describe('App Component', () => {
       });
 
       it('maintains stable state during rapid tab switches', async () => {
-        const store = createTestStore({
+        const store = createAppTestStore({
           auth: {
             isAuthenticated: true,
             systemPublicKey: 'test-key',
@@ -686,7 +691,7 @@ describe('App Component', () => {
 
     describe('State Management', () => {
       it('maintains results state independently of tab changes', async () => {
-        const store = createTestStore({
+        const store = createAppTestStore({
           auth: {
             isAuthenticated: true,
             systemPublicKey: 'test-key',

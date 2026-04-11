@@ -12,8 +12,7 @@ import SelectField from '../../components/form/SelectField'
 import TextField from '../../components/form/TextField'
 import SchemaStatusBadge from '../../components/schema/SchemaStatusBadge'
 
-import { renderWithRedux } from '../utils/testHelpers'
-import { createAuthenticatedState, createUnauthenticatedState } from '../utils/testHelpers'
+import { renderWithRedux, createAuthenticatedState, createUnauthenticatedState } from '../utils/testUtilities.jsx'
 
 describe('Component Integration Tests', () => {
   describe('TabNavigation with Authentication', () => {

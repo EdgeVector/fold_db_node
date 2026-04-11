@@ -33,7 +33,13 @@ export { SCHEMA_STATES };
  * @param {Object} preloadedState - Initial state for the store
  * @returns {Object} Configured test store
  */
-export function createTestStore(preloadedState = {}) {
+/**
+ * Creates a test store with optional initial state and extra reducers.
+ * By default only includes auth + schemas reducers. Tests that render
+ * components using other slices (e.g. ingestion) should pass extra
+ * reducers via the second argument.
+ */
+export function createTestStore(preloadedState = {}, { extraReducers = {} } = {}) {
   const defaultState = {
     auth: {
       isAuthenticated: false,
@@ -66,6 +72,7 @@ export function createTestStore(preloadedState = {}) {
     reducer: {
       auth: authReducer,
       schemas: schemaReducer,
+      ...extraReducers,
     },
     preloadedState: {
       ...defaultState,
@@ -105,10 +112,11 @@ export function createTestStore(preloadedState = {}) {
 export function renderWithRedux(ui, {
   preloadedState = {},
   store = null,
+  extraReducers = {},
   ...renderOptions
 } = {}) {
   if (!store) {
-    store = createTestStore(preloadedState);
+    store = createTestStore(preloadedState, { extraReducers });
   }
   
   function Wrapper({ children }) {
@@ -527,6 +535,72 @@ export const mockApiResponses = {
   }
 };
 
+/**
+ * Creates an authenticated state for testing with user object shape
+ * Used by component tests that check auth-dependent rendering
+ * @param {Object} overrides - Properties to override
+ * @returns {Object} Authenticated Redux state
+ */
+export const createAuthenticatedState = (overrides = {}) => ({
+  auth: {
+    isAuthenticated: true,
+    user: {
+      id: 'test-user-id',
+      username: 'testuser',
+      role: 'admin',
+    },
+    loading: false,
+    error: null,
+    ...(overrides.auth || {}),
+  },
+  schemas: {
+    schemas: {
+      'UserSchema': {
+        name: 'UserSchema',
+        state: 'approved',
+        fields: {
+          id: { field_type: 'String' },
+          name: { field_type: 'String' },
+          age: { field_type: 'Number' },
+        },
+      },
+      'ProductSchema': {
+        name: 'ProductSchema',
+        state: 'approved',
+        fields: {
+          id: { field_type: 'String' },
+          name: { field_type: 'String' },
+          price: { field_type: 'Number' },
+        },
+      },
+    },
+    loading: false,
+    error: null,
+    ...(overrides.schemas || {}),
+  },
+});
+
+/**
+ * Creates an unauthenticated state for testing
+ * @param {Object} overrides - Properties to override
+ * @returns {Object} Unauthenticated Redux state
+ */
+export const createUnauthenticatedState = (overrides = {}) => ({
+  auth: {
+    isAuthenticated: false,
+    user: null,
+    loading: false,
+    error: null,
+    ...(overrides.auth || {}),
+  },
+  schemas: {
+    schemas: {},
+    loading: false,
+    error: null,
+    ...(overrides.schemas || {}),
+  },
+});
+
 // Export all utilities as default
 export default {
   createTestStore,
@@ -537,6 +611,8 @@ export default {
   createMockRangeSchema,
   createMockSchemaList,
   createMockAuthState,
+  createAuthenticatedState,
+  createUnauthenticatedState,
   waitForCondition,
   mockDelay,
   createMockError,

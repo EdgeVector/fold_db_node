@@ -2,7 +2,7 @@ import React from 'react'
 import { screen, fireEvent, waitFor } from '@testing-library/react'
 import { describe, it, expect, beforeEach, vi } from 'vitest'
 import WordGraphTab from '../../../components/tabs/WordGraphTab'
-import { renderWithRedux, createTestSchemaState } from '../../utils/testStore.jsx'
+import { renderWithRedux, createTestSchemaState } from '../../utils/testUtilities.jsx'
 
 // react-force-graph-2d uses canvas/WebGL — replace with a testable stub
 vi.mock('react-force-graph-2d', () => ({
