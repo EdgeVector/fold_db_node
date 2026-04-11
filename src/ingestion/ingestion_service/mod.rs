@@ -271,13 +271,12 @@ impl IngestionService {
     /// that require recursive decomposition.
     fn check_has_nested_children(&self, flattened_data: &Value) -> bool {
         let representative = if let Some(arr) = flattened_data.as_array() {
-            arr.first().cloned()
+            arr.first()
         } else {
-            Some(flattened_data.clone())
+            Some(flattened_data)
         };
 
         representative
-            .as_ref()
             .map(|rep| !decomposer::decompose(rep).children.is_empty())
             .unwrap_or(false)
     }
@@ -528,14 +527,6 @@ impl IngestionService {
     /// and therefore incurs no per-token cost.
     pub fn is_local_provider(&self) -> bool {
         matches!(self.config.provider, AIProvider::Ollama)
-    }
-
-    /// Returns the provider name as a string.
-    pub fn provider_name(&self) -> &str {
-        match self.config.provider {
-            AIProvider::Ollama => "Ollama",
-            AIProvider::Anthropic => "Anthropic",
-        }
     }
 
     /// Get status information

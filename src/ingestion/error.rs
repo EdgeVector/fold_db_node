@@ -179,9 +179,6 @@ fn truncate_body(body: &str) -> String {
     }
 }
 
-/// Result type for ingestion operations
-pub type Result<T> = std::result::Result<T, IngestionError>;
-
 #[cfg(test)]
 mod tests {
     use super::*;
