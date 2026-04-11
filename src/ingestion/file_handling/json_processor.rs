@@ -299,6 +299,34 @@ Photo description:
 
 Respond with exactly one word: public or private"#;
 
+/// Classify and inject the `visibility` field into image JSON if not already set.
+///
+/// No-ops when `visibility` already has a value. Returns Ok(()) on success or
+/// if visibility was already set. Logs a warning and continues on AI failure.
+pub async fn classify_and_set_visibility(
+    data: &mut Value,
+    service: &crate::ingestion::ingestion_service::IngestionService,
+) {
+    if data.get("visibility").and_then(|v| v.as_str()).is_some() {
+        return;
+    }
+    match classify_visibility(data, service).await {
+        Ok(visibility) => {
+            if let Value::Object(ref mut map) = data {
+                map.insert("visibility".to_string(), Value::String(visibility));
+            }
+        }
+        Err(e) => {
+            log_feature!(
+                LogFeature::Ingestion,
+                warn,
+                "Visibility classification failed, skipping: {}",
+                e
+            );
+        }
+    }
+}
+
 /// Classify a photo's visibility as `"public"` or `"private"` using the AI backend.
 ///
 /// Reads the `markdown` field (vision model description) from the JSON and sends

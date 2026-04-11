@@ -675,6 +675,39 @@ fn extract_lookup_entry(ai_response: &AISchemaResponse) -> Option<SchemaLookupEn
     })
 }
 
+/// Filter mutation mappers to only reference fields that exist in the schema's
+/// runtime_fields. The AI may include mappers for fields it dropped from the
+/// schema definition, causing write failures.
+pub(crate) fn filter_mappers_by_schema(
+    mutation_mappers: &mut HashMap<String, String>,
+    schema_name: &str,
+    schema_manager: &Arc<SchemaCore>,
+) {
+    if let Ok(Some(schema_meta)) = schema_manager.get_schema_metadata(schema_name) {
+        let schema_fields: std::collections::HashSet<String> =
+            schema_meta.runtime_fields.keys().cloned().collect();
+        let before = mutation_mappers.len();
+        mutation_mappers.retain(|_json_field, schema_field| {
+            let target = if schema_field.contains('.') {
+                schema_field.rsplit('.').next().unwrap_or(schema_field)
+            } else {
+                schema_field.as_str()
+            };
+            schema_fields.contains(target)
+        });
+        let dropped = before - mutation_mappers.len();
+        if dropped > 0 {
+            log_feature!(
+                LogFeature::Ingestion,
+                debug,
+                "Dropped {} mutation mapper(s) for schema '{}' — target fields not in runtime_fields",
+                dropped,
+                schema_name
+            );
+        }
+    }
+}
+
 /// Generate mutations for a single JSON object: extract keys then build mutations.
 ///
 /// Shared by both the flat and decomposed ingestion paths.

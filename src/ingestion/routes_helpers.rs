@@ -242,31 +242,11 @@ pub(crate) async fn process_single_file_via_smart_folder(
                     )
                 });
                 // Classify photo visibility using AI
-                if is_image_file.is_some()
-                    && data.get("visibility").and_then(|v| v.as_str()).is_none()
-                {
-                    match crate::ingestion::file_handling::json_processor::classify_visibility(
-                        &data, service,
+                if is_image_file.is_some() {
+                    crate::ingestion::file_handling::json_processor::classify_and_set_visibility(
+                        &mut data, service,
                     )
-                    .await
-                    {
-                        Ok(visibility) => {
-                            if let serde_json::Value::Object(ref mut map) = data {
-                                map.insert(
-                                    "visibility".to_string(),
-                                    serde_json::Value::String(visibility),
-                                );
-                            }
-                        }
-                        Err(e) => {
-                            log_feature!(
-                                LogFeature::Ingestion,
-                                warn,
-                                "Visibility classification failed, skipping: {}",
-                                e
-                            );
-                        }
-                    }
+                    .await;
                 }
                 (data, hash_hex, raw_bytes, image_descriptive_name)
             }

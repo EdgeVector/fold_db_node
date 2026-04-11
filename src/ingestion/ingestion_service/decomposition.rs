@@ -652,27 +652,11 @@ impl IngestionService {
                 );
             }
             // Classify photo visibility using AI
-            if parent.get("visibility").and_then(|v| v.as_str()).is_none() {
-                match crate::ingestion::file_handling::json_processor::classify_visibility(
-                    &parent, self,
-                )
-                .await
-                {
-                    Ok(visibility) => {
-                        if let Value::Object(ref mut map) = parent {
-                            map.insert("visibility".to_string(), Value::String(visibility));
-                        }
-                    }
-                    Err(e) => {
-                        log_feature!(
-                            LogFeature::Ingestion,
-                            warn,
-                            "Visibility classification failed, skipping: {}",
-                            e
-                        );
-                    }
-                }
-            }
+            crate::ingestion::file_handling::json_processor::classify_and_set_visibility(
+                &mut parent,
+                self,
+            )
+            .await;
         }
 
         let mut own_key_value: Option<KeyValue> = None;
@@ -714,35 +698,8 @@ impl IngestionService {
                 }
             }
 
-            // Filter mutation mappers to only reference fields that exist in the
-            // schema's runtime_fields. The AI may include mappers for fields it
-            // dropped from the schema definition, causing write failures.
             let schema_manager = super::get_schema_manager(node).await?;
-            if let Ok(Some(schema_meta)) = schema_manager.get_schema_metadata(&schema_name) {
-                let schema_fields: std::collections::HashSet<String> =
-                    schema_meta.runtime_fields.keys().cloned().collect();
-                let before = mutation_mappers.len();
-                mutation_mappers.retain(|_json_field, schema_field| {
-                    let target = if schema_field.contains('.') {
-                        schema_field.rsplit('.').next().unwrap_or(schema_field)
-                    } else {
-                        schema_field.as_str()
-                    };
-                    schema_fields.contains(target)
-                });
-                let dropped = before - mutation_mappers.len();
-                if dropped > 0 {
-                    log_feature!(
-                        LogFeature::Ingestion,
-                        warn,
-                        "Dropped {} mutation mapper(s) for schema '{}' — target fields not in runtime_fields",
-                        dropped,
-                        schema_name
-                    );
-                }
-            }
-
-            let schema_manager = super::get_schema_manager(node).await?;
+            super::filter_mappers_by_schema(&mut mutation_mappers, &schema_name, &schema_manager);
             let mutations = super::generate_mutations_for_item(
                 parent_obj,
                 &schema_name,
