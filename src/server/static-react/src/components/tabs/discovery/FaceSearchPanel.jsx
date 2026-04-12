@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useState } from 'react'
 import { discoveryClient } from '../../../api/clients/discoveryClient'
+import { listContacts } from '../../../api/clients/trustClient'
 import { toErrorMessage } from '../../../utils/schemaUtils'
 import RoleSelect from './RoleSelect'
 
@@ -14,6 +15,28 @@ export default function FaceSearchPanel({ onResult }) {
   const [connectMessage, setConnectMessage] = useState('')
   const [connectRole, setConnectRole] = useState('acquaintance')
   const [faceSchemas, setFaceSchemas] = useState([])
+  const [knownPseudonyms, setKnownPseudonyms] = useState(() => new Set())
+
+  useEffect(() => {
+    let cancelled = false
+    async function loadContacts() {
+      try {
+        const resp = await listContacts()
+        if (cancelled || !resp.success) return
+        const contacts = resp.data?.contacts || []
+        const set = new Set()
+        for (const c of contacts) {
+          if (c.pseudonym) set.add(c.pseudonym)
+          if (c.messaging_pseudonym) set.add(c.messaging_pseudonym)
+        }
+        setKnownPseudonyms(set)
+      } catch {
+        // best-effort
+      }
+    }
+    loadContacts()
+    return () => { cancelled = true }
+  }, [])
 
   useEffect(() => {
     async function loadSchemas() {
@@ -160,6 +183,10 @@ export default function FaceSearchPanel({ onResult }) {
                       Cancel
                     </button>
                   </div>
+                ) : knownPseudonyms.has(r.pseudonym) ? (
+                  <span className="text-[10px] px-2 py-0.5 rounded-full bg-gruvbox-green/10 text-gruvbox-green border border-gruvbox-green/30">
+                    ✓ Already connected
+                  </span>
                 ) : (
                   <button
                     onClick={() => setConnectingTo(r.pseudonym)}

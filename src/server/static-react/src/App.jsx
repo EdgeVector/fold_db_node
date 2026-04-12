@@ -41,6 +41,7 @@ import { fetchIngestionConfig, selectIngestionConfig, selectIsAiConfigured, sele
 import { DEFAULT_TAB } from './constants'
 import { BROWSER_CONFIG } from './constants/config'
 import { getDatabaseStatus } from './api/clients/systemClient'
+import { getIdentityCard } from './api/clients/trustClient'
 import DatabaseSetupScreen from './components/DatabaseSetupScreen'
 
 function isIngestionResult(results) {
@@ -150,7 +151,22 @@ export function AppContent() {
           // file wasn't written (API call failed, data dir cleaned without reset).
           if (!response.data.onboarding_complete
               && localStorage.getItem('folddb_onboarding_complete') !== '1') {
-            setShowOnboarding(true)
+            // Final short-circuit: if the node already has an identity card
+            // with a display_name, treat setup as complete. This prevents the
+            // wizard from re-appearing on reload when the backend marker file
+            // is missing but the user has already configured their identity.
+            getIdentityCard()
+              .then(res => {
+                const hasIdentity = !!res?.data?.identity_card?.display_name
+                if (hasIdentity) {
+                  localStorage.setItem('folddb_onboarding_complete', '1')
+                } else {
+                  setShowOnboarding(true)
+                }
+              })
+              .catch(() => {
+                setShowOnboarding(true)
+              })
           }
         } else {
           // If endpoint is unavailable (older backend), assume initialized
