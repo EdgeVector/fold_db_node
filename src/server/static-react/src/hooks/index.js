@@ -10,3 +10,7 @@ export { useQueryBuilder } from "./useQueryBuilder";
 export { useFolderAutocomplete } from "./useFolderAutocomplete";
 export { useScanPolling } from "./useScanPolling";
 export { useBatchMonitor } from "./useBatchMonitor";
+export { useAuthInitialization } from "./useAuthInitialization.js";
+export { useTabRouting } from "./useTabRouting.js";
+export { useDatabaseInit } from "./useDatabaseInit.js";
+export { useResultHandler } from "./useResultHandler.js";
