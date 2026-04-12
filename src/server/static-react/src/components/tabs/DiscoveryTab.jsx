@@ -1334,13 +1334,41 @@ export default function DiscoveryTab({ onResult }) {
 
   useEffect(() => { loadConfigs() }, [loadConfigs])
 
-  const handlePublishFacesToggle = (category, enabled) => {
+  const handlePublishFacesToggle = async (category, enabled) => {
     setPublishFacesCategories(prev => {
       const next = new Set(prev)
       if (enabled) next.add(category)
       else next.delete(category)
       return next
     })
+    // If any schemas in this category are already opted in, re-opt them in with the new
+    // publish_faces value. Otherwise the checkbox only affects future opt-ins (was a bug
+    // where existing opt-ins silently ignored the checkbox change).
+    const schemas = categoryGroups[category] || []
+    const alreadyOptedIn = schemas.filter(s => optedInNames.has(s.name))
+    if (alreadyOptedIn.length === 0) return
+    setToggling(true)
+    setError(null)
+    try {
+      for (const s of alreadyOptedIn) {
+        const res = await discoveryClient.optIn({
+          schema_name: s.name,
+          category,
+          include_preview: false,
+          publish_faces: enabled,
+        })
+        if (res.success) {
+          setConfigs(res.data?.configs || [])
+        } else {
+          setError(res.error)
+          break
+        }
+      }
+    } catch (e) {
+      setError(toErrorMessage(e))
+    } finally {
+      setToggling(false)
+    }
   }
 
   const handleToggleCategory = async (category, schemas, enable) => {
