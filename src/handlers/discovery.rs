@@ -778,10 +778,22 @@ pub async fn poll_and_decrypt_requests(
         messages.len()
     );
 
-    // Try to decrypt each message
+    // Try to decrypt and dispatch each message. The loop enforces the invariant
+    // that a message is marked "processed" in the dedup store ONLY after the
+    // dispatch handler reports either successful handling (`Handled`) or a
+    // permanent parse/unknown failure (`Skipped`). Transient errors (store
+    // hiccups, failed persistence) propagate as `Err` and leave the dedup marker
+    // absent, so the next poll retries the same message.
+    //
+    // CLAUDE.md "no silent failures": we no longer swallow dispatch errors with
+    // `log::warn!; continue;`. Errors are collected and logged at the end, and
+    // the dedup store write itself is checked (no `let _ = ...`).
+    let mut dispatch_errors: Vec<(String, HandlerError)> = Vec::new();
     for msg in &messages {
         let target: uuid::Uuid = match msg.target_pseudonym.parse() {
             Ok(u) => u,
+            // Not addressable — cannot possibly be for us. Skip without dedup
+            // marker (cheap to re-skip next poll; avoids polluting the store).
             Err(_) => continue,
         };
 
@@ -802,221 +814,69 @@ pub async fn poll_and_decrypt_requests(
                     target,
                     e
                 );
-                continue; // Not for us or corrupted
+                // Not for us, corrupted, or from a different sender key. We
+                // intentionally do NOT mark this as processed: decrypt cost is
+                // low and the bulletin board expires messages on its own.
+                continue;
             }
         };
 
-        let message_type = raw
-            .get("message_type")
-            .and_then(|v| v.as_str())
-            .unwrap_or("");
-
-        // De-duplication: check if we already processed this message
+        // De-duplication: check if we already processed this message.
         let dedup_key = format!("msg_processed:{}", msg.message_id);
-        let existing = store.get(dedup_key.as_bytes()).await.ok().flatten();
-        if existing.is_some() {
-            continue;
+        match store.get(dedup_key.as_bytes()).await {
+            Ok(Some(_)) => continue,
+            Ok(None) => {}
+            Err(e) => {
+                // Store read failure — treat as transient, do not dispatch.
+                dispatch_errors.push((
+                    msg.message_id.clone(),
+                    HandlerError::Internal(format!("dedup read failed: {e}")),
+                ));
+                continue;
+            }
         }
 
-        // Mark as processed (store a small marker)
-        let _ = store.put(dedup_key.as_bytes(), b"1".to_vec()).await;
+        // Dispatch. The helper returns Handled/Skipped to indicate the message
+        // should be marked processed, or Err to indicate a transient failure
+        // that must be retried on the next poll.
+        let outcome =
+            dispatch_decrypted_message(node, &*store, master_key, &publisher, msg, raw).await;
 
-        match message_type {
-            "request" => {
-                let payload: ConnectionPayload = match serde_json::from_value(raw) {
-                    Ok(p) => p,
-                    Err(e) => {
-                        log::warn!("Failed to parse connection request: {}", e);
-                        continue;
-                    }
-                };
-
-                // Mutual contact detection via network intersection
-                let mutual_contacts = if let Some(ref keys) = payload.network_keys {
-                    let op = OperationProcessor::new(node.clone());
-                    let our_book = op
-                        .contact_book_path()
-                        .ok()
-                        .map(|p| ContactBook::load_from(&p).unwrap_or_default())
-                        .unwrap_or_default();
-                    let our_keys: std::collections::HashSet<&str> = our_book
-                        .active_contacts()
-                        .iter()
-                        .map(|c| c.public_key.as_str())
-                        .collect();
-                    keys.iter()
-                        .filter(|k| our_keys.contains(k.as_str()))
-                        .filter_map(|k| {
-                            our_book.get(k).map(|c| MutualContact {
-                                display_name: c.display_name.clone(),
-                                public_key: c.public_key.clone(),
-                            })
-                        })
-                        .collect()
-                } else {
-                    vec![]
-                };
-
-                let request_id = format!("msg-{}", msg.message_id);
-                let local_req = LocalConnectionRequest {
-                    request_id: request_id.clone(),
-                    message_id: msg.message_id.clone(),
-                    target_pseudonym: msg.target_pseudonym.clone(),
-                    sender_pseudonym: payload.sender_pseudonym.clone(),
-                    sender_public_key: payload.sender_public_key.clone(),
-                    reply_public_key: payload.reply_public_key.clone(),
-                    message: payload.message.clone(),
-                    status: "pending".to_string(),
-                    created_at: msg.created_at.clone(),
-                    responded_at: None,
-                    vouches: Vec::new(),
-                    referral_query_id: None,
-                    referral_contacts_queried: 0,
-                    mutual_contacts,
-                };
-                if let Err(e) = connection::save_received_request(&*store, &local_req).await {
-                    log::warn!("Failed to save received request: {}", e);
-                }
-            }
-            "accept" => {
-                let payload: ConnectionPayload = match serde_json::from_value(raw) {
-                    Ok(p) => p,
-                    Err(e) => {
-                        log::warn!("Failed to parse connection accept: {}", e);
-                        continue;
-                    }
-                };
-                let sent_request = match connection::update_sent_request_status(
-                    &*store,
-                    &payload.sender_pseudonym,
-                    "accepted",
-                )
-                .await
-                {
-                    Ok(req) => req,
-                    Err(e) => {
-                        log::warn!("Failed to update sent request: {}", e);
-                        None
-                    }
-                };
-
-                // Use the preferred_role from the original sent request, falling
-                // back to "acquaintance" if unset or if the sent request wasn't found.
-                let role = sent_request
-                    .as_ref()
-                    .and_then(|r| r.preferred_role.as_deref())
-                    .unwrap_or("acquaintance");
-
-                // Auto-create trust relationship from accepted connection
-                if payload.identity_card.is_some() {
-                    if let Err(e) = process_accepted_connection(node, &payload, role).await {
-                        log::warn!(
-                            "Failed to auto-create trust from accepted connection: {}",
-                            e
-                        );
-                    }
-                }
-            }
-            "decline" => {
-                let payload: ConnectionPayload = match serde_json::from_value(raw) {
-                    Ok(p) => p,
-                    Err(e) => {
-                        log::warn!("Failed to parse connection decline: {}", e);
-                        continue;
-                    }
-                };
-                if let Err(e) = connection::update_sent_request_status(
-                    &*store,
-                    &payload.sender_pseudonym,
-                    "declined",
-                )
-                .await
-                {
-                    log::warn!("Failed to update sent request: {e}");
-                }
-            }
-            "query_request" => {
-                let payload: QueryRequestPayload = match serde_json::from_value(raw) {
-                    Ok(p) => p,
-                    Err(e) => {
-                        log::warn!("Failed to parse query request: {}", e);
-                        continue;
-                    }
-                };
-                handle_incoming_query(node, &payload, master_key, &publisher).await;
-            }
-            "query_response" => {
-                let payload: QueryResponsePayload = match serde_json::from_value(raw) {
-                    Ok(p) => p,
-                    Err(e) => {
-                        log::warn!("Failed to parse query response: {}", e);
-                        continue;
-                    }
-                };
-                handle_incoming_query_response(&*store, &payload).await;
-            }
-            "schema_list_request" => {
-                let payload: SchemaListRequestPayload = match serde_json::from_value(raw) {
-                    Ok(p) => p,
-                    Err(e) => {
-                        log::warn!("Failed to parse schema list request: {}", e);
-                        continue;
-                    }
-                };
-                handle_incoming_schema_list_request(node, &payload, master_key, &publisher).await;
-            }
-            "schema_list_response" => {
-                let payload: SchemaListResponsePayload = match serde_json::from_value(raw) {
-                    Ok(p) => p,
-                    Err(e) => {
-                        log::warn!("Failed to parse schema list response: {}", e);
-                        continue;
-                    }
-                };
-                handle_incoming_schema_list_response(&*store, &payload).await;
-            }
-            "data_share" => {
-                let payload: DataSharePayload = match serde_json::from_value(raw) {
-                    Ok(p) => p,
-                    Err(e) => {
-                        log::warn!("Failed to parse data share: {}", e);
-                        continue;
-                    }
-                };
-
-                if let Err(e) = process_data_share(node, &payload).await {
+        match outcome {
+            Ok(DispatchOutcome::Handled) | Ok(DispatchOutcome::Skipped { .. }) => {
+                if let Ok(DispatchOutcome::Skipped { ref reason }) = outcome {
                     log::warn!(
-                        "Failed to process data share from {}: {}",
-                        payload.sender_display_name,
-                        e
-                    );
-                } else {
-                    log::info!(
-                        "Received {} records from {}",
-                        payload.records.len(),
-                        payload.sender_display_name
+                        "Permanently skipping message {}: {}",
+                        msg.message_id,
+                        reason
                     );
                 }
-            }
-            "referral_query" => {
-                if let Ok(payload) = serde_json::from_value::<ReferralQueryPayload>(raw.clone()) {
-                    handle_incoming_referral_query(node, &payload, master_key, &publisher).await;
-                } else {
-                    log::warn!("Failed to parse referral_query payload");
+                // Only mark as processed after the handler reports a terminal
+                // outcome. Propagate errors from the dedup write — a silent
+                // failure here would cause the message to re-dispatch forever.
+                if let Err(e) = store.put(dedup_key.as_bytes(), b"1".to_vec()).await {
+                    dispatch_errors.push((
+                        msg.message_id.clone(),
+                        HandlerError::Internal(format!("dedup write failed: {e}")),
+                    ));
                 }
             }
-            "referral_response" => {
-                if let Ok(payload) = serde_json::from_value::<ReferralResponsePayload>(raw.clone())
-                {
-                    handle_incoming_referral_response(node, &*store, &payload).await;
-                } else {
-                    log::warn!("Failed to parse referral_response payload");
-                }
-            }
-            _ => {
-                log::warn!("Unknown message type: {}", message_type);
+            Err(e) => {
+                log::error!(
+                    "Transient dispatch failure for message {} (will retry next poll): {}",
+                    msg.message_id,
+                    e
+                );
+                dispatch_errors.push((msg.message_id.clone(), e));
             }
         }
+    }
+
+    if !dispatch_errors.is_empty() {
+        log::error!(
+            "poll_and_decrypt_requests: {} message(s) failed dispatch and will be retried on the next poll",
+            dispatch_errors.len()
+        );
     }
 
     // Return all locally stored received requests
@@ -1027,6 +887,260 @@ pub async fn poll_and_decrypt_requests(
     Ok(ApiResponse::success(ConnectionRequestsResponse {
         requests,
     }))
+}
+
+/// Outcome of dispatching a single decrypted bulletin-board message.
+///
+/// Both `Handled` and `Skipped` cause the caller to write the dedup marker.
+/// `Err(HandlerError)` (returned separately) means the dispatch should be
+/// retried on the next poll and the dedup marker must NOT be written.
+#[derive(Debug)]
+enum DispatchOutcome {
+    /// Dispatch succeeded.
+    Handled,
+    /// Message is permanently unprocessable (bad/unknown payload). The caller
+    /// writes the dedup marker so we don't re-dispatch garbage on every poll.
+    Skipped { reason: String },
+}
+
+/// Dispatch a single decrypted message to the appropriate type-specific
+/// handler. This replaces the prior "log warn and continue" pattern that
+/// silently lost data when a transient error occurred between marking a
+/// message processed and actually persisting it.
+///
+/// Classification:
+/// - Transient (returns `Err`, caller retries): `save_received_request`,
+///   `update_sent_request_status`, `process_accepted_connection`,
+///   `process_data_share`. These can fail on a transient Sled hiccup or a
+///   missing-but-recoverable prerequisite, and must be retried.
+/// - Permanent (returns `Ok(Skipped)`, caller marks processed): payload
+///   deserialization failure, unknown `message_type`. Retrying forever would
+///   spam logs without changing the outcome.
+/// - Best-effort async helpers (`handle_incoming_query`, `..._query_response`,
+///   `..._schema_list_*`, `..._referral_*`): these already log their internal
+///   failures and have no return signal; they're treated as `Ok(Handled)` once
+///   the payload parses. Refactoring them to return `Result` is out of scope
+///   for this fix and would explode the diff.
+#[allow(clippy::too_many_lines)]
+async fn dispatch_decrypted_message(
+    node: &FoldNode,
+    store: &dyn fold_db::storage::traits::KvStore,
+    master_key: &[u8],
+    publisher: &DiscoveryPublisher,
+    msg: &crate::discovery::types::EncryptedMessage,
+    raw: serde_json::Value,
+) -> Result<DispatchOutcome, HandlerError> {
+    let message_type = raw
+        .get("message_type")
+        .and_then(|v| v.as_str())
+        .unwrap_or("")
+        .to_string();
+
+    match message_type.as_str() {
+        "request" => {
+            let payload: ConnectionPayload = match serde_json::from_value(raw) {
+                Ok(p) => p,
+                Err(e) => {
+                    return Ok(DispatchOutcome::Skipped {
+                        reason: format!("parse connection request: {e}"),
+                    });
+                }
+            };
+
+            // Mutual contact detection via network intersection
+            let mutual_contacts = if let Some(ref keys) = payload.network_keys {
+                let op = OperationProcessor::new(node.clone());
+                let our_book = op
+                    .contact_book_path()
+                    .ok()
+                    .map(|p| ContactBook::load_from(&p).unwrap_or_default())
+                    .unwrap_or_default();
+                let our_keys: std::collections::HashSet<&str> = our_book
+                    .active_contacts()
+                    .iter()
+                    .map(|c| c.public_key.as_str())
+                    .collect();
+                keys.iter()
+                    .filter(|k| our_keys.contains(k.as_str()))
+                    .filter_map(|k| {
+                        our_book.get(k).map(|c| MutualContact {
+                            display_name: c.display_name.clone(),
+                            public_key: c.public_key.clone(),
+                        })
+                    })
+                    .collect()
+            } else {
+                vec![]
+            };
+
+            let request_id = format!("msg-{}", msg.message_id);
+            let local_req = LocalConnectionRequest {
+                request_id,
+                message_id: msg.message_id.clone(),
+                target_pseudonym: msg.target_pseudonym.clone(),
+                sender_pseudonym: payload.sender_pseudonym.clone(),
+                sender_public_key: payload.sender_public_key.clone(),
+                reply_public_key: payload.reply_public_key.clone(),
+                message: payload.message.clone(),
+                status: "pending".to_string(),
+                created_at: msg.created_at.clone(),
+                responded_at: None,
+                vouches: Vec::new(),
+                referral_query_id: None,
+                referral_contacts_queried: 0,
+                mutual_contacts,
+            };
+            connection::save_received_request(store, &local_req)
+                .await
+                .map_err(|e| HandlerError::Internal(format!("save received request: {e}")))?;
+            Ok(DispatchOutcome::Handled)
+        }
+        "accept" => {
+            let payload: ConnectionPayload = match serde_json::from_value(raw) {
+                Ok(p) => p,
+                Err(e) => {
+                    return Ok(DispatchOutcome::Skipped {
+                        reason: format!("parse connection accept: {e}"),
+                    });
+                }
+            };
+            let sent_request = connection::update_sent_request_status(
+                store,
+                &payload.sender_pseudonym,
+                "accepted",
+            )
+            .await
+            .map_err(|e| HandlerError::Internal(format!("update sent request: {e}")))?;
+
+            // Use the preferred_role from the original sent request, falling
+            // back to "acquaintance" if unset or if the sent request wasn't found.
+            let role = sent_request
+                .as_ref()
+                .and_then(|r| r.preferred_role.as_deref())
+                .unwrap_or("acquaintance");
+
+            // Auto-create trust relationship from accepted connection
+            if payload.identity_card.is_some() {
+                process_accepted_connection(node, &payload, role)
+                    .await
+                    .map_err(|e| {
+                        HandlerError::Internal(format!("process accepted connection: {e}"))
+                    })?;
+            }
+            Ok(DispatchOutcome::Handled)
+        }
+        "decline" => {
+            let payload: ConnectionPayload = match serde_json::from_value(raw) {
+                Ok(p) => p,
+                Err(e) => {
+                    return Ok(DispatchOutcome::Skipped {
+                        reason: format!("parse connection decline: {e}"),
+                    });
+                }
+            };
+            connection::update_sent_request_status(store, &payload.sender_pseudonym, "declined")
+                .await
+                .map_err(|e| HandlerError::Internal(format!("update sent request: {e}")))?;
+            Ok(DispatchOutcome::Handled)
+        }
+        "query_request" => {
+            let payload: QueryRequestPayload = match serde_json::from_value(raw) {
+                Ok(p) => p,
+                Err(e) => {
+                    return Ok(DispatchOutcome::Skipped {
+                        reason: format!("parse query request: {e}"),
+                    });
+                }
+            };
+            handle_incoming_query(node, &payload, master_key, publisher).await;
+            Ok(DispatchOutcome::Handled)
+        }
+        "query_response" => {
+            let payload: QueryResponsePayload = match serde_json::from_value(raw) {
+                Ok(p) => p,
+                Err(e) => {
+                    return Ok(DispatchOutcome::Skipped {
+                        reason: format!("parse query response: {e}"),
+                    });
+                }
+            };
+            handle_incoming_query_response(store, &payload).await;
+            Ok(DispatchOutcome::Handled)
+        }
+        "schema_list_request" => {
+            let payload: SchemaListRequestPayload = match serde_json::from_value(raw) {
+                Ok(p) => p,
+                Err(e) => {
+                    return Ok(DispatchOutcome::Skipped {
+                        reason: format!("parse schema list request: {e}"),
+                    });
+                }
+            };
+            handle_incoming_schema_list_request(node, &payload, master_key, publisher).await;
+            Ok(DispatchOutcome::Handled)
+        }
+        "schema_list_response" => {
+            let payload: SchemaListResponsePayload = match serde_json::from_value(raw) {
+                Ok(p) => p,
+                Err(e) => {
+                    return Ok(DispatchOutcome::Skipped {
+                        reason: format!("parse schema list response: {e}"),
+                    });
+                }
+            };
+            handle_incoming_schema_list_response(store, &payload).await;
+            Ok(DispatchOutcome::Handled)
+        }
+        "data_share" => {
+            let payload: DataSharePayload = match serde_json::from_value(raw) {
+                Ok(p) => p,
+                Err(e) => {
+                    return Ok(DispatchOutcome::Skipped {
+                        reason: format!("parse data share: {e}"),
+                    });
+                }
+            };
+            process_data_share(node, &payload).await.map_err(|e| {
+                HandlerError::Internal(format!(
+                    "process data share from {}: {e}",
+                    payload.sender_display_name
+                ))
+            })?;
+            log::info!(
+                "Received {} records from {}",
+                payload.records.len(),
+                payload.sender_display_name
+            );
+            Ok(DispatchOutcome::Handled)
+        }
+        "referral_query" => {
+            let payload: ReferralQueryPayload = match serde_json::from_value(raw) {
+                Ok(p) => p,
+                Err(e) => {
+                    return Ok(DispatchOutcome::Skipped {
+                        reason: format!("parse referral query: {e}"),
+                    });
+                }
+            };
+            handle_incoming_referral_query(node, &payload, master_key, publisher).await;
+            Ok(DispatchOutcome::Handled)
+        }
+        "referral_response" => {
+            let payload: ReferralResponsePayload = match serde_json::from_value(raw) {
+                Ok(p) => p,
+                Err(e) => {
+                    return Ok(DispatchOutcome::Skipped {
+                        reason: format!("parse referral response: {e}"),
+                    });
+                }
+            };
+            handle_incoming_referral_response(node, store, &payload).await;
+            Ok(DispatchOutcome::Handled)
+        }
+        other => Ok(DispatchOutcome::Skipped {
+            reason: format!("unknown message_type '{other}'"),
+        }),
+    }
 }
 
 // ===== Async query auto-processing helpers =====
@@ -3227,4 +3341,280 @@ pub async fn dismiss_notification(
         .map_err(|e| HandlerError::Internal(format!("Failed to dismiss notification: {e}")))?;
 
     Ok(ApiResponse::success(serde_json::json!({"dismissed": true})))
+}
+
+// =========================================================================
+// Tests for the discovery message dispatch loop
+// =========================================================================
+//
+// These tests verify the "no silent failures" invariant of the bulletin-board
+// poll loop: dedup markers must be written ONLY after dispatch reports either
+// successful handling or a permanent (parse/unknown) skip. Transient errors
+// must leave the dedup marker absent so the next poll can retry.
+#[cfg(test)]
+mod dispatch_tests {
+    use super::*;
+    use crate::discovery::types::EncryptedMessage;
+    use fold_db::storage::error::StorageResult;
+    use fold_db::storage::inmemory_backend::InMemoryKvStore;
+    use fold_db::storage::traits::{ExecutionModel, FlushBehavior, KvStore};
+    use std::sync::Arc;
+    use tempfile::tempdir;
+
+    /// Build a minimal FoldNode suitable for tests that only touch the
+    /// metadata store via the dispatch helper.
+    async fn make_test_node() -> (FoldNode, tempfile::TempDir) {
+        let dir = tempdir().unwrap();
+        let keypair = fold_db::security::Ed25519KeyPair::generate().unwrap();
+        let config = crate::fold_node::NodeConfig::new(dir.path().to_path_buf())
+            .with_schema_service_url("test://mock")
+            .with_identity(&keypair.public_key_base64(), &keypair.secret_key_base64());
+        let node = FoldNode::new(config).await.unwrap();
+        (node, dir)
+    }
+
+    fn make_publisher() -> DiscoveryPublisher {
+        DiscoveryPublisher::new(
+            vec![0u8; 32],
+            "test://mock".to_string(),
+            "test-token".to_string(),
+        )
+    }
+
+    fn make_msg(message_id: &str) -> EncryptedMessage {
+        EncryptedMessage {
+            message_id: message_id.to_string(),
+            encrypted_blob: String::new(),
+            target_pseudonym: uuid::Uuid::new_v4().to_string(),
+            sender_pseudonym: None,
+            created_at: chrono::Utc::now().to_rfc3339(),
+        }
+    }
+
+    /// A KvStore wrapper that fails `put` for keys starting with a configured
+    /// prefix. Used to simulate transient storage failures for specific
+    /// sub-operations without breaking the dedup marker write.
+    struct FailingPutStore {
+        inner: Arc<InMemoryKvStore>,
+        fail_prefix: Vec<u8>,
+    }
+
+    #[async_trait::async_trait]
+    impl KvStore for FailingPutStore {
+        async fn get(&self, key: &[u8]) -> StorageResult<Option<Vec<u8>>> {
+            self.inner.get(key).await
+        }
+        async fn put(&self, key: &[u8], value: Vec<u8>) -> StorageResult<()> {
+            if key.starts_with(&self.fail_prefix) {
+                return Err(fold_db::storage::error::StorageError::BackendError(
+                    "injected transient failure".to_string(),
+                ));
+            }
+            self.inner.put(key, value).await
+        }
+        async fn delete(&self, key: &[u8]) -> StorageResult<bool> {
+            self.inner.delete(key).await
+        }
+        async fn exists(&self, key: &[u8]) -> StorageResult<bool> {
+            self.inner.exists(key).await
+        }
+        async fn scan_prefix(&self, prefix: &[u8]) -> StorageResult<Vec<(Vec<u8>, Vec<u8>)>> {
+            self.inner.scan_prefix(prefix).await
+        }
+        async fn batch_put(&self, items: Vec<(Vec<u8>, Vec<u8>)>) -> StorageResult<()> {
+            self.inner.batch_put(items).await
+        }
+        async fn batch_delete(&self, keys: Vec<Vec<u8>>) -> StorageResult<()> {
+            self.inner.batch_delete(keys).await
+        }
+        async fn flush(&self) -> StorageResult<()> {
+            self.inner.flush().await
+        }
+        fn backend_name(&self) -> &'static str {
+            "failing-put-test"
+        }
+        fn execution_model(&self) -> ExecutionModel {
+            self.inner.execution_model()
+        }
+        fn flush_behavior(&self) -> FlushBehavior {
+            self.inner.flush_behavior()
+        }
+    }
+
+    /// Parse-permanent: unknown message_type → Skipped (dedup should be marked
+    /// by the caller so we don't re-log garbage forever).
+    #[tokio::test]
+    async fn unknown_message_type_is_skipped_not_errored() {
+        let (node, _dir) = make_test_node().await;
+        let publisher = make_publisher();
+        let store: Arc<dyn KvStore> = Arc::new(InMemoryKvStore::new());
+        let raw = serde_json::json!({"message_type": "totally_made_up"});
+        let msg = make_msg("m-unknown");
+
+        let outcome = dispatch_decrypted_message(&node, &*store, &[0u8; 32], &publisher, &msg, raw)
+            .await
+            .expect("unknown type must not return Err (it's a permanent skip)");
+
+        match outcome {
+            DispatchOutcome::Skipped { reason } => {
+                assert!(
+                    reason.contains("totally_made_up"),
+                    "reason should name the unknown type, got: {reason}"
+                );
+            }
+            DispatchOutcome::Handled => panic!("expected Skipped, got Handled"),
+        }
+    }
+
+    /// Parse-permanent: malformed payload for a known message_type → Skipped.
+    #[tokio::test]
+    async fn malformed_request_payload_is_skipped() {
+        let (node, _dir) = make_test_node().await;
+        let publisher = make_publisher();
+        let store: Arc<dyn KvStore> = Arc::new(InMemoryKvStore::new());
+        // "request" expects ConnectionPayload fields; give it only message_type.
+        let raw = serde_json::json!({"message_type": "request"});
+        let msg = make_msg("m-bad-request");
+
+        let outcome = dispatch_decrypted_message(&node, &*store, &[0u8; 32], &publisher, &msg, raw)
+            .await
+            .expect("parse failure must not return Err");
+
+        assert!(matches!(outcome, DispatchOutcome::Skipped { .. }));
+    }
+
+    /// Happy path: a well-formed "request" payload is persisted and the
+    /// dispatch returns Handled. A second identical dispatch (simulating the
+    /// outer loop's dedup check) would be skipped by the caller via the dedup
+    /// key — we verify the save landed in the store.
+    #[tokio::test]
+    async fn valid_request_is_handled_and_persisted() {
+        let (node, _dir) = make_test_node().await;
+        let publisher = make_publisher();
+        let store: Arc<dyn KvStore> = Arc::new(InMemoryKvStore::new());
+
+        let raw = serde_json::json!({
+            "message_type": "request",
+            "message": "hi",
+            "sender_public_key": "pk1",
+            "sender_pseudonym": "ps1",
+            "reply_public_key": "rpk1",
+        });
+        let msg = make_msg("m-good");
+
+        let outcome = dispatch_decrypted_message(&node, &*store, &[0u8; 32], &publisher, &msg, raw)
+            .await
+            .expect("valid request should succeed");
+
+        assert!(matches!(outcome, DispatchOutcome::Handled));
+
+        let received = connection::list_received_requests(&*store)
+            .await
+            .expect("list");
+        assert_eq!(received.len(), 1);
+        assert_eq!(received[0].message_id, "m-good");
+        assert_eq!(received[0].sender_pseudonym, "ps1");
+    }
+
+    /// Transient: `save_received_request` fails → dispatch returns Err. The
+    /// outer loop uses this as the signal to NOT mark the dedup key, so the
+    /// next poll can retry. We verify the error is returned AND that no
+    /// connection-request was persisted (the failing put wrapper refused it).
+    #[tokio::test]
+    async fn transient_save_failure_returns_err_and_does_not_persist() {
+        let (node, _dir) = make_test_node().await;
+        let publisher = make_publisher();
+        let inner = Arc::new(InMemoryKvStore::new());
+        let store: Arc<dyn KvStore> = Arc::new(FailingPutStore {
+            inner: inner.clone(),
+            fail_prefix: b"discovery:conn_req:".to_vec(),
+        });
+
+        let raw = serde_json::json!({
+            "message_type": "request",
+            "message": "hi",
+            "sender_public_key": "pk1",
+            "sender_pseudonym": "ps1",
+            "reply_public_key": "rpk1",
+        });
+        let msg = make_msg("m-transient");
+
+        let outcome =
+            dispatch_decrypted_message(&node, &*store, &[0u8; 32], &publisher, &msg, raw).await;
+
+        match outcome {
+            Err(HandlerError::Internal(msg)) => {
+                assert!(
+                    msg.contains("save received request"),
+                    "error should identify the failing step, got: {msg}"
+                );
+            }
+            other => panic!("expected Err(Internal), got {other:?}"),
+        }
+
+        // Nothing was persisted, so a subsequent retry would try again.
+        let entries = inner
+            .scan_prefix(b"discovery:conn_req:")
+            .await
+            .expect("scan");
+        assert!(entries.is_empty(), "nothing should have been persisted");
+    }
+
+    /// Transient path + simulated outer-loop dedup behavior: verify the
+    /// contract that Err leaves dedup absent and the next attempt re-runs
+    /// dispatch. Models the key invariant from the bugfix.
+    #[tokio::test]
+    async fn err_leaves_dedup_absent_handled_sets_it() {
+        let (node, _dir) = make_test_node().await;
+        let publisher = make_publisher();
+        let inner = Arc::new(InMemoryKvStore::new());
+
+        // First attempt: store fails on save → Err, no dedup set.
+        let failing: Arc<dyn KvStore> = Arc::new(FailingPutStore {
+            inner: inner.clone(),
+            fail_prefix: b"discovery:conn_req:".to_vec(),
+        });
+        let raw1 = serde_json::json!({
+            "message_type": "request",
+            "message": "hi",
+            "sender_public_key": "pk1",
+            "sender_pseudonym": "ps1",
+            "reply_public_key": "rpk1",
+        });
+        let msg = make_msg("m-retry");
+        let dedup_key = format!("msg_processed:{}", msg.message_id);
+
+        let outcome1 =
+            dispatch_decrypted_message(&node, &*failing, &[0u8; 32], &publisher, &msg, raw1).await;
+        assert!(outcome1.is_err());
+        // Outer loop would NOT have written the dedup key on Err.
+        let dedup_present = inner.get(dedup_key.as_bytes()).await.unwrap();
+        assert!(
+            dedup_present.is_none(),
+            "dedup key must be absent after transient failure"
+        );
+
+        // Second attempt: store is now healthy → Handled, caller sets dedup.
+        let healthy: Arc<dyn KvStore> = inner.clone();
+        let raw2 = serde_json::json!({
+            "message_type": "request",
+            "message": "hi",
+            "sender_public_key": "pk1",
+            "sender_pseudonym": "ps1",
+            "reply_public_key": "rpk1",
+        });
+        let outcome2 =
+            dispatch_decrypted_message(&node, &*healthy, &[0u8; 32], &publisher, &msg, raw2)
+                .await
+                .expect("second attempt should succeed");
+        assert!(matches!(outcome2, DispatchOutcome::Handled));
+
+        // Simulate the outer loop writing the dedup marker after Handled.
+        healthy
+            .put(dedup_key.as_bytes(), b"1".to_vec())
+            .await
+            .unwrap();
+        let dedup_present = inner.get(dedup_key.as_bytes()).await.unwrap();
+        assert_eq!(dedup_present.as_deref(), Some(&b"1"[..]));
+    }
 }
