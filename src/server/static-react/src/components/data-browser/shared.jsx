@@ -6,6 +6,7 @@ import {
   createHashKeyFilter,
   createRangeKeyFilter,
 } from '../../utils/filterUtils'
+import FaceOverlay from '../FaceOverlay'
 
 export function keyId(schemaName, kv) {
   return `${schemaName}|${kv?.hash ?? ''}|${kv?.range ?? ''}`
@@ -203,7 +204,7 @@ function authHeaders() {
   return { 'x-user-hash': userHash, 'x-user-id': userHash }
 }
 
-export function RecordMetadata({ metadata }) {
+export function RecordMetadata({ metadata, schemaName, recordKey }) {
   const [expanded, setExpanded] = useState(false)
   const [blobUrl, setBlobUrl] = useState(null)
 
@@ -286,6 +287,9 @@ export function RecordMetadata({ metadata }) {
                 alt={sourceFile}
                 className="max-w-xs max-h-64 rounded border border-border object-contain bg-surface-secondary"
               />
+              {schemaName && recordKey && (
+                <FaceOverlay schemaName={schemaName} recordKey={recordKey} />
+              )}
             </div>
           )}
         </div>

@@ -216,7 +216,7 @@ export default function DataBrowserTab() {
                         <div className="pl-6 pb-2">
                           {record ? (
                             <Fragment>
-                              <RecordMetadata metadata={record.metadata} />
+                              <RecordMetadata metadata={record.metadata} schemaName={name} recordKey={keyLabel(kv)} />
                               {maxVersion > 1 && <VersionHistory moleculeUuid={molUuid} />}
                               <FieldsTable fields={record.fields} />
                             </Fragment>

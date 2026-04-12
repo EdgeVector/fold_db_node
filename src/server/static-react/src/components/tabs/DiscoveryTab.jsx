@@ -367,6 +367,19 @@ function FaceSearchPanel({ onResult }) {
   const [connectingTo, setConnectingTo] = useState(null)
   const [connectMessage, setConnectMessage] = useState('')
   const [connectRole, setConnectRole] = useState('acquaintance')
+  const [faceSchemas, setFaceSchemas] = useState([])
+
+  useEffect(() => {
+    async function loadSchemas() {
+      try {
+        const resp = await discoveryClient.listOptIns()
+        if (resp.success && resp.data?.configs) {
+          setFaceSchemas(resp.data.configs.filter(c => c.publish_faces))
+        }
+      } catch (e) { /* ignore */ }
+    }
+    loadSchemas()
+  }, [])
 
   const handleSearch = useCallback(async () => {
     if (!sourceSchema.trim() || !sourceKey.trim()) return
@@ -420,13 +433,16 @@ function FaceSearchPanel({ onResult }) {
       <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
         <div>
           <label className="text-xs text-secondary block mb-1">Schema Name</label>
-          <input
-            type="text"
+          <select
             value={sourceSchema}
             onChange={(e) => setSourceSchema(e.target.value)}
-            placeholder="e.g. photos"
-            className="input w-full"
-          />
+            className="w-full px-3 py-2 rounded-lg bg-surface border border-border text-primary text-sm"
+          >
+            <option value="">Select schema...</option>
+            {faceSchemas.map(s => (
+              <option key={s.schema_name} value={s.schema_name}>{s.schema_name}</option>
+            ))}
+          </select>
         </div>
         <div>
           <label className="text-xs text-secondary block mb-1">Record Key</label>

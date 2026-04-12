@@ -234,7 +234,7 @@ export default function IngestionReport({ ingestionResult, onDismiss }) {
                                 <div className="text-xs text-gruvbox-red italic px-3 py-2">Record not found in database</div>
                               ) : (
                                 <Fragment>
-                                  <RecordMetadata metadata={record.metadata} />
+                                  <RecordMetadata metadata={record.metadata} schemaName={name} recordKey={keyLabel(kv)} />
                                   {maxVersion > 1 && <VersionHistory moleculeUuid={molUuid} />}
                                   <FieldsTable fields={record.fields} />
                                 </Fragment>
