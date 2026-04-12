@@ -1039,10 +1039,7 @@ async fn cloud_delete_account(
                 status, body
             ))))
         }
-        Err(e) => Some(Err(CliError::new(format!(
-            "Network error: {}",
-            e
-        )))),
+        Err(e) => Some(Err(CliError::new(format!("Network error: {}", e)))),
     }
 }
 
