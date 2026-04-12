@@ -115,14 +115,58 @@ async fn try_refresh_token(state: &web::Data<AppState>) -> Option<String> {
     }
 }
 
+/// Combined helper: resolve discovery config + auth token from an HTTP request.
+/// Eliminates the repeated `match get_discovery_config() { Ok(c) => c, Err(r) => return r }`
+/// + `match get_auth_token(&req) { Ok(t) => t, Err(r) => return r }` boilerplate.
+fn require_discovery_and_auth(
+    req: &HttpRequest,
+) -> Result<(String, Vec<u8>, String), HttpResponse> {
+    let (url, key) = get_discovery_config()?;
+    let auth_token = get_auth_token(req)?;
+    Ok((url, key, auth_token))
+}
+
+/// Execute a discovery handler with automatic auth-retry on 401.
+///
+/// Many discovery endpoints follow this pattern:
+/// 1. Call handler with current auth token
+/// 2. If 401 error, refresh token and retry once
+/// 3. Return result or error
+///
+/// This helper eliminates that 10-line match block repeated across 6 handlers.
+async fn with_auth_retry<T, F, Fut>(
+    state: &web::Data<AppState>,
+    auth_token: &str,
+    f: F,
+) -> HttpResponse
+where
+    T: serde::Serialize,
+    F: Fn(String) -> Fut,
+    Fut: std::future::Future<Output = Result<T, crate::handlers::HandlerError>>,
+{
+    match f(auth_token.to_string()).await {
+        Ok(response) => HttpResponse::Ok().json(response),
+        Err(e) if is_auth_error(&e) => {
+            if let Some(new_token) = try_refresh_token(state).await {
+                match f(new_token).await {
+                    Ok(response) => return HttpResponse::Ok().json(response),
+                    Err(e) => return handler_error_to_response(e),
+                }
+            }
+            handler_error_to_response(e)
+        }
+        Err(e) => handler_error_to_response(e),
+    }
+}
+
 /// Resolve discovery config for use in other route modules.
 /// Returns (discovery_url, master_key, auth_token) or a HandlerError.
+///
+/// When called without an HttpRequest, falls back to env var and keychain for auth.
 pub async fn resolve_discovery_config(
-    node: &crate::fold_node::node::FoldNode,
     req: Option<&HttpRequest>,
 ) -> Result<(String, Vec<u8>, String), crate::handlers::HandlerError> {
     let (url, key) = get_discovery_config().map_err(|resp| {
-        // Extract the error message from the HttpResponse body if possible
         let msg = "Discovery not configured. Register with Exemem to enable (folddb cloud enable).";
         if resp.status() == actix_web::http::StatusCode::INTERNAL_SERVER_ERROR {
             crate::handlers::HandlerError::Internal(msg.to_string())
@@ -131,7 +175,7 @@ pub async fn resolve_discovery_config(
         }
     })?;
 
-    // Try to get auth token from env, keychain, or dummy for the request
+    // Try to get auth token from env, keychain, or the request's Authorization header
     let token = if let Some(r) = req {
         get_auth_token(r).map_err(|_| {
             crate::handlers::HandlerError::Unauthorized("No auth token available".to_string())
@@ -152,7 +196,6 @@ pub async fn resolve_discovery_config(
             })?
     };
 
-    let _ = node; // may be used in future for node-specific config
     Ok((url, key, token))
 }
 
@@ -187,13 +230,8 @@ pub async fn opt_out(
 ) -> impl Responder {
     let (_user_hash, node) = node_or_return!(state);
 
-    let (url, key) = match get_discovery_config() {
+    let (url, key, auth_token) = match require_discovery_and_auth(&req) {
         Ok(c) => c,
-        Err(response) => return response,
-    };
-
-    let auth_token = match get_auth_token(&req) {
-        Ok(t) => t,
         Err(response) => return response,
     };
 
@@ -207,29 +245,18 @@ pub async fn opt_out(
 pub async fn publish(req: HttpRequest, state: web::Data<AppState>) -> impl Responder {
     let (_user_hash, node) = node_or_return!(state);
 
-    let (url, key) = match get_discovery_config() {
+    let (url, key, auth_token) = match require_discovery_and_auth(&req) {
         Ok(c) => c,
         Err(response) => return response,
     };
 
-    let auth_token = match get_auth_token(&req) {
-        Ok(t) => t,
-        Err(response) => return response,
-    };
-
-    match discovery_handlers::publish(&node, &url, &auth_token, &key).await {
-        Ok(response) => HttpResponse::Ok().json(response),
-        Err(e) if is_auth_error(&e) => {
-            if let Some(new_token) = try_refresh_token(&state).await {
-                match discovery_handlers::publish(&node, &url, &new_token, &key).await {
-                    Ok(response) => return HttpResponse::Ok().json(response),
-                    Err(e) => return handler_error_to_response(e),
-                }
-            }
-            handler_error_to_response(e)
-        }
-        Err(e) => handler_error_to_response(e),
-    }
+    with_auth_retry(&state, &auth_token, |token| {
+        let node = node.clone();
+        let url = url.clone();
+        let key = key.clone();
+        async move { discovery_handlers::publish(&node, &url, &token, &key).await }
+    })
+    .await
 }
 
 /// POST /api/discovery/search — Search the discovery network.
@@ -240,29 +267,19 @@ pub async fn search(
 ) -> impl Responder {
     let (_user_hash, node) = node_or_return!(state);
 
-    let (url, key) = match get_discovery_config() {
+    let (url, key, auth_token) = match require_discovery_and_auth(&req) {
         Ok(c) => c,
         Err(response) => return response,
     };
 
-    let auth_token = match get_auth_token(&req) {
-        Ok(t) => t,
-        Err(response) => return response,
-    };
-
-    match discovery_handlers::search(&body, &node, &url, &auth_token, &key).await {
-        Ok(response) => HttpResponse::Ok().json(response),
-        Err(e) if is_auth_error(&e) => {
-            if let Some(new_token) = try_refresh_token(&state).await {
-                match discovery_handlers::search(&body, &node, &url, &new_token, &key).await {
-                    Ok(response) => return HttpResponse::Ok().json(response),
-                    Err(e) => return handler_error_to_response(e),
-                }
-            }
-            handler_error_to_response(e)
-        }
-        Err(e) => handler_error_to_response(e),
-    }
+    with_auth_retry(&state, &auth_token, |token| {
+        let body = body.clone();
+        let node = node.clone();
+        let url = url.clone();
+        let key = key.clone();
+        async move { discovery_handlers::search(&body, &node, &url, &token, &key).await }
+    })
+    .await
 }
 
 /// POST /api/discovery/connect — Send an E2E encrypted connection request.
@@ -273,42 +290,27 @@ pub async fn connect(
 ) -> impl Responder {
     let (_user_hash, node) = node_or_return!(state);
 
-    let (url, key) = match get_discovery_config() {
+    let (url, key, auth_token) = match require_discovery_and_auth(&req) {
         Ok(c) => c,
         Err(response) => return response,
     };
 
-    let auth_token = match get_auth_token(&req) {
-        Ok(t) => t,
-        Err(response) => return response,
-    };
-
-    match discovery_handlers::connect(&body, &node, &url, &auth_token, &key).await {
-        Ok(response) => HttpResponse::Ok().json(response),
-        Err(e) if is_auth_error(&e) => {
-            if let Some(new_token) = try_refresh_token(&state).await {
-                match discovery_handlers::connect(&body, &node, &url, &new_token, &key).await {
-                    Ok(response) => return HttpResponse::Ok().json(response),
-                    Err(e) => return handler_error_to_response(e),
-                }
-            }
-            handler_error_to_response(e)
-        }
-        Err(e) => handler_error_to_response(e),
-    }
+    with_auth_retry(&state, &auth_token, |token| {
+        let body = body.clone();
+        let node = node.clone();
+        let url = url.clone();
+        let key = key.clone();
+        async move { discovery_handlers::connect(&body, &node, &url, &token, &key).await }
+    })
+    .await
 }
 
 /// GET /api/discovery/connection-requests — Poll, decrypt, and list received connection requests.
 pub async fn connection_requests(req: HttpRequest, state: web::Data<AppState>) -> impl Responder {
     let (_user_hash, node) = node_or_return!(state);
 
-    let (url, key) = match get_discovery_config() {
+    let (url, key, auth_token) = match require_discovery_and_auth(&req) {
         Ok(c) => c,
-        Err(response) => return response,
-    };
-
-    let auth_token = match get_auth_token(&req) {
-        Ok(t) => t,
         Err(response) => return response,
     };
 
@@ -326,13 +328,8 @@ pub async fn respond_to_request(
 ) -> impl Responder {
     let (_user_hash, node) = node_or_return!(state);
 
-    let (url, key) = match get_discovery_config() {
+    let (url, key, auth_token) = match require_discovery_and_auth(&req) {
         Ok(c) => c,
-        Err(response) => return response,
-    };
-
-    let auth_token = match get_auth_token(&req) {
-        Ok(t) => t,
         Err(response) => return response,
     };
 
@@ -356,13 +353,8 @@ pub async fn sent_requests(state: web::Data<AppState>) -> impl Responder {
 pub async fn poll_requests(req: HttpRequest, state: web::Data<AppState>) -> impl Responder {
     let (_user_hash, _node) = node_or_return!(state);
 
-    let (url, key) = match get_discovery_config() {
+    let (url, key, auth_token) = match require_discovery_and_auth(&req) {
         Ok(c) => c,
-        Err(response) => return response,
-    };
-
-    let auth_token = match get_auth_token(&req) {
-        Ok(t) => t,
         Err(response) => return response,
     };
 
@@ -377,30 +369,17 @@ pub async fn poll_requests(req: HttpRequest, state: web::Data<AppState>) -> impl
 pub async fn browse_categories(req: HttpRequest, state: web::Data<AppState>) -> impl Responder {
     let (_user_hash, _node) = node_or_return!(state);
 
-    let (url, key) = match get_discovery_config() {
+    let (url, key, auth_token) = match require_discovery_and_auth(&req) {
         Ok(c) => c,
         Err(response) => return response,
     };
 
-    let auth_token = match get_auth_token(&req) {
-        Ok(t) => t,
-        Err(response) => return response,
-    };
-
-    match discovery_handlers::browse_categories(&url, &auth_token, &key).await {
-        Ok(response) => HttpResponse::Ok().json(response),
-        Err(e) if is_auth_error(&e) => {
-            // Try refreshing the token and retrying once
-            if let Some(new_token) = try_refresh_token(&state).await {
-                match discovery_handlers::browse_categories(&url, &new_token, &key).await {
-                    Ok(response) => return HttpResponse::Ok().json(response),
-                    Err(e) => return handler_error_to_response(e),
-                }
-            }
-            handler_error_to_response(e)
-        }
-        Err(e) => handler_error_to_response(e),
-    }
+    with_auth_retry(&state, &auth_token, |token| {
+        let url = url.clone();
+        let key = key.clone();
+        async move { discovery_handlers::browse_categories(&url, &token, &key).await }
+    })
+    .await
 }
 
 /// GET /api/discovery/interests — Get detected interest categories.
@@ -440,13 +419,8 @@ pub async fn detect_interests(state: web::Data<AppState>) -> impl Responder {
 pub async fn similar_profiles(req: HttpRequest, state: web::Data<AppState>) -> impl Responder {
     let (_user_hash, node) = node_or_return!(state);
 
-    let (url, key) = match get_discovery_config() {
+    let (url, key, auth_token) = match require_discovery_and_auth(&req) {
         Ok(c) => c,
-        Err(response) => return response,
-    };
-
-    let auth_token = match get_auth_token(&req) {
-        Ok(t) => t,
         Err(response) => return response,
     };
 
@@ -580,6 +554,7 @@ pub async fn moment_scan(
     }
 }
 
+
 /// POST /api/discovery/moments/receive — Receive moment hashes from a peer.
 pub async fn moment_receive_hashes(
     body: web::Json<discovery_handlers::MomentHashReceiveRequest>,
@@ -638,29 +613,19 @@ pub async fn face_search(
 ) -> impl Responder {
     let (_user_hash, node) = node_or_return!(state);
 
-    let (url, key) = match get_discovery_config() {
+    let (url, key, auth_token) = match require_discovery_and_auth(&req) {
         Ok(c) => c,
         Err(response) => return response,
     };
 
-    let auth_token = match get_auth_token(&req) {
-        Ok(t) => t,
-        Err(response) => return response,
-    };
-
-    match discovery_handlers::face_search(&body, &node, &url, &auth_token, &key).await {
-        Ok(response) => HttpResponse::Ok().json(response),
-        Err(e) if is_auth_error(&e) => {
-            if let Some(new_token) = try_refresh_token(&state).await {
-                match discovery_handlers::face_search(&body, &node, &url, &new_token, &key).await {
-                    Ok(response) => return HttpResponse::Ok().json(response),
-                    Err(e) => return handler_error_to_response(e),
-                }
-            }
-            handler_error_to_response(e)
-        }
-        Err(e) => handler_error_to_response(e),
-    }
+    with_auth_retry(&state, &auth_token, |token| {
+        let body = body.clone();
+        let node = node.clone();
+        let url = url.clone();
+        let key = key.clone();
+        async move { discovery_handlers::face_search(&body, &node, &url, &token, &key).await }
+    })
+    .await
 }
 
 // === Data Sharing Routes ===
@@ -673,31 +638,19 @@ pub async fn share_data(
 ) -> impl Responder {
     let (_user_hash, node) = node_or_return!(state);
 
-    let (url, key) = match get_discovery_config() {
+    let (url, key, auth_token) = match require_discovery_and_auth(&req) {
         Ok(c) => c,
         Err(response) => return response,
     };
 
-    let auth_token = match get_auth_token(&req) {
-        Ok(t) => t,
-        Err(response) => return response,
-    };
-
-    match discovery_handlers::send_data_share(&body, &node, &url, &auth_token, &key).await {
-        Ok(response) => HttpResponse::Ok().json(response),
-        Err(e) if is_auth_error(&e) => {
-            if let Some(new_token) = try_refresh_token(&state).await {
-                match discovery_handlers::send_data_share(&body, &node, &url, &new_token, &key)
-                    .await
-                {
-                    Ok(response) => return HttpResponse::Ok().json(response),
-                    Err(e) => return handler_error_to_response(e),
-                }
-            }
-            handler_error_to_response(e)
-        }
-        Err(e) => handler_error_to_response(e),
-    }
+    with_auth_retry(&state, &auth_token, |token| {
+        let body = body.clone();
+        let node = node.clone();
+        let url = url.clone();
+        let key = key.clone();
+        async move { discovery_handlers::send_data_share(&body, &node, &url, &token, &key).await }
+    })
+    .await
 }
 
 // === Notification Routes ===
