@@ -67,10 +67,10 @@ export interface LocalConnectionRequest {
   status: string;
   created_at: string;
   responded_at: string | null;
-  vouches: Vouch[];
-  referral_query_id: string | null;
-  referral_contacts_queried: number;
-  mutual_contacts: MutualContact[];
+  vouches?: Vouch[];
+  referral_query_id?: string | null;
+  referral_contacts_queried?: number;
+  mutual_contacts?: MutualContact[];
 }
 
 export interface LocalSentRequest {

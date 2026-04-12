@@ -639,7 +639,7 @@ function ConnectionRequestsPanel({ onResult }) {
                         ))
                     }
                   </select>
-                  {!r.referral_query_id && (
+                  {!r.referral_query_id && (!r.mutual_contacts || r.mutual_contacts.length === 0) && (
                     <button
                       type="button"
                       className="btn btn-sm"
