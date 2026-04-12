@@ -90,9 +90,7 @@ impl FoldHttpServer {
     /// * There is an error starting the server
     pub async fn run(&self) -> FoldDbResult<()> {
         // Check for interrupted bootstrap and resume if needed
-        if let Some((api_url, api_key)) =
-            crate::server::routes::auth::check_bootstrap_pending()
-        {
+        if let Some((api_url, api_key)) = crate::server::routes::auth::check_bootstrap_pending() {
             log_feature!(
                 LogFeature::HttpServer,
                 info,
