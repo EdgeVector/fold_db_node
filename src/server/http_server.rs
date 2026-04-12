@@ -164,30 +164,64 @@ impl FoldHttpServer {
             node_manager: self.node_manager.clone(),
         });
 
-        // Auto-refresh Exemem session token on startup if credentials exist in keychain.
-        // This ensures a fresh 24h token is available for discovery and API calls.
-        // Non-fatal: if refresh fails (no network, no credentials), we log and continue.
-        // Wrapped in spawn_blocking + timeout because macOS Keychain access can block
-        // (e.g. permission dialogs) and must not prevent the HTTP server from starting.
+        // Auto-refresh Exemem session token on startup — but ONLY if the stored
+        // token is actually near expiry. Unconditionally re-registering on every
+        // boot rotates the API key (Exemem deactivates the old one), which leaves
+        // the in-memory `SyncEngine` holding a stale key and breaks cloud sync.
         //
+        // Non-fatal: if load/parse/refresh fails (no network, no credentials),
+        // we log and continue. Timeout guards against macOS Keychain blocking.
         {
             let app_state_clone = app_state.clone();
             tokio::spawn(async move {
-                if crate::keychain::has_credentials() {
-                    log::info!("Refreshing Exemem session token...");
-                    match tokio::time::timeout(
-                        std::time::Duration::from_secs(10),
-                        crate::server::routes::auth::refresh_session_token(&app_state_clone),
-                    )
-                    .await
-                    {
-                        Ok(Ok(_)) => log::info!("Exemem session token refreshed successfully"),
-                        Ok(Err(e)) => {
-                            log::warn!("Exemem session token refresh failed (non-fatal): {}", e)
-                        }
-                        Err(_) => log::warn!(
-                            "Exemem session token refresh timed out after 10s (non-fatal)"
-                        ),
+                // Load stored credentials so we can inspect the session token
+                // and decide whether a refresh is actually needed.
+                let creds = match crate::keychain::load_credentials() {
+                    Ok(Some(c)) => c,
+                    Ok(None) => {
+                        log::info!("No Exemem credentials stored; skipping startup refresh");
+                        return;
+                    }
+                    Err(e) => {
+                        log::warn!("Failed to load Exemem credentials (non-fatal): {}", e);
+                        return;
+                    }
+                };
+
+                // Only refresh when the token is near expiry. Threshold of 12h
+                // of remaining lifetime means each boot can refresh at most once
+                // per half-day instead of on every launch.
+                const MIN_REMAINING_SECS: i64 = 12 * 60 * 60;
+                let now = chrono::Utc::now().timestamp();
+                match session_token_needs_refresh(&creds.session_token, now, MIN_REMAINING_SECS) {
+                    Ok(false) => {
+                        log::info!(
+                            "Exemem session token still valid (>12h remaining); skipping startup refresh"
+                        );
+                        return;
+                    }
+                    Ok(true) => {
+                        log::info!("Exemem session token near expiry; refreshing...");
+                    }
+                    Err(e) => {
+                        // Malformed token — treat as "needs refresh" rather than
+                        // a silent skip, so we recover from a corrupted token.
+                        log::warn!("Unable to parse stored session token ({}); refreshing", e);
+                    }
+                }
+
+                match tokio::time::timeout(
+                    std::time::Duration::from_secs(10),
+                    crate::server::routes::auth::refresh_session_token(&app_state_clone),
+                )
+                .await
+                {
+                    Ok(Ok(_)) => log::info!("Exemem session token refreshed successfully"),
+                    Ok(Err(e)) => {
+                        log::warn!("Exemem session token refresh failed (non-fatal): {}", e)
+                    }
+                    Err(_) => {
+                        log::warn!("Exemem session token refresh timed out after 10s (non-fatal)")
                     }
                 }
             });
@@ -980,6 +1014,32 @@ impl FoldHttpServer {
     }
 }
 
+/// Determine whether the stored Exemem session token needs refreshing.
+///
+/// Session tokens have the format `user_hash.timestamp.expiry.signature` where
+/// `expiry` is a Unix timestamp in seconds. The token needs refreshing when the
+/// remaining lifetime `(expiry - now)` is less than `min_remaining_secs`.
+///
+/// Returns `Err` on any parse failure — callers should treat that as "refresh
+/// anyway" rather than silently skipping, so a corrupted token is recoverable.
+pub(crate) fn session_token_needs_refresh(
+    token: &str,
+    now: i64,
+    min_remaining_secs: i64,
+) -> Result<bool, String> {
+    let parts: Vec<&str> = token.split('.').collect();
+    if parts.len() != 4 {
+        return Err(format!(
+            "session token must have 4 dot-separated parts, got {}",
+            parts.len()
+        ));
+    }
+    let expiry: i64 = parts[2]
+        .parse()
+        .map_err(|e| format!("session token expiry field is not a valid integer: {e}"))?;
+    Ok((expiry - now) < min_remaining_secs)
+}
+
 /// Serve embedded static assets from the React build.
 /// Falls back to index.html for SPA client-side routing.
 async fn serve_embedded_asset(req: HttpRequest) -> HttpResponse {
@@ -1007,5 +1067,43 @@ async fn serve_embedded_asset(req: HttpRequest) -> HttpResponse {
                 .body(content.data.into_owned()),
             None => HttpResponse::NotFound().body("UI not available"),
         }
+    }
+}
+
+#[cfg(test)]
+mod session_token_tests {
+    use super::session_token_needs_refresh;
+
+    #[test]
+    fn token_far_from_expiry_does_not_need_refresh() {
+        // now = 1000, expiry = 1000 + 24h, threshold = 12h → plenty of time left
+        let now = 1000;
+        let expiry = now + 24 * 3600;
+        let token = format!("userhash.{}.{}.sigsig", now, expiry);
+        assert!(!session_token_needs_refresh(&token, now, 12 * 3600).unwrap());
+    }
+
+    #[test]
+    fn token_near_expiry_needs_refresh() {
+        // 1h remaining, threshold = 12h → needs refresh
+        let now = 1000;
+        let expiry = now + 3600;
+        let token = format!("userhash.{}.{}.sigsig", now, expiry);
+        assert!(session_token_needs_refresh(&token, now, 12 * 3600).unwrap());
+    }
+
+    #[test]
+    fn malformed_token_returns_err() {
+        assert!(session_token_needs_refresh("not-a-token", 0, 1).is_err());
+        assert!(session_token_needs_refresh("a.b.c", 0, 1).is_err());
+        assert!(session_token_needs_refresh("a.b.notanum.d", 0, 1).is_err());
+    }
+
+    #[test]
+    fn expired_token_needs_refresh() {
+        let now = 10_000;
+        let expiry = 9_000; // already expired
+        let token = format!("userhash.{}.{}.sigsig", 1000, expiry);
+        assert!(session_token_needs_refresh(&token, now, 0).unwrap());
     }
 }
