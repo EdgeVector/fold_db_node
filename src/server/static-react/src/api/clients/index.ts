@@ -1,7 +1,6 @@
 /**
  * API Clients Index
  * Centralized exports for all API clients
- * Part of API-STD-1 standardization
  */
 
 // Schema Client
@@ -33,23 +32,18 @@ export {
 // System Client
 export {
   systemClient,
-  UnifiedSystemClient,
-  createSystemClient,
   getLogs,
   resetDatabase,
   getSystemStatus,
   createLogStream,
-  validateResetRequest,
 } from "./systemClient";
 
-// Mutation Client (if exists)
+// Mutation Client
 export * from "./mutationClient";
 
 // Ingestion Client
 export {
   ingestionClient,
-  UnifiedIngestionClient,
-  createIngestionClient,
 } from "./ingestionClient";
 
 // LLM Query Client
@@ -71,37 +65,12 @@ export type {
   FaceSearchResult,
 } from "./discoveryClient";
 
-// Type exports for convenience
 export type {
-  SchemasByStateResponse,
-  SchemasWithStateResponse,
-  SchemaStatusResponse,
-} from "./schemaClient";
-
-export type {
-  SystemKeyResponse,
-  SecurityStatus,
-} from "./securityClient";
-
-export type {
-  LogsResponse,
   ResetDatabaseRequest,
   ResetDatabaseResponse,
-  SystemStatusResponse,
 } from "./systemClient";
 
 export type {
-  IngestionStatus,
-  IngestionProgress,
-  IngestionResults,
   OllamaConfig,
-  AnthropicConfig,
   IngestionConfig,
-  ValidationRequest,
-  ValidationResponse,
-  ProcessIngestionRequest,
-  ProcessIngestionResponse,
-  FileRecommendation,
-  SmartFolderScanResponse,
-  SmartFolderIngestResponse,
 } from "./ingestionClient";

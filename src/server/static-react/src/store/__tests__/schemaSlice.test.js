@@ -17,9 +17,6 @@ import {
   resetSchemas,
   selectAllSchemas,
   selectApprovedSchemas,
-  selectAvailableSchemas,
-  selectBlockedSchemas,
-  selectSchemaById,
   selectFetchLoading,
   selectFetchError
 } from '../schemaSlice';
@@ -269,29 +266,6 @@ describe('schemaSlice', () => {
       const approvedSchemas = selectApprovedSchemas(store.getState());
       expect(approvedSchemas).toHaveLength(3);
       expect(approvedSchemas.every(schema => schema.state === 'approved')).toBe(true);
-    });
-
-    it('should select only available schemas', () => {
-      const availableSchemas = selectAvailableSchemas(store.getState());
-      expect(availableSchemas).toHaveLength(1);
-      expect(availableSchemas[0].name).toBe('available-schema');
-    });
-
-    it('should select only blocked schemas', () => {
-      const blockedSchemas = selectBlockedSchemas(store.getState());
-      expect(blockedSchemas).toHaveLength(1);
-      expect(blockedSchemas[0].name).toBe('blocked-schema');
-    });
-
-    it('should select schema by ID', () => {
-      const schema = selectSchemaById('approved-schema-1')(store.getState());
-      expect(schema?.name).toBe('approved-schema-1');
-      expect(schema?.state).toBe('approved');
-    });
-
-    it('should return null for non-existent schema', () => {
-      const schema = selectSchemaById('non-existent')(store.getState());
-      expect(schema).toBeNull();
     });
 
     it('should select fetch loading state', () => {

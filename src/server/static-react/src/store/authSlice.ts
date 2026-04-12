@@ -16,11 +16,6 @@ export interface KeyAuthenticationState {
   publicKeyId: string | null;
   isLoading: boolean;
   error: string | null;
-  // Magic link auth state
-  email: string | null;
-  magicLinkPending: boolean;
-  sessionToken: string | null;
-  apiKey: string | null;
 }
 
 const initialState: KeyAuthenticationState = {
@@ -30,10 +25,6 @@ const initialState: KeyAuthenticationState = {
   publicKeyId: null,
   isLoading: false,
   error: null,
-  email: null,
-  magicLinkPending: false,
-  sessionToken: null,
-  apiKey: null,
 };
 
 // Async thunk for auto-login using the node's public key identity (all modes)
@@ -77,60 +68,6 @@ export const loadSystemPublicKey = createAsyncThunk(
     } catch (err) {
       return rejectWithValue(
         err instanceof Error ? err.message : "Failed to load system public key",
-      );
-    }
-  },
-);
-
-// Async thunk for starting magic link verification
-export const startMagicLink = createAsyncThunk(
-  "auth/startMagicLink",
-  async (email: string, { rejectWithValue }) => {
-    try {
-      const resp = await fetch("/api/auth/magic-link/start", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ email }),
-      });
-      const data = await resp.json();
-      if (data.ok) {
-        return { email };
-      }
-      return rejectWithValue(data.error || "Failed to send verification code");
-    } catch (err) {
-      return rejectWithValue(
-        err instanceof Error ? err.message : "Network error",
-      );
-    }
-  },
-);
-
-// Async thunk for verifying magic link code
-export const verifyMagicLink = createAsyncThunk(
-  "auth/verifyMagicLink",
-  async (
-    { email, code }: { email: string; code: string },
-    { rejectWithValue },
-  ) => {
-    try {
-      const resp = await fetch("/api/auth/magic-link/verify", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ email, code }),
-      });
-      const data = await resp.json();
-      if (data.ok) {
-        return {
-          userHash: data.user_hash,
-          sessionToken: data.session_token,
-          apiKey: data.api_key,
-          isNewUser: data.is_new_user,
-        };
-      }
-      return rejectWithValue(data.error || "Verification failed");
-    } catch (err) {
-      return rejectWithValue(
-        err instanceof Error ? err.message : "Network error",
       );
     }
   },
@@ -190,41 +127,6 @@ const authSlice = createSlice({
       .addCase(autoLogin.rejected, (state, action) => {
         state.isLoading = false;
         state.error = (action.payload as string) || "Auto-login failed";
-      })
-      // startMagicLink cases
-      .addCase(startMagicLink.pending, (state) => {
-        state.magicLinkPending = true;
-        state.error = null;
-      })
-      .addCase(startMagicLink.fulfilled, (state, action) => {
-        state.magicLinkPending = true;
-        state.email = action.payload.email;
-        state.error = null;
-      })
-      .addCase(startMagicLink.rejected, (state, action) => {
-        state.magicLinkPending = false;
-        state.error = action.payload as string;
-      })
-      // verifyMagicLink cases
-      .addCase(verifyMagicLink.pending, (state) => {
-        state.isLoading = true;
-        state.error = null;
-      })
-      .addCase(verifyMagicLink.fulfilled, (state, action) => {
-        state.isLoading = false;
-        state.magicLinkPending = false;
-        state.isAuthenticated = true;
-        state.sessionToken = action.payload.sessionToken;
-        state.apiKey = action.payload.apiKey;
-        state.user = {
-          id: state.email || "",
-          hash: action.payload.userHash,
-        };
-        state.error = null;
-      })
-      .addCase(verifyMagicLink.rejected, (state, action) => {
-        state.isLoading = false;
-        state.error = action.payload as string;
       })
       // loadSystemPublicKey cases
       .addCase(loadSystemPublicKey.fulfilled, (state, action) => {

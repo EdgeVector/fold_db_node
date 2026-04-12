@@ -9,9 +9,9 @@ const STOPWORDS = new Set([
 const SEARCH_BATCH = 8
 
 export function makeSchemaId(name) { return `schema:${name}` }
-export function makeWordId(term)   { return `word:${term}` }
+function makeWordId(term)   { return `word:${term}` }
 
-export function formatKey(kv) {
+function formatKey(kv) {
   const parts = []
   if (kv?.hash)  parts.push(kv.hash.slice(0, 12))
   if (kv?.range) parts.push(kv.range.slice(0, 12))

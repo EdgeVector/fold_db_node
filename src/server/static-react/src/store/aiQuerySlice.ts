@@ -154,8 +154,6 @@ export default aiQuerySlice.reducer;
 // SELECTORS
 // ============================================================================
 
-export const selectAIQueryState = (state: { aiQuery: AIQueryState }) => state.aiQuery;
-
 export const selectInputText = (state: { aiQuery: AIQueryState }) => state.aiQuery.inputText;
 
 export const selectSessionId = (state: { aiQuery: AIQueryState }) => state.aiQuery.sessionId;
@@ -168,8 +166,5 @@ export const selectShowResults = (state: { aiQuery: AIQueryState }) => state.aiQ
 
 export const selectViewMode = (state: { aiQuery: AIQueryState }) => state.aiQuery.viewMode;
 
-export const selectHasResults = (state: { aiQuery: AIQueryState }) => 
-  state.aiQuery.conversationLog.some(log => log.type === 'results');
-
-export const selectCanAskFollowup = (state: { aiQuery: AIQueryState }) => 
+export const selectCanAskFollowup = (state: { aiQuery: AIQueryState }) =>
   state.aiQuery.sessionId && state.aiQuery.conversationLog.some(log => log.type === 'results');

@@ -116,7 +116,4 @@ export const selectIsAiConfigured = (state: RootState) => {
   return !!providerConfig.model;
 };
 
-export const selectIsAiReady = (state: RootState) =>
-  state.ingestion.config !== null && selectIsAiConfigured(state);
-
 export default ingestionSlice.reducer;

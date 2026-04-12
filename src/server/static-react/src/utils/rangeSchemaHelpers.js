@@ -15,7 +15,6 @@
  */
 
 import { RANGE_SCHEMA_CONFIG } from '../constants/schemas.js';
-import { VALIDATION_MESSAGES } from '../constants/validation.js';
 import { MUTATION_TYPE_API_MAP } from '../constants/ui.js';
 
 /**
@@ -42,7 +41,7 @@ import { MUTATION_TYPE_API_MAP } from '../constants/ui.js';
  * @param {Schema} schema - Schema object
  * @returns {'Single'|'Range'|'HashRange'|null} Schema type or null if not determinable
  */
-export function getSchemaType(schema) {
+function getSchemaType(schema) {
   if (!schema || typeof schema !== 'object') return null;
   
   const schemaType = schema.schema_type;
@@ -76,17 +75,6 @@ export function isHashRangeSchema(schema) {
   
   // Trust backend schema_type - it knows best
   return getSchemaType(schema) === 'HashRange';
-}
-
-/**
- * Gets the hash field expression for a HashRange schema
- * 
- * @param {Schema} schema - Schema object
- * @returns {string|null} Hash field expression or null if not found
- */
-export function getHashField(schema) {
-  if (!schema || !isHashRangeSchema(schema)) return null;
-  return schema.key?.hash_field || null;
 }
 
 /**
@@ -155,101 +143,6 @@ export function getHashKey(schema) {
 }
 
 /**
- * Returns a normalized key shape for the schema.
- * { type: 'single'|'range'|'hashrange', hashField: string|null, rangeField: string|null }
- * @param {Schema} schema
- * @returns {{type:string, hashField:string|null, rangeField:string|null}}
- */
-export function getKeyShape(schema) {
-  const hashField = getHashKey(schema);
-  const rangeField = getRangeKey(schema);
-  let type = 'single';
-  if (isHashRangeSchema(schema)) type = 'hashrange';
-  else if (isRangeSchema(schema)) type = 'range';
-  return { type, hashField, rangeField };
-}
-
-/**
- * Gets all non-range-key fields for a range schema
- * 
- * @param {Schema} schema - Schema object
- * @returns {Object} Object containing non-range-key fields
- */
-export function getNonRangeKeyFields(schema) {
-  if (!isRangeSchema(schema)) {
-    return {};
-  }
-  
-  const rangeKey = getRangeKey(schema);
-  
-  // Declarative schema fields are an array of strings - convert to object format
-  if (!Array.isArray(schema.fields)) {
-    throw new Error(`Expected schema.fields to be an array for range schema "${schema.name}", got ${typeof schema.fields}`);
-  }
-  
-  return schema.fields.reduce((acc, fieldName) => {
-    if (fieldName !== rangeKey) {
-      acc[fieldName] = {};
-    }
-    return acc;
-  }, {});
-}
-
-/**
- * Gets range fields from a schema
- * Note: Declarative schemas don't store field types, so this returns empty array
- * 
- * @param {Schema} schema - Schema object
- * @returns {string[]} Array of range field names (empty for declarative schemas)
- */
-export function getRangeFields(schema) {
-  if (!schema || !schema.fields) return [];
-  // Declarative schemas don't have field_type metadata
-  return [];
-}
-
-/**
- * Gets non-range fields from a schema
- * Note: Declarative schemas don't have field_type metadata
- * 
- * @param {Schema} schema - Schema object
- * @returns {Object} Object containing all fields (declarative schemas don't distinguish by type)
- */
-export function getNonRangeFields(schema) {
-  if (!schema) {
-    throw new Error('Schema is required for getNonRangeFields');
-  }
-  if (!schema.fields) {
-    throw new Error(`Schema "${schema.name}" is missing fields property`);
-  }
-  if (!Array.isArray(schema.fields)) {
-    throw new Error(`Expected schema.fields to be an array for schema "${schema.name}", got ${typeof schema.fields}`);
-  }
-  
-  return schema.fields.reduce((acc, fieldName) => {
-    acc[fieldName] = {};
-    return acc;
-  }, {});
-}
-
-/**
- * Validates range_key for range schema mutations
- * Minimal validation - backend is authoritative
- * 
- * @param {string} rangeKeyValue - Range key value to validate
- * @param {boolean} [isRequired=true] - Whether range key is required
- * @returns {string|null} Error message or null if valid
- */
-export function validateRangeKey(rangeKeyValue, isRequired = true) {
-  // Only check if required field is completely missing - backend handles everything else
-  if (isRequired && !rangeKeyValue) {
-    return 'Range key is required';
-  }
-  
-  return null;
-}
-
-/**
  * Enhanced range schema mutation formatter with better validation
  * Range schemas require non-range_key fields to be JSON objects
  * 
@@ -307,57 +200,21 @@ export function formatRangeMutation(schema, mutationType, rangeKeyValue, fieldDa
   return mutation;
 }
 
-/**
- * Formats a range schema query with proper HashRangeFilter
- * 
- * @param {Schema} schema - Schema object
- * @param {string[]} fields - Fields to query
- * @param {string} [rangeFilterValue] - Range filter value
- * @returns {Object} Formatted query object
- */
-export function formatRangeQuery(schema, fields, rangeFilterValue) {
-  const query = {
-    type: 'query',
-    schema: schema.name,
-    fields: fields
-  };
-  
-  if (rangeFilterValue && rangeFilterValue.trim()) {
-    // Use RangeKey filter for exact range key match
-    query.filter = { "RangeKey": rangeFilterValue.trim() };
+function getNonRangeKeyFields(schema) {
+  if (!isRangeSchema(schema)) return {};
+  const rangeKey = getRangeKey(schema);
+  if (!Array.isArray(schema.fields)) {
+    throw new Error(`Expected schema.fields to be an array for range schema "${schema.name}", got ${typeof schema.fields}`);
   }
-  
-  return query;
-}
-
-/**
- * Formats a HashRange schema query with hash and range key filters
- * 
- * @param {Schema} schema - Schema object
- * @param {string[]} fields - Fields to query
- * @param {string} [hashKey] - Hash key value
- * @param {string} [rangeKey] - Range key value
- * @returns {Object} Formatted query object
- */
-export function formatHashRangeQuery(schema, fields, hashKey, rangeKey) {
-  const query = {
-    type: 'query',
-    schema: schema.name,
-    fields: fields
-  };
-  
-  if (hashKey && hashKey.trim()) {
-    query.filter = { "HashKey": hashKey.trim() };
-  } else if (rangeKey && rangeKey.trim()) {
-    query.filter = { "RangeKey": rangeKey.trim() };
-  }
-  
-  return query;
+  return schema.fields.reduce((acc, fieldName) => {
+    if (fieldName !== rangeKey) acc[fieldName] = {};
+    return acc;
+  }, {});
 }
 
 /**
  * Gets comprehensive range schema display information
- * 
+ *
  * @param {Schema} schema - Schema object
  * @returns {RangeSchemaInfo|null} Range schema info or null if not a range schema
  */

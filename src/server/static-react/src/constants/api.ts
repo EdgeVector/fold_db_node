@@ -150,24 +150,6 @@ export const SCHEMA_OPERATIONS = {
   QUERY: "query",
 } as const;
 
-// Operation Type Classification
-export const OPERATION_TYPES = {
-  QUERY: "query",
-  MUTATION: "mutation",
-  SYSTEM: "system",
-  INGESTION: "ingestion",
-  SECURITY: "security",
-  TRANSFORM: "transform",
-} as const;
-
-// Request Priority Levels
-export const REQUEST_PRIORITIES = {
-  LOW: "low",
-  NORMAL: "normal",
-  HIGH: "high",
-  CRITICAL: "critical",
-} as const;
-
 // Cache Key Prefixes
 export const CACHE_KEYS = {
   SCHEMAS: "schemas",
@@ -184,11 +166,3 @@ export const CACHE_KEYS = {
 
 // Type definitions for better type safety
 export type SchemaState = (typeof SCHEMA_STATES)[keyof typeof SCHEMA_STATES];
-export type SchemaOperation =
-  (typeof SCHEMA_OPERATIONS)[keyof typeof SCHEMA_OPERATIONS];
-export type OperationType =
-  (typeof OPERATION_TYPES)[keyof typeof OPERATION_TYPES];
-export type RequestPriority =
-  (typeof REQUEST_PRIORITIES)[keyof typeof REQUEST_PRIORITIES];
-export type HttpStatusCode =
-  (typeof HTTP_STATUS_CODES)[keyof typeof HTTP_STATUS_CODES];

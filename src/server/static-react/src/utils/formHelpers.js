@@ -46,29 +46,6 @@ export function generateInputStyles({
 }
 
 /**
- * Generates select styling classes based on field state
- * @param {Object} options - Styling options
- * @param {boolean} options.hasError - Whether field has error
- * @param {boolean} options.disabled - Whether field is disabled
- * @param {boolean} options.loading - Whether field is loading
- * @param {string} [options.additionalClasses=''] - Additional CSS classes
- * @returns {string} Combined CSS classes
- */
-export function generateSelectStyles({
-  hasError,
-  disabled,
-  loading,
-  additionalClasses = "",
-}) {
-  const baseStyles = "select";
-  const errorStyles = hasError ? "border-gruvbox-red" : "";
-  const disabledStyles =
-    disabled || loading ? "opacity-50 cursor-not-allowed" : "";
-
-  return `${baseStyles} ${errorStyles} ${disabledStyles} ${additionalClasses}`.trim();
-}
-
-/**
  * Generates ARIA attributes for form fields
  * @param {Object} options - ARIA options
  * @param {string} options.fieldId - Field ID
@@ -88,23 +65,6 @@ export function generateAriaAttributes({ fieldId, hasError, hasHelp }) {
   }
 
   return attributes;
-}
-
-/**
- * Creates a debounced function for field validation
- * @param {Function} validationFn - Validation function to debounce
- * @param {number} delay - Debounce delay in milliseconds
- * @returns {Function} Debounced validation function
- */
-export function createDebouncedValidation(validationFn, delay) {
-  let timeoutId;
-
-  return (...args) => {
-    clearTimeout(timeoutId);
-    timeoutId = setTimeout(() => {
-      validationFn(...args);
-    }, delay);
-  };
 }
 
 /**
