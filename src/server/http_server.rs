@@ -89,6 +89,35 @@ impl FoldHttpServer {
     /// * There is an error binding to the specified address
     /// * There is an error starting the server
     pub async fn run(&self) -> FoldDbResult<()> {
+        // Check for interrupted bootstrap and resume if needed
+        if let Some((api_url, api_key)) =
+            crate::server::routes::auth::check_bootstrap_pending()
+        {
+            log_feature!(
+                LogFeature::HttpServer,
+                info,
+                "Found interrupted bootstrap — resuming cloud data download"
+            );
+            let node_manager = self.node_manager.clone();
+            tokio::spawn(async move {
+                // Get Sled pool from the node manager
+                if let Some(pool) = node_manager.get_sled_pool().await {
+                    if let Err(e) = crate::server::routes::auth::resume_bootstrap(
+                        &api_url,
+                        &api_key,
+                        &node_manager,
+                        pool,
+                    )
+                    .await
+                    {
+                        log::error!("Bootstrap resume failed: {}", e);
+                    }
+                } else {
+                    log::warn!("Cannot resume bootstrap: no Sled pool available yet");
+                }
+            });
+        }
+
         // Load schemas from schema service if configured
         self.load_schemas_if_configured().await?;
 

@@ -682,14 +682,65 @@ pub async fn restore_from_phrase(
     }
 }
 
+/// Path to the bootstrap pending marker file.
+fn bootstrap_marker_path() -> Option<std::path::PathBuf> {
+    crate::utils::paths::folddb_home()
+        .ok()
+        .map(|h| h.join("data").join(".bootstrap_pending"))
+}
+
+/// Write a marker so bootstrap resumes if the app is restarted mid-download.
+fn write_bootstrap_marker(api_url: &str, api_key: &str) {
+    if let Some(path) = bootstrap_marker_path() {
+        if let Some(parent) = path.parent() {
+            let _ = std::fs::create_dir_all(parent);
+        }
+        let marker = serde_json::json!({
+            "api_url": api_url,
+            "api_key": api_key,
+        });
+        let _ = std::fs::write(
+            &path,
+            serde_json::to_string_pretty(&marker).unwrap_or_default(),
+        );
+        log::info!("Wrote bootstrap marker at {:?}", path);
+    }
+}
+
+/// Remove the marker after successful bootstrap.
+fn clear_bootstrap_marker() {
+    if let Some(path) = bootstrap_marker_path() {
+        let _ = std::fs::remove_file(&path);
+        log::info!("Cleared bootstrap marker");
+    }
+}
+
+/// Check if a bootstrap was interrupted and needs resuming.
+/// Returns (api_url, api_key) if a marker exists.
+pub fn check_bootstrap_pending() -> Option<(String, String)> {
+    let path = bootstrap_marker_path()?;
+    let contents = std::fs::read_to_string(&path).ok()?;
+    let marker: serde_json::Value = serde_json::from_str(&contents).ok()?;
+    let api_url = marker["api_url"].as_str()?.to_string();
+    let api_key = marker["api_key"].as_str()?.to_string();
+    Some((api_url, api_key))
+}
+
 /// Bootstrap the local database from cloud storage (R2/S3).
 ///
-/// Accepts a pre-cloned `Arc<SledPool>` from the running server's shared node.
-/// The caller grabs this pool BEFORE `update_config()` / `invalidate_all_nodes()`
-/// so it stays alive even after the shared node is cleared.
+/// Writes a marker file before starting so if the process is killed mid-download,
+/// the bootstrap resumes on the next daemon start. Marker is cleared on success.
 ///
-/// Downloads the latest snapshot and replays any write logs after it,
-/// restoring the full database state on a new/recovered device.
+/// Also callable as `resume_bootstrap` from the server startup path.
+pub async fn resume_bootstrap(
+    api_url: &str,
+    api_key: &str,
+    node_manager: &std::sync::Arc<crate::server::node_manager::NodeManager>,
+    sled_pool: std::sync::Arc<fold_db::storage::SledPool>,
+) -> Result<(), String> {
+    bootstrap_from_cloud(api_url, api_key, node_manager, sled_pool).await
+}
+
 async fn bootstrap_from_cloud(
     api_url: &str,
     api_key: &str,
@@ -697,6 +748,7 @@ async fn bootstrap_from_cloud(
     sled_pool: std::sync::Arc<fold_db::storage::SledPool>,
 ) -> Result<(), String> {
     log::info!("Starting database bootstrap from cloud after identity restore");
+    write_bootstrap_marker(api_url, api_key);
 
     // Derive E2E encryption keys from the restored identity (one key for everything)
     let config = node_manager.get_base_config().await;
@@ -753,6 +805,7 @@ async fn bootstrap_from_cloud(
         final_seq
     );
 
+    clear_bootstrap_marker();
     Ok(())
 }
 
