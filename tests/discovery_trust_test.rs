@@ -18,6 +18,7 @@ fn test_connection_payload_with_identity_card() {
             node_public_key: "node_pk_alice".to_string(),
         }),
         preferred_role: None,
+        network_keys: None,
     };
     let json = serde_json::to_string(&payload).unwrap();
     let deserialized: ConnectionPayload = serde_json::from_str(&json).unwrap();

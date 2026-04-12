@@ -64,6 +64,10 @@ pub struct ConnectionPayload {
     /// `process_accepted_connection` when the accept comes back.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub preferred_role: Option<String>,
+    /// Ed25519 public keys of sender's contacts for mutual-contact detection.
+    /// Included in the encrypted payload — only the recipient can read them.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub network_keys: Option<Vec<String>>,
 }
 
 /// Encrypt a connection payload for a target's X25519 public key.
@@ -262,6 +266,13 @@ pub struct Vouch {
     pub received_at: String,
 }
 
+/// A mutual contact discovered via network intersection.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct MutualContact {
+    pub display_name: String,
+    pub public_key: String,
+}
+
 /// A decrypted, locally stored connection request.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct LocalConnectionRequest {
@@ -282,6 +293,9 @@ pub struct LocalConnectionRequest {
     pub referral_query_id: Option<String>,
     #[serde(default)]
     pub referral_contacts_queried: u32,
+    /// Mutual contacts found by intersecting sender's network with ours.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub mutual_contacts: Vec<MutualContact>,
 }
 
 /// A locally stored sent connection request.
@@ -522,6 +536,7 @@ mod tests {
             reply_public_key: "reply_pk_base64".to_string(),
             identity_card: None,
             preferred_role: None,
+            network_keys: None,
         };
 
         let encrypted = encrypt_connection_message(public.as_bytes(), &payload).unwrap();
@@ -549,6 +564,7 @@ mod tests {
             reply_public_key: "rpk".to_string(),
             identity_card: None,
             preferred_role: None,
+            network_keys: None,
         };
 
         let encrypted = encrypt_connection_message(public.as_bytes(), &payload).unwrap();
@@ -573,6 +589,7 @@ mod tests {
             reply_public_key: "rpk".to_string(),
             identity_card: None,
             preferred_role: None,
+            network_keys: None,
         };
 
         let encrypted = encrypt_message(public.as_bytes(), &payload).unwrap();

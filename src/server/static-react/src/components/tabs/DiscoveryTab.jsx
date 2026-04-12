@@ -672,6 +672,21 @@ function ConnectionRequestsPanel({ onResult }) {
                 </div>
               </div>
               <p className="text-sm text-primary">{r.message}</p>
+              {/* Mutual contacts (instant, from network intersection) */}
+              {r.mutual_contacts && r.mutual_contacts.length > 0 && (
+                <div className="mt-2 p-2 bg-gruvbox-green/10 rounded border border-gruvbox-green/30">
+                  <p className="text-xs font-medium text-gruvbox-green mb-1">
+                    {r.mutual_contacts.length} mutual contact{r.mutual_contacts.length !== 1 ? 's' : ''}:
+                  </p>
+                  <div className="flex flex-wrap gap-1">
+                    {r.mutual_contacts.map((mc, i) => (
+                      <span key={i} className="px-2 py-0.5 text-xs rounded-full bg-gruvbox-green/20 text-gruvbox-green font-medium">
+                        {mc.display_name}
+                      </span>
+                    ))}
+                  </div>
+                </div>
+              )}
               {/* Vouches from trusted contacts */}
               {r.vouches && r.vouches.length > 0 && (
                 <div className="mt-2 space-y-1">
