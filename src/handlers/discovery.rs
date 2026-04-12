@@ -644,11 +644,23 @@ pub async fn poll_and_decrypt_requests(
     let our_pseudonyms: Vec<uuid::Uuid> = {
         let mut pseudonyms = Vec::new();
 
-        // Add our connection-sender pseudonym (used by the connect handler as sender_pseudonym)
+        // Add our connection-sender pseudonym (fallback used by connect handler when no opt-ins)
         let hash = crate::discovery::pseudonym::content_hash("connection-sender");
         pseudonyms.push(crate::discovery::pseudonym::derive_pseudonym(
             master_key, &hash,
         ));
+
+        // Add our schema-name-derived sender pseudonyms. The connect handler uses
+        // derive_pseudonym(master_key, content_hash(first_opt_in.schema_name)) as
+        // sender_pseudonym. When someone replies or shares data to that pseudonym,
+        // we need to poll for it. Without this, data shares never reach their target.
+        for cfg in &configs {
+            let schema_hash = crate::discovery::pseudonym::content_hash(&cfg.schema_name);
+            pseudonyms.push(crate::discovery::pseudonym::derive_pseudonym(
+                master_key,
+                &schema_hash,
+            ));
+        }
 
         // Add pseudonyms derived from actual published embeddings (same as publisher.rs)
         let native_index_mgr = db_ops.native_index_manager();
@@ -687,6 +699,14 @@ pub async fn poll_and_decrypt_requests(
         // Each UUID is 36 chars + comma separator. At 1000 pseudonyms that's ~37KB,
         // within typical URL limits for most HTTP servers.
         pseudonyms.truncate(1000);
+        log::debug!(
+            "our_pseudonyms[0..5]: {:?}",
+            pseudonyms
+                .iter()
+                .take(5)
+                .map(|p| p.to_string())
+                .collect::<Vec<_>>()
+        );
         pseudonyms
     };
 
@@ -696,21 +716,24 @@ pub async fn poll_and_decrypt_requests(
         }));
     }
 
-    // Poll messages: if we have a reasonable number of pseudonyms, filter server-side.
-    // Otherwise poll all recent messages and filter client-side during decryption.
-    let pseudonym_filter = if our_pseudonyms.len() <= 100 {
-        Some(our_pseudonyms.as_slice())
-    } else {
-        log::info!(
-            "Too many pseudonyms ({}) for URL filter, polling all recent messages",
-            our_pseudonyms.len()
-        );
-        None
-    };
-    let messages = publisher
-        .poll_messages(None, pseudonym_filter)
-        .await
-        .handler_err("poll messages")?;
+    // Poll messages in chunks of ≤100 pseudonyms. The messaging service requires a
+    // pseudonym filter (returns empty if None), so we must always send a filter.
+    // For large pseudonym sets, split into multiple polls and merge results.
+    const POLL_CHUNK_SIZE: usize = 100;
+    let mut messages = Vec::new();
+    for chunk in our_pseudonyms.chunks(POLL_CHUNK_SIZE) {
+        let chunk_messages = publisher
+            .poll_messages(None, Some(chunk))
+            .await
+            .handler_err("poll messages")?;
+        messages.extend(chunk_messages);
+    }
+    log::info!(
+        "Polled {} pseudonyms in {} chunks, got {} messages",
+        our_pseudonyms.len(),
+        our_pseudonyms.len().div_ceil(POLL_CHUNK_SIZE),
+        messages.len()
+    );
 
     // Try to decrypt each message
     for msg in &messages {
