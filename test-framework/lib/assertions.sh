@@ -32,18 +32,137 @@ assert_contains() {
 get_contact_count() {
   local port="$1" hash="$2"
   curl -fsS "http://127.0.0.1:$port/api/contacts" -H "X-User-Hash: $hash" \
-    | jq 'length'
+    | jq '(.contacts // .) | length'
 }
 
 get_notification_count() {
   local port="$1" hash="$2"
   curl -fsS "http://127.0.0.1:$port/api/notifications" -H "X-User-Hash: $hash" \
-    | jq 'length'
+    | jq '.count // ((.notifications // .) | length)'
 }
 
 get_pending_requests() {
   local port="$1" hash="$2"
   curl -fsS "http://127.0.0.1:$port/api/discovery/connection-requests" \
     -H "X-User-Hash: $hash" \
-    | jq '[.[] | select(.status == "pending")] | length'
+    | jq '[(.requests // .)[] | select(.status == "pending")] | length'
+}
+
+# get_schema_record_count NODE_PORT HASH SCHEMA_NAME
+# Returns the number of records in a schema (looks up by descriptive_name).
+get_schema_record_count() {
+  local port="$1" hash="$2" schema_name="$3"
+  # Look up schema by descriptive_name, then query all records
+  local schema_hash
+  schema_hash=$(curl -fsS "http://127.0.0.1:$port/api/schemas" \
+    -H "X-User-Hash: $hash" \
+    | jq -r --arg name "$schema_name" '.schemas[] | select(.descriptive_name == $name) | .name' \
+    | head -1)
+  if [[ -z "$schema_hash" ]]; then
+    echo 0
+    return 0
+  fi
+  # List all keys for the schema. Response: {keys: [{hash, range}, ...], total_count}
+  curl -fsS "http://127.0.0.1:$port/api/schema/$schema_hash/keys" \
+    -H "X-User-Hash: $hash" \
+    | jq '.total_count // ((.keys // []) | length)' 2>/dev/null || echo 0
+}
+
+# Run a single assertion from YAML: {node, field, op, value, [schema]}
+# Args: NODES_JSON ASSERTION_JSON
+run_assertion() {
+  local nodes_json="$1"
+  local assertion="$2"
+  local node field op value schema
+  node=$(echo "$assertion" | jq -r '.node')
+  field=$(echo "$assertion" | jq -r '.field')
+  op=$(echo "$assertion" | jq -r '.op')
+  value=$(echo "$assertion" | jq -r '.value')
+  schema=$(echo "$assertion" | jq -r '.schema // ""')
+
+  local port hash
+  port=$(jq -r --arg role "$node" '.[] | select(.role == $role) | .port' "$nodes_json")
+  hash=$(jq -r --arg role "$node" '.[] | select(.role == $role) | .hash' "$nodes_json")
+
+  if [[ -z "$port" || -z "$hash" ]]; then
+    echo "[FAIL] assertion: node $node not found in nodes.json" >&2
+    return 1
+  fi
+
+  local actual
+  case "$field" in
+    contact_count)
+      actual=$(get_contact_count "$port" "$hash")
+      ;;
+    notification_count)
+      actual=$(get_notification_count "$port" "$hash")
+      ;;
+    pending_requests)
+      actual=$(get_pending_requests "$port" "$hash")
+      ;;
+    schema_record_count)
+      actual=$(get_schema_record_count "$port" "$hash" "$schema")
+      ;;
+    my_pseudonym_count)
+      actual=$(curl -fsS "http://127.0.0.1:$port/api/discovery/my-pseudonyms" \
+        -H "X-User-Hash: $hash" | jq '.count // 0')
+      ;;
+    *)
+      echo "[FAIL] unknown field: $field" >&2
+      return 1 ;;
+  esac
+
+  local label="$node.$field"
+  [[ -n "$schema" ]] && label="$label[$schema]"
+
+  case "$op" in
+    "==") assert_eq "$actual" "$value" "$label" ;;
+    ">=") assert_ge "$actual" "$value" "$label" ;;
+    "<=")
+      if (( actual <= value )); then
+        echo "[PASS] $label: $actual <= $value"
+      else
+        echo "[FAIL] $label: expected<=$value actual=$actual" >&2
+        return 1
+      fi ;;
+    ">")
+      if (( actual > value )); then
+        echo "[PASS] $label: $actual > $value"
+      else
+        echo "[FAIL] $label: expected>$value actual=$actual" >&2
+        return 1
+      fi ;;
+    *)
+      echo "[FAIL] unknown op: $op" >&2
+      return 1 ;;
+  esac
+}
+
+# run_assertions NODES_JSON SCENARIO_YAML
+# Returns 0 if all pass, non-zero on any failure.
+run_assertions() {
+  local nodes_json="$1" scenario="$2"
+  local count pass fail
+  count=$(yq '.assertions | length' "$scenario")
+  pass=0
+  fail=0
+  if [[ "$count" == "0" || "$count" == "null" ]]; then
+    echo "[assertions] no assertions in scenario"
+    return 0
+  fi
+
+  echo "[assertions] running $count assertions"
+  local i
+  for ((i=0; i<count; i++)); do
+    local assertion
+    assertion=$(yq -o=json ".assertions[$i]" "$scenario")
+    if run_assertion "$nodes_json" "$assertion"; then
+      pass=$((pass+1))
+    else
+      fail=$((fail+1))
+    fi
+  done
+
+  echo "[assertions] $pass passed, $fail failed"
+  [[ "$fail" == "0" ]]
 }

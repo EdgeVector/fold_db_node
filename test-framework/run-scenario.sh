@@ -88,12 +88,15 @@ if [[ -z "${FOLDDB_TEST_ADMIN_SECRET:-}" && -f "$ADMIN_SECRET_FILE" ]]; then
   export FOLDDB_TEST_ADMIN_SECRET
 fi
 
-# Standalone smoke driver: spawn nodes, register, cleanup. Triggered by
-# FOLDDB_TEST_STANDALONE=1 (the Claude-driven agent driver is aspirational).
+# Standalone driver: spawn nodes, register, execute steps, run assertions, cleanup.
+# Triggered by FOLDDB_TEST_STANDALONE=1 (the Claude-driven agent driver is aspirational).
+#
+# v1: sequential execution (no parallel roles). Each scenario step runs its actions
+# for each role in order. Dependencies are implicit because we don't skip steps.
 run_standalone_smoke() {
   local scenario="$1"
   local nodes_json="$SESSION_DIR/state/nodes.json"
-  echo "[standalone] smoke-running $scenario"
+  echo "[standalone] running $scenario"
 
   # Parse node roles from the scenario.
   local roles
@@ -141,7 +144,39 @@ run_standalone_smoke() {
 
   echo "[standalone] nodes.json:"
   cat "$nodes_json"
-  echo "[standalone] smoke complete; running cleanup"
+
+  # Execute scenario steps
+  echo ""
+  echo "[standalone] =========================================="
+  echo "[standalone]  executing scenario steps"
+  echo "[standalone] =========================================="
+  local steps_ok=1
+  if run_steps "$nodes_json" "$scenario" "$FRAMEWORK_DIR"; then
+    echo "[standalone] steps complete"
+  else
+    steps_ok=0
+    echo "[standalone] STEPS FAILED" >&2
+  fi
+
+  # Run assertions
+  echo ""
+  echo "[standalone] =========================================="
+  echo "[standalone]  running assertions"
+  echo "[standalone] =========================================="
+  local asserts_ok=1
+  if ! run_assertions "$nodes_json" "$scenario"; then
+    asserts_ok=0
+  fi
+
+  if [[ "$steps_ok" == "1" && "$asserts_ok" == "1" ]]; then
+    echo ""
+    echo "[standalone] ✅ SCENARIO PASSED"
+  else
+    echo ""
+    echo "[standalone] ❌ SCENARIO FAILED (steps_ok=$steps_ok asserts_ok=$asserts_ok)" >&2
+  fi
+  echo "[standalone] teardown..."
+  [[ "$steps_ok" == "1" && "$asserts_ok" == "1" ]] || return 1
 }
 
 # shellcheck source=lib/node_factory.sh
@@ -152,6 +187,8 @@ source "$FRAMEWORK_DIR/lib/coordination.sh"
 source "$FRAMEWORK_DIR/lib/cleanup.sh"
 # shellcheck source=lib/assertions.sh
 source "$FRAMEWORK_DIR/lib/assertions.sh"
+# shellcheck source=lib/step_executor.sh
+source "$FRAMEWORK_DIR/lib/step_executor.sh"
 
 if [[ "${FOLDDB_TEST_STANDALONE:-0}" == "1" ]]; then
   run_standalone_smoke "$SCENARIO"
