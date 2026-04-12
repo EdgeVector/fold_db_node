@@ -198,12 +198,16 @@ impl OperationProcessor {
         // Also mark the matching sent invite as accepted.
         let mut is_mutual = false;
         if let Ok(mut sent) = crate::trust::sent_invites::SentInviteStore::load() {
-            // Check if we have any sent invite (pending or not) -- the sender
-            // is responding to our invite, making this mutual
-            let has_sent = sent.invites.iter().any(|_| true);
-            if has_sent {
-                is_mutual = true;
-                // Mark the most recent pending invite as accepted
+            // Mark matching pending invite as accepted. We detect mutual trust
+            // by finding a sent invite whose nonce was consumed by the sender,
+            // but since we don't have cross-node nonce data, we fall back to
+            // checking if the sender is already in our contact book (below).
+            // Here we just mark the most recent pending invite as accepted.
+            let has_pending = sent
+                .invites
+                .iter()
+                .any(|i| i.status == crate::trust::sent_invites::SentInviteStatus::Pending);
+            if has_pending {
                 for inv in sent.invites.iter_mut().rev() {
                     if inv.status == crate::trust::sent_invites::SentInviteStatus::Pending {
                         inv.status = crate::trust::sent_invites::SentInviteStatus::Accepted;

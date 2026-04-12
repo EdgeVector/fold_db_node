@@ -59,6 +59,11 @@ pub struct AddMemberRequest {
     pub display_name: String,
 }
 
+/// Derive a short display name from a public key (e.g., "node-abc12345").
+fn display_name_from_pubkey(public_key: &str) -> String {
+    format!("node-{}", &public_key[..8.min(public_key.len())])
+}
+
 /// Get the SledPool from a FoldNode, falling back to a local pool if unavailable.
 pub async fn get_sled_pool(
     node: &FoldNode,
@@ -142,11 +147,7 @@ pub async fn create_org(
     let pool = get_sled_pool(node).await?;
 
     let creator_public_key = node.get_node_public_key().to_string();
-    // Use a short display name derived from the public key
-    let creator_display_name = format!(
-        "node-{}",
-        &creator_public_key[..8.min(creator_public_key.len())]
-    );
+    let creator_display_name = display_name_from_pubkey(&creator_public_key);
 
     let membership =
         org_ops::create_org(&pool, &req.name, &creator_public_key, &creator_display_name)
@@ -187,7 +188,7 @@ pub async fn join_org(
     let pool = get_sled_pool(node).await?;
 
     let my_public_key = node.get_node_public_key().to_string();
-    let my_display_name = format!("node-{}", &my_public_key[..8.min(my_public_key.len())]);
+    let my_display_name = display_name_from_pubkey(&my_public_key);
 
     let membership = org_ops::join_org(&pool, invite, &my_public_key, &my_display_name)
         .handler_err("join org")?;
@@ -324,22 +325,7 @@ pub async fn remove_member(
     // If we are removing ourselves, purge the org data and schemas locally
     let is_self_removal = node_public_key == node.get_node_public_key();
     if is_self_removal {
-        let fold_db = node.get_fold_db().handler_err("get fold_db")?;
-        let db_ops = fold_db.get_db_ops();
-        db_ops
-            .purge_org_data(org_hash)
-            .await
-            .handler_err("purge org data after removal")?;
-        fold_db
-            .schema_manager
-            .purge_org_schemas(org_hash)
-            .await
-            .handler_err("purge org schemas after removal")?;
-        // Drop the FoldDB guard BEFORE configure_org_sync_if_needed,
-        // which also acquires the db mutex.
-        drop(fold_db);
-
-        node.configure_org_sync_if_needed().await;
+        purge_org_locally(org_hash, node, "removal").await?;
     }
 
     if let Some(client) = get_auth_client(node).await {
@@ -410,6 +396,32 @@ handler_response! {
     }
 }
 
+/// Purge all local data and schemas for an org, then reconfigure sync.
+///
+/// Used by both `remove_member` (self-removal) and `delete_org`.
+async fn purge_org_locally(
+    org_hash: &str,
+    node: &FoldNode,
+    context: &str,
+) -> Result<(), crate::handlers::HandlerError> {
+    {
+        let fold_db = node.get_fold_db().handler_err("get fold_db")?;
+        let db_ops = fold_db.get_db_ops();
+        db_ops
+            .purge_org_data(org_hash)
+            .await
+            .handler_err(&format!("purge org data after {context}"))?;
+        fold_db
+            .schema_manager
+            .purge_org_schemas(org_hash)
+            .await
+            .handler_err(&format!("purge org schemas after {context}"))?;
+        // fold_db guard dropped here before configure_org_sync_if_needed
+    }
+    node.configure_org_sync_if_needed().await;
+    Ok(())
+}
+
 /// Shared HTTP client for org operations. Uses a single connection pool across all requests.
 fn shared_http_client() -> Arc<reqwest::Client> {
     use std::sync::LazyLock;
@@ -460,23 +472,7 @@ pub async fn delete_org(
     org_ops::delete_org(&pool, org_hash).handler_err("delete org")?;
 
     // Purge local data and schemas since the org is completely gone
-    {
-        let fold_db = node.get_fold_db().handler_err("get fold_db")?;
-        let db_ops = fold_db.get_db_ops();
-        db_ops
-            .purge_org_data(org_hash)
-            .await
-            .handler_err("purge org data after deletion")?;
-        fold_db
-            .schema_manager
-            .purge_org_schemas(org_hash)
-            .await
-            .handler_err("purge org schemas after deletion")?;
-        // fold_db guard dropped here before configure_org_sync_if_needed
-    }
-
-    // Reconfigure org sync without the deleted org (acquires db mutex)
-    node.configure_org_sync_if_needed().await;
+    purge_org_locally(org_hash, node, "deletion").await?;
 
     Ok(ApiResponse::success_with_user(
         OkResponse { ok: true },
