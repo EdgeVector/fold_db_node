@@ -1,0 +1,62 @@
+name: face-discovery-3node
+description: |
+  Full happy path: Alice ingests a photo of Carol. Bob runs face search, finds
+  Carol's pseudonym via network_keys (Carol+Bob are already connected), requests
+  connection with Alice. Alice sees Bob with mutual_contact Carol, accepts,
+  shares the record. Bob receives share notification.
+nodes:
+  - role: alice
+    display_name: Alice
+  - role: bob
+    display_name: Bob
+  - role: carol
+    display_name: Carol
+fixtures:
+  photos:
+    - alice_photo_of_carol.jpg
+steps:
+  - id: opt_in
+    roles: [alice, bob, carol]
+    actions:
+      - { action: opt_in_all }
+      - { action: publish }
+
+  - id: carol_bob_connect
+    roles: [carol, bob]
+    depends_on: [opt_in]
+    actions:
+      - { action: connect, from: carol, to: bob, preferred_role: peer }
+      - { action: poll_requests, role: bob, expect_pending: 1 }
+      - { action: accept_request, role: bob }
+
+  - id: alice_ingest
+    roles: [alice]
+    depends_on: [opt_in]
+    actions:
+      - { action: ingest_photo, fixture: alice_photo_of_carol.jpg }
+
+  - id: bob_face_search
+    roles: [bob]
+    depends_on: [alice_ingest, carol_bob_connect]
+    actions:
+      - { action: face_search, expect_mutual_contact: carol }
+      - { action: connect, from: bob, to: alice, preferred_role: peer }
+
+  - id: alice_accept
+    roles: [alice]
+    depends_on: [bob_face_search]
+    actions:
+      - { action: poll_requests, role: alice, expect_pending: 1 }
+      - { action: accept_request, role: alice }
+      - { action: share_record, with: bob }
+
+  - id: bob_notification
+    roles: [bob]
+    depends_on: [alice_accept]
+    actions:
+      - { action: poll_notifications, expect_notification: shared_record }
+assertions:
+  - { node: alice, field: contact_count, op: ">=", value: 1 }
+  - { node: bob, field: contact_count, op: ">=", value: 2 }
+  - { node: carol, field: contact_count, op: ">=", value: 1 }
+  - { node: bob, field: notification_count, op: ">=", value: 1 }

@@ -1,0 +1,15 @@
+name: referral-queries
+description: Referral queries across a small connected graph.
+nodes:
+  - role: alice
+    display_name: Alice
+  - role: bob
+    display_name: Bob
+  - role: carol
+    display_name: Carol
+steps:
+  - id: opt_in
+    roles: [alice, bob, carol]
+    actions:
+      - { action: opt_in_all }
+assertions: []

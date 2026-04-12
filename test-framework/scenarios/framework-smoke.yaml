@@ -1,0 +1,11 @@
+name: framework-smoke
+description: Minimal scenario validating the test framework itself boots a single node.
+nodes:
+  - role: solo
+    display_name: Solo
+steps: []
+assertions:
+  - node: solo
+    field: contact_count
+    op: "=="
+    value: 0

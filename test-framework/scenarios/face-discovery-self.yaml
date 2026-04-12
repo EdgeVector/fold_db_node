@@ -1,0 +1,17 @@
+name: face-discovery-self
+description: Single node ingests a photo and runs face search against its own data.
+nodes:
+  - role: solo
+    display_name: Solo
+steps:
+  - id: opt_in
+    roles: [solo]
+    actions:
+      - { action: opt_in_all }
+  - id: ingest_and_search
+    roles: [solo]
+    depends_on: [opt_in]
+    actions:
+      - { action: ingest_photo, fixture: sample.jpg }
+      - { action: face_search }
+assertions: []

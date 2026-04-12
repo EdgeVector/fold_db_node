@@ -1,0 +1,14 @@
+name: network-intersection
+description: Two nodes discover each other via shared network intersection.
+nodes:
+  - role: alice
+    display_name: Alice
+  - role: bob
+    display_name: Bob
+steps:
+  - id: opt_in
+    roles: [alice, bob]
+    actions:
+      - { action: opt_in_all }
+      - { action: publish }
+assertions: []
