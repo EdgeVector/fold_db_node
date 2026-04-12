@@ -448,8 +448,18 @@ pub async fn search(
     let top_k = req.top_k.unwrap_or(20).min(MAX_TOP_K);
     let offset = req.offset.map(|o| o.min(MAX_OFFSET));
 
+    // Use a lower similarity threshold (0.3) for text search. The Lambda default is 0.7
+    // which is too high for text query embeddings against fragment embeddings — query text
+    // and stored fragments often share topic but not exact wording.
     let results = publisher
-        .search(query_embedding, top_k, req.category_filter.clone(), offset)
+        .search_with_threshold(
+            query_embedding,
+            top_k,
+            req.category_filter.clone(),
+            offset,
+            Some(0.3),
+            "text".to_string(),
+        )
         .await
         .handler_err("search discovery network")?;
 
@@ -1553,7 +1563,7 @@ pub async fn similar_profiles(
         .await
         .handler_err("load interest profile")?;
 
-    let enabled_categories: Vec<String> = match profile {
+    let mut enabled_categories: Vec<String> = match profile {
         Some(ref p) => p
             .categories
             .iter()
@@ -1562,6 +1572,21 @@ pub async fn similar_profiles(
             .collect(),
         None => Vec::new(),
     };
+
+    // Fallback: if no interest profile exists, use the discovery opt-in categories.
+    // Users who opted schemas into discovery should see similar profiles without
+    // needing to run a separate interest-detection step.
+    if enabled_categories.is_empty() {
+        let configs = crate::discovery::config::list_opt_ins(&*metadata_store)
+            .await
+            .map_err(|e| HandlerError::Internal(format!("load opt-in configs: {}", e)))?;
+        let mut seen = std::collections::HashSet::new();
+        for c in &configs {
+            if seen.insert(c.category.clone()) {
+                enabled_categories.push(c.category.clone());
+            }
+        }
+    }
 
     if enabled_categories.is_empty() {
         return Ok(ApiResponse::success(SimilarProfilesResponse {
