@@ -92,10 +92,16 @@ impl OperationProcessor {
         let mut results: Vec<Value> = records_map
             .into_iter()
             .map(|(key, record)| {
+                let author_pub_key = record
+                    .metadata
+                    .values()
+                    .find_map(|m| m.source_pub_key.clone())
+                    .filter(|s| !s.is_empty());
                 serde_json::json!({
                     "key": key,
                     "fields": record.fields,
-                    "metadata": record.metadata
+                    "metadata": record.metadata,
+                    "author_pub_key": author_pub_key,
                 })
             })
             .collect();
@@ -137,10 +143,16 @@ impl OperationProcessor {
         let mut results: Vec<Value> = records_map
             .into_iter()
             .map(|(key, record)| {
+                let author_pub_key = record
+                    .metadata
+                    .values()
+                    .find_map(|m| m.source_pub_key.clone())
+                    .filter(|s| !s.is_empty());
                 serde_json::json!({
                     "key": key,
                     "fields": record.fields,
-                    "metadata": record.metadata
+                    "metadata": record.metadata,
+                    "author_pub_key": author_pub_key,
                 })
             })
             .collect();

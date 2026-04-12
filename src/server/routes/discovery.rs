@@ -179,6 +179,32 @@ pub async fn opt_in(
     }
 }
 
+/// GET /api/discovery/my-pseudonyms — List all pseudonyms this node publishes.
+/// Used by the E2E test framework for cleanup.
+pub async fn my_pseudonyms(state: web::Data<AppState>) -> impl Responder {
+    let (_user_hash, node) = node_or_return!(state);
+
+    let (_url, key) = match get_discovery_config() {
+        Ok(c) => c,
+        Err(response) => return response,
+    };
+
+    match discovery_handlers::my_pseudonyms(&node, &key).await {
+        Ok(response) => HttpResponse::Ok().json(response),
+        Err(e) => handler_error_to_response(e),
+    }
+}
+
+/// POST /api/discovery/opt-out-all — Clear all discovery opt-ins (test cleanup).
+pub async fn opt_out_all(state: web::Data<AppState>) -> impl Responder {
+    let (_user_hash, node) = node_or_return!(state);
+
+    match discovery_handlers::opt_out_all(&node).await {
+        Ok(response) => HttpResponse::Ok().json(response),
+        Err(e) => handler_error_to_response(e),
+    }
+}
+
 /// POST /api/discovery/opt-out — Opt-out a schema from discovery.
 pub async fn opt_out(
     req: HttpRequest,

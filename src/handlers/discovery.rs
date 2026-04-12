@@ -616,6 +616,121 @@ pub async fn connect(
     Ok(ApiResponse::success(()))
 }
 
+/// Collect all pseudonyms this node publishes. Used by the request poller and by
+/// the `my_pseudonyms` handler (test-framework cleanup). The derivation must stay
+/// in sync with `publisher.rs`.
+pub(crate) async fn collect_our_pseudonyms(
+    node: &FoldNode,
+    master_key: &[u8],
+) -> Result<Vec<uuid::Uuid>, HandlerError> {
+    let db = node
+        .get_fold_db()
+        .map_err(|e| HandlerError::Internal(format!("Failed to access database: {}", e)))?;
+    let db_ops = db.get_db_ops();
+    let store = get_metadata_store(&db);
+
+    let configs = config::list_opt_ins(&*store)
+        .await
+        .handler_err("list opt-ins")?;
+
+    let mut pseudonyms = Vec::new();
+
+    // Add our connection-sender pseudonym (fallback used by connect handler when no opt-ins)
+    let hash = crate::discovery::pseudonym::content_hash("connection-sender");
+    pseudonyms.push(crate::discovery::pseudonym::derive_pseudonym(
+        master_key, &hash,
+    ));
+
+    // Add our schema-name-derived sender pseudonyms. The connect handler uses
+    // derive_pseudonym(master_key, content_hash(first_opt_in.schema_name)) as
+    // sender_pseudonym. When someone replies or shares data to that pseudonym,
+    // we need to poll for it. Without this, data shares never reach their target.
+    for cfg in &configs {
+        let schema_hash = crate::discovery::pseudonym::content_hash(&cfg.schema_name);
+        pseudonyms.push(crate::discovery::pseudonym::derive_pseudonym(
+            master_key,
+            &schema_hash,
+        ));
+    }
+
+    // Add pseudonyms derived from actual published embeddings (same as publisher.rs)
+    let native_index_mgr = db_ops.native_index_manager();
+    if let Some(nim) = native_index_mgr {
+        let embedding_store = nim.store().clone();
+        for cfg in &configs {
+            let prefix = format!("emb:{}:", cfg.schema_name);
+            if let Ok(raw_entries) = embedding_store.scan_prefix(prefix.as_bytes()).await {
+                for (_key, value) in &raw_entries {
+                    if let Ok(stored) = serde_json::from_slice::<serde_json::Value>(value) {
+                        if let Some(emb_arr) = stored.get("embedding").and_then(|e| e.as_array()) {
+                            let embedding_bytes: Vec<u8> = emb_arr
+                                .iter()
+                                .filter_map(|v| v.as_f64().map(|f| f as f32))
+                                .flat_map(|f| f.to_le_bytes())
+                                .collect();
+                            let content_hash =
+                                crate::discovery::pseudonym::content_hash_bytes(&embedding_bytes);
+                            pseudonyms.push(crate::discovery::pseudonym::derive_pseudonym(
+                                master_key,
+                                &content_hash,
+                            ));
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    pseudonyms.sort();
+    pseudonyms.dedup();
+    // Cap pseudonyms to avoid excessively long URLs in the poll request.
+    // Each UUID is 36 chars + comma separator. At 1000 pseudonyms that's ~37KB,
+    // within typical URL limits for most HTTP servers.
+    pseudonyms.truncate(1000);
+    log::debug!(
+        "our_pseudonyms[0..5]: {:?}",
+        pseudonyms
+            .iter()
+            .take(5)
+            .map(|p| p.to_string())
+            .collect::<Vec<_>>()
+    );
+    Ok(pseudonyms)
+}
+
+/// List all pseudonyms this node currently publishes. Used by the E2E test
+/// framework for cleanup.
+pub async fn my_pseudonyms(node: &FoldNode, master_key: &[u8]) -> HandlerResult<serde_json::Value> {
+    let pseudonyms = collect_our_pseudonyms(node, master_key).await?;
+    Ok(ApiResponse::success(serde_json::json!({
+        "pseudonyms": pseudonyms.iter().map(|p| p.to_string()).collect::<Vec<_>>(),
+        "count": pseudonyms.len(),
+    })))
+}
+
+/// Clear all discovery opt-ins. Used by the E2E test framework for cleanup.
+pub async fn opt_out_all(node: &FoldNode) -> HandlerResult<serde_json::Value> {
+    let db = node
+        .get_fold_db()
+        .map_err(|e| HandlerError::Internal(format!("{e}")))?;
+    let store = get_metadata_store(&db);
+    let configs = config::list_opt_ins(&*store)
+        .await
+        .handler_err("list opt-ins")?;
+    let mut opted_out = 0usize;
+    for cfg in &configs {
+        if config::remove_opt_in(&*store, &cfg.schema_name)
+            .await
+            .is_ok()
+        {
+            opted_out += 1;
+        }
+    }
+    Ok(ApiResponse::success(
+        serde_json::json!({"opted_out": opted_out}),
+    ))
+}
+
 /// Poll the bulletin board, decrypt messages for our pseudonyms, and store locally.
 pub async fn poll_and_decrypt_requests(
     node: &FoldNode,
@@ -632,83 +747,11 @@ pub async fn poll_and_decrypt_requests(
     let db = node
         .get_fold_db()
         .map_err(|e| HandlerError::Internal(format!("Failed to access database: {}", e)))?;
-    let db_ops = db.get_db_ops();
     let store = get_metadata_store(&db);
 
-    // Get our published pseudonyms by scanning the native index — same derivation
-    // as the publisher uses when uploading: derive(master_key, SHA256(embedding_bytes)).
-    let configs = config::list_opt_ins(&*store)
-        .await
-        .handler_err("list opt-ins")?;
-
-    let our_pseudonyms: Vec<uuid::Uuid> = {
-        let mut pseudonyms = Vec::new();
-
-        // Add our connection-sender pseudonym (fallback used by connect handler when no opt-ins)
-        let hash = crate::discovery::pseudonym::content_hash("connection-sender");
-        pseudonyms.push(crate::discovery::pseudonym::derive_pseudonym(
-            master_key, &hash,
-        ));
-
-        // Add our schema-name-derived sender pseudonyms. The connect handler uses
-        // derive_pseudonym(master_key, content_hash(first_opt_in.schema_name)) as
-        // sender_pseudonym. When someone replies or shares data to that pseudonym,
-        // we need to poll for it. Without this, data shares never reach their target.
-        for cfg in &configs {
-            let schema_hash = crate::discovery::pseudonym::content_hash(&cfg.schema_name);
-            pseudonyms.push(crate::discovery::pseudonym::derive_pseudonym(
-                master_key,
-                &schema_hash,
-            ));
-        }
-
-        // Add pseudonyms derived from actual published embeddings (same as publisher.rs)
-        let native_index_mgr = db_ops.native_index_manager();
-        if let Some(nim) = native_index_mgr {
-            let embedding_store = nim.store().clone();
-            for cfg in &configs {
-                let prefix = format!("emb:{}:", cfg.schema_name);
-                if let Ok(raw_entries) = embedding_store.scan_prefix(prefix.as_bytes()).await {
-                    for (_key, value) in &raw_entries {
-                        if let Ok(stored) = serde_json::from_slice::<serde_json::Value>(value) {
-                            if let Some(emb_arr) =
-                                stored.get("embedding").and_then(|e| e.as_array())
-                            {
-                                let embedding_bytes: Vec<u8> = emb_arr
-                                    .iter()
-                                    .filter_map(|v| v.as_f64().map(|f| f as f32))
-                                    .flat_map(|f| f.to_le_bytes())
-                                    .collect();
-                                let content_hash = crate::discovery::pseudonym::content_hash_bytes(
-                                    &embedding_bytes,
-                                );
-                                pseudonyms.push(crate::discovery::pseudonym::derive_pseudonym(
-                                    master_key,
-                                    &content_hash,
-                                ));
-                            }
-                        }
-                    }
-                }
-            }
-        }
-
-        pseudonyms.sort();
-        pseudonyms.dedup();
-        // Cap pseudonyms to avoid excessively long URLs in the poll request.
-        // Each UUID is 36 chars + comma separator. At 1000 pseudonyms that's ~37KB,
-        // within typical URL limits for most HTTP servers.
-        pseudonyms.truncate(1000);
-        log::debug!(
-            "our_pseudonyms[0..5]: {:?}",
-            pseudonyms
-                .iter()
-                .take(5)
-                .map(|p| p.to_string())
-                .collect::<Vec<_>>()
-        );
-        pseudonyms
-    };
+    // Get our published pseudonyms via the shared helper — same derivation as the
+    // publisher uses when uploading: derive(master_key, SHA256(embedding_bytes)).
+    let our_pseudonyms: Vec<uuid::Uuid> = collect_our_pseudonyms(node, master_key).await?;
 
     if our_pseudonyms.is_empty() {
         return Ok(ApiResponse::success(ConnectionRequestsResponse {

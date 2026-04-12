@@ -204,7 +204,7 @@ function authHeaders() {
   return { 'x-user-hash': userHash, 'x-user-id': userHash }
 }
 
-export function RecordMetadata({ metadata, schemaName, recordKey }) {
+export function RecordMetadata({ metadata, schemaName, recordKey, sharedBy }) {
   const [expanded, setExpanded] = useState(false)
   const [blobUrl, setBlobUrl] = useState(null)
 
@@ -256,10 +256,22 @@ export function RecordMetadata({ metadata, schemaName, recordKey }) {
       .catch(() => {})
   }, [fileUrl])
 
-  if (!hasData) return null
+  if (!hasData && !sharedBy) return null
+  if (!hasData && sharedBy) {
+    return (
+      <div className="mb-1 text-xs text-gruvbox-green">
+        {'\u{1F4E5}'} {sharedBy}
+      </div>
+    )
+  }
 
   return (
     <div className="mb-1">
+      {sharedBy && (
+        <div className="text-xs text-gruvbox-green mb-1">
+          {'\u{1F4E5}'} {sharedBy}
+        </div>
+      )}
       <button
         type="button"
         className="flex items-center gap-1 text-xs text-tertiary hover:text-secondary transition-colors"
