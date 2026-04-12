@@ -21,18 +21,42 @@ interface CloudApiConfig {
   apiKey: string;
 }
 
-function getCloudConfig(): CloudApiConfig | null {
+// Cache cloud config in memory (populated from localStorage or server)
+let cachedCloudConfig: CloudApiConfig | null = null;
+
+async function getCloudConfig(): Promise<CloudApiConfig | null> {
+  if (cachedCloudConfig) return cachedCloudConfig;
+
+  // Try localStorage first (fast path)
   const apiUrl = localStorage.getItem("exemem_api_url");
   const apiKey = localStorage.getItem("exemem_api_key");
-  if (!apiUrl || !apiKey) return null;
-  return { apiUrl, apiKey };
+  if (apiUrl && apiKey) {
+    cachedCloudConfig = { apiUrl, apiKey };
+    return cachedCloudConfig;
+  }
+
+  // Fall back to server credentials endpoint (source of truth)
+  try {
+    const resp = await fetch("/api/auth/credentials");
+    if (resp.ok) {
+      const data = await resp.json();
+      if (data.ok && data.api_url && data.api_key) {
+        cachedCloudConfig = { apiUrl: data.api_url, apiKey: data.api_key };
+        return cachedCloudConfig;
+      }
+    }
+  } catch {
+    // Server not reachable — no cloud config available
+  }
+
+  return null;
 }
 
 async function cloudFetch(
   path: string,
   options: RequestInit = {},
 ): Promise<any> {
-  const config = getCloudConfig();
+  const config = await getCloudConfig();
   if (!config) {
     throw new Error("Not connected to Exemem cloud");
   }
