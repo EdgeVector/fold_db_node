@@ -1024,11 +1024,25 @@ async fn cloud_delete_account(
     match resp {
         Ok(r) if r.status().is_success() => {
             eprintln!(" done.");
-            // Also disable cloud locally
+
+            // Purge cloud storage (R2/B2) — best-effort, don't fail if this errors
+            eprint!("Purging cloud storage...");
+            let purge_resp = http
+                .post(format!("{}/api/sync", api_url))
+                .header("X-API-Key", &api_key)
+                .json(&serde_json::json!({"action": "purge_account"}))
+                .send()
+                .await;
+            match purge_resp {
+                Ok(pr) if pr.status().is_success() => eprintln!(" done."),
+                Ok(pr) => eprintln!(" warning: HTTP {}", pr.status()),
+                Err(e) => eprintln!(" warning: {}", e),
+            }
+
+            // Disable cloud locally
             let _ = cloud_disable(config_path);
             Some(Ok(commands::CommandOutput::Message(
-                "Account deleted. Cloud data will be purged within 24 hours.\nLocal data is preserved."
-                    .to_string(),
+                "Account deleted. All cloud data purged.\nLocal data is preserved.".to_string(),
             )))
         }
         Ok(r) => {
