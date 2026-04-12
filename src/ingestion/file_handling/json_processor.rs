@@ -72,43 +72,6 @@ pub async fn convert_file_to_json(file_path: &PathBuf) -> Result<Value, Ingestio
     Ok(value)
 }
 
-/// Maximum length for a derived descriptive_name (characters).
-#[cfg(test)]
-const MAX_DESCRIPTIVE_NAME_LEN: usize = 120;
-
-/// Extract the first meaningful sentence from markdown text, skipping YAML frontmatter.
-/// Returns `None` if the body is empty after stripping.
-#[cfg(test)]
-fn first_sentence(md: &str) -> Option<String> {
-    // Skip YAML frontmatter (--- ... ---)
-    let body = if md.starts_with("---") {
-        md.splitn(3, "---").nth(2).unwrap_or("")
-    } else {
-        md
-    };
-
-    let trimmed = body.trim();
-    if trimmed.is_empty() {
-        return None;
-    }
-
-    // Take the first line, truncate to MAX_DESCRIPTIVE_NAME_LEN
-    let first_line = trimmed.lines().next().unwrap_or("");
-    let sentence = first_line.trim_start_matches('#').trim();
-    if sentence.is_empty() {
-        return None;
-    }
-
-    if sentence.len() <= MAX_DESCRIPTIVE_NAME_LEN {
-        Some(sentence.to_string())
-    } else {
-        // Truncate at word boundary
-        let truncated = &sentence[..MAX_DESCRIPTIVE_NAME_LEN];
-        let end = truncated.rfind(' ').unwrap_or(MAX_DESCRIPTIVE_NAME_LEN);
-        Some(format!("{}...", &sentence[..end]))
-    }
-}
-
 /// Remove null-valued entries from a JSON object.
 /// FileMarkdown has many Option<T> fields; nulls would clutter the AI schema prompt.
 fn strip_null_fields(value: &mut Value) {
@@ -820,41 +783,5 @@ mod tests {
         // Arrays are not stripped — only object fields
         assert!(value.is_array());
         assert_eq!(value.as_array().unwrap().len(), 3);
-    }
-
-    #[test]
-    fn test_first_sentence_with_frontmatter() {
-        let md = "---\nsource: photo.jpg\n---\nA sunset over the ocean with warm orange tones.";
-        assert_eq!(
-            first_sentence(md).unwrap(),
-            "A sunset over the ocean with warm orange tones."
-        );
-    }
-
-    #[test]
-    fn test_first_sentence_no_frontmatter() {
-        let md = "A cat sitting on a keyboard.";
-        assert_eq!(first_sentence(md).unwrap(), "A cat sitting on a keyboard.");
-    }
-
-    #[test]
-    fn test_first_sentence_strips_heading() {
-        let md = "---\nfoo: bar\n---\n# Image Description\nA diagram of system architecture.";
-        assert_eq!(first_sentence(md).unwrap(), "Image Description");
-    }
-
-    #[test]
-    fn test_first_sentence_empty_body() {
-        assert!(first_sentence("---\nfoo: bar\n---\n").is_none());
-        assert!(first_sentence("").is_none());
-        assert!(first_sentence("   ").is_none());
-    }
-
-    #[test]
-    fn test_first_sentence_truncates_long_text() {
-        let long = format!("---\nk: v\n---\n{}", "word ".repeat(50));
-        let result = first_sentence(&long).unwrap();
-        assert!(result.len() <= MAX_DESCRIPTIVE_NAME_LEN + 3); // +3 for "..."
-        assert!(result.ends_with("..."));
     }
 }

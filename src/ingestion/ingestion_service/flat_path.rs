@@ -76,7 +76,7 @@ impl IngestionService {
         // Enrich image data with source_file_name, created_at, image_type so
         // mutations include these key fields. The HTTP routes do this before
         // calling us, but direct callers (integration tests, admin_ops) may not.
-        let enriched_data = if is_image {
+        let mut enriched_data = if is_image {
             let mut data = flattened_data.clone();
             if let Some(ref sfn) = request.source_file_name {
                 let dummy_path = std::path::PathBuf::from(sfn);
@@ -95,8 +95,6 @@ impl IngestionService {
         } else {
             flattened_data.clone()
         };
-        // enriched_data needs to be mutable for content_hash injection below
-        let mut enriched_data = enriched_data;
 
         // Inject content_hash AFTER AI analysis so the AI doesn't treat it as a
         // user data field. content_hash prevents key collisions in mutations when
