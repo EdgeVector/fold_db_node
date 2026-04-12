@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useRef } from 'react'
+import React from 'react'
 import { FoldDbProvider } from './components/FoldDbProvider'
 import Header from './components/Header'
 import Footer from './components/Footer'
@@ -30,19 +30,16 @@ import ConflictsTab from './components/tabs/ConflictsTab'
 import TrustTab from './components/tabs/TrustTab'
 import RemoteQueryTab from './components/tabs/RemoteQueryTab'
 import SettingsTab from './components/tabs/SettingsTab'
-import OnboardingWizard, { ONBOARDING_STORAGE_KEY } from './components/onboarding/OnboardingWizard'
+import OnboardingWizard from './components/onboarding/OnboardingWizard'
 
 import LogSidebar from './components/LogSidebar'
 import ErrorBoundary from './components/ErrorBoundary'
-import { useApprovedSchemas } from './hooks/useApprovedSchemas.js'
-import { useAppSelector, useAppDispatch } from './store/hooks'
-import { restoreSession, autoLogin, loadSystemPublicKey } from './store/authSlice'
-import { fetchIngestionConfig, selectIngestionConfig, selectIsAiConfigured, selectAiProvider } from './store/ingestionSlice'
-import { DEFAULT_TAB } from './constants'
-import { BROWSER_CONFIG } from './constants/config'
-import { getDatabaseStatus } from './api/clients/systemClient'
-import { getIdentityCard } from './api/clients/trustClient'
 import DatabaseSetupScreen from './components/DatabaseSetupScreen'
+import { useApprovedSchemas } from './hooks/useApprovedSchemas.js'
+import { useAuthInitialization } from './hooks/useAuthInitialization.js'
+import { useTabRouting } from './hooks/useTabRouting.js'
+import { useDatabaseInit } from './hooks/useDatabaseInit.js'
+import { useResultHandler } from './hooks/useResultHandler.js'
 
 function isIngestionResult(results) {
   if (!results?.success) return false
@@ -50,181 +47,38 @@ function isIngestionResult(results) {
   return typeof d === 'object' && Array.isArray(d?.schemas_written) && d.schemas_written.length > 0
 }
 
-// Single lookup for URL hash → tab ID (prevents duplication)
-const HASH_TO_TAB = {
-  agent: 'agent',
-  schemas: 'schemas', schema: 'schemas',
-  query: 'query', mutation: 'mutation',
-  ingestion: 'ingestion', 'json-ingestion': 'ingestion',
-  'file-upload': 'file-upload',
-  'native-index': 'native-index', search: 'native-index',
-  'llm-query': 'llm-query', 'ai-query': 'llm-query',
-  'smart-folder': 'smart-folder', import: 'smart-folder',
-  'data-browser': 'data-browser', browser: 'data-browser',
-  'word-graph': 'word-graph',
-  discovery: 'discovery',
-  'discovery-browse': 'discovery-browse',
-  views: 'views',
-  people: 'people',
-  sharing: 'people',
-  trust: 'people', 'trust-graph': 'people',
-  feed: 'people',
-  'shared-moments': 'people',
-  'my-profile': 'people', profile: 'people',
-  'apple-import': 'apple-import',
-  conflicts: 'conflicts',
-  'remote-query': 'remote-query',
-  settings: 'settings',
-}
-
-function resolveTabFromHash() {
-  if (typeof window !== 'undefined' && window.location.hash) {
-    return HASH_TO_TAB[window.location.hash.slice(1)] || null
-  }
-  return null
-}
-
 export function AppContent() {
-  const [activeTab, setActiveTab] = useState(() => resolveTabFromHash() || DEFAULT_TAB)
-  const [settingsSubTab, setSettingsSubTab] = useState(null)
-  const [results, setResults] = useState(null)
-  const [setupDismissed, setSetupDismissed] = useState(
-    () => localStorage.getItem('folddb_setup_dismissed') === '1'
-  )
-  const [dbStatus, setDbStatus] = useState(null) // { initialized, has_saved_config }
-  const [dbStatusLoading, setDbStatusLoading] = useState(true)
-  const [showOnboarding, setShowOnboarding] = useState(false)
+  // Auth + AI config orchestration
+  const {
+    isAuthenticated,
+    isAuthLoading,
+    aiConfigured,
+    aiProvider,
+    showSetupBanner,
+    dismissSetup,
+  } = useAuthInitialization()
 
-  // Clear results whenever the active tab changes (covers all switch paths)
-  useEffect(() => {
-    setResults(null)
-  }, [activeTab])
+  // Tab routing / URL hash sync
+  const { activeTab, settingsSubTab, handleTabChange, navigateToSettings } =
+    useTabRouting()
 
-  // Sync activeTab with URL hash changes
-  useEffect(() => {
-    const handleHashChange = () => {
-      const tab = resolveTabFromHash()
-      if (tab && tab !== activeTab) {
-        setActiveTab(tab)
-      }
-    }
+  // Database status + onboarding wizard
+  const {
+    dbStatus,
+    dbStatusLoading,
+    showOnboarding,
+    setShowOnboarding,
+    recheckDbStatus,
+  } = useDatabaseInit(isAuthenticated)
 
-    window.addEventListener('hashchange', handleHashChange)
-    handleHashChange()
-    return () => window.removeEventListener('hashchange', handleHashChange)
-  }, [activeTab])
-
-  // Redux state and dispatch
-  const dispatch = useAppDispatch()
-  const { isAuthenticated, isLoading: isAuthLoading } = useAppSelector(state => state.auth)
-
-  // Restore session on mount FIRST - this must run before other effects.
-  // Always auto-login with node identity (public key is the sole identity source).
-  useEffect(() => {
-    const userId = localStorage.getItem(BROWSER_CONFIG.STORAGE_KEYS.USER_ID)
-    const userHash = localStorage.getItem(BROWSER_CONFIG.STORAGE_KEYS.USER_HASH)
-    if (userId && userHash) {
-      dispatch(restoreSession({ id: userId, hash: userHash }))
-      return
-    }
-
-    // No stored credentials — auto-login with node's public key identity
-    dispatch(autoLogin())
-  }, [dispatch])
-
-  // Load the system public key for display in Key Management tab
-  useEffect(() => {
-    dispatch(loadSystemPublicKey())
-  }, [dispatch])
-
-  // Check database status after authenticated
-  useEffect(() => {
-    if (!isAuthenticated) return
-    setDbStatusLoading(true)
-    getDatabaseStatus()
-      .then(response => {
-        if (response.success && response.data) {
-          setDbStatus(response.data)
-          // Show onboarding if neither backend nor localStorage says it's complete.
-          // Backend marker file is authoritative (--empty-db wipes it to reset),
-          // but localStorage is the fallback for cases where the backend marker
-          // file wasn't written (API call failed, data dir cleaned without reset).
-          if (!response.data.onboarding_complete
-              && localStorage.getItem('folddb_onboarding_complete') !== '1') {
-            // Final short-circuit: if the node already has an identity card
-            // with a display_name, treat setup as complete. This prevents the
-            // wizard from re-appearing on reload when the backend marker file
-            // is missing but the user has already configured their identity.
-            getIdentityCard()
-              .then(res => {
-                const hasIdentity = !!res?.data?.identity_card?.display_name
-                if (hasIdentity) {
-                  localStorage.setItem('folddb_onboarding_complete', '1')
-                } else {
-                  setShowOnboarding(true)
-                }
-              })
-              .catch(() => {
-                setShowOnboarding(true)
-              })
-          }
-        } else {
-          // If endpoint is unavailable (older backend), assume initialized
-          setDbStatus({ initialized: true, has_saved_config: true, onboarding_complete: true })
-        }
-      })
-      .catch(() => {
-        // If endpoint doesn't exist, assume initialized (backwards compat)
-        setDbStatus({ initialized: true, has_saved_config: true, onboarding_complete: true })
-      })
-      .finally(() => setDbStatusLoading(false))
-  }, [isAuthenticated])
-
-
+  // Operation result handling (shared across tabs)
+  const { results, setResults, resultsRef, handleOperationResult } =
+    useResultHandler(activeTab)
 
   // Only fetch schemas when authenticated
-  const {
-    error: schemasError,
-    refetch: refetchSchemas
-  } = useApprovedSchemas({ enabled: isAuthenticated })
-
-  // Fetch AI configuration on mount (after auth)
-  useEffect(() => {
-    if (isAuthenticated) {
-      dispatch(fetchIngestionConfig())
-    }
-  }, [dispatch, isAuthenticated])
-
-  // Check AI configuration status for setup banner
-  const ingestionConfig = useAppSelector(selectIngestionConfig)
-  const aiConfigured = useAppSelector(selectIsAiConfigured)
-  const aiProvider = useAppSelector(selectAiProvider)
-  const showSetupBanner = isAuthenticated && ingestionConfig !== null && !aiConfigured && !setupDismissed
-
-  const handleTabChange = (tab) => {
-    setActiveTab(tab)
-    // Clear settings sub-tab when navigating away from settings
-    if (tab !== 'settings') setSettingsSubTab(null)
-    // Update URL hash to match active tab
-    if (typeof window !== 'undefined') {
-      window.location.hash = tab;
-    }
-  }
-
-  const navigateToSettings = (subTab) => {
-    setSettingsSubTab(subTab || null)
-    handleTabChange('settings')
-  }
-
-  const resultsRef = useRef(null)
-
-  const handleOperationResult = (result) => {
-    setResults(result)
-    // Scroll results into view after rendering
-    setTimeout(() => {
-      resultsRef.current?.scrollIntoView({ behavior: 'smooth', block: 'start' })
-    }, 100)
-  }
+  const { error: schemasError, refetch: refetchSchemas } = useApprovedSchemas({
+    enabled: isAuthenticated,
+  })
 
   const handleSchemaUpdated = () => {
     refetchSchemas()
@@ -310,25 +164,7 @@ export function AppContent() {
 
   // Show database setup screen for fresh installs (no saved config, not initialized)
   if (dbStatus && !dbStatus.initialized && !dbStatus.has_saved_config) {
-    return (
-      <DatabaseSetupScreen
-        onComplete={() => {
-          // Re-check database status after setup
-          setDbStatusLoading(true)
-          getDatabaseStatus()
-            .then(response => {
-              if (response.success && response.data) {
-                setDbStatus(response.data)
-              }
-            })
-            .catch(() => {
-              // Assume initialized after successful setup call
-              setDbStatus({ initialized: true, has_saved_config: true })
-            })
-            .finally(() => setDbStatusLoading(false))
-        }}
-      />
-    );
+    return <DatabaseSetupScreen onComplete={recheckDbStatus} />
   }
 
   // Show onboarding wizard on first run (after DB is initialized)
@@ -362,10 +198,7 @@ export function AppContent() {
               Configure AI
             </button>
             <button
-              onClick={() => {
-                setSetupDismissed(true)
-                localStorage.setItem('folddb_setup_dismissed', '1')
-              }}
+              onClick={dismissSetup}
               className="text-gruvbox-blue text-sm bg-transparent border-none cursor-pointer hover:text-gruvbox-bright transition-colors"
             >
               Dismiss
