@@ -309,7 +309,8 @@ impl OperationProcessor {
             if child_field_map.contains_key(child_schema_name) {
                 continue;
             }
-            if let Ok(Some(child_schema)) = db.schema_manager().get_schema_metadata(child_schema_name)
+            if let Ok(Some(child_schema)) =
+                db.schema_manager().get_schema_metadata(child_schema_name)
             {
                 let fields = Self::get_queryable_fields(&child_schema);
                 if !fields.is_empty() {

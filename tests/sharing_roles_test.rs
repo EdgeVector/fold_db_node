@@ -181,7 +181,11 @@ async fn test_role_removal_revokes_domain_trust() {
 
     // Verify: trust should be revoked in health domain
     let db = node.get_fold_db().unwrap();
-    let health_map = db.db_ops().load_trust_map_for_domain("health").await.unwrap();
+    let health_map = db
+        .db_ops()
+        .load_trust_map_for_domain("health")
+        .await
+        .unwrap();
     assert_eq!(
         health_map.get(&contact_key),
         None,

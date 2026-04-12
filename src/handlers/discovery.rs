@@ -2906,7 +2906,11 @@ async fn process_data_share(
                 .map_err(|e| HandlerError::Internal(format!("Schema serialization: {e}")))?;
 
             // Try to load schema — if it already exists, load_schema_from_json returns an error (that's fine)
-            match db.schema_manager().load_schema_from_json(&schema_json).await {
+            match db
+                .schema_manager()
+                .load_schema_from_json(&schema_json)
+                .await
+            {
                 Ok(_) => {
                     log::info!("Created schema '{}' from data share", record.schema_name);
                     // Auto-approve shared schemas so mutations can be written
