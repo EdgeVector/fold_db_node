@@ -25,6 +25,9 @@ pub struct DiscoveryUploadEntry {
     /// Embedding space identifier: "text" (384-dim) or "face" (512-dim).
     #[serde(default = "default_embedding_space")]
     pub embedding_space: String,
+    /// Minimum trust tier required to discover this entry (face embeddings).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub min_trust_tier: Option<i32>,
 }
 
 /// Batch upload request to the discovery service.

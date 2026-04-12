@@ -179,6 +179,7 @@ impl DiscoveryPublisher {
                 fragment_type,
                 public_key,
                 embedding_space: "text".to_string(),
+                min_trust_tier: None,
             });
         }
 
@@ -216,6 +217,7 @@ impl DiscoveryPublisher {
                     fragment_type: "face".to_string(),
                     public_key,
                     embedding_space: "face".to_string(),
+                    min_trust_tier: Some(config.face_visibility as i32),
                 });
             }
         }
