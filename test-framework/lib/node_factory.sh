@@ -39,21 +39,12 @@ nf_spawn_node() {
   local node_dir="$session_dir/nodes/$name"
   mkdir -p "$node_dir/data"
 
-  # Generate unique Ed25519 keypair
-  openssl genpkey -algorithm ed25519 -out "$node_dir/node.key" 2>/dev/null
-
-  cat > "$node_dir/config.json" <<EOF
-{
-  "bind_port": $port,
-  "data_dir": "$node_dir/data",
-  "schema_service_url": "${FOLDDB_TEST_DEV_SCHEMA:-https://schema-dev.folddb.com}",
-  "exemem_api_url": "${FOLDDB_TEST_DEV_API:-https://api-dev.exemem.com}"
-}
-EOF
-
   local bin
   bin="$(nf_find_binary)"
-  nohup "$bin" --config "$node_dir/config.json" \
+  nohup "$bin" \
+    --port "$port" \
+    --data-dir "$node_dir/data" \
+    --schema-service-url "${FOLDDB_TEST_DEV_SCHEMA:?}" \
     >"$node_dir/stdout.log" 2>"$node_dir/stderr.log" &
   local pid=$!
   echo "$pid" > "$node_dir/pid"
