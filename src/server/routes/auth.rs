@@ -1,5 +1,6 @@
 use actix_web::{web, HttpResponse};
 use serde::{Deserialize, Serialize};
+use std::sync::{Arc, Mutex};
 
 use crate::keychain;
 use crate::server::http_server::AppState;
@@ -362,17 +363,70 @@ async fn signed_register(
 // Standalone auth refresh (no AppState dependency)
 // ============================================================================
 
-/// Refresh Exemem credentials by re-registering with the node's Ed25519 keypair.
+/// Refresh Exemem credentials for the sync engine.
 ///
-/// This is a standalone function that does NOT depend on `AppState` or any HTTP
-/// server context. It loads the node identity from the persisted identity file,
-/// signs a register request, calls the Exemem CLI register endpoint, stores the
-/// new credentials locally, and returns a `SyncAuth` for the sync engine.
+/// This function has two branches:
 ///
-/// Used as the `AuthRefreshCallback` for the sync engine so it can automatically
-/// recover from 401 errors (e.g., expired session tokens).
-async fn refresh_auth_standalone() -> Result<fold_db::sync::auth::SyncAuth, String> {
-    // 1. Load the node's persisted identity (Ed25519 keypair)
+/// 1. **Stored key is fresh** — If `credentials.json` holds an API key that is
+///    different from what we last returned, we return that stored key. This is
+///    the common case: the startup task (or another code path) rotated the key
+///    and the in-memory sync engine just needs to catch up. Does NOT hit the
+///    network.
+/// 2. **Stored key is also stale** — If the stored key matches what we last
+///    returned (i.e. the caller is telling us that key already got a 401), we
+///    fall back to re-registering with the node's Ed25519 keypair via the
+///    Exemem CLI register endpoint. This rotates the API key.
+///
+/// Returns `SyncAuth::ApiKey(_)` in both cases. The sync engine wire protocol
+/// for presigned URL requests uses `X-API-Key`, NOT a bearer token, so we must
+/// never return `SyncAuth::BearerToken` from here.
+async fn refresh_auth_standalone(
+    last_returned: Arc<Mutex<Option<String>>>,
+) -> Result<fold_db::sync::auth::SyncAuth, String> {
+    // Step 1: Try the stored credentials first. If we have a newer key than the
+    // one we last handed the sync engine, just hand it that new key — no need
+    // to burn a fresh one.
+    let stored = crate::keychain::load_credentials()
+        .map_err(|e| format!("Auth refresh: failed to load credentials: {e}"))?;
+
+    if let Some(ref creds) = stored {
+        let mut guard = last_returned
+            .lock()
+            .map_err(|e| format!("Auth refresh: last_returned mutex poisoned: {e}"))?;
+        let already_returned = guard.as_deref() == Some(creds.api_key.as_str());
+        if !already_returned {
+            log::info!("Sync auth: returning stored api_key from credentials.json");
+            *guard = Some(creds.api_key.clone());
+            return Ok(fold_db::sync::auth::SyncAuth::ApiKey(creds.api_key.clone()));
+        }
+        // Stored key is the same one we already returned → it's stale, fall through.
+        log::info!("Sync auth: stored api_key is stale, re-registering with Exemem");
+    } else {
+        log::info!("Sync auth: no stored credentials, re-registering with Exemem");
+    }
+
+    // Step 2: Re-register. This rotates the API key on the Exemem side.
+    let new_api_key = reregister_and_store().await?;
+
+    let mut guard = last_returned
+        .lock()
+        .map_err(|e| format!("Auth refresh: last_returned mutex poisoned: {e}"))?;
+    *guard = Some(new_api_key.clone());
+
+    log::info!("Sync auth refreshed successfully via re-registration");
+
+    // The sync engine's presigned-URL endpoint authenticates with X-API-Key,
+    // not a bearer token, so we return ApiKey even after re-registration.
+    Ok(fold_db::sync::auth::SyncAuth::ApiKey(new_api_key))
+}
+
+/// Re-register this node with Exemem using the persisted Ed25519 keypair.
+///
+/// Standalone: does not depend on `AppState`. Loads the node identity from
+/// disk, signs a register request, calls the Exemem CLI register endpoint,
+/// stores the new credentials locally, and returns the new `api_key`.
+async fn reregister_and_store() -> Result<String, String> {
+    // 1. Load the node's persisted identity (Ed25519 keypair).
     //    Try the NodeManager identity path first (identity/{hash}.json),
     //    fall back to config/node_identity.json for backward compat.
     let folddb_home = crate::utils::paths::folddb_home()
@@ -406,16 +460,16 @@ async fn refresh_auth_standalone() -> Result<fold_db::sync::auth::SyncAuth, Stri
     let identity: Identity = serde_json::from_str(&identity_json)
         .map_err(|e| format!("Failed to parse node identity: {e}"))?;
 
-    // 2. Decode public key from base64 to hex (CLI register expects hex)
+    // 2. Decode public key from base64 to hex (CLI register expects hex).
     let public_key_hex = base64_to_hex(&identity.public_key)
         .ok_or_else(|| "Failed to decode public key from base64".to_string())?;
 
-    // 3. Sign "{public_key_hex}:{timestamp}"
+    // 3. Sign "{public_key_hex}:{timestamp}".
     let timestamp = chrono::Utc::now().timestamp();
     let payload = format!("{}:{}", public_key_hex, timestamp);
     let signature_b64 = sign_payload(&identity.private_key, &payload)?;
 
-    // 4. POST to Exemem CLI register endpoint
+    // 4. POST to Exemem CLI register endpoint.
     let api_url = exemem_api_url();
     let url = format!("{}/api/auth/cli/register", api_url);
     let register_body = serde_json::json!({
@@ -448,7 +502,7 @@ async fn refresh_auth_standalone() -> Result<fold_db::sync::auth::SyncAuth, Stri
         return Err(format!("Auth refresh: register failed: {error}"));
     }
 
-    // 5. Extract and store new credentials
+    // 5. Extract and store new credentials.
     let session_token = json
         .get("session_token")
         .and_then(|v| v.as_str())
@@ -474,21 +528,28 @@ async fn refresh_auth_standalone() -> Result<fold_db::sync::auth::SyncAuth, Stri
     // Per-device secrets (api_key, session_token) are stored ONLY in credentials.json.
     // We do NOT write them to Sled (which syncs across devices) or node_config.json.
 
-    log::info!("Sync auth refreshed successfully via re-registration");
-
-    // Return the new session token as the sync auth credential
-    Ok(fold_db::sync::auth::SyncAuth::BearerToken(
-        session_token.to_string(),
-    ))
+    Ok(api_key.to_string())
 }
 
 /// Build an `AuthRefreshCallback` for the sync engine.
 ///
-/// The returned callback re-registers with the Exemem API using the node's
-/// persisted Ed25519 keypair, stores the new credentials locally, and returns
-/// the fresh `SyncAuth` token. No `AppState` or HTTP server context required.
+/// The returned callback:
+/// 1. First checks `credentials.json` for a newer API key than the one it last
+///    returned, and hands that to the sync engine if available. No network
+///    call — just catches the engine up to a key that a previous startup task
+///    or register call already produced.
+/// 2. Only if the stored key is also stale does it re-register with the
+///    Exemem API (rotating the key) and return the new one.
+///
+/// The "last returned" API key is tracked in a mutex captured by the closure
+/// so repeated 401s eventually force a real re-registration instead of
+/// returning the same stale key forever.
 pub fn build_auth_refresh_callback() -> fold_db::sync::AuthRefreshCallback {
-    std::sync::Arc::new(|| Box::pin(refresh_auth_standalone()))
+    let last_returned: Arc<Mutex<Option<String>>> = Arc::new(Mutex::new(None));
+    Arc::new(move || {
+        let last_returned = last_returned.clone();
+        Box::pin(refresh_auth_standalone(last_returned))
+    })
 }
 
 /// Sign a payload with the node's Ed25519 private key.
@@ -822,4 +883,139 @@ fn base64_to_hex(b64: &str) -> Option<String> {
         .or_else(|_| base64::engine::general_purpose::URL_SAFE.decode(b64))
         .ok()?;
     Some(hex::encode(bytes))
+}
+
+// ============================================================================
+// Tests
+// ============================================================================
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// Serializes tests that mutate `FOLDDB_HOME` (a process-global env var) so
+    /// they don't race each other.
+    fn env_lock() -> std::sync::MutexGuard<'static, ()> {
+        use std::sync::OnceLock;
+        static LOCK: OnceLock<Mutex<()>> = OnceLock::new();
+        LOCK.get_or_init(|| Mutex::new(()))
+            .lock()
+            .expect("env lock poisoned")
+    }
+
+    /// Set FOLDDB_HOME to a temp dir, write credentials.json containing
+    /// `api_key`, and return the temp dir guard.
+    fn setup_creds_in_temp_home(api_key: &str) -> tempfile::TempDir {
+        let tmp = tempfile::tempdir().expect("tempdir");
+        std::env::set_var("FOLDDB_HOME", tmp.path());
+
+        let creds = crate::keychain::ExememCredentials {
+            user_hash: "test-user".to_string(),
+            session_token: "test-session".to_string(),
+            api_key: api_key.to_string(),
+            encryption_key: String::new(),
+        };
+        crate::keychain::store_credentials(&creds).expect("store_credentials");
+        tmp
+    }
+
+    #[tokio::test]
+    #[allow(clippy::await_holding_lock)]
+    async fn refresh_auth_returns_stored_api_key_without_network() {
+        let _guard = env_lock();
+        let _tmp = setup_creds_in_temp_home("api_key_v2");
+
+        let last_returned: Arc<Mutex<Option<String>>> = Arc::new(Mutex::new(None));
+        let result = refresh_auth_standalone(last_returned.clone()).await;
+
+        let auth = result.expect("should return stored api_key without hitting network");
+        match auth {
+            fold_db::sync::auth::SyncAuth::ApiKey(k) => assert_eq!(k, "api_key_v2"),
+            fold_db::sync::auth::SyncAuth::BearerToken(_) => {
+                panic!("must return ApiKey variant, never BearerToken")
+            }
+        }
+        assert_eq!(
+            last_returned.lock().unwrap().as_deref(),
+            Some("api_key_v2"),
+            "last_returned should be updated to the key we returned"
+        );
+
+        std::env::remove_var("FOLDDB_HOME");
+    }
+
+    #[tokio::test]
+    #[allow(clippy::await_holding_lock)]
+    async fn refresh_auth_returns_newer_stored_key_on_second_call() {
+        // First call returns v1. Between calls, credentials.json is updated
+        // (simulating the startup task rotating the key). Second call should
+        // see the newer key and return it instead of re-registering.
+        let _guard = env_lock();
+        let tmp = setup_creds_in_temp_home("api_key_v1");
+
+        let last_returned: Arc<Mutex<Option<String>>> = Arc::new(Mutex::new(None));
+        let first = refresh_auth_standalone(last_returned.clone())
+            .await
+            .expect("first call");
+        assert!(matches!(
+            first,
+            fold_db::sync::auth::SyncAuth::ApiKey(ref k) if k == "api_key_v1"
+        ));
+
+        // Rotate the stored credential.
+        let creds = crate::keychain::ExememCredentials {
+            user_hash: "test-user".to_string(),
+            session_token: "test-session".to_string(),
+            api_key: "api_key_v2".to_string(),
+            encryption_key: String::new(),
+        };
+        crate::keychain::store_credentials(&creds).expect("store rotated creds");
+
+        let second = refresh_auth_standalone(last_returned.clone())
+            .await
+            .expect("second call should see newer stored key");
+        match second {
+            fold_db::sync::auth::SyncAuth::ApiKey(k) => assert_eq!(k, "api_key_v2"),
+            fold_db::sync::auth::SyncAuth::BearerToken(_) => {
+                panic!("must return ApiKey variant")
+            }
+        }
+        assert_eq!(last_returned.lock().unwrap().as_deref(), Some("api_key_v2"));
+
+        drop(tmp);
+        std::env::remove_var("FOLDDB_HOME");
+    }
+
+    #[tokio::test]
+    #[allow(clippy::await_holding_lock)]
+    async fn refresh_auth_attempts_reregister_when_stored_key_is_stale() {
+        // When the stored key matches what we last returned, the stored key
+        // is stale → we must fall through to re-registration. We can't run
+        // an actual Exemem API here, so we point at a non-resolvable URL
+        // and assert that the call path reached the HTTP layer (i.e. it did
+        // NOT short-circuit by returning the stale stored key again).
+        let _guard = env_lock();
+        let _tmp = setup_creds_in_temp_home("api_key_stale");
+
+        // Point Exemem API at a non-routable address so reregister fails fast.
+        std::env::set_var("EXEMEM_API_URL", "http://127.0.0.1:1");
+
+        let last_returned: Arc<Mutex<Option<String>>> =
+            Arc::new(Mutex::new(Some("api_key_stale".to_string())));
+
+        let result = refresh_auth_standalone(last_returned).await;
+        let err = result.expect_err("should attempt reregister and fail at HTTP");
+        // Any of these prove we reached the HTTP / identity-load stage rather
+        // than short-circuiting on the stored key:
+        let reached_http = err.contains("failed to connect")
+            || err.contains("Failed to read node identity")
+            || err.contains("Cannot resolve FOLDDB_HOME");
+        assert!(
+            reached_http,
+            "expected error from reregister path, got: {err}"
+        );
+
+        std::env::remove_var("EXEMEM_API_URL");
+        std::env::remove_var("FOLDDB_HOME");
+    }
 }
