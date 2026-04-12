@@ -1,3 +1,5 @@
+use std::collections::HashMap;
+
 use fold_db::access::{AuditAction, AuditEvent, TrustTier};
 use fold_db::schema::types::Field;
 use fold_db::schema::SchemaError;
@@ -218,7 +220,7 @@ impl OperationProcessor {
 
         // 1. Resolve tiers across all domains
         let domains = db.db_ops.list_trust_domains().await?;
-        let mut domain_tiers = std::collections::HashMap::new();
+        let mut domain_tiers = HashMap::new();
         for domain in &domains {
             let map = db.db_ops.load_trust_map_for_domain(domain).await?;
             if let Some(&tier) = map.get(public_key) {
@@ -308,8 +310,7 @@ impl OperationProcessor {
             .get_schemas_with_states()
             .map_err(|e| SchemaError::InvalidData(format!("Failed to list schemas: {e}")))?;
 
-        let mut domain_schemas: std::collections::HashMap<String, usize> =
-            std::collections::HashMap::new();
+        let mut domain_schemas: HashMap<String, usize> = HashMap::new();
         let mut total_policy_fields = 0usize;
         let mut total_unprotected_fields = 0usize;
 
@@ -331,8 +332,7 @@ impl OperationProcessor {
 
         // Count contacts per domain
         let domains = db.db_ops.list_trust_domains().await?;
-        let mut domain_contacts: std::collections::HashMap<String, usize> =
-            std::collections::HashMap::new();
+        let mut domain_contacts: HashMap<String, usize> = HashMap::new();
         for domain in &domains {
             let map = db.db_ops.load_trust_map_for_domain(domain).await?;
             if !map.is_empty() {
@@ -386,7 +386,7 @@ impl OperationProcessor {
     pub async fn get_all_field_policies(
         &self,
         schema_name: &str,
-    ) -> Result<std::collections::HashMap<String, Option<serde_json::Value>>, SchemaError> {
+    ) -> Result<HashMap<String, Option<serde_json::Value>>, SchemaError> {
         let db = self.get_db().map_err(to_schema_err)?;
         let schema = db
             .schema_manager
@@ -394,7 +394,7 @@ impl OperationProcessor {
             .await?
             .ok_or_else(|| SchemaError::InvalidData(format!("Schema '{schema_name}' not found")))?;
 
-        let mut policies = std::collections::HashMap::new();
+        let mut policies = HashMap::new();
         for (field_name, field) in &schema.runtime_fields {
             let policy_json = field
                 .common()
