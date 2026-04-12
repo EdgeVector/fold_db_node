@@ -10,7 +10,8 @@ use crate::discovery::calendar_sharing::{self, EventFingerprint, PeerEventSet, S
 use crate::discovery::config::{self, DiscoveryOptIn};
 use crate::discovery::connection::{
     self, ConnectionPayload, DataSharePayload, IdentityCardPayload, LocalConnectionRequest,
-    LocalSentRequest, SharedRecord, SharedRecordKey,
+    LocalSentRequest, ReferralQueryPayload, ReferralResponsePayload, SharedRecord, SharedRecordKey,
+    Vouch,
 };
 use crate::discovery::interests::{self, InterestProfile};
 use crate::discovery::moments;
@@ -95,6 +96,11 @@ pub struct RespondToRequestPayload {
 pub struct ToggleInterestRequest {
     pub category: String,
     pub enabled: bool,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+pub struct CheckNetworkRequest {
+    pub request_id: String,
 }
 
 // === Data Sharing types ===
@@ -748,6 +754,9 @@ pub async fn poll_and_decrypt_requests(
                     status: "pending".to_string(),
                     created_at: msg.created_at.clone(),
                     responded_at: None,
+                    vouches: Vec::new(),
+                    referral_query_id: None,
+                    referral_contacts_queried: 0,
                 };
                 if let Err(e) = connection::save_received_request(&*store, &local_req).await {
                     log::warn!("Failed to save received request: {}", e);
@@ -871,6 +880,21 @@ pub async fn poll_and_decrypt_requests(
                         payload.records.len(),
                         payload.sender_display_name
                     );
+                }
+            }
+            "referral_query" => {
+                if let Ok(payload) = serde_json::from_value::<ReferralQueryPayload>(raw.clone()) {
+                    handle_incoming_referral_query(node, &payload, master_key, &publisher).await;
+                } else {
+                    log::warn!("Failed to parse referral_query payload");
+                }
+            }
+            "referral_response" => {
+                if let Ok(payload) = serde_json::from_value::<ReferralResponsePayload>(raw.clone())
+                {
+                    handle_incoming_referral_response(node, &*store, &payload).await;
+                } else {
+                    log::warn!("Failed to parse referral_response payload");
                 }
             }
             _ => {
@@ -2463,6 +2487,365 @@ pub async fn send_data_share(
     Ok(ApiResponse::success(DataShareResponse {
         shared: shared_count,
     }))
+}
+
+// ===== Referral query handlers =====
+
+/// Initiate a referral query: ask trusted contacts if they know the sender
+/// of a pending connection request.
+pub async fn initiate_referral_query(
+    req: &CheckNetworkRequest,
+    node: &FoldNode,
+    discovery_url: &str,
+    auth_token: &str,
+    master_key: &[u8],
+) -> HandlerResult<serde_json::Value> {
+    let db = node
+        .get_fold_db()
+        .map_err(|e| HandlerError::Internal(format!("Failed to access database: {e}")))?;
+    let store = get_metadata_store(&db);
+
+    // Find the connection request by scanning prefix
+    let entries = store
+        .scan_prefix(b"discovery:conn_req:")
+        .await
+        .handler_err("scan connection requests")?;
+
+    let mut found_key: Option<Vec<u8>> = None;
+    let mut found_req: Option<LocalConnectionRequest> = None;
+    for (key, value) in &entries {
+        if let Ok(local_req) = serde_json::from_slice::<LocalConnectionRequest>(value) {
+            if local_req.request_id == req.request_id {
+                found_key = Some(key.clone());
+                found_req = Some(local_req);
+                break;
+            }
+        }
+    }
+
+    let (sled_key, mut local_req) = match (found_key, found_req) {
+        (Some(k), Some(r)) => (k, r),
+        _ => {
+            return Err(HandlerError::NotFound(format!(
+                "Connection request {} not found",
+                req.request_id
+            )));
+        }
+    };
+
+    if local_req.status != "pending" {
+        return Err(HandlerError::BadRequest(
+            "Can only check network for pending requests".to_string(),
+        ));
+    }
+
+    if local_req.referral_query_id.is_some() {
+        return Err(HandlerError::BadRequest(
+            "Referral query already sent for this request".to_string(),
+        ));
+    }
+
+    // Load contact book
+    let op = OperationProcessor::new(node.clone());
+    let book_path = op
+        .contact_book_path()
+        .map_err(|e| HandlerError::Internal(format!("Failed to resolve contacts path: {e}")))?;
+    let contact_book = ContactBook::load_from(&book_path).unwrap_or_default();
+
+    // Filter to contacts with both messaging pseudonym and public key
+    let eligible: Vec<Contact> = contact_book
+        .active_contacts()
+        .into_iter()
+        .filter(|c| c.messaging_pseudonym.is_some() && c.messaging_public_key.is_some())
+        .cloned()
+        .collect();
+
+    if eligible.is_empty() {
+        return Ok(ApiResponse::success(serde_json::json!({
+            "query_id": null,
+            "contacts_queried": 0
+        })));
+    }
+
+    let query_id = uuid::Uuid::new_v4().to_string();
+
+    // Derive our connection-sender pseudonym
+    let sender_hash = crate::discovery::pseudonym::content_hash("connection-sender");
+    let our_pseudonym = crate::discovery::pseudonym::derive_pseudonym(master_key, &sender_hash);
+    let our_pk_b64 = connection::get_pseudonym_public_key_b64(master_key, &our_pseudonym);
+
+    let publisher = DiscoveryPublisher::new(
+        master_key.to_vec(),
+        discovery_url.to_string(),
+        auth_token.to_string(),
+    );
+
+    let mut queried_count: u32 = 0;
+
+    for contact in &eligible {
+        let messaging_pseudonym_str = contact.messaging_pseudonym.as_ref().unwrap();
+        let messaging_pk_b64 = contact.messaging_public_key.as_ref().unwrap();
+
+        let target_pseudonym: uuid::Uuid = match messaging_pseudonym_str.parse() {
+            Ok(u) => u,
+            Err(e) => {
+                log::warn!(
+                    "Invalid messaging pseudonym UUID for contact {}: {}",
+                    contact.display_name,
+                    e
+                );
+                continue;
+            }
+        };
+
+        let pk_bytes = match B64.decode(messaging_pk_b64) {
+            Ok(b) if b.len() == 32 => {
+                let mut arr = [0u8; 32];
+                arr.copy_from_slice(&b);
+                arr
+            }
+            Ok(_) => {
+                log::warn!(
+                    "Messaging public key wrong length for contact {}",
+                    contact.display_name
+                );
+                continue;
+            }
+            Err(e) => {
+                log::warn!(
+                    "Invalid messaging public key for contact {}: {}",
+                    contact.display_name,
+                    e
+                );
+                continue;
+            }
+        };
+
+        let payload = ReferralQueryPayload {
+            message_type: "referral_query".to_string(),
+            query_id: query_id.clone(),
+            subject_pseudonym: local_req.sender_pseudonym.clone(),
+            subject_public_key: local_req.sender_public_key.clone(),
+            sender_pseudonym: our_pseudonym.to_string(),
+            reply_public_key: our_pk_b64.clone(),
+        };
+
+        let encrypted = match connection::encrypt_message(&pk_bytes, &payload) {
+            Ok(e) => e,
+            Err(e) => {
+                log::warn!(
+                    "Failed to encrypt referral query for {}: {}",
+                    contact.display_name,
+                    e
+                );
+                continue;
+            }
+        };
+
+        let encrypted_b64 = B64.encode(&encrypted);
+
+        if let Err(e) = publisher
+            .connect(target_pseudonym, encrypted_b64, Some(our_pseudonym))
+            .await
+        {
+            log::warn!(
+                "Failed to send referral query to {}: {}",
+                contact.display_name,
+                e
+            );
+            continue;
+        }
+
+        queried_count += 1;
+    }
+
+    // Update the connection request with referral info
+    local_req.referral_query_id = Some(query_id.clone());
+    local_req.referral_contacts_queried = queried_count;
+
+    let updated = serde_json::to_vec(&local_req)
+        .map_err(|e| HandlerError::Internal(format!("Failed to serialize request: {e}")))?;
+    store
+        .put(&sled_key, updated)
+        .await
+        .handler_err("save updated connection request")?;
+
+    Ok(ApiResponse::success(serde_json::json!({
+        "query_id": query_id,
+        "contacts_queried": queried_count
+    })))
+}
+
+/// Handle an incoming referral query: check if we know the subject and respond if so.
+async fn handle_incoming_referral_query(
+    node: &FoldNode,
+    payload: &ReferralQueryPayload,
+    master_key: &[u8],
+    publisher: &DiscoveryPublisher,
+) {
+    // Load contact book
+    let op = OperationProcessor::new(node.clone());
+    let book_path = match op.contact_book_path() {
+        Ok(p) => p,
+        Err(e) => {
+            log::warn!("Failed to resolve contacts path for referral query: {e}");
+            return;
+        }
+    };
+    let contact_book = ContactBook::load_from(&book_path).unwrap_or_default();
+
+    // Check if we know the subject
+    let active = contact_book.active_contacts();
+    let matched_contact = active.iter().find(|c| {
+        c.pseudonym.as_deref() == Some(&payload.subject_pseudonym)
+            || c.messaging_pseudonym.as_deref() == Some(&payload.subject_pseudonym)
+            || c.messaging_public_key.as_deref() == Some(&payload.subject_public_key)
+    });
+
+    let contact = match matched_contact {
+        Some(c) => (*c).clone(),
+        None => return, // Silence = no
+    };
+
+    // Derive our connection-sender pseudonym + X25519 key
+    let sender_hash = crate::discovery::pseudonym::content_hash("connection-sender");
+    let our_pseudonym = crate::discovery::pseudonym::derive_pseudonym(master_key, &sender_hash);
+    let our_pk_b64 = connection::get_pseudonym_public_key_b64(master_key, &our_pseudonym);
+
+    let response = ReferralResponsePayload {
+        message_type: "referral_response".to_string(),
+        query_id: payload.query_id.clone(),
+        known_as: contact.display_name.clone(),
+        sender_pseudonym: our_pseudonym.to_string(),
+        reply_public_key: our_pk_b64,
+    };
+
+    // Decode the querier's reply public key
+    let reply_pk_bytes = match B64.decode(&payload.reply_public_key) {
+        Ok(b) if b.len() == 32 => {
+            let mut arr = [0u8; 32];
+            arr.copy_from_slice(&b);
+            arr
+        }
+        Ok(_) => {
+            log::warn!("Referral query reply key wrong length");
+            return;
+        }
+        Err(e) => {
+            log::warn!("Invalid referral query reply key: {e}");
+            return;
+        }
+    };
+
+    let encrypted = match connection::encrypt_message(&reply_pk_bytes, &response) {
+        Ok(e) => e,
+        Err(e) => {
+            log::warn!("Failed to encrypt referral response: {e}");
+            return;
+        }
+    };
+
+    let encrypted_b64 = B64.encode(&encrypted);
+
+    let sender_uuid: uuid::Uuid = match payload.sender_pseudonym.parse() {
+        Ok(u) => u,
+        Err(e) => {
+            log::warn!("Invalid sender pseudonym UUID in referral query: {e}");
+            return;
+        }
+    };
+
+    if let Err(e) = publisher
+        .connect(sender_uuid, encrypted_b64, Some(our_pseudonym))
+        .await
+    {
+        log::warn!("Failed to send referral response: {e}");
+    } else {
+        log::info!(
+            "Sent referral response for query {} (known as {})",
+            payload.query_id,
+            contact.display_name
+        );
+    }
+}
+
+/// Handle an incoming referral response: append the vouch to the connection request.
+async fn handle_incoming_referral_response(
+    node: &FoldNode,
+    store: &dyn fold_db::storage::traits::KvStore,
+    payload: &ReferralResponsePayload,
+) {
+    // Scan for the connection request matching this query_id
+    let entries = match store.scan_prefix(b"discovery:conn_req:").await {
+        Ok(e) => e,
+        Err(e) => {
+            log::warn!("Failed to scan connection requests for referral response: {e}");
+            return;
+        }
+    };
+
+    let mut found_key: Option<Vec<u8>> = None;
+    let mut found_req: Option<LocalConnectionRequest> = None;
+    for (key, value) in &entries {
+        if let Ok(local_req) = serde_json::from_slice::<LocalConnectionRequest>(value) {
+            if local_req.referral_query_id.as_deref() == Some(&payload.query_id) {
+                found_key = Some(key.clone());
+                found_req = Some(local_req);
+                break;
+            }
+        }
+    }
+
+    let (sled_key, mut local_req) = match (found_key, found_req) {
+        (Some(k), Some(r)) => (k, r),
+        _ => {
+            log::warn!("Referral response for unknown query {}", payload.query_id);
+            return;
+        }
+    };
+
+    // Look up voucher identity from contact book
+    let voucher_display_name = {
+        let op = OperationProcessor::new(node.clone());
+        let book_path = op.contact_book_path().ok();
+        let contact_book = book_path
+            .and_then(|p| ContactBook::load_from(&p).ok())
+            .unwrap_or_default();
+
+        contact_book
+            .active_contacts()
+            .iter()
+            .find(|c| {
+                c.messaging_pseudonym.as_deref() == Some(&payload.sender_pseudonym)
+                    || c.pseudonym.as_deref() == Some(&payload.sender_pseudonym)
+            })
+            .map(|c| c.display_name.clone())
+            .unwrap_or_else(|| "Unknown contact".to_string())
+    };
+
+    local_req.vouches.push(Vouch {
+        voucher_display_name,
+        known_as: payload.known_as.clone(),
+        received_at: chrono::Utc::now().to_rfc3339(),
+    });
+
+    let updated = match serde_json::to_vec(&local_req) {
+        Ok(v) => v,
+        Err(e) => {
+            log::warn!("Failed to serialize updated connection request: {e}");
+            return;
+        }
+    };
+
+    if let Err(e) = store.put(&sled_key, updated).await {
+        log::warn!("Failed to save updated connection request with vouch: {e}");
+    } else {
+        log::info!(
+            "Added vouch for referral query {} (known as '{}')",
+            payload.query_id,
+            payload.known_as
+        );
+    }
 }
 
 /// Process a received data share: create schemas if needed, write mutations,

@@ -233,6 +233,35 @@ pub fn decrypt_message_raw(
     serde_json::from_slice(&plaintext).map_err(|e| format!("Failed to deserialize payload: {}", e))
 }
 
+/// Referral query — "do you know this pseudonym?"
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ReferralQueryPayload {
+    pub message_type: String,
+    pub query_id: String,
+    pub subject_pseudonym: String,
+    pub subject_public_key: String,
+    pub sender_pseudonym: String,
+    pub reply_public_key: String,
+}
+
+/// Referral response — "yes, I know them as Bob"
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ReferralResponsePayload {
+    pub message_type: String,
+    pub query_id: String,
+    pub known_as: String,
+    pub sender_pseudonym: String,
+    pub reply_public_key: String,
+}
+
+/// A vouch from a trusted contact about a connection requester.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct Vouch {
+    pub voucher_display_name: String,
+    pub known_as: String,
+    pub received_at: String,
+}
+
 /// A decrypted, locally stored connection request.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct LocalConnectionRequest {
@@ -247,6 +276,12 @@ pub struct LocalConnectionRequest {
     pub status: String,
     pub created_at: String,
     pub responded_at: Option<String>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub vouches: Vec<Vouch>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub referral_query_id: Option<String>,
+    #[serde(default)]
+    pub referral_contacts_queried: u32,
 }
 
 /// A locally stored sent connection request.

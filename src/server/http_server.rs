@@ -628,6 +628,10 @@ impl FoldHttpServer {
                     web::post().to(discovery_routes::respond_to_request),
                 )
                 .route(
+                    "/connection-requests/check-network",
+                    web::post().to(discovery_routes::check_network),
+                )
+                .route(
                     "/sent-requests",
                     web::get().to(discovery_routes::sent_requests),
                 )

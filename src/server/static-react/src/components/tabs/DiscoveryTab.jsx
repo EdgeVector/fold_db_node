@@ -639,6 +639,22 @@ function ConnectionRequestsPanel({ onResult }) {
                         ))
                     }
                   </select>
+                  {!r.referral_query_id && (
+                    <button
+                      type="button"
+                      className="btn btn-sm"
+                      onClick={async () => {
+                        try {
+                          await discoveryClient.checkNetwork(r.request_id);
+                          fetchRequests();
+                        } catch (e) {
+                          console.error('Check network failed:', e);
+                        }
+                      }}
+                    >
+                      Check network
+                    </button>
+                  )}
                   <button
                     onClick={() => handleRespond(r.request_id, 'accept')}
                     disabled={responding === r.request_id}
@@ -656,6 +672,24 @@ function ConnectionRequestsPanel({ onResult }) {
                 </div>
               </div>
               <p className="text-sm text-primary">{r.message}</p>
+              {/* Vouches from trusted contacts */}
+              {r.vouches && r.vouches.length > 0 && (
+                <div className="mt-2 space-y-1">
+                  {r.vouches.map((v, i) => (
+                    <div key={i} className="text-xs flex items-center gap-1 text-gruvbox-green">
+                      <span className="font-semibold">{v.voucher_display_name}</span>
+                      <span className="text-secondary">knows this person as</span>
+                      <span className="font-semibold">&ldquo;{v.known_as}&rdquo;</span>
+                    </div>
+                  ))}
+                </div>
+              )}
+              {/* Referral query progress */}
+              {r.referral_query_id && (!r.vouches || r.vouches.length === 0) && (
+                <p className="text-xs text-secondary mt-1">
+                  Checking network... (queried {r.referral_contacts_queried} contacts)
+                </p>
+              )}
               <div className="text-xs text-tertiary font-mono truncate">
                 from: {r.sender_pseudonym}
               </div>
