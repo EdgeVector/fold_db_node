@@ -784,5 +784,4 @@ mod tests {
         assert!(value.is_array());
         assert_eq!(value.as_array().unwrap().len(), 3);
     }
-
 }
