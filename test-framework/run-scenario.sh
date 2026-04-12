@@ -77,8 +77,72 @@ fi
 
 export FOLDDB_TEST_RUN_ID="$RUN_ID"
 export FOLDDB_TEST_SESSION_DIR="$SESSION_DIR"
-export FOLDDB_TEST_DEV_API="${FOLDDB_TEST_DEV_API:-https://api-dev.exemem.com}"
-export FOLDDB_TEST_DEV_SCHEMA="${FOLDDB_TEST_DEV_SCHEMA:-https://schema-dev.folddb.com}"
+export FOLDDB_TEST_DEV_API="${FOLDDB_TEST_DEV_API:-https://ygyu7ritx8.execute-api.us-west-2.amazonaws.com}"
+export FOLDDB_TEST_DEV_SCHEMA="${FOLDDB_TEST_DEV_SCHEMA:-https://y0q3m6vk75.execute-api.us-west-2.amazonaws.com}"
+export AWS_REGION="${AWS_REGION:-us-west-2}"
+
+# Load test admin secret for cleanup Lambda invocations.
+ADMIN_SECRET_FILE="${FOLDDB_TEST_ADMIN_SECRET_FILE:-$HOME/.folddb/test-admin-secret-dev.txt}"
+if [[ -z "${FOLDDB_TEST_ADMIN_SECRET:-}" && -f "$ADMIN_SECRET_FILE" ]]; then
+  FOLDDB_TEST_ADMIN_SECRET="$(tr -d '[:space:]' < "$ADMIN_SECRET_FILE")"
+  export FOLDDB_TEST_ADMIN_SECRET
+fi
+
+# Standalone smoke driver: spawn nodes, register, cleanup. Triggered by
+# FOLDDB_TEST_STANDALONE=1 (the Claude-driven agent driver is aspirational).
+run_standalone_smoke() {
+  local scenario="$1"
+  local nodes_json="$SESSION_DIR/state/nodes.json"
+  echo "[standalone] smoke-running $scenario"
+
+  # Parse node roles from the scenario.
+  local roles
+  if command -v yq >/dev/null 2>&1; then
+    roles="$(yq -r '.nodes[].role' "$scenario")"
+  else
+    roles="$(python3 -c "import yaml,sys; [print(n['role']) for n in yaml.safe_load(open('$scenario'))['nodes']]")"
+  fi
+  [[ -n "$roles" ]] || { echo "[standalone] no nodes in scenario" >&2; return 2; }
+
+  local port=40000
+  echo "[]" > "$nodes_json"
+  local trapcmd="cleanup_all '$nodes_json' || true"
+  trap "$trapcmd" EXIT
+
+  while read -r role; do
+    [[ -n "$role" ]] || continue
+    echo "[standalone] --- node: $role (port $port) ---"
+    local invite
+    invite="$(nf_create_invite_codes 1)"
+    echo "[standalone] invite: $invite"
+    nf_spawn_node "$role" "$port" "$SESSION_DIR" >/dev/null
+    nf_wait_healthy "$port" 30
+    local reg_resp
+    reg_resp="$(nf_register_node "$port" "$invite")"
+    echo "[standalone] register resp: $reg_resp"
+    local hash api_key public_key
+    hash="$(echo "$reg_resp" | jq -r '.user_hash // .hash // ""')"
+    api_key="$(echo "$reg_resp" | jq -r '.api_key // ""')"
+    public_key="$(echo "$reg_resp" | jq -r '.public_key // ""')"
+    if [[ -z "$hash" || -z "$public_key" ]]; then
+      # Fallback: fetch from auto-identity endpoint.
+      local ident
+      ident="$(curl -fsS "http://127.0.0.1:$port/api/system/auto-identity" || true)"
+      [[ -z "$hash" ]]        && hash="$(echo "$ident" | jq -r '.user_hash // ""')"
+      [[ -z "$public_key" ]]  && public_key="$(echo "$ident" | jq -r '.public_key // ""')"
+    fi
+    jq --arg role "$role" --argjson port "$port" \
+       --arg hash "$hash" --arg api_key "$api_key" \
+       --arg invite "$invite" --arg public_key "$public_key" \
+       '. + [{role:$role, port:$port, hash:$hash, api_key:$api_key, invite_code:$invite, public_key:$public_key}]' \
+       "$nodes_json" > "$nodes_json.tmp" && mv "$nodes_json.tmp" "$nodes_json"
+    port=$((port + 1))
+  done <<< "$roles"
+
+  echo "[standalone] nodes.json:"
+  cat "$nodes_json"
+  echo "[standalone] smoke complete; running cleanup"
+}
 
 # shellcheck source=lib/node_factory.sh
 source "$FRAMEWORK_DIR/lib/node_factory.sh"
@@ -88,6 +152,11 @@ source "$FRAMEWORK_DIR/lib/coordination.sh"
 source "$FRAMEWORK_DIR/lib/cleanup.sh"
 # shellcheck source=lib/assertions.sh
 source "$FRAMEWORK_DIR/lib/assertions.sh"
+
+if [[ "${FOLDDB_TEST_STANDALONE:-0}" == "1" ]]; then
+  run_standalone_smoke "$SCENARIO"
+  exit 0
+fi
 
 cat <<EOF
 
