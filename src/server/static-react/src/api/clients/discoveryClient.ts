@@ -45,6 +45,12 @@ export interface ConnectionRequest {
   created_at: string;
 }
 
+export interface Vouch {
+  voucher_display_name: string;
+  known_as: string;
+  received_at: string;
+}
+
 export interface LocalConnectionRequest {
   request_id: string;
   message_id: string;
@@ -56,6 +62,9 @@ export interface LocalConnectionRequest {
   status: string;
   created_at: string;
   responded_at: string | null;
+  vouches: Vouch[];
+  referral_query_id: string | null;
+  referral_contacts_queried: number;
 }
 
 export interface LocalSentRequest {
@@ -283,6 +292,13 @@ export class DiscoveryClient {
       role,
     }, {
       timeout: API_TIMEOUTS.MUTATION,
+    });
+  }
+
+  async checkNetwork(requestId: string): Promise<EnhancedApiResponse<{ query_id: string; contacts_queried: number }>> {
+    return this.client.post('/discovery/connection-requests/check-network', { request_id: requestId }, {
+      timeout: API_TIMEOUTS.MUTATION,
+      retries: API_RETRIES.NONE,
     });
   }
 
