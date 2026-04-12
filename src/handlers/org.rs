@@ -412,7 +412,7 @@ async fn purge_org_locally(
             .await
             .handler_err(&format!("purge org data after {context}"))?;
         fold_db
-            .schema_manager
+            .schema_manager()
             .purge_org_schemas(org_hash)
             .await
             .handler_err(&format!("purge org schemas after {context}"))?;

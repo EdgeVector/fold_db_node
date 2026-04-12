@@ -24,7 +24,7 @@ impl OperationProcessor {
     /// Executes a query and returns raw structured results, not JSON.
     pub async fn execute_query_map(&self, query: Query) -> FoldDbResult<QueryResultMap> {
         let db = self.get_db()?;
-        let results = db.query_executor.query(query).await;
+        let results = db.query_executor().query(query).await;
         Ok(results?)
     }
 
@@ -50,14 +50,14 @@ impl OperationProcessor {
 
         // Resolve tiers in all domains
         let domains = db
-            .db_ops
+            .db_ops()
             .list_trust_domains()
             .await
             .map_err(FoldDbError::Schema)?;
         let mut trust_tiers = HashMap::new();
         for domain in &domains {
             let map = db
-                .db_ops
+                .db_ops()
                 .load_trust_map_for_domain(domain)
                 .await
                 .map_err(FoldDbError::Schema)?;
@@ -84,7 +84,7 @@ impl OperationProcessor {
         // Use query_with_access for access-controlled results
         let db = self.get_db()?;
         let result_map = db
-            .query_executor
+            .query_executor()
             .query_with_access(query, &access_context, None)
             .await?;
         let records_map = fold_db::fold_db_core::query::records_from_field_map(&result_map);
@@ -289,7 +289,7 @@ impl OperationProcessor {
     )> {
         let db = self.get_db()?;
 
-        let schema = match db.schema_manager.get_schema_metadata(schema_name)? {
+        let schema = match db.schema_manager().get_schema_metadata(schema_name)? {
             Some(s) => s,
             None => return Ok((vec![], HashMap::new(), HashMap::new())),
         };
@@ -309,7 +309,8 @@ impl OperationProcessor {
             if child_field_map.contains_key(child_schema_name) {
                 continue;
             }
-            if let Ok(Some(child_schema)) = db.schema_manager.get_schema_metadata(child_schema_name)
+            if let Ok(Some(child_schema)) =
+                db.schema_manager().get_schema_metadata(child_schema_name)
             {
                 let fields = Self::get_queryable_fields(&child_schema);
                 if !fields.is_empty() {
@@ -507,7 +508,7 @@ impl OperationProcessor {
         let db = self.get_db()?;
 
         let mut schema = db
-            .schema_manager
+            .schema_manager()
             .get_schema(schema_name)
             .await?
             .ok_or_else(|| FoldDbError::Database(format!("Schema '{}' not found", schema_name)))?;
@@ -539,7 +540,7 @@ impl OperationProcessor {
 
         if let Some(ref kf) = key_field_name {
             if let Some(field) = schema.runtime_fields.get_mut(kf) {
-                field.refresh_from_db(&db.db_ops).await;
+                field.refresh_from_db(db.db_ops()).await;
                 all_keys = field.get_all_keys();
             }
         }
@@ -548,7 +549,7 @@ impl OperationProcessor {
         // with the most keys (the key field may not be loaded yet after expansion).
         if all_keys.is_empty() {
             for field in schema.runtime_fields.values_mut() {
-                field.refresh_from_db(&db.db_ops).await;
+                field.refresh_from_db(db.db_ops()).await;
                 let keys = field.get_all_keys();
                 if keys.len() > all_keys.len() {
                     all_keys = keys;
@@ -581,7 +582,7 @@ impl OperationProcessor {
         let mut results = db.native_search_all_classifications(term).await?;
 
         // Enrich results with human-readable schema display names
-        let schemas = db.schema_manager.get_active_schemas_with_states()?;
+        let schemas = db.schema_manager().get_active_schemas_with_states()?;
         let display_names: std::collections::HashMap<&str, &str> = schemas
             .iter()
             .filter_map(|s| {

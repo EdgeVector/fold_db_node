@@ -78,7 +78,7 @@ pub async fn get_feed(
         // Get schema to inspect field access policies
         let (all_fields, public_fields) = {
             let db = processor.get_db_public().typed_handler_err()?;
-            let schema = match db.schema_manager.get_schema(schema_name).await {
+            let schema = match db.schema_manager().get_schema(schema_name).await {
                 Ok(Some(s)) => s,
                 // Skip schemas that don't exist or fail to load
                 _ => continue,

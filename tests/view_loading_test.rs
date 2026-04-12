@@ -172,7 +172,7 @@ async fn load_view_with_schema_dependency() {
     // Verify view is locally registered
     let db = node.get_fold_db().unwrap();
     assert!(
-        db.schema_manager.get_view("MyView").unwrap().is_some(),
+        db.schema_manager().get_view("MyView").unwrap().is_some(),
         "MyView should be registered locally"
     );
 
@@ -211,8 +211,8 @@ async fn load_view_chain_resolves_dependencies() {
 
     // Both views should be registered locally
     let db = node.get_fold_db().unwrap();
-    assert!(db.schema_manager.get_view("ViewA").unwrap().is_some());
-    assert!(db.schema_manager.get_view("ViewB").unwrap().is_some());
+    assert!(db.schema_manager().get_view("ViewA").unwrap().is_some());
+    assert!(db.schema_manager().get_view("ViewB").unwrap().is_some());
 
     handle.stop(true).await;
 }
@@ -334,7 +334,7 @@ async fn load_view_converts_stored_view_fields_correctly() {
     node.load_view_from_service("TypedView").await.unwrap();
 
     let db = node.get_fold_db().unwrap();
-    let view = db.schema_manager.get_view("TypedView").unwrap().unwrap();
+    let view = db.schema_manager().get_view("TypedView").unwrap().unwrap();
 
     assert_eq!(
         view.output_fields.get("count"),

@@ -43,7 +43,7 @@ async fn load_photo_schema(node: &FoldNode) {
 
     // Set all fields to public-read so feed tests work
     let mut schema = fold_db
-        .schema_manager
+        .schema_manager()
         .get_schema("Photo")
         .await
         .expect("get schema")
@@ -63,7 +63,7 @@ async fn load_photo_schema(node: &FoldNode) {
     }
 
     fold_db
-        .schema_manager
+        .schema_manager()
         .update_schema(&schema)
         .await
         .expect("Failed to set public policies on Photo schema");
@@ -320,7 +320,7 @@ async fn test_feed_strips_non_public_fields() {
 
         let db = node.get_fold_db().expect("Failed to get FoldDB");
         let mut schema = db
-            .schema_manager
+            .schema_manager()
             .get_schema("Photo")
             .await
             .expect("Failed to get Photo schema")
@@ -334,7 +334,7 @@ async fn test_feed_strips_non_public_fields() {
             });
         }
 
-        db.schema_manager
+        db.schema_manager()
             .update_schema(&schema)
             .await
             .expect("Failed to update schema with access policy");

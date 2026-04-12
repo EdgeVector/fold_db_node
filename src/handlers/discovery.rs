@@ -1090,7 +1090,7 @@ async fn handle_incoming_schema_list_request(
         }
     };
 
-    let schemas: Vec<SchemaInfo> = match db.schema_manager.get_schemas() {
+    let schemas: Vec<SchemaInfo> = match db.schema_manager().get_schemas() {
         Ok(all_schemas) => all_schemas
             .values()
             .map(|s| SchemaInfo {
@@ -2380,7 +2380,7 @@ pub async fn send_data_share(
     for record_req in &req.records {
         // Load schema definition
         let schema_def = match db
-            .schema_manager
+            .schema_manager()
             .get_schema_metadata(&record_req.schema_name)
         {
             Ok(Some(schema)) => serde_json::to_value(&schema).ok(),
@@ -2392,7 +2392,7 @@ pub async fn send_data_share(
             record_req.schema_name.clone(),
             vec![], // all fields
         );
-        let result_map = db.query_executor.query(query).await;
+        let result_map = db.query_executor().query(query).await;
         let records_map = match result_map {
             Ok(rm) => fold_db::fold_db_core::query::records_from_field_map(&rm),
             Err(e) => {
@@ -2906,12 +2906,16 @@ async fn process_data_share(
                 .map_err(|e| HandlerError::Internal(format!("Schema serialization: {e}")))?;
 
             // Try to load schema — if it already exists, load_schema_from_json returns an error (that's fine)
-            match db.schema_manager.load_schema_from_json(&schema_json).await {
+            match db
+                .schema_manager()
+                .load_schema_from_json(&schema_json)
+                .await
+            {
                 Ok(_) => {
                     log::info!("Created schema '{}' from data share", record.schema_name);
                     // Auto-approve shared schemas so mutations can be written
                     if let Err(e) = db
-                        .schema_manager
+                        .schema_manager()
                         .set_schema_state(
                             &record.schema_name,
                             fold_db::schema::SchemaState::Approved,
@@ -2933,7 +2937,7 @@ async fn process_data_share(
                     );
                     // Ensure schema is approved even if it already existed
                     if let Err(approve_err) = db
-                        .schema_manager
+                        .schema_manager()
                         .set_schema_state(
                             &record.schema_name,
                             fold_db::schema::SchemaState::Approved,
@@ -2965,7 +2969,7 @@ async fn process_data_share(
         );
 
         if let Err(e) = db
-            .mutation_manager
+            .mutation_manager()
             .write_mutations_batch_async(vec![mutation])
             .await
         {

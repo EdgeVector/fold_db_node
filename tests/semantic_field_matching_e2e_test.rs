@@ -206,11 +206,11 @@ async fn test_semantic_field_matching_full_pipeline() {
     {
         let db = node.get_fold_db().unwrap();
         let json_a = serde_json::to_string(&resp_a.schema).unwrap();
-        db.schema_manager
+        db.schema_manager()
             .load_schema_from_json(&json_a)
             .await
             .unwrap();
-        db.schema_manager.approve(&schema_a_name).await.unwrap();
+        db.schema_manager().approve(&schema_a_name).await.unwrap();
     }
 
     // 4. Write data using Schema A
@@ -304,14 +304,14 @@ async fn test_semantic_field_matching_full_pipeline() {
     {
         let db = node.get_fold_db().unwrap();
         let json_b = serde_json::to_string(&resp_b.schema).unwrap();
-        db.schema_manager
+        db.schema_manager()
             .load_schema_from_json(&json_b)
             .await
             .unwrap();
-        db.schema_manager.approve(&schema_b_name).await.unwrap();
+        db.schema_manager().approve(&schema_b_name).await.unwrap();
         if let Some(ref old_name) = resp_b.replaced_schema {
             let _ = db
-                .schema_manager
+                .schema_manager()
                 .block_and_supersede(old_name, &schema_b_name)
                 .await;
         }

@@ -384,7 +384,7 @@ impl FoldNode {
         // (collected_views is in leaf-first order from recursion)
         for schema_json in &result.schemas_to_load {
             self.db
-                .schema_manager
+                .schema_manager()
                 .load_schema_from_json(schema_json)
                 .await
                 .map_err(|e| {
@@ -393,7 +393,7 @@ impl FoldNode {
         }
         for view in &result.views_to_register {
             self.db
-                .schema_manager
+                .schema_manager()
                 .register_view(view.clone())
                 .await
                 .map_err(|e| {
@@ -440,7 +440,7 @@ impl FoldNode {
             }
 
             // Already loaded locally → skip
-            if self.db.schema_manager.get_view(name)?.is_some() {
+            if self.db.schema_manager().get_view(name)?.is_some() {
                 result.already_loaded.push(name.to_string());
                 return Ok(());
             }
@@ -472,7 +472,7 @@ impl FoldNode {
             // Ensure output schema is loaded locally
             if self
                 .db
-                .schema_manager
+                .schema_manager()
                 .get_schema(&stored_view.output_schema_name)
                 .await?
                 .is_none()
@@ -491,8 +491,8 @@ impl FoldNode {
                 let source = &query.schema_name;
 
                 // Already loaded locally as schema or view?
-                let is_local = self.db.schema_manager.get_schema(source).await?.is_some()
-                    || self.db.schema_manager.get_view(source)?.is_some();
+                let is_local = self.db.schema_manager().get_schema(source).await?.is_some()
+                    || self.db.schema_manager().get_view(source)?.is_some();
                 if is_local {
                     result.already_loaded.push(source.clone());
                     continue;
@@ -568,7 +568,7 @@ impl FoldNode {
     ) -> FoldDbResult<Vec<String>> {
         Ok(self
             .db
-            .mutation_manager
+            .mutation_manager()
             .write_mutations_batch_async(mutations)
             .await?)
     }
@@ -586,7 +586,7 @@ impl FoldNode {
         // Initialize security manager with node configuration
         let security_config = config.security_config.clone();
 
-        let db_ops = db.db_ops.clone();
+        let db_ops = db.db_ops().clone();
 
         let security_manager = Arc::new(
             SecurityManager::new_with_persistence(
@@ -696,7 +696,7 @@ impl FoldNode {
     ) -> Option<FileIngestionRecord> {
         let key = format!("file:{}:{}", pub_key, file_hash);
         self.db
-            .db_ops
+            .db_ops()
             .idempotency_store()
             .get_item::<FileIngestionRecord>(&key)
             .await
@@ -713,7 +713,7 @@ impl FoldNode {
     ) -> FoldDbResult<()> {
         let key = format!("file:{}:{}", pub_key, file_hash);
         self.db
-            .db_ops
+            .db_ops()
             .idempotency_store()
             .put_item(&key, &record)
             .await
@@ -734,7 +734,7 @@ impl FoldNode {
             fold_db::fold_db_core::infrastructure::process_results_subscriber::ProcessMutationResult,
         )> = self
             .db
-            .db_ops
+            .db_ops()
             .process_results_store()
             .scan_items_with_prefix(&prefix)
             .await

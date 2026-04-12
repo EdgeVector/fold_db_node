@@ -771,7 +771,7 @@ pub async fn apply_defaults_all(
         async {
             let db = op.get_db_public().typed_handler_err()?;
             let schemas = db
-                .schema_manager
+                .schema_manager()
                 .get_schemas_with_states()
                 .typed_handler_err()?;
             drop(db);

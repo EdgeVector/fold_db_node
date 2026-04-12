@@ -109,7 +109,7 @@ pub async fn node_info(state: web::Data<AppState>) -> impl Responder {
                 .map_err(|e| crate::handlers::HandlerError::Internal(e.to_string()))?;
 
             // List schemas with descriptive names
-            let all_schemas = db.schema_manager.get_schemas().typed_handler_err()?;
+            let all_schemas = db.schema_manager().get_schemas().typed_handler_err()?;
             let shared_schemas: Vec<String> = all_schemas.keys().cloned().collect();
             let schemas: Vec<SharedSchemaInfo> = all_schemas
                 .values()

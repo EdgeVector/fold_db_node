@@ -237,11 +237,11 @@ async fn test_schema_expansion_on_fresh_db() {
     let schema_json = serde_json::to_string(&add_resp.schema).unwrap();
     {
         let db_1 = node_1.get_fold_db().unwrap();
-        db_1.schema_manager
+        db_1.schema_manager()
             .load_schema_from_json(&schema_json)
             .await
             .unwrap();
-        db_1.schema_manager
+        db_1.schema_manager()
             .approve(&add_resp.schema.name)
             .await
             .unwrap();
@@ -279,7 +279,7 @@ async fn test_schema_expansion_on_fresh_db() {
     // Verify Schema A is NOT loaded in this fresh DB
     {
         let db_2 = node_2.get_fold_db().unwrap();
-        let a_metadata = db_2.schema_manager.get_schema_metadata(&schema_a_name);
+        let a_metadata = db_2.schema_manager().get_schema_metadata(&schema_a_name);
         assert!(
             a_metadata.map(|opt| opt.is_none()).unwrap_or(true),
             "Schema A should NOT be loaded in fresh DB"
@@ -322,7 +322,7 @@ async fn test_schema_expansion_on_fresh_db() {
         let client = fold_db_node::fold_node::SchemaServiceClient::new(&schema_url);
         let old_schema = client.get_schema(&schema_a_name).await.unwrap();
         let old_json = serde_json::to_string(&old_schema).unwrap();
-        db_2.schema_manager
+        db_2.schema_manager()
             .load_schema_from_json(&old_json)
             .await
             .unwrap();
@@ -330,14 +330,14 @@ async fn test_schema_expansion_on_fresh_db() {
 
         // 2. Load and approve Schema B
         let schema_b_json = serde_json::to_string(&add_resp_b.schema).unwrap();
-        db_2.schema_manager
+        db_2.schema_manager()
             .load_schema_from_json(&schema_b_json)
             .await
             .unwrap();
 
         // This is the call that would fail without the fix — apply_field_mappers
         // needs the old schema's molecule UUIDs.
-        let approve_result = db_2.schema_manager.approve(&add_resp_b.schema.name).await;
+        let approve_result = db_2.schema_manager().approve(&add_resp_b.schema.name).await;
         assert!(
             approve_result.is_ok(),
             "Approving expanded schema should succeed: {:?}",
@@ -347,7 +347,7 @@ async fn test_schema_expansion_on_fresh_db() {
 
         // --- Phase 3: Verify state ---
         // Block old schema (as ingestion service would)
-        db_2.schema_manager
+        db_2.schema_manager()
             .block_and_supersede(&schema_a_name, &add_resp_b.schema.name)
             .await
             .unwrap();
@@ -380,7 +380,7 @@ async fn test_schema_expansion_on_fresh_db() {
     // Verify Schema A is blocked by checking all schemas (including blocked)
     {
         let db_2 = node_2.get_fold_db().unwrap();
-        let all_schemas = db_2.schema_manager.get_schemas_with_states().unwrap();
+        let all_schemas = db_2.schema_manager().get_schemas_with_states().unwrap();
         let blocked: Vec<_> = all_schemas
             .iter()
             .filter(|s| s.state == SchemaState::Blocked)
@@ -475,13 +475,13 @@ async fn test_expansion_without_old_schema_warns_but_succeeds() {
     {
         let db_2 = node_2.get_fold_db().unwrap();
         let schema_b_json = serde_json::to_string(&add_resp.schema).unwrap();
-        db_2.schema_manager
+        db_2.schema_manager()
             .load_schema_from_json(&schema_b_json)
             .await
             .unwrap();
 
         // approve should succeed even without old schema (warn + skip, not error)
-        let result = db_2.schema_manager.approve(&add_resp.schema.name).await;
+        let result = db_2.schema_manager().approve(&add_resp.schema.name).await;
         assert!(
             result.is_ok(),
             "Approval should succeed even without old schema loaded: {:?}",

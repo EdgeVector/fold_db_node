@@ -115,7 +115,7 @@ pub(crate) fn apply_image_schema_override(
 /// Acquire a clone of the SchemaCore from the node without holding the DB lock.
 pub(crate) async fn get_schema_manager(node: &FoldNode) -> IngestionResult<Arc<SchemaCore>> {
     let db_guard = node.get_fold_db().map_err(schema_err)?;
-    let manager = db_guard.schema_manager.clone();
+    let manager = db_guard.schema_manager().clone();
     drop(db_guard);
     Ok(manager)
 }
