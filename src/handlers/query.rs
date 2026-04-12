@@ -10,7 +10,6 @@ use crate::handlers::response::{
     get_db_guard, ApiResponse, HandlerError, HandlerResult, IntoHandlerError, IntoTypedHandlerError,
 };
 use fold_db::schema::types::operations::Query;
-use fold_db::storage::traits::TypedStore;
 use serde::{Deserialize, Serialize};
 
 handler_response! {
@@ -147,8 +146,7 @@ pub async fn get_atom_content(
     let db_ops = db_guard.get_db_ops();
 
     let atom: fold_db::atom::Atom = db_ops
-        .atoms_store()
-        .get_item(&format!("atom:{}", atom_uuid))
+        .get_atom_by_uuid(atom_uuid, None)
         .await
         .handler_err("fetch atom")?
         .ok_or_else(|| HandlerError::NotFound(format!("Atom '{}' not found", atom_uuid)))?;

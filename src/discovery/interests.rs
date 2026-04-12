@@ -221,7 +221,7 @@ pub async fn run_interest_detection(
         .map_err(|e| format!("Failed to access database: {}", e))?;
 
     let db_ops = db.get_db_ops();
-    let metadata_store = db_ops.metadata_store().inner().clone();
+    let metadata_store = db_ops.raw_metadata_store();
 
     // Get all schemas
     let schemas: Vec<_> = db
