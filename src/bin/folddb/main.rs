@@ -8,6 +8,7 @@ mod output;
 mod restore;
 mod update_check;
 
+use base64::Engine;
 use clap::Parser;
 use cli::{Cli, Command, DaemonCommand};
 use client::FoldDbClient;
@@ -778,17 +779,28 @@ async fn cloud_enable(
         Err(e) => return Some(Err(CliError::new(format!("Input cancelled: {}", e)))),
     };
 
-    let pub_key = match &config.public_key {
+    let pub_key_b64 = match &config.public_key {
         Some(k) => k.clone(),
         None => {
             return Some(Err(CliError::new("No public key in config")));
         }
     };
-    let pub_key_hex: String = pub_key
-        .as_bytes()
-        .iter()
-        .map(|b| format!("{:02x}", b))
-        .collect();
+    let private_key_b64 = match &config.private_key {
+        Some(k) => k.clone(),
+        None => {
+            return Some(Err(CliError::new("No private key in config")));
+        }
+    };
+    let pub_key_bytes = match base64::engine::general_purpose::STANDARD.decode(&pub_key_b64) {
+        Ok(b) => b,
+        Err(e) => {
+            return Some(Err(CliError::new(format!(
+                "Failed to decode public key: {}",
+                e
+            ))));
+        }
+    };
+    let pub_key_hex: String = pub_key_bytes.iter().map(|b| format!("{:02x}", b)).collect();
 
     let api_url = fold_db_node::endpoints::exemem_api_url();
 
@@ -797,6 +809,7 @@ async fn cloud_enable(
     let resp = match commands::setup::register_with_exemem_and_invite(
         &api_url,
         &pub_key_hex,
+        &private_key_b64,
         Some(&invite_code),
     ) {
         Ok(r) => r,
