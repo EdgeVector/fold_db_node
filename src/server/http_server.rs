@@ -677,6 +677,14 @@ impl FoldHttpServer {
                 .route("/opt-ins", web::get().to(discovery_routes::list_opt_ins))
                 .route("/opt-in", web::post().to(discovery_routes::opt_in))
                 .route("/opt-out", web::post().to(discovery_routes::opt_out))
+                .route(
+                    "/my-pseudonyms",
+                    web::get().to(discovery_routes::my_pseudonyms),
+                )
+                .route(
+                    "/opt-out-all",
+                    web::post().to(discovery_routes::opt_out_all),
+                )
                 .route("/publish", web::post().to(discovery_routes::publish))
                 .route("/search", web::post().to(discovery_routes::search))
                 .route("/connect", web::post().to(discovery_routes::connect))

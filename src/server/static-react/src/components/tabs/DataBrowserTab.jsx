@@ -1,9 +1,10 @@
-import { useCallback, useMemo, useState, Fragment } from 'react'
+import { useCallback, useEffect, useMemo, useState, Fragment } from 'react'
 import { useAppSelector } from '../../store/hooks'
 import { selectAllSchemas } from '../../store/schemaSlice'
 import { useOrgNames } from '../../hooks/useOrgNames'
 import { schemaClient } from '../../api/clients/schemaClient'
-import { mutationClient } from '../../api/clients'
+import { mutationClient, systemClient } from '../../api/clients'
+import * as trustClient from '../../api/clients/trustClient'
 import { FieldsTable } from '../StructuredResults'
 import SchemaName from '../shared/SchemaName'
 import ShareRecordModal from '../ShareRecordModal'
@@ -40,6 +41,45 @@ export default function DataBrowserTab() {
   const [keyRecords, setKeyRecords] = useState({})        // { compositeId: { fields, metadata } }
   const [keyLoading, setKeyLoading] = useState({})        // { compositeId: bool }
   const [shareTarget, setShareTarget] = useState(null)
+
+  // Contact book (pub_key -> display_name) + own node public key, used to render
+  // the "Shared by X" badge on records whose author differs from this node.
+  const [contactsByKey, setContactsByKey] = useState(() => new Map())
+  const [ownPublicKey, setOwnPublicKey] = useState(null)
+
+  useEffect(() => {
+    let cancelled = false
+    async function load() {
+      try {
+        const res = await trustClient.listContacts()
+        if (!cancelled && res?.success && res.data?.contacts) {
+          const map = new Map()
+          for (const c of res.data.contacts) {
+            if (c?.public_key) map.set(c.public_key, c.display_name || 'Unknown')
+          }
+          setContactsByKey(map)
+        }
+      } catch { /* ignore */ }
+      try {
+        const res = await systemClient.getAutoIdentity()
+        if (!cancelled && res?.success) {
+          const pk = res.data?.public_key || res.data?.data?.public_key || null
+          setOwnPublicKey(pk)
+        }
+      } catch { /* ignore */ }
+    }
+    load()
+    return () => { cancelled = true }
+  }, [])
+
+  // Resolve author_pub_key -> badge label. Returns null when the record is owned
+  // by this node (no badge) or when author is unknown (omitted by the caller).
+  const resolveSharedBy = useCallback((authorPubKey) => {
+    if (!authorPubKey) return null
+    if (ownPublicKey && authorPubKey === ownPublicKey) return null
+    const name = contactsByKey.get(authorPubKey)
+    return name ? `Shared by ${name}` : 'Shared by External'
+  }, [contactsByKey, ownPublicKey])
 
   const schemaList = useMemo(() => {
     if (!Array.isArray(schemas)) return []
@@ -118,12 +158,12 @@ export default function DataBrowserTab() {
             return String(x?.key?.hash || '') === String(kv?.hash || '') &&
                    String(x?.key?.range || '') === String(kv?.range || '')
           }) || arr[0]
-          setKeyRecords((p) => ({ ...p, [id]: { fields: match?.fields || {}, metadata: match?.metadata || {} } }))
+          setKeyRecords((p) => ({ ...p, [id]: { fields: match?.fields || {}, metadata: match?.metadata || {}, author_pub_key: match?.author_pub_key || null } }))
         } else {
-          setKeyRecords((p) => ({ ...p, [id]: { fields: {}, metadata: {} } }))
+          setKeyRecords((p) => ({ ...p, [id]: { fields: {}, metadata: {}, author_pub_key: null } }))
         }
       } catch { /* show empty fields on error - user can re-expand */
-        setKeyRecords((p) => ({ ...p, [id]: { fields: {}, metadata: {} } }))
+        setKeyRecords((p) => ({ ...p, [id]: { fields: {}, metadata: {}, author_pub_key: null } }))
       } finally {
         setKeyLoading((p) => ({ ...p, [id]: false }))
       }
@@ -188,6 +228,7 @@ export default function DataBrowserTab() {
 
                   const maxVersion = record ? getMaxVersion(record.metadata) : 0
                   const molUuid = record ? getFirstMoleculeUuid(record.metadata) : null
+                  const sharedBy = record ? resolveSharedBy(record.author_pub_key) : null
 
                   return (
                     <div key={id} className="border-b border-border last:border-b-0">
@@ -200,6 +241,14 @@ export default function DataBrowserTab() {
                           <span className="text-xs text-secondary">{isKeyOpen ? '▾' : '▸'}</span>
                           <span className="text-xs font-mono text-primary">{keyLabel(kv)}</span>
                           <VersionBadge version={maxVersion} />
+                          {sharedBy && (
+                            <span
+                              className="inline-flex items-center px-1.5 py-0.5 text-[10px] font-semibold rounded bg-gruvbox-green/15 text-gruvbox-green"
+                              title={record?.author_pub_key || ''}
+                            >
+                              {'\u{1F4E5}'} {sharedBy}
+                            </span>
+                          )}
                           {kLoading && <span className="text-xs text-secondary">(loading...)</span>}
                         </button>
                         <button
@@ -216,7 +265,7 @@ export default function DataBrowserTab() {
                         <div className="pl-6 pb-2">
                           {record ? (
                             <Fragment>
-                              <RecordMetadata metadata={record.metadata} schemaName={name} recordKey={keyLabel(kv)} />
+                              <RecordMetadata metadata={record.metadata} schemaName={name} recordKey={keyLabel(kv)} sharedBy={sharedBy} />
                               {maxVersion > 1 && <VersionHistory moleculeUuid={molUuid} />}
                               <FieldsTable fields={record.fields} />
                             </Fragment>
