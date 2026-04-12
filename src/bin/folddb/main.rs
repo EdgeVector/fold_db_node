@@ -123,6 +123,9 @@ async fn main() {
                 // Status and Sync go through daemon HTTP (handled later)
                 None
             }
+            cli::CloudCommand::DeleteAccount => {
+                cloud_delete_account(&config, config_path.as_deref()).await
+            }
         };
         if let Some(result) = result {
             match result {
@@ -947,6 +950,97 @@ fn cloud_disable(config_path: Option<&str>) -> Option<Result<commands::CommandOu
     }
 
     Some(Ok(commands::CommandOutput::Message(msg)))
+}
+
+/// Delete Exemem account and all cloud data.
+async fn cloud_delete_account(
+    config: &fold_db_node::fold_node::config::NodeConfig,
+    config_path: Option<&str>,
+) -> Option<Result<commands::CommandOutput, CliError>> {
+    if !config.database.has_cloud_sync() {
+        return Some(Ok(commands::CommandOutput::Message(
+            "No cloud account configured.".to_string(),
+        )));
+    }
+
+    eprintln!("\x1b[31mWARNING: This will permanently delete your Exemem account\x1b[0m");
+    eprintln!("  - All cloud backup data will be purged");
+    eprintln!("  - All API keys will be revoked");
+    eprintln!("  - Your local data will NOT be affected");
+    eprintln!();
+
+    let confirmed = dialoguer::Confirm::new()
+        .with_prompt("Are you sure you want to delete your Exemem account?")
+        .default(false)
+        .interact()
+        .unwrap_or(false);
+
+    if !confirmed {
+        return Some(Ok(commands::CommandOutput::Message(
+            "Cancelled.".to_string(),
+        )));
+    }
+
+    // Double confirmation for destructive action
+    let typed: String = match dialoguer::Input::new()
+        .with_prompt("Type DELETE to confirm")
+        .interact_text()
+    {
+        Ok(t) => t,
+        Err(_) => {
+            return Some(Ok(commands::CommandOutput::Message(
+                "Cancelled.".to_string(),
+            )))
+        }
+    };
+
+    if typed.trim() != "DELETE" {
+        return Some(Ok(commands::CommandOutput::Message(
+            "Cancelled — you must type DELETE exactly.".to_string(),
+        )));
+    }
+
+    // Call Exemem API to delete account
+    let api_url = fold_db_node::endpoints::exemem_api_url();
+
+    // Get API key from credentials file for authentication
+    let api_key = match fold_db_node::keychain::load_credentials() {
+        Ok(Some(creds)) if !creds.api_key.is_empty() => creds.api_key,
+        _ => {
+            return Some(Err(CliError::new(
+                "No credentials found. Cloud account may already be deleted.",
+            )))
+        }
+    };
+
+    eprint!("Deleting account...");
+    let http = reqwest::Client::new();
+    let resp = http
+        .delete(format!("{}/api/auth/account", api_url))
+        .header("X-API-Key", &api_key)
+        .send()
+        .await;
+
+    match resp {
+        Ok(r) if r.status().is_success() => {
+            eprintln!(" done.");
+            // Also disable cloud locally
+            let _ = cloud_disable(config_path);
+            Some(Ok(commands::CommandOutput::Message(
+                "Account deleted. Cloud data will be purged within 24 hours.\nLocal data is preserved."
+                    .to_string(),
+            )))
+        }
+        Ok(r) => {
+            let status = r.status();
+            let body = r.text().await.unwrap_or_default();
+            Some(Err(CliError::new(format!(
+                "Account deletion failed (HTTP {}): {}",
+                status, body
+            ))))
+        }
+        Err(e) => Some(Err(CliError::new(format!("Network error: {}", e)))),
+    }
 }
 
 /// Show the 24-word recovery phrase derived from the local identity file.
