@@ -196,7 +196,7 @@ async fn mutations_work_after_simulated_restart() {
         }),
     );
     fold_db
-        .mutation_manager_mut()
+        .mutation_manager()
         .write_mutations_batch_async(vec![mutation1])
         .await
         .expect("write mutation 1");
@@ -265,7 +265,7 @@ async fn mutations_work_after_simulated_restart() {
         }),
     );
     fold_db
-        .mutation_manager_mut()
+        .mutation_manager()
         .write_mutations_batch_async(vec![mutation2])
         .await
         .expect("write mutation 2 after simulated restart");
