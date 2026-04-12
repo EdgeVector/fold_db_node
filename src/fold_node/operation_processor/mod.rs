@@ -70,7 +70,7 @@ mod tests {
     async fn load_and_approve_schema(node: &FoldNode, mut schema: DeclarativeSchemaDefinition) {
         schema.populate_runtime_fields().unwrap();
         let db = node.get_fold_db().unwrap();
-        db.schema_manager
+        db.schema_manager()
             .load_schema_internal(schema)
             .await
             .unwrap();
@@ -78,7 +78,7 @@ mod tests {
 
     async fn approve_schema(node: &FoldNode, name: &str) {
         let db = node.get_fold_db().unwrap();
-        db.schema_manager
+        db.schema_manager()
             .set_schema_state(name, SchemaState::Approved)
             .await
             .unwrap();

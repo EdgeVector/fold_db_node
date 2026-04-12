@@ -22,10 +22,10 @@ fn to_schema_err(e: fold_db::error::FoldDbError) -> SchemaError {
 impl OperationProcessor {
     pub async fn load_trust_maps(&self) -> Result<serde_json::Value, SchemaError> {
         let db = self.get_db().map_err(to_schema_err)?;
-        let domains = db.db_ops.list_trust_domains().await?;
+        let domains = db.db_ops().list_trust_domains().await?;
         let mut result = serde_json::Map::new();
         for domain in &domains {
-            let map = db.db_ops.load_trust_map_for_domain(domain).await?;
+            let map = db.db_ops().load_trust_map_for_domain(domain).await?;
             let value = serde_json::to_value(&map).map_err(|e| {
                 SchemaError::InvalidData(format!("Failed to serialize trust map: {e}"))
             })?;
@@ -40,9 +40,9 @@ impl OperationProcessor {
         tier: TrustTier,
     ) -> Result<(), SchemaError> {
         let db = self.get_db().map_err(to_schema_err)?;
-        let mut map = db.db_ops.load_trust_map().await?;
+        let mut map = db.db_ops().load_trust_map().await?;
         map.insert(user_public_key.to_string(), tier);
-        db.db_ops.store_trust_map(&map).await?;
+        db.db_ops().store_trust_map(&map).await?;
         let event = AuditEvent::trust_event(
             user_public_key,
             AuditAction::TrustGrant {
@@ -50,22 +50,22 @@ impl OperationProcessor {
                 tier,
             },
         );
-        db.db_ops.append_audit_event(event).await?;
+        db.db_ops().append_audit_event(event).await?;
         Ok(())
     }
 
     pub async fn revoke_trust(&self, user_public_key: &str) -> Result<(), SchemaError> {
         let db = self.get_db().map_err(to_schema_err)?;
-        let mut map = db.db_ops.load_trust_map().await?;
+        let mut map = db.db_ops().load_trust_map().await?;
         map.remove(user_public_key);
-        db.db_ops.store_trust_map(&map).await?;
+        db.db_ops().store_trust_map(&map).await?;
         let event = AuditEvent::trust_event(
             user_public_key,
             AuditAction::TrustRevoke {
                 user_id: user_public_key.to_string(),
             },
         );
-        db.db_ops.append_audit_event(event).await?;
+        db.db_ops().append_audit_event(event).await?;
         Ok(())
     }
 
@@ -74,13 +74,13 @@ impl OperationProcessor {
         user_public_key: &str,
     ) -> Result<Option<TrustTier>, SchemaError> {
         let db = self.get_db().map_err(to_schema_err)?;
-        let map = db.db_ops.load_trust_map().await?;
+        let map = db.db_ops().load_trust_map().await?;
         Ok(map.get(user_public_key).copied())
     }
 
     pub async fn list_trust_grants(&self) -> Result<Vec<(String, TrustTier)>, SchemaError> {
         let db = self.get_db().map_err(to_schema_err)?;
-        let map = db.db_ops.load_trust_map().await?;
+        let map = db.db_ops().load_trust_map().await?;
         Ok(map.into_iter().collect())
     }
 
@@ -94,9 +94,9 @@ impl OperationProcessor {
         tier: TrustTier,
     ) -> Result<(), SchemaError> {
         let db = self.get_db().map_err(to_schema_err)?;
-        let mut map = db.db_ops.load_trust_map_for_domain(domain).await?;
+        let mut map = db.db_ops().load_trust_map_for_domain(domain).await?;
         map.insert(user_public_key.to_string(), tier);
-        db.db_ops.store_trust_map_for_domain(domain, &map).await?;
+        db.db_ops().store_trust_map_for_domain(domain, &map).await?;
         let event = AuditEvent::trust_event(
             user_public_key,
             AuditAction::TrustGrant {
@@ -104,7 +104,7 @@ impl OperationProcessor {
                 tier,
             },
         );
-        db.db_ops.append_audit_event(event).await?;
+        db.db_ops().append_audit_event(event).await?;
         Ok(())
     }
 
@@ -115,23 +115,23 @@ impl OperationProcessor {
         domain: &str,
     ) -> Result<(), SchemaError> {
         let db = self.get_db().map_err(to_schema_err)?;
-        let mut map = db.db_ops.load_trust_map_for_domain(domain).await?;
+        let mut map = db.db_ops().load_trust_map_for_domain(domain).await?;
         map.remove(user_public_key);
-        db.db_ops.store_trust_map_for_domain(domain, &map).await?;
+        db.db_ops().store_trust_map_for_domain(domain, &map).await?;
         let event = AuditEvent::trust_event(
             user_public_key,
             AuditAction::TrustRevoke {
                 user_id: user_public_key.to_string(),
             },
         );
-        db.db_ops.append_audit_event(event).await?;
+        db.db_ops().append_audit_event(event).await?;
         Ok(())
     }
 
     /// List all trust domains that have stored maps.
     pub async fn list_trust_domains(&self) -> Result<Vec<String>, SchemaError> {
         let db = self.get_db().map_err(to_schema_err)?;
-        db.db_ops.list_trust_domains().await
+        db.db_ops().list_trust_domains().await
     }
 
     // ===== Role-based trust operations =====
@@ -219,10 +219,10 @@ impl OperationProcessor {
         let db = self.get_db().map_err(to_schema_err)?;
 
         // 1. Resolve tiers across all domains
-        let domains = db.db_ops.list_trust_domains().await?;
+        let domains = db.db_ops().list_trust_domains().await?;
         let mut domain_tiers = HashMap::new();
         for domain in &domains {
-            let map = db.db_ops.load_trust_map_for_domain(domain).await?;
+            let map = db.db_ops().load_trust_map_for_domain(domain).await?;
             if let Some(&tier) = map.get(public_key) {
                 domain_tiers.insert(domain.clone(), tier);
             }
@@ -238,7 +238,7 @@ impl OperationProcessor {
 
         // 3. For each approved schema, check which fields are accessible
         let schemas = db
-            .schema_manager
+            .schema_manager()
             .get_schemas_with_states()
             .map_err(|e| SchemaError::InvalidData(format!("Failed to list schemas: {e}")))?;
         let mut accessible_schemas = Vec::new();
@@ -306,7 +306,7 @@ impl OperationProcessor {
 
         // Count schemas per trust domain
         let schemas = db
-            .schema_manager
+            .schema_manager()
             .get_schemas_with_states()
             .map_err(|e| SchemaError::InvalidData(format!("Failed to list schemas: {e}")))?;
 
@@ -331,10 +331,10 @@ impl OperationProcessor {
         }
 
         // Count contacts per domain
-        let domains = db.db_ops.list_trust_domains().await?;
+        let domains = db.db_ops().list_trust_domains().await?;
         let mut domain_contacts: HashMap<String, usize> = HashMap::new();
         for domain in &domains {
-            let map = db.db_ops.load_trust_map_for_domain(domain).await?;
+            let map = db.db_ops().load_trust_map_for_domain(domain).await?;
             if !map.is_empty() {
                 domain_contacts.insert(domain.clone(), map.len());
             }
@@ -360,7 +360,7 @@ impl OperationProcessor {
     ) -> Result<(), SchemaError> {
         let db = self.get_db().map_err(to_schema_err)?;
         let mut schema = db
-            .schema_manager
+            .schema_manager()
             .get_schema(schema_name)
             .await?
             .ok_or_else(|| SchemaError::InvalidData(format!("Schema '{schema_name}' not found")))?;
@@ -378,7 +378,7 @@ impl OperationProcessor {
         schema
             .field_access_policies
             .insert(field_name.to_string(), parsed);
-        db.schema_manager.update_schema(&schema).await?;
+        db.schema_manager().update_schema(&schema).await?;
         Ok(())
     }
 
@@ -389,7 +389,7 @@ impl OperationProcessor {
     ) -> Result<HashMap<String, Option<serde_json::Value>>, SchemaError> {
         let db = self.get_db().map_err(to_schema_err)?;
         let schema = db
-            .schema_manager
+            .schema_manager()
             .get_schema(schema_name)
             .await?
             .ok_or_else(|| SchemaError::InvalidData(format!("Schema '{schema_name}' not found")))?;
@@ -414,7 +414,7 @@ impl OperationProcessor {
     ) -> Result<Option<serde_json::Value>, SchemaError> {
         let db = self.get_db().map_err(to_schema_err)?;
         let schema = db
-            .schema_manager
+            .schema_manager()
             .get_schema(schema_name)
             .await?
             .ok_or_else(|| SchemaError::InvalidData(format!("Schema '{schema_name}' not found")))?;
@@ -440,7 +440,7 @@ impl OperationProcessor {
     ) -> Result<usize, SchemaError> {
         let db = self.get_db().map_err(to_schema_err)?;
         let mut schema = db
-            .schema_manager
+            .schema_manager()
             .get_schema(schema_name)
             .await?
             .ok_or_else(|| SchemaError::InvalidData(format!("Schema '{schema_name}' not found")))?;
@@ -488,7 +488,7 @@ impl OperationProcessor {
         }
 
         if applied > 0 {
-            db.schema_manager.update_schema(&schema).await?;
+            db.schema_manager().update_schema(&schema).await?;
         }
 
         Ok(applied)
@@ -505,7 +505,7 @@ impl OperationProcessor {
 
     pub async fn get_audit_log(&self, limit: usize) -> Result<serde_json::Value, SchemaError> {
         let db = self.get_db().map_err(to_schema_err)?;
-        let log = db.db_ops.load_audit_log().await?;
+        let log = db.db_ops().load_audit_log().await?;
         let recent = log.recent(limit);
         serde_json::to_value(recent)
             .map_err(|e| SchemaError::InvalidData(format!("Failed to serialize audit log: {e}")))

@@ -20,7 +20,7 @@ impl OperationProcessor {
 
         let db = self.get_db()?;
         let mut ids = db
-            .mutation_manager
+            .mutation_manager()
             .write_mutations_with_access(vec![mutation], &access_context, None)
             .await
             .map_err(Self::mutation_write_error)?;
@@ -53,7 +53,7 @@ impl OperationProcessor {
 
         let db = self.get_db()?;
         let mut ids = db
-            .mutation_manager
+            .mutation_manager()
             .write_mutations_batch_async(vec![mutation])
             .await
             .map_err(Self::mutation_write_error)?;
@@ -93,7 +93,7 @@ impl OperationProcessor {
     ) -> FoldDbResult<Vec<String>> {
         let db = self.get_db()?;
         let mutation_ids = db
-            .mutation_manager
+            .mutation_manager()
             .write_mutations_batch_async(mutations)
             .await
             .map_err(Self::mutation_write_error)?;

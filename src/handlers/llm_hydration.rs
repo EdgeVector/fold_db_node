@@ -108,7 +108,7 @@ pub async fn hydrate_index_results(
         };
 
         // Execute the query
-        match fold_db.query_executor.query(query).await {
+        match fold_db.query_executor().query(query).await {
             Ok(field_results) => {
                 // field_results is HashMap<field_name, HashMap<KeyValue, FieldValue>>
                 // We need to map back to our results

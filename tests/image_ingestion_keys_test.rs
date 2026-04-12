@@ -146,11 +146,11 @@ async fn test_hash_mutation_keys_queryable() {
     {
         let db = node.get_fold_db().unwrap();
         let json_str = serde_json::to_string(&schema_json).unwrap();
-        db.schema_manager
+        db.schema_manager()
             .load_schema_from_json(&json_str)
             .await
             .expect("Failed to load schema");
-        db.schema_manager
+        db.schema_manager()
             .approve(schema_name)
             .await
             .expect("Failed to approve schema");
@@ -233,11 +233,11 @@ async fn test_hashrange_mutation_partial_key_errors() {
     {
         let db = node.get_fold_db().unwrap();
         let json_str = serde_json::to_string(&schema_json).unwrap();
-        db.schema_manager
+        db.schema_manager()
             .load_schema_from_json(&json_str)
             .await
             .expect("Failed to load schema");
-        db.schema_manager
+        db.schema_manager()
             .approve(schema_name)
             .await
             .expect("Failed to approve schema");
@@ -422,11 +422,11 @@ async fn test_image_ingestion_pipeline_produces_keys() {
     {
         let db = node.get_fold_db().unwrap();
         let json_str = serde_json::to_string(&add_response.schema).unwrap();
-        db.schema_manager
+        db.schema_manager()
             .load_schema_from_json(&json_str)
             .await
             .expect("load_schema_from_json failed");
-        db.schema_manager
+        db.schema_manager()
             .approve(&final_name)
             .await
             .expect("approve failed");

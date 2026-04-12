@@ -7,13 +7,13 @@ impl OperationProcessor {
     /// List active schemas with their states (excludes Blocked/superseded schemas).
     pub async fn list_schemas(&self) -> FoldDbResult<Vec<SchemaWithState>> {
         let db = self.get_db()?;
-        Ok(db.schema_manager.get_active_schemas_with_states()?)
+        Ok(db.schema_manager().get_active_schemas_with_states()?)
     }
 
     /// Get a specific schema by name with its state.
     pub async fn get_schema(&self, name: &str) -> FoldDbResult<Option<SchemaWithState>> {
         let db = self.get_db()?;
-        let mgr = &db.schema_manager;
+        let mgr = &db.schema_manager();
         match mgr.get_schema_metadata(name)? {
             Some(schema) => {
                 let states = mgr.get_schema_states()?;
@@ -27,7 +27,7 @@ impl OperationProcessor {
     /// Approve a schema and apply classification-based default access policies.
     pub async fn approve_schema(&self, schema_name: &str) -> FoldDbResult<()> {
         let db = self.get_db()?;
-        db.schema_manager.approve(schema_name).await?;
+        db.schema_manager().approve(schema_name).await?;
         drop(db); // Release lock before apply_classification_defaults acquires it
 
         // Auto-apply access policies based on data classification
@@ -59,7 +59,7 @@ impl OperationProcessor {
     /// Block a schema.
     pub async fn block_schema(&self, schema_name: &str) -> FoldDbResult<()> {
         let db = self.get_db()?;
-        Ok(db.schema_manager.block_schema(schema_name).await?)
+        Ok(db.schema_manager().block_schema(schema_name).await?)
     }
 
     /// Load schemas from the schema service.
@@ -74,7 +74,7 @@ impl OperationProcessor {
             let schema_name = schema.name.clone();
             let result = {
                 let db = self.get_db()?;
-                db.schema_manager.load_schema_internal(schema).await
+                db.schema_manager().load_schema_internal(schema).await
             };
 
             match result {
