@@ -165,26 +165,8 @@ pub async fn save_ingestion_config(
 
     let saved_config = request.into_inner();
 
-    // Write to Sled config store (best-effort alongside file save)
-    if let Ok(folddb_home) = crate::utils::paths::folddb_home() {
-        let data_path = folddb_home.join("data");
-        {
-            let pool = std::sync::Arc::new(fold_db::storage::SledPool::new(data_path));
-            if let Ok(store) = fold_db::NodeConfigStore::new(pool) {
-                if let Err(e) =
-                    crate::ingestion::config::IngestionConfig::save_to_sled(&store, &saved_config)
-                {
-                    log_feature!(
-                        LogFeature::Ingestion,
-                        warn,
-                        "Failed to save AI config to Sled: {}",
-                        e
-                    );
-                }
-            }
-        }
-    }
-
+    // AI config is per-device (saved to ingestion_config.json only, not Sled).
+    // A laptop might run Ollama locally while a phone uses Anthropic's API.
     match crate::ingestion::config::IngestionConfig::save_to_file(&saved_config) {
         Ok(()) => {
             // Reload the IngestionService so the new config takes effect immediately.

@@ -15,7 +15,7 @@ use fold_db::org::operations as org_ops;
 use fold_db::org::OrgMembership;
 use fold_db::security::{PublicKeyInfo, SecurityConfig, SecurityManager};
 use fold_db::sync::org_sync::SyncPartitioner;
-use fold_db::{AiConfig, CloudCredentials, NodeConfigStore, NodeIdentity};
+use fold_db::{CloudCredentials, NodeConfigStore, NodeIdentity};
 
 /// Result of loading a view (and its dependencies) from the schema service.
 #[derive(Debug, Default, Serialize)]
@@ -1096,40 +1096,11 @@ async fn migrate_config_files_to_sled(node: &FoldNode) {
         }
     }
 
-    // 3. Migrate AI/ingestion config
-    let ingestion_path = folddb_home.join("config").join("ingestion_config.json");
-    if ingestion_path.exists() {
-        if let Ok(content) = std::fs::read_to_string(&ingestion_path) {
-            if let Ok(saved) =
-                serde_json::from_str::<crate::ingestion::config::SavedConfig>(&content)
-            {
-                let provider_str = match saved.provider {
-                    crate::ingestion::config::AIProvider::Anthropic => "anthropic",
-                    crate::ingestion::config::AIProvider::Ollama => "ollama",
-                };
-                let ai = AiConfig {
-                    provider: provider_str.to_string(),
-                    anthropic_key: if saved.anthropic.api_key.is_empty() {
-                        None
-                    } else {
-                        Some(saved.anthropic.api_key)
-                    },
-                    anthropic_model: Some(saved.anthropic.model),
-                    anthropic_base_url: Some(saved.anthropic.base_url),
-                    ollama_model: Some(saved.ollama.model),
-                    ollama_url: Some(saved.ollama.base_url),
-                    ollama_vision_model: Some(saved.ollama.vision_model),
-                };
-                if let Err(e) = store.set_ai_config(&ai) {
-                    log::warn!("Failed to migrate AI config to Sled: {}", e);
-                } else {
-                    migrated_any = true;
-                }
-            }
-        }
-    }
+    // AI config is NOT migrated to Sled — it's per-device (a laptop might
+    // run Ollama locally while a phone uses Anthropic). It stays in
+    // ingestion_config.json which is never synced.
 
-    // 4. Migrate identity card
+    // 3. Migrate identity card
     if let Ok(Some(card)) = crate::trust::identity_card::IdentityCard::load() {
         if let Err(e) = store.set_display_name(&card.display_name) {
             log::warn!("Failed to migrate display_name to Sled: {}", e);
