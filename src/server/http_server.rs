@@ -226,6 +226,14 @@ impl FoldHttpServer {
             progress_tracker_data.clone(),
         );
 
+        // Spawn the autonomous bulletin-board poller. Without this, encrypted
+        // messages (async query responses, schema list responses, referral
+        // replies, data shares) only arrive when the user opens the
+        // Connections screen. The poller delegates to
+        // `handlers::discovery::poll_and_dispatch`.
+        let _bulletin_poller_handle =
+            crate::discovery::background_poller::spawn(self.node_manager.clone());
+
         // Start the HTTP server
         let server = ActixHttpServer::new(move || {
             // CORS — restrict to localhost origins only.
@@ -880,8 +888,7 @@ impl FoldHttpServer {
 
         cfg.service(
             web::scope("/remote")
-                // Inbound: handle queries from other nodes (kept for direct connections)
-                .route("/query", web::post().to(remote_routes::remote_query))
+                // Unauthenticated metadata endpoint used by the sharing UI.
                 .route("/node-info", web::get().to(remote_routes::node_info))
                 // Outbound: async queries via messaging service
                 .route("/async-query", web::post().to(remote_routes::async_query))

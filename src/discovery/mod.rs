@@ -1,4 +1,5 @@
 pub mod async_query;
+pub mod background_poller;
 pub mod calendar_sharing;
 pub mod config;
 pub mod connection;

@@ -617,12 +617,43 @@ pub async fn connect(
 }
 
 /// Poll the bulletin board, decrypt messages for our pseudonyms, and store locally.
+///
+/// This is the full-featured UI path: it runs a poll+dispatch cycle and then
+/// returns the current set of locally stored connection requests for display.
 pub async fn poll_and_decrypt_requests(
     node: &FoldNode,
     discovery_url: &str,
     auth_token: &str,
     master_key: &[u8],
 ) -> HandlerResult<ConnectionRequestsResponse> {
+    poll_and_dispatch(node, discovery_url, auth_token, master_key).await?;
+
+    let db = node
+        .get_fold_db()
+        .map_err(|e| HandlerError::Internal(format!("Failed to access database: {}", e)))?;
+    let store = get_metadata_store(&db);
+    let requests = connection::list_received_requests(&*store)
+        .await
+        .handler_err("list received requests")?;
+
+    Ok(ApiResponse::success(ConnectionRequestsResponse {
+        requests,
+    }))
+}
+
+/// Poll the bulletin board, decrypt messages for our pseudonyms, and dispatch
+/// each message to its handler (connection requests, query requests/responses,
+/// schema list requests/responses, data shares, referrals).
+///
+/// This is the autonomous path used by the background poller — it does not
+/// return any data to the caller. `poll_and_decrypt_requests` wraps this and
+/// then loads connection requests from the local store for the UI.
+pub async fn poll_and_dispatch(
+    node: &FoldNode,
+    discovery_url: &str,
+    auth_token: &str,
+    master_key: &[u8],
+) -> Result<(), HandlerError> {
     let publisher = DiscoveryPublisher::new(
         master_key.to_vec(),
         discovery_url.to_string(),
@@ -711,9 +742,7 @@ pub async fn poll_and_decrypt_requests(
     };
 
     if our_pseudonyms.is_empty() {
-        return Ok(ApiResponse::success(ConnectionRequestsResponse {
-            requests: Vec::new(),
-        }));
+        return Ok(());
     }
 
     // Poll messages in chunks of ≤100 pseudonyms. The messaging service requires a
@@ -906,11 +935,12 @@ pub async fn poll_and_decrypt_requests(
                 let payload: QueryResponsePayload = match serde_json::from_value(raw) {
                     Ok(p) => p,
                     Err(e) => {
-                        log::warn!("Failed to parse query response: {}", e);
-                        continue;
+                        return Err(HandlerError::BadRequest(format!(
+                            "Failed to parse query response: {e}"
+                        )));
                     }
                 };
-                handle_incoming_query_response(&*store, &payload).await;
+                handle_incoming_query_response(&*store, &payload).await?;
             }
             "schema_list_request" => {
                 let payload: SchemaListRequestPayload = match serde_json::from_value(raw) {
@@ -976,14 +1006,7 @@ pub async fn poll_and_decrypt_requests(
         }
     }
 
-    // Return all locally stored received requests
-    let requests = connection::list_received_requests(&*store)
-        .await
-        .handler_err("list received requests")?;
-
-    Ok(ApiResponse::success(ConnectionRequestsResponse {
-        requests,
-    }))
+    Ok(())
 }
 
 // ===== Async query auto-processing helpers =====
@@ -1073,31 +1096,36 @@ async fn handle_incoming_query(
 }
 
 /// Handle an incoming query response: update local async query with results.
-async fn handle_incoming_query_response(
+///
+/// Errors are propagated to the caller — a failed store write would otherwise
+/// leave the query row stuck in "pending" with no user-visible signal.
+pub(crate) async fn handle_incoming_query_response(
     store: &dyn fold_db::storage::traits::KvStore,
     payload: &QueryResponsePayload,
-) {
+) -> Result<(), HandlerError> {
     log::info!("Received query response for request {}", payload.request_id);
 
     let results = if payload.success {
-        payload
-            .results
-            .as_ref()
-            .map(|r| serde_json::to_value(r).unwrap_or_default())
+        match payload.results.as_ref() {
+            Some(r) => Some(serde_json::to_value(r).map_err(|e| {
+                HandlerError::Internal(format!("Failed to serialize query results: {e}"))
+            })?),
+            None => None,
+        }
     } else {
         None
     };
 
-    if let Err(e) = async_query::update_async_query_result(
+    async_query::update_async_query_result(
         store,
         &payload.request_id,
         results,
         payload.error.clone(),
     )
     .await
-    {
-        log::warn!("Failed to update async query result: {}", e);
-    }
+    .map_err(|e| HandlerError::Internal(format!("Failed to update async query result: {e}")))?;
+
+    Ok(())
 }
 
 /// Handle an incoming schema list request: list schemas and send back.
@@ -3184,4 +3212,92 @@ pub async fn dismiss_notification(
         .map_err(|e| HandlerError::Internal(format!("Failed to dismiss notification: {e}")))?;
 
     Ok(ApiResponse::success(serde_json::json!({"dismissed": true})))
+}
+
+#[cfg(test)]
+mod async_query_tests {
+    use super::*;
+    use crate::discovery::async_query::{save_async_query, LocalAsyncQuery};
+    use fold_db::storage::sled_backend::SledKvStore;
+    use fold_db::storage::SledPool;
+    use std::sync::Arc;
+
+    fn test_store() -> (tempfile::TempDir, SledKvStore) {
+        let tmp = tempfile::tempdir().unwrap();
+        let pool = Arc::new(SledPool::new(tmp.path().to_path_buf()));
+        let store = SledKvStore::new(pool, "test_async_queries".to_string());
+        (tmp, store)
+    }
+
+    /// A pending local async query + a successful response should land the
+    /// result in the store and mark the row as "completed". This is the
+    /// seam exercised by the async-query feature: the dispatch layer sees
+    /// a `query_response` message, pulls out the payload, and hands it to
+    /// `handle_incoming_query_response`.
+    #[tokio::test]
+    async fn incoming_query_response_updates_local_row_on_success() {
+        let (_tmp, store) = test_store();
+
+        let pending = LocalAsyncQuery {
+            request_id: "req-1".to_string(),
+            contact_public_key: "pk".to_string(),
+            contact_display_name: "Alice".to_string(),
+            schema_name: Some("notes".to_string()),
+            fields: vec![],
+            query_type: "query".to_string(),
+            status: "pending".to_string(),
+            created_at: "2026-04-12T00:00:00Z".to_string(),
+            completed_at: None,
+            results: None,
+            error: None,
+        };
+        save_async_query(&store, &pending).await.unwrap();
+
+        let response = QueryResponsePayload {
+            message_type: "query_response".to_string(),
+            request_id: "req-1".to_string(),
+            success: true,
+            results: Some(vec![serde_json::json!({"title": "Hello"})]),
+            error: None,
+            sender_pseudonym: "peer-pseudo".to_string(),
+            reply_public_key: "peer-rpk".to_string(),
+        };
+
+        handle_incoming_query_response(&store, &response)
+            .await
+            .expect("handle_incoming_query_response should succeed");
+
+        let updated = async_query::get_async_query(&store, "req-1")
+            .await
+            .unwrap()
+            .expect("row should still exist");
+        assert_eq!(updated.status, "completed");
+        assert!(updated.completed_at.is_some());
+        let results = updated.results.expect("results should be populated");
+        assert_eq!(results[0]["title"].as_str(), Some("Hello"));
+    }
+
+    /// A response for an unknown request_id should surface an error (no silent
+    /// skip). This is the regression guard for the G6 fix.
+    #[tokio::test]
+    async fn incoming_query_response_propagates_missing_row_error() {
+        let (_tmp, store) = test_store();
+
+        let response = QueryResponsePayload {
+            message_type: "query_response".to_string(),
+            request_id: "does-not-exist".to_string(),
+            success: true,
+            results: Some(vec![]),
+            error: None,
+            sender_pseudonym: "peer".to_string(),
+            reply_public_key: "rpk".to_string(),
+        };
+
+        let result = handle_incoming_query_response(&store, &response).await;
+        assert!(
+            result.is_err(),
+            "expected error for missing row, got {:?}",
+            result
+        );
+    }
 }

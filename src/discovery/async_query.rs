@@ -139,10 +139,9 @@ pub async fn list_async_queries(store: &dyn KvStore) -> Result<Vec<LocalAsyncQue
 
     let mut queries = Vec::new();
     for (_key, value) in entries {
-        match serde_json::from_slice(&value) {
-            Ok(q) => queries.push(q),
-            Err(e) => log::warn!("Failed to deserialize async query: {}", e),
-        }
+        let query: LocalAsyncQuery = serde_json::from_slice(&value)
+            .map_err(|e| format!("Failed to deserialize async query: {}", e))?;
+        queries.push(query);
     }
 
     queries.sort_by(|a: &LocalAsyncQuery, b: &LocalAsyncQuery| b.created_at.cmp(&a.created_at));
@@ -252,6 +251,47 @@ mod tests {
         let parsed: QueryResponsePayload = serde_json::from_str(&json).unwrap();
         assert!(parsed.success);
         assert_eq!(parsed.results.unwrap().len(), 1);
+    }
+
+    #[tokio::test]
+    async fn list_async_queries_propagates_deserialization_errors() {
+        use fold_db::storage::sled_backend::SledKvStore;
+        use fold_db::storage::SledPool;
+        use std::sync::Arc;
+
+        let tmp = tempfile::tempdir().unwrap();
+        let pool = Arc::new(SledPool::new(tmp.path().to_path_buf()));
+        let store = SledKvStore::new(pool, "test_async_queries".to_string());
+
+        // A valid entry
+        let valid = LocalAsyncQuery {
+            request_id: "good".to_string(),
+            contact_public_key: "pk".to_string(),
+            contact_display_name: "Alice".to_string(),
+            schema_name: Some("notes".to_string()),
+            fields: vec![],
+            query_type: "query".to_string(),
+            status: "pending".to_string(),
+            created_at: "2026-04-12T00:00:00Z".to_string(),
+            completed_at: None,
+            results: None,
+            error: None,
+        };
+        save_async_query(&store, &valid).await.unwrap();
+
+        // A corrupted entry under the same prefix
+        let bad_key = format!("{}corrupt", ASYNC_QUERY_PREFIX);
+        store
+            .put(bad_key.as_bytes(), b"not-json".to_vec())
+            .await
+            .unwrap();
+
+        // Must propagate the deserialization error instead of silently skipping.
+        let result = list_async_queries(&store).await;
+        assert!(
+            result.is_err(),
+            "list_async_queries should have propagated deserialization error, got Ok"
+        );
     }
 
     #[test]
