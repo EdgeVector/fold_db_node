@@ -211,7 +211,44 @@ impl IngestionService {
 
         let schema_response = &add_response.schema;
 
-        let json_str = serde_json::to_string(schema_response).map_err(|error| {
+        // Backfill default classifications for any unclassified fields. The schema
+        // service may return legacy schemas missing `field_data_classifications` entries
+        // (e.g. schemas created before PR #361 enforcement). Rather than rejecting at
+        // load time, we default unclassified fields to sensitivity_level=1, domain=general.
+        let mut schema_value = serde_json::to_value(schema_response).map_err(|error| {
+            IngestionError::ai_response_validation_error(format!(
+                "Failed to serialize schema definition: {}",
+                error
+            ))
+        })?;
+        if let Some(obj) = schema_value.as_object_mut() {
+            let field_names: Vec<String> = obj
+                .get("fields")
+                .and_then(|v| v.as_array())
+                .map(|arr| {
+                    arr.iter()
+                        .filter_map(|v| v.as_str().map(String::from))
+                        .collect()
+                })
+                .unwrap_or_default();
+            let classifications = obj
+                .entry("field_data_classifications".to_string())
+                .or_insert_with(|| serde_json::Value::Object(serde_json::Map::new()));
+            if let Some(classifications_obj) = classifications.as_object_mut() {
+                for field_name in field_names {
+                    if !classifications_obj.contains_key(&field_name) {
+                        classifications_obj.insert(
+                            field_name,
+                            serde_json::json!({
+                                "sensitivity_level": 1,
+                                "data_domain": "general"
+                            }),
+                        );
+                    }
+                }
+            }
+        }
+        let json_str = serde_json::to_string(&schema_value).map_err(|error| {
             IngestionError::ai_response_validation_error(format!(
                 "Failed to serialize schema definition: {}",
                 error
