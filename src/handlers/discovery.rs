@@ -10,8 +10,8 @@ use crate::discovery::calendar_sharing::{self, EventFingerprint, PeerEventSet, S
 use crate::discovery::config::{self, DiscoveryOptIn};
 use crate::discovery::connection::{
     self, ConnectionPayload, DataSharePayload, IdentityCardPayload, LocalConnectionRequest,
-    LocalSentRequest, ReferralQueryPayload, ReferralResponsePayload, SharedRecord, SharedRecordKey,
-    Vouch,
+    LocalSentRequest, MutualContact, ReferralQueryPayload, ReferralResponsePayload, SharedRecord,
+    SharedRecordKey, Vouch,
 };
 use crate::discovery::interests::{self, InterestProfile};
 use crate::discovery::moments;
@@ -556,6 +556,13 @@ pub async fn connect(
     // 3. Build and encrypt the connection payload
     let sender_pk_b64 = connection::get_pseudonym_public_key_b64(master_key, &sender_pseudonym);
 
+    // Collect our contacts' Ed25519 public keys for mutual-contact detection
+    let network_keys: Vec<String> = contact_book
+        .active_contacts()
+        .iter()
+        .map(|c| c.public_key.clone())
+        .collect();
+
     let payload = ConnectionPayload {
         message_type: "request".to_string(),
         message: req.message.clone(),
@@ -564,6 +571,11 @@ pub async fn connect(
         reply_public_key: sender_pk_b64,
         identity_card: None,
         preferred_role: req.preferred_role.clone(),
+        network_keys: if network_keys.is_empty() {
+            None
+        } else {
+            Some(network_keys)
+        },
     };
 
     let encrypted = connection::encrypt_connection_message(&target_pk, &payload)
@@ -742,6 +754,33 @@ pub async fn poll_and_decrypt_requests(
                         continue;
                     }
                 };
+
+                // Mutual contact detection via network intersection
+                let mutual_contacts = if let Some(ref keys) = payload.network_keys {
+                    let op = OperationProcessor::new(node.clone());
+                    let our_book = op
+                        .contact_book_path()
+                        .ok()
+                        .map(|p| ContactBook::load_from(&p).unwrap_or_default())
+                        .unwrap_or_default();
+                    let our_keys: std::collections::HashSet<&str> = our_book
+                        .active_contacts()
+                        .iter()
+                        .map(|c| c.public_key.as_str())
+                        .collect();
+                    keys.iter()
+                        .filter(|k| our_keys.contains(k.as_str()))
+                        .filter_map(|k| {
+                            our_book.get(k).map(|c| MutualContact {
+                                display_name: c.display_name.clone(),
+                                public_key: c.public_key.clone(),
+                            })
+                        })
+                        .collect()
+                } else {
+                    vec![]
+                };
+
                 let request_id = format!("msg-{}", msg.message_id);
                 let local_req = LocalConnectionRequest {
                     request_id: request_id.clone(),
@@ -757,6 +796,7 @@ pub async fn poll_and_decrypt_requests(
                     vouches: Vec::new(),
                     referral_query_id: None,
                     referral_contacts_queried: 0,
+                    mutual_contacts,
                 };
                 if let Err(e) = connection::save_received_request(&*store, &local_req).await {
                     log::warn!("Failed to save received request: {}", e);
@@ -1302,6 +1342,7 @@ pub async fn respond_to_request(
                 node_public_key: node.get_node_public_key().to_string(),
             }),
             preferred_role: None, // accept messages don't carry a role preference
+            network_keys: None,   // not needed in accept messages
         };
 
         let encrypted = connection::encrypt_connection_message(&reply_pk, &response_payload)

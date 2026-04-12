@@ -51,6 +51,11 @@ export interface Vouch {
   received_at: string;
 }
 
+export interface MutualContact {
+  display_name: string;
+  public_key: string;
+}
+
 export interface LocalConnectionRequest {
   request_id: string;
   message_id: string;
@@ -65,6 +70,7 @@ export interface LocalConnectionRequest {
   vouches: Vouch[];
   referral_query_id: string | null;
   referral_contacts_queried: number;
+  mutual_contacts: MutualContact[];
 }
 
 export interface LocalSentRequest {
