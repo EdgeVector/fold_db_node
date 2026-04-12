@@ -7,7 +7,6 @@ import ingestionReducer, {
   selectAiProvider,
   selectActiveModel,
   selectIsAiConfigured,
-  selectIsAiReady,
 } from "../../store/ingestionSlice";
 import type { RootState } from "../../store/store";
 import type { IngestionConfig } from "../../api/clients/ingestionClient";
@@ -214,22 +213,5 @@ describe("ingestionSlice", () => {
       });
     });
 
-    describe("selectIsAiReady", () => {
-      it("returns false when no config", () => {
-        expect(selectIsAiReady(stateWith(null) as RootState)).toBe(false);
-      });
-
-      it("returns true when config exists and is configured", () => {
-        expect(selectIsAiReady(stateWith(anthropicConfig) as RootState)).toBe(true);
-      });
-
-      it("returns false when config exists but not configured", () => {
-        const unconfigured: IngestionConfig = {
-          ...anthropicConfig,
-          anthropic: { ...anthropicConfig.anthropic, api_key: "" },
-        };
-        expect(selectIsAiReady(stateWith(unconfigured) as RootState)).toBe(false);
-      });
-    });
   });
 });

@@ -458,48 +458,11 @@ export const selectApprovedSchemas = createSelector(
     }),
 );
 
-export const selectAvailableSchemas = createSelector(
-  [selectAllSchemas],
-  (schemas: Schema[]) =>
-    schemas.filter((schema) => schema.state === SCHEMA_STATES.AVAILABLE),
-);
-
-export const selectBlockedSchemas = createSelector(
-  [selectAllSchemas],
-  (schemas: Schema[]) =>
-    schemas.filter((schema) => schema.state === SCHEMA_STATES.BLOCKED),
-);
-
-// Range schema selectors
-export const selectApprovedRangeSchemas = createSelector(
-  [selectApprovedSchemas],
-  (schemas: Schema[]) =>
-    schemas.filter((schema) => schema.rangeInfo?.isRangeSchema === true),
-);
-
-export const selectAvailableRangeSchemas = createSelector(
-  [selectAvailableSchemas],
-  (schemas: Schema[]) =>
-    schemas.filter((schema) => schema.rangeInfo?.isRangeSchema === true),
-);
-
 // Loading and error selectors
-export const selectSchemaLoading = (state: RootState) => state.schemas.loading;
-export const selectSchemaErrors = (state: RootState) => state.schemas.errors;
 export const selectFetchLoading = (state: RootState) =>
   state.schemas.loading.fetch;
 export const selectFetchError = (state: RootState) =>
   state.schemas.errors.fetch;
-
-// Schema-specific selectors
-export const selectSchemaById = (schemaName: string) => (state: RootState) =>
-  state.schemas.schemas[schemaName] || null;
-
-export const selectSchemaOperationState =
-  (schemaName: string) => (state: RootState) => ({
-    loading: state.schemas.loading.operations[schemaName] || false,
-    error: state.schemas.errors.operations[schemaName] || null,
-  });
 
 // Cache selectors
 export const selectCacheInfo = createSelector(
@@ -509,15 +472,6 @@ export const selectCacheInfo = createSelector(
     lastFetched: schemaState.lastFetched,
     ttl: schemaState.cache.ttl,
   }),
-);
-
-// Active schema selectors
-export const selectActiveSchema = (state: RootState) =>
-  state.schemas.activeSchema;
-export const selectActiveSchemaData = createSelector(
-  [selectActiveSchema, selectSchemasById],
-  (activeSchemaName, schemasById) =>
-    activeSchemaName ? schemasById[activeSchemaName] || null : null,
 );
 
 // Export actions and reducer

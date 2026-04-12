@@ -106,20 +106,3 @@ export function createAriaAttributes(fieldId, hasError = false, helpText = "") {
 
   return attributes;
 }
-
-/**
- * Validates select field options array
- * @param {Array} options - Options to validate
- * @returns {boolean} True if options are valid
- */
-export function validateOptions(options) {
-  if (!Array.isArray(options)) return false;
-
-  return options.every(
-    (option) =>
-      option &&
-      typeof option === "object" &&
-      typeof option.value !== "undefined" &&
-      typeof option.label === "string",
-  );
-}
