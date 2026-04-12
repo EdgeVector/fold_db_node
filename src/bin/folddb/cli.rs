@@ -314,6 +314,8 @@ pub enum CloudCommand {
     Status,
     /// Trigger an immediate sync cycle
     Sync,
+    /// Delete your Exemem account and all cloud data
+    DeleteAccount,
 }
 
 #[derive(Subcommand, Debug)]
@@ -911,6 +913,7 @@ mod tests {
             vec!["folddb", "cloud", "disable"],
             vec!["folddb", "cloud", "status"],
             vec!["folddb", "cloud", "sync"],
+            vec!["folddb", "cloud", "delete-account"],
             vec!["folddb", "org", "list"],
             vec!["folddb", "org", "create", "TestOrg"],
             vec!["folddb", "org", "invites"],
