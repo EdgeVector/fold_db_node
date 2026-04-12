@@ -581,7 +581,7 @@ impl LlmQueryService {
                 let db = node
                     .get_fold_db()
                     .map_err(|e| format!("Failed to access database: {}", e))?;
-                let store = db.get_db_ops().metadata_store().inner().clone();
+                let store = db.get_db_ops().raw_metadata_store();
 
                 crate::discovery::config::save_opt_in(&*store, &opt_in_config)
                     .await
@@ -604,7 +604,7 @@ impl LlmQueryService {
                 let db = node
                     .get_fold_db()
                     .map_err(|e| format!("Failed to access database: {}", e))?;
-                let store = db.get_db_ops().metadata_store().inner().clone();
+                let store = db.get_db_ops().raw_metadata_store();
 
                 crate::discovery::config::remove_opt_in(&*store, &schema_name)
                     .await
@@ -620,7 +620,7 @@ impl LlmQueryService {
                 let db = node
                     .get_fold_db()
                     .map_err(|e| format!("Failed to access database: {}", e))?;
-                let store = db.get_db_ops().metadata_store().inner().clone();
+                let store = db.get_db_ops().raw_metadata_store();
 
                 let configs = crate::discovery::config::list_opt_ins(&*store)
                     .await

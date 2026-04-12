@@ -1,7 +1,6 @@
 use base64::{engine::general_purpose::STANDARD as BASE64, Engine as _};
 use fold_db::log_feature;
 use fold_db::logging::features::LogFeature;
-use fold_db::storage::traits::TypedStore;
 use serde::{Deserialize, Serialize};
 
 use std::sync::Arc;
@@ -697,8 +696,7 @@ impl FoldNode {
         let key = format!("file:{}:{}", pub_key, file_hash);
         self.db
             .db_ops()
-            .idempotency_store()
-            .get_item::<FileIngestionRecord>(&key)
+            .get_idempotency_item::<FileIngestionRecord>(&key)
             .await
             .ok()
             .flatten()
@@ -714,8 +712,7 @@ impl FoldNode {
         let key = format!("file:{}:{}", pub_key, file_hash);
         self.db
             .db_ops()
-            .idempotency_store()
-            .put_item(&key, &record)
+            .put_idempotency_item(&key, &record)
             .await
             .map_err(|e| FoldDbError::Database(e.to_string()))
     }
@@ -735,8 +732,7 @@ impl FoldNode {
         )> = self
             .db
             .db_ops()
-            .process_results_store()
-            .scan_items_with_prefix(&prefix)
+            .scan_process_results(&prefix)
             .await
             .map_err(|e| FoldDbError::Database(e.to_string()))?;
 

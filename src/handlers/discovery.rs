@@ -235,7 +235,7 @@ pub struct SimilarProfilesResponse {
 fn get_metadata_store(
     db: &fold_db::fold_db_core::FoldDB,
 ) -> std::sync::Arc<dyn fold_db::storage::traits::KvStore> {
-    db.get_db_ops().metadata_store().inner().clone()
+    db.get_db_ops().raw_metadata_store()
 }
 
 /// List all discovery opt-in configs.
@@ -344,7 +344,7 @@ pub async fn publish(
         .map_err(|e| HandlerError::Internal(format!("Failed to access database: {}", e)))?;
 
     let db_ops = db.get_db_ops();
-    let metadata_store = db_ops.metadata_store().inner().clone();
+    let metadata_store = db_ops.raw_metadata_store();
     let configs = config::list_opt_ins(&*metadata_store)
         .await
         .handler_err("list discovery opt-ins")?;
@@ -1504,7 +1504,7 @@ pub async fn detect_interests(node: &FoldNode) -> HandlerResult<InterestProfile>
         .map_err(|e| HandlerError::Internal(format!("Failed to access database: {}", e)))?;
 
     let db_ops = db.get_db_ops();
-    let metadata_store = db_ops.metadata_store().inner().clone();
+    let metadata_store = db_ops.raw_metadata_store();
 
     // Get all schemas and extract their field_interest_categories
     let schemas: Vec<_> = db
@@ -1540,7 +1540,7 @@ pub async fn similar_profiles(
         .map_err(|e| HandlerError::Internal(format!("Failed to access database: {}", e)))?;
 
     let db_ops = db.get_db_ops();
-    let metadata_store = db_ops.metadata_store().inner().clone();
+    let metadata_store = db_ops.raw_metadata_store();
 
     let native_index_mgr = db_ops
         .native_index_manager()
