@@ -19,6 +19,7 @@ fn test_connection_payload_with_identity_card() {
         }),
         preferred_role: None,
         network_keys: None,
+        request_id: None,
     };
     let json = serde_json::to_string(&payload).unwrap();
     let deserialized: ConnectionPayload = serde_json::from_str(&json).unwrap();

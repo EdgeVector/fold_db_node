@@ -573,6 +573,12 @@ pub async fn connect(
         .map(|c| c.public_key.clone())
         .collect();
 
+    // Generate the stable round-trip request_id up-front. Put it in the
+    // outgoing payload AND in our LocalSentRequest so that when the acceptor
+    // echoes it back in their "accept" we can unambiguously match the row
+    // (important when the acceptor derives a single reply pseudonym).
+    let stable_request_id = uuid::Uuid::new_v4().to_string();
+
     let payload = ConnectionPayload {
         message_type: "request".to_string(),
         message: req.message.clone(),
@@ -586,6 +592,7 @@ pub async fn connect(
         } else {
             Some(network_keys)
         },
+        request_id: Some(stable_request_id.clone()),
     };
 
     let encrypted = connection::encrypt_connection_message(&target_pk, &payload)
@@ -601,7 +608,7 @@ pub async fn connect(
 
     // 5. Save sent request locally
     let sent = LocalSentRequest {
-        request_id: uuid::Uuid::new_v4().to_string(),
+        request_id: stable_request_id,
         target_pseudonym: req.target_pseudonym.to_string(),
         sender_pseudonym: sender_pseudonym.to_string(),
         message: req.message.clone(),
@@ -731,6 +738,85 @@ pub async fn opt_out_all(node: &FoldNode) -> HandlerResult<serde_json::Value> {
     ))
 }
 
+// === Dedup marker prune (G2) =====================================================
+//
+// Every processed bulletin-board message leaves a `msg_processed:{id}` marker so
+// we don't re-dispatch it on subsequent polls. Without a bound the key-space grows
+// forever. We prune entries older than `DEDUP_RETENTION_SECS` every
+// `PRUNE_EVERY_N_POLLS` invocations of `poll_and_decrypt_requests`.
+//
+// The marker value is an 8-byte little-endian u64 seconds timestamp. The older
+// marker format was `b"1"`; malformed/short values are treated as stale (age = 0
+// at deploy, then immediately older than retention on subsequent prunes) and are
+// deleted on the next prune pass.
+
+const MSG_PROCESSED_PREFIX: &str = "msg_processed:";
+/// Retain dedup markers for 7 days. Bulletin-board messages in DynamoDB have a
+/// shorter TTL anyway; a reappearing 7-day-old message is safe to re-dispatch.
+const DEDUP_RETENTION_SECS: u64 = 7 * 24 * 60 * 60;
+/// Run the prune scan every N-th call. A simple in-memory atomic counter avoids
+/// a separate background task.
+const PRUNE_EVERY_N_POLLS: u64 = 50;
+
+static PRUNE_POLL_COUNTER: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+
+fn now_secs() -> u64 {
+    std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|d| d.as_secs())
+        .unwrap_or(0)
+}
+
+fn encode_marker_timestamp(secs: u64) -> Vec<u8> {
+    secs.to_le_bytes().to_vec()
+}
+
+/// Decode a dedup marker value into a wall-clock seconds timestamp.
+/// Returns `None` for legacy/malformed markers (pre-G2 wrote `b"1"`).
+fn decode_marker_timestamp(value: &[u8]) -> Option<u64> {
+    if value.len() != 8 {
+        return None;
+    }
+    let mut buf = [0u8; 8];
+    buf.copy_from_slice(value);
+    Some(u64::from_le_bytes(buf))
+}
+
+/// Delete dedup markers older than `DEDUP_RETENTION_SECS`. Legacy markers
+/// (non-8-byte values written before this fix) are also deleted — they're
+/// known to be at most ≤7 days old at deploy time and are safe to drop.
+///
+/// Uses the `KvStore::scan_prefix` method which loads all matching entries
+/// at once (no streaming API exists on the trait). The marker key-space is
+/// bounded by recent bulletin-board traffic, so a full load is fine.
+pub(crate) async fn prune_msg_processed_markers(
+    store: &dyn fold_db::storage::traits::KvStore,
+    now: u64,
+    retention_secs: u64,
+) -> Result<usize, String> {
+    let entries = store
+        .scan_prefix(MSG_PROCESSED_PREFIX.as_bytes())
+        .await
+        .map_err(|e| format!("scan_prefix failed: {e}"))?;
+
+    let mut deleted = 0usize;
+    for (key, value) in entries {
+        let stale = match decode_marker_timestamp(&value) {
+            Some(ts) => now.saturating_sub(ts) > retention_secs,
+            // Legacy/malformed marker — drop it.
+            None => true,
+        };
+        if stale {
+            store
+                .delete(&key)
+                .await
+                .map_err(|e| format!("delete failed: {e}"))?;
+            deleted += 1;
+        }
+    }
+    Ok(deleted)
+}
+
 /// Poll the bulletin board, decrypt messages for our pseudonyms, and store locally.
 pub async fn poll_and_decrypt_requests(
     node: &FoldNode,
@@ -822,7 +908,10 @@ pub async fn poll_and_decrypt_requests(
         };
 
         // De-duplication: check if we already processed this message.
-        let dedup_key = format!("msg_processed:{}", msg.message_id);
+        // Any present value counts as "processed"; the stored value is a
+        // wall-clock timestamp (little-endian u64 seconds) used only by the
+        // periodic prune of stale markers.
+        let dedup_key = format!("{}{}", MSG_PROCESSED_PREFIX, msg.message_id);
         match store.get(dedup_key.as_bytes()).await {
             Ok(Some(_)) => continue,
             Ok(None) => {}
@@ -854,7 +943,12 @@ pub async fn poll_and_decrypt_requests(
                 // Only mark as processed after the handler reports a terminal
                 // outcome. Propagate errors from the dedup write — a silent
                 // failure here would cause the message to re-dispatch forever.
-                if let Err(e) = store.put(dedup_key.as_bytes(), b"1".to_vec()).await {
+                // Store the write timestamp so the periodic prune can expire
+                // stale markers (see G2 prune module above).
+                if let Err(e) = store
+                    .put(dedup_key.as_bytes(), encode_marker_timestamp(now_secs()))
+                    .await
+                {
                     dispatch_errors.push((
                         msg.message_id.clone(),
                         HandlerError::Internal(format!("dedup write failed: {e}")),
@@ -877,6 +971,20 @@ pub async fn poll_and_decrypt_requests(
             "poll_and_decrypt_requests: {} message(s) failed dispatch and will be retried on the next poll",
             dispatch_errors.len()
         );
+    }
+
+    // Prune stale dedup markers every N-th poll. Done after the dispatch loop
+    // so we never delete a marker we're about to check in the same iteration.
+    let prune_count = PRUNE_POLL_COUNTER.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+    if prune_count.is_multiple_of(PRUNE_EVERY_N_POLLS) {
+        match prune_msg_processed_markers(&*store, now_secs(), DEDUP_RETENTION_SECS).await {
+            Ok(deleted) => {
+                if deleted > 0 {
+                    log::info!("Pruned {} stale msg_processed markers", deleted);
+                }
+            }
+            Err(e) => log::error!("Failed to prune msg_processed markers: {}", e),
+        }
     }
 
     // Return all locally stored received requests
@@ -989,6 +1097,9 @@ async fn dispatch_decrypted_message(
                 referral_query_id: None,
                 referral_contacts_queried: 0,
                 mutual_contacts,
+                // Stash the requester's stable id so that when we later build
+                // an accept message we can echo it back (G3 — stable match).
+                sender_request_id: payload.request_id.clone(),
             };
             connection::save_received_request(store, &local_req)
                 .await
@@ -1007,6 +1118,7 @@ async fn dispatch_decrypted_message(
             let sent_request = connection::update_sent_request_status(
                 store,
                 &payload.sender_pseudonym,
+                payload.request_id.as_deref(),
                 "accepted",
             )
             .await
@@ -1038,9 +1150,14 @@ async fn dispatch_decrypted_message(
                     });
                 }
             };
-            connection::update_sent_request_status(store, &payload.sender_pseudonym, "declined")
-                .await
-                .map_err(|e| HandlerError::Internal(format!("update sent request: {e}")))?;
+            connection::update_sent_request_status(
+                store,
+                &payload.sender_pseudonym,
+                payload.request_id.as_deref(),
+                "declined",
+            )
+            .await
+            .map_err(|e| HandlerError::Internal(format!("update sent request: {e}")))?;
             Ok(DispatchOutcome::Handled)
         }
         "query_request" => {
@@ -1533,6 +1650,9 @@ pub async fn respond_to_request(
             }),
             preferred_role: None, // accept messages don't carry a role preference
             network_keys: None,   // not needed in accept messages
+            // Echo the requester's stable request_id so they can match the
+            // accept to the exact LocalSentRequest row (see G3).
+            request_id: updated.sender_request_id.clone(),
         };
 
         let encrypted = connection::encrypt_connection_message(&reply_pk, &response_payload)
@@ -3616,5 +3736,72 @@ mod dispatch_tests {
             .unwrap();
         let dedup_present = inner.get(dedup_key.as_bytes()).await.unwrap();
         assert_eq!(dedup_present.as_deref(), Some(&b"1"[..]));
+    }
+}
+
+#[cfg(test)]
+mod prune_tests {
+    use super::*;
+    use fold_db::storage::inmemory_backend::InMemoryKvStore;
+    use fold_db::storage::traits::KvStore;
+
+    #[tokio::test]
+    async fn prune_deletes_old_markers_and_keeps_fresh_ones() {
+        let store = InMemoryKvStore::default();
+        let now: u64 = 1_700_000_000;
+
+        // Fresh marker (1 hour old)
+        let fresh_key = format!("{}fresh", MSG_PROCESSED_PREFIX);
+        store
+            .put(fresh_key.as_bytes(), encode_marker_timestamp(now - 3_600))
+            .await
+            .unwrap();
+
+        // Stale marker (8 days old)
+        let stale_key = format!("{}stale", MSG_PROCESSED_PREFIX);
+        store
+            .put(
+                stale_key.as_bytes(),
+                encode_marker_timestamp(now - 8 * 24 * 60 * 60),
+            )
+            .await
+            .unwrap();
+
+        // Legacy marker (pre-G2 `b"1"`) — treated as malformed and deleted.
+        let legacy_key = format!("{}legacy", MSG_PROCESSED_PREFIX);
+        store
+            .put(legacy_key.as_bytes(), b"1".to_vec())
+            .await
+            .unwrap();
+
+        // Unrelated key — must not be touched by prefix scan.
+        store.put(b"other:untouched", b"x".to_vec()).await.unwrap();
+
+        let deleted = prune_msg_processed_markers(&store, now, DEDUP_RETENTION_SECS)
+            .await
+            .unwrap();
+        assert_eq!(deleted, 2, "stale + legacy should be deleted");
+
+        assert!(store.get(fresh_key.as_bytes()).await.unwrap().is_some());
+        assert!(store.get(stale_key.as_bytes()).await.unwrap().is_none());
+        assert!(store.get(legacy_key.as_bytes()).await.unwrap().is_none());
+        assert!(store.get(b"other:untouched").await.unwrap().is_some());
+    }
+
+    #[tokio::test]
+    async fn prune_noop_when_all_fresh() {
+        let store = InMemoryKvStore::default();
+        let now: u64 = 1_700_000_000;
+        for i in 0..5 {
+            let k = format!("{}msg-{}", MSG_PROCESSED_PREFIX, i);
+            store
+                .put(k.as_bytes(), encode_marker_timestamp(now - 60))
+                .await
+                .unwrap();
+        }
+        let deleted = prune_msg_processed_markers(&store, now, DEDUP_RETENTION_SECS)
+            .await
+            .unwrap();
+        assert_eq!(deleted, 0);
     }
 }

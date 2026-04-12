@@ -68,6 +68,13 @@ pub struct ConnectionPayload {
     /// Included in the encrypted payload — only the recipient can read them.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub network_keys: Option<Vec<String>>,
+    /// Stable round-trip request identifier. Set by the requester in a "request"
+    /// message; echoed by the acceptor in the matching "accept"/"decline" so the
+    /// requester can unambiguously update the right `LocalSentRequest` even when
+    /// the acceptor derives a single reply pseudonym for all conversations.
+    /// `None` for legacy clients that predate this field.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub request_id: Option<String>,
 }
 
 /// Encrypt a connection payload for a target's X25519 public key.
@@ -296,6 +303,12 @@ pub struct LocalConnectionRequest {
     /// Mutual contacts found by intersecting sender's network with ours.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub mutual_contacts: Vec<MutualContact>,
+    /// The requester-generated request_id from the incoming `ConnectionPayload`,
+    /// if present. The acceptor echoes this back in the accept message so the
+    /// requester can match the reply to the exact `LocalSentRequest` row,
+    /// avoiding ambiguity under pseudonym reuse.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub sender_request_id: Option<String>,
 }
 
 /// A locally stored sent connection request.
@@ -415,9 +428,18 @@ pub async fn list_sent_requests(store: &dyn KvStore) -> Result<Vec<LocalSentRequ
 /// Update a sent request status (e.g., when we receive an acceptance).
 /// Returns the updated `LocalSentRequest` if one was found, so callers
 /// can inspect `preferred_role` etc.
+///
+/// Matching strategy:
+/// - If `request_id` is `Some`, match by that stable id (preferred — unambiguous
+///   even under pseudonym reuse by the acceptor).
+/// - If `request_id` is `None`, fall back to matching the first pending row
+///   whose `target_pseudonym` equals the incoming sender's pseudonym. This
+///   preserves backward compatibility with legacy clients that didn't echo
+///   a `request_id`.
 pub async fn update_sent_request_status(
     store: &dyn KvStore,
     target_pseudonym: &str,
+    request_id: Option<&str>,
     status: &str,
 ) -> Result<Option<LocalSentRequest>, String> {
     let entries = store
@@ -427,7 +449,14 @@ pub async fn update_sent_request_status(
 
     for (key, value) in entries {
         if let Ok(mut req) = serde_json::from_slice::<LocalSentRequest>(&value) {
-            if req.target_pseudonym == target_pseudonym && req.status == "pending" {
+            if req.status != "pending" {
+                continue;
+            }
+            let matches = match request_id {
+                Some(rid) => req.request_id == rid,
+                None => req.target_pseudonym == target_pseudonym,
+            };
+            if matches {
                 req.status = status.to_string();
                 let updated =
                     serde_json::to_vec(&req).map_err(|e| format!("Failed to serialize: {}", e))?;
@@ -537,6 +566,7 @@ mod tests {
             identity_card: None,
             preferred_role: None,
             network_keys: None,
+            request_id: None,
         };
 
         let encrypted = encrypt_connection_message(public.as_bytes(), &payload).unwrap();
@@ -565,6 +595,7 @@ mod tests {
             identity_card: None,
             preferred_role: None,
             network_keys: None,
+            request_id: None,
         };
 
         let encrypted = encrypt_connection_message(public.as_bytes(), &payload).unwrap();
@@ -590,6 +621,7 @@ mod tests {
             identity_card: None,
             preferred_role: None,
             network_keys: None,
+            request_id: None,
         };
 
         let encrypted = encrypt_message(public.as_bytes(), &payload).unwrap();
@@ -597,6 +629,87 @@ mod tests {
 
         assert_eq!(raw["message_type"].as_str().unwrap(), "request");
         assert_eq!(raw["message"].as_str().unwrap(), "Generic test");
+    }
+
+    #[tokio::test]
+    async fn test_update_sent_request_status_matches_by_request_id() {
+        use fold_db::storage::inmemory_backend::InMemoryKvStore;
+
+        let store = InMemoryKvStore::default();
+
+        // Two pending sent-requests to the SAME target pseudonym (simulates Bob
+        // deriving a single reply pseudonym for all his accepts). Distinct
+        // request_ids must keep the rows unambiguous.
+        let shared_target = Uuid::new_v4().to_string();
+        let req_a = LocalSentRequest {
+            request_id: "req-a".to_string(),
+            target_pseudonym: shared_target.clone(),
+            sender_pseudonym: Uuid::new_v4().to_string(),
+            message: "first".to_string(),
+            status: "pending".to_string(),
+            created_at: chrono::Utc::now().to_rfc3339(),
+            preferred_role: Some("acquaintance".to_string()),
+        };
+        let req_b = LocalSentRequest {
+            request_id: "req-b".to_string(),
+            target_pseudonym: shared_target.clone(),
+            sender_pseudonym: Uuid::new_v4().to_string(),
+            message: "second".to_string(),
+            status: "pending".to_string(),
+            created_at: chrono::Utc::now().to_rfc3339(),
+            preferred_role: Some("friend".to_string()),
+        };
+        save_sent_request(&store, &req_a).await.unwrap();
+        save_sent_request(&store, &req_b).await.unwrap();
+
+        // Accept for req-b arrives first — must update req-b, not req-a.
+        let updated_b =
+            update_sent_request_status(&store, &shared_target, Some("req-b"), "accepted")
+                .await
+                .unwrap()
+                .expect("req-b should match");
+        assert_eq!(updated_b.request_id, "req-b");
+        assert_eq!(updated_b.preferred_role.as_deref(), Some("friend"));
+
+        // Accept for req-a — must now update req-a (req-b is no longer pending).
+        let updated_a =
+            update_sent_request_status(&store, &shared_target, Some("req-a"), "accepted")
+                .await
+                .unwrap()
+                .expect("req-a should match");
+        assert_eq!(updated_a.request_id, "req-a");
+        assert_eq!(updated_a.preferred_role.as_deref(), Some("acquaintance"));
+
+        // Verify both rows are persisted as accepted.
+        let all = list_sent_requests(&store).await.unwrap();
+        assert_eq!(all.len(), 2);
+        assert!(all.iter().all(|r| r.status == "accepted"));
+    }
+
+    #[tokio::test]
+    async fn test_update_sent_request_status_fallback_to_target_pseudonym() {
+        use fold_db::storage::inmemory_backend::InMemoryKvStore;
+
+        let store = InMemoryKvStore::default();
+        let target = Uuid::new_v4().to_string();
+        let req = LocalSentRequest {
+            request_id: "legacy".to_string(),
+            target_pseudonym: target.clone(),
+            sender_pseudonym: Uuid::new_v4().to_string(),
+            message: "legacy msg".to_string(),
+            status: "pending".to_string(),
+            created_at: chrono::Utc::now().to_rfc3339(),
+            preferred_role: None,
+        };
+        save_sent_request(&store, &req).await.unwrap();
+
+        // Legacy client: request_id is None — fall back to target_pseudonym match.
+        let updated = update_sent_request_status(&store, &target, None, "accepted")
+            .await
+            .unwrap()
+            .expect("legacy path should match");
+        assert_eq!(updated.request_id, "legacy");
+        assert_eq!(updated.status, "accepted");
     }
 
     #[test]
