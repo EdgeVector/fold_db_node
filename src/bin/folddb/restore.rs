@@ -113,7 +113,7 @@ fn try_register_and_configure(
     eprint!("Registering with Exemem...");
 
     // Use setup's register function
-    match crate::commands::setup::register_with_exemem(&api_url, &pub_key_hex) {
+    match crate::commands::setup::register_with_exemem(&api_url, &pub_key_hex, private_key_b64) {
         Ok(resp) => {
             eprintln!(" done.");
             let api_key = match resp.api_key {

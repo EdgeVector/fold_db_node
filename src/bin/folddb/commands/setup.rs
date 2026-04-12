@@ -1,6 +1,7 @@
 use crate::error::CliError;
+use base64::Engine;
 use dialoguer::{Confirm, Input};
-use fold_db::security::{Ed25519KeyPair, SecurityConfig};
+use fold_db::security::{Ed25519KeyPair, KeyUtils, SecurityConfig};
 use fold_db::storage::{CloudSyncConfig, DatabaseConfig};
 use fold_db_node::fold_node::config::NodeConfig;
 use fold_db_node::trust::identity_card::IdentityCard;
@@ -42,23 +43,56 @@ fn hex_encode(bytes: &[u8]) -> String {
     bytes.iter().map(|b| format!("{:02x}", b)).collect()
 }
 
+/// Sign the canonical CLI-register payload `"{public_key_hex}:{timestamp}"` with the
+/// node's base64-encoded Ed25519 private key. Returns the base64 signature.
+///
+/// Must stay in sync with:
+/// - `fold_db_node/src/server/routes/auth.rs::sign_payload`
+/// - `exemem-infra/lambdas/auth_service/src/cli/types.rs::verify_ed25519_signature`
+pub fn sign_cli_register_payload(
+    private_key_b64: &str,
+    public_key_hex: &str,
+    timestamp: i64,
+) -> Result<String, CliError> {
+    let key_bytes = base64::engine::general_purpose::STANDARD
+        .decode(private_key_b64)
+        .map_err(|e| CliError::new(format!("Failed to decode private key: {}", e)))?;
+    let key_pair = Ed25519KeyPair::from_secret_key(&key_bytes)
+        .map_err(|e| CliError::new(format!("Failed to create key pair: {}", e)))?;
+    let payload = format!("{}:{}", public_key_hex, timestamp);
+    let signature = key_pair.sign(payload.as_bytes());
+    Ok(KeyUtils::signature_to_base64(&signature))
+}
+
 /// Register the node's public key with the Exemem API.
+///
+/// The request is signed with the node's private key so the server can verify
+/// key ownership and allow idempotent re-registration.
 pub fn register_with_exemem(
     api_url: &str,
     public_key_hex: &str,
+    private_key_b64: &str,
 ) -> Result<ExememRegisterResponse, CliError> {
-    register_with_exemem_and_invite(api_url, public_key_hex, None)
+    register_with_exemem_and_invite(api_url, public_key_hex, private_key_b64, None)
 }
 
 /// Register with Exemem, optionally passing an invite code.
+///
+/// Always sends a signed request — the caller must provide the node's
+/// base64-encoded Ed25519 private key so the payload can be signed.
 pub fn register_with_exemem_and_invite(
     api_url: &str,
     public_key_hex: &str,
+    private_key_b64: &str,
     invite_code: Option<&str>,
 ) -> Result<ExememRegisterResponse, CliError> {
     let url = format!("{}/api/auth/cli/register", api_url.trim_end_matches('/'));
+    let timestamp = chrono::Utc::now().timestamp();
+    let signature = sign_cli_register_payload(private_key_b64, public_key_hex, timestamp)?;
     let mut body = serde_json::json!({
         "public_key": public_key_hex,
+        "timestamp": timestamp,
+        "signature": signature,
     });
     if let Some(code) = invite_code {
         body["invite_code"] = serde_json::Value::String(code.to_string());
@@ -266,17 +300,19 @@ pub fn run_setup_wizard() -> Result<NodeConfig, CliError> {
             .map_err(|e| CliError::new(format!("Input cancelled: {}", e)))?;
 
         let api_url = fold_db_node::endpoints::exemem_api_url();
-        let pub_key_bytes = {
-            use base64::Engine;
-            base64::engine::general_purpose::STANDARD
-                .decode(&identity.public_key)
-                .map_err(|e| CliError::new(format!("Failed to decode public key: {}", e)))?
-        };
+        let pub_key_bytes = base64::engine::general_purpose::STANDARD
+            .decode(&identity.public_key)
+            .map_err(|e| CliError::new(format!("Failed to decode public key: {}", e)))?;
         let public_key_hex = hex_encode(&pub_key_bytes);
 
         eprintln!();
         eprint!("Registering with Exemem...");
-        let resp = register_with_exemem_and_invite(&api_url, &public_key_hex, Some(&invite_code))?;
+        let resp = register_with_exemem_and_invite(
+            &api_url,
+            &public_key_hex,
+            &identity.private_key,
+            Some(&invite_code),
+        )?;
         eprintln!(" done.");
 
         let api_key = resp
@@ -380,4 +416,50 @@ pub fn run_setup_wizard() -> Result<NodeConfig, CliError> {
     eprintln!();
 
     Ok(config)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use fold_db::security::KeyUtils;
+
+    #[test]
+    fn sign_cli_register_payload_round_trips() {
+        // Generate a fresh keypair.
+        let key_pair = Ed25519KeyPair::generate().expect("generate keypair");
+        let private_key_b64 = key_pair.secret_key_base64();
+        let public_key_b64 = key_pair.public_key_base64();
+
+        // Decode public key to bytes, then hex-encode (matching the lambda).
+        let pub_key_bytes = base64::engine::general_purpose::STANDARD
+            .decode(&public_key_b64)
+            .expect("decode pub key");
+        let public_key_hex = hex_encode(&pub_key_bytes);
+
+        let timestamp: i64 = 1_700_000_000;
+        let sig_b64 = sign_cli_register_payload(&private_key_b64, &public_key_hex, timestamp)
+            .expect("sign payload");
+
+        // Decode the base64 signature and verify it against the canonical payload.
+        let signature = KeyUtils::signature_from_base64(&sig_b64).expect("signature from base64");
+
+        let payload = format!("{}:{}", public_key_hex, timestamp);
+        assert!(
+            key_pair.verify(payload.as_bytes(), &signature),
+            "signature should verify against canonical payload"
+        );
+
+        // Different payload must NOT verify.
+        let wrong_payload = format!("{}:{}", public_key_hex, timestamp + 1);
+        assert!(
+            !key_pair.verify(wrong_payload.as_bytes(), &signature),
+            "signature must not verify against altered payload"
+        );
+    }
+
+    #[test]
+    fn sign_cli_register_payload_rejects_invalid_private_key() {
+        let err = sign_cli_register_payload("not-valid-base64!!!", "deadbeef", 123);
+        assert!(err.is_err());
+    }
 }
