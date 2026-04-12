@@ -144,12 +144,17 @@ pub async fn magic_link_verify(body: web::Json<MagicLinkVerifyRequest>) -> HttpR
 /// Check if credentials exist locally.
 pub async fn get_credentials() -> HttpResponse {
     match keychain::load_credentials() {
-        Ok(Some(creds)) => HttpResponse::Ok().json(serde_json::json!({
-            "ok": true,
-            "has_credentials": true,
-            "user_hash": creds.user_hash,
-            "session_token": creds.session_token,
-        })),
+        Ok(Some(creds)) => {
+            let api_url = crate::endpoints::exemem_api_url();
+            HttpResponse::Ok().json(serde_json::json!({
+                "ok": true,
+                "has_credentials": true,
+                "user_hash": creds.user_hash,
+                "session_token": creds.session_token,
+                "api_url": api_url,
+                "api_key": creds.api_key,
+            }))
+        }
         Ok(None) => HttpResponse::Ok().json(serde_json::json!({
             "ok": true,
             "has_credentials": false,

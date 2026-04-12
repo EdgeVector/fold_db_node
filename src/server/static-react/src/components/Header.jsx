@@ -71,14 +71,11 @@ function Header({ onSettingsClick, onAiSettingsClick, onCloudSettingsClick }) {
     systemClient.getNodePublicKey().then(res => {
       if (res.data?.public_key) setNodePublicKey(res.data.public_key)
     }).catch(() => {})
-    // Fetch cloud storage quota if connected
-    const hasCloud = localStorage.getItem('exemem_api_url') && localStorage.getItem('exemem_api_key')
-    if (hasCloud) {
-      getSubscriptionStatus().then(status => {
-        setStorageSize(status.storage.used_bytes)
-        setStorageQuota(status.storage.quota_bytes)
-      }).catch(() => { /* cloud API not reachable */ })
-    }
+    // Fetch cloud storage quota (getSubscriptionStatus handles config lookup)
+    getSubscriptionStatus().then(status => {
+      setStorageSize(status.storage.used_bytes)
+      setStorageQuota(status.storage.quota_bytes)
+    }).catch(() => { /* cloud not configured or API not reachable */ })
   }, [])
 
   // Poll for invites after layout mount
