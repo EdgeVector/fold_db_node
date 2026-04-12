@@ -102,8 +102,13 @@ function Header({ onSettingsClick, onAiSettingsClick, onCloudSettingsClick }) {
   }, [isAuthenticated]);
 
   // Poll notification count
+  // Also triggers backend decryption of new bulletin board messages so the
+  // bell badge updates without requiring the user to open the Received tab.
   const refreshNotifCount = useCallback(async () => {
     try {
+      // Trigger backend decryption of new bulletin board messages
+      await discoveryClient.getConnectionRequests().catch(() => {});
+      // Then get the updated count
       const res = await discoveryClient.notificationCount();
       if (res.success && res.data) {
         setNotifCount(res.data.count || 0);
