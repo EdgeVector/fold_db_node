@@ -75,6 +75,13 @@ pub struct ConnectionPayload {
     /// `None` for legacy clients that predate this field.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub request_id: Option<String>,
+    /// Sender's **stable identity pseudonym** (see
+    /// `discovery::pseudonym::derive_identity_pseudonym`). Carried in both
+    /// "request" and "accept" messages so both sides can persist the peer's
+    /// identity pseudonym in their contact book and use it as the primary
+    /// match key for referral queries. `None` for legacy clients.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub identity_pseudonym: Option<String>,
 }
 
 /// Encrypt a connection payload for a target's X25519 public key.
@@ -253,6 +260,11 @@ pub struct ReferralQueryPayload {
     pub subject_public_key: String,
     pub sender_pseudonym: String,
     pub reply_public_key: String,
+    /// Subject's **stable identity pseudonym** — primary match key for
+    /// referral matching. `None` for legacy clients; handlers fall back to
+    /// `subject_pseudonym` / `subject_public_key` in that case.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub subject_identity_pseudonym: Option<String>,
 }
 
 /// Referral response — "yes, I know them as Bob"
@@ -263,6 +275,11 @@ pub struct ReferralResponsePayload {
     pub known_as: String,
     pub sender_pseudonym: String,
     pub reply_public_key: String,
+    /// Voucher's **stable identity pseudonym** — primary match key for the
+    /// requester's voucher-lookup in their local contact book. `None` for
+    /// legacy clients; handlers fall back to `sender_pseudonym`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub voucher_identity_pseudonym: Option<String>,
 }
 
 /// A vouch from a trusted contact about a connection requester.
@@ -309,6 +326,13 @@ pub struct LocalConnectionRequest {
     /// avoiding ambiguity under pseudonym reuse.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub sender_request_id: Option<String>,
+    /// Sender's **stable identity pseudonym** as carried in the incoming
+    /// `ConnectionPayload`. Stashed here so that when Alice runs a
+    /// referral query about Charlie she can embed Charlie's identity
+    /// pseudonym in the outgoing `ReferralQueryPayload`. `None` for
+    /// legacy senders that didn't include it.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub sender_identity_pseudonym: Option<String>,
 }
 
 /// A locally stored sent connection request.
@@ -567,6 +591,7 @@ mod tests {
             preferred_role: None,
             network_keys: None,
             request_id: None,
+            identity_pseudonym: None,
         };
 
         let encrypted = encrypt_connection_message(public.as_bytes(), &payload).unwrap();
@@ -596,6 +621,7 @@ mod tests {
             preferred_role: None,
             network_keys: None,
             request_id: None,
+            identity_pseudonym: None,
         };
 
         let encrypted = encrypt_connection_message(public.as_bytes(), &payload).unwrap();
@@ -622,6 +648,7 @@ mod tests {
             preferred_role: None,
             network_keys: None,
             request_id: None,
+            identity_pseudonym: None,
         };
 
         let encrypted = encrypt_message(public.as_bytes(), &payload).unwrap();

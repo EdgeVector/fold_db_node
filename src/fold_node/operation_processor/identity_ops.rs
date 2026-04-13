@@ -245,6 +245,7 @@ impl OperationProcessor {
             pseudonym: None,
             messaging_pseudonym: None,
             messaging_public_key: None,
+            identity_pseudonym: None,
             revoked: false,
             roles,
         };
