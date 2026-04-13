@@ -74,7 +74,6 @@ pub async fn run_restore() -> Result<CommandOutput, CliError> {
     std::fs::write(&identity_path, &identity_json)
         .map_err(|e| CliError::new(format!("Failed to write identity: {}", e)))?;
 
-    eprintln!("Identity restored.");
     eprintln!("Public key: {}", public_key_b64);
 
     // Try to register with Exemem — rollback identity if this fails catastrophically
@@ -133,8 +132,8 @@ fn try_register_and_configure(
                 database: fold_db::storage::DatabaseConfig::with_cloud_sync(
                     data_path.clone(),
                     fold_db::storage::CloudSyncConfig {
-                        api_url,
-                        api_key,
+                        api_url: api_url.clone(),
+                        api_key: api_key.clone(),
                         session_token: None,
                         user_hash: resp.user_hash,
                     },
@@ -153,13 +152,20 @@ fn try_register_and_configure(
             std::fs::write(config_path, config_json)
                 .map_err(|e| CliError::new(format!("Failed to write config: {}", e)))?;
 
+            // Write the bootstrap pending marker so the daemon picks up the
+            // restore and actually downloads the user's database from cloud on
+            // the next start. Without this, the user ends up with a
+            // registered-but-empty local DB.
+            fold_db_node::server::routes::auth::write_bootstrap_marker(&api_url, &api_key)
+                .map_err(|e| CliError::new(format!("Failed to write bootstrap marker: {}", e)))?;
+
             mark_onboarding_complete();
 
-            let mut msg = "Identity restored with cloud backup enabled.\n\
-                Your data will be downloaded from Exemem cloud on first sync."
-                .to_string();
-            msg.push_str("\nRun `folddb daemon start` to begin syncing.");
-            Ok(msg)
+            eprintln!("Identity restored.");
+            Ok("Identity restored with cloud backup enabled.\n\
+                Your database will be downloaded from the cloud on next daemon start.\n\
+                Run `folddb daemon start` to begin."
+                .to_string())
         }
         Err(e) => {
             eprintln!(" failed: {} (will use local-only mode).", e);
@@ -186,6 +192,7 @@ fn try_register_and_configure(
 
             mark_onboarding_complete();
 
+            eprintln!("Identity restored.");
             Ok("Identity restored (local only).\nCloud registration failed — run `folddb cloud enable` to retry.".to_string())
         }
     }
