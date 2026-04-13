@@ -250,12 +250,13 @@ impl SenderInfo {
 /// Resolve discovery config and derive sender identity (pseudonym + reply key).
 /// Callers use this to build the message payload, then call `send_encrypted_message`.
 async fn resolve_sender_info(
+    state: &AppState,
     node: &crate::fold_node::node::FoldNode,
 ) -> Result<SenderInfo, crate::handlers::HandlerError> {
     use crate::discovery::connection;
 
     let (discovery_url, master_key, auth_token) =
-        crate::server::routes::discovery::resolve_discovery_config(node, None).await?;
+        crate::server::routes::discovery::resolve_discovery_config(state, node, None).await?;
 
     let hash = crate::discovery::pseudonym::content_hash("connection-sender");
     let our_pseudonym = crate::discovery::pseudonym::derive_pseudonym(&master_key, &hash);
@@ -313,7 +314,7 @@ pub async fn async_query(
             use crate::discovery::async_query::{LocalAsyncQuery, QueryRequestPayload};
 
             let contact = validate_contact_for_messaging(&req.contact_public_key)?;
-            let sender = resolve_sender_info(&node).await?;
+            let sender = resolve_sender_info(&state, &node).await?;
 
             let request_id = uuid::Uuid::new_v4().to_string();
             let public_key = node.get_node_public_key();
@@ -375,7 +376,7 @@ pub async fn async_browse(
             use crate::discovery::async_query::{LocalAsyncQuery, SchemaListRequestPayload};
 
             let contact = validate_contact_for_messaging(&req.contact_public_key)?;
-            let sender = resolve_sender_info(&node).await?;
+            let sender = resolve_sender_info(&state, &node).await?;
 
             let request_id = uuid::Uuid::new_v4().to_string();
             let public_key = node.get_node_public_key();

@@ -481,14 +481,19 @@ pub async fn revoke_contact(path: web::Path<String>, state: web::Data<AppState>)
 
 // ===== Trust invite relay (via Exemem discovery service) =====
 
-/// Helper: get discovery URL, master key, and auth token from env/credentials.
-fn get_discovery_config_and_token() -> Result<(String, Vec<u8>, String), String> {
+/// Helper: get discovery URL, master key, and auth token from the explicit
+/// `AppState` resolver plus env/keychain credentials.
+async fn get_discovery_config_and_token(
+    state: &AppState,
+) -> Result<(String, Vec<u8>, String), String> {
     let cloud_required_msg = "Email invites and link sharing require Exemem cloud backup. \
          Enable cloud backup in Settings to use these features.";
-    let url = std::env::var("DISCOVERY_SERVICE_URL").map_err(|_| cloud_required_msg.to_string())?;
-    let key_hex =
-        std::env::var("DISCOVERY_MASTER_KEY").map_err(|_| cloud_required_msg.to_string())?;
-    let key = hex::decode(&key_hex).map_err(|_| "Invalid discovery configuration".to_string())?;
+    let cfg = state
+        .discovery_config()
+        .await
+        .ok_or_else(|| cloud_required_msg.to_string())?;
+    let url = cfg.url;
+    let key = cfg.master_key;
 
     let token = std::env::var("DISCOVERY_AUTH_TOKEN")
         .or_else(|_| {
@@ -528,10 +533,12 @@ fn get_discovery_config_and_token() -> Result<(String, Vec<u8>, String), String>
     Ok((url, key, token))
 }
 
-/// Build a DiscoveryPublisher from env config, returning 503 on failure.
-fn require_publisher(
+/// Build a DiscoveryPublisher from the `AppState` discovery resolver,
+/// returning 503 on failure.
+async fn require_publisher(
+    state: &AppState,
 ) -> Result<crate::discovery::publisher::DiscoveryPublisher, actix_web::HttpResponse> {
-    let (url, key, token) = get_discovery_config_and_token().map_err(|e| {
+    let (url, key, token) = get_discovery_config_and_token(state).await.map_err(|e| {
         actix_web::HttpResponse::ServiceUnavailable().json(serde_json::json!({"error": e}))
     })?;
     Ok(crate::discovery::publisher::DiscoveryPublisher::new(
@@ -556,7 +563,7 @@ pub async fn share_trust_invite(
     state: web::Data<AppState>,
 ) -> impl Responder {
     let (user_hash, _node) = node_or_return!(state);
-    let publisher = match require_publisher() {
+    let publisher = match require_publisher(&state).await {
         Ok(p) => p,
         Err(r) => return r,
     };
@@ -585,7 +592,7 @@ pub async fn fetch_shared_invite(
     state: web::Data<AppState>,
 ) -> impl Responder {
     let (_user_hash, _node) = node_or_return!(state);
-    let publisher = match require_publisher() {
+    let publisher = match require_publisher(&state).await {
         Ok(p) => p,
         Err(r) => return r,
     };
@@ -611,7 +618,7 @@ pub async fn send_verified_invite(
     state: web::Data<AppState>,
 ) -> impl Responder {
     let (user_hash, _node) = node_or_return!(state);
-    let publisher = match require_publisher() {
+    let publisher = match require_publisher(&state).await {
         Ok(p) => p,
         Err(r) => return r,
     };
@@ -648,7 +655,7 @@ pub async fn verify_invite_code(
     state: web::Data<AppState>,
 ) -> impl Responder {
     let (_user_hash, _node) = node_or_return!(state);
-    let publisher = match require_publisher() {
+    let publisher = match require_publisher(&state).await {
         Ok(p) => p,
         Err(r) => return r,
     };
@@ -919,7 +926,7 @@ pub async fn list_sent_invites(state: web::Data<AppState>) -> impl Responder {
 pub async fn exemem_status(state: web::Data<AppState>) -> impl Responder {
     let (_user_hash, _node) = node_or_return!(state);
 
-    let config_result = get_discovery_config_and_token();
+    let config_result = get_discovery_config_and_token(&state).await;
     match config_result {
         Err(msg) => actix_web::HttpResponse::Ok().json(serde_json::json!({
             "connected": false,
