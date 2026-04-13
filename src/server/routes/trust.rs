@@ -305,7 +305,7 @@ pub async fn send_verified_invite(
     body: web::Json<serde_json::Value>,
     state: web::Data<AppState>,
 ) -> impl Responder {
-    let (user_hash, _node) = node_or_return!(state);
+    let (user_hash, node) = node_or_return!(state);
     let publisher = match require_publisher(&state).await {
         Ok(p) => p,
         Err(r) => return r,
@@ -318,16 +318,16 @@ pub async fn send_verified_invite(
         Ok(e) => e.to_string(),
         Err(r) => return r,
     };
-    let sender_name = match require_json_str(&body, "sender_name") {
-        Ok(n) => n.to_string(),
-        Err(r) => return r,
-    };
+    // SECURITY: sender_name is intentionally NOT read from the request body.
+    // The handler resolves it from the server-owned identity card to prevent
+    // clients from spoofing a display name (e.g. "PayPal Security Team") in
+    // the outgoing verification email.
     handler_result_to_response(
         trust_handlers::send_verified_invite(
             &publisher,
+            &node,
             &invite_token,
             &recipient_email,
-            &sender_name,
             &user_hash,
         )
         .await,

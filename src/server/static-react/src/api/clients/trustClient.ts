@@ -198,15 +198,16 @@ export async function fetchSharedInvite(
 
 // ===== Email-Verified Trust Invites =====
 
+// NOTE: sender_name is intentionally resolved server-side from the local
+// identity card — the client must not pass it. This prevents display-name
+// spoofing in outgoing verification emails.
 export async function sendVerifiedInvite(
   token: string,
   recipientEmail: string,
-  senderName: string,
 ): Promise<EnhancedApiResponse<{ ok: boolean; invite_id: string }>> {
   return client.post<{ ok: boolean; invite_id: string }>("/trust/invite/send-verified", {
     token,
     recipient_email: recipientEmail,
-    sender_name: senderName,
   });
 }
 
