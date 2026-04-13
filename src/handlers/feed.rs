@@ -115,6 +115,25 @@ pub async fn get_feed(
             value_filters: None,
         };
 
+        // SAFETY: feed handler is owner-only by construction.
+        //
+        // - Route: POST /api/feed (server/routes/feed.rs) runs against the local
+        //   node's own Sled via `node_or_return!(state)`; there is no
+        //   caller-identity input in `FeedRequest` (only `friend_hashes`, which
+        //   name the *authors* whose records to surface, not a querying caller).
+        // - The caller is always the owner of this node. If we routed through
+        //   `execute_query_json_with_access(query, owner_pub_key)`, the access
+        //   layer's owner short-circuit (see `OperationProcessor::build_access_context`)
+        //   would produce `AccessContext::owner` and apply no field filtering —
+        //   equivalent to `execute_query_map` here.
+        // - Access enforcement in this handler is performed explicitly above:
+        //   only fields whose `min_read_tier == TrustTier::Public` are retained
+        //   in `public_fields`, and records are filtered by friend authorship
+        //   via `source_pub_key`. This is strictly tighter than the trust-tier
+        //   check would apply for the owner.
+        //
+        // See `handlers::query` / `handlers::discovery` for the
+        // caller-identity-aware path using `execute_query_json_with_access`.
         let result_map = match processor.execute_query_map(query).await {
             Ok(m) => m,
             // Skip schemas that fail to query
