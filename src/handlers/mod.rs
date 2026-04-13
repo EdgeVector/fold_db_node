@@ -29,6 +29,7 @@
 //! ```
 
 pub mod auth;
+pub mod caller;
 pub mod discovery;
 pub mod feed;
 pub mod ingestion;
@@ -43,6 +44,7 @@ pub mod system;
 pub mod trust;
 
 // Re-export commonly used types
+pub use caller::current_caller_pubkey;
 pub(crate) use response::handler_response;
 pub use response::{
     get_db_guard, ApiResponse, HandlerError, HandlerResult, IntoHandlerError, IntoTypedHandlerError,

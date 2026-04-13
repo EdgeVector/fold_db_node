@@ -4,6 +4,7 @@
 //! These can be called by both HTTP server routes and Lambda handlers.
 
 use crate::fold_node::node::FoldNode;
+use crate::handlers::current_caller_pubkey;
 use crate::handlers::handler_response;
 use crate::handlers::response::{ApiResponse, HandlerResult, IntoHandlerError};
 use fold_db::org::operations as org_ops;
@@ -146,7 +147,7 @@ pub async fn create_org(
     let cloud_client = get_auth_client(node).await;
     let pool = get_sled_pool(node).await?;
 
-    let creator_public_key = node.get_node_public_key().to_string();
+    let creator_public_key = current_caller_pubkey(node);
     let creator_display_name = display_name_from_pubkey(&creator_public_key);
 
     let membership =
@@ -187,7 +188,7 @@ pub async fn join_org(
 ) -> HandlerResult<JoinOrgResponse> {
     let pool = get_sled_pool(node).await?;
 
-    let my_public_key = node.get_node_public_key().to_string();
+    let my_public_key = current_caller_pubkey(node);
     let my_display_name = display_name_from_pubkey(&my_public_key);
 
     let membership = org_ops::join_org(&pool, invite, &my_public_key, &my_display_name)
@@ -266,7 +267,7 @@ pub async fn add_member(
             .duration_since(std::time::UNIX_EPOCH)
             .expect("system clock before UNIX epoch")
             .as_secs(),
-        added_by: node.get_node_public_key().to_string(),
+        added_by: current_caller_pubkey(node),
     };
 
     // Validate the public key can be used for encryption BEFORE modifying state.
@@ -323,7 +324,7 @@ pub async fn remove_member(
     org_ops::remove_member(&pool, org_hash, node_public_key).handler_err("remove member")?;
 
     // If we are removing ourselves, purge the org data and schemas locally
-    let is_self_removal = node_public_key == node.get_node_public_key();
+    let is_self_removal = node_public_key == current_caller_pubkey(node);
     if is_self_removal {
         purge_org_locally(org_hash, node, "removal").await?;
     }
@@ -347,8 +348,8 @@ pub async fn leave_org(
     user_hash: &str,
     node: &FoldNode,
 ) -> HandlerResult<OkResponse> {
-    let node_public_key = node.get_node_public_key();
-    remove_member(org_hash, node_public_key, user_hash, node).await
+    let node_public_key = current_caller_pubkey(node);
+    remove_member(org_hash, &node_public_key, user_hash, node).await
 }
 
 /// Generate an invite bundle for an organization.

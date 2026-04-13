@@ -5,6 +5,7 @@
 
 use crate::fold_node::node::FoldNode;
 use crate::fold_node::OperationProcessor;
+use crate::handlers::current_caller_pubkey;
 use crate::handlers::handler_response;
 use crate::handlers::response::{
     get_db_guard, ApiResponse, HandlerError, HandlerResult, IntoHandlerError, IntoTypedHandlerError,
@@ -37,7 +38,7 @@ pub async fn execute_query(
     node: &FoldNode,
 ) -> HandlerResult<QueryResponse> {
     let processor = OperationProcessor::new(std::sync::Arc::new(node.clone()));
-    let caller_pub_key = node.get_node_public_key().to_string();
+    let caller_pub_key = current_caller_pubkey(node);
 
     let results = processor
         .execute_query_json_with_access(query, &caller_pub_key)

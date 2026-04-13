@@ -5,6 +5,7 @@
 
 use crate::fold_node::node::FoldNode;
 use crate::fold_node::OperationProcessor;
+use crate::handlers::current_caller_pubkey;
 use crate::handlers::handler_response;
 use crate::handlers::response::{ApiResponse, HandlerResult, IntoTypedHandlerError};
 use fold_db::schema::types::key_value::KeyValue;
@@ -56,7 +57,7 @@ pub async fn execute_mutation_from_components(
     node: &FoldNode,
 ) -> HandlerResult<SingleMutationResponse> {
     let processor = OperationProcessor::new(std::sync::Arc::new(node.clone()));
-    let caller_pub_key = node.get_node_public_key().to_string();
+    let caller_pub_key = current_caller_pubkey(node);
 
     let mutation = Mutation::new(
         schema,
