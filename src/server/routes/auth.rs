@@ -30,7 +30,6 @@ pub struct StoreCredentialsRequest {
     pub user_hash: String,
     pub session_token: String,
     pub api_key: String,
-    pub encryption_key: String,
 }
 
 // ============================================================================
@@ -107,7 +106,6 @@ pub async fn magic_link_verify(body: web::Json<MagicLinkVerifyRequest>) -> HttpR
                                 user_hash: user_hash.to_string(),
                                 session_token: session_token.to_string(),
                                 api_key: api_key.to_string(),
-                                encryption_key: String::new(),
                             };
                             if let Err(e) = keychain::store_credentials(&creds) {
                                 return HttpResponse::InternalServerError().json(serde_json::json!({
@@ -168,13 +166,12 @@ pub async fn get_credentials() -> HttpResponse {
 }
 
 /// POST /api/auth/credentials
-/// Store credentials locally (called after verify with encryption key).
+/// Store credentials locally (called after verify).
 pub async fn store_credentials(body: web::Json<StoreCredentialsRequest>) -> HttpResponse {
     let creds = keychain::ExememCredentials {
         user_hash: body.user_hash.clone(),
         session_token: body.session_token.clone(),
         api_key: body.api_key.clone(),
-        encryption_key: body.encryption_key.clone(),
     };
 
     match keychain::store_credentials(&creds) {
@@ -335,7 +332,6 @@ async fn signed_register(
             user_hash: user_hash.to_string(),
             session_token: session_token.to_string(),
             api_key: api_key.to_string(),
-            encryption_key: String::new(),
         };
         keychain::store_credentials(&creds).map_err(|e| {
             format!("Registration succeeded but failed to persist credentials locally: {e}")
@@ -520,7 +516,6 @@ async fn reregister_and_store() -> Result<String, String> {
         user_hash: user_hash.to_string(),
         session_token: session_token.to_string(),
         api_key: api_key.to_string(),
-        encryption_key: String::new(),
     };
     crate::keychain::store_credentials(&creds)
         .map_err(|e| format!("Auth refresh: failed to store credentials: {e}"))?;
@@ -1186,7 +1181,6 @@ mod tests {
             user_hash: "test-user".to_string(),
             session_token: "test-session".to_string(),
             api_key: api_key.to_string(),
-            encryption_key: String::new(),
         };
         crate::keychain::store_credentials(&creds).expect("store_credentials");
         tmp
@@ -1240,7 +1234,6 @@ mod tests {
             user_hash: "test-user".to_string(),
             session_token: "test-session".to_string(),
             api_key: "api_key_v2".to_string(),
-            encryption_key: String::new(),
         };
         crate::keychain::store_credentials(&creds).expect("store rotated creds");
 
