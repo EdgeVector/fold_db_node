@@ -24,8 +24,6 @@ pub struct ExememCredentials {
     pub user_hash: String,
     pub session_token: String,
     pub api_key: String,
-    /// Base64-encoded AES-256 encryption key (32 bytes)
-    pub encryption_key: String,
 }
 
 fn credentials_path() -> Result<PathBuf, String> {
