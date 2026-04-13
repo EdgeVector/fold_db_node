@@ -2,6 +2,13 @@ import React, { useState, useEffect } from 'react'
 import { activateExemem } from '../../api/clients/activateExemem'
 import { getSubscriptionStatus, createCheckoutSession, createPortalSession, formatBytes, usagePercent } from '../../api/clients/subscriptionClient'
 
+// Poll configuration for post-Stripe-checkout upgrade detection. Stripe redirects
+// back to the app before the webhook that flips the user to `plan=paid` has
+// necessarily fired; we poll for up to 20s to bridge that race window.
+export const UPGRADE_POLL_INTERVAL_MS = 2000
+export const UPGRADE_POLL_MAX_MS = 20000
+export const CANCELLED_BANNER_MS = 5000
+
 export default function CloudMigrationSettings() {
   const backupSkipped = localStorage.getItem('folddb_cloud_backup_skipped') === '1'
   const [registering, setRegistering] = useState(false)
@@ -18,13 +25,64 @@ export default function CloudMigrationSettings() {
   const [inviteCodes, setInviteCodes] = useState(null)
   const [creatingCode, setCreatingCode] = useState(false)
 
+  // Stripe checkout redirect handling: 'idle' | 'pending' | 'complete' | 'timeout' | 'cancelled'
+  const [upgradeStatus, setUpgradeStatus] = useState('idle')
+
+  // Handle Stripe checkout return: poll for webhook-driven plan flip or show cancelled banner.
   useEffect(() => {
-    // Detect Stripe checkout return
     const params = new URLSearchParams(window.location.search)
-    if (params.get('subscription') === 'success') {
-      window.history.replaceState({}, '', window.location.pathname)
+    const subParam = params.get('subscription')
+    if (!subParam) return
+
+    // Always clean the URL param first so a reload doesn't re-trigger.
+    window.history.replaceState({}, '', window.location.pathname)
+
+    if (subParam === 'cancelled') {
+      setUpgradeStatus('cancelled')
+      const timer = setTimeout(() => setUpgradeStatus('idle'), CANCELLED_BANNER_MS)
+      return () => clearTimeout(timer)
     }
 
+    if (subParam !== 'success') return
+
+    setUpgradeStatus('pending')
+    let cancelled = false
+    const startedAt = Date.now()
+
+    const tick = async () => {
+      if (cancelled) return
+      try {
+        const status = await getSubscriptionStatus()
+        if (cancelled) return
+        if (status && status.plan === 'paid') {
+          setStorageInfo({
+            plan: status.plan,
+            used_bytes: status.storage.used_bytes,
+            quota_bytes: status.storage.quota_bytes,
+            has_subscription: status.has_subscription,
+          })
+          setUpgradeStatus('complete')
+          return
+        }
+      } catch {
+        // Transient cloud API failure during polling — keep trying until timeout.
+      }
+      if (cancelled) return
+      if (Date.now() - startedAt >= UPGRADE_POLL_MAX_MS) {
+        setUpgradeStatus('timeout')
+        return
+      }
+      intervalId = setTimeout(tick, UPGRADE_POLL_INTERVAL_MS)
+    }
+
+    let intervalId = setTimeout(tick, UPGRADE_POLL_INTERVAL_MS)
+    return () => {
+      cancelled = true
+      clearTimeout(intervalId)
+    }
+  }, [])
+
+  useEffect(() => {
     // Check if already in cloud mode via localStorage OR keychain
     const hasCloudConfig = localStorage.getItem('exemem_api_url') && localStorage.getItem('exemem_api_key')
 
@@ -96,6 +154,69 @@ export default function CloudMigrationSettings() {
     }
   }
 
+  const renderUpgradeBanner = () => {
+    if (upgradeStatus === 'idle') return null
+    if (upgradeStatus === 'pending') {
+      return (
+        <div
+          data-testid="upgrade-banner-pending"
+          className="flex items-center gap-3 p-3 border border-gruvbox-blue bg-gruvbox-blue/5 rounded-md"
+        >
+          <svg className="animate-spin h-4 w-4 text-gruvbox-blue flex-shrink-0" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24">
+            <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4"></circle>
+            <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path>
+          </svg>
+          <p className="text-xs text-gruvbox-blue leading-relaxed">Completing your upgrade...</p>
+        </div>
+      )
+    }
+    if (upgradeStatus === 'complete') {
+      return (
+        <div
+          data-testid="upgrade-banner-complete"
+          className="flex items-start justify-between gap-3 p-3 border border-gruvbox-green bg-gruvbox-green/5 rounded-md"
+        >
+          <p className="text-xs text-gruvbox-green leading-relaxed">Welcome to Exemem Paid. Your upgrade is complete.</p>
+          <button
+            onClick={() => setUpgradeStatus('idle')}
+            className="text-xs text-gruvbox-green underline cursor-pointer bg-transparent border-none flex-shrink-0"
+          >
+            Dismiss
+          </button>
+        </div>
+      )
+    }
+    if (upgradeStatus === 'timeout') {
+      return (
+        <div
+          data-testid="upgrade-banner-timeout"
+          className="flex items-start justify-between gap-3 p-3 border border-gruvbox-yellow bg-gruvbox-yellow/5 rounded-md"
+        >
+          <p className="text-xs text-gruvbox-yellow leading-relaxed">
+            Payment received but tier not yet updated. Refresh in a minute.
+          </p>
+          <button
+            onClick={() => setUpgradeStatus('idle')}
+            className="text-xs text-gruvbox-yellow underline cursor-pointer bg-transparent border-none flex-shrink-0"
+          >
+            Dismiss
+          </button>
+        </div>
+      )
+    }
+    if (upgradeStatus === 'cancelled') {
+      return (
+        <div
+          data-testid="upgrade-banner-cancelled"
+          className="flex items-center gap-3 p-3 border border-border bg-surface-elevated rounded-md"
+        >
+          <p className="text-xs text-gruvbox-dim leading-relaxed">Checkout cancelled. No charges were made.</p>
+        </div>
+      )
+    }
+    return null
+  }
+
   const handleManageSubscription = async () => {
     setError(null)
     try {
@@ -104,6 +225,18 @@ export default function CloudMigrationSettings() {
     } catch (err) {
       setError(err.message || 'Failed to open billing portal')
     }
+  }
+
+  // Shell render when a Stripe redirect banner should show but cloud-mode
+  // detection hasn't finished yet (storageInfo still null). Keeps the banner
+  // visible without blocking on the async detect.
+  if (upgradeStatus !== 'idle' && !(isCloudMode && storageInfo)) {
+    return (
+      <div className="flex flex-col gap-6 w-full text-gruvbox-bright">
+        <h3 className="text-sm font-bold uppercase tracking-widest text-gruvbox-light">Cloud Storage</h3>
+        {renderUpgradeBanner()}
+      </div>
+    )
   }
 
   // Cloud mode: show storage tier info
@@ -115,6 +248,8 @@ export default function CloudMigrationSettings() {
     return (
       <div className="flex flex-col gap-6 w-full text-gruvbox-bright">
         <h3 className="text-sm font-bold uppercase tracking-widest text-gruvbox-light">Cloud Storage</h3>
+
+        {renderUpgradeBanner()}
 
         {storageInfo.offline && (
           <div className="flex items-start gap-3 p-3 border border-gruvbox-yellow bg-gruvbox-yellow/5 rounded-md">
