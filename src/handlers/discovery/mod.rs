@@ -58,6 +58,8 @@ pub(super) const MAX_TOP_K: usize = 100;
 const MAX_OFFSET: usize = 10_000;
 /// Maximum number of photos in a single moment scan request.
 pub(super) const MAX_PHOTO_BATCH: usize = 1_000;
+/// Maximum number of calendar events in a single sync or peer-store request.
+pub(super) const MAX_CALENDAR_BATCH: usize = 1_000;
 
 // === Request types ===
 
