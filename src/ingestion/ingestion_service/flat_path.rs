@@ -13,20 +13,11 @@ use std::collections::HashMap;
 use std::sync::atomic::{AtomicUsize, Ordering};
 
 /// Cumulative count of face-detection failures encountered during ingestion.
-/// Surfaced for visibility instead of swallowing errors silently — see
-/// [`face_detection_failure_count`].
+/// Each failure is emitted to the ingestion error log with the running count —
+/// `run_face_detection` cannot fail the parent ingestion (data is already
+/// written by the time it runs), so the failure must be observable via logs.
 #[cfg(feature = "face-detection")]
 static FACE_DETECTION_FAILURE_COUNT: AtomicUsize = AtomicUsize::new(0);
-
-/// Returns the cumulative number of face-detection failures observed during
-/// ingestion since process start. This exists so a user / operator has a
-/// visible signal that face indexing is misbehaving — `run_face_detection`
-/// cannot fail the parent ingestion (data is already written by the time it
-/// runs) so the failure must be observable some other way.
-#[cfg(feature = "face-detection")]
-pub fn face_detection_failure_count() -> usize {
-    FACE_DETECTION_FAILURE_COUNT.load(Ordering::Relaxed)
-}
 
 impl IngestionService {
     /// Handles the flat (non-nested) ingestion path: AI recommendation, mutation generation, execution.
