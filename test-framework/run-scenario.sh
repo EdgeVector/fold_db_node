@@ -94,8 +94,13 @@ if [[ "$DRY_RUN" == "1" ]]; then
   exit 0
 fi
 
+# Prevent stale ambient state from a developer shell leaking into test nodes.
+# Per-node configs set FOLDDB_HOME explicitly; clear it here as a safety belt.
+unset FOLDDB_HOME NODE_CONFIG GSTACK_SERVER_PORT GSTACK_PORT
+
 export FOLDDB_TEST_RUN_ID="$RUN_ID"
 export FOLDDB_TEST_SESSION_DIR="$SESSION_DIR"
+: > "$SESSION_DIR/state/pending-invites.txt"
 export FOLDDB_TEST_DEV_API="${FOLDDB_TEST_DEV_API:-https://ygyu7ritx8.execute-api.us-west-2.amazonaws.com}"
 export FOLDDB_TEST_DEV_SCHEMA="${FOLDDB_TEST_DEV_SCHEMA:-https://y0q3m6vk75.execute-api.us-west-2.amazonaws.com}"
 export AWS_REGION="${AWS_REGION:-us-west-2}"
@@ -126,25 +131,41 @@ run_scenario() {
   fi
   [[ -n "$roles" ]] || { echo "[run] no nodes in scenario" >&2; return 2; }
 
-  local port=40000
   echo "[]" > "$nodes_json"
   # On exit: if the user asked to keep the session, skip teardown entirely so
   # they can poke at cloud state + local logs post-mortem. Otherwise tear
   # down everything (cloud + local). Previously --keep-session was silently
   # a no-op because the trap always ran cleanup_all.
+  #
+  # The trap is installed BEFORE any cloud state is created (invite codes,
+  # nodes) and fires on EXIT/INT/TERM so SIGINT during spawn still revokes
+  # pending invites and kills half-started processes.
   if [[ "$KEEP_SESSION" == "1" ]]; then
     trap 'echo "[run] --keep-session: skipping teardown. Inspect state at $SESSION_DIR and dev cloud (Aurora + DynamoDB) manually."' EXIT
   else
     local trapcmd="cleanup_all '$nodes_json' || true"
-    trap "$trapcmd" EXIT
+    trap "$trapcmd" EXIT INT TERM
   fi
 
+  local next_node_port=40000
+  local next_gstack_port=9400
   while read -r role; do
     [[ -n "$role" ]] || continue
-    echo "[run] --- node: $role (port $port) ---"
+    local port gstack_port
+    port="$(nf_find_free_port "$next_node_port")"
+    next_node_port=$((port + 1))
+    gstack_port="$(nf_find_free_port "$next_gstack_port")"
+    next_gstack_port=$((gstack_port + 1))
+    echo "[run] --- node: $role (port $port, gstack $gstack_port) ---"
     local invite
     invite="$(nf_create_invite_codes 1)"
     echo "[run] invite: $invite"
+    # Record invite + ports in nodes.json immediately so cleanup can find them
+    # even if spawn/registration crash halfway through.
+    jq --arg role "$role" --argjson port "$port" --argjson gport "$gstack_port" \
+       --arg invite "$invite" \
+       '. + [{role:$role, port:$port, gstack_port:$gport, invite_code:$invite, hash:"", api_key:"", public_key:"", display_name:""}]' \
+       "$nodes_json" > "$nodes_json.tmp" && mv "$nodes_json.tmp" "$nodes_json"
     nf_spawn_node "$role" "$port" "$SESSION_DIR" >/dev/null
     nf_wait_healthy "$port" 30
     local reg_resp
@@ -168,13 +189,12 @@ run_scenario() {
     nf_set_display_name "$port" "$hash" "$display_name"
     echo "[run] set display_name=$display_name"
 
-    jq --arg role "$role" --argjson port "$port" \
+    # Update the pre-recorded entry for this role with registration results.
+    jq --arg role "$role" \
        --arg hash "$hash" --arg api_key "$api_key" \
-       --arg invite "$invite" --arg public_key "$public_key" \
-       --arg display_name "$display_name" \
-       '. + [{role:$role, port:$port, hash:$hash, api_key:$api_key, invite_code:$invite, public_key:$public_key, display_name:$display_name}]' \
+       --arg public_key "$public_key" --arg display_name "$display_name" \
+       'map(if .role == $role then . + {hash:$hash, api_key:$api_key, public_key:$public_key, display_name:$display_name} else . end)' \
        "$nodes_json" > "$nodes_json.tmp" && mv "$nodes_json.tmp" "$nodes_json"
-    port=$((port + 1))
   done <<< "$roles"
 
   echo "[run] nodes.json:"

@@ -15,10 +15,11 @@ execute_action() {
   [[ -n "$action" ]] || { echo "[step] missing action name" >&2; return 1; }
 
   # Look up node info for this role
-  local port hash public_key
+  local port hash public_key gstack_port
   port=$(jq -r --arg role "$role" '.[] | select(.role == $role) | .port' "$nodes_json")
   hash=$(jq -r --arg role "$role" '.[] | select(.role == $role) | .hash' "$nodes_json")
   public_key=$(jq -r --arg role "$role" '.[] | select(.role == $role) | .public_key' "$nodes_json")
+  gstack_port=$(jq -r --arg role "$role" '.[] | select(.role == $role) | .gstack_port // 9400' "$nodes_json")
 
   if [[ -z "$port" || -z "$hash" ]]; then
     echo "[step] role $role not found in nodes.json" >&2
@@ -28,7 +29,9 @@ execute_action() {
   export NODE_PORT="$port"
   export USER_HASH="$hash"
   export NODE_PUBLIC_KEY="$public_key"
-  export GSTACK_PORT="${GSTACK_PORT:-9400}"
+  # Per-node gstack daemon port — isolates each node's browser session so
+  # parallel UI recipes across roles cannot clobber each other's tabs/cookies.
+  export GSTACK_PORT="$gstack_port"
   export FOLDDB_TEST_FRAMEWORK_DIR="$framework_dir"
 
   local recipes="$framework_dir/recipes"
@@ -63,14 +66,27 @@ execute_action() {
       [[ -n "$progress_id" ]] || { echo "[step] no progress_id from scan" >&2; return 1; }
       echo "[step] scan started: $progress_id"
 
-      # Poll for scan result
+      # Poll for scan result. Distinguish "not ready" (empty list) from
+      # "endpoint broken" (curl failure). Bail after 5 consecutive HTTP errors
+      # so a broken scan endpoint fails fast instead of silently hanging 60s
+      # and masking the real failure as a scan-returned-0 error.
       local scan_result="" files_to_ingest="[]"
-      local poll_i
+      local poll_i scan_errs=0
       for ((poll_i=0; poll_i<60; poll_i++)); do
-        scan_result=$(curl -fsS "http://127.0.0.1:$port/api/ingestion/smart-folder/scan/$progress_id" \
-          -H "X-User-Hash: $hash" 2>/dev/null || echo '{}')
+        if ! scan_result=$(curl -fsS --max-time 5 \
+            "http://127.0.0.1:$port/api/ingestion/smart-folder/scan/$progress_id" \
+            -H "X-User-Hash: $hash" 2>&1); then
+          scan_errs=$((scan_errs + 1))
+          if (( scan_errs >= 5 )); then
+            echo "[step] scan endpoint failing repeatedly: $scan_result" >&2
+            return 1
+          fi
+          sleep 1
+          continue
+        fi
+        scan_errs=0
         local recs
-        recs=$(echo "$scan_result" | jq '(.recommended_files // []) | length' 2>/dev/null || echo 0)
+        recs=$(echo "$scan_result" | jq '(.recommended_files // []) | length')
         if (( recs > 0 )); then
           files_to_ingest=$(echo "$scan_result" | jq -c '[.recommended_files[].path]')
           echo "[step] scan complete: $recs files"
@@ -91,12 +107,24 @@ execute_action() {
           return 1
         }
       echo "[step] ingest response: $(echo "$ingest_resp" | head -c 300)"
-      # Wait for ingestion to complete (async)
-      local i
+      # Wait for ingestion to complete (async). Same fail-fast pattern: bail
+      # after 5 consecutive HTTP errors so a dead /api/schemas endpoint fails
+      # loudly instead of hanging the full 120s window.
+      local i ing_errs=0
       for ((i=0; i<120; i++)); do
-        local n
-        n=$(curl -fsS "http://127.0.0.1:$port/api/schemas" -H "X-User-Hash: $hash" \
-          2>/dev/null | jq '[.schemas[] | select(.descriptive_name == "Photography")] | length' 2>/dev/null || echo 0)
+        local schemas_resp n
+        if ! schemas_resp=$(curl -fsS --max-time 5 \
+            "http://127.0.0.1:$port/api/schemas" -H "X-User-Hash: $hash" 2>&1); then
+          ing_errs=$((ing_errs + 1))
+          if (( ing_errs >= 5 )); then
+            echo "[step] /api/schemas failing repeatedly: $schemas_resp" >&2
+            return 1
+          fi
+          sleep 1
+          continue
+        fi
+        ing_errs=0
+        n=$(echo "$schemas_resp" | jq '[.schemas[] | select(.descriptive_name == "Photography")] | length')
         if (( n > 0 )); then
           # Check if records exist
           local schema_hash

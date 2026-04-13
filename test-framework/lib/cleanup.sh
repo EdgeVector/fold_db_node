@@ -63,22 +63,38 @@ JSON
 
 cleanup_all() {
   local nodes_json="$1"
-  [[ -f "$nodes_json" ]] || { echo "no nodes.json at $nodes_json" >&2; return 0; }
-
   local api="${FOLDDB_TEST_DEV_API:?}"
   local session_dir="${FOLDDB_TEST_SESSION_DIR:?}"
+
+  # Drain any pending-invite codes that were created before they made it into
+  # nodes.json. These would otherwise leak in DynamoDB on SIGINT during spawn.
+  local pending_file="$session_dir/state/pending-invites.txt"
+  if [[ -f "$pending_file" ]]; then
+    local pinv
+    while IFS= read -r pinv; do
+      [[ -n "$pinv" ]] || continue
+      aws dynamodb delete-item \
+        --table-name "$FOLDDB_TEST_INVITE_TABLE" \
+        --region "$AWS_REGION" \
+        --key "{\"code\":{\"S\":\"$pinv\"}}" >/dev/null 2>&1 || true
+    done < "$pending_file"
+    rm -f "$pending_file"
+  fi
+
+  [[ -f "$nodes_json" ]] || { echo "no nodes.json at $nodes_json" >&2; return 0; }
 
   local count
   count="$(jq 'length' "$nodes_json")"
   local i
   for ((i=0; i<count; i++)); do
-    local role port hash api_key invite public_key
+    local role port hash api_key invite public_key gstack_port
     role="$(jq -r ".[$i].role" "$nodes_json")"
     port="$(jq -r ".[$i].port" "$nodes_json")"
-    hash="$(jq -r ".[$i].hash" "$nodes_json")"
+    hash="$(jq -r ".[$i].hash // \"\"" "$nodes_json")"
     api_key="$(jq -r ".[$i].api_key // \"\"" "$nodes_json")"
     invite="$(jq -r ".[$i].invite_code // \"\"" "$nodes_json")"
     public_key="$(jq -r ".[$i].public_key // \"\"" "$nodes_json")"
+    gstack_port="$(jq -r ".[$i].gstack_port // \"\"" "$nodes_json")"
 
     echo "[cleanup] $role (port=$port hash=$hash)"
 
@@ -131,6 +147,11 @@ cleanup_all() {
       kill "$pid" 2>/dev/null || true
       sleep 0.1
       kill -9 "$pid" 2>/dev/null || true
+    fi
+
+    # Shut down per-node gstack daemon (if one was allocated for UI recipes).
+    if [[ -n "$gstack_port" && "$gstack_port" != "null" ]]; then
+      nf_shutdown_gstack "$gstack_port" || true
     fi
   done
 }
