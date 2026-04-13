@@ -98,6 +98,16 @@ cleanup_all() {
 
     echo "[cleanup] $role (port=$port hash=$hash)"
 
+    # Fetch this node's published pseudonyms BEFORE killing it. Both the
+    # discovery cleanup (step 3) and the messaging cleanup (step 4) need
+    # this list, and it's only available while the node process is alive.
+    local pseudonyms_json="[]"
+    if [[ -n "$hash" ]]; then
+      pseudonyms_json="$(curl -fsS "http://127.0.0.1:$port/api/discovery/my-pseudonyms" \
+        -H "X-User-Hash: $hash" 2>/dev/null \
+        | jq -c '.pseudonyms // [] | map(tostring)' 2>/dev/null || echo '[]')"
+    fi
+
     # Delete account at Exemem (API Gateway route).
     if [[ -n "$api_key" && -n "$hash" ]]; then
       curl -fsS -X DELETE "$api/auth/account" \
@@ -106,29 +116,30 @@ cleanup_all() {
         >/dev/null 2>&1 || true
     fi
 
-    # Admin: delete by public key (direct Lambda invoke).
-    if [[ -n "$public_key" ]]; then
+    # Admin: wipe discovery vectors for this node's pseudonyms.
+    #
+    # NB: an earlier version called /admin/delete-by-public-key with the
+    # node's identity public_key. That always matched zero rows because
+    # discovery_face_vectors.public_key is per-pseudonym DERIVED
+    # (publisher.rs::get_pseudonym_public_key_b64), not the node identity.
+    # The correct primitive is /admin/delete-by-pseudonyms, which takes
+    # the same pseudonym list we're about to use for messaging cleanup.
+    if [[ "$pseudonyms_json" != "[]" && -n "$pseudonyms_json" ]]; then
       _cleanup_lambda_invoke "$FOLDDB_TEST_DISCOVERY_LAMBDA" \
-        "/admin/delete-by-public-key" \
-        "{\"public_key\":\"$public_key\"}"
+        "/admin/delete-by-pseudonyms" \
+        "{\"pseudonyms\":$pseudonyms_json}"
+    else
+      echo "[cleanup] $role has no published pseudonyms (skip discovery vector cleanup)"
     fi
 
     # Admin: clear bulletin-board messages for this node's pseudonyms.
-    # messaging_service::handle_clear_messages expects `{pseudonyms: [...]}` —
-    # it deletes by target_pseudonym, not user_hash. We fetch the live list
-    # from the node before killing it.
-    if [[ -n "$hash" ]]; then
-      local pseudonyms_json
-      pseudonyms_json="$(curl -fsS "http://127.0.0.1:$port/api/discovery/my-pseudonyms" \
-        -H "X-User-Hash: $hash" 2>/dev/null \
-        | jq -c '.pseudonyms // [] | map(tostring)' 2>/dev/null || echo '[]')"
-      if [[ "$pseudonyms_json" != "[]" && -n "$pseudonyms_json" ]]; then
-        _cleanup_lambda_invoke "$FOLDDB_TEST_MESSAGING_LAMBDA" \
-          "/admin/clear-messages" \
-          "{\"pseudonyms\":$pseudonyms_json}"
-      else
-        echo "[cleanup] $role has no pseudonyms to clear (skip messaging)"
-      fi
+    # messaging_service::handle_clear_messages deletes by target_pseudonym.
+    if [[ "$pseudonyms_json" != "[]" && -n "$pseudonyms_json" ]]; then
+      _cleanup_lambda_invoke "$FOLDDB_TEST_MESSAGING_LAMBDA" \
+        "/admin/clear-messages" \
+        "{\"pseudonyms\":$pseudonyms_json}"
+    else
+      echo "[cleanup] $role has no pseudonyms to clear (skip messaging)"
     fi
 
     # Revoke invite code.
