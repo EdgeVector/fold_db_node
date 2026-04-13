@@ -74,7 +74,6 @@ pub async fn run_restore() -> Result<CommandOutput, CliError> {
     std::fs::write(&identity_path, &identity_json)
         .map_err(|e| CliError::new(format!("Failed to write identity: {}", e)))?;
 
-    eprintln!("Identity restored.");
     eprintln!("Public key: {}", public_key_b64);
 
     // Try to register with Exemem — rollback identity if this fails catastrophically
@@ -129,6 +128,9 @@ fn try_register_and_configure(
                 .map(|h| h.join("data"))
                 .unwrap_or_else(|_| std::path::PathBuf::from("data"));
 
+            let marker_api_url = api_url.clone();
+            let marker_api_key = api_key.clone();
+
             let config = fold_db_node::fold_node::config::NodeConfig {
                 database: fold_db::storage::DatabaseConfig::with_cloud_sync(
                     data_path.clone(),
@@ -153,12 +155,25 @@ fn try_register_and_configure(
             std::fs::write(config_path, config_json)
                 .map_err(|e| CliError::new(format!("Failed to write config: {}", e)))?;
 
+            // Write the bootstrap marker so the daemon resumes the cloud
+            // database download on next start. Without this, the user ends
+            // up with a registered-but-empty local DB (silent data loss).
+            // Match the HTTP `/api/auth/restore` path exactly — same marker
+            // shape, same location — via the shared helper in server::routes::auth.
+            fold_db_node::server::routes::auth::write_bootstrap_marker(
+                &marker_api_url,
+                &marker_api_key,
+            )
+            .map_err(|e| CliError::new(format!("Failed to write bootstrap marker: {}", e)))?;
+
             mark_onboarding_complete();
 
-            let mut msg = "Identity restored with cloud backup enabled.\n\
-                Your data will be downloaded from Exemem cloud on first sync."
+            eprintln!("Identity restored with cloud backup enabled.");
+
+            let msg = "Identity restored.\n\
+                Run `folddb daemon start` — your database will be downloaded \
+                and restored on first sync."
                 .to_string();
-            msg.push_str("\nRun `folddb daemon start` to begin syncing.");
             Ok(msg)
         }
         Err(e) => {

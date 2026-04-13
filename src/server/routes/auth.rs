@@ -756,21 +756,28 @@ fn bootstrap_marker_path() -> Option<std::path::PathBuf> {
 }
 
 /// Write a marker so bootstrap resumes if the app is restarted mid-download.
-fn write_bootstrap_marker(api_url: &str, api_key: &str) {
-    if let Some(path) = bootstrap_marker_path() {
-        if let Some(parent) = path.parent() {
-            let _ = std::fs::create_dir_all(parent);
-        }
-        let marker = serde_json::json!({
-            "api_url": api_url,
-            "api_key": api_key,
-        });
-        let _ = std::fs::write(
-            &path,
-            serde_json::to_string_pretty(&marker).unwrap_or_default(),
-        );
-        log::info!("Wrote bootstrap marker at {:?}", path);
+///
+/// Fails loudly: returns an error if `$FOLDDB_HOME` cannot be resolved or the
+/// marker file cannot be written. Callers in the CLI `restore` path rely on
+/// this to guarantee the daemon actually resumes the cloud download — a silent
+/// failure here would leave the user with an empty database.
+pub fn write_bootstrap_marker(api_url: &str, api_key: &str) -> Result<(), String> {
+    let path = bootstrap_marker_path()
+        .ok_or_else(|| "Cannot resolve FOLDDB_HOME for bootstrap marker".to_string())?;
+    if let Some(parent) = path.parent() {
+        std::fs::create_dir_all(parent)
+            .map_err(|e| format!("Failed to create bootstrap marker dir: {e}"))?;
     }
+    let marker = serde_json::json!({
+        "api_url": api_url,
+        "api_key": api_key,
+    });
+    let contents = serde_json::to_string_pretty(&marker)
+        .map_err(|e| format!("Failed to serialize bootstrap marker: {e}"))?;
+    std::fs::write(&path, contents)
+        .map_err(|e| format!("Failed to write bootstrap marker at {path:?}: {e}"))?;
+    log::info!("Wrote bootstrap marker at {:?}", path);
+    Ok(())
 }
 
 /// Remove the marker after successful bootstrap.
@@ -814,7 +821,7 @@ async fn bootstrap_from_cloud(
     sled_pool: std::sync::Arc<fold_db::storage::SledPool>,
 ) -> Result<(), String> {
     log::info!("Starting database bootstrap from cloud after identity restore");
-    write_bootstrap_marker(api_url, api_key);
+    write_bootstrap_marker(api_url, api_key)?;
 
     // Derive E2E encryption keys from the restored identity (one key for everything)
     let config = node_manager.get_base_config().await;
@@ -1017,5 +1024,71 @@ mod tests {
 
         std::env::remove_var("EXEMEM_API_URL");
         std::env::remove_var("FOLDDB_HOME");
+    }
+
+    /// The CLI `folddb restore` path and the HTTP `POST /api/auth/restore`
+    /// path MUST write a marker file that the daemon picks up on next start
+    /// to resume the cloud database download. This test verifies the shape
+    /// round-trips through `check_bootstrap_pending` — if this ever drifts,
+    /// the CLI restore path silently fails and users get empty databases.
+    #[test]
+    fn write_bootstrap_marker_round_trips_through_check() {
+        let _guard = env_lock();
+        let tmp = tempfile::tempdir().expect("tempdir");
+        std::env::set_var("FOLDDB_HOME", tmp.path());
+
+        // No marker yet.
+        assert!(
+            check_bootstrap_pending().is_none(),
+            "no marker should exist in fresh FOLDDB_HOME"
+        );
+
+        write_bootstrap_marker("https://api.example.test", "api-key-xyz")
+            .expect("write_bootstrap_marker should succeed in fresh temp home");
+
+        // Marker file exists at the expected path.
+        let marker_path = bootstrap_marker_path().expect("marker path");
+        assert!(marker_path.exists(), "marker file should exist on disk");
+        assert_eq!(
+            marker_path,
+            tmp.path().join("data").join(".bootstrap_pending"),
+            "marker must live at $FOLDDB_HOME/data/.bootstrap_pending"
+        );
+
+        // Shape matches what `check_bootstrap_pending` + `resume_bootstrap` expect.
+        let (api_url, api_key) =
+            check_bootstrap_pending().expect("marker should round-trip through check");
+        assert_eq!(api_url, "https://api.example.test");
+        assert_eq!(api_key, "api-key-xyz");
+
+        // Clearing works.
+        clear_bootstrap_marker();
+        assert!(
+            check_bootstrap_pending().is_none(),
+            "marker should be gone after clear"
+        );
+
+        drop(tmp);
+        std::env::remove_var("FOLDDB_HOME");
+    }
+
+    #[test]
+    fn write_bootstrap_marker_fails_loudly_when_home_unresolvable() {
+        let _guard = env_lock();
+        // Point FOLDDB_HOME at a file (not a directory) so create_dir_all fails.
+        let tmp = tempfile::tempdir().expect("tempdir");
+        let file_path = tmp.path().join("not-a-dir");
+        std::fs::write(&file_path, b"blocker").expect("write blocker file");
+        std::env::set_var("FOLDDB_HOME", &file_path);
+
+        let err = write_bootstrap_marker("https://api.example.test", "api-key-xyz")
+            .expect_err("must fail loudly, not silently swallow");
+        assert!(
+            err.contains("bootstrap marker") || err.contains("Failed"),
+            "error must mention the marker failure, got: {err}"
+        );
+
+        std::env::remove_var("FOLDDB_HOME");
+        drop(tmp);
     }
 }
