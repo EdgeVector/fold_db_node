@@ -1,4 +1,4 @@
-import { useState, useCallback } from 'react'
+import { useState, useCallback, useMemo } from 'react'
 import { markOnboardingComplete } from '../../api/clients/systemClient'
 import IdentityStep from './IdentityStep'
 import ConfigureAiStep from './ConfigureAiStep'
@@ -17,6 +17,15 @@ const STEPS = [
 ]
 
 export const ONBOARDING_STORAGE_KEY = 'folddb_onboarding_complete'
+
+// Cloud is considered already active on this device when DatabaseSetupScreen
+// or a prior CloudBackupStep run stored an Exemem API key in localStorage.
+// Canonical writers: DatabaseSetupScreen.jsx (lines 128, 172) and
+// CloudBackupStep.jsx (lines 39, 90).
+export function isCloudAlreadyActive() {
+  if (typeof window === 'undefined') return false
+  return !!window.localStorage.getItem('exemem_api_key')
+}
 
 function ProgressIndicator({ currentStep, steps }) {
   return (
@@ -57,6 +66,13 @@ function ProgressIndicator({ currentStep, steps }) {
 export default function OnboardingWizard({ onComplete }) {
   const [currentStep, setCurrentStep] = useState('identity')
   const [completedSteps, setCompletedSteps] = useState(new Set())
+  // Captured once at mount — if the user activates cloud mid-wizard via
+  // CloudBackupStep, we still want that step to render normally.
+  const cloudActive = useMemo(() => isCloudAlreadyActive(), [])
+  const visibleSteps = useMemo(
+    () => STEPS.filter(s => !(s.id === 'cloud-backup' && cloudActive)),
+    [cloudActive]
+  )
 
   const markCompleted = useCallback((stepId) => {
     setCompletedSteps(prev => new Set([...prev, stepId]))
@@ -97,17 +113,50 @@ export default function OnboardingWizard({ onComplete }) {
             onSkip={() => goToStep('apple-data')}
           />
         )
-      case 'apple-data':
+      case 'apple-data': {
+        // If cloud is already active from DatabaseSetupScreen, skip the
+        // CloudBackupStep to avoid re-registering and rotating the API key.
+        const afterApple = () => {
+          if (cloudActive) {
+            markCompleted('cloud-backup')
+            goToStep('discovery')
+          } else {
+            goToStep('cloud-backup')
+          }
+        }
         return (
           <AppleDataStep
             onNext={() => {
               markCompleted('apple-data')
-              goToStep('cloud-backup')
+              afterApple()
             }}
-            onSkip={() => goToStep('cloud-backup')}
+            onSkip={afterApple}
           />
         )
+      }
       case 'cloud-backup':
+        // Defensive fall-through: if something routed here while cloud is
+        // already active, render a minimal already-connected card instead of
+        // re-running activation.
+        if (cloudActive) {
+          return (
+            <div data-testid="cloud-already-active" className="text-center">
+              <h2 className="text-lg font-bold text-primary mb-2">Cloud backup is already active</h2>
+              <p className="text-xs text-secondary mb-4">
+                You activated Exemem cloud during setup. Skipping this step.
+              </p>
+              <button
+                className="btn btn-primary"
+                onClick={() => {
+                  markCompleted('cloud-backup')
+                  goToStep('discovery')
+                }}
+              >
+                Next
+              </button>
+            </div>
+          )
+        }
         return (
           <CloudBackupStep
             onNext={() => {
@@ -149,7 +198,7 @@ export default function OnboardingWizard({ onComplete }) {
           <p className="text-xs text-secondary">Your data, your rules</p>
         </div>
 
-        <ProgressIndicator currentStep={currentStep} steps={STEPS} />
+        <ProgressIndicator currentStep={currentStep} steps={visibleSteps} />
 
         <div className="card p-6">
           {renderStep()}
