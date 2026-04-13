@@ -70,3 +70,22 @@ Follow the same standards as fold_db:
 - Always write tests
 - Use `TODO` format for incomplete implementations
 - Platform-specific APIs (e.g., OS keychain) must be behind feature flags
+
+## Trust boundary: loopback owner context
+
+**Intentional invariant (as of 2026-04-13)**: `src/handlers/query.rs` and `src/handlers/mutation.rs` hardcode the HTTP caller as the node's own pubkey (`caller_pub_key = node.get_node_public_key()`). This gives every local HTTP request owner context via `build_access_context`'s owner short-circuit, so trust-tier enforcement is effectively disabled for anything reaching `http://localhost:9001`.
+
+This is **correct for the Tauri single-user model**: the owner of the device is the owner of the data, and the node is only reachable from localhost via the Tauri UI / CLI. Access enforcement on the remote discovery/messaging path (non-owner callers) is separate and works correctly.
+
+**What's NOT protected**:
+- Other processes on the user's machine that can reach `localhost:9001`
+- Browser extensions with permissive CORS
+- Any future shared / headless / multi-user distribution
+
+**Before shipping a non-Tauri distribution (headless daemon, shared mode, hosted-for-many, etc)** you MUST:
+
+1. Verify the CORS / bind config rejects non-Tauri origins in release builds (audit `actix-cors` config in `src/server/http_server.rs`; confirm release binds loopback-only and rejects cross-origin requests that don't originate from the Tauri webview).
+2. Add per-request caller authentication — loopback token, session cookie, or signed identity header — so the hardcoded `get_node_public_key()` can be replaced with a verified caller identity.
+3. Update `src/handlers/query.rs` and `src/handlers/mutation.rs` to consume that verified identity instead of the hardcoded owner pubkey.
+
+See `docs/designs/trust_domains.md` (workspace root) for the access enforcement design. See PR #436 for the feed.rs Case-A audit that formalized this invariant.
