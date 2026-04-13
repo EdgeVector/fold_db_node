@@ -1,0 +1,159 @@
+name: E2E Cloud Tests
+
+on:
+  workflow_dispatch:
+    inputs:
+      scenario:
+        description: "Scenario YAML to run (relative to test-framework/)"
+        required: true
+        default: "scenarios/face-discovery-self.yaml"
+      keep_session:
+        description: "Keep session dir after run (for debugging)"
+        required: false
+        type: boolean
+        default: false
+  schedule:
+    # Nightly at 07:00 UTC (midnight PT)
+    - cron: "0 7 * * *"
+
+concurrency:
+  # One E2E run at a time — prevents dev cloud state conflicts.
+  group: e2e-cloud
+  cancel-in-progress: false
+
+jobs:
+  e2e:
+    name: E2E Test Framework (dev cloud)
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+
+    # Only run on the main repo (not forks) to protect secrets
+    if: github.repository == 'EdgeVector/fold_db_node'
+
+    env:
+      RUSTFLAGS: -C linker=clang -C link-arg=-fuse-ld=mold
+      FOLDDB_TEST_DEV_API: https://ygyu7ritx8.execute-api.us-west-2.amazonaws.com
+      FOLDDB_TEST_DEV_SCHEMA: https://y0q3m6vk75.execute-api.us-west-2.amazonaws.com
+
+    steps:
+      - name: Free disk space
+        run: |
+          sudo rm -rf /usr/share/dotnet /usr/local/lib/android /opt/ghc /usr/local/share/powershell /usr/share/swift
+          sudo apt-get clean
+          df -h /
+
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Install mold linker
+        run: sudo apt-get update && sudo apt-get install -y mold
+
+      - name: Install jq + yq
+        run: |
+          sudo apt-get install -y jq
+          sudo wget -qO /usr/local/bin/yq https://github.com/mikefarah/yq/releases/latest/download/yq_linux_amd64
+          sudo chmod +x /usr/local/bin/yq
+          jq --version
+          yq --version
+
+      - name: Install Python + PyNaCl (for node factory key generation)
+        run: |
+          python3 -m pip install --quiet pynacl
+
+      - name: Install Rust
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Configure git for private dependencies
+        run: git config --global url."https://x-access-token:${{ secrets.PRIVATE_DEPS_TOKEN }}@github.com/".insteadOf "https://github.com/"
+
+      - name: Cache Rust artifacts
+        uses: Swatinem/rust-cache@v2
+
+      - name: Install Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+
+      - name: Build React frontend
+        run: |
+          cd src/server/static-react
+          npm ci
+          npm run build
+
+      - name: Build folddb_server (face-detection feature)
+        run: cargo build --features face-detection --bin folddb_server
+
+      - name: Configure AWS credentials
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          aws-access-key-id: ${{ secrets.AWS_E2E_ACCESS_KEY_ID }}
+          aws-secret-access-key: ${{ secrets.AWS_E2E_SECRET_ACCESS_KEY }}
+          aws-region: us-west-2
+
+      - name: Write test admin secret to disk
+        run: |
+          mkdir -p ~/.folddb
+          echo -n "${{ secrets.FOLDDB_TEST_ADMIN_SECRET }}" > ~/.folddb/test-admin-secret-dev.txt
+          chmod 600 ~/.folddb/test-admin-secret-dev.txt
+
+      - name: Run scenario (manual trigger)
+        if: github.event_name == 'workflow_dispatch'
+        run: |
+          cd test-framework
+          export FOLDDB_TEST_STANDALONE=1
+          SCENARIO="${{ github.event.inputs.scenario }}"
+          KEEP="${{ github.event.inputs.keep_session }}"
+          ARGS=""
+          if [[ "$KEEP" == "true" ]]; then
+            ARGS="--keep-session"
+          fi
+          bash run-scenario.sh "$SCENARIO" $ARGS
+
+      - name: Run all nightly scenarios
+        if: github.event_name == 'schedule'
+        run: |
+          cd test-framework
+          export FOLDDB_TEST_STANDALONE=1
+          set +e
+          FAIL=0
+          for scenario in scenarios/face-discovery-self.yaml scenarios/face-discovery-3node.yaml; do
+            echo ""
+            echo "================================================================"
+            echo "  Running: $scenario"
+            echo "================================================================"
+            bash run-scenario.sh "$scenario"
+            rc=$?
+            if [[ $rc -ne 0 ]]; then
+              echo "[nightly] $scenario FAILED (rc=$rc)"
+              FAIL=1
+            else
+              echo "[nightly] $scenario PASSED"
+            fi
+          done
+          exit $FAIL
+
+      - name: Upload session logs on failure
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: e2e-session-logs
+          path: test-framework/logs/
+          retention-days: 7
+
+      - name: Summary
+        if: always()
+        run: |
+          echo "## E2E Cloud Test Results" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "| Scenario | Result |" >> $GITHUB_STEP_SUMMARY
+          echo "|---|---|" >> $GITHUB_STEP_SUMMARY
+          cd test-framework
+          for run_dir in logs/run-*; do
+            [[ -d "$run_dir" ]] || continue
+            name=$(basename "$run_dir")
+            if find "$run_dir/state" -name "*.failed" 2>/dev/null | grep -q .; then
+              echo "| $name | ❌ FAIL |" >> $GITHUB_STEP_SUMMARY
+            else
+              echo "| $name | ✅ PASS |" >> $GITHUB_STEP_SUMMARY
+            fi
+          done
