@@ -1368,12 +1368,66 @@ async fn dispatch_decrypted_message(
                     });
                 }
             };
-            process_data_share(node, &payload).await.map_err(|e| {
-                HandlerError::Internal(format!(
-                    "process data share from {}: {e}",
-                    payload.sender_display_name
-                ))
-            })?;
+
+            // Part A: authorization gate — sender must be a known, non-revoked
+            // contact. Unknown or revoked senders could otherwise inject
+            // arbitrary mutations onto this node just by knowing our messaging
+            // pseudonym + pubkey. See fix doc: trust-boundary hole.
+            let op = OperationProcessor::new(node.clone());
+            let book_path = op
+                .contact_book_path()
+                .map_err(|e| HandlerError::Internal(format!("contact book path: {e}")))?;
+            let contact_book = ContactBook::load_from(&book_path).unwrap_or_default();
+            match authorize_data_share_sender(&contact_book, &payload) {
+                DataShareAuthz::Authorized => {}
+                DataShareAuthz::UnknownSender => {
+                    let pk_preview: String = payload.sender_public_key.chars().take(8).collect();
+                    log::warn!(
+                        "Rejecting data_share (msg {}): unknown sender pubkey {}",
+                        msg.message_id,
+                        pk_preview
+                    );
+                    return Ok(DispatchOutcome::Skipped {
+                        reason: "data_share from unknown sender".to_string(),
+                    });
+                }
+                DataShareAuthz::RevokedSender => {
+                    let pk_preview: String = payload.sender_public_key.chars().take(8).collect();
+                    log::warn!(
+                        "Rejecting data_share (msg {}): revoked sender pubkey {}",
+                        msg.message_id,
+                        pk_preview
+                    );
+                    return Ok(DispatchOutcome::Skipped {
+                        reason: "data_share from revoked sender".to_string(),
+                    });
+                }
+            }
+
+            // Part B: schema gate — schema service owns schema creation. Do
+            // not allow a shared payload to install or auto-approve schemas.
+            let db = node
+                .get_fold_db()
+                .map_err(|e| HandlerError::Internal(format!("Failed to get db: {e}")))?;
+            let schema_states = db
+                .schema_manager()
+                .get_schema_states()
+                .map_err(|e| HandlerError::Internal(format!("get schema states: {e}")))?;
+            match validate_data_share_schemas(&schema_states, &payload) {
+                DataShareSchemaCheck::AllApproved => {}
+                DataShareSchemaCheck::UnknownOrUnapproved { schema_name } => {
+                    log::warn!(
+                        "Rejecting data_share (msg {}): schema '{}' not installed/approved on this node",
+                        msg.message_id,
+                        schema_name
+                    );
+                    return Ok(DispatchOutcome::Skipped {
+                        reason: format!("data_share references unknown schema '{schema_name}'"),
+                    });
+                }
+            }
+
+            process_data_share(node, &payload).await?;
             log::info!(
                 "Received {} records from {}",
                 payload.records.len(),
@@ -2794,8 +2848,81 @@ async fn handle_incoming_referral_response(
     Ok(DispatchOutcome::Handled)
 }
 
-/// Process a received data share: create schemas if needed, write mutations,
-/// and save any included file data.
+/// Outcome of the data-share sender authorization check.
+///
+/// Pure-function result so the gate can be unit tested without standing up a
+/// full `FoldNode`. See [`authorize_data_share_sender`].
+#[derive(Debug, PartialEq, Eq)]
+enum DataShareAuthz {
+    /// Sender matches an active (non-revoked) contact.
+    Authorized,
+    /// Sender pubkey does not match any contact in the book.
+    UnknownSender,
+    /// Sender matches a contact whose trust has been revoked.
+    RevokedSender,
+}
+
+/// Pure authorization helper: does `payload.sender_public_key` correspond to
+/// a known, non-revoked contact in `contact_book`?
+///
+/// The primary match key is the Ed25519 pubkey (base64) because that is the
+/// field already carried on every [`DataSharePayload`]. If the contact also
+/// carries a stable `identity_pseudonym` (PR #418) and the payload ever grows
+/// one, that would become the secondary key — for now only the pubkey match
+/// is available and it is both necessary and sufficient.
+fn authorize_data_share_sender(
+    contact_book: &ContactBook,
+    payload: &DataSharePayload,
+) -> DataShareAuthz {
+    match contact_book.get(&payload.sender_public_key) {
+        None => DataShareAuthz::UnknownSender,
+        Some(c) if c.revoked => DataShareAuthz::RevokedSender,
+        Some(_) => DataShareAuthz::Authorized,
+    }
+}
+
+/// Outcome of the data-share schema validation check.
+#[derive(Debug, PartialEq, Eq)]
+enum DataShareSchemaCheck {
+    /// Every record references a schema that is already installed and
+    /// approved on this node.
+    AllApproved,
+    /// At least one record references a schema the node has not installed
+    /// and approved. The first offending schema name is returned so the
+    /// caller can log it.
+    UnknownOrUnapproved { schema_name: String },
+}
+
+/// Pure schema-validation helper: every record in `payload` must reference a
+/// schema that is already present on this node AND in the `Approved` state.
+///
+/// Schema creation is owned by the schema service. Shared payloads must NOT
+/// be able to install or auto-approve arbitrary schema definitions — doing
+/// so would let any contact silently add a schema to the recipient's node.
+fn validate_data_share_schemas(
+    schema_states: &HashMap<String, fold_db::schema::SchemaState>,
+    payload: &DataSharePayload,
+) -> DataShareSchemaCheck {
+    for record in &payload.records {
+        match schema_states.get(&record.schema_name) {
+            Some(fold_db::schema::SchemaState::Approved) => {}
+            _ => {
+                return DataShareSchemaCheck::UnknownOrUnapproved {
+                    schema_name: record.schema_name.clone(),
+                };
+            }
+        }
+    }
+    DataShareSchemaCheck::AllApproved
+}
+
+/// Process a received data share: write mutations and save any included
+/// file data.
+///
+/// Caller MUST have already authorized the sender (via
+/// [`authorize_data_share_sender`]) and validated that every referenced
+/// schema is installed and approved (via [`validate_data_share_schemas`]).
+/// This function assumes both gates have passed and does not re-check.
 async fn process_data_share(
     node: &FoldNode,
     payload: &DataSharePayload,
@@ -2805,61 +2932,10 @@ async fn process_data_share(
         .map_err(|e| HandlerError::Internal(format!("Failed to get db: {e}")))?;
 
     for record in &payload.records {
-        // 1. Create schema if it doesn't exist
-        if let Some(ref schema_def) = record.schema_definition {
-            let schema_json = serde_json::to_string(schema_def)
-                .map_err(|e| HandlerError::Internal(format!("Schema serialization: {e}")))?;
-
-            // Try to load schema — if it already exists, load_schema_from_json returns an error (that's fine)
-            match db
-                .schema_manager()
-                .load_schema_from_json(&schema_json)
-                .await
-            {
-                Ok(_) => {
-                    log::info!("Created schema '{}' from data share", record.schema_name);
-                    // Auto-approve shared schemas so mutations can be written
-                    if let Err(e) = db
-                        .schema_manager()
-                        .set_schema_state(
-                            &record.schema_name,
-                            fold_db::schema::SchemaState::Approved,
-                        )
-                        .await
-                    {
-                        log::warn!(
-                            "Failed to approve shared schema '{}': {}",
-                            record.schema_name,
-                            e
-                        );
-                    }
-                }
-                Err(e) => {
-                    log::debug!(
-                        "Schema '{}' load result (may already exist): {}",
-                        record.schema_name,
-                        e
-                    );
-                    // Ensure schema is approved even if it already existed
-                    if let Err(approve_err) = db
-                        .schema_manager()
-                        .set_schema_state(
-                            &record.schema_name,
-                            fold_db::schema::SchemaState::Approved,
-                        )
-                        .await
-                    {
-                        log::warn!(
-                            "Failed to approve existing schema '{}': {}",
-                            record.schema_name,
-                            approve_err
-                        );
-                    }
-                }
-            }
-        }
-
-        // 2. Write the mutation with the sender's pub_key
+        // Write the mutation with the sender's pub_key. The dispatch arm has
+        // already verified the schema is installed and approved, so any
+        // failure here is a transient Sled hiccup — propagate so the caller
+        // retries on the next poll instead of silently dropping the record.
         let key = fold_db::schema::types::key_value::KeyValue::new(
             record.key.hash.clone(),
             record.key.range.clone(),
@@ -2873,71 +2949,82 @@ async fn process_data_share(
             fold_db::schema::types::operations::MutationType::Create,
         );
 
-        if let Err(e) = db
-            .mutation_manager()
+        db.mutation_manager()
             .write_mutations_batch_async(vec![mutation])
             .await
-        {
-            log::warn!(
-                "Failed to write shared record for schema '{}': {}",
-                record.schema_name,
-                e
-            );
-        }
+            .map_err(|e| {
+                HandlerError::Internal(format!(
+                    "write shared record for schema '{}': {e}",
+                    record.schema_name
+                ))
+            })?;
 
-        // 3. If file data is included, save it to upload storage
+        // If file data is included, save it to upload storage. A bad base64
+        // blob is a permanent payload error — bail out with Internal so the
+        // full partial write stays out of dedup and the peer can resend a
+        // fixed payload. A Sled/fs write failure is transient — also bail.
         if let Some(ref file_b64) = record.file_data_base64 {
-            match B64.decode(file_b64) {
-                Ok(file_bytes) => {
-                    let file_name = record
-                        .file_name
-                        .as_deref()
-                        .or_else(|| record.fields.get("file_hash").and_then(|v| v.as_str()))
-                        .unwrap_or("shared_file");
+            let file_bytes = B64.decode(file_b64).map_err(|e| {
+                HandlerError::Internal(format!(
+                    "decode shared file data for schema '{}': {e}",
+                    record.schema_name
+                ))
+            })?;
+            let file_name = record
+                .file_name
+                .as_deref()
+                .or_else(|| record.fields.get("file_hash").and_then(|v| v.as_str()))
+                .unwrap_or("shared_file");
 
-                    let upload_path = std::env::var("FOLDDB_UPLOAD_PATH")
-                        .map(std::path::PathBuf::from)
-                        .unwrap_or_else(|_| std::path::PathBuf::from("data/uploads"));
-                    let upload_storage = fold_db::storage::UploadStorage::local(upload_path);
+            let upload_path = std::env::var("FOLDDB_UPLOAD_PATH")
+                .map(std::path::PathBuf::from)
+                .unwrap_or_else(|_| std::path::PathBuf::from("data/uploads"));
+            let upload_storage = fold_db::storage::UploadStorage::local(upload_path);
 
-                    if let Err(e) = upload_storage.save_file(file_name, &file_bytes, None).await {
-                        log::warn!("Failed to save shared file '{}': {}", file_name, e);
-                    }
+            upload_storage
+                .save_file(file_name, &file_bytes, None)
+                .await
+                .map_err(|e| {
+                    HandlerError::Internal(format!("save shared file '{file_name}': {e}"))
+                })?;
 
-                    // 4. Run face detection on shared photos
-                    #[cfg(feature = "face-detection")]
-                    {
-                        let db_ops = db.get_db_ops();
-                        if let Some(native_idx) = db_ops.native_index_manager() {
-                            if native_idx.has_face_processor() {
-                                match native_idx
-                                    .index_faces(&record.schema_name, &key, &file_bytes)
-                                    .await
-                                {
-                                    Ok(count) if count > 0 => {
-                                        log::info!(
-                                            "Detected {} face(s) in shared photo '{}'",
-                                            count,
-                                            file_name
-                                        );
-                                    }
-                                    Ok(_) => {}
-                                    Err(e) => {
-                                        log::warn!("Face detection failed on shared photo: {}", e);
-                                    }
-                                }
+            // Run face detection on shared photos. Detection is a best-effort
+            // index enrichment: failures here must not block the share write
+            // that already succeeded.
+            #[cfg(feature = "face-detection")]
+            {
+                let db_ops = db.get_db_ops();
+                if let Some(native_idx) = db_ops.native_index_manager() {
+                    if native_idx.has_face_processor() {
+                        match native_idx
+                            .index_faces(&record.schema_name, &key, &file_bytes)
+                            .await
+                        {
+                            Ok(count) if count > 0 => {
+                                log::info!(
+                                    "Detected {} face(s) in shared photo '{}'",
+                                    count,
+                                    file_name
+                                );
+                            }
+                            Ok(_) => {}
+                            Err(e) => {
+                                log::warn!(
+                                    "Face detection failed on shared photo '{}': {}",
+                                    file_name,
+                                    e
+                                );
                             }
                         }
                     }
-                }
-                Err(e) => {
-                    log::warn!("Failed to decode shared file data: {}", e);
                 }
             }
         }
     }
 
-    // 5. Store a notification for the UI
+    // Store a notification for the UI. Failure here is transient (Sled) and
+    // leaves the records written but the UI unnotified — propagate so the
+    // poll retry can try again.
     let notification = serde_json::json!({
         "type": "data_share_received",
         "sender_display_name": payload.sender_display_name,
@@ -2953,15 +3040,15 @@ async fn process_data_share(
         uuid::Uuid::new_v4()
     );
     let store = get_metadata_store(&db);
-    if let Err(e) = store
+    store
         .put(
             notif_key.as_bytes(),
-            serde_json::to_vec(&notification).unwrap_or_default(),
+            serde_json::to_vec(&notification).map_err(|e| {
+                HandlerError::Internal(format!("serialize data share notification: {e}"))
+            })?,
         )
         .await
-    {
-        log::warn!("Failed to store data share notification: {}", e);
-    }
+        .map_err(|e| HandlerError::Internal(format!("store data share notification: {e}")))?;
 
     log::info!(
         "Received {} records from {} (schemas: {})",
@@ -3543,5 +3630,159 @@ mod referral_match_tests {
         let legacy_row = contact_with(None, None, Some("rotating"), Some("pk"));
         let legacy_response = response_with(None, "rotating");
         assert!(referral_voucher_matches(&legacy_row, &legacy_response));
+    }
+}
+
+// ---- data_share authorization gate tests -----------------------------------
+
+/// Pure unit tests for the `data_share` trust-boundary gates:
+/// [`authorize_data_share_sender`] and [`validate_data_share_schemas`].
+///
+/// These gates protect against a sender with no existing trust relationship
+/// injecting mutations (or inventing schemas) on the recipient's node just
+/// by knowing the recipient's messaging pseudonym + pubkey.
+#[cfg(test)]
+mod data_share_gate_tests {
+    use super::*;
+    use chrono::Utc;
+    use std::collections::HashMap;
+
+    fn active_contact(public_key: &str) -> Contact {
+        Contact {
+            public_key: public_key.to_string(),
+            display_name: "Alice".to_string(),
+            contact_hint: None,
+            direction: TrustDirection::Mutual,
+            connected_at: Utc::now(),
+            pseudonym: None,
+            messaging_pseudonym: None,
+            messaging_public_key: None,
+            identity_pseudonym: None,
+            revoked: false,
+            roles: HashMap::new(),
+        }
+    }
+
+    fn revoked_contact(public_key: &str) -> Contact {
+        let mut c = active_contact(public_key);
+        c.revoked = true;
+        c
+    }
+
+    fn payload_from(sender_pk: &str, schema_names: &[&str]) -> DataSharePayload {
+        DataSharePayload {
+            message_type: "data_share".to_string(),
+            sender_public_key: sender_pk.to_string(),
+            sender_display_name: "Alice".to_string(),
+            records: schema_names
+                .iter()
+                .map(|name| SharedRecord {
+                    schema_name: (*name).to_string(),
+                    schema_definition: None,
+                    fields: HashMap::new(),
+                    key: SharedRecordKey {
+                        hash: Some("h".to_string()),
+                        range: None,
+                    },
+                    file_data_base64: None,
+                    file_name: None,
+                })
+                .collect(),
+        }
+    }
+
+    #[test]
+    fn gate_rejects_unknown_sender() {
+        let book = ContactBook::new();
+        let payload = payload_from("pk_alice", &["Photography"]);
+        assert_eq!(
+            authorize_data_share_sender(&book, &payload),
+            DataShareAuthz::UnknownSender
+        );
+    }
+
+    #[test]
+    fn gate_rejects_revoked_sender() {
+        let mut book = ContactBook::new();
+        book.upsert_contact(revoked_contact("pk_alice"));
+        let payload = payload_from("pk_alice", &["Photography"]);
+        assert_eq!(
+            authorize_data_share_sender(&book, &payload),
+            DataShareAuthz::RevokedSender
+        );
+    }
+
+    #[test]
+    fn gate_accepts_active_sender() {
+        let mut book = ContactBook::new();
+        book.upsert_contact(active_contact("pk_alice"));
+        let payload = payload_from("pk_alice", &["Photography"]);
+        assert_eq!(
+            authorize_data_share_sender(&book, &payload),
+            DataShareAuthz::Authorized
+        );
+    }
+
+    #[test]
+    fn schema_gate_rejects_unknown_schema() {
+        let states: HashMap<String, fold_db::schema::SchemaState> = HashMap::new();
+        let payload = payload_from("pk_alice", &["Photography"]);
+        assert_eq!(
+            validate_data_share_schemas(&states, &payload),
+            DataShareSchemaCheck::UnknownOrUnapproved {
+                schema_name: "Photography".to_string()
+            }
+        );
+    }
+
+    #[test]
+    fn schema_gate_rejects_non_approved_schema() {
+        let mut states: HashMap<String, fold_db::schema::SchemaState> = HashMap::new();
+        // Present but only Available — not yet approved. Must be rejected to
+        // preserve the invariant that users explicitly approve schemas.
+        states.insert(
+            "Photography".to_string(),
+            fold_db::schema::SchemaState::Available,
+        );
+        let payload = payload_from("pk_alice", &["Photography"]);
+        assert_eq!(
+            validate_data_share_schemas(&states, &payload),
+            DataShareSchemaCheck::UnknownOrUnapproved {
+                schema_name: "Photography".to_string()
+            }
+        );
+    }
+
+    #[test]
+    fn schema_gate_accepts_all_approved_schemas() {
+        let mut states: HashMap<String, fold_db::schema::SchemaState> = HashMap::new();
+        states.insert(
+            "Photography".to_string(),
+            fold_db::schema::SchemaState::Approved,
+        );
+        states.insert("Travel".to_string(), fold_db::schema::SchemaState::Approved);
+        let payload = payload_from("pk_alice", &["Photography", "Travel"]);
+        assert_eq!(
+            validate_data_share_schemas(&states, &payload),
+            DataShareSchemaCheck::AllApproved
+        );
+    }
+
+    #[test]
+    fn schema_gate_rejects_mixed_when_any_is_unknown() {
+        let mut states: HashMap<String, fold_db::schema::SchemaState> = HashMap::new();
+        states.insert(
+            "Photography".to_string(),
+            fold_db::schema::SchemaState::Approved,
+        );
+        // "Travel" is missing entirely — must reject even though the first
+        // record is fine. Partial writes are not acceptable.
+        let payload = payload_from("pk_alice", &["Photography", "Travel"]);
+        assert_eq!(
+            validate_data_share_schemas(&states, &payload),
+            DataShareSchemaCheck::UnknownOrUnapproved {
+                schema_name: "Travel".to_string()
+            }
+        );
     }
 }
