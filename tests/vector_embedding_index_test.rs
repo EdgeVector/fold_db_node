@@ -61,7 +61,7 @@ async fn insert_post(
 async fn test_indexed_records_appear_in_search() {
     let (node, _tmp) = setup_node().await;
     load_schema(&node, "BlogPost.json").await;
-    let processor = OperationProcessor::new(node);
+    let processor = OperationProcessor::new(std::sync::Arc::new(node));
 
     insert_post(
         &processor,
@@ -100,7 +100,7 @@ async fn test_indexed_records_appear_in_search() {
 async fn test_semantic_ranking_returns_most_relevant_first() {
     let (node, _tmp) = setup_node().await;
     load_schema(&node, "BlogPost.json").await;
-    let processor = OperationProcessor::new(node);
+    let processor = OperationProcessor::new(std::sync::Arc::new(node));
 
     insert_post(
         &processor,
@@ -149,7 +149,7 @@ async fn test_semantic_ranking_returns_most_relevant_first() {
 async fn test_update_replaces_existing_index_entry() {
     let (node, _tmp) = setup_node().await;
     load_schema(&node, "BlogPost.json").await;
-    let processor = OperationProcessor::new(node);
+    let processor = OperationProcessor::new(std::sync::Arc::new(node));
 
     // Insert then update the same record (same key)
     insert_post(
@@ -197,7 +197,7 @@ async fn test_update_replaces_existing_index_entry() {
 async fn test_results_include_score_metadata() {
     let (node, _tmp) = setup_node().await;
     load_schema(&node, "BlogPost.json").await;
-    let processor = OperationProcessor::new(node);
+    let processor = OperationProcessor::new(std::sync::Arc::new(node));
 
     insert_post(
         &processor,
@@ -229,7 +229,7 @@ async fn test_results_include_score_metadata() {
 async fn test_empty_query_returns_error() {
     let (node, _tmp) = setup_node().await;
     load_schema(&node, "BlogPost.json").await;
-    let processor = OperationProcessor::new(node);
+    let processor = OperationProcessor::new(std::sync::Arc::new(node));
 
     let result = processor.native_index_search("   ").await;
     assert!(result.is_err(), "Blank query should return an error");
@@ -241,7 +241,7 @@ async fn test_search_spans_multiple_schemas() {
     let (node, _tmp) = setup_node().await;
     load_schema(&node, "BlogPost.json").await;
     load_schema(&node, "Message.json").await;
-    let processor = OperationProcessor::new(node);
+    let processor = OperationProcessor::new(std::sync::Arc::new(node));
 
     // Insert a BlogPost
     insert_post(

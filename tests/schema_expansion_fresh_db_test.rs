@@ -248,7 +248,7 @@ async fn test_schema_expansion_on_fresh_db() {
     } // drop db_1 guard before using processor
 
     // Write a record to Schema A
-    let processor_1 = OperationProcessor::new(node_1.clone());
+    let processor_1 = OperationProcessor::new(std::sync::Arc::new(node_1.clone()));
     let mutation = fold_db::schema::types::Mutation::new(
         add_resp.schema.name.clone(),
         {
@@ -353,7 +353,7 @@ async fn test_schema_expansion_on_fresh_db() {
             .unwrap();
     } // drop db_2 guard before using processor
 
-    let processor_2 = OperationProcessor::new(node_2.clone());
+    let processor_2 = OperationProcessor::new(std::sync::Arc::new(node_2.clone()));
     // list_schemas returns only active (non-blocked) schemas
     let active_schemas = processor_2.list_schemas().await.unwrap();
 

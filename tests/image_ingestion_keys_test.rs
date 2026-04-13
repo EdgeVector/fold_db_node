@@ -157,7 +157,7 @@ async fn test_hash_mutation_keys_queryable() {
     }
 
     // Verify schema loaded
-    let processor = OperationProcessor::new(node.clone());
+    let processor = OperationProcessor::new(std::sync::Arc::new(node.clone()));
     let schemas = processor.list_schemas().await.unwrap();
     let schema = schemas
         .iter()
@@ -441,7 +441,7 @@ async fn test_image_ingestion_pipeline_produces_keys() {
     eprintln!("Executed {} mutations", ids.len());
 
     // Step 5: Verify keys
-    let processor = OperationProcessor::new(node.clone());
+    let processor = OperationProcessor::new(std::sync::Arc::new(node.clone()));
     let (keys, total) = processor
         .list_schema_keys(&final_name, 0, 100)
         .await

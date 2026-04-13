@@ -145,14 +145,7 @@ pub async fn smart_folder_scan(
                 });
             });
 
-            let node_guard;
-            let node_ref = match node_arc {
-                Some(ref arc) => {
-                    node_guard = arc.read().await;
-                    Some(&*node_guard)
-                }
-                None => None,
-            };
+            let node_ref = node_arc.as_deref();
             let result = smart_folder::perform_smart_folder_scan_with_progress(
                 &folder_path,
                 max_depth,
@@ -330,7 +323,7 @@ pub async fn smart_folder_ingest(
     }
 
     let encryption_key = {
-        let node = node_arc.read().await;
+        let node = node_arc.as_ref();
         node.get_encryption_key()
     };
 

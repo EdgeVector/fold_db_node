@@ -81,7 +81,7 @@ async fn register_view(processor: &OperationProcessor, view: TransformView) {
 async fn query_view_via_execute_query_json() {
     let (node, _tmp) = setup_node().await;
     load_schema(&node, "BlogPost.json").await;
-    let processor = OperationProcessor::new(node);
+    let processor = OperationProcessor::new(std::sync::Arc::new(node));
 
     insert_blog_post(&processor, "Hello World", "First post", "2024-01-01").await;
     insert_blog_post(&processor, "Second Post", "More content", "2024-02-01").await;
@@ -127,7 +127,7 @@ async fn query_view_via_execute_query_json() {
 async fn query_view_with_empty_fields_returns_all_output_fields() {
     let (node, _tmp) = setup_node().await;
     load_schema(&node, "BlogPost.json").await;
-    let processor = OperationProcessor::new(node);
+    let processor = OperationProcessor::new(std::sync::Arc::new(node));
 
     insert_blog_post(&processor, "Title", "Body text", "2024-03-01").await;
 
@@ -164,7 +164,7 @@ async fn query_view_with_empty_fields_returns_all_output_fields() {
 async fn query_view_chain_via_execute_query_json() {
     let (node, _tmp) = setup_node().await;
     load_schema(&node, "BlogPost.json").await;
-    let processor = OperationProcessor::new(node);
+    let processor = OperationProcessor::new(std::sync::Arc::new(node));
 
     insert_blog_post(&processor, "Chain Test", "chain content", "2024-04-01").await;
 
@@ -213,7 +213,7 @@ async fn query_view_chain_via_execute_query_json() {
 async fn query_blocked_view_returns_error() {
     let (node, _tmp) = setup_node().await;
     load_schema(&node, "BlogPost.json").await;
-    let processor = OperationProcessor::new(node);
+    let processor = OperationProcessor::new(std::sync::Arc::new(node));
 
     let view = TransformView::new(
         "BlockedView",
@@ -241,7 +241,7 @@ async fn query_blocked_view_returns_error() {
 async fn query_view_after_mutation_returns_fresh_data() {
     let (node, _tmp) = setup_node().await;
     load_schema(&node, "BlogPost.json").await;
-    let processor = OperationProcessor::new(node);
+    let processor = OperationProcessor::new(std::sync::Arc::new(node));
 
     insert_blog_post(&processor, "Original", "v1 content", "2024-05-01").await;
 
@@ -295,7 +295,7 @@ async fn query_view_after_mutation_returns_fresh_data() {
 async fn query_view_via_json_deserialization() {
     let (node, _tmp) = setup_node().await;
     load_schema(&node, "BlogPost.json").await;
-    let processor = OperationProcessor::new(node);
+    let processor = OperationProcessor::new(std::sync::Arc::new(node));
 
     insert_blog_post(&processor, "JSON Test", "json content", "2024-06-01").await;
 
@@ -542,7 +542,7 @@ mod wasm_tests {
     async fn query_wasm_view_returns_transformed_output() {
         let (node, _tmp) = setup_node().await;
         load_schema(&node, "BlogPost.json").await;
-        let processor = OperationProcessor::new(node);
+        let processor = OperationProcessor::new(std::sync::Arc::new(node));
 
         insert_blog_post(&processor, "Hello", "world", "2024-01-01").await;
 
@@ -579,7 +579,7 @@ mod wasm_tests {
     async fn query_wasm_view_that_transforms_input() {
         let (node, _tmp) = setup_node().await;
         load_schema(&node, "BlogPost.json").await;
-        let processor = OperationProcessor::new(node);
+        let processor = OperationProcessor::new(std::sync::Arc::new(node));
 
         insert_blog_post(&processor, "Test Title", "Some content here", "2024-01-01").await;
 
@@ -622,7 +622,7 @@ mod wasm_tests {
     async fn wasm_view_cache_invalidation_via_http_path() {
         let (node, _tmp) = setup_node().await;
         load_schema(&node, "BlogPost.json").await;
-        let processor = OperationProcessor::new(node);
+        let processor = OperationProcessor::new(std::sync::Arc::new(node));
 
         insert_blog_post(&processor, "Original", "content", "2024-01-01").await;
 
@@ -666,7 +666,7 @@ mod wasm_tests {
     async fn wasm_view_write_is_rejected() {
         let (node, _tmp) = setup_node().await;
         load_schema(&node, "BlogPost.json").await;
-        let processor = OperationProcessor::new(node);
+        let processor = OperationProcessor::new(std::sync::Arc::new(node));
 
         let view = TransformView::new(
             "ReadOnlyWasm",

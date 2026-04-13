@@ -56,7 +56,7 @@ fn range_of(record: &serde_json::Value) -> String {
 async fn test_sort_order_desc_range_schema() {
     let (node, _tmp) = setup_node().await;
     load_schema(&node, "BlogPost.json").await;
-    let processor = OperationProcessor::new(node);
+    let processor = OperationProcessor::new(std::sync::Arc::new(node));
 
     // Insert posts in non-sorted order
     let dates = ["2024-06-15", "2024-01-01", "2024-12-25", "2024-03-10"];
@@ -105,7 +105,7 @@ async fn test_sort_order_desc_range_schema() {
 async fn test_sort_order_asc_range_schema() {
     let (node, _tmp) = setup_node().await;
     load_schema(&node, "BlogPost.json").await;
-    let processor = OperationProcessor::new(node);
+    let processor = OperationProcessor::new(std::sync::Arc::new(node));
 
     let dates = ["2024-06-15", "2024-01-01", "2024-12-25", "2024-03-10"];
     for date in &dates {
@@ -153,7 +153,7 @@ async fn test_sort_order_asc_range_schema() {
 async fn test_sort_order_none_returns_results_without_crash() {
     let (node, _tmp) = setup_node().await;
     load_schema(&node, "BlogPost.json").await;
-    let processor = OperationProcessor::new(node);
+    let processor = OperationProcessor::new(std::sync::Arc::new(node));
 
     let dates = ["2024-06-15", "2024-01-01"];
     for date in &dates {
@@ -197,7 +197,7 @@ async fn test_sort_order_none_returns_results_without_crash() {
 async fn test_sort_order_desc_hashrange_schema() {
     let (node, _tmp) = setup_node().await;
     load_schema(&node, "Message.json").await;
-    let processor = OperationProcessor::new(node);
+    let processor = OperationProcessor::new(std::sync::Arc::new(node));
 
     // Insert messages in non-sorted order
     let messages = [
@@ -261,7 +261,7 @@ async fn test_sort_order_desc_hashrange_schema() {
 async fn test_sort_order_asc_hashrange_schema() {
     let (node, _tmp) = setup_node().await;
     load_schema(&node, "Message.json").await;
-    let processor = OperationProcessor::new(node);
+    let processor = OperationProcessor::new(std::sync::Arc::new(node));
 
     let messages = [
         ("conv1", "2024-01-15T10:00:00Z", "Hello"),
@@ -325,7 +325,7 @@ async fn test_sort_order_asc_hashrange_schema() {
 async fn test_sort_order_via_json_deserialization() {
     let (node, _tmp) = setup_node().await;
     load_schema(&node, "BlogPost.json").await;
-    let processor = OperationProcessor::new(node);
+    let processor = OperationProcessor::new(std::sync::Arc::new(node));
 
     let dates = ["2024-06-15", "2024-01-01", "2024-12-25"];
     for date in &dates {

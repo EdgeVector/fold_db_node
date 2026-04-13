@@ -36,7 +36,7 @@ async fn test_indexing_progress_tracking() {
         map
     };
 
-    let processor = OperationProcessor::new(node.clone());
+    let processor = OperationProcessor::new(std::sync::Arc::new(node.clone()));
 
     let key_value = KeyValue::new(Some("1".to_string()), None);
 

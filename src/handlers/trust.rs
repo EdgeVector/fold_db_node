@@ -126,7 +126,7 @@ pub async fn grant_trust(
     user_hash: &str,
     node: &FoldNode,
 ) -> HandlerResult<serde_json::Value> {
-    let op = OperationProcessor::new(node.clone());
+    let op = OperationProcessor::new(std::sync::Arc::new(node.clone()));
     op.assign_role_to_contact(&req.public_key, &req.role)
         .await
         .typed_handler_err()?;
@@ -142,7 +142,7 @@ pub async fn revoke_trust(
     user_hash: &str,
     node: &FoldNode,
 ) -> HandlerResult<serde_json::Value> {
-    let op = OperationProcessor::new(node.clone());
+    let op = OperationProcessor::new(std::sync::Arc::new(node.clone()));
     op.revoke_trust(public_key).await.typed_handler_err()?;
     Ok(ApiResponse::success_with_user(
         serde_json::json!({"revoked": true}),
@@ -155,7 +155,7 @@ pub async fn list_trust_grants(
     user_hash: &str,
     node: &FoldNode,
 ) -> HandlerResult<TrustGrantsResponse> {
-    let op = OperationProcessor::new(node.clone());
+    let op = OperationProcessor::new(std::sync::Arc::new(node.clone()));
     let grants = op.list_trust_grants().await.typed_handler_err()?;
     let entries = grants
         .into_iter()
@@ -173,7 +173,7 @@ pub async fn resolve_trust(
     user_hash: &str,
     node: &FoldNode,
 ) -> HandlerResult<TrustResolveResponse> {
-    let op = OperationProcessor::new(node.clone());
+    let op = OperationProcessor::new(std::sync::Arc::new(node.clone()));
     let tier = op
         .resolve_trust_tier(&public_key)
         .await
@@ -194,7 +194,7 @@ pub async fn set_field_policy(
     user_hash: &str,
     node: &FoldNode,
 ) -> HandlerResult<serde_json::Value> {
-    let op = OperationProcessor::new(node.clone());
+    let op = OperationProcessor::new(std::sync::Arc::new(node.clone()));
     op.set_field_access_policy(schema_name, field_name, req.policy)
         .await
         .typed_handler_err()?;
@@ -211,7 +211,7 @@ pub async fn get_field_policy(
     user_hash: &str,
     node: &FoldNode,
 ) -> HandlerResult<FieldPolicyResponse> {
-    let op = OperationProcessor::new(node.clone());
+    let op = OperationProcessor::new(std::sync::Arc::new(node.clone()));
     let policy = op
         .get_field_access_policy(&schema_name, &field_name)
         .await
@@ -232,7 +232,7 @@ pub async fn get_all_field_policies(
     user_hash: &str,
     node: &FoldNode,
 ) -> HandlerResult<serde_json::Value> {
-    let op = OperationProcessor::new(node.clone());
+    let op = OperationProcessor::new(std::sync::Arc::new(node.clone()));
     let policies = op
         .get_all_field_policies(&schema_name)
         .await
@@ -256,7 +256,7 @@ pub async fn get_audit_log(
     user_hash: &str,
     node: &FoldNode,
 ) -> HandlerResult<AuditLogResponse> {
-    let op = OperationProcessor::new(node.clone());
+    let op = OperationProcessor::new(std::sync::Arc::new(node.clone()));
     let events = op.get_audit_log(limit).await.typed_handler_err()?;
     let count = events.as_array().map_or(0, |a| a.len());
     Ok(ApiResponse::success_with_user(
@@ -272,7 +272,7 @@ pub async fn get_identity_card(
     user_hash: &str,
     node: &FoldNode,
 ) -> HandlerResult<serde_json::Value> {
-    let op = OperationProcessor::new(node.clone());
+    let op = OperationProcessor::new(std::sync::Arc::new(node.clone()));
     let card = op.get_identity_card().typed_handler_err()?;
     Ok(ApiResponse::success_with_user(
         serde_json::json!({ "identity_card": card }),
@@ -286,7 +286,7 @@ pub async fn set_identity_card(
     user_hash: &str,
     node: &FoldNode,
 ) -> HandlerResult<serde_json::Value> {
-    let op = OperationProcessor::new(node.clone());
+    let op = OperationProcessor::new(std::sync::Arc::new(node.clone()));
     op.set_identity_card(req.display_name, req.contact_hint, req.birthday)
         .typed_handler_err()?;
     Ok(ApiResponse::success_with_user(
@@ -299,7 +299,7 @@ pub async fn set_identity_card(
 
 /// List all active contacts.
 pub async fn list_contacts(user_hash: &str, node: &FoldNode) -> HandlerResult<serde_json::Value> {
-    let op = OperationProcessor::new(node.clone());
+    let op = OperationProcessor::new(std::sync::Arc::new(node.clone()));
     let contacts = op.list_contacts().typed_handler_err()?;
     Ok(ApiResponse::success_with_user(
         serde_json::json!({ "contacts": contacts }),
@@ -313,7 +313,7 @@ pub async fn get_contact(
     user_hash: &str,
     node: &FoldNode,
 ) -> HandlerResult<serde_json::Value> {
-    let op = OperationProcessor::new(node.clone());
+    let op = OperationProcessor::new(std::sync::Arc::new(node.clone()));
     let contact = op.get_contact(public_key).typed_handler_err()?;
     Ok(ApiResponse::success_with_user(
         serde_json::json!({ "contact": contact }),
@@ -327,7 +327,7 @@ pub async fn revoke_contact(
     user_hash: &str,
     node: &FoldNode,
 ) -> HandlerResult<serde_json::Value> {
-    let op = OperationProcessor::new(node.clone());
+    let op = OperationProcessor::new(std::sync::Arc::new(node.clone()));
     op.revoke_contact(public_key).await.typed_handler_err()?;
     Ok(ApiResponse::success_with_user(
         serde_json::json!({"revoked": true}),
@@ -343,7 +343,7 @@ pub async fn create_trust_invite(
     user_hash: &str,
     node: &FoldNode,
 ) -> HandlerResult<serde_json::Value> {
-    let op = OperationProcessor::new(node.clone());
+    let op = OperationProcessor::new(std::sync::Arc::new(node.clone()));
     let invite = op
         .create_trust_invite(&req.proposed_role)
         .typed_handler_err()?;
@@ -366,7 +366,7 @@ pub async fn accept_trust_invite(
     user_hash: &str,
     node: &FoldNode,
 ) -> HandlerResult<serde_json::Value> {
-    let op = OperationProcessor::new(node.clone());
+    let op = OperationProcessor::new(std::sync::Arc::new(node.clone()));
     let invite = TrustInvite::from_token(&req.token)
         .map_err(fold_db::schema::SchemaError::InvalidData)
         .typed_handler_err()?;
@@ -472,7 +472,7 @@ pub async fn send_verified_invite(
     recipient_email: &str,
     user_hash: &str,
 ) -> HandlerResult<serde_json::Value> {
-    let op = OperationProcessor::new(node.clone());
+    let op = OperationProcessor::new(std::sync::Arc::new(node.clone()));
     let identity_card = op.get_identity_card().typed_handler_err()?;
     let sender_name = resolve_sender_name_from_identity(identity_card)?;
     let invite_id = publisher
@@ -517,7 +517,7 @@ pub async fn assign_contact_role(
     user_hash: &str,
     node: &FoldNode,
 ) -> HandlerResult<serde_json::Value> {
-    let op = OperationProcessor::new(node.clone());
+    let op = OperationProcessor::new(std::sync::Arc::new(node.clone()));
     op.assign_role_to_contact(public_key, &req.role_name)
         .await
         .typed_handler_err()?;
@@ -534,7 +534,7 @@ pub async fn remove_contact_role(
     user_hash: &str,
     node: &FoldNode,
 ) -> HandlerResult<serde_json::Value> {
-    let op = OperationProcessor::new(node.clone());
+    let op = OperationProcessor::new(std::sync::Arc::new(node.clone()));
     op.remove_role_from_contact(public_key, domain)
         .await
         .typed_handler_err()?;
@@ -550,7 +550,7 @@ pub async fn sharing_audit(
     user_hash: &str,
     node: &FoldNode,
 ) -> HandlerResult<crate::trust::sharing_audit::SharingAuditResult> {
-    let op = OperationProcessor::new(node.clone());
+    let op = OperationProcessor::new(std::sync::Arc::new(node.clone()));
     let result = op
         .audit_contact_access(public_key)
         .await
@@ -560,7 +560,7 @@ pub async fn sharing_audit(
 
 /// Overview of the node's sharing posture.
 pub async fn sharing_posture(user_hash: &str, node: &FoldNode) -> HandlerResult<serde_json::Value> {
-    let op = OperationProcessor::new(node.clone());
+    let op = OperationProcessor::new(std::sync::Arc::new(node.clone()));
     let result = op.sharing_posture().await.typed_handler_err()?;
     Ok(ApiResponse::success_with_user(result, user_hash))
 }
@@ -571,7 +571,7 @@ pub async fn apply_defaults_all(
     user_hash: &str,
     node: &FoldNode,
 ) -> HandlerResult<serde_json::Value> {
-    let op = OperationProcessor::new(node.clone());
+    let op = OperationProcessor::new(std::sync::Arc::new(node.clone()));
     let db = op.get_db_public().typed_handler_err()?;
     let schemas = db
         .schema_manager()

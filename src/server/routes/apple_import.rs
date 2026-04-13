@@ -93,7 +93,7 @@ async fn run_apple_notes_import(
     folder: Option<String>,
     progress_id: String,
     tracker: ProgressTracker,
-    node_arc: std::sync::Arc<tokio::sync::RwLock<crate::fold_node::FoldNode>>,
+    node_arc: std::sync::Arc<crate::fold_node::FoldNode>,
     service: std::sync::Arc<crate::ingestion::ingestion_service::IngestionService>,
 ) {
     use crate::ingestion::apple_import::notes;
@@ -139,7 +139,7 @@ async fn run_apple_notes_import(
 
     let batch_size = 10;
     let mut ingested = 0;
-    let node = node_arc.read().await;
+    let node = node_arc.as_ref();
 
     for (i, chunk) in records.chunks(batch_size).enumerate() {
         let request = IngestionRequest {
@@ -159,7 +159,7 @@ async fn run_apple_notes_import(
             request,
             &fold_db::logging::core::get_current_user_id().unwrap_or_default(),
             &tracker,
-            &node,
+            node,
             service.clone(),
         )
         .await
@@ -197,7 +197,7 @@ async fn run_apple_notes_import(
     _folder: Option<String>,
     progress_id: String,
     tracker: ProgressTracker,
-    _node_arc: std::sync::Arc<tokio::sync::RwLock<crate::fold_node::FoldNode>>,
+    _node_arc: std::sync::Arc<crate::fold_node::FoldNode>,
     _service: std::sync::Arc<crate::ingestion::ingestion_service::IngestionService>,
 ) {
     let mut job = Job::new(progress_id, JobType::Other("apple-notes".into()));
@@ -273,7 +273,7 @@ async fn run_apple_reminders_import(
     list: Option<String>,
     progress_id: String,
     tracker: ProgressTracker,
-    node_arc: std::sync::Arc<tokio::sync::RwLock<crate::fold_node::FoldNode>>,
+    node_arc: std::sync::Arc<crate::fold_node::FoldNode>,
     service: std::sync::Arc<crate::ingestion::ingestion_service::IngestionService>,
 ) {
     use crate::ingestion::apple_import::reminders;
@@ -330,7 +330,7 @@ async fn run_apple_reminders_import(
     job.message = format!("Extracted {} reminders, ingesting...", total);
     let _ = tracker.save(&job).await;
 
-    let node = node_arc.read().await;
+    let node = node_arc.as_ref();
     let request = IngestionRequest {
         data: serde_json::Value::Array(records),
         auto_execute: true,
@@ -348,7 +348,7 @@ async fn run_apple_reminders_import(
         request,
         &fold_db::logging::core::get_current_user_id().unwrap_or_default(),
         &tracker,
-        &node,
+        node,
         service,
     )
     .await
@@ -381,7 +381,7 @@ async fn run_apple_reminders_import(
     _list: Option<String>,
     progress_id: String,
     tracker: ProgressTracker,
-    _node_arc: std::sync::Arc<tokio::sync::RwLock<crate::fold_node::FoldNode>>,
+    _node_arc: std::sync::Arc<crate::fold_node::FoldNode>,
     _service: std::sync::Arc<crate::ingestion::ingestion_service::IngestionService>,
 ) {
     let mut job = Job::new(progress_id, JobType::Other("apple-reminders".into()));
@@ -457,7 +457,7 @@ async fn run_apple_photos_import(
     limit: usize,
     progress_id: String,
     tracker: ProgressTracker,
-    node_arc: std::sync::Arc<tokio::sync::RwLock<crate::fold_node::FoldNode>>,
+    node_arc: std::sync::Arc<crate::fold_node::FoldNode>,
     service: std::sync::Arc<crate::ingestion::ingestion_service::IngestionService>,
 ) {
     use crate::ingestion::apple_import::photos;
@@ -500,7 +500,7 @@ async fn run_apple_photos_import(
     job.message = format!("Exported {} photos, uploading...", total);
     let _ = tracker.save(&job).await;
 
-    let node = node_arc.read().await;
+    let node = node_arc.as_ref();
     let mut ingested = 0;
 
     for (i, path) in paths.iter().enumerate() {
@@ -568,7 +568,7 @@ async fn run_apple_photos_import(
                     request,
                     &fold_db::logging::core::get_current_user_id().unwrap_or_default(),
                     &tracker,
-                    &node,
+                    node,
                     service.clone(),
                 )
                 .await
@@ -618,7 +618,7 @@ async fn run_apple_photos_import(
     _limit: usize,
     progress_id: String,
     tracker: ProgressTracker,
-    _node_arc: std::sync::Arc<tokio::sync::RwLock<crate::fold_node::FoldNode>>,
+    _node_arc: std::sync::Arc<crate::fold_node::FoldNode>,
     _service: std::sync::Arc<crate::ingestion::ingestion_service::IngestionService>,
 ) {
     let mut job = Job::new(progress_id, JobType::Other("apple-photos".into()));
@@ -691,7 +691,7 @@ async fn run_apple_calendar_import(
     calendar: Option<String>,
     progress_id: String,
     tracker: ProgressTracker,
-    node_arc: std::sync::Arc<tokio::sync::RwLock<crate::fold_node::FoldNode>>,
+    node_arc: std::sync::Arc<crate::fold_node::FoldNode>,
     service: std::sync::Arc<crate::ingestion::ingestion_service::IngestionService>,
 ) {
     use crate::ingestion::apple_import::calendar as cal;
@@ -738,7 +738,7 @@ async fn run_apple_calendar_import(
 
     let batch_size = 10;
     let mut ingested = 0;
-    let node = node_arc.read().await;
+    let node = node_arc.as_ref();
 
     for (i, chunk) in records.chunks(batch_size).enumerate() {
         let request = IngestionRequest {
@@ -758,7 +758,7 @@ async fn run_apple_calendar_import(
             request,
             &fold_db::logging::core::get_current_user_id().unwrap_or_default(),
             &tracker,
-            &node,
+            node,
             service.clone(),
         )
         .await
@@ -796,7 +796,7 @@ async fn run_apple_calendar_import(
     _calendar: Option<String>,
     progress_id: String,
     tracker: ProgressTracker,
-    _node_arc: std::sync::Arc<tokio::sync::RwLock<crate::fold_node::FoldNode>>,
+    _node_arc: std::sync::Arc<crate::fold_node::FoldNode>,
     _service: std::sync::Arc<crate::ingestion::ingestion_service::IngestionService>,
 ) {
     let mut job = Job::new(progress_id, JobType::Other("apple-calendar".into()));

@@ -31,7 +31,7 @@ pub async fn run_sync(
     sources: &super::sync_config::EnabledSources,
     photos_limit: usize,
     user_id: &str,
-    node_arc: Arc<tokio::sync::RwLock<crate::fold_node::FoldNode>>,
+    node_arc: Arc<crate::fold_node::FoldNode>,
     service: Arc<IngestionService>,
     tracker: ProgressTracker,
 ) {
@@ -76,7 +76,7 @@ pub async fn run_sync(
 #[cfg(target_os = "macos")]
 async fn sync_notes(
     user_id: &str,
-    node_arc: Arc<tokio::sync::RwLock<crate::fold_node::FoldNode>>,
+    node_arc: Arc<crate::fold_node::FoldNode>,
     service: Arc<IngestionService>,
     tracker: ProgressTracker,
 ) {
@@ -110,7 +110,7 @@ async fn sync_notes(
     }
 
     let records = notes::to_json_records(&notes);
-    let node = node_arc.read().await;
+    let node = node_arc.as_ref();
     let uid = user_id.to_string();
 
     for chunk in records.chunks(10) {
@@ -127,14 +127,9 @@ async fn sync_notes(
             image_bytes: None,
         };
 
-        if let Err(e) = crate::handlers::ingestion::process_json(
-            request,
-            &uid,
-            &tracker,
-            &node,
-            service.clone(),
-        )
-        .await
+        if let Err(e) =
+            crate::handlers::ingestion::process_json(request, &uid, &tracker, node, service.clone())
+                .await
         {
             log_feature!(
                 LogFeature::Ingestion,
@@ -149,7 +144,7 @@ async fn sync_notes(
 #[cfg(target_os = "macos")]
 async fn sync_reminders(
     user_id: &str,
-    node_arc: Arc<tokio::sync::RwLock<crate::fold_node::FoldNode>>,
+    node_arc: Arc<crate::fold_node::FoldNode>,
     service: Arc<IngestionService>,
     tracker: ProgressTracker,
 ) {
@@ -183,7 +178,7 @@ async fn sync_reminders(
     }
 
     let records = reminders::to_json_records(&rems);
-    let node = node_arc.read().await;
+    let node = node_arc.as_ref();
 
     let request = IngestionRequest {
         data: serde_json::Value::Array(records),
@@ -199,7 +194,7 @@ async fn sync_reminders(
     };
 
     if let Err(e) =
-        crate::handlers::ingestion::process_json(request, user_id, &tracker, &node, service).await
+        crate::handlers::ingestion::process_json(request, user_id, &tracker, node, service).await
     {
         log_feature!(
             LogFeature::Ingestion,
@@ -213,7 +208,7 @@ async fn sync_reminders(
 #[cfg(target_os = "macos")]
 async fn sync_photos(
     user_id: &str,
-    node_arc: Arc<tokio::sync::RwLock<crate::fold_node::FoldNode>>,
+    node_arc: Arc<crate::fold_node::FoldNode>,
     service: Arc<IngestionService>,
     tracker: ProgressTracker,
     limit: usize,
@@ -247,7 +242,7 @@ async fn sync_photos(
         return;
     }
 
-    let node = node_arc.read().await;
+    let node = node_arc.as_ref();
 
     for path in &paths {
         let file_path = path.to_path_buf();
@@ -307,7 +302,7 @@ async fn sync_photos(
                     request,
                     user_id,
                     &tracker,
-                    &node,
+                    node,
                     service.clone(),
                 )
                 .await
@@ -339,7 +334,7 @@ async fn sync_photos(
 #[cfg(not(target_os = "macos"))]
 async fn sync_notes(
     _user_id: &str,
-    _node_arc: Arc<tokio::sync::RwLock<crate::fold_node::FoldNode>>,
+    _node_arc: Arc<crate::fold_node::FoldNode>,
     _service: Arc<IngestionService>,
     _tracker: ProgressTracker,
 ) {
@@ -353,7 +348,7 @@ async fn sync_notes(
 #[cfg(not(target_os = "macos"))]
 async fn sync_reminders(
     _user_id: &str,
-    _node_arc: Arc<tokio::sync::RwLock<crate::fold_node::FoldNode>>,
+    _node_arc: Arc<crate::fold_node::FoldNode>,
     _service: Arc<IngestionService>,
     _tracker: ProgressTracker,
 ) {
@@ -367,7 +362,7 @@ async fn sync_reminders(
 #[cfg(not(target_os = "macos"))]
 async fn sync_photos(
     _user_id: &str,
-    _node_arc: Arc<tokio::sync::RwLock<crate::fold_node::FoldNode>>,
+    _node_arc: Arc<crate::fold_node::FoldNode>,
     _service: Arc<IngestionService>,
     _tracker: ProgressTracker,
     _limit: usize,

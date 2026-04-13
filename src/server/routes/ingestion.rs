@@ -48,7 +48,7 @@ pub(crate) async fn require_ingestion_context(
 ) -> Result<
     (
         String,
-        Arc<tokio::sync::RwLock<crate::fold_node::FoldNode>>,
+        Arc<crate::fold_node::FoldNode>,
         Arc<IngestionService>,
     ),
     HttpResponse,
@@ -89,13 +89,13 @@ pub async fn process_json(
         };
 
     // Lock briefly — handler clones the node and spawns a background task
-    let node = node_arc.read().await;
+    let node = node_arc.as_ref();
 
     match crate::handlers::ingestion::process_json(
         request.into_inner(),
         &user_id,
         progress_tracker.get_ref(),
-        &node,
+        node,
         service,
     )
     .await
@@ -449,7 +449,7 @@ pub async fn batch_folder_ingest(
 
     let auto_execute = request.auto_execute.unwrap_or(true);
     let encryption_key = {
-        let node = node_arc.read().await;
+        let node = node_arc.as_ref();
         node.get_encryption_key()
     };
 

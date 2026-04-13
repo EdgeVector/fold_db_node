@@ -46,7 +46,7 @@ async fn load_schema(node: &FoldNode, schema_filename: &str) {
 async fn test_array_fields_survive_roundtrip() {
     let (node, _tmp) = setup_node().await;
     load_schema(&node, "TravelPreferences.json").await;
-    let processor = OperationProcessor::new(node);
+    let processor = OperationProcessor::new(std::sync::Arc::new(node));
 
     // Write a record with array fields
     let mut fields = HashMap::new();
@@ -150,7 +150,7 @@ async fn test_array_fields_survive_roundtrip() {
 async fn test_empty_array_fields_survive_roundtrip() {
     let (node, _tmp) = setup_node().await;
     load_schema(&node, "TravelPreferences.json").await;
-    let processor = OperationProcessor::new(node);
+    let processor = OperationProcessor::new(std::sync::Arc::new(node));
 
     let mut fields = HashMap::new();
     fields.insert("traveler".to_string(), json!("Bob"));
