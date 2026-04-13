@@ -86,3 +86,6 @@ steps:
 assertions:
   - { node: alice, field: contact_count, op: ">=", value: 1 }
   - { node: bob, field: notification_count, op: ">=", value: 1 }
+  # PR #396: author_pub_key plumbed through query response. Bob's Photography schema
+  # should contain a record authored by Alice (the shared photo).
+  - { node: bob, field: shared_record_count, schema: Photography, author_role: alice, op: ">=", value: 1 }
