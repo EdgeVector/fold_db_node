@@ -1,59 +1,66 @@
-//! Shared utilities, types, and file-processing helpers used by ingestion route handlers.
+//! Pure (framework-agnostic) helpers used by both ingestion HTTP routes and
+//! background workers such as the smart-folder batch coordinator and the
+//! Apple auto-sync scheduler.
+//!
+//! No actix/HTTP types live here — route handlers translate between these
+//! helpers and `HttpResponse`.
 
 use crate::ingestion::ingestion_service::IngestionService;
 use crate::ingestion::progress::ProgressService;
-use crate::ingestion::IngestionRequest;
-use crate::ingestion::ProgressTracker;
-use crate::server::http_server::AppState;
-use crate::server::routes::require_node;
-use actix_web::{web, HttpResponse, Responder};
+use crate::ingestion::{IngestionRequest, ProgressTracker};
 use fold_db::log_feature;
 use fold_db::logging::features::LogFeature;
 use serde::{Deserialize, Serialize};
-use serde_json::json;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
-/// Return a 503 response when the ingestion service is unavailable.
-pub(crate) fn ingestion_unavailable() -> HttpResponse {
-    HttpResponse::ServiceUnavailable().json(json!({
-        "success": false,
-        "error": "Ingestion service not available"
-    }))
+/// Response for batch folder ingestion
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct BatchFolderResponse {
+    pub success: bool,
+    pub batch_id: String,
+    pub files_found: usize,
+    pub file_progress_ids: Vec<FileProgressInfo>,
+    pub message: String,
 }
 
-/// Shared ingestion service state — wrapped in RwLock so config saves can reload it.
-pub type IngestionServiceState = tokio::sync::RwLock<Option<Arc<IngestionService>>>;
-
-/// Extract the user/node/ingestion triple that most ingestion handlers need.
-pub(crate) async fn require_ingestion_context(
-    state: &web::Data<AppState>,
-    ingestion_service: &web::Data<IngestionServiceState>,
-) -> Result<
-    (
-        String,
-        Arc<tokio::sync::RwLock<crate::fold_node::FoldNode>>,
-        Arc<IngestionService>,
-    ),
-    HttpResponse,
-> {
-    let (user_id, node_arc) = require_node(state).await?;
-    let service = get_ingestion_service(ingestion_service)
-        .await
-        .ok_or_else(ingestion_unavailable)?;
-    Ok((user_id, node_arc, service))
+/// Progress info for a single file in a batch
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct FileProgressInfo {
+    pub file_name: String,
+    pub progress_id: String,
 }
 
-/// Helper to get a clone of the current IngestionService Arc from the RwLock.
-pub async fn get_ingestion_service(
-    state: &web::Data<IngestionServiceState>,
-) -> Option<Arc<IngestionService>> {
-    state.read().await.clone()
+/// Error describing why folder validation failed.
+#[derive(Debug, Clone)]
+pub enum FolderValidationError {
+    NotFound(PathBuf),
+    NotADirectory(PathBuf),
+}
+
+impl std::fmt::Display for FolderValidationError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::NotFound(p) => write!(f, "Folder not found: {}", p.display()),
+            Self::NotADirectory(p) => write!(f, "Path is not a directory: {}", p.display()),
+        }
+    }
+}
+
+/// Validate that a path exists and is a directory.
+pub fn validate_folder(path: &Path) -> Result<(), FolderValidationError> {
+    if !path.exists() {
+        return Err(FolderValidationError::NotFound(path.to_path_buf()));
+    }
+    if !path.is_dir() {
+        return Err(FolderValidationError::NotADirectory(path.to_path_buf()));
+    }
+    Ok(())
 }
 
 /// Resolve a folder path — expands `~` to the home directory, absolute paths
 /// pass through, relative paths are resolved against the current working directory.
-pub(crate) fn resolve_folder_path(path: &str) -> PathBuf {
+pub fn resolve_folder_path(path: &str) -> PathBuf {
     let expanded = if path == "~" {
         dirs::home_dir().unwrap_or_else(|| PathBuf::from(path))
     } else if let Some(rest) = path.strip_prefix("~/") {
@@ -73,9 +80,9 @@ pub(crate) fn resolve_folder_path(path: &str) -> PathBuf {
     }
 }
 
-/// Initialize progress tracking for a list of files, returning a FileProgressInfo per file.
-pub(crate) async fn start_file_progress(
-    files: &[std::path::PathBuf],
+/// Initialize progress tracking for a list of files, returning a `FileProgressInfo` per file.
+pub async fn start_file_progress(
+    files: &[PathBuf],
     user_id: &str,
     progress_service: &ProgressService,
 ) -> Vec<FileProgressInfo> {
@@ -100,50 +107,16 @@ pub(crate) async fn start_file_progress(
     infos
 }
 
-/// Validate that a path exists and is a directory, returning an error HttpResponse if not.
-pub(crate) fn validate_folder(path: &Path) -> Result<(), HttpResponse> {
-    if !path.exists() {
-        return Err(HttpResponse::BadRequest().json(json!({
-            "success": false,
-            "error": format!("Folder not found: {}", path.display())
-        })));
-    }
-    if !path.is_dir() {
-        return Err(HttpResponse::BadRequest().json(json!({
-            "success": false,
-            "error": format!("Path is not a directory: {}", path.display())
-        })));
-    }
-    Ok(())
-}
-
-/// Response for batch folder ingestion
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct BatchFolderResponse {
-    pub success: bool,
-    pub batch_id: String,
-    pub files_found: usize,
-    pub file_progress_ids: Vec<FileProgressInfo>,
-    pub message: String,
-}
-
-/// Progress info for a single file in a batch
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct FileProgressInfo {
-    pub file_name: String,
-    pub progress_id: String,
-}
-
 /// Spawn a single background task that processes files sequentially.
 ///
 /// Files are ingested one at a time so that schema expansion works correctly:
 /// each file sees the schema established by previous files, avoiding redundant
 /// expansion chains and scattered data across schema versions.
 #[allow(clippy::too_many_arguments)]
-pub(crate) fn spawn_file_ingestion_tasks(
-    files_with_progress: impl IntoIterator<Item = (std::path::PathBuf, String)>,
+pub fn spawn_file_ingestion_tasks(
+    files_with_progress: impl IntoIterator<Item = (PathBuf, String)>,
     progress_tracker: &ProgressTracker,
-    node_arc: &std::sync::Arc<tokio::sync::RwLock<crate::fold_node::FoldNode>>,
+    node_arc: &Arc<tokio::sync::RwLock<crate::fold_node::FoldNode>>,
     user_id: &str,
     auto_execute: bool,
     ingestion_service: Arc<IngestionService>,
@@ -196,11 +169,11 @@ pub(crate) fn spawn_file_ingestion_tasks(
 /// Reads the file, computes its SHA256 hash, encrypts and stores in upload storage,
 /// then ingests the JSON content with file_hash metadata.
 #[allow(clippy::too_many_arguments)]
-pub(crate) async fn process_single_file_via_smart_folder(
-    file_path: &std::path::Path,
+pub async fn process_single_file_via_smart_folder(
+    file_path: &Path,
     progress_id: &str,
     progress_service: &ProgressService,
-    node_arc: &std::sync::Arc<tokio::sync::RwLock<crate::fold_node::FoldNode>>,
+    node_arc: &Arc<tokio::sync::RwLock<crate::fold_node::FoldNode>>,
     auto_execute: bool,
     service: &IngestionService,
     upload_storage: &fold_db::storage::UploadStorage,
@@ -321,26 +294,10 @@ pub(crate) async fn process_single_file_via_smart_folder(
     Ok(())
 }
 
-/// Query parameters for the Ollama models endpoint.
-#[derive(Debug, Deserialize)]
-pub struct OllamaModelsQuery {
-    pub base_url: String,
-}
-
-/// A single model entry returned by the Ollama `/api/tags` endpoint.
-#[derive(Debug, Serialize, Deserialize)]
-pub struct OllamaModelInfo {
-    pub name: String,
-    pub size: u64,
-}
-
-/// Return a 200 response with an empty models list and an error message.
-fn ollama_models_error(msg: String) -> HttpResponse {
-    HttpResponse::Ok().json(json!({ "models": [], "error": msg }))
-}
-
 /// Fetch and parse models from a remote Ollama instance.
-async fn fetch_ollama_models(base_url: &str) -> Result<Vec<OllamaModelInfo>, String> {
+///
+/// Lives here (not in an HTTP module) so it can be called from any context.
+pub async fn fetch_ollama_models(base_url: &str) -> Result<Vec<OllamaModelInfo>, String> {
     let url = format!("{}/api/tags", base_url);
     let client = reqwest::Client::builder()
         .timeout(std::time::Duration::from_secs(5))
@@ -373,16 +330,11 @@ async fn fetch_ollama_models(base_url: &str) -> Result<Vec<OllamaModelInfo>, Str
         .unwrap_or_default())
 }
 
-/// List models available on a remote Ollama instance.
-///
-/// Proxies `GET {base_url}/api/tags` and returns the model list.
-/// Short timeout (5 s) to avoid hanging on unreachable servers.
-pub async fn list_ollama_models(query: web::Query<OllamaModelsQuery>) -> impl Responder {
-    let base_url = query.base_url.trim_end_matches('/');
-    match fetch_ollama_models(base_url).await {
-        Ok(models) => HttpResponse::Ok().json(json!({ "models": models })),
-        Err(msg) => ollama_models_error(msg),
-    }
+/// A single model entry returned by the Ollama `/api/tags` endpoint.
+#[derive(Debug, Serialize, Deserialize)]
+pub struct OllamaModelInfo {
+    pub name: String,
+    pub size: u64,
 }
 
 #[cfg(test)]

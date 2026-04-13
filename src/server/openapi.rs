@@ -25,11 +25,11 @@ use utoipa::OpenApi;
         crate::server::routes::log::update_feature_level,
         crate::server::routes::log::reload_config,
         crate::server::routes::log::get_features,
-        crate::ingestion::routes::process_json,
-        crate::ingestion::routes::get_status,
-        crate::ingestion::routes::validate_json,
-        crate::ingestion::routes::get_ingestion_config,
-        crate::ingestion::routes::save_ingestion_config,
+        crate::server::routes::ingestion::process_json,
+        crate::server::routes::ingestion::get_status,
+        crate::server::routes::ingestion::validate_json,
+        crate::server::routes::ingestion::get_ingestion_config,
+        crate::server::routes::ingestion::save_ingestion_config,
         crate::fold_node::llm_query::routes::chat
     ),
     components(

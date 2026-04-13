@@ -1,10 +1,16 @@
-//! Smart folder route handlers — LLM-powered file filtering and ingestion.
+//! HTTP route handlers for smart-folder scan and ingest endpoints.
 
 use crate::ingestion::batch_controller::{BatchController, BatchControllerMap, PendingFile};
+use crate::ingestion::helpers::{
+    resolve_folder_path, start_file_progress, validate_folder, BatchFolderResponse,
+};
 use crate::ingestion::progress::ProgressService;
+use crate::ingestion::service_state::{get_ingestion_service, IngestionServiceState};
 use crate::ingestion::smart_folder;
+use crate::ingestion::smart_folder::batch::spawn_batch_coordinator;
 use crate::ingestion::ProgressTracker;
 use crate::server::http_server::AppState;
+use crate::server::routes::ingestion::{folder_error_to_response, require_ingestion_context};
 use crate::server::routes::{require_node, require_user_context};
 use actix_web::{web, HttpResponse, Responder};
 use fold_db::log_feature;
@@ -16,31 +22,19 @@ use std::path::Path;
 use std::sync::Arc;
 use tokio::sync::Mutex;
 
-use super::batch::spawn_batch_coordinator;
-use crate::ingestion::routes_helpers::{
-    get_ingestion_service, resolve_folder_path, start_file_progress, validate_folder,
-    BatchFolderResponse, IngestionServiceState,
-};
-
 /// Request for smart folder scanning
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct SmartFolderScanRequest {
-    /// Path to the folder to scan
     pub folder_path: String,
-    /// Maximum depth to scan (default: 5)
     pub max_depth: Option<usize>,
-    /// Maximum files to analyze (default: 500)
     pub max_files: Option<usize>,
 }
 
 /// Request for adjusting scan results via natural language
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct AdjustScanRequest {
-    /// The user's natural language instruction (e.g. "include all work files")
     pub instruction: String,
-    /// Current recommended files
     pub recommended_files: Vec<smart_folder::FileRecommendation>,
-    /// Current skipped files
     pub skipped_files: Vec<smart_folder::FileRecommendation>,
 }
 
@@ -48,37 +42,24 @@ pub struct AdjustScanRequest {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct AdjustScanResponse {
     pub success: bool,
-    /// AI explanation of what changed
     pub message: String,
-    /// Updated recommended files
     pub recommended_files: Vec<smart_folder::FileRecommendation>,
-    /// Updated skipped files
     pub skipped_files: Vec<smart_folder::FileRecommendation>,
-    /// Updated summary
     pub summary: std::collections::HashMap<String, usize>,
-    /// Updated total estimated cost
     pub total_estimated_cost: f64,
 }
 
 /// Request for smart folder ingestion (after user approval)
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct SmartFolderIngestRequest {
-    /// Base folder path
     pub folder_path: String,
-    /// List of file paths (relative to folder) to ingest
     pub files_to_ingest: Vec<String>,
-    /// Whether to auto-execute mutations (default: true)
     pub auto_execute: Option<bool>,
-    /// Optional spend limit in USD. None = no cap.
     pub spend_limit: Option<f64>,
-    /// Per-file estimated costs (parallel to files_to_ingest). Used for spend tracking.
     pub file_costs: Option<Vec<f64>>,
-    /// When true, bypass per-user file dedup so already-ingested files are reprocessed.
     #[serde(default)]
     pub force_reingest: bool,
-    /// Max files to process concurrently (default: 4, clamped 1..=8).
     pub max_concurrent: Option<usize>,
-    /// Optional org hash — when set, ingested data is stored under the org.
     pub org_hash: Option<String>,
 }
 
@@ -90,8 +71,6 @@ pub struct SmartFolderScanStartResponse {
 }
 
 /// Scan a folder and use LLM to recommend which files contain personal data.
-/// Returns a progress_id immediately; poll `/api/ingestion/progress/{id}` for steps,
-/// then fetch `/api/ingestion/smart-folder/scan/{id}` for the result.
 #[utoipa::path(
     post,
     path = "/api/ingestion/smart-folder/scan",
@@ -115,27 +94,23 @@ pub async fn smart_folder_scan(
         request.folder_path
     );
 
-    // Get user context
     let user_id = match require_user_context() {
         Ok(hash) => hash,
         Err(response) => return response,
     };
 
-    // Resolve folder path
     let folder_path = resolve_folder_path(&request.folder_path);
 
-    if let Err(response) = validate_folder(&folder_path) {
-        return response;
+    if let Err(err) = validate_folder(&folder_path) {
+        return folder_error_to_response(err);
     }
 
     let max_depth = request.max_depth.unwrap_or(10);
     let max_files = request.max_files.unwrap_or(100);
 
-    // Create progress tracking
     let progress_id = uuid::Uuid::new_v4().to_string();
     let tracker = progress_tracker.get_ref().clone();
 
-    // Initialize the job
     let mut job = Job::new(progress_id.clone(), JobType::Other("scan".to_string()));
     job = job.with_user(user_id.clone());
     job.message = "Starting scan...".to_string();
@@ -144,16 +119,13 @@ pub async fn smart_folder_scan(
         log::warn!("Failed to save scan progress: {}", e);
     }
 
-    // Get shared state for the background task
     let node_arc = require_node(&state).await.ok().map(|(_uid, arc)| arc);
-    let service_opt = get_ingestion_service(&ingestion_service).await;
+    let service_opt = get_ingestion_service(ingestion_service.get_ref()).await;
 
-    // Spawn the scan in the background
     let pid = progress_id.clone();
     tokio::spawn(async move {
         let user_id_inner = user_id.clone();
         fold_db::logging::core::run_with_user(&user_id, async move {
-            // Build a progress callback that writes to the tracker
             let tracker_cb = tracker.clone();
             let pid_cb = pid.clone();
             let progress_user_id = fold_db::logging::core::get_current_user_id()
@@ -162,7 +134,6 @@ pub async fn smart_folder_scan(
                 let tracker_inner = tracker_cb.clone();
                 let pid_inner = pid_cb.clone();
                 let uid = progress_user_id.clone();
-                // Fire-and-forget async update via a spawned task
                 tokio::spawn(async move {
                     fold_db::logging::core::run_with_user(&uid, async move {
                         if let Ok(Some(mut job)) = tracker_inner.load(&pid_inner).await {
@@ -192,12 +163,9 @@ pub async fn smart_folder_scan(
             )
             .await;
 
-            // Let any in-flight spawned progress-update tasks drain before
-            // writing the final Completed/Failed status.
             tokio::task::yield_now().await;
             tokio::time::sleep(std::time::Duration::from_millis(50)).await;
 
-            // Store result or error in the job
             if let Ok(Some(mut job)) = tracker.load(&pid).await {
                 match result {
                     Ok(response) => {
@@ -291,19 +259,12 @@ pub async fn smart_folder_ingest(
 
     let folder_path = resolve_folder_path(&request.folder_path);
 
-    // Extract user, node, and ingestion service up front
     let (user_id, node_arc, service) =
-        match crate::ingestion::routes_helpers::require_ingestion_context(
-            &state,
-            &ingestion_service,
-        )
-        .await
-        {
+        match require_ingestion_context(&state, &ingestion_service).await {
             Ok(ctx) => ctx,
             Err(response) => return response,
         };
 
-    // Validate files exist and build full paths with costs
     let file_costs = request.file_costs.as_deref();
     let mut files_to_process: Vec<std::path::PathBuf> = Vec::new();
     let mut costs: Vec<f64> = Vec::new();
@@ -334,10 +295,8 @@ pub async fn smart_folder_ingest(
         }));
     }
 
-    // Generate batch ID
     let batch_id = uuid::Uuid::new_v4().to_string();
 
-    // Create progress tracking for each file
     let progress_service = ProgressService::new(progress_tracker.get_ref().clone());
     let file_progress_ids =
         start_file_progress(&files_to_process, &user_id, &progress_service).await;
@@ -345,7 +304,6 @@ pub async fn smart_folder_ingest(
     let auto_execute = request.auto_execute.unwrap_or(true);
     let force_reingest = request.force_reingest;
 
-    // Build pending files for the batch controller
     let pending_files: Vec<PendingFile> = files_to_process
         .iter()
         .zip(file_progress_ids.iter())
@@ -357,7 +315,6 @@ pub async fn smart_folder_ingest(
         })
         .collect();
 
-    // Create the batch controller
     let is_local = service.is_local_provider();
     let controller = BatchController::new(
         batch_id.clone(),
@@ -367,7 +324,6 @@ pub async fn smart_folder_ingest(
     );
     let ctrl_arc = Arc::new(Mutex::new(controller));
 
-    // Register in the global map
     {
         let mut map_guard = batch_controller_map.lock().await;
         map_guard.insert(batch_id.clone(), ctrl_arc);
@@ -380,13 +336,11 @@ pub async fn smart_folder_ingest(
 
     // Default to 2 concurrent files.  Each file triggers an Ollama inference
     // call for schema recommendation, and Ollama processes requests serially.
-    // Higher concurrency just queues requests that eventually timeout (300s).
     let max_concurrent = request.max_concurrent.unwrap_or(2).clamp(1, 100);
 
-    // Spawn the concurrent coordinator
     spawn_batch_coordinator(
         batch_id.clone(),
-        batch_controller_map,
+        batch_controller_map.get_ref().clone(),
         progress_tracker.get_ref(),
         &node_arc,
         &user_id,
@@ -409,8 +363,6 @@ pub async fn smart_folder_ingest(
 }
 
 /// Adjust scan results using a natural language instruction.
-/// The LLM re-classifies files based on the user's instruction and returns
-/// an updated set of recommended/skipped files.
 #[utoipa::path(
     post,
     path = "/api/ingestion/smart-folder/adjust",
@@ -435,7 +387,7 @@ pub async fn adjust_scan_results(
         request.skipped_files.len(),
     );
 
-    let service = match get_ingestion_service(&ingestion_service).await {
+    let service = match get_ingestion_service(ingestion_service.get_ref()).await {
         Some(s) => s,
         None => {
             return HttpResponse::InternalServerError().json(json!({
@@ -445,14 +397,12 @@ pub async fn adjust_scan_results(
         }
     };
 
-    // Build the adjustment prompt
     let prompt = smart_folder::create_adjust_prompt(
         &request.instruction,
         &request.recommended_files,
         &request.skipped_files,
     );
 
-    // Call the LLM
     let llm_response = match smart_folder::call_llm_for_file_analysis(&prompt, &service).await {
         Ok(r) => r,
         Err(e) => {
@@ -464,7 +414,6 @@ pub async fn adjust_scan_results(
         }
     };
 
-    // Parse the LLM response into path → should_ingest decisions
     let all_files: Vec<smart_folder::FileRecommendation> = request
         .recommended_files
         .iter()
@@ -476,7 +425,6 @@ pub async fn adjust_scan_results(
 
     match smart_folder::parse_llm_file_recommendations(&llm_response, &all_paths) {
         Ok(updated_recs) => {
-            // Merge LLM decisions with existing file metadata
             let updated = smart_folder::merge_adjust_results(&all_files, &updated_recs);
 
             let mut recommended = Vec::new();
@@ -495,7 +443,6 @@ pub async fn adjust_scan_results(
                 }
             }
 
-            // Extract LLM explanation (try to parse it from between the JSON)
             let message = format!(
                 "Updated: {} files to ingest, {} skipped.",
                 recommended.len(),

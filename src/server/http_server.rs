@@ -9,7 +9,10 @@ use super::routes::{
 };
 use super::static_assets::Asset;
 use crate::fold_node::llm_query;
-use crate::ingestion::routes as ingestion_routes;
+use crate::server::routes::apple_import as apple_import_routes;
+use crate::server::routes::file_upload as file_upload_routes;
+use crate::server::routes::ingestion as ingestion_routes;
+use crate::server::routes::smart_folder as smart_folder_routes;
 use crate::utils::http_errors;
 use fold_db::error::{FoldDbError, FoldDbResult};
 
@@ -253,7 +256,7 @@ impl FoldHttpServer {
         let progress_tracker_data = web::Data::new(progress_tracker);
 
         // Spawn Apple auto-sync background scheduler
-        crate::ingestion::apple_import::sync_scheduler::spawn_sync_scheduler(
+        crate::server::routes::apple_import::spawn_sync_scheduler(
             sync_config_data.get_ref().clone(),
             app_state.clone(),
             ingestion_service_data.clone(),
@@ -469,7 +472,7 @@ impl FoldHttpServer {
         )
         .route(
             "/ingestion/upload",
-            web::post().to(crate::ingestion::file_handling::upload::upload_file),
+            web::post().to(file_upload_routes::upload_file),
         )
         .route(
             "/ingestion/status",
@@ -501,15 +504,15 @@ impl FoldHttpServer {
         )
         .route(
             "/ingestion/smart-folder/scan",
-            web::post().to(ingestion_routes::smart_folder_scan),
+            web::post().to(smart_folder_routes::smart_folder_scan),
         )
         .route(
             "/ingestion/smart-folder/scan/{id}",
-            web::get().to(ingestion_routes::get_scan_result),
+            web::get().to(smart_folder_routes::get_scan_result),
         )
         .route(
             "/ingestion/smart-folder/ingest",
-            web::post().to(ingestion_routes::smart_folder_ingest),
+            web::post().to(smart_folder_routes::smart_folder_ingest),
         )
         .route(
             "/ingestion/batch/{batch_id}",
@@ -525,11 +528,11 @@ impl FoldHttpServer {
         )
         .route(
             "/ingestion/smart-folder/adjust",
-            web::post().to(ingestion_routes::adjust_scan_results),
+            web::post().to(smart_folder_routes::adjust_scan_results),
         )
         .route(
             "/file/{hash}",
-            web::get().to(crate::ingestion::file_handling::upload::serve_file),
+            web::get().to(file_upload_routes::serve_file),
         )
         .route(
             "/ingestion/ollama/models",
@@ -537,35 +540,35 @@ impl FoldHttpServer {
         )
         .route(
             "/ingestion/apple-import/status",
-            web::get().to(ingestion_routes::apple_import_routes::apple_import_status),
+            web::get().to(apple_import_routes::apple_import_status),
         )
         .route(
             "/ingestion/apple-import/notes",
-            web::post().to(ingestion_routes::apple_import_routes::apple_import_notes),
+            web::post().to(apple_import_routes::apple_import_notes),
         )
         .route(
             "/ingestion/apple-import/reminders",
-            web::post().to(ingestion_routes::apple_import_routes::apple_import_reminders),
+            web::post().to(apple_import_routes::apple_import_reminders),
         )
         .route(
             "/ingestion/apple-import/photos",
-            web::post().to(ingestion_routes::apple_import_routes::apple_import_photos),
+            web::post().to(apple_import_routes::apple_import_photos),
         )
         .route(
             "/ingestion/apple-import/calendar",
-            web::post().to(ingestion_routes::apple_import_routes::apple_import_calendar),
+            web::post().to(apple_import_routes::apple_import_calendar),
         )
         .route(
             "/ingestion/apple-import/sync-config",
-            web::get().to(ingestion_routes::apple_import_routes::get_sync_config),
+            web::get().to(apple_import_routes::get_sync_config),
         )
         .route(
             "/ingestion/apple-import/sync-config",
-            web::post().to(ingestion_routes::apple_import_routes::update_sync_config),
+            web::post().to(apple_import_routes::update_sync_config),
         )
         .route(
             "/ingestion/apple-import/next-sync",
-            web::get().to(ingestion_routes::apple_import_routes::get_next_sync),
+            web::get().to(apple_import_routes::get_next_sync),
         );
     }
 
