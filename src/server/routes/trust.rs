@@ -1,11 +1,15 @@
-use crate::fold_node::OperationProcessor;
-use crate::handlers::{ApiResponse, IntoHandlerError, IntoTypedHandlerError};
+//! HTTP routes for trust management, field policies, identity cards,
+//! contacts, trust invites, sharing roles, and audit log.
+//!
+//! All business logic lives in `crate::handlers::trust`. This file is
+//! a thin HTTP-extraction layer: it pulls query/body/path data from
+//! `HttpRequest`, calls the shared handler, and maps `HandlerResult<T>`
+//! into `HttpResponse`.
+
+use crate::handlers::trust as trust_handlers;
 use crate::server::http_server::AppState;
 use crate::server::routes::{handler_result_to_response, node_or_return};
-use crate::trust::trust_invite::TrustInvite;
-use actix_web::{web, Responder};
-use fold_db::access::TrustTier;
-use serde::{Deserialize, Serialize};
+use actix_web::{web, HttpResponse, Responder};
 
 /// Fix base64 public keys that get mangled by URL path decoding.
 /// Actix decodes `%2B` → `+` correctly, but some clients/proxies
@@ -14,469 +18,172 @@ fn fix_pubkey_from_path(key: &str) -> String {
     key.replace(' ', "+")
 }
 
-// ===== Request/Response types =====
+// ===== Trust management =====
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct TrustGrantRequest {
-    pub public_key: String,
-    pub role: String,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct TrustGrantsResponse {
-    pub grants: Vec<TrustGrantEntry>,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct TrustGrantEntry {
-    pub public_key: String,
-    pub tier: TrustTier,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct TrustResolveResponse {
-    pub public_key: String,
-    pub tier: Option<TrustTier>,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct SetFieldPolicyRequest {
-    pub policy: serde_json::Value,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct FieldPolicyResponse {
-    pub schema_name: String,
-    pub field_name: String,
-    pub policy: Option<serde_json::Value>,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct AuditLogResponse {
-    pub events: serde_json::Value,
-    pub count: usize,
-}
-
-// ===== Trust management endpoints =====
-
-/// POST /api/trust/grant — assign a role to a public key (role determines tier)
+/// POST /api/trust/grant
 pub async fn grant_trust(
-    body: web::Json<TrustGrantRequest>,
+    body: web::Json<trust_handlers::TrustGrantRequest>,
     state: web::Data<AppState>,
 ) -> impl Responder {
     let (user_hash, node) = node_or_return!(state);
-    let op = OperationProcessor::new(node.clone());
-    handler_result_to_response(
-        async {
-            op.assign_role_to_contact(&body.public_key, &body.role)
-                .await
-                .typed_handler_err()?;
-            Ok(ApiResponse::success_with_user(
-                serde_json::json!({"granted": true, "role": body.role}),
-                user_hash,
-            ))
-        }
-        .await,
-    )
+    handler_result_to_response(trust_handlers::grant_trust(&body, &user_hash, &node).await)
 }
 
-/// DELETE /api/trust/revoke/{key} — revoke trust for a public key
+/// DELETE /api/trust/revoke/{key}
 pub async fn revoke_trust(path: web::Path<String>, state: web::Data<AppState>) -> impl Responder {
     let public_key = fix_pubkey_from_path(&path.into_inner());
     let (user_hash, node) = node_or_return!(state);
-    let op = OperationProcessor::new(node.clone());
-    handler_result_to_response(
-        async {
-            op.revoke_trust(&public_key).await.typed_handler_err()?;
-            Ok(ApiResponse::success_with_user(
-                serde_json::json!({"revoked": true}),
-                user_hash,
-            ))
-        }
-        .await,
-    )
+    handler_result_to_response(trust_handlers::revoke_trust(&public_key, &user_hash, &node).await)
 }
 
-/// GET /api/trust/grants — list all trust assignments
+/// GET /api/trust/grants
 pub async fn list_trust_grants(state: web::Data<AppState>) -> impl Responder {
     let (user_hash, node) = node_or_return!(state);
-    let op = OperationProcessor::new(node.clone());
-    handler_result_to_response(
-        async {
-            let grants = op.list_trust_grants().await.typed_handler_err()?;
-            let entries: Vec<TrustGrantEntry> = grants
-                .into_iter()
-                .map(|(public_key, tier)| TrustGrantEntry { public_key, tier })
-                .collect();
-            Ok(ApiResponse::success_with_user(
-                TrustGrantsResponse { grants: entries },
-                user_hash,
-            ))
-        }
-        .await,
-    )
+    handler_result_to_response(trust_handlers::list_trust_grants(&user_hash, &node).await)
 }
 
-/// GET /api/trust/resolve/{key} — check resolved trust tier for a key
+/// GET /api/trust/resolve/{key}
 pub async fn resolve_trust(path: web::Path<String>, state: web::Data<AppState>) -> impl Responder {
     let public_key = fix_pubkey_from_path(&path.into_inner());
     let (user_hash, node) = node_or_return!(state);
-    let op = OperationProcessor::new(node.clone());
-    handler_result_to_response(
-        async {
-            let tier = op
-                .resolve_trust_tier(&public_key)
-                .await
-                .typed_handler_err()?;
-            Ok(ApiResponse::success_with_user(
-                TrustResolveResponse { public_key, tier },
-                user_hash,
-            ))
-        }
-        .await,
-    )
+    handler_result_to_response(trust_handlers::resolve_trust(public_key, &user_hash, &node).await)
 }
 
-// ===== Schema policy endpoints =====
+// ===== Schema policy =====
 
-/// PUT /api/schema/{name}/field/{field}/policy — set field access policy
+/// PUT /api/schema/{name}/field/{field}/policy
 pub async fn set_field_policy(
     path: web::Path<(String, String)>,
-    body: web::Json<SetFieldPolicyRequest>,
+    body: web::Json<trust_handlers::SetFieldPolicyRequest>,
     state: web::Data<AppState>,
 ) -> impl Responder {
     let (schema_name, field_name) = path.into_inner();
     let (user_hash, node) = node_or_return!(state);
-    let op = OperationProcessor::new(node.clone());
     handler_result_to_response(
-        async {
-            op.set_field_access_policy(&schema_name, &field_name, body.into_inner().policy)
-                .await
-                .typed_handler_err()?;
-            Ok(ApiResponse::success_with_user(
-                serde_json::json!({"policy_set": true}),
-                user_hash,
-            ))
-        }
+        trust_handlers::set_field_policy(
+            &schema_name,
+            &field_name,
+            body.into_inner(),
+            &user_hash,
+            &node,
+        )
         .await,
     )
 }
 
-/// GET /api/schema/{name}/field/{field}/policy — get field access policy
+/// GET /api/schema/{name}/field/{field}/policy
 pub async fn get_field_policy(
     path: web::Path<(String, String)>,
     state: web::Data<AppState>,
 ) -> impl Responder {
     let (schema_name, field_name) = path.into_inner();
     let (user_hash, node) = node_or_return!(state);
-    let op = OperationProcessor::new(node.clone());
     handler_result_to_response(
-        async {
-            let policy = op
-                .get_field_access_policy(&schema_name, &field_name)
-                .await
-                .typed_handler_err()?;
-            Ok(ApiResponse::success_with_user(
-                FieldPolicyResponse {
-                    schema_name,
-                    field_name,
-                    policy,
-                },
-                user_hash,
-            ))
-        }
-        .await,
+        trust_handlers::get_field_policy(schema_name, field_name, &user_hash, &node).await,
     )
 }
 
-/// GET /api/schema/{name}/policies — get all field access policies for a schema
+/// GET /api/schema/{name}/policies
 pub async fn get_all_field_policies(
     path: web::Path<String>,
     state: web::Data<AppState>,
 ) -> impl Responder {
     let schema_name = path.into_inner();
     let (user_hash, node) = node_or_return!(state);
-    let op = OperationProcessor::new(node.clone());
     handler_result_to_response(
-        async {
-            let policies = op
-                .get_all_field_policies(&schema_name)
-                .await
-                .typed_handler_err()?;
-            let policies_json =
-                serde_json::to_value(&policies).handler_err("serialize policies")?;
-            Ok(ApiResponse::success_with_user(
-                serde_json::json!({
-                    "schema_name": schema_name,
-                    "field_policies": policies_json,
-                }),
-                user_hash,
-            ))
-        }
-        .await,
+        trust_handlers::get_all_field_policies(schema_name, &user_hash, &node).await,
     )
 }
 
-// ===== Audit log endpoint =====
+// ===== Audit log =====
 
-/// GET /api/trust/audit?limit=100 — get recent audit events
+/// GET /api/trust/audit?limit=100
 pub async fn get_audit_log(
-    query: web::Query<AuditLogQuery>,
+    query: web::Query<trust_handlers::AuditLogQuery>,
     state: web::Data<AppState>,
 ) -> impl Responder {
     let (user_hash, node) = node_or_return!(state);
-    let op = OperationProcessor::new(node.clone());
     let limit = query.limit.unwrap_or(100);
-    handler_result_to_response(
-        async {
-            let events = op.get_audit_log(limit).await.typed_handler_err()?;
-            let count = events.as_array().map_or(0, |a| a.len());
-            Ok(ApiResponse::success_with_user(
-                AuditLogResponse { events, count },
-                user_hash,
-            ))
-        }
-        .await,
-    )
+    handler_result_to_response(trust_handlers::get_audit_log(limit, &user_hash, &node).await)
 }
 
-#[derive(Debug, Deserialize)]
-pub struct AuditLogQuery {
-    pub limit: Option<usize>,
-}
+// ===== Identity card =====
 
-// ===== Identity card endpoints =====
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct SetIdentityCardRequest {
-    pub display_name: String,
-    #[serde(default)]
-    pub contact_hint: Option<String>,
-    #[serde(default)]
-    pub birthday: Option<String>,
-}
-
-/// GET /api/identity/card — get the current identity card
+/// GET /api/identity/card
 pub async fn get_identity_card(state: web::Data<AppState>) -> impl Responder {
     let (user_hash, node) = node_or_return!(state);
-    let op = OperationProcessor::new(node.clone());
-    handler_result_to_response(
-        async {
-            let card = op.get_identity_card().typed_handler_err()?;
-            Ok(ApiResponse::success_with_user(
-                serde_json::json!({ "identity_card": card }),
-                user_hash,
-            ))
-        }
-        .await,
-    )
+    handler_result_to_response(trust_handlers::get_identity_card(&user_hash, &node).await)
 }
 
-/// PUT /api/identity/card — set or update the identity card
+/// PUT /api/identity/card
 pub async fn set_identity_card(
-    body: web::Json<SetIdentityCardRequest>,
+    body: web::Json<trust_handlers::SetIdentityCardRequest>,
     state: web::Data<AppState>,
 ) -> impl Responder {
     let (user_hash, node) = node_or_return!(state);
-    let op = OperationProcessor::new(node.clone());
-    let req = body.into_inner();
     handler_result_to_response(
-        async {
-            op.set_identity_card(req.display_name, req.contact_hint, req.birthday)
-                .typed_handler_err()?;
-            Ok(ApiResponse::success_with_user(
-                serde_json::json!({"saved": true}),
-                user_hash,
-            ))
-        }
-        .await,
+        trust_handlers::set_identity_card(body.into_inner(), &user_hash, &node).await,
     )
 }
 
-// ===== Contact book endpoints =====
+// ===== Contacts =====
 
-/// GET /api/contacts — list all active contacts
+/// GET /api/contacts
 pub async fn list_contacts(state: web::Data<AppState>) -> impl Responder {
     let (user_hash, node) = node_or_return!(state);
-    let op = OperationProcessor::new(node.clone());
-    handler_result_to_response(
-        async {
-            let contacts = op.list_contacts().typed_handler_err()?;
-            Ok(ApiResponse::success_with_user(
-                serde_json::json!({ "contacts": contacts }),
-                user_hash,
-            ))
-        }
-        .await,
-    )
+    handler_result_to_response(trust_handlers::list_contacts(&user_hash, &node).await)
 }
 
-/// GET /api/contacts/{key} — get a specific contact
+/// GET /api/contacts/{key}
 pub async fn get_contact(path: web::Path<String>, state: web::Data<AppState>) -> impl Responder {
     let public_key = fix_pubkey_from_path(&path.into_inner());
     let (user_hash, node) = node_or_return!(state);
-    let op = OperationProcessor::new(node.clone());
-    handler_result_to_response(
-        async {
-            let contact = op.get_contact(&public_key).typed_handler_err()?;
-            Ok(ApiResponse::success_with_user(
-                serde_json::json!({ "contact": contact }),
-                user_hash,
-            ))
-        }
-        .await,
-    )
+    handler_result_to_response(trust_handlers::get_contact(&public_key, &user_hash, &node).await)
 }
 
-// ===== Trust invite endpoints =====
-
-#[derive(Debug, Clone, Deserialize)]
-pub struct CreateInviteRequest {
-    pub proposed_role: String,
+/// DELETE /api/contacts/{key}
+pub async fn revoke_contact(path: web::Path<String>, state: web::Data<AppState>) -> impl Responder {
+    let public_key = fix_pubkey_from_path(&path.into_inner());
+    let (user_hash, node) = node_or_return!(state);
+    handler_result_to_response(trust_handlers::revoke_contact(&public_key, &user_hash, &node).await)
 }
 
-#[derive(Debug, Clone, Deserialize)]
-pub struct AcceptInviteRequest {
-    /// The trust invite token (base64url).
-    pub token: String,
-    /// Override the proposed role (optional).
-    #[serde(default)]
-    pub accept_role: Option<String>,
-    /// Whether to trust back (create reciprocal invite).
-    #[serde(default)]
-    pub trust_back: bool,
-}
+// ===== Trust invites =====
 
-/// POST /api/trust/invite — create a signed trust invite token
+/// POST /api/trust/invite
 pub async fn create_trust_invite(
-    body: web::Json<CreateInviteRequest>,
+    body: web::Json<trust_handlers::CreateInviteRequest>,
     state: web::Data<AppState>,
 ) -> impl Responder {
     let (user_hash, node) = node_or_return!(state);
-    let op = OperationProcessor::new(node.clone());
-    handler_result_to_response(
-        async {
-            let invite = op
-                .create_trust_invite(&body.proposed_role)
-                .typed_handler_err()?;
-            let token = invite
-                .to_token()
-                .map_err(fold_db::schema::SchemaError::InvalidData)
-                .typed_handler_err()?;
-            Ok(ApiResponse::success_with_user(
-                serde_json::json!({
-                    "invite": invite,
-                    "token": token,
-                }),
-                user_hash,
-            ))
-        }
-        .await,
-    )
+    handler_result_to_response(trust_handlers::create_trust_invite(&body, &user_hash, &node).await)
 }
 
-/// POST /api/trust/invite/accept — accept a trust invite token
+/// POST /api/trust/invite/accept
 pub async fn accept_trust_invite(
-    body: web::Json<AcceptInviteRequest>,
+    body: web::Json<trust_handlers::AcceptInviteRequest>,
     state: web::Data<AppState>,
 ) -> impl Responder {
     let (user_hash, node) = node_or_return!(state);
-    let op = OperationProcessor::new(node.clone());
-    let req = body.into_inner();
     handler_result_to_response(
-        async {
-            let invite = TrustInvite::from_token(&req.token)
-                .map_err(fold_db::schema::SchemaError::InvalidData)
-                .typed_handler_err()?;
-
-            let reciprocal = op
-                .accept_trust_invite(&invite, req.accept_role.as_deref(), req.trust_back)
-                .await
-                .typed_handler_err()?;
-
-            let reciprocal_token = match &reciprocal {
-                Some(inv) => Some(
-                    inv.to_token()
-                        .map_err(fold_db::schema::SchemaError::InvalidData)
-                        .typed_handler_err()?,
-                ),
-                None => None,
-            };
-
-            Ok(ApiResponse::success_with_user(
-                serde_json::json!({
-                    "accepted": true,
-                    "sender": {
-                        "display_name": invite.sender_identity.display_name,
-                        "contact_hint": invite.sender_identity.contact_hint,
-                        "public_key": invite.sender_pub_key,
-                    },
-                    "reciprocal_invite": reciprocal,
-                    "reciprocal_token": reciprocal_token,
-                }),
-                user_hash,
-            ))
-        }
-        .await,
+        trust_handlers::accept_trust_invite(body.into_inner(), &user_hash, &node).await,
     )
 }
 
-/// POST /api/trust/invite/preview — preview a trust invite without accepting
+/// POST /api/trust/invite/preview
 pub async fn preview_trust_invite(
     body: web::Json<serde_json::Value>,
     state: web::Data<AppState>,
 ) -> impl Responder {
     let (_user_hash, _node) = node_or_return!(state);
-    handler_result_to_response(
-        async {
-            let token = body
-                .get("token")
-                .and_then(|v| v.as_str())
-                .ok_or_else(|| {
-                    fold_db::schema::SchemaError::InvalidData("Missing 'token' field".to_string())
-                })
-                .typed_handler_err()?;
-
-            let invite = TrustInvite::from_token(token)
-                .map_err(fold_db::schema::SchemaError::InvalidData)
-                .typed_handler_err()?;
-
-            let valid = invite
-                .verify()
-                .map_err(fold_db::schema::SchemaError::InvalidData)
-                .typed_handler_err()?;
-
-            Ok(ApiResponse::success(serde_json::json!({
-                "valid": valid,
-                "sender": {
-                    "display_name": invite.sender_identity.display_name,
-                    "contact_hint": invite.sender_identity.contact_hint,
-                    "public_key": invite.sender_pub_key,
-                    "fingerprint": invite.fingerprint(),
-                },
-                "proposed_role": invite.proposed_role,
-                "created_at": invite.created_at,
-            })))
+    let token = match body.get("token").and_then(|v| v.as_str()) {
+        Some(t) => t.to_string(),
+        None => {
+            return HttpResponse::BadRequest()
+                .json(serde_json::json!({"error": "Missing 'token' field"}));
         }
-        .await,
-    )
-}
-
-/// DELETE /api/contacts/{key} — revoke trust and remove contact
-pub async fn revoke_contact(path: web::Path<String>, state: web::Data<AppState>) -> impl Responder {
-    let public_key = fix_pubkey_from_path(&path.into_inner());
-    let (user_hash, node) = node_or_return!(state);
-    let op = OperationProcessor::new(node.clone());
-    handler_result_to_response(
-        async {
-            op.revoke_contact(&public_key).await.typed_handler_err()?;
-            Ok(ApiResponse::success_with_user(
-                serde_json::json!({"revoked": true}),
-                user_hash,
-            ))
-        }
-        .await,
-    )
+    };
+    handler_result_to_response(trust_handlers::preview_trust_invite(&token).await)
 }
 
 // ===== Trust invite relay (via Exemem discovery service) =====
@@ -537,27 +244,24 @@ async fn get_discovery_config_and_token(
 /// returning 503 on failure.
 async fn require_publisher(
     state: &AppState,
-) -> Result<crate::discovery::publisher::DiscoveryPublisher, actix_web::HttpResponse> {
-    let (url, key, token) = get_discovery_config_and_token(state).await.map_err(|e| {
-        actix_web::HttpResponse::ServiceUnavailable().json(serde_json::json!({"error": e}))
-    })?;
+) -> Result<crate::discovery::publisher::DiscoveryPublisher, HttpResponse> {
+    let (url, key, token) = get_discovery_config_and_token(state)
+        .await
+        .map_err(|e| HttpResponse::ServiceUnavailable().json(serde_json::json!({"error": e})))?;
     Ok(crate::discovery::publisher::DiscoveryPublisher::new(
         key, url, token,
     ))
 }
 
 /// Extract a required string field from a JSON body, returning 400 on absence.
-fn require_json_str<'a>(
-    body: &'a serde_json::Value,
-    field: &str,
-) -> Result<&'a str, actix_web::HttpResponse> {
+fn require_json_str<'a>(body: &'a serde_json::Value, field: &str) -> Result<&'a str, HttpResponse> {
     body.get(field).and_then(|v| v.as_str()).ok_or_else(|| {
-        actix_web::HttpResponse::BadRequest()
+        HttpResponse::BadRequest()
             .json(serde_json::json!({"error": format!("Missing '{}' field", field)}))
     })
 }
 
-/// POST /api/trust/invite/share — upload invite token to Exemem relay, return short ID
+/// POST /api/trust/invite/share
 pub async fn share_trust_invite(
     body: web::Json<serde_json::Value>,
     state: web::Data<AppState>,
@@ -571,22 +275,12 @@ pub async fn share_trust_invite(
         Ok(t) => t.to_string(),
         Err(r) => return r,
     };
-
-    match publisher.store_trust_invite(&invite_token).await {
-        Ok(invite_id) => actix_web::HttpResponse::Ok().json(ApiResponse::success_with_user(
-            serde_json::json!({
-                "invite_id": invite_id,
-                "shared": true,
-            }),
-            user_hash,
-        )),
-        Err(e) => {
-            actix_web::HttpResponse::InternalServerError().json(serde_json::json!({"error": e}))
-        }
-    }
+    handler_result_to_response(
+        trust_handlers::share_trust_invite(&publisher, &invite_token, &user_hash).await,
+    )
 }
 
-/// GET /api/trust/invite/fetch?id=xxx — fetch invite token from Exemem relay by ID
+/// GET /api/trust/invite/fetch?id=xxx
 pub async fn fetch_shared_invite(
     query: web::Query<std::collections::HashMap<String, String>>,
     state: web::Data<AppState>,
@@ -599,20 +293,14 @@ pub async fn fetch_shared_invite(
     let invite_id = match query.get("id") {
         Some(id) => id.clone(),
         None => {
-            return actix_web::HttpResponse::BadRequest()
+            return HttpResponse::BadRequest()
                 .json(serde_json::json!({"error": "Missing 'id' query parameter"}));
         }
     };
-
-    match publisher.fetch_trust_invite(&invite_id).await {
-        Ok(token) => {
-            actix_web::HttpResponse::Ok().json(serde_json::json!({"ok": true, "token": token}))
-        }
-        Err(e) => actix_web::HttpResponse::NotFound().json(serde_json::json!({"error": e})),
-    }
+    handler_result_to_response(trust_handlers::fetch_shared_invite(&publisher, &invite_id).await)
 }
 
-/// POST /api/trust/invite/send-verified — send invite with email verification
+/// POST /api/trust/invite/send-verified
 pub async fn send_verified_invite(
     body: web::Json<serde_json::Value>,
     state: web::Data<AppState>,
@@ -634,22 +322,19 @@ pub async fn send_verified_invite(
         Ok(n) => n.to_string(),
         Err(r) => return r,
     };
-
-    match publisher
-        .send_verified_invite(&invite_token, &recipient_email, &sender_name)
-        .await
-    {
-        Ok(invite_id) => actix_web::HttpResponse::Ok().json(ApiResponse::success_with_user(
-            serde_json::json!({"ok": true, "invite_id": invite_id}),
-            user_hash,
-        )),
-        Err(e) => {
-            actix_web::HttpResponse::InternalServerError().json(serde_json::json!({"error": e}))
-        }
-    }
+    handler_result_to_response(
+        trust_handlers::send_verified_invite(
+            &publisher,
+            &invite_token,
+            &recipient_email,
+            &sender_name,
+            &user_hash,
+        )
+        .await,
+    )
 }
 
-/// POST /api/trust/invite/verify — verify a code and fetch the invite token
+/// POST /api/trust/invite/verify
 pub async fn verify_invite_code(
     body: web::Json<serde_json::Value>,
     state: web::Data<AppState>,
@@ -667,52 +352,33 @@ pub async fn verify_invite_code(
         Ok(c) => c.to_string(),
         Err(r) => return r,
     };
-
-    match publisher.verify_invite_code(&invite_id, &code).await {
-        Ok(invite_token) => actix_web::HttpResponse::Ok()
-            .json(serde_json::json!({"ok": true, "token": invite_token})),
-        Err(e) => actix_web::HttpResponse::BadRequest().json(serde_json::json!({"error": e})),
-    }
+    handler_result_to_response(
+        trust_handlers::verify_invite_code(&publisher, &invite_id, &code).await,
+    )
 }
 
-// ===== Sharing roles endpoints =====
+// ===== Sharing roles =====
 
-/// GET /api/sharing/roles — list all role definitions
+/// GET /api/sharing/roles
 pub async fn list_sharing_roles(state: web::Data<AppState>) -> impl Responder {
     let (_user_hash, _node) = node_or_return!(state);
-    let config = crate::trust::sharing_roles::SharingRoleConfig::load().unwrap_or_default();
-    actix_web::HttpResponse::Ok().json(serde_json::json!({"roles": config.roles}))
+    handler_result_to_response(trust_handlers::list_sharing_roles())
 }
 
-#[derive(Debug, Deserialize)]
-pub struct AssignRoleRequest {
-    pub role_name: String,
-}
-
-/// POST /api/contacts/{key}/role — assign a role to a contact
+/// POST /api/contacts/{key}/role
 pub async fn assign_contact_role(
     path: web::Path<String>,
-    body: web::Json<AssignRoleRequest>,
+    body: web::Json<trust_handlers::AssignRoleRequest>,
     state: web::Data<AppState>,
 ) -> impl Responder {
     let public_key = fix_pubkey_from_path(&path.into_inner());
     let (user_hash, node) = node_or_return!(state);
-    let op = OperationProcessor::new(node.clone());
     handler_result_to_response(
-        async {
-            op.assign_role_to_contact(&public_key, &body.role_name)
-                .await
-                .typed_handler_err()?;
-            Ok(ApiResponse::success_with_user(
-                serde_json::json!({"assigned": true, "role": body.role_name}),
-                user_hash,
-            ))
-        }
-        .await,
+        trust_handlers::assign_contact_role(&public_key, &body, &user_hash, &node).await,
     )
 }
 
-/// DELETE /api/contacts/{key}/role/{domain} — remove role from contact in domain
+/// DELETE /api/contacts/{key}/role/{domain}
 pub async fn remove_contact_role(
     path: web::Path<(String, String)>,
     state: web::Data<AppState>,
@@ -720,206 +386,74 @@ pub async fn remove_contact_role(
     let (pk_raw, domain) = path.into_inner();
     let public_key = fix_pubkey_from_path(&pk_raw);
     let (user_hash, node) = node_or_return!(state);
-    let op = OperationProcessor::new(node.clone());
     handler_result_to_response(
-        async {
-            op.remove_role_from_contact(&public_key, &domain)
-                .await
-                .typed_handler_err()?;
-            Ok(ApiResponse::success_with_user(
-                serde_json::json!({"removed": true, "domain": domain}),
-                user_hash,
-            ))
-        }
-        .await,
+        trust_handlers::remove_contact_role(&public_key, &domain, &user_hash, &node).await,
     )
 }
 
-/// GET /api/sharing/audit/{key} — audit what a contact can see
+/// GET /api/sharing/audit/{key}
 pub async fn sharing_audit(path: web::Path<String>, state: web::Data<AppState>) -> impl Responder {
     let public_key = fix_pubkey_from_path(&path.into_inner());
     let (user_hash, node) = node_or_return!(state);
-    let op = OperationProcessor::new(node.clone());
-    handler_result_to_response(
-        async {
-            let result = op
-                .audit_contact_access(&public_key)
-                .await
-                .typed_handler_err()?;
-            Ok(ApiResponse::success_with_user(result, user_hash))
-        }
-        .await,
-    )
+    handler_result_to_response(trust_handlers::sharing_audit(&public_key, &user_hash, &node).await)
 }
 
-/// GET /api/sharing/posture — overview of the node's sharing posture
+/// GET /api/sharing/posture
 pub async fn sharing_posture(state: web::Data<AppState>) -> impl Responder {
     let (user_hash, node) = node_or_return!(state);
-    let op = OperationProcessor::new(node.clone());
-    handler_result_to_response(
-        async {
-            let result = op.sharing_posture().await.typed_handler_err()?;
-            Ok(ApiResponse::success_with_user(result, user_hash))
-        }
-        .await,
-    )
+    handler_result_to_response(trust_handlers::sharing_posture(&user_hash, &node).await)
 }
 
-/// POST /api/sharing/apply-defaults — apply classification-based access policies
-/// to all approved schemas. Query param ?force=true overwrites existing policies.
+/// POST /api/sharing/apply-defaults
 pub async fn apply_defaults_all(
     query: web::Query<std::collections::HashMap<String, String>>,
     state: web::Data<AppState>,
 ) -> impl Responder {
     let (user_hash, node) = node_or_return!(state);
-    let op = OperationProcessor::new(node.clone());
     let force = query.get("force").map(|v| v == "true").unwrap_or(false);
-    handler_result_to_response(
-        async {
-            let db = op.get_db_public().typed_handler_err()?;
-            let schemas = db
-                .schema_manager()
-                .get_schemas_with_states()
-                .typed_handler_err()?;
-            drop(db);
-
-            let mut total_applied = 0usize;
-            let mut schemas_updated = 0usize;
-
-            for sws in &schemas {
-                if sws.state != fold_db::schema::SchemaState::Approved {
-                    continue;
-                }
-                match op
-                    .apply_classification_defaults_with_force(&sws.schema.name, force)
-                    .await
-                {
-                    Ok(count) if count > 0 => {
-                        total_applied += count;
-                        schemas_updated += 1;
-                    }
-                    _ => {}
-                }
-            }
-
-            Ok(ApiResponse::success_with_user(
-                serde_json::json!({
-                    "schemas_updated": schemas_updated,
-                    "fields_updated": total_applied,
-                }),
-                user_hash,
-            ))
-        }
-        .await,
-    )
+    handler_result_to_response(trust_handlers::apply_defaults_all(force, &user_hash, &node).await)
 }
 
-// ===== Decline invites =====
+// ===== Declined invites =====
 
-/// POST /api/trust/invite/decline — decline a trust invite (record locally)
+/// POST /api/trust/invite/decline
 pub async fn decline_trust_invite(
     body: web::Json<serde_json::Value>,
     state: web::Data<AppState>,
 ) -> impl Responder {
     let (_user_hash, _node) = node_or_return!(state);
-    handler_result_to_response(
-        async {
-            let token = body
-                .get("token")
-                .and_then(|v| v.as_str())
-                .ok_or_else(|| {
-                    fold_db::schema::SchemaError::InvalidData("Missing 'token' field".to_string())
-                })
-                .typed_handler_err()?;
-
-            let invite = TrustInvite::from_token(token)
-                .map_err(fold_db::schema::SchemaError::InvalidData)
-                .typed_handler_err()?;
-
-            let mut store = crate::trust::declined_invites::DeclinedInviteStore::load()
-                .map_err(fold_db::schema::SchemaError::InvalidData)
-                .typed_handler_err()?;
-
-            store.decline(crate::trust::declined_invites::DeclinedInvite {
-                sender_pub_key: invite.sender_pub_key.clone(),
-                sender_display_name: invite.sender_identity.display_name.clone(),
-                sender_contact_hint: invite.sender_identity.contact_hint.clone(),
-                proposed_role: invite.proposed_role.clone(),
-                declined_at: chrono::Utc::now(),
-                nonce: invite.nonce.clone(),
-            });
-
-            store
-                .save()
-                .map_err(fold_db::schema::SchemaError::InvalidData)
-                .typed_handler_err()?;
-
-            Ok(ApiResponse::success(serde_json::json!({
-                "declined": true,
-                "sender": invite.sender_identity.display_name,
-            })))
+    let token = match body.get("token").and_then(|v| v.as_str()) {
+        Some(t) => t.to_string(),
+        None => {
+            return HttpResponse::BadRequest()
+                .json(serde_json::json!({"error": "Missing 'token' field"}));
         }
-        .await,
-    )
+    };
+    handler_result_to_response(trust_handlers::decline_trust_invite(&token).await)
 }
 
-/// GET /api/trust/invite/declined — list all declined invites
+/// GET /api/trust/invite/declined
 pub async fn list_declined_invites(state: web::Data<AppState>) -> impl Responder {
     let (_user_hash, _node) = node_or_return!(state);
-    handler_result_to_response(
-        async {
-            let store = crate::trust::declined_invites::DeclinedInviteStore::load()
-                .map_err(fold_db::schema::SchemaError::InvalidData)
-                .typed_handler_err()?;
-            Ok(ApiResponse::success(
-                serde_json::json!({"declined_invites": store.invites}),
-            ))
-        }
-        .await,
-    )
+    handler_result_to_response(trust_handlers::list_declined_invites().await)
 }
 
-/// DELETE /api/trust/invite/declined/{nonce} — undo a decline (change mind)
+/// DELETE /api/trust/invite/declined/{nonce}
 pub async fn undecline_invite(
     path: web::Path<String>,
     state: web::Data<AppState>,
 ) -> impl Responder {
     let nonce = path.into_inner();
     let (_user_hash, _node) = node_or_return!(state);
-    handler_result_to_response(
-        async {
-            let mut store = crate::trust::declined_invites::DeclinedInviteStore::load()
-                .map_err(fold_db::schema::SchemaError::InvalidData)
-                .typed_handler_err()?;
-            let removed = store.undecline(&nonce);
-            store
-                .save()
-                .map_err(fold_db::schema::SchemaError::InvalidData)
-                .typed_handler_err()?;
-            Ok(ApiResponse::success(
-                serde_json::json!({"undeclined": removed}),
-            ))
-        }
-        .await,
-    )
+    handler_result_to_response(trust_handlers::undecline_invite(&nonce).await)
 }
 
 // ===== Sent invites =====
 
-/// GET /api/trust/invite/sent — list all sent invites with status
+/// GET /api/trust/invite/sent
 pub async fn list_sent_invites(state: web::Data<AppState>) -> impl Responder {
     let (_user_hash, _node) = node_or_return!(state);
-    handler_result_to_response(
-        async {
-            let store = crate::trust::sent_invites::SentInviteStore::load()
-                .map_err(fold_db::schema::SchemaError::InvalidData)
-                .typed_handler_err()?;
-            Ok(ApiResponse::success(
-                serde_json::json!({"sent_invites": store.invites}),
-            ))
-        }
-        .await,
-    )
+    handler_result_to_response(trust_handlers::list_sent_invites().await)
 }
 
 /// GET /api/sharing/exemem-status — check Exemem connectivity and token validity
@@ -928,7 +462,7 @@ pub async fn exemem_status(state: web::Data<AppState>) -> impl Responder {
 
     let config_result = get_discovery_config_and_token(&state).await;
     match config_result {
-        Err(msg) => actix_web::HttpResponse::Ok().json(serde_json::json!({
+        Err(msg) => HttpResponse::Ok().json(serde_json::json!({
             "connected": false,
             "reason": msg,
         })),
@@ -951,7 +485,7 @@ pub async fn exemem_status(state: web::Data<AppState>) -> impl Responder {
                 serde_json::json!({"valid": true, "format": "opaque"})
             };
 
-            actix_web::HttpResponse::Ok().json(serde_json::json!({
+            HttpResponse::Ok().json(serde_json::json!({
                 "connected": true,
                 "discovery_url": url,
                 "token": token_info,
