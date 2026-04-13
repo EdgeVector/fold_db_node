@@ -85,46 +85,17 @@ impl FoldNode {
 
     /// Load E2E encryption keys.
     ///
-    /// If a legacy `e2e.key` file exists, uses it (backward compatibility).
-    /// Otherwise, derives encryption keys from the Ed25519 identity seed —
+    /// Derives encryption keys from the Ed25519 identity seed —
     /// one key for everything (identity + encryption).
     async fn load_e2e_keys(
-        config: &NodeConfig,
+        _config: &NodeConfig,
         private_key_b64: &str,
     ) -> FoldDbResult<fold_db::crypto::E2eKeys> {
-        let base = if let Some(config_dir) = &config.config_dir {
-            config_dir
-                .parent()
-                .map(|p| p.to_path_buf())
-                .unwrap_or_else(|| config_dir.clone())
-        } else {
-            crate::utils::paths::folddb_home()
-                .map_err(|e| FoldDbError::Config(format!("Cannot resolve FOLDDB_HOME: {e}")))?
-        };
-        let e2e_key_path = base.join("e2e.key");
-
-        if e2e_key_path.exists() {
-            // Legacy: read existing e2e.key file
-            let bytes = crate::sensitive_io::read_sensitive(&e2e_key_path)
-                .map_err(|e| FoldDbError::Config(format!("Failed to read E2E key: {}", e)))?;
-            if bytes.len() != 32 {
-                return Err(FoldDbError::Config(format!(
-                    "E2E key file has invalid length: {} (expected 32)",
-                    bytes.len()
-                )));
-            }
-            let mut secret = [0u8; 32];
-            secret.copy_from_slice(&bytes);
-            log::info!("Loaded legacy e2e.key file (will be migrated in future)");
-            Ok(fold_db::crypto::E2eKeys::from_secret(&secret))
-        } else {
-            // Derive from Ed25519 identity — one key for everything
-            let seed = Self::extract_ed25519_seed(private_key_b64)?;
-            let keys = fold_db::crypto::E2eKeys::from_ed25519_seed(&seed)
-                .map_err(|e| FoldDbError::Config(format!("Failed to derive E2E keys: {}", e)))?;
-            log::info!("E2E keys derived from node identity (no separate e2e.key)");
-            Ok(keys)
-        }
+        let seed = Self::extract_ed25519_seed(private_key_b64)?;
+        let keys = fold_db::crypto::E2eKeys::from_ed25519_seed(&seed)
+            .map_err(|e| FoldDbError::Config(format!("Failed to derive E2E keys: {}", e)))?;
+        log::info!("E2E keys derived from node identity (no separate e2e.key)");
+        Ok(keys)
     }
 
     /// Extract the 32-byte Ed25519 seed from a base64-encoded private key.
