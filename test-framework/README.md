@@ -52,12 +52,12 @@ test-framework/
 
 - bash 4+
 - `jq`, `yq`
+- `ajv` CLI (`npm i -g ajv-cli`) — **required** for scenario schema validation.
+  Missing ajv is a hard error; `run-scenario.sh` refuses to start without it
+  so typos in action names fail at parse time instead of silently no-op'ing.
 - `aws` CLI (invite code management + admin Lambda invokes)
 - `curl`
 - `python3` with `pynacl` (per-node Ed25519 key generation — `pip3 install pynacl`)
-- Optional: `ajv` CLI (`npm i -g ajv-cli`) to enable scenario schema validation.
-  When absent, validation is silently skipped — so install it in CI if you
-  want typo detection.
 
 ## How a scenario runs
 
