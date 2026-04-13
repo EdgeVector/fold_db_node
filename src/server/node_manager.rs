@@ -96,49 +96,22 @@ impl NodeManager {
                 .with_identity(&keypair.public_key_base64(), &keypair.secret_key_base64());
         }
 
-        // Load E2E encryption keys — derived from identity if no legacy e2e.key exists
-        let e2e_keys = {
-            let folddb_home = crate::utils::paths::folddb_home().map_err(|e| {
-                NodeManagerError::ConfigurationError(format!("Cannot resolve FOLDDB_HOME: {e}"))
+        // E2E encryption keys — unified identity: derived from the node's
+        // Ed25519 seed. In the pre-signup state (no identity yet) we use an
+        // ephemeral in-memory random key that will be replaced once the user
+        // creates an identity and the node is re-initialized.
+        let e2e_keys = if let Some(ref priv_key) = node_config.private_key {
+            let seed = crate::fold_node::FoldNode::extract_ed25519_seed(priv_key).map_err(|e| {
+                NodeManagerError::ConfigurationError(format!("Failed to extract seed: {}", e))
             })?;
-            let e2e_key_path = folddb_home.join("e2e.key");
-
-            if e2e_key_path.exists() {
-                // Legacy: use existing e2e.key file
-                fold_db::crypto::E2eKeys::load_or_generate(&e2e_key_path)
-                    .await
-                    .map_err(|e| {
-                        NodeManagerError::ConfigurationError(format!(
-                            "Failed to load E2E keys: {}",
-                            e
-                        ))
-                    })?
-            } else if let Some(ref priv_key) = node_config.private_key {
-                // Derive from identity — one key for everything
-                let seed =
-                    crate::fold_node::FoldNode::extract_ed25519_seed(priv_key).map_err(|e| {
-                        NodeManagerError::ConfigurationError(format!(
-                            "Failed to extract seed: {}",
-                            e
-                        ))
-                    })?;
-                fold_db::crypto::E2eKeys::from_ed25519_seed(&seed).map_err(|e| {
-                    NodeManagerError::ConfigurationError(format!(
-                        "Failed to derive E2E keys: {}",
-                        e
-                    ))
-                })?
-            } else {
-                // No identity yet — generate random key (pre-signup state)
-                fold_db::crypto::E2eKeys::load_or_generate(&e2e_key_path)
-                    .await
-                    .map_err(|e| {
-                        NodeManagerError::ConfigurationError(format!(
-                            "Failed to load E2E keys: {}",
-                            e
-                        ))
-                    })?
-            }
+            fold_db::crypto::E2eKeys::from_ed25519_seed(&seed).map_err(|e| {
+                NodeManagerError::ConfigurationError(format!("Failed to derive E2E keys: {}", e))
+            })?
+        } else {
+            // Pre-signup: ephemeral, in-memory only — never persisted.
+            let mut secret = [0u8; 32];
+            rand::RngCore::fill_bytes(&mut rand::thread_rng(), &mut secret);
+            fold_db::crypto::E2eKeys::from_secret(&secret)
         };
 
         // Ensure the Exemem factory can find the correct storage path.

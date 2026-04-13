@@ -257,22 +257,13 @@ impl OperationProcessor {
         // Create a temporary SyncEngine to perform the initial upload.
         // The existing Sled data is already encrypted — we just need to snapshot
         // it and upload to S3.
-        // Load E2E keys — derive from identity if no legacy e2e.key
+        // Derive E2E keys from the node's Ed25519 identity (unified identity).
         let e2e_keys = {
-            let folddb_home = crate::utils::paths::folddb_home()
-                .map_err(|e| FoldDbError::Config(format!("Cannot resolve FOLDDB_HOME: {e}")))?;
-            let e2e_key_path = folddb_home.join("e2e.key");
-            if e2e_key_path.exists() {
-                fold_db::crypto::E2eKeys::load_or_generate(&e2e_key_path)
-                    .await
-                    .map_err(|e| FoldDbError::Config(format!("Failed to load E2E keys: {e}")))?
-            } else {
-                let priv_key = &self.node.private_key;
-                let seed = crate::fold_node::FoldNode::extract_ed25519_seed(priv_key)
-                    .map_err(|e| FoldDbError::Config(format!("Failed to extract seed: {e}")))?;
-                fold_db::crypto::E2eKeys::from_ed25519_seed(&seed)
-                    .map_err(|e| FoldDbError::Config(format!("Failed to derive E2E keys: {e}")))?
-            }
+            let priv_key = &self.node.private_key;
+            let seed = crate::fold_node::FoldNode::extract_ed25519_seed(priv_key)
+                .map_err(|e| FoldDbError::Config(format!("Failed to extract seed: {e}")))?;
+            fold_db::crypto::E2eKeys::from_ed25519_seed(&seed)
+                .map_err(|e| FoldDbError::Config(format!("Failed to derive E2E keys: {e}")))?
         };
 
         let data_dir = std::env::var("FOLD_STORAGE_PATH").unwrap_or_else(|_| "data".to_string());
