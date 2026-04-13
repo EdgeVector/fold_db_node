@@ -282,7 +282,7 @@ async fn test_paintings_use_single_schema() {
     eprintln!("Successes: {}/{}", successes, painting_files.len());
 
     // 5. Verify: list all schemas and check states
-    let processor = OperationProcessor::new(node.clone());
+    let processor = OperationProcessor::new(std::sync::Arc::new(node.clone()));
     let all_schemas = processor
         .list_schemas()
         .await

@@ -404,7 +404,7 @@ async fn test_semantic_field_matching_full_pipeline() {
     eprintln!("Schema B: wrote 'Starry Night' by 'Vincent van Gogh' (via creator→artist rename)");
 
     // 10. Query the expanded schema and verify the record was written
-    let processor = OperationProcessor::new(node.clone());
+    let processor = OperationProcessor::new(std::sync::Arc::new(node.clone()));
     let (keys_list, total) = processor
         .list_schema_keys(&schema_b_name, 0, 100)
         .await

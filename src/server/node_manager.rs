@@ -16,7 +16,7 @@ use fold_db::security::Ed25519KeyPair;
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 use std::sync::Arc;
-use tokio::sync::{Mutex, RwLock};
+use tokio::sync::RwLock;
 
 /// Persisted node identity keypair
 #[derive(Serialize, Deserialize)]
@@ -46,11 +46,17 @@ pub struct NodeManagerConfig {
 }
 
 /// Manages the FoldDB node instance
+///
+/// FoldNode is `Sync` (all mutation happens through interior mutability in its
+/// own sub-locks). The outer wrapper only needs to (a) lazily create the node
+/// on first access and (b) allow invalidation for reconfiguration. A single
+/// `RwLock<Option<Arc<FoldNode>>>` covers both: concurrent reads on the hot
+/// path, writes only for init/invalidate. No per-request `RwLock<FoldNode>`.
 pub struct NodeManager {
     /// Configuration for creating the node (wrapped in RwLock for live reconfiguration)
     config: RwLock<NodeManagerConfig>,
-    /// Shared node (single-tenant, avoids Sled lock conflicts)
-    shared_node: Arc<Mutex<Option<Arc<RwLock<FoldNode>>>>>,
+    /// Shared node slot. `None` until first request creates it.
+    shared_node: RwLock<Option<Arc<FoldNode>>>,
 }
 
 impl NodeManager {
@@ -58,30 +64,36 @@ impl NodeManager {
     pub fn new(config: NodeManagerConfig) -> Self {
         Self {
             config: RwLock::new(config),
-            shared_node: Arc::new(Mutex::new(None)),
+            shared_node: RwLock::new(None),
         }
     }
 
     /// Get the node, creating one if it doesn't exist.
     ///
-    /// Returns a shared node for all requests. Uses a mutex to ensure only one
-    /// node is ever created, avoiding race conditions where multiple concurrent
-    /// requests could try to create the node simultaneously.
-    pub async fn get_node(&self, user_id: &str) -> Result<Arc<RwLock<FoldNode>>, NodeManagerError> {
-        let mut shared = self.shared_node.lock().await;
+    /// Fast path: concurrent read lock clones the cached `Arc`.
+    /// Slow path: upgrades to a write lock to create the node. The
+    /// double-check under the write lock prevents racing creators from
+    /// building two nodes.
+    pub async fn get_node(&self, user_id: &str) -> Result<Arc<FoldNode>, NodeManagerError> {
+        // Fast path: concurrent readers, uncontended once cached.
+        if let Some(node) = self.shared_node.read().await.as_ref() {
+            return Ok(node.clone());
+        }
 
-        if let Some(node) = shared.as_ref() {
+        // Slow path: serialize creators.
+        let mut slot = self.shared_node.write().await;
+        if let Some(node) = slot.as_ref() {
+            // Another creator won the race.
             return Ok(node.clone());
         }
 
         let node = self.create_node(user_id).await?;
-        *shared = Some(node.clone());
-
+        *slot = Some(node.clone());
         Ok(node)
     }
 
     /// Create a new node instance for a user
-    async fn create_node(&self, user_id: &str) -> Result<Arc<RwLock<FoldNode>>, NodeManagerError> {
+    async fn create_node(&self, user_id: &str) -> Result<Arc<FoldNode>, NodeManagerError> {
         // Clone the base config and set user_id
         let mut node_config = self.config.read().await.base_config.clone();
 
@@ -188,7 +200,7 @@ impl NodeManager {
         .await
         .map_err(|e| NodeManagerError::NodeCreationError(e.to_string()))?;
 
-        Ok(Arc::new(RwLock::new(node)))
+        Ok(Arc::new(node))
     }
 
     /// Load an existing identity keypair from disk, or generate a new random one.
@@ -278,7 +290,7 @@ impl NodeManager {
     /// Invalidate the cached node, forcing recreation on next access.
     /// Used when configuration changes require the node to be recreated.
     pub async fn invalidate_all_nodes(&self) {
-        let mut shared = self.shared_node.lock().await;
+        let mut shared = self.shared_node.write().await;
         *shared = None;
     }
 
@@ -296,8 +308,8 @@ impl NodeManager {
     /// Set a pre-existing node.
     /// This is useful for embedded scenarios where the node is created externally.
     pub async fn set_node(&self, _user_id: &str, node: FoldNode) {
-        let node_arc = Arc::new(RwLock::new(node));
-        let mut shared = self.shared_node.lock().await;
+        let node_arc = Arc::new(node);
+        let mut shared = self.shared_node.write().await;
         *shared = Some(node_arc);
     }
 
@@ -350,9 +362,8 @@ impl NodeManager {
     ///
     /// Returns None if no node is loaded yet.
     pub async fn get_sled_pool(&self) -> Option<std::sync::Arc<fold_db::storage::SledPool>> {
-        let shared = self.shared_node.lock().await;
-        if let Some(node_arc) = shared.as_ref() {
-            let node = node_arc.read().await;
+        let shared = self.shared_node.read().await;
+        if let Some(node) = shared.as_ref() {
             if let Ok(fold_db) = node.get_fold_db() {
                 return fold_db.sled_pool().cloned();
             }
@@ -362,7 +373,7 @@ impl NodeManager {
 
     /// Check if an active node exists.
     pub async fn has_active_node(&self) -> bool {
-        let shared = self.shared_node.lock().await;
+        let shared = self.shared_node.read().await;
         shared.is_some()
     }
 }

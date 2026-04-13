@@ -45,13 +45,13 @@ pub async fn process_json(
         };
 
     // Lock briefly — handler clones the node and spawns a background task
-    let node = node_arc.read().await;
+    let node = node_arc.as_ref();
 
     match crate::handlers::ingestion::process_json(
         request.into_inner(),
         &user_id,
         progress_tracker.get_ref(),
-        &node,
+        node,
         service,
     )
     .await

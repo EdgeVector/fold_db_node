@@ -55,7 +55,7 @@ pub async fn execute_mutation_from_components(
     user_hash: &str,
     node: &FoldNode,
 ) -> HandlerResult<SingleMutationResponse> {
-    let processor = OperationProcessor::new(node.clone());
+    let processor = OperationProcessor::new(std::sync::Arc::new(node.clone()));
     let caller_pub_key = node.get_node_public_key().to_string();
 
     let mutation = Mutation::new(
@@ -108,7 +108,7 @@ pub async fn execute_mutations_batch_from_json(
     user_hash: &str,
     node: &FoldNode,
 ) -> HandlerResult<MutationResponse> {
-    let processor = OperationProcessor::new(node.clone());
+    let processor = OperationProcessor::new(std::sync::Arc::new(node.clone()));
     let count = mutations_data.len();
 
     let mutation_ids = processor

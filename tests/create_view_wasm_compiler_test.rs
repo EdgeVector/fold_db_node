@@ -208,7 +208,7 @@ mod integration {
 
         let (node, _tmp) = setup_node().await;
         load_schema(&node, "BlogPost.json").await;
-        let processor = OperationProcessor::new(node);
+        let processor = OperationProcessor::new(std::sync::Arc::new(node));
 
         insert_blog_post(
             &processor,
@@ -286,7 +286,7 @@ fn transform_impl(input: Value) -> Value {
 
         let (node, _tmp) = setup_node().await;
         load_schema(&node, "BlogPost.json").await;
-        let processor = OperationProcessor::new(node);
+        let processor = OperationProcessor::new(std::sync::Arc::new(node));
 
         insert_blog_post(&processor, "My Title", "some content", "2024-03-01").await;
 
@@ -351,7 +351,7 @@ fn transform_impl(input: Value) -> Value {
 
         let (node, _tmp) = setup_node().await;
         load_schema(&node, "BlogPost.json").await;
-        let processor = OperationProcessor::new(node);
+        let processor = OperationProcessor::new(std::sync::Arc::new(node));
 
         let rust_code = r#"
 fn transform_impl(input: Value) -> Value {
@@ -402,7 +402,7 @@ fn transform_impl(input: Value) -> Value {
 
         let (node, _tmp) = setup_node().await;
         load_schema(&node, "BlogPost.json").await;
-        let processor = OperationProcessor::new(node);
+        let processor = OperationProcessor::new(std::sync::Arc::new(node));
 
         insert_blog_post(&processor, "Original", "one two three", "2024-01-01").await;
 

@@ -175,7 +175,7 @@ mod tests {
 
         let (node, _tmp) = setup_node().await;
         load_schema(&node, "BlogPost.json").await;
-        let processor = OperationProcessor::new(node);
+        let processor = OperationProcessor::new(std::sync::Arc::new(node));
 
         insert_blog_post(&processor, "Hello", "one two three four five", "2024-01-01").await;
         insert_blog_post(&processor, "World", "six seven", "2024-02-01").await;
@@ -250,7 +250,7 @@ mod tests {
         }
 
         let (node, _tmp) = setup_node().await;
-        let processor = OperationProcessor::new(node);
+        let processor = OperationProcessor::new(std::sync::Arc::new(node));
 
         let params = json!({
             "schema_type": "Single",
@@ -276,7 +276,7 @@ mod tests {
         }
 
         let (node, _tmp) = setup_node().await;
-        let processor = OperationProcessor::new(node);
+        let processor = OperationProcessor::new(std::sync::Arc::new(node));
 
         let params = json!({
             "name": "MissingTransform",
@@ -302,7 +302,7 @@ mod tests {
         }
 
         let (node, _tmp) = setup_node().await;
-        let processor = OperationProcessor::new(node);
+        let processor = OperationProcessor::new(std::sync::Arc::new(node));
 
         let params = json!({
             "name": "BadView",
@@ -329,7 +329,7 @@ mod tests {
         }
 
         let (node, _tmp) = setup_node().await;
-        let processor = OperationProcessor::new(node);
+        let processor = OperationProcessor::new(std::sync::Arc::new(node));
 
         let params = json!({
             "name": "BadType",
@@ -357,7 +357,7 @@ mod tests {
 
         let (node, _tmp) = setup_node().await;
         load_schema(&node, "BlogPost.json").await;
-        let processor = OperationProcessor::new(node);
+        let processor = OperationProcessor::new(std::sync::Arc::new(node));
 
         insert_blog_post(
             &processor,
@@ -437,7 +437,7 @@ mod tests {
 
         let (node, _tmp) = setup_node().await;
         load_schema(&node, "BlogPost.json").await;
-        let processor = OperationProcessor::new(node);
+        let processor = OperationProcessor::new(std::sync::Arc::new(node));
 
         let tool_params = json!({
             "name": "ListableView",

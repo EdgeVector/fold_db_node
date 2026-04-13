@@ -31,7 +31,7 @@ async fn setup_node() -> (OperationProcessor, FoldNode, String, PathBuf, TempDir
         .with_identity(&pub_key, &keypair.secret_key_base64())
         .with_config_dir(config_dir.clone());
     let node = FoldNode::new(config).await.unwrap();
-    let processor = OperationProcessor::new(node.clone());
+    let processor = OperationProcessor::new(std::sync::Arc::new(node.clone()));
     (processor, node, pub_key, config_dir, temp_dir)
 }
 

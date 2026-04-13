@@ -56,7 +56,7 @@ pub async fn get_indexing_status(
     user_hash: &str,
     node: &FoldNode,
 ) -> HandlerResult<IndexingStatusResponse> {
-    let status = OperationProcessor::new(node.clone())
+    let status = OperationProcessor::new(std::sync::Arc::new(node.clone()))
         .get_indexing_status()
         .await
         .typed_handler_err()?;

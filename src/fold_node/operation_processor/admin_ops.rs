@@ -126,7 +126,7 @@ impl OperationProcessor {
             max_depth,
             max_files,
             None,
-            Some(&self.node),
+            Some(self.node.as_ref()),
         )
         .await
         .map_err(|e| FoldDbError::Other(e.to_string()))
@@ -197,7 +197,7 @@ impl OperationProcessor {
         let response = service
             .process_json_with_node_and_progress(
                 request,
-                &self.node,
+                self.node.as_ref(),
                 &progress_service,
                 progress_id,
             )
@@ -231,7 +231,7 @@ impl OperationProcessor {
             .run_agent_query(
                 user_query,
                 &schemas,
-                &self.node,
+                self.node.as_ref(),
                 user_hash,
                 max_iterations,
                 &[],

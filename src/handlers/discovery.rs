@@ -605,7 +605,7 @@ async fn connect_inner(
     target_str: &str,
 ) -> HandlerResult<()> {
     // Check if already connected to this pseudonym
-    let op = OperationProcessor::new(node.clone());
+    let op = OperationProcessor::new(std::sync::Arc::new(node.clone()));
     let book_path = op
         .contact_book_path()
         .map_err(|e| HandlerError::Internal(format!("Failed to resolve contacts path: {e}")))?;
@@ -1181,7 +1181,7 @@ async fn dispatch_decrypted_message(
 
             // Mutual contact detection via network intersection
             let mutual_contacts = if let Some(ref keys) = payload.network_keys {
-                let op = OperationProcessor::new(node.clone());
+                let op = OperationProcessor::new(std::sync::Arc::new(node.clone()));
                 let our_book = op
                     .contact_book_path()
                     .ok()
@@ -1405,7 +1405,7 @@ async fn handle_incoming_query(
         payload.schema_name
     );
 
-    let op = OperationProcessor::new(node.clone());
+    let op = OperationProcessor::new(std::sync::Arc::new(node.clone()));
     let query = Query::new(payload.schema_name.clone(), payload.fields.clone());
 
     // Query execution errors are reported back to the caller in the response
@@ -1519,7 +1519,7 @@ async fn handle_incoming_schema_list_request(
         payload.request_id
     );
 
-    let op = OperationProcessor::new(node.clone());
+    let op = OperationProcessor::new(std::sync::Arc::new(node.clone()));
     let db = op
         .get_db_public()
         .map_err(|e| HandlerError::Internal(format!("get db for schema list: {e}")))?;
@@ -1613,7 +1613,7 @@ async fn process_accepted_connection(
         .as_ref()
         .ok_or_else(|| HandlerError::Internal("No identity card in acceptance".to_string()))?;
 
-    let op = OperationProcessor::new(node.clone());
+    let op = OperationProcessor::new(std::sync::Arc::new(node.clone()));
     let roles_path = op
         .sharing_roles_path()
         .map_err(|e| HandlerError::Internal(format!("Failed to resolve roles path: {e}")))?;
@@ -1680,7 +1680,7 @@ pub async fn respond_to_request(
     };
 
     let role_name = req.role.as_deref().unwrap_or("acquaintance");
-    let op = OperationProcessor::new(node.clone());
+    let op = OperationProcessor::new(std::sync::Arc::new(node.clone()));
     let roles_path = op
         .sharing_roles_path()
         .map_err(|e| HandlerError::Internal(format!("Failed to resolve roles path: {e}")))?;
@@ -2761,7 +2761,7 @@ pub async fn send_data_share(
     master_key: &[u8],
 ) -> HandlerResult<DataShareResponse> {
     // 1. Look up recipient in contact book
-    let op = OperationProcessor::new(node.clone());
+    let op = OperationProcessor::new(std::sync::Arc::new(node.clone()));
     let book_path = op
         .contact_book_path()
         .map_err(|e| HandlerError::Internal(format!("Failed to resolve contacts path: {e}")))?;
@@ -3034,7 +3034,7 @@ pub async fn initiate_referral_query(
     }
 
     // Load contact book
-    let op = OperationProcessor::new(node.clone());
+    let op = OperationProcessor::new(std::sync::Arc::new(node.clone()));
     let book_path = op
         .contact_book_path()
         .map_err(|e| HandlerError::Internal(format!("Failed to resolve contacts path: {e}")))?;
@@ -3173,7 +3173,7 @@ async fn handle_incoming_referral_query(
     master_key: &[u8],
     publisher: &DiscoveryPublisher,
 ) -> Result<DispatchOutcome, HandlerError> {
-    let op = OperationProcessor::new(node.clone());
+    let op = OperationProcessor::new(std::sync::Arc::new(node.clone()));
     let book_path = op
         .contact_book_path()
         .map_err(|e| HandlerError::Internal(format!("contact book path: {e}")))?;
@@ -3306,7 +3306,7 @@ async fn handle_incoming_referral_response(
     // on the payload. We do NOT hide the error from the caller — we just
     // render an explicit "Unknown contact" label.
     let voucher_display_name = {
-        let op = OperationProcessor::new(node.clone());
+        let op = OperationProcessor::new(std::sync::Arc::new(node.clone()));
         match op.contact_book_path() {
             Ok(book_path) => {
                 let contact_book = ContactBook::load_from(&book_path).unwrap_or_default();

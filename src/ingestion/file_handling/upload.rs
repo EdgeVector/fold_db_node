@@ -332,7 +332,7 @@ pub async fn upload_file(
         Err(response) => return response,
     };
     let encryption_key = {
-        let node = node_arc.read().await;
+        let node = node_arc.as_ref();
         node.get_encryption_key()
     };
 
@@ -354,7 +354,7 @@ pub async fn upload_file(
 
     // Check per-user file dedup — skip entire pipeline if this user already ingested this file
     {
-        let node = node_arc.read().await;
+        let node = node_arc.as_ref();
         let pub_key = node.get_node_public_key().to_string();
         if let Some(record) = node.is_file_ingested(&pub_key, &form_data.file_hash).await {
             log_feature!(
@@ -550,13 +550,13 @@ pub async fn upload_file(
     };
 
     // Lock briefly — the handler clones the node and spawns a background task
-    let node = node_arc.read().await;
+    let node = node_arc.as_ref();
 
     match crate::handlers::ingestion::process_json(
         request,
         &user_id,
         progress_tracker.get_ref(),
-        &node,
+        node,
         service,
     )
     .await
@@ -633,7 +633,7 @@ pub async fn serve_file(
         Err(response) => return response,
     };
     let encryption_key = {
-        let node = node_arc.read().await;
+        let node = node_arc.as_ref();
         node.get_encryption_key()
     };
 

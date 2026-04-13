@@ -276,7 +276,7 @@ async fn transform_registry_e2e_medical_summary() {
 
     // Step 9: Set up FoldDB with medical_records schema + test data
     let (node, _tmp) = setup_node_with_medical_schema().await;
-    let processor = OperationProcessor::new(node);
+    let processor = OperationProcessor::new(std::sync::Arc::new(node));
 
     insert_medical_record(
         &processor,

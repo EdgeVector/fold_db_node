@@ -105,7 +105,7 @@ async fn range_schema_multiple_batches_preserve_all_data() {
     let node = create_node(db_path).await;
 
     setup_schema(&node).await;
-    let processor = OperationProcessor::new(node.clone());
+    let processor = OperationProcessor::new(std::sync::Arc::new(node.clone()));
 
     // Write 3 mutations in SEPARATE calls (simulates per-file ingestion)
     write_file_mutation(&processor, "notes.txt", "Meeting notes", "text").await;
@@ -130,7 +130,7 @@ async fn schema_reload_from_json_preserves_molecules() {
     let node = create_node(db_path).await;
 
     setup_schema(&node).await;
-    let processor = OperationProcessor::new(node.clone());
+    let processor = OperationProcessor::new(std::sync::Arc::new(node.clone()));
 
     // Write first file
     write_file_mutation(&processor, "file1.txt", "Content 1", "text").await;
@@ -303,7 +303,7 @@ async fn molecule_uuid_stays_consistent_across_batches() {
     let node = create_node(db_path).await;
 
     setup_schema(&node).await;
-    let processor = OperationProcessor::new(node.clone());
+    let processor = OperationProcessor::new(std::sync::Arc::new(node.clone()));
 
     // Write first batch
     write_file_mutation(&processor, "a.txt", "Content A", "text").await;

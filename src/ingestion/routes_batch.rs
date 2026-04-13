@@ -117,7 +117,7 @@ pub async fn batch_folder_ingest(
 
     let auto_execute = request.auto_execute.unwrap_or(true);
     let encryption_key = {
-        let node = node_arc.read().await;
+        let node = node_arc.as_ref();
         node.get_encryption_key()
     };
 

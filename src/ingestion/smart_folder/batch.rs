@@ -117,7 +117,7 @@ pub(crate) fn spawn_batch_coordinator(
     batch_id: String,
     batch_controller_map: web::Data<BatchControllerMap>,
     progress_tracker: &ProgressTracker,
-    node_arc: &Arc<tokio::sync::RwLock<crate::fold_node::FoldNode>>,
+    node_arc: &Arc<crate::fold_node::FoldNode>,
     user_id: &str,
     auto_execute: bool,
     ingestion_service: Arc<IngestionService>,

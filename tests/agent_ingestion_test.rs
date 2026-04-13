@@ -177,7 +177,7 @@ async fn test_agent_scan_ingest_and_query() {
         .with_schema_service_url(&schema_url);
     let node = FoldNode::new(config).await.unwrap();
 
-    let processor = OperationProcessor::new(node.clone());
+    let processor = OperationProcessor::new(std::sync::Arc::new(node.clone()));
 
     let sample_data_path = Path::new(env!("CARGO_MANIFEST_DIR")).join("sample_data");
     assert!(
