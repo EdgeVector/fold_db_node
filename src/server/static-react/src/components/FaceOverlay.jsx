@@ -1,51 +1,43 @@
 import { useState, useEffect } from 'react';
 import { discoveryClient } from '../api/clients/discoveryClient';
-import { listContacts } from '../api/clients/trustClient';
 
 export default function FaceOverlay({ schemaName, recordKey }) {
   const [faces, setFaces] = useState([]);
   const [loading, setLoading] = useState(true);
+  const [loadError, setLoadError] = useState(null);
   const [searchResults, setSearchResults] = useState(null);
   const [searchingFace, setSearchingFace] = useState(null);
-  const [knownPseudonyms, setKnownPseudonyms] = useState(() => new Set());
 
   useEffect(() => {
     let cancelled = false;
     async function loadFaces() {
       try {
         const resp = await discoveryClient.listFaces(schemaName, recordKey);
-        if (!cancelled && resp.success && resp.data?.faces) {
+        if (cancelled) return;
+        if (resp.success && resp.data?.faces) {
           setFaces(resp.data.faces);
+        } else if (!resp.success) {
+          // Surface the error explicitly. This may be expected in builds
+          // where the face-detection cargo feature is disabled — we cannot
+          // distinguish "feature off" from "runtime crash" here, so we
+          // show whatever the backend returned and warn (not error) in
+          // the console.
+          const msg = resp.error || 'Face detection unavailable';
+          console.warn(`FaceOverlay: listFaces failed: ${msg}`);
+          setLoadError(msg);
         }
-      } catch {
-        // silently ignore — face detection may not be enabled
+      } catch (e) {
+        if (cancelled) return;
+        const msg = e?.message || String(e);
+        console.warn(`FaceOverlay: listFaces threw: ${msg}`);
+        setLoadError(msg);
+      } finally {
+        if (!cancelled) setLoading(false);
       }
-      if (!cancelled) setLoading(false);
     }
     loadFaces();
     return () => { cancelled = true; };
   }, [schemaName, recordKey]);
-
-  useEffect(() => {
-    let cancelled = false;
-    async function loadContacts() {
-      try {
-        const resp = await listContacts();
-        if (cancelled || !resp.success) return;
-        const contacts = resp.data?.contacts || [];
-        const set = new Set();
-        for (const c of contacts) {
-          if (c.pseudonym) set.add(c.pseudonym);
-          if (c.messaging_pseudonym) set.add(c.messaging_pseudonym);
-        }
-        setKnownPseudonyms(set);
-      } catch {
-        // best-effort
-      }
-    }
-    loadContacts();
-    return () => { cancelled = true; };
-  }, []);
 
   async function handleConnect(pseudonym) {
     try {
@@ -67,6 +59,8 @@ export default function FaceOverlay({ schemaName, recordKey }) {
       const resp = await discoveryClient.faceSearch(schemaName, recordKey, faceIndex);
       if (resp.success) {
         setSearchResults(resp.data?.results || []);
+      } else {
+        setSearchResults([]);
       }
     } catch {
       setSearchResults([]);
@@ -74,7 +68,19 @@ export default function FaceOverlay({ schemaName, recordKey }) {
     setSearchingFace(null);
   }
 
-  if (loading || faces.length === 0) return null;
+  if (loading) return null;
+
+  if (loadError) {
+    return (
+      <div className="mt-2">
+        <span className="text-xs text-tertiary">
+          Face detection unavailable (feature not enabled in this build).
+        </span>
+      </div>
+    );
+  }
+
+  if (faces.length === 0) return null;
 
   return (
     <div className="mt-2">
@@ -107,19 +113,22 @@ export default function FaceOverlay({ schemaName, recordKey }) {
                   </div>
                   <div className="flex items-center gap-2">
                     <code className="text-tertiary text-[10px]">{String(r.pseudonym).slice(0, 8)}...</code>
-                    {knownPseudonyms.has(r.pseudonym) ? (
-                      <span className="text-[10px] px-2 py-0.5 rounded-full bg-gruvbox-green/10 text-gruvbox-green border border-gruvbox-green/30">
-                        ✓ Already connected
-                      </span>
-                    ) : (
-                      <button
-                        type="button"
-                        onClick={() => handleConnect(r.pseudonym)}
-                        className="text-[10px] px-2 py-0.5 rounded border border-gruvbox-blue/40 text-gruvbox-blue hover:bg-gruvbox-blue/10 transition-colors bg-transparent cursor-pointer"
-                      >
-                        Connect
-                      </button>
-                    )}
+                    {/*
+                      NOTE: "Already connected" badge removed. The pseudonyms
+                      returned from face search are derived from face embedding
+                      bytes (see src/discovery/publisher.rs `content_hash_bytes`)
+                      and live in a different namespace from text-contact
+                      pseudonyms — comparing them never matched in practice.
+                      Follow-up: track face-pseudonym <-> contact mapping at
+                      connect-accept time so this badge can be restored.
+                    */}
+                    <button
+                      type="button"
+                      onClick={() => handleConnect(r.pseudonym)}
+                      className="text-[10px] px-2 py-0.5 rounded border border-gruvbox-blue/40 text-gruvbox-blue hover:bg-gruvbox-blue/10 transition-colors bg-transparent cursor-pointer"
+                    >
+                      Connect
+                    </button>
                   </div>
                 </div>
               ))}

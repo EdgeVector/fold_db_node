@@ -3021,33 +3021,32 @@ async fn process_data_share(
                     HandlerError::Internal(format!("save shared file '{file_name}': {e}"))
                 })?;
 
-            // Run face detection on shared photos. Detection is a best-effort
-            // index enrichment: failures here must not block the share write
-            // that already succeeded.
+            // Run face detection on shared photos. The mutation + file write
+            // already succeeded, but face indexing is part of how this record
+            // becomes searchable on the receiver. Treat failures as TRANSIENT
+            // and propagate `Internal` so the dispatch arm retries on the
+            // next poll cycle (matches the DispatchOutcome retry semantics
+            // from PR #398). Silently warning would leave the record on the
+            // node but invisible to face search forever.
             #[cfg(feature = "face-detection")]
             {
                 let db_ops = db.get_db_ops();
                 if let Some(native_idx) = db_ops.native_index_manager() {
                     if native_idx.has_face_processor() {
-                        match native_idx
+                        let count = native_idx
                             .index_faces(&record.schema_name, &key, &file_bytes)
                             .await
-                        {
-                            Ok(count) if count > 0 => {
-                                log::info!(
-                                    "Detected {} face(s) in shared photo '{}'",
-                                    count,
-                                    file_name
-                                );
-                            }
-                            Ok(_) => {}
-                            Err(e) => {
-                                log::warn!(
-                                    "Face detection failed on shared photo '{}': {}",
-                                    file_name,
-                                    e
-                                );
-                            }
+                            .map_err(|e| {
+                                HandlerError::Internal(format!(
+                                    "face indexing failed for shared photo '{file_name}': {e}"
+                                ))
+                            })?;
+                        if count > 0 {
+                            log::info!(
+                                "Detected {} face(s) in shared photo '{}'",
+                                count,
+                                file_name
+                            );
                         }
                     }
                 }
