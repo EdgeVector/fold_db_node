@@ -272,6 +272,12 @@ impl IngestionService {
         // loading the new one. apply_field_mappers (triggered by approve) needs
         // the old schema's molecule UUIDs. In a fresh DB the old schema only
         // exists on the remote schema service.
+        //
+        // INVARIANT: schema expansion must be atomic. If we can't fetch or load
+        // the old schema, we MUST abort ingestion rather than silently
+        // continuing — otherwise apply_field_mappers runs without the source
+        // molecule UUIDs and the new expanded schema coexists with an
+        // unblocked old schema, producing split-brain writes.
         if let Some(ref old_name) = add_response.replaced_schema {
             let old_loaded = schema_manager
                 .get_schema_metadata(old_name)
@@ -281,32 +287,24 @@ impl IngestionService {
                 if let Some(url) = node.schema_service_url() {
                     if !crate::fold_node::node::FoldNode::is_test_schema_service(&url) {
                         let client = crate::fold_node::SchemaServiceClient::new(&url);
-                        match client.get_schema(old_name).await {
-                            Ok(old_schema) => {
-                                let old_json =
-                                    serde_json::to_string(&old_schema).map_err(schema_err)?;
-                                if let Err(e) =
-                                    schema_manager.load_schema_from_json(&old_json).await
-                                {
-                                    log_feature!(
-                                        LogFeature::Ingestion,
-                                        warn,
-                                        "Failed to load old schema '{}' from service: {}",
-                                        old_name,
-                                        e
-                                    );
-                                }
-                            }
-                            Err(e) => {
-                                log_feature!(
-                                    LogFeature::Ingestion,
-                                    warn,
-                                    "Failed to fetch old schema '{}' from service: {}",
-                                    old_name,
-                                    e
-                                );
-                            }
-                        }
+                        let old_schema = client.get_schema(old_name).await.map_err(|e| {
+                            IngestionError::SchemaCreationError(format!(
+                                "Schema expansion aborted: failed to fetch old schema '{}' \
+                                 from schema service (new schema '{}' not loaded): {}",
+                                old_name, schema_response.name, e
+                            ))
+                        })?;
+                        let old_json = serde_json::to_string(&old_schema).map_err(schema_err)?;
+                        schema_manager
+                            .load_schema_from_json(&old_json)
+                            .await
+                            .map_err(|e| {
+                                IngestionError::SchemaCreationError(format!(
+                                    "Schema expansion aborted: failed to load old schema '{}' \
+                                     locally (new schema '{}' not loaded): {}",
+                                    old_name, schema_response.name, e
+                                ))
+                            })?;
                     }
                 }
             }
@@ -328,6 +326,11 @@ impl IngestionService {
             .map_err(schema_err)?;
 
         // Block the old schema AFTER approval, so field_mappers are already resolved.
+        //
+        // INVARIANT: if block_and_supersede fails, the new expanded schema is
+        // live AND the old schema is still Approved — both accept writes,
+        // creating split-brain state. We must propagate this error so the
+        // caller can abort ingestion for this sample.
         if let Some(ref old_name) = add_response.replaced_schema {
             log_feature!(
                 LogFeature::Ingestion,
@@ -336,18 +339,16 @@ impl IngestionService {
                 old_name,
                 schema_response.name
             );
-            if let Err(e) = schema_manager
+            schema_manager
                 .block_and_supersede(old_name, &schema_response.name)
                 .await
-            {
-                log_feature!(
-                    LogFeature::Ingestion,
-                    warn,
-                    "Failed to block old schema '{}' during expansion: {}",
-                    old_name,
-                    e
-                );
-            }
+                .map_err(|e| {
+                    IngestionError::SchemaCreationError(format!(
+                        "Schema expansion aborted: failed to block old schema '{}' \
+                         after loading expanded '{}' (split-brain risk): {}",
+                        old_name, schema_response.name, e
+                    ))
+                })?;
         }
 
         let schema_name = schema_response.name.clone();
