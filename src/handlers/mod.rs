@@ -39,6 +39,7 @@ pub mod org;
 pub mod query;
 pub mod response;
 pub mod system;
+pub mod trust;
 
 // Re-export commonly used types
 pub(crate) use response::handler_response;
