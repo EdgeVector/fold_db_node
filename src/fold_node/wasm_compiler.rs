@@ -110,7 +110,10 @@ pub fn compile_rust_to_wasm(rust_transform: &str) -> Result<Vec<u8>, String> {
         project_dir.display()
     );
 
-    // Build with cargo
+    // Build with cargo. Pass `--target-dir` explicitly so a parent
+    // `CARGO_TARGET_DIR` env var (common in CI / workspace builds)
+    // does not redirect output away from `project_dir/target/`.
+    let target_dir = project_dir.join("target");
     let output = Command::new("cargo")
         .args([
             "build",
@@ -120,6 +123,8 @@ pub fn compile_rust_to_wasm(rust_transform: &str) -> Result<Vec<u8>, String> {
             "--manifest-path",
         ])
         .arg(project_dir.join("Cargo.toml"))
+        .arg("--target-dir")
+        .arg(&target_dir)
         .output()
         .map_err(|e| format!("Failed to run cargo build: {e}"))?;
 
