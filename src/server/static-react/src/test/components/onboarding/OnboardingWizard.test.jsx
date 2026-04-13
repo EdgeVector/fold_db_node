@@ -1,5 +1,5 @@
 import React from 'react';
-import { screen, fireEvent, waitFor } from '@testing-library/react';
+import { screen, fireEvent } from '@testing-library/react';
 import { vi, describe, it, expect, beforeEach, afterEach } from 'vitest';
 import OnboardingWizard, { ONBOARDING_STORAGE_KEY } from '../../../components/onboarding/OnboardingWizard';
 import { renderWithRedux } from '../../utils/testUtilities.jsx';
@@ -174,5 +174,67 @@ describe('OnboardingWizard', () => {
 
   it('exports ONBOARDING_STORAGE_KEY constant', () => {
     expect(ONBOARDING_STORAGE_KEY).toBe('folddb_onboarding_complete');
+  });
+
+  describe('cloud-already-active gate', () => {
+    it('skips CloudBackupStep and goes directly to Discovery when exemem_api_key is set', () => {
+      localStorage.setItem('exemem_api_key', 'test-api-key-abc123');
+      renderWizard();
+
+      // Cloud Backup should not appear in the progress indicator.
+      expect(screen.queryByText('Cloud Backup')).toBeNull();
+
+      // Navigate: identity -> welcome -> apple-data -> (skip cloud) -> discovery.
+      fireEvent.click(screen.getByTestId('identity-next'));
+      fireEvent.click(screen.getByTestId('ai-next'));
+      fireEvent.click(screen.getByTestId('apple-next'));
+
+      // We should land on Discovery, NOT Cloud Backup.
+      expect(screen.queryByTestId('cloud-step')).toBeNull();
+      expect(screen.getByTestId('discovery-step')).toBeTruthy();
+    });
+
+    it('also skips cloud step when apple-data is skipped', () => {
+      localStorage.setItem('exemem_api_key', 'test-api-key-abc123');
+      renderWizard();
+
+      fireEvent.click(screen.getByTestId('identity-skip'));
+      fireEvent.click(screen.getByTestId('ai-skip'));
+      fireEvent.click(screen.getByTestId('apple-skip'));
+
+      expect(screen.queryByTestId('cloud-step')).toBeNull();
+      expect(screen.getByTestId('discovery-step')).toBeTruthy();
+    });
+
+    it('marks cloud-backup completed when skipped via gate', () => {
+      localStorage.setItem('exemem_api_key', 'test-api-key-abc123');
+      renderWizard();
+
+      fireEvent.click(screen.getByTestId('identity-next'));
+      fireEvent.click(screen.getByTestId('ai-next'));
+      fireEvent.click(screen.getByTestId('apple-next'));
+      fireEvent.click(screen.getByTestId('discovery-next'));
+
+      // identity + welcome + apple-data + cloud-backup (gated) + discovery = 5
+      expect(screen.getByTestId('allset-step')).toBeTruthy();
+      expect(screen.getByTestId('completed-count').textContent).toBe('5');
+    });
+
+    it('renders CloudBackupStep normally when exemem_api_key is not set', () => {
+      // localStorage already cleared in beforeEach.
+      expect(localStorage.getItem('exemem_api_key')).toBeNull();
+      renderWizard();
+
+      // Cloud Backup should appear in the progress indicator.
+      expect(screen.getByText('Cloud Backup')).toBeTruthy();
+
+      fireEvent.click(screen.getByTestId('identity-next'));
+      fireEvent.click(screen.getByTestId('ai-next'));
+      fireEvent.click(screen.getByTestId('apple-next'));
+
+      // We should land on Cloud Backup, not Discovery.
+      expect(screen.getByTestId('cloud-step')).toBeTruthy();
+      expect(screen.queryByTestId('discovery-step')).toBeNull();
+    });
   });
 });

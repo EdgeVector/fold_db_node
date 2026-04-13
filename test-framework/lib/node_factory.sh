@@ -42,6 +42,15 @@ nf_spawn_node() {
   # Generate unique Ed25519 keys for this node so each test node has a distinct
   # identity (user_hash + public_key). Without this, nodes fall back to a shared
   # default identity and all assertions collapse.
+  #
+  # NOTE: depends on python3 + pynacl. pynacl is documented as a requirement in
+  # test-framework/README.md. Fail loudly if it's missing — a cryptic NameError
+  # from python becomes a mystery "all nodes have the same hash" bug otherwise.
+  if ! python3 -c 'import nacl.signing' >/dev/null 2>&1; then
+    echo "[node_factory] python3 + pynacl required for Ed25519 keygen." >&2
+    echo "[node_factory]   install: pip3 install pynacl" >&2
+    return 1
+  fi
   local keys priv pub
   keys="$(python3 -c '
 import base64, nacl.signing
@@ -51,6 +60,7 @@ print(base64.b64encode(sk.verify_key.encode()).decode())
 ')"
   priv="$(echo "$keys" | sed -n '1p')"
   pub="$(echo "$keys"  | sed -n '2p')"
+  [[ -n "$priv" && -n "$pub" ]] || { echo "[node_factory] Ed25519 keygen failed" >&2; return 1; }
 
   cat > "$node_dir/config/node_config.json" <<EOCONF
 {
