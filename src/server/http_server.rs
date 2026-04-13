@@ -989,14 +989,6 @@ impl FoldHttpServer {
     fn configure_auth_routes(cfg: &mut web::ServiceConfig) {
         cfg.service(
             web::scope("/auth")
-                .route(
-                    "/magic-link/start",
-                    web::post().to(auth_routes::magic_link_start),
-                )
-                .route(
-                    "/magic-link/verify",
-                    web::post().to(auth_routes::magic_link_verify),
-                )
                 .route("/credentials", web::get().to(auth_routes::get_credentials))
                 .route(
                     "/credentials",
