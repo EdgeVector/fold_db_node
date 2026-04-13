@@ -14,8 +14,30 @@ nf_create_invite_codes() {
       --table-name ExememInviteCodes-dev \
       --item "{\"code\":{\"S\":\"$code\"},\"used\":{\"BOOL\":false},\"created_at\":{\"N\":\"$(date +%s)\"}}" \
       >/dev/null
+    # Record in pending list so SIGINT/crash before nodes.json update still cleans up.
+    if [[ -n "${FOLDDB_TEST_SESSION_DIR:-}" ]]; then
+      echo "$code" >> "$FOLDDB_TEST_SESSION_DIR/state/pending-invites.txt"
+    fi
     echo "$code"
   done
+}
+
+# nf_find_free_port <start> [max_tries]
+# Returns the first TCP port >= start that is not bound by any local process.
+nf_find_free_port() {
+  local start="${1:?}" max="${2:-200}"
+  local p=$start
+  local tried=0
+  while (( tried < max )); do
+    if ! lsof -nP -iTCP:"$p" -sTCP:LISTEN >/dev/null 2>&1; then
+      echo "$p"
+      return 0
+    fi
+    p=$((p + 1))
+    tried=$((tried + 1))
+  done
+  echo "nf_find_free_port: no free port in [$start, $((start + max)))" >&2
+  return 1
 }
 
 # Locate the fold_db_node repo root (the directory containing a Cargo.toml
@@ -154,10 +176,19 @@ nf_register_node() {
     -d "{\"invite_code\":\"$invite\"}")"
 
   # Registration may cause an internal server restart that holds the Sled lock.
-  # Give it a moment, then if the server is down, kill any stale process on the
-  # port and respawn with the same config (preserves the identity).
-  sleep 2
-  if ! curl -fsS --max-time 2 "http://127.0.0.1:$port/api/system/auto-identity" >/dev/null 2>&1; then
+  # Poll briefly for the server to come back. If it's still down after a few
+  # seconds, kill any stale process on the port and respawn with the same
+  # config (preserves the identity).
+  local rwait_deadline=$(( $(date +%s) + 5 ))
+  local healthy=0
+  while (( $(date +%s) < rwait_deadline )); do
+    if curl -fsS --max-time 2 "http://127.0.0.1:$port/api/system/auto-identity" >/dev/null 2>&1; then
+      healthy=1
+      break
+    fi
+    sleep 0.3
+  done
+  if (( healthy == 0 )); then
     if [[ -n "$name" && -n "$session_dir" ]]; then
       local stale
       for stale in $(lsof -t -i ":$port" 2>/dev/null); do
@@ -198,4 +229,20 @@ nf_shutdown_node() {
     sleep 0.2
     kill -9 "$pid" 2>/dev/null || true
   fi
+}
+
+# nf_shutdown_gstack <gstack_port>
+# Stops a per-node gstack daemon. gstack auto-starts on first recipe call, so
+# there is no spawn helper — we only need to tear it down.
+nf_shutdown_gstack() {
+  local gport="${1:?}"
+  local browse="$HOME/.claude/skills/gstack/browse/dist/browse"
+  if [[ -x "$browse" ]]; then
+    GSTACK_SERVER_PORT="$gport" "$browse" stop >/dev/null 2>&1 || true
+  fi
+  # Backstop: kill anything still bound to the port.
+  local stale
+  for stale in $(lsof -t -nP -iTCP:"$gport" -sTCP:LISTEN 2>/dev/null); do
+    kill -9 "$stale" 2>/dev/null || true
+  done
 }
