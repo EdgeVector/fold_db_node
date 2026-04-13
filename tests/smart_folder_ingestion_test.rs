@@ -433,7 +433,7 @@ async fn test_smart_folder_ingest_and_query() {
     let query_service =
         LlmQueryService::new(ingestion_config).expect("Failed to create LlmQueryService");
 
-    let processor = OperationProcessor::new(node.clone());
+    let processor = OperationProcessor::new(std::sync::Arc::new(node.clone()));
     let schemas = processor
         .list_schemas()
         .await

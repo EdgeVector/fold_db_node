@@ -18,12 +18,12 @@ pub mod view_ops;
 /// This eliminates code duplication across HTTP routes, TCP server, CLI, and direct API usage.
 /// All operation execution goes through this single processor to ensure consistent behavior.
 pub struct OperationProcessor {
-    node: FoldNode,
+    node: Arc<FoldNode>,
 }
 
 impl OperationProcessor {
     /// Creates a new operation processor with a FoldNode instance.
-    pub fn new(node: FoldNode) -> Self {
+    pub fn new(node: Arc<FoldNode>) -> Self {
         Self { node }
     }
 
@@ -62,7 +62,7 @@ mod tests {
             .with_schema_service_url("test://mock")
             .with_identity(&keypair.public_key_base64(), &keypair.secret_key_base64());
         let node = FoldNode::new(config).await.unwrap();
-        let processor = OperationProcessor::new(node.clone());
+        let processor = OperationProcessor::new(Arc::new(node.clone()));
         (processor, node)
     }
 

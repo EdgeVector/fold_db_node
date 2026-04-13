@@ -113,7 +113,7 @@ fn unwrap_feed(
 async fn test_basic_feed_returns_friends_photos_sorted_desc() {
     let (node, _tmp) = setup_node().await;
     load_photo_schema(&node).await;
-    let processor = OperationProcessor::new(node.clone());
+    let processor = OperationProcessor::new(std::sync::Arc::new(node.clone()));
 
     // Insert photos from two friends at different timestamps
     insert_photo(
@@ -181,7 +181,7 @@ async fn test_basic_feed_returns_friends_photos_sorted_desc() {
 async fn test_feed_filters_out_non_friends() {
     let (node, _tmp) = setup_node().await;
     load_photo_schema(&node).await;
-    let processor = OperationProcessor::new(node.clone());
+    let processor = OperationProcessor::new(std::sync::Arc::new(node.clone()));
 
     insert_photo(
         &processor,
@@ -237,7 +237,7 @@ async fn test_feed_filters_out_non_friends() {
 async fn test_empty_friends_returns_empty_feed() {
     let (node, _tmp) = setup_node().await;
     load_photo_schema(&node).await;
-    let processor = OperationProcessor::new(node.clone());
+    let processor = OperationProcessor::new(std::sync::Arc::new(node.clone()));
 
     insert_photo(
         &processor,
@@ -266,7 +266,7 @@ async fn test_empty_friends_returns_empty_feed() {
 async fn test_feed_respects_limit() {
     let (node, _tmp) = setup_node().await;
     load_photo_schema(&node).await;
-    let processor = OperationProcessor::new(node.clone());
+    let processor = OperationProcessor::new(std::sync::Arc::new(node.clone()));
 
     for i in 1..=5 {
         insert_photo(
@@ -340,7 +340,7 @@ async fn test_feed_strips_non_public_fields() {
             .expect("Failed to update schema with access policy");
     }
 
-    let processor = OperationProcessor::new(node.clone());
+    let processor = OperationProcessor::new(std::sync::Arc::new(node.clone()));
 
     insert_photo(
         &processor,

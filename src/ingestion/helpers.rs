@@ -116,7 +116,7 @@ pub async fn start_file_progress(
 pub fn spawn_file_ingestion_tasks(
     files_with_progress: impl IntoIterator<Item = (PathBuf, String)>,
     progress_tracker: &ProgressTracker,
-    node_arc: &Arc<tokio::sync::RwLock<crate::fold_node::FoldNode>>,
+    node_arc: &Arc<crate::fold_node::FoldNode>,
     user_id: &str,
     auto_execute: bool,
     ingestion_service: Arc<IngestionService>,
@@ -173,7 +173,7 @@ pub async fn process_single_file_via_smart_folder(
     file_path: &Path,
     progress_id: &str,
     progress_service: &ProgressService,
-    node_arc: &Arc<tokio::sync::RwLock<crate::fold_node::FoldNode>>,
+    node_arc: &Arc<crate::fold_node::FoldNode>,
     auto_execute: bool,
     service: &IngestionService,
     upload_storage: &fold_db::storage::UploadStorage,
@@ -234,7 +234,7 @@ pub async fn process_single_file_via_smart_folder(
         .await
         .map_err(|e| format!("Failed to store encrypted file: {}", e))?;
 
-    let node = node_arc.read().await;
+    let node = node_arc.as_ref();
     let pub_key = node.get_node_public_key().to_string();
 
     // Check per-user file dedup — skip entire pipeline if this user already ingested this file
@@ -284,7 +284,7 @@ pub async fn process_single_file_via_smart_folder(
     service
         .process_json_with_node_and_progress(
             request,
-            &node,
+            node,
             progress_service,
             progress_id.to_string(),
         )

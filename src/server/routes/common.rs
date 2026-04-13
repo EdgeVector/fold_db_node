@@ -7,7 +7,6 @@ use fold_db::log_feature;
 use fold_db::logging::features::LogFeature;
 use serde_json::json;
 use std::sync::Arc;
-use tokio::sync::RwLock;
 
 /// Convert a `HandlerResult<T>` directly to an `HttpResponse`.
 ///
@@ -59,7 +58,7 @@ pub fn require_user_context() -> Result<String, HttpResponse> {
 async fn get_node_for_user(
     state: &web::Data<AppState>,
     user_id: &str,
-) -> Result<Arc<RwLock<FoldNode>>, HttpResponse> {
+) -> Result<Arc<FoldNode>, HttpResponse> {
     state.node_manager.get_node(user_id).await.map_err(|e| {
         log_feature!(
             LogFeature::HttpServer,
@@ -79,7 +78,7 @@ async fn get_node_for_user(
 /// Helper macro-like pattern to get node for current user context
 pub async fn require_node(
     state: &web::Data<AppState>,
-) -> Result<(String, Arc<RwLock<FoldNode>>), HttpResponse> {
+) -> Result<(String, Arc<FoldNode>), HttpResponse> {
     let user_hash = require_user_context()?;
     let node = get_node_for_user(state, &user_hash).await?;
     Ok((user_hash, node))
@@ -104,15 +103,14 @@ macro_rules! node_or_return {
 }
 pub(crate) use node_or_return;
 
-/// Combined helper: require_node + acquire read lock.
-///
-/// Returns an owned read guard so the caller doesn't need `node_arc`.
+/// Historical name retained to avoid churning dozens of call sites. Since
+/// `FoldNode` is `Sync` and no handler ever takes it mutably, we simply
+/// return the `Arc<FoldNode>` directly — callers that do `node.method()`
+/// work unchanged via `Arc`'s `Deref`.
 pub async fn require_node_read(
     state: &web::Data<AppState>,
-) -> Result<(String, tokio::sync::OwnedRwLockReadGuard<FoldNode>), HttpResponse> {
-    let (user_hash, node_arc) = require_node(state).await?;
-    let node = node_arc.read_owned().await;
-    Ok((user_hash, node))
+) -> Result<(String, Arc<FoldNode>), HttpResponse> {
+    require_node(state).await
 }
 
 #[cfg(test)]

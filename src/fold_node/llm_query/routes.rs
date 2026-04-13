@@ -80,14 +80,13 @@ async fn require_llm_context(
     (
         Arc<LlmQueryService>,
         String,
-        tokio::sync::OwnedRwLockReadGuard<crate::fold_node::FoldNode>,
+        Arc<crate::fold_node::FoldNode>,
     ),
     HttpResponse,
 > {
     let service = require_service(llm_state).await?;
     let (user_hash, node_arc) = require_node(app_state).await?;
-    let node = node_arc.read_owned().await;
-    Ok((service, user_hash, node))
+    Ok((service, user_hash, node_arc))
 }
 
 /// Convert a HandlerResult with data into an HttpResponse, or 500 if data is missing.

@@ -340,7 +340,7 @@ async fn test_schema_names_are_semantic_not_hashes() {
     );
 
     // List all schemas in the node
-    let processor = OperationProcessor::new(node.clone());
+    let processor = OperationProcessor::new(std::sync::Arc::new(node.clone()));
     let all_schemas = processor
         .list_schemas()
         .await

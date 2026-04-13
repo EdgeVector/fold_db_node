@@ -222,8 +222,7 @@ pub async fn reset_database(
                 }
             };
 
-            let processor =
-                crate::fold_node::OperationProcessor::new(node_arc.read().await.clone());
+            let processor = crate::fold_node::OperationProcessor::new(node_arc.clone());
 
             if let Err(e) = processor.perform_database_reset(Some(&uid)).await {
                 handle.fail(format!("Database reset failed: {}", e)).await;
@@ -324,8 +323,7 @@ pub async fn migrate_to_cloud(
                 }
             };
 
-            let processor =
-                crate::fold_node::OperationProcessor::new(node_arc.read().await.clone());
+            let processor = crate::fold_node::OperationProcessor::new(node_arc.clone());
 
             handle.update(20, "Syncing schemas and documents...").await;
 

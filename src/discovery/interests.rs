@@ -213,10 +213,9 @@ pub async fn toggle_interest_category(
 /// Reads schemas from FoldNode and detects interests from their
 /// field_interest_categories.
 pub async fn run_interest_detection(
-    node: &Arc<tokio::sync::RwLock<crate::fold_node::FoldNode>>,
+    node: &Arc<crate::fold_node::FoldNode>,
 ) -> Result<InterestProfile, String> {
-    let node_guard = node.read().await;
-    let db = node_guard
+    let db = node
         .get_fold_db()
         .map_err(|e| format!("Failed to access database: {}", e))?;
 
@@ -233,7 +232,6 @@ pub async fn run_interest_detection(
 
     // Drop the DB lock before doing the work
     drop(db);
-    drop(node_guard);
 
     detect_interests_from_schemas(&schemas, &*metadata_store).await
 }
