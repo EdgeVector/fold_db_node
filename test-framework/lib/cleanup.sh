@@ -13,6 +13,61 @@ set -euo pipefail
 : "${FOLDDB_TEST_INVITE_TABLE:=ExememInviteCodes-dev}"
 : "${AWS_REGION:=us-west-2}"
 
+_cleanup_assert_no_ghosts() {
+  # Postcondition for cleanup_all: after every node has been torn down, the
+  # discovery Lambda's vector tables MUST be empty. The framework runs under
+  # `concurrency.group: e2e-cloud` so nothing else should be writing to dev
+  # cloud during a run — any non-zero count after teardown is a silent leak.
+  #
+  # This is the assertion that would have caught the delete-by-public-key
+  # bug on day 1: cleanup reported "OK" for every node, but the rows it
+  # was supposed to delete stayed in the database forever, polluting
+  # face-search results in subsequent test runs. Runs WARN, not FAIL —
+  # we don't want a stray dev-cloud row to red-fail an otherwise green
+  # scenario, but the loud log line forces the next person to look.
+  if [[ -z "${FOLDDB_TEST_ADMIN_SECRET:-}" ]]; then
+    echo "[cleanup] FOLDDB_TEST_ADMIN_SECRET unset; skipping post-teardown ghost assertion" >&2
+    return 0
+  fi
+  local out payload status body fv tv
+  out="$(mktemp)"
+  payload=$(cat <<JSON
+{
+  "rawPath": "/admin/counts",
+  "requestContext": {"http": {"method": "GET", "path": "/admin/counts"}},
+  "headers": {"x-test-admin-secret": "$FOLDDB_TEST_ADMIN_SECRET"},
+  "body": ""
+}
+JSON
+)
+  if ! aws lambda invoke \
+      --function-name "$FOLDDB_TEST_DISCOVERY_LAMBDA" \
+      --region "$AWS_REGION" \
+      --cli-binary-format raw-in-base64-out \
+      --payload "$payload" \
+      "$out" >/dev/null 2>&1; then
+    echo "[cleanup] post-teardown ghost check: lambda invoke failed" >&2
+    rm -f "$out"
+    return 0
+  fi
+  status="$(jq -r '.statusCode // empty' "$out" 2>/dev/null)"
+  body="$(jq -r '.body // empty' "$out" 2>/dev/null)"
+  rm -f "$out"
+  if [[ "$status" != "200" || -z "$body" ]]; then
+    echo "[cleanup] post-teardown ghost check: unexpected response status=$status body=$(echo "$body" | head -c 200)" >&2
+    return 0
+  fi
+  fv="$(echo "$body" | jq -r '.discovery_face_vectors // 0' 2>/dev/null || echo "?")"
+  tv="$(echo "$body" | jq -r '.discovery_vectors // 0' 2>/dev/null || echo "?")"
+  if [[ "$fv" == "0" && "$tv" == "0" ]]; then
+    echo "[cleanup] post-teardown discovery counts: face=0 text=0 ✓"
+  else
+    echo "[cleanup] WARN: post-teardown discovery counts NON-ZERO (face_vectors=$fv discovery_vectors=$tv)." >&2
+    echo "[cleanup] WARN: a per-node delete-by-pseudonyms call above reported OK but left rows behind — silent leak somewhere." >&2
+    echo "[cleanup] WARN: re-run with FOLDDB_TEST_VERBOSE=1, or invoke /admin/wipe-discovery-vectors manually if this is dev cloud." >&2
+  fi
+}
+
 _cleanup_lambda_invoke() {
   # Args: LAMBDA_FN PATH JSON_BODY
   local fn="$1" path="$2" body="$3"
@@ -165,4 +220,6 @@ cleanup_all() {
       nf_shutdown_gstack "$gstack_port" || true
     fi
   done
+
+  _cleanup_assert_no_ghosts
 }

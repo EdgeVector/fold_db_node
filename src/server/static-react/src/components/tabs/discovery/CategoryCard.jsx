@@ -39,7 +39,7 @@ export default function CategoryCard({
   const previewItems = buildPreviewItems(schemas)
 
   return (
-    <div className="card rounded p-4 space-y-3">
+    <div className="card rounded p-4 space-y-2">
       <div className="flex items-center justify-between">
         <div className="flex items-center gap-3">
           <ToggleSwitch
@@ -70,6 +70,28 @@ export default function CategoryCard({
         </button>
       </div>
 
+      {/*
+        Inline face-publish opt-in. Visible when this category is opted-in.
+        Previously this was buried inside the "Show preview" panel — users
+        opting in to Photography had no signal that face publishing was a
+        separate, off-by-default toggle. Surfacing it next to the switch
+        makes the choice explicit and discoverable.
+      */}
+      {someOptedIn && (
+        <label className="flex items-center gap-2 ml-12 cursor-pointer select-none">
+          <input
+            type="checkbox"
+            checked={publishFaces}
+            onChange={(e) => onPublishFacesToggle(category, e.target.checked)}
+            disabled={toggling}
+            className="accent-gruvbox-green"
+          />
+          <span className="text-xs text-secondary">
+            Also publish face embeddings <span className="text-tertiary">(faces in photos become searchable on the network)</span>
+          </span>
+        </label>
+      )}
+
       {expanded && (
         <div className="border-t border-border pt-3 space-y-2">
           <div className="text-xs text-secondary font-semibold">
@@ -91,20 +113,6 @@ export default function CategoryCard({
           <div className="text-xs text-tertiary mt-1">
             Embedding vectors of these fields will be published — raw text is never shared.
           </div>
-
-          {/* Publish face embeddings opt-in */}
-          <label className="flex items-center gap-2 mt-2 cursor-pointer">
-            <input
-              type="checkbox"
-              checked={publishFaces}
-              onChange={(e) => onPublishFacesToggle(category, e.target.checked)}
-              disabled={toggling}
-              className="accent-gruvbox-green"
-            />
-            <span className="text-xs text-secondary">
-              Publish face embeddings (detected faces in photos will be searchable on the network)
-            </span>
-          </label>
         </div>
       )}
     </div>

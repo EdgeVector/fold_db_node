@@ -699,7 +699,7 @@ impl FoldNode {
         let prefix = format!("{}:mut:", progress_id);
         let items: Vec<(
             String,
-            fold_db::fold_db_core::infrastructure::process_results_subscriber::ProcessMutationResult,
+            fold_db::fold_db_core::process_results_subscriber::ProcessMutationResult,
         )> = self
             .db
             .db_ops()
