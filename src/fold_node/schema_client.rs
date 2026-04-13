@@ -3,11 +3,81 @@ use fold_db::schema::types::Schema;
 use reqwest::StatusCode;
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
+use std::future::Future;
 
 use crate::schema_service::types::{
     AddViewRequest, AddViewResponse, BatchSchemaReuseRequest, BatchSchemaReuseResponse,
     SchemaLookupEntry, StoredView,
 };
+
+/// Internal error wrapper used by retryable schema-service calls.
+///
+/// The retry layer only retries transient failures (connect errors, timeouts,
+/// 5xx responses). Permanent failures (4xx, 409 CONFLICT, deserialization
+/// errors) fail fast on the first attempt.
+#[derive(Debug)]
+enum RetryError {
+    Transient(FoldDbError),
+    Permanent(FoldDbError),
+}
+
+/// Classify a `reqwest::Error` from `.send()` as transient or permanent.
+///
+/// Note: `reqwest::Error` from `.send()` covers connect/timeout/body-stream
+/// errors but NOT HTTP status — status classification is handled separately
+/// by `status_is_retryable`.
+fn reqwest_error_is_retryable(err: &reqwest::Error) -> bool {
+    err.is_timeout() || err.is_connect() || err.is_request()
+}
+
+/// Classify an HTTP status code as retryable (5xx) or permanent (4xx).
+fn status_is_retryable(status: StatusCode) -> bool {
+    status.is_server_error()
+}
+
+/// Retry an async schema-service operation up to 3 times with exponential
+/// backoff on transient failures.
+///
+/// The operation must distinguish transient from permanent failures by
+/// returning `RetryError::Transient` or `RetryError::Permanent`. Permanent
+/// errors (4xx, 409 CONFLICT, deserialization) fail fast without retry.
+async fn with_retries<F, Fut, T>(mut op: F) -> FoldDbResult<T>
+where
+    F: FnMut() -> Fut,
+    Fut: Future<Output = Result<T, RetryError>>,
+{
+    const MAX_ATTEMPTS: u32 = 3;
+    let mut last_err: Option<FoldDbError> = None;
+    for attempt in 0..MAX_ATTEMPTS {
+        match op().await {
+            Ok(v) => return Ok(v),
+            Err(RetryError::Permanent(e)) => return Err(e),
+            Err(RetryError::Transient(e)) => {
+                log::warn!(
+                    "schema service call failed (attempt {}/{}): {}",
+                    attempt + 1,
+                    MAX_ATTEMPTS,
+                    e
+                );
+                last_err = Some(e);
+                if attempt + 1 < MAX_ATTEMPTS {
+                    backoff_delay(attempt).await;
+                }
+            }
+        }
+    }
+    Err(last_err.expect("retry loop must have produced at least one error"))
+}
+
+/// Exponential backoff delay: 250ms, 1s, 4s, then 4s cap.
+async fn backoff_delay(attempt: u32) {
+    let ms = match attempt {
+        0 => 250,
+        1 => 1000,
+        _ => 4000,
+    };
+    tokio::time::sleep(tokio::time::Duration::from_millis(ms)).await;
+}
 
 /// Client for communicating with the schema service
 #[derive(Clone)]
@@ -53,87 +123,130 @@ impl SchemaServiceClient {
     }
 
     /// Add a schema definition to the schema service.
+    ///
+    /// Retries up to 3 times on transient failures (connect errors, timeouts,
+    /// 5xx responses). Does NOT retry on 4xx responses including 409 CONFLICT
+    /// or on deserialization failures.
     pub async fn add_schema(
         &self,
         schema: &Schema,
         mutation_mappers: HashMap<String, String>,
     ) -> FoldDbResult<AddSchemaResponse> {
         let url = format!("{}/api/schemas", self.base_url);
-
         let request = AddSchemaRequest {
             schema: schema.clone(),
             mutation_mappers,
         };
 
-        let response = self
-            .client
-            .post(&url)
-            .json(&request)
-            .send()
-            .await
-            .map_err(|error| {
-                FoldDbError::Config(format!(
-                    "Failed to submit schema to schema service at {}: {}. Is the schema service running?",
-                    url,
-                    error
-                ))
-            })?;
+        with_retries(|| async {
+            let response = self
+                .client
+                .post(&url)
+                .json(&request)
+                .send()
+                .await
+                .map_err(|error| {
+                    let retryable = reqwest_error_is_retryable(&error);
+                    let wrapped = FoldDbError::Config(format!(
+                        "Failed to submit schema to schema service at {}: {}. Is the schema service running?",
+                        url, error
+                    ));
+                    if retryable {
+                        RetryError::Transient(wrapped)
+                    } else {
+                        RetryError::Permanent(wrapped)
+                    }
+                })?;
 
-        let status = response.status();
+            let status = response.status();
 
-        if status == StatusCode::CREATED || status == StatusCode::OK {
-            return response.json::<AddSchemaResponse>().await.map_err(|error| {
-                FoldDbError::Config(format!("Failed to parse schema response: {}", error))
-            });
-        }
+            if status == StatusCode::CREATED || status == StatusCode::OK {
+                return response
+                    .json::<AddSchemaResponse>()
+                    .await
+                    .map_err(|error| {
+                        // Deserialization of a 2xx body is a permanent failure —
+                        // retrying won't change the server's response shape.
+                        RetryError::Permanent(FoldDbError::Config(format!(
+                            "Failed to parse schema response: {}",
+                            error
+                        )))
+                    });
+            }
 
-        if status == StatusCode::CONFLICT {
-            // CONFLICT should never happen — the schema service always either
-            // returns an existing schema, expands, or creates new. If it does
-            // happen, treat it as an error so the caller can retry or report.
+            if status == StatusCode::CONFLICT {
+                // CONFLICT should never happen — the schema service always either
+                // returns an existing schema, expands, or creates new. Treat it
+                // as a permanent error so we don't waste time retrying.
+                let body = response
+                    .text()
+                    .await
+                    .unwrap_or_else(|_| "<empty>".to_string());
+                return Err(RetryError::Permanent(FoldDbError::Config(format!(
+                    "Schema service returned unexpected CONFLICT (409): {}. \
+                     The schema service should always return Added, AlreadyExists, or Expanded.",
+                    body
+                ))));
+            }
+
+            let retryable = status_is_retryable(status);
             let body = response
                 .text()
                 .await
                 .unwrap_or_else(|_| "<empty>".to_string());
-            return Err(FoldDbError::Config(format!(
-                "Schema service returned unexpected CONFLICT (409): {}. \
-                 The schema service should always return Added, AlreadyExists, or Expanded.",
-                body
-            )));
-        }
-
-        let body = response
-            .text()
-            .await
-            .unwrap_or_else(|_| "<empty>".to_string());
-        Err(FoldDbError::Config(format!(
-            "Schema service add schema failed with status {}: {}",
-            status, body
-        )))
+            let wrapped = FoldDbError::Config(format!(
+                "Schema service add schema failed with status {}: {}",
+                status, body
+            ));
+            if retryable {
+                Err(RetryError::Transient(wrapped))
+            } else {
+                Err(RetryError::Permanent(wrapped))
+            }
+        })
+        .await
     }
 
     /// Send a GET request and deserialize the JSON response.
+    ///
+    /// Retries up to 3 times on transient failures (connect errors, timeouts,
+    /// 5xx responses). Does NOT retry on 4xx responses or deserialization
+    /// failures.
     async fn get_json<T: serde::de::DeserializeOwned>(
         &self,
         url: &str,
         context: &str,
     ) -> FoldDbResult<T> {
-        let response = self
-            .client
-            .get(url)
-            .send()
-            .await
-            .map_err(|e| FoldDbError::Config(format!("Failed to fetch {}: {}", context, e)))?;
-        if !response.status().is_success() {
-            return Err(FoldDbError::Config(format!(
-                "Schema service returned error for {}: {}",
-                context,
-                response.status()
-            )));
-        }
-        response.json().await.map_err(|e| {
-            FoldDbError::Config(format!("Failed to parse {} response: {}", context, e))
+        with_retries(|| async {
+            let response = self.client.get(url).send().await.map_err(|e| {
+                let retryable = reqwest_error_is_retryable(&e);
+                let wrapped = FoldDbError::Config(format!("Failed to fetch {}: {}", context, e));
+                if retryable {
+                    RetryError::Transient(wrapped)
+                } else {
+                    RetryError::Permanent(wrapped)
+                }
+            })?;
+            let status = response.status();
+            if !status.is_success() {
+                let wrapped = FoldDbError::Config(format!(
+                    "Schema service returned error for {}: {}",
+                    context, status
+                ));
+                return Err(if status_is_retryable(status) {
+                    RetryError::Transient(wrapped)
+                } else {
+                    RetryError::Permanent(wrapped)
+                });
+            }
+            response.json().await.map_err(|e| {
+                RetryError::Permanent(FoldDbError::Config(format!(
+                    "Failed to parse {} response: {}",
+                    context, e
+                )))
+            })
         })
+        .await
     }
 
     /// Extract a schema name from a JSON value that may be a string, `{"name": ...}`, or `{"schema": {"name": ...}}`.
@@ -186,49 +299,66 @@ impl SchemaServiceClient {
     }
 
     /// Batch check whether proposed schemas can reuse existing ones.
+    ///
+    /// Retries up to 3 times on transient failures.
     pub async fn batch_check_schema_reuse(
         &self,
         entries: &[SchemaLookupEntry],
     ) -> FoldDbResult<BatchSchemaReuseResponse> {
         let url = format!("{}/api/schemas/batch-check-reuse", self.base_url);
-
         let request = BatchSchemaReuseRequest {
             schemas: entries.to_vec(),
         };
 
-        let response = self
-            .client
-            .post(&url)
-            .json(&request)
-            .send()
-            .await
-            .map_err(|e| {
-                FoldDbError::Config(format!(
-                    "Failed to batch check schema reuse at {}: {}",
-                    url, e
-                ))
-            })?;
-
-        if !response.status().is_success() {
-            let body = response
-                .text()
+        with_retries(|| async {
+            let response = self
+                .client
+                .post(&url)
+                .json(&request)
+                .send()
                 .await
-                .unwrap_or_else(|_| "<empty>".to_string());
-            return Err(FoldDbError::Config(format!(
-                "Batch schema reuse check failed: {}",
-                body
-            )));
-        }
+                .map_err(|e| {
+                    let retryable = reqwest_error_is_retryable(&e);
+                    let wrapped = FoldDbError::Config(format!(
+                        "Failed to batch check schema reuse at {}: {}",
+                        url, e
+                    ));
+                    if retryable {
+                        RetryError::Transient(wrapped)
+                    } else {
+                        RetryError::Permanent(wrapped)
+                    }
+                })?;
 
-        response
-            .json::<BatchSchemaReuseResponse>()
-            .await
-            .map_err(|e| {
-                FoldDbError::Config(format!(
-                    "Failed to parse batch schema reuse response: {}",
-                    e
-                ))
-            })
+            let status = response.status();
+            if !status.is_success() {
+                let retryable = status_is_retryable(status);
+                let body = response
+                    .text()
+                    .await
+                    .unwrap_or_else(|_| "<empty>".to_string());
+                let wrapped = FoldDbError::Config(format!(
+                    "Batch schema reuse check failed (status {}): {}",
+                    status, body
+                ));
+                return Err(if retryable {
+                    RetryError::Transient(wrapped)
+                } else {
+                    RetryError::Permanent(wrapped)
+                });
+            }
+
+            response
+                .json::<BatchSchemaReuseResponse>()
+                .await
+                .map_err(|e| {
+                    RetryError::Permanent(FoldDbError::Config(format!(
+                        "Failed to parse batch schema reuse response: {}",
+                        e
+                    )))
+                })
+        })
+        .await
     }
 
     /// Register a view with the global schema service.
@@ -304,8 +434,221 @@ mod tests {
     use actix_web::{rt::time::sleep, web, App, HttpResponse, HttpServer};
     use fold_db::schema::types::SchemaType;
     use std::net::TcpListener;
+    use std::sync::atomic::{AtomicU32, Ordering};
+    use std::sync::Arc;
     use std::time::Duration;
     use tempfile::tempdir;
+
+    // ----- Retry wrapper unit tests -----
+
+    #[actix_web::test]
+    async fn with_retries_returns_ok_on_first_attempt() {
+        let calls = Arc::new(AtomicU32::new(0));
+        let calls_for_op = calls.clone();
+        let result: FoldDbResult<u32> = with_retries(move || {
+            let calls = calls_for_op.clone();
+            async move {
+                calls.fetch_add(1, Ordering::SeqCst);
+                Ok::<u32, RetryError>(42u32)
+            }
+        })
+        .await;
+
+        assert_eq!(result.unwrap(), 42);
+        assert_eq!(calls.load(Ordering::SeqCst), 1);
+    }
+
+    #[actix_web::test]
+    async fn with_retries_retries_transient_then_succeeds() {
+        let calls = Arc::new(AtomicU32::new(0));
+        let calls_for_op = calls.clone();
+        let result: FoldDbResult<&'static str> = with_retries(move || {
+            let calls = calls_for_op.clone();
+            async move {
+                let n = calls.fetch_add(1, Ordering::SeqCst);
+                if n < 2 {
+                    Err(RetryError::Transient(FoldDbError::Config(
+                        "simulated timeout".into(),
+                    )))
+                } else {
+                    Ok("ok")
+                }
+            }
+        })
+        .await;
+
+        assert_eq!(result.unwrap(), "ok");
+        assert_eq!(calls.load(Ordering::SeqCst), 3);
+    }
+
+    #[actix_web::test]
+    async fn with_retries_does_not_retry_permanent() {
+        let calls = Arc::new(AtomicU32::new(0));
+        let calls_for_op = calls.clone();
+        let result: FoldDbResult<()> = with_retries(move || {
+            let calls = calls_for_op.clone();
+            async move {
+                calls.fetch_add(1, Ordering::SeqCst);
+                Err::<(), _>(RetryError::Permanent(FoldDbError::Config(
+                    "409 CONFLICT".into(),
+                )))
+            }
+        })
+        .await;
+
+        assert!(result.is_err());
+        assert_eq!(calls.load(Ordering::SeqCst), 1);
+        let msg = result.unwrap_err().to_string();
+        assert!(msg.contains("CONFLICT"), "got: {}", msg);
+    }
+
+    #[actix_web::test]
+    async fn with_retries_exhausts_after_max_attempts() {
+        let calls = Arc::new(AtomicU32::new(0));
+        let calls_for_op = calls.clone();
+        let result: FoldDbResult<()> = with_retries(move || {
+            let calls = calls_for_op.clone();
+            async move {
+                calls.fetch_add(1, Ordering::SeqCst);
+                Err::<(), _>(RetryError::Transient(FoldDbError::Config(
+                    "503 Service Unavailable".into(),
+                )))
+            }
+        })
+        .await;
+
+        assert!(result.is_err());
+        assert_eq!(calls.load(Ordering::SeqCst), 3);
+    }
+
+    #[test]
+    fn status_is_retryable_classifies_correctly() {
+        assert!(status_is_retryable(StatusCode::INTERNAL_SERVER_ERROR));
+        assert!(status_is_retryable(StatusCode::BAD_GATEWAY));
+        assert!(status_is_retryable(StatusCode::SERVICE_UNAVAILABLE));
+        assert!(status_is_retryable(StatusCode::GATEWAY_TIMEOUT));
+
+        assert!(!status_is_retryable(StatusCode::BAD_REQUEST));
+        assert!(!status_is_retryable(StatusCode::UNAUTHORIZED));
+        assert!(!status_is_retryable(StatusCode::FORBIDDEN));
+        assert!(!status_is_retryable(StatusCode::NOT_FOUND));
+        assert!(!status_is_retryable(StatusCode::CONFLICT));
+        assert!(!status_is_retryable(StatusCode::OK));
+    }
+
+    // ----- Integration: retry against a flaky mock server -----
+
+    /// Spawn a mock POST /api/schemas endpoint that returns 500 for the first
+    /// `fail_count` requests, then a valid AddSchemaResponse thereafter.
+    /// Returns (base_url, handle, request_counter).
+    async fn spawn_flaky_add_schema(
+        fail_count: u32,
+    ) -> (String, actix_web::dev::ServerHandle, Arc<AtomicU32>) {
+        let counter = Arc::new(AtomicU32::new(0));
+        let counter_for_handler = counter.clone();
+
+        let listener =
+            TcpListener::bind(("127.0.0.1", 0)).expect("failed to bind flaky test listener");
+        let port = listener.local_addr().unwrap().port();
+
+        let server = HttpServer::new(move || {
+            let counter = counter_for_handler.clone();
+            App::new().route(
+                "/api/schemas",
+                web::post().to(move |_payload: web::Json<serde_json::Value>| {
+                    let counter = counter.clone();
+                    async move {
+                        let n = counter.fetch_add(1, Ordering::SeqCst);
+                        if n < fail_count {
+                            HttpResponse::InternalServerError().body("flaky")
+                        } else {
+                            let mut schema = Schema::new(
+                                "flaky_schema".to_string(),
+                                SchemaType::Single,
+                                None,
+                                Some(vec!["id".to_string()]),
+                                None,
+                                None,
+                            );
+                            schema.descriptive_name = Some("Flaky Schema".to_string());
+                            HttpResponse::Created().json(AddSchemaResponse {
+                                schema,
+                                mutation_mappers: HashMap::new(),
+                                replaced_schema: None,
+                            })
+                        }
+                    }
+                }),
+            )
+        })
+        .listen(listener)
+        .expect("failed to listen for flaky test server")
+        .run();
+
+        let handle = server.handle();
+        actix_web::rt::spawn(server);
+        sleep(Duration::from_millis(50)).await;
+
+        (format!("http://127.0.0.1:{}", port), handle, counter)
+    }
+
+    #[actix_web::test]
+    async fn add_schema_retries_on_5xx_and_eventually_succeeds() {
+        // Fail twice with 500, succeed on third try.
+        let (base_url, handle, counter) = spawn_flaky_add_schema(2).await;
+
+        let client = SchemaServiceClient::new(&base_url);
+        let mut schema = Schema::new(
+            "probe".to_string(),
+            SchemaType::Single,
+            None,
+            Some(vec!["id".to_string()]),
+            None,
+            None,
+        );
+        schema.descriptive_name = Some("Probe".to_string());
+
+        let response = client
+            .add_schema(&schema, HashMap::new())
+            .await
+            .expect("retry should succeed after 2 failures");
+
+        assert_eq!(response.schema.name, "flaky_schema");
+        assert_eq!(
+            counter.load(Ordering::SeqCst),
+            3,
+            "should have made 3 attempts"
+        );
+
+        handle.stop(true).await;
+    }
+
+    #[actix_web::test]
+    async fn add_schema_gives_up_after_exhausting_retries() {
+        // Always fail with 500.
+        let (base_url, handle, counter) = spawn_flaky_add_schema(u32::MAX).await;
+
+        let client = SchemaServiceClient::new(&base_url);
+        let mut schema = Schema::new(
+            "probe2".to_string(),
+            SchemaType::Single,
+            None,
+            Some(vec!["id".to_string()]),
+            None,
+            None,
+        );
+        schema.descriptive_name = Some("Probe2".to_string());
+
+        let result = client.add_schema(&schema, HashMap::new()).await;
+        assert!(result.is_err(), "should fail after exhausting retries");
+        assert_eq!(
+            counter.load(Ordering::SeqCst),
+            3,
+            "should have made exactly 3 attempts"
+        );
+
+        handle.stop(true).await;
+    }
 
     async fn spawn_schema_service(
         state: SchemaServiceState,

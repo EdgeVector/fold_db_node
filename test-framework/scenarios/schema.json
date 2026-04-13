@@ -1,8 +1,9 @@
 {
   "$schema": "http://json-schema.org/draft-07/schema#",
   "title": "FoldDB E2E Scenario",
+  "description": "Schema for test-framework/scenarios/*.yaml. Kept in sync with the action dispatch in lib/step_executor.sh and the assertion fields in lib/assertions.sh. If you add a new action or assertion field, update both the code AND this schema in the same commit.",
   "type": "object",
-  "required": ["name", "description", "nodes"],
+  "required": ["name", "description", "nodes", "steps"],
   "properties": {
     "name": { "type": "string" },
     "description": { "type": "string" },
@@ -12,7 +13,7 @@
       "maxItems": 5,
       "items": {
         "type": "object",
-        "required": ["role", "display_name"],
+        "required": ["role"],
         "properties": {
           "role": { "type": "string" },
           "display_name": { "type": "string" }
@@ -38,22 +39,21 @@
                 "action": {
                   "type": "string",
                   "enum": [
-                    "opt_in_all",
-                    "opt_in_photography",
-                    "publish",
                     "ingest_photo",
+                    "opt_in_photography",
+                    "opt_in_all",
+                    "publish",
                     "face_search",
-                    "text_search",
+                    "expect_results_min",
                     "connect",
+                    "connect_all_results",
+                    "export_pseudonyms",
                     "poll_requests",
+                    "expect_pending_min",
+                    "expect_notification_min",
                     "accept_request",
-                    "decline_request",
                     "share_record",
-                    "poll_notifications",
-                    "expect_pending",
-                    "expect_notification",
-                    "expect_contact",
-                    "expect_mutual_contact"
+                    "sleep"
                   ]
                 }
               },
@@ -77,16 +77,17 @@
               "notification_count",
               "pending_requests",
               "schema_record_count",
-              "my_pseudonym_count",
-              "shared_by"
+              "shared_record_count",
+              "my_pseudonym_count"
             ]
           },
           "op": {
             "type": "string",
-            "enum": ["==", "!=", ">=", "<=", ">", "<", "contains"]
+            "enum": ["==", "!=", ">=", "<=", ">", "<"]
           },
           "value": {},
-          "timeout": { "type": "integer" }
+          "schema": { "type": "string" },
+          "author_role": { "type": "string" }
         }
       }
     }

@@ -1,6 +1,6 @@
 //! Calendar sharing handlers, extracted from the discovery module.
 
-use super::get_metadata_store;
+use super::{get_metadata_store, MAX_CALENDAR_BATCH};
 use crate::discovery::calendar_sharing::{self, EventFingerprint, PeerEventSet, SharedEvent};
 use crate::fold_node::node::FoldNode;
 use crate::handlers::response::{ApiResponse, HandlerError, HandlerResult, IntoHandlerError};
@@ -137,6 +137,13 @@ pub async fn calendar_sharing_opt_out(
         .await
         .handler_err("opt out of calendar sharing")?;
 
+    // Purge all locally-stored calendar data on opt-out. Leaving stale entries
+    // in Sled is a real privacy issue for a feature whose whole pitch is
+    // "only reveal overlap existence."
+    calendar_sharing::clear_all_calendar_data(&*store)
+        .await
+        .handler_err("purge calendar data on opt-out")?;
+
     Ok(ApiResponse::success(CalendarSharingStatusResponse {
         opted_in: false,
         local_event_count: 0,
@@ -153,6 +160,14 @@ pub async fn sync_calendar_events(
         .get_fold_db()
         .map_err(|e| HandlerError::Internal(format!("Failed to access database: {}", e)))?;
     let store = get_metadata_store(&db);
+
+    if req.events.len() > MAX_CALENDAR_BATCH {
+        return Err(HandlerError::BadRequest(format!(
+            "Too many calendar events in batch: {} (max {})",
+            req.events.len(),
+            MAX_CALENDAR_BATCH
+        )));
+    }
 
     let opted_in = calendar_sharing::is_opted_in(&*store)
         .await
@@ -196,6 +211,14 @@ pub async fn store_peer_events(
         .get_fold_db()
         .map_err(|e| HandlerError::Internal(format!("Failed to access database: {}", e)))?;
     let store = get_metadata_store(&db);
+
+    if req.fingerprints.len() > MAX_CALENDAR_BATCH {
+        return Err(HandlerError::BadRequest(format!(
+            "Too many peer event fingerprints in batch: {} (max {})",
+            req.fingerprints.len(),
+            MAX_CALENDAR_BATCH
+        )));
+    }
 
     let opted_in = calendar_sharing::is_opted_in(&*store)
         .await

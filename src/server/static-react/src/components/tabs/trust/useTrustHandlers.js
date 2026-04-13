@@ -137,10 +137,11 @@ export function useTrustHandlers({
     setSendingEmail(true)
     setError(null)
     try {
+      // sender_name is resolved server-side from the local identity card
+      // (prevents display-name spoofing in the outgoing verification email).
       const response = await sendVerifiedInvite(
         inviteToken,
         recipientEmail.trim(),
-        identityCard.display_name,
       )
       if (response.success && response.data) {
         setEmailSentId(response.data.invite_id)

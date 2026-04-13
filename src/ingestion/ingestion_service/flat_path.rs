@@ -9,6 +9,24 @@ use fold_db::logging::features::LogFeature;
 use fold_db::schema::types::Mutation;
 use serde_json::Value;
 use std::collections::HashMap;
+#[cfg(feature = "face-detection")]
+use std::sync::atomic::{AtomicUsize, Ordering};
+
+/// Cumulative count of face-detection failures encountered during ingestion.
+/// Surfaced for visibility instead of swallowing errors silently — see
+/// [`face_detection_failure_count`].
+#[cfg(feature = "face-detection")]
+static FACE_DETECTION_FAILURE_COUNT: AtomicUsize = AtomicUsize::new(0);
+
+/// Returns the cumulative number of face-detection failures observed during
+/// ingestion since process start. This exists so a user / operator has a
+/// visible signal that face indexing is misbehaving — `run_face_detection`
+/// cannot fail the parent ingestion (data is already written by the time it
+/// runs) so the failure must be observable some other way.
+#[cfg(feature = "face-detection")]
+pub fn face_detection_failure_count() -> usize {
+    FACE_DETECTION_FAILURE_COUNT.load(Ordering::Relaxed)
+}
 
 impl IngestionService {
     /// Handles the flat (non-nested) ingestion path: AI recommendation, mutation generation, execution.
@@ -274,11 +292,13 @@ impl IngestionService {
         let db = match node.get_fold_db() {
             Ok(db) => db,
             Err(e) => {
+                FACE_DETECTION_FAILURE_COUNT.fetch_add(1, Ordering::Relaxed);
                 log_feature!(
                     LogFeature::Ingestion,
-                    warn,
-                    "Failed to acquire FoldDB for face detection: {}",
-                    e
+                    error,
+                    "Face detection: failed to acquire FoldDB ({}); failure_count={}",
+                    e,
+                    FACE_DETECTION_FAILURE_COUNT.load(Ordering::Relaxed)
                 );
                 return;
             }
@@ -314,13 +334,15 @@ impl IngestionService {
                     }
                 }
                 Err(e) => {
+                    FACE_DETECTION_FAILURE_COUNT.fetch_add(1, Ordering::Relaxed);
                     log_feature!(
                         LogFeature::Ingestion,
-                        warn,
-                        "Face detection failed for schema='{}' key={:?}: {}",
+                        error,
+                        "Face detection failed for schema='{}' key={:?}: {}; failure_count={}",
                         schema_name,
                         key,
-                        e
+                        e,
+                        FACE_DETECTION_FAILURE_COUNT.load(Ordering::Relaxed)
                     );
                 }
             }
