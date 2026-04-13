@@ -9,6 +9,26 @@ pub fn create_test_node_config() -> NodeConfig {
     NodeConfig::new(path)
 }
 
+/// Generate a valid Ed25519 keypair for tests, returned as base64 strings
+/// `(private_key_b64, public_key_b64)`. The unified identity path in
+/// `FoldNode::new` feeds the private key seed through
+/// `ed25519-compact::KeyPair::from_seed`, which panics on an all-zero seed,
+/// so tests must use a real random keypair instead of a hardcoded fixture.
+#[allow(dead_code)]
+pub fn test_identity_b64() -> (String, String) {
+    use base64::Engine;
+    use ed25519_dalek::SigningKey;
+    use rand::rngs::OsRng;
+
+    let signing_key = SigningKey::generate(&mut OsRng);
+    let verifying_key = signing_key.verifying_key();
+    let b64 = base64::engine::general_purpose::STANDARD;
+    (
+        b64.encode(signing_key.to_bytes()),
+        b64.encode(verifying_key.to_bytes()),
+    )
+}
+
 #[allow(dead_code)]
 pub fn create_test_mutation(
     schema_json: &serde_json::Value,

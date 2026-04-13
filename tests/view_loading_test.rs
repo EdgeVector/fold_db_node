@@ -13,6 +13,8 @@ use std::net::TcpListener;
 
 use fold_db::schema_service::types::StoredView;
 
+mod common;
+
 /// Spawn a mock schema service that serves pre-configured schemas and views.
 async fn spawn_mock_service(
     schemas: HashMap<String, Schema>,
@@ -125,12 +127,14 @@ async fn make_node(schema_service_url: &str) -> FoldNode {
     // Keep tempdir alive by leaking it (test-only)
     std::mem::forget(dir);
 
-    // Test-only keys (valid ed25519 keypair, base64-encoded)
+    // Generate a real Ed25519 keypair — the unified identity path runs the
+    // seed through `ed25519-compact`, which panics on an all-zero seed.
+    let (private_key, public_key) = common::test_identity_b64();
     let config = NodeConfig {
         database: DatabaseConfig::local(db_path),
         schema_service_url: Some(schema_service_url.to_string()),
-        private_key: Some("AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=".to_string()),
-        public_key: Some("O2onvM62pC1io6jQKm8Nc2UyFXcd4kOmOsBIoYtZ2ik=".to_string()),
+        private_key: Some(private_key),
+        public_key: Some(public_key),
         ..Default::default()
     };
     FoldNode::new(config).await.unwrap()
