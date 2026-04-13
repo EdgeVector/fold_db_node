@@ -1362,10 +1362,7 @@ async fn dispatch_decrypted_message(
                     });
                 }
             };
-            handle_incoming_query_response(store, &payload)
-                .await
-                .map_err(|e| HandlerError::Internal(format!("handle query response: {e}")))?;
-            Ok(DispatchOutcome::Handled)
+            handle_incoming_query_response(store, &payload).await
         }
         "schema_list_request" => {
             let payload: SchemaListRequestPayload = match serde_json::from_value(raw) {
@@ -1387,10 +1384,7 @@ async fn dispatch_decrypted_message(
                     });
                 }
             };
-            handle_incoming_schema_list_response(store, &payload)
-                .await
-                .map_err(|e| HandlerError::Internal(format!("handle schema list response: {e}")))?;
-            Ok(DispatchOutcome::Handled)
+            handle_incoming_schema_list_response(store, &payload).await
         }
         "data_share" => {
             let payload: DataSharePayload = match serde_json::from_value(raw) {
@@ -1586,11 +1580,33 @@ async fn handle_incoming_query(
 /// Handle an incoming query response: update local async query with results.
 /// Returns `Err` on transient store failure so the dispatcher retries
 /// (FU-8: was previously swallowing the error silently).
+/// Handle an incoming query response: update the local async query row.
+/// Returns `Ok(DispatchOutcome::Skipped)` when the referenced `request_id`
+/// no longer exists locally (permanent — retrying forever won't bring it
+/// back; it was pruned or never sent from this node). Propagates transient
+/// store errors as `Err` so the dispatcher retries, instead of silently
+/// dropping the response (FU-8).
 async fn handle_incoming_query_response(
     store: &dyn fold_db::storage::traits::KvStore,
     payload: &QueryResponsePayload,
-) -> Result<(), HandlerError> {
+) -> Result<DispatchOutcome, HandlerError> {
     log::info!("Received query response for request {}", payload.request_id);
+
+    // Check existence first so "unknown request_id" is classified as a
+    // permanent skip rather than a retriable error. Load failure itself is
+    // transient and propagates.
+    let existing = async_query::get_async_query(store, &payload.request_id)
+        .await
+        .map_err(|e| HandlerError::Internal(format!("load async query: {e}")))?;
+    if existing.is_none() {
+        log::warn!(
+            "Query response for unknown request {} (pruned or never sent from this node)",
+            payload.request_id
+        );
+        return Ok(DispatchOutcome::Skipped {
+            reason: format!("unknown async query request_id {}", payload.request_id),
+        });
+    }
 
     let results = if payload.success {
         match payload.results.as_ref() {
@@ -1612,7 +1628,7 @@ async fn handle_incoming_query_response(
     )
     .await
     .map_err(|e| HandlerError::Internal(format!("update async query result: {e}")))?;
-    Ok(())
+    Ok(DispatchOutcome::Handled)
 }
 
 /// Handle an incoming schema list request: list schemas and send back.
@@ -1694,23 +1710,41 @@ async fn handle_incoming_schema_list_request(
 }
 
 /// Handle an incoming schema list response: update local async query.
-/// Returns `Err` on transient store failure so the dispatcher retries
-/// (FU-8: was previously swallowing the error silently).
+/// Returns `Ok(DispatchOutcome::Skipped)` when the referenced `request_id`
+/// no longer exists locally (permanent — pruned or never sent from this
+/// node). Propagates transient store errors as `Err` so the dispatcher
+/// retries, instead of silently swallowing them (FU-8).
 async fn handle_incoming_schema_list_response(
     store: &dyn fold_db::storage::traits::KvStore,
     payload: &SchemaListResponsePayload,
-) -> Result<(), HandlerError> {
+) -> Result<DispatchOutcome, HandlerError> {
     log::info!(
         "Received schema list response for request {}",
         payload.request_id
     );
+
+    let existing = async_query::get_async_query(store, &payload.request_id)
+        .await
+        .map_err(|e| HandlerError::Internal(format!("load async query: {e}")))?;
+    if existing.is_none() {
+        log::warn!(
+            "Schema list response for unknown request {} (pruned or never sent from this node)",
+            payload.request_id
+        );
+        return Ok(DispatchOutcome::Skipped {
+            reason: format!(
+                "unknown async schema list request_id {}",
+                payload.request_id
+            ),
+        });
+    }
 
     let results = serde_json::to_value(&payload.schemas)
         .map_err(|e| HandlerError::Internal(format!("serialize schema list: {e}")))?;
     async_query::update_async_query_result(store, &payload.request_id, Some(results), None)
         .await
         .map_err(|e| HandlerError::Internal(format!("update schema list result: {e}")))?;
-    Ok(())
+    Ok(DispatchOutcome::Handled)
 }
 
 /// Process an accepted connection: create trust relationship and contact on our side.
@@ -3370,6 +3404,149 @@ mod dispatch_tests {
             .unwrap();
         let dedup_present = inner.get(dedup_key.as_bytes()).await.unwrap();
         assert_eq!(dedup_present.as_deref(), Some(&b"1"[..]));
+    }
+
+    /// Build a pending LocalAsyncQuery row so the response handlers have
+    /// something to update. Kept minimal — only fields exercised by the
+    /// response path.
+    async fn seed_async_query(store: &dyn KvStore, request_id: &str, query_type: &str) {
+        let q = crate::discovery::async_query::LocalAsyncQuery {
+            request_id: request_id.to_string(),
+            contact_public_key: "pk1".to_string(),
+            contact_display_name: "Alice".to_string(),
+            schema_name: Some("test_schema".to_string()),
+            fields: vec![],
+            query_type: query_type.to_string(),
+            status: "pending".to_string(),
+            created_at: chrono::Utc::now().to_rfc3339(),
+            completed_at: None,
+            results: None,
+            error: None,
+        };
+        crate::discovery::async_query::save_async_query(store, &q)
+            .await
+            .expect("seed async query");
+    }
+
+    /// Happy path: query response for a known request_id updates the row
+    /// and returns Handled.
+    #[tokio::test]
+    async fn query_response_happy_path_is_handled() {
+        let store: Arc<dyn KvStore> = Arc::new(InMemoryKvStore::new());
+        seed_async_query(&*store, "req-123", "query").await;
+
+        let payload = QueryResponsePayload {
+            message_type: "query_response".to_string(),
+            request_id: "req-123".to_string(),
+            success: true,
+            results: Some(vec![serde_json::json!({"id": 1})]),
+            error: None,
+            sender_pseudonym: uuid::Uuid::new_v4().to_string(),
+            reply_public_key: "rpk".to_string(),
+        };
+
+        let outcome = handle_incoming_query_response(&*store, &payload)
+            .await
+            .expect("should not error");
+        assert!(matches!(outcome, DispatchOutcome::Handled));
+
+        let updated = crate::discovery::async_query::get_async_query(&*store, "req-123")
+            .await
+            .unwrap()
+            .expect("row");
+        assert_eq!(updated.status, "completed");
+        assert!(updated.results.is_some());
+    }
+
+    /// Permanent: query response for an unknown request_id returns
+    /// Skipped so the outer dispatcher marks dedup and stops retrying. The
+    /// request was pruned (TTL) or was never sent from this node — no
+    /// amount of retrying will recover it.
+    #[tokio::test]
+    async fn query_response_unknown_request_id_is_skipped() {
+        let store: Arc<dyn KvStore> = Arc::new(InMemoryKvStore::new());
+
+        let payload = QueryResponsePayload {
+            message_type: "query_response".to_string(),
+            request_id: "missing-req".to_string(),
+            success: true,
+            results: Some(vec![]),
+            error: None,
+            sender_pseudonym: uuid::Uuid::new_v4().to_string(),
+            reply_public_key: "rpk".to_string(),
+        };
+
+        let outcome = handle_incoming_query_response(&*store, &payload)
+            .await
+            .expect("should not error");
+        match outcome {
+            DispatchOutcome::Skipped { reason } => {
+                assert!(
+                    reason.contains("missing-req"),
+                    "reason should name the unknown request_id, got: {reason}"
+                );
+            }
+            DispatchOutcome::Handled => panic!("expected Skipped, got Handled"),
+        }
+    }
+
+    /// Happy path: schema list response for a known request_id updates
+    /// the row and returns Handled.
+    #[tokio::test]
+    async fn schema_list_response_happy_path_is_handled() {
+        let store: Arc<dyn KvStore> = Arc::new(InMemoryKvStore::new());
+        seed_async_query(&*store, "req-sl-1", "schema_list").await;
+
+        let payload = SchemaListResponsePayload {
+            message_type: "schema_list_response".to_string(),
+            request_id: "req-sl-1".to_string(),
+            schemas: vec![crate::discovery::async_query::SchemaInfo {
+                name: "s1".to_string(),
+                descriptive_name: None,
+            }],
+            sender_pseudonym: uuid::Uuid::new_v4().to_string(),
+            reply_public_key: "rpk".to_string(),
+        };
+
+        let outcome = handle_incoming_schema_list_response(&*store, &payload)
+            .await
+            .expect("should not error");
+        assert!(matches!(outcome, DispatchOutcome::Handled));
+
+        let updated = crate::discovery::async_query::get_async_query(&*store, "req-sl-1")
+            .await
+            .unwrap()
+            .expect("row");
+        assert_eq!(updated.status, "completed");
+        assert!(updated.results.is_some());
+    }
+
+    /// Permanent: schema list response for an unknown request_id returns
+    /// Skipped (dedup marked, no retry forever).
+    #[tokio::test]
+    async fn schema_list_response_unknown_request_id_is_skipped() {
+        let store: Arc<dyn KvStore> = Arc::new(InMemoryKvStore::new());
+
+        let payload = SchemaListResponsePayload {
+            message_type: "schema_list_response".to_string(),
+            request_id: "missing-sl".to_string(),
+            schemas: vec![],
+            sender_pseudonym: uuid::Uuid::new_v4().to_string(),
+            reply_public_key: "rpk".to_string(),
+        };
+
+        let outcome = handle_incoming_schema_list_response(&*store, &payload)
+            .await
+            .expect("should not error");
+        match outcome {
+            DispatchOutcome::Skipped { reason } => {
+                assert!(
+                    reason.contains("missing-sl"),
+                    "reason should name the unknown request_id, got: {reason}"
+                );
+            }
+            DispatchOutcome::Handled => panic!("expected Skipped, got Handled"),
+        }
     }
 }
 
