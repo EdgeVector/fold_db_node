@@ -4,11 +4,10 @@
 //! respecting spend limits and cancellation.
 
 use crate::ingestion::batch_controller::{BatchControllerMap, BatchStatus, PendingFile};
+use crate::ingestion::helpers::process_single_file_via_smart_folder;
 use crate::ingestion::ingestion_service::IngestionService;
 use crate::ingestion::progress::ProgressService;
-use crate::ingestion::routes_helpers::process_single_file_via_smart_folder;
 use crate::ingestion::ProgressTracker;
-use actix_web::web;
 use fold_db::log_feature;
 use fold_db::logging::features::LogFeature;
 use std::sync::Arc;
@@ -113,9 +112,9 @@ async fn wait_for_resume(notifier: Arc<Notify>, map: &BatchControllerMap, batch_
 /// files in parallel, checking the spend limit before each file and pausing
 /// when the limit is hit.
 #[allow(clippy::too_many_arguments)]
-pub(crate) fn spawn_batch_coordinator(
+pub fn spawn_batch_coordinator(
     batch_id: String,
-    batch_controller_map: web::Data<BatchControllerMap>,
+    batch_controller_map: BatchControllerMap,
     progress_tracker: &ProgressTracker,
     node_arc: &Arc<tokio::sync::RwLock<crate::fold_node::FoldNode>>,
     user_id: &str,
@@ -130,7 +129,7 @@ pub(crate) fn spawn_batch_coordinator(
     let progress_tracker = progress_tracker.clone();
     let node_arc = node_arc.clone();
     let user_id = user_id.to_string();
-    let map = batch_controller_map.get_ref().clone();
+    let map = batch_controller_map;
 
     tokio::spawn(async move {
         let user_id_inner = user_id.clone();

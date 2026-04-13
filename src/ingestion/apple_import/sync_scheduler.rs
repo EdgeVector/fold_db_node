@@ -8,15 +8,12 @@
 use std::sync::Arc;
 use tokio::sync::RwLock;
 
-use chrono::Utc;
 use fold_db::log_feature;
 use fold_db::logging::features::LogFeature;
 use fold_db::progress::ProgressTracker;
 
 use super::sync_config::AppleSyncConfig;
 use crate::ingestion::ingestion_service::IngestionService;
-use crate::ingestion::routes_helpers::IngestionServiceState;
-use crate::server::http_server::AppState;
 
 /// Shared handle to the sync config so routes and the scheduler can both read/write it.
 pub type SyncConfigState = Arc<RwLock<AppleSyncConfig>>;
@@ -26,117 +23,25 @@ pub fn create_sync_config_state() -> SyncConfigState {
     Arc::new(RwLock::new(AppleSyncConfig::load()))
 }
 
-/// Spawn the background sync scheduler.
+/// Execute all enabled Apple-source imports once.
 ///
-/// The task wakes every 60 seconds, checks if `next_sync` has passed, and if
-/// so runs imports for each enabled source. After completion it updates
-/// `last_sync` / `next_sync` and persists the config.
-pub fn spawn_sync_scheduler(
-    sync_config: SyncConfigState,
-    app_state: actix_web::web::Data<AppState>,
-    ingestion_service: actix_web::web::Data<IngestionServiceState>,
-    progress_tracker: actix_web::web::Data<ProgressTracker>,
-) {
-    tokio::spawn(async move {
-        let mut interval = tokio::time::interval(std::time::Duration::from_secs(60));
-        loop {
-            interval.tick().await;
-
-            let should_sync = {
-                let cfg = sync_config.read().await;
-                cfg.enabled && cfg.next_sync.is_some_and(|next| Utc::now() >= next)
-            };
-
-            if !should_sync {
-                continue;
-            }
-
-            log_feature!(
-                LogFeature::Ingestion,
-                info,
-                "Apple auto-sync: starting scheduled import"
-            );
-
-            let (sources, photos_limit) = {
-                let cfg = sync_config.read().await;
-                (cfg.sources.clone(), cfg.photos_limit)
-            };
-
-            run_sync(
-                &sources,
-                photos_limit,
-                &app_state,
-                &ingestion_service,
-                &progress_tracker,
-            )
-            .await;
-
-            // Mark complete and persist
-            {
-                let mut cfg = sync_config.write().await;
-                cfg.mark_sync_complete(Utc::now());
-                if let Err(e) = cfg.save() {
-                    log_feature!(
-                        LogFeature::Ingestion,
-                        error,
-                        "Apple auto-sync: failed to persist config: {}",
-                        e
-                    );
-                }
-            }
-
-            log_feature!(
-                LogFeature::Ingestion,
-                info,
-                "Apple auto-sync: scheduled import complete"
-            );
-        }
-    });
-}
-
-/// Execute the actual imports for enabled sources.
-async fn run_sync(
+/// Framework-agnostic — the HTTP layer's scheduler loop calls this after
+/// resolving `node_arc` / `service` / `tracker` for the current user.
+pub async fn run_sync(
     sources: &super::sync_config::EnabledSources,
     photos_limit: usize,
-    app_state: &actix_web::web::Data<AppState>,
-    ingestion_service: &actix_web::web::Data<IngestionServiceState>,
-    progress_tracker: &actix_web::web::Data<ProgressTracker>,
+    user_id: &str,
+    node_arc: Arc<tokio::sync::RwLock<crate::fold_node::FoldNode>>,
+    service: Arc<IngestionService>,
+    tracker: ProgressTracker,
 ) {
-    use crate::server::routes::common::require_node;
-
-    let (user_id, node_arc) = match require_node(app_state).await {
-        Ok(ctx) => ctx,
-        Err(_) => {
-            log_feature!(
-                LogFeature::Ingestion,
-                warn,
-                "Apple auto-sync: no active node, skipping"
-            );
-            return;
-        }
-    };
-
-    let service: Arc<IngestionService> = match ingestion_service.read().await.clone() {
-        Some(s) => s,
-        None => {
-            log_feature!(
-                LogFeature::Ingestion,
-                warn,
-                "Apple auto-sync: ingestion service not available, skipping"
-            );
-            return;
-        }
-    };
-
-    let tracker = progress_tracker.get_ref().clone();
-
     if sources.notes {
         log_feature!(
             LogFeature::Ingestion,
             info,
             "Apple auto-sync: importing notes"
         );
-        sync_notes(&user_id, node_arc.clone(), service.clone(), tracker.clone()).await;
+        sync_notes(user_id, node_arc.clone(), service.clone(), tracker.clone()).await;
     }
 
     if sources.reminders {
@@ -145,7 +50,7 @@ async fn run_sync(
             info,
             "Apple auto-sync: importing reminders"
         );
-        sync_reminders(&user_id, node_arc.clone(), service.clone(), tracker.clone()).await;
+        sync_reminders(user_id, node_arc.clone(), service.clone(), tracker.clone()).await;
     }
 
     if sources.photos {
@@ -156,7 +61,7 @@ async fn run_sync(
             photos_limit
         );
         sync_photos(
-            &user_id,
+            user_id,
             node_arc.clone(),
             service.clone(),
             tracker.clone(),

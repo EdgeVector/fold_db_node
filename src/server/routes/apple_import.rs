@@ -13,7 +13,9 @@ use fold_db::progress::{Job, JobStatus, JobType, ProgressTracker};
 use serde::{Deserialize, Serialize};
 use serde_json::json;
 
-use crate::ingestion::routes_helpers::IngestionServiceState;
+use crate::ingestion::apple_import;
+use crate::ingestion::apple_import::sync_scheduler::SyncConfigState;
+use crate::ingestion::service_state::IngestionServiceState;
 #[cfg(target_os = "macos")]
 use crate::ingestion::IngestionRequest;
 use crate::server::http_server::AppState;
@@ -23,7 +25,7 @@ use crate::server::routes::common::require_node;
 /// Returns whether Apple import is available (macOS only).
 pub async fn apple_import_status() -> impl Responder {
     HttpResponse::Ok().json(json!({
-        "available": super::is_available(),
+        "available": apple_import::is_available(),
     }))
 }
 
@@ -33,14 +35,13 @@ pub struct AppleNotesRequest {
 }
 
 /// POST /api/ingestion/apple-import/notes
-/// Extract notes from Apple Notes and ingest them.
 pub async fn apple_import_notes(
     request: web::Json<AppleNotesRequest>,
     state: web::Data<AppState>,
     ingestion_service: web::Data<IngestionServiceState>,
     progress_tracker: web::Data<ProgressTracker>,
 ) -> impl Responder {
-    if !super::is_available() {
+    if !apple_import::is_available() {
         return HttpResponse::BadRequest().json(json!({
             "success": false,
             "error": "Apple import is only available on macOS",
@@ -65,7 +66,6 @@ pub async fn apple_import_notes(
     let progress_id = uuid::Uuid::new_v4().to_string();
     let tracker = progress_tracker.get_ref().clone();
 
-    // Initialize progress
     let mut job = Job::new(progress_id.clone(), JobType::Other("apple-notes".into()));
     job = job.with_user(user_id.clone());
     job.message = "Extracting notes from Apple Notes...".into();
@@ -96,9 +96,8 @@ async fn run_apple_notes_import(
     node_arc: std::sync::Arc<tokio::sync::RwLock<crate::fold_node::FoldNode>>,
     service: std::sync::Arc<crate::ingestion::ingestion_service::IngestionService>,
 ) {
-    use super::notes;
+    use crate::ingestion::apple_import::notes;
 
-    // Extract notes (blocking osascript call)
     let notes_result = tokio::task::spawn_blocking(move || notes::extract(folder.as_deref())).await;
 
     let notes = match notes_result {
@@ -132,14 +131,12 @@ async fn run_apple_notes_import(
     let total = notes.len();
     let records = notes::to_json_records(&notes);
 
-    // Update progress: extraction done, starting ingestion
     let mut job = Job::new(progress_id.clone(), JobType::Other("apple-notes".into()));
     job.status = JobStatus::Running;
     job.progress_percentage = 30;
     job.message = format!("Extracted {} notes, ingesting...", total);
     let _ = tracker.save(&job).await;
 
-    // Ingest in batches of 10
     let batch_size = 10;
     let mut ingested = 0;
     let node = node_arc.read().await;
@@ -179,7 +176,6 @@ async fn run_apple_notes_import(
             }
         }
 
-        // Update progress
         let pct = 30 + ((i + 1) * 70 / total.div_ceil(batch_size)).min(70);
         let mut job = Job::new(progress_id.clone(), JobType::Other("apple-notes".into()));
         job.status = JobStatus::Running;
@@ -188,7 +184,6 @@ async fn run_apple_notes_import(
         let _ = tracker.save(&job).await;
     }
 
-    // Final status
     let mut job = Job::new(progress_id.clone(), JobType::Other("apple-notes".into()));
     job.status = JobStatus::Completed;
     job.progress_percentage = 100;
@@ -223,7 +218,7 @@ pub async fn apple_import_reminders(
     ingestion_service: web::Data<IngestionServiceState>,
     progress_tracker: web::Data<ProgressTracker>,
 ) -> impl Responder {
-    if !super::is_available() {
+    if !apple_import::is_available() {
         return HttpResponse::BadRequest().json(json!({
             "success": false,
             "error": "Apple import is only available on macOS",
@@ -281,7 +276,7 @@ async fn run_apple_reminders_import(
     node_arc: std::sync::Arc<tokio::sync::RwLock<crate::fold_node::FoldNode>>,
     service: std::sync::Arc<crate::ingestion::ingestion_service::IngestionService>,
 ) {
-    use super::reminders;
+    use crate::ingestion::apple_import::reminders;
 
     let reminders_result =
         tokio::task::spawn_blocking(move || reminders::extract(list.as_deref())).await;
@@ -335,7 +330,6 @@ async fn run_apple_reminders_import(
     job.message = format!("Extracted {} reminders, ingesting...", total);
     let _ = tracker.save(&job).await;
 
-    // Ingest all reminders in one batch (typically < 100)
     let node = node_arc.read().await;
     let request = IngestionRequest {
         data: serde_json::Value::Array(records),
@@ -409,7 +403,7 @@ pub async fn apple_import_photos(
     ingestion_service: web::Data<IngestionServiceState>,
     progress_tracker: web::Data<ProgressTracker>,
 ) -> impl Responder {
-    if !super::is_available() {
+    if !apple_import::is_available() {
         return HttpResponse::BadRequest().json(json!({
             "success": false,
             "error": "Apple import is only available on macOS",
@@ -466,7 +460,7 @@ async fn run_apple_photos_import(
     node_arc: std::sync::Arc<tokio::sync::RwLock<crate::fold_node::FoldNode>>,
     service: std::sync::Arc<crate::ingestion::ingestion_service::IngestionService>,
 ) {
-    use super::photos;
+    use crate::ingestion::apple_import::photos;
 
     let photos_result =
         tokio::task::spawn_blocking(move || photos::export(album.as_deref(), limit)).await;
@@ -506,7 +500,6 @@ async fn run_apple_photos_import(
     job.message = format!("Exported {} photos, uploading...", total);
     let _ = tracker.save(&job).await;
 
-    // Convert and ingest each photo via file_to_markdown → ingestion pipeline
     let node = node_arc.read().await;
     let mut ingested = 0;
 
@@ -526,7 +519,6 @@ async fn run_apple_photos_import(
                         &file_path,
                         Some(file_name),
                     );
-                // Classify photo visibility using AI
                 if json_value
                     .get("visibility")
                     .and_then(|v| v.as_str())
@@ -557,10 +549,8 @@ async fn run_apple_photos_import(
                     }
                 }
 
-                // Read image bytes for face detection
                 let image_bytes = std::fs::read(&file_path).ok();
 
-                // Feed into ingestion pipeline
                 let request = IngestionRequest {
                     data: json_value,
                     auto_execute: true,
@@ -643,14 +633,13 @@ pub struct AppleCalendarRequest {
 }
 
 /// POST /api/ingestion/apple-import/calendar
-/// Extract events from Apple Calendar and ingest them.
 pub async fn apple_import_calendar(
     request: web::Json<AppleCalendarRequest>,
     state: web::Data<AppState>,
     ingestion_service: web::Data<IngestionServiceState>,
     progress_tracker: web::Data<ProgressTracker>,
 ) -> impl Responder {
-    if !super::is_available() {
+    if !apple_import::is_available() {
         return HttpResponse::BadRequest().json(json!({
             "success": false,
             "error": "Apple import is only available on macOS",
@@ -705,7 +694,7 @@ async fn run_apple_calendar_import(
     node_arc: std::sync::Arc<tokio::sync::RwLock<crate::fold_node::FoldNode>>,
     service: std::sync::Arc<crate::ingestion::ingestion_service::IngestionService>,
 ) {
-    use super::calendar as cal;
+    use crate::ingestion::apple_import::calendar as cal;
 
     let events_result =
         tokio::task::spawn_blocking(move || cal::extract(calendar.as_deref())).await;
@@ -747,7 +736,6 @@ async fn run_apple_calendar_import(
     job.message = format!("Extracted {} events, ingesting...", total);
     let _ = tracker.save(&job).await;
 
-    // Ingest in batches of 10
     let batch_size = 10;
     let mut ingested = 0;
     let node = node_arc.read().await;
@@ -819,8 +807,6 @@ async fn run_apple_calendar_import(
 
 // ── Auto-Sync Config Routes ─────────────────────────────────────────
 
-use super::sync_scheduler::SyncConfigState;
-
 /// GET /api/ingestion/apple-import/sync-config
 pub async fn get_sync_config(sync_config: web::Data<SyncConfigState>) -> impl Responder {
     let cfg = sync_config.read().await;
@@ -830,8 +816,8 @@ pub async fn get_sync_config(sync_config: web::Data<SyncConfigState>) -> impl Re
 #[derive(Deserialize, Serialize)]
 pub struct UpdateSyncConfigRequest {
     pub enabled: Option<bool>,
-    pub schedule: Option<super::sync_config::SyncSchedule>,
-    pub sources: Option<super::sync_config::EnabledSources>,
+    pub schedule: Option<apple_import::sync_config::SyncSchedule>,
+    pub sources: Option<apple_import::sync_config::EnabledSources>,
     pub photos_limit: Option<usize>,
 }
 
@@ -874,4 +860,101 @@ pub async fn get_next_sync(sync_config: web::Data<SyncConfigState>) -> impl Resp
         "next_sync": cfg.next_sync,
         "last_sync": cfg.last_sync,
     }))
+}
+
+// ── Background auto-sync scheduler ─────────────────────────────────
+
+/// Spawn the background sync scheduler loop.
+///
+/// The task wakes every 60 seconds, checks if `next_sync` has passed, and if
+/// so calls `sync_scheduler::run_sync` with the current user's node. After
+/// completion it updates `last_sync` / `next_sync` and persists the config.
+pub fn spawn_sync_scheduler(
+    sync_config: SyncConfigState,
+    app_state: actix_web::web::Data<AppState>,
+    ingestion_service: actix_web::web::Data<IngestionServiceState>,
+    progress_tracker: actix_web::web::Data<ProgressTracker>,
+) {
+    tokio::spawn(async move {
+        let mut interval = tokio::time::interval(std::time::Duration::from_secs(60));
+        loop {
+            interval.tick().await;
+
+            let should_sync = {
+                let cfg = sync_config.read().await;
+                cfg.enabled && cfg.next_sync.is_some_and(|next| chrono::Utc::now() >= next)
+            };
+
+            if !should_sync {
+                continue;
+            }
+
+            fold_db::log_feature!(
+                fold_db::logging::features::LogFeature::Ingestion,
+                info,
+                "Apple auto-sync: starting scheduled import"
+            );
+
+            let (sources, photos_limit) = {
+                let cfg = sync_config.read().await;
+                (cfg.sources.clone(), cfg.photos_limit)
+            };
+
+            // Resolve current user's node through the same path as HTTP routes.
+            let (user_id, node_arc) = match require_node(&app_state).await {
+                Ok(ctx) => ctx,
+                Err(_) => {
+                    fold_db::log_feature!(
+                        fold_db::logging::features::LogFeature::Ingestion,
+                        warn,
+                        "Apple auto-sync: no active node, skipping"
+                    );
+                    continue;
+                }
+            };
+
+            let service = match ingestion_service.read().await.clone() {
+                Some(s) => s,
+                None => {
+                    fold_db::log_feature!(
+                        fold_db::logging::features::LogFeature::Ingestion,
+                        warn,
+                        "Apple auto-sync: ingestion service not available, skipping"
+                    );
+                    continue;
+                }
+            };
+
+            let tracker = progress_tracker.get_ref().clone();
+
+            apple_import::sync_scheduler::run_sync(
+                &sources,
+                photos_limit,
+                &user_id,
+                node_arc,
+                service,
+                tracker,
+            )
+            .await;
+
+            {
+                let mut cfg = sync_config.write().await;
+                cfg.mark_sync_complete(chrono::Utc::now());
+                if let Err(e) = cfg.save() {
+                    fold_db::log_feature!(
+                        fold_db::logging::features::LogFeature::Ingestion,
+                        error,
+                        "Apple auto-sync: failed to persist config: {}",
+                        e
+                    );
+                }
+            }
+
+            fold_db::log_feature!(
+                fold_db::logging::features::LogFeature::Ingestion,
+                info,
+                "Apple auto-sync: scheduled import complete"
+            );
+        }
+    });
 }

@@ -1,11 +1,16 @@
-//! File upload and conversion module for ingestion
+//! HTTP route handlers for file upload and retrieval.
+//!
+//! Accepts multipart uploads, encrypts the payload via the current node's
+//! encryption key, stores the encrypted bytes in content-addressed storage,
+//! and dispatches the converted JSON into the ingestion pipeline.
 
 use crate::ingestion::file_handling::json_processor::{
-    convert_file_to_json_http, save_json_to_temp_file,
+    convert_file_to_json, save_json_to_temp_file,
 };
-use crate::ingestion::routes_helpers::{get_ingestion_service, IngestionServiceState};
+use crate::ingestion::service_state::{get_ingestion_service, IngestionServiceState};
 use crate::ingestion::{IngestionRequest, ProgressTracker};
 use crate::server::http_server::AppState;
+use crate::server::routes::ingestion::ingestion_unavailable;
 use crate::server::routes::require_node;
 use actix_multipart::Multipart;
 use actix_web::{web, HttpResponse, Responder};
@@ -15,6 +20,7 @@ use fold_db::storage::UploadStorage;
 use futures_util::StreamExt;
 use serde_json::json;
 use std::path::PathBuf;
+
 // ---- Multipart form data parsing ----
 
 /// Data extracted from multipart upload form
@@ -22,7 +28,6 @@ use std::path::PathBuf;
 pub struct UploadFormData {
     pub file_path: PathBuf,
     /// The unique filename as saved to disk (full SHA256 hex hash).
-    /// This matches the filename in data/uploads/ directory.
     pub original_filename: String,
     pub auto_execute: bool,
     pub pub_key: String,
@@ -31,6 +36,25 @@ pub struct UploadFormData {
     pub progress_id: Option<String>,
     /// Full SHA256 hex hash of the uploaded file content
     pub file_hash: String,
+}
+
+/// Convert a file to JSON using file_to_markdown, returning an HTTP 500 on error.
+async fn convert_file_to_json_http(file_path: &PathBuf) -> Result<serde_json::Value, HttpResponse> {
+    match convert_file_to_json(file_path).await {
+        Ok(value) => Ok(value),
+        Err(e) => {
+            log_feature!(
+                LogFeature::Ingestion,
+                error,
+                "File conversion failed: {}",
+                e
+            );
+            Err(HttpResponse::InternalServerError().json(json!({
+                "success": false,
+                "error": format!("Failed to convert file to JSON: {}", e)
+            })))
+        }
+    }
 }
 
 /// Extract and parse multipart form data
@@ -70,8 +94,6 @@ pub async fn parse_multipart(
 
         match field_name.as_deref() {
             Some("file") => {
-                // Capture the original filename from the Content-Disposition header
-                // before consuming the field data.
                 let upload_filename = field
                     .content_disposition()
                     .get_filename()
@@ -130,11 +152,7 @@ pub async fn parse_multipart(
     })
 }
 
-/// Save uploaded file from multipart field with content-based hash and encryption
-/// Returns (file_path, unique_filename, already_exists, file_hash) where:
-/// - unique_filename is the full SHA256 hex hash (content-addressed)
-/// - already_exists is true if this exact file was already uploaded
-/// - file_hash is the full SHA256 hex hash string
+/// Save uploaded file from multipart field with content-based hash and encryption.
 async fn save_uploaded_file(
     mut field: actix_multipart::Field,
     upload_storage: &UploadStorage,
@@ -143,7 +161,6 @@ async fn save_uploaded_file(
 ) -> Result<(PathBuf, String, bool, String), HttpResponse> {
     use sha2::{Digest, Sha256};
 
-    // Read file contents and compute hash simultaneously
     let mut hasher = Sha256::new();
     let mut file_data = Vec::new();
 
@@ -168,12 +185,10 @@ async fn save_uploaded_file(
         file_data.extend_from_slice(&data);
     }
 
-    // Use full SHA256 hex hash as content-addressed filename
     let hash_result = hasher.finalize();
     let hash_hex = format!("{:x}", hash_result);
     let unique_filename = hash_hex.clone();
 
-    // Encrypt file data before storage
     let encrypted_data = fold_db::crypto::envelope::encrypt_envelope(encryption_key, &file_data)
         .map_err(|e| {
             log_feature!(
@@ -188,7 +203,6 @@ async fn save_uploaded_file(
             }))
         })?;
 
-    // Content-addressed storage: user_id=None (same file = same hash = same object)
     let (_storage_path, already_exists) = match upload_storage
         .save_file_if_not_exists(&unique_filename, &encrypted_data, None)
         .await
@@ -203,20 +217,15 @@ async fn save_uploaded_file(
         }
     };
 
-    // Extract the file extension from the original filename so file_to_markdown
-    // can detect the format (e.g. jpg → vision model, pdf → PDF handler).
     let extension = original_filename
         .and_then(|name| std::path::Path::new(name).extension())
         .and_then(|ext| ext.to_str())
         .map(|ext| ext.to_string());
 
-    // The display name returned to callers: prefer the original filename, fall
-    // back to the content hash.
     let display_name = original_filename
         .map(|s| s.to_string())
         .unwrap_or_else(|| unique_filename.clone());
 
-    // Handle duplicate detection
     if already_exists {
         log_feature!(
             LogFeature::Ingestion,
@@ -225,7 +234,6 @@ async fn save_uploaded_file(
             unique_filename,
             upload_storage.get_display_path(&unique_filename, None)
         );
-        // For processing, we need unencrypted data on a local path
         let process_path = write_unencrypted_for_processing(
             &unique_filename,
             &file_data,
@@ -236,7 +244,6 @@ async fn save_uploaded_file(
         return Ok((process_path, display_name, true, hash_hex));
     }
 
-    // Storage has encrypted data; file converter needs unencrypted data on a local path
     let filepath = write_unencrypted_for_processing(
         &unique_filename,
         &file_data,
@@ -257,9 +264,6 @@ async fn save_uploaded_file(
 }
 
 /// Write unencrypted file data to a temp path for processing by file_to_markdown.
-/// Storage holds encrypted data; this provides the plaintext for conversion.
-/// The optional `extension` is appended so that downstream format detection
-/// (which relies on file extension) works correctly.
 async fn write_unencrypted_for_processing(
     filename: &str,
     file_data: &[u8],
@@ -300,13 +304,6 @@ async fn read_field_text(field: &mut actix_multipart::Field) -> Option<String> {
 // ---- File upload handlers ----
 
 /// Process file upload and ingestion
-///
-/// Accepts multipart/form-data with:
-/// - file: Binary file to upload
-///
-/// Additional optional fields:
-/// - autoExecute: Boolean (default: true)
-/// - pubKey: String (default: "default")
 #[utoipa::path(
     post,
     path = "/api/ingestion/upload",
@@ -326,7 +323,6 @@ pub async fn upload_file(
 ) -> impl Responder {
     log_feature!(LogFeature::Ingestion, info, "Received file upload request");
 
-    // Get node first (for encryption key)
     let (user_id, node_arc) = match require_node(&state).await {
         Ok(res) => res,
         Err(response) => return response,
@@ -336,13 +332,11 @@ pub async fn upload_file(
         node.get_encryption_key()
     };
 
-    // Extract file and form data from multipart request (encrypts before save)
     let form_data = match parse_multipart(payload, &upload_storage, &encryption_key).await {
         Ok(data) => data,
         Err(response) => return response,
     };
 
-    // Check if file already exists (duplicate upload) - Log it but proceed with ingestion!
     if form_data.already_exists {
         log_feature!(
             LogFeature::Ingestion,
@@ -352,7 +346,6 @@ pub async fn upload_file(
         );
     }
 
-    // Check per-user file dedup — skip entire pipeline if this user already ingested this file
     {
         let node = node_arc.read().await;
         let pub_key = node.get_node_public_key().to_string();
@@ -402,20 +395,18 @@ pub async fn upload_file(
         }
     };
 
-    // Enrich image JSON with image_type and created_at for HashRange schema support
     let image_descriptive_name = if crate::ingestion::is_image_file(&form_data.original_filename) {
         let desc_name = crate::ingestion::file_handling::json_processor::enrich_image_json(
             &mut json_value,
             &form_data.file_path,
             Some(&form_data.original_filename),
         );
-        // Classify photo visibility using AI
         if json_value
             .get("visibility")
             .and_then(|v| v.as_str())
             .is_none()
         {
-            if let Some(service) = get_ingestion_service(&ingestion_service).await {
+            if let Some(service) = get_ingestion_service(ingestion_service.get_ref()).await {
                 match crate::ingestion::file_handling::json_processor::classify_visibility(
                     &json_value,
                     &service,
@@ -446,8 +437,6 @@ pub async fn upload_file(
         None
     };
 
-    // Read raw image bytes before the temp file is deleted so the ingestion
-    // pipeline can run face detection after mutations are stored.
     let image_bytes = if crate::ingestion::is_image_file(&form_data.original_filename) {
         match tokio::fs::read(&form_data.file_path).await {
             Ok(bytes) => Some(bytes),
@@ -466,8 +455,6 @@ pub async fn upload_file(
     };
 
     // Clean up the unencrypted temp file now that conversion is complete.
-    // The encrypted copy is already stored; leaving plaintext on disk is a data leak.
-    // Retry deletion to handle transient filesystem locks (e.g., antivirus scanners).
     for attempt in 0..3u32 {
         match tokio::fs::remove_file(&form_data.file_path).await {
             Ok(()) => break,
@@ -494,7 +481,6 @@ pub async fn upload_file(
         "File converted to JSON successfully, starting ingestion"
     );
 
-    // Save JSON to a temporary file for testing/debugging
     let temp_json_path = match save_json_to_temp_file(&json_value) {
         Ok(path) => {
             log_feature!(
@@ -523,13 +509,11 @@ pub async fn upload_file(
         form_data.original_filename
     );
 
-    // Use client-provided progress_id if available, otherwise generate one
     let progress_id = form_data
         .progress_id
         .clone()
         .unwrap_or_else(|| uuid::Uuid::new_v4().to_string());
 
-    // Build ingestion request and delegate to the shared handler
     let request = IngestionRequest {
         data: json_value,
         auto_execute: form_data.auto_execute,
@@ -543,13 +527,11 @@ pub async fn upload_file(
         image_bytes,
     };
 
-    // Extract ingestion service
-    let service = match get_ingestion_service(&ingestion_service).await {
+    let service = match get_ingestion_service(ingestion_service.get_ref()).await {
         Some(s) => s,
-        None => return crate::ingestion::routes_helpers::ingestion_unavailable(),
+        None => return ingestion_unavailable(),
     };
 
-    // Lock briefly — the handler clones the node and spawns a background task
     let node = node_arc.read().await;
 
     match crate::handlers::ingestion::process_json(
@@ -601,10 +583,6 @@ pub async fn upload_file(
 }
 
 /// Serve an uploaded file by its content hash.
-///
-/// Reads the encrypted file from upload storage, decrypts it, and
-/// returns the raw bytes with an appropriate Content-Type header
-/// derived from the optional `name` query parameter.
 #[utoipa::path(
     get,
     path = "/api/file/{hash}",
@@ -627,7 +605,6 @@ pub async fn serve_file(
 ) -> impl Responder {
     let file_hash = path.into_inner();
 
-    // Get encryption key from node
     let (_user_id, node_arc) = match require_node(&state).await {
         Ok(res) => res,
         Err(response) => return response,
@@ -637,7 +614,6 @@ pub async fn serve_file(
         node.get_encryption_key()
     };
 
-    // Read encrypted file (content-addressed, user_id=None)
     let encrypted_data = match upload_storage.read_file(&file_hash, None).await {
         Ok(data) => data,
         Err(_) => {
@@ -647,7 +623,6 @@ pub async fn serve_file(
         }
     };
 
-    // Decrypt
     let decrypted =
         match fold_db::crypto::envelope::decrypt_envelope(&encryption_key, &encrypted_data) {
             Ok(data) => data,
@@ -665,7 +640,6 @@ pub async fn serve_file(
             }
         };
 
-    // Determine content type from optional name query param
     let content_type = query
         .get("name")
         .and_then(|name| {
@@ -705,51 +679,38 @@ mod tests {
 
     #[test]
     fn test_unique_filename_format() {
-        // Verify the unique filename is the full SHA256 hex hash (content-addressed)
         let test_content = b"test file content";
         let mut hasher = Sha256::new();
         hasher.update(test_content);
         let hash_result = hasher.finalize();
         let hash_hex = format!("{:x}", hash_result);
-
-        // Full hash is 64 hex chars
         assert_eq!(hash_hex.len(), 64);
-
-        // The filename IS the hash (content-addressed)
         let unique_filename = hash_hex.clone();
         assert_eq!(unique_filename, hash_hex);
     }
 
     #[test]
     fn test_hash_consistency() {
-        // Same content should produce same hash
         let content = b"identical content";
-
         let mut hasher1 = Sha256::new();
         hasher1.update(content);
         let hash1 = format!("{:x}", hasher1.finalize());
-
         let mut hasher2 = Sha256::new();
         hasher2.update(content);
         let hash2 = format!("{:x}", hasher2.finalize());
-
         assert_eq!(hash1, hash2);
     }
 
     #[test]
     fn test_hash_uniqueness() {
-        // Different content should produce different hashes
         let content1 = b"content one";
         let content2 = b"content two";
-
         let mut hasher1 = Sha256::new();
         hasher1.update(content1);
         let hash1 = format!("{:x}", hasher1.finalize());
-
         let mut hasher2 = Sha256::new();
         hasher2.update(content2);
         let hash2 = format!("{:x}", hasher2.finalize());
-
         assert_ne!(hash1, hash2);
     }
 }

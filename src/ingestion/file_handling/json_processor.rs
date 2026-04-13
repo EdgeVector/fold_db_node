@@ -3,7 +3,7 @@
 use file_to_markdown::{
     Config as FtmConfig, Converter as FtmConverter, OllamaConfig as FtmOllamaConfig,
 };
-use serde_json::{json, Value};
+use serde_json::Value;
 use std::io::Write;
 use std::path::PathBuf;
 use tempfile::NamedTempFile;
@@ -77,29 +77,6 @@ pub async fn convert_file_to_json(file_path: &PathBuf) -> Result<Value, Ingestio
 fn strip_null_fields(value: &mut Value) {
     if let Value::Object(map) = value {
         map.retain(|_, v| !v.is_null());
-    }
-}
-
-/// Convert a file to JSON using file_to_markdown (actix-web wrapper)
-pub async fn convert_file_to_json_http(
-    file_path: &PathBuf,
-) -> Result<Value, actix_web::HttpResponse> {
-    use actix_web::HttpResponse;
-
-    match convert_file_to_json(file_path).await {
-        Ok(value) => Ok(value),
-        Err(e) => {
-            log_feature!(
-                LogFeature::Ingestion,
-                error,
-                "File conversion failed: {}",
-                e
-            );
-            Err(HttpResponse::InternalServerError().json(json!({
-                "success": false,
-                "error": format!("Failed to convert file to JSON: {}", e)
-            })))
-        }
     }
 }
 
@@ -408,6 +385,7 @@ pub fn save_json_to_temp_file(json: &Value) -> std::io::Result<String> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use serde_json::json;
 
     #[test]
     fn test_flatten_root_to_array() {

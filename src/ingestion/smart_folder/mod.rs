@@ -1,11 +1,10 @@
 //! Shared smart-folder scan and ingestion logic.
 //!
 //! These functions are framework-agnostic and used by both
-//! HTTP handlers (`routes.rs`) and the CLI (`folddb`).
+//! HTTP handlers in `server::routes::smart_folder` and the CLI (`folddb`).
 
 pub mod batch;
 pub mod classify;
-pub mod routes;
 pub mod scanner;
 pub mod types;
 

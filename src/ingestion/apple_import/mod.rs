@@ -12,7 +12,6 @@ pub mod notes;
 pub mod photos;
 #[cfg(target_os = "macos")]
 pub mod reminders;
-pub mod routes;
 pub mod sync_config;
 pub mod sync_scheduler;
 

@@ -10,13 +10,12 @@ pub mod config;
 pub mod decomposer;
 pub mod error;
 pub mod file_handling;
+pub mod helpers;
 pub mod ingestion_service;
 pub mod key_extraction;
 pub mod mutation_generator;
 pub mod progress;
-pub mod routes;
-pub mod routes_batch;
-pub mod routes_helpers;
+pub mod service_state;
 pub mod smart_folder;
 pub mod structure_analyzer;
 
