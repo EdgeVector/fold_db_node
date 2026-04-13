@@ -1,6 +1,47 @@
 import { useState } from 'react'
 import { applySetup } from '../api/clients/systemClient'
 
+// Poll interval and max duration for /api/auth/restore/status.
+// The endpoint reports `in_progress` | `complete` | `failed` (see
+// src/server/routes/auth.rs::restore_status, added in backend PR #406).
+const RESTORE_POLL_INTERVAL_MS = 2000
+const RESTORE_POLL_MAX_MS = 5 * 60 * 1000
+
+// Wait for the background cloud bootstrap triggered by POST /api/auth/restore
+// to finish. Resolves on `complete`, throws on `failed` or timeout. Network
+// errors while polling are surfaced immediately — no silent failures.
+export async function pollRestoreStatus({
+  intervalMs = RESTORE_POLL_INTERVAL_MS,
+  maxMs = RESTORE_POLL_MAX_MS,
+  fetchImpl = fetch,
+} = {}) {
+  const deadline = Date.now() + maxMs
+  // Loop with an explicit delay between polls so tests can advance timers.
+  // eslint-disable-next-line no-constant-condition
+  while (true) {
+    const resp = await fetchImpl('/api/auth/restore/status')
+    if (!resp.ok) {
+      throw new Error(`Restore status request failed: HTTP ${resp.status}`)
+    }
+    const body = await resp.json()
+    if (body.status === 'complete') {
+      return
+    }
+    if (body.status === 'failed') {
+      throw new Error(body.error || 'Restore failed')
+    }
+    if (body.status !== 'in_progress') {
+      throw new Error(`Unknown restore status: ${JSON.stringify(body.status)}`)
+    }
+    if (Date.now() + intervalMs > deadline) {
+      throw new Error(
+        'Restore is still in progress after 5 minutes. Check the node logs and try again.'
+      )
+    }
+    await new Promise((r) => setTimeout(r, intervalMs))
+  }
+}
+
 const colors = {
   bg: '#282828',
   bgElevated: '#3c3836',
@@ -22,6 +63,14 @@ export default function DatabaseSetupScreen({ onComplete }) {
   const [inviteCode, setInviteCode] = useState('')
   const [showRestore, setShowRestore] = useState(false)
   const [recoveryPhrase, setRecoveryPhrase] = useState('')
+  // Restore flow state machine, separate from `loading` so the UI can show
+  // a distinct message while the backend finishes downloading cloud data.
+  //   idle         — no restore in flight
+  //   registering  — POST /api/auth/restore in flight
+  //   in_progress  — polling /api/auth/restore/status, waiting for cloud bootstrap
+  //   complete     — handled via onComplete, effectively transient
+  //   failed       — error shown, user can retry or go back
+  const [restoreStatus, setRestoreStatus] = useState('idle')
 
   const handleLocalSetup = async () => {
     setLoading(true)
@@ -106,6 +155,7 @@ export default function DatabaseSetupScreen({ onComplete }) {
     }
     setLoading(true)
     setError(null)
+    setRestoreStatus('registering')
     try {
       const resp = await fetch('/api/auth/restore', {
         method: 'POST',
@@ -121,6 +171,14 @@ export default function DatabaseSetupScreen({ onComplete }) {
       localStorage.setItem('exemem_api_url', data.api_url)
       localStorage.setItem('exemem_api_key', data.api_key)
 
+      // Identity is registered; the server has spawned the cloud bootstrap in
+      // the background. Poll the status endpoint until it reports `complete`
+      // so the user actually knows their data is back before we tell the
+      // node "you're set up". See backend PR #406.
+      setRestoreStatus('in_progress')
+      await pollRestoreStatus()
+      setRestoreStatus('complete')
+
       const response = await applySetup({
         storage: {
           type: 'exemem',
@@ -131,13 +189,20 @@ export default function DatabaseSetupScreen({ onComplete }) {
       if (response.success) {
         onComplete()
       } else {
+        setRestoreStatus('failed')
         setError(response.data?.message || 'Setup failed')
       }
     } catch (e) {
+      setRestoreStatus('failed')
       setError(e?.message || String(e))
     } finally {
       setLoading(false)
     }
+  }
+
+  const resetRestore = () => {
+    setRestoreStatus('idle')
+    setError(null)
   }
 
   const inputStyle = {
@@ -308,7 +373,10 @@ export default function DatabaseSetupScreen({ onComplete }) {
         )}
 
         {loading && (
-          <div style={{ marginTop: '24px', color: colors.dim, fontSize: '13px' }}>
+          <div
+            data-testid="restore-progress"
+            style={{ marginTop: '24px', color: colors.dim, fontSize: '13px' }}
+          >
             <div style={{
               width: '20px', height: '20px',
               border: `2px solid ${colors.border}`,
@@ -317,7 +385,11 @@ export default function DatabaseSetupScreen({ onComplete }) {
               animation: 'spin 0.8s linear infinite',
               margin: '0 auto 8px',
             }} />
-            {showRestore ? 'Restoring identity...' : 'Initializing database...'}
+            {showRestore
+              ? (restoreStatus === 'in_progress'
+                  ? 'Restoring your data from the cloud. This may take a few minutes...'
+                  : 'Restoring identity...')
+              : 'Initializing database...'}
             <style>{`@keyframes spin { to { transform: rotate(360deg) } }`}</style>
           </div>
         )}
@@ -328,7 +400,19 @@ export default function DatabaseSetupScreen({ onComplete }) {
             background: `${colors.red}15`, border: `1px solid ${colors.red}`,
             fontSize: '13px', color: colors.red, textAlign: 'left',
           }}>
-            {error}
+            <div>{error}</div>
+            {showRestore && restoreStatus === 'failed' && !loading && (
+              <div style={{ display: 'flex', gap: '8px', marginTop: '12px' }}>
+                <button
+                  onClick={resetRestore}
+                  style={btnStyle(colors.purple, true)}
+                >Try again</button>
+                <button
+                  onClick={() => { setShowRestore(false); setRecoveryPhrase(''); resetRestore() }}
+                  style={{ ...btnStyle(colors.border, true), background: 'transparent', color: colors.dim }}
+                >Cancel</button>
+              </div>
+            )}
           </div>
         )}
       </div>
