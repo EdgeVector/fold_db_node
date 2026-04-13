@@ -717,6 +717,9 @@ async fn connect_inner(
     // (important when the acceptor derives a single reply pseudonym).
     let stable_request_id = uuid::Uuid::new_v4().to_string();
 
+    let our_identity_pseudonym =
+        crate::discovery::pseudonym::derive_identity_pseudonym(master_key).to_string();
+
     let payload = ConnectionPayload {
         message_type: "request".to_string(),
         message: req.message.clone(),
@@ -731,6 +734,7 @@ async fn connect_inner(
             Some(network_keys)
         },
         request_id: Some(stable_request_id.clone()),
+        identity_pseudonym: Some(our_identity_pseudonym),
     };
 
     let encrypted = connection::encrypt_connection_message(&target_pk, &payload)
@@ -1241,6 +1245,10 @@ async fn dispatch_decrypted_message(
                 // Stash the requester's stable id so that when we later build
                 // an accept message we can echo it back (G3 — stable match).
                 sender_request_id: payload.request_id.clone(),
+                // Stash the requester's stable identity pseudonym so we
+                // can persist it on the contact row at accept-time and
+                // use it as a referral-match key.
+                sender_identity_pseudonym: payload.identity_pseudonym.clone(),
             };
             connection::save_received_request(store, &local_req)
                 .await
@@ -1653,6 +1661,7 @@ async fn process_accepted_connection(
         TrustDirection::Outgoing,
         Some(acceptance.sender_pseudonym.clone()),
         Some(acceptance.reply_public_key.clone()),
+        acceptance.identity_pseudonym.clone(),
         role.domain.clone(),
         default_role.to_string(),
     );
@@ -1742,6 +1751,7 @@ pub async fn respond_to_request(
             TrustDirection::Incoming,
             Some(updated.sender_pseudonym.clone()),
             Some(updated.reply_public_key.clone()),
+            updated.sender_identity_pseudonym.clone(),
             role.domain.clone(),
             role_name.to_string(),
         );
@@ -1792,6 +1802,12 @@ pub async fn respond_to_request(
             // Echo the requester's stable request_id so they can match the
             // accept to the exact LocalSentRequest row (see G3).
             request_id: updated.sender_request_id.clone(),
+            // Carry our own stable identity pseudonym so the requester
+            // can persist it on their contact row for us and use it as
+            // the primary match key in future referral queries.
+            identity_pseudonym: Some(
+                crate::discovery::pseudonym::derive_identity_pseudonym(master_key).to_string(),
+            ),
         };
 
         let encrypted = connection::encrypt_connection_message(&reply_pk, &response_payload)
@@ -2499,6 +2515,11 @@ pub async fn initiate_referral_query(
             subject_public_key: local_req.sender_public_key.clone(),
             sender_pseudonym: our_pseudonym.to_string(),
             reply_public_key: our_pk_b64.clone(),
+            // Primary match key: the subject's stable identity pseudonym
+            // carried on the original incoming `ConnectionPayload`. When
+            // `None` (legacy sender), handlers fall back to the
+            // pseudonym/public-key match.
+            subject_identity_pseudonym: local_req.sender_identity_pseudonym.clone(),
         };
 
         let encrypted = match connection::encrypt_message(&pk_bytes, &payload) {
@@ -2547,6 +2568,47 @@ pub async fn initiate_referral_query(
     })))
 }
 
+/// Pure match helper: does contact `c` correspond to the referral-query
+/// subject described by `payload`?
+///
+/// Matching strategy:
+/// 1. **Primary** — stable identity pseudonym. Only fires when *both*
+///    sides carry one. Two nodes that both know the same subject derive
+///    the same identity pseudonym for them, so this is the reliable key.
+/// 2. **Legacy fallback** — rotating pseudonym / public-key fields.
+///    Used for contacts that were created before identity pseudonyms
+///    existed, or when the referral query came from a legacy sender.
+fn referral_contact_matches(c: &Contact, payload: &ReferralQueryPayload) -> bool {
+    let identity_match = match (
+        c.identity_pseudonym.as_deref(),
+        payload.subject_identity_pseudonym.as_deref(),
+    ) {
+        (Some(a), Some(b)) => a == b,
+        _ => false,
+    };
+    identity_match
+        || c.pseudonym.as_deref() == Some(&payload.subject_pseudonym)
+        || c.messaging_pseudonym.as_deref() == Some(&payload.subject_pseudonym)
+        || c.messaging_public_key.as_deref() == Some(&payload.subject_public_key)
+}
+
+/// Pure match helper: does contact `c` correspond to the voucher who sent
+/// referral `response`?
+///
+/// Same primary/fallback strategy as [`referral_contact_matches`].
+fn referral_voucher_matches(c: &Contact, response: &ReferralResponsePayload) -> bool {
+    let identity_match = match (
+        c.identity_pseudonym.as_deref(),
+        response.voucher_identity_pseudonym.as_deref(),
+    ) {
+        (Some(a), Some(b)) => a == b,
+        _ => false,
+    };
+    identity_match
+        || c.messaging_pseudonym.as_deref() == Some(&response.sender_pseudonym)
+        || c.pseudonym.as_deref() == Some(&response.sender_pseudonym)
+}
+
 /// Handle an incoming referral query: check if we know the subject and respond if so.
 /// Returns `Skipped` for parse-permanent errors; `Err` for transient network
 /// or crypto failures so the caller retries (FU-8).
@@ -2562,13 +2624,10 @@ async fn handle_incoming_referral_query(
         .map_err(|e| HandlerError::Internal(format!("contact book path: {e}")))?;
     let contact_book = ContactBook::load_from(&book_path).unwrap_or_default();
 
-    // Check if we know the subject
+    // Check if we know the subject. See `referral_contact_matches` for the
+    // primary/legacy-fallback match strategy.
     let active = contact_book.active_contacts();
-    let matched_contact = active.iter().find(|c| {
-        c.pseudonym.as_deref() == Some(&payload.subject_pseudonym)
-            || c.messaging_pseudonym.as_deref() == Some(&payload.subject_pseudonym)
-            || c.messaging_public_key.as_deref() == Some(&payload.subject_public_key)
-    });
+    let matched_contact = active.iter().find(|c| referral_contact_matches(c, payload));
 
     let contact = match matched_contact {
         Some(c) => (*c).clone(),
@@ -2590,6 +2649,12 @@ async fn handle_incoming_referral_query(
         known_as: contact.display_name.clone(),
         sender_pseudonym: our_pseudonym.to_string(),
         reply_public_key: our_pk_b64,
+        // Our own stable identity pseudonym so the query originator can
+        // resolve us to a contact row and render our display name
+        // instead of "Unknown contact".
+        voucher_identity_pseudonym: Some(
+            crate::discovery::pseudonym::derive_identity_pseudonym(master_key).to_string(),
+        ),
     };
 
     let reply_pk_bytes = match B64.decode(&payload.reply_public_key) {
@@ -2696,10 +2761,7 @@ async fn handle_incoming_referral_response(
                 contact_book
                     .active_contacts()
                     .iter()
-                    .find(|c| {
-                        c.messaging_pseudonym.as_deref() == Some(&payload.sender_pseudonym)
-                            || c.pseudonym.as_deref() == Some(&payload.sender_pseudonym)
-                    })
+                    .find(|c| referral_voucher_matches(c, payload))
                     .map(|c| c.display_name.clone())
                     .unwrap_or_else(|| "Unknown contact".to_string())
             }
@@ -3344,5 +3406,142 @@ mod prune_tests {
             HandlerError::Internal(msg) => assert!(msg.contains("corrupt")),
             other => panic!("expected Internal error, got {other:?}"),
         }
+    }
+}
+
+// ---- Referral match tests ---------------------------------------------------
+
+/// Pure unit tests for [`referral_contact_matches`] / [`referral_voucher_matches`].
+///
+/// Exercises the stable-identity-pseudonym primary match and the legacy
+/// rotating-pseudonym fallback. These pure helpers are the only logic we can
+/// test without standing up a full `FoldNode` + publisher, which is precisely
+/// why the matching was extracted into them.
+#[cfg(test)]
+mod referral_match_tests {
+    use super::*;
+    use chrono::Utc;
+    use std::collections::HashMap;
+
+    fn contact_with(
+        identity: Option<&str>,
+        pseudonym: Option<&str>,
+        messaging_pseudonym: Option<&str>,
+        messaging_public_key: Option<&str>,
+    ) -> Contact {
+        Contact {
+            public_key: "pk".to_string(),
+            display_name: "Bob".to_string(),
+            contact_hint: None,
+            direction: TrustDirection::Mutual,
+            connected_at: Utc::now(),
+            pseudonym: pseudonym.map(str::to_string),
+            messaging_pseudonym: messaging_pseudonym.map(str::to_string),
+            messaging_public_key: messaging_public_key.map(str::to_string),
+            identity_pseudonym: identity.map(str::to_string),
+            revoked: false,
+            roles: HashMap::new(),
+        }
+    }
+
+    fn query_with(
+        subject_identity: Option<&str>,
+        subject_pseudonym: &str,
+        subject_pk: &str,
+    ) -> ReferralQueryPayload {
+        ReferralQueryPayload {
+            message_type: "referral_query".to_string(),
+            query_id: "qid".to_string(),
+            subject_pseudonym: subject_pseudonym.to_string(),
+            subject_public_key: subject_pk.to_string(),
+            sender_pseudonym: "sender".to_string(),
+            reply_public_key: "reply".to_string(),
+            subject_identity_pseudonym: subject_identity.map(str::to_string),
+        }
+    }
+
+    fn response_with(
+        voucher_identity: Option<&str>,
+        sender_pseudonym: &str,
+    ) -> ReferralResponsePayload {
+        ReferralResponsePayload {
+            message_type: "referral_response".to_string(),
+            query_id: "qid".to_string(),
+            known_as: "Charlie".to_string(),
+            sender_pseudonym: sender_pseudonym.to_string(),
+            reply_public_key: "reply".to_string(),
+            voucher_identity_pseudonym: voucher_identity.map(str::to_string),
+        }
+    }
+
+    /// **The memory-flagged bug** — rotating pseudonyms differ between Alice
+    /// and Bob, so every legacy match field is wrong. The identity pseudonym
+    /// is the only key that agrees, and it alone must produce a match.
+    #[test]
+    fn matches_on_identity_pseudonym_when_all_legacy_fields_mismatch() {
+        let bob_contact_row = contact_with(
+            Some("IDENTITY-STABLE"),
+            Some("bobs-view-of-charlie"),
+            Some("bobs-view-of-charlie"),
+            Some("bobs-view-pk"),
+        );
+        // Alice derived totally different rotating values for Charlie:
+        let alice_query = query_with(
+            Some("IDENTITY-STABLE"),
+            "alices-view-of-charlie",
+            "alices-view-pk",
+        );
+        assert!(
+            referral_contact_matches(&bob_contact_row, &alice_query),
+            "identity pseudonym match must succeed even when every legacy field disagrees"
+        );
+    }
+
+    /// Legacy compat — an old contact row with no identity pseudonym, and an
+    /// old-sender query with no identity pseudonym, must still match via the
+    /// rotating pseudonym field. Guards the migration path.
+    #[test]
+    fn legacy_fallback_matches_on_messaging_pseudonym() {
+        let legacy_contact = contact_with(None, None, Some("rotating-pseudo"), Some("old-pk"));
+        let legacy_query = query_with(None, "rotating-pseudo", "some-other-pk");
+        assert!(referral_contact_matches(&legacy_contact, &legacy_query));
+    }
+
+    /// Negative case — both sides have identity pseudonyms but they differ.
+    /// The identity match fails and the legacy rotating fields don't agree
+    /// either, so the overall match must be false. No silent catch-all.
+    #[test]
+    fn no_match_when_identity_pseudonyms_differ_and_legacy_fields_disagree() {
+        let contact = contact_with(Some("id-a"), Some("rot-a"), Some("rot-a"), Some("pk-a"));
+        let query = query_with(Some("id-b"), "rot-b", "pk-b");
+        assert!(!referral_contact_matches(&contact, &query));
+    }
+
+    /// **Voucher-lookup symptom from the memory doc** — Bob derived
+    /// `sender_pseudonym` from the stable `connection-sender` tag, but
+    /// Alice's contact row for Bob was keyed off Bob's first opt-in config
+    /// name, so the rotating fields disagree. The identity pseudonym is the
+    /// one key they share, and it must resolve `voucher_display_name` to
+    /// Bob's actual name instead of falling through to "Unknown contact".
+    #[test]
+    fn voucher_matches_on_identity_pseudonym() {
+        let alices_row_for_bob = contact_with(
+            Some("BOBS-IDENTITY"),
+            Some("alices-view-of-bob"),
+            Some("alices-view-of-bob"),
+            Some("alices-view-pk"),
+        );
+        let bobs_response = response_with(Some("BOBS-IDENTITY"), "bobs-connection-sender-pseudo");
+        assert!(referral_voucher_matches(
+            &alices_row_for_bob,
+            &bobs_response
+        ));
+    }
+
+    #[test]
+    fn voucher_legacy_fallback_matches_on_sender_pseudonym() {
+        let legacy_row = contact_with(None, None, Some("rotating"), Some("pk"));
+        let legacy_response = response_with(None, "rotating");
+        assert!(referral_voucher_matches(&legacy_row, &legacy_response));
     }
 }

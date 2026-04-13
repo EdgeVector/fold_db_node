@@ -20,6 +20,7 @@ fn test_connection_payload_with_identity_card() {
         preferred_role: None,
         network_keys: None,
         request_id: None,
+        identity_pseudonym: None,
     };
     let json = serde_json::to_string(&payload).unwrap();
     let deserialized: ConnectionPayload = serde_json::from_str(&json).unwrap();
@@ -63,6 +64,7 @@ fn test_contact_from_discovery_incoming() {
         TrustDirection::Incoming,
         Some("pseudo-uuid".to_string()),
         Some("reply_pk".to_string()),
+        Some("identity-pseudo-uuid".to_string()),
         "personal".to_string(),
         "acquaintance".to_string(),
     );
@@ -72,6 +74,10 @@ fn test_contact_from_discovery_incoming() {
     assert_eq!(contact.direction, TrustDirection::Incoming);
     assert_eq!(contact.pseudonym, Some("pseudo-uuid".to_string()));
     assert_eq!(contact.messaging_public_key, Some("reply_pk".to_string()));
+    assert_eq!(
+        contact.identity_pseudonym,
+        Some("identity-pseudo-uuid".to_string())
+    );
     assert_eq!(
         contact.roles.get("personal"),
         Some(&"acquaintance".to_string())
@@ -86,6 +92,7 @@ fn test_contact_from_discovery_outgoing() {
         "Alice".to_string(),
         None,
         TrustDirection::Outgoing,
+        None,
         None,
         None,
         "health".to_string(),

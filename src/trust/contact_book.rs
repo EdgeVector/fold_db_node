@@ -49,6 +49,17 @@ pub struct Contact {
     /// Set alongside `messaging_pseudonym`.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub messaging_public_key: Option<String>,
+    /// **Stable identity pseudonym** of this contact, derived from their
+    /// master key alone (not from any schema name). Used as the primary
+    /// match key in referral queries so that two different nodes that both
+    /// know this contact will match on the same value regardless of
+    /// whichever schemas the contact has opted into discovery.
+    ///
+    /// `None` on legacy rows created before this field was introduced;
+    /// match logic falls back to `pseudonym` / `messaging_pseudonym` in
+    /// that case.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub identity_pseudonym: Option<String>,
     /// Whether trust has been revoked (kept for history).
     #[serde(default)]
     pub revoked: bool,
@@ -68,6 +79,7 @@ impl Contact {
         direction: TrustDirection,
         pseudonym: Option<String>,
         messaging_public_key: Option<String>,
+        identity_pseudonym: Option<String>,
         role_domain: String,
         role_name: String,
     ) -> Self {
@@ -82,6 +94,7 @@ impl Contact {
             messaging_pseudonym: pseudonym.clone(),
             pseudonym,
             messaging_public_key,
+            identity_pseudonym,
             revoked: false,
             roles,
         }
@@ -150,6 +163,9 @@ impl ContactBook {
             if contact.messaging_public_key.is_some() {
                 existing.messaging_public_key = contact.messaging_public_key;
             }
+            if contact.identity_pseudonym.is_some() {
+                existing.identity_pseudonym = contact.identity_pseudonym;
+            }
             // Preserve existing roles — don't overwrite with empty map
             if !contact.roles.is_empty() {
                 existing.roles = contact.roles;
@@ -203,6 +219,7 @@ mod tests {
             pseudonym: None,
             messaging_pseudonym: None,
             messaging_public_key: None,
+            identity_pseudonym: None,
             revoked: false,
             roles: HashMap::new(),
         }
@@ -247,6 +264,7 @@ mod tests {
             pseudonym: None,
             messaging_pseudonym: None,
             messaging_public_key: None,
+            identity_pseudonym: None,
             revoked: false,
             roles: HashMap::new(),
         });

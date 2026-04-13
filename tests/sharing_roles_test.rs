@@ -113,6 +113,7 @@ async fn test_role_assignment_grants_domain_trust() {
         pseudonym: None,
         messaging_pseudonym: None,
         messaging_public_key: None,
+        identity_pseudonym: None,
         revoked: false,
         roles: HashMap::new(),
     });
@@ -166,6 +167,7 @@ async fn test_role_removal_revokes_domain_trust() {
         pseudonym: None,
         messaging_pseudonym: None,
         messaging_public_key: None,
+        identity_pseudonym: None,
         revoked: false,
         roles: HashMap::new(),
     });
@@ -223,6 +225,7 @@ async fn test_sharing_audit_with_domain_policies() {
         pseudonym: None,
         messaging_pseudonym: None,
         messaging_public_key: None,
+        identity_pseudonym: None,
         revoked: false,
         roles: HashMap::new(),
     });
@@ -310,6 +313,7 @@ async fn test_multiple_roles_across_domains() {
         pseudonym: None,
         messaging_pseudonym: None,
         messaging_public_key: None,
+        identity_pseudonym: None,
         revoked: false,
         roles: HashMap::new(),
     });

@@ -54,6 +54,32 @@ fn test_content_hash_bytes_deterministic() {
     assert_ne!(content_hash_bytes(&data), content_hash_bytes(&[5, 6, 7]));
 }
 
+#[test]
+fn test_identity_pseudonym_deterministic_for_master_key() {
+    let master = b"master-secret-key-32-bytes-long!!";
+    let p1 = derive_identity_pseudonym(master);
+    let p2 = derive_identity_pseudonym(master);
+    assert_eq!(p1, p2, "identity pseudonym must be stable for a master key");
+}
+
+#[test]
+fn test_identity_pseudonym_differs_from_connection_sender() {
+    let master = b"master-secret-key-32-bytes-long!!";
+    let identity = derive_identity_pseudonym(master);
+    let connection_sender = derive_pseudonym(master, &content_hash("connection-sender"));
+    assert_ne!(
+        identity, connection_sender,
+        "identity pseudonym must be distinct from the connection-sender pseudonym — otherwise it would be just another schema-coupled pseudonym with no migration benefit"
+    );
+}
+
+#[test]
+fn test_identity_pseudonym_differs_across_master_keys() {
+    let p1 = derive_identity_pseudonym(b"key-one-32-bytes-long-enough!!!!");
+    let p2 = derive_identity_pseudonym(b"key-two-32-bytes-long-enough!!!!");
+    assert_ne!(p1, p2);
+}
+
 // === Config Persistence Tests ===
 
 async fn make_store() -> Arc<dyn fold_db::storage::traits::KvStore> {
