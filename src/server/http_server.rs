@@ -45,6 +45,15 @@ pub struct AppState {
     pub(crate) node_manager: Arc<NodeManager>,
 }
 
+impl AppState {
+    /// Resolve the current discovery configuration without mutating any
+    /// process-wide state. Returns `None` when the node is not registered
+    /// with Exemem.
+    pub async fn discovery_config(&self) -> Option<super::discovery_config::DiscoveryConfig> {
+        super::discovery_config::DiscoveryConfig::resolve(&self.node_manager).await
+    }
+}
+
 impl FoldHttpServer {
     /// Create a new HTTP server.
     ///
@@ -140,22 +149,13 @@ impl FoldHttpServer {
             }
         );
 
-        // Auto-configure discovery service env vars if not already set.
-        // run.sh sets these, but when running the binary directly they must be derived.
-        if std::env::var("DISCOVERY_SERVICE_URL").is_err() {
-            let url = format!("{}/api", super::routes::auth::exemem_api_url());
-            log::info!("Auto-configuring DISCOVERY_SERVICE_URL={}", url);
-            std::env::set_var("DISCOVERY_SERVICE_URL", &url);
-        }
-        if std::env::var("DISCOVERY_MASTER_KEY").is_err() {
-            let base_config = self.node_manager.get_base_config().await;
-            if let Some(ref priv_key_b64) = base_config.private_key {
-                use sha2::{Digest, Sha256};
-                let mut hasher = Sha256::new();
-                hasher.update(priv_key_b64.as_bytes());
-                let key_hex = hex::encode(hasher.finalize());
-                log::info!("Auto-configuring DISCOVERY_MASTER_KEY from node identity");
-                std::env::set_var("DISCOVERY_MASTER_KEY", &key_hex);
+        // Discovery configuration is resolved on-demand via
+        // `AppState::discovery_config()` — no process-wide env mutation.
+        // Log whether it is currently available so operators can debug.
+        match super::discovery_config::DiscoveryConfig::resolve(&self.node_manager).await {
+            Some(cfg) => log::info!("Discovery configuration resolved: url={}", cfg.url),
+            None => {
+                log::info!("Discovery configuration not yet available (no identity registered)")
             }
         }
 

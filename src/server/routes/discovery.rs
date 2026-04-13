@@ -3,62 +3,18 @@ use crate::server::http_server::AppState;
 use crate::server::routes::{handler_error_to_response, node_or_return};
 use actix_web::{web, HttpRequest, HttpResponse, Responder};
 
-/// Helper to get discovery config.
-/// Checks env vars first, then falls back to deriving from Sled config store.
-/// Returns (discovery_url, master_key) or an error response.
-fn get_discovery_config() -> Result<(String, Vec<u8>), HttpResponse> {
-    let not_configured = || {
-        HttpResponse::ServiceUnavailable().json(serde_json::json!({
+/// Helper to get discovery config via the explicit `AppState` resolver.
+/// Returns (discovery_url, master_key) or a 503 response when the node has
+/// not been registered with Exemem yet.
+async fn get_discovery_config(state: &AppState) -> Result<(String, Vec<u8>), HttpResponse> {
+    match state.discovery_config().await {
+        Some(cfg) => Ok((cfg.url, cfg.master_key)),
+        None => Err(HttpResponse::ServiceUnavailable().json(serde_json::json!({
             "ok": false,
             "error": "Discovery not available. Register with Exemem to enable.",
             "code": "DISCOVERY_NOT_CONFIGURED"
-        }))
-    };
-
-    // Try env vars first (explicit override)
-    if let (Ok(url), Ok(key_hex)) = (
-        std::env::var("DISCOVERY_SERVICE_URL"),
-        std::env::var("DISCOVERY_MASTER_KEY"),
-    ) {
-        let key = hex::decode(&key_hex).map_err(|_| {
-            HttpResponse::InternalServerError().json(serde_json::json!({
-                "ok": false,
-                "error": "Invalid DISCOVERY_MASTER_KEY (expected hex-encoded bytes).",
-                "code": "INVALID_CONFIG"
-            }))
-        })?;
-        return Ok((url, key));
+        }))),
     }
-
-    // Fall back: derive from Sled config store
-    // Discovery URL = cloud api_url + "/api" (same API gateway)
-    // Master key = SHA256(node private key)
-    let data_path = crate::utils::paths::folddb_home()
-        .ok()
-        .map(|h| h.join("data"))
-        .or_else(|| {
-            std::env::var("FOLD_STORAGE_PATH")
-                .ok()
-                .map(std::path::PathBuf::from)
-        });
-
-    if let Some(path) = data_path {
-        {
-            let pool = std::sync::Arc::new(fold_db::storage::SledPool::new(path));
-            if let Ok(store) = fold_db::NodeConfigStore::new(pool) {
-                if let (Some(cloud), Some(identity)) =
-                    (store.get_cloud_config(), store.get_identity())
-                {
-                    use sha2::{Digest, Sha256};
-                    let url = format!("{}/api", cloud.api_url);
-                    let key = Sha256::digest(identity.private_key.as_bytes()).to_vec();
-                    return Ok((url, key));
-                }
-            }
-        }
-    }
-
-    Err(not_configured())
 }
 
 /// Extract the auth token from env var, local credential store, or the incoming request's
@@ -118,18 +74,20 @@ async fn try_refresh_token(state: &web::Data<AppState>) -> Option<String> {
 /// Resolve discovery config for use in other route modules.
 /// Returns (discovery_url, master_key, auth_token) or a HandlerError.
 pub async fn resolve_discovery_config(
+    state: &AppState,
     node: &crate::fold_node::node::FoldNode,
     req: Option<&HttpRequest>,
 ) -> Result<(String, Vec<u8>, String), crate::handlers::HandlerError> {
-    let (url, key) = get_discovery_config().map_err(|resp| {
-        // Extract the error message from the HttpResponse body if possible
-        let msg = "Discovery not configured. Register with Exemem to enable (folddb cloud enable).";
-        if resp.status() == actix_web::http::StatusCode::INTERNAL_SERVER_ERROR {
-            crate::handlers::HandlerError::Internal(msg.to_string())
-        } else {
-            crate::handlers::HandlerError::ServiceUnavailable(msg.to_string())
+    let (url, key) = match state.discovery_config().await {
+        Some(cfg) => (cfg.url, cfg.master_key),
+        None => {
+            let msg =
+                "Discovery not configured. Register with Exemem to enable (folddb cloud enable).";
+            return Err(crate::handlers::HandlerError::ServiceUnavailable(
+                msg.to_string(),
+            ));
         }
-    })?;
+    };
 
     // Try to get auth token from env, keychain, or dummy for the request
     let token = if let Some(r) = req {
@@ -184,7 +142,7 @@ pub async fn opt_in(
 pub async fn my_pseudonyms(state: web::Data<AppState>) -> impl Responder {
     let (_user_hash, node) = node_or_return!(state);
 
-    let (_url, key) = match get_discovery_config() {
+    let (_url, key) = match get_discovery_config(&state).await {
         Ok(c) => c,
         Err(response) => return response,
     };
@@ -213,7 +171,7 @@ pub async fn opt_out(
 ) -> impl Responder {
     let (_user_hash, node) = node_or_return!(state);
 
-    let (url, key) = match get_discovery_config() {
+    let (url, key) = match get_discovery_config(&state).await {
         Ok(c) => c,
         Err(response) => return response,
     };
@@ -233,7 +191,7 @@ pub async fn opt_out(
 pub async fn publish(req: HttpRequest, state: web::Data<AppState>) -> impl Responder {
     let (_user_hash, node) = node_or_return!(state);
 
-    let (url, key) = match get_discovery_config() {
+    let (url, key) = match get_discovery_config(&state).await {
         Ok(c) => c,
         Err(response) => return response,
     };
@@ -266,7 +224,7 @@ pub async fn search(
 ) -> impl Responder {
     let (_user_hash, node) = node_or_return!(state);
 
-    let (url, key) = match get_discovery_config() {
+    let (url, key) = match get_discovery_config(&state).await {
         Ok(c) => c,
         Err(response) => return response,
     };
@@ -299,7 +257,7 @@ pub async fn connect(
 ) -> impl Responder {
     let (_user_hash, node) = node_or_return!(state);
 
-    let (url, key) = match get_discovery_config() {
+    let (url, key) = match get_discovery_config(&state).await {
         Ok(c) => c,
         Err(response) => return response,
     };
@@ -328,7 +286,7 @@ pub async fn connect(
 pub async fn connection_requests(req: HttpRequest, state: web::Data<AppState>) -> impl Responder {
     let (_user_hash, node) = node_or_return!(state);
 
-    let (url, key) = match get_discovery_config() {
+    let (url, key) = match get_discovery_config(&state).await {
         Ok(c) => c,
         Err(response) => return response,
     };
@@ -352,7 +310,7 @@ pub async fn respond_to_request(
 ) -> impl Responder {
     let (_user_hash, node) = node_or_return!(state);
 
-    let (url, key) = match get_discovery_config() {
+    let (url, key) = match get_discovery_config(&state).await {
         Ok(c) => c,
         Err(response) => return response,
     };
@@ -376,7 +334,7 @@ pub async fn check_network(
 ) -> impl Responder {
     let (_user_hash, node) = node_or_return!(state);
 
-    let (url, key) = match get_discovery_config() {
+    let (url, key) = match get_discovery_config(&state).await {
         Ok(c) => c,
         Err(response) => return response,
     };
@@ -419,7 +377,7 @@ pub async fn sent_requests(state: web::Data<AppState>) -> impl Responder {
 pub async fn poll_requests(req: HttpRequest, state: web::Data<AppState>) -> impl Responder {
     let (_user_hash, _node) = node_or_return!(state);
 
-    let (url, key) = match get_discovery_config() {
+    let (url, key) = match get_discovery_config(&state).await {
         Ok(c) => c,
         Err(response) => return response,
     };
@@ -440,7 +398,7 @@ pub async fn poll_requests(req: HttpRequest, state: web::Data<AppState>) -> impl
 pub async fn browse_categories(req: HttpRequest, state: web::Data<AppState>) -> impl Responder {
     let (_user_hash, _node) = node_or_return!(state);
 
-    let (url, key) = match get_discovery_config() {
+    let (url, key) = match get_discovery_config(&state).await {
         Ok(c) => c,
         Err(response) => return response,
     };
@@ -503,7 +461,7 @@ pub async fn detect_interests(state: web::Data<AppState>) -> impl Responder {
 pub async fn similar_profiles(req: HttpRequest, state: web::Data<AppState>) -> impl Responder {
     let (_user_hash, node) = node_or_return!(state);
 
-    let (url, key) = match get_discovery_config() {
+    let (url, key) = match get_discovery_config(&state).await {
         Ok(c) => c,
         Err(response) => return response,
     };
@@ -632,7 +590,7 @@ pub async fn moment_scan(
 ) -> impl Responder {
     let (_user_hash, node) = node_or_return!(state);
 
-    let (_url, key) = match get_discovery_config() {
+    let (_url, key) = match get_discovery_config(&state).await {
         Ok(c) => c,
         Err(response) => return response,
     };
@@ -701,7 +659,7 @@ pub async fn face_search(
 ) -> impl Responder {
     let (_user_hash, node) = node_or_return!(state);
 
-    let (url, key) = match get_discovery_config() {
+    let (url, key) = match get_discovery_config(&state).await {
         Ok(c) => c,
         Err(response) => return response,
     };
@@ -736,7 +694,7 @@ pub async fn share_data(
 ) -> impl Responder {
     let (_user_hash, node) = node_or_return!(state);
 
-    let (url, key) = match get_discovery_config() {
+    let (url, key) = match get_discovery_config(&state).await {
         Ok(c) => c,
         Err(response) => return response,
     };

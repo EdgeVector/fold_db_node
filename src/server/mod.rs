@@ -1,3 +1,4 @@
+pub mod discovery_config;
 pub mod embedded;
 pub mod http_server;
 pub mod middleware;
