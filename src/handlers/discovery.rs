@@ -468,6 +468,79 @@ pub async fn search(
     }))
 }
 
+// Sled key prefix for per-target "connect in flight" sentinels.
+//
+// Used by the connect handler to serialize concurrent POSTs to the
+// `/api/discovery/connect` endpoint targeting the same pseudonym (CLI + UI,
+// two UI tabs, etc.).
+const CONNECT_IN_FLIGHT_PREFIX: &str = "discovery:connect_in_flight:";
+
+// TTL on the in-flight sentinel. If the guarded flow dies mid-way (crash,
+// panic, dropped future) without releasing, the next attempt after this many
+// seconds will treat the sentinel as stale and overwrite it. Long enough to
+// cover a network round trip, short enough that a legitimate retry isn't
+// blocked.
+const CONNECT_IN_FLIGHT_TTL_SECS: i64 = 60;
+
+/// Outcome of attempting to acquire the per-target connect sentinel.
+#[derive(Debug, PartialEq, Eq)]
+pub(crate) enum SentinelAcquire {
+    /// Sentinel acquired (either fresh or stale-overwritten). Caller owns it
+    /// and must release on every exit path.
+    Acquired,
+    /// Another fresh sentinel already exists — caller must reject the request.
+    InFlight,
+}
+
+/// Try to acquire the per-target in-flight sentinel in the Sled store.
+/// See `connect` for rationale. Pure helper, unit-testable.
+pub(crate) async fn try_acquire_connect_sentinel(
+    store: &dyn fold_db::storage::traits::KvStore,
+    target_pseudonym: &str,
+    now_ts: i64,
+    ttl_secs: i64,
+) -> Result<SentinelAcquire, HandlerError> {
+    let key = format!("{}{}", CONNECT_IN_FLIGHT_PREFIX, target_pseudonym);
+    if let Some(existing) = store
+        .get(key.as_bytes())
+        .await
+        .map_err(|e| HandlerError::Internal(format!("sentinel read: {e}")))?
+    {
+        let existing_ts = std::str::from_utf8(&existing)
+            .ok()
+            .and_then(|s| s.parse::<i64>().ok())
+            .ok_or_else(|| {
+                HandlerError::Internal("corrupt connect_in_flight sentinel value".to_string())
+            })?;
+        if now_ts - existing_ts < ttl_secs {
+            return Ok(SentinelAcquire::InFlight);
+        }
+        // Stale: previous attempt died mid-flight. Fall through and overwrite.
+    }
+    store
+        .put(key.as_bytes(), now_ts.to_string().into_bytes())
+        .await
+        .map_err(|e| HandlerError::Internal(format!("sentinel write: {e}")))?;
+    Ok(SentinelAcquire::Acquired)
+}
+
+/// Release the per-target in-flight sentinel. Best-effort — a release failure
+/// is logged but does not mask the caller's primary result, because the
+/// sentinel self-expires after `CONNECT_IN_FLIGHT_TTL_SECS`.
+pub(crate) async fn release_connect_sentinel(
+    store: &dyn fold_db::storage::traits::KvStore,
+    target_pseudonym: &str,
+) {
+    let key = format!("{}{}", CONNECT_IN_FLIGHT_PREFIX, target_pseudonym);
+    if let Err(e) = store.delete(key.as_bytes()).await {
+        log::warn!(
+            "Failed to release connect_in_flight sentinel for {}: {}",
+            target_pseudonym,
+            e
+        );
+    }
+}
+
 /// Send an E2E encrypted connection request to a pseudonym owner.
 ///
 /// 1. Looks up the target pseudonym's published X25519 public key
@@ -482,16 +555,64 @@ pub async fn connect(
     auth_token: &str,
     master_key: &[u8],
 ) -> HandlerResult<()> {
+    // Acquire a per-target sentinel in the Sled store BEFORE running the guard
+    // checks. This closes the race where two concurrent POSTs for the same
+    // target pseudonym (CLI + UI, two UI tabs, ...) both pass the contact-book
+    // and sent-request guards and each post a duplicate connection request to
+    // the bulletin board. KvStore has no put-if-absent / compare-and-swap
+    // primitive, so we do get → check TTL → put. Narrower than true CAS but
+    // sufficient: concurrency here is within a single fold_db node process.
+    let target_str = req.target_pseudonym.to_string();
+    let db = node
+        .get_fold_db()
+        .map_err(|e| HandlerError::Internal(format!("Failed to access database: {e}")))?;
+    let store = get_metadata_store(&db);
+
+    let now_ts = chrono::Utc::now().timestamp();
+    match try_acquire_connect_sentinel(&*store, &target_str, now_ts, CONNECT_IN_FLIGHT_TTL_SECS)
+        .await?
+    {
+        SentinelAcquire::InFlight => {
+            return Err(HandlerError::BadRequest(
+                "Connection request already in flight for this peer".to_string(),
+            ));
+        }
+        SentinelAcquire::Acquired => {}
+    }
+
+    // Run the actual connect flow. ALWAYS release the sentinel on every exit
+    // path (success or error). Using `let result = ...` then release, instead
+    // of a Drop guard, because the release is async.
+    let result = connect_inner(
+        req,
+        node,
+        discovery_url,
+        auth_token,
+        master_key,
+        &target_str,
+    )
+    .await;
+    release_connect_sentinel(&*store, &target_str).await;
+    result
+}
+
+async fn connect_inner(
+    req: &ConnectRequest,
+    node: &FoldNode,
+    discovery_url: &str,
+    auth_token: &str,
+    master_key: &[u8],
+    target_str: &str,
+) -> HandlerResult<()> {
     // Check if already connected to this pseudonym
     let op = OperationProcessor::new(node.clone());
     let book_path = op
         .contact_book_path()
         .map_err(|e| HandlerError::Internal(format!("Failed to resolve contacts path: {e}")))?;
     let contact_book = ContactBook::load_from(&book_path).unwrap_or_default();
-    let target_str = req.target_pseudonym.to_string();
     if contact_book.active_contacts().iter().any(|c| {
-        c.pseudonym.as_deref() == Some(target_str.as_str())
-            || c.messaging_pseudonym.as_deref() == Some(target_str.as_str())
+        c.pseudonym.as_deref() == Some(target_str)
+            || c.messaging_pseudonym.as_deref() == Some(target_str)
     }) {
         return Err(HandlerError::BadRequest(
             "Already connected to this peer".to_string(),
@@ -690,10 +811,13 @@ pub(crate) async fn collect_our_pseudonyms(
 
     pseudonyms.sort();
     pseudonyms.dedup();
-    // Cap pseudonyms to avoid excessively long URLs in the poll request.
-    // Each UUID is 36 chars + comma separator. At 1000 pseudonyms that's ~37KB,
-    // within typical URL limits for most HTTP servers.
-    pseudonyms.truncate(1000);
+    // NOTE: previously truncated to 1000 here with a "URL length limit" comment,
+    // but that was misleading — the poll request only sends pseudonyms to the
+    // server when `our_pseudonyms.len() <= 100` (otherwise it passes None and
+    // filters client-side). The truncate silently dropped decrypt keys beyond
+    // the 1000th, causing addressed messages to be missed. No cap needed:
+    // pseudonyms are 16 bytes each, and the server-filter branch already guards
+    // URL length.
     log::debug!(
         "our_pseudonyms[0..5]: {:?}",
         pseudonyms
@@ -1169,8 +1293,7 @@ async fn dispatch_decrypted_message(
                     });
                 }
             };
-            handle_incoming_query(node, &payload, master_key, publisher).await;
-            Ok(DispatchOutcome::Handled)
+            handle_incoming_query(node, &payload, master_key, publisher).await
         }
         "query_response" => {
             let payload: QueryResponsePayload = match serde_json::from_value(raw) {
@@ -1181,7 +1304,9 @@ async fn dispatch_decrypted_message(
                     });
                 }
             };
-            handle_incoming_query_response(store, &payload).await;
+            handle_incoming_query_response(store, &payload)
+                .await
+                .map_err(|e| HandlerError::Internal(format!("handle query response: {e}")))?;
             Ok(DispatchOutcome::Handled)
         }
         "schema_list_request" => {
@@ -1193,8 +1318,7 @@ async fn dispatch_decrypted_message(
                     });
                 }
             };
-            handle_incoming_schema_list_request(node, &payload, master_key, publisher).await;
-            Ok(DispatchOutcome::Handled)
+            handle_incoming_schema_list_request(node, &payload, master_key, publisher).await
         }
         "schema_list_response" => {
             let payload: SchemaListResponsePayload = match serde_json::from_value(raw) {
@@ -1205,7 +1329,9 @@ async fn dispatch_decrypted_message(
                     });
                 }
             };
-            handle_incoming_schema_list_response(store, &payload).await;
+            handle_incoming_schema_list_response(store, &payload)
+                .await
+                .map_err(|e| HandlerError::Internal(format!("handle schema list response: {e}")))?;
             Ok(DispatchOutcome::Handled)
         }
         "data_share" => {
@@ -1239,8 +1365,7 @@ async fn dispatch_decrypted_message(
                     });
                 }
             };
-            handle_incoming_referral_query(node, &payload, master_key, publisher).await;
-            Ok(DispatchOutcome::Handled)
+            handle_incoming_referral_query(node, &payload, master_key, publisher).await
         }
         "referral_response" => {
             let payload: ReferralResponsePayload = match serde_json::from_value(raw) {
@@ -1251,8 +1376,7 @@ async fn dispatch_decrypted_message(
                     });
                 }
             };
-            handle_incoming_referral_response(node, store, &payload).await;
-            Ok(DispatchOutcome::Handled)
+            handle_incoming_referral_response(node, store, &payload).await
         }
         other => Ok(DispatchOutcome::Skipped {
             reason: format!("unknown message_type '{other}'"),
@@ -1263,12 +1387,15 @@ async fn dispatch_decrypted_message(
 // ===== Async query auto-processing helpers =====
 
 /// Handle an incoming query request: execute the query and send results back.
+/// Returns `Skipped` for permanent parse failures (bad reply pk, bad sender
+/// pseudonym UUID — retrying won't recover). Returns `Err` for transient
+/// network or encryption failures so the caller retries (FU-8).
 async fn handle_incoming_query(
     node: &FoldNode,
     payload: &QueryRequestPayload,
     master_key: &[u8],
     publisher: &DiscoveryPublisher,
-) {
+) -> Result<DispatchOutcome, HandlerError> {
     use crate::fold_node::OperationProcessor;
     use fold_db::schema::types::operations::Query;
 
@@ -1281,7 +1408,8 @@ async fn handle_incoming_query(
     let op = OperationProcessor::new(node.clone());
     let query = Query::new(payload.schema_name.clone(), payload.fields.clone());
 
-    // Execute with access control using sender's Ed25519 key
+    // Query execution errors are reported back to the caller in the response
+    // payload — this is part of the wire protocol, not a silent failure.
     let (success, results, error) = match op
         .execute_query_json_with_access(query, &payload.sender_public_key)
         .await
@@ -1290,7 +1418,6 @@ async fn handle_incoming_query(
         Err(e) => (false, None, Some(format!("Query failed: {}", e))),
     };
 
-    // Derive our reply pseudonym + X25519 key
     let hash = crate::discovery::pseudonym::content_hash("connection-sender");
     let our_pseudonym = crate::discovery::pseudonym::derive_pseudonym(master_key, &hash);
     let our_reply_pk = connection::get_pseudonym_public_key_b64(master_key, &our_pseudonym);
@@ -1305,7 +1432,7 @@ async fn handle_incoming_query(
         reply_public_key: our_reply_pk,
     };
 
-    // Encrypt with requester's reply public key and send back
+    // Parse-permanent: reply public key malformed on the wire. Not recoverable.
     let reply_pk_bytes = match B64.decode(&payload.reply_public_key) {
         Ok(b) if b.len() == 32 => {
             let mut arr = [0u8; 32];
@@ -1313,74 +1440,78 @@ async fn handle_incoming_query(
             arr
         }
         _ => {
-            log::warn!(
-                "Invalid reply public key in query request {}",
-                payload.request_id
-            );
-            return;
+            return Ok(DispatchOutcome::Skipped {
+                reason: format!(
+                    "invalid reply public key in query request {}",
+                    payload.request_id
+                ),
+            });
         }
     };
 
-    let encrypted = match connection::encrypt_message(&reply_pk_bytes, &response) {
-        Ok(e) => e,
-        Err(e) => {
-            log::warn!("Failed to encrypt query response: {}", e);
-            return;
-        }
-    };
+    // Encryption failure is a transient crypto error — propagate for retry.
+    let encrypted = connection::encrypt_message(&reply_pk_bytes, &response)
+        .map_err(|e| HandlerError::Internal(format!("encrypt query response: {e}")))?;
 
+    // Parse-permanent: sender pseudonym malformed UUID. Not recoverable.
     let sender_pseudonym: uuid::Uuid = match payload.sender_pseudonym.parse() {
         Ok(u) => u,
-        Err(_) => {
-            log::warn!("Invalid sender pseudonym in query request");
-            return;
+        Err(e) => {
+            return Ok(DispatchOutcome::Skipped {
+                reason: format!("invalid sender pseudonym UUID: {e}"),
+            });
         }
     };
 
     let encrypted_b64 = B64.encode(&encrypted);
-    if let Err(e) = publisher
+    publisher
         .connect(sender_pseudonym, encrypted_b64, Some(our_pseudonym))
         .await
-    {
-        log::warn!("Failed to send query response: {}", e);
-    }
+        .map_err(|e| HandlerError::Internal(format!("send query response: {e}")))?;
+    Ok(DispatchOutcome::Handled)
 }
 
 /// Handle an incoming query response: update local async query with results.
+/// Returns `Err` on transient store failure so the dispatcher retries
+/// (FU-8: was previously swallowing the error silently).
 async fn handle_incoming_query_response(
     store: &dyn fold_db::storage::traits::KvStore,
     payload: &QueryResponsePayload,
-) {
+) -> Result<(), HandlerError> {
     log::info!("Received query response for request {}", payload.request_id);
 
     let results = if payload.success {
-        payload
-            .results
-            .as_ref()
-            .map(|r| serde_json::to_value(r).unwrap_or_default())
+        match payload.results.as_ref() {
+            Some(r) => Some(
+                serde_json::to_value(r)
+                    .map_err(|e| HandlerError::Internal(format!("serialize query results: {e}")))?,
+            ),
+            None => None,
+        }
     } else {
         None
     };
 
-    if let Err(e) = async_query::update_async_query_result(
+    async_query::update_async_query_result(
         store,
         &payload.request_id,
         results,
         payload.error.clone(),
     )
     .await
-    {
-        log::warn!("Failed to update async query result: {}", e);
-    }
+    .map_err(|e| HandlerError::Internal(format!("update async query result: {e}")))?;
+    Ok(())
 }
 
 /// Handle an incoming schema list request: list schemas and send back.
+/// Returns `Skipped` for wire-malformed parse-permanent errors; returns `Err`
+/// for transient db/network failures so the caller retries (FU-8).
 async fn handle_incoming_schema_list_request(
     node: &FoldNode,
     payload: &SchemaListRequestPayload,
     master_key: &[u8],
     publisher: &DiscoveryPublisher,
-) {
+) -> Result<DispatchOutcome, HandlerError> {
     use crate::fold_node::OperationProcessor;
 
     log::info!(
@@ -1389,27 +1520,21 @@ async fn handle_incoming_schema_list_request(
     );
 
     let op = OperationProcessor::new(node.clone());
-    let db = match op.get_db_public() {
-        Ok(db) => db,
-        Err(e) => {
-            log::warn!("Failed to get database for schema list: {}", e);
-            return;
-        }
-    };
+    let db = op
+        .get_db_public()
+        .map_err(|e| HandlerError::Internal(format!("get db for schema list: {e}")))?;
 
-    let schemas: Vec<SchemaInfo> = match db.schema_manager().get_schemas() {
-        Ok(all_schemas) => all_schemas
-            .values()
-            .map(|s| SchemaInfo {
-                name: s.name.clone(),
-                descriptive_name: s.descriptive_name.clone(),
-            })
-            .collect(),
-        Err(e) => {
-            log::warn!("Failed to get schemas: {}", e);
-            return;
-        }
-    };
+    let all_schemas = db
+        .schema_manager()
+        .get_schemas()
+        .map_err(|e| HandlerError::Internal(format!("get schemas: {e}")))?;
+    let schemas: Vec<SchemaInfo> = all_schemas
+        .values()
+        .map(|s| SchemaInfo {
+            name: s.name.clone(),
+            descriptive_name: s.descriptive_name.clone(),
+        })
+        .collect();
 
     let hash = crate::discovery::pseudonym::content_hash("connection-sender");
     let our_pseudonym = crate::discovery::pseudonym::derive_pseudonym(master_key, &hash);
@@ -1430,53 +1555,50 @@ async fn handle_incoming_schema_list_request(
             arr
         }
         _ => {
-            log::warn!("Invalid reply public key in schema list request");
-            return;
+            return Ok(DispatchOutcome::Skipped {
+                reason: "invalid reply public key in schema list request".to_string(),
+            });
         }
     };
 
-    let encrypted = match connection::encrypt_message(&reply_pk_bytes, &response) {
-        Ok(e) => e,
-        Err(e) => {
-            log::warn!("Failed to encrypt schema list response: {}", e);
-            return;
-        }
-    };
+    let encrypted = connection::encrypt_message(&reply_pk_bytes, &response)
+        .map_err(|e| HandlerError::Internal(format!("encrypt schema list response: {e}")))?;
 
     let sender_pseudonym: uuid::Uuid = match payload.sender_pseudonym.parse() {
         Ok(u) => u,
-        Err(_) => {
-            log::warn!("Invalid sender pseudonym in schema list request");
-            return;
+        Err(e) => {
+            return Ok(DispatchOutcome::Skipped {
+                reason: format!("invalid sender pseudonym UUID in schema list request: {e}"),
+            });
         }
     };
 
     let encrypted_b64 = B64.encode(&encrypted);
-    if let Err(e) = publisher
+    publisher
         .connect(sender_pseudonym, encrypted_b64, Some(our_pseudonym))
         .await
-    {
-        log::warn!("Failed to send schema list response: {}", e);
-    }
+        .map_err(|e| HandlerError::Internal(format!("send schema list response: {e}")))?;
+    Ok(DispatchOutcome::Handled)
 }
 
 /// Handle an incoming schema list response: update local async query.
+/// Returns `Err` on transient store failure so the dispatcher retries
+/// (FU-8: was previously swallowing the error silently).
 async fn handle_incoming_schema_list_response(
     store: &dyn fold_db::storage::traits::KvStore,
     payload: &SchemaListResponsePayload,
-) {
+) -> Result<(), HandlerError> {
     log::info!(
         "Received schema list response for request {}",
         payload.request_id
     );
 
-    let results = serde_json::to_value(&payload.schemas).unwrap_or_default();
-    if let Err(e) =
-        async_query::update_async_query_result(store, &payload.request_id, Some(results), None)
-            .await
-    {
-        log::warn!("Failed to update schema list result: {}", e);
-    }
+    let results = serde_json::to_value(&payload.schemas)
+        .map_err(|e| HandlerError::Internal(format!("serialize schema list: {e}")))?;
+    async_query::update_async_query_result(store, &payload.request_id, Some(results), None)
+        .await
+        .map_err(|e| HandlerError::Internal(format!("update schema list result: {e}")))?;
+    Ok(())
 }
 
 /// Process an accepted connection: create trust relationship and contact on our side.
@@ -3043,21 +3165,18 @@ pub async fn initiate_referral_query(
 }
 
 /// Handle an incoming referral query: check if we know the subject and respond if so.
+/// Returns `Skipped` for parse-permanent errors; `Err` for transient network
+/// or crypto failures so the caller retries (FU-8).
 async fn handle_incoming_referral_query(
     node: &FoldNode,
     payload: &ReferralQueryPayload,
     master_key: &[u8],
     publisher: &DiscoveryPublisher,
-) {
-    // Load contact book
+) -> Result<DispatchOutcome, HandlerError> {
     let op = OperationProcessor::new(node.clone());
-    let book_path = match op.contact_book_path() {
-        Ok(p) => p,
-        Err(e) => {
-            log::warn!("Failed to resolve contacts path for referral query: {e}");
-            return;
-        }
-    };
+    let book_path = op
+        .contact_book_path()
+        .map_err(|e| HandlerError::Internal(format!("contact book path: {e}")))?;
     let contact_book = ContactBook::load_from(&book_path).unwrap_or_default();
 
     // Check if we know the subject
@@ -3070,7 +3189,11 @@ async fn handle_incoming_referral_query(
 
     let contact = match matched_contact {
         Some(c) => (*c).clone(),
-        None => return, // Silence = no
+        None => {
+            // Silence = no. This is the protocol: non-matching referral queries
+            // produce no response. Mark as handled (nothing to retry).
+            return Ok(DispatchOutcome::Handled);
+        }
     };
 
     // Derive our connection-sender pseudonym + X25519 key
@@ -3086,7 +3209,6 @@ async fn handle_incoming_referral_query(
         reply_public_key: our_pk_b64,
     };
 
-    // Decode the querier's reply public key
     let reply_pk_bytes = match B64.decode(&payload.reply_public_key) {
         Ok(b) if b.len() == 32 => {
             let mut arr = [0u8; 32];
@@ -3094,70 +3216,76 @@ async fn handle_incoming_referral_query(
             arr
         }
         Ok(_) => {
-            log::warn!("Referral query reply key wrong length");
-            return;
+            return Ok(DispatchOutcome::Skipped {
+                reason: "referral query reply key wrong length".to_string(),
+            });
         }
         Err(e) => {
-            log::warn!("Invalid referral query reply key: {e}");
-            return;
+            return Ok(DispatchOutcome::Skipped {
+                reason: format!("invalid referral query reply key: {e}"),
+            });
         }
     };
 
-    let encrypted = match connection::encrypt_message(&reply_pk_bytes, &response) {
-        Ok(e) => e,
-        Err(e) => {
-            log::warn!("Failed to encrypt referral response: {e}");
-            return;
-        }
-    };
+    let encrypted = connection::encrypt_message(&reply_pk_bytes, &response)
+        .map_err(|e| HandlerError::Internal(format!("encrypt referral response: {e}")))?;
 
     let encrypted_b64 = B64.encode(&encrypted);
 
     let sender_uuid: uuid::Uuid = match payload.sender_pseudonym.parse() {
         Ok(u) => u,
         Err(e) => {
-            log::warn!("Invalid sender pseudonym UUID in referral query: {e}");
-            return;
+            return Ok(DispatchOutcome::Skipped {
+                reason: format!("invalid sender pseudonym UUID in referral query: {e}"),
+            });
         }
     };
 
-    if let Err(e) = publisher
+    publisher
         .connect(sender_uuid, encrypted_b64, Some(our_pseudonym))
         .await
-    {
-        log::warn!("Failed to send referral response: {e}");
-    } else {
-        log::info!(
-            "Sent referral response for query {} (known as {})",
-            payload.query_id,
-            contact.display_name
-        );
-    }
+        .map_err(|e| HandlerError::Internal(format!("send referral response: {e}")))?;
+    log::info!(
+        "Sent referral response for query {} (known as {})",
+        payload.query_id,
+        contact.display_name
+    );
+    Ok(DispatchOutcome::Handled)
 }
 
 /// Handle an incoming referral response: append the vouch to the connection request.
+/// Returns `Ok(DispatchOutcome::Skipped)` when the referenced connection request
+/// no longer exists (permanent — retrying won't help). Propagates transient
+/// store errors as `Err` so the dispatcher retries, instead of silently
+/// dropping the vouch (FU-8).
 async fn handle_incoming_referral_response(
     node: &FoldNode,
     store: &dyn fold_db::storage::traits::KvStore,
     payload: &ReferralResponsePayload,
-) {
-    // Scan for the connection request matching this query_id
-    let entries = match store.scan_prefix(b"discovery:conn_req:").await {
-        Ok(e) => e,
-        Err(e) => {
-            log::warn!("Failed to scan connection requests for referral response: {e}");
-            return;
-        }
-    };
+) -> Result<DispatchOutcome, HandlerError> {
+    // Scan for the connection request matching this query_id. A scan failure
+    // here is transient — propagate so the caller retries.
+    let entries = store
+        .scan_prefix(b"discovery:conn_req:")
+        .await
+        .map_err(|e| HandlerError::Internal(format!("scan connection requests: {e}")))?;
 
     let mut found_key: Option<Vec<u8>> = None;
     let mut found_req: Option<LocalConnectionRequest> = None;
     for (key, value) in &entries {
-        if let Ok(local_req) = serde_json::from_slice::<LocalConnectionRequest>(value) {
-            if local_req.referral_query_id.as_deref() == Some(&payload.query_id) {
-                found_key = Some(key.clone());
-                found_req = Some(local_req);
-                break;
+        // Deserialization of an existing row: if one row is corrupt, log and
+        // skip just that row — matching connection.rs's existing pattern. Do
+        // NOT drop the whole message because of one bad neighbor.
+        match serde_json::from_slice::<LocalConnectionRequest>(value) {
+            Ok(local_req) => {
+                if local_req.referral_query_id.as_deref() == Some(&payload.query_id) {
+                    found_key = Some(key.clone());
+                    found_req = Some(local_req);
+                    break;
+                }
+            }
+            Err(e) => {
+                log::warn!("Corrupt connection request row during referral scan: {e}");
             }
         }
     }
@@ -3166,27 +3294,37 @@ async fn handle_incoming_referral_response(
         (Some(k), Some(r)) => (k, r),
         _ => {
             log::warn!("Referral response for unknown query {}", payload.query_id);
-            return;
+            return Ok(DispatchOutcome::Skipped {
+                reason: format!("referral response for unknown query {}", payload.query_id),
+            });
         }
     };
 
-    // Look up voucher identity from contact book
+    // Look up voucher identity from contact book. Contact-book load failure
+    // is treated as "no voucher name"; this is deliberate because the vouch
+    // itself is the important part and we already have the sender pseudonym
+    // on the payload. We do NOT hide the error from the caller — we just
+    // render an explicit "Unknown contact" label.
     let voucher_display_name = {
         let op = OperationProcessor::new(node.clone());
-        let book_path = op.contact_book_path().ok();
-        let contact_book = book_path
-            .and_then(|p| ContactBook::load_from(&p).ok())
-            .unwrap_or_default();
-
-        contact_book
-            .active_contacts()
-            .iter()
-            .find(|c| {
-                c.messaging_pseudonym.as_deref() == Some(&payload.sender_pseudonym)
-                    || c.pseudonym.as_deref() == Some(&payload.sender_pseudonym)
-            })
-            .map(|c| c.display_name.clone())
-            .unwrap_or_else(|| "Unknown contact".to_string())
+        match op.contact_book_path() {
+            Ok(book_path) => {
+                let contact_book = ContactBook::load_from(&book_path).unwrap_or_default();
+                contact_book
+                    .active_contacts()
+                    .iter()
+                    .find(|c| {
+                        c.messaging_pseudonym.as_deref() == Some(&payload.sender_pseudonym)
+                            || c.pseudonym.as_deref() == Some(&payload.sender_pseudonym)
+                    })
+                    .map(|c| c.display_name.clone())
+                    .unwrap_or_else(|| "Unknown contact".to_string())
+            }
+            Err(e) => {
+                log::warn!("Failed to resolve contact book path for voucher lookup: {e}");
+                "Unknown contact".to_string()
+            }
+        }
     };
 
     local_req.vouches.push(Vouch {
@@ -3195,23 +3333,20 @@ async fn handle_incoming_referral_response(
         received_at: chrono::Utc::now().to_rfc3339(),
     });
 
-    let updated = match serde_json::to_vec(&local_req) {
-        Ok(v) => v,
-        Err(e) => {
-            log::warn!("Failed to serialize updated connection request: {e}");
-            return;
-        }
-    };
+    let updated = serde_json::to_vec(&local_req).map_err(|e| {
+        HandlerError::Internal(format!("serialize vouched connection request: {e}"))
+    })?;
 
-    if let Err(e) = store.put(&sled_key, updated).await {
-        log::warn!("Failed to save updated connection request with vouch: {e}");
-    } else {
-        log::info!(
-            "Added vouch for referral query {} (known as '{}')",
-            payload.query_id,
-            payload.known_as
-        );
-    }
+    store
+        .put(&sled_key, updated)
+        .await
+        .map_err(|e| HandlerError::Internal(format!("save vouched connection request: {e}")))?;
+    log::info!(
+        "Added vouch for referral query {} (known as '{}')",
+        payload.query_id,
+        payload.known_as
+    );
+    Ok(DispatchOutcome::Handled)
 }
 
 /// Process a received data share: create schemas if needed, write mutations,
@@ -3803,5 +3938,93 @@ mod prune_tests {
             .await
             .unwrap();
         assert_eq!(deleted, 0);
+    }
+
+    // ===== connect sentinel tests (FU-2) =====
+
+    #[tokio::test]
+    async fn sentinel_first_acquire_succeeds() {
+        let store = InMemoryKvStore::default();
+        let store_ref: &dyn KvStore = &store;
+        let target = "11111111-1111-1111-1111-111111111111";
+        let outcome = try_acquire_connect_sentinel(store_ref, target, 1_000_000, 60)
+            .await
+            .expect("first acquire must not error");
+        assert_eq!(outcome, SentinelAcquire::Acquired);
+        // Sentinel key present.
+        let key = format!("{}{}", CONNECT_IN_FLIGHT_PREFIX, target);
+        assert!(store_ref.get(key.as_bytes()).await.unwrap().is_some());
+    }
+
+    #[tokio::test]
+    async fn sentinel_second_acquire_within_ttl_rejects() {
+        let store = InMemoryKvStore::default();
+        let store_ref: &dyn KvStore = &store;
+        let target = "22222222-2222-2222-2222-222222222222";
+        let first = try_acquire_connect_sentinel(store_ref, target, 1_000_000, 60)
+            .await
+            .unwrap();
+        assert_eq!(first, SentinelAcquire::Acquired);
+        // Only 10 seconds have passed — still in flight.
+        let second = try_acquire_connect_sentinel(store_ref, target, 1_000_010, 60)
+            .await
+            .unwrap();
+        assert_eq!(second, SentinelAcquire::InFlight);
+    }
+
+    #[tokio::test]
+    async fn sentinel_stale_is_overwritten() {
+        let store = InMemoryKvStore::default();
+        let store_ref: &dyn KvStore = &store;
+        let target = "33333333-3333-3333-3333-333333333333";
+        try_acquire_connect_sentinel(store_ref, target, 1_000_000, 60)
+            .await
+            .unwrap();
+        // Clock has advanced 2 minutes. Previous sentinel is stale.
+        let second = try_acquire_connect_sentinel(store_ref, target, 1_000_120, 60)
+            .await
+            .unwrap();
+        assert_eq!(second, SentinelAcquire::Acquired);
+        // The stored timestamp should be the new one.
+        let key = format!("{}{}", CONNECT_IN_FLIGHT_PREFIX, target);
+        let value = store_ref.get(key.as_bytes()).await.unwrap().unwrap();
+        assert_eq!(std::str::from_utf8(&value).unwrap(), "1000120");
+    }
+
+    #[tokio::test]
+    async fn sentinel_release_clears_key_so_next_acquire_succeeds() {
+        let store = InMemoryKvStore::default();
+        let store_ref: &dyn KvStore = &store;
+        let target = "44444444-4444-4444-4444-444444444444";
+        try_acquire_connect_sentinel(store_ref, target, 1_000_000, 60)
+            .await
+            .unwrap();
+        release_connect_sentinel(store_ref, target).await;
+        let key = format!("{}{}", CONNECT_IN_FLIGHT_PREFIX, target);
+        assert!(store_ref.get(key.as_bytes()).await.unwrap().is_none());
+        // And a fresh acquire at the same logical time now succeeds.
+        let again = try_acquire_connect_sentinel(store_ref, target, 1_000_005, 60)
+            .await
+            .unwrap();
+        assert_eq!(again, SentinelAcquire::Acquired);
+    }
+
+    #[tokio::test]
+    async fn sentinel_corrupt_value_errors_loudly() {
+        let store = InMemoryKvStore::default();
+        let store_ref: &dyn KvStore = &store;
+        let target = "55555555-5555-5555-5555-555555555555";
+        let key = format!("{}{}", CONNECT_IN_FLIGHT_PREFIX, target);
+        store_ref
+            .put(key.as_bytes(), b"not-a-timestamp".to_vec())
+            .await
+            .unwrap();
+        let err = try_acquire_connect_sentinel(store_ref, target, 1_000_000, 60)
+            .await
+            .expect_err("corrupt sentinel must surface as an error, not silently overwrite");
+        match err {
+            HandlerError::Internal(msg) => assert!(msg.contains("corrupt")),
+            other => panic!("expected Internal error, got {other:?}"),
+        }
     }
 }
