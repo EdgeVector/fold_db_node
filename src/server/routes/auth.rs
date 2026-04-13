@@ -612,9 +612,21 @@ pub async fn get_recovery_phrase(data: web::Data<AppState>) -> HttpResponse {
     }))
 }
 
+/// Resolve the path to `$FOLDDB_HOME/config/node_identity.json`.
+fn identity_path() -> std::path::PathBuf {
+    crate::utils::paths::folddb_home()
+        .map(|h| h.join("config").join("node_identity.json"))
+        .unwrap_or_else(|_| std::path::PathBuf::from("config/node_identity.json"))
+}
+
 /// POST /api/auth/restore
 /// Restore node identity from a 24-word BIP39 recovery phrase.
 /// Derives Ed25519 keypair, writes identity, registers with Exemem.
+///
+/// If registration fails, the partially-written `node_identity.json` is
+/// deleted and the in-memory NodeManager config is invalidated so the node
+/// does not silently boot with a half-restored identity. This mirrors the
+/// CLI restore rollback pattern in `src/bin/folddb/restore.rs`.
 pub async fn restore_from_phrase(
     data: web::Data<AppState>,
     body: web::Json<serde_json::Value>,
@@ -664,17 +676,21 @@ pub async fn restore_from_phrase(
     let public_key_b64 =
         base64::engine::general_purpose::STANDARD.encode(key_pair.public_key_bytes());
 
+    // Snapshot pre-restore config so we can roll back the in-memory state
+    // if register fails. The on-disk identity file is deleted on rollback —
+    // we do NOT preserve any prior identity (HTTP restore has always
+    // overwritten, and the UI warns the user).
+    let pre_restore_config = data.node_manager.get_base_config().await;
+    let id_path = identity_path();
+
     // Write identity to disk ($FOLDDB_HOME/config/node_identity.json)
-    let identity_path = crate::utils::paths::folddb_home()
-        .map(|h| h.join("config").join("node_identity.json"))
-        .unwrap_or_else(|_| std::path::PathBuf::from("config/node_identity.json"));
     let identity_json = serde_json::json!({
         "private_key": private_key_b64,
         "public_key": public_key_b64,
     });
 
     if let Err(e) = crate::sensitive_io::write_sensitive(
-        &identity_path,
+        &id_path,
         serde_json::to_string_pretty(&identity_json)
             .unwrap()
             .as_bytes(),
@@ -685,6 +701,59 @@ pub async fn restore_from_phrase(
         }));
     }
 
+    match finalize_restore(
+        &data,
+        &public_key_b64,
+        &private_key_b64,
+        pre_restore_config.clone(),
+    )
+    .await
+    {
+        Ok(response) => HttpResponse::Ok().json(response),
+        Err(e) => {
+            // Rollback: remove the freshly-written identity file and restore
+            // the pre-restore in-memory config so the node doesn't boot with
+            // a half-restored identity on next restart.
+            log::error!(
+                "restore_from_phrase failed, rolling back identity file: {}",
+                e
+            );
+            if let Err(rm_err) = std::fs::remove_file(&id_path) {
+                if rm_err.kind() != std::io::ErrorKind::NotFound {
+                    log::error!(
+                        "restore_from_phrase rollback: failed to delete {:?}: {}",
+                        id_path,
+                        rm_err
+                    );
+                }
+            }
+            data.node_manager
+                .update_config(crate::server::node_manager::NodeManagerConfig {
+                    base_config: pre_restore_config,
+                })
+                .await;
+            HttpResponse::InternalServerError().json(serde_json::json!({
+                "ok": false,
+                "error": e
+            }))
+        }
+    }
+}
+
+/// Finalize a restore once the identity file has been written. Updates the
+/// NodeManager config with the restored keypair, calls signed_register, and
+/// spawns the background bootstrap. Returns the register response JSON on
+/// success so the HTTP handler can forward it to the client.
+///
+/// If this returns Err, the caller is responsible for rolling back the
+/// identity file and restoring the pre-restore in-memory config (see
+/// `restore_from_phrase`).
+async fn finalize_restore(
+    data: &web::Data<AppState>,
+    public_key_b64: &str,
+    private_key_b64: &str,
+    pre_restore_config: crate::fold_node::config::NodeConfig,
+) -> Result<serde_json::Value, String> {
     // Ensure the shared local node exists (opens Sled) before we grab the handle.
     // On a fresh node where no request has been served yet, get_sled_db() returns
     // None because the node has not been created yet.
@@ -696,56 +765,172 @@ pub async fn restore_from_phrase(
     let sled_pool = data.node_manager.get_sled_pool().await;
 
     // Update the in-memory config so signed_register uses the restored key.
-    // This calls invalidate_all_nodes(), clearing the shared node — but our
-    // cloned sled_db handle above keeps the database alive.
-    let mut base_config = data.node_manager.get_base_config().await;
-    base_config.public_key = Some(public_key_b64.clone());
-    base_config.private_key = Some(private_key_b64.clone());
+    let mut base_config = pre_restore_config;
+    base_config.public_key = Some(public_key_b64.to_string());
+    base_config.private_key = Some(private_key_b64.to_string());
     data.node_manager
         .update_config(crate::server::node_manager::NodeManagerConfig { base_config })
         .await;
 
-    // Register with Exemem (idempotent — returns fresh token for existing users)
-    match signed_register(&data, None).await {
-        Ok(json) => {
-            let mut response = json;
-            if let Some(obj) = response.as_object_mut() {
-                obj.insert(
-                    "api_url".to_string(),
-                    serde_json::Value::String(exemem_api_url()),
-                );
-            }
-
-            // Spawn background bootstrap if we got Exemem credentials and a Sled handle.
-            // This downloads the latest snapshot + replays write logs from R2
-            // so the restored node has the full database, not just the identity.
-            if let (Some(api_key), Some(_user_hash), Some(sled_pool)) = (
-                response.get("api_key").and_then(|v| v.as_str()),
-                response.get("user_hash").and_then(|v| v.as_str()),
-                sled_pool,
-            ) {
-                let api_url = exemem_api_url();
-                let api_key = api_key.to_string();
-                let node_manager = data.node_manager.clone();
-
-                tokio::spawn(async move {
-                    if let Err(e) =
-                        bootstrap_from_cloud(&api_url, &api_key, &node_manager, sled_pool).await
-                    {
-                        log::error!("Background bootstrap after restore failed: {}", e);
-                    }
-                });
-            } else {
-                log::warn!("Bootstrap after restore skipped: missing api_key, user_hash, or sled_pool handle");
-            }
-
-            HttpResponse::Ok().json(response)
-        }
-        Err(e) => HttpResponse::InternalServerError().json(serde_json::json!({
-            "ok": false,
-            "error": e
-        })),
+    // Register with Exemem (idempotent — returns fresh token for existing users).
+    // Failure here triggers rollback in the caller.
+    let mut response = signed_register(data, None).await?;
+    if let Some(obj) = response.as_object_mut() {
+        obj.insert(
+            "api_url".to_string(),
+            serde_json::Value::String(exemem_api_url()),
+        );
     }
+
+    // Spawn background bootstrap if we got Exemem credentials and a Sled handle.
+    // Bootstrap runs asynchronously — failures update the bootstrap status file
+    // but do NOT trigger identity rollback (register already succeeded).
+    if let (Some(api_key), Some(_user_hash), Some(sled_pool)) = (
+        response.get("api_key").and_then(|v| v.as_str()),
+        response.get("user_hash").and_then(|v| v.as_str()),
+        sled_pool,
+    ) {
+        let api_url = exemem_api_url();
+        let api_key = api_key.to_string();
+        let node_manager = data.node_manager.clone();
+
+        tokio::spawn(async move {
+            if let Err(e) = bootstrap_from_cloud(&api_url, &api_key, &node_manager, sled_pool).await
+            {
+                log::error!("Background bootstrap after restore failed: {}", e);
+            }
+        });
+    } else {
+        log::warn!(
+            "Bootstrap after restore skipped: missing api_key, user_hash, or sled_pool handle"
+        );
+    }
+
+    Ok(response)
+}
+
+// ============================================================================
+// Bootstrap status tracking
+// ============================================================================
+
+/// State of the most recent / in-flight database bootstrap after identity restore.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum BootstrapStatusState {
+    InProgress,
+    Complete,
+    Failed,
+}
+
+/// Persisted bootstrap status, written to
+/// `$FOLDDB_HOME/data/.bootstrap_status.json`. The UI polls this via
+/// `GET /api/auth/restore/status` after a successful restore call to tell
+/// whether the background cloud download is still running, finished, or
+/// failed.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct BootstrapStatus {
+    pub status: BootstrapStatusState,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub error: Option<String>,
+}
+
+impl BootstrapStatus {
+    pub fn in_progress() -> Self {
+        Self {
+            status: BootstrapStatusState::InProgress,
+            error: None,
+        }
+    }
+    pub fn complete() -> Self {
+        Self {
+            status: BootstrapStatusState::Complete,
+            error: None,
+        }
+    }
+    pub fn failed(error: String) -> Self {
+        Self {
+            status: BootstrapStatusState::Failed,
+            error: Some(error),
+        }
+    }
+}
+
+/// Path to the bootstrap status file.
+pub(crate) fn bootstrap_status_path() -> Option<std::path::PathBuf> {
+    crate::utils::paths::folddb_home()
+        .ok()
+        .map(|h| h.join("data").join(".bootstrap_status.json"))
+}
+
+/// Write the bootstrap status to disk. Errors are logged loudly (no silent
+/// failures) but not returned — callers are inside tokio::spawn and have no
+/// way to propagate an error to the original HTTP client.
+pub(crate) fn write_bootstrap_status(status: &BootstrapStatus) {
+    let path = match bootstrap_status_path() {
+        Some(p) => p,
+        None => {
+            log::error!("write_bootstrap_status: cannot resolve FOLDDB_HOME");
+            return;
+        }
+    };
+    if let Some(parent) = path.parent() {
+        if let Err(e) = std::fs::create_dir_all(parent) {
+            log::error!(
+                "write_bootstrap_status: failed to create {:?}: {}",
+                parent,
+                e
+            );
+            return;
+        }
+    }
+    let json = match serde_json::to_string_pretty(status) {
+        Ok(s) => s,
+        Err(e) => {
+            log::error!("write_bootstrap_status: serialize failed: {}", e);
+            return;
+        }
+    };
+    if let Err(e) = std::fs::write(&path, json) {
+        log::error!("write_bootstrap_status: write {:?} failed: {}", path, e);
+    }
+}
+
+/// Read the bootstrap status from disk, if the file exists.
+pub(crate) fn read_bootstrap_status() -> Option<BootstrapStatus> {
+    let path = bootstrap_status_path()?;
+    let contents = std::fs::read_to_string(&path).ok()?;
+    serde_json::from_str(&contents).ok()
+}
+
+/// Remove the bootstrap status file. Used by tests to reset state between
+/// cases; production code transitions status via `write_bootstrap_status`
+/// with a terminal state (`complete` / `failed`) rather than deleting.
+#[cfg(test)]
+pub(crate) fn clear_bootstrap_status() {
+    if let Some(path) = bootstrap_status_path() {
+        if let Err(e) = std::fs::remove_file(&path) {
+            if e.kind() != std::io::ErrorKind::NotFound {
+                log::error!("clear_bootstrap_status: failed to remove {:?}: {}", path, e);
+            }
+        }
+    }
+}
+
+/// GET /api/auth/restore/status
+/// Returns the state of the most recent restore-triggered cloud bootstrap.
+/// When neither the `.bootstrap_pending` marker nor the
+/// `.bootstrap_status.json` file exists, the node is idle and the endpoint
+/// reports `complete` so the UI can stop polling.
+pub async fn restore_status() -> HttpResponse {
+    if let Some(status) = read_bootstrap_status() {
+        return HttpResponse::Ok().json(status);
+    }
+    // No status file. If the pending marker is absent too, treat as complete
+    // (never started, or previous success already cleared both files).
+    if bootstrap_marker_path().map(|p| p.exists()).unwrap_or(false) {
+        return HttpResponse::Ok().json(BootstrapStatus::in_progress());
+    }
+    HttpResponse::Ok().json(BootstrapStatus::complete())
 }
 
 /// Path to the bootstrap pending marker file.
@@ -815,21 +1000,42 @@ async fn bootstrap_from_cloud(
 ) -> Result<(), String> {
     log::info!("Starting database bootstrap from cloud after identity restore");
     write_bootstrap_marker(api_url, api_key);
+    write_bootstrap_status(&BootstrapStatus::in_progress());
 
-    // Derive E2E encryption keys from the restored identity (one key for everything)
+    // Helper so every early-return path records the failure to the status file.
+    let run = async { bootstrap_from_cloud_inner(api_url, api_key, node_manager, sled_pool).await };
+    match run.await {
+        Ok(()) => {
+            clear_bootstrap_marker();
+            write_bootstrap_status(&BootstrapStatus::complete());
+            Ok(())
+        }
+        Err(e) => {
+            write_bootstrap_status(&BootstrapStatus::failed(e.clone()));
+            Err(e)
+        }
+    }
+}
+
+async fn bootstrap_from_cloud_inner(
+    api_url: &str,
+    api_key: &str,
+    node_manager: &std::sync::Arc<crate::server::node_manager::NodeManager>,
+    sled_pool: std::sync::Arc<fold_db::storage::SledPool>,
+) -> Result<(), String> {
+    // Derive E2E encryption keys from the restored identity (unified identity:
+    // one Ed25519 key for everything, no separate e2e.key). Bootstrap is only
+    // ever invoked after an identity is restored or loaded, so the private key
+    // must be present here — absence is a hard error, not a fallback path.
     let config = node_manager.get_base_config().await;
-    let e2e_keys = if let Some(ref priv_key) = config.private_key {
-        let seed = crate::fold_node::FoldNode::extract_ed25519_seed(priv_key)
-            .map_err(|e| format!("Failed to extract seed: {e}"))?;
-        fold_db::crypto::E2eKeys::from_ed25519_seed(&seed)
-            .map_err(|e| format!("Failed to derive E2E keys: {e}"))?
-    } else {
-        let folddb_home = crate::utils::paths::folddb_home()
-            .map_err(|e| format!("Cannot resolve FOLDDB_HOME: {e}"))?;
-        fold_db::crypto::E2eKeys::load_or_generate(&folddb_home.join("e2e.key"))
-            .await
-            .map_err(|e| format!("Failed to load E2E keys: {e}"))?
-    };
+    let priv_key = config
+        .private_key
+        .as_ref()
+        .ok_or_else(|| "bootstrap_from_cloud: node private key not set".to_string())?;
+    let seed = crate::fold_node::FoldNode::extract_ed25519_seed(priv_key)
+        .map_err(|e| format!("Failed to extract seed: {e}"))?;
+    let e2e_keys = fold_db::crypto::E2eKeys::from_ed25519_seed(&seed)
+        .map_err(|e| format!("Failed to derive E2E keys: {e}"))?;
     let data_dir = config.get_storage_path();
     let data_dir_str = data_dir
         .to_str()
@@ -870,8 +1076,6 @@ async fn bootstrap_from_cloud(
         "Database bootstrap complete after restore: final sequence = {}",
         final_seq
     );
-
-    clear_bootstrap_marker();
     Ok(())
 }
 
@@ -1013,6 +1217,152 @@ mod tests {
         assert!(
             reached_http,
             "expected error from reregister path, got: {err}"
+        );
+
+        std::env::remove_var("EXEMEM_API_URL");
+        std::env::remove_var("FOLDDB_HOME");
+    }
+
+    // ------------------------------------------------------------------
+    // Bootstrap status file round-trip (G4)
+    // ------------------------------------------------------------------
+
+    fn setup_empty_home() -> tempfile::TempDir {
+        let tmp = tempfile::tempdir().expect("tempdir");
+        std::env::set_var("FOLDDB_HOME", tmp.path());
+        std::fs::create_dir_all(tmp.path().join("data")).expect("create data dir");
+        tmp
+    }
+
+    #[test]
+    fn bootstrap_status_write_and_read_round_trip() {
+        let _guard = env_lock();
+        let _tmp = setup_empty_home();
+
+        write_bootstrap_status(&BootstrapStatus::in_progress());
+        let got = read_bootstrap_status().expect("status should exist after write");
+        assert_eq!(got.status, BootstrapStatusState::InProgress);
+        assert!(got.error.is_none());
+
+        write_bootstrap_status(&BootstrapStatus::failed("boom".to_string()));
+        let got = read_bootstrap_status().expect("status should exist");
+        assert_eq!(got.status, BootstrapStatusState::Failed);
+        assert_eq!(got.error.as_deref(), Some("boom"));
+
+        write_bootstrap_status(&BootstrapStatus::complete());
+        let got = read_bootstrap_status().expect("status should exist");
+        assert_eq!(got.status, BootstrapStatusState::Complete);
+        assert!(got.error.is_none());
+
+        clear_bootstrap_status();
+        assert!(
+            read_bootstrap_status().is_none(),
+            "status file should be gone after clear"
+        );
+
+        std::env::remove_var("FOLDDB_HOME");
+    }
+
+    #[tokio::test]
+    #[allow(clippy::await_holding_lock)]
+    async fn restore_status_endpoint_reports_each_state() {
+        let _guard = env_lock();
+        let _tmp = setup_empty_home();
+
+        // Idle (no files): reports complete.
+        let resp = restore_status().await;
+        assert_eq!(resp.status(), actix_web::http::StatusCode::OK);
+        let body = test_body_json(resp).await;
+        assert_eq!(body["status"], "complete");
+
+        // Pending marker present, no status file: reports in_progress.
+        let marker = bootstrap_marker_path().expect("marker path");
+        std::fs::create_dir_all(marker.parent().unwrap()).unwrap();
+        std::fs::write(&marker, "{}").unwrap();
+        let resp = restore_status().await;
+        let body = test_body_json(resp).await;
+        assert_eq!(body["status"], "in_progress");
+        std::fs::remove_file(&marker).unwrap();
+
+        // Explicit in_progress status file.
+        write_bootstrap_status(&BootstrapStatus::in_progress());
+        let body = test_body_json(restore_status().await).await;
+        assert_eq!(body["status"], "in_progress");
+
+        // Failed status with error message.
+        write_bootstrap_status(&BootstrapStatus::failed("network down".to_string()));
+        let body = test_body_json(restore_status().await).await;
+        assert_eq!(body["status"], "failed");
+        assert_eq!(body["error"], "network down");
+
+        // Complete status.
+        write_bootstrap_status(&BootstrapStatus::complete());
+        let body = test_body_json(restore_status().await).await;
+        assert_eq!(body["status"], "complete");
+
+        clear_bootstrap_status();
+        std::env::remove_var("FOLDDB_HOME");
+    }
+
+    async fn test_body_json(resp: HttpResponse) -> serde_json::Value {
+        use actix_web::body::MessageBody;
+        let body = resp.into_body();
+        let bytes = body.try_into_bytes().expect("body bytes");
+        serde_json::from_slice(&bytes).expect("json body")
+    }
+
+    // ------------------------------------------------------------------
+    // Restore rollback deletes identity file on finalize failure (G3)
+    // ------------------------------------------------------------------
+
+    #[tokio::test]
+    #[allow(clippy::await_holding_lock)]
+    async fn restore_rollback_removes_identity_on_register_failure() {
+        // Point Exemem API at a non-routable address so signed_register fails.
+        let _guard = env_lock();
+        let tmp = setup_empty_home();
+        std::fs::create_dir_all(tmp.path().join("config")).expect("create config dir");
+        std::env::set_var("EXEMEM_API_URL", "http://127.0.0.1:1");
+
+        // Build an AppState with a default NodeManager.
+        let node_manager = std::sync::Arc::new(crate::server::node_manager::NodeManager::new(
+            crate::server::node_manager::NodeManagerConfig {
+                base_config: crate::fold_node::config::NodeConfig {
+                    database: fold_db::storage::DatabaseConfig::local(tmp.path().join("data")),
+                    storage_path: Some(tmp.path().join("data")),
+                    network_listen_address: "/ip4/0.0.0.0/tcp/0".to_string(),
+                    security_config: fold_db::security::SecurityConfig::from_env(),
+                    schema_service_url: Some("test://mock".to_string()),
+                    public_key: None,
+                    private_key: None,
+                    config_dir: Some(tmp.path().join("config")),
+                },
+            },
+        ));
+
+        let data = web::Data::new(AppState {
+            node_manager: node_manager.clone(),
+        });
+
+        // Valid 24-word phrase.
+        let entropy = [0u8; 32];
+        let mnemonic = bip39::Mnemonic::from_entropy(&entropy).expect("mnemonic");
+        let words = mnemonic.words().collect::<Vec<_>>().join(" ");
+
+        let resp =
+            restore_from_phrase(data, web::Json(serde_json::json!({ "words": words }))).await;
+        assert_eq!(
+            resp.status(),
+            actix_web::http::StatusCode::INTERNAL_SERVER_ERROR,
+            "restore should fail when Exemem API is unreachable"
+        );
+
+        // Identity file must be gone after rollback.
+        let id_path = tmp.path().join("config").join("node_identity.json");
+        assert!(
+            !id_path.exists(),
+            "rollback should have deleted {:?}",
+            id_path
         );
 
         std::env::remove_var("EXEMEM_API_URL");
