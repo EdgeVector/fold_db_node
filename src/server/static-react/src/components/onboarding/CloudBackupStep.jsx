@@ -1,5 +1,6 @@
 import { useState } from 'react'
 import { systemClient } from '../../api/clients/systemClient'
+import { activateExemem } from '../../api/clients/activateExemem'
 
 export default function CloudBackupStep({ onNext, onSkip }) {
   const [loading, setLoading] = useState(false)
@@ -20,31 +21,7 @@ export default function CloudBackupStep({ onNext, onSkip }) {
     setLoading(true)
     setError(null)
     try {
-      const resp = await fetch('/api/auth/register', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ invite_code: inviteCode.trim() }),
-      })
-      if (!resp.ok) {
-        const errBody = await resp.text().catch(() => '')
-        throw new Error(errBody || `Registration failed (HTTP ${resp.status})`)
-      }
-      const data = await resp.json()
-
-      if (!data.ok) {
-        throw new Error(data.error || 'Registration failed')
-      }
-
-      localStorage.setItem('exemem_api_url', data.api_url)
-      localStorage.setItem('exemem_api_key', data.api_key)
-
-      await systemClient.applySetup({
-        storage: {
-          type: 'exemem',
-          api_url: data.api_url,
-          api_key: data.api_key,
-        }
-      })
+      await activateExemem(inviteCode)
 
       // Fetch recovery phrase
       const phraseResp = await fetch('/api/auth/recovery-phrase')

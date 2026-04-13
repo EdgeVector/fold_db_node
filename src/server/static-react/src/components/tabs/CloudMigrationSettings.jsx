@@ -1,8 +1,8 @@
 import React, { useState, useEffect } from 'react'
-import { systemClient } from '../../api/clients/systemClient'
+import { activateExemem } from '../../api/clients/activateExemem'
 import { getSubscriptionStatus, createCheckoutSession, createPortalSession, formatBytes, usagePercent } from '../../api/clients/subscriptionClient'
 
-export default function CloudMigrationSettings({ onClose }) {
+export default function CloudMigrationSettings() {
   const backupSkipped = localStorage.getItem('folddb_cloud_backup_skipped') === '1'
   const [registering, setRegistering] = useState(false)
   const [error, setError] = useState(null)
@@ -75,35 +75,7 @@ export default function CloudMigrationSettings({ onClose }) {
     setRegistering(true)
     setError(null)
     try {
-      // Register this node's public key with Exemem
-      const resp = await fetch('/api/auth/register', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ invite_code: inviteCode.trim() }),
-      })
-      if (!resp.ok) {
-        const errBody = await resp.text().catch(() => '')
-        throw new Error(errBody || `Registration failed (HTTP ${resp.status})`)
-      }
-      const data = await resp.json()
-
-      if (!data.ok) {
-        throw new Error(data.error || 'Registration failed')
-      }
-
-      // Store cloud credentials for subscription client
-      localStorage.setItem('exemem_api_url', data.api_url)
-      localStorage.setItem('exemem_api_key', data.api_key)
-
-      // Switch database to Exemem mode
-      await systemClient.applySetup({
-        storage: {
-          type: 'exemem',
-          api_url: data.api_url,
-          api_key: data.api_key,
-        }
-      })
-
+      await activateExemem(inviteCode)
       // Reload to pick up new config
       window.location.reload()
     } catch (err) {

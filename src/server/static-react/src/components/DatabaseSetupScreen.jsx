@@ -1,5 +1,6 @@
 import { useState } from 'react'
 import { applySetup } from '../api/clients/systemClient'
+import { activateExemem } from '../api/clients/activateExemem'
 
 // Poll interval and max duration for /api/auth/restore/status.
 // The endpoint reports `in_progress` | `complete` | `failed` (see
@@ -113,32 +114,8 @@ export default function DatabaseSetupScreen({ onComplete }) {
     setLoading(true)
     setError(null)
     try {
-      const resp = await fetch('/api/auth/register', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ invite_code: inviteCode.trim() }),
-      })
-      const data = await resp.json()
-
-      if (!data.ok) {
-        throw new Error(data.error || 'Registration failed')
-      }
-
-      localStorage.setItem('exemem_api_url', data.api_url)
-      localStorage.setItem('exemem_api_key', data.api_key)
-
-      const response = await applySetup({
-        storage: {
-          type: 'exemem',
-          api_url: data.api_url,
-          api_key: data.api_key,
-        },
-      })
-      if (response.success) {
-        onComplete()
-      } else {
-        setError(response.data?.message || 'Setup failed')
-      }
+      await activateExemem(inviteCode)
+      onComplete()
     } catch (e) {
       setError(e?.message || String(e))
     } finally {
