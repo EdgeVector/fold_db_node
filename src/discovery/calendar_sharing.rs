@@ -6,7 +6,7 @@
 //!
 //! Comparison uses: date range overlap + location string similarity + title similarity.
 
-use chrono::{NaiveDateTime, ParseError};
+use chrono::NaiveDateTime;
 use fold_db::storage::traits::KvStore;
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
@@ -41,6 +41,9 @@ pub struct EventFingerprint {
     pub end_time: String,
     /// Original event title (stored locally, shared only as tokens to peers).
     pub display_title: String,
+    /// Original event location (stored locally for UI rendering with original case/punctuation).
+    #[serde(default)]
+    pub display_location: String,
 }
 
 /// A set of event fingerprints from a peer, stored locally.
@@ -133,6 +136,7 @@ pub fn fingerprint_event(
         start_time: start_time.to_string(),
         end_time: end_time.to_string(),
         display_title: summary.to_string(),
+        display_location: location.to_string(),
     }
 }
 
@@ -157,18 +161,20 @@ pub async fn save_local_events(
 }
 
 /// Load all local event fingerprints.
+///
+/// Propagates deserialize errors rather than silently skipping corrupt entries —
+/// a corrupt fingerprint is a bug we want to surface, not hide.
 pub async fn load_local_events(store: &dyn KvStore) -> Result<Vec<EventFingerprint>, String> {
     let entries = store
         .scan_prefix(CALENDAR_EVENTS_PREFIX.as_bytes())
         .await
         .map_err(|e| format!("Failed to scan local events: {}", e))?;
 
-    let mut events = Vec::new();
+    let mut events = Vec::with_capacity(entries.len());
     for (_key, value) in entries {
-        match serde_json::from_slice(&value) {
-            Ok(fp) => events.push(fp),
-            Err(e) => log::warn!("Failed to deserialize event fingerprint: {}", e),
-        }
+        let fp: EventFingerprint = serde_json::from_slice(&value)
+            .map_err(|e| format!("Failed to deserialize event fingerprint: {}", e))?;
+        events.push(fp);
     }
     Ok(events)
 }
@@ -187,51 +193,93 @@ pub async fn save_peer_events(store: &dyn KvStore, peer_set: &PeerEventSet) -> R
 }
 
 /// Load all peer event sets.
+///
+/// Propagates deserialize errors rather than silently skipping corrupt entries.
 pub async fn load_all_peer_events(store: &dyn KvStore) -> Result<Vec<PeerEventSet>, String> {
     let entries = store
         .scan_prefix(PEER_EVENTS_PREFIX.as_bytes())
         .await
         .map_err(|e| format!("Failed to scan peer events: {}", e))?;
 
-    let mut peer_sets = Vec::new();
+    let mut peer_sets = Vec::with_capacity(entries.len());
     for (_key, value) in entries {
-        match serde_json::from_slice(&value) {
-            Ok(ps) => peer_sets.push(ps),
-            Err(e) => log::warn!("Failed to deserialize peer event set: {}", e),
-        }
+        let ps: PeerEventSet = serde_json::from_slice(&value)
+            .map_err(|e| format!("Failed to deserialize peer event set: {}", e))?;
+        peer_sets.push(ps);
     }
     Ok(peer_sets)
 }
 
+/// Clear all locally-stored calendar data — both local event fingerprints and
+/// peer event sets. Called on opt-out so stale data doesn't leak back when the
+/// user re-opts-in.
+pub async fn clear_all_calendar_data(store: &dyn KvStore) -> Result<usize, String> {
+    let mut deleted = 0usize;
+
+    let local_entries = store
+        .scan_prefix(CALENDAR_EVENTS_PREFIX.as_bytes())
+        .await
+        .map_err(|e| format!("Failed to scan local events for clear: {}", e))?;
+    for (key, _value) in local_entries {
+        store
+            .delete(&key)
+            .await
+            .map_err(|e| format!("Failed to delete local event entry: {}", e))?;
+        deleted += 1;
+    }
+
+    let peer_entries = store
+        .scan_prefix(PEER_EVENTS_PREFIX.as_bytes())
+        .await
+        .map_err(|e| format!("Failed to scan peer events for clear: {}", e))?;
+    for (key, _value) in peer_entries {
+        store
+            .delete(&key)
+            .await
+            .map_err(|e| format!("Failed to delete peer event entry: {}", e))?;
+        deleted += 1;
+    }
+
+    Ok(deleted)
+}
+
 // === Overlap detection ===
 
-/// Parse a datetime string, trying multiple formats.
-fn parse_datetime(s: &str) -> Result<NaiveDateTime, ParseError> {
-    // Try ISO 8601 first
+/// Parse a datetime string, trying supported formats.
+///
+/// Returns `None` on failure rather than substituting a date-only fallback —
+/// silently promoting a date-only string to midnight turns parse failures into
+/// false-positive overlaps downstream.
+fn parse_datetime(s: &str) -> Option<NaiveDateTime> {
     if let Ok(dt) = NaiveDateTime::parse_from_str(s, "%Y-%m-%dT%H:%M:%S") {
-        return Ok(dt);
+        return Some(dt);
     }
     if let Ok(dt) = NaiveDateTime::parse_from_str(s, "%Y-%m-%d %H:%M:%S") {
-        return Ok(dt);
+        return Some(dt);
     }
-    // Apple Calendar format: "Saturday, March 28, 2026 at 9:00:00 AM"
-    // Fall back to treating as a date-only
-    NaiveDateTime::parse_from_str(&format!("{} 00:00:00", s), "%Y-%m-%d %H:%M:%S")
+    None
 }
 
 /// Check if two date ranges overlap and return overlap ratio (0.0–1.0).
-/// Returns 1.0 for perfect overlap, 0.0 for no overlap.
+/// Returns 1.0 for perfect overlap, 0.0 for no overlap or any parse failure.
 fn date_overlap_score(start_a: &str, end_a: &str, start_b: &str, end_b: &str) -> f64 {
-    let (Ok(sa), Ok(ea), Ok(sb), Ok(eb)) = (
+    let (Some(sa), Some(ea), Some(sb), Some(eb)) = (
         parse_datetime(start_a),
         parse_datetime(end_a),
         parse_datetime(start_b),
         parse_datetime(end_b),
     ) else {
-        // If we can't parse, fall back to exact string match on date portion
-        let date_a = start_a.split_whitespace().next().unwrap_or(start_a);
-        let date_b = start_b.split_whitespace().next().unwrap_or(start_b);
-        return if date_a == date_b { 0.8 } else { 0.0 };
+        // Parse failure: do NOT substitute a string-prefix score. Unparseable
+        // dates must not inflate similarity.
+        log::warn!(
+            "calendar_sharing: failed to parse one of start/end datetimes \
+             (a: {:?}..{:?}, b: {:?}..{:?}); returning 0.0 overlap",
+            start_a,
+            end_a,
+            start_b,
+            end_b
+        );
+        return 0.0;
     };
 
     let overlap_start = sa.max(sb);
@@ -301,7 +349,7 @@ pub fn detect_shared_events(
                             event_title: local_fp.display_title.clone(),
                             start_time: local_fp.start_time.clone(),
                             end_time: local_fp.end_time.clone(),
-                            location: local_fp.location_tokens.join(" "),
+                            location: local_fp.display_location.clone(),
                             connection_count: 0,
                             connection_pseudonyms: Vec::new(),
                             match_score: 0.0,
@@ -618,5 +666,115 @@ mod tests {
 
         let shared = detect_shared_events(&local, &peer_sets);
         assert!(shared.is_empty(), "Should not match unrelated events");
+    }
+
+    #[test]
+    fn test_date_overlap_unparseable_returns_zero() {
+        // Previously: same-date-prefix unparseable strings returned 0.8 — a
+        // false-positive that pushed pairs above OVERLAP_THRESHOLD for free.
+        let score = date_overlap_score(
+            "Saturday, March 28, 2026 at 9:00:00 AM",
+            "Saturday, March 28, 2026 at 11:00:00 AM",
+            "Saturday, March 28, 2026 at 10:00:00 AM",
+            "Saturday, March 28, 2026 at 12:00:00 PM",
+        );
+        assert!(
+            score.abs() < f64::EPSILON,
+            "unparseable dates must score 0.0, got {}",
+            score
+        );
+    }
+
+    #[test]
+    fn test_parse_datetime_failure_is_none() {
+        assert!(parse_datetime("not a real date").is_none());
+        assert!(parse_datetime("2026-03-28").is_none()); // date-only no longer accepted
+    }
+
+    #[test]
+    fn test_display_location_preserves_original() {
+        // The user-visible location should keep original case/punctuation,
+        // not the tokenized (lowercased, punctuation-stripped) form.
+        let local = vec![fingerprint_event(
+            "RustConf 2026",
+            "2026-06-15 09:00:00",
+            "2026-06-17 17:00:00",
+            "Portland Convention Center",
+            "Cal",
+        )];
+        let peer_sets = vec![PeerEventSet {
+            peer_pseudonym: "peer-a".to_string(),
+            fingerprints: vec![fingerprint_event(
+                "RustConf 2026",
+                "2026-06-15 09:00:00",
+                "2026-06-17 17:00:00",
+                "Portland Convention Center",
+                "Conferences",
+            )],
+            updated_at: "2026-03-29T00:00:00Z".to_string(),
+        }];
+
+        let shared = detect_shared_events(&local, &peer_sets);
+        assert_eq!(shared.len(), 1);
+        assert_eq!(shared[0].location, "Portland Convention Center");
+    }
+
+    // === Async store-backed tests ===
+
+    fn new_test_store() -> std::sync::Arc<dyn KvStore> {
+        use fold_db::storage::inmemory_backend::InMemoryKvStore;
+        std::sync::Arc::new(InMemoryKvStore::new())
+    }
+
+    #[tokio::test]
+    async fn test_clear_all_calendar_data_purges_local_and_peer() {
+        let store = new_test_store();
+
+        let fp = fingerprint_event(
+            "RustConf 2026",
+            "2026-06-15 09:00:00",
+            "2026-06-17 17:00:00",
+            "Portland",
+            "Cal",
+        );
+        save_local_events(store.as_ref(), std::slice::from_ref(&fp))
+            .await
+            .unwrap();
+        save_peer_events(
+            store.as_ref(),
+            &PeerEventSet {
+                peer_pseudonym: "peer-a".to_string(),
+                fingerprints: vec![fp],
+                updated_at: "2026-03-29T00:00:00Z".to_string(),
+            },
+        )
+        .await
+        .unwrap();
+
+        assert_eq!(load_local_events(store.as_ref()).await.unwrap().len(), 1);
+        assert_eq!(load_all_peer_events(store.as_ref()).await.unwrap().len(), 1);
+
+        let deleted = clear_all_calendar_data(store.as_ref()).await.unwrap();
+        assert_eq!(deleted, 2);
+
+        assert_eq!(load_local_events(store.as_ref()).await.unwrap().len(), 0);
+        assert_eq!(load_all_peer_events(store.as_ref()).await.unwrap().len(), 0);
+    }
+
+    #[tokio::test]
+    async fn test_load_local_events_propagates_deserialize_error() {
+        let store = new_test_store();
+        let bad_key = format!("{}corrupt", CALENDAR_EVENTS_PREFIX);
+        store
+            .put(bad_key.as_bytes(), b"not valid json".to_vec())
+            .await
+            .unwrap();
+
+        let result = load_local_events(store.as_ref()).await;
+        assert!(
+            result.is_err(),
+            "corrupt entry must surface as an error, got {:?}",
+            result
+        );
     }
 }
