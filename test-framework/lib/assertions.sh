@@ -68,6 +68,34 @@ get_schema_record_count() {
     | jq '.total_count // ((.keys // []) | length)' 2>/dev/null || echo 0
 }
 
+# get_shared_record_count NODE_PORT HASH SCHEMA_NAME EXPECTED_AUTHOR_PUBKEY
+# Returns the count of records in a schema whose author_pub_key matches the expected key.
+# Used to verify the shared_by attribution feature (PR #396).
+get_shared_record_count() {
+  local port="$1" hash="$2" schema_name="$3" expected_pk="$4"
+  local schema_hash
+  schema_hash=$(curl -fsS "http://127.0.0.1:$port/api/schemas" \
+    -H "X-User-Hash: $hash" \
+    | jq -r --arg name "$schema_name" '.schemas[] | select(.descriptive_name == $name) | .name' \
+    | head -1)
+  [[ -n "$schema_hash" ]] || { echo 0; return 0; }
+
+  # List all fields for the schema to build a valid query
+  local fields
+  fields=$(curl -fsS "http://127.0.0.1:$port/api/schemas" -H "X-User-Hash: $hash" \
+    | jq -c --arg h "$schema_hash" '.schemas[] | select(.name == $h) | .fields')
+  [[ "$fields" != "null" && -n "$fields" ]] || { echo 0; return 0; }
+
+  # Query all records in the schema and count those with matching author_pub_key.
+  local resp
+  resp=$(curl -fsS -X POST "http://127.0.0.1:$port/api/query" \
+    -H "Content-Type: application/json" \
+    -H "X-User-Hash: $hash" \
+    -d "{\"schema_name\":\"$schema_hash\",\"fields\":$fields}" 2>/dev/null || echo '{}')
+  echo "$resp" | jq --arg pk "$expected_pk" \
+    '[(.data // .results // [])[] | select(.author_pub_key == $pk)] | length' 2>/dev/null || echo 0
+}
+
 # Run a single assertion from YAML: {node, field, op, value, [schema]}
 # Args: NODES_JSON ASSERTION_JSON
 run_assertion() {
@@ -102,6 +130,19 @@ run_assertion() {
       ;;
     schema_record_count)
       actual=$(get_schema_record_count "$port" "$hash" "$schema")
+      ;;
+    shared_record_count)
+      # Counts records in schema whose author_pub_key matches another role's public_key.
+      # assertion YAML: { node: bob, field: shared_record_count, schema: Photography, author_role: alice, op: ">=", value: 1 }
+      local author_role author_pk
+      author_role=$(echo "$assertion" | jq -r '.author_role // ""')
+      [[ -n "$author_role" ]] || { echo "[FAIL] shared_record_count: author_role required" >&2; return 1; }
+      author_pk=$(jq -r --arg role "$author_role" '.[] | select(.role == $role) | .public_key' "$nodes_json")
+      [[ -n "$author_pk" && "$author_pk" != "null" ]] || {
+        echo "[FAIL] shared_record_count: no public_key for role $author_role" >&2
+        return 1
+      }
+      actual=$(get_shared_record_count "$port" "$hash" "$schema" "$author_pk")
       ;;
     my_pseudonym_count)
       actual=$(curl -fsS "http://127.0.0.1:$port/api/discovery/my-pseudonyms" \
