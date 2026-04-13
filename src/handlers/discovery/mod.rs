@@ -13,7 +13,7 @@ use crate::discovery::connection::{
     SharedRecordKey, Vouch,
 };
 use crate::discovery::interests::{self, InterestProfile};
-use crate::discovery::publisher::DiscoveryPublisher;
+use crate::discovery::publisher::{self as publisher, DiscoveryPublisher};
 use crate::discovery::types::*;
 pub use crate::discovery::types::{
     MomentHashReceiveRequest, MomentOptInRequest, MomentOptOutRequest, PhotoMetadata,
@@ -324,22 +324,55 @@ pub async fn opt_out(
         .await
         .handler_err("remove discovery opt-in")?;
 
-    // Derive pseudonyms locally and send to discovery service for deletion.
-    // No server-side pseudonym-to-user mapping — privacy by design.
-    let publisher = DiscoveryPublisher::new(
+    // Enumerate pseudonyms to delete from the discovery lambda.
+    //
+    // Primary path: read the `discovery:uploaded:{schema}:*` tracking
+    // table, which is the authoritative record of what we uploaded,
+    // complete even if the user has since deleted source embeddings
+    // locally. This prevents zombie embeddings surviving opt-out.
+    //
+    // Fallback path: if the tracking table is empty for this schema —
+    // e.g. a pre-existing user who published before this tracking
+    // table existed — rederive from live `emb:` entries. This preserves
+    // pre-existing behaviour for those users but does NOT reach
+    // fragments whose source data has already been deleted locally.
+    // Once they republish with this version installed, future opt-outs
+    // use the tracking table and the leak is closed going forward.
+    let discovery_publisher = DiscoveryPublisher::new(
         master_key.to_vec(),
         discovery_url.to_string(),
         auth_token.to_string(),
     );
-    let pseudonyms = publisher
-        .derive_schema_pseudonyms(&*store, &req.schema_name)
+
+    let tracked = publisher::list_uploaded_pseudonyms(&*store, Some(&req.schema_name))
         .await
-        .handler_err("derive pseudonyms for opt-out")?;
+        .map_err(HandlerError::Internal)?;
+
+    let pseudonyms: Vec<uuid::Uuid> = if tracked.is_empty() {
+        discovery_publisher
+            .derive_schema_pseudonyms(&*store, &req.schema_name)
+            .await
+            .handler_err("derive pseudonyms for opt-out (fallback)")?
+    } else {
+        tracked
+            .into_iter()
+            .map(|(_schema, pseudo)| pseudo)
+            .collect()
+    };
+
     if !pseudonyms.is_empty() {
-        publisher
+        // Send the delete to the lambda first. On failure, leave the
+        // tracking table intact so a retry can finish the job — no
+        // silent drops.
+        discovery_publisher
             .unpublish_pseudonyms(pseudonyms)
             .await
             .handler_err("unpublish from discovery service")?;
+        // Only clear local tracking after the lambda has confirmed
+        // deletion. No-op when we came in via the fallback path.
+        publisher::clear_uploaded(&*store, Some(&req.schema_name))
+            .await
+            .map_err(HandlerError::Internal)?;
     }
 
     let configs = config::list_opt_ins(&*store)
