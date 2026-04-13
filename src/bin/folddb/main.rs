@@ -1038,22 +1038,77 @@ async fn cloud_delete_account(
         Ok(r) if r.status().is_success() => {
             eprintln!(" done.");
 
-            // Purge cloud storage (R2/B2) — best-effort, don't fail if this errors
+            // Purge cloud storage (R2/B2) via the storage_admin_service Lambda.
+            // Fail LOUDLY if the purge errors — we previously swallowed this and
+            // told the user "All cloud data purged" while objects remained.
             eprint!("Purging cloud storage...");
             let purge_resp = http
-                .post(format!("{}/api/sync", api_url))
+                .post(format!("{}/api/storage-admin/purge-account", api_url))
                 .header("X-API-Key", &api_key)
-                .json(&serde_json::json!({"action": "purge_account"}))
                 .send()
                 .await;
-            match purge_resp {
-                Ok(pr) if pr.status().is_success() => eprintln!(" done."),
-                Ok(pr) => eprintln!(" warning: HTTP {}", pr.status()),
-                Err(e) => eprintln!(" warning: {}", e),
+            let purge_body: serde_json::Value = match purge_resp {
+                Ok(pr) => {
+                    let status = pr.status();
+                    let text = pr.text().await.unwrap_or_default();
+                    if !status.is_success() {
+                        eprintln!(" FAILED");
+                        return Some(Err(CliError::new(format!(
+                            "Cloud storage purge failed (HTTP {}): {}. Your Exemem account row was deleted but cloud objects may remain. Contact support.",
+                            status, text
+                        ))));
+                    }
+                    match serde_json::from_str(&text) {
+                        Ok(v) => v,
+                        Err(e) => {
+                            eprintln!(" FAILED");
+                            return Some(Err(CliError::new(format!(
+                                "Cloud storage purge returned unparseable response: {} (body: {})",
+                                e, text
+                            ))));
+                        }
+                    }
+                }
+                Err(e) => {
+                    eprintln!(" FAILED");
+                    return Some(Err(CliError::new(format!(
+                        "Cloud storage purge network error: {}. Your Exemem account row was deleted but cloud objects may remain. Contact support.",
+                        e
+                    ))));
+                }
+            };
+
+            // Check server-reported ok flag: storage_admin_service returns
+            // `ok: false` when individual object deletes failed.
+            let ok = purge_body
+                .get("ok")
+                .and_then(|v| v.as_bool())
+                .unwrap_or(false);
+            let deleted = purge_body
+                .get("deleted_objects")
+                .and_then(|v| v.as_u64())
+                .unwrap_or(0);
+            if !ok {
+                eprintln!(" FAILED");
+                let failed_count = purge_body
+                    .get("failed_count")
+                    .and_then(|v| v.as_u64())
+                    .unwrap_or(0);
+                return Some(Err(CliError::new(format!(
+                    "Cloud storage purge incomplete: deleted {} objects, {} deletes failed. Your Exemem account row was deleted but some cloud objects remain. Contact support. Server response: {}",
+                    deleted, failed_count, purge_body
+                ))));
+            }
+            eprintln!(" done ({} objects).", deleted);
+
+            // Disable cloud locally — also fail loud if this errors.
+            if let Some(Err(e)) = cloud_disable(config_path) {
+                return Some(Err(CliError::new(format!(
+                    "Cloud purge succeeded but local cloud-disable failed: {}. Run `folddb cloud disable` manually.",
+                    e
+                ))));
             }
 
-            // Disable cloud locally
-            let _ = cloud_disable(config_path);
             Some(Ok(commands::CommandOutput::Message(
                 "Account deleted. All cloud data purged.\nLocal data is preserved.".to_string(),
             )))
