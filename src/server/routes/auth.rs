@@ -703,16 +703,39 @@ pub enum BootstrapStatusState {
     Failed,
 }
 
+/// Which phase of the two-phase bootstrap the node is currently executing.
+///
+/// Added so the UI can render "Restoring personal data…" vs
+/// "Restoring org data…" instead of a single coarse spinner. Serialized as
+/// snake_case to match `BootstrapStatusState`.
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum BootstrapPhase {
+    Personal,
+    Orgs,
+}
+
 /// Persisted bootstrap status, written to
 /// `$FOLDDB_HOME/data/.bootstrap_status.json`. The UI polls this via
 /// `GET /api/auth/restore/status` after a successful restore call to tell
 /// whether the background cloud download is still running, finished, or
 /// failed.
+///
+/// `phase`, `targets_done`, and `targets_total` are additive — older status
+/// files (pre-per-phase tracking) omit these keys and deserialize as `None`
+/// via `#[serde(default)]`. Older UI clients reading only `status` / `error`
+/// keep working because the new fields are opt-in JSON keys.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct BootstrapStatus {
     pub status: BootstrapStatusState,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub error: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub phase: Option<BootstrapPhase>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub targets_done: Option<usize>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub targets_total: Option<usize>,
 }
 
 impl BootstrapStatus {
@@ -720,18 +743,39 @@ impl BootstrapStatus {
         Self {
             status: BootstrapStatusState::InProgress,
             error: None,
+            phase: None,
+            targets_done: None,
+            targets_total: None,
+        }
+    }
+    /// Phase-aware in-progress status. Used by `bootstrap_from_cloud_inner`
+    /// to publish "we're inside the personal phase" vs "we're inside the
+    /// orgs phase" so the UI can render per-phase progress.
+    pub fn in_progress_phase(phase: BootstrapPhase, done: usize, total: usize) -> Self {
+        Self {
+            status: BootstrapStatusState::InProgress,
+            error: None,
+            phase: Some(phase),
+            targets_done: Some(done),
+            targets_total: Some(total),
         }
     }
     pub fn complete() -> Self {
         Self {
             status: BootstrapStatusState::Complete,
             error: None,
+            phase: None,
+            targets_done: None,
+            targets_total: None,
         }
     }
     pub fn failed(error: String) -> Self {
         Self {
             status: BootstrapStatusState::Failed,
             error: Some(error),
+            phase: None,
+            targets_done: None,
+            targets_total: None,
         }
     }
 }
@@ -966,10 +1010,20 @@ async fn bootstrap_from_cloud_inner(
     // Download the personal `latest.enc` snapshot and replay the personal log.
     // After this the local Sled contains the personal namespace, INCLUDING any
     // `OrgMembership` rows the user had before losing their device.
+    write_bootstrap_status(&BootstrapStatus::in_progress_phase(
+        BootstrapPhase::Personal,
+        0,
+        1,
+    ));
     let personal_outcome = engine
         .bootstrap_target(0)
         .await
         .map_err(|e| format!("Bootstrap failed (phase 1: personal): {e}"))?;
+    write_bootstrap_status(&BootstrapStatus::in_progress_phase(
+        BootstrapPhase::Personal,
+        1,
+        1,
+    ));
 
     log::info!(
         "Bootstrap phase 1 (personal) complete: last_seq={}, entries_replayed={}",
@@ -999,6 +1053,19 @@ async fn bootstrap_from_cloud_inner(
             engine
                 .configure_org_sync(org_config.partitioner, org_config.targets)
                 .await;
+
+            // Publish that we're now inside the orgs phase. `bootstrap_all`
+            // is atomic from our caller's perspective — per-org-target
+            // granularity would require splitting `bootstrap_all` into a
+            // per-target loop, which touches fold_db. Descoped for now:
+            // the phase-level signal is still a meaningful improvement over
+            // the pre-this-PR binary state, and per-target detail is a
+            // straightforward follow-up once fold_db exposes the loop.
+            write_bootstrap_status(&BootstrapStatus::in_progress_phase(
+                BootstrapPhase::Orgs,
+                0,
+                org_count,
+            ));
 
             // --- Phase 2: bootstrap all targets (personal + orgs) ----------
             //
@@ -1209,6 +1276,95 @@ mod tests {
         );
 
         std::env::remove_var("FOLDDB_HOME");
+    }
+
+    #[test]
+    fn bootstrap_status_phase_round_trip() {
+        let _guard = env_lock();
+        let _tmp = setup_empty_home();
+
+        // Personal phase: 0/1 done.
+        write_bootstrap_status(&BootstrapStatus::in_progress_phase(
+            BootstrapPhase::Personal,
+            0,
+            1,
+        ));
+        let got = read_bootstrap_status().expect("status should exist");
+        assert_eq!(got.status, BootstrapStatusState::InProgress);
+        assert_eq!(got.phase, Some(BootstrapPhase::Personal));
+        assert_eq!(got.targets_done, Some(0));
+        assert_eq!(got.targets_total, Some(1));
+
+        // Orgs phase: 0/5 done.
+        write_bootstrap_status(&BootstrapStatus::in_progress_phase(
+            BootstrapPhase::Orgs,
+            0,
+            5,
+        ));
+        let got = read_bootstrap_status().expect("status should exist");
+        assert_eq!(got.phase, Some(BootstrapPhase::Orgs));
+        assert_eq!(got.targets_done, Some(0));
+        assert_eq!(got.targets_total, Some(5));
+
+        // Complete clears phase counters.
+        write_bootstrap_status(&BootstrapStatus::complete());
+        let got = read_bootstrap_status().expect("status should exist");
+        assert_eq!(got.status, BootstrapStatusState::Complete);
+        assert!(got.phase.is_none());
+        assert!(got.targets_done.is_none());
+        assert!(got.targets_total.is_none());
+
+        clear_bootstrap_status();
+        std::env::remove_var("FOLDDB_HOME");
+    }
+
+    #[test]
+    fn bootstrap_status_old_shape_backward_compatible() {
+        // A status file written by a pre-this-PR node has no `phase`,
+        // `targets_done`, or `targets_total` keys. `read_bootstrap_status`
+        // must still parse it, yielding `None` for the new fields.
+        let _guard = env_lock();
+        let _tmp = setup_empty_home();
+
+        let path = bootstrap_status_path().expect("status path");
+        std::fs::write(&path, r#"{"status":"in_progress"}"#).unwrap();
+        let got = read_bootstrap_status().expect("old shape must parse");
+        assert_eq!(got.status, BootstrapStatusState::InProgress);
+        assert!(got.error.is_none());
+        assert!(got.phase.is_none());
+        assert!(got.targets_done.is_none());
+        assert!(got.targets_total.is_none());
+
+        // Same for a failed-with-error file.
+        std::fs::write(&path, r#"{"status":"failed","error":"boom"}"#).unwrap();
+        let got = read_bootstrap_status().expect("old failed shape must parse");
+        assert_eq!(got.status, BootstrapStatusState::Failed);
+        assert_eq!(got.error.as_deref(), Some("boom"));
+        assert!(got.phase.is_none());
+
+        clear_bootstrap_status();
+        std::env::remove_var("FOLDDB_HOME");
+    }
+
+    #[test]
+    fn bootstrap_phase_serializes_snake_case() {
+        // Lock in the wire format — the UI will match against these exact
+        // strings.
+        let s = serde_json::to_value(BootstrapPhase::Personal).unwrap();
+        assert_eq!(s, serde_json::json!("personal"));
+        let s = serde_json::to_value(BootstrapPhase::Orgs).unwrap();
+        assert_eq!(s, serde_json::json!("orgs"));
+    }
+
+    #[test]
+    fn bootstrap_status_in_progress_phase_serializes_expected_keys() {
+        let status = BootstrapStatus::in_progress_phase(BootstrapPhase::Orgs, 2, 5);
+        let v = serde_json::to_value(&status).unwrap();
+        assert_eq!(v["status"], "in_progress");
+        assert_eq!(v["phase"], "orgs");
+        assert_eq!(v["targets_done"], 2);
+        assert_eq!(v["targets_total"], 5);
+        assert!(v.get("error").is_none(), "error omitted when None");
     }
 
     #[tokio::test]
