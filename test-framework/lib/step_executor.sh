@@ -198,7 +198,7 @@ execute_action() {
       resp=$(curl -fsS -X POST "http://127.0.0.1:$port/api/discovery/face-search" \
         -H "Content-Type: application/json" \
         -H "X-User-Hash: $hash" \
-        -d "{\"source_schema\":\"$schema_hash\",\"source_key\":\"$record_key\",\"face_index\":$face_index}")
+        -d "{\"source_schema\":\"$schema_hash\",\"source_key\":\"$record_key\",\"face_index\":$face_index,\"top_k\":50}")
       local n
       n=$(echo "$resp" | jq '.results | length')
       echo "[step] face_search returned $n results"
@@ -221,50 +221,174 @@ execute_action() {
       fi
       ;;
 
+    connect_all_results)
+      # Action: { action: connect_all_results, message, role, top_k }
+      # Connects to each result from the last face_search (any role).
+      # Only the one that's actually owned by Alice will route to her; others spray nowhere.
+      local source_role message connect_role top_k
+      source_role=$(echo "$action_json" | jq -r '.source_role // ""')
+      message=$(echo "$action_json" | jq -r '.message // "E2E test connect"')
+      connect_role=$(echo "$action_json" | jq -r '.role // "acquaintance"')
+      top_k=$(echo "$action_json" | jq -r '.top_k // 5')
+      local search_file
+      if [[ -n "$source_role" ]]; then
+        search_file="$FOLDDB_TEST_SESSION_DIR/state/last-face-search-$source_role.json"
+      else
+        search_file="$FOLDDB_TEST_SESSION_DIR/state/last-face-search-$role.json"
+      fi
+      [[ -f "$search_file" ]] || { echo "[step] no face search results in $search_file" >&2; return 1; }
+      local results_count
+      results_count=$(jq '.results | length' "$search_file")
+      local effective_k=$(( results_count < top_k ? results_count : top_k ))
+      echo "[step] $role connecting to top $effective_k of $results_count face search results"
+      local connected=0 k
+      for ((k=0; k<effective_k; k++)); do
+        local pseudo
+        pseudo=$(jq -r ".results[$k].pseudonym" "$search_file")
+        [[ "$pseudo" == "null" || -z "$pseudo" ]] && continue
+        if curl -fsS -X POST "http://127.0.0.1:$port/api/discovery/connect" \
+          -H "Content-Type: application/json" \
+          -H "X-User-Hash: $hash" \
+          -d "{\"target_pseudonym\":\"$pseudo\",\"message\":\"$message\",\"preferred_role\":\"$connect_role\"}" \
+          > /dev/null 2>&1; then
+          connected=$((connected+1))
+          echo "[step]   -> connected to $pseudo"
+        else
+          echo "[step]   -> skipped $pseudo (connect failed)"
+        fi
+      done
+      echo "[step] $role connected to $connected/$effective_k pseudonyms"
+      [[ "$connected" -gt 0 ]] || return 1
+      ;;
+
+    export_pseudonyms)
+      # Save this role's pseudonym list to state for cross-node reference.
+      # Other nodes can then connect to "role.pseudonym[i]".
+      local resp
+      resp=$(curl -fsS "http://127.0.0.1:$port/api/discovery/my-pseudonyms" \
+        -H "X-User-Hash: $hash")
+      echo "$resp" > "$FOLDDB_TEST_SESSION_DIR/state/pseudonyms-$role.json"
+      local n
+      n=$(echo "$resp" | jq '.count // ((.pseudonyms // []) | length)')
+      echo "[step] exported $n pseudonyms for $role"
+      ;;
+
     connect)
-      # Action: { action: connect, target: "last_face_search[0]", message: "...", role: "friend" }
+      # Action: { action: connect, target: "last_face_search[0]" |
+      #                                    "<role>.face_search[i]" |
+      #                                    "<role>.pseudonym[i]" |
+      #                                    "<uuid>", message, role }
       local target message connect_role
       target=$(echo "$action_json" | jq -r '.target // "last_face_search[0]"')
       message=$(echo "$action_json" | jq -r '.message // "E2E test connect"')
       connect_role=$(echo "$action_json" | jq -r '.role // "acquaintance"')
-      local target_pseudonym
+      local target_pseudonym=""
       if [[ "$target" == last_face_search* ]]; then
         local idx
         idx=$(echo "$target" | sed -E 's/last_face_search\[([0-9]+)\]/\1/')
         [[ "$idx" == "$target" ]] && idx=0
         target_pseudonym=$(jq -r ".results[$idx].pseudonym" \
           "$FOLDDB_TEST_SESSION_DIR/state/last-face-search-$role.json")
+      elif [[ "$target" == *.face_search* ]]; then
+        # Reference like "alice.face_search[0]" — another role's face-search results
+        local target_role idx
+        target_role=$(echo "$target" | cut -d. -f1)
+        idx=$(echo "$target" | sed -E 's/.*face_search\[([0-9]+)\]/\1/')
+        [[ "$idx" == "$target" ]] && idx=0
+        target_pseudonym=$(jq -r ".results[$idx].pseudonym" \
+          "$FOLDDB_TEST_SESSION_DIR/state/last-face-search-$target_role.json")
+      elif [[ "$target" == *.pseudonym* ]]; then
+        # Reference like "alice.pseudonym[0]" — look up another role's exported pseudonyms
+        local target_role idx
+        target_role=$(echo "$target" | cut -d. -f1)
+        idx=$(echo "$target" | sed -E 's/.*pseudonym\[([0-9]+)\]/\1/')
+        [[ "$idx" == "$target" ]] && idx=0
+        target_pseudonym=$(jq -r ".pseudonyms[$idx]" \
+          "$FOLDDB_TEST_SESSION_DIR/state/pseudonyms-$target_role.json")
       else
         target_pseudonym="$target"
       fi
       [[ -n "$target_pseudonym" && "$target_pseudonym" != "null" ]] || {
-        echo "[step] no target pseudonym" >&2; return 1;
+        echo "[step] no target pseudonym (target=$target)" >&2; return 1;
       }
       curl -fsS -X POST "http://127.0.0.1:$port/api/discovery/connect" \
         -H "Content-Type: application/json" \
         -H "X-User-Hash: $hash" \
         -d "{\"target_pseudonym\":\"$target_pseudonym\",\"message\":\"$message\",\"preferred_role\":\"$connect_role\"}" \
         > /dev/null
-      echo "[step] connect sent to $target_pseudonym"
+      echo "[step] $role → connect to $target_pseudonym"
       ;;
 
     poll_requests)
+      # Also processes data_share messages (they share the poll loop on the backend).
       curl -fsS "http://127.0.0.1:$port/api/discovery/connection-requests" \
         -H "X-User-Hash: $hash" > "$FOLDDB_TEST_SESSION_DIR/state/last-poll-$role.json"
       local n
       n=$(jq '(.requests // .) | length' "$FOLDDB_TEST_SESSION_DIR/state/last-poll-$role.json" 2>/dev/null || echo 0)
-      echo "[step] polled: $n requests"
+      echo "[step] $role polled: $n requests"
+      ;;
+
+    expect_pending_min)
+      # Poll with retry until pending count reaches the threshold (or timeout).
+      # Action: { action: expect_pending_min, value: 1, timeout_seconds: 60 }
+      local min to_secs pwait_i pending
+      min=$(echo "$action_json" | jq -r '.value // 1')
+      to_secs=$(echo "$action_json" | jq -r '.timeout_seconds // 60')
+      for ((pwait_i=0; pwait_i<to_secs; pwait_i++)); do
+        curl -fsS "http://127.0.0.1:$port/api/discovery/connection-requests" \
+          -H "X-User-Hash: $hash" > "$FOLDDB_TEST_SESSION_DIR/state/last-poll-$role.json"
+        pending=$(jq '[(.requests // .)[] | select(.status == "pending")] | length' \
+          "$FOLDDB_TEST_SESSION_DIR/state/last-poll-$role.json" 2>/dev/null || echo 0)
+        if (( pending >= min )); then
+          echo "[step] $role pending: $pending >= $min ✓ (after ${pwait_i}s)"
+          return 0
+        fi
+        sleep 1
+      done
+      echo "[step] $role expect_pending_min FAIL: $pending < $min after ${to_secs}s" >&2
+      return 1
+      ;;
+
+    expect_notification_min)
+      # Action: { action: expect_notification_min, value: 1, timeout_seconds: 60 }
+      local min to_secs nwait_i ncount
+      min=$(echo "$action_json" | jq -r '.value // 1')
+      to_secs=$(echo "$action_json" | jq -r '.timeout_seconds // 60')
+      for ((nwait_i=0; nwait_i<to_secs; nwait_i++)); do
+        # Trigger backend polling first — this decrypts any new bulletin board messages
+        # including data shares, which then generate notifications.
+        curl -fsS "http://127.0.0.1:$port/api/discovery/connection-requests" \
+          -H "X-User-Hash: $hash" > /dev/null
+        ncount=$(curl -fsS "http://127.0.0.1:$port/api/notifications" \
+          -H "X-User-Hash: $hash" | jq '.count // 0')
+        if (( ncount >= min )); then
+          echo "[step] $role notifications: $ncount >= $min ✓ (after ${nwait_i}s)"
+          return 0
+        fi
+        sleep 1
+      done
+      echo "[step] $role expect_notification_min FAIL: $ncount < $min after ${to_secs}s" >&2
+      return 1
       ;;
 
     accept_request)
+      # Use the last poll result if present, otherwise poll fresh
       local req_file req_id
       req_file="$FOLDDB_TEST_SESSION_DIR/state/last-poll-$role.json"
+      if [[ ! -f "$req_file" ]]; then
+        curl -fsS "http://127.0.0.1:$port/api/discovery/connection-requests" \
+          -H "X-User-Hash: $hash" > "$req_file"
+      fi
       req_id=$(jq -r '(.requests // .)[] | select(.status == "pending") | .request_id' "$req_file" | head -1)
       [[ -n "$req_id" && "$req_id" != "null" ]] || { echo "[step] no pending request to accept" >&2; return 1; }
-      curl -fsS -X POST "http://127.0.0.1:$port/api/discovery/connection-requests/respond" \
+      local accept_resp
+      if ! accept_resp=$(curl -fsS -X POST "http://127.0.0.1:$port/api/discovery/connection-requests/respond" \
         -H "Content-Type: application/json" \
         -H "X-User-Hash: $hash" \
-        -d "{\"request_id\":\"$req_id\",\"action\":\"accept\",\"role\":\"friend\"}" > /dev/null
+        -d "{\"request_id\":\"$req_id\",\"action\":\"accept\",\"role\":\"friend\"}" 2>&1); then
+        echo "[step] accept failed: $accept_resp" >&2
+        return 1
+      fi
       echo "[step] accepted request $req_id"
       ;;
 

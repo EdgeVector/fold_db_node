@@ -121,7 +121,7 @@ run_standalone_smoke() {
     nf_spawn_node "$role" "$port" "$SESSION_DIR" >/dev/null
     nf_wait_healthy "$port" 30
     local reg_resp
-    reg_resp="$(nf_register_node "$port" "$invite")"
+    reg_resp="$(nf_register_node "$port" "$invite" "$role" "$SESSION_DIR")"
     echo "[standalone] register resp: $reg_resp"
     local hash api_key public_key
     hash="$(echo "$reg_resp" | jq -r '.user_hash // .hash // ""')"
@@ -134,10 +134,18 @@ run_standalone_smoke() {
       [[ -z "$hash" ]]        && hash="$(echo "$ident" | jq -r '.user_hash // ""')"
       [[ -z "$public_key" ]]  && public_key="$(echo "$ident" | jq -r '.public_key // ""')"
     fi
+    # Set display name — required for accept_request (handler rejects w/o identity card).
+    # Capitalize first letter of role as the display name.
+    local display_name
+    display_name="$(echo "$role" | awk '{ printf "%s%s", toupper(substr($0,1,1)), tolower(substr($0,2)) }')"
+    nf_set_display_name "$port" "$hash" "$display_name"
+    echo "[standalone] set display_name=$display_name"
+
     jq --arg role "$role" --argjson port "$port" \
        --arg hash "$hash" --arg api_key "$api_key" \
        --arg invite "$invite" --arg public_key "$public_key" \
-       '. + [{role:$role, port:$port, hash:$hash, api_key:$api_key, invite_code:$invite, public_key:$public_key}]' \
+       --arg display_name "$display_name" \
+       '. + [{role:$role, port:$port, hash:$hash, api_key:$api_key, invite_code:$invite, public_key:$public_key, display_name:$display_name}]' \
        "$nodes_json" > "$nodes_json.tmp" && mv "$nodes_json.tmp" "$nodes_json"
     port=$((port + 1))
   done <<< "$roles"
