@@ -100,7 +100,6 @@ jobs:
         if: github.event_name == 'workflow_dispatch'
         run: |
           cd test-framework
-          export FOLDDB_TEST_STANDALONE=1
           SCENARIO="${{ github.event.inputs.scenario }}"
           KEEP="${{ github.event.inputs.keep_session }}"
           ARGS=""
@@ -113,7 +112,6 @@ jobs:
         if: github.event_name == 'schedule'
         run: |
           cd test-framework
-          export FOLDDB_TEST_STANDALONE=1
           set +e
           FAIL=0
           for scenario in scenarios/face-discovery-self.yaml scenarios/face-discovery-3node.yaml; do

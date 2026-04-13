@@ -1,6 +1,9 @@
 #!/usr/bin/env bash
 # Step executor for the test framework.
-# Iterates scenario steps, resolves actions to recipes, executes with node context.
+# Iterates scenario steps, dispatches actions inline against node HTTP APIs.
+#
+# On polling timeouts, emit the last response to stderr so schema drift is
+# visible as "actual payload" rather than a generic "timed out" error.
 set -euo pipefail
 
 # execute_action NODES_JSON ROLE FRAMEWORK_DIR ACTION_JSON
@@ -131,7 +134,14 @@ execute_action() {
         fi
         sleep 1
       done
-      echo "[step] ingestion timed out" >&2
+      # On timeout, dump the final state so we can see whether schemas never
+      # loaded, records never appeared, or face detection hung. Without this
+      # the caller just sees "timed out" and has to rerun with --keep-session.
+      local last_schemas
+      last_schemas=$(curl -fsS "http://127.0.0.1:$port/api/schemas" \
+        -H "X-User-Hash: $hash" 2>/dev/null | head -c 800)
+      echo "[step] ingestion timed out after 120s" >&2
+      echo "[step]   last /api/schemas: $last_schemas" >&2
       return 1
       ;;
 

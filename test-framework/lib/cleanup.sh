@@ -39,15 +39,24 @@ JSON
 )
   local out
   out="$(mktemp)"
-  if aws lambda invoke \
+  local aws_err
+  if ! aws_err="$(aws lambda invoke \
       --function-name "$fn" \
       --region "$AWS_REGION" \
       --cli-binary-format raw-in-base64-out \
       --payload "$payload" \
-      "$out" >/dev/null 2>&1; then
-    :
+      "$out" 2>&1 >/dev/null)"; then
+    echo "[cleanup] lambda invoke failed: $fn $path — $aws_err" >&2
   else
-    echo "[cleanup] lambda invoke failed: $fn $path" >&2
+    # A 4xx/5xx from the Lambda shows up in the response body, not the invoke
+    # exit code. Parse it and surface so "silently wrong payload shape" bugs
+    # (see finding #8 of the framework review) are loud instead of cumulative.
+    local status body
+    status="$(jq -r '.statusCode // empty' "$out" 2>/dev/null)"
+    if [[ -n "$status" && "$status" != "200" ]]; then
+      body="$(head -c 300 "$out")"
+      echo "[cleanup] lambda $fn $path returned status=$status body=$body" >&2
+    fi
   fi
   rm -f "$out"
 }
@@ -88,11 +97,22 @@ cleanup_all() {
         "{\"public_key\":\"$public_key\"}"
     fi
 
-    # Admin: clear messages (direct Lambda invoke).
+    # Admin: clear bulletin-board messages for this node's pseudonyms.
+    # messaging_service::handle_clear_messages expects `{pseudonyms: [...]}` —
+    # it deletes by target_pseudonym, not user_hash. We fetch the live list
+    # from the node before killing it.
     if [[ -n "$hash" ]]; then
-      _cleanup_lambda_invoke "$FOLDDB_TEST_MESSAGING_LAMBDA" \
-        "/admin/clear-messages" \
-        "{\"user_hash\":\"$hash\"}"
+      local pseudonyms_json
+      pseudonyms_json="$(curl -fsS "http://127.0.0.1:$port/api/discovery/my-pseudonyms" \
+        -H "X-User-Hash: $hash" 2>/dev/null \
+        | jq -c '.pseudonyms // [] | map(tostring)' 2>/dev/null || echo '[]')"
+      if [[ "$pseudonyms_json" != "[]" && -n "$pseudonyms_json" ]]; then
+        _cleanup_lambda_invoke "$FOLDDB_TEST_MESSAGING_LAMBDA" \
+          "/admin/clear-messages" \
+          "{\"pseudonyms\":$pseudonyms_json}"
+      else
+        echo "[cleanup] $role has no pseudonyms to clear (skip messaging)"
+      fi
     fi
 
     # Revoke invite code.
