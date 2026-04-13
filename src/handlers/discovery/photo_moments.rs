@@ -7,8 +7,56 @@ use crate::discovery::types::{
     MomentHashReceiveRequest, MomentOptInRequest, MomentOptOutRequest, PhotoMetadata,
 };
 use crate::fold_node::node::FoldNode;
+use crate::fold_node::OperationProcessor;
 use crate::handlers::response::{ApiResponse, HandlerError, HandlerResult, IntoHandlerError};
+use crate::trust::contact_book::{Contact, ContactBook};
 use serde::{Deserialize, Serialize};
+
+/// Outcome of the moment-peer authorization check.
+///
+/// Pure-function result so the gate can be unit tested without standing up a
+/// full `FoldNode`. Matches the pattern established in PR #420 for
+/// `authorize_data_share_sender`.
+#[derive(Debug, PartialEq, Eq)]
+pub(crate) enum MomentPeerAuthz {
+    /// Peer pseudonym matches an active (non-revoked) contact.
+    Authorized,
+    /// Peer pseudonym does not match any contact in the book.
+    UnknownPeer,
+    /// Peer pseudonym matches a contact whose trust has been revoked.
+    RevokedPeer,
+}
+
+/// Match a `peer_pseudonym` against any contact in `book`, checking all three
+/// pseudonym fields on [`Contact`]: `identity_pseudonym` (stable, preferred),
+/// `messaging_pseudonym`, and the legacy discovery `pseudonym`. Includes
+/// revoked contacts — callers must inspect `contact.revoked`.
+fn find_contact_by_pseudonym<'a>(
+    book: &'a ContactBook,
+    peer_pseudonym: &str,
+) -> Option<&'a Contact> {
+    book.contacts.values().find(|c| {
+        c.identity_pseudonym.as_deref() == Some(peer_pseudonym)
+            || c.messaging_pseudonym.as_deref() == Some(peer_pseudonym)
+            || c.pseudonym.as_deref() == Some(peer_pseudonym)
+    })
+}
+
+/// Pure authorization helper: does `peer_pseudonym` correspond to a known,
+/// non-revoked contact in `contact_book`? Matches any of the three pseudonym
+/// fields on [`Contact`]. Matches the pattern of `authorize_data_share_sender`
+/// in PR #420, but keyed on pseudonym (not pubkey) because the moment opt-in
+/// payload carries a pseudonym.
+pub(crate) fn authorize_moment_peer(
+    contact_book: &ContactBook,
+    peer_pseudonym: &str,
+) -> MomentPeerAuthz {
+    match find_contact_by_pseudonym(contact_book, peer_pseudonym) {
+        None => MomentPeerAuthz::UnknownPeer,
+        Some(c) if c.revoked => MomentPeerAuthz::RevokedPeer,
+        Some(_) => MomentPeerAuthz::Authorized,
+    }
+}
 
 #[cfg(feature = "ts-bindings")]
 use ts_rs::TS;
@@ -63,10 +111,40 @@ pub struct MomentDetectResponse {
 }
 
 /// Opt-in to photo moment sharing with a peer.
+///
+/// Trust-boundary gate: the target `peer_pseudonym` MUST correspond to a
+/// known, non-revoked contact in this node's contact book. Without this
+/// check an attacker could spray `moment_opt_in` requests for arbitrary
+/// pseudonyms and pollute Sled — same class of bug as the `data_share`
+/// vulnerability closed by PR #420.
 pub async fn moment_opt_in(
     req: &MomentOptInRequest,
     node: &FoldNode,
 ) -> HandlerResult<MomentOptInListResponse> {
+    // Authorization gate: load contact book and match the requested peer
+    // pseudonym against known contacts. See `authorize_moment_peer`.
+    let op = OperationProcessor::new(node.clone());
+    let book_path = op
+        .contact_book_path()
+        .map_err(|e| HandlerError::Internal(format!("contact book path: {}", e)))?;
+    let contact_book = ContactBook::load_from(&book_path)
+        .map_err(|e| HandlerError::Internal(format!("load contact book: {}", e)))?;
+    match authorize_moment_peer(&contact_book, &req.peer_pseudonym) {
+        MomentPeerAuthz::Authorized => {}
+        MomentPeerAuthz::UnknownPeer => {
+            return Err(HandlerError::Unauthorized(format!(
+                "moment_opt_in: peer pseudonym '{}' is not a known contact",
+                req.peer_pseudonym
+            )));
+        }
+        MomentPeerAuthz::RevokedPeer => {
+            return Err(HandlerError::Unauthorized(format!(
+                "moment_opt_in: peer pseudonym '{}' belongs to a revoked contact",
+                req.peer_pseudonym
+            )));
+        }
+    }
+
     let db = node
         .get_fold_db()
         .map_err(|e| HandlerError::Internal(format!("Failed to access database: {}", e)))?;
@@ -284,4 +362,114 @@ pub async fn moment_list(node: &FoldNode) -> HandlerResult<SharedMomentsResponse
     Ok(ApiResponse::success(SharedMomentsResponse {
         moments: shared_moments,
     }))
+}
+
+#[cfg(test)]
+mod moment_auth_gate_tests {
+    use super::*;
+    use crate::trust::contact_book::TrustDirection;
+    use chrono::Utc;
+    use std::collections::HashMap;
+
+    fn insert_contact(book: &mut ContactBook, c: Contact) {
+        // Use direct insert to preserve the `revoked` field, which
+        // `upsert_contact` would reset to false.
+        book.contacts.insert(c.public_key.clone(), c);
+    }
+
+    fn contact_with_pseudonyms(
+        pk: &str,
+        discovery_pseudo: Option<&str>,
+        messaging_pseudo: Option<&str>,
+        identity_pseudo: Option<&str>,
+        revoked: bool,
+    ) -> Contact {
+        Contact {
+            public_key: pk.to_string(),
+            display_name: format!("contact-{}", pk),
+            contact_hint: None,
+            direction: TrustDirection::Mutual,
+            connected_at: Utc::now(),
+            pseudonym: discovery_pseudo.map(|s| s.to_string()),
+            messaging_pseudonym: messaging_pseudo.map(|s| s.to_string()),
+            messaging_public_key: None,
+            identity_pseudonym: identity_pseudo.map(|s| s.to_string()),
+            revoked,
+            roles: HashMap::new(),
+        }
+    }
+
+    #[test]
+    fn empty_book_rejects_any_peer() {
+        let book = ContactBook::new();
+        assert_eq!(
+            authorize_moment_peer(&book, "random-pseudonym"),
+            MomentPeerAuthz::UnknownPeer
+        );
+    }
+
+    #[test]
+    fn matches_by_identity_pseudonym() {
+        let mut book = ContactBook::new();
+        insert_contact(
+            &mut book,
+            contact_with_pseudonyms("pk-alice", None, None, Some("id-alice"), false),
+        );
+        assert_eq!(
+            authorize_moment_peer(&book, "id-alice"),
+            MomentPeerAuthz::Authorized
+        );
+    }
+
+    #[test]
+    fn matches_by_messaging_pseudonym() {
+        let mut book = ContactBook::new();
+        insert_contact(
+            &mut book,
+            contact_with_pseudonyms("pk-bob", None, Some("msg-bob"), None, false),
+        );
+        assert_eq!(
+            authorize_moment_peer(&book, "msg-bob"),
+            MomentPeerAuthz::Authorized
+        );
+    }
+
+    #[test]
+    fn matches_by_discovery_pseudonym() {
+        let mut book = ContactBook::new();
+        insert_contact(
+            &mut book,
+            contact_with_pseudonyms("pk-carol", Some("disc-carol"), None, None, false),
+        );
+        assert_eq!(
+            authorize_moment_peer(&book, "disc-carol"),
+            MomentPeerAuthz::Authorized
+        );
+    }
+
+    #[test]
+    fn rejects_revoked_contact() {
+        let mut book = ContactBook::new();
+        insert_contact(
+            &mut book,
+            contact_with_pseudonyms("pk-dave", None, None, Some("id-dave"), true),
+        );
+        assert_eq!(
+            authorize_moment_peer(&book, "id-dave"),
+            MomentPeerAuthz::RevokedPeer
+        );
+    }
+
+    #[test]
+    fn rejects_unknown_pseudonym_when_others_exist() {
+        let mut book = ContactBook::new();
+        insert_contact(
+            &mut book,
+            contact_with_pseudonyms("pk-alice", None, None, Some("id-alice"), false),
+        );
+        assert_eq!(
+            authorize_moment_peer(&book, "id-eve"),
+            MomentPeerAuthz::UnknownPeer
+        );
+    }
 }

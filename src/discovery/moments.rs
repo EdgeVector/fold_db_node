@@ -263,10 +263,11 @@ pub async fn list_moment_opt_ins(store: &dyn KvStore) -> Result<Vec<MomentOptIn>
 
     let mut opt_ins = Vec::new();
     for (_key, value) in entries {
-        match serde_json::from_slice(&value) {
-            Ok(opt_in) => opt_ins.push(opt_in),
-            Err(e) => log::warn!("Failed to deserialize moment opt-in: {}", e),
-        }
+        // No silent failures: a corrupt Sled row is a programming or storage
+        // bug and must surface, not be swallowed into an empty list.
+        let opt_in = serde_json::from_slice(&value)
+            .map_err(|e| format!("Failed to deserialize moment opt-in: {}", e))?;
+        opt_ins.push(opt_in);
     }
     Ok(opt_ins)
 }
@@ -281,20 +282,60 @@ pub async fn has_moment_opt_in(store: &dyn KvStore, peer_pseudonym: &str) -> Res
     Ok(value.is_some())
 }
 
-/// Save our computed moment hashes for a peer (for later comparison).
+/// Append-upsert our computed moment hashes for a peer.
+///
+/// Prior behavior was a plain `put` that overwrote any previous hashes,
+/// which made incremental scans impossible: scanning photo batch 2 would
+/// wipe batch 1's hashes. This function now reads the existing vec,
+/// extends with the new hashes, deduplicates by `PhotoMomentHash::hash`
+/// (27 hashes per photo overlap heavily with neighboring time buckets),
+/// and writes back.
+///
+/// The vec is capped at [`MAX_SAVED_MOMENT_HASHES`] entries; if exceeded,
+/// the oldest entries (at the front of the vec) are evicted to make room.
+/// TODO: replace insertion-order eviction with TTL-based eviction in a
+/// follow-up once the moments transport is wired up end-to-end.
 pub async fn save_our_moment_hashes(
     store: &dyn KvStore,
     peer_pseudonym: &str,
     hashes: &[PhotoMomentHash],
 ) -> Result<(), String> {
     let key = format!("{}{}", MOMENT_HASH_PREFIX, peer_pseudonym);
-    let value = serde_json::to_vec(hashes)
+
+    // Read existing hashes for this peer (empty vec if none).
+    let existing = load_our_moment_hashes(store, peer_pseudonym).await?;
+
+    // Extend and dedupe by hash string. We preserve insertion order so the
+    // LRU-by-insertion cap below is meaningful.
+    let mut seen: std::collections::HashSet<String> =
+        std::collections::HashSet::with_capacity(existing.len() + hashes.len());
+    let mut merged: Vec<PhotoMomentHash> = Vec::with_capacity(existing.len() + hashes.len());
+    for h in existing.into_iter().chain(hashes.iter().cloned()) {
+        if seen.insert(h.hash.clone()) {
+            merged.push(h);
+        }
+    }
+
+    // Cap unbounded growth. If we exceed the cap, evict oldest-first so
+    // new entries always land.
+    if merged.len() > MAX_SAVED_MOMENT_HASHES {
+        let overflow = merged.len() - MAX_SAVED_MOMENT_HASHES;
+        merged.drain(0..overflow);
+    }
+
+    let value = serde_json::to_vec(&merged)
         .map_err(|e| format!("Failed to serialize moment hashes: {}", e))?;
     store
         .put(key.as_bytes(), value)
         .await
         .map_err(|e| format!("Failed to save moment hashes: {}", e))
 }
+
+/// Maximum number of saved moment hashes per peer. Each photo produces 27
+/// hashes (3 time buckets * 9 geohash cells), so this supports ~3700 photos
+/// worth of unique hashes before eviction. Prevents unbounded Sled growth if
+/// the scan loop is called repeatedly on a huge photo library.
+pub const MAX_SAVED_MOMENT_HASHES: usize = 100_000;
 
 /// Load our computed moment hashes for a peer.
 pub async fn load_our_moment_hashes(
@@ -368,10 +409,11 @@ pub async fn list_shared_moments(store: &dyn KvStore) -> Result<Vec<SharedMoment
 
     let mut moments = Vec::new();
     for (_key, value) in entries {
-        match serde_json::from_slice(&value) {
-            Ok(moment) => moments.push(moment),
-            Err(e) => log::warn!("Failed to deserialize shared moment: {}", e),
-        }
+        // No silent failures: a corrupt Sled row is a programming or storage
+        // bug and must surface, not be swallowed into an empty list.
+        let moment: SharedMoment = serde_json::from_slice(&value)
+            .map_err(|e| format!("Failed to deserialize shared moment: {}", e))?;
+        moments.push(moment);
     }
 
     moments.sort_by(|a: &SharedMoment, b: &SharedMoment| b.detected_at.cmp(&a.detected_at));
@@ -560,6 +602,92 @@ mod tests {
 
         let overlaps = find_hash_overlaps(&our, &peer_hash_strings);
         assert!(overlaps.is_empty(), "6 hours apart should not match");
+    }
+
+    fn fake_hash(h: &str) -> PhotoMomentHash {
+        PhotoMomentHash {
+            hash: h.to_string(),
+            time_bucket: "2026-03-15T14".to_string(),
+            geohash: "9q8yyk".to_string(),
+            timestamp: "2026-03-15T14:32:00+00:00".to_string(),
+            record_id: format!("rec-{}", h),
+        }
+    }
+
+    #[tokio::test]
+    async fn test_save_our_moment_hashes_appends_and_dedupes() {
+        use fold_db::storage::inmemory_backend::InMemoryKvStore;
+        let store = InMemoryKvStore::new();
+        let kv: &dyn KvStore = &store;
+
+        let batch1 = vec![fake_hash("aaa"), fake_hash("bbb")];
+        save_our_moment_hashes(kv, "peer1", &batch1).await.unwrap();
+
+        // Second batch includes one duplicate ("bbb") and one new ("ccc").
+        let batch2 = vec![fake_hash("bbb"), fake_hash("ccc")];
+        save_our_moment_hashes(kv, "peer1", &batch2).await.unwrap();
+
+        let loaded = load_our_moment_hashes(kv, "peer1").await.unwrap();
+        let loaded_hashes: Vec<String> = loaded.iter().map(|h| h.hash.clone()).collect();
+
+        // All three unique hashes must be present — prior overwrite bug
+        // would have left only ["bbb", "ccc"].
+        assert_eq!(loaded_hashes.len(), 3);
+        assert!(loaded_hashes.contains(&"aaa".to_string()));
+        assert!(loaded_hashes.contains(&"bbb".to_string()));
+        assert!(loaded_hashes.contains(&"ccc".to_string()));
+    }
+
+    #[tokio::test]
+    async fn test_save_our_moment_hashes_respects_cap() {
+        use fold_db::storage::inmemory_backend::InMemoryKvStore;
+        let store = InMemoryKvStore::new();
+        let kv: &dyn KvStore = &store;
+
+        // Prime the store with MAX entries.
+        let initial: Vec<PhotoMomentHash> = (0..MAX_SAVED_MOMENT_HASHES)
+            .map(|i| fake_hash(&format!("h{:06}", i)))
+            .collect();
+        save_our_moment_hashes(kv, "peer1", &initial).await.unwrap();
+
+        // Push 10 more unique entries — oldest should be evicted.
+        let extra: Vec<PhotoMomentHash> = (0..10)
+            .map(|i| fake_hash(&format!("new{:03}", i)))
+            .collect();
+        save_our_moment_hashes(kv, "peer1", &extra).await.unwrap();
+
+        let loaded = load_our_moment_hashes(kv, "peer1").await.unwrap();
+        assert_eq!(loaded.len(), MAX_SAVED_MOMENT_HASHES);
+        // The newest entries must still be present.
+        let last = &loaded[loaded.len() - 1];
+        assert_eq!(last.hash, "new009");
+        // The oldest 10 must have been evicted.
+        assert!(!loaded.iter().any(|h| h.hash == "h000000"));
+    }
+
+    #[tokio::test]
+    async fn test_list_moment_opt_ins_surfaces_corrupt_rows() {
+        use fold_db::storage::inmemory_backend::InMemoryKvStore;
+        let store = InMemoryKvStore::new();
+        let kv: &dyn KvStore = &store;
+
+        // Write a valid opt-in and a corrupt one under the opt-in prefix.
+        let valid = MomentOptIn {
+            peer_pseudonym: "peerA".to_string(),
+            peer_display_name: None,
+            opted_in_at: "2026-03-15T14:32:00+00:00".to_string(),
+        };
+        save_moment_opt_in(kv, &valid).await.unwrap();
+
+        let bad_key = format!("{}peerB", MOMENT_OPTIN_PREFIX);
+        kv.put(bad_key.as_bytes(), b"this-is-not-json".to_vec())
+            .await
+            .unwrap();
+
+        // Prior silent-failure path would return only the valid opt-in.
+        // The fix surfaces the corruption as an error.
+        let res = list_moment_opt_ins(kv).await;
+        assert!(res.is_err(), "expected error on corrupt opt-in row");
     }
 
     #[test]
