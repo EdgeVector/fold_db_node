@@ -18,20 +18,64 @@ nf_create_invite_codes() {
   done
 }
 
-nf_find_binary() {
-  local dir
-  dir="$(pwd)"
-  while [[ "$dir" != "/" ]]; do
-    if [[ -x "$dir/target/release/folddb_server" ]]; then
-      echo "$dir/target/release/folddb_server"; return 0
+# Locate the fold_db_node repo root (the directory containing a Cargo.toml
+# that declares the `face-detection` feature).
+nf_repo_root() {
+  local d
+  d="$(pwd)"
+  while [[ "$d" != "/" ]]; do
+    if [[ -f "$d/Cargo.toml" ]] && grep -q '^face-detection' "$d/Cargo.toml" 2>/dev/null; then
+      echo "$d"; return 0
     fi
-    if [[ -x "$dir/target/debug/folddb_server" ]]; then
-      echo "$dir/target/debug/folddb_server"; return 0
-    fi
-    dir="$(dirname "$dir")"
+    d="$(dirname "$d")"
   done
-  echo "folddb_server binary not found" >&2
+  echo "[nf_repo_root] fold_db_node repo root not found (no Cargo.toml with face-detection feature above $(pwd))" >&2
   return 1
+}
+
+# Hard-error if the built binary was compiled without `--features face-detection`.
+# The face detection code paths are fully gated behind that cfg, so an opt-out
+# build would silently index zero faces — violating no-silent-failures and
+# masking real discovery bugs in scenarios that use ingest_photo.
+nf_assert_face_detection_compiled_in() {
+  local bin="$1"
+  # Use grep -c (drains stdin) instead of grep -q — with `set -o pipefail`,
+  # grep -q short-circuits and sends SIGPIPE to nm, failing the whole pipeline.
+  local sym_count
+  sym_count="$(nm "$bin" 2>/dev/null | grep -cE 'run_face_detection|has_face_processor|index_faces' || true)"
+  if (( sym_count == 0 )); then
+    cat >&2 <<EOF
+[nf] ERROR: $bin was built without --features face-detection.
+[nf] Face detection symbols (run_face_detection / has_face_processor / index_faces)
+[nf] are absent from the binary, so every ingest_photo step would silently
+[nf] produce zero face embeddings and mask discovery bugs.
+[nf] Rebuild with:
+[nf]   cargo build --bin folddb_server --features face-detection
+EOF
+    return 1
+  fi
+}
+
+# Build folddb_server with the face-detection feature (idempotent — cargo is a
+# no-op when nothing changed) and echo the path to the debug binary. Replaces
+# the old "walk up and hope a pre-built binary exists" lookup, which was the
+# footgun that let a feature-less binary slip into E2E runs.
+nf_find_binary() {
+  # Cache across multiple calls in the same run (cargo is a no-op on no-change
+  # but still spams stderr and takes a beat; we only need to build once).
+  if [[ -n "${FOLDDB_TEST_BINARY:-}" && -x "$FOLDDB_TEST_BINARY" ]]; then
+    echo "$FOLDDB_TEST_BINARY"; return 0
+  fi
+  local repo_root bin
+  repo_root="$(nf_repo_root)" || return 1
+  echo "[nf] building folddb_server --features face-detection (repo: $repo_root)" >&2
+  ( cd "$repo_root" && cargo build --bin folddb_server --features face-detection >&2 ) \
+    || { echo "[nf] cargo build failed" >&2; return 1; }
+  bin="$repo_root/target/debug/folddb_server"
+  [[ -x "$bin" ]] || { echo "[nf] expected binary at $bin but not found" >&2; return 1; }
+  nf_assert_face_detection_compiled_in "$bin" || return 1
+  export FOLDDB_TEST_BINARY="$bin"
+  echo "$bin"
 }
 
 nf_spawn_node() {

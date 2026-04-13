@@ -125,7 +125,11 @@ execute_action() {
                   fi
                   sleep 1
                 done
-                echo "[step] ingestion: $recs records, NO faces detected (face detection may have failed or no faces in image)"
+                echo "[step] ERROR: ingestion wrote $recs records but face detection produced 0 faces after 90s." >&2
+                echo "[step] Either the folddb_server binary was built without --features face-detection," >&2
+                echo "[step] the face detection model failed to load, or the fixture contains no detectable face." >&2
+                echo "[step] Check nodes/$role/stderr.log for face processor errors." >&2
+                return 1
               fi
               echo "[step] ingestion complete: $recs records after ${i}s"
               return 0
@@ -204,13 +208,25 @@ execute_action() {
           | jq -r '(.keys // [])[0].hash // (.keys // [])[0].range // ""')
       fi
       [[ -n "$record_key" && "$record_key" != "null" ]] || { echo "[step] no records to face-search" >&2; return 1; }
-      local resp
-      resp=$(curl -fsS -X POST "http://127.0.0.1:$port/api/discovery/face-search" \
+      # Capture HTTP status + body separately so a non-2xx response hard-fails
+      # with the actual error body instead of silently reporting 0 results.
+      local resp http_body http_code
+      resp=$(curl -sS -o /tmp/folddb-face-search-$$.body -w '%{http_code}' \
+        -X POST "http://127.0.0.1:$port/api/discovery/face-search" \
         -H "Content-Type: application/json" \
         -H "X-User-Hash: $hash" \
         -d "{\"source_schema\":\"$schema_hash\",\"source_key\":\"$record_key\",\"face_index\":$face_index,\"top_k\":50}")
+      http_code="$resp"
+      http_body=$(cat /tmp/folddb-face-search-$$.body 2>/dev/null || echo '')
+      rm -f /tmp/folddb-face-search-$$.body
+      if [[ "$http_code" != "200" ]]; then
+        echo "[step] face_search FAILED: HTTP $http_code body=$(echo "$http_body" | head -c 300)" >&2
+        return 1
+      fi
+      resp="$http_body"
       local n
-      n=$(echo "$resp" | jq '.results | length')
+      n=$(echo "$resp" | jq '.results | length' 2>/dev/null || echo "")
+      [[ -n "$n" ]] || { echo "[step] face_search: response missing .results array: $(echo "$resp" | head -c 300)" >&2; return 1; }
       echo "[step] face_search returned $n results"
       # Save results for subsequent actions (expect_results_min, connect)
       echo "$resp" > "$FOLDDB_TEST_SESSION_DIR/state/last-face-search-$role.json"
