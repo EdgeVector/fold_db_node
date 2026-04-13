@@ -11,9 +11,33 @@ use crate::discovery::publisher::DiscoveryPublisher;
 use crate::fold_node::node::FoldNode;
 use crate::fold_node::OperationProcessor;
 use crate::handlers::response::{ApiResponse, HandlerError, HandlerResult, IntoTypedHandlerError};
+use crate::trust::identity_card::IdentityCard;
 use crate::trust::trust_invite::TrustInvite;
 use fold_db::access::TrustTier;
 use serde::{Deserialize, Serialize};
+
+/// Resolve the trust-invite sender display name from a local identity card.
+///
+/// SECURITY: this MUST be the only source of `sender_name` passed to the
+/// messaging service. Never accept it from client request bodies — a malicious
+/// client could otherwise set `sender_name = "PayPal Security Team"` and
+/// phish recipients under the node's SES identity.
+pub(crate) fn resolve_sender_name_from_identity(
+    identity: Option<IdentityCard>,
+) -> Result<String, HandlerError> {
+    let Some(card) = identity else {
+        return Err(HandlerError::BadRequest(
+            "Cannot send invite — set your display name in Settings first.".to_string(),
+        ));
+    };
+    let name = card.display_name;
+    if name.trim().is_empty() {
+        return Err(HandlerError::BadRequest(
+            "Cannot send invite — set your display name in Settings first.".to_string(),
+        ));
+    }
+    Ok(name)
+}
 
 // ===== Request/Response types =====
 
@@ -435,15 +459,24 @@ pub async fn fetch_shared_invite(
 }
 
 /// Send invite with email verification.
+///
+/// SECURITY: `sender_name` is resolved server-side from the local identity card.
+/// Never trust client-supplied sender names — a malicious client could set
+/// `sender_name = "PayPal Security Team"` and send a phishing email under the
+/// node's SES identity. The display name must come from the server-owned
+/// identity card.
 pub async fn send_verified_invite(
     publisher: &DiscoveryPublisher,
+    node: &FoldNode,
     invite_token: &str,
     recipient_email: &str,
-    sender_name: &str,
     user_hash: &str,
 ) -> HandlerResult<serde_json::Value> {
+    let op = OperationProcessor::new(node.clone());
+    let identity_card = op.get_identity_card().typed_handler_err()?;
+    let sender_name = resolve_sender_name_from_identity(identity_card)?;
     let invite_id = publisher
-        .send_verified_invite(invite_token, recipient_email, sender_name)
+        .send_verified_invite(invite_token, recipient_email, &sender_name)
         .await
         .map_err(HandlerError::Internal)?;
     Ok(ApiResponse::success_with_user(
@@ -640,4 +673,52 @@ pub async fn list_sent_invites() -> HandlerResult<serde_json::Value> {
     Ok(ApiResponse::success(
         serde_json::json!({"sent_invites": store.invites}),
     ))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn resolve_sender_name_returns_display_name_from_card() {
+        let card = IdentityCard::new("Alice".to_string(), None, None);
+        let name = resolve_sender_name_from_identity(Some(card))
+            .expect("valid identity card should yield a sender name");
+        assert_eq!(name, "Alice");
+    }
+
+    #[test]
+    fn resolve_sender_name_rejects_missing_identity_card() {
+        let err = resolve_sender_name_from_identity(None)
+            .expect_err("missing identity card must be a BadRequest error");
+        match err {
+            HandlerError::BadRequest(msg) => {
+                assert!(
+                    msg.contains("display name"),
+                    "error message should mention display name, got: {msg}"
+                );
+            }
+            other => panic!("expected BadRequest, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn resolve_sender_name_rejects_blank_display_name() {
+        let card = IdentityCard::new("   ".to_string(), None, None);
+        let err = resolve_sender_name_from_identity(Some(card))
+            .expect_err("blank display name must be rejected, not silently passed through");
+        assert!(matches!(err, HandlerError::BadRequest(_)));
+    }
+
+    #[test]
+    fn resolve_sender_name_does_not_fall_back_to_placeholder() {
+        // Regression guard: this helper must never return an
+        // attacker-friendly fallback like "Anonymous" or the user_hash.
+        // Missing identity is an explicit error, not a silent default.
+        let err = resolve_sender_name_from_identity(None).unwrap_err();
+        let HandlerError::BadRequest(msg) = err else {
+            panic!("expected BadRequest");
+        };
+        assert!(!msg.to_lowercase().contains("anonymous"));
+    }
 }
