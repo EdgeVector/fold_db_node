@@ -1054,6 +1054,10 @@ async fn bootstrap_from_cloud_inner(
     // Use the pre-cloned SledPool directly — no sled::open() needed.
     // This avoids the exclusive file lock issue since we share the same
     // pool instance the server already holds open.
+    //
+    // Retain a separate handle so phase 1.5 (below) can read the org
+    // memberships that phase 1 replays into Sled.
+    let pool_for_orgs = std::sync::Arc::clone(&sled_pool);
     let base_store: std::sync::Arc<dyn fold_db::storage::traits::NamespacedStore> =
         std::sync::Arc::new(fold_db::storage::SledNamespacedStore::new(sled_pool));
 
@@ -1066,16 +1070,71 @@ async fn bootstrap_from_cloud_inner(
         fold_db::sync::SyncConfig::default(),
     ));
 
-    // Run bootstrap (download snapshot + replay logs)
-    let final_seq = engine
-        .bootstrap()
+    // --- Phase 1: personal bootstrap ---------------------------------------
+    //
+    // Download the personal `latest.enc` snapshot and replay the personal log.
+    // After this the local Sled contains the personal namespace, INCLUDING any
+    // `OrgMembership` rows the user had before losing their device.
+    let personal_outcome = engine
+        .bootstrap_target(0)
         .await
-        .map_err(|e| format!("Bootstrap failed: {e}"))?;
+        .map_err(|e| format!("Bootstrap failed (phase 1: personal): {e}"))?;
 
     log::info!(
-        "Database bootstrap complete after restore: final sequence = {}",
-        final_seq
+        "Bootstrap phase 1 (personal) complete: last_seq={}, entries_replayed={}",
+        personal_outcome.last_seq,
+        personal_outcome.entries_replayed
     );
+
+    // --- Phase 1.5: configure org sync targets from the replayed Sled ------
+    //
+    // Read the now-populated org memberships and install each as a `SyncTarget`
+    // on the engine so phase 2 can restore org data. This runs BEFORE the
+    // FoldNode opens the DB, so we can't use `FoldNode::configure_org_sync_if_needed`
+    // directly — instead we share the helper that builds the org sync config
+    // from a raw SledPool (`build_org_sync_config_from_sled`).
+    //
+    // Reuses `pool_for_orgs`, the SledPool handle retained above, so we hit
+    // the exact Sled instance that phase 1 just wrote into.
+    match crate::fold_node::node::build_org_sync_config_from_sled(&pool_for_orgs)
+        .map_err(|e| format!("Bootstrap failed (phase 1.5: load org memberships): {e}"))?
+    {
+        Some(org_config) => {
+            let org_count = org_config.membership_count;
+            log::info!(
+                "Bootstrap phase 1.5: configuring {} org sync target(s)",
+                org_count
+            );
+            engine
+                .configure_org_sync(org_config.partitioner, org_config.targets)
+                .await;
+
+            // --- Phase 2: bootstrap all targets (personal + orgs) ----------
+            //
+            // `bootstrap_all` re-runs the personal target (which re-downloads
+            // the snapshot — a cheap one-time cost on a once-per-device restore)
+            // and then bootstraps each org target. It also invokes the schema /
+            // embedding reloaders ONCE at the end if any target replayed them,
+            // which the per-target API does not do (reloader is private to
+            // fold_db). Using `bootstrap_all` here is deliberate: it is the
+            // only public path that fires the reloader after multi-target
+            // restore.
+            let outcomes = engine
+                .bootstrap_all()
+                .await
+                .map_err(|e| format!("Bootstrap failed (phase 2: org targets): {e}"))?;
+
+            log::info!(
+                "Bootstrap phase 2 complete: {} target(s) replayed",
+                outcomes.len()
+            );
+        }
+        None => {
+            log::info!("Bootstrap phase 1.5: no org memberships, skipping org sync configuration");
+        }
+    }
+
+    log::info!("Database bootstrap complete after restore");
     Ok(())
 }
 

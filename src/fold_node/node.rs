@@ -754,6 +754,69 @@ impl FoldNode {
 // Org sync wiring
 // =========================================================================
 
+/// Result of building per-org sync targets from the on-disk org memberships.
+///
+/// Shared between the normal startup path (`configure_org_sync_if_needed`) and
+/// the restore path (`bootstrap_from_cloud`) so both install exactly the same
+/// set of targets and crypto providers on the `SyncEngine`.
+pub(crate) struct OrgSyncConfig {
+    pub partitioner: SyncPartitioner,
+    pub targets: Vec<fold_db::sync::org_sync::SyncTarget>,
+    /// `(org_hash, crypto_provider)` pairs, one per successfully-built target.
+    /// Used to register org crypto providers on the encrypting store.
+    pub crypto_pairs: Vec<(String, Arc<dyn CryptoProvider>)>,
+    pub membership_count: usize,
+}
+
+/// Build the org-sync configuration from the org memberships stored in Sled.
+///
+/// Returns `Ok(None)` if there are no org memberships (caller should skip org
+/// sync setup). Returns `Err` if the Sled lookup itself fails — memberships
+/// whose crypto provider cannot be built are logged loudly and skipped (they
+/// do not fail the whole restore).
+pub(crate) fn build_org_sync_config_from_sled(
+    pool: &Arc<fold_db::storage::SledPool>,
+) -> FoldDbResult<Option<OrgSyncConfig>> {
+    let memberships = org_ops::list_orgs(pool)?;
+
+    if memberships.is_empty() {
+        return Ok(None);
+    }
+
+    let mut targets = Vec::new();
+    let mut crypto_pairs: Vec<(String, Arc<dyn CryptoProvider>)> = Vec::new();
+    for membership in &memberships {
+        match FoldNode::crypto_provider_for_org(membership) {
+            Ok(provider) => {
+                targets.push(fold_db::sync::org_sync::SyncTarget {
+                    label: membership.org_name.clone(),
+                    prefix: membership.org_hash.clone(),
+                    crypto: provider.clone(),
+                });
+                crypto_pairs.push((membership.org_hash.clone(), provider));
+            }
+            Err(e) => {
+                log_feature!(
+                    LogFeature::Database,
+                    error,
+                    "Failed to create crypto provider for org '{}': {}",
+                    membership.org_name,
+                    e
+                );
+            }
+        }
+    }
+
+    let partitioner = SyncPartitioner::new(&memberships);
+
+    Ok(Some(OrgSyncConfig {
+        partitioner,
+        targets,
+        crypto_pairs,
+        membership_count: memberships.len(),
+    }))
+}
+
 impl FoldNode {
     /// Configure org sync on the sync engine if sync is enabled and the node
     /// is a member of any organizations.
@@ -773,8 +836,16 @@ impl FoldNode {
             None => return,
         };
 
-        let memberships = match org_ops::list_orgs(&pool) {
-            Ok(orgs) => orgs,
+        let org_config = match build_org_sync_config_from_sled(&pool) {
+            Ok(Some(cfg)) => cfg,
+            Ok(None) => {
+                log_feature!(
+                    LogFeature::Database,
+                    debug,
+                    "No org memberships found, skipping org sync configuration"
+                );
+                return;
+            }
             Err(e) => {
                 log_feature!(
                     LogFeature::Database,
@@ -786,47 +857,18 @@ impl FoldNode {
             }
         };
 
-        if memberships.is_empty() {
-            log_feature!(
-                LogFeature::Database,
-                debug,
-                "No org memberships found, skipping org sync configuration"
-            );
-            return;
-        }
-
-        // Build sync targets and crypto providers for each org
-        let mut org_targets = Vec::new();
-        let mut org_crypto_pairs: Vec<(String, Arc<dyn CryptoProvider>)> = Vec::new();
-        for membership in &memberships {
-            match Self::crypto_provider_for_org(membership) {
-                Ok(provider) => {
-                    org_targets.push(fold_db::sync::org_sync::SyncTarget {
-                        label: membership.org_name.clone(),
-                        prefix: membership.org_hash.clone(),
-                        crypto: provider.clone(),
-                    });
-                    org_crypto_pairs.push((membership.org_hash.clone(), provider));
-                }
-                Err(e) => {
-                    log_feature!(
-                        LogFeature::Database,
-                        error,
-                        "Failed to create crypto provider for org '{}': {}",
-                        membership.org_name,
-                        e
-                    );
-                }
-            }
-        }
-
-        let partitioner = SyncPartitioner::new(&memberships);
+        let OrgSyncConfig {
+            partitioner,
+            targets: org_targets,
+            crypto_pairs: org_crypto_pairs,
+            membership_count,
+        } = org_config;
 
         log_feature!(
             LogFeature::Database,
             info,
             "Configuring org sync: {} org(s)",
-            memberships.len()
+            membership_count
         );
 
         sync_engine
@@ -846,7 +888,7 @@ impl FoldNode {
     }
 
     /// Create a CryptoProvider from an org's E2E secret (base64-encoded 32-byte key).
-    fn crypto_provider_for_org(
+    pub(crate) fn crypto_provider_for_org(
         membership: &OrgMembership,
     ) -> Result<Arc<dyn CryptoProvider>, FoldDbError> {
         let key_bytes = BASE64.decode(&membership.org_e2e_secret).map_err(|e| {
@@ -1012,6 +1054,65 @@ mod tests {
         // Verify that the keys are valid base64
         assert!(general_purpose::STANDARD.decode(private_key).is_ok());
         assert!(general_purpose::STANDARD.decode(public_key).is_ok());
+    }
+
+    /// `build_org_sync_config_from_sled` returns `Ok(None)` on an empty Sled.
+    ///
+    /// Regression guard for the two-phase bootstrap restore path: the restore
+    /// code must distinguish "no orgs" from "error loading orgs" so it can
+    /// skip phase 2 cleanly when the user has no org memberships.
+    #[tokio::test]
+    async fn build_org_sync_config_empty_sled_returns_none() {
+        let temp_dir = tempdir().unwrap();
+        let pool = Arc::new(fold_db::storage::SledPool::new(
+            temp_dir.path().join("sled"),
+        ));
+
+        let result = build_org_sync_config_from_sled(&pool)
+            .expect("build_org_sync_config_from_sled should succeed on empty sled");
+        assert!(result.is_none(), "expected None on empty sled, got Some");
+    }
+
+    /// `build_org_sync_config_from_sled` reads `OrgMembership` rows that were
+    /// just written to Sled and produces a fully populated `OrgSyncConfig`
+    /// — one `SyncTarget` per membership, with matching crypto pairs.
+    ///
+    /// This is the phase 1.5 integration point of the two-phase bootstrap
+    /// restore: after phase 1 replays the personal log into Sled, this
+    /// function reads the resulting org memberships and hands the SyncEngine
+    /// the targets it needs for phase 2.
+    #[tokio::test]
+    async fn build_org_sync_config_reads_memberships_from_sled() {
+        let temp_dir = tempdir().unwrap();
+        let pool = Arc::new(fold_db::storage::SledPool::new(
+            temp_dir.path().join("sled"),
+        ));
+
+        // Create two orgs directly in Sled (simulating what phase 1 replay
+        // would produce from restored log entries).
+        let creator_kp = Ed25519KeyPair::generate().unwrap();
+        let creator_pub = creator_kp.public_key_base64();
+
+        let org_a = fold_db::org::operations::create_org(&pool, "Alpha", &creator_pub, "Tom")
+            .expect("create_org Alpha");
+        let org_b = fold_db::org::operations::create_org(&pool, "Bravo", &creator_pub, "Tom")
+            .expect("create_org Bravo");
+
+        let cfg = build_org_sync_config_from_sled(&pool)
+            .expect("build should succeed")
+            .expect("expected Some — two memberships present");
+
+        assert_eq!(cfg.membership_count, 2);
+        assert_eq!(cfg.targets.len(), 2);
+        assert_eq!(cfg.crypto_pairs.len(), 2);
+
+        let target_prefixes: Vec<&str> = cfg.targets.iter().map(|t| t.prefix.as_str()).collect();
+        assert!(target_prefixes.contains(&org_a.org_hash.as_str()));
+        assert!(target_prefixes.contains(&org_b.org_hash.as_str()));
+
+        let crypto_hashes: Vec<&str> = cfg.crypto_pairs.iter().map(|(h, _)| h.as_str()).collect();
+        assert!(crypto_hashes.contains(&org_a.org_hash.as_str()));
+        assert!(crypto_hashes.contains(&org_b.org_hash.as_str()));
     }
 }
 
