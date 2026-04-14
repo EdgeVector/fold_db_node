@@ -34,11 +34,14 @@
 //! See `docs/designs/fingerprints_phase1_audit.md` for the audit that led
 //! to the junction-schema pattern.
 
+pub mod canonical_names;
 pub mod extractors;
 pub mod keys;
+pub mod planned_record;
 pub mod registration;
 pub mod schema_definitions;
 pub mod schemas;
+pub mod writer;
 
 // Ingest-path components (Phase 1)
 // pub mod extractors;
