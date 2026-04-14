@@ -16,6 +16,12 @@ export default function FaceSearchPanel({ onResult }) {
   const [connectRole, setConnectRole] = useState('acquaintance')
   const [faceSchemas, setFaceSchemas] = useState([])
   const [knownPseudonyms, setKnownPseudonyms] = useState(() => new Set())
+  // Detected faces in the user's selected (schema, key). Populated lazily
+  // when both fields are filled in, so the user can pick a face_index by
+  // bbox + confidence instead of brute-forcing every index.
+  const [detectedFaces, setDetectedFaces] = useState([])
+  const [detectedFacesError, setDetectedFacesError] = useState(null)
+  const [loadingFaces, setLoadingFaces] = useState(false)
 
   useEffect(() => {
     let cancelled = false
@@ -49,6 +55,42 @@ export default function FaceSearchPanel({ onResult }) {
     }
     loadSchemas()
   }, [])
+
+  // Fetch the list of detected faces for the current (schema, key). Runs
+  // whenever either field changes and both are non-empty. Failure is silent
+  // (the picker just shows "no faces detected") — the user can still type
+  // a face index manually, so we don't want to block search on this call.
+  useEffect(() => {
+    if (!sourceSchema.trim() || !sourceKey.trim()) {
+      setDetectedFaces([])
+      setDetectedFacesError(null)
+      return
+    }
+    let cancelled = false
+    setLoadingFaces(true)
+    setDetectedFacesError(null)
+    discoveryClient
+      .listFaces(sourceSchema, sourceKey)
+      .then(res => {
+        if (cancelled) return
+        if (res.success && res.data?.faces) {
+          setDetectedFaces(res.data.faces)
+        } else {
+          setDetectedFaces([])
+          setDetectedFacesError(res.error || null)
+        }
+      })
+      .catch(() => {
+        if (!cancelled) {
+          setDetectedFaces([])
+          setDetectedFacesError(null)
+        }
+      })
+      .finally(() => {
+        if (!cancelled) setLoadingFaces(false)
+      })
+    return () => { cancelled = true }
+  }, [sourceSchema, sourceKey])
 
   const handleSearch = useCallback(async () => {
     if (!sourceSchema.trim() || !sourceKey.trim()) return
@@ -124,6 +166,66 @@ export default function FaceSearchPanel({ onResult }) {
           />
         </div>
       </div>
+
+      {/*
+        Detected-faces picker. Without this, users had to brute-force every
+        face_index when a photo had multiple faces (e.g. a Comic Con shot
+        with the subject + 4 audience members in the background) — there
+        was no way to tell which index was who. Now the API returns bbox +
+        confidence for each face, and the picker lets the user click a face
+        to set face_index. Click again to clear. Renders an informative
+        empty/loading/legacy state so it never silently disappears.
+      */}
+      {sourceSchema.trim() && sourceKey.trim() && (
+        <div className="text-xs">
+          <div className="text-secondary mb-1">Detected faces in this record</div>
+          {loadingFaces && (
+            <div className="text-tertiary">Loading…</div>
+          )}
+          {!loadingFaces && detectedFacesError && (
+            <div className="text-gruvbox-red">{detectedFacesError}</div>
+          )}
+          {!loadingFaces && !detectedFacesError && detectedFaces.length === 0 && (
+            <div className="text-tertiary">No faces detected for this record.</div>
+          )}
+          {!loadingFaces && detectedFaces.length > 0 && (
+            <div className="flex flex-wrap gap-1.5">
+              {detectedFaces.map(f => {
+                const selected = f.face_index === faceIndex
+                const hasBbox = Array.isArray(f.bbox) && f.bbox.length === 4
+                const conf = typeof f.confidence === 'number' ? f.confidence : null
+                return (
+                  <button
+                    key={f.face_index}
+                    type="button"
+                    onClick={() => setFaceIndex(f.face_index)}
+                    className={`px-2 py-1 rounded border font-mono text-[11px] transition-colors ${
+                      selected
+                        ? 'bg-gruvbox-blue/20 border-gruvbox-blue text-primary'
+                        : 'bg-surface border-border text-secondary hover:border-gruvbox-blue/50'
+                    }`}
+                    title={
+                      hasBbox
+                        ? `bbox [${f.bbox.map(v => v.toFixed(3)).join(', ')}]${conf !== null ? ` · conf ${conf.toFixed(2)}` : ''}`
+                        : 'legacy entry — no bbox metadata'
+                    }
+                  >
+                    #{f.face_index}
+                    {hasBbox && (
+                      <span className="text-tertiary ml-1">
+                        ({(f.bbox[2] - f.bbox[0]).toFixed(2)}×{(f.bbox[3] - f.bbox[1]).toFixed(2)})
+                      </span>
+                    )}
+                    {conf !== null && (
+                      <span className="text-tertiary ml-1">{(conf * 100).toFixed(0)}%</span>
+                    )}
+                  </button>
+                )
+              })}
+            </div>
+          )}
+        </div>
+      )}
 
       <div className="flex gap-2 items-end">
         <div>

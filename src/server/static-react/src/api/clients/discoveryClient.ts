@@ -194,8 +194,11 @@ export interface MomentDetectResult {
 
 export interface FaceEntry {
   face_index: number;
-  bbox: [number, number, number, number]; // x1, y1, x2, y2 normalized
-  confidence: number;
+  /** `[x1, y1, x2, y2]` normalized to `[0, 1]`. Optional: legacy face entries
+   *  written before the bbox plumb-through (fold_db PR #535) lack this. */
+  bbox?: [number, number, number, number];
+  /** Detector confidence in `[0, 1]`. Optional for the same reason. */
+  confidence?: number;
 }
 
 export interface FaceSearchResult {
