@@ -70,11 +70,7 @@ impl CanonicalNames {
     /// If the descriptive_name was previously mapped to a different
     /// canonical_name, this returns an error. Re-registration of the
     /// same mapping is a no-op (idempotent).
-    pub fn insert(
-        &mut self,
-        descriptive_name: &str,
-        canonical_name: &str,
-    ) -> FoldDbResult<()> {
+    pub fn insert(&mut self, descriptive_name: &str, canonical_name: &str) -> FoldDbResult<()> {
         if let Some(existing) = self.by_descriptive.get(descriptive_name) {
             if existing == canonical_name {
                 return Ok(());
@@ -122,9 +118,9 @@ impl CanonicalNames {
 /// global state via `reset_for_tests()`.
 pub fn install(mapping: CanonicalNames) -> FoldDbResult<()> {
     let rw = REGISTRY.get_or_init(|| RwLock::new(CanonicalNames::new()));
-    let mut guard = rw.write().map_err(|e| {
-        FoldDbError::Config(format!("canonical_names: RwLock poisoned: {}", e))
-    })?;
+    let mut guard = rw
+        .write()
+        .map_err(|e| FoldDbError::Config(format!("canonical_names: RwLock poisoned: {}", e)))?;
     if guard.is_empty() {
         *guard = mapping;
         return Ok(());
@@ -148,9 +144,9 @@ pub fn lookup(descriptive_name: &str) -> FoldDbResult<String> {
             descriptive_name
         ))
     })?;
-    let guard = rw.read().map_err(|e| {
-        FoldDbError::Config(format!("canonical_names: RwLock poisoned: {}", e))
-    })?;
+    let guard = rw
+        .read()
+        .map_err(|e| FoldDbError::Config(format!("canonical_names: RwLock poisoned: {}", e)))?;
     guard.get(descriptive_name)
 }
 

@@ -69,11 +69,13 @@ async fn handle_add_schema(
                 mutation_mappers: HashMap::new(),
                 replaced_schema: None,
             }),
-            SchemaAddOutcome::Expanded(old, s, m) => HttpResponse::Created().json(AddSchemaResponse {
-                schema: s,
-                mutation_mappers: m,
-                replaced_schema: Some(old),
-            }),
+            SchemaAddOutcome::Expanded(old, s, m) => {
+                HttpResponse::Created().json(AddSchemaResponse {
+                    schema: s,
+                    mutation_mappers: m,
+                    replaced_schema: Some(old),
+                })
+            }
         },
         Err(e) => HttpResponse::BadRequest().json(json!({ "error": e.to_string() })),
     }
