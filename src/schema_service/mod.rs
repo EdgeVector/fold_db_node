@@ -7,6 +7,7 @@
 //! Core logic (state, types, classify) lives in `fold_db::schema_service`.
 //! This module provides the HTTP layer (server + routes).
 
+pub mod builtin_schemas;
 mod routes;
 pub mod server;
 

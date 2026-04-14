@@ -115,6 +115,9 @@ async fn spawn_schema_service() -> SpawnedService {
         .to_string_lossy()
         .to_string();
     let state = SchemaServiceState::new(db_path).unwrap();
+    fold_db_node::schema_service::builtin_schemas::seed(&state)
+        .await
+        .expect("seed built-in schemas");
     let state_data = web::Data::new(state);
     let listener = TcpListener::bind(("127.0.0.1", 0)).unwrap();
     let port = listener.local_addr().unwrap().port();
