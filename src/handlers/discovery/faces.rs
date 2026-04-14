@@ -18,9 +18,21 @@ pub struct FaceSearchRequest {
 }
 
 /// A single face entry returned by the list_faces handler.
+///
+/// `bbox` and `confidence` are populated for face entries written after
+/// fold_db's bbox plumb-through landed (see fold_db PR #535). Older entries
+/// return `None` for both — the React UI should render those as "—" rather
+/// than failing, so existing photos still appear in the list.
 #[derive(Debug, Clone, Serialize)]
 pub struct FaceEntry {
     pub face_index: usize,
+    /// Normalized bounding box `[x1, y1, x2, y2]` in `[0, 1]` of the source
+    /// image. None for legacy entries.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub bbox: Option<[f32; 4]>,
+    /// Detector confidence in `[0, 1]`. None for legacy entries.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub confidence: Option<f32>,
 }
 
 /// Response for listing faces on a record.
@@ -30,7 +42,8 @@ pub struct ListFacesResponse {
 }
 
 /// List all face embeddings stored for a specific record.
-/// Returns face indices (without full embedding vectors).
+/// Returns face indices, normalized bbox, and detector confidence
+/// (the full embedding vectors stay server-side).
 pub async fn list_faces(
     node: &FoldNode,
     schema: &str,
@@ -50,7 +63,11 @@ pub async fn list_faces(
 
     let entries: Vec<FaceEntry> = faces
         .into_iter()
-        .map(|(idx, _embedding)| FaceEntry { face_index: idx })
+        .map(|f| FaceEntry {
+            face_index: f.fragment_idx,
+            bbox: f.bbox,
+            confidence: f.confidence,
+        })
         .collect();
 
     Ok(ApiResponse::success(ListFacesResponse { faces: entries }))
@@ -79,15 +96,16 @@ pub async fn face_search(
         fold_db::schema::types::key_value::KeyValue::new(Some(req.source_key.clone()), None);
     let faces = native_index_mgr.list_faces(&req.source_schema, &key_value);
 
-    let (_idx, embedding) = faces
+    let face = faces
         .into_iter()
-        .find(|(idx, _)| *idx == face_index)
+        .find(|f| f.fragment_idx == face_index)
         .ok_or_else(|| {
             HandlerError::NotFound(format!(
                 "No face at index {} for schema='{}' key='{}'",
                 face_index, req.source_schema, req.source_key
             ))
         })?;
+    let embedding = face.embedding;
 
     let publisher = DiscoveryPublisher::new(
         master_key.to_vec(),

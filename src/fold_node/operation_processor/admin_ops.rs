@@ -47,8 +47,7 @@ impl OperationProcessor {
     /// Get event statistics.
     pub async fn get_event_statistics(
         &self,
-    ) -> FoldDbResult<fold_db::fold_db_core::infrastructure::event_statistics::EventStatistics>
-    {
+    ) -> FoldDbResult<fold_db::fold_db_core::event_statistics::EventStatistics> {
         let db = self.get_db()?;
         Ok(db.get_event_statistics())
     }
