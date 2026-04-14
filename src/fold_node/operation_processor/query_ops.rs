@@ -22,10 +22,30 @@ struct RefLocation {
 
 impl OperationProcessor {
     /// Executes a query and returns raw structured results, not JSON.
-    pub async fn execute_query_map(&self, query: Query) -> FoldDbResult<QueryResultMap> {
+    ///
+    /// Requires an explicit `AccessContext` — the upstream `QueryExecutor::query()`
+    /// bypass has been removed, so every caller must decide what identity the
+    /// query runs as. Internal/loopback callers should pass
+    /// `AccessContext::owner(node_pub_key)` to match the loopback trust model
+    /// documented in `CLAUDE.md` (Trust boundary: loopback owner context).
+    pub async fn execute_query_map(
+        &self,
+        query: Query,
+        access_context: &AccessContext,
+    ) -> FoldDbResult<QueryResultMap> {
         let db = self.get_db()?;
-        let results = db.query_executor().query(query).await;
+        let results = db
+            .query_executor()
+            .query_with_access(query, access_context, None)
+            .await;
         Ok(results?)
+    }
+
+    /// Convenience: build an owner-context `AccessContext` for this node's own
+    /// public key. Used by loopback / internal callers that match the
+    /// single-user Tauri trust model (see CLAUDE.md).
+    pub fn owner_access_context(&self) -> AccessContext {
+        AccessContext::owner(self.node.get_node_public_key().to_string())
     }
 
     /// Executes a query and returns formatted JSON records.
@@ -137,7 +157,8 @@ impl OperationProcessor {
         let sort_order = query.sort_order.clone();
         let value_filters = query.value_filters.clone();
 
-        let result_map = self.execute_query_map(query).await?;
+        let owner_ctx = self.owner_access_context();
+        let result_map = self.execute_query_map(query, &owner_ctx).await?;
         let records_map = fold_db::fold_db_core::query::records_from_field_map(&result_map);
 
         let mut results: Vec<Value> = records_map

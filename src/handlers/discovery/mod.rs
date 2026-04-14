@@ -1309,6 +1309,9 @@ pub async fn send_data_share(
 
     let mut shared_records = Vec::with_capacity(req.records.len());
 
+    // Sender is the record owner sharing their own data — owner context.
+    let owner_ctx = fold_db::access::AccessContext::owner(sender_public_key.clone());
+
     for record_req in &req.records {
         // Load schema definition
         let schema_def = match db
@@ -1324,7 +1327,10 @@ pub async fn send_data_share(
             record_req.schema_name.clone(),
             vec![], // all fields
         );
-        let result_map = db.query_executor().query(query).await;
+        let result_map = db
+            .query_executor()
+            .query_with_access(query, &owner_ctx, None)
+            .await;
         let records_map = match result_map {
             Ok(rm) => fold_db::fold_db_core::query::records_from_field_map(&rm),
             Err(e) => {

@@ -83,7 +83,7 @@ async fn write_file_mutation(
 async fn query_source_files(processor: &OperationProcessor) -> Vec<String> {
     let query = Query::new("FileRecords".to_string(), vec!["source_file".to_string()]);
     let result = processor
-        .execute_query_map(query)
+        .execute_query_map(query, &fold_db::access::AccessContext::owner("test"))
         .await
         .expect("execute query");
 

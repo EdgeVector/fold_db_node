@@ -97,7 +97,7 @@ async fn test_exact_range_key_filtering_with_blogpost() {
         Some(HashRangeFilter::HashKey(target_date.to_string())),
     );
     let result_with_filter = processor
-        .execute_query_map(query)
+        .execute_query_map(query, &fold_db::access::AccessContext::owner("test"))
         .await
         .expect("Failed to execute query with filter");
 
@@ -180,7 +180,7 @@ async fn test_exact_range_key_filtering_with_blogpost() {
         Some(HashRangeFilter::HashKey(target_date_2.to_string())),
     );
     let result_for_first_post = processor
-        .execute_query_map(query)
+        .execute_query_map(query, &fold_db::access::AccessContext::owner("test"))
         .await
         .expect("Failed to execute query for first post");
 
@@ -217,7 +217,7 @@ async fn test_exact_range_key_filtering_with_blogpost() {
         Some(HashRangeFilter::HashKey(non_existent_date.to_string())),
     );
     let result_non_existent = processor
-        .execute_query_map(query)
+        .execute_query_map(query, &fold_db::access::AccessContext::owner("test"))
         .await
         .expect("Failed to execute query for non-existent record");
 
@@ -242,7 +242,7 @@ async fn test_exact_range_key_filtering_with_blogpost() {
         ],
     );
     let result_all = processor
-        .execute_query_map(query)
+        .execute_query_map(query, &fold_db::access::AccessContext::owner("test"))
         .await
         .expect("Failed to execute query for all records");
 
@@ -323,7 +323,7 @@ async fn test_range_key_set_in_query_object() {
         Some(HashRangeFilter::HashKey(target_date.to_string())),
     );
     let result = processor
-        .execute_query_map(query)
+        .execute_query_map(query, &fold_db::access::AccessContext::owner("test"))
         .await
         .expect("Failed to execute query");
 

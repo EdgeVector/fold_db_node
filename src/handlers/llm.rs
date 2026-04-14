@@ -266,8 +266,10 @@ pub async fn ai_native_index_query(
         search_results.len()
     );
 
-    // Step 2: Hydrate results by fetching actual field values
-    let hydrated_results = hydrate_index_results(search_results, &db_guard).await;
+    // Step 2: Hydrate results by fetching actual field values.
+    // Loopback owner context — see trust-boundary note in CLAUDE.md.
+    let owner_ctx = fold_db::access::AccessContext::owner(node.get_node_public_key().to_string());
+    let hydrated_results = hydrate_index_results(search_results, &db_guard, &owner_ctx).await;
 
     log_feature!(
         LogFeature::Query,
