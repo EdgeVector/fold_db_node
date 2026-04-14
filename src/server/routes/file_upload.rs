@@ -21,6 +21,14 @@ use futures_util::StreamExt;
 use serde_json::json;
 use std::path::PathBuf;
 
+/// Maximum size (in bytes) accepted for a single file upload.
+///
+/// Enforced incrementally in [`save_uploaded_file`] so an oversized request is
+/// rejected before the full payload is buffered in memory. This prevents a
+/// single multipart request from exhausting the process heap (a DoS vector,
+/// particularly in Lambda/constrained-memory environments).
+pub const MAX_UPLOAD_SIZE: usize = 500 * 1024 * 1024;
+
 // ---- Multipart form data parsing ----
 
 /// Data extracted from multipart upload form
@@ -163,6 +171,7 @@ async fn save_uploaded_file(
 
     let mut hasher = Sha256::new();
     let mut file_data = Vec::new();
+    let mut total_bytes: usize = 0;
 
     while let Some(chunk) = field.next().await {
         let data = match chunk {
@@ -180,6 +189,23 @@ async fn save_uploaded_file(
                 })));
             }
         };
+
+        total_bytes = total_bytes.saturating_add(data.len());
+        if total_bytes > MAX_UPLOAD_SIZE {
+            log_feature!(
+                LogFeature::Ingestion,
+                warn,
+                "Rejecting upload: payload exceeds max size of {} bytes",
+                MAX_UPLOAD_SIZE
+            );
+            return Err(HttpResponse::PayloadTooLarge().json(json!({
+                "success": false,
+                "error": format!(
+                    "File exceeds maximum upload size of {} bytes",
+                    MAX_UPLOAD_SIZE
+                )
+            })));
+        }
 
         hasher.update(&data);
         file_data.extend_from_slice(&data);
@@ -675,7 +701,106 @@ pub async fn serve_file(
 
 #[cfg(test)]
 mod tests {
+    use super::{parse_multipart, MAX_UPLOAD_SIZE};
+    use actix_web::{web, App, HttpResponse};
+    use fold_db::storage::UploadStorage;
     use sha2::{Digest, Sha256};
+    use std::sync::Arc;
+
+    /// Test handler that runs `parse_multipart` and returns the resulting
+    /// status code so tests can assert on oversized-upload rejection.
+    async fn test_parse_handler(
+        payload: actix_multipart::Multipart,
+        upload_storage: web::Data<UploadStorage>,
+    ) -> HttpResponse {
+        let key = [0u8; 32];
+        match parse_multipart(payload, upload_storage.get_ref(), &key).await {
+            Ok(_) => HttpResponse::Ok().finish(),
+            Err(response) => response,
+        }
+    }
+
+    fn build_multipart_body(boundary: &str, field_name: &str, content: &[u8]) -> Vec<u8> {
+        let mut body = Vec::new();
+        body.extend_from_slice(format!("--{}\r\n", boundary).as_bytes());
+        body.extend_from_slice(
+            format!(
+                "Content-Disposition: form-data; name=\"{}\"; filename=\"big.bin\"\r\n",
+                field_name
+            )
+            .as_bytes(),
+        );
+        body.extend_from_slice(b"Content-Type: application/octet-stream\r\n\r\n");
+        body.extend_from_slice(content);
+        body.extend_from_slice(format!("\r\n--{}--\r\n", boundary).as_bytes());
+        body
+    }
+
+    #[actix_web::test]
+    async fn test_upload_rejects_oversized_file() {
+        let temp_dir = tempfile::tempdir().unwrap();
+        let storage = Arc::new(UploadStorage::local(temp_dir.path().to_path_buf()));
+
+        let app = actix_web::test::init_service(
+            App::new()
+                .app_data(web::Data::from(storage))
+                // Raise the actix payload limit so our own in-loop check is
+                // what rejects the request, not actix's default cap.
+                .app_data(web::PayloadConfig::new(MAX_UPLOAD_SIZE * 2))
+                .route("/upload", web::post().to(test_parse_handler)),
+        )
+        .await;
+
+        let boundary = "----TEST_BOUNDARY";
+        // One byte over the limit.
+        let oversized = vec![0u8; MAX_UPLOAD_SIZE + 1];
+        let body = build_multipart_body(boundary, "file", &oversized);
+
+        let req = actix_web::test::TestRequest::post()
+            .uri("/upload")
+            .insert_header((
+                "content-type",
+                format!("multipart/form-data; boundary={}", boundary),
+            ))
+            .set_payload(body)
+            .to_request();
+
+        let resp = actix_web::test::call_service(&app, req).await;
+        assert_eq!(
+            resp.status(),
+            actix_web::http::StatusCode::PAYLOAD_TOO_LARGE,
+            "oversized upload should be rejected with 413"
+        );
+    }
+
+    #[actix_web::test]
+    async fn test_upload_accepts_small_file() {
+        let temp_dir = tempfile::tempdir().unwrap();
+        let storage = Arc::new(UploadStorage::local(temp_dir.path().to_path_buf()));
+
+        let app = actix_web::test::init_service(
+            App::new()
+                .app_data(web::Data::from(storage))
+                .route("/upload", web::post().to(test_parse_handler)),
+        )
+        .await;
+
+        let boundary = "----TEST_BOUNDARY";
+        let small = b"hello world";
+        let body = build_multipart_body(boundary, "file", small);
+
+        let req = actix_web::test::TestRequest::post()
+            .uri("/upload")
+            .insert_header((
+                "content-type",
+                format!("multipart/form-data; boundary={}", boundary),
+            ))
+            .set_payload(body)
+            .to_request();
+
+        let resp = actix_web::test::call_service(&app, req).await;
+        assert_eq!(resp.status(), actix_web::http::StatusCode::OK);
+    }
 
     #[test]
     fn test_unique_filename_format() {
