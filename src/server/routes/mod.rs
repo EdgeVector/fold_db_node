@@ -7,6 +7,7 @@ pub mod discovery;
 pub mod feed;
 pub mod file_upload;
 pub mod filesystem;
+pub mod fingerprints;
 pub mod ingestion;
 pub mod log;
 pub mod org;
