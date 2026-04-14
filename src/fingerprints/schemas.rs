@@ -41,16 +41,26 @@
 //! (Mention, Fingerprint) reference) and `MentionBySource` (one row
 //! per Mention, hashed by "<source_schema>:<source_key>").
 
-// TODO: Populate this module with schema definition constants once the
-// round-trip integration test (task 15) confirms how schemas should be
-// registered. The current plan is to emit each schema as a JSON payload
-// that mirrors what the schema service accepts, then call
-// `DbOperations::store_schema` at node startup before any extractor
-// writes. If the schema service gatekeeps schema creation for
-// similarity/deduplication purposes, the call path routes through it
-// instead.
+// ────────────────────────────────────────────────────────────────────
+//  IMPORTANT: these constants are DESCRIPTIVE NAMES, not runtime names
+// ────────────────────────────────────────────────────────────────────
 //
-// Schema names (for reference by other modules):
+// fold_db's schema service canonicalizes every submitted schema by
+// renaming it to its identity_hash. A schema proposed with name =
+// "Fingerprint" comes back from the service with name =
+// "sh_<some-hash>". The descriptive_name is preserved, but the
+// runtime name is the hash.
+//
+// These constants are the descriptive_name values we set on each
+// schema in `schema_definitions.rs` when proposing. They are also the
+// lookup keys for `canonical_names::lookup()`, which returns the
+// runtime name that must be used in execute_mutation / execute_query.
+//
+// NEVER use these constants directly as schema names in mutations or
+// queries. Always go through canonical_names::lookup(DESCRIPTIVE_NAME)
+// to get the runtime name. The lookup layer exists specifically to
+// enforce this invariant — if you try to look up a descriptive name
+// that wasn't registered, you get a loud error.
 
 pub const FINGERPRINT: &str = "Fingerprint";
 pub const MENTION: &str = "Mention";

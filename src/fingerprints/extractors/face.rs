@@ -71,9 +71,21 @@ pub struct DetectedFace {
 
 /// A record the extractor plans to write. Schema-agnostic — the
 /// writer layer routes each variant to the correct mutation call.
+///
+/// **IMPORTANT: `descriptive_schema` is NOT a runtime schema name.**
+/// It holds the descriptive_name constant from
+/// `crate::fingerprints::schemas` (e.g. `"Fingerprint"`). The writer
+/// layer must resolve it to the canonical runtime name via
+/// `canonical_names::lookup(descriptive_schema)` before calling
+/// `execute_mutation`. The planning layer deliberately does not know
+/// about canonical names so plans remain deterministic and
+/// unit-testable without a running schema service.
 #[derive(Debug, Clone)]
 pub struct PlannedRecord {
-    pub schema: &'static str,
+    /// Descriptive schema name (e.g. `"Fingerprint"`). Resolve to the
+    /// runtime canonical name at write time via
+    /// `canonical_names::lookup(descriptive_schema)`.
+    pub descriptive_schema: &'static str,
     pub fields: HashMap<String, Value>,
     /// The value of the schema's declared hash_field (so the writer
     /// can pass the correct KeyValue to execute_mutation).
@@ -84,9 +96,13 @@ pub struct PlannedRecord {
 }
 
 impl PlannedRecord {
-    fn hash(schema: &'static str, hash_key: String, fields: HashMap<String, Value>) -> Self {
+    fn hash(
+        descriptive_schema: &'static str,
+        hash_key: String,
+        fields: HashMap<String, Value>,
+    ) -> Self {
         Self {
-            schema,
+            descriptive_schema,
             fields,
             hash_key,
             range_key: None,
@@ -94,13 +110,13 @@ impl PlannedRecord {
     }
 
     fn hash_range(
-        schema: &'static str,
+        descriptive_schema: &'static str,
         hash_key: String,
         range_key: String,
         fields: HashMap<String, Value>,
     ) -> Self {
         Self {
-            schema,
+            descriptive_schema,
             fields,
             hash_key,
             range_key: Some(range_key),
@@ -122,17 +138,21 @@ pub struct FaceExtractionPlan {
 }
 
 impl FaceExtractionPlan {
-    /// Filter a view of records belonging to a specific schema. Used
-    /// by tests and the writer layer for schema-grouped routing.
+    /// Filter a view of records belonging to a specific descriptive
+    /// schema. Used by tests and the writer layer for schema-grouped
+    /// routing. `descriptive_schema` is a descriptive_name constant
+    /// from `crate::fingerprints::schemas`, not a runtime name.
     pub fn records_for_schema<'a>(
         &'a self,
-        schema: &'static str,
+        descriptive_schema: &'static str,
     ) -> impl Iterator<Item = &'a PlannedRecord> + 'a {
-        self.records.iter().filter(move |r| r.schema == schema)
+        self.records
+            .iter()
+            .filter(move |r| r.descriptive_schema == descriptive_schema)
     }
 
-    pub fn count_for_schema(&self, schema: &'static str) -> usize {
-        self.records_for_schema(schema).count()
+    pub fn count_for_schema(&self, descriptive_schema: &'static str) -> usize {
+        self.records_for_schema(descriptive_schema).count()
     }
 }
 
@@ -413,7 +433,7 @@ mod tests {
         assert_eq!(plan.face_count, 0);
         assert!(plan.ran_empty);
         assert_eq!(plan.records.len(), 1);
-        assert_eq!(plan.records[0].schema, EXTRACTION_STATUS);
+        assert_eq!(plan.records[0].descriptive_schema, EXTRACTION_STATUS);
         assert_eq!(
             plan.records[0].fields.get("status").unwrap(),
             &json!("RanEmpty")
@@ -576,7 +596,7 @@ mod tests {
         let plan_b = plan_face_extraction(SCHEMA, KEY, &faces, MENTION_ID, STATUS_ID, NOW);
         assert_eq!(plan_a.records.len(), plan_b.records.len());
         for (a, b) in plan_a.records.iter().zip(plan_b.records.iter()) {
-            assert_eq!(a.schema, b.schema);
+            assert_eq!(a.descriptive_schema, b.descriptive_schema);
             assert_eq!(a.hash_key, b.hash_key);
             assert_eq!(a.range_key, b.range_key);
         }
