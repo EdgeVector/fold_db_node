@@ -72,9 +72,20 @@ impl DiscoveryConfig {
         let pool = std::sync::Arc::new(fold_db::storage::SledPool::new(data_path));
         let store = fold_db::NodeConfigStore::new(pool).ok()?;
         let cloud = store.get_cloud_config()?;
-        let identity = store.get_identity()?;
+
+        // This fallback path does not have access to the E2E key (which is
+        // derived from the identity private key we are trying to read). If
+        // the stored value is encrypted we cannot decrypt it here — the
+        // `NodeManager` base-config path will succeed on the next resolve
+        // attempt once the node finishes initialization. Fall through to
+        // None so the caller retries.
+        let raw_priv = store.raw_identity_private_key()?;
+        if raw_priv.starts_with("ENC:") {
+            log::debug!("discovery: Sled identity is encrypted; deferring to base-config path");
+            return None;
+        }
         let url = format!("{}/api", cloud.api_url);
-        let master_key = Sha256::digest(identity.private_key.as_bytes()).to_vec();
+        let master_key = Sha256::digest(raw_priv.as_bytes()).to_vec();
         Some(Self { url, master_key })
     }
 }
