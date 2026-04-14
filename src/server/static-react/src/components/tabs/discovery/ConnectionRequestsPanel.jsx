@@ -34,6 +34,19 @@ export default function ConnectionRequestsPanel({ onResult }) {
 
   useEffect(() => { fetchRequests(); fetchRoles() }, [fetchRequests, fetchRoles])
 
+  // Auto-poll the bulletin board every 5s while the panel is mounted. The
+  // GET /api/discovery/connection-requests endpoint already does a fresh
+  // poll-and-decrypt server-side (see routes/discovery/connections.rs::
+  // connection_requests), but bulletin-board delivery has eventual
+  // consistency on the order of seconds — operators were clicking Refresh
+  // multiple times while waiting for a connect to land. Polling on a timer
+  // makes the UI behave the way you'd expect a chat inbox to behave and
+  // removes the "did the click do anything?" friction.
+  useEffect(() => {
+    const id = setInterval(fetchRequests, 5000)
+    return () => clearInterval(id)
+  }, [fetchRequests])
+
   const handleRespond = async (requestId, action) => {
     setResponding(requestId)
     try {

@@ -193,7 +193,24 @@ pub fn spawn_batch_coordinator(
                 }
 
                 if join_set.is_empty() {
-                    break;
+                    // Only exit the coordinator if there are also no more
+                    // pending files to pop. The previous unconditional `break`
+                    // meant a SpendLimitHit pause woke the coordinator (via
+                    // `wait_for_resume` returning false) → the inner `while`
+                    // broke → join_set was still empty (we never spawned
+                    // anything because the very first try_pop_file hit the
+                    // limit) → outer `break` → coordinator exited and the
+                    // batch was marked Completed with 0 files actually
+                    // processed. That's the "Resume button does nothing"
+                    // symptom the operator sees: the batch reports
+                    // "Ingestion complete — 0 files ingested" instead of
+                    // resuming. With this guard the loop falls through to
+                    // the next outer iteration and tries to pop again under
+                    // the new (raised) spend limit.
+                    if all_popped {
+                        break;
+                    }
+                    continue;
                 }
 
                 // Wait for the next completion, record result, loop to fill more slots

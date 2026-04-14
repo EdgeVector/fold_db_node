@@ -123,7 +123,15 @@ function SmartFolderTab({ onResult: onResultProp }) {
 
   const handleScanComplete = useCallback((result) => {
     setScanResult(result)
-    setSpendLimit(result.total_estimated_cost?.toFixed(2) || '')
+    // Default the spend limit to 5× the estimated cost (with a $1 floor) so
+    // small-batch ingests don't immediately trip on rounding/variance. The
+    // previous "default to exactly the estimate" behavior meant every single
+    // ingest hit "spend limit reached" before any file finished — operators
+    // had to manually bump the field on every Proceed click. Users can still
+    // tighten it down if they want.
+    const estimated = result.total_estimated_cost || 0
+    const safeDefault = Math.max(estimated * 5, 1).toFixed(2)
+    setSpendLimit(estimated > 0 ? safeDefault : '')
     setScanProgressId(null)
     setIsScanning(false)
   }, [])

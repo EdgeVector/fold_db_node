@@ -151,7 +151,11 @@ export default function FaceSearchPanel({ onResult }) {
           >
             <option value="">Select schema...</option>
             {faceSchemas.map(s => (
-              <option key={s.schema_name} value={s.schema_name}>{s.schema_name}</option>
+              // listOptIns gives us both the schema hash (s.schema_name) and
+              // the human-readable category (s.category, e.g. "Photography").
+              // Show the category to the user; the value still has to be the
+              // hash because that's what /api/discovery/face-search expects.
+              <option key={s.schema_name} value={s.schema_name}>{s.category || s.schema_name}</option>
             ))}
           </select>
         </div>
@@ -199,7 +203,7 @@ export default function FaceSearchPanel({ onResult }) {
                     key={f.face_index}
                     type="button"
                     onClick={() => setFaceIndex(f.face_index)}
-                    className={`px-2 py-1 rounded border font-mono text-[11px] transition-colors ${
+                    className={`px-2 py-1 rounded border font-mono text-[11px] transition-colors flex items-center gap-1.5 ${
                       selected
                         ? 'bg-gruvbox-blue/20 border-gruvbox-blue text-primary'
                         : 'bg-surface border-border text-secondary hover:border-gruvbox-blue/50'
@@ -210,9 +214,49 @@ export default function FaceSearchPanel({ onResult }) {
                         : 'legacy entry — no bbox metadata'
                     }
                   >
+                    {/*
+                      Mini bbox-position diagram. We don't have the actual photo
+                      bytes here (image data isn't stored alongside face vectors),
+                      but the bbox is in [0, 1] of the original image, so we can
+                      render a 24×18 outline-of-photo SVG with a rect at the
+                      bbox coordinates. Operators can see at a glance which
+                      detection is upper-left vs centered vs in the audience,
+                      which is enough to disambiguate "Tom" vs "background
+                      person" without needing actual pixel thumbnails.
+                    */}
+                    {hasBbox && (
+                      <svg
+                        width="24"
+                        height="18"
+                        viewBox="0 0 1 0.75"
+                        preserveAspectRatio="none"
+                        className="flex-shrink-0"
+                        aria-hidden="true"
+                      >
+                        <rect
+                          x="0"
+                          y="0"
+                          width="1"
+                          height="0.75"
+                          fill="none"
+                          stroke="currentColor"
+                          strokeWidth="0.04"
+                          opacity="0.4"
+                        />
+                        <rect
+                          x={f.bbox[0]}
+                          y={f.bbox[1] * 0.75}
+                          width={Math.max(f.bbox[2] - f.bbox[0], 0.04)}
+                          height={Math.max((f.bbox[3] - f.bbox[1]) * 0.75, 0.03)}
+                          fill={selected ? 'rgb(131, 165, 152)' : 'rgb(168, 153, 132)'}
+                          fillOpacity="0.8"
+                          stroke="none"
+                        />
+                      </svg>
+                    )}
                     #{f.face_index}
                     {hasBbox && (
-                      <span className="text-tertiary ml-1">
+                      <span className="text-tertiary">
                         ({(f.bbox[2] - f.bbox[0]).toFixed(2)}×{(f.bbox[3] - f.bbox[1]).toFixed(2)})
                       </span>
                     )}
