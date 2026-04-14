@@ -14,7 +14,7 @@ use fold_db::org::operations as org_ops;
 use fold_db::org::OrgMembership;
 use fold_db::security::{PublicKeyInfo, SecurityConfig, SecurityManager};
 use fold_db::sync::org_sync::SyncPartitioner;
-use fold_db::{CloudCredentials, NodeConfigStore, NodeIdentity};
+use fold_db::{CloudCredentials, NodeIdentity};
 
 /// Result of loading a view (and its dependencies) from the schema service.
 #[derive(Debug, Default, Serialize)]
@@ -1102,14 +1102,13 @@ async fn migrate_config_files_to_sled(node: &FoldNode) {
         Err(_) => return,
     };
 
-    let pool = match db.sled_pool() {
-        Some(p) => p.clone(),
-        None => return,
-    };
-    let store = match NodeConfigStore::new(pool) {
-        Ok(s) => s,
-        Err(e) => {
-            log::warn!("Failed to open node_config tree for migration: {}", e);
+    // Reuse the FoldDB's own config store so sensitive fields (node
+    // identity private key) are encrypted at rest via the E2E key that
+    // was wired in by the factory.
+    let store = match db.config_store() {
+        Some(s) => s,
+        None => {
+            log::warn!("FoldDB has no config store; skipping Sled migration");
             return;
         }
     };
