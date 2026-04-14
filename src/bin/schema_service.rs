@@ -43,7 +43,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         println!("🚀 Schema service starting with local sled storage");
         println!("   Database path: {}", db_path);
 
-        SchemaServiceServer::new(db_path, &bind_address)?
+        SchemaServiceServer::new_with_builtins(db_path, &bind_address).await?
     };
 
     println!("✅ Schema service listening on {}", bind_address);

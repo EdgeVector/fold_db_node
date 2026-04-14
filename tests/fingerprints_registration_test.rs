@@ -119,6 +119,13 @@ async fn spawn_schema_service() -> SpawnedService {
         .to_string_lossy()
         .to_string();
     let state = SchemaServiceState::new(db_path).unwrap();
+    // Seed the built-in Phase 1 schemas — this is what the real
+    // SchemaServiceServer::new_with_builtins() does at startup. Tests
+    // that skip this step get an empty service and fetch-and-load
+    // fails because the built-ins are missing.
+    fold_db_node::schema_service::builtin_schemas::seed(&state)
+        .await
+        .expect("seed built-in schemas");
     let state_data = web::Data::new(state);
     let listener = TcpListener::bind(("127.0.0.1", 0)).unwrap();
     let port = listener.local_addr().unwrap().port();
@@ -205,18 +212,6 @@ async fn register_phase_1_schemas_end_to_end() {
                 .any(|r| r.descriptive_name == *expected),
             "descriptive name '{}' missing from registration outcome",
             expected
-        );
-    }
-
-    // No schema registration was an expansion — these schemas were
-    // all new to the schema service. If any came back as Expanded,
-    // that would indicate a collision with existing schemas.
-    for entry in &outcome.registered {
-        assert!(
-            entry.response.replaced_schema.is_none(),
-            "schema '{}' was unexpectedly expanded (replaced '{}')",
-            entry.descriptive_name,
-            entry.response.replaced_schema.as_deref().unwrap_or("?")
         );
     }
 

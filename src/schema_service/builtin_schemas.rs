@@ -1,35 +1,85 @@
-//! Programmatic Rust definitions of the twelve Phase 1 fingerprint schemas.
+//! Built-in system schemas that every schema service ships with.
 //!
-//! Per the schema-service correction captured in
-//! `exemem-workspace/docs/designs/fingerprints.md`, schemas are supplied
-//! by end users and verified by the schema service. fold_db_node never
-//! creates schemas manually. The Fingerprints subsystem follows the
-//! same path as user-data schemas: at subsystem startup, each schema
-//! is **proposed** to the schema service via
-//! `node.add_schema_to_service()`, which returns the canonical version
-//! (Added / AlreadyExists / Expanded).
+//! ## Why built-in, not proposed
 //!
-//! This module builds the proposal payloads. It does NOT register
-//! schemas locally; registration happens in `registration.rs`.
+//! The twelve fingerprint-system schemas (Fingerprint, Mention, Edge,
+//! Identity, IdentityReceipt, Persona, EdgeByFingerprint,
+//! MentionByFingerprint, MentionBySource, IngestionError,
+//! ExtractionStatus, ReceivedShare) are system primitives, not user
+//! data. Every fold_db_node would propose byte-identical copies of
+//! them at startup, triggering the schema service's propose-verify-
+//! canonicalize dance for no reason — the dedup flow exists to serve
+//! user-data schemas where multiple clients might submit similar-but-
+//! not-identical definitions. For system primitives, proposing is
+//! theatrical.
 //!
-//! ## Why Rust instead of JSON files
+//! So instead: the schema service **owns** these schemas. The service
+//! binary ships with the definitions, seeds them into storage at
+//! startup via `seed(&state)`, and clients **fetch** them via
+//! `GET /schemas/available` — no propose, no canonicalization
+//! round-trip, no identity_hash recomputation on the client side.
 //!
-//! Keeping the definitions in Rust means the Rust type system can
-//! verify that field names referenced from the resolver match the
-//! field names in the schema definition. Dead or mistyped field
-//! references fail to compile rather than failing silently at
-//! query time.
+//! This matches the invariant "the schema service is the canonical
+//! definition of all schemas" more literally than the propose-based
+//! flow: for these twelve, the service doesn't just approve them,
+//! it defines them.
+//!
+//! ## Field names are still hardcoded in fold_db_node code
+//!
+//! The extractor, resolver, and writer reference specific field
+//! names (`"id"`, `"kind"`, `"weight"`, etc.) as string literals.
+//! Those are the consumer-side contract with these schemas and
+//! they live in fold_db_node. Moving the schema *definitions* here
+//! doesn't change that; it just means the source of truth for the
+//! schema structure is one module, not duplicated between
+//! `fold_db_node` and the schema service deployment.
+//!
+//! ## Seeding is idempotent
+//!
+//! `seed(&state)` iterates every built-in schema. For each, it
+//! computes the identity_hash and checks whether the schema service
+//! already has a schema by that hash. If present: no-op. If absent:
+//! add. This makes seeding safe to re-run across restarts, against
+//! fresh Sled stores, and against existing stores that may have
+//! picked up the same schemas via the legacy propose flow.
 
+use fold_db::error::FoldDbResult;
 use fold_db::schema::types::data_classification::DataClassification;
 use fold_db::schema::types::field_value_type::FieldValueType;
 use fold_db::schema::types::key_config::KeyConfig;
 use fold_db::schema::types::schema::DeclarativeSchemaType as SchemaType;
 use fold_db::schema::types::Schema;
+use fold_db::schema_service::state::SchemaServiceState;
+use fold_db::schema_service::types::SchemaAddOutcome;
+use std::collections::HashMap;
 
-use super::schemas::{
-    EDGE, EDGE_BY_FINGERPRINT, EXTRACTION_STATUS, FINGERPRINT, IDENTITY, IDENTITY_RECEIPT,
-    INGESTION_ERROR, MENTION, MENTION_BY_FINGERPRINT, MENTION_BY_SOURCE, PERSONA, RECEIVED_SHARE,
-};
+// ── Descriptive-name constants ─────────────────────────────────────
+//
+// These are the `descriptive_name` values we set on each built-in
+// schema. The schema service renames every schema to its
+// identity_hash on insert, so `schema.name` will be a hash after
+// seeding; `schema.descriptive_name` preserves the human-readable
+// label.
+//
+// Clients look schemas up by descriptive_name via
+// canonical_names::lookup(), which the fingerprints subsystem
+// populates at startup from the `descriptive_name → canonical_name`
+// map returned by the schema service.
+
+pub const FINGERPRINT: &str = "Fingerprint";
+pub const MENTION: &str = "Mention";
+pub const EDGE: &str = "Edge";
+pub const IDENTITY: &str = "Identity";
+pub const IDENTITY_RECEIPT: &str = "IdentityReceipt";
+pub const PERSONA: &str = "Persona";
+
+pub const EDGE_BY_FINGERPRINT: &str = "EdgeByFingerprint";
+pub const MENTION_BY_FINGERPRINT: &str = "MentionByFingerprint";
+pub const MENTION_BY_SOURCE: &str = "MentionBySource";
+
+pub const INGESTION_ERROR: &str = "IngestionError";
+pub const EXTRACTION_STATUS: &str = "ExtractionStatus";
+pub const RECEIVED_SHARE: &str = "ReceivedShare";
 
 /// Build a `Schema` value with the standard configuration:
 /// - Hash schema_type by default (override where needed)
@@ -506,6 +556,72 @@ pub fn all_phase_1_schemas() -> Vec<Schema> {
         extraction_status_schema(),
         received_share_schema(),
     ]
+}
+
+/// The list of all descriptive names for the built-in schemas. Clients
+/// (fold_db_node's fingerprints subsystem) use this list to fetch
+/// every built-in by descriptive name and populate their local
+/// canonical-name registry.
+pub const PHASE_1_DESCRIPTIVE_NAMES: &[&str] = &[
+    FINGERPRINT,
+    MENTION,
+    EDGE,
+    IDENTITY,
+    IDENTITY_RECEIPT,
+    PERSONA,
+    EDGE_BY_FINGERPRINT,
+    MENTION_BY_FINGERPRINT,
+    MENTION_BY_SOURCE,
+    INGESTION_ERROR,
+    EXTRACTION_STATUS,
+    RECEIVED_SHARE,
+];
+
+/// Seed every built-in schema into the given `SchemaServiceState`.
+///
+/// Idempotent: schemas whose identity_hash is already present in the
+/// service are skipped. Schemas that are missing get added via
+/// `state.add_schema()`, which is the same path user-data schemas
+/// take. The only semantic difference is the origin — these come
+/// from the service's own Rust code, not from a client proposal.
+///
+/// Called from `SchemaServiceServer::new()` so every production
+/// schema service instance auto-seeds on boot. Tests that spin up a
+/// `SchemaServiceState` directly must call this explicitly before
+/// handing the state to an HTTP layer.
+///
+/// Fails loudly on the first error. Partial seeding is not a valid
+/// state for the service — if we can't install the built-ins, the
+/// service should refuse to start.
+pub async fn seed(state: &SchemaServiceState) -> FoldDbResult<()> {
+    for schema in all_phase_1_schemas() {
+        let descriptive = schema
+            .descriptive_name
+            .clone()
+            .unwrap_or_else(|| schema.name.clone());
+        match state.add_schema(schema, HashMap::new()).await {
+            Ok(SchemaAddOutcome::Added(_, _)) | Ok(SchemaAddOutcome::AlreadyExists(_, _)) => {
+                // Both outcomes are fine. AlreadyExists fires when the
+                // service was previously seeded (or a client
+                // previously proposed this schema via the legacy
+                // propose flow). Idempotent either way.
+            }
+            Ok(SchemaAddOutcome::Expanded(old, _, _)) => {
+                return Err(fold_db::error::FoldDbError::Config(format!(
+                    "builtin_schemas: '{}' unexpectedly expanded existing schema '{}'. \
+                     Built-in schemas must not collide with user-proposed schemas.",
+                    descriptive, old
+                )));
+            }
+            Err(e) => {
+                return Err(fold_db::error::FoldDbError::Config(format!(
+                    "builtin_schemas: failed to seed '{}': {}",
+                    descriptive, e
+                )));
+            }
+        }
+    }
+    Ok(())
 }
 
 #[cfg(test)]

@@ -24,7 +24,12 @@ pub struct SchemaServiceServer {
 }
 
 impl SchemaServiceServer {
-    /// Create a new schema service server with local sled storage
+    /// Create a new schema service server with local sled storage.
+    ///
+    /// This is the legacy synchronous constructor — it does NOT seed
+    /// built-in schemas. Callers that need built-ins (which is every
+    /// production caller) should use `new_with_builtins` instead, or
+    /// call `seed_builtins` explicitly after construction.
     pub fn new(db_path: String, bind_address: &str) -> FoldDbResult<Self> {
         let state = SchemaServiceState::new(db_path)?;
 
@@ -32,6 +37,27 @@ impl SchemaServiceServer {
             state: web::Data::new(state),
             bind_address: bind_address.to_string(),
         })
+    }
+
+    /// Create a new schema service server with local sled storage and
+    /// seed the built-in Phase 1 fingerprint schemas. Idempotent —
+    /// safe to run against a fresh store or a previously-seeded one.
+    ///
+    /// This is the production constructor. The schema service binary
+    /// (`src/bin/schema_service.rs`) uses it, and any test that
+    /// spins up a server expecting the fingerprint subsystem to work
+    /// should use it too.
+    pub async fn new_with_builtins(db_path: String, bind_address: &str) -> FoldDbResult<Self> {
+        let server = Self::new(db_path, bind_address)?;
+        server.seed_builtins().await?;
+        Ok(server)
+    }
+
+    /// Seed the built-in Phase 1 schemas into this server's state.
+    /// Idempotent — skips schemas that are already present. See
+    /// `schema_service::builtin_schemas` for the full list.
+    pub async fn seed_builtins(&self) -> FoldDbResult<()> {
+        super::builtin_schemas::seed(self.state.as_ref()).await
     }
 
     /// Run the schema service server

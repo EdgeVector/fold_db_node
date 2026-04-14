@@ -1,114 +1,83 @@
-//! Phase 1 schema registration — propose every fingerprint schema to
-//! the schema service at subsystem startup, load the canonical
-//! versions the service returns, approve them, and populate the
-//! process-wide `canonical_names` lookup.
+//! Phase 1 schema lookup — fetch the twelve built-in fingerprint
+//! schemas from the schema service at subsystem startup, load the
+//! canonical versions locally, approve them, and populate the
+//! process-wide `canonical_names` registry.
 //!
-//! ## The architectural invariant (from user correction 2026-04-14)
+//! ## The architectural invariant (from user direction 2026-04-14)
 //!
-//! **All schemas must come from the schema service. No local
-//! overrides, ever.** The fingerprints subsystem never creates a
-//! schema locally without first proposing it to the service. The
-//! service canonicalizes the schema (renames it to its identity_hash,
-//! possibly expands it to match an existing schema, or returns an
-//! already-existing match) and we trust whatever it returns.
+//! **The twelve Phase 1 fingerprint schemas are system primitives,
+//! not user data. They are built into the schema service itself
+//! (see `crate::schema_service::builtin_schemas`), not proposed by
+//! fold_db_node at startup.** fold_db_node's job is to fetch them
+//! by descriptive name, load the canonical version locally, and
+//! populate the `descriptive_name → canonical_name` lookup.
 //!
-//! This mirrors the existing flow in
-//! `src/ingestion/ingestion_service/schema_creation.rs` that the AI
-//! ingestion pipeline uses — the fingerprints subsystem is not
-//! special, it's just another proposer.
+//! This differs from the earlier propose-and-verify flow in one
+//! important way: fold_db_node no longer carries the schema
+//! definitions. The schema service owns them; the node is a
+//! consumer. A fold_db_node that talks to a schema service missing
+//! these built-ins will fail loudly at startup — that's correct
+//! behavior, because fold_db_node cannot install system schemas on
+//! behalf of a service that isn't configured for them.
 //!
 //! ## Flow
 //!
 //! ```text
-//!   register_phase_1_schemas(node)
+//!   lookup_phase_1_schemas(node)
 //!       │
-//!       │  for each of the twelve schemas:
+//!       │  fetch every schema via
+//!       │  /schemas/available → filter by descriptive_name
 //!       │
 //!       ▼
-//!   ┌─────────────────────────────┐
-//!   │ 1. compute_identity_hash    │  (schema_definitions already does
-//!   │    (already done in         │   this in build())
-//!   │     schema_definitions.rs)  │
-//!   └─────────────┬───────────────┘
-//!                 │
-//!                 ▼
-//!   ┌─────────────────────────────┐
-//!   │ 2. node.add_schema_to_      │  NETWORK CALL — trust what
-//!   │    service(&schema)         │  the service returns
-//!   └─────────────┬───────────────┘
-//!                 │
-//!                 ▼
-//!   ┌─────────────────────────────┐
-//!   │ 3. AddSchemaResponse {      │
-//!   │      schema: canonical,     │  canonical.name is the
-//!   │      mutation_mappers,      │  identity_hash, NOT our
-//!   │      replaced_schema?       │  proposed semantic name
-//!   │    }                        │
-//!   └─────────────┬───────────────┘
-//!                 │
-//!                 ▼
-//!   ┌─────────────────────────────┐
-//!   │ 4. load_schema_from_json(   │  load the CANONICAL schema
-//!   │      canonical_json)        │  locally — not our proposal
-//!   └─────────────┬───────────────┘
-//!                 │
-//!                 ▼
-//!   ┌─────────────────────────────┐
-//!   │ 5. schema_manager           │  mark usable for mutations
-//!   │    .approve(&canonical_name)│
-//!   └─────────────┬───────────────┘
-//!                 │
-//!                 ▼
-//!   ┌─────────────────────────────┐
-//!   │ 6. canonical_names          │  register descriptive_name
-//!   │    .insert(                 │  → canonical_name mapping so
-//!   │       descriptive_name,     │  extractors/resolver can
-//!   │       canonical.name)       │  look up runtime names
-//!   └─────────────────────────────┘
+//!   for each built-in descriptive name:
+//!       find canonical schema in the response
+//!       if missing → LOUD FAILURE (service is misconfigured)
+//!       serialize canonical schema to JSON
+//!       schema_manager.load_schema_from_json()
+//!       schema_manager.set_schema_state(Approved)
+//!       record (descriptive_name → canonical.name) in outcome
+//!
+//!   install canonical_names map from outcome
 //! ```
 //!
 //! ## Failure posture
 //!
-//! Schema registration is a startup prerequisite for the entire
-//! fingerprints subsystem. If ANY schema fails to register, the
-//! function returns an error and the caller MUST fail loudly — the
-//! subsystem cannot operate with only some schemas available. This
-//! matches the "no silent failures" invariant and the Section 2
-//! error-map decision on `ModelLoadError → fail fast`.
+//! Fails loudly on the first error. Every error means one of three
+//! things is wrong:
 //!
-//! ## What this module does NOT do
+//!   1. The schema service is unreachable → startup can't proceed
+//!   2. The schema service is reachable but missing a built-in →
+//!      the service is misconfigured and must be fixed (or seeded)
+//!      before the node can start
+//!   3. The local schema manager rejected the canonical JSON →
+//!      schema-shape incompatibility between fold_db_node and the
+//!      service, which is a deployment mismatch we must not paper
+//!      over
 //!
-//! - It does not handle the schema-service `replaced_schema`
-//!   (expansion) case. None of the fingerprint schemas have ever
-//!   been submitted before this subsystem exists, so there is
-//!   nothing to expand. If the service ever returns a non-None
-//!   `replaced_schema` during registration, we fail loudly — that
-//!   means something about the fingerprints-schema ecosystem is in
-//!   an unexpected state and partial registration is unsafe.
-//! - It does not acquire a schema_creation_lock. Registration runs
-//!   exactly once at subsystem startup; there is no concurrency.
-//! - It does not accept manual overrides. The canonical name comes
-//!   from the service and the service alone.
+//! Partial installation is never acceptable. The resolver can't
+//! traverse if half the junction schemas are missing, and the
+//! writer can't emit errors if IngestionError isn't registered.
 
 use fold_db::error::{FoldDbError, FoldDbResult};
+use fold_db::schema::types::Schema;
 use fold_db::schema::SchemaState;
 
-use crate::fold_node::schema_client::AddSchemaResponse;
 use crate::fold_node::FoldNode;
+use crate::schema_service::builtin_schemas::PHASE_1_DESCRIPTIVE_NAMES;
 
 use super::canonical_names::{self, CanonicalNames};
-use super::schema_definitions::all_phase_1_schemas;
 
-/// Outcome of registering a single schema.
+/// Outcome of registering a single built-in schema.
 #[derive(Debug, Clone)]
 pub struct RegisteredSchema {
-    /// The descriptive_name we proposed (e.g. "Fingerprint").
+    /// The descriptive_name we looked up (e.g. "Fingerprint").
     pub descriptive_name: String,
     /// The canonical runtime name assigned by the schema service.
     /// This is what every subsequent mutation and query must use.
     pub canonical_name: String,
-    /// Raw response from the schema service — kept for diagnostics.
-    pub response: AddSchemaResponse,
+    /// The canonical Schema returned by the service. Kept for
+    /// diagnostics and for the local load step.
+    pub canonical: Schema,
 }
 
 /// Outcome of registering the whole Phase 1 schema set.
@@ -123,7 +92,6 @@ impl RegistrationOutcome {
     }
 
     /// Convenience: build the canonical-names mapping from the outcome.
-    /// Used by the top-level registration step.
     pub fn build_canonical_names(&self) -> FoldDbResult<CanonicalNames> {
         let mut names = CanonicalNames::new();
         for entry in &self.registered {
@@ -133,61 +101,56 @@ impl RegistrationOutcome {
     }
 }
 
-/// Register every Phase 1 fingerprint schema with the schema service.
-///
-/// For each of the twelve schemas:
-///   1. Propose to the schema service via `add_schema_to_service`
-///   2. Load the canonical returned schema locally
-///   3. Approve it
-///   4. Record the descriptive_name → canonical_name mapping
-///
-/// After this returns successfully, the global `canonical_names`
-/// registry is populated and the rest of the fingerprints subsystem
-/// can look up runtime names via `canonical_names::lookup(&str)`.
-///
-/// Fails loudly on the first error. Registration is all-or-nothing
-/// because partial state is worse than no state — the resolver can't
-/// traverse if half the junction schemas are missing, and the
-/// writer can't emit errors if IngestionError isn't registered.
+/// Backwards-compatible name. Previous callers used
+/// `register_phase_1_schemas` when the flow was propose-based. The
+/// semantics are now fetch-and-load, but the name stays so downstream
+/// imports don't churn.
 pub async fn register_phase_1_schemas(node: &FoldNode) -> FoldDbResult<RegistrationOutcome> {
+    lookup_phase_1_schemas(node).await
+}
+
+/// Fetch every built-in Phase 1 schema from the schema service by
+/// descriptive name, load the canonical returned by the service
+/// locally, approve it, and populate the process-wide
+/// canonical_names registry.
+pub async fn lookup_phase_1_schemas(node: &FoldNode) -> FoldDbResult<RegistrationOutcome> {
     let mut outcome = RegistrationOutcome::default();
+
+    // 1. Fetch the full list of available schemas from the service.
+    // We filter on the client side by descriptive_name rather than
+    // adding a new "get by descriptive_name" endpoint — the service
+    // side API stays minimal.
+    let available = node.fetch_available_schemas().await?;
+
+    // Build a quick lookup: descriptive_name → canonical Schema.
+    let mut by_descriptive: std::collections::HashMap<String, Schema> =
+        std::collections::HashMap::new();
+    for schema in available {
+        if let Some(descriptive) = schema.descriptive_name.clone() {
+            by_descriptive.insert(descriptive, schema);
+        }
+    }
 
     let fold_db = node.get_fold_db()?;
     let schema_manager = fold_db.schema_manager();
 
-    for schema in all_phase_1_schemas() {
-        let descriptive_name = schema
-            .descriptive_name
-            .clone()
-            .unwrap_or_else(|| schema.name.clone());
-
-        // 1. Propose to the schema service. trust whatever it returns.
-        let response = node.add_schema_to_service(&schema).await.map_err(|e| {
+    for descriptive in PHASE_1_DESCRIPTIVE_NAMES {
+        let canonical = by_descriptive.remove(*descriptive).ok_or_else(|| {
             FoldDbError::Config(format!(
-                "fingerprints: schema service rejected '{}': {}",
-                descriptive_name, e
+                "fingerprints: schema service is missing built-in schema '{}'. \
+                     The service must be running a build that seeds
+                     phase-1 built-in schemas (see
+                     `src/schema_service/builtin_schemas.rs`). \
+                     fold_db_node refuses to start without all twelve.",
+                descriptive
             ))
         })?;
 
-        // We only accept clean Added / AlreadyExists. Expansion of a
-        // fingerprints schema into an existing schema on first
-        // registration would mean the schema-service ecosystem is in
-        // an unexpected state — fail loudly rather than half-install.
-        if response.replaced_schema.is_some() {
-            return Err(FoldDbError::Config(format!(
-                "fingerprints: schema '{}' unexpectedly expanded an existing schema '{:?}'. \
-                 Refusing to install partial fingerprint graph.",
-                descriptive_name, response.replaced_schema
-            )));
-        }
-
-        let canonical = response.schema.clone();
         let canonical_name = canonical.name.clone();
 
-        // 2. Serialize the canonical schema to JSON and load it
-        // locally. We load the canonical version returned by the
-        // service — NOT the version we proposed, which would
-        // bypass canonicalization.
+        // 2. Load the canonical schema locally. We serialize what the
+        // service returned and pass it to the schema manager exactly
+        // as-is — the canonical version is the source of truth.
         let canonical_json = serde_json::to_string(&canonical).map_err(|e| {
             FoldDbError::Config(format!(
                 "fingerprints: failed to serialize canonical '{}': {}",
@@ -217,9 +180,9 @@ pub async fn register_phase_1_schemas(node: &FoldNode) -> FoldDbResult<Registrat
             })?;
 
         outcome.registered.push(RegisteredSchema {
-            descriptive_name,
+            descriptive_name: descriptive.to_string(),
             canonical_name,
-            response,
+            canonical,
         });
     }
 
@@ -244,21 +207,17 @@ mod tests {
 
     #[test]
     fn build_canonical_names_rejects_conflicts() {
-        // If the same descriptive_name ends up with two different
-        // canonical names across the registered set, we must surface
-        // the conflict rather than silently overwrite.
-        let response = dummy_response("sh_xyz");
         let outcome = RegistrationOutcome {
             registered: vec![
                 RegisteredSchema {
                     descriptive_name: "Fingerprint".to_string(),
                     canonical_name: "sh_abc".to_string(),
-                    response: response.clone(),
+                    canonical: dummy_schema("sh_abc"),
                 },
                 RegisteredSchema {
                     descriptive_name: "Fingerprint".to_string(),
                     canonical_name: "sh_def".to_string(),
-                    response,
+                    canonical: dummy_schema("sh_def"),
                 },
             ],
         };
@@ -268,18 +227,17 @@ mod tests {
 
     #[test]
     fn build_canonical_names_accepts_consistent_entries() {
-        let response = dummy_response("sh_xyz");
         let outcome = RegistrationOutcome {
             registered: vec![
                 RegisteredSchema {
                     descriptive_name: "Fingerprint".to_string(),
                     canonical_name: "sh_abc".to_string(),
-                    response: response.clone(),
+                    canonical: dummy_schema("sh_abc"),
                 },
                 RegisteredSchema {
                     descriptive_name: "Mention".to_string(),
                     canonical_name: "sh_def".to_string(),
-                    response,
+                    canonical: dummy_schema("sh_def"),
                 },
             ],
         };
@@ -288,21 +246,16 @@ mod tests {
         assert_eq!(names.get("Mention").unwrap(), "sh_def");
     }
 
-    fn dummy_response(name: &str) -> AddSchemaResponse {
+    fn dummy_schema(name: &str) -> Schema {
         use fold_db::schema::types::key_config::KeyConfig;
         use fold_db::schema::types::schema::DeclarativeSchemaType;
-        use fold_db::schema::types::Schema;
-        AddSchemaResponse {
-            schema: Schema::new(
-                name.to_string(),
-                DeclarativeSchemaType::Hash,
-                Some(KeyConfig::new(Some("id".to_string()), None)),
-                Some(vec!["id".to_string()]),
-                None,
-                None,
-            ),
-            mutation_mappers: Default::default(),
-            replaced_schema: None,
-        }
+        Schema::new(
+            name.to_string(),
+            DeclarativeSchemaType::Hash,
+            Some(KeyConfig::new(Some("id".to_string()), None)),
+            Some(vec!["id".to_string()]),
+            None,
+            None,
+        )
     }
 }
