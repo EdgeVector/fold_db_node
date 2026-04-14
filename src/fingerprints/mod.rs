@@ -34,6 +34,8 @@
 //! See `docs/designs/fingerprints_phase1_audit.md` for the audit that led
 //! to the junction-schema pattern.
 
+pub mod registration;
+pub mod schema_definitions;
 pub mod schemas;
 
 // Ingest-path components (Phase 1)
