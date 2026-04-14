@@ -53,6 +53,7 @@ use std::collections::HashMap;
 use crate::fingerprints::keys::{
     edge_id, edge_kind, fingerprint_id_for_face_embedding, kind, mention_source_composite,
 };
+use crate::fingerprints::planned_record::PlannedRecord;
 use crate::fingerprints::schemas::{
     EDGE, EDGE_BY_FINGERPRINT, EXTRACTION_STATUS, FINGERPRINT, MENTION, MENTION_BY_FINGERPRINT,
     MENTION_BY_SOURCE,
@@ -67,61 +68,6 @@ pub struct DetectedFace {
     pub embedding: Vec<f32>,
     pub bbox: [f32; 4],
     pub confidence: f32,
-}
-
-/// A record the extractor plans to write. Schema-agnostic — the
-/// writer layer routes each variant to the correct mutation call.
-///
-/// **IMPORTANT: `descriptive_schema` is NOT a runtime schema name.**
-/// It holds the descriptive_name constant from
-/// `crate::fingerprints::schemas` (e.g. `"Fingerprint"`). The writer
-/// layer must resolve it to the canonical runtime name via
-/// `canonical_names::lookup(descriptive_schema)` before calling
-/// `execute_mutation`. The planning layer deliberately does not know
-/// about canonical names so plans remain deterministic and
-/// unit-testable without a running schema service.
-#[derive(Debug, Clone)]
-pub struct PlannedRecord {
-    /// Descriptive schema name (e.g. `"Fingerprint"`). Resolve to the
-    /// runtime canonical name at write time via
-    /// `canonical_names::lookup(descriptive_schema)`.
-    pub descriptive_schema: &'static str,
-    pub fields: HashMap<String, Value>,
-    /// The value of the schema's declared hash_field (so the writer
-    /// can pass the correct KeyValue to execute_mutation).
-    pub hash_key: String,
-    /// For HashRange schemas only — the value of the declared
-    /// range_field.
-    pub range_key: Option<String>,
-}
-
-impl PlannedRecord {
-    fn hash(
-        descriptive_schema: &'static str,
-        hash_key: String,
-        fields: HashMap<String, Value>,
-    ) -> Self {
-        Self {
-            descriptive_schema,
-            fields,
-            hash_key,
-            range_key: None,
-        }
-    }
-
-    fn hash_range(
-        descriptive_schema: &'static str,
-        hash_key: String,
-        range_key: String,
-        fields: HashMap<String, Value>,
-    ) -> Self {
-        Self {
-            descriptive_schema,
-            fields,
-            hash_key,
-            range_key: Some(range_key),
-        }
-    }
 }
 
 /// The full planned output for one photo.
