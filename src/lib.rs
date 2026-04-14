@@ -1,5 +1,6 @@
 pub mod discovery;
 pub mod endpoints;
+pub mod fingerprints;
 pub mod fold_node;
 pub mod handlers;
 pub mod ingestion;
