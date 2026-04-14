@@ -72,12 +72,16 @@ impl OperationProcessor {
         card.save()
             .map_err(|e| SchemaError::InvalidData(format!("Failed to save identity card: {e}")))?;
 
-        // Also save to Sled config store (best-effort)
-        if let Ok(folddb_home) = folddb_home() {
-            let data_path = folddb_home.join("data");
-            {
-                let pool = std::sync::Arc::new(fold_db::storage::SledPool::new(data_path));
-                if let Ok(store) = fold_db::NodeConfigStore::new(pool) {
+        // Also save to Sled config store. Reuse the running node's existing
+        // SledPool — opening a NEW SledPool here was the cause of an 11-second
+        // freeze on the very first onboarding step (PUT /api/identity/card).
+        // SledPool::new opens the DB cold which scans/verifies pages; on a
+        // populated dogfood snapshot that's 5–15 seconds, all blocking the
+        // request handler. The running node already holds an open pool — use
+        // it.
+        if let Ok(db) = self.node.get_fold_db() {
+            if let Some(pool) = db.sled_pool() {
+                if let Ok(store) = fold_db::NodeConfigStore::new(pool.clone()) {
                     if let Err(e) = card.save_to_sled(&store) {
                         log::warn!("Failed to save identity card to Sled: {}", e);
                     }
