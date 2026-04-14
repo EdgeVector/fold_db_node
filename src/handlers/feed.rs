@@ -134,7 +134,8 @@ pub async fn get_feed(
         //
         // See `handlers::query` / `handlers::discovery` for the
         // caller-identity-aware path using `execute_query_json_with_access`.
-        let result_map = match processor.execute_query_map(query).await {
+        let owner_ctx = processor.owner_access_context();
+        let result_map = match processor.execute_query_map(query, &owner_ctx).await {
             Ok(m) => m,
             // Skip schemas that fail to query
             Err(_) => continue,

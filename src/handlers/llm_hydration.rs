@@ -1,3 +1,4 @@
+use fold_db::access::AccessContext;
 use fold_db::db_operations::IndexResult;
 use fold_db::fold_db_core::FoldDB;
 use fold_db::schema::types::field::HashRangeFilter;
@@ -21,6 +22,7 @@ const MAX_HYDRATE_RESULTS: usize = 50;
 pub async fn hydrate_index_results(
     mut results: Vec<IndexResult>,
     fold_db: &FoldDB,
+    access_context: &AccessContext,
 ) -> Vec<IndexResult> {
     if results.is_empty() {
         return results;
@@ -108,7 +110,11 @@ pub async fn hydrate_index_results(
         };
 
         // Execute the query
-        match fold_db.query_executor().query(query).await {
+        match fold_db
+            .query_executor()
+            .query_with_access(query, access_context, None)
+            .await
+        {
             Ok(field_results) => {
                 // field_results is HashMap<field_name, HashMap<KeyValue, FieldValue>>
                 // We need to map back to our results
