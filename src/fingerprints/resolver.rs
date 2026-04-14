@@ -125,7 +125,7 @@ impl ResolvedEdge {
 /// Per-Persona traversal diagnostics. Zero values everywhere means
 /// a clean resolve; any non-zero means something was filtered,
 /// missing, or excluded, and the UI should surface it.
-#[derive(Debug, Clone, Default, PartialEq, Eq)]
+#[derive(Debug, Clone, Default, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 pub struct ResolveDiagnostics {
     /// Seed fingerprint IDs that do not exist in the Fingerprint
     /// schema. This is a hard inconsistency — a Persona should

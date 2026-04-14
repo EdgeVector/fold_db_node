@@ -32,6 +32,7 @@ pub mod auth;
 pub mod caller;
 pub mod discovery;
 pub mod feed;
+pub mod fingerprints;
 pub mod ingestion;
 pub mod llm;
 pub mod llm_hydration;

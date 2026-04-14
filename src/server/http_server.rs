@@ -375,6 +375,7 @@ impl FoldHttpServer {
                 .configure(Self::configure_llm_query_routes)
                 .configure(Self::configure_security_routes)
                 .configure(Self::configure_discovery_routes)
+                .configure(Self::configure_fingerprints_routes)
                 .configure(Self::configure_trust_routes)
                 .configure(Self::configure_identity_routes)
                 .configure(Self::configure_sharing_routes)
@@ -670,6 +671,17 @@ impl FoldHttpServer {
             web::scope("/security").service(
                 web::resource("/system-key")
                     .route(web::get().to(security_routes::get_system_public_key)),
+            ),
+        );
+    }
+
+    fn configure_fingerprints_routes(cfg: &mut web::ServiceConfig) {
+        use crate::server::routes::fingerprints as fp_routes;
+        cfg.service(
+            web::scope("/fingerprints").service(
+                web::scope("/personas")
+                    .route("", web::get().to(fp_routes::list_personas))
+                    .route("/{id}", web::get().to(fp_routes::get_persona)),
             ),
         );
     }
