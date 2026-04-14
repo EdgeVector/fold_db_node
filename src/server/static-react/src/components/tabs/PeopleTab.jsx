@@ -3,8 +3,10 @@ import TrustTab from './TrustTab'
 import SharingTab from './SharingTab'
 import FeedTab from './FeedTab'
 import SharedMomentsTab from './SharedMomentsTab'
+import PersonasPanel from './personas/PersonasPanel'
 
 const SUB_TABS = [
+  { id: 'personas', label: 'Personas' },
   { id: 'contacts', label: 'Contacts' },
   { id: 'feed', label: 'Feed' },
   { id: 'sharing', label: 'Sharing' },
@@ -12,10 +14,12 @@ const SUB_TABS = [
 ]
 
 export default function PeopleTab({ onResult }) {
-  const [activeSubTab, setActiveSubTab] = useState('contacts')
+  const [activeSubTab, setActiveSubTab] = useState('personas')
 
   const renderContent = () => {
     switch (activeSubTab) {
+      case 'personas':
+        return <PersonasPanel />
       case 'contacts':
         return <TrustTab onResult={onResult} />
       case 'feed':
