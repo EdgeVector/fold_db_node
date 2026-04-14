@@ -39,6 +39,7 @@ pub mod extractors;
 pub mod keys;
 pub mod planned_record;
 pub mod registration;
+pub mod resolver;
 pub mod schema_definitions;
 pub mod schemas;
 pub mod writer;
