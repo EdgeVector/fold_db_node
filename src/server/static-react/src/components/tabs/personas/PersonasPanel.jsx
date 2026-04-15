@@ -3,6 +3,7 @@ import {
   listPersonas,
   getPersona,
   updatePersona,
+  RELATIONSHIP_OPTIONS,
 } from '../../../api/clients/fingerprintsClient'
 
 /**
@@ -130,6 +131,17 @@ export default function PersonasPanel() {
     [applyPatch],
   )
 
+  const handleRenamePersona = useCallback(
+    name => applyPatch({ name }, 'Failed to rename persona'),
+    [applyPatch],
+  )
+
+  const handleRelationshipChange = useCallback(
+    relationship =>
+      applyPatch({ relationship }, 'Failed to update relationship'),
+    [applyPatch],
+  )
+
   return (
     <div className="flex flex-col gap-4 lg:flex-row">
       <PersonaList
@@ -150,6 +162,8 @@ export default function PersonasPanel() {
         onUnexcludeMention={handleUnexcludeMention}
         onExcludeEdge={handleExcludeEdge}
         onUnexcludeEdge={handleUnexcludeEdge}
+        onRenamePersona={handleRenamePersona}
+        onRelationshipChange={handleRelationshipChange}
       />
     </div>
   )
@@ -243,6 +257,8 @@ function PersonaDetail({
   onUnexcludeMention,
   onExcludeEdge,
   onUnexcludeEdge,
+  onRenamePersona,
+  onRelationshipChange,
 }) {
   if (!selectedId) {
     return (
@@ -271,6 +287,8 @@ function PersonaDetail({
           onUnexcludeMention={onUnexcludeMention}
           onExcludeEdge={onExcludeEdge}
           onUnexcludeEdge={onUnexcludeEdge}
+          onRenamePersona={onRenamePersona}
+          onRelationshipChange={onRelationshipChange}
         />
       )}
     </div>
@@ -284,6 +302,8 @@ function PersonaDetailBody({
   onUnexcludeMention,
   onExcludeEdge,
   onUnexcludeEdge,
+  onRenamePersona,
+  onRelationshipChange,
 }) {
   // Local mirror of the slider value so the knob moves smoothly
   // while the user drags. We only call the parent (and fire the
@@ -308,11 +328,63 @@ function PersonaDetailBody({
     }
   }
 
+  // Local name-edit state. Tracks an "editing" flag so the header
+  // can swap between static text and an inline input without a
+  // dialog. Sync when the parent replaces `detail` so stale drafts
+  // don't leak across persona switches.
+  const [editingName, setEditingName] = useState(false)
+  const [nameDraft, setNameDraft] = useState(detail.name || '')
+  useEffect(() => {
+    setNameDraft(detail.name || '')
+    setEditingName(false)
+  }, [detail.id, detail.name])
+
+  const commitName = () => {
+    const trimmed = nameDraft.trim()
+    if (!trimmed || trimmed === detail.name) {
+      setEditingName(false)
+      return
+    }
+    if (typeof onRenamePersona === 'function') {
+      onRenamePersona(trimmed)
+    }
+    setEditingName(false)
+  }
+
   return (
     <>
       <header>
         <div className="flex items-center gap-2">
-          <h3 className="text-base font-semibold">{detail.name || '(unnamed)'}</h3>
+          {editingName && !detail.built_in ? (
+            <input
+              type="text"
+              value={nameDraft}
+              onChange={e => setNameDraft(e.target.value)}
+              onBlur={commitName}
+              onKeyDown={e => {
+                if (e.key === 'Enter') commitName()
+                if (e.key === 'Escape') {
+                  setNameDraft(detail.name || '')
+                  setEditingName(false)
+                }
+              }}
+              className="input text-sm font-semibold"
+              data-testid="persona-name-input"
+              autoFocus
+            />
+          ) : (
+            <button
+              type="button"
+              className="text-base font-semibold text-left hover:underline decoration-dotted"
+              title={detail.built_in ? "Built-in personas can't be renamed — update the IdentityCard" : 'Click to rename'}
+              onClick={() => {
+                if (!detail.built_in) setEditingName(true)
+              }}
+              data-testid="persona-name-button"
+            >
+              {detail.name || '(unnamed)'}
+            </button>
+          )}
           {detail.built_in && (
             <span className="text-[10px] px-2 py-0.5 rounded-full bg-gruvbox-blue/10 text-gruvbox-blue border border-gruvbox-blue/30">
               built-in
@@ -325,8 +397,28 @@ function PersonaDetailBody({
           )}
         </div>
         <div className="text-xs text-tertiary mt-1 font-mono break-all">{detail.id}</div>
-        <div className="text-xs text-secondary mt-1">
-          {detail.relationship} · tier {detail.trust_tier}
+        <div className="text-xs text-secondary mt-1 flex items-center gap-1.5">
+          <label htmlFor={`persona-relationship-${detail.id}`} className="text-tertiary">
+            Relationship:
+          </label>
+          <select
+            id={`persona-relationship-${detail.id}`}
+            value={detail.relationship || 'unknown'}
+            onChange={e => {
+              if (typeof onRelationshipChange === 'function') {
+                onRelationshipChange(e.target.value)
+              }
+            }}
+            className="input text-xs py-0.5"
+            data-testid="persona-relationship-select"
+          >
+            {RELATIONSHIP_OPTIONS.map(opt => (
+              <option key={opt} value={opt}>
+                {opt}
+              </option>
+            ))}
+          </select>
+          <span className="text-tertiary">· tier {detail.trust_tier}</span>
         </div>
       </header>
 

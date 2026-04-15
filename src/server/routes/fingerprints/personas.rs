@@ -26,6 +26,9 @@ pub struct UpdatePersonaRequest {
     pub remove_excluded_edge_id: Option<String>,
     pub add_excluded_mention_id: Option<String>,
     pub remove_excluded_mention_id: Option<String>,
+    pub name: Option<String>,
+    pub relationship: Option<String>,
+    pub aliases: Option<Vec<String>>,
 }
 
 /// GET /api/fingerprints/personas — list every Persona with
@@ -73,6 +76,9 @@ pub async fn update_persona(
         remove_excluded_edge_id: body.remove_excluded_edge_id,
         add_excluded_mention_id: body.add_excluded_mention_id,
         remove_excluded_mention_id: body.remove_excluded_mention_id,
+        name: body.name,
+        relationship: body.relationship,
+        aliases: body.aliases,
     };
 
     match fp_handlers::apply_persona_patch(node, persona_id, patch).await {

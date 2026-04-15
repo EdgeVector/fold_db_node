@@ -10,6 +10,14 @@ vi.mock('../../../../api/clients/fingerprintsClient', () => ({
   listPersonas: vi.fn(),
   getPersona: vi.fn(),
   updatePersona: vi.fn(),
+  RELATIONSHIP_OPTIONS: [
+    'self',
+    'family',
+    'colleague',
+    'friend',
+    'acquaintance',
+    'unknown',
+  ],
 }))
 
 import {
@@ -466,6 +474,102 @@ describe('PersonasPanel', () => {
       await waitFor(() => {
         expect(updatePersona).toHaveBeenCalledWith('ps_b', {
           add_excluded_edge_id: 'eg_z',
+        })
+      })
+    })
+
+    it('sends a PATCH with { name } when the user renames a non-built-in persona', async () => {
+      listPersonas.mockResolvedValue(
+        okList([makeSummary({ id: 'ps_rename', name: 'Old' })]),
+      )
+      getPersona.mockResolvedValue(
+        okDetail(makeDetail({ id: 'ps_rename', name: 'Old', built_in: false })),
+      )
+      updatePersona.mockResolvedValue(
+        okDetail(makeDetail({ id: 'ps_rename', name: 'New Name', built_in: false })),
+      )
+
+      render(<PersonasPanel />)
+      await waitFor(() => {
+        expect(screen.getByTestId('persona-row-ps_rename')).toBeInTheDocument()
+      })
+      fireEvent.click(screen.getByTestId('persona-row-ps_rename'))
+      await waitFor(() => {
+        expect(screen.getByTestId('persona-name-button')).toBeInTheDocument()
+      })
+
+      fireEvent.click(screen.getByTestId('persona-name-button'))
+      const input = screen.getByTestId('persona-name-input')
+      fireEvent.change(input, { target: { value: 'New Name' } })
+      fireEvent.keyDown(input, { key: 'Enter' })
+
+      await waitFor(() => {
+        expect(updatePersona).toHaveBeenCalledWith('ps_rename', {
+          name: 'New Name',
+        })
+      })
+    })
+
+    it('hides the name edit affordance for built-in personas', async () => {
+      listPersonas.mockResolvedValue(
+        okList([makeSummary({ id: 'ps_me', name: 'Me', built_in: true })]),
+      )
+      getPersona.mockResolvedValue(
+        okDetail(makeDetail({ id: 'ps_me', name: 'Me', built_in: true })),
+      )
+
+      render(<PersonasPanel />)
+      await waitFor(() => {
+        expect(screen.getByTestId('persona-row-ps_me')).toBeInTheDocument()
+      })
+      fireEvent.click(screen.getByTestId('persona-row-ps_me'))
+      await waitFor(() => {
+        expect(screen.getByTestId('persona-name-button')).toBeInTheDocument()
+      })
+
+      // Clicking the name button is a no-op for built-in personas —
+      // the input never renders.
+      fireEvent.click(screen.getByTestId('persona-name-button'))
+      expect(screen.queryByTestId('persona-name-input')).toBeNull()
+    })
+
+    it('sends a PATCH with { relationship } when the dropdown changes', async () => {
+      listPersonas.mockResolvedValue(
+        okList([makeSummary({ id: 'ps_rel', name: 'Rel' })]),
+      )
+      getPersona.mockResolvedValue(
+        okDetail(
+          makeDetail({
+            id: 'ps_rel',
+            name: 'Rel',
+            relationship: 'unknown',
+          }),
+        ),
+      )
+      updatePersona.mockResolvedValue(
+        okDetail(
+          makeDetail({
+            id: 'ps_rel',
+            name: 'Rel',
+            relationship: 'friend',
+          }),
+        ),
+      )
+
+      render(<PersonasPanel />)
+      await waitFor(() => {
+        expect(screen.getByTestId('persona-row-ps_rel')).toBeInTheDocument()
+      })
+      fireEvent.click(screen.getByTestId('persona-row-ps_rel'))
+      await waitFor(() => {
+        expect(screen.getByTestId('persona-relationship-select')).toBeInTheDocument()
+      })
+      fireEvent.change(screen.getByTestId('persona-relationship-select'), {
+        target: { value: 'friend' },
+      })
+      await waitFor(() => {
+        expect(updatePersona).toHaveBeenCalledWith('ps_rel', {
+          relationship: 'friend',
         })
       })
     })

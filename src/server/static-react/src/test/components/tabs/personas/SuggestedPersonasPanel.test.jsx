@@ -6,6 +6,14 @@ import SuggestedPersonasPanel from '../../../../components/tabs/personas/Suggest
 vi.mock('../../../../api/clients/fingerprintsClient', () => ({
   listSuggestedPersonas: vi.fn(),
   acceptSuggestedPersona: vi.fn(),
+  RELATIONSHIP_OPTIONS: [
+    'self',
+    'family',
+    'colleague',
+    'friend',
+    'acquaintance',
+    'unknown',
+  ],
 }))
 
 import {
@@ -120,16 +128,19 @@ describe('SuggestedPersonasPanel', () => {
       expect(screen.getByTestId('suggested-row-sg_accept')).toBeInTheDocument()
     })
 
-    // Click Name it → input renders.
+    // Click Name it → input + relationship dropdown render.
     fireEvent.click(screen.getByTestId('suggested-name-sg_accept'))
     const input = screen.getByTestId('suggested-name-input-sg_accept')
     fireEvent.change(input, { target: { value: 'Tom (colleague)' } })
+    const relSelect = screen.getByTestId('suggested-relationship-select-sg_accept')
+    fireEvent.change(relSelect, { target: { value: 'colleague' } })
     fireEvent.click(screen.getByTestId('suggested-confirm-sg_accept'))
 
     await waitFor(() => {
       expect(acceptSuggestedPersona).toHaveBeenCalledWith({
         fingerprint_ids: ['fp_a', 'fp_b', 'fp_c'],
         name: 'Tom (colleague)',
+        relationship: 'colleague',
       })
     })
 

@@ -2,6 +2,7 @@ import { useCallback, useEffect, useState } from 'react'
 import {
   listSuggestedPersonas,
   acceptSuggestedPersona,
+  RELATIONSHIP_OPTIONS,
 } from '../../../api/clients/fingerprintsClient'
 
 /**
@@ -57,7 +58,7 @@ export default function SuggestedPersonasPanel() {
   }, [namingId])
 
   const handleAccept = useCallback(
-    async (suggestion, name) => {
+    async (suggestion, name, relationship) => {
       const trimmed = name.trim()
       if (!trimmed) return
       setBusyId(suggestion.suggested_id)
@@ -65,6 +66,7 @@ export default function SuggestedPersonasPanel() {
         const res = await acceptSuggestedPersona({
           fingerprint_ids: suggestion.fingerprint_ids,
           name: trimmed,
+          relationship,
         })
         if (res.success) {
           // Remove the accepted suggestion from the list — it's a
@@ -139,7 +141,9 @@ export default function SuggestedPersonasPanel() {
             onBeginNaming={() => setNamingId(suggestion.suggested_id)}
             onCancelNaming={() => setNamingId(null)}
             onDismiss={() => handleDismiss(suggestion.suggested_id)}
-            onAccept={name => handleAccept(suggestion, name)}
+            onAccept={(name, relationship) =>
+              handleAccept(suggestion, name, relationship)
+            }
           />
         ))}
       </ul>
@@ -157,6 +161,7 @@ function SuggestedRow({
   onAccept,
 }) {
   const [nameDraft, setNameDraft] = useState(suggestion.suggested_name)
+  const [relationshipDraft, setRelationshipDraft] = useState('unknown')
 
   return (
     <li
@@ -201,11 +206,23 @@ function SuggestedRow({
               data-testid={`suggested-name-input-${suggestion.suggested_id}`}
               autoFocus
             />
+            <select
+              value={relationshipDraft}
+              onChange={e => setRelationshipDraft(e.target.value)}
+              className="input text-xs"
+              data-testid={`suggested-relationship-select-${suggestion.suggested_id}`}
+            >
+              {RELATIONSHIP_OPTIONS.map(opt => (
+                <option key={opt} value={opt}>
+                  {opt}
+                </option>
+              ))}
+            </select>
             <button
               type="button"
               className="btn-primary text-xs"
               disabled={busy || !nameDraft.trim()}
-              onClick={() => onAccept(nameDraft)}
+              onClick={() => onAccept(nameDraft, relationshipDraft)}
               data-testid={`suggested-confirm-${suggestion.suggested_id}`}
             >
               {busy ? 'Creating…' : 'Create'}
