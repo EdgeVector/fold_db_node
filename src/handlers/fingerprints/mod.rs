@@ -10,12 +10,14 @@
 //! (`crate::server::routes::fingerprints`) wraps them in actix
 //! responses.
 
+pub mod import_contacts;
 pub mod ingest;
 pub mod ingest_text;
 pub mod ingestion_errors;
 pub mod personas;
 pub mod suggestions;
 
+pub use import_contacts::import_contacts;
 pub use ingest::{
     ingest_photo_faces_batch, DetectedFaceDto, IngestPhotoFacesRequest, IngestPhotoFacesResponse,
     PhotoFacesDto, PhotoIngestResult,
