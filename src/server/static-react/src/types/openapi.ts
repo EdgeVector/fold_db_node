@@ -597,7 +597,7 @@ export interface components {
         /** @enum {string} */
         MoleculeStatus: "Active" | "Deleted";
         MoleculeUpdate: {
-            source_pub_key: string;
+            writer_pubkey: string;
             status: components["schemas"]["MoleculeStatus"];
             /** Format: date-time */
             timestamp: string;
