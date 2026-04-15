@@ -42,6 +42,7 @@ pub mod planned_record;
 pub mod registration;
 pub mod resolver;
 pub mod schemas;
+pub mod self_identity;
 pub mod writer;
 
 // Ingest-path components (Phase 1)
