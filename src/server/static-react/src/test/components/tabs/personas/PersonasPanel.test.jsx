@@ -9,13 +9,13 @@ import PersonasPanel from '../../../../components/tabs/personas/PersonasPanel'
 vi.mock('../../../../api/clients/fingerprintsClient', () => ({
   listPersonas: vi.fn(),
   getPersona: vi.fn(),
-  updatePersonaThreshold: vi.fn(),
+  updatePersona: vi.fn(),
 }))
 
 import {
   listPersonas,
   getPersona,
-  updatePersonaThreshold,
+  updatePersona,
 } from '../../../../api/clients/fingerprintsClient'
 
 // ── Test data builders ─────────────────────────────────────────────
@@ -216,7 +216,7 @@ describe('PersonasPanel', () => {
           }),
         ),
       )
-      updatePersonaThreshold.mockResolvedValue(
+      updatePersona.mockResolvedValue(
         okDetail(
           makeDetail({
             id: 'ps_me',
@@ -245,12 +245,12 @@ describe('PersonasPanel', () => {
 
       // Drag the slider — local state updates, no PATCH yet.
       fireEvent.change(slider, { target: { value: '0.75' } })
-      expect(updatePersonaThreshold).not.toHaveBeenCalled()
+      expect(updatePersona).not.toHaveBeenCalled()
 
       // Release the slider — fires the commit + PATCH.
       fireEvent.mouseUp(slider)
       await waitFor(() => {
-        expect(updatePersonaThreshold).toHaveBeenCalledWith('ps_me', 0.75)
+        expect(updatePersona).toHaveBeenCalledWith('ps_me', { threshold: 0.75 })
       })
 
       // Response is swapped into the detail view.
@@ -283,7 +283,7 @@ describe('PersonasPanel', () => {
       const slider = screen.getByTestId('persona-detail-threshold-input')
       // Release without changing — commit should be a no-op.
       fireEvent.mouseUp(slider)
-      expect(updatePersonaThreshold).not.toHaveBeenCalled()
+      expect(updatePersona).not.toHaveBeenCalled()
     })
 
     it('renders diagnostics block when the resolver surfaced any filter hits', async () => {
@@ -347,6 +347,171 @@ describe('PersonasPanel', () => {
 
       await waitFor(() => {
         expect(screen.getByTestId('persona-detail-error')).toHaveTextContent('nope')
+      })
+    })
+  })
+
+  describe('exclusions', () => {
+    it('sends add_excluded_mention_id when the ✂ mention button is clicked', async () => {
+      listPersonas.mockResolvedValue(okList([makeSummary({ id: 'ps_a', name: 'A' })]))
+      getPersona.mockResolvedValue(
+        okDetail(
+          makeDetail({
+            id: 'ps_a',
+            name: 'A',
+            mention_ids: ['mn_x'],
+            mentions: [
+              {
+                id: 'mn_x',
+                source_schema: 'Photos',
+                source_key: 'IMG_1',
+                source_field: '',
+                extractor: 'face_detect',
+                confidence: 0.95,
+                created_at: '2026-04-15T10:00:00Z',
+              },
+            ],
+            excluded_mention_ids: [],
+            excluded_edge_ids: [],
+          }),
+        ),
+      )
+      updatePersona.mockResolvedValue(
+        okDetail(
+          makeDetail({
+            id: 'ps_a',
+            name: 'A',
+            mention_ids: [],
+            mentions: [],
+            excluded_mention_ids: ['mn_x'],
+            excluded_edge_ids: [],
+          }),
+        ),
+      )
+
+      render(<PersonasPanel />)
+      await waitFor(() => {
+        expect(screen.getByTestId('persona-row-ps_a')).toBeInTheDocument()
+      })
+      fireEvent.click(screen.getByTestId('persona-row-ps_a'))
+      await waitFor(() => {
+        expect(screen.getByTestId('persona-mention-exclude-mn_x')).toBeInTheDocument()
+      })
+
+      fireEvent.click(screen.getByTestId('persona-mention-exclude-mn_x'))
+      await waitFor(() => {
+        expect(updatePersona).toHaveBeenCalledWith('ps_a', {
+          add_excluded_mention_id: 'mn_x',
+        })
+      })
+
+      // Exclusions panel now offers an Undo button for that mention.
+      await waitFor(() => {
+        expect(
+          screen.getByTestId('persona-exclusions-toggle'),
+        ).toBeInTheDocument()
+      })
+      fireEvent.click(screen.getByTestId('persona-exclusions-toggle'))
+      expect(
+        screen.getByTestId('persona-mention-unexclude-mn_x'),
+      ).toBeInTheDocument()
+    })
+
+    it('sends add_excluded_edge_id when the ✂ edge button is clicked', async () => {
+      listPersonas.mockResolvedValue(okList([makeSummary({ id: 'ps_b', name: 'B' })]))
+      getPersona.mockResolvedValue(
+        okDetail(
+          makeDetail({
+            id: 'ps_b',
+            name: 'B',
+            edge_ids: ['eg_z'],
+            edges: [
+              {
+                id: 'eg_z',
+                a: 'fp_1',
+                b: 'fp_2',
+                kind: 'StrongMatch',
+                weight: 0.9,
+                created_at: '2026-04-15T10:00:00Z',
+              },
+            ],
+            excluded_mention_ids: [],
+            excluded_edge_ids: [],
+          }),
+        ),
+      )
+      updatePersona.mockResolvedValue(
+        okDetail(
+          makeDetail({
+            id: 'ps_b',
+            name: 'B',
+            edge_ids: [],
+            edges: [],
+            excluded_mention_ids: [],
+            excluded_edge_ids: ['eg_z'],
+          }),
+        ),
+      )
+
+      render(<PersonasPanel />)
+      await waitFor(() => {
+        expect(screen.getByTestId('persona-row-ps_b')).toBeInTheDocument()
+      })
+      fireEvent.click(screen.getByTestId('persona-row-ps_b'))
+      await waitFor(() => {
+        expect(screen.getByTestId('persona-edge-exclude-eg_z')).toBeInTheDocument()
+      })
+
+      fireEvent.click(screen.getByTestId('persona-edge-exclude-eg_z'))
+      await waitFor(() => {
+        expect(updatePersona).toHaveBeenCalledWith('ps_b', {
+          add_excluded_edge_id: 'eg_z',
+        })
+      })
+    })
+
+    it('un-excludes a mention through the exclusions panel Undo button', async () => {
+      listPersonas.mockResolvedValue(okList([makeSummary({ id: 'ps_c', name: 'C' })]))
+      getPersona.mockResolvedValue(
+        okDetail(
+          makeDetail({
+            id: 'ps_c',
+            name: 'C',
+            mentions: [],
+            mention_ids: [],
+            excluded_mention_ids: ['mn_old'],
+            excluded_edge_ids: [],
+          }),
+        ),
+      )
+      updatePersona.mockResolvedValue(
+        okDetail(
+          makeDetail({
+            id: 'ps_c',
+            name: 'C',
+            mentions: [],
+            mention_ids: [],
+            excluded_mention_ids: [],
+            excluded_edge_ids: [],
+          }),
+        ),
+      )
+
+      render(<PersonasPanel />)
+      await waitFor(() => {
+        expect(screen.getByTestId('persona-row-ps_c')).toBeInTheDocument()
+      })
+      fireEvent.click(screen.getByTestId('persona-row-ps_c'))
+      await waitFor(() => {
+        expect(screen.getByTestId('persona-exclusions-toggle')).toBeInTheDocument()
+      })
+      fireEvent.click(screen.getByTestId('persona-exclusions-toggle'))
+      fireEvent.click(screen.getByTestId('persona-mention-unexclude-mn_old'))
+
+      await waitFor(() => {
+        expect(updatePersona).toHaveBeenCalledWith('ps_c', {
+          remove_excluded_mention_id: 'mn_old',
+        })
       })
     })
   })

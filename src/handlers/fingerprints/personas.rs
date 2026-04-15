@@ -75,6 +75,11 @@ pub struct PersonaDetailResponse {
     pub identity_id: Option<String>,
     pub seed_fingerprint_ids: Vec<String>,
     pub aliases: Vec<String>,
+    /// Raw exclusion lists from the Persona record. The UI renders
+    /// these as a collapsible "excluded items" panel so the user
+    /// can undo any ✂ action they regret. Ordered as stored.
+    pub excluded_edge_ids: Vec<String>,
+    pub excluded_mention_ids: Vec<String>,
     /// Full resolved fingerprint set (includes the seeds + every
     /// endpoint reachable via edges above threshold).
     pub fingerprint_ids: Vec<String>,
@@ -291,6 +296,9 @@ pub async fn get_persona(
         diagnostics.is_none()
     );
 
+    let excluded_edge_ids_out = string_array_field(fields, "excluded_edge_ids");
+    let excluded_mention_ids_out = string_array_field(fields, "excluded_mention_ids");
+
     Ok(ApiResponse::success(PersonaDetailResponse {
         id: spec.persona_id,
         name: string_field(fields, "name").unwrap_or_default(),
@@ -302,6 +310,8 @@ pub async fn get_persona(
         identity_id: spec.identity_id,
         seed_fingerprint_ids: spec.seed_fingerprint_ids,
         aliases,
+        excluded_edge_ids: excluded_edge_ids_out,
+        excluded_mention_ids: excluded_mention_ids_out,
         fingerprint_ids: fp_ids,
         edge_ids,
         mention_ids,
@@ -528,36 +538,84 @@ fn fingerprint_display_value(kind: &str, value: Option<&Value>) -> String {
     }
 }
 
-/// Update the threshold field on an existing Persona record, then
-/// return the re-resolved detail. The frontend uses this to drive
-/// the Persona detail threshold slider.
-///
-/// This is a read-modify-write against the Persona record:
-/// 1. Fetch the existing record via the standard query path.
-/// 2. Copy every field into a fresh mutation payload, overwriting
-///    only `threshold` with the caller-supplied value.
-/// 3. Execute a `MutationType::Update` that preserves the content-
-///    addressed primary key (`id`) and writes the merged record.
-/// 4. Re-run `get_persona` to return the updated detail with freshly
-///    resolved counts and diagnostics.
-///
-/// Read-modify-write rather than a partial update because
-/// `execute_mutation` expects all fields to be present in the
-/// fields map, and we can't assume the caller's record is in the
-/// writer's in-memory state.
+/// Declarative patch applied by `apply_persona_patch`. Every field is
+/// optional; callers populate only the ops they want to run. Ops are
+/// applied in a stable order within a single read-modify-write cycle
+/// so a caller can, e.g., set the threshold AND exclude an edge in
+/// one round trip.
+#[derive(Debug, Clone, Default)]
+pub struct PersonaPatch {
+    pub threshold: Option<f32>,
+    pub add_excluded_edge_id: Option<String>,
+    pub remove_excluded_edge_id: Option<String>,
+    pub add_excluded_mention_id: Option<String>,
+    pub remove_excluded_mention_id: Option<String>,
+}
+
+impl PersonaPatch {
+    pub fn is_empty(&self) -> bool {
+        self.threshold.is_none()
+            && self.add_excluded_edge_id.is_none()
+            && self.remove_excluded_edge_id.is_none()
+            && self.add_excluded_mention_id.is_none()
+            && self.remove_excluded_mention_id.is_none()
+    }
+}
+
+/// Update the threshold field on an existing Persona record.
+/// Retained as a thin compat wrapper over `apply_persona_patch`
+/// so older callers keep working; new callers should use the patch
+/// API directly.
 pub async fn update_persona_threshold(
     node: Arc<FoldNode>,
     persona_id: String,
     new_threshold: f32,
 ) -> HandlerResult<PersonaDetailResponse> {
-    // Validate range. Clients should already clamp but we defend
-    // against malformed payloads here because a threshold outside
-    // [0, 1] would silently break cluster resolution.
-    if !new_threshold.is_finite() || !(0.0..=1.0).contains(&new_threshold) {
-        return Err(HandlerError::BadRequest(format!(
-            "threshold must be a finite number in [0.0, 1.0], got {}",
-            new_threshold
-        )));
+    apply_persona_patch(
+        node,
+        persona_id,
+        PersonaPatch {
+            threshold: Some(new_threshold),
+            ..Default::default()
+        },
+    )
+    .await
+}
+
+/// Apply a [`PersonaPatch`] to an existing Persona record and return
+/// the freshly-resolved detail.
+///
+/// Read-modify-write:
+/// 1. Fetch the existing record.
+/// 2. Copy every field into a mutation payload.
+/// 3. For each Some-op in the patch, mutate the relevant field in
+///    place (threshold scalar, or array-add / array-remove).
+/// 4. Execute a `MutationType::Update` preserving the content-keyed
+///    primary key.
+/// 5. Re-run `get_persona` so the caller sees the updated counts +
+///    diagnostics in one round trip.
+///
+/// Edge/mention exclusion ops are idempotent: adding an id that's
+/// already excluded is a no-op; removing an id that isn't excluded
+/// is a no-op. Both still write the record so the caller gets a
+/// fresh resolve back — useful for "refresh and re-render" flows.
+pub async fn apply_persona_patch(
+    node: Arc<FoldNode>,
+    persona_id: String,
+    patch: PersonaPatch,
+) -> HandlerResult<PersonaDetailResponse> {
+    if patch.is_empty() {
+        return Err(HandlerError::BadRequest(
+            "persona patch must contain at least one mutable field".to_string(),
+        ));
+    }
+    if let Some(threshold) = patch.threshold {
+        if !threshold.is_finite() || !(0.0..=threshold_upper()).contains(&threshold) {
+            return Err(HandlerError::BadRequest(format!(
+                "threshold must be a finite number in [0.0, 1.0], got {}",
+                threshold
+            )));
+        }
     }
 
     let persona_canonical = canonical_names::lookup(PERSONA).map_err(|e| {
@@ -592,7 +650,7 @@ pub async fn update_persona_threshold(
         HandlerError::Internal("persona record missing 'fields' envelope".to_string())
     })?;
 
-    // 2. Copy every field, overwriting only `threshold`.
+    // 2. Clone every field into a mutation payload.
     let mut payload: HashMap<String, Value> = HashMap::new();
     let Value::Object(field_map) = fields else {
         return Err(HandlerError::Internal(
@@ -602,34 +660,95 @@ pub async fn update_persona_threshold(
     for (k, v) in field_map.iter() {
         payload.insert(k.clone(), v.clone());
     }
-    payload.insert(
-        "threshold".to_string(),
-        serde_json::Number::from_f64(new_threshold as f64)
-            .map(Value::Number)
-            .unwrap_or(Value::Null),
-    );
 
-    // 3. Execute Update. Keep the same content-addressed primary key.
+    // 3. Apply patch ops in-place on the payload.
+    if let Some(threshold) = patch.threshold {
+        payload.insert(
+            "threshold".to_string(),
+            serde_json::Number::from_f64(threshold as f64)
+                .map(Value::Number)
+                .unwrap_or(Value::Null),
+        );
+    }
+    if let Some(edge_id) = &patch.add_excluded_edge_id {
+        apply_array_add(&mut payload, "excluded_edge_ids", edge_id);
+    }
+    if let Some(edge_id) = &patch.remove_excluded_edge_id {
+        apply_array_remove(&mut payload, "excluded_edge_ids", edge_id);
+    }
+    if let Some(mention_id) = &patch.add_excluded_mention_id {
+        apply_array_add(&mut payload, "excluded_mention_ids", mention_id);
+    }
+    if let Some(mention_id) = &patch.remove_excluded_mention_id {
+        apply_array_remove(&mut payload, "excluded_mention_ids", mention_id);
+    }
+
+    // 4. Execute Update. Keep the same content-addressed primary key.
     let key_value = KeyValue::new(Some(persona_id.clone()), None);
     processor
         .execute_mutation(persona_canonical, payload, key_value, MutationType::Update)
         .await
         .map_err(|e| {
-            HandlerError::Internal(format!(
-                "failed to update persona '{}' threshold: {}",
-                persona_id, e
-            ))
+            HandlerError::Internal(format!("failed to update persona '{}': {}", persona_id, e))
         })?;
 
     log::info!(
-        "fingerprints.handler: updated persona '{}' threshold to {:.3}",
+        "fingerprints.handler: applied patch to persona '{}' \
+         (threshold={:?}, add_edge={:?}, rm_edge={:?}, add_mention={:?}, rm_mention={:?})",
         persona_id,
-        new_threshold
+        patch.threshold,
+        patch.add_excluded_edge_id,
+        patch.remove_excluded_edge_id,
+        patch.add_excluded_mention_id,
+        patch.remove_excluded_mention_id,
     );
 
     // 4. Re-run the standard detail path so the caller gets the
     //    freshly-resolved counts + diagnostics.
     get_persona(node, persona_id).await
+}
+
+// ── Patch application helpers ────────────────────────────────────
+
+fn threshold_upper() -> f32 {
+    1.0
+}
+
+/// Append `value` to the string array at `field_name` on `payload`
+/// unless it is already present. If the payload field is missing or
+/// not an array, replace it with a single-element array — the array
+/// shape on the schema is fixed so this is a safe recovery.
+fn apply_array_add(payload: &mut HashMap<String, Value>, field_name: &str, value: &str) {
+    let existing = payload
+        .get(field_name)
+        .and_then(|v| v.as_array())
+        .cloned()
+        .unwrap_or_default();
+    let mut items: Vec<Value> = existing;
+    let already_present = items
+        .iter()
+        .any(|v| v.as_str().map(|s| s == value).unwrap_or(false));
+    if !already_present {
+        items.push(Value::String(value.to_string()));
+    }
+    payload.insert(field_name.to_string(), Value::Array(items));
+}
+
+/// Remove every occurrence of `value` from the string array at
+/// `field_name`. No-op when the field is missing, not an array, or
+/// does not contain the value. Writes the (possibly unchanged) array
+/// back so the mutation payload is self-consistent.
+fn apply_array_remove(payload: &mut HashMap<String, Value>, field_name: &str, value: &str) {
+    let existing = payload
+        .get(field_name)
+        .and_then(|v| v.as_array())
+        .cloned()
+        .unwrap_or_default();
+    let items: Vec<Value> = existing
+        .into_iter()
+        .filter(|v| v.as_str().map(|s| s != value).unwrap_or(true))
+        .collect();
+    payload.insert(field_name.to_string(), Value::Array(items));
 }
 
 // ── Field-extraction helpers ─────────────────────────────────────
@@ -803,6 +922,72 @@ mod tests {
     fn string_array_field_returns_empty_when_missing() {
         let fields = json!({});
         assert_eq!(string_array_field(&fields, "aliases"), Vec::<String>::new());
+    }
+
+    #[test]
+    fn apply_array_add_appends_when_missing() {
+        let mut payload: HashMap<String, Value> = HashMap::new();
+        payload.insert("excluded_edge_ids".to_string(), json!(["eg_a"]));
+        apply_array_add(&mut payload, "excluded_edge_ids", "eg_b");
+        assert_eq!(
+            payload.get("excluded_edge_ids").unwrap(),
+            &json!(["eg_a", "eg_b"])
+        );
+    }
+
+    #[test]
+    fn apply_array_add_is_idempotent() {
+        let mut payload: HashMap<String, Value> = HashMap::new();
+        payload.insert("excluded_edge_ids".to_string(), json!(["eg_a"]));
+        apply_array_add(&mut payload, "excluded_edge_ids", "eg_a");
+        assert_eq!(payload.get("excluded_edge_ids").unwrap(), &json!(["eg_a"]));
+    }
+
+    #[test]
+    fn apply_array_add_initializes_missing_field() {
+        let mut payload: HashMap<String, Value> = HashMap::new();
+        apply_array_add(&mut payload, "excluded_mention_ids", "mn_a");
+        assert_eq!(
+            payload.get("excluded_mention_ids").unwrap(),
+            &json!(["mn_a"])
+        );
+    }
+
+    #[test]
+    fn apply_array_remove_strips_matching_value() {
+        let mut payload: HashMap<String, Value> = HashMap::new();
+        payload.insert(
+            "excluded_mention_ids".to_string(),
+            json!(["mn_a", "mn_b", "mn_c"]),
+        );
+        apply_array_remove(&mut payload, "excluded_mention_ids", "mn_b");
+        assert_eq!(
+            payload.get("excluded_mention_ids").unwrap(),
+            &json!(["mn_a", "mn_c"])
+        );
+    }
+
+    #[test]
+    fn apply_array_remove_is_noop_when_missing() {
+        let mut payload: HashMap<String, Value> = HashMap::new();
+        payload.insert("excluded_edge_ids".to_string(), json!(["eg_a"]));
+        apply_array_remove(&mut payload, "excluded_edge_ids", "eg_nope");
+        assert_eq!(payload.get("excluded_edge_ids").unwrap(), &json!(["eg_a"]));
+    }
+
+    #[test]
+    fn persona_patch_is_empty_when_all_none() {
+        let patch = PersonaPatch::default();
+        assert!(patch.is_empty());
+    }
+
+    #[test]
+    fn persona_patch_not_empty_when_any_set() {
+        let patch = PersonaPatch {
+            threshold: Some(0.5),
+            ..Default::default()
+        };
+        assert!(!patch.is_empty());
     }
 
     #[test]

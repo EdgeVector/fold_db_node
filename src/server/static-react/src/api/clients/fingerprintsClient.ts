@@ -91,6 +91,10 @@ export interface PersonaDetailResponse {
   identity_id: string | null;
   seed_fingerprint_ids: string[];
   aliases: string[];
+  /** Raw exclusion lists from the Persona record — rendered in the
+   *  collapsible exclusions panel so the user can Undo each one. */
+  excluded_edge_ids: string[];
+  excluded_mention_ids: string[];
   fingerprint_ids: string[];
   edge_ids: string[];
   mention_ids: string[];
@@ -127,19 +131,45 @@ export async function getPersona(
 }
 
 /**
- * Update the threshold on an existing Persona. The backend does a
- * read-modify-write against the Persona record and returns the
- * freshly-resolved detail with updated counts + diagnostics, so the
- * UI can swap the response straight into place without a second GET.
+ * Declarative patch shape mirroring `UpdatePersonaRequest` on the
+ * backend. Every field is optional; callers populate only the ops
+ * they need. Multiple ops may coexist in a single request and are
+ * applied together within one read-modify-write cycle.
+ */
+export interface PersonaPatch {
+  threshold?: number;
+  add_excluded_edge_id?: string;
+  remove_excluded_edge_id?: string;
+  add_excluded_mention_id?: string;
+  remove_excluded_mention_id?: string;
+}
+
+/**
+ * Apply a patch to an existing Persona and return the freshly-
+ * resolved detail. The backend does a single read-modify-write so
+ * the caller can swap the response straight into place without a
+ * second GET.
+ */
+export async function updatePersona(
+  id: string,
+  patch: PersonaPatch,
+): Promise<EnhancedApiResponse<PersonaDetailResponse>> {
+  return client.patch<PersonaDetailResponse>(
+    `/fingerprints/personas/${encodeURIComponent(id)}`,
+    patch,
+  );
+}
+
+/**
+ * Compat wrapper — existing callers that only want to move the
+ * threshold slider can keep using this. New call sites should prefer
+ * `updatePersona` directly so they can batch multiple ops.
  */
 export async function updatePersonaThreshold(
   id: string,
   threshold: number,
 ): Promise<EnhancedApiResponse<PersonaDetailResponse>> {
-  return client.patch<PersonaDetailResponse>(
-    `/fingerprints/personas/${encodeURIComponent(id)}`,
-    { threshold },
-  );
+  return updatePersona(id, { threshold });
 }
 
 // ===== IngestionError types + client =====
