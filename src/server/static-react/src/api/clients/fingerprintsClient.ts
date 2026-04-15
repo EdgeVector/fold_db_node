@@ -141,3 +141,50 @@ export async function updatePersonaThreshold(
     { threshold },
   );
 }
+
+// ===== IngestionError types + client =====
+
+export interface IngestionErrorView {
+  id: string;
+  source_schema: string;
+  source_key: string;
+  extractor: string;
+  error_class: string;
+  error_msg: string;
+  retry_count: number;
+  resolved: boolean;
+  created_at: string;
+  last_retry_at: string | null;
+}
+
+export interface ListIngestionErrorsResponse {
+  errors: IngestionErrorView[];
+}
+
+/**
+ * List every IngestionError row. By default resolved rows are hidden
+ * — the Failed panel is a to-do list of live extractor failures.
+ * Pass `includeResolved: true` to pull the archive too.
+ */
+export async function listIngestionErrors(
+  includeResolved = false,
+): Promise<EnhancedApiResponse<ListIngestionErrorsResponse>> {
+  const qs = includeResolved ? "?include_resolved=true" : "";
+  return client.get<ListIngestionErrorsResponse>(
+    `/fingerprints/ingestion-errors${qs}`,
+  );
+}
+
+/**
+ * Mark a single IngestionError row as resolved. Used by both the
+ * Dismiss and Retry buttons — Phase 1 does not actually re-run the
+ * extractor on Retry, it just clears the row.
+ */
+export async function resolveIngestionError(
+  id: string,
+): Promise<EnhancedApiResponse<IngestionErrorView>> {
+  return client.patch<IngestionErrorView>(
+    `/fingerprints/ingestion-errors/${encodeURIComponent(id)}`,
+    {},
+  );
+}

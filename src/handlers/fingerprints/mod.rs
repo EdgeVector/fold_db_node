@@ -11,11 +11,15 @@
 //! responses.
 
 pub mod ingest;
+pub mod ingestion_errors;
 pub mod personas;
 
 pub use ingest::{
     ingest_photo_faces_batch, DetectedFaceDto, IngestPhotoFacesRequest, IngestPhotoFacesResponse,
     PhotoFacesDto, PhotoIngestResult,
+};
+pub use ingestion_errors::{
+    list_ingestion_errors, resolve_ingestion_error, IngestionErrorView, ListIngestionErrorsResponse,
 };
 pub use personas::{
     get_persona, list_personas, update_persona_threshold, ListPersonasResponse,
