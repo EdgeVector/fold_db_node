@@ -330,6 +330,16 @@ pub async fn get_persona(
 // the resolver's diagnostics). Missing records are logged but do not
 // fail the request — the goal is best-effort enrichment.
 
+/// Public alias used by the Suggested Personas handler so it can
+/// enrich its sample fingerprints without duplicating this loop.
+/// Thin wrapper so the signature stays inside the personas module.
+pub(crate) async fn fetch_fingerprint_views_for_ids(
+    processor: &crate::fold_node::OperationProcessor,
+    ids: &[String],
+) -> Result<Vec<FingerprintView>, HandlerError> {
+    fetch_fingerprint_views(processor, ids).await
+}
+
 async fn fetch_fingerprint_views(
     processor: &crate::fold_node::OperationProcessor,
     ids: &[String],
