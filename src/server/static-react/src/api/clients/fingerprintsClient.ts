@@ -218,3 +218,50 @@ export async function resolveIngestionError(
     {},
   );
 }
+
+// ===== Suggested Personas =====
+
+export interface SuggestedPersonaView {
+  suggested_id: string;
+  suggested_name: string;
+  fingerprint_ids: string[];
+  fingerprint_count: number;
+  edge_count: number;
+  mention_count: number;
+  sample_fingerprints: FingerprintView[];
+}
+
+export interface ListSuggestedResponse {
+  suggestions: SuggestedPersonaView[];
+}
+
+export interface AcceptSuggestedRequest {
+  fingerprint_ids: string[];
+  name: string;
+  relationship?: string;
+}
+
+/**
+ * Run the dense-subgraph sweep and return candidate clusters that
+ * pass the MIN_FINGERPRINTS / MIN_MENTIONS gates and are not
+ * already covered by an existing Persona.
+ */
+export async function listSuggestedPersonas(): Promise<
+  EnhancedApiResponse<ListSuggestedResponse>
+> {
+  return client.get<ListSuggestedResponse>("/fingerprints/suggestions");
+}
+
+/**
+ * Promote a suggested cluster into a real Persona record. Returns
+ * the freshly-resolved PersonaDetailResponse so the UI can redirect
+ * the user into the new Persona without a second round trip.
+ */
+export async function acceptSuggestedPersona(
+  req: AcceptSuggestedRequest,
+): Promise<EnhancedApiResponse<PersonaDetailResponse>> {
+  return client.post<PersonaDetailResponse>(
+    "/fingerprints/suggestions/accept",
+    req,
+  );
+}

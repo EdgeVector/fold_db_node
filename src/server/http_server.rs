@@ -693,6 +693,14 @@ impl FoldHttpServer {
                     web::scope("/ingestion-errors")
                         .route("", web::get().to(fp_routes::list_ingestion_errors))
                         .route("/{id}", web::patch().to(fp_routes::resolve_ingestion_error)),
+                )
+                .service(
+                    web::scope("/suggestions")
+                        .route("", web::get().to(fp_routes::list_suggested_personas))
+                        .route(
+                            "/accept",
+                            web::post().to(fp_routes::accept_suggested_persona),
+                        ),
                 ),
         );
     }

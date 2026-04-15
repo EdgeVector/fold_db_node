@@ -13,6 +13,7 @@
 pub mod ingest;
 pub mod ingestion_errors;
 pub mod personas;
+pub mod suggestions;
 
 pub use ingest::{
     ingest_photo_faces_batch, DetectedFaceDto, IngestPhotoFacesRequest, IngestPhotoFacesResponse,
@@ -24,4 +25,8 @@ pub use ingestion_errors::{
 pub use personas::{
     apply_persona_patch, get_persona, list_personas, update_persona_threshold,
     ListPersonasResponse, PersonaDetailResponse, PersonaPatch, PersonaSummary,
+};
+pub use suggestions::{
+    accept_suggested_persona, list_suggested_personas, AcceptSuggestedRequest,
+    ListSuggestedResponse, SuggestedPersonaView,
 };

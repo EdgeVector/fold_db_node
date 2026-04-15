@@ -4,7 +4,9 @@
 pub mod ingest;
 pub mod ingestion_errors;
 pub mod personas;
+pub mod suggestions;
 
 pub use ingest::ingest_photo_faces;
 pub use ingestion_errors::{list_ingestion_errors, resolve_ingestion_error};
 pub use personas::{get_persona, list_personas, update_persona};
+pub use suggestions::{accept_suggested_persona, list_suggested_personas};

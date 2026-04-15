@@ -1,0 +1,245 @@
+import { useCallback, useEffect, useState } from 'react'
+import {
+  listSuggestedPersonas,
+  acceptSuggestedPersona,
+} from '../../../api/clients/fingerprintsClient'
+
+/**
+ * Suggested Personas panel — the design doc's dense-subgraph sweep
+ * surface. Renders every candidate cluster the backend proposed,
+ * with [Name it] to promote into a real Persona and [Dismiss] to
+ * hide the candidate for the rest of this session (frontend-only
+ * soft state — no backend write).
+ *
+ * Data shape: GET /api/fingerprints/suggestions. Accept goes through
+ * POST /api/fingerprints/suggestions/accept and returns the
+ * freshly-resolved PersonaDetailResponse.
+ */
+export default function SuggestedPersonasPanel() {
+  const [suggestions, setSuggestions] = useState([])
+  const [loading, setLoading] = useState(true)
+  const [error, setError] = useState(null)
+  // suggested_id → true. Dismissals live only in component state.
+  const [dismissed, setDismissed] = useState(() => new Set())
+  // suggested_id currently showing the name input.
+  const [namingId, setNamingId] = useState(null)
+  // suggested_id currently being promoted (debounces the button).
+  const [busyId, setBusyId] = useState(null)
+
+  const fetchList = useCallback(async () => {
+    setLoading(true)
+    setError(null)
+    try {
+      const res = await listSuggestedPersonas()
+      if (res.success) {
+        setSuggestions(res.data?.suggestions ?? [])
+      } else {
+        setError(res.error ?? 'Failed to load suggestions')
+      }
+    } catch (e) {
+      setError(e?.message ?? 'Network error')
+    } finally {
+      setLoading(false)
+    }
+  }, [])
+
+  useEffect(() => {
+    fetchList()
+  }, [fetchList])
+
+  const handleDismiss = useCallback(id => {
+    setDismissed(prev => {
+      const next = new Set(prev)
+      next.add(id)
+      return next
+    })
+    if (namingId === id) setNamingId(null)
+  }, [namingId])
+
+  const handleAccept = useCallback(
+    async (suggestion, name) => {
+      const trimmed = name.trim()
+      if (!trimmed) return
+      setBusyId(suggestion.suggested_id)
+      try {
+        const res = await acceptSuggestedPersona({
+          fingerprint_ids: suggestion.fingerprint_ids,
+          name: trimmed,
+        })
+        if (res.success) {
+          // Remove the accepted suggestion from the list — it's a
+          // real Persona now and the Personas tab will pick it up
+          // on next refresh.
+          setSuggestions(prev =>
+            prev.filter(s => s.suggested_id !== suggestion.suggested_id),
+          )
+          setNamingId(null)
+        } else {
+          setError(res.error ?? 'Failed to accept suggestion')
+        }
+      } catch (e) {
+        setError(e?.message ?? 'Network error while accepting')
+      } finally {
+        setBusyId(null)
+      }
+    },
+    [],
+  )
+
+  const visible = suggestions.filter(s => !dismissed.has(s.suggested_id))
+
+  return (
+    <div className="card p-3" data-testid="suggested-personas-panel">
+      <div className="flex items-center justify-between mb-3">
+        <h3 className="text-base font-semibold">Suggested clusters</h3>
+        <button
+          type="button"
+          className="btn-secondary text-xs"
+          onClick={fetchList}
+          disabled={loading}
+          data-testid="suggested-personas-refresh"
+        >
+          {loading ? 'Loading…' : 'Refresh'}
+        </button>
+      </div>
+
+      <p className="text-[11px] text-tertiary mb-2">
+        Dense subgraphs the resolver spotted in your fingerprint graph.
+        Name one to turn it into a Persona. Dismissals last for this
+        session only.
+      </p>
+
+      {error && (
+        <div
+          className="text-sm text-gruvbox-red mb-2"
+          data-testid="suggested-personas-error"
+        >
+          {error}
+        </div>
+      )}
+
+      {!loading && !error && visible.length === 0 && (
+        <div
+          className="text-sm text-secondary"
+          data-testid="suggested-personas-empty"
+        >
+          No suggestions right now — either every dense cluster is
+          already a Persona, or you haven&apos;t ingested enough signal
+          yet.
+        </div>
+      )}
+
+      <ul className="space-y-2">
+        {visible.map(suggestion => (
+          <SuggestedRow
+            key={suggestion.suggested_id}
+            suggestion={suggestion}
+            naming={namingId === suggestion.suggested_id}
+            busy={busyId === suggestion.suggested_id}
+            onBeginNaming={() => setNamingId(suggestion.suggested_id)}
+            onCancelNaming={() => setNamingId(null)}
+            onDismiss={() => handleDismiss(suggestion.suggested_id)}
+            onAccept={name => handleAccept(suggestion, name)}
+          />
+        ))}
+      </ul>
+    </div>
+  )
+}
+
+function SuggestedRow({
+  suggestion,
+  naming,
+  busy,
+  onBeginNaming,
+  onCancelNaming,
+  onDismiss,
+  onAccept,
+}) {
+  const [nameDraft, setNameDraft] = useState(suggestion.suggested_name)
+
+  return (
+    <li
+      className="border border-gruvbox-yellow/40 bg-gruvbox-yellow/5 rounded p-2"
+      data-testid={`suggested-row-${suggestion.suggested_id}`}
+    >
+      <div className="flex items-baseline gap-2">
+        <span className="text-sm font-semibold">
+          {suggestion.suggested_name}
+        </span>
+        <span className="text-[11px] text-tertiary">
+          · {suggestion.fingerprint_count} fps · {suggestion.edge_count} edges
+          · {suggestion.mention_count} mentions
+        </span>
+      </div>
+
+      {suggestion.sample_fingerprints.length > 0 && (
+        <ul
+          className="text-[11px] text-tertiary mt-1 space-y-0.5"
+          data-testid={`suggested-samples-${suggestion.suggested_id}`}
+        >
+          {suggestion.sample_fingerprints.slice(0, 5).map(fp => (
+            <li key={fp.id} className="flex items-baseline gap-2">
+              <span className="text-[9px] uppercase tracking-wider text-gruvbox-yellow bg-gruvbox-yellow/10 border border-gruvbox-yellow/30 rounded px-1.5 py-0.5 font-mono shrink-0">
+                {fp.kind || 'unknown'}
+              </span>
+              <span className="truncate">{fp.display_value || '(empty)'}</span>
+            </li>
+          ))}
+        </ul>
+      )}
+
+      <div className="flex items-center gap-2 mt-2">
+        {naming ? (
+          <>
+            <input
+              type="text"
+              value={nameDraft}
+              onChange={e => setNameDraft(e.target.value)}
+              placeholder="Persona name"
+              className="input text-xs flex-1"
+              data-testid={`suggested-name-input-${suggestion.suggested_id}`}
+              autoFocus
+            />
+            <button
+              type="button"
+              className="btn-primary text-xs"
+              disabled={busy || !nameDraft.trim()}
+              onClick={() => onAccept(nameDraft)}
+              data-testid={`suggested-confirm-${suggestion.suggested_id}`}
+            >
+              {busy ? 'Creating…' : 'Create'}
+            </button>
+            <button
+              type="button"
+              className="btn-secondary text-xs"
+              onClick={onCancelNaming}
+              data-testid={`suggested-cancel-${suggestion.suggested_id}`}
+            >
+              Cancel
+            </button>
+          </>
+        ) : (
+          <>
+            <button
+              type="button"
+              className="btn-primary text-xs"
+              onClick={onBeginNaming}
+              data-testid={`suggested-name-${suggestion.suggested_id}`}
+            >
+              Name it
+            </button>
+            <button
+              type="button"
+              className="btn-secondary text-xs"
+              onClick={onDismiss}
+              data-testid={`suggested-dismiss-${suggestion.suggested_id}`}
+            >
+              Dismiss
+            </button>
+          </>
+        )}
+      </div>
+    </li>
+  )
+}
