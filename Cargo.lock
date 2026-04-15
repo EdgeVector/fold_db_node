@@ -1769,7 +1769,6 @@ checksum = "28dea519a9695b9977216879a3ebfddf92f1c08c05d984f8996aecd6ecdc811d"
 [[package]]
 name = "file_to_markdown"
 version = "0.1.0"
-source = "git+https://github.com/EdgeVector/file_to_markdown.git?branch=master#9a64b276237f56c608e2b59b4dea5f58c487945b"
 dependencies = [
  "base64 0.22.1",
  "chrono",
@@ -1836,7 +1835,6 @@ checksum = "3f9eec918d3f24069decb9af1554cad7c880e2da24a9afd88aca000531ab82c1"
 [[package]]
 name = "fold_db"
 version = "0.3.0"
-source = "git+https://github.com/EdgeVector/fold_db.git?branch=mainline#23ab7cd1e9ba989a3c614be220c79f450fe97ba4"
 dependencies = [
  "aes-gcm",
  "async-trait",

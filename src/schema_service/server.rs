@@ -232,6 +232,13 @@ mod tests {
 
                 assert_eq!(stored_schema.name, added_schema.name);
             }
+            SchemaStorage::External(_) => {
+                // This test constructs state via SchemaServiceState::new(path)
+                // which is always Sled-backed; an External variant here would
+                // be a construction bug. Fail loudly rather than silently
+                // skipping the storage-level assertion.
+                panic!("test built Sled-backed state but got External variant");
+            }
         }
     }
 
