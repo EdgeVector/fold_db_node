@@ -670,6 +670,16 @@ pub struct PersonaPatch {
     pub remove_excluded_edge_id: Option<String>,
     pub add_excluded_mention_id: Option<String>,
     pub remove_excluded_mention_id: Option<String>,
+    /// Rename the persona. Ignored when `built_in == true` — the
+    /// "Me" persona's name is always the node owner's display name
+    /// and should only change via the IdentityCard flow.
+    pub name: Option<String>,
+    /// Change the relationship category. Accepts
+    /// `self | family | colleague | friend | acquaintance | unknown`.
+    pub relationship: Option<String>,
+    /// Replace the aliases array wholesale. Pass an empty vec to
+    /// clear all aliases; `None` leaves the existing list alone.
+    pub aliases: Option<Vec<String>>,
 }
 
 impl PersonaPatch {
@@ -679,8 +689,24 @@ impl PersonaPatch {
             && self.remove_excluded_edge_id.is_none()
             && self.add_excluded_mention_id.is_none()
             && self.remove_excluded_mention_id.is_none()
+            && self.name.is_none()
+            && self.relationship.is_none()
+            && self.aliases.is_none()
     }
 }
+
+/// Canonical relationship values accepted by the patch handler.
+/// Keeping this list here, close to the validator, means the UI
+/// can fetch the same set via an OpenAPI spec later without
+/// having to duplicate it in the React client.
+const ALLOWED_RELATIONSHIPS: &[&str] = &[
+    "self",
+    "family",
+    "colleague",
+    "friend",
+    "acquaintance",
+    "unknown",
+];
 
 /// Update the threshold field on an existing Persona record.
 /// Retained as a thin compat wrapper over `apply_persona_patch`
@@ -734,6 +760,21 @@ pub async fn apply_persona_patch(
             return Err(HandlerError::BadRequest(format!(
                 "threshold must be a finite number in [0.0, 1.0], got {}",
                 threshold
+            )));
+        }
+    }
+    if let Some(ref name) = patch.name {
+        if name.trim().is_empty() {
+            return Err(HandlerError::BadRequest(
+                "name must not be empty".to_string(),
+            ));
+        }
+    }
+    if let Some(ref relationship) = patch.relationship {
+        if !ALLOWED_RELATIONSHIPS.contains(&relationship.as_str()) {
+            return Err(HandlerError::BadRequest(format!(
+                "relationship must be one of {:?}, got '{}'",
+                ALLOWED_RELATIONSHIPS, relationship
             )));
         }
     }
@@ -801,6 +842,37 @@ pub async fn apply_persona_patch(
     }
     if let Some(mention_id) = &patch.remove_excluded_mention_id {
         apply_array_remove(&mut payload, "excluded_mention_ids", mention_id);
+    }
+
+    // Metadata fields. `built_in` personas reject name renames
+    // because the Me persona's name is sourced from the IdentityCard
+    // and would drift from the rest of the identity flow if edited
+    // in place. Relationship and aliases on Me are user-editable —
+    // per the design doc, Me is mutable except for its
+    // seed_fingerprint_ids and built_in flag.
+    if let Some(name) = &patch.name {
+        let built_in_now = payload
+            .get("built_in")
+            .and_then(|v| v.as_bool())
+            .unwrap_or(false);
+        if built_in_now {
+            return Err(HandlerError::BadRequest(
+                "cannot rename a built-in persona (Me) — update the IdentityCard display name instead".to_string(),
+            ));
+        }
+        payload.insert("name".to_string(), Value::String(name.trim().to_string()));
+    }
+    if let Some(relationship) = &patch.relationship {
+        payload.insert(
+            "relationship".to_string(),
+            Value::String(relationship.clone()),
+        );
+    }
+    if let Some(aliases) = &patch.aliases {
+        payload.insert(
+            "aliases".to_string(),
+            Value::Array(aliases.iter().map(|s| Value::String(s.clone())).collect()),
+        );
     }
 
     // 4. Execute Update. Keep the same content-addressed primary key.
@@ -1131,6 +1203,51 @@ mod tests {
     #[test]
     fn short_fingerprint_id_handles_empty() {
         assert_eq!(short_fingerprint_id(""), "");
+    }
+
+    #[test]
+    fn persona_patch_not_empty_when_only_name_set() {
+        let patch = PersonaPatch {
+            name: Some("Tom".to_string()),
+            ..Default::default()
+        };
+        assert!(!patch.is_empty());
+    }
+
+    #[test]
+    fn persona_patch_not_empty_when_only_relationship_set() {
+        let patch = PersonaPatch {
+            relationship: Some("friend".to_string()),
+            ..Default::default()
+        };
+        assert!(!patch.is_empty());
+    }
+
+    #[test]
+    fn persona_patch_not_empty_when_only_aliases_set() {
+        let patch = PersonaPatch {
+            aliases: Some(vec!["tommy".to_string()]),
+            ..Default::default()
+        };
+        assert!(!patch.is_empty());
+    }
+
+    #[test]
+    fn allowed_relationships_includes_every_design_doc_value() {
+        for r in &[
+            "self",
+            "family",
+            "colleague",
+            "friend",
+            "acquaintance",
+            "unknown",
+        ] {
+            assert!(
+                ALLOWED_RELATIONSHIPS.contains(r),
+                "expected '{}' in ALLOWED_RELATIONSHIPS",
+                r
+            );
+        }
     }
 
     #[test]

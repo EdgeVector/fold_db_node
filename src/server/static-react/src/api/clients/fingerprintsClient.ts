@@ -151,7 +151,26 @@ export interface PersonaPatch {
   remove_excluded_edge_id?: string;
   add_excluded_mention_id?: string;
   remove_excluded_mention_id?: string;
+  /** Rename the persona. Rejected by the backend when built_in is true. */
+  name?: string;
+  /** Relationship category. One of
+   *  self | family | colleague | friend | acquaintance | unknown. */
+  relationship?: string;
+  /** Replace the aliases array wholesale. */
+  aliases?: string[];
 }
+
+/** The canonical relationship list the backend accepts. Mirrors
+ *  `ALLOWED_RELATIONSHIPS` in handlers/fingerprints/personas.rs. */
+export const RELATIONSHIP_OPTIONS = [
+  "self",
+  "family",
+  "colleague",
+  "friend",
+  "acquaintance",
+  "unknown",
+] as const;
+export type Relationship = (typeof RELATIONSHIP_OPTIONS)[number];
 
 /**
  * Apply a patch to an existing Persona and return the freshly-
