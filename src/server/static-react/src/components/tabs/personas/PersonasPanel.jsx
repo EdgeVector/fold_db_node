@@ -297,9 +297,9 @@ function PersonaDetailBody({ detail, onThresholdCommit }) {
 
       {detail.diagnostics && <Diagnostics diagnostics={detail.diagnostics} />}
 
-      <CountRow label="Fingerprints" items={detail.fingerprint_ids} testId="persona-fingerprints" />
-      <CountRow label="Edges" items={detail.edge_ids} testId="persona-edges" />
-      <CountRow label="Mentions" items={detail.mention_ids} testId="persona-mentions" />
+      <FingerprintRows fingerprints={detail.fingerprints || []} fallbackIds={detail.fingerprint_ids} />
+      <EdgeRows edges={detail.edges || []} fallbackIds={detail.edge_ids} />
+      <MentionRows mentions={detail.mentions || []} fallbackIds={detail.mention_ids} />
 
       {detail.identity_id && (
         <div className="text-xs text-secondary">
@@ -311,25 +311,143 @@ function PersonaDetailBody({ detail, onThresholdCommit }) {
   )
 }
 
-function CountRow({ label, items, testId }) {
+function SectionShell({ label, count, testId, children }) {
   return (
     <div data-testid={testId}>
       <div className="text-xs text-secondary mb-1">
-        {label}: <span className="font-mono text-tertiary">{items.length}</span>
+        {label}: <span className="font-mono text-tertiary">{count}</span>
       </div>
-      {items.length > 0 && (
-        <ul className="max-h-32 overflow-y-auto text-[11px] font-mono text-tertiary space-y-0.5">
-          {items.slice(0, 20).map(id => (
-            <li key={id} className="truncate">
-              {id}
-            </li>
-          ))}
-          {items.length > 20 && (
-            <li className="italic">…and {items.length - 20} more</li>
-          )}
+      {count > 0 && (
+        <ul className="max-h-40 overflow-y-auto text-[11px] text-tertiary space-y-0.5">
+          {children}
         </ul>
       )}
     </div>
+  )
+}
+
+function FingerprintRows({ fingerprints, fallbackIds }) {
+  // Fall back to opaque ids if the backend hasn't returned enriched
+  // content yet (older release, or dangling fingerprints). This keeps
+  // the panel from silently showing nothing when enrichment is
+  // missing.
+  if (fingerprints.length === 0) {
+    return (
+      <SectionShell
+        label="Fingerprints"
+        count={fallbackIds.length}
+        testId="persona-fingerprints"
+      >
+        {fallbackIds.slice(0, 20).map(id => (
+          <li key={id} className="truncate font-mono">
+            {id}
+          </li>
+        ))}
+        {fallbackIds.length > 20 && (
+          <li className="italic">…and {fallbackIds.length - 20} more</li>
+        )}
+      </SectionShell>
+    )
+  }
+  return (
+    <SectionShell
+      label="Fingerprints"
+      count={fingerprints.length}
+      testId="persona-fingerprints"
+    >
+      {fingerprints.slice(0, 40).map(fp => (
+        <li key={fp.id} className="flex items-baseline gap-2">
+          <span className="text-[9px] uppercase tracking-wider text-gruvbox-yellow bg-gruvbox-yellow/10 border border-gruvbox-yellow/30 rounded px-1.5 py-0.5 font-mono shrink-0">
+            {fp.kind || 'unknown'}
+          </span>
+          <span className="truncate text-primary">{fp.display_value || '(empty)'}</span>
+        </li>
+      ))}
+      {fingerprints.length > 40 && (
+        <li className="italic">…and {fingerprints.length - 40} more</li>
+      )}
+    </SectionShell>
+  )
+}
+
+function EdgeRows({ edges, fallbackIds }) {
+  if (edges.length === 0) {
+    return (
+      <SectionShell label="Edges" count={fallbackIds.length} testId="persona-edges">
+        {fallbackIds.slice(0, 20).map(id => (
+          <li key={id} className="truncate font-mono">
+            {id}
+          </li>
+        ))}
+        {fallbackIds.length > 20 && (
+          <li className="italic">…and {fallbackIds.length - 20} more</li>
+        )}
+      </SectionShell>
+    )
+  }
+  return (
+    <SectionShell label="Edges" count={edges.length} testId="persona-edges">
+      {edges.slice(0, 40).map(e => (
+        <li key={e.id} className="flex items-baseline gap-2">
+          <span className="text-[9px] uppercase tracking-wider text-gruvbox-blue bg-gruvbox-blue/10 border border-gruvbox-blue/30 rounded px-1.5 py-0.5 font-mono shrink-0">
+            {e.kind}
+          </span>
+          <span className="font-mono truncate">{e.a}</span>
+          <span className="text-tertiary">·</span>
+          <span className="font-mono truncate">{e.b}</span>
+          <span className="ml-auto font-mono text-gruvbox-green shrink-0">
+            {e.weight.toFixed(2)}
+          </span>
+        </li>
+      ))}
+      {edges.length > 40 && (
+        <li className="italic">…and {edges.length - 40} more</li>
+      )}
+    </SectionShell>
+  )
+}
+
+function MentionRows({ mentions, fallbackIds }) {
+  if (mentions.length === 0) {
+    return (
+      <SectionShell label="Mentions" count={fallbackIds.length} testId="persona-mentions">
+        {fallbackIds.slice(0, 20).map(id => (
+          <li key={id} className="truncate font-mono">
+            {id}
+          </li>
+        ))}
+        {fallbackIds.length > 20 && (
+          <li className="italic">…and {fallbackIds.length - 20} more</li>
+        )}
+      </SectionShell>
+    )
+  }
+  return (
+    <SectionShell label="Mentions" count={mentions.length} testId="persona-mentions">
+      {mentions.slice(0, 40).map(m => (
+        <li key={m.id} className="flex items-baseline gap-2">
+          <span className="text-[9px] uppercase tracking-wider text-gruvbox-aqua bg-gruvbox-aqua/10 border border-gruvbox-aqua/30 rounded px-1.5 py-0.5 font-mono shrink-0">
+            {m.extractor}
+          </span>
+          <span className="truncate">
+            <span className="font-mono text-secondary">{m.source_schema}</span>
+            <span className="text-tertiary">:</span>
+            <span className="font-mono">{m.source_key}</span>
+            {m.source_field && (
+              <span className="text-tertiary"> · {m.source_field}</span>
+            )}
+          </span>
+          {m.created_at && (
+            <span className="ml-auto font-mono text-tertiary shrink-0">
+              {m.created_at.slice(0, 10)}
+            </span>
+          )}
+        </li>
+      ))}
+      {mentions.length > 40 && (
+        <li className="italic">…and {mentions.length - 40} more</li>
+      )}
+    </SectionShell>
   )
 }
 

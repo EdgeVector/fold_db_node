@@ -25,7 +25,7 @@
 
 use crate::fingerprints::canonical_names;
 use crate::fingerprints::resolver::{PersonaResolver, PersonaSpec, ResolveDiagnostics};
-use crate::fingerprints::schemas::PERSONA;
+use crate::fingerprints::schemas::{EDGE, FINGERPRINT, MENTION, PERSONA};
 use crate::fold_node::FoldNode;
 use crate::handlers::response::{ApiResponse, HandlerError, HandlerResult};
 use fold_db::schema::types::key_value::KeyValue;
@@ -80,10 +80,57 @@ pub struct PersonaDetailResponse {
     pub fingerprint_ids: Vec<String>,
     pub edge_ids: Vec<String>,
     pub mention_ids: Vec<String>,
+    /// Enriched fingerprint records for the resolved set. Same
+    /// ordering as `fingerprint_ids`. Entries that could not be
+    /// fetched (dangling reference) are omitted and surface via
+    /// `ResolveDiagnostics.dangling_edge_ids` or a new
+    /// `missing_fingerprint_ids` bucket on the frontend.
+    pub fingerprints: Vec<FingerprintView>,
+    pub edges: Vec<EdgeView>,
+    pub mentions: Vec<MentionView>,
     /// `None` when the resolver reported a clean result;
     /// `Some(diagnostics)` when anything was missing, filtered,
     /// or excluded. The UI should surface diagnostics loudly.
     pub diagnostics: Option<ResolveDiagnostics>,
+}
+
+/// A Fingerprint record flattened for the Persona detail view.
+/// Carries just enough for the UI to render "tom@acme.com (email)"
+/// or "face embedding (512-dim)" without a second round trip.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct FingerprintView {
+    pub id: String,
+    pub kind: String,
+    /// Human-readable form. For scalar kinds (email, phone, name)
+    /// this is the canonical value. For face embeddings we collapse
+    /// the 512-float vector down to a short placeholder so the UI
+    /// doesn't have to render 2 KB of floats — the full vector
+    /// stays on the Fingerprint record, where the face-specific
+    /// UI can fetch it if needed.
+    pub display_value: String,
+    pub first_seen: Option<String>,
+    pub last_seen: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct EdgeView {
+    pub id: String,
+    pub a: String,
+    pub b: String,
+    pub kind: String,
+    pub weight: f32,
+    pub created_at: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct MentionView {
+    pub id: String,
+    pub source_schema: String,
+    pub source_key: String,
+    pub source_field: String,
+    pub extractor: String,
+    pub confidence: f32,
+    pub created_at: Option<String>,
 }
 
 // ── Handlers ─────────────────────────────────────────────────────
@@ -223,6 +270,15 @@ pub async fn get_persona(
     edge_ids.sort();
     mention_ids.sort();
 
+    // Hydrate the resolved ID sets into full records so the UI has
+    // something readable to show (emails, face-embedding placeholders,
+    // source record pointers) instead of opaque hashes. One HashKey
+    // query per record — fine for Phase 1 dogfood cluster sizes; a
+    // future optimization can batch or cache.
+    let fingerprints = fetch_fingerprint_views(&processor, &fp_ids).await?;
+    let edges = fetch_edge_views(&processor, &edge_ids).await?;
+    let mentions = fetch_mention_views(&processor, &mention_ids).await?;
+
     let diagnostics = result.diagnostics().cloned();
 
     log::info!(
@@ -249,8 +305,221 @@ pub async fn get_persona(
         fingerprint_ids: fp_ids,
         edge_ids,
         mention_ids,
+        fingerprints,
+        edges,
+        mentions,
         diagnostics,
     }))
+}
+
+// ── Enrichment helpers ───────────────────────────────────────────
+//
+// Each helper runs one HashKey query per ID against the appropriate
+// schema, flattens the result into a view struct, and skips IDs the
+// store no longer has (dangling references are already surfaced via
+// the resolver's diagnostics). Missing records are logged but do not
+// fail the request — the goal is best-effort enrichment.
+
+async fn fetch_fingerprint_views(
+    processor: &crate::fold_node::OperationProcessor,
+    ids: &[String],
+) -> Result<Vec<FingerprintView>, HandlerError> {
+    let canonical = canonical_names::lookup(FINGERPRINT).map_err(|e| {
+        HandlerError::Internal(format!(
+            "fingerprints: canonical_names not initialized for '{}': {}",
+            FINGERPRINT, e
+        ))
+    })?;
+    let mut out = Vec::with_capacity(ids.len());
+    for id in ids {
+        let query = Query {
+            schema_name: canonical.clone(),
+            fields: vec![
+                "id".to_string(),
+                "kind".to_string(),
+                "value".to_string(),
+                "first_seen".to_string(),
+                "last_seen".to_string(),
+            ],
+            filter: Some(fold_db::schema::types::field::HashRangeFilter::HashKey(
+                id.clone(),
+            )),
+            as_of: None,
+            rehydrate_depth: None,
+            sort_order: None,
+            value_filters: None,
+        };
+        let records = processor.execute_query_json(query).await.map_err(|e| {
+            HandlerError::Internal(format!("fingerprint '{}' query failed: {}", id, e))
+        })?;
+        let Some(record) = records.first() else {
+            log::warn!("fingerprints.handler: fingerprint '{}' not found during enrichment", id);
+            continue;
+        };
+        let Some(fields) = record.get("fields") else {
+            continue;
+        };
+        let kind = string_field(fields, "kind").unwrap_or_default();
+        let display_value = fingerprint_display_value(&kind, fields.get("value"));
+        out.push(FingerprintView {
+            id: id.clone(),
+            kind,
+            display_value,
+            first_seen: string_field(fields, "first_seen"),
+            last_seen: string_field(fields, "last_seen"),
+        });
+    }
+    Ok(out)
+}
+
+async fn fetch_edge_views(
+    processor: &crate::fold_node::OperationProcessor,
+    ids: &[String],
+) -> Result<Vec<EdgeView>, HandlerError> {
+    let canonical = canonical_names::lookup(EDGE).map_err(|e| {
+        HandlerError::Internal(format!(
+            "fingerprints: canonical_names not initialized for '{}': {}",
+            EDGE, e
+        ))
+    })?;
+    let mut out = Vec::with_capacity(ids.len());
+    for id in ids {
+        let query = Query {
+            schema_name: canonical.clone(),
+            fields: vec![
+                "id".to_string(),
+                "a".to_string(),
+                "b".to_string(),
+                "kind".to_string(),
+                "weight".to_string(),
+                "created_at".to_string(),
+            ],
+            filter: Some(fold_db::schema::types::field::HashRangeFilter::HashKey(
+                id.clone(),
+            )),
+            as_of: None,
+            rehydrate_depth: None,
+            sort_order: None,
+            value_filters: None,
+        };
+        let records = processor
+            .execute_query_json(query)
+            .await
+            .map_err(|e| HandlerError::Internal(format!("edge '{}' query failed: {}", id, e)))?;
+        let Some(record) = records.first() else {
+            log::warn!("fingerprints.handler: edge '{}' not found during enrichment", id);
+            continue;
+        };
+        let Some(fields) = record.get("fields") else {
+            continue;
+        };
+        let weight = fields
+            .get("weight")
+            .and_then(|v| v.as_f64())
+            .map(|f| f as f32)
+            .unwrap_or(0.0);
+        out.push(EdgeView {
+            id: id.clone(),
+            a: string_field(fields, "a").unwrap_or_default(),
+            b: string_field(fields, "b").unwrap_or_default(),
+            kind: string_field(fields, "kind").unwrap_or_default(),
+            weight,
+            created_at: string_field(fields, "created_at"),
+        });
+    }
+    Ok(out)
+}
+
+async fn fetch_mention_views(
+    processor: &crate::fold_node::OperationProcessor,
+    ids: &[String],
+) -> Result<Vec<MentionView>, HandlerError> {
+    let canonical = canonical_names::lookup(MENTION).map_err(|e| {
+        HandlerError::Internal(format!(
+            "fingerprints: canonical_names not initialized for '{}': {}",
+            MENTION, e
+        ))
+    })?;
+    let mut out = Vec::with_capacity(ids.len());
+    for id in ids {
+        let query = Query {
+            schema_name: canonical.clone(),
+            fields: vec![
+                "id".to_string(),
+                "source_schema".to_string(),
+                "source_key".to_string(),
+                "source_field".to_string(),
+                "extractor".to_string(),
+                "confidence".to_string(),
+                "created_at".to_string(),
+            ],
+            filter: Some(fold_db::schema::types::field::HashRangeFilter::HashKey(
+                id.clone(),
+            )),
+            as_of: None,
+            rehydrate_depth: None,
+            sort_order: None,
+            value_filters: None,
+        };
+        let records = processor
+            .execute_query_json(query)
+            .await
+            .map_err(|e| HandlerError::Internal(format!("mention '{}' query failed: {}", id, e)))?;
+        let Some(record) = records.first() else {
+            log::warn!(
+                "fingerprints.handler: mention '{}' not found during enrichment",
+                id
+            );
+            continue;
+        };
+        let Some(fields) = record.get("fields") else {
+            continue;
+        };
+        let confidence = fields
+            .get("confidence")
+            .and_then(|v| v.as_f64())
+            .map(|f| f as f32)
+            .unwrap_or(0.0);
+        out.push(MentionView {
+            id: id.clone(),
+            source_schema: string_field(fields, "source_schema").unwrap_or_default(),
+            source_key: string_field(fields, "source_key").unwrap_or_default(),
+            source_field: string_field(fields, "source_field").unwrap_or_default(),
+            extractor: string_field(fields, "extractor").unwrap_or_default(),
+            confidence,
+            created_at: string_field(fields, "created_at"),
+        });
+    }
+    Ok(out)
+}
+
+/// Reduce a Fingerprint.value cell into a human-readable string.
+///
+/// Scalar kinds (email, phone, full_name, first_name, handle,
+/// node_pub_key) return the string as-is. Face embeddings are a
+/// 512-float vector, ~2 KB serialized — we collapse them to a short
+/// placeholder so the UI doesn't have to render the whole vector.
+/// Unknown kinds fall through to a best-effort stringification.
+fn fingerprint_display_value(kind: &str, value: Option<&Value>) -> String {
+    let Some(value) = value else {
+        return String::new();
+    };
+    if kind.eq_ignore_ascii_case("face_embedding") || kind.eq_ignore_ascii_case("faceembedding") {
+        let dim = value.as_array().map(|a| a.len()).unwrap_or(0);
+        return format!("face embedding ({} dims)", dim);
+    }
+    match value {
+        Value::String(s) => s.clone(),
+        Value::Array(items) => {
+            if items.is_empty() {
+                "[]".to_string()
+            } else {
+                format!("{} items", items.len())
+            }
+        }
+        Value::Null => String::new(),
+        other => other.to_string(),
+    }
 }
 
 /// Update the threshold field on an existing Persona record, then
@@ -528,6 +797,27 @@ mod tests {
     fn string_array_field_returns_empty_when_missing() {
         let fields = json!({});
         assert_eq!(string_array_field(&fields, "aliases"), Vec::<String>::new());
+    }
+
+    #[test]
+    fn fingerprint_display_value_handles_scalar_kinds() {
+        let v = json!("tom@acme.com");
+        assert_eq!(fingerprint_display_value("email", Some(&v)), "tom@acme.com");
+    }
+
+    #[test]
+    fn fingerprint_display_value_collapses_face_embedding_to_dim_count() {
+        let vec: Vec<Value> = (0..512).map(|_| json!(0.1)).collect();
+        let v = Value::Array(vec);
+        assert_eq!(
+            fingerprint_display_value("face_embedding", Some(&v)),
+            "face embedding (512 dims)"
+        );
+    }
+
+    #[test]
+    fn fingerprint_display_value_missing_value_is_empty() {
+        assert_eq!(fingerprint_display_value("email", None), "");
     }
 
     #[test]
