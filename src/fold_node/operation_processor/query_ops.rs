@@ -115,7 +115,7 @@ impl OperationProcessor {
                 let author_pub_key = record
                     .metadata
                     .values()
-                    .find_map(|m| m.source_pub_key.clone())
+                    .find_map(|m| m.writer_pubkey.clone())
                     .filter(|s| !s.is_empty());
                 serde_json::json!({
                     "key": key,
@@ -167,7 +167,7 @@ impl OperationProcessor {
                 let author_pub_key = record
                     .metadata
                     .values()
-                    .find_map(|m| m.source_pub_key.clone())
+                    .find_map(|m| m.writer_pubkey.clone())
                     .filter(|s| !s.is_empty());
                 serde_json::json!({
                     "key": key,

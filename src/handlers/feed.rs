@@ -129,7 +129,7 @@ pub async fn get_feed(
         // - Access enforcement in this handler is performed explicitly above:
         //   only fields whose `min_read_tier == TrustTier::Public` are retained
         //   in `public_fields`, and records are filtered by friend authorship
-        //   via `source_pub_key`. This is strictly tighter than the trust-tier
+        //   via `writer_pubkey`. This is strictly tighter than the trust-tier
         //   check would apply for the owner.
         //
         // See `handlers::query` / `handlers::discovery` for the
@@ -147,7 +147,7 @@ pub async fn get_feed(
             let author = record
                 .metadata
                 .values()
-                .find_map(|meta| meta.source_pub_key.as_deref());
+                .find_map(|meta| meta.writer_pubkey.as_deref());
 
             let author = match author {
                 Some(a) if friends.contains(a) => a.to_string(),
