@@ -323,7 +323,34 @@ impl PersonaResolver {
             mention_ids.insert(m.clone());
         }
 
-        if diagnostics.is_clean() {
+        let clean = diagnostics.is_clean();
+        if !clean {
+            log::warn!(
+                "fingerprints.resolver: persona {} resolved with diagnostics \
+                 (fps={}, edges={}, mentions={}, missing_seeds={}, excluded_edges={}, \
+                 forbidden_edges={}, below_threshold={}, excluded_mentions={}, dangling_edges={})",
+                spec.persona_id,
+                visited_fps.len(),
+                visited_edges.len(),
+                mention_ids.len(),
+                diagnostics.missing_seed_fingerprint_ids.len(),
+                diagnostics.excluded_edge_count,
+                diagnostics.forbidden_edge_count,
+                diagnostics.below_threshold_edge_count,
+                diagnostics.excluded_mention_count,
+                diagnostics.dangling_edge_ids.len(),
+            );
+        } else {
+            log::debug!(
+                "fingerprints.resolver: persona {} resolved cleanly (fps={}, edges={}, mentions={})",
+                spec.persona_id,
+                visited_fps.len(),
+                visited_edges.len(),
+                mention_ids.len(),
+            );
+        }
+
+        if clean {
             Ok(ResolveResult::Resolved {
                 persona_id: spec.persona_id.clone(),
                 fingerprint_ids: visited_fps,

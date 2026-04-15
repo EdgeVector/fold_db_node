@@ -114,6 +114,11 @@ pub async fn register_phase_1_schemas(node: &FoldNode) -> FoldDbResult<Registrat
 /// locally, approve it, and populate the process-wide
 /// canonical_names registry.
 pub async fn lookup_phase_1_schemas(node: &FoldNode) -> FoldDbResult<RegistrationOutcome> {
+    let started = std::time::Instant::now();
+    log::info!(
+        "fingerprints.registration: fetching {} Phase 1 built-in schemas from schema service",
+        PHASE_1_DESCRIPTIVE_NAMES.len()
+    );
     let mut outcome = RegistrationOutcome::default();
 
     // 1. Fetch the full list of available schemas from the service.
@@ -191,6 +196,12 @@ pub async fn lookup_phase_1_schemas(node: &FoldNode) -> FoldDbResult<Registratio
     // semantic labels to runtime names.
     let mapping = outcome.build_canonical_names()?;
     canonical_names::install(mapping)?;
+
+    log::info!(
+        "fingerprints.registration: Phase 1 registration complete in {:?} ({} schemas loaded and approved)",
+        started.elapsed(),
+        outcome.total()
+    );
 
     Ok(outcome)
 }
