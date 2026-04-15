@@ -25,7 +25,7 @@
 
 use crate::fingerprints::canonical_names;
 use crate::fingerprints::resolver::{PersonaResolver, PersonaSpec, ResolveDiagnostics};
-use crate::fingerprints::schemas::{EDGE, FINGERPRINT, MENTION, PERSONA};
+use crate::fingerprints::schemas::{EDGE, FINGERPRINT, MENTION, MENTION_BY_FINGERPRINT, PERSONA};
 use crate::fold_node::FoldNode;
 use crate::handlers::response::{ApiResponse, HandlerError, HandlerResult};
 use fold_db::schema::types::key_value::KeyValue;
@@ -101,10 +101,16 @@ pub struct PersonaDetailResponse {
 
 /// A Fingerprint record flattened for the Persona detail view.
 /// Carries just enough for the UI to render "tom@acme.com (email)"
-/// or "face embedding (512-dim)" without a second round trip.
+/// or "face embedding (512-dim) · Photos:IMG_1234" without a
+/// second round trip.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct FingerprintView {
     pub id: String,
+    /// First 8 hex chars of the Fingerprint key (after the `fp_`
+    /// prefix). Lets the UI distinguish otherwise-identical face
+    /// embedding rows at a glance, which is friction point F2 from
+    /// the Phase 1 walkthrough findings.
+    pub short_id: String,
     pub kind: String,
     /// Human-readable form. For scalar kinds (email, phone, name)
     /// this is the canonical value. For face embeddings we collapse
@@ -115,6 +121,22 @@ pub struct FingerprintView {
     pub display_value: String,
     pub first_seen: Option<String>,
     pub last_seen: Option<String>,
+    /// A sample source record that references this fingerprint,
+    /// formatted as `"<source_schema>:<source_key>"`. Populated from
+    /// the most recent Mention via the MentionByFingerprint
+    /// junction. `None` when no mentions touch this fingerprint
+    /// (e.g. a Persona seed fingerprint the user added directly).
+    ///
+    /// The UI uses this to render face rows like "face_embedding
+    /// (512 dims) · Photos:IMG_1234 · 2026-04-15" so five
+    /// otherwise-identical face fingerprints become distinguishable
+    /// by the photo each came from.
+    pub sample_source: Option<String>,
+    /// `source_field` on the sample Mention (e.g. "face").
+    pub sample_source_field: Option<String>,
+    /// `created_at` on the sample Mention — when this fingerprint
+    /// was first observed on the sample source record.
+    pub sample_mention_at: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -384,15 +406,103 @@ async fn fetch_fingerprint_views(
         };
         let kind = string_field(fields, "kind").unwrap_or_default();
         let display_value = fingerprint_display_value(&kind, fields.get("value"));
+        let sample = fetch_sample_mention_for_fingerprint(processor, id).await?;
         out.push(FingerprintView {
             id: id.clone(),
+            short_id: short_fingerprint_id(id),
             kind,
             display_value,
             first_seen: string_field(fields, "first_seen"),
             last_seen: string_field(fields, "last_seen"),
+            sample_source: sample
+                .as_ref()
+                .map(|m| format!("{}:{}", m.source_schema, m.source_key)),
+            sample_source_field: sample.as_ref().and_then(|m| {
+                if m.source_field.is_empty() {
+                    None
+                } else {
+                    Some(m.source_field.clone())
+                }
+            }),
+            sample_mention_at: sample.and_then(|m| m.created_at),
         });
     }
     Ok(out)
+}
+
+/// Join MentionByFingerprint → Mention to find a representative
+/// source record for a given fingerprint. Returns the first
+/// successfully-fetched Mention for the fingerprint, or `None` when
+/// the fingerprint is not referenced by any Mention (e.g. a Persona
+/// seed fingerprint that was hand-added via the Suggestions accept
+/// endpoint).
+///
+/// "First" is the junction's natural order — range keys are mention
+/// ids which are deterministic per source record, so the ordering
+/// is stable across calls even though it isn't explicitly sorted.
+/// A future enhancement could return the MOST RECENT mention by
+/// `created_at`; the current implementation is cheaper and meets
+/// the friction-point fix for F2/F8 (at-a-glance distinguishability
+/// for otherwise-identical face rows).
+async fn fetch_sample_mention_for_fingerprint(
+    processor: &crate::fold_node::OperationProcessor,
+    fingerprint_id: &str,
+) -> Result<Option<MentionView>, HandlerError> {
+    let junction_canonical = canonical_names::lookup(MENTION_BY_FINGERPRINT).map_err(|e| {
+        HandlerError::Internal(format!(
+            "fingerprints: canonical_names not initialized for '{}': {}",
+            MENTION_BY_FINGERPRINT, e
+        ))
+    })?;
+    let junction_query = Query {
+        schema_name: junction_canonical,
+        fields: vec!["mention_id".to_string()],
+        filter: Some(fold_db::schema::types::field::HashRangeFilter::HashKey(
+            fingerprint_id.to_string(),
+        )),
+        as_of: None,
+        rehydrate_depth: None,
+        sort_order: None,
+        value_filters: None,
+    };
+    let junction_records = processor
+        .execute_query_json(junction_query)
+        .await
+        .map_err(|e| {
+            HandlerError::Internal(format!(
+                "sample-mention junction query failed for '{}': {}",
+                fingerprint_id, e
+            ))
+        })?;
+
+    let Some(first) = junction_records.first() else {
+        return Ok(None);
+    };
+    let Some(mention_id) = first
+        .get("fields")
+        .and_then(|f| f.get("mention_id"))
+        .and_then(|v| v.as_str())
+    else {
+        return Ok(None);
+    };
+
+    // Reuse the existing Mention fetcher with a single-id slice so we
+    // get exactly the same view type the UI already consumes for the
+    // mentions section. Empty result means a dangling junction row —
+    // logged and treated as "no sample available".
+    let mentions =
+        fetch_mention_views(processor, std::slice::from_ref(&mention_id.to_string())).await?;
+    Ok(mentions.into_iter().next())
+}
+
+/// Extract a short display id for the UI.
+/// Takes everything after the first underscore (if any) and keeps
+/// the first 8 chars, giving ~32 bits of visual distinguishability
+/// across otherwise-identical face embedding rows. Falls back to
+/// the raw id when it's shorter than 8 chars or has no underscore.
+fn short_fingerprint_id(full: &str) -> String {
+    let tail = full.split_once('_').map(|(_, rest)| rest).unwrap_or(full);
+    tail.chars().take(8).collect()
 }
 
 async fn fetch_edge_views(
@@ -998,6 +1108,29 @@ mod tests {
             ..Default::default()
         };
         assert!(!patch.is_empty());
+    }
+
+    #[test]
+    fn short_fingerprint_id_takes_8_chars_after_underscore() {
+        assert_eq!(
+            short_fingerprint_id("fp_cd0c9614db89af2080dd4e99d5fe021699ab43fa"),
+            "cd0c9614"
+        );
+    }
+
+    #[test]
+    fn short_fingerprint_id_handles_missing_underscore() {
+        assert_eq!(short_fingerprint_id("abcdef0123456789"), "abcdef01");
+    }
+
+    #[test]
+    fn short_fingerprint_id_handles_short_input() {
+        assert_eq!(short_fingerprint_id("fp_abc"), "abc");
+    }
+
+    #[test]
+    fn short_fingerprint_id_handles_empty() {
+        assert_eq!(short_fingerprint_id(""), "");
     }
 
     #[test]

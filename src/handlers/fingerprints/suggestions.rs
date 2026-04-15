@@ -546,12 +546,17 @@ mod tests {
     use super::*;
 
     fn fp(kind: &str, value: &str) -> FingerprintView {
+        let id = format!("fp_{}_{}", kind, value);
         FingerprintView {
-            id: format!("fp_{}_{}", kind, value),
+            short_id: id.chars().skip(3).take(8).collect(),
+            id,
             kind: kind.to_string(),
             display_value: value.to_string(),
             first_seen: None,
             last_seen: None,
+            sample_source: None,
+            sample_source_field: None,
+            sample_mention_at: None,
         }
     }
 

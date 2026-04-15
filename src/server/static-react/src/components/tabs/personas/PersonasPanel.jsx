@@ -429,6 +429,27 @@ function FingerprintRows({ fingerprints, fallbackIds }) {
             {fp.kind || 'unknown'}
           </span>
           <span className="truncate text-primary">{fp.display_value || '(empty)'}</span>
+          {fp.sample_source && (
+            <span
+              className="font-mono text-tertiary text-[10px] truncate shrink-0"
+              title={
+                fp.sample_mention_at
+                  ? `${fp.sample_source} · ${fp.sample_mention_at}`
+                  : fp.sample_source
+              }
+            >
+              · {fp.sample_source}
+              {fp.sample_source_field ? ` · ${fp.sample_source_field}` : ''}
+            </span>
+          )}
+          {fp.short_id && (
+            <span
+              className="font-mono text-[10px] text-tertiary shrink-0 ml-auto"
+              title={fp.id}
+            >
+              {fp.short_id}
+            </span>
+          )}
         </li>
       ))}
       {fingerprints.length > 40 && (
