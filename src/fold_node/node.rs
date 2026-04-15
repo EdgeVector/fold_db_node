@@ -184,6 +184,36 @@ impl FoldNode {
         // Configure org sync if the sync engine is enabled and orgs exist
         node.configure_org_sync_if_needed().await;
 
+        // Register the twelve Phase 1 built-in fingerprint schemas so
+        // the fingerprints subsystem (personas, face extraction,
+        // ingest endpoint) can serve requests. Best-effort: an
+        // unreachable schema service is logged and the node still
+        // boots so non-fingerprints functionality stays available.
+        //
+        // Test/mock schema-service URLs are skipped — unit tests that
+        // don't need fingerprints don't pay the registration cost,
+        // and tests that DO need it call register_phase_1_schemas
+        // directly against their own in-process schema service.
+        if let Some(url) = node.schema_service_url() {
+            if !Self::is_test_schema_service(&url) {
+                match crate::fingerprints::registration::register_phase_1_schemas(&node).await {
+                    Ok(outcome) => {
+                        log::info!(
+                            "fingerprints: Phase 1 registration complete ({} schemas)",
+                            outcome.total()
+                        );
+                    }
+                    Err(e) => {
+                        log::warn!(
+                            "fingerprints: Phase 1 registration failed — subsystem dormant \
+                             until next restart. Error: {}",
+                            e
+                        );
+                    }
+                }
+            }
+        }
+
         Ok(node)
     }
 
