@@ -37,6 +37,7 @@
 pub mod canonical_names;
 pub mod extractors;
 pub mod face_ann_cache;
+pub mod ingest_photo;
 pub mod keys;
 pub mod planned_record;
 pub mod registration;
