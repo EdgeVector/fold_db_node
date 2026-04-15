@@ -678,12 +678,17 @@ impl FoldHttpServer {
     fn configure_fingerprints_routes(cfg: &mut web::ServiceConfig) {
         use crate::server::routes::fingerprints as fp_routes;
         cfg.service(
-            web::scope("/fingerprints").service(
-                web::scope("/personas")
-                    .route("", web::get().to(fp_routes::list_personas))
-                    .route("/{id}", web::get().to(fp_routes::get_persona))
-                    .route("/{id}", web::patch().to(fp_routes::update_persona)),
-            ),
+            web::scope("/fingerprints")
+                .route(
+                    "/ingest-photo-faces",
+                    web::post().to(fp_routes::ingest_photo_faces),
+                )
+                .service(
+                    web::scope("/personas")
+                        .route("", web::get().to(fp_routes::list_personas))
+                        .route("/{id}", web::get().to(fp_routes::get_persona))
+                        .route("/{id}", web::patch().to(fp_routes::update_persona)),
+                ),
         );
     }
 

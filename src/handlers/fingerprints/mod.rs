@@ -10,8 +10,13 @@
 //! (`crate::server::routes::fingerprints`) wraps them in actix
 //! responses.
 
+pub mod ingest;
 pub mod personas;
 
+pub use ingest::{
+    ingest_photo_faces_batch, DetectedFaceDto, IngestPhotoFacesRequest, IngestPhotoFacesResponse,
+    PhotoFacesDto, PhotoIngestResult,
+};
 pub use personas::{
     get_persona, list_personas, update_persona_threshold, ListPersonasResponse,
     PersonaDetailResponse, PersonaSummary,
