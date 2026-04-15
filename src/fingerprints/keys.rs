@@ -64,6 +64,11 @@ pub mod kind {
 /// Edge kinds. Same rationale as fingerprint kind constants.
 pub mod edge_kind {
     pub const STRONG_MATCH: &str = "StrongMatch";
+    /// Between `MIN_SIMILARITY_EDGE` and `STRONG_MATCH_CUTOFF` in
+    /// the face ingest path. Represents "plausibly the same face,
+    /// but close enough to be a sibling" — clusters at the default
+    /// threshold but splits at a tight threshold.
+    pub const MEDIUM_MATCH: &str = "MediumMatch";
     pub const CO_OCCURRENCE: &str = "CoOccurrence";
     pub const USER_ASSERTED: &str = "UserAsserted";
     pub const TEMPORAL_COINCIDENCE: &str = "TemporalCoincidence";

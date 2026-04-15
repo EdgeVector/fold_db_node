@@ -55,9 +55,11 @@
 //!   callers must invoke it explicitly after
 //!   `register_phase_1_schemas` (see the call site TODO).
 
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, OnceLock, RwLock};
 
 use instant_distance::{Builder, HnswMap, Point, Search};
+use tokio::sync::Mutex;
 
 use crate::fingerprints::canonical_names;
 use crate::fingerprints::schemas::FINGERPRINT;
@@ -279,6 +281,51 @@ impl FaceAnnCache {
 // ─────────────────────────────────────────────────────────────────
 
 static GLOBAL_CACHE: OnceLock<Arc<FaceAnnCache>> = OnceLock::new();
+
+/// Lazy first-use initialization flag. Flipped true after
+/// `rebuild_from_store` has run once for this process. Subsequent
+/// `ensure_cache_ready` calls short-circuit.
+static CACHE_INITIALIZED: AtomicBool = AtomicBool::new(false);
+
+/// Mutex used to serialize the one-time rebuild. Prevents a
+/// thundering herd when multiple concurrent ingestion tasks race to
+/// be the first to populate the cache.
+static CACHE_INIT_LOCK: OnceLock<Mutex<()>> = OnceLock::new();
+
+/// Lazy rebuild-from-store — call this at the start of any ingest
+/// path that intends to query the cache. The first call does the
+/// real work: acquires a mutex, double-checks the `initialized`
+/// flag, and runs `rebuild_from_store`. Every subsequent call is a
+/// cheap atomic load.
+///
+/// This replaces the alternative of wiring `rebuild_from_store`
+/// into node startup — moving it here keeps the face-ingest path
+/// self-contained, lets the cache warm up lazily when it's
+/// actually needed, and avoids editing `node::assemble` (which is
+/// a crowded merge-conflict surface).
+pub async fn ensure_cache_ready(node: &FoldNode) -> FoldDbResult<()> {
+    if CACHE_INITIALIZED.load(Ordering::Acquire) {
+        return Ok(());
+    }
+    let lock = CACHE_INIT_LOCK.get_or_init(|| Mutex::new(()));
+    let _guard = lock.lock().await;
+    // Re-check under the lock — another task may have won the race.
+    if CACHE_INITIALIZED.load(Ordering::Acquire) {
+        return Ok(());
+    }
+    let count = rebuild_from_store(node).await?;
+    CACHE_INITIALIZED.store(true, Ordering::Release);
+    log::info!("face_ann_cache: lazy rebuild on first ingest complete ({count} faces indexed)");
+    Ok(())
+}
+
+/// For tests that need to exercise the init path multiple times
+/// (e.g. rebuilding after a fake store change). Production code
+/// never calls this.
+#[cfg(test)]
+pub fn reset_initialization_flag_for_tests() {
+    CACHE_INITIALIZED.store(false, Ordering::Release);
+}
 
 /// Get (or lazily initialize) the process-wide face ANN cache.
 ///

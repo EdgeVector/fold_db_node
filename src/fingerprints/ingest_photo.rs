@@ -35,14 +35,38 @@
 //! returns a [`IngestionOutcome`] summarizing the face count and
 //! whether the extractor ran empty (for observability).
 
+use std::collections::HashMap;
 use std::sync::Arc;
 
+use serde_json::{json, Value};
 use sha2::{Digest, Sha256};
 
 use crate::fingerprints::extractors::face::{plan_face_extraction, DetectedFace};
+use crate::fingerprints::face_ann_cache::{cache, ensure_cache_ready, FaceEmbedding};
+use crate::fingerprints::keys::{edge_id, edge_kind, fingerprint_id_for_face_embedding};
+use crate::fingerprints::planned_record::PlannedRecord;
+use crate::fingerprints::schemas::{EDGE, EDGE_BY_FINGERPRINT};
 use crate::fingerprints::writer::{write_records, WriteOutcome};
 use crate::fold_node::FoldNode;
 use fold_db::error::FoldDbResult;
+
+/// Cosine similarity floor for emitting a face-to-face similarity
+/// edge. Below this, the two faces are considered independent
+/// observations with no persona-level relationship.
+const MIN_SIMILARITY_EDGE: f32 = 0.85;
+
+/// Cosine similarity cutoff that separates StrongMatch from
+/// MediumMatch. At or above this the pair is treated as "basically
+/// the same face"; between `MIN_SIMILARITY_EDGE` and this, the pair
+/// is a softer signal that still clusters at the default threshold
+/// but lets the user split them with a slider nudge.
+const STRONG_MATCH_CUTOFF: f32 = 0.95;
+
+/// Top-K neighbors to query from the cache per new face. K=5 is
+/// enough to cover the "same face across a burst of photos" case
+/// without blowing up the edge count; rarely-similar faces produce
+/// fewer hits because the threshold filter cuts them.
+const NEIGHBOR_QUERY_K: usize = 5;
 
 /// Summary of a single-photo ingestion pass.
 #[derive(Debug, Clone, Default)]
@@ -144,13 +168,175 @@ pub async fn ingest_photo_faces(
         now_iso8601,
     );
 
-    let write_outcome = write_records(node, &plan.records).await?;
+    let write_outcome = write_records(node.clone(), &plan.records).await?;
+
+    // Cross-photo similarity edges. This is the piece the design
+    // doc (fingerprints.md §Resolution) describes as "for each
+    // face-kind Fi: HNSW query against existing face Fingerprints"
+    // and that the original `extractors/face.rs` module explicitly
+    // deferred. See docs/findings/fingerprints_phase1_ui_walkthrough.md
+    // §Gap 2 for the walkthrough finding that shipped without it.
+    //
+    // Best-effort: a similarity-edge failure logs loudly but does
+    // NOT unwind the successful fingerprint/mention writes. The
+    // fingerprint graph stays correct at the record level; the
+    // persona view that depends on these edges degrades gracefully.
+    let similarity_edges =
+        emit_similarity_edges_for_faces(node, faces, &mention_id, now_iso8601).await;
+    let similarity_records_written = match similarity_edges {
+        Ok(n) => n,
+        Err(e) => {
+            log::warn!(
+                "fingerprints.ingest: similarity-edge emission failed for {}:{} — \
+                 Fingerprints/Mentions wrote successfully but similarity graph is stale. Error: {}",
+                source_schema,
+                source_key,
+                e
+            );
+            0
+        }
+    };
 
     Ok(IngestionOutcome {
-        records_written: write_outcome.total(),
+        records_written: write_outcome.total() + similarity_records_written,
         face_count: plan.face_count,
         ran_empty: plan.ran_empty,
     })
+}
+
+/// For every face in `faces`, find nearest neighbors in the face
+/// ANN cache, emit Edge + EdgeByFingerprint junction records for
+/// any pair above `MIN_SIMILARITY_EDGE`, then add the new face to
+/// the cache so subsequent calls see it.
+///
+/// This runs **after** `write_records(plan.records)` succeeds so
+/// the source Fingerprint records referenced by the new Edges
+/// exist in the store. The resolver's dangling-edge diagnostic
+/// already handles the race where an edge's endpoint disappears;
+/// we'd rather leak a harmless edge than miss one.
+///
+/// The function returns the number of records written, or an
+/// error on first write failure. Cache-insert and embedding-
+/// normalization failures log and are skipped — they are
+/// recoverable on the next face.
+async fn emit_similarity_edges_for_faces(
+    node: Arc<FoldNode>,
+    faces: &[DetectedFace],
+    mention_id: &str,
+    now_iso8601: &str,
+) -> FoldDbResult<usize> {
+    if faces.is_empty() {
+        return Ok(0);
+    }
+
+    ensure_cache_ready(&node).await?;
+    let ann = cache();
+
+    let mut new_records: Vec<PlannedRecord> = Vec::new();
+
+    for face in faces {
+        let fp_id = fingerprint_id_for_face_embedding(&face.embedding);
+
+        // Normalize once; we reuse the result for both the nearest
+        // query and the subsequent cache insert.
+        let embedding = match FaceEmbedding::new(face.embedding.clone()) {
+            Ok(e) => e,
+            Err(e) => {
+                log::warn!(
+                    "fingerprints.ingest: skipping similarity-edge emission for fingerprint {} — malformed embedding: {}",
+                    fp_id,
+                    e
+                );
+                continue;
+            }
+        };
+
+        // Query BEFORE insert so we don't find ourselves. Hits are
+        // sorted descending by similarity; we walk through and emit
+        // edges to each neighbor above the floor.
+        let hits = ann.nearest(&embedding, NEIGHBOR_QUERY_K);
+
+        for hit in hits {
+            if hit.fingerprint_id == fp_id {
+                // Defensive: nearest() may return self for
+                // already-indexed ids if an ingestion retried.
+                continue;
+            }
+            if hit.similarity < MIN_SIMILARITY_EDGE {
+                continue;
+            }
+            let kind = if hit.similarity >= STRONG_MATCH_CUTOFF {
+                edge_kind::STRONG_MATCH
+            } else {
+                edge_kind::MEDIUM_MATCH
+            };
+            let eg_id = edge_id(&fp_id, &hit.fingerprint_id, kind);
+
+            new_records.push(PlannedRecord::hash(
+                EDGE,
+                eg_id.clone(),
+                similarity_edge_fields(
+                    &eg_id,
+                    &fp_id,
+                    &hit.fingerprint_id,
+                    kind,
+                    hit.similarity,
+                    mention_id,
+                    now_iso8601,
+                ),
+            ));
+            new_records.push(PlannedRecord::hash_range(
+                EDGE_BY_FINGERPRINT,
+                fp_id.clone(),
+                eg_id.clone(),
+                edge_by_fingerprint_fields(&fp_id, &eg_id),
+            ));
+            new_records.push(PlannedRecord::hash_range(
+                EDGE_BY_FINGERPRINT,
+                hit.fingerprint_id.clone(),
+                eg_id.clone(),
+                edge_by_fingerprint_fields(&hit.fingerprint_id, &eg_id),
+            ));
+        }
+
+        // Add AFTER querying so sibling faces in the same photo
+        // also see this one on their own query pass.
+        ann.add(fp_id, embedding);
+    }
+
+    if new_records.is_empty() {
+        return Ok(0);
+    }
+
+    let outcome = write_records(node, &new_records).await?;
+    Ok(outcome.total())
+}
+
+fn similarity_edge_fields(
+    eg_id: &str,
+    a: &str,
+    b: &str,
+    kind: &'static str,
+    weight: f32,
+    mention_id: &str,
+    now: &str,
+) -> HashMap<String, Value> {
+    let mut m = HashMap::new();
+    m.insert("id".to_string(), json!(eg_id));
+    m.insert("a".to_string(), json!(a));
+    m.insert("b".to_string(), json!(b));
+    m.insert("kind".to_string(), json!(kind));
+    m.insert("weight".to_string(), json!(weight));
+    m.insert("evidence_mention_ids".to_string(), json!(vec![mention_id]));
+    m.insert("created_at".to_string(), json!(now));
+    m
+}
+
+fn edge_by_fingerprint_fields(fp_id: &str, eg_id: &str) -> HashMap<String, Value> {
+    let mut m = HashMap::new();
+    m.insert("fingerprint_id".to_string(), json!(fp_id));
+    m.insert("edge_id".to_string(), json!(eg_id));
+    m
 }
 
 #[cfg(test)]
@@ -192,4 +378,44 @@ mod tests {
         let id = extraction_status_id("Photos", "IMG_1234", "face_detect");
         assert_eq!(id, "es_Photos:IMG_1234:face_detect");
     }
+
+    #[test]
+    fn similarity_edge_fields_roundtrips_core_fields() {
+        let f = similarity_edge_fields(
+            "eg_test",
+            "fp_a",
+            "fp_b",
+            edge_kind::STRONG_MATCH,
+            0.97,
+            "mn_xyz",
+            "2026-04-15T00:00:00Z",
+        );
+        assert_eq!(f.get("id").unwrap(), &json!("eg_test"));
+        assert_eq!(f.get("a").unwrap(), &json!("fp_a"));
+        assert_eq!(f.get("b").unwrap(), &json!("fp_b"));
+        assert_eq!(f.get("kind").unwrap(), &json!("StrongMatch"));
+        assert!((f.get("weight").unwrap().as_f64().unwrap() - 0.97_f64).abs() < 1e-5);
+        assert_eq!(
+            f.get("evidence_mention_ids").unwrap(),
+            &json!(vec!["mn_xyz"])
+        );
+    }
+
+    #[test]
+    fn edge_by_fingerprint_fields_has_two_keys() {
+        let f = edge_by_fingerprint_fields("fp_a", "eg_a");
+        assert_eq!(f.get("fingerprint_id").unwrap(), &json!("fp_a"));
+        assert_eq!(f.get("edge_id").unwrap(), &json!("eg_a"));
+        assert_eq!(f.len(), 2);
+    }
+
+    // Compile-time sanity for the similarity cutoffs. These are
+    // `const` expressions, so a runtime `assert!` would trip
+    // clippy::assertions_on_constants. A top-level `const _: () =
+    // assert!(...)` shifts the check to compile time and stays
+    // silent when green.
+    const _: () = assert!(MIN_SIMILARITY_EDGE > 0.0);
+    const _: () = assert!(MIN_SIMILARITY_EDGE < 1.0);
+    const _: () = assert!(STRONG_MATCH_CUTOFF > MIN_SIMILARITY_EDGE);
+    const _: () = assert!(STRONG_MATCH_CUTOFF <= 1.0);
 }
