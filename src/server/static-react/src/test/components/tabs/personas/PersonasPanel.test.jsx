@@ -322,9 +322,9 @@ describe('PersonasPanel', () => {
         expect(screen.getByTestId('persona-detail-diagnostics')).toBeInTheDocument()
       })
       const diag = screen.getByTestId('persona-detail-diagnostics')
-      expect(diag).toHaveTextContent('2 edge(s) excluded')
-      expect(diag).toHaveTextContent('1 UserForbidden edge(s) skipped')
-      expect(diag).toHaveTextContent('4 edge(s) below the current threshold')
+      expect(diag).toHaveTextContent('2 edges excluded')
+      expect(diag).toHaveTextContent('1 UserForbidden edge skipped')
+      expect(diag).toHaveTextContent('4 edges below the current threshold')
     })
 
     it('does NOT render diagnostics block when resolver was clean', async () => {
