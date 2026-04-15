@@ -353,7 +353,10 @@ async fn fetch_fingerprint_views(
             HandlerError::Internal(format!("fingerprint '{}' query failed: {}", id, e))
         })?;
         let Some(record) = records.first() else {
-            log::warn!("fingerprints.handler: fingerprint '{}' not found during enrichment", id);
+            log::warn!(
+                "fingerprints.handler: fingerprint '{}' not found during enrichment",
+                id
+            );
             continue;
         };
         let Some(fields) = record.get("fields") else {
@@ -407,7 +410,10 @@ async fn fetch_edge_views(
             .await
             .map_err(|e| HandlerError::Internal(format!("edge '{}' query failed: {}", id, e)))?;
         let Some(record) = records.first() else {
-            log::warn!("fingerprints.handler: edge '{}' not found during enrichment", id);
+            log::warn!(
+                "fingerprints.handler: edge '{}' not found during enrichment",
+                id
+            );
             continue;
         };
         let Some(fields) = record.get("fields") else {
