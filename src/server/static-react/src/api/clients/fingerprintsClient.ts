@@ -53,12 +53,21 @@ export interface ResolveDiagnostics {
 
 export interface FingerprintView {
   id: string;
+  /** First 8 hex chars of the fingerprint key — lets the UI
+   *  distinguish otherwise-identical face embedding rows. */
+  short_id: string;
   kind: string;
   /** Scalar rendered value (email, phone, name) or a collapsed
    *  placeholder for face embeddings. */
   display_value: string;
   first_seen: string | null;
   last_seen: string | null;
+  /** Representative source record that references this fingerprint,
+   *  formatted as `"<source_schema>:<source_key>"`. `null` when no
+   *  Mention points at this fingerprint. */
+  sample_source: string | null;
+  sample_source_field: string | null;
+  sample_mention_at: string | null;
 }
 
 export interface EdgeView {
