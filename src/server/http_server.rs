@@ -683,6 +683,10 @@ impl FoldHttpServer {
                     "/ingest-photo-faces",
                     web::post().to(fp_routes::ingest_photo_faces),
                 )
+                .route(
+                    "/ingest-text-signals",
+                    web::post().to(fp_routes::ingest_text_signals),
+                )
                 .service(
                     web::scope("/personas")
                         .route("", web::get().to(fp_routes::list_personas))
