@@ -281,14 +281,50 @@ pub async fn get_identity_card(
 }
 
 /// Set or update the identity card.
+///
+/// Side-effect: after the card is written, the handler attempts to
+/// bootstrap the built-in Me persona if none exists yet. This is what
+/// makes the setup wizard's "Save & Continue" result in a visible Me
+/// persona in the People tab without requiring a restart. The call
+/// is idempotent — repeated wizard saves will not create duplicates
+/// because `ensure_me_persona_if_absent` skips when a built-in
+/// Persona already exists. Failures are logged and swallowed so a
+/// broken fingerprints subsystem cannot block the setup wizard.
 pub async fn set_identity_card(
     req: SetIdentityCardRequest,
     user_hash: &str,
     node: &FoldNode,
 ) -> HandlerResult<serde_json::Value> {
     let op = OperationProcessor::new(std::sync::Arc::new(node.clone()));
-    op.set_identity_card(req.display_name, req.contact_hint, req.birthday)
+    op.set_identity_card(req.display_name.clone(), req.contact_hint, req.birthday)
         .typed_handler_err()?;
+
+    let node_arc = std::sync::Arc::new(node.clone());
+    match crate::fingerprints::self_identity::ensure_me_persona_if_absent(
+        node_arc,
+        req.display_name,
+    )
+    .await
+    {
+        Ok(Some(outcome)) => {
+            log::info!(
+                "fingerprints: Me persona bootstrapped from set_identity_card (ps_id={})",
+                outcome.me_persona_id
+            );
+        }
+        Ok(None) => {
+            log::debug!(
+                "fingerprints: Me persona already present — set_identity_card is a no-op for bootstrap"
+            );
+        }
+        Err(e) => {
+            log::warn!(
+                "fingerprints: Me persona bootstrap from set_identity_card failed: {}",
+                e
+            );
+        }
+    }
+
     Ok(ApiResponse::success_with_user(
         serde_json::json!({"saved": true}),
         user_hash,
