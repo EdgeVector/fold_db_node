@@ -113,6 +113,13 @@ pub async fn write_records(
 ) -> FoldDbResult<WriteOutcome> {
     let processor = OperationProcessor::new(node);
     let mut outcome = WriteOutcome::default();
+    let started = std::time::Instant::now();
+    let input_count = records.len();
+
+    log::info!(
+        "fingerprints.writer: starting batch write ({} records)",
+        input_count
+    );
 
     for record in records {
         let canonical = canonical_names::lookup(record.descriptive_schema).map_err(|e| {
@@ -147,6 +154,23 @@ pub async fn write_records(
             hash_key: record.hash_key.clone(),
         });
     }
+
+    let fp_count = outcome.count_for_descriptive("Fingerprint");
+    let mn_count = outcome.count_for_descriptive("Mention");
+    let eg_count = outcome.count_for_descriptive("Edge");
+    let other_count = outcome
+        .total()
+        .saturating_sub(fp_count + mn_count + eg_count);
+    log::info!(
+        "fingerprints.writer: batch write complete in {:?}: \
+         {} total (Fingerprint={}, Mention={}, Edge={}, other={})",
+        started.elapsed(),
+        outcome.total(),
+        fp_count,
+        mn_count,
+        eg_count,
+        other_count
+    );
 
     Ok(outcome)
 }

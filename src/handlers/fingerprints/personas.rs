@@ -94,6 +94,7 @@ pub struct PersonaDetailResponse {
 /// has a handful of personas so this is fine. A future optimization
 /// could cache counts or stream them.
 pub async fn list_personas(node: Arc<FoldNode>) -> HandlerResult<ListPersonasResponse> {
+    let started = std::time::Instant::now();
     let persona_canonical = canonical_names::lookup(PERSONA).map_err(|e| {
         HandlerError::Internal(format!(
             "fingerprints: canonical_names not initialized for '{}': {}",
@@ -156,6 +157,12 @@ pub async fn list_personas(node: Arc<FoldNode>) -> HandlerResult<ListPersonasRes
         _ => a.name.cmp(&b.name),
     });
 
+    log::info!(
+        "fingerprints.handler: list_personas resolved {} personas in {:?}",
+        personas.len(),
+        started.elapsed()
+    );
+
     Ok(ApiResponse::success(ListPersonasResponse { personas }))
 }
 
@@ -165,6 +172,7 @@ pub async fn get_persona(
     node: Arc<FoldNode>,
     persona_id: String,
 ) -> HandlerResult<PersonaDetailResponse> {
+    let started = std::time::Instant::now();
     let persona_canonical = canonical_names::lookup(PERSONA).map_err(|e| {
         HandlerError::Internal(format!(
             "fingerprints: canonical_names not initialized for '{}': {}",
@@ -215,6 +223,16 @@ pub async fn get_persona(
     mention_ids.sort();
 
     let diagnostics = result.diagnostics().cloned();
+
+    log::info!(
+        "fingerprints.handler: get_persona '{}' resolved in {:?} (fps={}, edges={}, mentions={}, clean={})",
+        persona_id,
+        started.elapsed(),
+        fp_ids.len(),
+        edge_ids.len(),
+        mention_ids.len(),
+        diagnostics.is_none()
+    );
 
     Ok(ApiResponse::success(PersonaDetailResponse {
         id: spec.persona_id,
