@@ -4,9 +4,11 @@ import SharingTab from './SharingTab'
 import FeedTab from './FeedTab'
 import SharedMomentsTab from './SharedMomentsTab'
 import PersonasPanel from './personas/PersonasPanel'
+import IngestionErrorsPanel from './personas/IngestionErrorsPanel'
 
 const SUB_TABS = [
   { id: 'personas', label: 'Personas' },
+  { id: 'failed', label: 'Failed' },
   { id: 'contacts', label: 'Contacts' },
   { id: 'feed', label: 'Feed' },
   { id: 'sharing', label: 'Sharing' },
@@ -20,6 +22,8 @@ export default function PeopleTab({ onResult }) {
     switch (activeSubTab) {
       case 'personas':
         return <PersonasPanel />
+      case 'failed':
+        return <IngestionErrorsPanel />
       case 'contacts':
         return <TrustTab onResult={onResult} />
       case 'feed':
