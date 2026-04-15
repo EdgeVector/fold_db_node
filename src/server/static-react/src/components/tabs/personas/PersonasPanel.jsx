@@ -587,17 +587,18 @@ function FingerprintRows({ fingerprints, fallbackIds }) {
           </span>
           <span className="truncate text-primary">{fp.display_value || '(empty)'}</span>
           {fp.sample_source && (
-            <span
-              className="font-mono text-tertiary text-[10px] truncate shrink-0"
+            <a
+              href="#data-browser"
+              className="font-mono text-tertiary text-[10px] truncate shrink-0 hover:underline decoration-dotted"
               title={
                 fp.sample_mention_at
-                  ? `${fp.sample_source} · ${fp.sample_mention_at}`
-                  : fp.sample_source
+                  ? `Open Browse tab — ${fp.sample_source} · ${fp.sample_mention_at}`
+                  : `Open Browse tab — ${fp.sample_source}`
               }
             >
               · {fp.sample_source}
               {fp.sample_source_field ? ` · ${fp.sample_source_field}` : ''}
-            </span>
+            </a>
           )}
           {fp.short_id && (
             <span
@@ -691,14 +692,19 @@ function MentionRows({ mentions, fallbackIds, onExclude }) {
           <span className="text-[9px] uppercase tracking-wider text-gruvbox-aqua bg-gruvbox-aqua/10 border border-gruvbox-aqua/30 rounded px-1.5 py-0.5 font-mono shrink-0">
             {m.extractor}
           </span>
-          <span className="truncate">
+          <a
+            href="#data-browser"
+            className="truncate hover:underline decoration-dotted"
+            title={`Open Browse tab — ${m.source_schema}:${m.source_key}`}
+            data-testid={`persona-mention-link-${m.id}`}
+          >
             <span className="font-mono text-secondary">{m.source_schema}</span>
             <span className="text-tertiary">:</span>
             <span className="font-mono">{m.source_key}</span>
             {m.source_field && (
               <span className="text-tertiary"> · {m.source_field}</span>
             )}
-          </span>
+          </a>
           {m.created_at && (
             <span className="font-mono text-tertiary shrink-0 ml-auto">
               {m.created_at.slice(0, 10)}
