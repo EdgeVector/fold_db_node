@@ -163,6 +163,25 @@ pub async fn ingest_photo_faces_batch(
         let source_key = photo.source_key.clone();
         let faces: Vec<DetectedFace> = photo.faces.into_iter().map(DetectedFace::from).collect();
 
+        // Validate before handing to the planner. Empty embeddings
+        // and malformed floats get caught here and surface as a
+        // loud per-photo IngestionError row, instead of being
+        // silently stored as useless "face embedding (0 dims)"
+        // fingerprints — which was one of the friction points in
+        // the Phase 1 UI walkthrough.
+        if let Err((error_class, error_msg)) = validate_face_inputs(&faces) {
+            record_photo_failure(
+                node.clone(),
+                &request.source_schema,
+                &source_key,
+                error_class,
+                &error_msg,
+                &mut per_photo,
+            )
+            .await;
+            continue;
+        }
+
         match ingest_photo_faces(
             node.clone(),
             &request.source_schema,
@@ -191,20 +210,15 @@ pub async fn ingest_photo_faces_batch(
             }
             Err(e) => {
                 let msg = format!("{}", e);
-                log::warn!(
-                    "fingerprints.ingest: photo '{}' on schema '{}' failed: {}",
-                    source_key,
-                    request.source_schema,
-                    msg
-                );
-                per_photo.push(PhotoIngestResult {
-                    source_key,
-                    ok: false,
-                    face_count: 0,
-                    records_written: 0,
-                    ran_empty: false,
-                    error: Some(msg),
-                });
+                record_photo_failure(
+                    node.clone(),
+                    &request.source_schema,
+                    &source_key,
+                    "WriterError",
+                    &msg,
+                    &mut per_photo,
+                )
+                .await;
             }
         }
     }
@@ -226,10 +240,138 @@ pub async fn ingest_photo_faces_batch(
     }))
 }
 
+/// Input validation for a single photo's face list. Rejects the
+/// failure modes that would otherwise land as silent garbage
+/// fingerprints in the store:
+///
+/// - Any face whose embedding vector is empty.
+/// - Any face whose embedding contains NaN or infinite values —
+///   those would poison the similarity graph.
+///
+/// Returns `(error_class, human-readable message)` on the first
+/// violation, or `Ok(())` when every face is well-formed.
+fn validate_face_inputs(faces: &[DetectedFace]) -> Result<(), (&'static str, String)> {
+    for (idx, face) in faces.iter().enumerate() {
+        if face.embedding.is_empty() {
+            return Err((
+                "EmptyFaceEmbedding",
+                format!("face[{}] has an empty embedding vector", idx),
+            ));
+        }
+        if let Some((bad_idx, bad_val)) = face
+            .embedding
+            .iter()
+            .enumerate()
+            .find(|(_, v)| !v.is_finite())
+        {
+            return Err((
+                "MalformedFaceEmbedding",
+                format!(
+                    "face[{}].embedding[{}] = {} is not a finite number",
+                    idx, bad_idx, bad_val
+                ),
+            ));
+        }
+    }
+    Ok(())
+}
+
+/// Record a per-photo failure: push a `PhotoIngestResult { ok: false }`
+/// row so the batch caller sees the failure in the response, AND
+/// emit a loud `IngestionError` row so the Failed panel in the UI
+/// can surface the failure for the user to retry or dismiss. Both
+/// sides are independently best-effort — the response row goes in
+/// memory, the IngestionError is persisted.
+async fn record_photo_failure(
+    node: Arc<FoldNode>,
+    source_schema: &str,
+    source_key: &str,
+    error_class: &str,
+    error_msg: &str,
+    per_photo: &mut Vec<PhotoIngestResult>,
+) {
+    log::warn!(
+        "fingerprints.ingest: photo '{}' on schema '{}' failed ({}): {}",
+        source_key,
+        source_schema,
+        error_class,
+        error_msg
+    );
+
+    crate::fingerprints::ingestion_error_writer::write_ingestion_error(
+        node,
+        crate::fingerprints::ingestion_error_writer::IngestionErrorRecord {
+            source_schema,
+            source_key,
+            extractor: "face_detect",
+            error_class,
+            error_msg,
+        },
+    )
+    .await;
+
+    per_photo.push(PhotoIngestResult {
+        source_key: source_key.to_string(),
+        ok: false,
+        face_count: 0,
+        records_written: 0,
+        ran_empty: false,
+        error: Some(format!("{}: {}", error_class, error_msg)),
+    });
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
     use serde_json::json;
+
+    fn face(emb: Vec<f32>) -> DetectedFace {
+        DetectedFace {
+            embedding: emb,
+            bbox: [0.0, 0.0, 0.0, 0.0],
+            confidence: 0.9,
+        }
+    }
+
+    #[test]
+    fn validate_face_inputs_accepts_well_formed_embedding() {
+        assert!(validate_face_inputs(&[face(vec![0.1, 0.2, 0.3])]).is_ok());
+    }
+
+    #[test]
+    fn validate_face_inputs_rejects_empty_embedding() {
+        let err = validate_face_inputs(&[face(vec![])]).unwrap_err();
+        assert_eq!(err.0, "EmptyFaceEmbedding");
+        assert!(err.1.contains("face[0]"));
+    }
+
+    #[test]
+    fn validate_face_inputs_rejects_nan() {
+        let err = validate_face_inputs(&[face(vec![0.1, f32::NAN, 0.3])]).unwrap_err();
+        assert_eq!(err.0, "MalformedFaceEmbedding");
+        assert!(err.1.contains("face[0].embedding[1]"));
+    }
+
+    #[test]
+    fn validate_face_inputs_rejects_infinity() {
+        let err = validate_face_inputs(&[face(vec![0.1, f32::INFINITY])]).unwrap_err();
+        assert_eq!(err.0, "MalformedFaceEmbedding");
+        assert!(err.1.contains("face[0].embedding[1]"));
+    }
+
+    #[test]
+    fn validate_face_inputs_reports_the_second_face_when_the_first_is_fine() {
+        let err = validate_face_inputs(&[face(vec![0.1, 0.2]), face(vec![])]).unwrap_err();
+        assert_eq!(err.0, "EmptyFaceEmbedding");
+        assert!(err.1.contains("face[1]"));
+    }
+
+    #[test]
+    fn validate_face_inputs_accepts_empty_face_list() {
+        // An empty list means "extractor ran, found no faces" — that
+        // is the ran_empty branch and must NOT be a failure.
+        assert!(validate_face_inputs(&[]).is_ok());
+    }
 
     #[test]
     fn request_deserializes_from_json() {
