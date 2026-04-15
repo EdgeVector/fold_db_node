@@ -234,16 +234,17 @@ export async function listIngestionErrors(
 }
 
 /**
- * Mark a single IngestionError row as resolved. Used by both the
- * Dismiss and Retry buttons — Phase 1 does not actually re-run the
- * extractor on Retry, it just clears the row.
+ * Set the resolved flag on a single IngestionError row.
+ * Pass `resolved: true` (default) to dismiss, `false` to restore
+ * a previously-dismissed row back into the active Failed panel.
  */
 export async function resolveIngestionError(
   id: string,
+  resolved = true,
 ): Promise<EnhancedApiResponse<IngestionErrorView>> {
   return client.patch<IngestionErrorView>(
     `/fingerprints/ingestion-errors/${encodeURIComponent(id)}`,
-    {},
+    { resolved },
   );
 }
 

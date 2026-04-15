@@ -111,23 +111,45 @@ export default function PersonasPanel() {
     [applyPatch],
   )
 
+  // Undo snackbar state for ✂ exclude actions. Shows "Excluded —
+  // Undo" for 5 seconds after each exclude, giving the user a fast
+  // recovery path without scrolling to the exclusions panel.
+  const [undoSnack, setUndoSnack] = useState(null)
+  useEffect(() => {
+    if (!undoSnack) return
+    const timer = setTimeout(() => setUndoSnack(null), 5000)
+    return () => clearTimeout(timer)
+  }, [undoSnack])
+
   const handleExcludeMention = useCallback(
-    id => applyPatch({ add_excluded_mention_id: id }, 'Failed to exclude mention'),
+    id => {
+      applyPatch({ add_excluded_mention_id: id }, 'Failed to exclude mention')
+      setUndoSnack({ type: 'mention', id })
+    },
     [applyPatch],
   )
 
   const handleUnexcludeMention = useCallback(
-    id => applyPatch({ remove_excluded_mention_id: id }, 'Failed to un-exclude mention'),
+    id => {
+      applyPatch({ remove_excluded_mention_id: id }, 'Failed to un-exclude mention')
+      setUndoSnack(null)
+    },
     [applyPatch],
   )
 
   const handleExcludeEdge = useCallback(
-    id => applyPatch({ add_excluded_edge_id: id }, 'Failed to exclude edge'),
+    id => {
+      applyPatch({ add_excluded_edge_id: id }, 'Failed to exclude edge')
+      setUndoSnack({ type: 'edge', id })
+    },
     [applyPatch],
   )
 
   const handleUnexcludeEdge = useCallback(
-    id => applyPatch({ remove_excluded_edge_id: id }, 'Failed to un-exclude edge'),
+    id => {
+      applyPatch({ remove_excluded_edge_id: id }, 'Failed to un-exclude edge')
+      setUndoSnack(null)
+    },
     [applyPatch],
   )
 
@@ -165,6 +187,28 @@ export default function PersonasPanel() {
         onRenamePersona={handleRenamePersona}
         onRelationshipChange={handleRelationshipChange}
       />
+      {undoSnack && (
+        <div
+          className="fixed bottom-4 left-1/2 -translate-x-1/2 z-50 px-4 py-2 rounded-lg bg-gruvbox-blue/20 border border-gruvbox-blue/40 flex items-center gap-3 text-xs shadow-lg backdrop-blur"
+          data-testid="persona-undo-snack"
+        >
+          <span>
+            Excluded {undoSnack.type === 'mention' ? 'mention' : 'edge'}{' '}
+            <span className="font-mono text-tertiary">{undoSnack.id.slice(0, 12)}…</span>
+          </span>
+          <button
+            type="button"
+            className="text-gruvbox-blue underline underline-offset-2 font-semibold"
+            onClick={() => {
+              if (undoSnack.type === 'mention') handleUnexcludeMention(undoSnack.id)
+              else handleUnexcludeEdge(undoSnack.id)
+            }}
+            data-testid="persona-undo-snack-undo"
+          >
+            Undo
+          </button>
+        </div>
+      )}
     </div>
   )
 }
@@ -272,7 +316,7 @@ function PersonaDetail({
   }
 
   return (
-    <div className="lg:w-1/2 card p-3 space-y-3" data-testid="persona-detail">
+    <div className="lg:w-1/2 card p-3 space-y-3 overflow-y-auto max-h-[calc(100vh-12rem)]" data-testid="persona-detail">
       {loading && <div className="text-sm text-secondary">Loading…</div>}
       {error && (
         <div className="text-sm text-gruvbox-red" data-testid="persona-detail-error">
@@ -351,6 +395,20 @@ function PersonaDetailBody({
     setEditingName(false)
   }
 
+  // Build an id→label index from enriched fingerprints so EdgeRows
+  // can render readable labels for each endpoint instead of raw
+  // fp_abc123 hashes. Cheap — fingerprints array is small and this
+  // runs once per detail render.
+  const fpIndex = (detail.fingerprints || []).reduce((acc, fp) => {
+    const label = fp.kind === 'face_embedding'
+      ? fp.sample_source
+        ? `face · ${fp.sample_source}`
+        : `face · ${fp.short_id || fp.id.slice(3, 11)}`
+      : fp.display_value || fp.short_id || fp.id.slice(3, 11)
+    acc[fp.id] = label
+    return acc
+  }, {})
+
   return (
     <>
       <header>
@@ -375,7 +433,11 @@ function PersonaDetailBody({
           ) : (
             <button
               type="button"
-              className="text-base font-semibold text-left hover:underline decoration-dotted"
+              className={`text-base font-semibold text-left decoration-dotted ${
+                detail.built_in
+                  ? 'cursor-not-allowed opacity-80'
+                  : 'hover:underline cursor-text'
+              }`}
               title={detail.built_in ? "Built-in personas can't be renamed — update the IdentityCard" : 'Click to rename'}
               onClick={() => {
                 if (!detail.built_in) setEditingName(true)
@@ -397,28 +459,30 @@ function PersonaDetailBody({
           )}
         </div>
         <div className="text-xs text-tertiary mt-1 font-mono break-all">{detail.id}</div>
-        <div className="text-xs text-secondary mt-1 flex items-center gap-1.5">
-          <label htmlFor={`persona-relationship-${detail.id}`} className="text-tertiary">
-            Relationship:
-          </label>
-          <select
-            id={`persona-relationship-${detail.id}`}
-            value={detail.relationship || 'unknown'}
-            onChange={e => {
-              if (typeof onRelationshipChange === 'function') {
-                onRelationshipChange(e.target.value)
-              }
-            }}
-            className="input text-xs py-0.5"
-            data-testid="persona-relationship-select"
-          >
-            {RELATIONSHIP_OPTIONS.map(opt => (
-              <option key={opt} value={opt}>
-                {opt}
-              </option>
-            ))}
-          </select>
-          <span className="text-tertiary">· tier {detail.trust_tier}</span>
+        <div className="text-xs text-secondary mt-1 flex flex-wrap items-center gap-x-2 gap-y-1">
+          <div className="flex items-center gap-1.5 shrink-0">
+            <label htmlFor={`persona-relationship-${detail.id}`} className="text-tertiary">
+              Relationship:
+            </label>
+            <select
+              id={`persona-relationship-${detail.id}`}
+              value={detail.relationship || 'unknown'}
+              onChange={e => {
+                if (typeof onRelationshipChange === 'function') {
+                  onRelationshipChange(e.target.value)
+                }
+              }}
+              className="input text-xs py-0.5"
+              data-testid="persona-relationship-select"
+            >
+              {RELATIONSHIP_OPTIONS.map(opt => (
+                <option key={opt} value={opt}>
+                  {opt}
+                </option>
+              ))}
+            </select>
+          </div>
+          <span className="text-tertiary shrink-0">tier {detail.trust_tier}</span>
         </div>
       </header>
 
@@ -448,6 +512,7 @@ function PersonaDetailBody({
         edges={detail.edges || []}
         fallbackIds={detail.edge_ids}
         onExclude={onExcludeEdge}
+        fingerprintIndex={fpIndex}
       />
       <MentionRows
         mentions={detail.mentions || []}
@@ -551,7 +616,7 @@ function FingerprintRows({ fingerprints, fallbackIds }) {
   )
 }
 
-function EdgeRows({ edges, fallbackIds, onExclude }) {
+function EdgeRows({ edges, fallbackIds, onExclude, fingerprintIndex = {} }) {
   if (edges.length === 0) {
     return (
       <SectionShell label="Edges" count={fallbackIds.length} testId="persona-edges">
@@ -573,9 +638,13 @@ function EdgeRows({ edges, fallbackIds, onExclude }) {
           <span className="text-[9px] uppercase tracking-wider text-gruvbox-blue bg-gruvbox-blue/10 border border-gruvbox-blue/30 rounded px-1.5 py-0.5 font-mono shrink-0">
             {e.kind}
           </span>
-          <span className="font-mono truncate">{e.a}</span>
-          <span className="text-tertiary">·</span>
-          <span className="font-mono truncate">{e.b}</span>
+          <span className="truncate" title={e.a}>
+            {fingerprintIndex[e.a] || e.a.slice(0, 16) + '…'}
+          </span>
+          <span className="text-tertiary shrink-0">—</span>
+          <span className="truncate" title={e.b}>
+            {fingerprintIndex[e.b] || e.b.slice(0, 16) + '…'}
+          </span>
           <span className="ml-auto font-mono text-gruvbox-green shrink-0">
             {e.weight.toFixed(2)}
           </span>
