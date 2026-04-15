@@ -428,6 +428,18 @@ pub(super) async fn reset_database(
                 );
             }
         }
+        // External backends (e.g. S3-backed schema-infra Lambda) own
+        // their own reset semantics and can't be reset through this
+        // admin endpoint — it's only meant for local Sled state. The
+        // self-hosted binary that mounts this route uses Sled, so
+        // this arm should never actually execute.
+        SchemaStorage::External(_) => {
+            return HttpResponse::BadRequest().json(ResetResponse {
+                success: false,
+                message: "reset endpoint is not supported for external storage backends"
+                    .to_string(),
+            });
+        }
     }
 
     log_feature!(
@@ -579,7 +591,7 @@ pub(super) async fn get_transform_wasm(
         hash
     );
 
-    match state.get_transform_wasm(&hash) {
+    match state.get_transform_wasm(&hash).await {
         Ok(Some(bytes)) => HttpResponse::Ok()
             .content_type("application/wasm")
             .body(bytes),
