@@ -409,10 +409,13 @@ mod tests {
         assert_eq!(f.len(), 2);
     }
 
-    #[test]
-    fn similarity_cutoffs_are_sane() {
-        assert!(MIN_SIMILARITY_EDGE > 0.0 && MIN_SIMILARITY_EDGE < 1.0);
-        assert!(STRONG_MATCH_CUTOFF > MIN_SIMILARITY_EDGE);
-        assert!(STRONG_MATCH_CUTOFF <= 1.0);
-    }
+    // Compile-time sanity for the similarity cutoffs. These are
+    // `const` expressions, so a runtime `assert!` would trip
+    // clippy::assertions_on_constants. A top-level `const _: () =
+    // assert!(...)` shifts the check to compile time and stays
+    // silent when green.
+    const _: () = assert!(MIN_SIMILARITY_EDGE > 0.0);
+    const _: () = assert!(MIN_SIMILARITY_EDGE < 1.0);
+    const _: () = assert!(STRONG_MATCH_CUTOFF > MIN_SIMILARITY_EDGE);
+    const _: () = assert!(STRONG_MATCH_CUTOFF <= 1.0);
 }
