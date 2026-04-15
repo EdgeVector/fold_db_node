@@ -6,6 +6,48 @@ import {
 } from '../../../api/clients/fingerprintsClient'
 
 /**
+ * localStorage key used to persist the set of dismissed suggestion
+ * ids across page reloads. Versioned so a future data-format change
+ * can invalidate the old set without stranding stale entries.
+ */
+const DISMISSED_STORAGE_KEY = 'folddb.dismissed_suggested_personas.v1'
+
+/**
+ * Load the persisted dismissed-id set from localStorage. Returns an
+ * empty Set when the key is missing, the value isn't a JSON array,
+ * or storage is unavailable (e.g. Safari private mode).
+ *
+ * Exported so the vitest suite can poke at it directly.
+ */
+export function loadDismissedFromStorage() {
+  try {
+    const raw = window.localStorage.getItem(DISMISSED_STORAGE_KEY)
+    if (!raw) return new Set()
+    const parsed = JSON.parse(raw)
+    if (!Array.isArray(parsed)) return new Set()
+    return new Set(parsed.filter(x => typeof x === 'string'))
+  } catch (_e) {
+    return new Set()
+  }
+}
+
+/**
+ * Persist a dismissed-id Set back to localStorage. Swallows any
+ * write failure (quota exceeded, storage unavailable) — dismissals
+ * are a UX nicety, not a correctness requirement.
+ */
+export function saveDismissedToStorage(set) {
+  try {
+    window.localStorage.setItem(
+      DISMISSED_STORAGE_KEY,
+      JSON.stringify(Array.from(set)),
+    )
+  } catch (_e) {
+    // ignore
+  }
+}
+
+/**
  * Suggested Personas panel — the design doc's dense-subgraph sweep
  * surface. Renders every candidate cluster the backend proposed,
  * with [Name it] to promote into a real Persona and [Dismiss] to
@@ -20,8 +62,11 @@ export default function SuggestedPersonasPanel() {
   const [suggestions, setSuggestions] = useState([])
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState(null)
-  // suggested_id → true. Dismissals live only in component state.
-  const [dismissed, setDismissed] = useState(() => new Set())
+  // suggested_id set. Dismissals persist in localStorage so they
+  // survive page reloads — friction point F7 from the Phase 1
+  // walkthrough findings. The key is versioned so a future format
+  // change can invalidate the old set cleanly.
+  const [dismissed, setDismissed] = useState(() => loadDismissedFromStorage())
   // suggested_id currently showing the name input.
   const [namingId, setNamingId] = useState(null)
   // suggested_id currently being promoted (debounces the button).
@@ -48,14 +93,26 @@ export default function SuggestedPersonasPanel() {
     fetchList()
   }, [fetchList])
 
-  const handleDismiss = useCallback(id => {
-    setDismissed(prev => {
-      const next = new Set(prev)
-      next.add(id)
-      return next
-    })
-    if (namingId === id) setNamingId(null)
-  }, [namingId])
+  const handleDismiss = useCallback(
+    id => {
+      setDismissed(prev => {
+        const next = new Set(prev)
+        next.add(id)
+        saveDismissedToStorage(next)
+        return next
+      })
+      if (namingId === id) setNamingId(null)
+    },
+    [namingId],
+  )
+
+  /// Clear every persisted dismissal so suggestions the user hid
+  /// earlier become visible again. Useful when the user wants to
+  /// re-review a cluster they dismissed by mistake.
+  const handleClearDismissals = useCallback(() => {
+    setDismissed(new Set())
+    saveDismissedToStorage(new Set())
+  }, [])
 
   const handleAccept = useCallback(
     async (suggestion, name, relationship) => {
@@ -94,21 +151,35 @@ export default function SuggestedPersonasPanel() {
     <div className="card p-3" data-testid="suggested-personas-panel">
       <div className="flex items-center justify-between mb-3">
         <h3 className="text-base font-semibold">Suggested clusters</h3>
-        <button
-          type="button"
-          className="btn-secondary text-xs"
-          onClick={fetchList}
-          disabled={loading}
-          data-testid="suggested-personas-refresh"
-        >
-          {loading ? 'Loading…' : 'Refresh'}
-        </button>
+        <div className="flex items-center gap-2">
+          {dismissed.size > 0 && (
+            <button
+              type="button"
+              className="btn-secondary text-xs"
+              onClick={handleClearDismissals}
+              data-testid="suggested-personas-clear-dismissed"
+              title="Show every suggestion you previously dismissed"
+            >
+              Clear {dismissed.size} dismissed
+            </button>
+          )}
+          <button
+            type="button"
+            className="btn-secondary text-xs"
+            onClick={fetchList}
+            disabled={loading}
+            data-testid="suggested-personas-refresh"
+          >
+            {loading ? 'Loading…' : 'Refresh'}
+          </button>
+        </div>
       </div>
 
       <p className="text-[11px] text-tertiary mb-2">
         Dense subgraphs the resolver spotted in your fingerprint graph.
-        Name one to turn it into a Persona. Dismissals last for this
-        session only.
+        Name one to turn it into a Persona. Dismissals are remembered
+        across reloads — use &quot;Clear N dismissed&quot; to bring them
+        back.
       </p>
 
       {error && (

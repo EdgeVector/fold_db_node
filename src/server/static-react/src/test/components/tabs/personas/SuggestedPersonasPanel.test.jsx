@@ -51,9 +51,12 @@ function ok(data) {
   return { success: true, data }
 }
 
+const DISMISSED_STORAGE_KEY = 'folddb.dismissed_suggested_personas.v1'
+
 describe('SuggestedPersonasPanel', () => {
   beforeEach(() => {
     vi.clearAllMocks()
+    window.localStorage.clear()
   })
 
   it('shows an empty-state message when there are no suggestions', async () => {
@@ -156,5 +159,87 @@ describe('SuggestedPersonasPanel', () => {
     await waitFor(() => {
       expect(screen.getByTestId('suggested-personas-error')).toHaveTextContent('boom')
     })
+  })
+
+  it('persists dismissals to localStorage so they survive a reload', async () => {
+    listSuggestedPersonas.mockResolvedValue(
+      ok({ suggestions: [makeSuggestion({ suggested_id: 'sg_persist' })] }),
+    )
+    const { unmount } = render(<SuggestedPersonasPanel />)
+    await waitFor(() => {
+      expect(screen.getByTestId('suggested-row-sg_persist')).toBeInTheDocument()
+    })
+    fireEvent.click(screen.getByTestId('suggested-dismiss-sg_persist'))
+    await waitFor(() => {
+      expect(screen.queryByTestId('suggested-row-sg_persist')).toBeNull()
+    })
+
+    // Confirm the dismissal landed in localStorage with the versioned key.
+    const stored = JSON.parse(
+      window.localStorage.getItem(DISMISSED_STORAGE_KEY) || '[]',
+    )
+    expect(stored).toContain('sg_persist')
+
+    // Remount (simulates a reload) and the row should still be hidden.
+    unmount()
+    listSuggestedPersonas.mockResolvedValue(
+      ok({ suggestions: [makeSuggestion({ suggested_id: 'sg_persist' })] }),
+    )
+    render(<SuggestedPersonasPanel />)
+    await waitFor(() => {
+      expect(screen.getByTestId('suggested-personas-empty')).toBeInTheDocument()
+    })
+    expect(screen.queryByTestId('suggested-row-sg_persist')).toBeNull()
+  })
+
+  it('clears every dismissal when Clear N dismissed is clicked', async () => {
+    window.localStorage.setItem(
+      DISMISSED_STORAGE_KEY,
+      JSON.stringify(['sg_a', 'sg_b']),
+    )
+    listSuggestedPersonas.mockResolvedValue(
+      ok({
+        suggestions: [
+          makeSuggestion({ suggested_id: 'sg_a' }),
+          makeSuggestion({ suggested_id: 'sg_b' }),
+        ],
+      }),
+    )
+
+    render(<SuggestedPersonasPanel />)
+    // Both rows hidden on initial render because both ids are persisted
+    // in the dismissed set.
+    await waitFor(() => {
+      expect(screen.getByTestId('suggested-personas-empty')).toBeInTheDocument()
+    })
+
+    fireEvent.click(screen.getByTestId('suggested-personas-clear-dismissed'))
+    await waitFor(() => {
+      expect(screen.getByTestId('suggested-row-sg_a')).toBeInTheDocument()
+      expect(screen.getByTestId('suggested-row-sg_b')).toBeInTheDocument()
+    })
+
+    // Storage is wiped.
+    expect(
+      JSON.parse(window.localStorage.getItem(DISMISSED_STORAGE_KEY) || '[]'),
+    ).toEqual([])
+  })
+
+  it('loadDismissedFromStorage tolerates malformed JSON', async () => {
+    const { loadDismissedFromStorage } = await import(
+      '../../../../components/tabs/personas/SuggestedPersonasPanel'
+    )
+    window.localStorage.setItem(DISMISSED_STORAGE_KEY, 'not-json')
+    expect(loadDismissedFromStorage().size).toBe(0)
+    window.localStorage.setItem(DISMISSED_STORAGE_KEY, '42')
+    expect(loadDismissedFromStorage().size).toBe(0)
+    window.localStorage.setItem(
+      DISMISSED_STORAGE_KEY,
+      JSON.stringify(['sg_a', 1, null, 'sg_b']),
+    )
+    const s = loadDismissedFromStorage()
+    expect(s.has('sg_a')).toBe(true)
+    expect(s.has('sg_b')).toBe(true)
+    expect(s.size).toBe(2)
   })
 })
