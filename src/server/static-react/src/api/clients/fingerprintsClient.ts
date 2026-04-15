@@ -51,6 +51,35 @@ export interface ResolveDiagnostics {
   dangling_edge_ids: string[];
 }
 
+export interface FingerprintView {
+  id: string;
+  kind: string;
+  /** Scalar rendered value (email, phone, name) or a collapsed
+   *  placeholder for face embeddings. */
+  display_value: string;
+  first_seen: string | null;
+  last_seen: string | null;
+}
+
+export interface EdgeView {
+  id: string;
+  a: string;
+  b: string;
+  kind: string;
+  weight: number;
+  created_at: string | null;
+}
+
+export interface MentionView {
+  id: string;
+  source_schema: string;
+  source_key: string;
+  source_field: string;
+  extractor: string;
+  confidence: number;
+  created_at: string | null;
+}
+
 export interface PersonaDetailResponse {
   id: string;
   name: string;
@@ -65,6 +94,12 @@ export interface PersonaDetailResponse {
   fingerprint_ids: string[];
   edge_ids: string[];
   mention_ids: string[];
+  /** Enriched records for the resolved cluster. Same order as the
+   *  corresponding `*_ids` arrays; entries may be fewer than IDs
+   *  when records are dangling. */
+  fingerprints: FingerprintView[];
+  edges: EdgeView[];
+  mentions: MentionView[];
   /** None when the resolve was clean. */
   diagnostics: ResolveDiagnostics | null;
 }
