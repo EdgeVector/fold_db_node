@@ -42,27 +42,29 @@ export default function IngestionErrorsPanel() {
     fetchList()
   }, [fetchList])
 
-  const handleResolve = useCallback(
-    async id => {
+  const handleSetResolved = useCallback(
+    async (id, resolved) => {
       setBusyId(id)
       try {
-        const res = await resolveIngestionError(id)
+        const res = await resolveIngestionError(id, resolved)
         if (res.success) {
-          // Drop the row from the open list (or flip its resolved
-          // badge if we're showing resolved rows too).
           setErrors(prev => {
             if (includeResolved) {
               return prev.map(e =>
-                e.id === id ? { ...e, resolved: true } : e,
+                e.id === id ? { ...e, resolved } : e,
               )
             }
-            return prev.filter(e => e.id !== id)
+            // When hiding resolved rows, drop dismissed; for restore
+            // the row stays because it's now unresolved.
+            return resolved
+              ? prev.filter(e => e.id !== id)
+              : prev.map(e => (e.id === id ? { ...e, resolved: false } : e))
           })
         } else {
-          setError(res.error ?? 'Failed to dismiss ingestion error')
+          setError(res.error ?? `Failed to ${resolved ? 'dismiss' : 'restore'}`)
         }
       } catch (e) {
-        setError(e?.message ?? 'Network error while dismissing')
+        setError(e?.message ?? 'Network error')
       } finally {
         setBusyId(null)
       }
@@ -123,7 +125,8 @@ export default function IngestionErrorsPanel() {
             onToggle={() =>
               setExpandedId(prev => (prev === row.id ? null : row.id))
             }
-            onResolve={() => handleResolve(row.id)}
+            onResolve={() => handleSetResolved(row.id, true)}
+            onRestore={() => handleSetResolved(row.id, false)}
             busy={busyId === row.id}
           />
         ))}
@@ -132,7 +135,7 @@ export default function IngestionErrorsPanel() {
   )
 }
 
-function IngestionErrorRow({ row, expanded, onToggle, onResolve, busy }) {
+function IngestionErrorRow({ row, expanded, onToggle, onResolve, onRestore, busy }) {
   const created = row.created_at ? row.created_at.slice(0, 10) : ''
   return (
     <li
@@ -178,7 +181,7 @@ function IngestionErrorRow({ row, expanded, onToggle, onResolve, busy }) {
         <span className="text-tertiary text-[11px]">
           · retries: {row.retry_count}
         </span>
-        {!row.resolved && (
+        {!row.resolved ? (
           <button
             type="button"
             className="ml-auto btn-secondary text-xs"
@@ -187,6 +190,16 @@ function IngestionErrorRow({ row, expanded, onToggle, onResolve, busy }) {
             data-testid={`ingestion-error-dismiss-${row.id}`}
           >
             {busy ? 'Dismissing…' : 'Dismiss'}
+          </button>
+        ) : (
+          <button
+            type="button"
+            className="ml-auto text-[11px] text-tertiary underline underline-offset-2 hover:text-gruvbox-green"
+            onClick={onRestore}
+            disabled={busy}
+            data-testid={`ingestion-error-restore-${row.id}`}
+          >
+            {busy ? 'Restoring…' : 'Restore'}
           </button>
         )}
       </div>

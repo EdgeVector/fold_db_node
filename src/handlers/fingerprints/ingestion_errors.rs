@@ -119,16 +119,20 @@ pub async fn list_ingestion_errors(
     Ok(ApiResponse::success(ListIngestionErrorsResponse { errors }))
 }
 
-/// Mark a single IngestionError row as resolved. Used by both the
-/// Dismiss and Retry buttons in the UI — Phase 1 does not actually
-/// re-run the extractor for Retry, it just clears the row.
+/// Set the `resolved` flag on a single IngestionError row.
+///
+/// Callers pass `resolved: true` to dismiss and `resolved: false`
+/// to restore a previously-dismissed row back into the active
+/// Failed panel. The toggle is idempotent — setting `true` on an
+/// already-resolved row is a no-op, and vice versa.
 ///
 /// Read-modify-write so every field is carried through untouched
 /// except `resolved` (and `last_retry_at` when we later wire a real
-/// retry). Mirrors `personas::update_persona_threshold`.
+/// retry). Mirrors `personas::apply_persona_patch`.
 pub async fn resolve_ingestion_error(
     node: Arc<FoldNode>,
     error_id: String,
+    resolved: bool,
 ) -> HandlerResult<IngestionErrorView> {
     let canonical = canonical_names::lookup(INGESTION_ERROR).map_err(|e| {
         HandlerError::Internal(format!(
@@ -172,7 +176,7 @@ pub async fn resolve_ingestion_error(
     for (k, v) in field_map.iter() {
         payload.insert(k.clone(), v.clone());
     }
-    payload.insert("resolved".to_string(), Value::Bool(true));
+    payload.insert("resolved".to_string(), Value::Bool(resolved));
 
     // 3. Execute Update keeping the same primary key.
     let key_value = KeyValue::new(Some(error_id.clone()), None);
@@ -181,19 +185,20 @@ pub async fn resolve_ingestion_error(
         .await
         .map_err(|e| {
             HandlerError::Internal(format!(
-                "failed to mark ingestion error '{}' resolved: {}",
+                "failed to update ingestion error '{}': {}",
                 error_id, e
             ))
         })?;
 
     log::info!(
-        "fingerprints.handler: ingestion error '{}' marked resolved",
-        error_id
+        "fingerprints.handler: ingestion error '{}' resolved={}",
+        error_id,
+        resolved
     );
 
     // 4. Return the updated row so the UI can swap it in place.
     let mut view = ingestion_error_view_from_fields(fields)?;
-    view.resolved = true;
+    view.resolved = resolved;
     Ok(ApiResponse::success(view))
 }
 

@@ -32,18 +32,31 @@ pub async fn list_ingestion_errors(
     }
 }
 
-/// PATCH /api/fingerprints/ingestion-errors/{id} — mark a single row
-/// resolved. Body currently has no fields; this is a pure idempotent
-/// clear. Retained as PATCH (not POST) because the operation mutates
-/// an existing resource.
+/// Body payload for `PATCH /api/fingerprints/ingestion-errors/{id}`.
+#[derive(Debug, Deserialize)]
+pub struct UpdateIngestionErrorBody {
+    /// `true` to dismiss (default when omitted), `false` to restore
+    /// a previously-dismissed row back into the active Failed panel.
+    #[serde(default = "default_resolved")]
+    pub resolved: bool,
+}
+
+fn default_resolved() -> bool {
+    true
+}
+
+/// PATCH /api/fingerprints/ingestion-errors/{id} — set the resolved
+/// flag. Pass `{ "resolved": false }` to un-dismiss a previously
+/// dismissed row.
 pub async fn resolve_ingestion_error(
     path: web::Path<String>,
+    body: web::Json<UpdateIngestionErrorBody>,
     state: web::Data<AppState>,
 ) -> impl Responder {
     let (_user_hash, node) = node_or_return!(state);
     let error_id = path.into_inner();
 
-    match fp_handlers::resolve_ingestion_error(node, error_id).await {
+    match fp_handlers::resolve_ingestion_error(node, error_id, body.resolved).await {
         Ok(response) => HttpResponse::Ok().json(response),
         Err(e) => handler_error_to_response(e),
     }

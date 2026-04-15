@@ -117,7 +117,7 @@ describe('IngestionErrorsPanel', () => {
     await waitFor(() => {
       expect(screen.queryByTestId('ingestion-error-row-ie_dismiss')).toBeNull()
     })
-    expect(resolveIngestionError).toHaveBeenCalledWith('ie_dismiss')
+    expect(resolveIngestionError).toHaveBeenCalledWith('ie_dismiss', true)
   })
 
   it('toggles the include_resolved filter and refetches', async () => {
