@@ -13,5 +13,6 @@
 pub mod personas;
 
 pub use personas::{
-    get_persona, list_personas, ListPersonasResponse, PersonaDetailResponse, PersonaSummary,
+    get_persona, list_personas, update_persona_threshold, ListPersonasResponse,
+    PersonaDetailResponse, PersonaSummary,
 };

@@ -681,7 +681,8 @@ impl FoldHttpServer {
             web::scope("/fingerprints").service(
                 web::scope("/personas")
                     .route("", web::get().to(fp_routes::list_personas))
-                    .route("/{id}", web::get().to(fp_routes::get_persona)),
+                    .route("/{id}", web::get().to(fp_routes::get_persona))
+                    .route("/{id}", web::patch().to(fp_routes::update_persona)),
             ),
         );
     }

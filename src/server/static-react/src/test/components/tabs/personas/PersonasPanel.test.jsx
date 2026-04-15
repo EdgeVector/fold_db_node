@@ -9,11 +9,13 @@ import PersonasPanel from '../../../../components/tabs/personas/PersonasPanel'
 vi.mock('../../../../api/clients/fingerprintsClient', () => ({
   listPersonas: vi.fn(),
   getPersona: vi.fn(),
+  updatePersonaThreshold: vi.fn(),
 }))
 
 import {
   listPersonas,
   getPersona,
+  updatePersonaThreshold,
 } from '../../../../api/clients/fingerprintsClient'
 
 // ── Test data builders ─────────────────────────────────────────────
@@ -192,11 +194,96 @@ describe('PersonasPanel', () => {
       expect(screen.getByTestId('persona-edges')).toHaveTextContent('Edges: 2')
       expect(screen.getByTestId('persona-mentions')).toHaveTextContent('Mentions: 1')
 
-      // Threshold slider is present and read-only.
+      // Threshold slider is present, editable, and reflects current value.
       const slider = screen.getByTestId('persona-detail-threshold-input')
-      expect(slider).toBeDisabled()
-      expect(slider).toHaveAttribute('readonly')
+      expect(slider).not.toBeDisabled()
+      expect(slider).not.toHaveAttribute('readonly')
       expect(slider).toHaveValue('0.9')
+    })
+
+    it('commits threshold via PATCH when the slider is released', async () => {
+      listPersonas.mockResolvedValue(
+        okList([makeSummary({ id: 'ps_me', name: 'Me', built_in: true })]),
+      )
+      getPersona.mockResolvedValue(
+        okDetail(
+          makeDetail({
+            id: 'ps_me',
+            name: 'Me',
+            threshold: 0.9,
+            built_in: true,
+            fingerprint_ids: ['fp_a', 'fp_b'],
+          }),
+        ),
+      )
+      updatePersonaThreshold.mockResolvedValue(
+        okDetail(
+          makeDetail({
+            id: 'ps_me',
+            name: 'Me',
+            threshold: 0.75,
+            built_in: true,
+            // After lowering the threshold the cluster grows.
+            fingerprint_ids: ['fp_a', 'fp_b', 'fp_c'],
+          }),
+        ),
+      )
+
+      render(<PersonasPanel />)
+      await waitFor(() => {
+        expect(screen.getByTestId('persona-row-ps_me')).toBeInTheDocument()
+      })
+      fireEvent.click(screen.getByTestId('persona-row-ps_me'))
+
+      await waitFor(() => {
+        expect(screen.getByTestId('persona-fingerprints')).toHaveTextContent(
+          'Fingerprints: 2',
+        )
+      })
+
+      const slider = screen.getByTestId('persona-detail-threshold-input')
+
+      // Drag the slider — local state updates, no PATCH yet.
+      fireEvent.change(slider, { target: { value: '0.75' } })
+      expect(updatePersonaThreshold).not.toHaveBeenCalled()
+
+      // Release the slider — fires the commit + PATCH.
+      fireEvent.mouseUp(slider)
+      await waitFor(() => {
+        expect(updatePersonaThreshold).toHaveBeenCalledWith('ps_me', 0.75)
+      })
+
+      // Response is swapped into the detail view.
+      await waitFor(() => {
+        expect(screen.getByTestId('persona-fingerprints')).toHaveTextContent(
+          'Fingerprints: 3',
+        )
+      })
+
+      // List is refetched so the list row counts stay in sync.
+      expect(listPersonas).toHaveBeenCalledTimes(2)
+    })
+
+    it('does not fire PATCH if the new threshold matches the current one', async () => {
+      listPersonas.mockResolvedValue(okList([makeSummary({ id: 'ps_a', name: 'A' })]))
+      getPersona.mockResolvedValue(
+        okDetail(makeDetail({ id: 'ps_a', name: 'A', threshold: 0.85 })),
+      )
+
+      render(<PersonasPanel />)
+      await waitFor(() => {
+        expect(screen.getByTestId('persona-row-ps_a')).toBeInTheDocument()
+      })
+      fireEvent.click(screen.getByTestId('persona-row-ps_a'))
+
+      await waitFor(() => {
+        expect(screen.getByTestId('persona-fingerprints')).toBeInTheDocument()
+      })
+
+      const slider = screen.getByTestId('persona-detail-threshold-input')
+      // Release without changing — commit should be a no-op.
+      fireEvent.mouseUp(slider)
+      expect(updatePersonaThreshold).not.toHaveBeenCalled()
     })
 
     it('renders diagnostics block when the resolver surfaced any filter hits', async () => {

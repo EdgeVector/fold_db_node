@@ -3,4 +3,4 @@
 
 pub mod personas;
 
-pub use personas::{get_persona, list_personas};
+pub use personas::{get_persona, list_personas, update_persona};
