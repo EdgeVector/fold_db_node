@@ -10,12 +10,22 @@ use serde::Deserialize;
 
 /// Body payload for `PATCH /api/fingerprints/personas/{id}`.
 ///
-/// Only the `threshold` field is mutable today; future fields
-/// (e.g. `name`, `relationship`) can be added alongside without
-/// breaking existing clients because every field is `Option`.
-#[derive(Debug, Deserialize)]
+/// Every field is optional — callers populate only the ops they
+/// need. Multiple ops may coexist in a single request and are
+/// applied together within one read-modify-write cycle (see
+/// `handlers::fingerprints::personas::apply_persona_patch`).
+///
+/// The exclusion ops are idempotent: adding an id that's already
+/// excluded is a no-op, and the same for remove — the request
+/// still returns the freshly-resolved detail so the caller can
+/// round-trip "refresh and re-render" cheaply.
+#[derive(Debug, Deserialize, Default)]
 pub struct UpdatePersonaRequest {
     pub threshold: Option<f32>,
+    pub add_excluded_edge_id: Option<String>,
+    pub remove_excluded_edge_id: Option<String>,
+    pub add_excluded_mention_id: Option<String>,
+    pub remove_excluded_mention_id: Option<String>,
 }
 
 /// GET /api/fingerprints/personas — list every Persona with
@@ -57,13 +67,15 @@ pub async fn update_persona(
     let persona_id = path.into_inner();
     let body = body.into_inner();
 
-    let Some(threshold) = body.threshold else {
-        return HttpResponse::BadRequest().json(serde_json::json!({
-            "error": "at least one mutable field must be supplied; threshold is required today"
-        }));
+    let patch = fp_handlers::PersonaPatch {
+        threshold: body.threshold,
+        add_excluded_edge_id: body.add_excluded_edge_id,
+        remove_excluded_edge_id: body.remove_excluded_edge_id,
+        add_excluded_mention_id: body.add_excluded_mention_id,
+        remove_excluded_mention_id: body.remove_excluded_mention_id,
     };
 
-    match fp_handlers::update_persona_threshold(node, persona_id, threshold).await {
+    match fp_handlers::apply_persona_patch(node, persona_id, patch).await {
         Ok(response) => HttpResponse::Ok().json(response),
         Err(e) => handler_error_to_response(e),
     }

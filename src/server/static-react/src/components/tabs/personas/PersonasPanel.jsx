@@ -2,7 +2,7 @@ import { useCallback, useEffect, useState } from 'react'
 import {
   listPersonas,
   getPersona,
-  updatePersonaThreshold,
+  updatePersona,
 } from '../../../api/clients/fingerprintsClient'
 
 /**
@@ -82,11 +82,11 @@ export default function PersonasPanel() {
     }
   }, [selectedId])
 
-  const handleThresholdCommit = useCallback(
-    async nextThreshold => {
+  const applyPatch = useCallback(
+    async (patch, errorLabel) => {
       if (!selectedId) return
       try {
-        const res = await updatePersonaThreshold(selectedId, nextThreshold)
+        const res = await updatePersona(selectedId, patch)
         if (res.success && res.data) {
           // Replace the detail in place so the user sees the freshly
           // resolved cluster counts + diagnostics without a second GET.
@@ -95,13 +95,39 @@ export default function PersonasPanel() {
           // picks up the new counts too.
           fetchList()
         } else {
-          setDetailError(res.error ?? 'Failed to update threshold')
+          setDetailError(res.error ?? errorLabel)
         }
       } catch (e) {
-        setDetailError(e?.message ?? 'Network error while updating threshold')
+        setDetailError(e?.message ?? `Network error while ${errorLabel.toLowerCase()}`)
       }
     },
     [selectedId, fetchList],
+  )
+
+  const handleThresholdCommit = useCallback(
+    nextThreshold =>
+      applyPatch({ threshold: nextThreshold }, 'Failed to update threshold'),
+    [applyPatch],
+  )
+
+  const handleExcludeMention = useCallback(
+    id => applyPatch({ add_excluded_mention_id: id }, 'Failed to exclude mention'),
+    [applyPatch],
+  )
+
+  const handleUnexcludeMention = useCallback(
+    id => applyPatch({ remove_excluded_mention_id: id }, 'Failed to un-exclude mention'),
+    [applyPatch],
+  )
+
+  const handleExcludeEdge = useCallback(
+    id => applyPatch({ add_excluded_edge_id: id }, 'Failed to exclude edge'),
+    [applyPatch],
+  )
+
+  const handleUnexcludeEdge = useCallback(
+    id => applyPatch({ remove_excluded_edge_id: id }, 'Failed to un-exclude edge'),
+    [applyPatch],
   )
 
   return (
@@ -120,6 +146,10 @@ export default function PersonasPanel() {
         loading={detailLoading}
         error={detailError}
         onThresholdCommit={handleThresholdCommit}
+        onExcludeMention={handleExcludeMention}
+        onUnexcludeMention={handleUnexcludeMention}
+        onExcludeEdge={handleExcludeEdge}
+        onUnexcludeEdge={handleUnexcludeEdge}
       />
     </div>
   )
@@ -203,7 +233,17 @@ function PersonaList({ personas, loading, error, selectedId, onSelect, onRefresh
   )
 }
 
-function PersonaDetail({ selectedId, detail, loading, error, onThresholdCommit }) {
+function PersonaDetail({
+  selectedId,
+  detail,
+  loading,
+  error,
+  onThresholdCommit,
+  onExcludeMention,
+  onUnexcludeMention,
+  onExcludeEdge,
+  onUnexcludeEdge,
+}) {
   if (!selectedId) {
     return (
       <div
@@ -224,13 +264,27 @@ function PersonaDetail({ selectedId, detail, loading, error, onThresholdCommit }
         </div>
       )}
       {!loading && !error && detail && (
-        <PersonaDetailBody detail={detail} onThresholdCommit={onThresholdCommit} />
+        <PersonaDetailBody
+          detail={detail}
+          onThresholdCommit={onThresholdCommit}
+          onExcludeMention={onExcludeMention}
+          onUnexcludeMention={onUnexcludeMention}
+          onExcludeEdge={onExcludeEdge}
+          onUnexcludeEdge={onUnexcludeEdge}
+        />
       )}
     </div>
   )
 }
 
-function PersonaDetailBody({ detail, onThresholdCommit }) {
+function PersonaDetailBody({
+  detail,
+  onThresholdCommit,
+  onExcludeMention,
+  onUnexcludeMention,
+  onExcludeEdge,
+  onUnexcludeEdge,
+}) {
   // Local mirror of the slider value so the knob moves smoothly
   // while the user drags. We only call the parent (and fire the
   // PATCH) when the user releases the slider, which keeps us from
@@ -298,8 +352,22 @@ function PersonaDetailBody({ detail, onThresholdCommit }) {
       {detail.diagnostics && <Diagnostics diagnostics={detail.diagnostics} />}
 
       <FingerprintRows fingerprints={detail.fingerprints || []} fallbackIds={detail.fingerprint_ids} />
-      <EdgeRows edges={detail.edges || []} fallbackIds={detail.edge_ids} />
-      <MentionRows mentions={detail.mentions || []} fallbackIds={detail.mention_ids} />
+      <EdgeRows
+        edges={detail.edges || []}
+        fallbackIds={detail.edge_ids}
+        onExclude={onExcludeEdge}
+      />
+      <MentionRows
+        mentions={detail.mentions || []}
+        fallbackIds={detail.mention_ids}
+        onExclude={onExcludeMention}
+      />
+
+      <ExclusionsPanel
+        detail={detail}
+        onUnexcludeMention={onUnexcludeMention}
+        onUnexcludeEdge={onUnexcludeEdge}
+      />
 
       {detail.identity_id && (
         <div className="text-xs text-secondary">
@@ -370,7 +438,7 @@ function FingerprintRows({ fingerprints, fallbackIds }) {
   )
 }
 
-function EdgeRows({ edges, fallbackIds }) {
+function EdgeRows({ edges, fallbackIds, onExclude }) {
   if (edges.length === 0) {
     return (
       <SectionShell label="Edges" count={fallbackIds.length} testId="persona-edges">
@@ -398,6 +466,18 @@ function EdgeRows({ edges, fallbackIds }) {
           <span className="ml-auto font-mono text-gruvbox-green shrink-0">
             {e.weight.toFixed(2)}
           </span>
+          {typeof onExclude === 'function' && (
+            <button
+              type="button"
+              title="Exclude this edge from the persona"
+              aria-label="Exclude edge"
+              className="text-tertiary hover:text-gruvbox-red shrink-0"
+              onClick={() => onExclude(e.id)}
+              data-testid={`persona-edge-exclude-${e.id}`}
+            >
+              ✂
+            </button>
+          )}
         </li>
       ))}
       {edges.length > 40 && (
@@ -407,7 +487,7 @@ function EdgeRows({ edges, fallbackIds }) {
   )
 }
 
-function MentionRows({ mentions, fallbackIds }) {
+function MentionRows({ mentions, fallbackIds, onExclude }) {
   if (mentions.length === 0) {
     return (
       <SectionShell label="Mentions" count={fallbackIds.length} testId="persona-mentions">
@@ -438,9 +518,21 @@ function MentionRows({ mentions, fallbackIds }) {
             )}
           </span>
           {m.created_at && (
-            <span className="ml-auto font-mono text-tertiary shrink-0">
+            <span className="font-mono text-tertiary shrink-0 ml-auto">
               {m.created_at.slice(0, 10)}
             </span>
+          )}
+          {typeof onExclude === 'function' && (
+            <button
+              type="button"
+              title="Exclude this mention from the persona"
+              aria-label="Exclude mention"
+              className={`text-tertiary hover:text-gruvbox-red shrink-0 ${m.created_at ? '' : 'ml-auto'}`}
+              onClick={() => onExclude(m.id)}
+              data-testid={`persona-mention-exclude-${m.id}`}
+            >
+              ✂
+            </button>
           )}
         </li>
       ))}
@@ -448,6 +540,89 @@ function MentionRows({ mentions, fallbackIds }) {
         <li className="italic">…and {mentions.length - 40} more</li>
       )}
     </SectionShell>
+  )
+}
+
+function ExclusionsPanel({ detail, onUnexcludeMention, onUnexcludeEdge }) {
+  const excludedMentions = detail.excluded_mention_ids || []
+  const excludedEdges = detail.excluded_edge_ids || []
+  const [open, setOpen] = useState(false)
+  const total = excludedMentions.length + excludedEdges.length
+
+  if (total === 0) return null
+
+  return (
+    <div
+      className="text-xs border-t border-border pt-2"
+      data-testid="persona-exclusions-panel"
+    >
+      <button
+        type="button"
+        className="text-tertiary underline underline-offset-2"
+        onClick={() => setOpen(o => !o)}
+        data-testid="persona-exclusions-toggle"
+      >
+        {open ? 'Hide' : 'Show'} {total} excluded item{total === 1 ? '' : 's'}
+      </button>
+      {open && (
+        <div className="mt-2 space-y-2">
+          {excludedMentions.length > 0 && (
+            <div>
+              <div className="text-[11px] text-secondary mb-1">
+                Excluded mentions ({excludedMentions.length})
+              </div>
+              <ul className="space-y-0.5">
+                {excludedMentions.map(id => (
+                  <li
+                    key={id}
+                    className="flex items-baseline gap-2 text-[11px] font-mono text-tertiary"
+                  >
+                    <span className="truncate">{id}</span>
+                    {typeof onUnexcludeMention === 'function' && (
+                      <button
+                        type="button"
+                        className="ml-auto text-tertiary underline underline-offset-2 hover:text-gruvbox-green shrink-0"
+                        onClick={() => onUnexcludeMention(id)}
+                        data-testid={`persona-mention-unexclude-${id}`}
+                      >
+                        Undo
+                      </button>
+                    )}
+                  </li>
+                ))}
+              </ul>
+            </div>
+          )}
+          {excludedEdges.length > 0 && (
+            <div>
+              <div className="text-[11px] text-secondary mb-1">
+                Excluded edges ({excludedEdges.length})
+              </div>
+              <ul className="space-y-0.5">
+                {excludedEdges.map(id => (
+                  <li
+                    key={id}
+                    className="flex items-baseline gap-2 text-[11px] font-mono text-tertiary"
+                  >
+                    <span className="truncate">{id}</span>
+                    {typeof onUnexcludeEdge === 'function' && (
+                      <button
+                        type="button"
+                        className="ml-auto text-tertiary underline underline-offset-2 hover:text-gruvbox-green shrink-0"
+                        onClick={() => onUnexcludeEdge(id)}
+                        data-testid={`persona-edge-unexclude-${id}`}
+                      >
+                        Undo
+                      </button>
+                    )}
+                  </li>
+                ))}
+              </ul>
+            </div>
+          )}
+        </div>
+      )}
+    </div>
   )
 }
 

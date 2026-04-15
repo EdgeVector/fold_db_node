@@ -22,6 +22,6 @@ pub use ingestion_errors::{
     list_ingestion_errors, resolve_ingestion_error, IngestionErrorView, ListIngestionErrorsResponse,
 };
 pub use personas::{
-    get_persona, list_personas, update_persona_threshold, ListPersonasResponse,
-    PersonaDetailResponse, PersonaSummary,
+    apply_persona_patch, get_persona, list_personas, update_persona_threshold,
+    ListPersonasResponse, PersonaDetailResponse, PersonaPatch, PersonaSummary,
 };
