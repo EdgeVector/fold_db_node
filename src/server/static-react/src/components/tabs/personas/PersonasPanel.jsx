@@ -808,32 +808,37 @@ function ExclusionsPanel({ detail, onUnexcludeMention, onUnexcludeEdge }) {
   )
 }
 
+function pl(n, singular, plural) {
+  return n === 1 ? `${n} ${singular}` : `${n} ${plural}`
+}
+
 function Diagnostics({ diagnostics }) {
   const entries = []
   if (diagnostics.missing_seed_fingerprint_ids.length > 0) {
+    const n = diagnostics.missing_seed_fingerprint_ids.length
     entries.push(
-      `${diagnostics.missing_seed_fingerprint_ids.length} missing seed fingerprint(s): ${diagnostics.missing_seed_fingerprint_ids.join(', ')}`,
+      `${pl(n, 'missing seed fingerprint', 'missing seed fingerprints')}: ${diagnostics.missing_seed_fingerprint_ids.join(', ')}`,
     )
   }
   if (diagnostics.excluded_edge_count > 0) {
-    entries.push(`${diagnostics.excluded_edge_count} edge(s) excluded by persona rules`)
+    entries.push(`${pl(diagnostics.excluded_edge_count, 'edge', 'edges')} excluded by persona rules`)
   }
   if (diagnostics.forbidden_edge_count > 0) {
-    entries.push(`${diagnostics.forbidden_edge_count} UserForbidden edge(s) skipped`)
+    entries.push(`${pl(diagnostics.forbidden_edge_count, 'UserForbidden edge', 'UserForbidden edges')} skipped`)
   }
   if (diagnostics.below_threshold_edge_count > 0) {
     entries.push(
-      `${diagnostics.below_threshold_edge_count} edge(s) below the current threshold`,
+      `${pl(diagnostics.below_threshold_edge_count, 'edge', 'edges')} below the current threshold`,
     )
   }
   if (diagnostics.excluded_mention_count > 0) {
     entries.push(
-      `${diagnostics.excluded_mention_count} mention(s) excluded by persona rules`,
+      `${pl(diagnostics.excluded_mention_count, 'mention', 'mentions')} excluded by persona rules`,
     )
   }
   if (diagnostics.dangling_edge_ids.length > 0) {
     entries.push(
-      `${diagnostics.dangling_edge_ids.length} dangling edge reference(s) — data inconsistency`,
+      `${pl(diagnostics.dangling_edge_ids.length, 'dangling edge reference', 'dangling edge references')} — data inconsistency`,
     )
   }
 
