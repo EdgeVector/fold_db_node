@@ -185,6 +185,85 @@ pub async fn bootstrap_self_identity(
     })
 }
 
+/// Idempotent wrapper around [`bootstrap_self_identity`]. Returns
+/// `Ok(None)` when a built-in Me persona already exists on this
+/// node (any `Persona` record with `built_in == true`), and only
+/// delegates to `bootstrap_self_identity` when none is present.
+///
+/// This is the function the node-startup path and the
+/// `PUT /api/identity/card` handler should call so that repeated
+/// restarts and repeated card saves never emit duplicate Me
+/// personas. Using a query against the live Persona schema as the
+/// idempotency gate is intentional: it survives DB restores,
+/// cross-device sync, and stale in-memory state, because the source
+/// of truth for "does Me exist" is the actual record set.
+pub async fn ensure_me_persona_if_absent(
+    node: Arc<FoldNode>,
+    display_name: String,
+) -> FoldDbResult<Option<SelfIdentityOutcome>> {
+    if me_persona_exists(&node).await? {
+        log::debug!(
+            "fingerprints.self_identity: Me persona already present on this node — skipping bootstrap"
+        );
+        return Ok(None);
+    }
+    let outcome = bootstrap_self_identity(node, display_name).await?;
+    log::info!(
+        "fingerprints.self_identity: bootstrapped Me persona (id={}, identity={})",
+        outcome.me_persona_id,
+        outcome.self_identity_id
+    );
+    Ok(Some(outcome))
+}
+
+/// Query the Persona schema for any record with `built_in == true`.
+/// Returns `Ok(true)` when one exists, `Ok(false)` when none does,
+/// and an error when the canonical name registry has not been
+/// populated yet — the latter is a programmer bug, not a normal
+/// runtime condition.
+async fn me_persona_exists(node: &Arc<FoldNode>) -> FoldDbResult<bool> {
+    use crate::fold_node::OperationProcessor;
+    use fold_db::schema::types::operations::Query;
+
+    let canonical = canonical_names::lookup(PERSONA).map_err(|e| {
+        FoldDbError::Config(format!(
+            "me_persona_exists: canonical_names registry missing '{}' — \
+             register_phase_1_schemas() must run before this check. Error: {}",
+            PERSONA, e
+        ))
+    })?;
+
+    let processor = OperationProcessor::new(node.clone());
+    let query = Query {
+        schema_name: canonical,
+        fields: vec!["built_in".to_string()],
+        filter: None,
+        as_of: None,
+        rehydrate_depth: None,
+        sort_order: None,
+        value_filters: None,
+    };
+    let records = processor
+        .execute_query_json(query)
+        .await
+        .map_err(|e| FoldDbError::Config(format!("me_persona_exists query failed: {}", e)))?;
+
+    Ok(any_record_built_in(&records))
+}
+
+/// Pure predicate: does any record in `records` have
+/// `fields.built_in == true`? Factored out so the `built_in`
+/// extraction is unit-testable without a live FoldNode.
+fn any_record_built_in(records: &[Value]) -> bool {
+    records.iter().any(|record| {
+        record
+            .get("fields")
+            .and_then(|f| f.get("built_in"))
+            .and_then(|v| v.as_bool())
+            .unwrap_or(false)
+    })
+}
+
 // ── Record builders ─────────────────────────────────────────────
 
 fn identity_record(
@@ -436,5 +515,46 @@ mod tests {
         verifying_key
             .verify(&card_b.canonical_bytes(), &sig_a)
             .expect_err("signature for card_a must NOT verify against card_b");
+    }
+
+    // ── me_persona_exists / any_record_built_in ───────────────
+
+    #[test]
+    fn any_record_built_in_true_when_any_record_has_built_in_true() {
+        let records = vec![
+            json!({"fields": {"built_in": false}}),
+            json!({"fields": {"built_in": true}}),
+        ];
+        assert!(any_record_built_in(&records));
+    }
+
+    #[test]
+    fn any_record_built_in_false_when_no_records_are_built_in() {
+        let records = vec![
+            json!({"fields": {"built_in": false}}),
+            json!({"fields": {"built_in": false}}),
+        ];
+        assert!(!any_record_built_in(&records));
+    }
+
+    #[test]
+    fn any_record_built_in_false_on_empty_slice() {
+        let records: Vec<Value> = Vec::new();
+        assert!(!any_record_built_in(&records));
+    }
+
+    #[test]
+    fn any_record_built_in_treats_missing_field_as_not_built_in() {
+        let records = vec![json!({"fields": {}}), json!({"fields": {"name": "foo"}})];
+        assert!(!any_record_built_in(&records));
+    }
+
+    #[test]
+    fn any_record_built_in_ignores_non_bool_values() {
+        let records = vec![
+            json!({"fields": {"built_in": "true"}}), // string, not bool
+            json!({"fields": {"built_in": 1}}),
+        ];
+        assert!(!any_record_built_in(&records));
     }
 }

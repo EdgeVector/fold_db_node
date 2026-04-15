@@ -202,6 +202,58 @@ impl FoldNode {
                             "fingerprints: Phase 1 registration complete ({} schemas)",
                             outcome.total()
                         );
+
+                        // Me persona bootstrap — only fires when an
+                        // IdentityCard already exists on disk AND no
+                        // built-in persona is present yet. Nodes that
+                        // have not completed the setup wizard skip
+                        // this; nodes upgrading from pre-Phase-1
+                        // pick up the Me persona on their first
+                        // restart after the wizard has saved a card.
+                        // Subsequent restarts are no-ops because the
+                        // existing Me persona trips the idempotency
+                        // guard in ensure_me_persona_if_absent.
+                        match crate::trust::identity_card::IdentityCard::load() {
+                            Ok(Some(card)) => {
+                                let node_arc = Arc::new(node.clone());
+                                match crate::fingerprints::self_identity::ensure_me_persona_if_absent(
+                                    node_arc,
+                                    card.display_name.clone(),
+                                )
+                                .await
+                                {
+                                    Ok(Some(outcome)) => {
+                                        log::info!(
+                                            "fingerprints: Me persona bootstrapped at startup (ps_id={})",
+                                            outcome.me_persona_id
+                                        );
+                                    }
+                                    Ok(None) => {
+                                        log::debug!(
+                                            "fingerprints: Me persona already present — no bootstrap needed"
+                                        );
+                                    }
+                                    Err(e) => {
+                                        log::warn!(
+                                            "fingerprints: Me persona bootstrap failed: {}",
+                                            e
+                                        );
+                                    }
+                                }
+                            }
+                            Ok(None) => {
+                                log::info!(
+                                    "fingerprints: no IdentityCard on disk yet — Me persona will be \
+                                     bootstrapped when the setup wizard saves a card"
+                                );
+                            }
+                            Err(e) => {
+                                log::warn!(
+                                    "fingerprints: failed to load IdentityCard for Me bootstrap: {}",
+                                    e
+                                );
+                            }
+                        }
                     }
                     Err(e) => {
                         log::warn!(
