@@ -3,8 +3,9 @@
 // Consumes the backend routes exposed by
 // `src/server/routes/fingerprints/personas.rs`:
 //
-//   GET /api/fingerprints/personas       → list with resolved counts
-//   GET /api/fingerprints/personas/:id   → detail with resolved cluster
+//   GET   /api/fingerprints/personas       → list with resolved counts
+//   GET   /api/fingerprints/personas/:id   → detail with resolved cluster
+//   PATCH /api/fingerprints/personas/:id   → update mutable fields (threshold)
 //
 // The backend handler translates descriptive schema names through
 // `canonical_names::lookup()` internally, so this client just uses
@@ -87,5 +88,21 @@ export async function getPersona(
 ): Promise<EnhancedApiResponse<PersonaDetailResponse>> {
   return client.get<PersonaDetailResponse>(
     `/fingerprints/personas/${encodeURIComponent(id)}`,
+  );
+}
+
+/**
+ * Update the threshold on an existing Persona. The backend does a
+ * read-modify-write against the Persona record and returns the
+ * freshly-resolved detail with updated counts + diagnostics, so the
+ * UI can swap the response straight into place without a second GET.
+ */
+export async function updatePersonaThreshold(
+  id: string,
+  threshold: number,
+): Promise<EnhancedApiResponse<PersonaDetailResponse>> {
+  return client.patch<PersonaDetailResponse>(
+    `/fingerprints/personas/${encodeURIComponent(id)}`,
+    { threshold },
   );
 }

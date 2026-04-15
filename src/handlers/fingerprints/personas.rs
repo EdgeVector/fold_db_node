@@ -28,7 +28,8 @@ use crate::fingerprints::resolver::{PersonaResolver, PersonaSpec, ResolveDiagnos
 use crate::fingerprints::schemas::PERSONA;
 use crate::fold_node::FoldNode;
 use crate::handlers::response::{ApiResponse, HandlerError, HandlerResult};
-use fold_db::schema::types::operations::Query;
+use fold_db::schema::types::key_value::KeyValue;
+use fold_db::schema::types::operations::{MutationType, Query};
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use std::collections::{HashMap, HashSet};
@@ -250,6 +251,110 @@ pub async fn get_persona(
         mention_ids,
         diagnostics,
     }))
+}
+
+/// Update the threshold field on an existing Persona record, then
+/// return the re-resolved detail. The frontend uses this to drive
+/// the Persona detail threshold slider.
+///
+/// This is a read-modify-write against the Persona record:
+/// 1. Fetch the existing record via the standard query path.
+/// 2. Copy every field into a fresh mutation payload, overwriting
+///    only `threshold` with the caller-supplied value.
+/// 3. Execute a `MutationType::Update` that preserves the content-
+///    addressed primary key (`id`) and writes the merged record.
+/// 4. Re-run `get_persona` to return the updated detail with freshly
+///    resolved counts and diagnostics.
+///
+/// Read-modify-write rather than a partial update because
+/// `execute_mutation` expects all fields to be present in the
+/// fields map, and we can't assume the caller's record is in the
+/// writer's in-memory state.
+pub async fn update_persona_threshold(
+    node: Arc<FoldNode>,
+    persona_id: String,
+    new_threshold: f32,
+) -> HandlerResult<PersonaDetailResponse> {
+    // Validate range. Clients should already clamp but we defend
+    // against malformed payloads here because a threshold outside
+    // [0, 1] would silently break cluster resolution.
+    if !new_threshold.is_finite() || !(0.0..=1.0).contains(&new_threshold) {
+        return Err(HandlerError::BadRequest(format!(
+            "threshold must be a finite number in [0.0, 1.0], got {}",
+            new_threshold
+        )));
+    }
+
+    let persona_canonical = canonical_names::lookup(PERSONA).map_err(|e| {
+        HandlerError::Internal(format!(
+            "fingerprints: canonical_names not initialized for '{}': {}",
+            PERSONA, e
+        ))
+    })?;
+
+    let processor = crate::fold_node::OperationProcessor::new(node.clone());
+
+    // 1. Fetch existing record by primary key.
+    let query = Query {
+        schema_name: persona_canonical.clone(),
+        fields: persona_fields(),
+        filter: Some(fold_db::schema::types::field::HashRangeFilter::HashKey(
+            persona_id.clone(),
+        )),
+        as_of: None,
+        rehydrate_depth: None,
+        sort_order: None,
+        value_filters: None,
+    };
+    let records = processor
+        .execute_query_json(query)
+        .await
+        .map_err(|e| HandlerError::Internal(format!("persona query failed: {}", e)))?;
+    let record = records
+        .first()
+        .ok_or_else(|| HandlerError::NotFound(format!("persona '{}' not found", persona_id)))?;
+    let fields = record.get("fields").ok_or_else(|| {
+        HandlerError::Internal("persona record missing 'fields' envelope".to_string())
+    })?;
+
+    // 2. Copy every field, overwriting only `threshold`.
+    let mut payload: HashMap<String, Value> = HashMap::new();
+    let Value::Object(field_map) = fields else {
+        return Err(HandlerError::Internal(
+            "persona record 'fields' envelope is not a JSON object".to_string(),
+        ));
+    };
+    for (k, v) in field_map.iter() {
+        payload.insert(k.clone(), v.clone());
+    }
+    payload.insert(
+        "threshold".to_string(),
+        serde_json::Number::from_f64(new_threshold as f64)
+            .map(Value::Number)
+            .unwrap_or(Value::Null),
+    );
+
+    // 3. Execute Update. Keep the same content-addressed primary key.
+    let key_value = KeyValue::new(Some(persona_id.clone()), None);
+    processor
+        .execute_mutation(persona_canonical, payload, key_value, MutationType::Update)
+        .await
+        .map_err(|e| {
+            HandlerError::Internal(format!(
+                "failed to update persona '{}' threshold: {}",
+                persona_id, e
+            ))
+        })?;
+
+    log::info!(
+        "fingerprints.handler: updated persona '{}' threshold to {:.3}",
+        persona_id,
+        new_threshold
+    );
+
+    // 4. Re-run the standard detail path so the caller gets the
+    //    freshly-resolved counts + diagnostics.
+    get_persona(node, persona_id).await
 }
 
 // ── Field-extraction helpers ─────────────────────────────────────

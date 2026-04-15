@@ -1,5 +1,9 @@
 import { useCallback, useEffect, useState } from 'react'
-import { listPersonas, getPersona } from '../../../api/clients/fingerprintsClient'
+import {
+  listPersonas,
+  getPersona,
+  updatePersonaThreshold,
+} from '../../../api/clients/fingerprintsClient'
 
 /**
  * Personas sub-tab content. Shows a list of every Persona on the node,
@@ -10,9 +14,11 @@ import { listPersonas, getPersona } from '../../../api/clients/fingerprintsClien
  * /api/fingerprints/personas/:id (see fingerprintsClient.ts and
  * src/handlers/fingerprints/personas.rs).
  *
- * Threshold slider is read-only in this first cut. Mutation support
- * (editing threshold, excluding mentions, merging/splitting personas)
- * lands in a follow-up once the backend exposes a mutate path.
+ * Threshold slider is editable — dragging updates local state only;
+ * releasing the slider fires a PATCH /api/fingerprints/personas/:id
+ * with the new threshold, then the detail view is replaced with the
+ * freshly-resolved response and the list is refetched so the cluster
+ * counts match.
  */
 export default function PersonasPanel() {
   const [personas, setPersonas] = useState([])
@@ -76,6 +82,28 @@ export default function PersonasPanel() {
     }
   }, [selectedId])
 
+  const handleThresholdCommit = useCallback(
+    async nextThreshold => {
+      if (!selectedId) return
+      try {
+        const res = await updatePersonaThreshold(selectedId, nextThreshold)
+        if (res.success && res.data) {
+          // Replace the detail in place so the user sees the freshly
+          // resolved cluster counts + diagnostics without a second GET.
+          setDetail(res.data)
+          // And refetch the list so the summary row for this persona
+          // picks up the new counts too.
+          fetchList()
+        } else {
+          setDetailError(res.error ?? 'Failed to update threshold')
+        }
+      } catch (e) {
+        setDetailError(e?.message ?? 'Network error while updating threshold')
+      }
+    },
+    [selectedId, fetchList],
+  )
+
   return (
     <div className="flex flex-col gap-4 lg:flex-row">
       <PersonaList
@@ -91,6 +119,7 @@ export default function PersonasPanel() {
         detail={detail}
         loading={detailLoading}
         error={detailError}
+        onThresholdCommit={handleThresholdCommit}
       />
     </div>
   )
@@ -174,7 +203,7 @@ function PersonaList({ personas, loading, error, selectedId, onSelect, onRefresh
   )
 }
 
-function PersonaDetail({ selectedId, detail, loading, error }) {
+function PersonaDetail({ selectedId, detail, loading, error, onThresholdCommit }) {
   if (!selectedId) {
     return (
       <div
@@ -194,12 +223,37 @@ function PersonaDetail({ selectedId, detail, loading, error }) {
           {error}
         </div>
       )}
-      {!loading && !error && detail && <PersonaDetailBody detail={detail} />}
+      {!loading && !error && detail && (
+        <PersonaDetailBody detail={detail} onThresholdCommit={onThresholdCommit} />
+      )}
     </div>
   )
 }
 
-function PersonaDetailBody({ detail }) {
+function PersonaDetailBody({ detail, onThresholdCommit }) {
+  // Local mirror of the slider value so the knob moves smoothly
+  // while the user drags. We only call the parent (and fire the
+  // PATCH) when the user releases the slider, which keeps us from
+  // spamming the backend on every pixel of drag.
+  const [sliderValue, setSliderValue] = useState(detail.threshold)
+
+  // If the parent replaces `detail` (e.g. after a PATCH response or
+  // when the selected persona changes), resync the local state.
+  useEffect(() => {
+    setSliderValue(detail.threshold)
+  }, [detail.threshold, detail.id])
+
+  const commit = () => {
+    // Guard against no-ops and missing callback (e.g. tests that
+    // don't pass it). Pass a number, not a string.
+    const next = Number(sliderValue)
+    if (!Number.isFinite(next)) return
+    if (Math.abs(next - detail.threshold) < 1e-6) return
+    if (typeof onThresholdCommit === 'function') {
+      onThresholdCommit(next)
+    }
+  }
+
   return (
     <>
       <header>
@@ -222,20 +276,21 @@ function PersonaDetailBody({ detail }) {
         </div>
       </header>
 
-      {/* Threshold slider is read-only in v1 — no PATCH endpoint yet. */}
       <div data-testid="persona-detail-threshold">
         <label className="text-xs text-secondary block mb-1">
-          Threshold: <span className="font-mono">{detail.threshold.toFixed(2)}</span>
+          Threshold: <span className="font-mono">{Number(sliderValue).toFixed(2)}</span>
         </label>
         <input
           type="range"
           min="0"
           max="1"
           step="0.01"
-          value={detail.threshold}
-          disabled
-          readOnly
-          className="w-full opacity-60 cursor-not-allowed"
+          value={sliderValue}
+          onChange={e => setSliderValue(e.target.value)}
+          onMouseUp={commit}
+          onTouchEnd={commit}
+          onKeyUp={commit}
+          className="w-full"
           data-testid="persona-detail-threshold-input"
         />
       </div>
