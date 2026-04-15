@@ -11,6 +11,7 @@
 //! responses.
 
 pub mod ingest;
+pub mod ingest_text;
 pub mod ingestion_errors;
 pub mod personas;
 pub mod suggestions;
@@ -18,6 +19,9 @@ pub mod suggestions;
 pub use ingest::{
     ingest_photo_faces_batch, DetectedFaceDto, IngestPhotoFacesRequest, IngestPhotoFacesResponse,
     PhotoFacesDto, PhotoIngestResult,
+};
+pub use ingest_text::{
+    ingest_text_signals_batch, IngestTextSignalsRequest, IngestTextSignalsResponse,
 };
 pub use ingestion_errors::{
     list_ingestion_errors, resolve_ingestion_error, IngestionErrorView, ListIngestionErrorsResponse,

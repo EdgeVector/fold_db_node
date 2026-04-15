@@ -18,9 +18,9 @@
 //! schema-service-backed node.
 
 pub mod face;
+pub mod text;
 
-// Phase 2 extractors
+// Phase 2 extractors (future)
 // pub mod ner;
-// pub mod email_header;
 // pub mod calendar_attendee;
 // pub mod contact;
