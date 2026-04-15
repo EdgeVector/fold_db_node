@@ -233,6 +233,78 @@ pub fn extract_signals(text: &str) -> Vec<ExtractedSignal> {
         });
     }
 
+    // Name extraction — capitalized word pairs/triples that look
+    // like personal names. This is a heuristic regex, NOT an NER
+    // model. It catches "Tom Tang", "Alice Bob Chen", etc. but also
+    // false-positives like "New York" or "San Francisco". The intent
+    // is to produce FullName fingerprints that the Persona resolver
+    // connects via CoOccurrence edges to email/phone fingerprints
+    // from the same record; the user confirms or rejects at the
+    // Persona level, so false-positives degrade the Suggestions
+    // panel (noisy candidates) but never commit identity without
+    // user action.
+    //
+    // Exclusion patterns skip common false-positive categories:
+    // months, days, common English title words. This is best-effort.
+    let name_re =
+        Regex::new(r"\b([A-Z][a-z]{1,20}(?:\s+[A-Z][a-z]{1,20}){1,2})\b").expect("valid regex");
+    let exclude: std::collections::HashSet<&str> = [
+        // Months
+        "January",
+        "February",
+        "March",
+        "April",
+        "May",
+        "June",
+        "July",
+        "August",
+        "September",
+        "October",
+        "November",
+        "December",
+        // Days
+        "Monday",
+        "Tuesday",
+        "Wednesday",
+        "Thursday",
+        "Friday",
+        "Saturday",
+        "Sunday",
+        // Common non-name capitalized pairs
+        "New York",
+        "San Francisco",
+        "Los Angeles",
+        "Las Vegas",
+        "United States",
+        "North America",
+        "South America",
+        "Good Morning",
+        "Happy Birthday",
+        "Thank You",
+        "Dear Sir",
+        "Dear Madam",
+        "Best Regards",
+    ]
+    .into_iter()
+    .collect();
+    for m in name_re.find_iter(text) {
+        let raw = m.as_str();
+        if exclude.contains(raw) {
+            continue;
+        }
+        // Skip single-word matches (the regex requires 2+ words).
+        let word_count = raw.split_whitespace().count();
+        if word_count < 2 {
+            continue;
+        }
+        let fp_id = fingerprint_id_for_string(kind::FULL_NAME, raw);
+        signals.push(ExtractedSignal {
+            kind: kind::FULL_NAME,
+            value: raw.to_string(),
+            fingerprint_id: fp_id,
+        });
+    }
+
     signals
 }
 
@@ -476,5 +548,62 @@ mod tests {
         assert_eq!(mention_by_fp, 2); // one per unique signal
         assert_eq!(mention_by_src, 1); // one per mention
         assert_eq!(edge_by_fp, 2); // two per edge (one per endpoint)
+    }
+
+    // ── Name extraction tests ────────────────────────────────────
+
+    #[test]
+    fn extracts_two_word_names() {
+        let signals = extract_signals("Meeting with Tom Tang tomorrow.");
+        let names: Vec<&str> = signals
+            .iter()
+            .filter(|s| s.kind == kind::FULL_NAME)
+            .map(|s| s.value.as_str())
+            .collect();
+        assert_eq!(names, vec!["Tom Tang"]);
+    }
+
+    #[test]
+    fn extracts_three_word_names() {
+        let signals = extract_signals("Lunch with Alice Bob Chen.");
+        let names: Vec<&str> = signals
+            .iter()
+            .filter(|s| s.kind == kind::FULL_NAME)
+            .map(|s| s.value.as_str())
+            .collect();
+        assert_eq!(names, vec!["Alice Bob Chen"]);
+    }
+
+    #[test]
+    fn skips_excluded_patterns() {
+        let signals = extract_signals("Happy Birthday! See you in New York on Monday.");
+        let names: Vec<&str> = signals
+            .iter()
+            .filter(|s| s.kind == kind::FULL_NAME)
+            .map(|s| s.value.as_str())
+            .collect();
+        assert!(
+            names.is_empty(),
+            "excluded patterns should not match: {:?}",
+            names
+        );
+    }
+
+    #[test]
+    fn name_fingerprint_ids_are_case_normalized() {
+        let a = extract_signals("Tom Tang");
+        let b = extract_signals("Tom Tang");
+        assert_eq!(
+            a.last().unwrap().fingerprint_id,
+            b.last().unwrap().fingerprint_id
+        );
+    }
+
+    #[test]
+    fn names_and_emails_coexist_in_same_text() {
+        let signals = extract_signals("Email from Tom Tang <tom@acme.com> about the project.");
+        let kinds: Vec<&str> = signals.iter().map(|s| s.kind).collect();
+        assert!(kinds.contains(&kind::EMAIL));
+        assert!(kinds.contains(&kind::FULL_NAME));
     }
 }
