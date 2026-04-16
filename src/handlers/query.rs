@@ -187,6 +187,7 @@ pub async fn get_process_results(
 }
 
 /// Summary of a sync conflict for API responses.
+#[cfg_attr(feature = "ts-bindings", derive(ts_rs::TS))]
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ConflictSummary {
     pub id: String,

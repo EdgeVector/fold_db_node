@@ -1836,7 +1836,7 @@ checksum = "3f9eec918d3f24069decb9af1554cad7c880e2da24a9afd88aca000531ab82c1"
 [[package]]
 name = "fold_db"
 version = "0.3.0"
-source = "git+https://github.com/EdgeVector/fold_db.git?branch=feature%2Fsharing-engine#dcc490ac6cfb6ee4418df294a90068a273130cc4"
+source = "git+https://github.com/EdgeVector/fold_db.git?branch=feature%2Fsharing-engine#8d9766224ecfa106e578aa4f73ac64f7c1442268"
 dependencies = [
  "aes-gcm",
  "async-trait",
@@ -1931,6 +1931,7 @@ dependencies = [
  "tokio",
  "tokio-stream",
  "toml",
+ "ts-rs",
  "urlencoding",
  "utoipa",
  "uuid",
@@ -5489,10 +5490,12 @@ version = "10.1.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "e640d9b0964e9d39df633548591090ab92f7a4567bc31d3891af23471a3365c6"
 dependencies = [
+ "chrono",
  "lazy_static",
  "serde_json",
  "thiserror 2.0.18",
  "ts-rs-macros",
+ "uuid",
 ]
 
 [[package]]

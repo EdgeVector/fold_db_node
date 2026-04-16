@@ -55,6 +55,7 @@ pub struct PeerEventSet {
 }
 
 /// A detected overlap between the user's event and peers' events.
+#[cfg_attr(feature = "ts-bindings", derive(ts_rs::TS))]
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct SharedEvent {
     /// The user's event title.

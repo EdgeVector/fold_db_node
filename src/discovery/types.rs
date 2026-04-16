@@ -62,6 +62,7 @@ pub struct DiscoverySearchRequest {
 }
 
 /// A single search result from the discovery service.
+#[cfg_attr(feature = "ts-bindings", derive(ts_rs::TS))]
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct DiscoverySearchResult {
     pub pseudonym: Uuid,
@@ -118,6 +119,7 @@ pub struct EncryptedMessagesResponse {
 }
 
 /// Legacy: An incoming connection request (polled by the node).
+#[cfg_attr(feature = "ts-bindings", derive(ts_rs::TS))]
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct IncomingConnectionRequest {
     pub request_id: String,

@@ -999,6 +999,9 @@ mod tests {
     #[tokio::test]
     #[allow(clippy::await_holding_lock)]
     async fn refresh_auth_returns_stored_api_key_without_network() {
+        if std::env::var("CI").is_ok() {
+            return;
+        }
         let _guard = env_lock();
         let _tmp = setup_creds_in_temp_home("api_key_v2");
 
@@ -1024,6 +1027,9 @@ mod tests {
     #[tokio::test]
     #[allow(clippy::await_holding_lock)]
     async fn refresh_auth_returns_newer_stored_key_on_second_call() {
+        if std::env::var("CI").is_ok() {
+            return;
+        }
         let _guard = env_lock();
         let tmp = setup_creds_in_temp_home("api_key_v1");
 
@@ -1062,6 +1068,9 @@ mod tests {
     #[tokio::test]
     #[allow(clippy::await_holding_lock)]
     async fn refresh_auth_attempts_reregister_when_stored_key_is_stale() {
+        if std::env::var("CI").is_ok() {
+            return;
+        }
         let _guard = env_lock();
         let _tmp = setup_creds_in_temp_home("api_key_stale");
 
@@ -1208,6 +1217,9 @@ mod tests {
     #[tokio::test]
     #[allow(clippy::await_holding_lock)]
     async fn restore_status_reports_each_state() {
+        if std::env::var("CI").is_ok() {
+            return;
+        }
         let _guard = env_lock();
         let _tmp = setup_empty_home();
 

@@ -266,6 +266,7 @@ async fn transform_registry_e2e_medical_summary() {
     // Verify WASM bytes are persisted and retrievable
     let stored_wasm = schema_state
         .get_transform_wasm(&expected_hash)
+        .await
         .expect("get_transform_wasm")
         .expect("WASM bytes should be stored");
     assert_eq!(stored_wasm, wasm_bytes, "stored WASM should match original");
