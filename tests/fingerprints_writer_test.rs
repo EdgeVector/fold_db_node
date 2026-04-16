@@ -257,15 +257,23 @@ async fn face_extraction_plan_writes_all_records_through_schema_service() {
 
     assert_eq!(
         results.len(),
-        2,
-        "expected 2 Fingerprint records after writing 2 faces, got {}",
+        3,
+        "expected 3 Fingerprint records after writing 2 faces + self_identity, got {}",
         results.len()
     );
     // Every returned record should have kind = face_embedding.
+    // We expect 3 records (2 face_embedding + 1 node_pub_key self_identity).
+    let mut face_count = 0;
     for record in &results {
         let fields = record.get("fields").expect("fields envelope");
-        assert_eq!(fields["kind"], json!("face_embedding"));
+        let kind = fields["kind"].as_str().unwrap();
+        if kind == "face_embedding" {
+            face_count += 1;
+        } else {
+            assert_eq!(kind, "node_pub_key");
+        }
     }
+    assert_eq!(face_count, 2, "must find exactly 2 face_embedding records");
 
     // Query the Mention schema — exactly one record (one photo).
     let mention_canonical = canonical_names::lookup(schemas::MENTION).unwrap();
@@ -316,7 +324,7 @@ async fn writer_fails_loudly_without_canonical_names_registered() {
     );
 
     let result = write_records(node.clone(), &plan.records).await;
-    let err = result.expect_err("writer must fail without registered schemas");
+    println!("{:#?}", result); let err = result.expect_err("writer must fail without registered schemas");
     let msg = format!("{}", err);
     assert!(
         msg.contains("cannot resolve descriptive_schema")
