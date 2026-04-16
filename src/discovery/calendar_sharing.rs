@@ -375,7 +375,7 @@ pub fn detect_shared_events(
     }
 
     let mut result: Vec<SharedEvent> = shared.into_values().collect();
-    result.sort_by(|a, b| b.connection_count.cmp(&a.connection_count));
+    result.sort_by_key(|b| std::cmp::Reverse(b.connection_count));
     result
 }
 
