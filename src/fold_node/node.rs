@@ -831,8 +831,10 @@ pub(crate) fn build_org_sync_config_from_sled(
     pool: &Arc<fold_db::storage::SledPool>,
 ) -> FoldDbResult<Option<OrgSyncConfig>> {
     let memberships = org_ops::list_orgs(pool)?;
+    let share_rules = fold_db::sharing::store::list_share_rules(pool).unwrap_or_default();
+    let share_subscriptions = fold_db::sharing::store::list_share_subscriptions(pool).unwrap_or_default();
 
-    if memberships.is_empty() {
+    if memberships.is_empty() && share_rules.is_empty() && share_subscriptions.is_empty() {
         return Ok(None);
     }
 
@@ -860,7 +862,41 @@ pub(crate) fn build_org_sync_config_from_sled(
         }
     }
 
-    let partitioner = SyncPartitioner::new(&memberships);
+    for rule in &share_rules {
+        if !rule.active { continue; }
+        
+        let mut key = [0u8; 32];
+        let bytes = &rule.share_e2e_secret;
+        if bytes.len() == 32 {
+            key.copy_from_slice(bytes);
+            let provider = Arc::new(fold_db::crypto::LocalCryptoProvider::from_key(key));
+            targets.push(fold_db::sync::org_sync::SyncTarget {
+                label: format!("share -> {}", rule.recipient_display_name),
+                prefix: rule.share_prefix.clone(),
+                crypto: provider.clone(),
+            });
+            crypto_pairs.push((rule.share_prefix.clone(), provider));
+        }
+    }
+
+    for sub in &share_subscriptions {
+        if !sub.active { continue; }
+
+        let mut key = [0u8; 32];
+        let bytes = &sub.share_e2e_secret;
+        if bytes.len() == 32 {
+            key.copy_from_slice(bytes);
+            let provider = Arc::new(fold_db::crypto::LocalCryptoProvider::from_key(key));
+            targets.push(fold_db::sync::org_sync::SyncTarget {
+                label: format!("share <- {}", sub.sender_pubkey),
+                prefix: sub.share_prefix.clone(),
+                crypto: provider.clone(),
+            });
+            crypto_pairs.push((sub.share_prefix.clone(), provider));
+        }
+    }
+
+    let partitioner = SyncPartitioner::new(&memberships, &share_rules);
 
     Ok(Some(OrgSyncConfig {
         partitioner,

@@ -14,7 +14,7 @@ face-detection = ["fold_db/face-detection"]
 
 [dependencies]
 # Core database library
-fold_db = { git = "https://github.com/EdgeVector/fold_db.git", branch = "mainline", features = ["cli"] }
+fold_db = { git = "https://github.com/EdgeVector/fold_db.git", branch = "feature/sharing-engine", features = ["cli"] }
 
 # HTTP Server
 actix-web = "4.3"
