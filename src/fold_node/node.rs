@@ -832,7 +832,8 @@ pub(crate) fn build_org_sync_config_from_sled(
 ) -> FoldDbResult<Option<OrgSyncConfig>> {
     let memberships = org_ops::list_orgs(pool)?;
     let share_rules = fold_db::sharing::store::list_share_rules(pool).unwrap_or_default();
-    let share_subscriptions = fold_db::sharing::store::list_share_subscriptions(pool).unwrap_or_default();
+    let share_subscriptions =
+        fold_db::sharing::store::list_share_subscriptions(pool).unwrap_or_default();
 
     if memberships.is_empty() && share_rules.is_empty() && share_subscriptions.is_empty() {
         return Ok(None);
@@ -863,8 +864,10 @@ pub(crate) fn build_org_sync_config_from_sled(
     }
 
     for rule in &share_rules {
-        if !rule.active { continue; }
-        
+        if !rule.active {
+            continue;
+        }
+
         let mut key = [0u8; 32];
         let bytes = &rule.share_e2e_secret;
         if bytes.len() == 32 {
@@ -880,7 +883,9 @@ pub(crate) fn build_org_sync_config_from_sled(
     }
 
     for sub in &share_subscriptions {
-        if !sub.active { continue; }
+        if !sub.active {
+            continue;
+        }
 
         let mut key = [0u8; 32];
         let bytes = &sub.share_e2e_secret;

@@ -21,7 +21,10 @@ pub async fn list_rules(state: web::Data<AppState>) -> impl Responder {
 }
 
 /// DELETE /api/sharing/rules/{rule_id} — deactivate a share rule
-pub async fn deactivate_rule(path: web::Path<String>, state: web::Data<AppState>) -> impl Responder {
+pub async fn deactivate_rule(
+    path: web::Path<String>,
+    state: web::Data<AppState>,
+) -> impl Responder {
     let (user_hash, node) = node_or_return!(state);
     let rule_id = path.into_inner();
     handler_result_to_response(sharing_handlers::deactivate_rule(&rule_id, &user_hash, &node).await)

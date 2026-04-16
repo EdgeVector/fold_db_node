@@ -956,11 +956,26 @@ impl FoldHttpServer {
                     web::get().to(trust_routes::get_all_field_policies),
                 )
                 .route("/exemem-status", web::get().to(trust_routes::exemem_status))
-                .route("/rules", web::post().to(crate::server::routes::sharing::create_rule))
-                .route("/rules", web::get().to(crate::server::routes::sharing::list_rules))
-                .route("/rules/{id}", web::delete().to(crate::server::routes::sharing::deactivate_rule))
-                .route("/invite", web::post().to(crate::server::routes::sharing::generate_invite))
-                .route("/accept", web::post().to(crate::server::routes::sharing::accept_invite)),
+                .route(
+                    "/rules",
+                    web::post().to(crate::server::routes::sharing::create_rule),
+                )
+                .route(
+                    "/rules",
+                    web::get().to(crate::server::routes::sharing::list_rules),
+                )
+                .route(
+                    "/rules/{id}",
+                    web::delete().to(crate::server::routes::sharing::deactivate_rule),
+                )
+                .route(
+                    "/invite",
+                    web::post().to(crate::server::routes::sharing::generate_invite),
+                )
+                .route(
+                    "/accept",
+                    web::post().to(crate::server::routes::sharing::accept_invite),
+                ),
         );
     }
 

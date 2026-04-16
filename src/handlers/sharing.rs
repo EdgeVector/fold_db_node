@@ -6,7 +6,7 @@ use crate::fold_node::node::FoldNode;
 use crate::handlers::current_caller_pubkey;
 use crate::handlers::response::{ApiResponse, HandlerResult, IntoHandlerError};
 use fold_db::sharing::store;
-use fold_db::sharing::types::{ShareRule, ShareScope, ShareInvite, ShareSubscription};
+use fold_db::sharing::types::{ShareInvite, ShareRule, ShareScope, ShareSubscription};
 use serde::Deserialize;
 use std::time::{SystemTime, UNIX_EPOCH};
 
@@ -78,7 +78,7 @@ pub async fn create_rule(
 ) -> HandlerResult<ShareRuleResponse> {
     let pool = get_sled_pool(node).await?;
     let my_pubkey = current_caller_pubkey(node);
-    
+
     let mut e2e_bytes = [0u8; 32];
     rand::RngCore::fill_bytes(&mut rand::rngs::OsRng, &mut e2e_bytes);
 
@@ -117,10 +117,7 @@ pub async fn create_rule(
     ))
 }
 
-pub async fn list_rules(
-    user_hash: &str,
-    node: &FoldNode,
-) -> HandlerResult<ListShareRulesResponse> {
+pub async fn list_rules(user_hash: &str, node: &FoldNode) -> HandlerResult<ListShareRulesResponse> {
     let pool = get_sled_pool(node).await?;
     let rules = store::list_share_rules(&pool).handler_err("list share rules")?;
 
@@ -150,14 +147,18 @@ pub async fn generate_invite(
     node: &FoldNode,
 ) -> HandlerResult<ShareInviteResponse> {
     let pool = get_sled_pool(node).await?;
-    
+
     let rules = store::list_share_rules(&pool).handler_err("list rules to generate invite")?;
-    let rule = rules.into_iter().find(|r| r.rule_id == req.rule_id)
-        .ok_or_else(|| crate::handlers::HandlerError::NotFound(format!("Rule not found: {}", req.rule_id)))?;
+    let rule = rules
+        .into_iter()
+        .find(|r| r.rule_id == req.rule_id)
+        .ok_or_else(|| {
+            crate::handlers::HandlerError::NotFound(format!("Rule not found: {}", req.rule_id))
+        })?;
 
     // In a real flow, this could trigger the bulletin board send.
     // For now, we return the structured invite for the client/tests.
-    
+
     let my_pubkey = current_caller_pubkey(node);
     let my_display_name = format!("node-{}", &my_pubkey[..8.min(my_pubkey.len())]);
 
@@ -190,7 +191,8 @@ pub async fn accept_invite(
         active: true,
     };
 
-    store::create_share_subscription(&pool, sub.clone()).handler_err("create share subscription")?;
+    store::create_share_subscription(&pool, sub.clone())
+        .handler_err("create share subscription")?;
 
     Ok(ApiResponse::success_with_user(
         AcceptInviteResponse { subscription: sub },

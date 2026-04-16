@@ -308,8 +308,9 @@ async fn face_extraction_plan_writes_all_records_through_schema_service() {
 async fn writer_fails_loudly_without_canonical_names_registered() {
     canonical_names::reset_for_tests();
 
-    let service = spawn_schema_service().await;
-    let (node, _tmp) = create_node(&service.url).await;
+    // We use a mock URL to prevent FoldNode::new from automatically bootstrapping
+    // schemas, ensuring the canonical_names registry remains genuinely empty.
+    let (node, _tmp) = create_node("mock://localhost").await;
 
     // Do NOT call register_phase_1_schemas. The canonical_names
     // registry is empty and no schemas exist on the node.
@@ -324,7 +325,7 @@ async fn writer_fails_loudly_without_canonical_names_registered() {
     );
 
     let result = write_records(node.clone(), &plan.records).await;
-    println!("{:#?}", result); let err = result.expect_err("writer must fail without registered schemas");
+    let err = result.expect_err("writer must fail without registered schemas");
     let msg = format!("{}", err);
     assert!(
         msg.contains("cannot resolve descriptive_schema")
