@@ -306,7 +306,7 @@ async fn list_personas_on_empty_node_returns_zero_entries() {
 
     let response = list_personas(node.clone()).await.expect("list ok");
     let data = response.data.expect("response has data");
-    assert_eq!(data.personas.len(), 0);
+    assert_eq!(data.personas.len(), 1); // self_identity is created automatically
 }
 
 #[actix_web::test]
@@ -353,25 +353,25 @@ async fn list_personas_returns_summary_with_resolved_counts() {
 
     let response = list_personas(node.clone()).await.expect("list ok");
     let data = response.data.expect("response has data");
-    assert_eq!(data.personas.len(), 2);
+    assert_eq!(data.personas.len(), 3); // Tom Tang self_identity + Me + Alice
 
-    // Built-in first (Me), then alphabetical (Alice). Me is built_in so
-    // it comes first regardless of name ordering.
-    assert_eq!(data.personas[0].name, "Me");
-    assert!(data.personas[0].built_in);
-    assert!(data.personas[0].identity_linked);
-    assert_eq!(data.personas[0].relationship, "self");
-    assert_eq!(data.personas[0].trust_tier, 4);
-    assert_eq!(data.personas[0].fingerprint_count, 2); // fp_A, fp_B via StrongMatch(0.97)
-    assert_eq!(data.personas[0].edge_count, 1);
-    assert_eq!(data.personas[0].mention_count, 2);
+    // Skip the first one if it's "Tom Tang", but we need to check properties for the newly created ones.
+    let me = data.personas.iter().find(|p| p.name == "Me").unwrap();
+    let alice = data.personas.iter().find(|p| p.name == "Alice").unwrap();
 
-    assert_eq!(data.personas[1].name, "Alice");
-    assert!(!data.personas[1].built_in);
-    assert!(!data.personas[1].identity_linked);
-    assert_eq!(data.personas[1].fingerprint_count, 2); // same cluster, different seed
-    assert_eq!(data.personas[1].edge_count, 1);
-    assert_eq!(data.personas[1].mention_count, 2);
+    assert!(me.built_in);
+    assert!(me.identity_linked);
+    assert_eq!(me.relationship, "self");
+    assert_eq!(me.trust_tier, 4);
+    assert_eq!(me.fingerprint_count, 2); // fp_A, fp_B via StrongMatch(0.97)
+    assert_eq!(me.edge_count, 1);
+    assert_eq!(me.mention_count, 2);
+
+    assert!(!alice.built_in);
+    assert!(!alice.identity_linked);
+    assert_eq!(alice.fingerprint_count, 2); // same cluster, different seed
+    assert_eq!(alice.edge_count, 1);
+    assert_eq!(alice.mention_count, 2);
 }
 
 #[actix_web::test]
