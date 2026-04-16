@@ -22,6 +22,7 @@ const PEER_MOMENT_PREFIX: &str = "discovery:peer_moment:";
 type HmacSha256 = Hmac<Sha256>;
 
 /// Opt-in record for photo moment sharing with a specific peer.
+#[cfg_attr(feature = "ts-bindings", derive(ts_rs::TS))]
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct MomentOptIn {
     /// Pseudonym of the peer we opted in to share with
@@ -51,6 +52,7 @@ pub struct PhotoMomentHash {
 }
 
 /// A detected shared moment between the local user and a peer.
+#[cfg_attr(feature = "ts-bindings", derive(ts_rs::TS))]
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct SharedMoment {
     /// Unique ID for this shared moment

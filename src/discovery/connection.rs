@@ -283,6 +283,7 @@ pub struct ReferralResponsePayload {
 }
 
 /// A vouch from a trusted contact about a connection requester.
+#[cfg_attr(feature = "ts-bindings", derive(ts_rs::TS))]
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Vouch {
     pub voucher_display_name: String,
@@ -291,6 +292,7 @@ pub struct Vouch {
 }
 
 /// A mutual contact discovered via network intersection.
+#[cfg_attr(feature = "ts-bindings", derive(ts_rs::TS))]
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct MutualContact {
     pub display_name: String,
@@ -298,6 +300,7 @@ pub struct MutualContact {
 }
 
 /// A decrypted, locally stored connection request.
+#[cfg_attr(feature = "ts-bindings", derive(ts_rs::TS))]
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct LocalConnectionRequest {
     pub request_id: String,
@@ -336,6 +339,7 @@ pub struct LocalConnectionRequest {
 }
 
 /// A locally stored sent connection request.
+#[cfg_attr(feature = "ts-bindings", derive(ts_rs::TS))]
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct LocalSentRequest {
     pub request_id: String,

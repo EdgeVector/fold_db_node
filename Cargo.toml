@@ -6,7 +6,7 @@ publish = false
 
 [features]
 default = []
-ts-bindings = ["fold_db/ts-bindings"]
+ts-bindings = ["fold_db/ts-bindings", "dep:ts-rs"]
 os-keychain = ["dep:keyring"]
 test-utils = ["fold_db/test-utils"]
 transform-wasm = ["fold_db/transform-wasm"]
@@ -14,7 +14,7 @@ face-detection = ["fold_db/face-detection"]
 
 [dependencies]
 # Core database library
-fold_db = { git = "https://github.com/EdgeVector/fold_db.git", branch = "mainline", features = ["cli"] }
+fold_db = { git = "https://github.com/EdgeVector/fold_db.git", branch = "feature/sharing-engine", features = ["cli"] }
 
 # HTTP Server
 actix-web = "4.3"
@@ -44,6 +44,7 @@ sled = "0.34"
 # Shared deps (also in fold_db, but needed directly)
 serde = { version = "1.0", features = ["derive"] }
 serde_json = "1.0"
+ts-rs = { version = "10.1.0", optional = true, features = ["uuid-impl", "chrono-impl"] }
 tokio = { version = "1.0", features = ["macros", "rt-multi-thread", "sync", "time", "fs", "signal", "io-util"] }
 log = { version = "0.4", features = ["std"] }
 toml = "0.8"

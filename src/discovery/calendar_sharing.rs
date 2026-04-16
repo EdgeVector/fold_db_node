@@ -55,6 +55,7 @@ pub struct PeerEventSet {
 }
 
 /// A detected overlap between the user's event and peers' events.
+#[cfg_attr(feature = "ts-bindings", derive(ts_rs::TS))]
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct SharedEvent {
     /// The user's event title.
@@ -374,7 +375,7 @@ pub fn detect_shared_events(
     }
 
     let mut result: Vec<SharedEvent> = shared.into_values().collect();
-    result.sort_by(|a, b| b.connection_count.cmp(&a.connection_count));
+    result.sort_by_key(|b| std::cmp::Reverse(b.connection_count));
     result
 }
 

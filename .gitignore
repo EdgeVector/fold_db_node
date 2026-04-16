@@ -84,3 +84,7 @@ snapshots/
 .claude/worktrees/
 src/server/static-react/config/
 .folddb-node*
+
+# Automatically generated files
+bindings/
+clippy_out.txt

@@ -144,7 +144,7 @@ pub async fn detect_interests_from_schemas(
         .collect();
 
     // Sort by count descending
-    categories.sort_by(|a, b| b.count.cmp(&a.count));
+    categories.sort_by_key(|b| std::cmp::Reverse(b.count));
 
     let profile = InterestProfile {
         categories,

@@ -257,15 +257,23 @@ async fn face_extraction_plan_writes_all_records_through_schema_service() {
 
     assert_eq!(
         results.len(),
-        2,
-        "expected 2 Fingerprint records after writing 2 faces, got {}",
+        3,
+        "expected 3 Fingerprint records after writing 2 faces + self_identity, got {}",
         results.len()
     );
     // Every returned record should have kind = face_embedding.
+    // We expect 3 records (2 face_embedding + 1 node_pub_key self_identity).
+    let mut face_count = 0;
     for record in &results {
         let fields = record.get("fields").expect("fields envelope");
-        assert_eq!(fields["kind"], json!("face_embedding"));
+        let kind = fields["kind"].as_str().unwrap();
+        if kind == "face_embedding" {
+            face_count += 1;
+        } else {
+            assert_eq!(kind, "node_pub_key");
+        }
     }
+    assert_eq!(face_count, 2, "must find exactly 2 face_embedding records");
 
     // Query the Mention schema — exactly one record (one photo).
     let mention_canonical = canonical_names::lookup(schemas::MENTION).unwrap();
@@ -300,8 +308,9 @@ async fn face_extraction_plan_writes_all_records_through_schema_service() {
 async fn writer_fails_loudly_without_canonical_names_registered() {
     canonical_names::reset_for_tests();
 
-    let service = spawn_schema_service().await;
-    let (node, _tmp) = create_node(&service.url).await;
+    // We use a mock URL to prevent FoldNode::new from automatically bootstrapping
+    // schemas, ensuring the canonical_names registry remains genuinely empty.
+    let (node, _tmp) = create_node("mock://localhost").await;
 
     // Do NOT call register_phase_1_schemas. The canonical_names
     // registry is empty and no schemas exist on the node.

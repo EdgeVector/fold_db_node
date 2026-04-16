@@ -41,6 +41,7 @@ pub mod mutation;
 pub mod org;
 pub mod query;
 pub mod response;
+pub mod sharing;
 pub mod system;
 pub mod trust;
 

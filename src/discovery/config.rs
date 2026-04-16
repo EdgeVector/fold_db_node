@@ -6,6 +6,7 @@ use std::collections::HashMap;
 const CONFIG_PREFIX: &str = "discovery:config:";
 
 /// Per-schema discovery opt-in configuration. Persisted in Sled.
+#[cfg_attr(feature = "ts-bindings", derive(ts_rs::TS))]
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct DiscoveryOptIn {
     pub schema_name: String,
