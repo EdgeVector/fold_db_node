@@ -1,6 +1,7 @@
 // Sharing & Trust Management API Client
 
-import { getSharedClient } from '../core/client';
+import { createApiClient, getSharedClient } from '../core/client';
+import type { EnhancedApiResponse } from '../core/types';
 import type {
   TrustTier,
   TrustGrantEntry,
@@ -172,4 +173,145 @@ export async function listCapabilities(
   );
   if (!resp.success) throw new Error(resp.error || 'Failed to list capabilities');
   return resp.data ?? [];
+}
+
+// ===== Cross-user sharing (rules, invites, subscriptions) =====
+//
+// Mirrors the Rust structs in fold_db::sharing::types. The HTTP layer
+// (src/handlers/sharing.rs + src/server/routes/sharing.rs) wraps the
+// payloads in the standard { ok, <field>, user_hash } envelope.
+
+/**
+ * Scope of a share rule. Matches Rust's `ShareScope` enum, which is
+ * serialized with serde's default enum tagging:
+ *   - `"AllSchemas"`                               (unit variant)
+ *   - `{ "Schema": "schema_name" }`                (tuple variant, 1 arg)
+ *   - `{ "SchemaField": ["schema", "field"] }`     (tuple variant, 2 args)
+ */
+export type ShareScope =
+  | 'AllSchemas'
+  | { Schema: string }
+  | { SchemaField: [string, string] };
+
+export interface ShareRule {
+  rule_id: string;
+  recipient_pubkey: string;
+  recipient_display_name: string;
+  scope: ShareScope;
+  share_prefix: string;
+  /** Raw E2E secret bytes (serde serializes Vec<u8> as number[]). */
+  share_e2e_secret: number[];
+  active: boolean;
+  created_at: number;
+  writer_pubkey: string;
+  signature: string;
+}
+
+export interface ShareInvite {
+  sender_pubkey: string;
+  sender_display_name: string;
+  share_prefix: string;
+  share_e2e_secret: number[];
+  scope_description: string;
+}
+
+export interface ShareSubscription {
+  sender_pubkey: string;
+  share_prefix: string;
+  share_e2e_secret: number[];
+  accepted_at: number;
+  active: boolean;
+}
+
+export interface CreateRuleRequest {
+  recipient_pubkey: string;
+  recipient_display_name: string;
+  scope: ShareScope;
+}
+
+export interface GenerateInviteRequest {
+  rule_id: string;
+  scope_description: string;
+}
+
+export interface ListShareRulesResponse {
+  ok: boolean;
+  rules: ShareRule[];
+  user_hash?: string;
+}
+
+export interface ShareRuleResponse {
+  ok: boolean;
+  rule: ShareRule;
+  user_hash?: string;
+}
+
+export interface OkResponse {
+  ok: boolean;
+  user_hash?: string;
+}
+
+export interface ShareInviteResponse {
+  ok: boolean;
+  invite: ShareInvite;
+  user_hash?: string;
+}
+
+export interface AcceptShareInviteResponse {
+  ok: boolean;
+  subscription: ShareSubscription;
+  user_hash?: string;
+}
+
+export interface PendingInvitesResponse {
+  ok: boolean;
+  invites: ShareInvite[];
+  user_hash?: string;
+}
+
+// Use the same client factory as other per-domain clients.
+const sharingApi = createApiClient({
+  enableCache: false,
+  enableLogging: true,
+  enableMetrics: true,
+});
+
+export async function listShareRules(): Promise<
+  EnhancedApiResponse<ListShareRulesResponse>
+> {
+  return sharingApi.get<ListShareRulesResponse>('/sharing/rules');
+}
+
+export async function createShareRule(
+  req: CreateRuleRequest,
+): Promise<EnhancedApiResponse<ShareRuleResponse>> {
+  return sharingApi.post<ShareRuleResponse>('/sharing/rules', req);
+}
+
+export async function deactivateShareRule(
+  ruleId: string,
+): Promise<EnhancedApiResponse<OkResponse>> {
+  return sharingApi.delete<OkResponse>(
+    `/sharing/rules/${encodeURIComponent(ruleId)}`,
+  );
+}
+
+export async function generateShareInvite(
+  req: GenerateInviteRequest,
+): Promise<EnhancedApiResponse<ShareInviteResponse>> {
+  return sharingApi.post<ShareInviteResponse>('/sharing/invite', req);
+}
+
+export async function acceptShareInvite(
+  invite: ShareInvite,
+): Promise<EnhancedApiResponse<AcceptShareInviteResponse>> {
+  return sharingApi.post<AcceptShareInviteResponse>('/sharing/accept', {
+    invite,
+  });
+}
+
+export async function listPendingShareInvites(): Promise<
+  EnhancedApiResponse<PendingInvitesResponse>
+> {
+  return sharingApi.get<PendingInvitesResponse>('/sharing/pending-invites');
 }
