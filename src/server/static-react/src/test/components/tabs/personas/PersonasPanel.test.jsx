@@ -11,6 +11,7 @@ vi.mock('../../../../api/clients/fingerprintsClient', () => ({
   getPersona: vi.fn(),
   updatePersona: vi.fn(),
   deletePersona: vi.fn(),
+  mergePersonas: vi.fn(),
   RELATIONSHIP_OPTIONS: [
     'self',
     'family',
@@ -26,6 +27,7 @@ import {
   getPersona,
   updatePersona,
   deletePersona,
+  mergePersonas,
 } from '../../../../api/clients/fingerprintsClient'
 
 // ── Test data builders ─────────────────────────────────────────────
@@ -1025,6 +1027,192 @@ describe('PersonasPanel', () => {
         })
         fireEvent.click(screen.getByTestId('persona-unlink-identity-button'))
         expect(updatePersona).not.toHaveBeenCalled()
+      } finally {
+        window.confirm = origConfirm
+      }
+    })
+  })
+
+  describe('merge flow', () => {
+    it('shows the merge dropdown with other non-built-in personas as options', async () => {
+      listPersonas.mockResolvedValue(
+        okList([
+          makeSummary({ id: 'ps_a', name: 'Alice', built_in: false }),
+          makeSummary({ id: 'ps_b', name: 'Alice Smith', built_in: false }),
+          makeSummary({ id: 'ps_me', name: 'Me', built_in: true }),
+        ]),
+      )
+      getPersona.mockResolvedValue(
+        okDetail(makeDetail({ id: 'ps_a', name: 'Alice', built_in: false })),
+      )
+      render(<PersonasPanel />)
+      await waitFor(() => {
+        expect(screen.getByTestId('persona-row-ps_a')).toBeInTheDocument()
+      })
+      fireEvent.click(screen.getByTestId('persona-row-ps_a'))
+      await waitFor(() => {
+        expect(screen.getByTestId('persona-merge-select')).toBeInTheDocument()
+      })
+      const select = screen.getByTestId('persona-merge-select')
+      // The selected persona is excluded, and built-in Me is excluded.
+      expect(select).toHaveTextContent('Alice Smith')
+      expect(select).not.toHaveTextContent('Me · ')
+    })
+
+    it('hides the merge control on built-in personas', async () => {
+      listPersonas.mockResolvedValue(
+        okList([
+          makeSummary({ id: 'ps_me', name: 'Me', built_in: true }),
+          makeSummary({ id: 'ps_a', name: 'Alice', built_in: false }),
+        ]),
+      )
+      getPersona.mockResolvedValue(
+        okDetail(makeDetail({ id: 'ps_me', name: 'Me', built_in: true })),
+      )
+      render(<PersonasPanel />)
+      await waitFor(() => {
+        expect(screen.getByTestId('persona-row-ps_me')).toBeInTheDocument()
+      })
+      fireEvent.click(screen.getByTestId('persona-row-ps_me'))
+      await waitFor(() => {
+        expect(screen.getByTestId('persona-detail')).toBeInTheDocument()
+      })
+      expect(screen.queryByTestId('persona-merge-control')).toBeNull()
+    })
+
+    it('hides the merge control when no other non-built-in personas exist', async () => {
+      listPersonas.mockResolvedValue(
+        okList([
+          makeSummary({ id: 'ps_me', name: 'Me', built_in: true }),
+          makeSummary({ id: 'ps_lonely', name: 'Lonely', built_in: false }),
+        ]),
+      )
+      getPersona.mockResolvedValue(
+        okDetail(makeDetail({ id: 'ps_lonely', name: 'Lonely', built_in: false })),
+      )
+      render(<PersonasPanel />)
+      await waitFor(() => {
+        expect(screen.getByTestId('persona-row-ps_lonely')).toBeInTheDocument()
+      })
+      fireEvent.click(screen.getByTestId('persona-row-ps_lonely'))
+      await waitFor(() => {
+        expect(screen.getByTestId('persona-detail')).toBeInTheDocument()
+      })
+      expect(screen.queryByTestId('persona-merge-control')).toBeNull()
+    })
+
+    it('confirms then calls mergePersonas(survivor, absorbed), drops the absorbed row', async () => {
+      listPersonas.mockResolvedValue(
+        okList([
+          makeSummary({ id: 'ps_survivor', name: 'Alice' }),
+          makeSummary({ id: 'ps_absorbed', name: 'Alice Smith' }),
+        ]),
+      )
+      getPersona.mockResolvedValue(
+        okDetail(makeDetail({ id: 'ps_survivor', name: 'Alice' })),
+      )
+      mergePersonas.mockResolvedValue(
+        okDetail(
+          makeDetail({
+            id: 'ps_survivor',
+            name: 'Alice',
+            aliases: ['Alice Smith'],
+          }),
+        ),
+      )
+      const origConfirm = window.confirm
+      window.confirm = () => true
+      try {
+        render(<PersonasPanel />)
+        await waitFor(() => {
+          expect(screen.getByTestId('persona-row-ps_survivor')).toBeInTheDocument()
+        })
+        fireEvent.click(screen.getByTestId('persona-row-ps_survivor'))
+        await waitFor(() => {
+          expect(screen.getByTestId('persona-merge-select')).toBeInTheDocument()
+        })
+        fireEvent.change(screen.getByTestId('persona-merge-select'), {
+          target: { value: 'ps_absorbed' },
+        })
+        fireEvent.click(screen.getByTestId('persona-merge-button'))
+        await waitFor(() => {
+          expect(mergePersonas).toHaveBeenCalledWith('ps_survivor', 'ps_absorbed')
+        })
+        // Absorbed row disappears from the list.
+        await waitFor(() => {
+          expect(screen.queryByTestId('persona-row-ps_absorbed')).toBeNull()
+        })
+      } finally {
+        window.confirm = origConfirm
+      }
+    })
+
+    it('skips the merge when the user cancels the confirm dialog', async () => {
+      listPersonas.mockResolvedValue(
+        okList([
+          makeSummary({ id: 'ps_a', name: 'Alice' }),
+          makeSummary({ id: 'ps_b', name: 'Alice Smith' }),
+        ]),
+      )
+      getPersona.mockResolvedValue(
+        okDetail(makeDetail({ id: 'ps_a', name: 'Alice' })),
+      )
+      const origConfirm = window.confirm
+      window.confirm = () => false
+      try {
+        render(<PersonasPanel />)
+        await waitFor(() => {
+          expect(screen.getByTestId('persona-row-ps_a')).toBeInTheDocument()
+        })
+        fireEvent.click(screen.getByTestId('persona-row-ps_a'))
+        await waitFor(() => {
+          expect(screen.getByTestId('persona-merge-select')).toBeInTheDocument()
+        })
+        fireEvent.change(screen.getByTestId('persona-merge-select'), {
+          target: { value: 'ps_b' },
+        })
+        fireEvent.click(screen.getByTestId('persona-merge-button'))
+        expect(mergePersonas).not.toHaveBeenCalled()
+      } finally {
+        window.confirm = origConfirm
+      }
+    })
+
+    it('surfaces backend error messages verbatim on merge failure', async () => {
+      listPersonas.mockResolvedValue(
+        okList([
+          makeSummary({ id: 'ps_a', name: 'Alice' }),
+          makeSummary({ id: 'ps_b', name: 'Bob' }),
+        ]),
+      )
+      getPersona.mockResolvedValue(
+        okDetail(makeDetail({ id: 'ps_a', name: 'Alice' })),
+      )
+      mergePersonas.mockResolvedValue({
+        success: false,
+        error:
+          'both personas are linked to different verified identities (id_x vs id_y); unlink one before merging',
+      })
+      const origConfirm = window.confirm
+      window.confirm = () => true
+      try {
+        render(<PersonasPanel />)
+        await waitFor(() => {
+          expect(screen.getByTestId('persona-row-ps_a')).toBeInTheDocument()
+        })
+        fireEvent.click(screen.getByTestId('persona-row-ps_a'))
+        await waitFor(() => {
+          expect(screen.getByTestId('persona-merge-select')).toBeInTheDocument()
+        })
+        fireEvent.change(screen.getByTestId('persona-merge-select'), {
+          target: { value: 'ps_b' },
+        })
+        fireEvent.click(screen.getByTestId('persona-merge-button'))
+        await waitFor(() => {
+          expect(screen.getByTestId('persona-detail-error')).toHaveTextContent(
+            /different verified identities/,
+          )
+        })
       } finally {
         window.confirm = origConfirm
       }

@@ -723,7 +723,8 @@ impl FoldHttpServer {
                         .route("", web::get().to(fp_routes::list_personas))
                         .route("/{id}", web::get().to(fp_routes::get_persona))
                         .route("/{id}", web::patch().to(fp_routes::update_persona))
-                        .route("/{id}", web::delete().to(fp_routes::delete_persona)),
+                        .route("/{id}", web::delete().to(fp_routes::delete_persona))
+                        .route("/{id}/merge", web::post().to(fp_routes::merge_personas)),
                 )
                 .service(
                     web::scope("/ingestion-errors")
