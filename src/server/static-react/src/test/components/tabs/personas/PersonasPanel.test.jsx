@@ -881,4 +881,153 @@ describe('PersonasPanel', () => {
       }
     })
   })
+
+  describe('unlink identity flow', () => {
+    it('shows the Unlink identity button on verified non-built-in personas', async () => {
+      listPersonas.mockResolvedValue(
+        okList([makeSummary({ id: 'ps_v', name: 'Verified', built_in: false })]),
+      )
+      getPersona.mockResolvedValue(
+        okDetail(
+          makeDetail({
+            id: 'ps_v',
+            name: 'Verified',
+            built_in: false,
+            identity_id: 'id_abc',
+          }),
+        ),
+      )
+      render(<PersonasPanel />)
+      await waitFor(() => {
+        expect(screen.getByTestId('persona-row-ps_v')).toBeInTheDocument()
+      })
+      fireEvent.click(screen.getByTestId('persona-row-ps_v'))
+      await waitFor(() => {
+        expect(screen.getByTestId('persona-unlink-identity-button')).toBeInTheDocument()
+      })
+    })
+
+    it('hides the Unlink button when identity_id is null', async () => {
+      listPersonas.mockResolvedValue(
+        okList([makeSummary({ id: 'ps_u', name: 'Unverified' })]),
+      )
+      getPersona.mockResolvedValue(
+        okDetail(
+          makeDetail({ id: 'ps_u', name: 'Unverified', identity_id: null }),
+        ),
+      )
+      render(<PersonasPanel />)
+      await waitFor(() => {
+        expect(screen.getByTestId('persona-row-ps_u')).toBeInTheDocument()
+      })
+      fireEvent.click(screen.getByTestId('persona-row-ps_u'))
+      await waitFor(() => {
+        expect(screen.getByTestId('persona-detail')).toBeInTheDocument()
+      })
+      expect(screen.queryByTestId('persona-unlink-identity-button')).toBeNull()
+    })
+
+    it('hides the Unlink button on built-in (Me) persona even when linked', async () => {
+      listPersonas.mockResolvedValue(
+        okList([makeSummary({ id: 'ps_me', name: 'Me', built_in: true })]),
+      )
+      getPersona.mockResolvedValue(
+        okDetail(
+          makeDetail({
+            id: 'ps_me',
+            name: 'Me',
+            built_in: true,
+            identity_id: 'id_self',
+          }),
+        ),
+      )
+      render(<PersonasPanel />)
+      await waitFor(() => {
+        expect(screen.getByTestId('persona-row-ps_me')).toBeInTheDocument()
+      })
+      fireEvent.click(screen.getByTestId('persona-row-ps_me'))
+      await waitFor(() => {
+        expect(screen.getByTestId('persona-detail')).toBeInTheDocument()
+      })
+      expect(screen.queryByTestId('persona-unlink-identity-button')).toBeNull()
+    })
+
+    it('confirms then calls updatePersona with clear_identity_id=true', async () => {
+      listPersonas.mockResolvedValue(
+        okList([makeSummary({ id: 'ps_v', name: 'Verified', built_in: false })]),
+      )
+      getPersona.mockResolvedValue(
+        okDetail(
+          makeDetail({
+            id: 'ps_v',
+            name: 'Verified',
+            built_in: false,
+            identity_id: 'id_abc',
+          }),
+        ),
+      )
+      updatePersona.mockResolvedValue(
+        okDetail(
+          makeDetail({
+            id: 'ps_v',
+            name: 'Verified',
+            built_in: false,
+            identity_id: null,
+          }),
+        ),
+      )
+      const origConfirm = window.confirm
+      window.confirm = () => true
+      try {
+        render(<PersonasPanel />)
+        await waitFor(() => {
+          expect(screen.getByTestId('persona-row-ps_v')).toBeInTheDocument()
+        })
+        fireEvent.click(screen.getByTestId('persona-row-ps_v'))
+        await waitFor(() => {
+          expect(screen.getByTestId('persona-unlink-identity-button')).toBeInTheDocument()
+        })
+        fireEvent.click(screen.getByTestId('persona-unlink-identity-button'))
+        await waitFor(() => {
+          expect(updatePersona).toHaveBeenCalledWith('ps_v', {
+            clear_identity_id: true,
+          })
+        })
+      } finally {
+        window.confirm = origConfirm
+      }
+    })
+
+    it('does nothing when the user cancels the Unlink confirm dialog', async () => {
+      listPersonas.mockResolvedValue(
+        okList([makeSummary({ id: 'ps_v', name: 'Verified', built_in: false })]),
+      )
+      getPersona.mockResolvedValue(
+        okDetail(
+          makeDetail({
+            id: 'ps_v',
+            name: 'Verified',
+            built_in: false,
+            identity_id: 'id_abc',
+          }),
+        ),
+      )
+      const origConfirm = window.confirm
+      window.confirm = () => false
+      try {
+        render(<PersonasPanel />)
+        await waitFor(() => {
+          expect(screen.getByTestId('persona-row-ps_v')).toBeInTheDocument()
+        })
+        fireEvent.click(screen.getByTestId('persona-row-ps_v'))
+        await waitFor(() => {
+          expect(screen.getByTestId('persona-unlink-identity-button')).toBeInTheDocument()
+        })
+        fireEvent.click(screen.getByTestId('persona-unlink-identity-button'))
+        expect(updatePersona).not.toHaveBeenCalled()
+      } finally {
+        window.confirm = origConfirm
+      }
+    })
+  })
 })

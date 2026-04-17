@@ -709,6 +709,7 @@ impl FoldHttpServer {
                     "/identity-cards/import",
                     web::post().to(fp_routes::import_identity_card),
                 )
+                .route("/identities", web::get().to(fp_routes::list_identities))
                 .route(
                     "/ingest-text-signals",
                     web::post().to(fp_routes::ingest_text_signals),

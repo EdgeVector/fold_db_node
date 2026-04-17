@@ -1,6 +1,7 @@
 //! HTTP routes for the fingerprint subsystem. Thin actix adapters
 //! over `crate::handlers::fingerprints`; no business logic here.
 
+pub mod identities;
 pub mod import_contacts;
 pub mod import_identity_card;
 pub mod ingest;
@@ -10,6 +11,7 @@ pub mod my_identity_card;
 pub mod personas;
 pub mod suggestions;
 
+pub use identities::list_identities;
 pub use import_contacts::import_contacts;
 pub use import_identity_card::import_identity_card;
 pub use ingest::ingest_photo_faces;

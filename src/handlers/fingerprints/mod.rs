@@ -10,6 +10,7 @@
 //! (`crate::server::routes::fingerprints`) wraps them in actix
 //! responses.
 
+pub mod identities;
 pub mod import_contacts;
 pub mod import_identity_card;
 pub mod ingest;
@@ -19,6 +20,7 @@ pub mod my_identity_card;
 pub mod personas;
 pub mod suggestions;
 
+pub use identities::{list_identities, IdentityAuditRow, ListIdentitiesResponse};
 pub use import_contacts::import_contacts;
 pub use import_identity_card::{
     import_identity_card, ImportIdentityCardRequest, ImportIdentityCardResponse,

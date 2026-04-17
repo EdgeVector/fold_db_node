@@ -35,6 +35,11 @@ pub struct UpdatePersonaRequest {
     /// here so a future "link existing Identity" UI can wire to PATCH
     /// without a dedicated endpoint.
     pub link_identity_id: Option<String>,
+    /// Clear `identity_id` on the persona (set to JSON null). Used
+    /// by the "Unlink identity" action on a verified persona detail.
+    /// Rejected by the backend on built-in personas.
+    #[serde(default)]
+    pub clear_identity_id: bool,
 }
 
 /// GET /api/fingerprints/personas — list every Persona with
@@ -100,6 +105,7 @@ pub async fn update_persona(
         aliases: body.aliases,
         user_confirmed: body.user_confirmed,
         link_identity_id: body.link_identity_id,
+        clear_identity_id: body.clear_identity_id,
     };
 
     match fp_handlers::apply_persona_patch(node, persona_id, patch).await {

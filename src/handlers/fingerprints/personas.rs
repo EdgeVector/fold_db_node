@@ -771,10 +771,20 @@ pub struct PersonaPatch {
     /// exists on this node (typically written by the import-identity-
     /// card handler after a successful signature verification). Sets
     /// `identity_id` on the persona to the SchemaRef shape the schema
-    /// requires. Pass `None` to leave the link unchanged; there is no
-    /// op to CLEAR the link today — if you need that, add a
-    /// `clear_identity_id: bool` companion later.
+    /// requires. Pass `None` to leave the link unchanged; pass
+    /// `clear_identity_id: true` to null it out.
     pub link_identity_id: Option<String>,
+    /// Clear `identity_id` on the persona (set to JSON null). Used
+    /// when the user realizes a link was set on the wrong persona,
+    /// or wants to downgrade a verified persona back to assumed.
+    /// Rejected on built-in personas — the Me persona's identity_id
+    /// is the self-Identity and must not be cleared.
+    ///
+    /// `link_identity_id` and `clear_identity_id = true` MUST NOT
+    /// be used in the same patch. The handler rejects that
+    /// combination with a 400 so the caller doesn't get a silent
+    /// "clear wins" or "link wins" surprise.
+    pub clear_identity_id: bool,
 }
 
 impl PersonaPatch {
@@ -789,6 +799,7 @@ impl PersonaPatch {
             && self.aliases.is_none()
             && self.user_confirmed.is_none()
             && self.link_identity_id.is_none()
+            && !self.clear_identity_id
     }
 }
 
@@ -850,6 +861,13 @@ pub async fn apply_persona_patch(
     if patch.is_empty() {
         return Err(HandlerError::BadRequest(
             "persona patch must contain at least one mutable field".to_string(),
+        ));
+    }
+    if patch.link_identity_id.is_some() && patch.clear_identity_id {
+        return Err(HandlerError::BadRequest(
+            "link_identity_id and clear_identity_id are mutually exclusive — \
+             pick one op per patch"
+                .to_string(),
         ));
     }
     if let Some(threshold) = patch.threshold {
@@ -998,6 +1016,24 @@ pub async fn apply_persona_patch(
             "identity_id".to_string(),
             serde_json::json!({ "schema": "Identity", "key": identity_id }),
         );
+    }
+    if patch.clear_identity_id {
+        // Me persona's identity_id is the self-Identity and MUST
+        // NOT be cleared; doing so would leave the built-in persona
+        // in a "claims to be Me but no signed identity" state that
+        // breaks trust decisions. Reject early with a clear message.
+        let built_in_now = payload
+            .get("built_in")
+            .and_then(|v| v.as_bool())
+            .unwrap_or(false);
+        if built_in_now {
+            return Err(HandlerError::BadRequest(
+                "cannot clear identity_id on a built-in persona (Me). \
+                 Rotate the IdentityCard if you need to change it."
+                    .to_string(),
+            ));
+        }
+        payload.insert("identity_id".to_string(), Value::Null);
     }
 
     // 4. Execute Update. Keep the same content-addressed primary key.
@@ -1352,6 +1388,24 @@ mod tests {
     fn persona_patch_not_empty_when_only_aliases_set() {
         let patch = PersonaPatch {
             aliases: Some(vec!["tommy".to_string()]),
+            ..Default::default()
+        };
+        assert!(!patch.is_empty());
+    }
+
+    #[test]
+    fn persona_patch_not_empty_when_only_clear_identity_id_set() {
+        let patch = PersonaPatch {
+            clear_identity_id: true,
+            ..Default::default()
+        };
+        assert!(!patch.is_empty());
+    }
+
+    #[test]
+    fn persona_patch_not_empty_when_only_link_identity_id_set() {
+        let patch = PersonaPatch {
+            link_identity_id: Some("id_abc".to_string()),
             ..Default::default()
         };
         assert!(!patch.is_empty());

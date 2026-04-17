@@ -170,6 +170,17 @@ export default function PersonasPanel() {
     [applyPatch],
   )
 
+  const handleUnlinkIdentity = useCallback(() => {
+    // Confirm because unlinking drops the verified badge — the user
+    // loses the cryptographic anchor even though the underlying
+    // Identity record survives on the node and can be re-linked.
+    const ok = window.confirm(
+      'Unlink this persona from its verified identity? The Identity record stays on the node and can be re-linked later.',
+    )
+    if (!ok) return
+    applyPatch({ clear_identity_id: true }, 'Failed to unlink identity')
+  }, [applyPatch])
+
   const handleDeletePersona = useCallback(async () => {
     if (!selectedId) return
     // Underlying Fingerprint / Mention / Edge records survive — the
@@ -218,6 +229,7 @@ export default function PersonasPanel() {
         onRelationshipChange={handleRelationshipChange}
         onConfirm={handleConfirm}
         onDelete={handleDeletePersona}
+        onUnlinkIdentity={handleUnlinkIdentity}
       />
       {undoSnack && (
         <div
@@ -346,6 +358,7 @@ function PersonaDetail({
   onRelationshipChange,
   onConfirm,
   onDelete,
+  onUnlinkIdentity,
 }) {
   if (!selectedId) {
     return (
@@ -378,6 +391,7 @@ function PersonaDetail({
           onRelationshipChange={onRelationshipChange}
           onConfirm={onConfirm}
           onDelete={onDelete}
+          onUnlinkIdentity={onUnlinkIdentity}
         />
       )}
     </div>
@@ -395,6 +409,7 @@ function PersonaDetailBody({
   onRelationshipChange,
   onConfirm,
   onDelete,
+  onUnlinkIdentity,
 }) {
   // Local mirror of the slider value so the knob moves smoothly
   // while the user drags. We only call the parent (and fire the
@@ -615,9 +630,22 @@ function PersonaDetailBody({
       />
 
       {detail.identity_id && (
-        <div className="text-xs text-secondary">
-          <span className="text-tertiary">Identity: </span>
-          <span className="font-mono break-all">{detail.identity_id}</span>
+        <div className="text-xs text-secondary flex items-center justify-between gap-2">
+          <div>
+            <span className="text-tertiary">Identity: </span>
+            <span className="font-mono break-all">{detail.identity_id}</span>
+          </div>
+          {!detail.built_in && typeof onUnlinkIdentity === 'function' && (
+            <button
+              type="button"
+              className="text-[11px] text-tertiary hover:text-gruvbox-yellow underline underline-offset-2 shrink-0"
+              onClick={onUnlinkIdentity}
+              data-testid="persona-unlink-identity-button"
+              title="Unlink this persona from its verified identity. The Identity record stays on the node — only the link is cleared."
+            >
+              Unlink identity
+            </button>
+          )}
         </div>
       )}
     </>
