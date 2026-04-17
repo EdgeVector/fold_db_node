@@ -680,6 +680,12 @@ pub struct PersonaPatch {
     /// Replace the aliases array wholesale. Pass an empty vec to
     /// clear all aliases; `None` leaves the existing list alone.
     pub aliases: Option<Vec<String>>,
+    /// Set the user_confirmed flag. The auto-create sweep produces
+    /// Personas with `user_confirmed: false`; the user flips this
+    /// to `true` via the Confirm action in the Persona detail UI.
+    /// There is no path to flip true → false; once confirmed, a
+    /// Persona stays confirmed until deleted.
+    pub user_confirmed: Option<bool>,
 }
 
 impl PersonaPatch {
@@ -692,6 +698,7 @@ impl PersonaPatch {
             && self.name.is_none()
             && self.relationship.is_none()
             && self.aliases.is_none()
+            && self.user_confirmed.is_none()
     }
 }
 
@@ -873,6 +880,21 @@ pub async fn apply_persona_patch(
             "aliases".to_string(),
             Value::Array(aliases.iter().map(|s| Value::String(s.clone())).collect()),
         );
+    }
+    if let Some(user_confirmed) = patch.user_confirmed {
+        // One-way transition: false→true is "Confirm this tentative
+        // persona". We deliberately reject true→false to prevent an
+        // accidental de-confirmation, which would be confusing state.
+        let was_confirmed = payload
+            .get("user_confirmed")
+            .and_then(|v| v.as_bool())
+            .unwrap_or(false);
+        if was_confirmed && !user_confirmed {
+            return Err(HandlerError::BadRequest(
+                "cannot un-confirm a persona; delete it if you want to reject it".to_string(),
+            ));
+        }
+        payload.insert("user_confirmed".to_string(), Value::Bool(user_confirmed));
     }
 
     // 4. Execute Update. Keep the same content-addressed primary key.

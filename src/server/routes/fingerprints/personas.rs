@@ -29,6 +29,7 @@ pub struct UpdatePersonaRequest {
     pub name: Option<String>,
     pub relationship: Option<String>,
     pub aliases: Option<Vec<String>>,
+    pub user_confirmed: Option<bool>,
 }
 
 /// GET /api/fingerprints/personas — list every Persona with
@@ -79,6 +80,7 @@ pub async fn update_persona(
         name: body.name,
         relationship: body.relationship,
         aliases: body.aliases,
+        user_confirmed: body.user_confirmed,
     };
 
     match fp_handlers::apply_persona_patch(node, persona_id, patch).await {
