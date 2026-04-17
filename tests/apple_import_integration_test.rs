@@ -502,6 +502,7 @@ mod tests {
             calendar: "Work".to_string(),
             all_day: false,
             recurring: true,
+            attendees: Vec::new(),
         };
         let evt_b = calendar::CalendarEvent {
             summary: "Standup".to_string(),
@@ -512,6 +513,7 @@ mod tests {
             calendar: "Work".to_string(),
             all_day: false,
             recurring: false,
+            attendees: Vec::new(),
         };
 
         let records_a = calendar::to_json_records(&[evt_a]);
@@ -534,6 +536,7 @@ mod tests {
             calendar: "Work".to_string(),
             all_day: false,
             recurring: false,
+            attendees: Vec::new(),
         };
         let evt_b = calendar::CalendarEvent {
             summary: "Standup".to_string(),
@@ -544,6 +547,7 @@ mod tests {
             calendar: "Personal".to_string(),
             all_day: false,
             recurring: false,
+            attendees: Vec::new(),
         };
 
         let records_a = calendar::to_json_records(&[evt_a]);
@@ -788,6 +792,7 @@ mod tests {
             calendar: "Work".to_string(),
             all_day: false,
             recurring: false,
+            attendees: Vec::new(),
         };
 
         let records = calendar::to_json_records(&[evt]);

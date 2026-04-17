@@ -16,6 +16,16 @@ pub struct CalendarEvent {
     pub calendar: String,
     pub all_day: bool,
     pub recurring: bool,
+    /// Attendee email addresses extracted from the event. Empty
+    /// when the event has no attendees or Calendar refuses access
+    /// to the attendees list (some accounts — notably Exchange —
+    /// block this). Downstream fingerprint extraction picks these
+    /// up by running the text regex extractor over the attendees
+    /// field alongside `description` and `summary`, so every
+    /// attendee email becomes a Fingerprint + Mention connected
+    /// via CoOccurrence edges to every other attendee of the
+    /// same event.
+    pub attendees: Vec<String>,
 }
 
 /// Extract all events (or events from a specific calendar) from Apple Calendar.
@@ -41,6 +51,7 @@ pub fn to_json_records(events: &[CalendarEvent]) -> Vec<Value> {
                 "calendar": e.calendar,
                 "all_day": e.all_day,
                 "recurring": e.recurring,
+                "attendees": e.attendees,
                 "content_hash": hash,
                 "source": "apple_calendar",
             })
@@ -88,8 +99,29 @@ pub fn build_script(calendar: Option<&str>) -> String {
         on error
             set eDescription to ""
         end try
+        -- Attendees. Some account types (especially Exchange) block
+        -- AppleScript access to the attendees list; we swallow the
+        -- error and emit an empty string in that case. Attendee
+        -- emails are comma-separated; the Rust parser splits and
+        -- trims them.
+        set eAttendees to ""
+        try
+            set atList to attendees of e
+            repeat with at in atList
+                try
+                    set atEmail to email of at
+                    if atEmail is not missing value and atEmail is not "" then
+                        if eAttendees is "" then
+                            set eAttendees to atEmail
+                        else
+                            set eAttendees to eAttendees & "," & atEmail
+                        end if
+                    end if
+                end try
+            end repeat
+        end try
         set eCalName to name of calendar of e
-        set output to output & "<<<EVT_START>>>" & eSummary & "<<<SEP>>>" & eStart & "<<<SEP>>>" & eEnd & "<<<SEP>>>" & eLocation & "<<<SEP>>>" & eDescription & "<<<SEP>>>" & eCalName & "<<<SEP>>>" & eAllDay & "<<<SEP>>>" & eRecurring & "<<<EVT_END>>>"
+        set output to output & "<<<EVT_START>>>" & eSummary & "<<<SEP>>>" & eStart & "<<<SEP>>>" & eEnd & "<<<SEP>>>" & eLocation & "<<<SEP>>>" & eDescription & "<<<SEP>>>" & eCalName & "<<<SEP>>>" & eAllDay & "<<<SEP>>>" & eRecurring & "<<<SEP>>>" & eAttendees & "<<<EVT_END>>>"
     end repeat
     return output
 end tell"#
@@ -97,28 +129,68 @@ end tell"#
 }
 
 pub fn parse_output(raw: &str) -> Result<Vec<CalendarEvent>, IngestionError> {
-    let re = Regex::new(
-        r"<<<EVT_START>>>(.*?)<<<SEP>>>(.*?)<<<SEP>>>(.*?)<<<SEP>>>(.*?)<<<SEP>>>(.*?)<<<SEP>>>(.*?)<<<SEP>>>(.*?)<<<SEP>>>(.*?)<<<EVT_END>>>"
-    )
-    .map_err(|e| IngestionError::Extraction(format!("Regex error: {}", e)))?;
+    // The AppleScript emits one `<<<EVT_START>>>…<<<EVT_END>>>` block
+    // per event. We scan for full records first, then split each
+    // record on `<<<SEP>>>` to get its fields. This avoids a subtle
+    // bug with a single multi-field regex: with non-greedy `.*?`
+    // captures, a 9-SEP regex will happily match across the
+    // boundary between two 8-SEP records in the legacy format.
+    //
+    // Splitting per-record keeps us correctly agnostic to field
+    // count — 8 fields means legacy (attendees: empty), 9 fields
+    // means the new attendees-aware format.
+    let record_re = Regex::new(r"<<<EVT_START>>>(.*?)<<<EVT_END>>>")
+        .map_err(|e| IngestionError::Extraction(format!("Regex error: {}", e)))?;
 
     let mut events = Vec::new();
-    for cap in re.captures_iter(raw) {
-        let all_day = cap[7].trim().to_lowercase() == "true";
-        let recurring = cap[8].trim().to_lowercase() == "true";
-
+    for cap in record_re.captures_iter(raw) {
+        let body = cap.get(1).map(|m| m.as_str()).unwrap_or("");
+        let fields: Vec<&str> = body.split("<<<SEP>>>").collect();
+        // Accept 8 (legacy) or 9 (with attendees) fields. Anything
+        // else is a malformed record; skip silently because callers
+        // must never abort ingestion on one bad row.
+        if fields.len() < 8 || fields.len() > 9 {
+            log::warn!(
+                "apple_calendar.parse_output: skipping malformed record with {} fields",
+                fields.len()
+            );
+            continue;
+        }
+        let all_day = fields[6].trim().to_lowercase() == "true";
+        let recurring = fields[7].trim().to_lowercase() == "true";
+        let attendees = if fields.len() == 9 {
+            parse_attendees(fields[8].trim())
+        } else {
+            Vec::new()
+        };
         events.push(CalendarEvent {
-            summary: cap[1].trim().to_string(),
-            start_time: cap[2].trim().to_string(),
-            end_time: cap[3].trim().to_string(),
-            location: cap[4].trim().to_string(),
-            description: cap[5].trim().to_string(),
-            calendar: cap[6].trim().to_string(),
+            summary: fields[0].trim().to_string(),
+            start_time: fields[1].trim().to_string(),
+            end_time: fields[2].trim().to_string(),
+            location: fields[3].trim().to_string(),
+            description: fields[4].trim().to_string(),
+            calendar: fields[5].trim().to_string(),
             all_day,
             recurring,
+            attendees,
         });
     }
     Ok(events)
+}
+
+/// Parse the comma-separated attendee email list emitted by the
+/// AppleScript. Empty input → empty vec. Whitespace and empty
+/// entries are dropped. Duplicates are preserved; downstream
+/// content-keyed fingerprint dedup handles collapsing to one
+/// Fingerprint per unique email.
+fn parse_attendees(raw: &str) -> Vec<String> {
+    if raw.is_empty() {
+        return Vec::new();
+    }
+    raw.split(',')
+        .map(|s| s.trim().to_string())
+        .filter(|s| !s.is_empty())
+        .collect()
 }
 
 #[cfg(test)]
@@ -193,6 +265,7 @@ mod tests {
             calendar: "Work".to_string(),
             all_day: false,
             recurring: false,
+            attendees: vec!["tom@acme.com".to_string(), "alice@acme.com".to_string()],
         }];
         let records = to_json_records(&events);
         assert_eq!(records.len(), 1);
@@ -201,5 +274,59 @@ mod tests {
         assert_eq!(records[0]["all_day"], false);
         assert_eq!(records[0]["recurring"], false);
         assert!(records[0]["content_hash"].is_string());
+        assert_eq!(records[0]["attendees"][0], "tom@acme.com");
+        assert_eq!(records[0]["attendees"][1], "alice@acme.com");
+    }
+
+    // ── Attendee extraction tests ───────────────────────────────
+
+    #[test]
+    fn parse_output_extracts_attendees() {
+        let raw = "<<<EVT_START>>>Planning<<<SEP>>>2026-03-28 10:00:00<<<SEP>>>2026-03-28 11:00:00<<<SEP>>>Zoom<<<SEP>>>Quarterly planning<<<SEP>>>Work<<<SEP>>>false<<<SEP>>>false<<<SEP>>>tom@acme.com,alice@acme.com,bob@example.com<<<EVT_END>>>";
+        let events = parse_output(raw).unwrap();
+        assert_eq!(events.len(), 1);
+        assert_eq!(
+            events[0].attendees,
+            vec!["tom@acme.com", "alice@acme.com", "bob@example.com"]
+        );
+    }
+
+    #[test]
+    fn parse_output_handles_empty_attendees_in_v9_format() {
+        let raw = "<<<EVT_START>>>Solo<<<SEP>>>2026-03-28 10:00:00<<<SEP>>>2026-03-28 11:00:00<<<SEP>>><<<SEP>>><<<SEP>>>Personal<<<SEP>>>false<<<SEP>>>false<<<SEP>>><<<EVT_END>>>";
+        let events = parse_output(raw).unwrap();
+        assert_eq!(events.len(), 1);
+        assert!(events[0].attendees.is_empty());
+    }
+
+    #[test]
+    fn parse_output_legacy_8_field_format_still_parses_with_empty_attendees() {
+        // This is the pre-attendees format some older AppleScript
+        // output or goldens may still produce. Parser falls back to
+        // 8-field regex and leaves attendees empty.
+        let raw = "<<<EVT_START>>>Legacy<<<SEP>>>2026-03-28 09:00:00<<<SEP>>>2026-03-28 09:15:00<<<SEP>>>Zoom<<<SEP>>>Daily sync<<<SEP>>>Work<<<SEP>>>false<<<SEP>>>true<<<EVT_END>>>";
+        let events = parse_output(raw).unwrap();
+        assert_eq!(events.len(), 1);
+        assert_eq!(events[0].summary, "Legacy");
+        assert!(events[0].attendees.is_empty());
+    }
+
+    #[test]
+    fn parse_output_trims_attendee_whitespace_and_drops_empties() {
+        let raw = "<<<EVT_START>>>x<<<SEP>>>s<<<SEP>>>e<<<SEP>>><<<SEP>>><<<SEP>>>c<<<SEP>>>false<<<SEP>>>false<<<SEP>>> tom@acme.com , ,alice@acme.com ,<<<EVT_END>>>";
+        let events = parse_output(raw).unwrap();
+        assert_eq!(events[0].attendees, vec!["tom@acme.com", "alice@acme.com"]);
+    }
+
+    #[test]
+    fn build_script_includes_attendee_block() {
+        // The AppleScript must extract `email of at` for each attendee
+        // and emit them comma-separated as the 9th field. Regression
+        // guard — if someone reformats the script, tests catch a loss
+        // of attendee extraction before it hits a dogfood node.
+        let script = build_script(None);
+        assert!(script.contains("attendees of e"));
+        assert!(script.contains("email of at"));
+        assert!(script.contains("& eAttendees"));
     }
 }
