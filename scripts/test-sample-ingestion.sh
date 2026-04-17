@@ -102,7 +102,7 @@ done
 # --- Configure ---
 echo "Configuring $PROVIDER provider..."
 if [ "$PROVIDER" = "Anthropic" ]; then
-  CONFIG='{"provider":"Anthropic","anthropic":{"api_key":"'"$ANTHROPIC_API_KEY"'","model":"claude-sonnet-4-20250514","base_url":"https://api.anthropic.com"},"enabled":true,"max_retries":3,"timeout_seconds":300,"auto_execute_mutations":true}'
+  CONFIG='{"provider":"Anthropic","anthropic":{"api_key":"'"$ANTHROPIC_API_KEY"'","model":"claude-sonnet-4-20250514","base_url":"https://api.anthropic.com"},"ollama":{"model":"'"$OLLAMA_MODEL"'","base_url":"'"$OLLAMA_URL"'","vision_model":"qwen3-vl:2b","ocr_model":"glm-ocr:latest","generation_params":{"num_ctx":16384,"temperature":0.8,"top_p":0.95,"top_k":0,"num_predict":16384,"repeat_penalty":1.0,"presence_penalty":0.0,"min_p":0.0}},"enabled":true,"max_retries":3,"timeout_seconds":300,"auto_execute_mutations":true}'
 else
   CONFIG='{"provider":"Ollama","ollama":{"model":"'"$OLLAMA_MODEL"'","base_url":"'"$OLLAMA_URL"'","vision_model":"qwen3-vl:2b","ocr_model":"glm-ocr:latest","generation_params":{"num_ctx":16384,"temperature":0.8,"top_p":0.95,"top_k":0,"num_predict":16384,"repeat_penalty":1.0,"presence_penalty":0.0,"min_p":0.0}},"enabled":true,"max_retries":3,"timeout_seconds":300,"auto_execute_mutations":true}'
 fi
