@@ -705,6 +705,7 @@ impl FoldHttpServer {
                 .service(
                     web::scope("/suggestions")
                         .route("", web::get().to(fp_routes::list_suggested_personas))
+                        .route("/count", web::get().to(fp_routes::get_suggestion_count))
                         .route(
                             "/accept",
                             web::post().to(fp_routes::accept_suggested_persona),

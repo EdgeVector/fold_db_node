@@ -1,5 +1,6 @@
-import { useState } from 'react'
+import { useEffect, useState } from 'react'
 import { version } from '../../package.json'
+import { getSuggestionCount } from '../api/clients/fingerprintsClient'
 
 const SIDEBAR_ITEMS = [
   { id: 'agent', label: 'Agent', icon: '\u{1F916}', group: 'MAIN' },
@@ -15,12 +16,42 @@ const SIDEBAR_ITEMS = [
 
 const GROUPS = ['MAIN', 'DATA', 'IMPORT', 'SOCIAL', 'SYSTEM']
 
+/** Poll cadence for the People-tab badge. Matches the Header
+ *  notification poll at 30s — same tradeoff: backend read is cheap,
+ *  UI staleness bounded to 30s. */
+const SUGGESTION_POLL_MS = 30_000
+
 function Sidebar({ activeTab, onTabChange }) {
   const [mobileOpen, setMobileOpen] = useState(false)
+  const [suggestionCount, setSuggestionCount] = useState(0)
   const grouped = {}
   for (const group of GROUPS) {
     grouped[group] = SIDEBAR_ITEMS.filter(item => item.group === group)
   }
+
+  // Poll the suggestion count and show a red badge on the People
+  // item when the auto-propose sweep has found new clusters. The
+  // count is process-cached on the backend so this is effectively
+  // a single atomic read per poll.
+  useEffect(() => {
+    let cancelled = false
+    const fetchCount = async () => {
+      try {
+        const res = await getSuggestionCount()
+        if (!cancelled && res.success) {
+          setSuggestionCount(res.data?.count ?? 0)
+        }
+      } catch {
+        // silent — badge is a nicety, not critical path
+      }
+    }
+    fetchCount()
+    const id = setInterval(fetchCount, SUGGESTION_POLL_MS)
+    return () => {
+      cancelled = true
+      clearInterval(id)
+    }
+  }, [])
 
   const handleTabChange = (id) => {
     onTabChange(id)
@@ -73,6 +104,15 @@ function Sidebar({ activeTab, onTabChange }) {
                   >
                     <span>{item.icon}</span>
                     <span>{item.label}</span>
+                    {item.id === 'people' && suggestionCount > 0 && (
+                      <span
+                        className="ml-auto inline-flex items-center justify-center min-w-[18px] h-[18px] px-1 text-[10px] font-bold bg-gruvbox-red text-white rounded-full"
+                        data-testid="sidebar-people-badge"
+                        title={`${suggestionCount} suggested ${suggestionCount === 1 ? 'persona' : 'personas'} awaiting review`}
+                      >
+                        {suggestionCount > 99 ? '99+' : suggestionCount}
+                      </span>
+                    )}
                   </button>
                 )
               })}

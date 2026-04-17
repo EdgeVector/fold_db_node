@@ -231,6 +231,17 @@ pub async fn ingest_photo_faces_batch(
         total_records_written,
     );
 
+    // Fire-and-forget post-ingest sweep so new fingerprints surface
+    // as Suggestions without the user having to open the panel. The
+    // auto_propose module debounces back-to-back calls during a
+    // large migration so we don't run N sweeps for N photos.
+    if total_records_written > 0 {
+        let node_bg = node.clone();
+        tokio::spawn(async move {
+            crate::fingerprints::auto_propose::run_sweep_and_update_count(node_bg).await;
+        });
+    }
+
     Ok(ApiResponse::success(IngestPhotoFacesResponse {
         total_photos,
         successful_photos,

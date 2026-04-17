@@ -18,6 +18,17 @@ pub async fn list_suggested_personas(state: web::Data<AppState>) -> impl Respond
     }
 }
 
+/// GET /api/fingerprints/suggestions/count — cheap read of the cached
+/// suggestion count populated by the post-ingest auto-propose sweep.
+/// The frontend polls this every 30s to drive the People-tab badge.
+pub async fn get_suggestion_count(state: web::Data<AppState>) -> impl Responder {
+    let (_user_hash, node) = node_or_return!(state);
+    match fp_handlers::get_suggestion_count(node).await {
+        Ok(response) => HttpResponse::Ok().json(response),
+        Err(e) => handler_error_to_response(e),
+    }
+}
+
 /// Body payload for `POST /api/fingerprints/suggestions/accept`.
 #[derive(Debug, Deserialize)]
 pub struct AcceptSuggestedBody {

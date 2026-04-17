@@ -33,6 +33,6 @@ pub use personas::{
     ListPersonasResponse, PersonaDetailResponse, PersonaPatch, PersonaSummary,
 };
 pub use suggestions::{
-    accept_suggested_persona, list_suggested_personas, AcceptSuggestedRequest,
-    ListSuggestedResponse, SuggestedPersonaView,
+    accept_suggested_persona, get_suggestion_count, list_suggested_personas,
+    AcceptSuggestedRequest, ListSuggestedResponse, SuggestedPersonaView, SuggestionCountResponse,
 };

@@ -13,4 +13,4 @@ pub use ingest::ingest_photo_faces;
 pub use ingest_text::ingest_text_signals;
 pub use ingestion_errors::{list_ingestion_errors, resolve_ingestion_error};
 pub use personas::{get_persona, list_personas, update_persona};
-pub use suggestions::{accept_suggested_persona, list_suggested_personas};
+pub use suggestions::{accept_suggested_persona, get_suggestion_count, list_suggested_personas};

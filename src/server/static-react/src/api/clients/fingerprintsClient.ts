@@ -281,6 +281,25 @@ export async function listSuggestedPersonas(): Promise<
   return client.get<ListSuggestedResponse>("/fingerprints/suggestions");
 }
 
+/** Count of pending suggested personas, populated by the post-ingest
+ *  auto-propose sweep. Cheap: a single atomic read on the backend. */
+export interface SuggestionCountResponse {
+  count: number;
+}
+
+/**
+ * Get the cached suggestion count — used to drive the People-tab
+ * badge. Does NOT re-run the BFS sweep; the cache is updated by the
+ * post-ingest hook (see `src/fingerprints/auto_propose.rs`).
+ */
+export async function getSuggestionCount(): Promise<
+  EnhancedApiResponse<SuggestionCountResponse>
+> {
+  return client.get<SuggestionCountResponse>(
+    "/fingerprints/suggestions/count",
+  );
+}
+
 /**
  * Promote a suggested cluster into a real Persona record. Returns
  * the freshly-resolved PersonaDetailResponse so the UI can redirect

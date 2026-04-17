@@ -166,6 +166,21 @@ pub async fn list_suggested_personas(node: Arc<FoldNode>) -> HandlerResult<ListS
     Ok(ApiResponse::success(ListSuggestedResponse { suggestions }))
 }
 
+/// Response type for the lightweight suggestion-count endpoint.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct SuggestionCountResponse {
+    pub count: usize,
+}
+
+/// Cheap count read — returns the cached suggestion count from the
+/// auto_propose module without re-running the BFS sweep. The cache
+/// is populated by post-ingest sweeps (see `auto_propose.rs`). The
+/// frontend polls this every 30s to drive the People-tab badge.
+pub async fn get_suggestion_count(_node: Arc<FoldNode>) -> HandlerResult<SuggestionCountResponse> {
+    let count = crate::fingerprints::auto_propose::get_count();
+    Ok(ApiResponse::success(SuggestionCountResponse { count }))
+}
+
 /// Promote a suggestion into a real Persona record and return its
 /// freshly-resolved `PersonaDetailResponse`.
 pub async fn accept_suggested_persona(
@@ -246,6 +261,14 @@ pub async fn accept_suggested_persona(
         persona_id,
         req.fingerprint_ids.len()
     );
+
+    // Decrement the cached suggestion count so the People-tab badge
+    // drops immediately without waiting for the next poll. We
+    // saturating-decrement because the cache is best-effort — if it
+    // drifts from the true count, the next post-ingest sweep will
+    // re-sync it.
+    let prev = crate::fingerprints::auto_propose::get_count();
+    crate::fingerprints::auto_propose::set_count(prev.saturating_sub(1));
 
     get_persona(node, persona_id).await
 }
