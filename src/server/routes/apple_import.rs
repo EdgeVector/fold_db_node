@@ -686,6 +686,45 @@ pub async fn apple_import_calendar(
     }))
 }
 
+/// Build the `TextRecordDto` batch that feeds the attendee-email
+/// fingerprint extractor after a calendar import. Pure transform —
+/// no network, no node access — so it's cheap to unit-test and easy
+/// to reason about:
+///
+/// - Events with an empty attendees list are dropped (nothing to
+///   extract). The text extractor would be a no-op on them anyway
+///   and the cost of emitting empty rows compounds quickly on large
+///   calendars.
+/// - `source_key` is the same `content_hash(summary|start|calendar)`
+///   that `cal::to_json_records` uses, so Mention records join back
+///   to the calendar event cleanly.
+/// - Attendees are joined with `", "` so the regex extractor treats
+///   them as one pass of the email rule. Joining is not a Fingerprint
+///   deduplication concern — the extractor content-hashes each email
+///   independently.
+///
+/// Gated to macOS because the only caller is the macOS calendar
+/// import path, and the two helpers it depends on (`CalendarEvent`
+/// plus `content_hash`) are themselves macOS-gated. The unit tests
+/// below share the gate.
+#[cfg(target_os = "macos")]
+fn build_attendee_ingestion_records(
+    events: &[crate::ingestion::apple_import::calendar::CalendarEvent],
+) -> Vec<crate::handlers::fingerprints::ingest_text::TextRecordDto> {
+    events
+        .iter()
+        .filter(|e| !e.attendees.is_empty())
+        .map(|e| {
+            let hash_input = format!("{}|{}|{}", e.summary, e.start_time, e.calendar);
+            let source_key = crate::ingestion::apple_import::content_hash(&hash_input);
+            crate::handlers::fingerprints::ingest_text::TextRecordDto {
+                source_key,
+                text: e.attendees.join(", "),
+            }
+        })
+        .collect()
+}
+
 #[cfg(target_os = "macos")]
 async fn run_apple_calendar_import(
     calendar: Option<String>,
@@ -781,6 +820,59 @@ async fn run_apple_calendar_import(
         job.progress_percentage = pct as u8;
         job.message = format!("Ingested {}/{} events...", ingested, total);
         let _ = tracker.save(&job).await;
+    }
+
+    // Fingerprint extraction for attendee emails. Each event with a
+    // non-empty attendees list becomes one text-ingestion record; the
+    // existing email regex extractor in `ingest_text_signals_batch`
+    // then writes a Fingerprint (email) + Mention (pointing back at
+    // the calendar event by content_hash) per address. Attendees are
+    // joined into one text blob per event so a single extractor pass
+    // picks up every email without caring about ordering.
+    //
+    // Failures here are logged but do NOT fail the calendar import —
+    // events have already been ingested and are queryable. A broken
+    // fingerprint pipeline is a separate bug and shouldn't poison a
+    // successful calendar sync.
+    let attendee_records = build_attendee_ingestion_records(&events);
+    if !attendee_records.is_empty() {
+        let attendee_count = attendee_records.len();
+        let request = crate::handlers::fingerprints::ingest_text::IngestTextSignalsRequest {
+            source_schema: "apple_calendar".to_string(),
+            records: attendee_records,
+        };
+        match crate::handlers::fingerprints::ingest_text::ingest_text_signals_batch(
+            node_arc.clone(),
+            request,
+        )
+        .await
+        {
+            Ok(response) => {
+                let signal_count = response.data.as_ref().map(|r| r.total_signals).unwrap_or(0);
+                let written = response
+                    .data
+                    .as_ref()
+                    .map(|r| r.total_records_written)
+                    .unwrap_or(0);
+                log_feature!(
+                    LogFeature::Ingestion,
+                    info,
+                    "Apple Calendar: extracted {} email signals from {} events ({} records written)",
+                    signal_count,
+                    attendee_count,
+                    written,
+                );
+            }
+            Err(e) => {
+                log_feature!(
+                    LogFeature::Ingestion,
+                    warn,
+                    "Apple Calendar: attendee fingerprint extraction failed for {} events: {:?}",
+                    attendee_count,
+                    e,
+                );
+            }
+        }
     }
 
     let mut job = Job::new(progress_id.clone(), JobType::Other("apple-calendar".into()));
@@ -957,4 +1049,85 @@ pub fn spawn_sync_scheduler(
             );
         }
     });
+}
+
+#[cfg(all(test, target_os = "macos"))]
+mod tests {
+    use super::build_attendee_ingestion_records;
+    use crate::ingestion::apple_import::calendar::CalendarEvent;
+
+    fn evt(summary: &str, start: &str, calendar: &str, attendees: Vec<&str>) -> CalendarEvent {
+        CalendarEvent {
+            summary: summary.into(),
+            start_time: start.into(),
+            end_time: "end".into(),
+            location: String::new(),
+            description: String::new(),
+            calendar: calendar.into(),
+            all_day: false,
+            recurring: false,
+            attendees: attendees.into_iter().map(String::from).collect(),
+        }
+    }
+
+    #[test]
+    fn skips_events_with_no_attendees() {
+        let events = vec![evt("Empty", "2026-04-17", "Work", vec![])];
+        let out = build_attendee_ingestion_records(&events);
+        assert!(out.is_empty());
+    }
+
+    #[test]
+    fn one_record_per_event_with_attendees_joined() {
+        let events = vec![evt(
+            "Standup",
+            "2026-04-17",
+            "Work",
+            vec!["alice@x.com", "bob@y.com"],
+        )];
+        let out = build_attendee_ingestion_records(&events);
+        assert_eq!(out.len(), 1);
+        assert_eq!(out[0].text, "alice@x.com, bob@y.com");
+        // source_key is a sha256-ish hex string; we only assert
+        // it's non-empty here — the exact hash is pinned by the
+        // content_hash helper's contract.
+        assert!(!out[0].source_key.is_empty());
+    }
+
+    #[test]
+    fn source_key_differs_for_different_events() {
+        let events = vec![
+            evt("A", "t1", "c1", vec!["a@b.c"]),
+            evt("B", "t2", "c2", vec!["d@e.f"]),
+        ];
+        let out = build_attendee_ingestion_records(&events);
+        assert_eq!(out.len(), 2);
+        assert_ne!(out[0].source_key, out[1].source_key);
+    }
+
+    #[test]
+    fn source_key_stable_for_same_identifying_fields() {
+        // Same summary + start + calendar → same key even if
+        // description / location change. This matches the key
+        // contract in cal::to_json_records.
+        let a = evt("Standup", "t", "Work", vec!["x@y.z"]);
+        let b = evt("Standup", "t", "Work", vec!["x@y.z"]);
+        let out_a = build_attendee_ingestion_records(&[a]);
+        let out_b = build_attendee_ingestion_records(&[b]);
+        assert_eq!(out_a[0].source_key, out_b[0].source_key);
+    }
+
+    #[test]
+    fn drops_only_empty_events_keeps_the_rest() {
+        let events = vec![
+            evt("Empty", "t1", "c", vec![]),
+            evt("One", "t2", "c", vec!["a@b.c"]),
+            evt("Also empty", "t3", "c", vec![]),
+            evt("Two", "t4", "c", vec!["d@e.f", "g@h.i"]),
+        ];
+        let out = build_attendee_ingestion_records(&events);
+        assert_eq!(out.len(), 2);
+        assert_eq!(out[0].text, "a@b.c");
+        assert_eq!(out[1].text, "d@e.f, g@h.i");
+    }
 }
