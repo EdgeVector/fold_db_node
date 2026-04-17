@@ -975,6 +975,10 @@ impl FoldHttpServer {
                 .route(
                     "/accept",
                     web::post().to(crate::server::routes::sharing::accept_invite),
+                )
+                .route(
+                    "/pending-invites",
+                    web::get().to(crate::server::routes::sharing::list_pending_invites),
                 ),
         );
     }

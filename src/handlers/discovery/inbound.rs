@@ -22,7 +22,7 @@ use crate::discovery::async_query::{
 };
 use crate::discovery::connection::{
     self, ConnectionPayload, DataSharePayload, LocalConnectionRequest, MutualContact,
-    ReferralQueryPayload, ReferralResponsePayload, Vouch,
+    ReferralQueryPayload, ReferralResponsePayload, ShareInvitePayload, Vouch,
 };
 #[cfg(test)]
 use crate::discovery::connection::{SharedRecord, SharedRecordKey};
@@ -501,6 +501,17 @@ async fn dispatch_decrypted_message(
             );
             Ok(DispatchOutcome::Handled)
         }
+        "share_invite" => {
+            let payload: ShareInvitePayload = match serde_json::from_value(raw) {
+                Ok(p) => p,
+                Err(e) => {
+                    return Ok(DispatchOutcome::Skipped {
+                        reason: format!("parse share_invite: {e}"),
+                    });
+                }
+            };
+            handle_incoming_share_invite(node, master_key, msg, payload).await
+        }
         "referral_query" => {
             let payload: ReferralQueryPayload = match serde_json::from_value(raw) {
                 Ok(p) => p,
@@ -527,6 +538,86 @@ async fn dispatch_decrypted_message(
             reason: format!("unknown message_type '{other}'"),
         }),
     }
+}
+
+// ===== Share invite inbound =====
+
+/// Handle an incoming `share_invite` bulletin-board message.
+///
+/// The outer envelope is already decrypted; `payload.share_e2e_secret_encrypted`
+/// is still an X25519 sealed box to our messaging pseudonym secret. We decrypt
+/// that inner layer and persist the plaintext invite to the pending-invites
+/// queue so the user can explicitly accept it via `POST /api/sharing/accept`.
+///
+/// Authorization: invites from unknown pubkeys are still persisted — the user
+/// is the gatekeeper via the accept step. A future iteration can add a
+/// known-contacts-only filter via the contact book.
+async fn handle_incoming_share_invite(
+    node: &FoldNode,
+    master_key: &[u8],
+    msg: &crate::discovery::types::EncryptedMessage,
+    payload: ShareInvitePayload,
+) -> Result<DispatchOutcome, HandlerError> {
+    let target: uuid::Uuid = match msg.target_pseudonym.parse() {
+        Ok(u) => u,
+        Err(_) => {
+            return Ok(DispatchOutcome::Skipped {
+                reason: "share_invite: target_pseudonym not a UUID".to_string(),
+            });
+        }
+    };
+
+    let (secret, _) = connection::derive_pseudonym_keypair(master_key, &target);
+
+    // Decrypt the inner share_e2e_secret layer.
+    let secret_value: serde_json::Value =
+        match connection::decrypt_message_raw(&secret, &payload.share_e2e_secret_encrypted) {
+            Ok(v) => v,
+            Err(e) => {
+                return Ok(DispatchOutcome::Skipped {
+                    reason: format!("share_invite: inner decrypt failed: {e}"),
+                });
+            }
+        };
+    let secret_bytes: Vec<u8> = match serde_json::from_value(secret_value) {
+        Ok(b) => b,
+        Err(e) => {
+            return Ok(DispatchOutcome::Skipped {
+                reason: format!("share_invite: inner secret not a byte array: {e}"),
+            });
+        }
+    };
+
+    // Build the plaintext invite and stash it in the pending-invites queue.
+    let invite = fold_db::sharing::types::ShareInvite {
+        sender_pubkey: payload.sender_pubkey.clone(),
+        sender_display_name: payload.sender_display_name.clone(),
+        share_prefix: payload.share_prefix.clone(),
+        share_e2e_secret: secret_bytes,
+        scope_description: payload.scope_description.clone(),
+    };
+
+    let pool = match crate::handlers::sharing::get_sled_pool(node).await {
+        Ok(p) => p,
+        Err(e) => {
+            return Err(HandlerError::Internal(format!(
+                "share_invite: sled pool: {e}"
+            )));
+        }
+    };
+
+    if let Err(e) = fold_db::sharing::store::store_pending_invite(&pool, invite) {
+        return Err(HandlerError::Internal(format!(
+            "share_invite: persist failed: {e}"
+        )));
+    }
+
+    log::info!(
+        "Received share_invite from {} (prefix {})",
+        payload.sender_pubkey,
+        payload.share_prefix
+    );
+    Ok(DispatchOutcome::Handled)
 }
 
 // ===== Async query auto-processing helpers =====
