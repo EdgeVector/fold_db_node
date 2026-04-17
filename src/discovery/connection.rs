@@ -506,6 +506,32 @@ pub fn get_pseudonym_public_key_b64(master_key: &[u8], pseudonym: &Uuid) -> Stri
     B64.encode(public.as_bytes())
 }
 
+/// A cross-user share invite delivered via the encrypted bulletin board.
+///
+/// The entire payload travels inside the envelope encrypted to the
+/// recipient's messaging pseudonym X25519 key (same crypto as `DataSharePayload`).
+/// `share_e2e_secret_encrypted` is an additional X25519 layer encrypted to the
+/// recipient's messaging key, so a recipient who persists only the decrypted
+/// outer envelope still has to perform an explicit accept (+ decrypt) step
+/// before the secret lands in their Sled store.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ShareInvitePayload {
+    /// Always "share_invite"
+    pub message_type: String,
+    /// Sender's node pubkey (Ed25519, base64)
+    pub sender_pubkey: String,
+    /// Sender's display name (for the accept UI)
+    pub sender_display_name: String,
+    /// R2 prefix for the share (e.g. "share:{sender_hash}:{recipient_hash}")
+    pub share_prefix: String,
+    /// Human-readable scope description
+    pub scope_description: String,
+    /// `share_e2e_secret` encrypted via X25519 sealed-box to the recipient's
+    /// messaging public key. The recipient's inbound poller decrypts this
+    /// using the pseudonym secret derived from the master key.
+    pub share_e2e_secret_encrypted: Vec<u8>,
+}
+
 /// A batch of records shared via the encrypted bulletin board.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct DataSharePayload {

@@ -46,7 +46,7 @@ pub use share::share_data;
 /// Helper to get discovery config via the explicit `AppState` resolver.
 /// Returns (discovery_url, master_key) or a 503 response when the node has
 /// not been registered with Exemem yet.
-pub(super) async fn get_discovery_config(
+pub(crate) async fn get_discovery_config(
     state: &AppState,
 ) -> Result<(String, Vec<u8>), HttpResponse> {
     match state.discovery_config().await {
@@ -62,7 +62,7 @@ pub(super) async fn get_discovery_config(
 /// Extract the auth token from env var, local credential store, or the incoming request's
 /// Authorization header. Env var is checked first to avoid unnecessary file reads
 /// in dev/CLI mode.
-pub(super) fn get_auth_token(req: &HttpRequest) -> Result<String, HttpResponse> {
+pub(crate) fn get_auth_token(req: &HttpRequest) -> Result<String, HttpResponse> {
     // 1. Env var (no credential file read needed — preferred for dev/CLI)
     if let Ok(token) = std::env::var("DISCOVERY_AUTH_TOKEN") {
         return Ok(token);
@@ -94,13 +94,13 @@ pub(super) fn get_auth_token(req: &HttpRequest) -> Result<String, HttpResponse> 
 
 /// Check if a discovery handler error is an auth failure.
 /// Matches the HandlerError variant directly instead of fragile string matching.
-pub(super) fn is_auth_error(err: &crate::handlers::HandlerError) -> bool {
+pub(crate) fn is_auth_error(err: &crate::handlers::HandlerError) -> bool {
     matches!(err, crate::handlers::HandlerError::Unauthorized(_)) || err.to_string().contains("401")
 }
 
 /// Try to refresh the session token via signed register, then return the new token.
 /// Returns None if refresh is not possible (no node, no exemem API, etc.).
-pub(super) async fn try_refresh_token(state: &web::Data<AppState>) -> Option<String> {
+pub(crate) async fn try_refresh_token(state: &web::Data<AppState>) -> Option<String> {
     match crate::server::routes::auth::refresh_session_token(state).await {
         Ok(token) => {
             log::info!("Discovery auth: refreshed session token after 401");
