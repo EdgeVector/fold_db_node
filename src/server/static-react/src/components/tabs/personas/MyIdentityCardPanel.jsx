@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useState } from 'react'
+import { QRCodeSVG } from 'qrcode.react'
 import {
   getMyIdentityCard,
   reissueMyIdentityCard,
@@ -35,6 +36,10 @@ export default function MyIdentityCardPanel() {
   const [draftName, setDraftName] = useState('')
   const [saving, setSaving] = useState(false)
   const [saveError, setSaveError] = useState(null)
+
+  // QR code is off by default — takes up 200+px of vertical space
+  // and most of the time the user just wants to copy JSON.
+  const [showQr, setShowQr] = useState(false)
 
   const fetchCard = useCallback(async () => {
     setLoading(true)
@@ -232,12 +237,51 @@ export default function MyIdentityCardPanel() {
             >
               Edit card
             </button>
+            <button
+              type="button"
+              className="btn-secondary text-xs"
+              onClick={() => setShowQr(v => !v)}
+              data-testid="my-identity-card-qr-toggle"
+              aria-pressed={showQr}
+            >
+              {showQr ? 'Hide QR' : 'Show QR'}
+            </button>
             <span className="text-[11px] text-tertiary">
               Editing reissues the card — a new Ed25519 signature is
               computed over the updated payload. Peers will see the
               stale card until you re-send.
             </span>
           </div>
+
+          {showQr && (
+            <div
+              className="flex flex-col items-center gap-2 bg-white rounded p-4 w-fit"
+              data-testid="my-identity-card-qr"
+            >
+              {/*
+                QR payload is COMPACT JSON (no indentation). QR
+                capacity scales roughly with byte count, and the
+                pretty-printed form would blow past the practical
+                scanning limit for phone cameras at common sizes.
+                Level-M error correction is the QR default and
+                tolerates some smudging; level H would give better
+                tolerance but bump the QR density, which hurts
+                low-light phone scans.
+              */}
+              <QRCodeSVG
+                value={JSON.stringify(card)}
+                size={256}
+                level="M"
+                marginSize={2}
+                data-testid="my-identity-card-qr-svg"
+              />
+              <p className="text-[10px] text-gray-600 max-w-[256px] text-center">
+                Scan with your phone's QR reader or another node's
+                Import Card flow. The payload is the signed card
+                JSON — verifiable without a network call.
+              </p>
+            </div>
+          )}
 
           <pre
             className="text-[11px] text-tertiary font-mono whitespace-pre-wrap break-words bg-surface rounded border border-border p-2 max-h-64 overflow-y-auto"
