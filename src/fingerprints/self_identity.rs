@@ -72,18 +72,18 @@ pub struct SelfIdentityOutcome {
 /// Note: `signature` is NOT included in the signed payload — it's
 /// the output. We sign the content-hash of the other fields.
 #[derive(Debug, Clone)]
-struct IdentityCardPayload<'a> {
-    pub_key: &'a str,
-    display_name: &'a str,
-    birthday: Option<&'a str>,
-    face_embedding: Option<&'a [f32]>,
-    issued_at: &'a str,
+pub(crate) struct IdentityCardPayload<'a> {
+    pub pub_key: &'a str,
+    pub display_name: &'a str,
+    pub birthday: Option<&'a str>,
+    pub face_embedding: Option<&'a [f32]>,
+    pub issued_at: &'a str,
 }
 
 impl<'a> IdentityCardPayload<'a> {
     /// Produce the canonical bytes that get signed. Uses
     /// serde_json::to_vec on a deterministic-key-order object.
-    fn canonical_bytes(&self) -> Vec<u8> {
+    pub(crate) fn canonical_bytes(&self) -> Vec<u8> {
         // BTreeMap-like ordering via serde_json — we build the
         // object with sorted keys explicitly.
         let obj = json!({

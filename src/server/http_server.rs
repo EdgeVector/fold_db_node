@@ -688,6 +688,10 @@ impl FoldHttpServer {
                     web::get().to(fp_routes::get_my_identity_card),
                 )
                 .route(
+                    "/identity-cards/import",
+                    web::post().to(fp_routes::import_identity_card),
+                )
+                .route(
                     "/ingest-text-signals",
                     web::post().to(fp_routes::ingest_text_signals),
                 )

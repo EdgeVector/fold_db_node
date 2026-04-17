@@ -30,6 +30,11 @@ pub struct UpdatePersonaRequest {
     pub relationship: Option<String>,
     pub aliases: Option<Vec<String>>,
     pub user_confirmed: Option<bool>,
+    /// Link this persona to a verified Identity (`id_<pub_key>`).
+    /// Typically set by the import-identity-card flow, but exposed
+    /// here so a future "link existing Identity" UI can wire to PATCH
+    /// without a dedicated endpoint.
+    pub link_identity_id: Option<String>,
 }
 
 /// GET /api/fingerprints/personas — list every Persona with
@@ -81,6 +86,7 @@ pub async fn update_persona(
         relationship: body.relationship,
         aliases: body.aliases,
         user_confirmed: body.user_confirmed,
+        link_identity_id: body.link_identity_id,
     };
 
     match fp_handlers::apply_persona_patch(node, persona_id, patch).await {

@@ -2,6 +2,7 @@
 //! over `crate::handlers::fingerprints`; no business logic here.
 
 pub mod import_contacts;
+pub mod import_identity_card;
 pub mod ingest;
 pub mod ingest_text;
 pub mod ingestion_errors;
@@ -10,6 +11,7 @@ pub mod personas;
 pub mod suggestions;
 
 pub use import_contacts::import_contacts;
+pub use import_identity_card::import_identity_card;
 pub use ingest::ingest_photo_faces;
 pub use ingest_text::ingest_text_signals;
 pub use ingestion_errors::{list_ingestion_errors, resolve_ingestion_error};
