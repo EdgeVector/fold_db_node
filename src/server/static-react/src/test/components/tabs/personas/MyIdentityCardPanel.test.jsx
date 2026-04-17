@@ -120,9 +120,11 @@ describe('MyIdentityCardPanel', () => {
       expect(screen.getByTestId('my-identity-card-draft-name')).toHaveValue(
         'Tom Tang',
       )
-      expect(screen.getByTestId('my-identity-card-draft-birthday')).toHaveValue(
-        '1990-04-17',
-      )
+      // Birthday is intentionally NOT editable here — a real person's
+      // birthday doesn't change; surfacing it would imply otherwise.
+      expect(
+        screen.queryByTestId('my-identity-card-draft-birthday'),
+      ).toBeNull()
     })
 
     it('calls reissueMyIdentityCard with only the changed display_name', async () => {
@@ -151,23 +153,6 @@ describe('MyIdentityCardPanel', () => {
       expect(screen.getByTestId('my-identity-card-fields')).toHaveTextContent(
         'Thomas',
       )
-    })
-
-    it('sends birthday: null when the user clears a previously-set birthday', async () => {
-      getMyIdentityCard.mockResolvedValue(ok(card({ birthday: '1990-04-17' })))
-      reissueMyIdentityCard.mockResolvedValue(ok(card({ birthday: null })))
-      render(<MyIdentityCardPanel />)
-      await waitFor(() => {
-        expect(screen.getByTestId('my-identity-card-edit')).toBeInTheDocument()
-      })
-      fireEvent.click(screen.getByTestId('my-identity-card-edit'))
-      fireEvent.change(screen.getByTestId('my-identity-card-draft-birthday'), {
-        target: { value: '' },
-      })
-      fireEvent.click(screen.getByTestId('my-identity-card-save'))
-      await waitFor(() => {
-        expect(reissueMyIdentityCard).toHaveBeenCalledWith({ birthday: null })
-      })
     })
 
     it('does not call reissue when nothing changed', async () => {

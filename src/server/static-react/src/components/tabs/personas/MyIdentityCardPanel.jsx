@@ -25,11 +25,14 @@ export default function MyIdentityCardPanel() {
   const [copied, setCopied] = useState(false)
 
   // Inline edit form state. `editing` toggles the display <dl> into
-  // the form; draftName/draftBirthday mirror the current card so a
-  // Cancel restores the stored values without a refetch.
+  // the form; draftName mirrors the current card so a Cancel
+  // restores the stored value without a refetch. Birthday is NOT
+  // surfaced in the edit form on purpose — a real person's birthday
+  // doesn't change, and exposing it as a normal editable field
+  // implies otherwise. The backend still accepts birthday patches
+  // (for a future first-time-set wizard), just not from this panel.
   const [editing, setEditing] = useState(false)
   const [draftName, setDraftName] = useState('')
-  const [draftBirthday, setDraftBirthday] = useState('')
   const [saving, setSaving] = useState(false)
   const [saveError, setSaveError] = useState(null)
 
@@ -59,7 +62,6 @@ export default function MyIdentityCardPanel() {
   const startEdit = useCallback(() => {
     if (!card) return
     setDraftName(card.display_name || '')
-    setDraftBirthday(card.birthday || '')
     setSaveError(null)
     setEditing(true)
   }, [card])
@@ -71,29 +73,16 @@ export default function MyIdentityCardPanel() {
 
   const handleSave = useCallback(async () => {
     if (!card) return
-    const req = {}
     const trimmedName = draftName.trim()
-    if (trimmedName && trimmedName !== card.display_name) {
-      req.display_name = trimmedName
-    }
-    // Birthday three-state: empty string vs. original.
-    // - empty and was set → null (clear)
-    // - empty and was unset → skip (nothing to do)
-    // - non-empty and differs → set
-    const trimmedBirthday = draftBirthday.trim()
-    if (trimmedBirthday === '' && card.birthday) {
-      req.birthday = null
-    } else if (trimmedBirthday !== '' && trimmedBirthday !== card.birthday) {
-      req.birthday = trimmedBirthday
-    }
-    if (Object.keys(req).length === 0) {
+    if (!trimmedName || trimmedName === card.display_name) {
+      // No-op — close the form without a round trip.
       setEditing(false)
       return
     }
     setSaving(true)
     setSaveError(null)
     try {
-      const res = await reissueMyIdentityCard(req)
+      const res = await reissueMyIdentityCard({ display_name: trimmedName })
       if (res.success) {
         setCard(res.data ?? null)
         setEditing(false)
@@ -105,7 +94,7 @@ export default function MyIdentityCardPanel() {
     } finally {
       setSaving(false)
     }
-  }, [card, draftName, draftBirthday])
+  }, [card, draftName])
 
   const handleCopy = useCallback(async () => {
     if (!card) return
@@ -172,19 +161,6 @@ export default function MyIdentityCardPanel() {
               onChange={e => setDraftName(e.target.value)}
               data-testid="my-identity-card-draft-name"
               autoFocus
-            />
-          </label>
-          <label className="block">
-            <span className="text-xs text-tertiary">
-              Birthday (YYYY-MM-DD, blank to clear)
-            </span>
-            <input
-              type="text"
-              className="input w-full mt-1 text-sm font-mono"
-              value={draftBirthday}
-              onChange={e => setDraftBirthday(e.target.value)}
-              data-testid="my-identity-card-draft-birthday"
-              placeholder="1990-04-17"
             />
           </label>
           {saveError && (
