@@ -6,6 +6,11 @@ use std::collections::HashMap;
 pub fn create_test_node_config() -> NodeConfig {
     let dir = tempfile::tempdir().unwrap();
     let path = dir.path().to_path_buf();
+
+    // Isolate config directory so tests don't read the host machine's saved UI state
+    // (e.g., if the user selected Ollama in the app, tests expecting Anthropic shouldn't fail)
+    std::env::set_var("FOLD_CONFIG_DIR", path.join("config"));
+
     NodeConfig::new(path)
 }
 
