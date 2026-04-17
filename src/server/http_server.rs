@@ -384,7 +384,25 @@ impl FoldHttpServer {
                 .configure(Self::configure_remote_routes)
                 .configure(Self::configure_auth_routes)
                 .configure(Self::configure_sync_routes)
-                .configure(Self::configure_org_routes),
+                .configure(Self::configure_org_routes)
+                .configure(Self::configure_test_admin_routes),
+        );
+    }
+
+    /// Register test-admin routes. Registration is unconditional; the handlers
+    /// themselves reject requests unless `FOLDDB_ENABLE_TEST_ADMIN=1`.
+    fn configure_test_admin_routes(cfg: &mut web::ServiceConfig) {
+        use crate::server::routes::test_admin as test_admin_routes;
+        cfg.service(
+            web::scope("/test-admin")
+                .route(
+                    "/contacts",
+                    web::post().to(test_admin_routes::upsert_contact),
+                )
+                .route(
+                    "/my-messaging-keys",
+                    web::get().to(test_admin_routes::my_messaging_keys),
+                ),
         );
     }
 

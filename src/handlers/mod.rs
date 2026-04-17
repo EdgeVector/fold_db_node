@@ -28,6 +28,7 @@
 //! }
 //! ```
 
+pub mod admin;
 pub mod auth;
 pub mod caller;
 pub mod discovery;
