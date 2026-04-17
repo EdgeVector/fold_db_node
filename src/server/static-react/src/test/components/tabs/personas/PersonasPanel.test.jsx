@@ -10,6 +10,7 @@ vi.mock('../../../../api/clients/fingerprintsClient', () => ({
   listPersonas: vi.fn(),
   getPersona: vi.fn(),
   updatePersona: vi.fn(),
+  deletePersona: vi.fn(),
   RELATIONSHIP_OPTIONS: [
     'self',
     'family',
@@ -24,6 +25,7 @@ import {
   listPersonas,
   getPersona,
   updatePersona,
+  deletePersona,
 } from '../../../../api/clients/fingerprintsClient'
 
 // ── Test data builders ─────────────────────────────────────────────
@@ -772,6 +774,111 @@ describe('PersonasPanel', () => {
       })
       expect(screen.queryByTestId('persona-confirm-banner')).toBeNull()
       expect(screen.queryByTestId('badge-tentative')).toBeNull()
+    })
+  })
+
+  describe('delete flow', () => {
+    it('renders the Delete persona button on non-built-in personas', async () => {
+      listPersonas.mockResolvedValue(
+        okList([makeSummary({ id: 'ps_d', name: 'Delete Me', built_in: false })]),
+      )
+      getPersona.mockResolvedValue(
+        okDetail(makeDetail({ id: 'ps_d', name: 'Delete Me', built_in: false })),
+      )
+      render(<PersonasPanel />)
+      await waitFor(() => {
+        expect(screen.getByTestId('persona-row-ps_d')).toBeInTheDocument()
+      })
+      fireEvent.click(screen.getByTestId('persona-row-ps_d'))
+      await waitFor(() => {
+        expect(screen.getByTestId('persona-delete-button')).toBeInTheDocument()
+      })
+    })
+
+    it('hides the Delete persona button on built-in (Me) persona', async () => {
+      listPersonas.mockResolvedValue(
+        okList([makeSummary({ id: 'ps_me', name: 'Me', built_in: true })]),
+      )
+      getPersona.mockResolvedValue(
+        okDetail(makeDetail({ id: 'ps_me', name: 'Me', built_in: true })),
+      )
+      render(<PersonasPanel />)
+      await waitFor(() => {
+        expect(screen.getByTestId('persona-row-ps_me')).toBeInTheDocument()
+      })
+      fireEvent.click(screen.getByTestId('persona-row-ps_me'))
+      await waitFor(() => {
+        expect(screen.getByTestId('persona-detail')).toBeInTheDocument()
+      })
+      expect(screen.queryByTestId('persona-delete-button')).toBeNull()
+    })
+
+    it('confirms then calls deletePersona, removes row from list', async () => {
+      listPersonas.mockResolvedValue(
+        okList([
+          makeSummary({ id: 'ps_keep', name: 'Keep', built_in: false }),
+          makeSummary({ id: 'ps_del', name: 'Del', built_in: false }),
+        ]),
+      )
+      getPersona.mockResolvedValue(
+        okDetail(makeDetail({ id: 'ps_del', name: 'Del', built_in: false })),
+      )
+      deletePersona.mockResolvedValue({
+        success: true,
+        data: { deleted_persona_id: 'ps_del' },
+      })
+      // Stub window.confirm to accept.
+      const origConfirm = window.confirm
+      window.confirm = () => true
+      try {
+        render(<PersonasPanel />)
+        await waitFor(() => {
+          expect(screen.getByTestId('persona-row-ps_del')).toBeInTheDocument()
+        })
+        fireEvent.click(screen.getByTestId('persona-row-ps_del'))
+        await waitFor(() => {
+          expect(screen.getByTestId('persona-delete-button')).toBeInTheDocument()
+        })
+        fireEvent.click(screen.getByTestId('persona-delete-button'))
+        await waitFor(() => {
+          expect(deletePersona).toHaveBeenCalledWith('ps_del')
+        })
+        // Row gone from list.
+        await waitFor(() => {
+          expect(screen.queryByTestId('persona-row-ps_del')).toBeNull()
+        })
+        // Other row still there.
+        expect(screen.getByTestId('persona-row-ps_keep')).toBeInTheDocument()
+      } finally {
+        window.confirm = origConfirm
+      }
+    })
+
+    it('skips the delete when the user cancels the confirm dialog', async () => {
+      listPersonas.mockResolvedValue(
+        okList([makeSummary({ id: 'ps_c', name: 'Keep', built_in: false })]),
+      )
+      getPersona.mockResolvedValue(
+        okDetail(makeDetail({ id: 'ps_c', name: 'Keep', built_in: false })),
+      )
+      const origConfirm = window.confirm
+      window.confirm = () => false
+      try {
+        render(<PersonasPanel />)
+        await waitFor(() => {
+          expect(screen.getByTestId('persona-row-ps_c')).toBeInTheDocument()
+        })
+        fireEvent.click(screen.getByTestId('persona-row-ps_c'))
+        await waitFor(() => {
+          expect(screen.getByTestId('persona-delete-button')).toBeInTheDocument()
+        })
+        fireEvent.click(screen.getByTestId('persona-delete-button'))
+        expect(deletePersona).not.toHaveBeenCalled()
+        // Row still there.
+        expect(screen.getByTestId('persona-row-ps_c')).toBeInTheDocument()
+      } finally {
+        window.confirm = origConfirm
+      }
     })
   })
 })
