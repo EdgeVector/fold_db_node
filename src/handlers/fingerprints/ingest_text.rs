@@ -134,6 +134,15 @@ pub async fn ingest_text_signals_batch(
         total_records_written,
     );
 
+    // Fire-and-forget post-ingest sweep — mirrors the face ingest
+    // path. See src/fingerprints/auto_propose.rs for the create logic.
+    if total_records_written > 0 {
+        let node_bg = node.clone();
+        tokio::spawn(async move {
+            crate::fingerprints::auto_propose::run_sweep_and_create_personas(node_bg).await;
+        });
+    }
+
     Ok(ApiResponse::success(IngestTextSignalsResponse {
         total_records,
         successful_records,

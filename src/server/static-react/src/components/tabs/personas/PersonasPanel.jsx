@@ -164,6 +164,11 @@ export default function PersonasPanel() {
     [applyPatch],
   )
 
+  const handleConfirm = useCallback(
+    () => applyPatch({ user_confirmed: true }, 'Failed to confirm persona'),
+    [applyPatch],
+  )
+
   return (
     <div className="flex flex-col gap-4 lg:flex-row">
       <PersonaList
@@ -186,6 +191,7 @@ export default function PersonasPanel() {
         onUnexcludeEdge={handleUnexcludeEdge}
         onRenamePersona={handleRenamePersona}
         onRelationshipChange={handleRelationshipChange}
+        onConfirm={handleConfirm}
       />
       {undoSnack && (
         <div
@@ -274,6 +280,15 @@ function PersonaList({ personas, loading, error, selectedId, onSelect, onRefresh
                       verified
                     </span>
                   )}
+                  {!p.user_confirmed && !p.built_in && (
+                    <span
+                      className="text-[10px] px-2 py-0.5 rounded-full bg-gruvbox-yellow/10 text-gruvbox-yellow border border-gruvbox-yellow/30"
+                      data-testid="badge-tentative"
+                      title="Auto-created by the sweep. Confirm to keep, or delete to reject."
+                    >
+                      tentative
+                    </span>
+                  )}
                 </div>
                 <span className="text-[10px] text-tertiary font-mono">
                   thr {p.threshold.toFixed(2)}
@@ -303,6 +318,7 @@ function PersonaDetail({
   onUnexcludeEdge,
   onRenamePersona,
   onRelationshipChange,
+  onConfirm,
 }) {
   if (!selectedId) {
     return (
@@ -333,6 +349,7 @@ function PersonaDetail({
           onUnexcludeEdge={onUnexcludeEdge}
           onRenamePersona={onRenamePersona}
           onRelationshipChange={onRelationshipChange}
+          onConfirm={onConfirm}
         />
       )}
     </div>
@@ -348,6 +365,7 @@ function PersonaDetailBody({
   onUnexcludeEdge,
   onRenamePersona,
   onRelationshipChange,
+  onConfirm,
 }) {
   // Local mirror of the slider value so the knob moves smoothly
   // while the user drags. We only call the parent (and fire the
@@ -457,7 +475,37 @@ function PersonaDetailBody({
               verified
             </span>
           )}
+          {!detail.user_confirmed && !detail.built_in && (
+            <span
+              className="text-[10px] px-2 py-0.5 rounded-full bg-gruvbox-yellow/10 text-gruvbox-yellow border border-gruvbox-yellow/30"
+              data-testid="persona-detail-badge-tentative"
+              title="Auto-created by the sweep. Review and confirm, or delete."
+            >
+              tentative
+            </span>
+          )}
         </div>
+        {!detail.user_confirmed && !detail.built_in && typeof onConfirm === 'function' && (
+          <div
+            className="mt-2 p-2 rounded border border-gruvbox-yellow/40 bg-gruvbox-yellow/5 flex items-center justify-between gap-2"
+            data-testid="persona-confirm-banner"
+          >
+            <span className="text-xs text-secondary">
+              This persona was auto-created from a dense cluster.
+              Review the fingerprints and mentions below, then confirm
+              or rename to keep it.
+            </span>
+            <button
+              type="button"
+              className="btn-primary text-xs shrink-0"
+              onClick={onConfirm}
+              data-testid="persona-confirm-button"
+              title="Mark this persona as confirmed. You can still rename, adjust threshold, or exclude edges/mentions later."
+            >
+              Confirm
+            </button>
+          </div>
+        )}
         <div className="text-xs text-tertiary mt-1 font-mono break-all">{detail.id}</div>
         <div className="text-xs text-secondary mt-1 flex flex-wrap items-center gap-x-2 gap-y-1">
           <div className="flex items-center gap-1.5 shrink-0">

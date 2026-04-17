@@ -34,6 +34,7 @@
 //! See `docs/designs/fingerprints_phase1_audit.md` for the audit that led
 //! to the junction-schema pattern.
 
+pub mod auto_propose;
 pub mod canonical_names;
 pub mod extractors;
 pub mod face_ann_cache;

@@ -619,4 +619,159 @@ describe('PersonasPanel', () => {
       })
     })
   })
+
+  describe('tentative personas + confirm flow', () => {
+    it('renders a tentative badge on unconfirmed, non-built-in personas', async () => {
+      listPersonas.mockResolvedValue(
+        okList([
+          makeSummary({
+            id: 'ps_auto_t1',
+            name: 'Tom Tang',
+            user_confirmed: false,
+            built_in: false,
+          }),
+        ]),
+      )
+      render(<PersonasPanel />)
+      await waitFor(() => {
+        expect(screen.getByTestId('persona-row-ps_auto_t1')).toBeInTheDocument()
+      })
+      expect(screen.getByTestId('badge-tentative')).toBeInTheDocument()
+    })
+
+    it('does NOT render a tentative badge on confirmed personas', async () => {
+      listPersonas.mockResolvedValue(
+        okList([
+          makeSummary({
+            id: 'ps_a',
+            name: 'Alice',
+            user_confirmed: true,
+            built_in: false,
+          }),
+        ]),
+      )
+      render(<PersonasPanel />)
+      await waitFor(() => {
+        expect(screen.getByTestId('persona-row-ps_a')).toBeInTheDocument()
+      })
+      expect(screen.queryByTestId('badge-tentative')).toBeNull()
+    })
+
+    it('shows a Confirm banner + button on tentative persona detail', async () => {
+      listPersonas.mockResolvedValue(
+        okList([
+          makeSummary({
+            id: 'ps_auto_t2',
+            name: 'Cluster',
+            user_confirmed: false,
+            built_in: false,
+          }),
+        ]),
+      )
+      getPersona.mockResolvedValue(
+        okDetail(
+          makeDetail({
+            id: 'ps_auto_t2',
+            name: 'Cluster',
+            user_confirmed: false,
+            built_in: false,
+          }),
+        ),
+      )
+      render(<PersonasPanel />)
+      await waitFor(() => {
+        expect(screen.getByTestId('persona-row-ps_auto_t2')).toBeInTheDocument()
+      })
+      fireEvent.click(screen.getByTestId('persona-row-ps_auto_t2'))
+      await waitFor(() => {
+        expect(screen.getByTestId('persona-confirm-banner')).toBeInTheDocument()
+      })
+      expect(screen.getByTestId('persona-confirm-button')).toBeInTheDocument()
+    })
+
+    it('fires updatePersona({ user_confirmed: true }) on Confirm click', async () => {
+      listPersonas.mockResolvedValue(
+        okList([
+          makeSummary({
+            id: 'ps_auto_t3',
+            name: 'Tentative One',
+            user_confirmed: false,
+            built_in: false,
+          }),
+        ]),
+      )
+      getPersona.mockResolvedValue(
+        okDetail(
+          makeDetail({
+            id: 'ps_auto_t3',
+            name: 'Tentative One',
+            user_confirmed: false,
+            built_in: false,
+          }),
+        ),
+      )
+      updatePersona.mockResolvedValue(
+        okDetail(
+          makeDetail({
+            id: 'ps_auto_t3',
+            name: 'Tentative One',
+            user_confirmed: true,
+            built_in: false,
+          }),
+        ),
+      )
+      render(<PersonasPanel />)
+      await waitFor(() => {
+        expect(screen.getByTestId('persona-row-ps_auto_t3')).toBeInTheDocument()
+      })
+      fireEvent.click(screen.getByTestId('persona-row-ps_auto_t3'))
+      await waitFor(() => {
+        expect(screen.getByTestId('persona-confirm-button')).toBeInTheDocument()
+      })
+      fireEvent.click(screen.getByTestId('persona-confirm-button'))
+      await waitFor(() => {
+        expect(updatePersona).toHaveBeenCalledWith('ps_auto_t3', {
+          user_confirmed: true,
+        })
+      })
+      // After a successful confirm, the banner should disappear (detail
+      // was replaced with user_confirmed=true).
+      await waitFor(() => {
+        expect(screen.queryByTestId('persona-confirm-banner')).toBeNull()
+      })
+    })
+
+    it('does NOT show the Confirm banner on built-in (Me) persona', async () => {
+      listPersonas.mockResolvedValue(
+        okList([
+          makeSummary({
+            id: 'ps_me',
+            name: 'Me',
+            user_confirmed: false, // even if flag is somehow false
+            built_in: true,
+          }),
+        ]),
+      )
+      getPersona.mockResolvedValue(
+        okDetail(
+          makeDetail({
+            id: 'ps_me',
+            name: 'Me',
+            user_confirmed: false,
+            built_in: true,
+          }),
+        ),
+      )
+      render(<PersonasPanel />)
+      await waitFor(() => {
+        expect(screen.getByTestId('persona-row-ps_me')).toBeInTheDocument()
+      })
+      fireEvent.click(screen.getByTestId('persona-row-ps_me'))
+      await waitFor(() => {
+        expect(screen.getByTestId('persona-detail')).toBeInTheDocument()
+      })
+      expect(screen.queryByTestId('persona-confirm-banner')).toBeNull()
+      expect(screen.queryByTestId('badge-tentative')).toBeNull()
+    })
+  })
 })

@@ -158,6 +158,10 @@ export interface PersonaPatch {
   relationship?: string;
   /** Replace the aliases array wholesale. */
   aliases?: string[];
+  /** Set user_confirmed. Used by the Confirm action on tentative
+   *  (auto-created) personas. The backend rejects true → false
+   *  transitions; to reject a tentative persona, delete it. */
+  user_confirmed?: boolean;
 }
 
 /** The canonical relationship list the backend accepts. Mirrors

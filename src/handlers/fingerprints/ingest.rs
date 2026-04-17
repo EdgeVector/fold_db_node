@@ -231,6 +231,16 @@ pub async fn ingest_photo_faces_batch(
         total_records_written,
     );
 
+    // Fire-and-forget post-ingest sweep — auto-creates tentative
+    // Personas for any dense cluster that emerged or grew. Debounced
+    // in auto_propose so a large migration doesn't trigger N sweeps.
+    if total_records_written > 0 {
+        let node_bg = node.clone();
+        tokio::spawn(async move {
+            crate::fingerprints::auto_propose::run_sweep_and_create_personas(node_bg).await;
+        });
+    }
+
     Ok(ApiResponse::success(IngestPhotoFacesResponse {
         total_photos,
         successful_photos,
