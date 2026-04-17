@@ -686,6 +686,15 @@ pub struct PersonaPatch {
     /// There is no path to flip true → false; once confirmed, a
     /// Persona stays confirmed until deleted.
     pub user_confirmed: Option<bool>,
+    /// Link this persona to a verified Identity record. The value is
+    /// the `id_<pub_key>` key of an Identity record that already
+    /// exists on this node (typically written by the import-identity-
+    /// card handler after a successful signature verification). Sets
+    /// `identity_id` on the persona to the SchemaRef shape the schema
+    /// requires. Pass `None` to leave the link unchanged; there is no
+    /// op to CLEAR the link today — if you need that, add a
+    /// `clear_identity_id: bool` companion later.
+    pub link_identity_id: Option<String>,
 }
 
 impl PersonaPatch {
@@ -699,6 +708,7 @@ impl PersonaPatch {
             && self.relationship.is_none()
             && self.aliases.is_none()
             && self.user_confirmed.is_none()
+            && self.link_identity_id.is_none()
     }
 }
 
@@ -895,6 +905,19 @@ pub async fn apply_persona_patch(
             ));
         }
         payload.insert("user_confirmed".to_string(), Value::Bool(user_confirmed));
+    }
+    if let Some(identity_id) = &patch.link_identity_id {
+        // Persona schema declares `identity_id` as
+        // `OneOf([SchemaRef("Identity"), Null])`. SchemaRef requires
+        // the reference-object shape — see `me_persona_record` for
+        // the canonical example. We write the DESCRIPTIVE schema
+        // name `"Identity"` because that's what the SchemaRef variant
+        // carries; the writer path will translate to the canonical
+        // name downstream.
+        payload.insert(
+            "identity_id".to_string(),
+            serde_json::json!({ "schema": "Identity", "key": identity_id }),
+        );
     }
 
     // 4. Execute Update. Keep the same content-addressed primary key.

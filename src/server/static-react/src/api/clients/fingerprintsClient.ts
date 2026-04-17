@@ -162,6 +162,10 @@ export interface PersonaPatch {
    *  (auto-created) personas. The backend rejects true → false
    *  transitions; to reject a tentative persona, delete it. */
   user_confirmed?: boolean;
+  /** Link this persona to a verified Identity (`id_<pub_key>`).
+   *  Typically set by the import-identity-card flow, but exposed here
+   *  so a future "link existing Identity" UI can reuse the PATCH. */
+  link_identity_id?: string;
 }
 
 /** The canonical relationship list the backend accepts. Mirrors
@@ -233,6 +237,62 @@ export async function getMyIdentityCard(): Promise<
 > {
   return client.get<MyIdentityCardResponse>(
     "/fingerprints/my-identity-card",
+  );
+}
+
+// ===== Import Identity Card (Phase 3b) =====
+
+/**
+ * Incoming card shape matches `MyIdentityCardResponse` 1:1 so the
+ * user can literally paste the JSON they got from another node's
+ * `/my-identity-card` response. The backend verifies the Ed25519
+ * signature over the canonical bytes before committing anything.
+ */
+export interface IncomingIdentityCard {
+  pub_key: string;
+  display_name: string;
+  birthday: string | null;
+  face_embedding: number[] | null;
+  node_id: string;
+  card_signature: string;
+  issued_at: string;
+}
+
+export interface ImportIdentityCardRequest {
+  card: IncomingIdentityCard;
+  /** Optional: a persona id on this node to link to the imported
+   *  Identity so the verified badge renders immediately. */
+  link_persona_id?: string;
+}
+
+export interface ImportIdentityCardResponse {
+  identity_id: string;
+  verified: boolean;
+  /** True when the Identity was already on this node. Lets the UI
+   *  distinguish "first-time import" from "re-paste of the same
+   *  card". The backend is always idempotent either way. */
+  was_already_present: boolean;
+  /** Populated when `link_persona_id` was supplied and the link
+   *  succeeded. Same shape as `PersonaDetailResponse`. */
+  linked_persona: PersonaDetailResponse | null;
+}
+
+/**
+ * Verify an incoming Identity Card and, on success, commit it as a
+ * local Identity record. Optionally links it to an existing Persona
+ * so the UI can flip the verified badge without a second round trip.
+ *
+ * Failure modes (all surface as 400):
+ * - Malformed base64 on `pub_key` or `card_signature`.
+ * - Signature doesn't verify against `pub_key`.
+ * - `link_persona_id` was passed but the persona isn't on this node.
+ */
+export async function importIdentityCard(
+  req: ImportIdentityCardRequest,
+): Promise<EnhancedApiResponse<ImportIdentityCardResponse>> {
+  return client.post<ImportIdentityCardResponse>(
+    "/fingerprints/identity-cards/import",
+    req,
   );
 }
 

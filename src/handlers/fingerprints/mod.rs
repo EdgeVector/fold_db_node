@@ -11,6 +11,7 @@
 //! responses.
 
 pub mod import_contacts;
+pub mod import_identity_card;
 pub mod ingest;
 pub mod ingest_text;
 pub mod ingestion_errors;
@@ -19,6 +20,10 @@ pub mod personas;
 pub mod suggestions;
 
 pub use import_contacts::import_contacts;
+pub use import_identity_card::{
+    import_identity_card, ImportIdentityCardRequest, ImportIdentityCardResponse,
+    IncomingIdentityCard,
+};
 pub use ingest::{
     ingest_photo_faces_batch, DetectedFaceDto, IngestPhotoFacesRequest, IngestPhotoFacesResponse,
     PhotoFacesDto, PhotoIngestResult,
