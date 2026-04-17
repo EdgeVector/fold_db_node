@@ -113,3 +113,20 @@ pub async fn update_persona(
         Err(e) => handler_error_to_response(e),
     }
 }
+
+/// POST /api/fingerprints/personas/{id}/merge — merge another
+/// persona INTO this one. Body is `{ "absorbed_persona_id": "ps_..." }`.
+/// On success returns the survivor's freshly-resolved detail; the
+/// absorbed persona is deleted.
+pub async fn merge_personas(
+    path: web::Path<String>,
+    body: web::Json<fp_handlers::MergePersonasRequest>,
+    state: web::Data<AppState>,
+) -> impl Responder {
+    let (_user_hash, node) = node_or_return!(state);
+    let survivor_id = path.into_inner();
+    match fp_handlers::merge_personas(node, survivor_id, body.into_inner()).await {
+        Ok(response) => HttpResponse::Ok().json(response),
+        Err(e) => handler_error_to_response(e),
+    }
+}

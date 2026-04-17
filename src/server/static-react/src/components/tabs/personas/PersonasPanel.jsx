@@ -4,6 +4,7 @@ import {
   getPersona,
   updatePersona,
   deletePersona,
+  mergePersonas,
   RELATIONSHIP_OPTIONS,
 } from '../../../api/clients/fingerprintsClient'
 
@@ -181,6 +182,36 @@ export default function PersonasPanel() {
     applyPatch({ clear_identity_id: true }, 'Failed to unlink identity')
   }, [applyPatch])
 
+  const handleMerge = useCallback(
+    async absorbedId => {
+      if (!selectedId || !absorbedId || absorbedId === selectedId) return
+      const absorbed = personas.find(p => p.id === absorbedId)
+      const survivor = personas.find(p => p.id === selectedId)
+      const ok = window.confirm(
+        `Merge "${absorbed?.name ?? absorbedId}" INTO "${survivor?.name ?? selectedId}"?\n\n` +
+          'The absorbed persona is deleted. Its seed fingerprints, aliases, ' +
+          'and exclusions are folded into the survivor. The survivor keeps ' +
+          'its own name, threshold, and relationship.',
+      )
+      if (!ok) return
+      try {
+        const res = await mergePersonas(selectedId, absorbedId)
+        if (res.success) {
+          setDetail(res.data ?? null)
+          // Drop the absorbed row from the list; refetch to pick up
+          // the survivor's new cluster counts.
+          setPersonas(prev => prev.filter(p => p.id !== absorbedId))
+          fetchList()
+        } else {
+          setDetailError(res.error ?? 'Failed to merge personas')
+        }
+      } catch (e) {
+        setDetailError(e?.message ?? 'Network error while merging personas')
+      }
+    },
+    [selectedId, personas, fetchList],
+  )
+
   const handleDeletePersona = useCallback(async () => {
     if (!selectedId) return
     // Underlying Fingerprint / Mention / Edge records survive — the
@@ -230,6 +261,8 @@ export default function PersonasPanel() {
         onConfirm={handleConfirm}
         onDelete={handleDeletePersona}
         onUnlinkIdentity={handleUnlinkIdentity}
+        onMerge={handleMerge}
+        mergeCandidates={personas}
       />
       {undoSnack && (
         <div
@@ -359,6 +392,8 @@ function PersonaDetail({
   onConfirm,
   onDelete,
   onUnlinkIdentity,
+  onMerge,
+  mergeCandidates,
 }) {
   if (!selectedId) {
     return (
@@ -392,6 +427,8 @@ function PersonaDetail({
           onConfirm={onConfirm}
           onDelete={onDelete}
           onUnlinkIdentity={onUnlinkIdentity}
+          onMerge={onMerge}
+          mergeCandidates={mergeCandidates}
         />
       )}
     </div>
@@ -410,6 +447,8 @@ function PersonaDetailBody({
   onConfirm,
   onDelete,
   onUnlinkIdentity,
+  onMerge,
+  mergeCandidates,
 }) {
   // Local mirror of the slider value so the knob moves smoothly
   // while the user drags. We only call the parent (and fire the
@@ -528,10 +567,17 @@ function PersonaDetailBody({
               tentative
             </span>
           )}
+          {!detail.built_in && typeof onMerge === 'function' && (
+            <MergeIntoControl
+              detail={detail}
+              mergeCandidates={mergeCandidates}
+              onMerge={onMerge}
+            />
+          )}
           {!detail.built_in && typeof onDelete === 'function' && (
             <button
               type="button"
-              className="ml-auto text-[11px] text-tertiary hover:text-gruvbox-red underline underline-offset-2 shrink-0"
+              className="text-[11px] text-tertiary hover:text-gruvbox-red underline underline-offset-2 shrink-0"
               onClick={onDelete}
               data-testid="persona-delete-button"
               title="Delete this persona. Underlying fingerprints, mentions, and edges remain in the graph."
@@ -649,6 +695,52 @@ function PersonaDetailBody({
         </div>
       )}
     </>
+  )
+}
+
+// Inline dropdown used in the persona detail header. Shown only on
+// non-built-in personas; excludes the current persona and any
+// built-in personas from the "merge into" options.
+function MergeIntoControl({ detail, mergeCandidates = [], onMerge }) {
+  const [value, setValue] = useState('')
+  const candidates = mergeCandidates.filter(
+    p => p.id !== detail.id && !p.built_in,
+  )
+  if (candidates.length === 0) return null
+  return (
+    <div
+      className="ml-auto flex items-center gap-1 shrink-0"
+      data-testid="persona-merge-control"
+    >
+      <select
+        value={value}
+        onChange={e => setValue(e.target.value)}
+        className="input text-[11px] py-0.5"
+        data-testid="persona-merge-select"
+        aria-label="Merge another persona into this one"
+      >
+        <option value="">— merge another into this —</option>
+        {candidates.map(p => (
+          <option key={p.id} value={p.id}>
+            {p.name || '(unnamed)'} · {p.relationship}
+          </option>
+        ))}
+      </select>
+      <button
+        type="button"
+        className="text-[11px] text-tertiary hover:text-gruvbox-yellow underline underline-offset-2"
+        disabled={!value}
+        onClick={() => {
+          if (!value) return
+          onMerge(value)
+          setValue('')
+        }}
+        data-testid="persona-merge-button"
+        title="Fold the selected persona's seeds/aliases into this one and delete the absorbed record."
+      >
+        Merge
+      </button>
+    </div>
   )
 }
 

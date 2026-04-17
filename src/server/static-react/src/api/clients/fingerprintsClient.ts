@@ -201,6 +201,29 @@ export async function updatePersona(
 }
 
 /**
+ * Merge `absorbedPersonaId` INTO `survivorId`. Unions seed
+ * fingerprints + exclusion lists, appends the absorbed persona's
+ * name to the survivor's aliases, and deletes the absorbed record.
+ *
+ * Rejected by the backend (400) when:
+ * - Either side is built-in (the Me persona does not merge).
+ * - Both sides have non-null, differing identity_id — two
+ *   cryptographically verified identities cannot collapse into
+ *   one. Unlink one first.
+ *
+ * Returns the survivor's freshly-resolved detail.
+ */
+export async function mergePersonas(
+  survivorId: string,
+  absorbedPersonaId: string,
+): Promise<EnhancedApiResponse<PersonaDetailResponse>> {
+  return client.post<PersonaDetailResponse>(
+    `/fingerprints/personas/${encodeURIComponent(survivorId)}/merge`,
+    { absorbed_persona_id: absorbedPersonaId },
+  );
+}
+
+/**
  * Delete a Persona. The backend rejects this for built-in personas
  * (the Me persona) with a 400. Underlying Fingerprint / Mention /
  * Edge records are NOT touched — they survive as observed facts.

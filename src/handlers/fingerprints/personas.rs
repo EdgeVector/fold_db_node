@@ -1200,6 +1200,264 @@ fn _unused_hashmap() {
     let _: HashMap<String, String> = HashMap::new();
 }
 
+/// Request body for [`merge_personas`]. The URL names the survivor
+/// (`{id}` in `POST /personas/{id}/merge`); the body names the
+/// persona whose seeds + aliases get folded in and then deleted.
+#[derive(Debug, Clone, Deserialize)]
+pub struct MergePersonasRequest {
+    pub absorbed_persona_id: String,
+}
+
+/// Fold one Persona into another.
+///
+/// Product shape: the user has two Personas that they've realized
+/// are the same person (e.g. the text pipeline created "Tom Tang"
+/// from emails and the face pipeline auto-created "Unknown-23"
+/// from shared photos, and a Mention connects them). Merging
+/// unions their seed_fingerprint_ids, unions their exclusion
+/// lists, appends the absorbed persona's name to the survivor's
+/// aliases, and deletes the absorbed record. The resolver then
+/// produces one cluster from the combined seeds.
+///
+/// Conflict policy:
+///
+/// - Both personas must be non-built-in. The Me persona never
+///   merges — its identity_id is the self-Identity and folding
+///   another persona into it would muddy that anchor.
+/// - If both personas have a non-null identity_id AND those
+///   identities differ, the merge is rejected. That configuration
+///   means the user is trying to merge two *verified* identities,
+///   which is a data-integrity bug, not a merge. The only sane
+///   move is to unlink one first.
+/// - If only one persona has identity_id, the survivor inherits it
+///   (so merging a verified Persona into an unverified one does
+///   not silently drop the cryptographic link).
+/// - Thresholds are NOT averaged — the survivor's threshold wins.
+///   Threshold is a UX knob, not a cluster property.
+///
+/// Returns the survivor's freshly-resolved detail.
+pub async fn merge_personas(
+    node: Arc<FoldNode>,
+    survivor_id: String,
+    request: MergePersonasRequest,
+) -> HandlerResult<PersonaDetailResponse> {
+    let absorbed_id = request.absorbed_persona_id;
+    if survivor_id == absorbed_id {
+        return Err(HandlerError::BadRequest(
+            "cannot merge a persona into itself".to_string(),
+        ));
+    }
+
+    let persona_canonical = canonical_names::lookup(PERSONA).map_err(|e| {
+        HandlerError::Internal(format!(
+            "fingerprints: canonical_names not initialized for '{}': {}",
+            PERSONA, e
+        ))
+    })?;
+    let processor = crate::fold_node::OperationProcessor::new(node.clone());
+
+    // Load both personas up front. Fail fast on NotFound so we
+    // never half-apply a merge.
+    let survivor = fetch_persona_fields(&processor, &persona_canonical, &survivor_id).await?;
+    let absorbed = fetch_persona_fields(&processor, &persona_canonical, &absorbed_id).await?;
+
+    if bool_field(&survivor, "built_in").unwrap_or(false)
+        || bool_field(&absorbed, "built_in").unwrap_or(false)
+    {
+        return Err(HandlerError::BadRequest(
+            "cannot merge a built-in persona (Me); rotate the IdentityCard instead".to_string(),
+        ));
+    }
+
+    // Identity conflict check. identity_id is stored as a SchemaRef
+    // object `{"schema": "Identity", "key": "id_..."}` OR JSON null.
+    // We only care about the `key` field for this comparison.
+    let survivor_identity_key = extract_identity_key(&survivor);
+    let absorbed_identity_key = extract_identity_key(&absorbed);
+    match (&survivor_identity_key, &absorbed_identity_key) {
+        (Some(a), Some(b)) if a != b => {
+            return Err(HandlerError::BadRequest(format!(
+                "both personas are linked to different verified identities ({} vs {}); \
+                 unlink one before merging",
+                a, b
+            )));
+        }
+        _ => {}
+    }
+
+    // Build the merged survivor payload.
+    let mut payload: HashMap<String, Value> = HashMap::new();
+    if let Value::Object(map) = &survivor {
+        for (k, v) in map.iter() {
+            payload.insert(k.clone(), v.clone());
+        }
+    } else {
+        return Err(HandlerError::Internal(
+            "survivor persona fields is not a JSON object".to_string(),
+        ));
+    }
+
+    // Union the seed fingerprints — the survivor's cluster widens
+    // to include every fingerprint that was driving the absorbed
+    // persona's resolve.
+    let merged_seeds = union_string_arrays(
+        string_array_field(&survivor, "seed_fingerprint_ids"),
+        string_array_field(&absorbed, "seed_fingerprint_ids"),
+    );
+    payload.insert(
+        "seed_fingerprint_ids".to_string(),
+        json_string_array(merged_seeds),
+    );
+
+    // Union exclusion lists so edges/mentions the user previously
+    // hid on either persona stay hidden on the merged cluster.
+    let merged_excl_edges = union_string_arrays(
+        string_array_field(&survivor, "excluded_edge_ids"),
+        string_array_field(&absorbed, "excluded_edge_ids"),
+    );
+    payload.insert(
+        "excluded_edge_ids".to_string(),
+        json_string_array(merged_excl_edges),
+    );
+    let merged_excl_mentions = union_string_arrays(
+        string_array_field(&survivor, "excluded_mention_ids"),
+        string_array_field(&absorbed, "excluded_mention_ids"),
+    );
+    payload.insert(
+        "excluded_mention_ids".to_string(),
+        json_string_array(merged_excl_mentions),
+    );
+
+    // Aliases: union + append the absorbed name when it differs
+    // from any existing alias / the survivor's name. Users expect
+    // "Tom Tang" merged into "Tom" to leave both names searchable.
+    let mut aliases = string_array_field(&survivor, "aliases");
+    for alias in string_array_field(&absorbed, "aliases") {
+        if !aliases.contains(&alias) {
+            aliases.push(alias);
+        }
+    }
+    let survivor_name = string_field(&survivor, "name").unwrap_or_default();
+    let absorbed_name = string_field(&absorbed, "name").unwrap_or_default();
+    if !absorbed_name.is_empty()
+        && absorbed_name != survivor_name
+        && !aliases.contains(&absorbed_name)
+    {
+        aliases.push(absorbed_name);
+    }
+    payload.insert("aliases".to_string(), json_string_array(aliases));
+
+    // Inherit identity_id if absorbed had one and survivor didn't.
+    // The identity-conflict guard above already rejected the
+    // differing-keys case; here we only need to promote.
+    if survivor_identity_key.is_none() {
+        if let Some(key) = absorbed_identity_key {
+            payload.insert(
+                "identity_id".to_string(),
+                serde_json::json!({ "schema": "Identity", "key": key }),
+            );
+        }
+    }
+
+    // Write the merged survivor, then delete the absorbed record.
+    // We write first because if the delete failed after an update,
+    // the user still has a merged survivor and a stale duplicate —
+    // recoverable. The other order leaves us with a missing
+    // survivor + an orphan absorbed record which is worse.
+    let survivor_key = KeyValue::new(Some(survivor_id.clone()), None);
+    processor
+        .execute_mutation(
+            persona_canonical.clone(),
+            payload,
+            survivor_key,
+            MutationType::Update,
+        )
+        .await
+        .map_err(|e| {
+            HandlerError::Internal(format!(
+                "failed to write merged survivor persona '{}': {}",
+                survivor_id, e
+            ))
+        })?;
+
+    let absorbed_key = KeyValue::new(Some(absorbed_id.clone()), None);
+    processor
+        .execute_mutation(
+            persona_canonical,
+            HashMap::new(),
+            absorbed_key,
+            MutationType::Delete,
+        )
+        .await
+        .map_err(|e| {
+            HandlerError::Internal(format!(
+                "survivor merged but failed to delete absorbed persona '{}': {}",
+                absorbed_id, e
+            ))
+        })?;
+
+    log::info!(
+        "fingerprints.handler: merged persona '{}' into '{}'",
+        absorbed_id,
+        survivor_id
+    );
+
+    get_persona(node, survivor_id).await
+}
+
+async fn fetch_persona_fields(
+    processor: &crate::fold_node::OperationProcessor,
+    persona_canonical: &str,
+    persona_id: &str,
+) -> Result<Value, HandlerError> {
+    let query = Query {
+        schema_name: persona_canonical.to_string(),
+        fields: persona_fields(),
+        filter: Some(fold_db::schema::types::field::HashRangeFilter::HashKey(
+            persona_id.to_string(),
+        )),
+        as_of: None,
+        rehydrate_depth: None,
+        sort_order: None,
+        value_filters: None,
+    };
+    let records = processor
+        .execute_query_json(query)
+        .await
+        .map_err(|e| HandlerError::Internal(format!("persona query failed: {}", e)))?;
+    let record = records
+        .first()
+        .ok_or_else(|| HandlerError::NotFound(format!("persona '{}' not found", persona_id)))?;
+    record
+        .get("fields")
+        .cloned()
+        .ok_or_else(|| HandlerError::Internal("persona record missing 'fields' envelope".into()))
+}
+
+fn extract_identity_key(fields: &Value) -> Option<String> {
+    fields
+        .get("identity_id")
+        .and_then(|v| v.as_object())
+        .and_then(|obj| obj.get("key"))
+        .and_then(|v| v.as_str())
+        .map(String::from)
+}
+
+fn union_string_arrays(a: Vec<String>, b: Vec<String>) -> Vec<String> {
+    let mut seen: HashSet<String> = HashSet::new();
+    let mut out: Vec<String> = Vec::with_capacity(a.len() + b.len());
+    for s in a.into_iter().chain(b) {
+        if seen.insert(s.clone()) {
+            out.push(s);
+        }
+    }
+    out
+}
+
+fn json_string_array(values: Vec<String>) -> Value {
+    Value::Array(values.into_iter().map(Value::String).collect())
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -1456,6 +1714,65 @@ mod tests {
         assert_eq!(
             string_array_field(&fields, "aliases"),
             vec!["a".to_string(), "b".to_string()]
+        );
+    }
+
+    // ── merge helpers ─────────────────────────────────────────
+
+    #[test]
+    fn union_string_arrays_preserves_first_occurrence_order() {
+        let a = vec!["x".to_string(), "y".to_string()];
+        let b = vec!["y".to_string(), "z".to_string()];
+        assert_eq!(
+            union_string_arrays(a, b),
+            vec!["x".to_string(), "y".to_string(), "z".to_string()]
+        );
+    }
+
+    #[test]
+    fn union_string_arrays_empty_inputs() {
+        assert!(union_string_arrays(Vec::new(), Vec::new()).is_empty());
+    }
+
+    #[test]
+    fn extract_identity_key_returns_key_for_schemaref_object() {
+        let fields = json!({
+            "identity_id": { "schema": "Identity", "key": "id_abc" }
+        });
+        assert_eq!(extract_identity_key(&fields).as_deref(), Some("id_abc"));
+    }
+
+    #[test]
+    fn extract_identity_key_returns_none_for_null() {
+        let fields = json!({ "identity_id": null });
+        assert!(extract_identity_key(&fields).is_none());
+    }
+
+    #[test]
+    fn extract_identity_key_returns_none_for_missing() {
+        let fields = json!({});
+        assert!(extract_identity_key(&fields).is_none());
+    }
+
+    #[test]
+    fn bool_field_is_none_on_missing_and_non_bool() {
+        assert!(bool_field(&json!({}), "x").is_none());
+        assert!(bool_field(&json!({ "x": "yes" }), "x").is_none());
+        assert!(bool_field(&json!({ "x": 1 }), "x").is_none());
+        assert_eq!(bool_field(&json!({ "x": true }), "x"), Some(true));
+    }
+
+    #[test]
+    fn string_array_field_returns_empty_on_missing() {
+        assert!(string_array_field(&json!({}), "seeds").is_empty());
+    }
+
+    #[test]
+    fn string_array_field_skips_non_strings_entries() {
+        let fields = json!({ "seeds": ["fp_a", 9, null, "fp_b"] });
+        assert_eq!(
+            string_array_field(&fields, "seeds"),
+            vec!["fp_a".to_string(), "fp_b".to_string()]
         );
     }
 }
