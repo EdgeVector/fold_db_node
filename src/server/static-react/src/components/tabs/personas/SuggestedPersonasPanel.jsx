@@ -26,7 +26,7 @@ export function loadDismissedFromStorage() {
     const parsed = JSON.parse(raw)
     if (!Array.isArray(parsed)) return new Set()
     return new Set(parsed.filter(x => typeof x === 'string'))
-  } catch (_e) {
+  } catch {
     return new Set()
   }
 }
@@ -42,7 +42,7 @@ export function saveDismissedToStorage(set) {
       DISMISSED_STORAGE_KEY,
       JSON.stringify(Array.from(set)),
     )
-  } catch (_e) {
+  } catch {
     // ignore
   }
 }
