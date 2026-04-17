@@ -56,7 +56,7 @@ jobs:
           sudo npm install -g ajv-cli
           jq --version
           yq --version
-          ajv --version
+          ajv help | head -1
 
       - name: Install Python + PyNaCl (for node factory key generation)
         run: |
