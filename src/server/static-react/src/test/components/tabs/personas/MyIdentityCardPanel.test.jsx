@@ -207,4 +207,40 @@ describe('MyIdentityCardPanel', () => {
       expect(screen.queryByTestId('my-identity-card-edit-form')).toBeNull()
     })
   })
+
+  describe('QR render', () => {
+    it('hides the QR block by default', async () => {
+      getMyIdentityCard.mockResolvedValue(ok(card()))
+      render(<MyIdentityCardPanel />)
+      await waitFor(() => {
+        expect(screen.getByTestId('my-identity-card-qr-toggle')).toBeInTheDocument()
+      })
+      expect(screen.queryByTestId('my-identity-card-qr')).toBeNull()
+    })
+
+    it('renders the QR SVG when Show QR is clicked', async () => {
+      getMyIdentityCard.mockResolvedValue(ok(card()))
+      render(<MyIdentityCardPanel />)
+      await waitFor(() => {
+        expect(screen.getByTestId('my-identity-card-qr-toggle')).toBeInTheDocument()
+      })
+      fireEvent.click(screen.getByTestId('my-identity-card-qr-toggle'))
+      expect(screen.getByTestId('my-identity-card-qr')).toBeInTheDocument()
+      expect(screen.getByTestId('my-identity-card-qr-toggle')).toHaveAttribute(
+        'aria-pressed',
+        'true',
+      )
+    })
+
+    it('toggles back off on a second click', async () => {
+      getMyIdentityCard.mockResolvedValue(ok(card()))
+      render(<MyIdentityCardPanel />)
+      await waitFor(() => {
+        expect(screen.getByTestId('my-identity-card-qr-toggle')).toBeInTheDocument()
+      })
+      fireEvent.click(screen.getByTestId('my-identity-card-qr-toggle'))
+      fireEvent.click(screen.getByTestId('my-identity-card-qr-toggle'))
+      expect(screen.queryByTestId('my-identity-card-qr')).toBeNull()
+    })
+  })
 })
