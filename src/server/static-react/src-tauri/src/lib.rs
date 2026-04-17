@@ -260,6 +260,12 @@ async fn start_fold_server(port: u16) -> Result<EmbeddedServerHandle, String> {
 
     eprintln!("[FoldDB] Using data directory: {:?}", data_dir);
 
+    // Fail fast with a clear message if the server can't actually start.
+    // With lazy DB init, a lock conflict or port conflict would otherwise
+    // surface as silent 500s / a blank webview after the window loads.
+    probe_port_available(port)?;
+    probe_db_unlocked(&data_dir)?;
+
     // Load node identity from file if it exists.
     // Identity is created during registration, not on startup.
     // If no identity exists, the node starts without one (onboarding flow).
@@ -358,4 +364,111 @@ async fn start_fold_server(port: u16) -> Result<EmbeddedServerHandle, String> {
     }
 
     Ok(handle)
+}
+
+/// Check that nothing else is listening on `port` before we hand off to
+/// lazy actix init (which otherwise returns success and lets the webview
+/// silently connect to a foreign server on the same port).
+fn probe_port_available(port: u16) -> Result<(), String> {
+    match std::net::TcpListener::bind(("127.0.0.1", port)) {
+        Ok(l) => {
+            drop(l);
+            Ok(())
+        }
+        Err(e) => Err(format!(
+            "Port {port} is already in use.\n\nAnother FoldDB instance or an unrelated service is bound to 127.0.0.1:{port}. Please close it and try again.\n\n({e})"
+        )),
+    }
+}
+
+/// Verify no other process holds the sled database lock.
+///
+/// Sled grabs an fcntl lock on `<data_dir>/db` when it opens. With lazy DB
+/// init, that doesn't happen until the first API request — so a stale
+/// `folddb_server` or second app instance produces silent 500s in the UI.
+/// We replicate sled's lock probe here (fs2 uses the same fcntl locks) so
+/// the startup dialog fires with an actionable message.
+fn probe_db_unlocked(data_dir: &std::path::Path) -> Result<(), String> {
+    use fs2::FileExt;
+    let lock_file = data_dir.join("db");
+    if !lock_file.exists() {
+        // First run — nothing to check.
+        return Ok(());
+    }
+    let f = std::fs::OpenOptions::new()
+        .read(true)
+        .write(true)
+        .open(&lock_file)
+        .map_err(|e| format!("Failed to open database lock file at {lock_file:?}: {e}"))?;
+    match f.try_lock_exclusive() {
+        Ok(()) => {
+            // Release so sled can take the lock when lazy init runs.
+            // Use fs2's unlock explicitly — std::fs::File::unlock was only
+            // stabilized in 1.89 but this crate's MSRV is 1.77.2.
+            let _ = FileExt::unlock(&f);
+            Ok(())
+        }
+        Err(_) => Err(format!(
+            "Another FoldDB process is already using the database at {data_dir:?}.\n\nPlease quit any running FoldDB app or dev server (e.g. `./run.sh --local`, `folddb_server`) and try again."
+        )),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn unique_tmp_dir(name: &str) -> std::path::PathBuf {
+        let p = std::env::temp_dir().join(format!(
+            "fold-app-test-{}-{}-{}",
+            name,
+            std::process::id(),
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap()
+                .as_nanos(),
+        ));
+        std::fs::create_dir_all(&p).unwrap();
+        p
+    }
+
+    #[test]
+    fn probe_port_available_ok_when_free() {
+        // Bind a socket to get an OS-assigned free port, then release.
+        let listener = std::net::TcpListener::bind(("127.0.0.1", 0)).unwrap();
+        let port = listener.local_addr().unwrap().port();
+        drop(listener);
+        assert!(probe_port_available(port).is_ok());
+    }
+
+    #[test]
+    fn probe_port_available_err_when_occupied() {
+        let listener = std::net::TcpListener::bind(("127.0.0.1", 0)).unwrap();
+        let port = listener.local_addr().unwrap().port();
+        let err = probe_port_available(port).expect_err("port should be occupied");
+        assert!(err.contains("already in use"), "unexpected error: {err}");
+        drop(listener);
+    }
+
+    #[test]
+    fn probe_db_unlocked_ok_when_no_lock_file() {
+        let tmp = unique_tmp_dir("no-lock");
+        assert!(probe_db_unlocked(&tmp).is_ok());
+        let _ = std::fs::remove_dir_all(&tmp);
+    }
+
+    #[test]
+    fn probe_db_unlocked_ok_when_lock_file_is_free() {
+        let tmp = unique_tmp_dir("free-lock");
+        std::fs::File::create(tmp.join("db")).unwrap();
+        assert!(probe_db_unlocked(&tmp).is_ok());
+        let _ = std::fs::remove_dir_all(&tmp);
+    }
+
+    // NOTE: the locked-by-another-process case is covered by manual testing
+    // (launch `./run.sh --local`, then start the Tauri app — the startup
+    // dialog should fire). It's not an automated test because fcntl locks
+    // don't conflict within the same process, so a unit test would need a
+    // real subprocess holding the lock, which adds significant flakiness
+    // risk for marginal coverage gain.
 }
