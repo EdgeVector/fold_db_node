@@ -706,6 +706,10 @@ impl FoldHttpServer {
                     web::get().to(fp_routes::get_my_identity_card),
                 )
                 .route(
+                    "/my-identity-card/reissue",
+                    web::post().to(fp_routes::reissue_identity_card),
+                )
+                .route(
                     "/identity-cards/import",
                     web::post().to(fp_routes::import_identity_card),
                 )
