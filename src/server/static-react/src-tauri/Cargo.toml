@@ -43,3 +43,4 @@ log = "0.4"
 
 # System utilities
 dirs = "5.0"
+fs2 = "0.4"
