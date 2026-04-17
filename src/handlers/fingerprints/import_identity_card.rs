@@ -244,12 +244,7 @@ fn verify_card_signature(card: &IncomingIdentityCard) -> Result<(), HandlerError
 fn decode_base64(value: &str, field_name: &str) -> Result<Vec<u8>, HandlerError> {
     base64::engine::general_purpose::STANDARD
         .decode(value)
-        .map_err(|e| {
-            HandlerError::BadRequest(format!(
-                "{} is not valid base64: {}",
-                field_name, e
-            ))
-        })
+        .map_err(|e| HandlerError::BadRequest(format!("{} is not valid base64: {}", field_name, e)))
 }
 
 // ── Record builders ────────────────────────────────────────────────
@@ -396,8 +391,7 @@ mod tests {
             issued_at: &card.issued_at,
         };
         let sig_b = sk_b.sign(&payload.canonical_bytes());
-        card.card_signature =
-            base64::engine::general_purpose::STANDARD.encode(sig_b.to_bytes());
+        card.card_signature = base64::engine::general_purpose::STANDARD.encode(sig_b.to_bytes());
         let err = verify_card_signature(&card).expect_err("wrong-signer card must not verify");
         assert!(matches!(err, HandlerError::BadRequest(_)));
     }
@@ -466,10 +460,7 @@ mod tests {
         assert_eq!(rec.descriptive_schema, IDENTITY_RECEIPT);
         assert_eq!(rec.fields.get("received_via").unwrap(), &json!("Paste"));
         assert_eq!(rec.fields.get("trust_level").unwrap(), &json!("Attested"));
-        assert_eq!(
-            rec.fields.get("identity_id").unwrap(),
-            &json!("id_abc")
-        );
+        assert_eq!(rec.fields.get("identity_id").unwrap(), &json!("id_abc"));
         assert!(rec.fields.get("received_from").unwrap().is_null());
     }
 }
