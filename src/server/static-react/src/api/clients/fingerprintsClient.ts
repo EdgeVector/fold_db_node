@@ -166,6 +166,10 @@ export interface PersonaPatch {
    *  Typically set by the import-identity-card flow, but exposed here
    *  so a future "link existing Identity" UI can reuse the PATCH. */
   link_identity_id?: string;
+  /** Clear identity_id on the persona. Rejected by the backend on
+   *  built-in personas (Me). Used by the "Unlink identity" action on
+   *  a verified persona detail. */
+  clear_identity_id?: boolean;
 }
 
 /** The canonical relationship list the backend accepts. Mirrors
@@ -402,4 +406,38 @@ export async function acceptSuggestedPersona(
     "/fingerprints/suggestions/accept",
     req,
   );
+}
+
+// ===== Identities audit view =====
+
+/**
+ * Audit row for a single Identity — the Identity record joined with
+ * its IdentityReceipt by `identity_id`. Mirrors the Rust
+ * `IdentityAuditRow`. `is_self` is true for the node's own card.
+ */
+export interface IdentityAuditRow {
+  identity_id: string;
+  pub_key: string;
+  display_name: string;
+  issued_at: string;
+  received_via: string | null;
+  received_at: string | null;
+  trust_level: string | null;
+  is_self: boolean;
+}
+
+export interface ListIdentitiesResponse {
+  identities: IdentityAuditRow[];
+}
+
+/**
+ * List every Identity on the node, joined with its IdentityReceipt,
+ * sorted newest-first by `received_at`. Powers the "Identities"
+ * audit panel in the People tab — lets the user see every card
+ * they've imported and, for each, when and how.
+ */
+export async function listIdentities(): Promise<
+  EnhancedApiResponse<ListIdentitiesResponse>
+> {
+  return client.get<ListIdentitiesResponse>("/fingerprints/identities");
 }
