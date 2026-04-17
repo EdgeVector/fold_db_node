@@ -703,10 +703,11 @@ pub async fn apple_import_calendar(
 ///   deduplication concern — the extractor content-hashes each email
 ///   independently.
 ///
-/// Lives outside the `#[cfg(target_os = "macos")]` gate because the
-/// helper has no macOS-specific dependencies. That lets CI on Linux
-/// exercise the transform even though the full import path is
-/// macOS-only.
+/// Gated to macOS because the only caller is the macOS calendar
+/// import path, and the two helpers it depends on (`CalendarEvent`
+/// plus `content_hash`) are themselves macOS-gated. The unit tests
+/// below share the gate.
+#[cfg(target_os = "macos")]
 fn build_attendee_ingestion_records(
     events: &[crate::ingestion::apple_import::calendar::CalendarEvent],
 ) -> Vec<crate::handlers::fingerprints::ingest_text::TextRecordDto> {
@@ -1050,7 +1051,7 @@ pub fn spawn_sync_scheduler(
     });
 }
 
-#[cfg(test)]
+#[cfg(all(test, target_os = "macos"))]
 mod tests {
     use super::build_attendee_ingestion_records;
     use crate::ingestion::apple_import::calendar::CalendarEvent;
