@@ -193,6 +193,19 @@ export async function updatePersona(
 }
 
 /**
+ * Delete a Persona. The backend rejects this for built-in personas
+ * (the Me persona) with a 400. Underlying Fingerprint / Mention /
+ * Edge records are NOT touched — they survive as observed facts.
+ */
+export async function deletePersona(
+  id: string,
+): Promise<EnhancedApiResponse<{ deleted_persona_id: string }>> {
+  return client.delete<{ deleted_persona_id: string }>(
+    `/fingerprints/personas/${encodeURIComponent(id)}`,
+  );
+}
+
+/**
  * Compat wrapper — existing callers that only want to move the
  * threshold slider can keep using this. New call sites should prefer
  * `updatePersona` directly so they can batch multiple ops.

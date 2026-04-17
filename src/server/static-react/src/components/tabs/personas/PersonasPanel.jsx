@@ -3,6 +3,7 @@ import {
   listPersonas,
   getPersona,
   updatePersona,
+  deletePersona,
   RELATIONSHIP_OPTIONS,
 } from '../../../api/clients/fingerprintsClient'
 
@@ -169,6 +170,30 @@ export default function PersonasPanel() {
     [applyPatch],
   )
 
+  const handleDeletePersona = useCallback(async () => {
+    if (!selectedId) return
+    // Underlying Fingerprint / Mention / Edge records survive — the
+    // confirm copy is deliberately about the cluster name, not the
+    // graph contents, so the user understands what they're keeping.
+    const ok = window.confirm(
+      'Delete this persona? The underlying fingerprints, mentions, and edges will remain in the graph — only the saved cluster name and seeds are removed.'
+    )
+    if (!ok) return
+    try {
+      const res = await deletePersona(selectedId)
+      if (res.success) {
+        // Drop the row from the list and clear the detail pane.
+        setPersonas(prev => prev.filter(p => p.id !== selectedId))
+        setDetail(null)
+        setSelectedId(null)
+      } else {
+        setDetailError(res.error ?? 'Failed to delete persona')
+      }
+    } catch (e) {
+      setDetailError(e?.message ?? 'Network error while deleting persona')
+    }
+  }, [selectedId])
+
   return (
     <div className="flex flex-col gap-4 lg:flex-row">
       <PersonaList
@@ -192,6 +217,7 @@ export default function PersonasPanel() {
         onRenamePersona={handleRenamePersona}
         onRelationshipChange={handleRelationshipChange}
         onConfirm={handleConfirm}
+        onDelete={handleDeletePersona}
       />
       {undoSnack && (
         <div
@@ -319,6 +345,7 @@ function PersonaDetail({
   onRenamePersona,
   onRelationshipChange,
   onConfirm,
+  onDelete,
 }) {
   if (!selectedId) {
     return (
@@ -350,6 +377,7 @@ function PersonaDetail({
           onRenamePersona={onRenamePersona}
           onRelationshipChange={onRelationshipChange}
           onConfirm={onConfirm}
+          onDelete={onDelete}
         />
       )}
     </div>
@@ -366,6 +394,7 @@ function PersonaDetailBody({
   onRenamePersona,
   onRelationshipChange,
   onConfirm,
+  onDelete,
 }) {
   // Local mirror of the slider value so the knob moves smoothly
   // while the user drags. We only call the parent (and fire the
@@ -483,6 +512,17 @@ function PersonaDetailBody({
             >
               tentative
             </span>
+          )}
+          {!detail.built_in && typeof onDelete === 'function' && (
+            <button
+              type="button"
+              className="ml-auto text-[11px] text-tertiary hover:text-gruvbox-red underline underline-offset-2 shrink-0"
+              onClick={onDelete}
+              data-testid="persona-delete-button"
+              title="Delete this persona. Underlying fingerprints, mentions, and edges remain in the graph."
+            >
+              Delete persona
+            </button>
           )}
         </div>
         {!detail.user_confirmed && !detail.built_in && typeof onConfirm === 'function' && (

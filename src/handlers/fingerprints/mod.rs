@@ -31,7 +31,7 @@ pub use ingestion_errors::{
 };
 pub use my_identity_card::{get_my_identity_card, MyIdentityCardResponse};
 pub use personas::{
-    apply_persona_patch, get_persona, list_personas, update_persona_threshold,
+    apply_persona_patch, delete_persona, get_persona, list_personas, update_persona_threshold,
     ListPersonasResponse, PersonaDetailResponse, PersonaPatch, PersonaSummary,
 };
 pub use suggestions::{

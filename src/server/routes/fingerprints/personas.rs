@@ -56,6 +56,19 @@ pub async fn get_persona(path: web::Path<String>, state: web::Data<AppState>) ->
     }
 }
 
+/// DELETE /api/fingerprints/personas/{id} — delete a Persona record.
+/// Underlying Fingerprint / Mention / Edge records are NOT touched;
+/// they survive as observed facts. Returns `400` on built-in
+/// personas (Me) and `404` when the id is not found.
+pub async fn delete_persona(path: web::Path<String>, state: web::Data<AppState>) -> impl Responder {
+    let (_user_hash, node) = node_or_return!(state);
+    let persona_id = path.into_inner();
+    match fp_handlers::delete_persona(node, persona_id).await {
+        Ok(response) => HttpResponse::Ok().json(response),
+        Err(e) => handler_error_to_response(e),
+    }
+}
+
 /// PATCH /api/fingerprints/personas/{id} — update mutable fields on
 /// an existing Persona. Returns the freshly-resolved detail on success.
 ///

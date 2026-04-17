@@ -241,6 +241,86 @@ pub async fn list_personas(node: Arc<FoldNode>) -> HandlerResult<ListPersonasRes
     Ok(ApiResponse::success(ListPersonasResponse { personas }))
 }
 
+/// Delete a Persona by id. Refuses to delete a built-in persona
+/// (the Me persona) because those are sourced from the IdentityCard
+/// and should only disappear when the user resets their node
+/// identity, not through a routine delete click.
+///
+/// Underlying Fingerprint / Mention / Edge records are NOT touched —
+/// they are observed facts, and their persistence is the point per
+/// the design doc §Operations ("Deleting a Persona removes the
+/// Persona record. Underlying ... records are untouched"). A new
+/// Persona seeded from the same fingerprints will resolve to the
+/// same cluster.
+pub async fn delete_persona(
+    node: Arc<FoldNode>,
+    persona_id: String,
+) -> HandlerResult<serde_json::Value> {
+    let persona_canonical = canonical_names::lookup(PERSONA).map_err(|e| {
+        HandlerError::Internal(format!(
+            "fingerprints: canonical_names not initialized for '{}': {}",
+            PERSONA, e
+        ))
+    })?;
+
+    let processor = crate::fold_node::OperationProcessor::new(node.clone());
+
+    // Fetch the persona to check built_in before deleting. A clean
+    // NotFound here is better than a silent mutation error.
+    let query = Query {
+        schema_name: persona_canonical.clone(),
+        fields: vec!["id".to_string(), "built_in".to_string()],
+        filter: Some(fold_db::schema::types::field::HashRangeFilter::HashKey(
+            persona_id.clone(),
+        )),
+        as_of: None,
+        rehydrate_depth: None,
+        sort_order: None,
+        value_filters: None,
+    };
+    let records = processor
+        .execute_query_json(query)
+        .await
+        .map_err(|e| HandlerError::Internal(format!("persona lookup failed: {}", e)))?;
+    let record = records
+        .first()
+        .ok_or_else(|| HandlerError::NotFound(format!("persona '{}' not found", persona_id)))?;
+    let fields = record.get("fields").ok_or_else(|| {
+        HandlerError::Internal("persona record missing 'fields' envelope".to_string())
+    })?;
+    let built_in = fields
+        .get("built_in")
+        .and_then(|v| v.as_bool())
+        .unwrap_or(false);
+    if built_in {
+        return Err(HandlerError::BadRequest(
+            "cannot delete a built-in persona (Me); reset your node identity instead".to_string(),
+        ));
+    }
+
+    let key_value = KeyValue::new(Some(persona_id.clone()), None);
+    processor
+        .execute_mutation(
+            persona_canonical,
+            HashMap::new(),
+            key_value,
+            MutationType::Delete,
+        )
+        .await
+        .map_err(|e| {
+            HandlerError::Internal(format!("failed to delete persona '{}': {}", persona_id, e))
+        })?;
+
+    log::info!(
+        "fingerprints.handler: deleted persona '{}' (underlying fingerprints/edges/mentions untouched)",
+        persona_id
+    );
+
+    Ok(ApiResponse::success(serde_json::json!({
+        "deleted_persona_id": persona_id,
+    })))
+}
+
 /// Fetch a single Persona by id and return its resolved cluster +
 /// diagnostics.
 pub async fn get_persona(
