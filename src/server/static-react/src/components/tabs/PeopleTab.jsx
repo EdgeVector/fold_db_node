@@ -6,10 +6,12 @@ import SharedMomentsTab from './SharedMomentsTab'
 import PersonasPanel from './personas/PersonasPanel'
 import IngestionErrorsPanel from './personas/IngestionErrorsPanel'
 import SuggestedPersonasPanel from './personas/SuggestedPersonasPanel'
+import MyIdentityCardPanel from './personas/MyIdentityCardPanel'
 
 const SUB_TABS = [
   { id: 'personas', label: 'Personas' },
   { id: 'suggestions', label: 'Suggestions' },
+  { id: 'my-card', label: 'My Card' },
   { id: 'failed', label: 'Failed' },
   { id: 'contacts', label: 'Contacts' },
   { id: 'feed', label: 'Feed' },
@@ -26,6 +28,8 @@ export default function PeopleTab({ onResult }) {
         return <PersonasPanel />
       case 'suggestions':
         return <SuggestedPersonasPanel />
+      case 'my-card':
+        return <MyIdentityCardPanel />
       case 'failed':
         return <IngestionErrorsPanel />
       case 'contacts':

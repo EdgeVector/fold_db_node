@@ -204,6 +204,38 @@ export async function updatePersonaThreshold(
   return updatePersona(id, { threshold });
 }
 
+// ===== My Identity Card =====
+
+export interface MyIdentityCardResponse {
+  pub_key: string;
+  display_name: string;
+  birthday: string | null;
+  /** The self-attested face embedding, if one was collected at
+   *  signup. Today always `null` — reserved for a future "take a
+   *  selfie" setup step. */
+  face_embedding: number[] | null;
+  node_id: string;
+  card_signature: string;
+  issued_at: string;
+}
+
+/**
+ * Fetch the node owner's signed Identity Card. Returns 404 if the
+ * self-Identity hasn't been bootstrapped yet (user hasn't completed
+ * the setup wizard).
+ *
+ * The card is the verbatim payload that will be handed to a peer
+ * over QR / NFC / messaging in Phase 3. The signature is
+ * verifiable standalone.
+ */
+export async function getMyIdentityCard(): Promise<
+  EnhancedApiResponse<MyIdentityCardResponse>
+> {
+  return client.get<MyIdentityCardResponse>(
+    "/fingerprints/my-identity-card",
+  );
+}
+
 // ===== IngestionError types + client =====
 
 export interface IngestionErrorView {
