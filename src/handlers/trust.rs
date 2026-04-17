@@ -13,7 +13,7 @@ use crate::fold_node::OperationProcessor;
 use crate::handlers::response::{ApiResponse, HandlerError, HandlerResult, IntoTypedHandlerError};
 use crate::trust::identity_card::IdentityCard;
 use crate::trust::trust_invite::TrustInvite;
-use fold_db::access::TrustTier;
+use fold_db::access::AccessTier;
 use serde::{Deserialize, Serialize};
 
 /// Resolve the trust-invite sender display name from a local identity card.
@@ -55,13 +55,13 @@ pub struct TrustGrantsResponse {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct TrustGrantEntry {
     pub public_key: String,
-    pub tier: TrustTier,
+    pub tier: AccessTier,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct TrustResolveResponse {
     pub public_key: String,
-    pub tier: Option<TrustTier>,
+    pub tier: Option<AccessTier>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

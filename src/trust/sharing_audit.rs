@@ -3,7 +3,7 @@
 //! Computes which schemas and fields a contact can access based on their
 //! trust tiers across all domains and the access policies on fields.
 
-use fold_db::access::TrustTier;
+use fold_db::access::AccessTier;
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 
@@ -27,7 +27,7 @@ pub struct SharingAuditResult {
     pub contact_public_key: String,
     pub contact_display_name: String,
     /// Per-domain trust tiers for this contact.
-    pub domain_tiers: HashMap<String, TrustTier>,
+    pub domain_tiers: HashMap<String, AccessTier>,
     /// Per-domain roles for this contact.
     pub domain_roles: HashMap<String, String>,
     /// Schemas this contact can access (at least one readable field).

@@ -2,7 +2,7 @@
 //! and the sharing audit system.
 
 use fold_db::access::types::FieldAccessPolicy;
-use fold_db::access::TrustTier;
+use fold_db::access::AccessTier;
 use fold_db::schema::types::declarative_schemas::DeclarativeSchemaDefinition;
 use fold_db::schema::types::field::Field;
 use fold_db::schema::types::key_config::KeyConfig;
@@ -39,7 +39,7 @@ async fn load_schema_with_policy(
     node: &FoldNode,
     name: &str,
     trust_domain: &str,
-    min_read_tier: TrustTier,
+    min_read_tier: AccessTier,
 ) {
     let mut schema = DeclarativeSchemaDefinition::new(
         name.to_string(),
@@ -73,7 +73,7 @@ async fn load_schema_with_policy(
         field.common_mut().access_policy = Some(FieldAccessPolicy {
             trust_domain: trust_domain.to_string(),
             min_read_tier,
-            min_write_tier: TrustTier::Owner,
+            min_write_tier: AccessTier::Owner,
             ..Default::default()
         });
     }
@@ -98,7 +98,7 @@ async fn test_role_assignment_grants_domain_trust() {
     let contact_key = Ed25519KeyPair::generate().unwrap().public_key_base64();
 
     // Grant initial trust in personal domain
-    op.grant_trust(&contact_key, TrustTier::Trusted)
+    op.grant_trust(&contact_key, AccessTier::Trusted)
         .await
         .unwrap();
 
@@ -134,7 +134,7 @@ async fn test_role_assignment_grants_domain_trust() {
     let tier = medical_map.get(&contact_key);
     assert_eq!(
         tier,
-        Some(&TrustTier::Inner),
+        Some(&AccessTier::Inner),
         "Doctor role should grant Inner tier in medical domain"
     );
 
@@ -153,7 +153,7 @@ async fn test_role_removal_revokes_domain_trust() {
     let book_path = config_dir.join("contact_book.json");
 
     let contact_key = Ed25519KeyPair::generate().unwrap().public_key_base64();
-    op.grant_trust(&contact_key, TrustTier::Trusted)
+    op.grant_trust(&contact_key, AccessTier::Trusted)
         .await
         .unwrap();
 
@@ -206,13 +206,13 @@ async fn test_sharing_audit_with_domain_policies() {
     let book_path = config_dir.join("contact_book.json");
 
     // Create schemas with different domain policies
-    load_schema_with_policy(&node, "PersonalNotes", "personal", TrustTier::Trusted).await;
-    load_schema_with_policy(&node, "HealthLog", "health", TrustTier::Trusted).await;
-    load_schema_with_policy(&node, "MedicalRecords", "medical", TrustTier::Inner).await;
+    load_schema_with_policy(&node, "PersonalNotes", "personal", AccessTier::Trusted).await;
+    load_schema_with_policy(&node, "HealthLog", "health", AccessTier::Trusted).await;
+    load_schema_with_policy(&node, "MedicalRecords", "medical", AccessTier::Inner).await;
 
     // Create a contact with friend role (personal domain, Trusted tier)
     let friend_key = Ed25519KeyPair::generate().unwrap().public_key_base64();
-    op.grant_trust(&friend_key, TrustTier::Trusted)
+    op.grant_trust(&friend_key, AccessTier::Trusted)
         .await
         .unwrap();
     let mut book = ContactBook::load_from(&book_path).unwrap_or_default();
@@ -298,9 +298,9 @@ async fn test_multiple_roles_across_domains() {
     let (op, node, _pub_key, config_dir, _tmp) = setup_node().await;
     let book_path = config_dir.join("contact_book.json");
 
-    load_schema_with_policy(&node, "Notes", "personal", TrustTier::Trusted).await;
-    load_schema_with_policy(&node, "Fitness", "health", TrustTier::Trusted).await;
-    load_schema_with_policy(&node, "Taxes", "financial", TrustTier::Inner).await;
+    load_schema_with_policy(&node, "Notes", "personal", AccessTier::Trusted).await;
+    load_schema_with_policy(&node, "Fitness", "health", AccessTier::Trusted).await;
+    load_schema_with_policy(&node, "Taxes", "financial", AccessTier::Inner).await;
 
     let contact_key = Ed25519KeyPair::generate().unwrap().public_key_base64();
     let mut book = ContactBook::load_from(&book_path).unwrap_or_default();
@@ -341,7 +341,7 @@ async fn test_multiple_roles_across_domains() {
 
 #[tokio::test]
 async fn test_sharing_roles_config() {
-    use fold_db::access::TrustTier;
+    use fold_db::access::AccessTier;
     use fold_db_node::trust::sharing_roles::SharingRoleConfig;
 
     let config = SharingRoleConfig::default();
@@ -349,11 +349,11 @@ async fn test_sharing_roles_config() {
     // Verify default roles exist
     let doctor = config.get_role("doctor").unwrap();
     assert_eq!(doctor.domain, "medical");
-    assert_eq!(doctor.tier, TrustTier::Inner);
+    assert_eq!(doctor.tier, AccessTier::Inner);
 
     let friend = config.get_role("friend").unwrap();
     assert_eq!(friend.domain, "personal");
-    assert_eq!(friend.tier, TrustTier::Trusted);
+    assert_eq!(friend.tier, AccessTier::Trusted);
 
     // Verify roles_for_domain
     let personal_roles = config.roles_for_domain("personal");
