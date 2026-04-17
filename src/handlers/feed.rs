@@ -92,7 +92,7 @@ pub async fn get_feed(
                     use fold_db::schema::types::field::Field;
                     match &field.common().access_policy {
                         None => false, // No policy = owner-only, not public
-                        Some(policy) => policy.min_read_tier == fold_db::access::TrustTier::Public,
+                        Some(policy) => policy.min_read_tier == fold_db::access::AccessTier::Public,
                     }
                 })
                 .map(|(name, _)| name.clone())
@@ -127,7 +127,7 @@ pub async fn get_feed(
         //   would produce `AccessContext::owner` and apply no field filtering —
         //   equivalent to `execute_query_map` here.
         // - Access enforcement in this handler is performed explicitly above:
-        //   only fields whose `min_read_tier == TrustTier::Public` are retained
+        //   only fields whose `min_read_tier == AccessTier::Public` are retained
         //   in `public_fields`, and records are filtered by friend authorship
         //   via `writer_pubkey`. This is strictly tighter than the trust-tier
         //   check would apply for the owner.

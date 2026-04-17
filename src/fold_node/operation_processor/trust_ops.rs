@@ -1,6 +1,6 @@
 use std::collections::HashMap;
 
-use fold_db::access::{AuditAction, AuditEvent, TrustTier};
+use fold_db::access::{AccessTier, AuditAction, AuditEvent};
 use fold_db::schema::types::Field;
 use fold_db::schema::SchemaError;
 
@@ -37,7 +37,7 @@ impl OperationProcessor {
     pub async fn grant_trust(
         &self,
         user_public_key: &str,
-        tier: TrustTier,
+        tier: AccessTier,
     ) -> Result<(), SchemaError> {
         let db = self.get_db().map_err(to_schema_err)?;
         let mut map = db.db_ops().load_trust_map().await?;
@@ -72,13 +72,13 @@ impl OperationProcessor {
     pub async fn resolve_trust_tier(
         &self,
         user_public_key: &str,
-    ) -> Result<Option<TrustTier>, SchemaError> {
+    ) -> Result<Option<AccessTier>, SchemaError> {
         let db = self.get_db().map_err(to_schema_err)?;
         let map = db.db_ops().load_trust_map().await?;
         Ok(map.get(user_public_key).copied())
     }
 
-    pub async fn list_trust_grants(&self) -> Result<Vec<(String, TrustTier)>, SchemaError> {
+    pub async fn list_trust_grants(&self) -> Result<Vec<(String, AccessTier)>, SchemaError> {
         let db = self.get_db().map_err(to_schema_err)?;
         let map = db.db_ops().load_trust_map().await?;
         Ok(map.into_iter().collect())
@@ -91,7 +91,7 @@ impl OperationProcessor {
         &self,
         user_public_key: &str,
         domain: &str,
-        tier: TrustTier,
+        tier: AccessTier,
     ) -> Result<(), SchemaError> {
         let db = self.get_db().map_err(to_schema_err)?;
         let mut map = db.db_ops().load_trust_map_for_domain(domain).await?;
@@ -465,15 +465,15 @@ impl OperationProcessor {
                 fold_db::access::FieldAccessPolicy {
                     trust_domain: cls.default_trust_domain().to_string(),
                     min_read_tier: cls.default_trust_tier(),
-                    min_write_tier: TrustTier::Owner,
+                    min_write_tier: AccessTier::Owner,
                     capabilities: vec![],
                 }
             } else {
                 let domain = schema_domain.as_deref().unwrap_or("personal");
                 fold_db::access::FieldAccessPolicy {
                     trust_domain: domain.to_string(),
-                    min_read_tier: TrustTier::Owner, // private until classified
-                    min_write_tier: TrustTier::Owner,
+                    min_read_tier: AccessTier::Owner, // private until classified
+                    min_write_tier: AccessTier::Owner,
                     capabilities: vec![],
                 }
             };

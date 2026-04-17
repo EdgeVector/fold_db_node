@@ -27,7 +27,7 @@ async fn setup_node() -> (FoldNode, TempDir) {
 
 /// Helper: load the Photo schema into the node's database with public access policies.
 async fn load_photo_schema(node: &FoldNode) {
-    use fold_db::access::types::{FieldAccessPolicy, TrustTier};
+    use fold_db::access::types::{AccessTier, FieldAccessPolicy};
     use fold_db::schema::types::field::Field;
 
     let schema_path = std::env::current_dir()
@@ -50,8 +50,8 @@ async fn load_photo_schema(node: &FoldNode) {
         .expect("Photo schema");
 
     let public_policy = FieldAccessPolicy {
-        min_read_tier: TrustTier::Public,
-        min_write_tier: TrustTier::Owner,
+        min_read_tier: AccessTier::Public,
+        min_write_tier: AccessTier::Owner,
         ..Default::default()
     };
 
@@ -315,7 +315,7 @@ async fn test_feed_strips_non_public_fields() {
     // Set one field's access policy to owner-only
     {
         use fold_db::access::types::FieldAccessPolicy;
-        use fold_db::access::TrustTier;
+        use fold_db::access::AccessTier;
         use fold_db::schema::types::field::Field;
 
         let db = node.get_fold_db().expect("Failed to get FoldDB");
@@ -328,8 +328,8 @@ async fn test_feed_strips_non_public_fields() {
 
         if let Some(field) = schema.runtime_fields.get_mut("caption") {
             field.common_mut().access_policy = Some(FieldAccessPolicy {
-                min_read_tier: TrustTier::Owner,
-                min_write_tier: TrustTier::Owner,
+                min_read_tier: AccessTier::Owner,
+                min_write_tier: AccessTier::Owner,
                 ..Default::default()
             });
         }
