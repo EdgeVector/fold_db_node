@@ -335,11 +335,17 @@ async fn start_fold_server(port: u16) -> Result<EmbeddedServerHandle, String> {
     // Set identity and schema service
     config = config.with_identity(&pub_key, &priv_key);
 
-    // Preserve cloud_sync config if the user enabled cloud backup via the UI.
-    // Only override to local if the loaded config has no cloud_sync.
-    if !config.database.has_cloud_sync() {
-        config.database = DatabaseConfig::local(data_dir);
-    }
+    // Always override the storage path to an absolute location, preserving
+    // any cloud_sync config. The legacy `{"type": "exemem", ...}` JSON format
+    // defaults `path` to relative "data" (fold_db/storage/config.rs:174),
+    // which resolves into the read-only .app bundle when the app is launched
+    // from /Applications — producing "Read-only file system (os error 30)"
+    // when sled tries to open the database.
+    let cloud_sync = config.database.cloud_sync.take();
+    config.database = match cloud_sync {
+        Some(cs) => DatabaseConfig::with_cloud_sync(data_dir, cs),
+        None => DatabaseConfig::local(data_dir),
+    };
 
     config.schema_service_url = Some(fold_db_node::endpoints::schema_service_url());
 
