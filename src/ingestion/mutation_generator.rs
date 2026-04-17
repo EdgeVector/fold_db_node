@@ -14,6 +14,20 @@ use std::collections::HashMap;
 /// format used by `key_extraction::try_normalize_date`.
 const RANGE_KEY_TIMESTAMP_FMT: &str = "%Y-%m-%d %H:%M:%S";
 
+/// Derive a deterministic hash of a record's mapped field values so it can
+/// serve as a fallback hash key when the AI-chosen hash_field is missing.
+fn content_hash_from_fields(schema_name: &str, fields: &HashMap<String, Value>) -> String {
+    let mut sorted_keys: Vec<&String> = fields.keys().collect();
+    sorted_keys.sort();
+    let mut hasher = Sha256::new();
+    hasher.update(schema_name.as_bytes());
+    for k in &sorted_keys {
+        hasher.update(k.as_bytes());
+        hasher.update(fields[*k].to_string().as_bytes());
+    }
+    format!("{:x}", hasher.finalize())
+}
+
 /// Flatten a JSON object's nested objects into dot-notation keys.
 ///
 /// Nested objects like `{"budget": {"flights": 1500, "hotel": 800}}` become
@@ -159,15 +173,7 @@ pub fn generate_mutations(
         // to a deterministic content hash so the record is still ingested and
         // deduplication works based on field values.
         let key_value = if key_value.hash.is_none() && key_value.range.is_none() {
-            let mut sorted_keys: Vec<&String> = mapped_fields.keys().collect();
-            sorted_keys.sort();
-            let mut hasher = Sha256::new();
-            hasher.update(schema_name.as_bytes());
-            for k in &sorted_keys {
-                hasher.update(k.as_bytes());
-                hasher.update(mapped_fields[*k].to_string().as_bytes());
-            }
-            let content_hash = format!("{:x}", hasher.finalize());
+            let content_hash = content_hash_from_fields(schema_name, &mapped_fields);
             log_feature!(
                 LogFeature::Ingestion,
                 warn,
@@ -201,6 +207,25 @@ pub fn generate_mutations(
                 );
             }
             KeyValue::new(key_value.hash, Some(ts))
+        } else {
+            key_value
+        };
+
+        // Symmetric fallback: if a range key was extracted but the hash key is
+        // missing (AI-chosen hash_field was null/absent for this record), derive
+        // a content hash from the mapped fields so HashRange mutations still
+        // carry both components. Without this, mutation_manager rejects the
+        // mutation with "HashRange schema '...' requires both hash and range".
+        let key_value = if key_value.hash.is_none() && key_value.range.is_some() {
+            let content_hash = content_hash_from_fields(schema_name, &mapped_fields);
+            log_feature!(
+                LogFeature::Ingestion,
+                warn,
+                "Hash key missing for schema '{}', using content hash '{}' as fallback",
+                schema_name,
+                &content_hash[..12]
+            );
+            KeyValue::new(Some(content_hash), key_value.range)
         } else {
             key_value
         };
@@ -467,5 +492,62 @@ mod tests {
         let range = result[0].key_value.range.as_ref().unwrap();
         chrono::NaiveDateTime::parse_from_str(range, RANGE_KEY_TIMESTAMP_FMT)
             .expect("Fallback range key should be a valid timestamp");
+    }
+
+    #[test]
+    fn test_generate_mutations_provides_hash_fallback_when_only_hash_missing() {
+        // Symmetric case to the previous test: the AI proposed a hash_field
+        // that's null in this record, but range_field was extracted fine.
+        // Without the fallback, mutation_manager rejects the mutation with
+        // "HashRange schema '...' requires both hash and range".
+        let mut keys_and_values = HashMap::new();
+        // hash_field intentionally absent — mimics a null hash value in data
+        keys_and_values.insert("range_field".to_string(), "2026-04-17".to_string());
+
+        let mut fields_and_values = HashMap::new();
+        fields_and_values.insert("title".to_string(), json!("Morning entry"));
+        fields_and_values.insert("date".to_string(), json!("2026-04-17"));
+
+        let mut mappers = HashMap::new();
+        mappers.insert("title".to_string(), "JournalSchema.title".to_string());
+        mappers.insert("date".to_string(), "JournalSchema.date".to_string());
+
+        let result = generate_mutations(
+            "JournalSchema",
+            &keys_and_values,
+            &fields_and_values,
+            &mappers,
+            "test-key".to_string(),
+            None,
+            None,
+        )
+        .expect("should succeed with hash key fallback");
+
+        assert_eq!(result.len(), 1);
+        assert!(
+            result[0].key_value.hash.is_some(),
+            "Should have a derived hash key"
+        );
+        assert_eq!(
+            result[0].key_value.range.as_deref(),
+            Some("2026-04-17"),
+            "Range key should be preserved from input"
+        );
+        // Hash is deterministic from the mapped fields, so the same input
+        // should always produce the same hash.
+        let second = generate_mutations(
+            "JournalSchema",
+            &keys_and_values,
+            &fields_and_values,
+            &mappers,
+            "test-key".to_string(),
+            None,
+            None,
+        )
+        .expect("should succeed again");
+        assert_eq!(
+            result[0].key_value.hash, second[0].key_value.hash,
+            "Fallback hash should be deterministic"
+        );
     }
 }
