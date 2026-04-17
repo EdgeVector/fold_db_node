@@ -736,10 +736,20 @@ pub(crate) async fn generate_mutations_for_item(
     let keys_and_values =
         extract_key_values_from_data(&fields_and_values, schema_name, schema_manager).await?;
 
+    // `content_hash` is an ingestion-only field that `inject_content_hash`
+    // adds for range-key disambiguation (consumed inside
+    // `extract_key_values_from_data`). It must not leak into the mutation —
+    // when mutation_mappers is empty the generator's fallback path would pass
+    // every entry of `fields_and_values` through as a mutation field, and
+    // mutation_manager then rejects the mutation with
+    // "Field 'content_hash' not found in runtime_fields for schema '...'".
+    let mut mutation_fields = fields_and_values;
+    mutation_fields.remove("content_hash");
+
     mutation_generator::generate_mutations(
         schema_name,
         &keys_and_values,
-        &fields_and_values,
+        &mutation_fields,
         mutation_mappers,
         pub_key.to_string(),
         source_file_name,
