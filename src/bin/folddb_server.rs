@@ -176,6 +176,12 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         println!();
     }
 
+    if fold_db_node::handlers::admin::test_admin_enabled() {
+        println!("⚠️  TEST-ADMIN MODE ENABLED (FOLDDB_ENABLE_TEST_ADMIN=1)");
+        println!("   /api/test-admin/* endpoints are unlocked. DO NOT USE IN PRODUCTION.");
+        println!();
+    }
+
     // Initialize logging system with environment configuration
     let log_config = fold_db::logging::config::LogConfig::from_env().unwrap_or_default();
 

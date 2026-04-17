@@ -19,6 +19,7 @@ pub mod sharing;
 pub mod smart_folder;
 pub mod sync;
 pub mod system;
+pub mod test_admin;
 pub mod trust;
 pub mod views;
 
