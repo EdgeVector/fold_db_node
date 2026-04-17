@@ -9,6 +9,7 @@ pub mod ingest_text;
 pub mod ingestion_errors;
 pub mod my_identity_card;
 pub mod personas;
+pub mod reissue_identity_card;
 pub mod suggestions;
 
 pub use identities::list_identities;
@@ -19,4 +20,5 @@ pub use ingest_text::ingest_text_signals;
 pub use ingestion_errors::{list_ingestion_errors, resolve_ingestion_error};
 pub use my_identity_card::get_my_identity_card;
 pub use personas::{delete_persona, get_persona, list_personas, merge_personas, update_persona};
+pub use reissue_identity_card::reissue_identity_card;
 pub use suggestions::{accept_suggested_persona, list_suggested_personas};

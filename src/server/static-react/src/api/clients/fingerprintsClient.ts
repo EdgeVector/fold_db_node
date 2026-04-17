@@ -280,6 +280,39 @@ export async function getMyIdentityCard(): Promise<
   );
 }
 
+/**
+ * Request body for reissue. `display_name` is a plain string-or-
+ * undefined. `birthday` uses a three-state convention:
+ *  - absent ................................ leave the field as-is
+ *  - present with `null` .................... clear the stored value
+ *  - present with a string .................. set to that value
+ *
+ * Callers should NOT send `birthday: undefined` expecting "clear" —
+ * that serializes to absent and leaves the backend's value alone.
+ */
+export interface ReissueIdentityCardRequest {
+  display_name?: string;
+  birthday?: string | null;
+}
+
+/**
+ * Re-sign the node owner's Identity Card with a new display_name
+ * and/or birthday. The backend re-computes the Ed25519 signature
+ * over the canonical payload, overwrites the existing Identity
+ * record, and syncs the built-in Me persona's name in lockstep.
+ *
+ * Returns the freshly-issued card in the same shape as
+ * `getMyIdentityCard` so the caller can swap it in place.
+ */
+export async function reissueMyIdentityCard(
+  req: ReissueIdentityCardRequest,
+): Promise<EnhancedApiResponse<MyIdentityCardResponse>> {
+  return client.post<MyIdentityCardResponse>(
+    "/fingerprints/my-identity-card/reissue",
+    req,
+  );
+}
+
 // ===== Import Identity Card (Phase 3b) =====
 
 /**

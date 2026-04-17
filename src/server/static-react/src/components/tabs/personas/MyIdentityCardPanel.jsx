@@ -1,5 +1,8 @@
 import { useCallback, useEffect, useState } from 'react'
-import { getMyIdentityCard } from '../../../api/clients/fingerprintsClient'
+import {
+  getMyIdentityCard,
+  reissueMyIdentityCard,
+} from '../../../api/clients/fingerprintsClient'
 
 /**
  * "My Identity Card" panel — shows the node owner's signed Identity
@@ -20,6 +23,15 @@ export default function MyIdentityCardPanel() {
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState(null)
   const [copied, setCopied] = useState(false)
+
+  // Inline edit form state. `editing` toggles the display <dl> into
+  // the form; draftName/draftBirthday mirror the current card so a
+  // Cancel restores the stored values without a refetch.
+  const [editing, setEditing] = useState(false)
+  const [draftName, setDraftName] = useState('')
+  const [draftBirthday, setDraftBirthday] = useState('')
+  const [saving, setSaving] = useState(false)
+  const [saveError, setSaveError] = useState(null)
 
   const fetchCard = useCallback(async () => {
     setLoading(true)
@@ -43,6 +55,57 @@ export default function MyIdentityCardPanel() {
   useEffect(() => {
     fetchCard()
   }, [fetchCard])
+
+  const startEdit = useCallback(() => {
+    if (!card) return
+    setDraftName(card.display_name || '')
+    setDraftBirthday(card.birthday || '')
+    setSaveError(null)
+    setEditing(true)
+  }, [card])
+
+  const cancelEdit = useCallback(() => {
+    setEditing(false)
+    setSaveError(null)
+  }, [])
+
+  const handleSave = useCallback(async () => {
+    if (!card) return
+    const req = {}
+    const trimmedName = draftName.trim()
+    if (trimmedName && trimmedName !== card.display_name) {
+      req.display_name = trimmedName
+    }
+    // Birthday three-state: empty string vs. original.
+    // - empty and was set → null (clear)
+    // - empty and was unset → skip (nothing to do)
+    // - non-empty and differs → set
+    const trimmedBirthday = draftBirthday.trim()
+    if (trimmedBirthday === '' && card.birthday) {
+      req.birthday = null
+    } else if (trimmedBirthday !== '' && trimmedBirthday !== card.birthday) {
+      req.birthday = trimmedBirthday
+    }
+    if (Object.keys(req).length === 0) {
+      setEditing(false)
+      return
+    }
+    setSaving(true)
+    setSaveError(null)
+    try {
+      const res = await reissueMyIdentityCard(req)
+      if (res.success) {
+        setCard(res.data ?? null)
+        setEditing(false)
+      } else {
+        setSaveError(res.error ?? 'Failed to reissue identity card')
+      }
+    } catch (e) {
+      setSaveError(e?.message ?? 'Network error')
+    } finally {
+      setSaving(false)
+    }
+  }, [card, draftName, draftBirthday])
 
   const handleCopy = useCallback(async () => {
     if (!card) return
@@ -91,7 +154,70 @@ export default function MyIdentityCardPanel() {
         </div>
       )}
 
-      {!loading && !error && card && (
+      {!loading && !error && card && editing && (
+        <form
+          className="space-y-3"
+          onSubmit={e => {
+            e.preventDefault()
+            handleSave()
+          }}
+          data-testid="my-identity-card-edit-form"
+        >
+          <label className="block">
+            <span className="text-xs text-tertiary">Display name</span>
+            <input
+              type="text"
+              className="input w-full mt-1 text-sm"
+              value={draftName}
+              onChange={e => setDraftName(e.target.value)}
+              data-testid="my-identity-card-draft-name"
+              autoFocus
+            />
+          </label>
+          <label className="block">
+            <span className="text-xs text-tertiary">
+              Birthday (YYYY-MM-DD, blank to clear)
+            </span>
+            <input
+              type="text"
+              className="input w-full mt-1 text-sm font-mono"
+              value={draftBirthday}
+              onChange={e => setDraftBirthday(e.target.value)}
+              data-testid="my-identity-card-draft-birthday"
+              placeholder="1990-04-17"
+            />
+          </label>
+          {saveError && (
+            <div
+              className="text-xs text-gruvbox-red"
+              data-testid="my-identity-card-save-error"
+            >
+              {saveError}
+            </div>
+          )}
+          <div className="flex items-center gap-2">
+            <button
+              type="submit"
+              className="btn-primary text-xs"
+              disabled={saving}
+              data-testid="my-identity-card-save"
+            >
+              {saving ? 'Signing…' : 'Save and reissue'}
+            </button>
+            <button
+              type="button"
+              className="btn-secondary text-xs"
+              onClick={cancelEdit}
+              disabled={saving}
+              data-testid="my-identity-card-cancel"
+            >
+              Cancel
+            </button>
+          </div>
+        </form>
+      )}
+
+      {!loading && !error && card && !editing && (
         <>
           <dl
             className="text-xs grid grid-cols-[max-content_1fr] gap-x-3 gap-y-1"
@@ -122,9 +248,18 @@ export default function MyIdentityCardPanel() {
             >
               {copied ? 'Copied!' : 'Copy card JSON'}
             </button>
+            <button
+              type="button"
+              className="btn-secondary text-xs"
+              onClick={startEdit}
+              data-testid="my-identity-card-edit"
+            >
+              Edit card
+            </button>
             <span className="text-[11px] text-tertiary">
-              Paste into a trusted peer's Receive Card flow (Phase 3,
-              not yet shipped).
+              Editing reissues the card — a new Ed25519 signature is
+              computed over the updated payload. Peers will see the
+              stale card until you re-send.
             </span>
           </div>
 

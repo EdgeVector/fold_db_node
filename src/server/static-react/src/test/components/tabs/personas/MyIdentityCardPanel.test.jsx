@@ -5,9 +5,13 @@ import MyIdentityCardPanel from '../../../../components/tabs/personas/MyIdentity
 
 vi.mock('../../../../api/clients/fingerprintsClient', () => ({
   getMyIdentityCard: vi.fn(),
+  reissueMyIdentityCard: vi.fn(),
 }))
 
-import { getMyIdentityCard } from '../../../../api/clients/fingerprintsClient'
+import {
+  getMyIdentityCard,
+  reissueMyIdentityCard,
+} from '../../../../api/clients/fingerprintsClient'
 
 function card(overrides = {}) {
   return {
@@ -102,5 +106,120 @@ describe('MyIdentityCardPanel', () => {
     expect(screen.getByTestId('my-identity-card-json')).toHaveTextContent(
       '"display_name": "Tom Tang"',
     )
+  })
+
+  describe('edit + reissue flow', () => {
+    it('shows the edit form after clicking Edit card', async () => {
+      getMyIdentityCard.mockResolvedValue(ok(card()))
+      render(<MyIdentityCardPanel />)
+      await waitFor(() => {
+        expect(screen.getByTestId('my-identity-card-edit')).toBeInTheDocument()
+      })
+      fireEvent.click(screen.getByTestId('my-identity-card-edit'))
+      expect(screen.getByTestId('my-identity-card-edit-form')).toBeInTheDocument()
+      expect(screen.getByTestId('my-identity-card-draft-name')).toHaveValue(
+        'Tom Tang',
+      )
+      expect(screen.getByTestId('my-identity-card-draft-birthday')).toHaveValue(
+        '1990-04-17',
+      )
+    })
+
+    it('calls reissueMyIdentityCard with only the changed display_name', async () => {
+      getMyIdentityCard.mockResolvedValue(ok(card()))
+      reissueMyIdentityCard.mockResolvedValue(
+        ok(card({ display_name: 'Thomas', issued_at: '2026-04-18T00:00:00Z' })),
+      )
+      render(<MyIdentityCardPanel />)
+      await waitFor(() => {
+        expect(screen.getByTestId('my-identity-card-edit')).toBeInTheDocument()
+      })
+      fireEvent.click(screen.getByTestId('my-identity-card-edit'))
+      fireEvent.change(screen.getByTestId('my-identity-card-draft-name'), {
+        target: { value: 'Thomas' },
+      })
+      fireEvent.click(screen.getByTestId('my-identity-card-save'))
+      await waitFor(() => {
+        expect(reissueMyIdentityCard).toHaveBeenCalledWith({
+          display_name: 'Thomas',
+        })
+      })
+      // After success we drop back to the display view with the new card.
+      await waitFor(() => {
+        expect(screen.queryByTestId('my-identity-card-edit-form')).toBeNull()
+      })
+      expect(screen.getByTestId('my-identity-card-fields')).toHaveTextContent(
+        'Thomas',
+      )
+    })
+
+    it('sends birthday: null when the user clears a previously-set birthday', async () => {
+      getMyIdentityCard.mockResolvedValue(ok(card({ birthday: '1990-04-17' })))
+      reissueMyIdentityCard.mockResolvedValue(ok(card({ birthday: null })))
+      render(<MyIdentityCardPanel />)
+      await waitFor(() => {
+        expect(screen.getByTestId('my-identity-card-edit')).toBeInTheDocument()
+      })
+      fireEvent.click(screen.getByTestId('my-identity-card-edit'))
+      fireEvent.change(screen.getByTestId('my-identity-card-draft-birthday'), {
+        target: { value: '' },
+      })
+      fireEvent.click(screen.getByTestId('my-identity-card-save'))
+      await waitFor(() => {
+        expect(reissueMyIdentityCard).toHaveBeenCalledWith({ birthday: null })
+      })
+    })
+
+    it('does not call reissue when nothing changed', async () => {
+      getMyIdentityCard.mockResolvedValue(ok(card()))
+      render(<MyIdentityCardPanel />)
+      await waitFor(() => {
+        expect(screen.getByTestId('my-identity-card-edit')).toBeInTheDocument()
+      })
+      fireEvent.click(screen.getByTestId('my-identity-card-edit'))
+      fireEvent.click(screen.getByTestId('my-identity-card-save'))
+      expect(reissueMyIdentityCard).not.toHaveBeenCalled()
+      // Form closes even though no network call happened.
+      expect(screen.queryByTestId('my-identity-card-edit-form')).toBeNull()
+    })
+
+    it('surfaces backend error messages in the save-error slot', async () => {
+      getMyIdentityCard.mockResolvedValue(ok(card()))
+      reissueMyIdentityCard.mockResolvedValue({
+        success: false,
+        error: 'display_name must not be empty',
+      })
+      render(<MyIdentityCardPanel />)
+      await waitFor(() => {
+        expect(screen.getByTestId('my-identity-card-edit')).toBeInTheDocument()
+      })
+      fireEvent.click(screen.getByTestId('my-identity-card-edit'))
+      fireEvent.change(screen.getByTestId('my-identity-card-draft-name'), {
+        target: { value: 'Rename' },
+      })
+      fireEvent.click(screen.getByTestId('my-identity-card-save'))
+      await waitFor(() => {
+        expect(
+          screen.getByTestId('my-identity-card-save-error'),
+        ).toHaveTextContent(/display_name must not be empty/)
+      })
+      // Form stays open so the user can fix the input.
+      expect(screen.getByTestId('my-identity-card-edit-form')).toBeInTheDocument()
+    })
+
+    it('Cancel restores the display view without reissuing', async () => {
+      getMyIdentityCard.mockResolvedValue(ok(card()))
+      render(<MyIdentityCardPanel />)
+      await waitFor(() => {
+        expect(screen.getByTestId('my-identity-card-edit')).toBeInTheDocument()
+      })
+      fireEvent.click(screen.getByTestId('my-identity-card-edit'))
+      fireEvent.change(screen.getByTestId('my-identity-card-draft-name'), {
+        target: { value: 'Rename' },
+      })
+      fireEvent.click(screen.getByTestId('my-identity-card-cancel'))
+      expect(reissueMyIdentityCard).not.toHaveBeenCalled()
+      expect(screen.queryByTestId('my-identity-card-edit-form')).toBeNull()
+    })
   })
 })

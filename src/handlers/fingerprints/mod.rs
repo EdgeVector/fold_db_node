@@ -18,6 +18,7 @@ pub mod ingest_text;
 pub mod ingestion_errors;
 pub mod my_identity_card;
 pub mod personas;
+pub mod reissue_identity_card;
 pub mod suggestions;
 
 pub use identities::{list_identities, IdentityAuditRow, ListIdentitiesResponse};
@@ -42,6 +43,7 @@ pub use personas::{
     update_persona_threshold, ListPersonasResponse, MergePersonasRequest, PersonaDetailResponse,
     PersonaPatch, PersonaSummary,
 };
+pub use reissue_identity_card::{reissue_identity_card, ReissueIdentityCardRequest};
 pub use suggestions::{
     accept_suggested_persona, list_suggested_personas, AcceptSuggestedRequest,
     ListSuggestedResponse, SuggestedPersonaView,
