@@ -1,7 +1,11 @@
 import React from 'react'
 import { render, screen, fireEvent, waitFor } from '@testing-library/react'
 import { describe, it, expect, beforeEach, vi } from 'vitest'
-import PersonasPanel from '../../../../components/tabs/personas/PersonasPanel'
+import PersonasPanel, {
+  filterPersonas,
+  sortPersonas,
+  PERSONA_SORT_OPTIONS,
+} from '../../../../components/tabs/personas/PersonasPanel'
 
 // Mock the fingerprints client — tests exercise the component logic
 // without hitting the real backend. Each test sets up its own
@@ -1216,6 +1220,251 @@ describe('PersonasPanel', () => {
       } finally {
         window.confirm = origConfirm
       }
+    })
+  })
+
+  // ── Filter + sort helpers (pure) ────────────────────────────────
+  //
+  // These exercise the helpers without rendering the component so
+  // every sort mode and filter edge case is fast to cover.
+
+  describe('filterPersonas (pure helper)', () => {
+    const dataset = [
+      makeSummary({ id: 'ps_a', name: 'Alice', aliases: ['Ali', 'A.'] }),
+      makeSummary({ id: 'ps_b', name: 'Bob', aliases: [] }),
+      makeSummary({ id: 'ps_c', name: 'Carol', aliases: ['Caz'] }),
+      makeSummary({ id: 'ps_d', name: 'Dan', aliases: ['Daniel', 'Danny'] }),
+    ]
+
+    it('returns the input unchanged when the query is empty', () => {
+      expect(filterPersonas(dataset, '')).toEqual(dataset)
+    })
+
+    it('returns the input unchanged when the query is only whitespace', () => {
+      expect(filterPersonas(dataset, '   ')).toEqual(dataset)
+    })
+
+    it('matches a case-insensitive substring of name', () => {
+      const result = filterPersonas(dataset, 'AL')
+      expect(result.map(p => p.id)).toEqual(['ps_a'])
+    })
+
+    it('matches a case-insensitive substring of any alias', () => {
+      const result = filterPersonas(dataset, 'danny')
+      expect(result.map(p => p.id)).toEqual(['ps_d'])
+    })
+
+    it('returns multiple matches when several personas hit the query', () => {
+      const result = filterPersonas(dataset, 'a')
+      expect(result.map(p => p.id).sort()).toEqual(['ps_a', 'ps_c', 'ps_d'])
+    })
+
+    it('returns an empty array when nothing matches', () => {
+      expect(filterPersonas(dataset, 'zzz')).toEqual([])
+    })
+
+    it('treats a missing aliases array as no alias matches', () => {
+      const data = [makeSummary({ id: 'ps_x', name: 'X' })]
+      delete data[0].aliases
+      expect(filterPersonas(data, 'x')).toHaveLength(1)
+      expect(filterPersonas(data, 'noop')).toHaveLength(0)
+    })
+
+    it('preserves the input order for matching entries', () => {
+      const result = filterPersonas(dataset, 'a')
+      expect(result.map(p => p.id)).toEqual(['ps_a', 'ps_c', 'ps_d'])
+    })
+  })
+
+  describe('sortPersonas (pure helper)', () => {
+    it('throws on an unknown mode rather than silently picking a default', () => {
+      expect(() => sortPersonas([], 'nope')).toThrow(/unknown mode/)
+    })
+
+    it('does not mutate its input', () => {
+      const input = [
+        makeSummary({ id: 'b', name: 'Bob' }),
+        makeSummary({ id: 'a', name: 'Alice' }),
+      ]
+      const snapshot = input.map(p => p.id)
+      sortPersonas(input, 'name_asc')
+      expect(input.map(p => p.id)).toEqual(snapshot)
+    })
+
+    it('recent: orders by created_at desc, nulls last, deterministic tie-break', () => {
+      const data = [
+        makeSummary({ id: 'old', created_at: '2026-01-01T00:00:00Z' }),
+        makeSummary({ id: 'null1', created_at: null }),
+        makeSummary({ id: 'new', created_at: '2026-04-15T00:00:00Z' }),
+        makeSummary({ id: 'null2', created_at: null }),
+      ]
+      const result = sortPersonas(data, 'recent')
+      expect(result.map(p => p.id)).toEqual(['new', 'old', 'null1', 'null2'])
+    })
+
+    it('name_asc: case-insensitive A→Z by name', () => {
+      const data = [
+        makeSummary({ id: '1', name: 'bob' }),
+        makeSummary({ id: '2', name: 'Alice' }),
+        makeSummary({ id: '3', name: 'carol' }),
+      ]
+      expect(sortPersonas(data, 'name_asc').map(p => p.name)).toEqual([
+        'Alice',
+        'bob',
+        'carol',
+      ])
+    })
+
+    it('mentions_desc: orders by mention_count high→low', () => {
+      const data = [
+        makeSummary({ id: 'a', name: 'A', mention_count: 3 }),
+        makeSummary({ id: 'b', name: 'B', mention_count: 12 }),
+        makeSummary({ id: 'c', name: 'C', mention_count: 0 }),
+      ]
+      expect(sortPersonas(data, 'mentions_desc').map(p => p.id)).toEqual([
+        'b',
+        'a',
+        'c',
+      ])
+    })
+
+    it('trust_tier_desc: orders by trust_tier high→low', () => {
+      const data = [
+        makeSummary({ id: 'a', name: 'A', trust_tier: 1 }),
+        makeSummary({ id: 'b', name: 'B', trust_tier: 4 }),
+        makeSummary({ id: 'c', name: 'C', trust_tier: 0 }),
+      ]
+      expect(sortPersonas(data, 'trust_tier_desc').map(p => p.id)).toEqual([
+        'b',
+        'a',
+        'c',
+      ])
+    })
+
+    it('exposes exactly the four documented sort options', () => {
+      expect(PERSONA_SORT_OPTIONS.map(o => o.value)).toEqual([
+        'recent',
+        'name_asc',
+        'mentions_desc',
+        'trust_tier_desc',
+      ])
+    })
+  })
+
+  describe('list view: filter + sort controls', () => {
+    function buildList() {
+      return okList([
+        makeSummary({
+          id: 'ps_alice',
+          name: 'Alice',
+          aliases: ['Ali'],
+          mention_count: 3,
+          trust_tier: 2,
+          created_at: '2026-04-01T00:00:00Z',
+        }),
+        makeSummary({
+          id: 'ps_bob',
+          name: 'Bob',
+          aliases: [],
+          mention_count: 12,
+          trust_tier: 1,
+          created_at: '2026-04-15T00:00:00Z',
+        }),
+        makeSummary({
+          id: 'ps_carol',
+          name: 'Carol',
+          aliases: ['Caz'],
+          mention_count: 0,
+          trust_tier: 4,
+          created_at: '2026-03-01T00:00:00Z',
+        }),
+      ])
+    }
+
+    it('renders the filter input and sort selector above the list', async () => {
+      listPersonas.mockResolvedValue(buildList())
+      render(<PersonasPanel />)
+      await waitFor(() => {
+        expect(screen.getByTestId('persona-list-filter')).toBeInTheDocument()
+      })
+      expect(screen.getByTestId('persona-list-sort')).toBeInTheDocument()
+    })
+
+    it('filters the visible rows by name substring (case-insensitive)', async () => {
+      listPersonas.mockResolvedValue(buildList())
+      render(<PersonasPanel />)
+      await waitFor(() => {
+        expect(screen.getByTestId('persona-row-ps_alice')).toBeInTheDocument()
+      })
+      fireEvent.change(screen.getByTestId('persona-list-filter'), {
+        target: { value: 'BOB' },
+      })
+      expect(screen.queryByTestId('persona-row-ps_alice')).not.toBeInTheDocument()
+      expect(screen.queryByTestId('persona-row-ps_carol')).not.toBeInTheDocument()
+      expect(screen.getByTestId('persona-row-ps_bob')).toBeInTheDocument()
+    })
+
+    it('filters by alias substring', async () => {
+      listPersonas.mockResolvedValue(buildList())
+      render(<PersonasPanel />)
+      await waitFor(() => {
+        expect(screen.getByTestId('persona-row-ps_carol')).toBeInTheDocument()
+      })
+      fireEvent.change(screen.getByTestId('persona-list-filter'), {
+        target: { value: 'caz' },
+      })
+      expect(screen.getByTestId('persona-row-ps_carol')).toBeInTheDocument()
+      expect(screen.queryByTestId('persona-row-ps_alice')).not.toBeInTheDocument()
+      expect(screen.queryByTestId('persona-row-ps_bob')).not.toBeInTheDocument()
+    })
+
+    it('shows the filtered-empty state (distinct from the empty-list state) when nothing matches', async () => {
+      listPersonas.mockResolvedValue(buildList())
+      render(<PersonasPanel />)
+      await waitFor(() => {
+        expect(screen.getByTestId('persona-row-ps_alice')).toBeInTheDocument()
+      })
+      fireEvent.change(screen.getByTestId('persona-list-filter'), {
+        target: { value: 'zzzzz' },
+      })
+      expect(
+        screen.getByTestId('persona-list-empty-filtered'),
+      ).toBeInTheDocument()
+      expect(screen.queryByTestId('persona-list-empty')).not.toBeInTheDocument()
+    })
+
+    it('reorders the visible rows when the sort mode changes (mentions_desc)', async () => {
+      listPersonas.mockResolvedValue(buildList())
+      render(<PersonasPanel />)
+      await waitFor(() => {
+        expect(screen.getByTestId('persona-row-ps_alice')).toBeInTheDocument()
+      })
+      fireEvent.change(screen.getByTestId('persona-list-sort'), {
+        target: { value: 'mentions_desc' },
+      })
+      const rows = screen
+        .getAllByTestId(/^persona-row-/)
+        .map(el => el.getAttribute('data-testid'))
+      expect(rows).toEqual([
+        'persona-row-ps_bob',
+        'persona-row-ps_alice',
+        'persona-row-ps_carol',
+      ])
+    })
+
+    it('reorders the visible rows by trust_tier_desc', async () => {
+      listPersonas.mockResolvedValue(buildList())
+      render(<PersonasPanel />)
+      await waitFor(() => {
+        expect(screen.getByTestId('persona-row-ps_alice')).toBeInTheDocument()
+      })
+      fireEvent.change(screen.getByTestId('persona-list-sort'), {
+        target: { value: 'trust_tier_desc' },
+      })
+      const rows = screen
+        .getAllByTestId(/^persona-row-/)
+        .map(el => el.getAttribute('data-testid'))
+      expect(rows[0]).toBe('persona-row-ps_carol')
     })
   })
 })

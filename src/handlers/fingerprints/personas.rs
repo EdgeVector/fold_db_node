@@ -56,6 +56,12 @@ pub struct PersonaSummary {
     pub fingerprint_count: usize,
     pub edge_count: usize,
     pub mention_count: usize,
+    /// Aliases (free-form alternate names) on the persona record. Surfaced
+    /// in the list summary so the UI can filter against them client-side.
+    pub aliases: Vec<String>,
+    /// ISO-8601 timestamp the persona record was created. Used by the UI
+    /// to sort by recency. `None` for older records that pre-date the field.
+    pub created_at: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -219,6 +225,8 @@ pub async fn list_personas(node: Arc<FoldNode>) -> HandlerResult<ListPersonasRes
             fingerprint_count: result.fingerprint_ids().len(),
             edge_count: result.edge_ids().len(),
             mention_count: result.mention_ids().len(),
+            aliases: string_array_field(fields, "aliases"),
+            created_at: string_field(fields, "created_at"),
         };
         personas.push(summary);
     }
