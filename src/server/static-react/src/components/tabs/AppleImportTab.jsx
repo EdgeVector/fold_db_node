@@ -213,7 +213,6 @@ const SOURCES = [
     label: 'Calendar',
     icon: "\uD83D\uDCC5",
     description: 'Import events from Apple Calendar.',
-    comingSoon: true,
   },
   {
     key: 'reminders',
@@ -397,7 +396,7 @@ function useSourceImport(sourceKey, importFn) {
 
 export default function AppleImportTab({ onResult: _onResult }) {
   const [available, setAvailable] = useState(null) // null = loading, true/false
-  const [enabled, setEnabled] = useState({ notes: true, photos: true, calendar: false, reminders: true })
+  const [enabled, setEnabled] = useState({ notes: true, photos: true, calendar: true, reminders: true })
   const [photosLimit, setPhotosLimit] = useState(50)
 
   useEffect(() => {

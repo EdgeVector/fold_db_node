@@ -8,6 +8,7 @@ const SIDEBAR_ITEMS = [
   { id: 'schemas', label: 'Schemas', icon: '\u{1F4CB}', group: 'DATA' },
   { id: 'smart-folder', label: 'Import', icon: '\u{1F4E5}', group: 'IMPORT' },
   { id: 'file-upload', label: 'Files', icon: '\u{1F4C4}', group: 'IMPORT' },
+  { id: 'apple-import', label: 'Apple', icon: '\u{1F34E}', group: 'IMPORT' },
   { id: 'people', label: 'People', icon: '\u{1F465}', group: 'SOCIAL' },
   { id: 'discovery', label: 'Discover', icon: '\u{1F310}', group: 'SOCIAL' },
   { id: 'settings', label: 'Settings', icon: '\u2699\uFE0F', group: 'SYSTEM' },
