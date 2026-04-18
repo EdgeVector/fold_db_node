@@ -19,7 +19,7 @@ pub struct Note {
 /// Returns a list of parsed [`Note`] structs.
 pub fn extract(folder: Option<&str>) -> Result<Vec<Note>, IngestionError> {
     let script = build_script(folder);
-    let raw = run_osascript(&script)?;
+    let raw = run_osascript(&script, "Notes.app")?;
     parse_output(&raw)
 }
 

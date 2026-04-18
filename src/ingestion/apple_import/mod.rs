@@ -33,9 +33,12 @@ const OSASCRIPT_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(30
 /// Run an AppleScript via osascript and return stdout.
 ///
 /// Kills the process after `OSASCRIPT_TIMEOUT` to prevent indefinite hangs
-/// (e.g. Photos.app unresponsive, iCloud sync, missing permissions).
+/// (iCloud sync, missing Automation permission, unresponsive target app).
+///
+/// `app_label` names the target macOS app (e.g. "Reminders.app") so the
+/// timeout error can point the user at the correct System Settings pane.
 #[cfg(target_os = "macos")]
-pub fn run_osascript(script: &str) -> Result<String, IngestionError> {
+pub fn run_osascript(script: &str, app_label: &str) -> Result<String, IngestionError> {
     let child = std::process::Command::new("osascript")
         .arg("-e")
         .arg(script)
@@ -57,15 +60,15 @@ pub fn run_osascript(script: &str) -> Result<String, IngestionError> {
             if !output.status.success() {
                 let stderr_str = String::from_utf8_lossy(&output.stderr);
                 return Err(IngestionError::Extraction(format!(
-                    "AppleScript error: {}",
-                    stderr_str
+                    "AppleScript error ({}): {}",
+                    app_label, stderr_str
                 )));
             }
             Ok(String::from_utf8_lossy(&output.stdout).to_string())
         }
         Ok(Err(e)) => Err(IngestionError::Extraction(format!(
-            "Failed to wait for osascript: {}",
-            e
+            "Failed to wait for osascript ({}): {}",
+            app_label, e
         ))),
         Err(_timeout) => {
             // Kill the timed-out process via pkill (child ownership moved to thread)
@@ -74,10 +77,12 @@ pub fn run_osascript(script: &str) -> Result<String, IngestionError> {
                 .arg(child_id.to_string())
                 .status();
             Err(IngestionError::Extraction(format!(
-                "osascript timed out after {} seconds. Photos.app may be unresponsive or \
-                 processing iCloud photos. Try again with a smaller limit, or ensure Full \
-                 Disk Access is granted in System Settings → Privacy & Security.",
-                OSASCRIPT_TIMEOUT.as_secs()
+                "osascript timed out after {} seconds talking to {}. The app may be \
+                 unresponsive, syncing with iCloud, or missing Automation permission. \
+                 Grant access in System Settings → Privacy & Security → Automation \
+                 (and Full Disk Access for Photos.app).",
+                OSASCRIPT_TIMEOUT.as_secs(),
+                app_label,
             )))
         }
     }

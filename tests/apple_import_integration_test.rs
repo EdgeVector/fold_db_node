@@ -131,17 +131,30 @@ mod tests {
 
     #[test]
     fn reminders_build_script_no_list() {
+        // The extraction script must iterate lists individually, skip
+        // completed reminders via `whose completed is false`, and use
+        // bulk property access. Iterating `every reminder` globally or
+        // reading properties per-reminder used to hang for 5+ minutes
+        // on a typical iCloud-backed Reminders account (see the hang
+        // fix in `apple_import/reminders.rs`).
         let script = reminders::build_script(None);
         assert!(script.contains(r#"tell application "Reminders""#));
-        assert!(script.contains("set reminderItems to every reminder"));
-        assert!(!script.contains("targetList"));
+        assert!(script.contains("repeat with lst in lists"));
+        assert!(script.contains("whose completed is false"));
+        assert!(script.contains("name of reminders of lst"));
+        assert!(!script.contains("set reminderItems to every reminder"));
     }
 
     #[test]
     fn reminders_build_script_with_list() {
+        // Single-list filter is applied by comparing against each
+        // list's name inside the loop rather than via an AppleScript
+        // `list "name"` lookup — the lookup throws when the list has
+        // been renamed/deleted, which surfaces as a confusing error
+        // to users.
         let script = reminders::build_script(Some("Shopping"));
-        assert!(script.contains(r#"list "Shopping""#));
-        assert!(script.contains("targetList"));
+        assert!(script.contains(r#"set targetFilter to "Shopping""#));
+        assert!(script.contains("is equal to lstName"));
     }
 
     // =========================================================================
