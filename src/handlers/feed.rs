@@ -227,12 +227,15 @@ fn find_writer_pubkey(schema: &Schema, key: &KeyValue) -> Option<String> {
                     .and_then(|m| m.get_atom_entry(r).map(|e| e.writer_pubkey.clone()))
             }),
             FieldVariant::HashRange(f) => {
-                key.hash.as_ref().zip(key.range.as_ref()).and_then(|(h, r)| {
-                    f.base
-                        .molecule
-                        .as_ref()
-                        .and_then(|m| m.get_atom_entry(h, r).map(|e| e.writer_pubkey.clone()))
-                })
+                key.hash
+                    .as_ref()
+                    .zip(key.range.as_ref())
+                    .and_then(|(h, r)| {
+                        f.base
+                            .molecule
+                            .as_ref()
+                            .and_then(|m| m.get_atom_entry(h, r).map(|e| e.writer_pubkey.clone()))
+                    })
             }
         };
         if let Some(pk) = pk {

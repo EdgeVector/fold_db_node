@@ -112,11 +112,7 @@ async fn insert_photo(
 /// Run this exactly once per test *after* every `insert_photo`, because
 /// the mutation path persists the in-memory cached schema after every
 /// mutation — running it mid-way would be clobbered by the next insert.
-async fn set_authors(
-    node: &FoldNode,
-    schema_name: &str,
-    entries: &[(&str, &Ed25519KeyPair)],
-) {
+async fn set_authors(node: &FoldNode, schema_name: &str, entries: &[(&str, &Ed25519KeyPair)]) {
     let db = node.get_fold_db().expect("get_fold_db");
     let mut schema = db
         .schema_manager()
@@ -293,10 +289,7 @@ async fn test_feed_filters_out_non_friends() {
 
     let request = FeedRequest {
         schema_name: Some("Photo".to_string()),
-        friend_hashes: vec![
-            friend_a.public_key_base64(),
-            friend_b.public_key_base64(),
-        ],
+        friend_hashes: vec![friend_a.public_key_base64(), friend_b.public_key_base64()],
         limit: None,
     };
 
