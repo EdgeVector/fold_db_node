@@ -17,8 +17,8 @@ use super::util::{
 };
 use super::ConnectionRequestsResponse;
 use crate::discovery::async_query::{
-    self, QueryRequestPayload, QueryResponsePayload, SchemaInfo, SchemaListRequestPayload,
-    SchemaListResponsePayload,
+    self, IdentityCardMessagePayload, QueryRequestPayload, QueryResponsePayload, SchemaInfo,
+    SchemaListRequestPayload, SchemaListResponsePayload,
 };
 use crate::discovery::connection::{
     self, ConnectionPayload, DataSharePayload, LocalConnectionRequest, MutualContact,
@@ -27,6 +27,7 @@ use crate::discovery::connection::{
 #[cfg(test)]
 use crate::discovery::connection::{SharedRecord, SharedRecordKey};
 use crate::discovery::publisher::DiscoveryPublisher;
+use crate::discovery::received_card::{self, LocalReceivedCard};
 use crate::fold_node::node::FoldNode;
 use crate::fold_node::OperationProcessor;
 use crate::handlers::response::{ApiResponse, HandlerError, HandlerResult, IntoHandlerError};
@@ -534,6 +535,17 @@ async fn dispatch_decrypted_message(
             };
             handle_incoming_referral_response(node, store, &payload).await
         }
+        "identity_card_send" => {
+            let payload: IdentityCardMessagePayload = match serde_json::from_value(raw) {
+                Ok(p) => p,
+                Err(e) => {
+                    return Ok(DispatchOutcome::Skipped {
+                        reason: format!("parse identity_card_send: {e}"),
+                    });
+                }
+            };
+            handle_incoming_identity_card(store, &payload).await
+        }
         other => Ok(DispatchOutcome::Skipped {
             reason: format!("unknown message_type '{other}'"),
         }),
@@ -758,6 +770,66 @@ async fn handle_incoming_query_response(
     )
     .await
     .map_err(|e| HandlerError::Internal(format!("update async query result: {e}")))?;
+    Ok(DispatchOutcome::Handled)
+}
+
+/// Handle an incoming `identity_card_send` payload: write a pending
+/// inbox row to Sled and leave signature verification for the user's
+/// Accept click. Dropped (`Skipped`) when `sender_public_key` doesn't
+/// match the pub_key the card claims — that's the "Bob forwards
+/// Alice's card under his pseudonym" replay, and we don't want it in
+/// the user's inbox at all.
+///
+/// We deliberately do NOT fail the poll on a parse issue in the
+/// inner card: the row still lands so the user sees "Alice sent
+/// something I couldn't read" rather than silent data loss.
+async fn handle_incoming_identity_card(
+    store: &dyn fold_db::storage::traits::KvStore,
+    payload: &IdentityCardMessagePayload,
+) -> Result<DispatchOutcome, HandlerError> {
+    // Anti-replay gate: the sender's bulletin-board identity (pubkey
+    // they signed the message envelope with, captured as
+    // sender_public_key) must match the pubkey embedded in the card.
+    // A node can't sign another node's card — that's the whole point
+    // of the Ed25519 signature — but a node CAN wrap another's card
+    // in their own envelope and try to pass it off. Dropping those
+    // at dispatch time keeps the inbox honest.
+    let card_pub_key = payload
+        .card
+        .get("pub_key")
+        .and_then(|v| v.as_str())
+        .unwrap_or("");
+    if card_pub_key != payload.sender_public_key {
+        log::warn!(
+            "Rejecting identity_card_send (msg {}): card.pub_key='{}' does not match sender_public_key='{}'",
+            payload.message_id,
+            card_pub_key,
+            payload.sender_public_key
+        );
+        return Ok(DispatchOutcome::Skipped {
+            reason: "identity_card_send: card.pub_key != sender_public_key".to_string(),
+        });
+    }
+
+    let row = LocalReceivedCard {
+        message_id: payload.message_id.clone(),
+        card: payload.card.clone(),
+        sender_public_key: payload.sender_public_key.clone(),
+        sender_pseudonym: payload.sender_pseudonym.clone(),
+        status: "pending".to_string(),
+        received_at: chrono::Utc::now().to_rfc3339(),
+        resolved_at: None,
+        accepted_identity_id: None,
+        error: None,
+    };
+    received_card::save_received_card(store, &row)
+        .await
+        .map_err(|e| HandlerError::Internal(format!("save received card: {e}")))?;
+    log::info!(
+        "fingerprints.inbound: stored identity_card_send (msg_id={}) from pubkey='{}' as pending",
+        payload.message_id,
+        payload.sender_public_key,
+    );
     Ok(DispatchOutcome::Handled)
 }
 

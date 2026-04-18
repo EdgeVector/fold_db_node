@@ -10,12 +10,14 @@ import MyIdentityCardPanel from './personas/MyIdentityCardPanel'
 import CrossUserSharingPanel from './sharing/CrossUserSharingPanel'
 import ImportIdentityCardPanel from './personas/ImportIdentityCardPanel'
 import ImportedIdentitiesPanel from './personas/ImportedIdentitiesPanel'
+import ReceivedCardsPanel from './personas/ReceivedCardsPanel'
 
 const SUB_TABS = [
   { id: 'personas', label: 'Personas' },
   { id: 'suggestions', label: 'Suggestions' },
   { id: 'my-card', label: 'My Card' },
   { id: 'import-card', label: 'Import Card' },
+  { id: 'received', label: 'Received' },
   { id: 'identities', label: 'Identities' },
   { id: 'failed', label: 'Failed' },
   { id: 'contacts', label: 'Contacts' },
@@ -38,6 +40,8 @@ export default function PeopleTab({ onResult }) {
         return <MyIdentityCardPanel />
       case 'import-card':
         return <ImportIdentityCardPanel />
+      case 'received':
+        return <ReceivedCardsPanel />
       case 'identities':
         return <ImportedIdentitiesPanel />
       case 'failed':

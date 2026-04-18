@@ -18,6 +18,7 @@ pub mod ingest_text;
 pub mod ingestion_errors;
 pub mod my_identity_card;
 pub mod personas;
+pub mod received_cards;
 pub mod reissue_identity_card;
 pub mod suggestions;
 
@@ -42,6 +43,10 @@ pub use personas::{
     apply_persona_patch, delete_persona, get_persona, list_personas, merge_personas,
     update_persona_threshold, ListPersonasResponse, MergePersonasRequest, PersonaDetailResponse,
     PersonaPatch, PersonaSummary,
+};
+pub use received_cards::{
+    accept_received_card, dismiss_received_card, list_received_cards, AcceptReceivedCardRequest,
+    AcceptReceivedCardResponse, ListReceivedCardsResponse, ReceivedCardView,
 };
 pub use reissue_identity_card::{reissue_identity_card, ReissueIdentityCardRequest};
 pub use suggestions::{
