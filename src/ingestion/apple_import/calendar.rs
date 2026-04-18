@@ -60,24 +60,53 @@ pub fn to_json_records(events: &[CalendarEvent]) -> Vec<Value> {
 }
 
 pub fn build_script(calendar: Option<&str>) -> String {
-    let calendar_filter = match calendar {
+    // Note on variable naming: AppleScript treats prepositions like
+    // `at`, `in`, `of`, `to` as reserved parameter-name tokens.
+    // Using them as loop variables (e.g. `repeat with at in list`)
+    // fails with "-2741: Expected variable name or property but
+    // found parameter name." All loop variables below are chosen
+    // to avoid that collision.
+    //
+    // Note on calendar-name lookup: events collected across multiple
+    // calendars lose their containing-calendar reference inside
+    // AppleScript (error -1728 on `name of calendar of e`). We track
+    // the calendar name in the outer loop instead of resolving it
+    // from each event reference.
+    let calendars_loop = match calendar {
         Some(name) => format!(
             r#"set targetCalendar to calendar "{}"
-    set eventList to every event of targetCalendar whose start date ≥ (current date) - 30 * days and start date ≤ (current date) + 90 * days"#,
-            name.replace('"', "\\\"")
+    set calName to name of targetCalendar
+    set eventList to (every event of targetCalendar whose start date ≥ (current date) - 30 * days and start date ≤ (current date) + 90 * days)
+    {event_body}"#,
+            name.replace('"', "\\\""),
+            event_body = event_body_block("calName")
         ),
-        None => r#"set eventList to {}
-    repeat with cal in calendars
-        set eventList to eventList & (every event of cal whose start date ≥ (current date) - 30 * days and start date ≤ (current date) + 90 * days)
-    end repeat"#
-            .to_string(),
+        None => format!(
+            r#"repeat with cal in calendars
+        set calName to name of cal
+        set eventList to (every event of cal whose start date ≥ (current date) - 30 * days and start date ≤ (current date) + 90 * days)
+        {event_body}
+    end repeat"#,
+            event_body = event_body_block("calName")
+        ),
     };
 
     format!(
         r#"tell application "Calendar"
-    {calendar_filter}
     set output to ""
-    repeat with e in eventList
+    {calendars_loop}
+    return output
+end tell"#
+    )
+}
+
+/// Inner AppleScript snippet that iterates `eventList` and appends
+/// one `<<<EVT_START>>>…<<<EVT_END>>>` record per event to `output`.
+/// Accepts the name of the outer-scope variable holding the current
+/// calendar's name (populated by the caller before this block runs).
+fn event_body_block(cal_name_var: &str) -> String {
+    format!(
+        r#"repeat with e in eventList
         set eSummary to summary of e
         set eStart to (start date of e) as string
         set eEnd to (end date of e) as string
@@ -106,25 +135,23 @@ pub fn build_script(calendar: Option<&str>) -> String {
         -- trims them.
         set eAttendees to ""
         try
-            set atList to attendees of e
-            repeat with at in atList
+            set attendeeList to attendees of e
+            repeat with anAttendee in attendeeList
                 try
-                    set atEmail to email of at
-                    if atEmail is not missing value and atEmail is not "" then
+                    set attendeeEmail to email of anAttendee
+                    if attendeeEmail is not missing value and attendeeEmail is not "" then
                         if eAttendees is "" then
-                            set eAttendees to atEmail
+                            set eAttendees to attendeeEmail
                         else
-                            set eAttendees to eAttendees & "," & atEmail
+                            set eAttendees to eAttendees & "," & attendeeEmail
                         end if
                     end if
                 end try
             end repeat
         end try
-        set eCalName to name of calendar of e
+        set eCalName to {cal_name_var}
         set output to output & "<<<EVT_START>>>" & eSummary & "<<<SEP>>>" & eStart & "<<<SEP>>>" & eEnd & "<<<SEP>>>" & eLocation & "<<<SEP>>>" & eDescription & "<<<SEP>>>" & eCalName & "<<<SEP>>>" & eAllDay & "<<<SEP>>>" & eRecurring & "<<<SEP>>>" & eAttendees & "<<<EVT_END>>>"
-    end repeat
-    return output
-end tell"#
+    end repeat"#
     )
 }
 
@@ -320,13 +347,58 @@ mod tests {
 
     #[test]
     fn build_script_includes_attendee_block() {
-        // The AppleScript must extract `email of at` for each attendee
+        // The AppleScript must extract the email for each attendee
         // and emit them comma-separated as the 9th field. Regression
         // guard — if someone reformats the script, tests catch a loss
         // of attendee extraction before it hits a dogfood node.
         let script = build_script(None);
         assert!(script.contains("attendees of e"));
-        assert!(script.contains("email of at"));
+        assert!(script.contains("email of anAttendee"));
         assert!(script.contains("& eAttendees"));
+    }
+
+    #[test]
+    fn build_script_avoids_reserved_applescript_prepositions_as_loop_vars() {
+        // AppleScript fails with `-2741: Expected variable name or
+        // property but found parameter name` when a preposition like
+        // `at`, `in`, `of`, `to`, `by`, `from` is used as a loop
+        // variable (e.g. `repeat with at in list`). This regression
+        // guards both the `repeat with <var> in ...` and
+        // `set <var> to ...` forms.
+        let script = build_script(None);
+        for bad in [
+            "repeat with at in",
+            "repeat with in in",
+            "repeat with of in",
+            "repeat with to in",
+            "repeat with by in",
+            "repeat with from in",
+            "set at to",
+            "set of to",
+            "set to to",
+        ] {
+            assert!(
+                !script.contains(bad),
+                "AppleScript uses reserved preposition as a variable: {bad:?}\nscript:\n{script}"
+            );
+        }
+    }
+
+    #[test]
+    fn build_script_tracks_calendar_name_in_outer_loop() {
+        // Events collected across calendars lose their containing
+        // calendar reference in AppleScript (error -1728 on
+        // `name of calendar of e`). The script must capture the
+        // calendar's name in the enclosing loop and reuse it per
+        // event instead of dereferencing it through the event ref.
+        let all = build_script(None);
+        assert!(!all.contains("name of calendar of e"));
+        assert!(all.contains("set calName to name of cal"));
+        assert!(all.contains("set eCalName to calName"));
+
+        let specific = build_script(Some("Work"));
+        assert!(!specific.contains("name of calendar of e"));
+        assert!(specific.contains("set calName to name of targetCalendar"));
+        assert!(specific.contains("set eCalName to calName"));
     }
 }
