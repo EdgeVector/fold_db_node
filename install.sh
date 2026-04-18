@@ -153,5 +153,5 @@ esac
 
 echo ""
 echo "FoldDB v${VERSION} installed!"
-echo "  Run 'folddb_server' to start, then visit http://localhost:9001"
+echo "  Run 'folddb_server' to start, then visit http://localhost:9101"
 echo "  Run 'folddb --help' for the CLI"

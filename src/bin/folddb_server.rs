@@ -1,5 +1,4 @@
 use clap::Parser;
-use fold_db::constants::DEFAULT_HTTP_PORT;
 use fold_db_node::{
     fold_node::config::load_node_config,
     server::{
@@ -9,6 +8,12 @@ use fold_db_node::{
 };
 use std::path::PathBuf;
 
+/// Dev CLI default HTTP port. Distinct from the bundled Tauri app's 9001
+/// so running `./run.sh` while FoldDB.app is open doesn't collide. The
+/// prod Tauri binary still uses 9001 (with 9002..=9010 fallback); dev
+/// gets 9101..=9199 via run.sh's auto-slot logic.
+const DEFAULT_DEV_HTTP_PORT: u16 = 9101;
+
 /// Command line options for the HTTP server binary.
 ///
 /// The HTTP server is now stateless - it accepts any user_hash from the
@@ -17,11 +22,11 @@ use std::path::PathBuf;
 #[command(
     author,
     version,
-    about = "FoldDB Server — run locally, open the UI at http://localhost:9001"
+    about = "FoldDB Server — run locally, open the UI at http://localhost:9101"
 )]
 struct Cli {
     /// Port for the HTTP server
-    #[arg(long, default_value_t = DEFAULT_HTTP_PORT)]
+    #[arg(long, default_value_t = DEFAULT_DEV_HTTP_PORT)]
     port: u16,
 
     /// Data directory (default: ~/.folddb/data)
@@ -82,7 +87,7 @@ fn config_file_exists() -> bool {
 ///
 /// # Command-Line Arguments
 ///
-/// * `--port <PORT>` - Port for the HTTP server (default: 9001)
+/// * `--port <PORT>` - Port for the HTTP server (default: 9101)
 /// * `--data-dir <PATH>` - Data directory (default: ~/.folddb/data)
 /// * `--schema-service-url <URL>` - URL of the schema service
 ///
@@ -209,14 +214,13 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
 #[cfg(test)]
 mod tests {
-    use super::Cli;
+    use super::{Cli, DEFAULT_DEV_HTTP_PORT};
     use clap::Parser;
-    use fold_db::constants::DEFAULT_HTTP_PORT;
 
     #[test]
     fn defaults() {
         let cli = Cli::parse_from(["test"]);
-        assert_eq!(cli.port, DEFAULT_HTTP_PORT);
+        assert_eq!(cli.port, DEFAULT_DEV_HTTP_PORT);
         assert!(cli.data_dir.is_none());
         assert!(cli.schema_service_url.is_none());
     }
