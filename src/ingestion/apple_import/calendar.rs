@@ -31,7 +31,7 @@ pub struct CalendarEvent {
 /// Extract all events (or events from a specific calendar) from Apple Calendar.
 pub fn extract(calendar: Option<&str>) -> Result<Vec<CalendarEvent>, IngestionError> {
     let script = build_script(calendar);
-    let raw = run_osascript(&script)?;
+    let raw = run_osascript(&script, "Calendar.app")?;
     parse_output(&raw)
 }
 

@@ -24,7 +24,7 @@ pub fn export(album: Option<&str>, limit: usize) -> Result<Vec<PathBuf>, Ingesti
         .map_err(|e| IngestionError::Extraction(format!("Failed to create export dir: {}", e)))?;
 
     let script = build_script(album, limit);
-    run_osascript(&script)?;
+    run_osascript(&script, "Photos.app")?;
 
     collect_and_convert(export_dir)
 }
