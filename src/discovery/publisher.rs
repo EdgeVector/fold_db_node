@@ -2,9 +2,7 @@ use super::config::DiscoveryOptIn;
 use super::connection;
 use super::pseudonym;
 use super::types::*;
-use fold_db::db_operations::native_index::anonymity::{
-    check_fragment_anonymity, default_privacy_class, FieldPrivacyClass, FragmentDecision,
-};
+use fold_db::db_operations::native_index::anonymity::{default_privacy_class, FieldPrivacyClass};
 use fold_db::storage::traits::KvStore;
 use serde::Deserialize;
 use uuid::Uuid;
@@ -196,29 +194,17 @@ impl DiscoveryPublisher {
                 continue;
             }
 
-            // Anonymity gate: check field privacy before publishing
+            // Per `preferences/discovery-no-anonymity-gating`, client-side
+            // anonymity gates (NER, token entropy, min-length) are disabled.
+            // Only `FieldPrivacyClass::NeverPublish` — explicit user opt-out —
+            // is honored here. All other fragments are accepted unconditionally.
             let privacy_class = config
                 .field_privacy
                 .get(&field_name)
                 .copied()
                 .unwrap_or_else(|| default_privacy_class(&field_name));
 
-            if let Some(ref text) = stored.fragment_text {
-                let decision = check_fragment_anonymity(&field_name, text, privacy_class);
-                match decision {
-                    FragmentDecision::Reject(_reason) => {
-                        skipped += 1;
-                        continue;
-                    }
-                    FragmentDecision::Accept => {}
-                    FragmentDecision::SubmitForNetworkCheck => {
-                        log::debug!(
-                            "Fragment for field '{}' passes local checks, submitting for network k-anonymity",
-                            field_name
-                        );
-                    }
-                }
-            } else if privacy_class == FieldPrivacyClass::NeverPublish {
+            if privacy_class == FieldPrivacyClass::NeverPublish {
                 skipped += 1;
                 continue;
             }
@@ -272,7 +258,7 @@ impl DiscoveryPublisher {
                     continue;
                 }
 
-                // Face embeddings skip the text anonymity gate (NER/entropy not applicable)
+                // Face embeddings are published unconditionally (client-side anonymity gates are disabled).
                 let embedding_bytes: Vec<u8> = stored
                     .embedding
                     .iter()
