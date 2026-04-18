@@ -12,10 +12,16 @@ use crate::ingestion::{IngestionError, IngestionResult};
 use fold_db::log_feature;
 use fold_db::logging::features::LogFeature;
 
-/// Convert a file to structured JSON using file_to_markdown (fully local, no external API calls).
+/// Convert a file to structured JSON.
 ///
-/// Uses Ollama for vision/OCR on images and PDFs; all other file types (text, CSV,
-/// Office docs, archives) convert without any AI.
+/// Routes images through the configured `vision_backend`:
+/// - `VisionBackend::Anthropic` → `anthropic_vision` module (remote Claude
+///   vision). Only supported image formats (jpg/png/gif/webp); other files
+///   still fall through to `file_to_markdown` below.
+/// - `VisionBackend::Ollama` (default) → `file_to_markdown` (fully local).
+///
+/// Non-image files (PDF, CSV, Office docs, text, archives) always use
+/// `file_to_markdown` — Anthropic vision is for images only.
 pub async fn convert_file_to_json(file_path: &PathBuf) -> Result<Value, IngestionError> {
     log_feature!(
         LogFeature::Ingestion,
@@ -25,6 +31,25 @@ pub async fn convert_file_to_json(file_path: &PathBuf) -> Result<Value, Ingestio
     );
 
     let ingestion_config = crate::ingestion::IngestionConfig::load()?;
+
+    // Route supported images through Anthropic when configured. Unsupported
+    // images (bmp, tiff, svg, …) and all non-image formats keep the local
+    // Ollama / file_to_markdown path.
+    if matches!(
+        ingestion_config.vision_backend,
+        crate::ingestion::config::VisionBackend::Anthropic
+    ) {
+        let ext = file_path.extension().and_then(|e| e.to_str()).unwrap_or("");
+        if crate::ingestion::file_handling::anthropic_vision::supports_extension(ext) {
+            return crate::ingestion::file_handling::anthropic_vision::convert_image_to_json(
+                file_path,
+                &ingestion_config.anthropic,
+                ingestion_config.timeout_seconds,
+                ingestion_config.max_retries,
+            )
+            .await;
+        }
+    }
 
     let ollama_config = FtmOllamaConfig {
         base_url: ingestion_config.ollama.base_url.clone(),
