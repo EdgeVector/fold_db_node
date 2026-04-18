@@ -18,8 +18,9 @@ set -e
 #   --demo           Use isolated demo directories ($FOLDDB_HOME/demo-data, demo-config)
 #   --region=REGION  Legacy flag, ignored
 #   --home <path>    Set FOLDDB_HOME (default: .folddb relative to CWD)
-#   --port <port>    HTTP server port (default: 9001)
-#   --schema-port <port>  Schema service port (default: 9002)
+#   --port <port>    HTTP server port (default: auto-slot in 9101..=9199,
+#                    or value of FOLDDB_PORT env var)
+#   --schema-port <port>  Schema service port (default: <http_port> + 1)
 #
 # Environment Variables:
 #   FOLDDB_HOME      Where all instance-specific state lives (default: .folddb)
@@ -79,6 +80,10 @@ on_exit() {
     kill_pid_file "$FOLDDB_HOME/folddb.pid"
     kill_pid_file "$FOLDDB_HOME/schema.pid"
     kill_pid_file "$FOLDDB_HOME/vite.pid"
+    # Remove the auto-slot discovery file so stale entries don't accumulate.
+    if [ "${AUTO_SLOT:-}" = true ] && [ -n "$HTTP_PORT" ]; then
+        rm -f "$HOME/.folddb-slots/$HTTP_PORT.json" 2>/dev/null || true
+    fi
 }
 trap on_exit EXIT
 
@@ -304,8 +309,17 @@ DEV_MODE=false
 RESET_DB=false
 EMPTY_DB=false
 DEMO_MODE=false
-HTTP_PORT="${FOLDDB_PORT:-9001}"
-SCHEMA_PORT="9002"
+# Auto-slot: when neither --port nor FOLDDB_PORT nor --home nor $FOLDDB_HOME
+# is set, pick the first free port in 9101..=9199 and derive FOLDDB_HOME
+# from it so N parallel agents can each run their own fold_db instance
+# without any coordination. The prod Tauri bundle owns 9001; dev lives in
+# the 9101 range.
+HTTP_PORT=""
+SCHEMA_PORT=""
+AUTO_SLOT=false
+if [ -n "$FOLDDB_PORT" ]; then
+    HTTP_PORT="$FOLDDB_PORT"
+fi
 
 for arg in "$@"; do
     case "$arg" in
@@ -376,11 +390,49 @@ for i in "${!args[@]}"; do
     esac
 done
 
-# Default FOLDDB_HOME if not set via --home or env var
+# Auto-slot: if nothing is pinned (no --port, no FOLDDB_PORT, no --home, no
+# $FOLDDB_HOME), scan 9101..=9199 for a free port and derive a per-slot
+# FOLDDB_HOME so parallel agents don't collide. Anything explicit (even one
+# of --port or --home) disables auto-slot — we assume the caller knows.
+if [ -z "$HTTP_PORT" ] && [ -z "$FOLDDB_HOME" ]; then
+    for candidate in $(seq 9101 9199); do
+        if ! (exec 3<>/dev/tcp/127.0.0.1/"$candidate") 2>/dev/null; then
+            HTTP_PORT="$candidate"
+            AUTO_SLOT=true
+            break
+        else
+            exec 3<&- 2>/dev/null || true
+            exec 3>&- 2>/dev/null || true
+        fi
+    done
+    if [ -z "$HTTP_PORT" ]; then
+        echo "error: no free TCP port found in 9101..=9199 — every port that run.sh would try is occupied" >&2
+        exit 1
+    fi
+    FOLDDB_HOME="/tmp/folddb-slot-$HTTP_PORT"
+    echo "[run.sh] auto-slot: port=$HTTP_PORT, home=$FOLDDB_HOME"
+fi
+
+# Fill in remaining defaults for whichever of port/home wasn't pinned.
+if [ -z "$HTTP_PORT" ]; then
+    HTTP_PORT=9101
+fi
+if [ -z "$SCHEMA_PORT" ]; then
+    SCHEMA_PORT=$((HTTP_PORT + 1))
+fi
 if [ -z "$FOLDDB_HOME" ]; then
     FOLDDB_HOME=".folddb"
 fi
 export FOLDDB_HOME
+
+# Publish the chosen slot so external tools can discover a running instance
+# without hardcoding a port. Best-effort; non-fatal if it fails.
+if [ "$AUTO_SLOT" = true ]; then
+    mkdir -p "$HOME/.folddb-slots" 2>/dev/null || true
+    cat > "$HOME/.folddb-slots/$HTTP_PORT.json" 2>/dev/null <<EOF || true
+{"port": $HTTP_PORT, "schema_port": $SCHEMA_PORT, "home": "$FOLDDB_HOME", "pid": $$}
+EOF
+fi
 
 # Export EXEMEM_ENV so the Rust process picks up the correct environment.
 # Default is prod. --dev flag overrides to dev.

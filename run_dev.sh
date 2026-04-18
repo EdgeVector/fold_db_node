@@ -1,7 +1,7 @@
 #!/bin/bash
 
 # Development mode with hot reloading
-# - Rust backend on port 9001
+# - Rust backend on port 9101
 # - Vite dev server on port 5173 (with HMR)
 # - Access app at http://localhost:5173
 
@@ -21,14 +21,14 @@ fi
 cd ../../..
 
 # Start Rust backend in background
-echo "Starting Rust backend on port 9001..."
-cargo run --bin folddb_server -- --port 9001 &
+echo "Starting Rust backend on port 9101..."
+cargo run --bin folddb_server -- --port 9101 &
 BACKEND_PID=$!
 
 # Wait for backend to be ready
 echo "Waiting for backend..."
 for i in {1..30}; do
-    if curl -s http://localhost:9001/api/system/status > /dev/null 2>&1; then
+    if curl -s http://localhost:9101/api/system/status > /dev/null 2>&1; then
         echo "Backend ready!"
         break
     fi

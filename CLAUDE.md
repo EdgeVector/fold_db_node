@@ -51,9 +51,11 @@ Always use `run.sh` to start the dev server — never start binaries manually:
 ```
 
 The script handles process cleanup, building, schema service startup, and frontend (Vite on :5173).
-- Backend: http://localhost:9001
-- Schema service: http://localhost:9002
+- Backend: http://localhost:9101 (dev default; auto-picked in 9101..=9199 when parallel agents run)
+- Schema service: http://localhost:9102
 - UI: http://localhost:5173
+
+Dev uses the 9101 range so it doesn't collide with the prod Tauri bundle, which owns 9001 (and falls back to 9002..=9010). Check `~/.folddb-slots/*.json` for the port a running `run.sh` picked, or use the `--port` flag to pin one.
 
 ## Feature Flags
 

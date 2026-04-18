@@ -1,13 +1,17 @@
 use clap::Parser;
-use fold_db::constants::DEFAULT_SCHEMA_SERVICE_PORT;
 use fold_db_node::schema_service::SchemaServiceServer;
+
+/// Dev default schema service port. Paired with the dev folddb_server
+/// default (9101) so auto-slotted instances can derive one port from the
+/// other as `schema = http + 1`.
+const DEFAULT_DEV_SCHEMA_PORT: u16 = 9102;
 
 /// Command line options for the schema service binary.
 #[derive(Parser, Debug)]
 #[command(author, version, about)]
 struct Cli {
     /// Port for the schema service
-    #[arg(long, default_value_t = DEFAULT_SCHEMA_SERVICE_PORT)]
+    #[arg(long, default_value_t = DEFAULT_DEV_SCHEMA_PORT)]
     port: u16,
 
     /// Path to the sled database for storing schemas
@@ -22,7 +26,7 @@ struct Cli {
 ///
 /// # Command-Line Arguments
 ///
-/// * `--port <PORT>` - Port for the schema service (default: 9002)
+/// * `--port <PORT>` - Port for the schema service (default: 9102)
 /// * `--db-path <PATH>` - Path to the sled database (default: schema_registry)
 ///
 /// # Errors
@@ -56,14 +60,13 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
 #[cfg(test)]
 mod tests {
-    use super::Cli;
+    use super::{Cli, DEFAULT_DEV_SCHEMA_PORT};
     use clap::Parser;
-    use fold_db::constants::DEFAULT_SCHEMA_SERVICE_PORT;
 
     #[test]
     fn defaults() {
         let cli = Cli::parse_from(["test"]);
-        assert_eq!(cli.port, DEFAULT_SCHEMA_SERVICE_PORT);
+        assert_eq!(cli.port, DEFAULT_DEV_SCHEMA_PORT);
         assert_eq!(cli.db_path, "schema_registry");
     }
 
