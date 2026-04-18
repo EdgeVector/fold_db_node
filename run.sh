@@ -24,6 +24,8 @@ set -e
 #
 # Environment Variables:
 #   FOLDDB_HOME      Where all instance-specific state lives (default: .folddb)
+#   FOLDDB_PORT      HTTP server port (alternative to --port)
+#   VITE_PORT        Vite frontend port (default: first free in 5173..=5199)
 #
 # Examples:
 #   ./run.sh                           # Local Sled mode with prod schema service
@@ -289,13 +291,13 @@ start_http_server() {
 start_vite_dev() {
     echo ""
     echo "Starting Vite dev server with hot reload..."
-    echo "Access app at: http://localhost:5173"
+    echo "Access app at: http://localhost:$VITE_PORT"
     echo ""
 
     cd src/server/static-react
     export VITE_ENABLE_SAMPLES=true
     export VITE_API_PORT="$HTTP_PORT"
-    npm run dev
+    npm run dev -- --port "$VITE_PORT" --strictPort
 }
 
 # ============================================================================
@@ -425,12 +427,35 @@ if [ -z "$FOLDDB_HOME" ]; then
 fi
 export FOLDDB_HOME
 
+# Vite port: scan 5173..=5199 for the first free slot so that parallel
+# `run.sh` invocations don't collide on the frontend. An explicit
+# $VITE_PORT disables the scan. Independent from the backend HTTP_PORT
+# auto-slot above — Vite port collisions happen even when the backend
+# was explicitly pinned.
+#
+# Use lsof (not a bash /dev/tcp probe) because Vite binds IPv6 by default;
+# a /dev/tcp/127.0.0.1 probe would miss an IPv6-only listener and hand us
+# a port Vite can't actually bind.
+if [ -z "${VITE_PORT:-}" ]; then
+    for candidate in $(seq 5173 5199); do
+        if ! lsof -iTCP:"$candidate" -sTCP:LISTEN -t >/dev/null 2>&1; then
+            VITE_PORT="$candidate"
+            break
+        fi
+    done
+    if [ -z "${VITE_PORT:-}" ]; then
+        echo "error: no free TCP port found in 5173..=5199 for Vite dev server" >&2
+        exit 1
+    fi
+fi
+export VITE_PORT
+
 # Publish the chosen slot so external tools can discover a running instance
 # without hardcoding a port. Best-effort; non-fatal if it fails.
 if [ "$AUTO_SLOT" = true ]; then
     mkdir -p "$HOME/.folddb-slots" 2>/dev/null || true
     cat > "$HOME/.folddb-slots/$HTTP_PORT.json" 2>/dev/null <<EOF || true
-{"port": $HTTP_PORT, "schema_port": $SCHEMA_PORT, "home": "$FOLDDB_HOME", "pid": $$}
+{"port": $HTTP_PORT, "schema_port": $SCHEMA_PORT, "vite_port": $VITE_PORT, "home": "$FOLDDB_HOME", "pid": $$}
 EOF
 fi
 

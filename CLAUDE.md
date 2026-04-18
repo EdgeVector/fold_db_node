@@ -50,12 +50,12 @@ Always use `run.sh` to start the dev server — never start binaries manually:
 ./run.sh --local --empty-db        # Local with fresh database
 ```
 
-The script handles process cleanup, building, schema service startup, and frontend (Vite on :5173).
+The script handles process cleanup, building, schema service startup, and frontend (Vite).
 - Backend: http://localhost:9101 (dev default; auto-picked in 9101..=9199 when parallel agents run)
 - Schema service: http://localhost:9102
-- UI: http://localhost:5173
+- UI: http://localhost:5173 (dev default; auto-picked in 5173..=5199 when parallel agents run)
 
-Dev uses the 9101 range so it doesn't collide with the prod Tauri bundle, which owns 9001 (and falls back to 9002..=9010). Check `~/.folddb-slots/*.json` for the port a running `run.sh` picked, or use the `--port` flag to pin one.
+Dev uses the 9101 range so it doesn't collide with the prod Tauri bundle, which owns 9001 (and falls back to 9002..=9010). The Vite frontend auto-slots independently in 5173..=5199. Check `~/.folddb-slots/*.json` for the backend/schema/vite ports a running `run.sh` picked, or pin any of them with `--port`, `--schema-port`, or `VITE_PORT`.
 
 ## Feature Flags
 
