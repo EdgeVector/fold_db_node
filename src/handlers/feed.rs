@@ -9,7 +9,10 @@ use crate::fold_node::OperationProcessor;
 use crate::handlers::handler_response;
 use crate::handlers::response::{ApiResponse, HandlerResult, IntoTypedHandlerError};
 use fold_db::fold_db_core::query::records_from_field_map;
+use fold_db::schema::types::field::{Field, FieldVariant};
+use fold_db::schema::types::key_value::KeyValue;
 use fold_db::schema::types::operations::{Query, SortOrder};
+use fold_db::schema::types::schema::Schema;
 use serde::Deserialize;
 use std::collections::HashSet;
 
@@ -75,30 +78,38 @@ pub async fn get_feed(
     let mut all_items = Vec::new();
 
     for schema_name in &schema_names {
-        // Get schema to inspect field access policies
-        let (all_fields, public_fields) = {
+        // Get schema (refreshed) so we can both inspect access policies and
+        // resolve per-key writer_pubkey from molecule AtomEntry. For Hash,
+        // Range, and HashRange fields, `FieldValue.writer_pubkey` is not
+        // populated by `resolve_value` — it only works for Single molecules.
+        // So author attribution must be read directly from the per-entry
+        // AtomEntry.writer_pubkey on each field's molecule.
+        let (all_fields, public_fields, schema) = {
             let db = processor.get_db_public().typed_handler_err()?;
-            let schema = match db.schema_manager().get_schema(schema_name).await {
+            let mut schema = match db.schema_manager().get_schema(schema_name).await {
                 Ok(Some(s)) => s,
                 // Skip schemas that don't exist or fail to load
                 _ => continue,
             };
 
+            // Refresh each field's molecule from DB so we can read per-entry
+            // writer_pubkey below.
+            for field in schema.runtime_fields.values_mut() {
+                field.refresh_from_db(db.db_ops()).await;
+            }
+
             let all_fields: Vec<String> = schema.fields.clone().unwrap_or_default();
             let public_fields: HashSet<String> = schema
                 .runtime_fields
                 .iter()
-                .filter(|(_, field)| {
-                    use fold_db::schema::types::field::Field;
-                    match &field.common().access_policy {
-                        None => false, // No policy = owner-only, not public
-                        Some(policy) => policy.min_read_tier == fold_db::access::AccessTier::Public,
-                    }
+                .filter(|(_, field)| match &field.common().access_policy {
+                    None => false, // No policy = owner-only, not public
+                    Some(policy) => policy.min_read_tier == fold_db::access::AccessTier::Public,
                 })
                 .map(|(name, _)| name.clone())
                 .collect();
 
-            (all_fields, public_fields)
+            (all_fields, public_fields, schema)
         };
 
         if public_fields.is_empty() {
@@ -144,12 +155,11 @@ pub async fn get_feed(
         let records = records_from_field_map(&result_map);
 
         for (key, record) in records {
-            let author = record
-                .metadata
-                .values()
-                .find_map(|meta| meta.writer_pubkey.as_deref());
-
-            let author = match author {
+            // Resolve writer_pubkey per-key from the molecule's AtomEntry.
+            // This handles Hash/Range/HashRange fields where per-entry
+            // writer_pubkey is not plumbed through FieldValue.
+            let author_owned = find_writer_pubkey(&schema, &key);
+            let author = match author_owned.as_deref() {
                 Some(a) if friends.contains(a) => a.to_string(),
                 _ => continue,
             };
@@ -190,4 +200,46 @@ pub async fn get_feed(
         },
         user_hash,
     ))
+}
+
+/// Look up the writer_pubkey for a record key by inspecting the per-entry
+/// AtomEntry on the schema's field molecules. Returns the first non-empty
+/// writer_pubkey found across fields (they should all agree for a given key
+/// when the record was written by a single mutation).
+fn find_writer_pubkey(schema: &Schema, key: &KeyValue) -> Option<String> {
+    for field in schema.runtime_fields.values() {
+        let pk = match field {
+            FieldVariant::Single(f) => f
+                .base
+                .molecule
+                .as_ref()
+                .map(|m| m.writer_pubkey().to_string()),
+            FieldVariant::Hash(f) => key.hash.as_ref().and_then(|h| {
+                f.base
+                    .molecule
+                    .as_ref()
+                    .and_then(|m| m.get_atom_entry(h).map(|e| e.writer_pubkey.clone()))
+            }),
+            FieldVariant::Range(f) => key.range.as_ref().and_then(|r| {
+                f.base
+                    .molecule
+                    .as_ref()
+                    .and_then(|m| m.get_atom_entry(r).map(|e| e.writer_pubkey.clone()))
+            }),
+            FieldVariant::HashRange(f) => {
+                key.hash.as_ref().zip(key.range.as_ref()).and_then(|(h, r)| {
+                    f.base
+                        .molecule
+                        .as_ref()
+                        .and_then(|m| m.get_atom_entry(h, r).map(|e| e.writer_pubkey.clone()))
+                })
+            }
+        };
+        if let Some(pk) = pk {
+            if !pk.is_empty() {
+                return Some(pk);
+            }
+        }
+    }
+    None
 }
