@@ -100,6 +100,11 @@ jobs:
 
       - name: Run scenario (manual trigger)
         if: github.event_name == 'workflow_dispatch'
+        env:
+          # folddb_server's ingestion service needs an Anthropic key to
+          # classify/extract images; without it the /ingest endpoint
+          # returns 503 and the scenario fails at the first ingest step.
+          ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
         run: |
           cd test-framework
           SCENARIO="${{ github.event.inputs.scenario }}"
@@ -112,6 +117,8 @@ jobs:
 
       - name: Run all nightly scenarios
         if: github.event_name == 'schedule'
+        env:
+          ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
         run: |
           cd test-framework
           set +e
