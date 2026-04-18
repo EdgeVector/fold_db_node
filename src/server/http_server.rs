@@ -1036,6 +1036,10 @@ impl FoldHttpServer {
                 .route(
                     "/async-query/{id}",
                     web::delete().to(remote_routes::delete_async_query),
+                )
+                .route(
+                    "/send-identity-card",
+                    web::post().to(remote_routes::send_identity_card),
                 ),
         );
     }

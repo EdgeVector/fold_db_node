@@ -336,6 +336,84 @@ pub async fn async_browse(
     )
 }
 
+/// POST /api/remote/send-identity-card — push the node owner's
+/// signed Identity Card to a contact via the messaging layer.
+///
+/// Phase 3 of the Identity Card exchange flow, send half. The
+/// receiving half (poll + inbox + accept) is a separate PR — this
+/// endpoint is usable today alongside paste / QR channels.
+///
+/// Failure modes (all 400):
+/// - Contact not in ContactBook or revoked.
+/// - Contact has no messaging keys (hasn't completed discovery).
+/// - Self-Identity card not yet issued (setup wizard incomplete).
+#[derive(Debug, Clone, Deserialize)]
+pub struct SendIdentityCardRequest {
+    /// Ed25519 pubkey of the recipient. Must already be in the
+    /// ContactBook (i.e. the user has a verified connection).
+    pub contact_public_key: String,
+}
+
+pub async fn send_identity_card(
+    body: web::Json<SendIdentityCardRequest>,
+    state: web::Data<AppState>,
+) -> impl Responder {
+    let (user_hash, node) = node_or_return!(state);
+    let req = body.into_inner();
+
+    handler_result_to_response(
+        async {
+            use crate::discovery::async_query::IdentityCardMessagePayload;
+
+            // Load the node's own signed card by reusing the exact
+            // same handler that powers GET /my-identity-card. Keeps
+            // the wire payload identical to the JSON a user can
+            // paste today.
+            let my_card = crate::handlers::fingerprints::get_my_identity_card(node.clone()).await?;
+            let card_value = my_card.data.ok_or_else(|| {
+                crate::handlers::HandlerError::Internal(
+                    "my-identity-card returned success envelope with no data".into(),
+                )
+            })?;
+            let card_json = serde_json::to_value(&card_value).map_err(|e| {
+                crate::handlers::HandlerError::Internal(format!(
+                    "failed to serialize identity card: {e}"
+                ))
+            })?;
+
+            let contact = validate_contact_for_messaging(&req.contact_public_key)?;
+            let sender = resolve_sender_info(&state, &node).await?;
+
+            let message_id = uuid::Uuid::new_v4().to_string();
+            let public_key = node.get_node_public_key();
+            let payload = IdentityCardMessagePayload {
+                message_type: "identity_card_send".to_string(),
+                message_id: message_id.clone(),
+                card: card_json,
+                sender_public_key: public_key.to_string(),
+                sender_pseudonym: sender.pseudonym_str(),
+            };
+
+            send_encrypted_message(&sender, &contact, &payload).await?;
+
+            log::info!(
+                "fingerprints.handler: sent identity card to contact '{}' (message_id={})",
+                contact.display_name,
+                message_id,
+            );
+
+            Ok(ApiResponse::success_with_user(
+                serde_json::json!({
+                    "message_id": message_id,
+                    "recipient_display_name": contact.display_name,
+                }),
+                user_hash,
+            ))
+        }
+        .await,
+    )
+}
+
 /// GET /api/remote/async-queries — list all async queries
 pub async fn list_async_queries(state: web::Data<AppState>) -> impl Responder {
     let (user_hash, node) = node_or_return!(state);
