@@ -532,17 +532,13 @@ mod tests {
         let expected_fp_id = fingerprint_id_for_face_embedding(&embedding);
         assert_eq!(fp.hash_key, expected_fp_id);
         assert_eq!(fp.fields.get("id").unwrap(), &json!(expected_fp_id));
-        assert_eq!(
-            fp.fields.get("kind").unwrap(),
-            &json!(kind::FACE_EMBEDDING)
-        );
+        assert_eq!(fp.fields.get("kind").unwrap(), &json!(kind::FACE_EMBEDDING));
         assert_eq!(fp.fields.get("value").unwrap(), &json!(embedding));
 
         // Edge record.
         let eg = &records[1];
         assert_eq!(eg.descriptive_schema, EDGE);
-        let node_pub_key_fp_id =
-            fingerprint_id_from_bytes(kind::NODE_PUB_KEY, "pk_abc".as_bytes());
+        let node_pub_key_fp_id = fingerprint_id_from_bytes(kind::NODE_PUB_KEY, "pk_abc".as_bytes());
         let expected_eg_id = edge_id(
             &expected_fp_id,
             &node_pub_key_fp_id,
