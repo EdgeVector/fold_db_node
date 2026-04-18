@@ -131,35 +131,57 @@ async fn install_update(app: tauri::AppHandle) -> Result<(), String> {
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
-  // Start the server in a separate thread with its own tokio runtime
-  // so we can block on it without deadlocking Tauri's runtime
-  let server_port = 9001u16;
-  let (tx, rx) = std::sync::mpsc::channel::<Result<EmbeddedServerHandle, String>>();
-
-  std::thread::spawn(move || {
-    let rt = tokio::runtime::Runtime::new().expect("Failed to create tokio runtime");
-    let result = rt.block_on(start_fold_server(server_port));
-    match result {
-      Ok(handle) => {
-        eprintln!("[FoldDB] Server started on port {}", server_port);
-        let _ = tx.send(Ok(handle));
-        // Keep runtime alive so the server keeps running
-        rt.block_on(std::future::pending::<()>());
+  // Pick a port. Prefer 9001 (stable for external tools / docs), but fall
+  // back through 9002..=9010 so launching the app doesn't fail just because
+  // something else on the machine happens to hold 9001. On error we route
+  // through the existing startup_error dialog below.
+  let (server_port, port_error) = match pick_port(9001, 10) {
+    Ok(p) => {
+      eprintln!("[FoldDB] Selected port {p}");
+      // Publish the chosen port so external tools (curl, CLI scripts) can
+      // find the running instance without hard-coding 9001.
+      if let Some(home) = dirs::home_dir() {
+        let folddb_dir = home.join(".folddb");
+        let _ = std::fs::create_dir_all(&folddb_dir);
+        let _ = std::fs::write(folddb_dir.join("port"), p.to_string());
       }
-      Err(e) => {
-        eprintln!("[FoldDB] Failed to start server: {}", e);
-        let _ = tx.send(Err(e));
-      }
+      (p, None)
     }
-  });
+    // Keep server_port = 9001 as a placeholder so the rest of this function
+    // compiles; the error path below short-circuits before we'd actually
+    // connect to it.
+    Err(e) => (9001u16, Some(e)),
+  };
 
-  // Wait for the server to start (with timeout)
-  let server_result = rx.recv_timeout(std::time::Duration::from_secs(30));
+  // If port selection failed, skip spawning the server and pipe the error
+  // straight into the existing startup_error dialog flow below.
+  let (server_handle, startup_error) = if let Some(e) = port_error {
+    (None, Some(e))
+  } else {
+    let (tx, rx) = std::sync::mpsc::channel::<Result<EmbeddedServerHandle, String>>();
+    std::thread::spawn(move || {
+      let rt = tokio::runtime::Runtime::new().expect("Failed to create tokio runtime");
+      let result = rt.block_on(start_fold_server(server_port));
+      match result {
+        Ok(handle) => {
+          eprintln!("[FoldDB] Server started on port {server_port}");
+          let _ = tx.send(Ok(handle));
+          // Keep runtime alive so the server keeps running
+          rt.block_on(std::future::pending::<()>());
+        }
+        Err(e) => {
+          eprintln!("[FoldDB] Failed to start server: {e}");
+          let _ = tx.send(Err(e));
+        }
+      }
+    });
 
-  let (server_handle, startup_error) = match server_result {
-    Ok(Ok(handle)) => (Some(handle), None),
-    Ok(Err(e)) => (None, Some(e)),
-    Err(_) => (None, Some("Server failed to start within 30 seconds.".to_string())),
+    // Wait for the server to start (with timeout)
+    match rx.recv_timeout(std::time::Duration::from_secs(30)) {
+      Ok(Ok(handle)) => (Some(handle), None),
+      Ok(Err(e)) => (None, Some(e)),
+      Err(_) => (None, Some("Server failed to start within 30 seconds.".to_string())),
+    }
   };
 
   tauri::Builder::default()
@@ -202,10 +224,18 @@ pub fn run() {
         std::process::exit(1);
       }
 
-      // Create the main window — server is already listening
+      // Create the main window — server is already listening.
+      // When the app had to fall back off 9001, surface the chosen port in
+      // the window title so the user (and any docs telling them to visit
+      // localhost:9001) can tell at a glance.
       let url = format!("http://localhost:{}", server_port);
+      let window_title = if server_port == 9001 {
+        "FoldDB - Personal Database".to_string()
+      } else {
+        format!("FoldDB - Personal Database (port {server_port})")
+      };
       let _window = WebviewWindowBuilder::new(app, "main", WebviewUrl::External(url.parse().unwrap()))
-        .title("FoldDB - Personal Database")
+        .title(&window_title)
         .inner_size(1400.0, 900.0)
         .min_inner_size(1000.0, 700.0)
         .center()
@@ -260,10 +290,11 @@ async fn start_fold_server(port: u16) -> Result<EmbeddedServerHandle, String> {
 
     eprintln!("[FoldDB] Using data directory: {:?}", data_dir);
 
-    // Fail fast with a clear message if the server can't actually start.
-    // With lazy DB init, a lock conflict or port conflict would otherwise
-    // surface as silent 500s / a blank webview after the window loads.
-    probe_port_available(port)?;
+    // Fail fast with a clear message if the DB is locked — the port was
+    // already selected by `pick_port` before we got here. Lazy DB init
+    // defers sled open to the first API request, so without this probe a
+    // stale folddb_server or second app instance produces silent 500s in
+    // the UI instead of a proper startup dialog.
     probe_db_unlocked(&data_dir)?;
 
     // Load node identity from file if it exists.
@@ -372,19 +403,25 @@ async fn start_fold_server(port: u16) -> Result<EmbeddedServerHandle, String> {
     Ok(handle)
 }
 
-/// Check that nothing else is listening on `port` before we hand off to
-/// lazy actix init (which otherwise returns success and lets the webview
-/// silently connect to a foreign server on the same port).
-fn probe_port_available(port: u16) -> Result<(), String> {
-    match std::net::TcpListener::bind(("127.0.0.1", port)) {
-        Ok(l) => {
-            drop(l);
-            Ok(())
+/// Pick the first free TCP port starting at `preferred`, trying at most
+/// `max_attempts` consecutive ports.
+///
+/// We bind-and-release rather than just asking the OS for an ephemeral
+/// port so that we stay predictable (9001 the vast majority of the time,
+/// 9002–9010 on the rare conflict). A tiny race exists between our
+/// release and the eventual actix bind — acceptable because the worst
+/// case is a retry via the existing startup_error dialog.
+fn pick_port(preferred: u16, max_attempts: u16) -> Result<u16, String> {
+    for offset in 0..max_attempts {
+        let port = preferred.saturating_add(offset);
+        if std::net::TcpListener::bind(("127.0.0.1", port)).is_ok() {
+            return Ok(port);
         }
-        Err(e) => Err(format!(
-            "Port {port} is already in use.\n\nAnother FoldDB instance or an unrelated service is bound to 127.0.0.1:{port}. Please close it and try again.\n\n({e})"
-        )),
     }
+    let last = preferred.saturating_add(max_attempts.saturating_sub(1));
+    Err(format!(
+        "No free TCP port found in range {preferred}..={last}.\n\nOther services on this machine are occupying every port FoldDB would try. Quit anything listening on 127.0.0.1:{preferred} (and the nine ports above it) and relaunch."
+    ))
 }
 
 /// Verify no other process holds the sled database lock.
@@ -439,21 +476,42 @@ mod tests {
     }
 
     #[test]
-    fn probe_port_available_ok_when_free() {
-        // Bind a socket to get an OS-assigned free port, then release.
+    fn pick_port_returns_preferred_when_free() {
+        // Ask the OS for a free port, release, confirm pick_port picks it.
         let listener = std::net::TcpListener::bind(("127.0.0.1", 0)).unwrap();
         let port = listener.local_addr().unwrap().port();
         drop(listener);
-        assert!(probe_port_available(port).is_ok());
+        assert_eq!(pick_port(port, 10).unwrap(), port);
     }
 
     #[test]
-    fn probe_port_available_err_when_occupied() {
-        let listener = std::net::TcpListener::bind(("127.0.0.1", 0)).unwrap();
-        let port = listener.local_addr().unwrap().port();
-        let err = probe_port_available(port).expect_err("port should be occupied");
-        assert!(err.contains("already in use"), "unexpected error: {err}");
-        drop(listener);
+    fn pick_port_falls_back_when_preferred_occupied() {
+        // Occupy a port, confirm pick_port returns a higher one within range.
+        let occupied = std::net::TcpListener::bind(("127.0.0.1", 0)).unwrap();
+        let port = occupied.local_addr().unwrap().port();
+        let picked = pick_port(port, 20).unwrap();
+        assert_ne!(picked, port, "should not pick the occupied port");
+        assert!(picked > port && picked < port + 20, "picked port {picked} outside range");
+        drop(occupied);
+    }
+
+    #[test]
+    fn pick_port_errors_when_all_attempts_occupied() {
+        // Occupy three consecutive ports; pick_port with max_attempts=3 should fail.
+        let l1 = std::net::TcpListener::bind(("127.0.0.1", 0)).unwrap();
+        let base = l1.local_addr().unwrap().port();
+        // Grabbing sequential ports isn't guaranteed, so bind them explicitly.
+        let l2 = match std::net::TcpListener::bind(("127.0.0.1", base + 1)) {
+            Ok(l) => l,
+            Err(_) => return, // someone else has it — skip rather than flake
+        };
+        let l3 = match std::net::TcpListener::bind(("127.0.0.1", base + 2)) {
+            Ok(l) => l,
+            Err(_) => return,
+        };
+        let err = pick_port(base, 3).expect_err("all three ports are occupied");
+        assert!(err.contains("No free TCP port"), "unexpected error: {err}");
+        drop((l1, l2, l3));
     }
 
     #[test]
