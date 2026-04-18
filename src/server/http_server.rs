@@ -699,10 +699,7 @@ impl FoldHttpServer {
         let mut scope = web::scope("/fingerprints");
         #[cfg(feature = "face-detection")]
         {
-            scope = scope.route(
-                "/detect-faces",
-                web::post().to(fp_routes::detect_faces),
-            );
+            scope = scope.route("/detect-faces", web::post().to(fp_routes::detect_faces));
         }
         cfg.service(
             scope
