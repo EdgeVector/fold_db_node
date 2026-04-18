@@ -497,3 +497,34 @@ export async function listIdentities(): Promise<
 > {
   return client.get<ListIdentitiesResponse>("/fingerprints/identities");
 }
+
+// ===== Send Identity Card (Phase 3 messaging — send half) =====
+
+export interface SendIdentityCardResponse {
+  message_id: string;
+  recipient_display_name: string;
+}
+
+/**
+ * Send the node owner's signed Identity Card to a contact via the
+ * existing encrypted messaging layer. Requires the recipient to
+ * already be in the ContactBook (established via a discovery
+ * connection). The payload is identical to the card the recipient
+ * would receive via paste or QR — same signature, same verifier on
+ * the receiving side.
+ *
+ * This is the SEND half of messaging-based card exchange. The
+ * receive half (inbox + accept flow) lands in a follow-up PR; for
+ * now the recipient surfaces the card through whatever ad-hoc
+ * inbox tooling they have.
+ *
+ * Backing endpoint: `POST /api/remote/send-identity-card`.
+ */
+export async function sendIdentityCard(
+  contactPublicKey: string,
+): Promise<EnhancedApiResponse<SendIdentityCardResponse>> {
+  return client.post<SendIdentityCardResponse>(
+    "/remote/send-identity-card",
+    { contact_public_key: contactPublicKey },
+  );
+}

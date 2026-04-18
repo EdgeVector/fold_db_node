@@ -3,7 +3,9 @@ import { QRCodeSVG } from 'qrcode.react'
 import {
   getMyIdentityCard,
   reissueMyIdentityCard,
+  sendIdentityCard,
 } from '../../../api/clients/fingerprintsClient'
+import { listContacts } from '../../../api/clients/trustClient'
 
 /**
  * "My Identity Card" panel — shows the node owner's signed Identity
@@ -40,6 +42,17 @@ export default function MyIdentityCardPanel() {
   // QR code is off by default — takes up 200+px of vertical space
   // and most of the time the user just wants to copy JSON.
   const [showQr, setShowQr] = useState(false)
+
+  // Send-to-contact state. Contacts are fetched lazily on first
+  // open of the picker so we don't pay the trust-client cost for
+  // users who never send their card through messaging.
+  const [sendPickerOpen, setSendPickerOpen] = useState(false)
+  const [contacts, setContacts] = useState([])
+  const [contactsLoading, setContactsLoading] = useState(false)
+  const [contactsError, setContactsError] = useState(null)
+  const [sendingTo, setSendingTo] = useState(null) // contact pub_key currently in-flight
+  const [sendResult, setSendResult] = useState(null) // { display_name } on success
+  const [sendError, setSendError] = useState(null)
 
   const fetchCard = useCallback(async () => {
     setLoading(true)
@@ -100,6 +113,53 @@ export default function MyIdentityCardPanel() {
       setSaving(false)
     }
   }, [card, draftName])
+
+  const openSendPicker = useCallback(async () => {
+    setSendPickerOpen(true)
+    setSendError(null)
+    setSendResult(null)
+    if (contacts.length > 0 || contactsLoading) return
+    setContactsLoading(true)
+    setContactsError(null)
+    try {
+      const res = await listContacts()
+      if (res.success) {
+        setContacts(res.data?.contacts ?? [])
+      } else {
+        setContactsError(res.error ?? 'Failed to load contacts')
+      }
+    } catch (e) {
+      setContactsError(e?.message ?? 'Network error while loading contacts')
+    } finally {
+      setContactsLoading(false)
+    }
+  }, [contacts.length, contactsLoading])
+
+  const handleSendTo = useCallback(async contact => {
+    if (!contact?.public_key) return
+    setSendingTo(contact.public_key)
+    setSendError(null)
+    setSendResult(null)
+    try {
+      const res = await sendIdentityCard(contact.public_key)
+      if (res.success) {
+        // Close the picker on success so the confirmation message
+        // is visually decoupled from the list of contacts. Keep the
+        // recipient's display name around for the success toast.
+        setSendResult({
+          display_name:
+            res.data?.recipient_display_name ?? contact.display_name,
+        })
+        setSendPickerOpen(false)
+      } else {
+        setSendError(res.error ?? 'Failed to send identity card')
+      }
+    } catch (e) {
+      setSendError(e?.message ?? 'Network error while sending')
+    } finally {
+      setSendingTo(null)
+    }
+  }, [])
 
   const handleCopy = useCallback(async () => {
     if (!card) return
@@ -246,12 +306,111 @@ export default function MyIdentityCardPanel() {
             >
               {showQr ? 'Hide QR' : 'Show QR'}
             </button>
+            <button
+              type="button"
+              className="btn-secondary text-xs"
+              onClick={openSendPicker}
+              data-testid="my-identity-card-send"
+              disabled={sendPickerOpen}
+            >
+              Send to contact
+            </button>
             <span className="text-[11px] text-tertiary">
               Editing reissues the card — a new Ed25519 signature is
               computed over the updated payload. Peers will see the
               stale card until you re-send.
             </span>
           </div>
+
+          {sendResult && (
+            <div
+              className="text-[11px] text-gruvbox-green"
+              data-testid="my-identity-card-send-result"
+            >
+              Sent to {sendResult.display_name}.
+            </div>
+          )}
+
+          {sendPickerOpen && (
+            <div
+              className="rounded border border-border p-3 space-y-2"
+              data-testid="my-identity-card-send-picker"
+            >
+              <div className="flex items-center justify-between">
+                <span className="text-xs font-semibold">
+                  Send to which contact?
+                </span>
+                <button
+                  type="button"
+                  className="text-[11px] text-tertiary underline"
+                  onClick={() => setSendPickerOpen(false)}
+                  data-testid="my-identity-card-send-close"
+                >
+                  Close
+                </button>
+              </div>
+              {contactsLoading && (
+                <div className="text-xs text-secondary">Loading contacts…</div>
+              )}
+              {contactsError && (
+                <div
+                  className="text-xs text-gruvbox-red"
+                  data-testid="my-identity-card-send-contacts-error"
+                >
+                  {contactsError}
+                </div>
+              )}
+              {!contactsLoading && !contactsError && contacts.length === 0 && (
+                <div
+                  className="text-xs text-secondary"
+                  data-testid="my-identity-card-send-empty"
+                >
+                  No contacts yet. Connect via discovery first before
+                  sending your card over messaging.
+                </div>
+              )}
+              {contacts.length > 0 && (
+                <ul className="space-y-1">
+                  {contacts
+                    .filter(c => !c.revoked)
+                    .map(contact => (
+                      <li
+                        key={contact.public_key}
+                        className="flex items-center justify-between gap-2"
+                      >
+                        <div className="min-w-0 flex-1">
+                          <div className="text-xs font-medium truncate">
+                            {contact.display_name || '(unnamed)'}
+                          </div>
+                          <div className="text-[10px] text-tertiary font-mono truncate">
+                            {contact.public_key}
+                          </div>
+                        </div>
+                        <button
+                          type="button"
+                          className="btn-primary text-[11px] py-0.5 shrink-0"
+                          onClick={() => handleSendTo(contact)}
+                          disabled={sendingTo === contact.public_key}
+                          data-testid={`my-identity-card-send-to-${contact.public_key}`}
+                        >
+                          {sendingTo === contact.public_key
+                            ? 'Sending…'
+                            : 'Send'}
+                        </button>
+                      </li>
+                    ))}
+                </ul>
+              )}
+              {sendError && (
+                <div
+                  className="text-xs text-gruvbox-red"
+                  data-testid="my-identity-card-send-error"
+                >
+                  {sendError}
+                </div>
+              )}
+            </div>
+          )}
 
           {showQr && (
             <div

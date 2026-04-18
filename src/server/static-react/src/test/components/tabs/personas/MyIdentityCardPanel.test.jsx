@@ -6,12 +6,18 @@ import MyIdentityCardPanel from '../../../../components/tabs/personas/MyIdentity
 vi.mock('../../../../api/clients/fingerprintsClient', () => ({
   getMyIdentityCard: vi.fn(),
   reissueMyIdentityCard: vi.fn(),
+  sendIdentityCard: vi.fn(),
+}))
+vi.mock('../../../../api/clients/trustClient', () => ({
+  listContacts: vi.fn(),
 }))
 
 import {
   getMyIdentityCard,
   reissueMyIdentityCard,
+  sendIdentityCard,
 } from '../../../../api/clients/fingerprintsClient'
+import { listContacts } from '../../../../api/clients/trustClient'
 
 function card(overrides = {}) {
   return {
@@ -241,6 +247,162 @@ describe('MyIdentityCardPanel', () => {
       fireEvent.click(screen.getByTestId('my-identity-card-qr-toggle'))
       fireEvent.click(screen.getByTestId('my-identity-card-qr-toggle'))
       expect(screen.queryByTestId('my-identity-card-qr')).toBeNull()
+    })
+  })
+
+  describe('send to contact', () => {
+    const aliceContact = {
+      public_key: 'pk_alice',
+      display_name: 'Alice',
+      direction: 'mutual',
+      connected_at: '2026-04-01T00:00:00Z',
+      revoked: false,
+    }
+    const bobContact = {
+      public_key: 'pk_bob',
+      display_name: 'Bob',
+      direction: 'mutual',
+      connected_at: '2026-04-02T00:00:00Z',
+      revoked: false,
+    }
+    const revokedContact = {
+      public_key: 'pk_revoked',
+      display_name: 'Gone',
+      direction: 'mutual',
+      connected_at: '2026-03-01T00:00:00Z',
+      revoked: true,
+    }
+
+    it('does not open the picker by default and does not fetch contacts', async () => {
+      getMyIdentityCard.mockResolvedValue(ok(card()))
+      render(<MyIdentityCardPanel />)
+      await waitFor(() => {
+        expect(screen.getByTestId('my-identity-card-send')).toBeInTheDocument()
+      })
+      expect(listContacts).not.toHaveBeenCalled()
+      expect(screen.queryByTestId('my-identity-card-send-picker')).toBeNull()
+    })
+
+    it('opens the picker and loads contacts on first click', async () => {
+      getMyIdentityCard.mockResolvedValue(ok(card()))
+      listContacts.mockResolvedValue(
+        ok({ contacts: [aliceContact, bobContact] }),
+      )
+      render(<MyIdentityCardPanel />)
+      await waitFor(() => {
+        expect(screen.getByTestId('my-identity-card-send')).toBeInTheDocument()
+      })
+      fireEvent.click(screen.getByTestId('my-identity-card-send'))
+      await waitFor(() => {
+        expect(
+          screen.getByTestId('my-identity-card-send-picker'),
+        ).toBeInTheDocument()
+      })
+      expect(listContacts).toHaveBeenCalledTimes(1)
+      expect(
+        screen.getByTestId('my-identity-card-send-to-pk_alice'),
+      ).toBeInTheDocument()
+      expect(
+        screen.getByTestId('my-identity-card-send-to-pk_bob'),
+      ).toBeInTheDocument()
+    })
+
+    it('filters revoked contacts out of the send list', async () => {
+      getMyIdentityCard.mockResolvedValue(ok(card()))
+      listContacts.mockResolvedValue(
+        ok({ contacts: [aliceContact, revokedContact] }),
+      )
+      render(<MyIdentityCardPanel />)
+      await waitFor(() => {
+        expect(screen.getByTestId('my-identity-card-send')).toBeInTheDocument()
+      })
+      fireEvent.click(screen.getByTestId('my-identity-card-send'))
+      await waitFor(() => {
+        expect(
+          screen.getByTestId('my-identity-card-send-to-pk_alice'),
+        ).toBeInTheDocument()
+      })
+      expect(
+        screen.queryByTestId('my-identity-card-send-to-pk_revoked'),
+      ).toBeNull()
+    })
+
+    it('shows the empty-state message when the user has no contacts', async () => {
+      getMyIdentityCard.mockResolvedValue(ok(card()))
+      listContacts.mockResolvedValue(ok({ contacts: [] }))
+      render(<MyIdentityCardPanel />)
+      await waitFor(() => {
+        expect(screen.getByTestId('my-identity-card-send')).toBeInTheDocument()
+      })
+      fireEvent.click(screen.getByTestId('my-identity-card-send'))
+      await waitFor(() => {
+        expect(
+          screen.getByTestId('my-identity-card-send-empty'),
+        ).toBeInTheDocument()
+      })
+    })
+
+    it('calls sendIdentityCard(pub_key) when a contact row is clicked', async () => {
+      getMyIdentityCard.mockResolvedValue(ok(card()))
+      listContacts.mockResolvedValue(ok({ contacts: [aliceContact] }))
+      sendIdentityCard.mockResolvedValue(
+        ok({
+          message_id: 'msg_abc',
+          recipient_display_name: 'Alice',
+        }),
+      )
+      render(<MyIdentityCardPanel />)
+      await waitFor(() => {
+        expect(screen.getByTestId('my-identity-card-send')).toBeInTheDocument()
+      })
+      fireEvent.click(screen.getByTestId('my-identity-card-send'))
+      await waitFor(() => {
+        expect(
+          screen.getByTestId('my-identity-card-send-to-pk_alice'),
+        ).toBeInTheDocument()
+      })
+      fireEvent.click(screen.getByTestId('my-identity-card-send-to-pk_alice'))
+      await waitFor(() => {
+        expect(sendIdentityCard).toHaveBeenCalledWith('pk_alice')
+      })
+      // Picker closes on success and a confirmation line appears.
+      await waitFor(() => {
+        expect(
+          screen.queryByTestId('my-identity-card-send-picker'),
+        ).toBeNull()
+      })
+      expect(screen.getByTestId('my-identity-card-send-result')).toHaveTextContent(
+        /Sent to Alice/,
+      )
+    })
+
+    it('surfaces backend errors in the picker without closing it', async () => {
+      getMyIdentityCard.mockResolvedValue(ok(card()))
+      listContacts.mockResolvedValue(ok({ contacts: [aliceContact] }))
+      sendIdentityCard.mockResolvedValue({
+        success: false,
+        error: 'Contact does not have messaging enabled. Connect via discovery first.',
+      })
+      render(<MyIdentityCardPanel />)
+      await waitFor(() => {
+        expect(screen.getByTestId('my-identity-card-send')).toBeInTheDocument()
+      })
+      fireEvent.click(screen.getByTestId('my-identity-card-send'))
+      await waitFor(() => {
+        expect(
+          screen.getByTestId('my-identity-card-send-to-pk_alice'),
+        ).toBeInTheDocument()
+      })
+      fireEvent.click(screen.getByTestId('my-identity-card-send-to-pk_alice'))
+      await waitFor(() => {
+        expect(
+          screen.getByTestId('my-identity-card-send-error'),
+        ).toHaveTextContent(/messaging enabled/)
+      })
+      // Picker stays open so the user can try a different contact.
+      expect(
+        screen.getByTestId('my-identity-card-send-picker'),
+      ).toBeInTheDocument()
     })
   })
 })

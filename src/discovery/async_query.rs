@@ -90,6 +90,42 @@ pub struct SchemaListResponsePayload {
     pub reply_public_key: String,
 }
 
+/// Identity Card sent to a remote node via messaging. Wraps the
+/// signed card payload (`MyIdentityCardResponse`-shaped JSON) so
+/// the recipient can run the exact same signature verification
+/// that `POST /api/fingerprints/identity-cards/import` runs on a
+/// pasted card.
+///
+/// This is **one-shot** — unlike query requests there is no
+/// reply. The recipient may choose to send their own card back
+/// as a separate message, but that's a follow-up not a response.
+///
+/// The `card` field is a `serde_json::Value` rather than a strongly
+/// typed struct so the payload stays compatible across minor card-
+/// schema changes: the verifier on the receiving side is the
+/// authoritative parser, and it already tolerates the one-of-many
+/// shapes we expect.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct IdentityCardMessagePayload {
+    /// Always "identity_card_send"
+    pub message_type: String,
+    /// Dedup / audit correlation id (UUID). The recipient's inbox
+    /// uses this as the Sled key so a replay of the same message
+    /// is a no-op rather than a duplicate entry.
+    pub message_id: String,
+    /// The signed Identity Card as JSON. Must match the shape of
+    /// `MyIdentityCardResponse` on the sender — verifier on the
+    /// receiver reconstructs the canonical bytes from these fields.
+    pub card: serde_json::Value,
+    /// Sender's Ed25519 public key — the same key used to sign the
+    /// card. The receiver checks that `card.pub_key == sender_public_key`
+    /// before acceptance to prevent "bob sends alice's card" replay.
+    pub sender_public_key: String,
+    /// Sender's bulletin board pseudonym — the inbox records this so
+    /// the UI can show "from Alice" rather than a raw pubkey.
+    pub sender_pseudonym: String,
+}
+
 // ===== Local storage =====
 
 /// A locally tracked async query (outgoing).
