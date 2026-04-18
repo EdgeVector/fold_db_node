@@ -123,6 +123,9 @@ impl AiBackend for OllamaBackend {
 
 // ---- Anthropic ----
 
+/// Anthropic request. `messages[*].content` is either a plain string (text-only
+/// calls) or a list of content blocks (vision / multi-part). We use an untagged
+/// enum to serialize both shapes against the same endpoint.
 #[derive(Debug, Serialize)]
 struct AnthropicRequest {
     model: String,
@@ -134,7 +137,32 @@ struct AnthropicRequest {
 #[derive(Debug, Serialize)]
 struct AnthropicMessage {
     role: String,
-    content: String,
+    content: AnthropicContentInput,
+}
+
+#[derive(Debug, Serialize)]
+#[serde(untagged)]
+enum AnthropicContentInput {
+    Text(String),
+    Blocks(Vec<AnthropicContentBlock>),
+}
+
+/// A single block in a multi-part Anthropic message. Only the variants we use
+/// are modeled (text + image); Anthropic supports more (`tool_use`, etc.) but
+/// we don't need them here.
+#[derive(Debug, Serialize)]
+#[serde(tag = "type", rename_all = "snake_case")]
+enum AnthropicContentBlock {
+    Text { text: String },
+    Image { source: AnthropicImageSource },
+}
+
+#[derive(Debug, Serialize)]
+struct AnthropicImageSource {
+    #[serde(rename = "type")]
+    source_type: String, // "base64"
+    media_type: String,  // "image/jpeg" | "image/png" | "image/gif" | "image/webp"
+    data: String,        // base64-encoded bytes
 }
 
 #[derive(Debug, Deserialize)]
@@ -216,7 +244,7 @@ impl AiBackend for AnthropicBackend {
             model: self.config.model.clone(),
             messages: vec![AnthropicMessage {
                 role: "user".to_string(),
-                content: prompt.to_string(),
+                content: AnthropicContentInput::Text(prompt.to_string()),
             }],
             max_tokens: models::MAX_TOKENS_ANALYSIS,
             temperature: Some(models::TEMPERATURE_FOCUSED),
@@ -225,6 +253,51 @@ impl AiBackend for AnthropicBackend {
             "Anthropic API",
             self.max_retries,
             || IngestionError::configuration_error("All Anthropic API attempts failed"),
+            || self.make_request(&request),
+        )
+        .await
+    }
+}
+
+impl AnthropicBackend {
+    /// Vision call: send an image + a text prompt and return the model's text
+    /// response. Used by the `anthropic_vision` file-to-markdown backend.
+    ///
+    /// `media_type` must be one of `image/jpeg`, `image/png`, `image/gif`,
+    /// `image/webp` per Anthropic's vision API; caller is responsible for
+    /// validating before calling.
+    pub async fn call_vision(
+        &self,
+        image_bytes: &[u8],
+        media_type: &str,
+        prompt: &str,
+    ) -> IngestionResult<String> {
+        use base64::Engine;
+        let data = base64::engine::general_purpose::STANDARD.encode(image_bytes);
+        let request = AnthropicRequest {
+            model: self.config.model.clone(),
+            messages: vec![AnthropicMessage {
+                role: "user".to_string(),
+                content: AnthropicContentInput::Blocks(vec![
+                    AnthropicContentBlock::Image {
+                        source: AnthropicImageSource {
+                            source_type: "base64".to_string(),
+                            media_type: media_type.to_string(),
+                            data,
+                        },
+                    },
+                    AnthropicContentBlock::Text {
+                        text: prompt.to_string(),
+                    },
+                ]),
+            }],
+            max_tokens: models::MAX_TOKENS_ANALYSIS,
+            temperature: Some(models::TEMPERATURE_FOCUSED),
+        };
+        super::helpers::call_with_retries(
+            "Anthropic Vision API",
+            self.max_retries,
+            || IngestionError::configuration_error("All Anthropic Vision API attempts failed"),
             || self.make_request(&request),
         )
         .await

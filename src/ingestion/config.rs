@@ -14,6 +14,21 @@ pub enum AIProvider {
     Ollama,
 }
 
+/// Specifies the backend used to convert images → markdown (vision / OCR).
+/// Separate from `AIProvider` (text backend): vision historically only
+/// supported Ollama via `file_to_markdown`, with Anthropic vision added for
+/// environments without a local Ollama daemon (CI, fresh installs).
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Default, utoipa::ToSchema)]
+pub enum VisionBackend {
+    /// Local Ollama vision models (qwen3-vl, glm-ocr). Requires a reachable
+    /// Ollama daemon at `ollama.base_url`.
+    #[default]
+    Ollama,
+    /// Anthropic Claude vision. Requires `anthropic.api_key`. Used in CI and
+    /// on machines that don't run Ollama locally.
+    Anthropic,
+}
+
 /// Generation parameters for Ollama models.
 #[derive(Debug, Clone, Serialize, Deserialize, utoipa::ToSchema)]
 pub struct OllamaGenerationParams {
@@ -229,6 +244,13 @@ pub struct IngestionConfig {
     pub timeout_seconds: u64,
     pub auto_execute_mutations: bool,
 
+    /// Backend used for image → markdown conversion. Defaults to `Ollama`
+    /// for backwards compatibility with existing installs; set to
+    /// `Anthropic` (or `INGESTION_VISION_BACKEND=anthropic`) to route
+    /// vision through Claude instead.
+    #[serde(default)]
+    pub vision_backend: VisionBackend,
+
     /// Override for LLM query (natural language search, chat, agent).
     /// When unset, inherits from the primary provider/model above.
     #[serde(default)]
@@ -245,6 +267,7 @@ impl Default for IngestionConfig {
             max_retries: 3,
             timeout_seconds: 300,
             auto_execute_mutations: true,
+            vision_backend: VisionBackend::default(),
             query: UseCaseOverride::default(),
         }
     }
@@ -342,6 +365,7 @@ impl IngestionConfig {
                 config.provider = saved.provider;
                 config.ollama = saved.ollama;
                 config.anthropic = saved.anthropic;
+                config.vision_backend = saved.vision_backend;
                 config.query = saved.query;
                 true
             }
@@ -350,6 +374,24 @@ impl IngestionConfig {
         // API keys: env vars always win — secrets shouldn't live in config files
         if let Ok(key) = env::var("ANTHROPIC_API_KEY") {
             config.anthropic.api_key = key;
+        }
+
+        // Vision backend: env var always wins even over saved config. This lets
+        // CI / ephemeral environments route images through Anthropic without
+        // mutating the user's on-disk ingestion_config.json.
+        if let Ok(v) = env::var("INGESTION_VISION_BACKEND") {
+            config.vision_backend = match v.to_lowercase().as_str() {
+                "anthropic" => VisionBackend::Anthropic,
+                "ollama" => VisionBackend::Ollama,
+                other => {
+                    log_feature!(
+                        LogFeature::Ingestion,
+                        warn,
+                        "Unrecognized INGESTION_VISION_BACKEND={other:?}; keeping previous value"
+                    );
+                    config.vision_backend
+                }
+            };
         }
 
         // Provider selection and non-secret model settings only apply when
@@ -494,6 +536,10 @@ pub struct SavedConfig {
     pub ollama: OllamaConfig,
     #[serde(default)]
     pub anthropic: AnthropicConfig,
+    /// Backend for image → markdown (Ollama default; Anthropic when set).
+    /// Persisted so the UI can surface the chosen backend.
+    #[serde(default)]
+    pub vision_backend: VisionBackend,
     /// Per-use-case overrides. When set, query uses its own provider/model.
     #[serde(default)]
     pub query: UseCaseOverride,
@@ -562,6 +608,41 @@ mod tests {
         assert_eq!(config.max_retries, 3);
         assert_eq!(config.timeout_seconds, 300);
         assert!(config.auto_execute_mutations);
+        assert_eq!(config.vision_backend, VisionBackend::Ollama);
+    }
+
+    #[test]
+    fn vision_backend_defaults_to_ollama() {
+        assert_eq!(VisionBackend::default(), VisionBackend::Ollama);
+    }
+
+    #[test]
+    fn saved_config_without_vision_backend_deserializes_to_ollama_default() {
+        // Existing ingestion_config.json files written before this change won't
+        // have the `vision_backend` field. They must still load cleanly and
+        // preserve Ollama behavior.
+        let json = r#"{
+            "provider": "Anthropic",
+            "ollama": {
+                "model": "llama3.3",
+                "base_url": "http://localhost:11434",
+                "vision_model": "qwen3-vl:2b",
+                "ocr_model": "glm-ocr:latest"
+            }
+        }"#;
+        let saved: SavedConfig = serde_json::from_str(json).expect("should parse legacy config");
+        assert_eq!(saved.vision_backend, VisionBackend::Ollama);
+    }
+
+    #[test]
+    fn saved_config_round_trip_preserves_vision_backend() {
+        let original = SavedConfig {
+            vision_backend: VisionBackend::Anthropic,
+            ..Default::default()
+        };
+        let json = serde_json::to_string(&original).unwrap();
+        let round_tripped: SavedConfig = serde_json::from_str(&json).unwrap();
+        assert_eq!(round_tripped.vision_backend, VisionBackend::Anthropic);
     }
 
     #[test]
