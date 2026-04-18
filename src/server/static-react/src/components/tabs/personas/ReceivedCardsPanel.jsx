@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useState } from 'react'
+import { useCallback, useEffect, useRef, useState } from 'react'
 import {
   acceptReceivedCard,
   dismissReceivedCard,
@@ -28,6 +28,14 @@ export default function ReceivedCardsPanel() {
   // Per-row action state keyed by message_id; lets two rows toggle
   // disabled/in-flight independently.
   const [pendingAction, setPendingAction] = useState({})
+  const [lastRefreshedAt, setLastRefreshedAt] = useState(null)
+  // Mirror pendingAction into a ref so the 30s poll can read the
+  // latest value without re-binding the interval every time a row's
+  // accept/dismiss flips its in-flight flag.
+  const pendingActionRef = useRef(pendingAction)
+  useEffect(() => {
+    pendingActionRef.current = pendingAction
+  }, [pendingAction])
 
   const fetchRows = useCallback(async () => {
     setLoading(true)
@@ -36,6 +44,7 @@ export default function ReceivedCardsPanel() {
       const res = await listReceivedCards()
       if (res.success) {
         setRows(res.data?.received_cards ?? [])
+        setLastRefreshedAt(Date.now())
       } else {
         setError(res.error ?? 'Failed to load received cards')
       }
@@ -48,6 +57,20 @@ export default function ReceivedCardsPanel() {
 
   useEffect(() => {
     fetchRows()
+  }, [fetchRows])
+
+  // Auto-refresh the inbox every 30s while mounted. Suppress the
+  // poll when any row is mid-action (accept/dismiss in-flight) so
+  // we don't stomp the in-flight UI state with a refetch.
+  useEffect(() => {
+    const id = setInterval(() => {
+      const anyPending = Object.values(pendingActionRef.current).some(
+        v => v != null,
+      )
+      if (anyPending) return
+      fetchRows()
+    }, 30_000)
+    return () => clearInterval(id)
   }, [fetchRows])
 
   const setRowPending = (id, flag) =>
@@ -115,6 +138,15 @@ export default function ReceivedCardsPanel() {
         Accept runs the Ed25519 verifier and writes an Identity
         record; Dismiss leaves an audit row without importing.
       </p>
+
+      <div
+        className="text-[11px] text-tertiary"
+        data-testid="received-cards-last-refreshed"
+      >
+        {lastRefreshedAt
+          ? `last refreshed at ${formatClock(lastRefreshedAt)}`
+          : 'last refreshed at —'}
+      </div>
 
       {error && (
         <div className="text-sm text-gruvbox-red" data-testid="received-cards-error">
@@ -205,6 +237,12 @@ export default function ReceivedCardsPanel() {
       )}
     </div>
   )
+}
+
+function formatClock(ms) {
+  const d = new Date(ms)
+  const pad = n => String(n).padStart(2, '0')
+  return `${pad(d.getHours())}:${pad(d.getMinutes())}:${pad(d.getSeconds())}`
 }
 
 function StatusBadge({ status }) {
