@@ -43,8 +43,11 @@ use std::sync::Arc;
 
 // ── Request / response types ─────────────────────────────────────
 
-/// Shape of a single detected face as sent by the caller.
-#[derive(Debug, Clone, Deserialize)]
+/// Shape of a single detected face. Used on the way in (as the
+/// caller's upload shape for `ingest-photo-faces`) and on the way
+/// out (as the pure-compute response shape for `detect-faces`),
+/// so it derives both `Deserialize` and `Serialize`.
+#[derive(Debug, Clone, Deserialize, Serialize)]
 pub struct DetectedFaceDto {
     /// Raw face embedding — typically 512 f32 values from ArcFace,
     /// but this handler imposes no dimension requirement. Malformed

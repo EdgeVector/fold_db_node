@@ -695,8 +695,17 @@ impl FoldHttpServer {
 
     fn configure_fingerprints_routes(cfg: &mut web::ServiceConfig) {
         use crate::server::routes::fingerprints as fp_routes;
+        #[allow(unused_mut)]
+        let mut scope = web::scope("/fingerprints");
+        #[cfg(feature = "face-detection")]
+        {
+            scope = scope.route(
+                "/detect-faces",
+                web::post().to(fp_routes::detect_faces),
+            );
+        }
         cfg.service(
-            web::scope("/fingerprints")
+            scope
                 .route(
                     "/ingest-photo-faces",
                     web::post().to(fp_routes::ingest_photo_faces),
