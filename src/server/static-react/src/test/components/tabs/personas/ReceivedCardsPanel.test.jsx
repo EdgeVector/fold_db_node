@@ -1,5 +1,5 @@
 import React from 'react'
-import { render, screen, fireEvent, waitFor } from '@testing-library/react'
+import { act, render, screen, fireEvent, waitFor } from '@testing-library/react'
 import { describe, it, expect, beforeEach, vi } from 'vitest'
 import ReceivedCardsPanel from '../../../../components/tabs/personas/ReceivedCardsPanel'
 
@@ -148,6 +148,104 @@ describe('ReceivedCardsPanel', () => {
       ).toHaveTextContent(/does not verify/)
     })
     expect(listReceivedCards).toHaveBeenCalledTimes(2)
+  })
+
+  it('auto-refetches every 30s while mounted', async () => {
+    vi.useFakeTimers({ shouldAdvanceTime: true })
+    try {
+      listReceivedCards.mockResolvedValue(ok({ received_cards: [] }))
+      render(<ReceivedCardsPanel />)
+      await waitFor(() => {
+        expect(listReceivedCards).toHaveBeenCalledTimes(1)
+      })
+
+      // No clicks — purely the timer drives the second call.
+      await act(async () => {
+        await vi.advanceTimersByTimeAsync(30_000)
+      })
+      expect(listReceivedCards).toHaveBeenCalledTimes(2)
+
+      await act(async () => {
+        await vi.advanceTimersByTimeAsync(30_000)
+      })
+      expect(listReceivedCards).toHaveBeenCalledTimes(3)
+    } finally {
+      vi.useRealTimers()
+    }
+  })
+
+  it('clears the auto-poll interval on unmount', async () => {
+    vi.useFakeTimers({ shouldAdvanceTime: true })
+    try {
+      listReceivedCards.mockResolvedValue(ok({ received_cards: [] }))
+      const { unmount } = render(<ReceivedCardsPanel />)
+      await waitFor(() => {
+        expect(listReceivedCards).toHaveBeenCalledTimes(1)
+      })
+      unmount()
+      await act(async () => {
+        await vi.advanceTimersByTimeAsync(120_000)
+      })
+      // Still only the initial mount call — interval was cleared.
+      expect(listReceivedCards).toHaveBeenCalledTimes(1)
+    } finally {
+      vi.useRealTimers()
+    }
+  })
+
+  it('suppresses the auto-poll while a row is mid-action', async () => {
+    vi.useFakeTimers({ shouldAdvanceTime: true })
+    try {
+      listReceivedCards.mockResolvedValue(
+        ok({ received_cards: [row({ message_id: 'msg_p' })] }),
+      )
+      // Accept never resolves during the test → pendingAction stays set.
+      let releaseAccept
+      acceptReceivedCard.mockImplementation(
+        () => new Promise(resolve => {
+          releaseAccept = resolve
+        }),
+      )
+
+      render(<ReceivedCardsPanel />)
+      await waitFor(() => {
+        expect(screen.getByTestId('received-card-accept-msg_p')).toBeInTheDocument()
+      })
+      expect(listReceivedCards).toHaveBeenCalledTimes(1)
+
+      fireEvent.click(screen.getByTestId('received-card-accept-msg_p'))
+      await waitFor(() => {
+        expect(acceptReceivedCard).toHaveBeenCalledWith('msg_p')
+      })
+
+      // Tick past the poll interval — should NOT refetch while mid-action.
+      await act(async () => {
+        await vi.advanceTimersByTimeAsync(30_000)
+      })
+      expect(listReceivedCards).toHaveBeenCalledTimes(1)
+
+      // Release the accept; now the row is no longer mid-action.
+      await act(async () => {
+        releaseAccept(ok({ received_card: row({ message_id: 'msg_p', status: 'accepted' }), identity_id: 'id_p' }))
+      })
+
+      await act(async () => {
+        await vi.advanceTimersByTimeAsync(30_000)
+      })
+      expect(listReceivedCards).toHaveBeenCalledTimes(2)
+    } finally {
+      vi.useRealTimers()
+    }
+  })
+
+  it('renders a "last refreshed at" line that updates after fetch', async () => {
+    listReceivedCards.mockResolvedValue(ok({ received_cards: [] }))
+    render(<ReceivedCardsPanel />)
+    await waitFor(() => {
+      expect(
+        screen.getByTestId('received-cards-last-refreshed'),
+      ).toHaveTextContent(/last refreshed at \d{2}:\d{2}:\d{2}/)
+    })
   })
 
   it('calls dismissReceivedCard and flips the status on success', async () => {
