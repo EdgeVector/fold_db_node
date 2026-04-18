@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useState } from 'react'
+import { useCallback, useEffect, useMemo, useState } from 'react'
 import {
   listPersonas,
   getPersona,
@@ -8,6 +8,97 @@ import {
   acceptSuggestedPersona,
   RELATIONSHIP_OPTIONS,
 } from '../../../api/clients/fingerprintsClient'
+
+// ── Pure filter + sort helpers ─────────────────────────────────────
+//
+// Extracted so unit tests can exercise them without mounting the
+// component. The Personas list can grow into the dozens on a
+// dogfood node, so this is the Tier-3 navigability win: filter by
+// name/alias substring, sort by recency / name / mentions / trust.
+
+/**
+ * Allowed sort modes. Exported so tests and the <select> options
+ * stay in sync without magic strings drifting between files.
+ */
+export const PERSONA_SORT_OPTIONS = [
+  { value: 'recent', label: 'Most recent' },
+  { value: 'name_asc', label: 'Name (A–Z)' },
+  { value: 'mentions_desc', label: 'Most mentions' },
+  { value: 'trust_tier_desc', label: 'Trust tier (high→low)' },
+]
+
+const PERSONA_SORT_VALUES = new Set(PERSONA_SORT_OPTIONS.map(o => o.value))
+
+/**
+ * Case-insensitive substring filter on `name` + `aliases`. Trimmed
+ * input; an empty string returns the list unchanged. Stable: order
+ * of the input is preserved when entries match.
+ */
+export function filterPersonas(personas, rawQuery) {
+  const q = (rawQuery ?? '').trim().toLowerCase()
+  if (q === '') return personas
+  return personas.filter(p => {
+    const name = (p.name ?? '').toLowerCase()
+    if (name.includes(q)) return true
+    const aliases = Array.isArray(p.aliases) ? p.aliases : []
+    return aliases.some(a => (a ?? '').toLowerCase().includes(q))
+  })
+}
+
+/**
+ * Sort a persona list by one of the allowed modes. Returns a new
+ * array — never mutates the input. Unknown modes throw loudly so a
+ * typo doesn't silently fall back to a different ordering.
+ *
+ * - `recent`: by `created_at` desc, nulls last (older records that
+ *   pre-date the field sink to the bottom). Tie-breaks on `id` for
+ *   determinism.
+ * - `name_asc`: case-insensitive locale compare on `name`.
+ * - `mentions_desc`: by `mention_count` desc, tie-break on name.
+ * - `trust_tier_desc`: by `trust_tier` desc, tie-break on name.
+ */
+export function sortPersonas(personas, mode) {
+  if (!PERSONA_SORT_VALUES.has(mode)) {
+    throw new Error(`sortPersonas: unknown mode "${mode}"`)
+  }
+  const out = personas.slice()
+  if (mode === 'recent') {
+    out.sort((a, b) => {
+      const aHas = typeof a.created_at === 'string' && a.created_at !== ''
+      const bHas = typeof b.created_at === 'string' && b.created_at !== ''
+      if (aHas && !bHas) return -1
+      if (!aHas && bHas) return 1
+      if (aHas && bHas && a.created_at !== b.created_at) {
+        return a.created_at < b.created_at ? 1 : -1
+      }
+      return (a.id ?? '').localeCompare(b.id ?? '')
+    })
+    return out
+  }
+  if (mode === 'name_asc') {
+    out.sort((a, b) =>
+      (a.name ?? '').localeCompare(b.name ?? '', undefined, {
+        sensitivity: 'base',
+      }),
+    )
+    return out
+  }
+  if (mode === 'mentions_desc') {
+    out.sort((a, b) => {
+      const diff = (b.mention_count ?? 0) - (a.mention_count ?? 0)
+      if (diff !== 0) return diff
+      return (a.name ?? '').localeCompare(b.name ?? '')
+    })
+    return out
+  }
+  // trust_tier_desc
+  out.sort((a, b) => {
+    const diff = (b.trust_tier ?? 0) - (a.trust_tier ?? 0)
+    if (diff !== 0) return diff
+    return (a.name ?? '').localeCompare(b.name ?? '')
+  })
+  return out
+}
 
 /**
  * Personas sub-tab content. Shows a list of every Persona on the node,
@@ -395,6 +486,16 @@ export default function PersonasPanel() {
 }
 
 function PersonaList({ personas, loading, error, selectedId, onSelect, onRefresh }) {
+  // Filter + sort live entirely in the list pane — no parent state,
+  // no persistence. Reset on reload by design (alpha scope).
+  const [filterText, setFilterText] = useState('')
+  const [sortMode, setSortMode] = useState('recent')
+
+  const visible = useMemo(() => {
+    const filtered = filterPersonas(personas, filterText)
+    return sortPersonas(filtered, sortMode)
+  }, [personas, filterText, sortMode])
+
   return (
     <div className="lg:w-1/2 card p-3" data-testid="persona-list">
       <div className="flex items-center justify-between mb-3">
@@ -410,6 +511,31 @@ function PersonaList({ personas, loading, error, selectedId, onSelect, onRefresh
         </button>
       </div>
 
+      <div className="flex items-center gap-2 mb-3">
+        <input
+          type="text"
+          value={filterText}
+          onChange={e => setFilterText(e.target.value)}
+          placeholder="Filter by name or alias…"
+          className="input text-xs flex-1"
+          data-testid="persona-list-filter"
+          aria-label="Filter personas by name or alias"
+        />
+        <select
+          value={sortMode}
+          onChange={e => setSortMode(e.target.value)}
+          className="input text-xs py-1"
+          data-testid="persona-list-sort"
+          aria-label="Sort personas"
+        >
+          {PERSONA_SORT_OPTIONS.map(opt => (
+            <option key={opt.value} value={opt.value}>
+              {opt.label}
+            </option>
+          ))}
+        </select>
+      </div>
+
       {error && (
         <div className="text-sm text-gruvbox-red" data-testid="persona-list-error">
           {error}
@@ -423,8 +549,18 @@ function PersonaList({ personas, loading, error, selectedId, onSelect, onRefresh
         </div>
       )}
 
+      {!loading && !error && personas.length > 0 && visible.length === 0 && (
+        <div
+          className="text-sm text-secondary"
+          data-testid="persona-list-empty-filtered"
+        >
+          No personas match “{filterText.trim()}”. Try a different filter
+          or clear the search.
+        </div>
+      )}
+
       <ul className="space-y-1">
-        {personas.map(p => (
+        {visible.map(p => (
           <li key={p.id}>
             <button
               type="button"

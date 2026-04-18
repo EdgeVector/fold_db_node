@@ -30,6 +30,10 @@ export interface PersonaSummary {
   fingerprint_count: number;
   edge_count: number;
   mention_count: number;
+  /** Free-form alternate names. Used for client-side filtering. */
+  aliases: string[];
+  /** ISO-8601 creation timestamp. Used for client-side recency sort. */
+  created_at: string | null;
 }
 
 export interface ListPersonasResponse {
