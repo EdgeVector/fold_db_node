@@ -10,6 +10,8 @@
 //! (`crate::server::routes::fingerprints`) wraps them in actix
 //! responses.
 
+#[cfg(feature = "face-detection")]
+pub mod detect_faces;
 pub mod identities;
 pub mod import_contacts;
 pub mod import_identity_card;
@@ -22,6 +24,8 @@ pub mod received_cards;
 pub mod reissue_identity_card;
 pub mod suggestions;
 
+#[cfg(feature = "face-detection")]
+pub use detect_faces::{detect_faces, DetectFacesRequest, DetectFacesResponse};
 pub use identities::{list_identities, IdentityAuditRow, ListIdentitiesResponse};
 pub use import_contacts::import_contacts;
 pub use import_identity_card::{

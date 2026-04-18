@@ -605,3 +605,38 @@ export async function dismissReceivedCard(
     {},
   );
 }
+
+// ===== Detect Faces =====
+
+export interface DetectedFace {
+  /** L2-normalized face embedding (typically 512-dim ArcFace). */
+  embedding: number[];
+  /** Bounding box [x, y, w, h]. */
+  bbox: [number, number, number, number];
+  /** Detector confidence in [0, 1]. */
+  confidence: number;
+}
+
+export interface DetectFacesResponse {
+  faces: DetectedFace[];
+}
+
+/**
+ * Run the local ONNX face detector over a single image and return
+ * embeddings + bounding boxes + confidences per detected face.
+ * Pure compute — no database writes. Returns `{ faces: [] }` when
+ * no faces were found. Returns 500 on nodes built without the
+ * `face-detection` cargo feature or without a face processor
+ * configured (the endpoint simply isn't registered in that case, so
+ * the call will 404).
+ *
+ * `imageBase64` must be raw base64 without a `data:` URL prefix.
+ */
+export async function detectFaces(
+  imageBase64: string,
+): Promise<EnhancedApiResponse<DetectFacesResponse>> {
+  return client.post<DetectFacesResponse>(
+    "/fingerprints/detect-faces",
+    { image_base64: imageBase64 },
+  );
+}
