@@ -19,8 +19,10 @@ const HASH_TO_TAB = {
   import: 'smart-folder',
   'data-browser': 'data-browser',
   browser: 'data-browser',
+  browse: 'data-browser',
   'word-graph': 'word-graph',
   discovery: 'discovery',
+  discover: 'discovery',
   'discovery-browse': 'discovery-browse',
   views: 'views',
   people: 'people',
@@ -57,12 +59,20 @@ export function useTabRouting() {
   )
   const [settingsSubTab, setSettingsSubTab] = useState(null)
 
-  // Sync activeTab with URL hash changes
+  // Sync activeTab with URL hash changes. Unknown hashes get rewritten to
+  // match the current activeTab so the address bar can't linger out of sync
+  // with rendered content (e.g. someone bookmarks `/#browse` before it became
+  // a real alias, or types a typo — URL normalizes instead of silently lying).
   useEffect(() => {
     const handleHashChange = () => {
-      const tab = resolveTabFromHash()
+      if (typeof window === 'undefined') return
+      const raw = window.location.hash.slice(1)
+      const tab = raw ? HASH_TO_TAB[raw] || null : null
       if (tab && tab !== activeTab) {
         setActiveTab(tab)
+      } else if (raw && !tab && window.location.hash !== `#${activeTab}`) {
+        // unknown hash — normalize URL to match current state
+        window.history.replaceState(null, '', `#${activeTab}`)
       }
     }
 
