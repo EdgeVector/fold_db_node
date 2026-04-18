@@ -39,10 +39,7 @@ pub async fn convert_file_to_json(file_path: &PathBuf) -> Result<Value, Ingestio
         ingestion_config.vision_backend,
         crate::ingestion::config::VisionBackend::Anthropic
     ) {
-        let ext = file_path
-            .extension()
-            .and_then(|e| e.to_str())
-            .unwrap_or("");
+        let ext = file_path.extension().and_then(|e| e.to_str()).unwrap_or("");
         if crate::ingestion::file_handling::anthropic_vision::supports_extension(ext) {
             return crate::ingestion::file_handling::anthropic_vision::convert_image_to_json(
                 file_path,

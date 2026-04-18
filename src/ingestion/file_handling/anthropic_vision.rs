@@ -91,20 +91,16 @@ pub async fn convert_image_to_json(
         .to_string();
 
     let bytes = std::fs::read(file_path).map_err(|e| {
-        IngestionError::FileConversionFailed(format!(
-            "Failed to read {}: {e}",
-            file_path.display()
-        ))
+        IngestionError::FileConversionFailed(format!("Failed to read {}: {e}", file_path.display()))
     })?;
     let size_bytes = bytes.len() as u64;
 
-    let backend =
-        AnthropicBackend::new(anthropic_config.clone(), timeout_seconds, max_retries)
-            .map_err(|e| {
-                IngestionError::configuration_error(format!(
-                    "Failed to build Anthropic backend for vision: {e}"
-                ))
-            })?;
+    let backend = AnthropicBackend::new(anthropic_config.clone(), timeout_seconds, max_retries)
+        .map_err(|e| {
+            IngestionError::configuration_error(format!(
+                "Failed to build Anthropic backend for vision: {e}"
+            ))
+        })?;
 
     let markdown = backend
         .call_vision(&bytes, media_type, VISION_PROMPT)

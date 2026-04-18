@@ -161,8 +161,8 @@ enum AnthropicContentBlock {
 struct AnthropicImageSource {
     #[serde(rename = "type")]
     source_type: String, // "base64"
-    media_type: String,  // "image/jpeg" | "image/png" | "image/gif" | "image/webp"
-    data: String,        // base64-encoded bytes
+    media_type: String, // "image/jpeg" | "image/png" | "image/gif" | "image/webp"
+    data: String,       // base64-encoded bytes
 }
 
 #[derive(Debug, Deserialize)]
