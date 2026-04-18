@@ -12,6 +12,7 @@ vi.mock('../../../../api/clients/fingerprintsClient', () => ({
   updatePersona: vi.fn(),
   deletePersona: vi.fn(),
   mergePersonas: vi.fn(),
+  acceptSuggestedPersona: vi.fn(),
   RELATIONSHIP_OPTIONS: [
     'self',
     'family',
@@ -28,6 +29,7 @@ import {
   updatePersona,
   deletePersona,
   mergePersonas,
+  acceptSuggestedPersona,
 } from '../../../../api/clients/fingerprintsClient'
 
 // ── Test data builders ─────────────────────────────────────────────
@@ -878,6 +880,173 @@ describe('PersonasPanel', () => {
         expect(deletePersona).not.toHaveBeenCalled()
         // Row still there.
         expect(screen.getByTestId('persona-row-ps_c')).toBeInTheDocument()
+      } finally {
+        window.confirm = origConfirm
+      }
+    })
+  })
+
+  describe('delete undo', () => {
+    // Shared setup helper — render the panel, select the persona, and
+    // run the delete flow with `window.confirm` accepted. Returns the
+    // saved confirm so each test can restore it in finally.
+    async function deleteAndAwaitSnack({
+      personaId = 'ps_undo',
+      name = 'UndoMe',
+      seeds = ['fp_a', 'fp_b', 'fp_c'],
+      relationship = 'friend',
+    } = {}) {
+      listPersonas.mockResolvedValue(
+        okList([makeSummary({ id: personaId, name, built_in: false, relationship })]),
+      )
+      getPersona.mockResolvedValue(
+        okDetail(
+          makeDetail({
+            id: personaId,
+            name,
+            built_in: false,
+            relationship,
+            seed_fingerprint_ids: seeds,
+          }),
+        ),
+      )
+      deletePersona.mockResolvedValue({
+        success: true,
+        data: { deleted_persona_id: personaId },
+      })
+      const origConfirm = window.confirm
+      window.confirm = () => true
+      render(<PersonasPanel />)
+      await waitFor(() => {
+        expect(screen.getByTestId(`persona-row-${personaId}`)).toBeInTheDocument()
+      })
+      fireEvent.click(screen.getByTestId(`persona-row-${personaId}`))
+      await waitFor(() => {
+        expect(screen.getByTestId('persona-delete-button')).toBeInTheDocument()
+      })
+      fireEvent.click(screen.getByTestId('persona-delete-button'))
+      await waitFor(() => {
+        expect(deletePersona).toHaveBeenCalledWith(personaId)
+      })
+      return { origConfirm, seeds, name, relationship }
+    }
+
+    it('shows the delete-undo snack after a successful delete', async () => {
+      const { origConfirm } = await deleteAndAwaitSnack()
+      try {
+        await waitFor(() => {
+          expect(
+            screen.getByTestId('persona-delete-undo-snack'),
+          ).toBeInTheDocument()
+        })
+        // Both the snack and the Undo button must be findable by
+        // their distinct test ids — separate from the exclude snack.
+        expect(
+          screen.getByTestId('persona-delete-undo-button'),
+        ).toBeInTheDocument()
+        expect(screen.queryByTestId('persona-undo-snack')).toBeNull()
+      } finally {
+        window.confirm = origConfirm
+      }
+    })
+
+    it('auto-dismisses the delete-undo snack after 5 seconds', async () => {
+      vi.useFakeTimers({ shouldAdvanceTime: true })
+      try {
+        const { origConfirm } = await deleteAndAwaitSnack()
+        try {
+          await waitFor(() => {
+            expect(
+              screen.getByTestId('persona-delete-undo-snack'),
+            ).toBeInTheDocument()
+          })
+          vi.advanceTimersByTime(5100)
+          await waitFor(() => {
+            expect(
+              screen.queryByTestId('persona-delete-undo-snack'),
+            ).toBeNull()
+          })
+        } finally {
+          window.confirm = origConfirm
+        }
+      } finally {
+        vi.useRealTimers()
+      }
+    })
+
+    it('Undo click invokes acceptSuggestedPersona with captured seeds + name + relationship', async () => {
+      const { origConfirm, seeds, name, relationship } = await deleteAndAwaitSnack()
+      try {
+        await waitFor(() => {
+          expect(
+            screen.getByTestId('persona-delete-undo-button'),
+          ).toBeInTheDocument()
+        })
+        // Restored persona comes back with a fresh server-allocated id.
+        const restored = makeDetail({
+          id: 'ps_undo_restored',
+          name,
+          relationship,
+          seed_fingerprint_ids: seeds,
+        })
+        acceptSuggestedPersona.mockResolvedValue({
+          success: true,
+          data: restored,
+        })
+        // The fetchList that runs after restore needs a non-rejecting
+        // mock so the post-undo refresh doesn't blow up.
+        listPersonas.mockResolvedValue(
+          okList([
+            makeSummary({
+              id: 'ps_undo_restored',
+              name,
+              relationship,
+              built_in: false,
+            }),
+          ]),
+        )
+        fireEvent.click(screen.getByTestId('persona-delete-undo-button'))
+        await waitFor(() => {
+          expect(acceptSuggestedPersona).toHaveBeenCalledTimes(1)
+        })
+        expect(acceptSuggestedPersona).toHaveBeenCalledWith({
+          fingerprint_ids: seeds,
+          name,
+          relationship,
+        })
+        // Snack disappears once restore succeeds.
+        await waitFor(() => {
+          expect(
+            screen.queryByTestId('persona-delete-undo-snack'),
+          ).toBeNull()
+        })
+      } finally {
+        window.confirm = origConfirm
+      }
+    })
+
+    it('surfaces an error message in the snack when restore fails', async () => {
+      const { origConfirm } = await deleteAndAwaitSnack()
+      try {
+        await waitFor(() => {
+          expect(
+            screen.getByTestId('persona-delete-undo-button'),
+          ).toBeInTheDocument()
+        })
+        acceptSuggestedPersona.mockResolvedValue({
+          success: false,
+          error: 'Backend rejected restore',
+        })
+        fireEvent.click(screen.getByTestId('persona-delete-undo-button'))
+        await waitFor(() => {
+          expect(
+            screen.getByTestId('persona-delete-undo-error'),
+          ).toHaveTextContent('Backend rejected restore')
+        })
+        // Snack itself stays visible so the user can read the error.
+        expect(
+          screen.getByTestId('persona-delete-undo-snack'),
+        ).toBeInTheDocument()
       } finally {
         window.confirm = origConfirm
       }
