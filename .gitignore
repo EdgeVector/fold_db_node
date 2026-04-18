@@ -88,3 +88,6 @@ src/server/static-react/config/
 # Automatically generated files
 bindings/
 clippy_out.txt
+
+# qa-harness reports
+.gstack/
