@@ -35,10 +35,20 @@ export interface AnthropicConfig {
   base_url: string;
 }
 
+/**
+ * Backend used to convert images → markdown during ingestion. Independent of
+ * `provider` (which controls text generation): vision historically only ran
+ * through a local Ollama daemon, with Anthropic added for machines without
+ * Ollama installed. The two fields can mix — e.g. text via Anthropic, vision
+ * via Ollama — so they are selected separately in the UI.
+ */
+export type VisionBackend = "Ollama" | "Anthropic";
+
 export interface IngestionConfig {
   provider: "Anthropic" | "Ollama";
   ollama: OllamaConfig;
   anthropic: AnthropicConfig;
+  vision_backend?: VisionBackend;
 }
 
 export interface ValidationRequest {

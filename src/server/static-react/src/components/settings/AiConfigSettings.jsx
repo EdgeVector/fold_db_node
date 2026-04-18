@@ -72,6 +72,7 @@ function useAiConfig({ configSaveStatus, setConfigSaveStatus, onClose }) {
   const dispatch = useAppDispatch()
   const savedConfig = useAppSelector(selectIngestionConfig)
   const [aiProvider, setAiProvider] = useState('Anthropic')
+  const [visionBackend, setVisionBackend] = useState('Ollama')
   const [ollamaModel, setOllamaModel] = useState('')
   const [ollamaVisionModel, setOllamaVisionModel] = useState('qwen3-vl:2b')
   const [ollamaOcrModel, setOllamaOcrModel] = useState('glm-ocr:latest')
@@ -183,6 +184,7 @@ function useAiConfig({ configSaveStatus, setConfigSaveStatus, onClose }) {
       setAnthropicModel(savedConfig.anthropic?.model || 'claude-sonnet-4-20250514')
       setAnthropicBaseUrl(savedConfig.anthropic?.base_url || 'https://api.anthropic.com')
       setAiProvider(savedConfig.provider || 'Anthropic')
+      setVisionBackend(savedConfig.vision_backend || 'Ollama')
       // Query override
       const q = savedConfig.query
       if (q && (q.provider || q.ollama_model || q.anthropic_model)) {
@@ -217,6 +219,7 @@ function useAiConfig({ configSaveStatus, setConfigSaveStatus, onClose }) {
           },
         },
         anthropic: { api_key: anthropicApiKey, model: anthropicModel, base_url: anthropicBaseUrl },
+        vision_backend: visionBackend,
         query: queryOverrideEnabled ? {
           provider: queryProvider,
           ollama_model: queryProvider === 'Ollama' ? queryOllamaModel || undefined : undefined,
@@ -282,6 +285,18 @@ function useAiConfig({ configSaveStatus, setConfigSaveStatus, onClose }) {
               </>
             )}
           </div>
+        </div>
+
+        <div>
+          <label className="label">Vision Backend <span className="text-xs text-secondary">(images only)</span></label>
+          <select value={visionBackend} onChange={(e) => setVisionBackend(e.target.value)} className="select" aria-label="Vision Backend">
+            <option value="Ollama">Ollama (local, free, requires daemon)</option>
+            <option value="Anthropic">Anthropic (cloud, uses API key)</option>
+          </select>
+          <p className="text-xs text-secondary mt-1">Controls how images are converted to markdown during ingestion. Separate from the text provider above — even with Anthropic for text, you can keep image conversion on Ollama (or vice versa).</p>
+          {visionBackend === 'Anthropic' && aiProvider !== 'Anthropic' && (
+            <p className="text-xs text-gruvbox-yellow mt-1">Requires an Anthropic API key (set one in the Anthropic provider section).</p>
+          )}
         </div>
 
         {aiProvider === 'Anthropic' && (
