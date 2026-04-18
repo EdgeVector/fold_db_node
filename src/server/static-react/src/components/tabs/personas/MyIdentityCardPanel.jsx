@@ -1,6 +1,7 @@
-import { useCallback, useEffect, useState } from 'react'
+import { useCallback, useEffect, useRef, useState } from 'react'
 import { QRCodeSVG } from 'qrcode.react'
 import {
+  detectFaces,
   getMyIdentityCard,
   reissueMyIdentityCard,
   sendIdentityCard,
@@ -53,6 +54,32 @@ export default function MyIdentityCardPanel() {
   const [sendingTo, setSendingTo] = useState(null) // contact pub_key currently in-flight
   const [sendResult, setSendResult] = useState(null) // { display_name } on success
   const [sendError, setSendError] = useState(null)
+
+  // Attach-face flow state. `stage` walks through
+  // idle → camera (getUserMedia running) → detecting (POST to
+  // /detect-faces) → saving (POST to /reissue). Errors surface
+  // inline; the modal stays open until the user cancels or succeeds.
+  const [attachOpen, setAttachOpen] = useState(false)
+  const [attachStage, setAttachStage] = useState('idle')
+  const [attachError, setAttachError] = useState(null)
+  const [removingFace, setRemovingFace] = useState(false)
+  const videoRef = useRef(null)
+  const streamRef = useRef(null)
+
+  const stopCamera = useCallback(() => {
+    const stream = streamRef.current
+    if (stream) {
+      for (const track of stream.getTracks()) {
+        track.stop()
+      }
+    }
+    streamRef.current = null
+    if (videoRef.current) {
+      videoRef.current.srcObject = null
+    }
+  }, [])
+
+  useEffect(() => stopCamera, [stopCamera])
 
   const fetchCard = useCallback(async () => {
     setLoading(true)
@@ -161,6 +188,121 @@ export default function MyIdentityCardPanel() {
     }
   }, [])
 
+  const closeAttach = useCallback(() => {
+    stopCamera()
+    setAttachOpen(false)
+    setAttachStage('idle')
+    setAttachError(null)
+  }, [stopCamera])
+
+  const openAttach = useCallback(async () => {
+    setAttachOpen(true)
+    setAttachError(null)
+    setAttachStage('camera')
+    if (
+      !navigator.mediaDevices ||
+      typeof navigator.mediaDevices.getUserMedia !== 'function'
+    ) {
+      setAttachError(
+        'Camera access is not available in this browser. Attach face from a device with a camera and a modern browser.',
+      )
+      setAttachStage('idle')
+      return
+    }
+    try {
+      const stream = await navigator.mediaDevices.getUserMedia({ video: true })
+      streamRef.current = stream
+      if (videoRef.current) {
+        videoRef.current.srcObject = stream
+        // Autoplay attr should be enough, but call play() explicitly
+        // for browsers that require a user-gesture-tied trigger.
+        videoRef.current.play?.().catch(() => {})
+      }
+    } catch (e) {
+      setAttachError(
+        e?.message ??
+          'Could not open the camera. Grant camera permission and try again.',
+      )
+      setAttachStage('idle')
+    }
+  }, [])
+
+  const snapAndDetect = useCallback(async () => {
+    const video = videoRef.current
+    if (!video || !streamRef.current) {
+      setAttachError('Camera is not ready yet.')
+      return
+    }
+    setAttachError(null)
+    setAttachStage('detecting')
+    try {
+      // Draw the current video frame to a canvas and read the PNG
+      // base64 payload. toDataURL returns `data:image/png;base64,<payload>`
+      // — strip the prefix so the backend gets raw base64.
+      const canvas = document.createElement('canvas')
+      canvas.width = video.videoWidth || 640
+      canvas.height = video.videoHeight || 480
+      const ctx = canvas.getContext('2d')
+      ctx.drawImage(video, 0, 0, canvas.width, canvas.height)
+      const dataUrl = canvas.toDataURL('image/png')
+      const commaIdx = dataUrl.indexOf(',')
+      const imageBase64 =
+        commaIdx >= 0 ? dataUrl.slice(commaIdx + 1) : dataUrl
+
+      const detectRes = await detectFaces(imageBase64)
+      if (!detectRes.success) {
+        setAttachError(detectRes.error ?? 'Face detection failed.')
+        setAttachStage('camera')
+        return
+      }
+      const faces = detectRes.data?.faces ?? []
+      if (faces.length === 0) {
+        setAttachError('No face detected. Try better lighting.')
+        setAttachStage('camera')
+        return
+      }
+      if (faces.length > 1) {
+        setAttachError(
+          'Multiple faces detected. Make sure only you are in frame.',
+        )
+        setAttachStage('camera')
+        return
+      }
+
+      setAttachStage('saving')
+      const embedding = faces[0].embedding
+      const saveRes = await reissueMyIdentityCard({ face_embedding: embedding })
+      if (!saveRes.success) {
+        setAttachError(saveRes.error ?? 'Failed to reissue identity card.')
+        setAttachStage('camera')
+        return
+      }
+      setCard(saveRes.data ?? null)
+      closeAttach()
+    } catch (e) {
+      setAttachError(e?.message ?? 'Network error while attaching face.')
+      setAttachStage('camera')
+    }
+  }, [closeAttach])
+
+  const handleRemoveFace = useCallback(async () => {
+    if (!card) return
+    setRemovingFace(true)
+    setAttachError(null)
+    try {
+      const res = await reissueMyIdentityCard({ face_embedding: null })
+      if (res.success) {
+        setCard(res.data ?? null)
+      } else {
+        setAttachError(res.error ?? 'Failed to remove face.')
+      }
+    } catch (e) {
+      setAttachError(e?.message ?? 'Network error while removing face.')
+    } finally {
+      setRemovingFace(false)
+    }
+  }, [card])
+
   const handleCopy = useCallback(async () => {
     if (!card) return
     const payload = JSON.stringify(card, null, 2)
@@ -268,6 +410,16 @@ export default function MyIdentityCardPanel() {
             <dd className="font-medium">{card.display_name}</dd>
             <dt className="text-tertiary">Birthday</dt>
             <dd>{card.birthday || <span className="text-tertiary italic">not set</span>}</dd>
+            <dt className="text-tertiary">Face</dt>
+            <dd data-testid="my-identity-card-face-status">
+              {card.face_embedding ? (
+                <span className="text-gruvbox-green">
+                  attached ({card.face_embedding.length}-d)
+                </span>
+              ) : (
+                <span className="text-tertiary italic">not attached</span>
+              )}
+            </dd>
             <dt className="text-tertiary">Public key</dt>
             <dd className="font-mono break-all text-[11px]" title={card.pub_key}>
               {card.pub_key}
@@ -315,12 +467,94 @@ export default function MyIdentityCardPanel() {
             >
               Send to contact
             </button>
+            {!card.face_embedding ? (
+              <button
+                type="button"
+                className="btn-secondary text-xs"
+                onClick={openAttach}
+                disabled={attachOpen}
+                data-testid="my-identity-card-attach-face"
+              >
+                Attach face
+              </button>
+            ) : (
+              <button
+                type="button"
+                className="btn-secondary text-xs"
+                onClick={handleRemoveFace}
+                disabled={removingFace}
+                data-testid="my-identity-card-remove-face"
+              >
+                {removingFace ? 'Removing…' : 'Remove face'}
+              </button>
+            )}
             <span className="text-[11px] text-tertiary">
               Editing reissues the card — a new Ed25519 signature is
               computed over the updated payload. Peers will see the
               stale card until you re-send.
             </span>
           </div>
+
+          <p
+            className="text-[11px] text-tertiary"
+            data-testid="my-identity-card-attach-help"
+          >
+            Attaches your face to your signed Identity Card. To also
+            add this photo to your photo library, upload it through
+            Photos separately.
+          </p>
+
+          {attachOpen && (
+            <div
+              className="rounded border border-border p-3 space-y-2"
+              data-testid="my-identity-card-attach-modal"
+            >
+              <div className="flex items-center justify-between">
+                <span className="text-xs font-semibold">
+                  Take a selfie
+                </span>
+                <button
+                  type="button"
+                  className="text-[11px] text-tertiary underline"
+                  onClick={closeAttach}
+                  data-testid="my-identity-card-attach-close"
+                >
+                  Cancel
+                </button>
+              </div>
+              <video
+                ref={videoRef}
+                autoPlay
+                muted
+                playsInline
+                className="w-full max-w-sm rounded bg-black"
+                data-testid="my-identity-card-attach-video"
+              />
+              {attachError && (
+                <div
+                  className="text-xs text-gruvbox-red"
+                  data-testid="my-identity-card-attach-error"
+                >
+                  {attachError}
+                </div>
+              )}
+              <button
+                type="button"
+                className="btn-primary text-xs"
+                onClick={snapAndDetect}
+                disabled={
+                  attachStage === 'detecting' || attachStage === 'saving'
+                }
+                data-testid="my-identity-card-attach-snap"
+              >
+                {attachStage === 'detecting'
+                  ? 'Detecting…'
+                  : attachStage === 'saving'
+                  ? 'Signing…'
+                  : 'Snap and attach'}
+              </button>
+            </div>
+          )}
 
           {sendResult && (
             <div

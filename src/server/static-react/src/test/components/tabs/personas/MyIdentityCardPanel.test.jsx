@@ -7,12 +7,14 @@ vi.mock('../../../../api/clients/fingerprintsClient', () => ({
   getMyIdentityCard: vi.fn(),
   reissueMyIdentityCard: vi.fn(),
   sendIdentityCard: vi.fn(),
+  detectFaces: vi.fn(),
 }))
 vi.mock('../../../../api/clients/trustClient', () => ({
   listContacts: vi.fn(),
 }))
 
 import {
+  detectFaces,
   getMyIdentityCard,
   reissueMyIdentityCard,
   sendIdentityCard,
@@ -403,6 +405,174 @@ describe('MyIdentityCardPanel', () => {
       expect(
         screen.getByTestId('my-identity-card-send-picker'),
       ).toBeInTheDocument()
+    })
+  })
+
+  describe('attach / remove face', () => {
+    function stubGetUserMedia(stream = { getTracks: () => [] }) {
+      const getUserMedia = vi.fn().mockResolvedValue(stream)
+      Object.defineProperty(navigator, 'mediaDevices', {
+        value: { getUserMedia },
+        configurable: true,
+      })
+      return getUserMedia
+    }
+
+    function stubToDataURL() {
+      // jsdom doesn't implement canvas. Patch HTMLCanvasElement so
+      // getContext/toDataURL don't blow up — we don't actually care
+      // about the pixel data because detectFaces is mocked.
+      HTMLCanvasElement.prototype.getContext = vi.fn().mockReturnValue({
+        drawImage: vi.fn(),
+      })
+      HTMLCanvasElement.prototype.toDataURL = vi
+        .fn()
+        .mockReturnValue('data:image/png;base64,AAAA')
+    }
+
+    it('hides the Attach button until the card is loaded', async () => {
+      // Resolve later so the panel stays in the loading branch.
+      getMyIdentityCard.mockReturnValue(new Promise(() => {}))
+      render(<MyIdentityCardPanel />)
+      expect(
+        screen.queryByTestId('my-identity-card-attach-face'),
+      ).toBeNull()
+    })
+
+    it('detects a single face and calls reissue with the embedding', async () => {
+      getMyIdentityCard.mockResolvedValue(ok(card({ face_embedding: null })))
+      const getUserMedia = stubGetUserMedia()
+      stubToDataURL()
+      detectFaces.mockResolvedValue(
+        ok({
+          faces: [
+            {
+              embedding: [0.1, 0.2, 0.3],
+              bbox: [0, 0, 1, 1],
+              confidence: 0.95,
+            },
+          ],
+        }),
+      )
+      reissueMyIdentityCard.mockResolvedValue(
+        ok(card({ face_embedding: [0.1, 0.2, 0.3] })),
+      )
+      render(<MyIdentityCardPanel />)
+      await waitFor(() => {
+        expect(
+          screen.getByTestId('my-identity-card-attach-face'),
+        ).toBeInTheDocument()
+      })
+      fireEvent.click(screen.getByTestId('my-identity-card-attach-face'))
+      await waitFor(() => {
+        expect(getUserMedia).toHaveBeenCalledTimes(1)
+      })
+      await waitFor(() => {
+        expect(
+          screen.getByTestId('my-identity-card-attach-snap'),
+        ).toBeInTheDocument()
+      })
+      fireEvent.click(screen.getByTestId('my-identity-card-attach-snap'))
+      await waitFor(() => {
+        expect(reissueMyIdentityCard).toHaveBeenCalledWith({
+          face_embedding: [0.1, 0.2, 0.3],
+        })
+      })
+      // Modal closes on success.
+      await waitFor(() => {
+        expect(
+          screen.queryByTestId('my-identity-card-attach-modal'),
+        ).toBeNull()
+      })
+    })
+
+    it('shows a "no face detected" error when detect returns 0 faces', async () => {
+      getMyIdentityCard.mockResolvedValue(ok(card({ face_embedding: null })))
+      stubGetUserMedia()
+      stubToDataURL()
+      detectFaces.mockResolvedValue(ok({ faces: [] }))
+      render(<MyIdentityCardPanel />)
+      await waitFor(() => {
+        expect(
+          screen.getByTestId('my-identity-card-attach-face'),
+        ).toBeInTheDocument()
+      })
+      fireEvent.click(screen.getByTestId('my-identity-card-attach-face'))
+      await waitFor(() => {
+        expect(
+          screen.getByTestId('my-identity-card-attach-snap'),
+        ).toBeInTheDocument()
+      })
+      fireEvent.click(screen.getByTestId('my-identity-card-attach-snap'))
+      await waitFor(() => {
+        expect(
+          screen.getByTestId('my-identity-card-attach-error'),
+        ).toHaveTextContent(/No face detected/)
+      })
+      expect(reissueMyIdentityCard).not.toHaveBeenCalled()
+      expect(
+        screen.getByTestId('my-identity-card-attach-modal'),
+      ).toBeInTheDocument()
+    })
+
+    it('shows a "multiple faces" error when detect returns 2+ faces', async () => {
+      getMyIdentityCard.mockResolvedValue(ok(card({ face_embedding: null })))
+      stubGetUserMedia()
+      stubToDataURL()
+      detectFaces.mockResolvedValue(
+        ok({
+          faces: [
+            { embedding: [0.1], bbox: [0, 0, 1, 1], confidence: 0.9 },
+            { embedding: [0.2], bbox: [1, 1, 2, 2], confidence: 0.9 },
+          ],
+        }),
+      )
+      render(<MyIdentityCardPanel />)
+      await waitFor(() => {
+        expect(
+          screen.getByTestId('my-identity-card-attach-face'),
+        ).toBeInTheDocument()
+      })
+      fireEvent.click(screen.getByTestId('my-identity-card-attach-face'))
+      await waitFor(() => {
+        expect(
+          screen.getByTestId('my-identity-card-attach-snap'),
+        ).toBeInTheDocument()
+      })
+      fireEvent.click(screen.getByTestId('my-identity-card-attach-snap'))
+      await waitFor(() => {
+        expect(
+          screen.getByTestId('my-identity-card-attach-error'),
+        ).toHaveTextContent(/Multiple faces detected/)
+      })
+      expect(reissueMyIdentityCard).not.toHaveBeenCalled()
+    })
+
+    it('Remove face calls reissue with face_embedding: null', async () => {
+      getMyIdentityCard.mockResolvedValue(
+        ok(card({ face_embedding: [0.1, 0.2, 0.3] })),
+      )
+      reissueMyIdentityCard.mockResolvedValue(
+        ok(card({ face_embedding: null })),
+      )
+      render(<MyIdentityCardPanel />)
+      await waitFor(() => {
+        expect(
+          screen.getByTestId('my-identity-card-remove-face'),
+        ).toBeInTheDocument()
+      })
+      fireEvent.click(screen.getByTestId('my-identity-card-remove-face'))
+      await waitFor(() => {
+        expect(reissueMyIdentityCard).toHaveBeenCalledWith({
+          face_embedding: null,
+        })
+      })
+      // After success the button flips back to Attach.
+      await waitFor(() => {
+        expect(
+          screen.getByTestId('my-identity-card-attach-face'),
+        ).toBeInTheDocument()
+      })
     })
   })
 })
