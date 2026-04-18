@@ -5,6 +5,7 @@ import {
   updatePersona,
   deletePersona,
   mergePersonas,
+  acceptSuggestedPersona,
   RELATIONSHIP_OPTIONS,
 } from '../../../api/clients/fingerprintsClient'
 
@@ -212,6 +213,22 @@ export default function PersonasPanel() {
     [selectedId, personas, fetchList],
   )
 
+  // Undo snack for delete — separate state from the exclude undoSnack
+  // so a delete-undo can sit alongside an exclude-undo without one
+  // clobbering the other. Auto-dismissed after 5s, same as the
+  // exclude snack. Rendered in the same floating container, but
+  // discriminated by a `type` field on each snack.
+  const [deleteUndoSnack, setDeleteUndoSnack] = useState(null)
+  useEffect(() => {
+    if (!deleteUndoSnack) return
+    // If a restore attempt failed, leave the error visible — the
+    // user needs to read it. Otherwise auto-dismiss after 5s, same
+    // as the exclude undo snack.
+    if (deleteUndoSnack.error) return
+    const timer = setTimeout(() => setDeleteUndoSnack(null), 5000)
+    return () => clearTimeout(timer)
+  }, [deleteUndoSnack])
+
   const handleDeletePersona = useCallback(async () => {
     if (!selectedId) return
     // Underlying Fingerprint / Mention / Edge records survive — the
@@ -221,6 +238,20 @@ export default function PersonasPanel() {
       'Delete this persona? The underlying fingerprints, mentions, and edges will remain in the graph — only the saved cluster name and seeds are removed.'
     )
     if (!ok) return
+    // Capture the snapshot needed to reconstruct the persona BEFORE
+    // we issue the delete — once detail is cleared we can't recover
+    // the seed set. acceptSuggestedPersona only needs seeds + name +
+    // relationship to materialize a fresh Persona record. Note that
+    // the restored persona gets a new id (uuid-generated server-side)
+    // and identity_id is NOT re-linked — the user can re-link it
+    // manually if needed.
+    const snapshot = detail
+      ? {
+          name: detail.name,
+          relationship: detail.relationship,
+          seed_fingerprint_ids: [...(detail.seed_fingerprint_ids || [])],
+        }
+      : null
     try {
       const res = await deletePersona(selectedId)
       if (res.success) {
@@ -228,13 +259,53 @@ export default function PersonasPanel() {
         setPersonas(prev => prev.filter(p => p.id !== selectedId))
         setDetail(null)
         setSelectedId(null)
+        if (snapshot && snapshot.seed_fingerprint_ids.length > 0) {
+          setDeleteUndoSnack({ type: 'delete', snapshot, error: null })
+        }
       } else {
         setDetailError(res.error ?? 'Failed to delete persona')
       }
     } catch (e) {
       setDetailError(e?.message ?? 'Network error while deleting persona')
     }
-  }, [selectedId])
+  }, [selectedId, detail])
+
+  const handleUndoDelete = useCallback(async () => {
+    if (!deleteUndoSnack || deleteUndoSnack.type !== 'delete') return
+    const { snapshot } = deleteUndoSnack
+    try {
+      const res = await acceptSuggestedPersona({
+        fingerprint_ids: snapshot.seed_fingerprint_ids,
+        name: snapshot.name,
+        relationship: snapshot.relationship,
+      })
+      if (res.success && res.data) {
+        // Refresh the list and jump into the restored persona so the
+        // user can confirm it came back. The restored persona has a
+        // new id since acceptSuggestedPersona allocates a fresh UUID.
+        await fetchList()
+        setDetail(res.data)
+        setSelectedId(res.data.id)
+        setDeleteUndoSnack(null)
+      } else {
+        // Surface the error inside the snack rather than silently
+        // dropping it — never want a "click Undo, nothing happens"
+        // experience.
+        setDeleteUndoSnack(s =>
+          s ? { ...s, error: res.error ?? 'Failed to restore persona' } : s,
+        )
+      }
+    } catch (e) {
+      setDeleteUndoSnack(s =>
+        s
+          ? {
+              ...s,
+              error: e?.message ?? 'Network error while restoring persona',
+            }
+          : s,
+      )
+    }
+  }, [deleteUndoSnack, fetchList])
 
   return (
     <div className="flex flex-col gap-4 lg:flex-row">
@@ -264,6 +335,39 @@ export default function PersonasPanel() {
         onMerge={handleMerge}
         mergeCandidates={personas}
       />
+      {deleteUndoSnack && deleteUndoSnack.type === 'delete' && (
+        <div
+          className="fixed bottom-16 left-1/2 -translate-x-1/2 z-50 px-4 py-2 rounded-lg bg-gruvbox-yellow/20 border border-gruvbox-yellow/40 flex flex-col gap-1 text-xs shadow-lg backdrop-blur max-w-sm"
+          data-testid="persona-delete-undo-snack"
+        >
+          <div className="flex items-center gap-3">
+            <span>
+              Deleted{' '}
+              <span className="font-semibold">
+                {deleteUndoSnack.snapshot.name || '(unnamed)'}
+              </span>
+              . Undo restores it with a new id (identity link is not
+              re-created).
+            </span>
+            <button
+              type="button"
+              className="text-gruvbox-yellow underline underline-offset-2 font-semibold ml-auto shrink-0"
+              onClick={handleUndoDelete}
+              data-testid="persona-delete-undo-button"
+            >
+              Undo
+            </button>
+          </div>
+          {deleteUndoSnack.error && (
+            <div
+              className="text-gruvbox-red"
+              data-testid="persona-delete-undo-error"
+            >
+              {deleteUndoSnack.error}
+            </div>
+          )}
+        </div>
+      )}
       {undoSnack && (
         <div
           className="fixed bottom-4 left-1/2 -translate-x-1/2 z-50 px-4 py-2 rounded-lg bg-gruvbox-blue/20 border border-gruvbox-blue/40 flex items-center gap-3 text-xs shadow-lg backdrop-blur"
