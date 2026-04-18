@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useState } from 'react'
+import { Scanner } from '@yudiel/react-qr-scanner'
 import {
   importIdentityCard,
   listPersonas,
@@ -31,6 +32,37 @@ export default function ImportIdentityCardPanel() {
   const [submitting, setSubmitting] = useState(false)
   const [error, setError] = useState(null)
   const [result, setResult] = useState(null)
+
+  // Scanner is off by default — instantiating the <Scanner> mounts
+  // the camera, which triggers a permission prompt the user didn't
+  // ask for. Toggle it on with the Scan button.
+  const [scanning, setScanning] = useState(false)
+  const [scanError, setScanError] = useState(null)
+
+  const handleScan = useCallback(detectedCodes => {
+    // onScan fires once per batch; @yudiel's default scanDelay
+    // ensures we don't flood the callback. Take the first code in
+    // the batch — the panel is for importing one card at a time, so
+    // multi-detect is an edge case we don't need to handle.
+    const first = detectedCodes?.[0]
+    if (!first?.rawValue) return
+    setPasted(first.rawValue)
+    setScanning(false)
+    setScanError(null)
+  }, [])
+
+  const handleScanError = useCallback(err => {
+    // getUserMedia rejections (no permission, no camera) surface
+    // here. Show the message to the user; most of the time they
+    // just need to grant camera access in the OS settings.
+    setScanError(
+      err?.message ??
+        (typeof err === 'string'
+          ? err
+          : 'Camera unavailable — paste the card JSON manually.'),
+    )
+    setScanning(false)
+  }, [])
 
   // Pull the persona list once so the user can pick one to link.
   // The dropdown is optional; the empty-string value means "just
@@ -104,17 +136,52 @@ export default function ImportIdentityCardPanel() {
       </div>
 
       <form className="space-y-3" onSubmit={handleSubmit}>
-        <label className="block">
-          <span className="text-xs text-tertiary">Identity Card JSON</span>
+        <div>
+          <div className="flex items-center justify-between">
+            <span className="text-xs text-tertiary">Identity Card JSON</span>
+            <button
+              type="button"
+              className="btn-secondary text-[11px] py-0.5"
+              onClick={() => {
+                setScanError(null)
+                setScanning(v => !v)
+              }}
+              data-testid="import-identity-card-scan-toggle"
+              aria-pressed={scanning}
+            >
+              {scanning ? 'Stop scanning' : 'Scan QR'}
+            </button>
+          </div>
+          {scanning && (
+            <div
+              className="mt-2 w-64 aspect-square rounded overflow-hidden border border-border"
+              data-testid="import-identity-card-scanner"
+            >
+              <Scanner
+                onScan={handleScan}
+                onError={handleScanError}
+                formats={['qr_code']}
+                components={{ finder: true }}
+              />
+            </div>
+          )}
+          {scanError && (
+            <div
+              className="text-[11px] text-gruvbox-red mt-1"
+              data-testid="import-identity-card-scan-error"
+            >
+              {scanError}
+            </div>
+          )}
           <textarea
-            className="input w-full font-mono text-xs h-48 mt-1"
+            className="input w-full font-mono text-xs h-48 mt-2"
             placeholder='{\n  "pub_key": "…",\n  "display_name": "Alice",\n  …\n}'
             value={pasted}
             onChange={e => setPasted(e.target.value)}
             data-testid="import-identity-card-textarea"
             spellCheck={false}
           />
-        </label>
+        </div>
 
         <label className="block">
           <span className="text-xs text-tertiary">

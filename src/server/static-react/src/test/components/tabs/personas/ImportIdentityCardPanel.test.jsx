@@ -8,6 +8,41 @@ vi.mock('../../../../api/clients/fingerprintsClient', () => ({
   listPersonas: vi.fn(),
 }))
 
+// Stub the QR scanner — the real one mounts a getUserMedia stream,
+// which jsdom doesn't implement. Our stub:
+//   1. Tags the DOM so we can assert the scanner is mounted.
+//   2. Exposes a Scan button that fires the onScan callback with a
+//      canned IDetectedBarcode[], letting us drive the happy path
+//      deterministically.
+//   3. Exposes a Trigger-error button for the onError path.
+vi.mock('@yudiel/react-qr-scanner', () => ({
+  Scanner: ({ onScan, onError }) => (
+    <div data-testid="mock-qr-scanner">
+      <button
+        type="button"
+        data-testid="mock-qr-scanner-fire-scan"
+        onClick={() =>
+          onScan?.([
+            {
+              rawValue:
+                '{"pub_key":"pk_base64","display_name":"Alice","birthday":null,"face_embedding":null,"node_id":"pk_base64","card_signature":"sig_base64","issued_at":"2026-04-17T12:00:00Z"}',
+            },
+          ])
+        }
+      >
+        fire scan
+      </button>
+      <button
+        type="button"
+        data-testid="mock-qr-scanner-fire-error"
+        onClick={() => onError?.(new Error('camera blocked'))}
+      >
+        fire error
+      </button>
+    </div>
+  ),
+}))
+
 import {
   importIdentityCard,
   listPersonas,
@@ -220,6 +255,79 @@ describe('ImportIdentityCardPanel', () => {
       expect(screen.getByTestId('import-identity-card-error')).toHaveTextContent(
         /card_signature does not verify/,
       )
+    })
+  })
+
+  describe('QR scanner flow', () => {
+    it('does not mount the scanner by default', async () => {
+      render(<ImportIdentityCardPanel />)
+      await waitFor(() => {
+        expect(
+          screen.getByTestId('import-identity-card-scan-toggle'),
+        ).toBeInTheDocument()
+      })
+      expect(screen.queryByTestId('mock-qr-scanner')).toBeNull()
+      expect(screen.queryByTestId('import-identity-card-scanner')).toBeNull()
+    })
+
+    it('mounts the scanner when Scan QR is clicked', async () => {
+      render(<ImportIdentityCardPanel />)
+      await waitFor(() => {
+        expect(
+          screen.getByTestId('import-identity-card-scan-toggle'),
+        ).toBeInTheDocument()
+      })
+      fireEvent.click(screen.getByTestId('import-identity-card-scan-toggle'))
+      expect(screen.getByTestId('mock-qr-scanner')).toBeInTheDocument()
+      expect(
+        screen.getByTestId('import-identity-card-scan-toggle'),
+      ).toHaveAttribute('aria-pressed', 'true')
+    })
+
+    it('populates the textarea and unmounts the scanner on a successful scan', async () => {
+      render(<ImportIdentityCardPanel />)
+      await waitFor(() => {
+        expect(
+          screen.getByTestId('import-identity-card-scan-toggle'),
+        ).toBeInTheDocument()
+      })
+      fireEvent.click(screen.getByTestId('import-identity-card-scan-toggle'))
+      fireEvent.click(screen.getByTestId('mock-qr-scanner-fire-scan'))
+      const textareaValue = screen.getByTestId(
+        'import-identity-card-textarea',
+      ).value
+      expect(textareaValue).toContain('"pub_key":"pk_base64"')
+      // Scanner closes after a successful capture so the camera LED
+      // goes off and the user can review before submitting.
+      expect(screen.queryByTestId('mock-qr-scanner')).toBeNull()
+    })
+
+    it('surfaces the onError message and closes the scanner', async () => {
+      render(<ImportIdentityCardPanel />)
+      await waitFor(() => {
+        expect(
+          screen.getByTestId('import-identity-card-scan-toggle'),
+        ).toBeInTheDocument()
+      })
+      fireEvent.click(screen.getByTestId('import-identity-card-scan-toggle'))
+      fireEvent.click(screen.getByTestId('mock-qr-scanner-fire-error'))
+      expect(
+        screen.getByTestId('import-identity-card-scan-error'),
+      ).toHaveTextContent(/camera blocked/)
+      expect(screen.queryByTestId('mock-qr-scanner')).toBeNull()
+    })
+
+    it('toggle button closes the scanner on a second click without firing scan', async () => {
+      render(<ImportIdentityCardPanel />)
+      await waitFor(() => {
+        expect(
+          screen.getByTestId('import-identity-card-scan-toggle'),
+        ).toBeInTheDocument()
+      })
+      fireEvent.click(screen.getByTestId('import-identity-card-scan-toggle'))
+      fireEvent.click(screen.getByTestId('import-identity-card-scan-toggle'))
+      expect(screen.queryByTestId('mock-qr-scanner')).toBeNull()
+      expect(screen.getByTestId('import-identity-card-textarea')).toHaveValue('')
     })
   })
 })
