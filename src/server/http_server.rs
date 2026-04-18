@@ -715,6 +715,18 @@ impl FoldHttpServer {
                 )
                 .route("/identities", web::get().to(fp_routes::list_identities))
                 .route(
+                    "/received-cards",
+                    web::get().to(fp_routes::list_received_cards),
+                )
+                .route(
+                    "/received-cards/{id}/accept",
+                    web::post().to(fp_routes::accept_received_card),
+                )
+                .route(
+                    "/received-cards/{id}/dismiss",
+                    web::post().to(fp_routes::dismiss_received_card),
+                )
+                .route(
                     "/ingest-text-signals",
                     web::post().to(fp_routes::ingest_text_signals),
                 )

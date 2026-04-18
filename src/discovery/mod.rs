@@ -6,6 +6,7 @@ pub mod interests;
 pub mod moments;
 pub mod pseudonym;
 pub mod publisher;
+pub mod received_card;
 pub mod types;
 
 #[cfg(test)]

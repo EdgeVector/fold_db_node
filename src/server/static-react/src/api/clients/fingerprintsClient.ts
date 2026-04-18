@@ -528,3 +528,76 @@ export async function sendIdentityCard(
     { contact_public_key: contactPublicKey },
   );
 }
+
+// ===== Received Cards inbox (Phase 3 messaging — receive half) =====
+
+export interface ReceivedCardView {
+  message_id: string;
+  sender_public_key: string;
+  sender_pseudonym: string;
+  status: string; // "pending" | "accepted" | "dismissed"
+  received_at: string;
+  resolved_at: string | null;
+  accepted_identity_id: string | null;
+  error: string | null;
+  display_name: string | null;
+  issued_at?: string | null;
+  card: Record<string, unknown>;
+}
+
+export interface ListReceivedCardsResponse {
+  received_cards: ReceivedCardView[];
+}
+
+export interface AcceptReceivedCardResponse {
+  received_card: ReceivedCardView;
+  identity_id: string;
+}
+
+/**
+ * List the messaging inbox of Identity Cards that landed through
+ * the bulletin board (via `POST /api/remote/send-identity-card` on
+ * the sender side). Includes pending, accepted, and dismissed rows
+ * so the user has a full audit trail.
+ *
+ * Newest-first by `received_at`.
+ */
+export async function listReceivedCards(): Promise<
+  EnhancedApiResponse<ListReceivedCardsResponse>
+> {
+  return client.get<ListReceivedCardsResponse>("/fingerprints/received-cards");
+}
+
+/**
+ * Accept a received card. Runs the same Ed25519 verifier the
+ * paste/QR import runs. On success the row flips to `accepted` and
+ * `accepted_identity_id` is populated; on verify failure the row
+ * stays `pending` with `error` set so the user can retry or
+ * dismiss.
+ *
+ * Optionally links the verified Identity to an existing Persona in
+ * the same round trip, same as the paste import.
+ */
+export async function acceptReceivedCard(
+  messageId: string,
+  linkPersonaId?: string,
+): Promise<EnhancedApiResponse<AcceptReceivedCardResponse>> {
+  return client.post<AcceptReceivedCardResponse>(
+    `/fingerprints/received-cards/${encodeURIComponent(messageId)}/accept`,
+    linkPersonaId ? { link_persona_id: linkPersonaId } : {},
+  );
+}
+
+/**
+ * Dismiss a received card. Row stays in the inbox as an audit
+ * entry with status=dismissed, but the underlying Identity record
+ * is never written. Rejected for rows that are already accepted.
+ */
+export async function dismissReceivedCard(
+  messageId: string,
+): Promise<EnhancedApiResponse<ReceivedCardView>> {
+  return client.post<ReceivedCardView>(
+    `/fingerprints/received-cards/${encodeURIComponent(messageId)}/dismiss`,
+    {},
+  );
+}
