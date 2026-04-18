@@ -232,8 +232,20 @@ pub async fn status() -> Result<String, CliError> {
 /// Returns the port the daemon is listening on.
 pub async fn ensure_running(dev: bool) -> Result<u16, CliError> {
     let port = default_port();
-    if check_daemon_health(port).await {
-        return Ok(port);
+
+    // Retry the health check before deciding the daemon is down. Under CI
+    // load (or on a laptop with a busy CPU), a single 2s health check can
+    // time out even when the daemon is healthy — which used to push us
+    // straight into starting a second daemon and hitting `port already in
+    // use`. Three tries with a short backoff covers the transient case
+    // without adding noticeable latency to the happy path.
+    for attempt in 0..3 {
+        if check_daemon_health(port).await {
+            return Ok(port);
+        }
+        if attempt < 2 {
+            tokio::time::sleep(std::time::Duration::from_millis(500)).await;
+        }
     }
 
     // Warn if PID file exists but health check failed on our port —
@@ -245,6 +257,21 @@ pub async fn ensure_running(dev: bool) -> Result<u16, CliError> {
         );
         eprintln!("The daemon may be running on a different port.");
         eprintln!("Run `folddb daemon stop` first, or set FOLDDB_PORT to match.");
+    }
+
+    // If the port is already bound by something, don't try to start a
+    // daemon on it — `start()` would just fail with "address in use" and
+    // the real symptom (a wedged or non-responding daemon already holding
+    // the port) would be hidden behind a confusing error. Fail cleanly
+    // with a hint the user can act on.
+    if is_port_in_use(port) {
+        return Err(CliError::new(format!(
+            "Port {} is in use but the daemon's health endpoint isn't responding",
+            port
+        ))
+        .with_hint(
+            "another process is holding this port. Run `folddb daemon stop` to clean up, or set FOLDDB_PORT to a free port.",
+        ));
     }
 
     let effective_dev = resolve_dev(dev);
