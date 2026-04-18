@@ -64,9 +64,12 @@ use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
 
 use crate::fingerprints::canonical_names;
-use crate::fingerprints::keys::identity_id;
+use crate::fingerprints::keys::{
+    edge_id, edge_kind, fingerprint_id_for_face_embedding, fingerprint_id_from_bytes, identity_id,
+    kind,
+};
 use crate::fingerprints::planned_record::PlannedRecord;
-use crate::fingerprints::schemas::{IDENTITY, IDENTITY_RECEIPT};
+use crate::fingerprints::schemas::{EDGE, FINGERPRINT, IDENTITY, IDENTITY_RECEIPT};
 use crate::fingerprints::self_identity::IdentityCardPayload;
 use crate::fingerprints::writer::write_records;
 use crate::fold_node::FoldNode;
@@ -129,23 +132,36 @@ pub async fn import_identity_card(
     let self_id = identity_id(&req.card.pub_key);
     let was_already_present = identity_exists(&node, &self_id).await?;
 
-    // 3. Write Identity + IdentityReceipt if this is new.
+    // 3. Write Identity + IdentityReceipt if this is new. If the
+    //    card carries a face embedding, also derive a face-kind
+    //    Fingerprint and an `identity_face` Edge linking it to the
+    //    card's NodePubKey Fingerprint so the graph picks up the
+    //    declaration. All records are content-keyed, so re-imports
+    //    of the same card collapse into the same primary keys and
+    //    overwrite idempotently.
     if !was_already_present {
         let now = chrono::Utc::now().to_rfc3339();
-        let identity_rec = build_identity_record(&self_id, &req.card);
-        let receipt_rec = build_identity_receipt_record(&self_id, &now);
-        write_records(node.clone(), &[identity_rec, receipt_rec])
-            .await
-            .map_err(|e| {
-                HandlerError::Internal(format!(
-                    "import_identity_card: failed to persist Identity/IdentityReceipt: {}",
-                    e
-                ))
-            })?;
+        let mut records: Vec<PlannedRecord> = Vec::with_capacity(4);
+        records.push(build_identity_record(&self_id, &req.card));
+        records.push(build_identity_receipt_record(&self_id, &now));
+        if let Some(face_embedding) = req.card.face_embedding.as_deref() {
+            records.extend(build_face_fingerprint_and_edge_records(
+                &req.card.pub_key,
+                face_embedding,
+                &now,
+            ));
+        }
+        write_records(node.clone(), &records).await.map_err(|e| {
+            HandlerError::Internal(format!(
+                "import_identity_card: failed to persist Identity/IdentityReceipt: {}",
+                e
+            ))
+        })?;
         log::info!(
-            "fingerprints.handler: imported Identity Card for pub_key='{}' (display_name='{}')",
+            "fingerprints.handler: imported Identity Card for pub_key='{}' (display_name='{}', face={})",
             req.card.pub_key,
             req.card.display_name,
+            req.card.face_embedding.is_some(),
         );
     } else {
         log::info!(
@@ -293,6 +309,55 @@ fn build_identity_receipt_record(identity_id: &str, now: &str) -> PlannedRecord 
     // when we add such a channel.
     fields.insert("trust_level".to_string(), json!("Attested"));
     PlannedRecord::hash(IDENTITY_RECEIPT, id, fields)
+}
+
+/// Build a `Fingerprint(kind="face_embedding")` record for the
+/// card's declared face and an `Edge(kind="identity_face")` linking
+/// that face Fingerprint to the card's NodePubKey Fingerprint. The
+/// NodePubKey Fingerprint id is recomputed the same way
+/// `bootstrap_self_identity` writes it on the issuing node, so the
+/// edge lands on the same key regardless of import order.
+///
+/// Both records are content-keyed: re-importing the same card
+/// overwrites at the same primary key.
+fn build_face_fingerprint_and_edge_records(
+    pub_key: &str,
+    face_embedding: &[f32],
+    now: &str,
+) -> Vec<PlannedRecord> {
+    let face_fp_id = fingerprint_id_for_face_embedding(face_embedding);
+    let node_pub_key_fp_id = fingerprint_id_from_bytes(kind::NODE_PUB_KEY, pub_key.as_bytes());
+    let eg_id = edge_id(&face_fp_id, &node_pub_key_fp_id, edge_kind::IDENTITY_FACE);
+
+    let mut face_fields: HashMap<String, Value> = HashMap::new();
+    face_fields.insert("id".to_string(), json!(face_fp_id));
+    face_fields.insert("kind".to_string(), json!(kind::FACE_EMBEDDING));
+    face_fields.insert("value".to_string(), json!(face_embedding));
+    face_fields.insert("first_seen".to_string(), json!(now));
+    face_fields.insert("last_seen".to_string(), json!(now));
+
+    let mut edge_fields: HashMap<String, Value> = HashMap::new();
+    edge_fields.insert("id".to_string(), json!(eg_id));
+    edge_fields.insert("a".to_string(), json!(face_fp_id));
+    edge_fields.insert("b".to_string(), json!(node_pub_key_fp_id));
+    edge_fields.insert("kind".to_string(), json!(edge_kind::IDENTITY_FACE));
+    // Weight = 1.0: the card's face is a cryptographically-signed
+    // self-declaration by the card's pub_key. It is not a noisy
+    // photo-graph coincidence, so we don't discount it.
+    edge_fields.insert("weight".to_string(), json!(1.0_f32));
+    // `evidence_mention_ids` is required by the Edge schema; the
+    // card itself is our only evidence and it isn't a Mention, so
+    // send an empty array rather than inventing a pseudo-Mention.
+    edge_fields.insert(
+        "evidence_mention_ids".to_string(),
+        json!(Vec::<String>::new()),
+    );
+    edge_fields.insert("created_at".to_string(), json!(now));
+
+    vec![
+        PlannedRecord::hash(FINGERPRINT, face_fp_id, face_fields),
+        PlannedRecord::hash(EDGE, eg_id, edge_fields),
+    ]
 }
 
 // ── Identity-exists probe ──────────────────────────────────────────
@@ -452,6 +517,62 @@ mod tests {
         );
         assert!(rec.fields.get("birthday").unwrap().is_null());
         assert!(rec.fields.get("face_embedding").unwrap().is_null());
+    }
+
+    #[test]
+    fn face_fingerprint_and_edge_records_use_content_keys_and_identity_face_kind() {
+        let embedding: Vec<f32> = (0..8).map(|i| i as f32 * 0.1).collect();
+        let records =
+            build_face_fingerprint_and_edge_records("pk_abc", &embedding, "2026-04-18T12:00:00Z");
+        assert_eq!(records.len(), 2);
+
+        // Fingerprint record.
+        let fp = &records[0];
+        assert_eq!(fp.descriptive_schema, FINGERPRINT);
+        let expected_fp_id = fingerprint_id_for_face_embedding(&embedding);
+        assert_eq!(fp.hash_key, expected_fp_id);
+        assert_eq!(fp.fields.get("id").unwrap(), &json!(expected_fp_id));
+        assert_eq!(fp.fields.get("kind").unwrap(), &json!(kind::FACE_EMBEDDING));
+        assert_eq!(fp.fields.get("value").unwrap(), &json!(embedding));
+
+        // Edge record.
+        let eg = &records[1];
+        assert_eq!(eg.descriptive_schema, EDGE);
+        let node_pub_key_fp_id = fingerprint_id_from_bytes(kind::NODE_PUB_KEY, "pk_abc".as_bytes());
+        let expected_eg_id = edge_id(
+            &expected_fp_id,
+            &node_pub_key_fp_id,
+            edge_kind::IDENTITY_FACE,
+        );
+        assert_eq!(eg.hash_key, expected_eg_id);
+        assert_eq!(
+            eg.fields.get("kind").unwrap(),
+            &json!(edge_kind::IDENTITY_FACE)
+        );
+        // Endpoints are stored verbatim; the edge_id already handles
+        // canonical ordering so we don't need to re-sort here.
+        assert_eq!(eg.fields.get("a").unwrap(), &json!(expected_fp_id));
+        assert_eq!(eg.fields.get("b").unwrap(), &json!(node_pub_key_fp_id));
+        assert!((eg.fields.get("weight").unwrap().as_f64().unwrap() - 1.0).abs() < 1e-6);
+        assert_eq!(
+            eg.fields.get("evidence_mention_ids").unwrap(),
+            &json!(Vec::<String>::new())
+        );
+    }
+
+    #[test]
+    fn face_records_are_idempotent_under_repeated_builds() {
+        // Same (pub_key, embedding) must produce identical primary
+        // keys on every call — that's what makes re-imports of the
+        // same card collapse into the same records rather than
+        // multiplying the graph.
+        let embedding: Vec<f32> = vec![0.5_f32; 512];
+        let a =
+            build_face_fingerprint_and_edge_records("pk_abc", &embedding, "2026-04-18T12:00:00Z");
+        let b =
+            build_face_fingerprint_and_edge_records("pk_abc", &embedding, "2026-04-19T12:00:00Z");
+        assert_eq!(a[0].hash_key, b[0].hash_key);
+        assert_eq!(a[1].hash_key, b[1].hash_key);
     }
 
     #[test]

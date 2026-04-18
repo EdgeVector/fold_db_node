@@ -258,9 +258,9 @@ export interface MyIdentityCardResponse {
   pub_key: string;
   display_name: string;
   birthday: string | null;
-  /** The self-attested face embedding, if one was collected at
-   *  signup. Today always `null` — reserved for a future "take a
-   *  selfie" setup step. */
+  /** The self-attested face embedding, if the owner attached one
+   *  via the "Attach face" selfie flow on MyIdentityCardPanel.
+   *  `null` when the card was issued without a face. */
   face_embedding: number[] | null;
   node_id: string;
   card_signature: string;
@@ -286,17 +286,20 @@ export async function getMyIdentityCard(): Promise<
 
 /**
  * Request body for reissue. `display_name` is a plain string-or-
- * undefined. `birthday` uses a three-state convention:
+ * undefined. `birthday` and `face_embedding` use a three-state
+ * convention:
  *  - absent ................................ leave the field as-is
  *  - present with `null` .................... clear the stored value
- *  - present with a string .................. set to that value
+ *  - present with a value ................... set to that value
  *
- * Callers should NOT send `birthday: undefined` expecting "clear" —
- * that serializes to absent and leaves the backend's value alone.
+ * Callers should NOT send these fields as `undefined` expecting
+ * "clear" — that serializes to absent and leaves the backend's
+ * value alone.
  */
 export interface ReissueIdentityCardRequest {
   display_name?: string;
   birthday?: string | null;
+  face_embedding?: number[] | null;
 }
 
 /**

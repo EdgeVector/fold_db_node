@@ -73,6 +73,15 @@ pub mod edge_kind {
     pub const USER_ASSERTED: &str = "UserAsserted";
     pub const TEMPORAL_COINCIDENCE: &str = "TemporalCoincidence";
     pub const USER_FORBIDDEN: &str = "UserForbidden";
+    /// Owner side of an Identity Card: links the face Fingerprint
+    /// encoded in a received Identity Card's `face_embedding` field to
+    /// the card's NodePubKey Fingerprint. Written by
+    /// `import_identity_card` when the incoming card carries a
+    /// non-null face embedding; distinct from the photo-corpus-side
+    /// `StrongMatch` / `MediumMatch` so face-similarity sweeps over
+    /// the observed-photo graph don't silently absorb Identity-Card
+    /// declarations.
+    pub const IDENTITY_FACE: &str = "identity_face";
 }
 
 /// Compute a Fingerprint primary key from (kind, canonical_value_bytes).

@@ -1,13 +1,13 @@
 //! Re-issue the node owner's Identity Card with updated
-//! `display_name` and/or `birthday`. Signs the new payload with the
-//! node's private key and overwrites the existing Identity record
-//! at `id_<pub_key>` — the primary key is stable so this is an
-//! in-place Update mutation.
+//! `display_name`, `birthday`, and/or `face_embedding`. Signs the
+//! new payload with the node's private key and overwrites the
+//! existing Identity record at `id_<pub_key>` — the primary key is
+//! stable so this is an in-place Update mutation.
 //!
-//! Scope for this pass: `display_name` + `birthday` only. The
-//! `face_embedding` field is excluded — that needs a camera-capture
-//! UX and an embedding pipeline that doesn't exist on the owner
-//! side yet. Will be added in a follow-up.
+//! Scope for this pass: all three patchable card fields.
+//! `face_embedding` uses a three-state patch (absent / null /
+//! populated array) so callers can attach, replace, or clear the
+//! face embedding without conflating those ops with "left alone."
 //!
 //! ## Endpoint
 //!
@@ -69,6 +69,12 @@ pub struct ReissueIdentityCardRequest {
     pub display_name: Option<String>,
     #[serde(default, deserialize_with = "deserialize_optional_nullable_string")]
     pub birthday: Option<Option<String>>,
+    /// Three-state patch for the face embedding:
+    /// - absent ................................. leave the field alone
+    /// - `"face_embedding": null` ............... clear the stored value
+    /// - `"face_embedding": [..floats..]` ....... set to that vector
+    #[serde(default, deserialize_with = "deserialize_optional_nullable_vec_f32")]
+    pub face_embedding: Option<Option<Vec<f32>>>,
 }
 
 fn deserialize_optional_nullable_string<'de, D>(
@@ -84,15 +90,32 @@ where
     Ok(Some(inner))
 }
 
+fn deserialize_optional_nullable_vec_f32<'de, D>(
+    deserializer: D,
+) -> Result<Option<Option<Vec<f32>>>, D::Error>
+where
+    D: serde::Deserializer<'de>,
+{
+    // Same three-state pattern as `deserialize_optional_nullable_string`:
+    // presence of the key gives us `Some(inner)`, with `inner` being
+    // `None` for JSON null and `Some(vec)` for a populated array.
+    let inner: Option<Vec<f32>> = Option::<Vec<f32>>::deserialize(deserializer)?;
+    Ok(Some(inner))
+}
+
 /// Re-sign the node owner's Identity Card and overwrite the stored
 /// Identity record + Me persona name.
 pub async fn reissue_identity_card(
     node: Arc<FoldNode>,
     request: ReissueIdentityCardRequest,
 ) -> HandlerResult<MyIdentityCardResponse> {
-    if request.display_name.is_none() && request.birthday.is_none() {
+    if request.display_name.is_none()
+        && request.birthday.is_none()
+        && request.face_embedding.is_none()
+    {
         return Err(HandlerError::BadRequest(
-            "reissue requires at least one of display_name or birthday".to_string(),
+            "reissue requires at least one of display_name, birthday, or face_embedding"
+                .to_string(),
         ));
     }
     if let Some(ref name) = request.display_name {
@@ -167,14 +190,17 @@ pub async fn reissue_identity_card(
             .and_then(|v| v.as_str())
             .map(String::from),
     };
-    let face_embedding: Option<Vec<f32>> = fields
-        .get("face_embedding")
-        .and_then(|v| v.as_array())
-        .map(|arr| {
-            arr.iter()
-                .filter_map(|x| x.as_f64().map(|f| f as f32))
-                .collect::<Vec<_>>()
-        });
+    let face_embedding: Option<Vec<f32>> = match request.face_embedding.clone() {
+        Some(value) => value,
+        None => fields
+            .get("face_embedding")
+            .and_then(|v| v.as_array())
+            .map(|arr| {
+                arr.iter()
+                    .filter_map(|x| x.as_f64().map(|f| f as f32))
+                    .collect::<Vec<_>>()
+            }),
+    };
 
     let now = chrono::Utc::now().to_rfc3339();
     let payload = IdentityCardPayload {
@@ -353,6 +379,7 @@ mod tests {
         let req = ReissueIdentityCardRequest {
             display_name: Some("   ".to_string()),
             birthday: None,
+            face_embedding: None,
         };
         // The body check lives in the handler; exercise it through
         // the pure validation path by calling a thin wrapper.
@@ -377,6 +404,31 @@ mod tests {
             Some(None),
             "explicit null means 'clear the field'"
         );
+    }
+
+    #[test]
+    fn request_parses_absent_face_embedding_as_none() {
+        let req: ReissueIdentityCardRequest =
+            serde_json::from_str(r#"{ "display_name": "Tom" }"#).unwrap();
+        assert!(req.face_embedding.is_none(), "missing field is None");
+    }
+
+    #[test]
+    fn request_parses_null_face_embedding_as_some_none() {
+        let req: ReissueIdentityCardRequest =
+            serde_json::from_str(r#"{ "face_embedding": null }"#).unwrap();
+        assert_eq!(
+            req.face_embedding,
+            Some(None),
+            "explicit null means 'clear the field'",
+        );
+    }
+
+    #[test]
+    fn request_parses_populated_face_embedding_as_some_some() {
+        let req: ReissueIdentityCardRequest =
+            serde_json::from_str(r#"{ "face_embedding": [0.1, 0.2, 0.3] }"#).unwrap();
+        assert_eq!(req.face_embedding, Some(Some(vec![0.1_f32, 0.2, 0.3])));
     }
 
     #[test]
