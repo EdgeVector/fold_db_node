@@ -344,7 +344,7 @@ async fn run_apple_reminders_import(
         image_bytes: None,
     };
 
-    let ingested = match crate::handlers::ingestion::process_json(
+    let (ingested, ingest_error) = match crate::handlers::ingestion::process_json(
         request,
         &fold_db::logging::core::get_current_user_id().unwrap_or_default(),
         &tracker,
@@ -353,7 +353,7 @@ async fn run_apple_reminders_import(
     )
     .await
     {
-        Ok(_) => total,
+        Ok(_) => (total, None),
         Err(e) => {
             log_feature!(
                 LogFeature::Ingestion,
@@ -361,19 +361,38 @@ async fn run_apple_reminders_import(
                 "Apple Reminders ingestion failed: {}",
                 e
             );
-            0
+            (0, Some(e.to_string()))
         }
     };
 
-    let mut job = Job::new(
-        progress_id.clone(),
-        JobType::Other("apple-reminders".into()),
-    );
-    job.status = JobStatus::Completed;
-    job.progress_percentage = 100;
-    job.message = format!("Imported {} reminders", ingested);
-    job.result = Some(json!({ "total": total, "ingested": ingested }));
+    let job = build_reminders_final_job(progress_id.clone(), total, ingested, ingest_error);
     let _ = tracker.save(&job).await;
+}
+
+/// Build the terminal job for an Apple Reminders import.
+///
+/// If the single-shot ingest call errored, the job is `Failed` with the error
+/// surfaced in `message`. Previously both success and failure were marked
+/// `Completed`, masking full-batch failures as a green checkmark with
+/// `Imported 0 reminders` — indistinguishable from a genuinely empty list.
+#[cfg(any(target_os = "macos", test))]
+fn build_reminders_final_job(
+    progress_id: String,
+    total: usize,
+    ingested: usize,
+    ingest_error: Option<String>,
+) -> Job {
+    let mut job = Job::new(progress_id, JobType::Other("apple-reminders".into()));
+    job.progress_percentage = 100;
+    if let Some(err) = ingest_error {
+        job.status = JobStatus::Failed;
+        job.message = format!("Reminders ingestion failed: {}", err);
+    } else {
+        job.status = JobStatus::Completed;
+        job.message = format!("Imported {} reminders", ingested);
+    }
+    job.result = Some(json!({ "total": total, "ingested": ingested }));
+    job
 }
 
 #[cfg(not(target_os = "macos"))]
@@ -1129,5 +1148,53 @@ mod tests {
         assert_eq!(out.len(), 2);
         assert_eq!(out[0].text, "a@b.c");
         assert_eq!(out[1].text, "d@e.f, g@h.i");
+    }
+}
+
+#[cfg(test)]
+mod reminders_final_job_tests {
+    use super::build_reminders_final_job;
+    use fold_db::progress::{JobStatus, JobType};
+
+    #[test]
+    fn success_marks_completed() {
+        let job = build_reminders_final_job("p1".into(), 10, 10, None);
+        assert!(matches!(job.status, JobStatus::Completed));
+        assert_eq!(job.message, "Imported 10 reminders");
+        assert_eq!(job.progress_percentage, 100);
+        assert!(matches!(job.job_type, JobType::Other(ref s) if s == "apple-reminders"));
+        let result = job.result.expect("result present");
+        assert_eq!(result["total"], 10);
+        assert_eq!(result["ingested"], 10);
+    }
+
+    #[test]
+    fn ingest_error_marks_failed_and_surfaces_error() {
+        // Regression: previously this was marked Completed with ingested=0,
+        // masking a full-batch failure as a green checkmark.
+        let job = build_reminders_final_job(
+            "p2".into(),
+            42,
+            0,
+            Some("schema service unreachable".into()),
+        );
+        assert!(matches!(job.status, JobStatus::Failed));
+        assert!(
+            job.message.contains("schema service unreachable"),
+            "error should appear in job.message, got: {}",
+            job.message,
+        );
+        let result = job.result.expect("result present");
+        assert_eq!(result["total"], 42);
+        assert_eq!(result["ingested"], 0);
+    }
+
+    #[test]
+    fn empty_success_is_completed_not_failed() {
+        // total=0, ingested=0, no error — this is a genuinely empty Reminders
+        // list, not a failure. Job must be Completed so UI stays green.
+        let job = build_reminders_final_job("p3".into(), 0, 0, None);
+        assert!(matches!(job.status, JobStatus::Completed));
+        assert_eq!(job.message, "Imported 0 reminders");
     }
 }
