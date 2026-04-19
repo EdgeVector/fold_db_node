@@ -1,5 +1,6 @@
 pub mod completions;
 pub mod daemon;
+pub mod org;
 pub mod setup;
 pub mod snapshot;
 pub mod system;
