@@ -50,22 +50,115 @@ TS="$(date -u +%Y-%m-%d-%H%M%S)"
 REPORT_DIR="${REPORT_DIR:-.gstack/qa-reports/harness-$TS}"
 mkdir -p "$REPORT_DIR/screenshots"
 
-BROWSE_BIN="${BROWSE_BIN:-$HOME/.claude/skills/gstack/browse/dist/browse}"
-if [ ! -x "$BROWSE_BIN" ]; then
-  echo "qa-harness: browse binary not found at $BROWSE_BIN" >&2
-  echo "            install via gstack or set BROWSE_BIN=/path/to/browse" >&2
-  exit 2
-fi
-
 REPORT_FILE="$REPORT_DIR/report.md"
 : > "$REPORT_FILE"
 
 log() { printf '[qa-harness] %s\n' "$*" | tee -a "$REPORT_DIR/harness.log" ; }
 
 # -----------------------------------------------------------------------------
-# Pick a browse port (auto-slot the harness itself; matches the repo's
-# parallel-agent-safety story from PRs #520 / #532)
+# Report + teardown state — populated as the harness progresses. write_report()
+# consults these so the EXIT trap can always produce a report, even if the
+# script aborts before reaching the final verdict.
 # -----------------------------------------------------------------------------
+
+PASS=""          # "" = no verdict reached; "1" = PASS; "0" = FAIL
+FAIL=0
+err_count=""
+TABS=""
+BACKEND_PORT=""
+SCHEMA_PORT=""
+VITE_PORT=""
+FOLDDB_HOME=""
+RUN_SH_PID=""
+
+write_report() {
+  local verdict
+  case "$PASS" in
+    1) verdict="PASS" ;;
+    0) verdict="FAIL" ;;
+    *) verdict="INCOMPLETE" ;;
+  esac
+  {
+    printf '# QA harness smoke report\n\n'
+    printf -- '- **Timestamp:** %s\n' "$TS"
+    printf -- '- **Stack:** backend=%s schema=%s vite=%s\n' \
+      "${BACKEND_PORT:-?}" "${SCHEMA_PORT:-?}" "${VITE_PORT:-?}"
+    printf -- '- **FOLDDB_HOME:** `%s`\n' "${FOLDDB_HOME:-?}"
+    printf -- '- **Tabs smoked:** %s\n' "${TABS:-n/a}"
+    printf -- '- **Tab failures:** %d\n' "${FAIL:-0}"
+    if [ -n "$err_count" ]; then
+      printf -- '- **Console errors:** %d (expected <=20; known noise from fold_db_node#534 is ~9)\n' "$err_count"
+    else
+      printf -- '- **Console errors:** n/a (not measured)\n'
+    fi
+    printf -- '- **Verdict:** %s\n\n' "$verdict"
+    if [ "$verdict" = INCOMPLETE ]; then
+      printf 'The harness exited before reaching a verdict. See `harness.log` and `run.log` in this directory.\n\n'
+    fi
+    if [ -n "$TABS" ]; then
+      printf '## Screenshots\n\n'
+      for tab in $TABS; do
+        printf -- '- [%s](screenshots/%s.png)\n' "$tab" "$tab"
+      done
+    fi
+  } > "$REPORT_FILE"
+}
+
+cleanup() {
+  if [ "$TEARDOWN" = false ]; then
+    if [ -n "$RUN_SH_PID" ]; then
+      log "teardown skipped (--no-teardown). stack still running; kill pid $RUN_SH_PID to stop."
+    fi
+    return
+  fi
+
+  if [ -n "$RUN_SH_PID" ]; then
+    log "tearing down stack (pid $RUN_SH_PID + descendants)..."
+    if kill -0 "$RUN_SH_PID" 2>/dev/null; then
+      pkill -P "$RUN_SH_PID" 2>/dev/null || true
+      kill "$RUN_SH_PID" 2>/dev/null || true
+      sleep 2
+      kill -9 "$RUN_SH_PID" 2>/dev/null || true
+      pkill -9 -P "$RUN_SH_PID" 2>/dev/null || true
+    fi
+  fi
+
+  # Kill any stray folddb_server / schema_service / vite children that
+  # run.sh spawned. Match by FOLDDB_HOME so we only kill our own stack,
+  # not some other agent's.
+  if [ -n "$FOLDDB_HOME" ]; then
+    pkill -f "FOLDDB_HOME=$FOLDDB_HOME" 2>/dev/null || true
+  fi
+
+  if [ -n "$FOLDDB_HOME" ] && [ -d "$FOLDDB_HOME" ]; then
+    case "$FOLDDB_HOME" in
+      /tmp/folddb-slot-*) rm -rf "$FOLDDB_HOME" 2>/dev/null || true ;;
+    esac
+  fi
+  if [ -n "$BACKEND_PORT" ]; then
+    rm -f "$HOME/.folddb-slots/$BACKEND_PORT.json" 2>/dev/null || true
+  fi
+}
+
+on_exit() {
+  write_report
+  cleanup
+}
+trap on_exit EXIT
+
+# -----------------------------------------------------------------------------
+# Locate the gstack browse binary and pick a free browse port. Both have to be
+# settled before the preflight check, because `browse status` binds the
+# configured port to start its daemon — a port collision would otherwise look
+# like a browse failure.
+# -----------------------------------------------------------------------------
+
+BROWSE_BIN="${BROWSE_BIN:-$HOME/.claude/skills/gstack/browse/dist/browse}"
+if [ ! -x "$BROWSE_BIN" ]; then
+  log "browse binary not found at $BROWSE_BIN"
+  log "install via gstack or set BROWSE_BIN=/path/to/browse"
+  exit 2
+fi
 
 if [ -z "${BROWSE_PORT:-}" ]; then
   for candidate in $(seq 9400 9499); do
@@ -74,12 +167,60 @@ if [ -z "${BROWSE_PORT:-}" ]; then
     fi
   done
   if [ -z "${BROWSE_PORT:-}" ]; then
-    echo "qa-harness: no free browse port in 9400..=9499" >&2
+    log "no free browse port in 9400..=9499"
     exit 2
   fi
 fi
 export BROWSE_PORT
 log "browse port: $BROWSE_PORT"
+
+# -----------------------------------------------------------------------------
+# Preflight the browse binary.
+#
+# The browse binary bundles playwright-core and expects a matching Chromium
+# headless-shell cache under ~/Library/Caches/ms-playwright/. On a fresh
+# machine, after a cache clear, or when playwright-core drifts, that cache is
+# missing and every browse call fails. Without this preflight those failures
+# were silent — `browse goto` with stderr discarded plus set -e dropped the
+# script with no useful error, leaving report.md at 0 bytes.
+# -----------------------------------------------------------------------------
+
+preflight_browse() {
+  local out
+  if out="$("$BROWSE_BIN" status 2>&1)"; then
+    log "browse preflight: ok"
+    return 0
+  fi
+  printf '%s\n' "$out" | sed 's/^/    /' >> "$REPORT_DIR/harness.log"
+  if ! printf '%s' "$out" | grep -qiE 'playwright|chromium|chrome-headless-shell|executable doesn'\''t exist'; then
+    log "browse preflight FAILED (non-Playwright error; see harness.log)"
+    return 1
+  fi
+  log "browse preflight: Playwright chromium missing — attempting one install"
+  local gstack_dir="$HOME/.claude/skills/gstack"
+  if [ ! -d "$gstack_dir" ]; then
+    log "browse preflight FAILED: gstack skill dir not found at $gstack_dir"
+    return 1
+  fi
+  log "running: (cd $gstack_dir && npx playwright install chromium) — this can take a minute"
+  if ! (cd "$gstack_dir" && npx playwright install chromium) >> "$REPORT_DIR/harness.log" 2>&1; then
+    log "browse preflight FAILED: npx playwright install chromium exited nonzero (see harness.log)"
+    return 1
+  fi
+  log "playwright chromium install completed; retrying preflight"
+  if out="$("$BROWSE_BIN" status 2>&1)"; then
+    log "browse preflight: ok after install"
+    return 0
+  fi
+  printf '%s\n' "$out" | sed 's/^/    /' >> "$REPORT_DIR/harness.log"
+  log "browse preflight FAILED even after install (see harness.log)"
+  return 1
+}
+
+if ! preflight_browse; then
+  echo "qa-harness: browse binary failed preflight (see $REPORT_DIR/harness.log)" >&2
+  exit 2
+fi
 
 # -----------------------------------------------------------------------------
 # Start the dev stack
@@ -104,47 +245,6 @@ log "starting ./run.sh --local --local-schema"
 nohup ./run.sh --local --local-schema > "$REPORT_DIR/run.log" 2>&1 &
 RUN_SH_PID=$!
 log "run.sh pid: $RUN_SH_PID"
-
-# -----------------------------------------------------------------------------
-# Teardown
-# -----------------------------------------------------------------------------
-
-cleanup() {
-  if [ "$TEARDOWN" = false ]; then
-    log "teardown skipped (--no-teardown). stack still running; kill pid $RUN_SH_PID to stop."
-    return
-  fi
-
-  log "tearing down stack (pid $RUN_SH_PID + descendants)..."
-  # kill the whole process group
-  if kill -0 "$RUN_SH_PID" 2>/dev/null; then
-    pkill -P "$RUN_SH_PID" 2>/dev/null || true
-    kill "$RUN_SH_PID" 2>/dev/null || true
-    # give it a sec, then SIGKILL
-    sleep 2
-    kill -9 "$RUN_SH_PID" 2>/dev/null || true
-    pkill -9 -P "$RUN_SH_PID" 2>/dev/null || true
-  fi
-
-  # Kill any stray folddb_server / schema_service / vite children
-  # that `run.sh` spawned. Match by their FOLDDB_HOME so we only kill
-  # our own stack, not some other agent's.
-  if [ -n "${FOLDDB_HOME:-}" ]; then
-    pkill -f "FOLDDB_HOME=$FOLDDB_HOME" 2>/dev/null || true
-  fi
-
-  # Remove our slot dir if we own it
-  if [ -n "${FOLDDB_HOME:-}" ] && [ -d "$FOLDDB_HOME" ]; then
-    case "$FOLDDB_HOME" in
-      /tmp/folddb-slot-*) rm -rf "$FOLDDB_HOME" 2>/dev/null || true ;;
-    esac
-  fi
-  # Remove our slot JSON
-  if [ -n "${BACKEND_PORT:-}" ]; then
-    rm -f "$HOME/.folddb-slots/$BACKEND_PORT.json" 2>/dev/null || true
-  fi
-}
-trap cleanup EXIT
 
 # -----------------------------------------------------------------------------
 # Wait for the slot JSON + services
@@ -204,31 +304,32 @@ wait_http "http://localhost:$BACKEND_PORT/api/system/auto-identity" 60 "backend"
 wait_http "http://localhost:$VITE_PORT/" 60 "vite" || exit 1
 
 # -----------------------------------------------------------------------------
-# Smoke test — walk the main tabs, screenshot each, count console errors
+# Smoke test — walk the main tabs, screenshot each, count console errors.
+# Every browse call routes stderr to harness.log so any future silent-browse
+# failure leaves a real error message instead of an empty report.
 # -----------------------------------------------------------------------------
 
 log "running smoke test..."
 APP_URL="http://localhost:$VITE_PORT"
+BROWSE_ERR="$REPORT_DIR/harness.log"
 
 # land on root, click "Skip setup entirely" so we're out of onboarding
-"$BROWSE_BIN" goto "$APP_URL/" >/dev/null 2>&1
+"$BROWSE_BIN" goto "$APP_URL/" >/dev/null 2>>"$BROWSE_ERR"
 
-SKIP_REF="$("$BROWSE_BIN" snapshot -i 2>/dev/null | grep -F '"Skip setup entirely"' | awk '{print $1}' | head -1 || true)"
+SKIP_REF="$("$BROWSE_BIN" snapshot -i 2>>"$BROWSE_ERR" | grep -F '"Skip setup entirely"' | awk '{print $1}' | head -1 || true)"
 if [ -n "$SKIP_REF" ]; then
-  "$BROWSE_BIN" click "$SKIP_REF" >/dev/null 2>&1 || true
+  "$BROWSE_BIN" click "$SKIP_REF" >/dev/null 2>>"$BROWSE_ERR" || true
   sleep 1
 fi
 
-# tabs to smoke
 TABS="agent data-browser query schemas people discovery settings"
-FAIL=0
 for tab in $TABS; do
-  "$BROWSE_BIN" goto "$APP_URL/#$tab" >/dev/null 2>&1 || true
+  "$BROWSE_BIN" goto "$APP_URL/#$tab" >/dev/null 2>>"$BROWSE_ERR" || true
   sleep 1
-  "$BROWSE_BIN" screenshot "$REPORT_DIR/screenshots/$tab.png" >/dev/null 2>&1 || true
+  "$BROWSE_BIN" screenshot "$REPORT_DIR/screenshots/$tab.png" >/dev/null 2>>"$BROWSE_ERR" || true
 
   # title sanity: document body should not be empty
-  body_len="$("$BROWSE_BIN" js "document.body.innerText.length" 2>/dev/null | tail -1 | tr -cd '0-9')"
+  body_len="$("$BROWSE_BIN" js "document.body.innerText.length" 2>>"$BROWSE_ERR" | tail -1 | tr -cd '0-9')"
   if [ -z "$body_len" ] || [ "$body_len" -lt 50 ]; then
     log "FAIL tab=$tab body length=${body_len:-0} (expected >= 50)"
     FAIL=$((FAIL + 1))
@@ -238,34 +339,18 @@ for tab in $TABS; do
 done
 
 # console error count across whole session
-err_count="$("$BROWSE_BIN" console --errors 2>/dev/null | grep -c '\[error\]' || true)"
+err_count="$("$BROWSE_BIN" console --errors 2>>"$BROWSE_ERR" | grep -c '\[error\]' || true)"
 log "console error total: $err_count"
 
 # -----------------------------------------------------------------------------
-# Write the report
+# Set verdict — the EXIT trap writes the report from the state we recorded.
 # -----------------------------------------------------------------------------
 
 PASS=1
 [ "$FAIL" -gt 0 ] && PASS=0
-# be tolerant of the known public-key 401 loop — ~9 per session is expected
-# until fold_db_node#534 lands. Fail if >20 (indicates something else broken).
-[ "$err_count" -gt 20 ] && PASS=0
-
-{
-  printf '# QA harness smoke report\n\n'
-  printf -- '- **Timestamp:** %s\n' "$TS"
-  printf -- '- **Stack:** backend=%s schema=%s vite=%s\n' \
-    "$BACKEND_PORT" "$SCHEMA_PORT" "$VITE_PORT"
-  printf -- '- **FOLDDB_HOME:** `%s`\n' "$FOLDDB_HOME"
-  printf -- '- **Tabs smoked:** %s\n' "$TABS"
-  printf -- '- **Tab failures:** %d\n' "$FAIL"
-  printf -- '- **Console errors:** %d (expected <=20; known noise from fold_db_node#534 is ~9)\n' "$err_count"
-  printf -- '- **Verdict:** %s\n\n' "$( [ "$PASS" = 1 ] && echo PASS || echo FAIL )"
-  printf '## Screenshots\n\n'
-  for tab in $TABS; do
-    printf -- '- [%s](screenshots/%s.png)\n' "$tab" "$tab"
-  done
-} > "$REPORT_FILE"
+# tolerate the known public-key 401 loop (~9/session) until fold_db_node#534
+# lands; fail if >20 (indicates something else broken).
+[ "${err_count:-0}" -gt 20 ] && PASS=0
 
 log "report: $REPORT_FILE"
 if [ "$PASS" = 1 ]; then
