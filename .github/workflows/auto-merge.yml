@@ -12,7 +12,11 @@ jobs:
       pull-requests: write
     steps:
       - name: Enable auto-merge
-        run: gh pr merge "$PR_URL" --auto --squash
+        # No strategy flag: the repo's merge-queue ruleset enforces SQUASH.
+        # Passing `--squash` here makes `gh` warn "merge strategy is set by the
+        # merge queue" and store an inconsistent autoMergeRequest.mergeMethod,
+        # which the queue silently refuses — stranding the PR until manually queued.
+        run: gh pr merge "$PR_URL" --auto
         env:
           PR_URL: ${{ github.event.pull_request.html_url }}
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
