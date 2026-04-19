@@ -74,10 +74,7 @@ pub struct OptInRequest {
     pub preview_max_chars: Option<usize>,
     pub preview_excluded_fields: Option<Vec<String>>,
     pub field_privacy: Option<
-        std::collections::HashMap<
-            String,
-            crate::discovery::field_privacy::FieldPrivacyClass,
-        >,
+        std::collections::HashMap<String, crate::discovery::field_privacy::FieldPrivacyClass>,
     >,
     #[serde(default)]
     pub publish_faces: bool,
