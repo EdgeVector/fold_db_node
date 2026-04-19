@@ -96,6 +96,21 @@ get_shared_record_count() {
     '[(.data // .results // [])[] | select(.author_pub_key == $pk)] | length' 2>/dev/null || echo 0
 }
 
+# get_org_member_count NODE_PORT HASH ORG_HASH
+# Returns the number of members on the given org as seen by this node. The
+# other node's membership molecule propagates via the OrgSyncEngine (alpha M1),
+# so this count is the acceptance test for "the other node's join molecule
+# arrived on me" — see projects/alpha-org-member-propagation-gap.
+get_org_member_count() {
+  local port="$1" hash="$2" org_hash="$3"
+  [[ -n "$org_hash" ]] || { echo 0; return 0; }
+  curl -fsS --max-time 5 "http://127.0.0.1:$port/api/org" \
+    -H "X-User-Hash: $hash" \
+    | jq --arg oh "$org_hash" -r \
+        '(((.data.orgs // .orgs // [])[] | select(.org_hash == $oh)).members // []) | length' \
+    2>/dev/null || echo 0
+}
+
 # Run a single assertion from YAML: {node, field, op, value, [schema]}
 # Args: NODES_JSON ASSERTION_JSON
 run_assertion() {
@@ -147,6 +162,25 @@ run_assertion() {
     my_pseudonym_count)
       actual=$(curl -fsS "http://127.0.0.1:$port/api/discovery/my-pseudonyms" \
         -H "X-User-Hash: $hash" | jq '.count // 0')
+      ;;
+    org_member_count)
+      # assertion YAML: { node: alice, field: org_member_count, org_role: alice, op: ">=", value: 2 }
+      # `org_role` names the role that ran `org_create`; we resolve its org_hash
+      # from the state file dropped by the org_create action.
+      local org_role create_file org_hash_ref
+      org_role=$(echo "$assertion" | jq -r '.org_role // ""')
+      [[ -n "$org_role" ]] || { echo "[FAIL] org_member_count: org_role required" >&2; return 1; }
+      create_file="$FOLDDB_TEST_SESSION_DIR/state/org-create-$org_role.json"
+      [[ -f "$create_file" ]] || {
+        echo "[FAIL] org_member_count: no org-create state for role $org_role (file=$create_file)" >&2
+        return 1
+      }
+      org_hash_ref=$(jq -r '(.data.org.org_hash // .org.org_hash // "")' "$create_file")
+      [[ -n "$org_hash_ref" && "$org_hash_ref" != "null" ]] || {
+        echo "[FAIL] org_member_count: no org_hash in $create_file" >&2
+        return 1
+      }
+      actual=$(get_org_member_count "$port" "$hash" "$org_hash_ref")
       ;;
     *)
       echo "[FAIL] unknown field: $field" >&2

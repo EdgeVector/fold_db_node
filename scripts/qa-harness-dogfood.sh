@@ -11,11 +11,13 @@
 # dependencies. Safe to run alongside other agents' dev servers (auto-slots
 # its own backend/schema/vite ports via run.sh).
 #
-# Also runs an org-sync leg that spins up a second node and attempts to
-# observe a molecule written on node A from node B. Today the leg is a
-# SCAFFOLD: M1 (OrgSyncEngine, see plan §4) has not landed, so the second
-# node just boots, confirms liveness, and records a TODO. Once M1 ships,
-# fill in the "org-sync leg" section marked `TODO M1` below.
+# Also runs an org-sync leg that spins up a second node in local mode and
+# verifies the multi-node plumbing (separate data dir, slot JSON, key pair).
+# The real two-node round-trip assertion lives in the cloud-mode E2E
+# framework instead — this harness runs without AWS creds, so it cannot
+# reach dev Exemem to exercise OrgSyncEngine. See
+# test-framework/scenarios/org-sync-2node.yaml for the acceptance test
+# (runs nightly via .github/workflows/e2e-cloud.yml, which has AWS creds).
 #
 # Usage:
 #   ./scripts/qa-harness-dogfood.sh [--no-teardown] [--report-dir <path>]
@@ -527,37 +529,27 @@ for entry in "${SOURCES[@]}"; do
 done
 
 # ---------------------------------------------------------------------------
-# Org-sync leg (SCAFFOLD; fill in once M1 lands)
+# Org-sync leg — local plumbing check only
+#
+# This harness runs without AWS credentials, so it cannot reach dev Exemem
+# to exercise OrgSyncEngine end-to-end. The real two-node round-trip now
+# lives in test-framework/scenarios/org-sync-2node.yaml, wired into nightly
+# .github/workflows/e2e-cloud.yml (which has AWS creds). Here we only
+# confirm a second node boots with its own slot JSON + data dir, keeping
+# the multi-node plumbing under test in this harness too.
 # ---------------------------------------------------------------------------
 
 ORG_RESULT="SKIP|org leg skipped (--skip-org)"
 if [ "$SKIP_ORG" = false ]; then
-  log "=== org-sync leg (SCAFFOLD — TODO M1 OrgSyncEngine) ==="
+  log "=== org-sync leg (local plumbing only; real assertion: e2e-cloud nightly) ==="
   if B_INFO="$(boot_stack node-b)"; then
     # shellcheck disable=SC2086
     set -- $B_INFO
     B_BACKEND=$1; B_SCHEMA=$2; B_VITE=$3; B_HOME=$4
     log "node B: backend=$B_BACKEND schema=$B_SCHEMA vite=$B_VITE home=$B_HOME"
 
-    # TODO real org-sync assertion:
-    #   M1 OrgSyncEngine code shipped 2026-04-19 (exemem-infra #123, fold_db
-    #   #560) but the two-node round-trip here needs:
-    #     a) exemem-infra dev deploy so ExememOrgSyncCounters-dev exists and
-    #        storage_service.presign_log_upload serves the new `count` field
-    #        (see gbrain projects/alpha-self-dogfood-m1, "Dev deploy" follow-up)
-    #     b) this harness running both nodes in CLOUD mode with invite codes
-    #        — today it uses --local --local-schema and no sync runs at all
-    #   Once both land, replace this block with:
-    #     1. folddb org create on node A → invite bundle
-    #     2. folddb org join < bundle on node B
-    #     3. tag a schema with org_hash, write 10 molecules on A and 10 on B
-    #     4. poll each for the other's 10 molecules, assert observed within 2
-    #        sync cycles (append-only + content-addressed = no conflict check)
-    #
-    # Until then, we only verify node B boots + is live, to keep the harness
-    # exercising the multi-node plumbing (separate data dirs, own slot JSON).
     if curl -fsS --max-time 5 "http://localhost:$B_BACKEND/api/system/auto-identity" >/dev/null 2>&1; then
-      ORG_RESULT="PENDING|node B live; real org round-trip blocked on exemem-infra dev deploy + cloud-mode harness (see gbrain projects/alpha-self-dogfood-m1)"
+      ORG_RESULT="PENDING|node B live; two-node org round-trip runs in test-framework/scenarios/org-sync-2node.yaml (nightly e2e-cloud)"
       log "[org] $ORG_RESULT"
     else
       ORG_RESULT="FAIL|node B backend not reachable after boot"
