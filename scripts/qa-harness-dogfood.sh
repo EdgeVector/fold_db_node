@@ -11,6 +11,13 @@
 # dependencies. Safe to run alongside other agents' dev servers (auto-slots
 # its own backend/schema/vite ports via run.sh).
 #
+# Per-source content fidelity: each SOURCES entry declares a marker-field
+# whose per-record value is unique across the write loop. After the query
+# round-trip, the set of marker values returned must exactly equal the set
+# written. Mismatches report up to 3 missing + 3 extra marker values so the
+# regression is actionable (see expected-markers-<src>.sorted.txt vs
+# actual-markers-<src>.sorted.txt under the report dir).
+#
 # Also runs an org-sync leg that spins up a second node in local mode and
 # verifies the multi-node plumbing (separate data dir, slot JSON, key pair).
 # The real two-node round-trip assertion lives in the cloud-mode E2E
@@ -384,14 +391,19 @@ gen_files_mutation() {
   }'
 }
 
-# Source table: name, schema-name, schema-file, generator-fn
+# Source table: label : schema-name : schema-file : generator-fn : marker-field
+#
+# marker-field names the per-record identity we set-compare on for content
+# fidelity. It must be stable per record and unique across the write loop, so
+# that a write of N records yields exactly N distinct marker values. On mismatch
+# we report up to 3 missing + 3 extra so regressions are actionable.
 SOURCES=(
-  "notes:QaDogfoodNote:notes.schema.json:gen_notes_mutation"
-  "photos:QaDogfoodPhoto:photos.schema.json:gen_photos_mutation"
-  "calendar:QaDogfoodCalendarEvent:calendar.schema.json:gen_calendar_mutation"
-  "contacts:QaDogfoodContact:contacts.schema.json:gen_contacts_mutation"
-  "reminders:QaDogfoodReminder:reminders.schema.json:gen_reminders_mutation"
-  "files:QaDogfoodLocalFile:files.schema.json:gen_files_mutation"
+  "notes:QaDogfoodNote:notes.schema.json:gen_notes_mutation:title"
+  "photos:QaDogfoodPhoto:photos.schema.json:gen_photos_mutation:photo_id"
+  "calendar:QaDogfoodCalendarEvent:calendar.schema.json:gen_calendar_mutation:event_id"
+  "contacts:QaDogfoodContact:contacts.schema.json:gen_contacts_mutation:contact_id"
+  "reminders:QaDogfoodReminder:reminders.schema.json:gen_reminders_mutation:reminder_id"
+  "files:QaDogfoodLocalFile:files.schema.json:gen_files_mutation:path"
 )
 
 # ---------------------------------------------------------------------------
@@ -419,8 +431,14 @@ exercise_source() {
   local backend_port="$1" schema_port="$2" entry="$3"
   local label="${entry%%:*}"; rest="${entry#*:}"
   local descriptive_name="${rest%%:*}"; rest="${rest#*:}"
-  local schema_file="${rest%%:*}"
-  local gen_fn="${rest##*:}"
+  local schema_file="${rest%%:*}"; rest="${rest#*:}"
+  local gen_fn="${rest%%:*}"; rest="${rest#*:}"
+  local marker_field="$rest"
+
+  if [ -z "$marker_field" ] || [ "$marker_field" = "$gen_fn" ]; then
+    RESULT_LINES+=("$label|FAIL|SOURCES entry missing marker-field: $entry")
+    return 1
+  fi
 
   local schema_path="$FIXTURES_DIR/$schema_file"
   if [ ! -f "$schema_path" ]; then
@@ -455,10 +473,18 @@ exercise_source() {
     return 1
   fi
 
-  log "[$label] writing $PER_SOURCE_COUNT fixture molecules"
-  local i mut write_fail=0
+  log "[$label] writing $PER_SOURCE_COUNT fixture molecules (marker='$marker_field')"
+  local i mut write_fail=0 marker_val
+  local expected_markers="$REPORT_DIR/expected-markers-$label.txt"
+  : > "$expected_markers"
   for i in $(seq 1 "$PER_SOURCE_COUNT"); do
     mut="$("$gen_fn" "$schema_name" "$i")"
+    marker_val="$(jq -r --arg f "$marker_field" '.fields_and_values[$f] // empty' <<<"$mut")"
+    if [ -z "$marker_val" ]; then
+      RESULT_LINES+=("$label|FAIL|generator did not emit marker-field '$marker_field' on i=$i")
+      return 1
+    fi
+    printf '%s\n' "$marker_val" >> "$expected_markers"
     if ! api POST "http://localhost:$backend_port/api/mutation" "$mut" \
         >> "$REPORT_DIR/mutation-$label.out" 2>&1; then
       write_fail=$((write_fail + 1))
@@ -467,6 +493,16 @@ exercise_source() {
   done
   if [ "$write_fail" -gt 0 ]; then
     RESULT_LINES+=("$label|FAIL|$write_fail of $PER_SOURCE_COUNT mutations failed")
+    return 1
+  fi
+
+  # Assert marker-field uniqueness across the write loop — a dupe here means
+  # the generator is broken and the later set-equality check would silently
+  # under-count expected markers.
+  local expected_unique
+  expected_unique="$(sort -u "$expected_markers" | wc -l | tr -d ' ')"
+  if [ "$expected_unique" -lt "$PER_SOURCE_COUNT" ]; then
+    RESULT_LINES+=("$label|FAIL|marker-field '$marker_field' not unique across $PER_SOURCE_COUNT writes (got $expected_unique distinct)")
     return 1
   fi
 
@@ -480,12 +516,40 @@ exercise_source() {
   printf '%s' "$qresp" > "$REPORT_DIR/query-$label.resp.json"
 
   # Query response is ApiResponse<QueryResponse> with `results` flattened.
+  # Each result record has shape { "key": {"range": ...}, "fields": {<field>: <value>, ...} }.
   local returned; returned="$(jq '.results | length' <<<"$qresp" 2>/dev/null || echo 0)"
   if ! [[ "$returned" =~ ^[0-9]+$ ]]; then returned=0; fi
   if [ "$returned" -lt "$PER_SOURCE_COUNT" ]; then
     RESULT_LINES+=("$label|FAIL|query returned $returned of $PER_SOURCE_COUNT expected")
     return 1
   fi
+
+  # Content-fidelity: the set of marker-field values returned by the query must
+  # exactly match the set written. Set equality — query order is not part of
+  # the API contract, so an ordered diff would be brittle.
+  local actual_markers="$REPORT_DIR/actual-markers-$label.txt"
+  jq -r --arg f "$marker_field" '.results[] | .fields[$f] // empty' <<<"$qresp" \
+    > "$actual_markers"
+  local expected_sorted="$REPORT_DIR/expected-markers-$label.sorted.txt"
+  local actual_sorted="$REPORT_DIR/actual-markers-$label.sorted.txt"
+  sort -u "$expected_markers" > "$expected_sorted"
+  sort -u "$actual_markers"   > "$actual_sorted"
+  local missing="$REPORT_DIR/missing-markers-$label.txt"
+  local extra="$REPORT_DIR/extra-markers-$label.txt"
+  comm -23 "$expected_sorted" "$actual_sorted" > "$missing"
+  comm -13 "$expected_sorted" "$actual_sorted" > "$extra"
+  local missing_n extra_n
+  missing_n="$(awk 'NF' "$missing" | wc -l | tr -d ' ')"
+  extra_n="$(awk 'NF' "$extra" | wc -l | tr -d ' ')"
+  if [ "$missing_n" -gt 0 ] || [ "$extra_n" -gt 0 ]; then
+    local missing_preview extra_preview
+    missing_preview="$(awk 'NF' "$missing" | head -n 3 | paste -sd',' -)"
+    extra_preview="$(awk 'NF' "$extra" | head -n 3 | paste -sd',' -)"
+    RESULT_LINES+=("$label|FAIL|content-fidelity on '$marker_field': missing=$missing_n extra=$extra_n [missing≤3: ${missing_preview:-none}] [extra≤3: ${extra_preview:-none}]")
+    log "[$label] FAIL content-fidelity missing=$missing_n extra=$extra_n"
+    return 1
+  fi
+  log "[$label] content-fidelity ok: $PER_SOURCE_COUNT/$PER_SOURCE_COUNT markers on '$marker_field'"
 
   log "[$label] /api/schema/$schema_name/keys molecule count"
   local keys_resp total
@@ -499,8 +563,8 @@ exercise_source() {
     return 1
   fi
 
-  RESULT_LINES+=("$label|PASS|wrote=$PER_SOURCE_COUNT query=$returned molecules=$total")
-  log "[$label] PASS wrote=$PER_SOURCE_COUNT query=$returned molecules=$total"
+  RESULT_LINES+=("$label|PASS|wrote=$PER_SOURCE_COUNT query=$returned molecules=$total fidelity=ok(marker=$marker_field)")
+  log "[$label] PASS wrote=$PER_SOURCE_COUNT query=$returned molecules=$total fidelity=ok"
   return 0
 }
 
