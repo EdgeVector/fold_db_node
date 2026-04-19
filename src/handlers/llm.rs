@@ -558,7 +558,14 @@ mod tests {
     use fold_db::schema::{Schema, SchemaState, SchemaWithState};
 
     fn schema_with(descriptive: Option<&str>) -> Schema {
-        let mut s = Schema::new("canonical-name".to_string(), SchemaType::Single, None, None, None, None);
+        let mut s = Schema::new(
+            "canonical-name".to_string(),
+            SchemaType::Single,
+            None,
+            None,
+            None,
+            None,
+        );
         s.descriptive_name = descriptive.map(str::to_string);
         s
     }
@@ -609,7 +616,10 @@ mod tests {
     #[test]
     fn schema_without_descriptive_name_treated_as_user_authored() {
         // Safe fallback: when we can't classify, run the agent rather than short-circuit.
-        let schemas = vec![SchemaWithState::new(schema_with(None), SchemaState::Approved)];
+        let schemas = vec![SchemaWithState::new(
+            schema_with(None),
+            SchemaState::Approved,
+        )];
         assert!(!is_empty_user_store(&schemas));
     }
 
