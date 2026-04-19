@@ -80,7 +80,7 @@ function useAiConfig({ configSaveStatus, setConfigSaveStatus, onClose }) {
   const [recommended, setRecommended] = useState(() => getRecommendedModels('http://localhost:11434'))
   const [anthropicApiKey, setAnthropicApiKey] = useState('')
   const [hasAnthropicEnvKey, setHasAnthropicEnvKey] = useState(false)
-  const [anthropicModel, setAnthropicModel] = useState('claude-sonnet-4-20250514')
+  const [anthropicModel, setAnthropicModel] = useState('claude-haiku-4-5-20251001')
   const [anthropicBaseUrl, setAnthropicBaseUrl] = useState('https://api.anthropic.com')
   const [ollamaModels, setOllamaModels] = useState([])
   const [ollamaModelsLoading, setOllamaModelsLoading] = useState(false)
@@ -181,7 +181,7 @@ function useAiConfig({ configSaveStatus, setConfigSaveStatus, onClose }) {
         setHasAnthropicEnvKey(false)
         setAnthropicApiKey(anthropicKey)
       }
-      setAnthropicModel(savedConfig.anthropic?.model || 'claude-sonnet-4-20250514')
+      setAnthropicModel(savedConfig.anthropic?.model || 'claude-haiku-4-5-20251001')
       setAnthropicBaseUrl(savedConfig.anthropic?.base_url || 'https://api.anthropic.com')
       setAiProvider(savedConfig.provider || 'Anthropic')
       setVisionBackend(savedConfig.vision_backend || 'Ollama')
@@ -254,8 +254,8 @@ function useAiConfig({ configSaveStatus, setConfigSaveStatus, onClose }) {
             <label className="label">Model</label>
             {aiProvider === 'Anthropic' ? (
               <select value={anthropicModel} onChange={(e) => setAnthropicModel(e.target.value)} className="select">
+                <option value="claude-haiku-4-5-20251001">Claude Haiku 4.5 (recommended)</option>
                 <option value="claude-sonnet-4-20250514">Claude Sonnet 4</option>
-                <option value="claude-haiku-4-5-20251001">Claude Haiku 4.5</option>
               </select>
             ) : (
               <>

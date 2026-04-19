@@ -180,7 +180,11 @@ impl Default for AnthropicConfig {
     fn default() -> Self {
         Self {
             api_key: String::new(),
-            model: models::ANTHROPIC_SONNET.to_string(),
+            // Haiku 4.5 matches Sonnet 4 quality on the 8-case ingestion eval
+            // (see autoresearch-ingestion/evaluate_anthropic.py — both score 0.900)
+            // while running ~2.5x faster and ~67% cheaper. Query stays on Sonnet
+            // via the explicit `query` override in `IngestionConfig::default()`.
+            model: models::ANTHROPIC_HAIKU.to_string(),
             base_url: models::ANTHROPIC_API_URL.to_string(),
         }
     }
@@ -268,7 +272,15 @@ impl Default for IngestionConfig {
             timeout_seconds: 300,
             auto_execute_mutations: true,
             vision_backend: VisionBackend::default(),
-            query: UseCaseOverride::default(),
+            // Ingestion defaults to Haiku (see AnthropicConfig::default), but
+            // natural-language query / agent reasoning is more demanding, so
+            // pin the query path to Sonnet by default. Users can flip it in
+            // the AI settings panel.
+            query: UseCaseOverride {
+                provider: None,
+                ollama_model: None,
+                anthropic_model: Some(models::ANTHROPIC_SONNET.to_string()),
+            },
         }
     }
 }
@@ -570,8 +582,16 @@ mod tests {
         let config = IngestionConfig::default();
         assert!(!config.enabled);
         assert_eq!(config.provider, AIProvider::Anthropic);
-        assert_eq!(config.anthropic.model, models::ANTHROPIC_SONNET);
+        // Ingestion default is Haiku — see AnthropicConfig::default for rationale.
+        assert_eq!(config.anthropic.model, models::ANTHROPIC_HAIKU);
         assert_eq!(config.anthropic.base_url, models::ANTHROPIC_API_URL);
+        // Query path is pinned to Sonnet via the explicit override.
+        assert_eq!(
+            config.query.anthropic_model.as_deref(),
+            Some(models::ANTHROPIC_SONNET),
+        );
+        // And the resolved query config picks Sonnet, not Haiku.
+        assert_eq!(config.query_config().anthropic.model, models::ANTHROPIC_SONNET);
         // Text model depends on system RAM — just verify it's non-empty
         assert!(!config.ollama.model.is_empty());
         assert_eq!(config.ollama.vision_model, models::OLLAMA_VISION);
