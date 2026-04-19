@@ -5,6 +5,8 @@ const SOURCES = [
   { id: 'notes', label: 'Apple Notes', icon: '\uD83D\uDCDD', description: 'Import all notes from Apple Notes' },
   { id: 'reminders', label: 'Apple Reminders', icon: '\u2705', description: 'Import all reminders including completed items' },
   { id: 'photos', label: 'Apple Photos', icon: '\uD83D\uDCF7', description: 'Export and import photos (HEIC converted to JPEG)' },
+  { id: 'calendar', label: 'Apple Calendar', icon: '\uD83D\uDCC5', description: 'Import events from Apple Calendar' },
+  { id: 'contacts', label: 'Apple Contacts', icon: '\uD83D\uDC64', description: 'Import contacts from Apple Contacts' },
 ]
 
 function SourceToggle({ source, enabled, onToggle }) {
@@ -88,7 +90,7 @@ function ImportProgress({ sourceId, progressId }) {
 
 export default function AppleDataStep({ onNext, onSkip }) {
   const [available, setAvailable] = useState(null)
-  const [enabled, setEnabled] = useState({ notes: true, reminders: true, photos: true })
+  const [enabled, setEnabled] = useState({ notes: true, reminders: true, photos: true, calendar: true, contacts: true })
   const [importing, setImporting] = useState(false)
   const [progressIds, setProgressIds] = useState({})
   const [allDone, setAllDone] = useState(false)
@@ -115,6 +117,8 @@ export default function AppleDataStep({ onNext, onSkip }) {
         if (source === 'notes') resp = await ingestionClient.appleImportNotes()
         else if (source === 'reminders') resp = await ingestionClient.appleImportReminders()
         else if (source === 'photos') resp = await ingestionClient.appleImportPhotos(null, photosLimit)
+        else if (source === 'calendar') resp = await ingestionClient.appleImportCalendar()
+        else if (source === 'contacts') resp = await ingestionClient.appleImportContacts()
 
         if (resp?.success && resp.data?.progress_id) {
           ids[source] = resp.data.progress_id
