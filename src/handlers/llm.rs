@@ -66,6 +66,39 @@ async fn get_schemas(node: &FoldNode) -> Result<Vec<SchemaWithState>, HandlerErr
         .typed_handler_err()
 }
 
+/// Canned answer returned by the agent when the node has no user-authored data.
+/// Mirrored in tests; changes here are user-visible.
+const EMPTY_STORE_AGENT_ANSWER: &str = "You haven't ingested any data yet. To get started:\n\n\
+    • Import from Apple (Notes, Photos, Calendar, Contacts, Reminders) in Settings → Apple Import\n\
+    • Upload files via the File Upload tab\n\
+    • Connect to an organization to see shared data\n\n\
+    Once data is ingested, ask me again and I'll query it for you.";
+
+/// Returns true when no approved schema is user-authored.
+///
+/// Every fresh node has the 12 Phase-1 built-ins (Fingerprint, Mention, Persona, …)
+/// pre-approved, but these are platform plumbing, not ingested content. If that's
+/// all we see, running the full tool loop is ~30s of wasted tokens against empty
+/// molecules (alpha dogfood papercut c600e). Callers should short-circuit to
+/// `EMPTY_STORE_AGENT_ANSWER`.
+///
+/// Safe fallback: a schema missing `descriptive_name` is treated as user-authored,
+/// so we run the agent rather than incorrectly short-circuiting.
+fn is_empty_user_store(schemas: &[SchemaWithState]) -> bool {
+    use crate::schema_service::builtin_schemas::PHASE_1_DESCRIPTIVE_NAMES;
+    use fold_db::schema::SchemaState;
+    schemas
+        .iter()
+        .filter(|s| s.state == SchemaState::Approved)
+        .all(|s| {
+            s.schema
+                .descriptive_name
+                .as_deref()
+                .map(|d| PHASE_1_DESCRIPTIVE_NAMES.contains(&d))
+                .unwrap_or(false)
+        })
+}
+
 // ============================================================================
 // Handler Functions
 // ============================================================================
@@ -373,6 +406,45 @@ pub async fn agent_query(
 
     let schemas = get_schemas(node).await?;
 
+    // Short-circuit: nothing ingested yet. Running the tool loop on an empty store
+    // wastes tokens + wall-clock (alpha papercut c600e: >30s "Thinking…" on fresh node).
+    if is_empty_user_store(&schemas) {
+        log_feature!(
+            LogFeature::Query,
+            info,
+            "Agent Query: empty-store short-circuit for session {}",
+            session_id
+        );
+        warn_session_err(
+            session_manager.add_message(&session_id, "user".to_string(), request.query.clone()),
+            "add user message (empty-store)",
+        );
+        warn_session_err(
+            session_manager.add_message(
+                &session_id,
+                "assistant".to_string(),
+                EMPTY_STORE_AGENT_ANSWER.to_string(),
+            ),
+            "add assistant message (empty-store)",
+        );
+        conversation_store::save_conversation_turn(
+            node,
+            session_id.clone(),
+            request.query.clone(),
+            EMPTY_STORE_AGENT_ANSWER.to_string(),
+            Vec::new(),
+        )
+        .await;
+        return Ok(ApiResponse::success_with_user(
+            AgentQueryHandlerResponse {
+                answer: EMPTY_STORE_AGENT_ANSWER.to_string(),
+                tool_calls: Vec::new(),
+                session_id,
+            },
+            user_hash,
+        ));
+    }
+
     // Default max iterations
     let max_iterations = request.max_iterations.unwrap_or(10);
 
@@ -477,4 +549,86 @@ pub async fn agent_query(
         },
         user_hash,
     ))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use fold_db::schema::types::SchemaType;
+    use fold_db::schema::{Schema, SchemaState, SchemaWithState};
+
+    fn schema_with(descriptive: Option<&str>) -> Schema {
+        let mut s = Schema::new("canonical-name".to_string(), SchemaType::Single, None, None, None, None);
+        s.descriptive_name = descriptive.map(str::to_string);
+        s
+    }
+
+    #[test]
+    fn empty_schema_list_is_empty_store() {
+        assert!(is_empty_user_store(&[]));
+    }
+
+    #[test]
+    fn only_builtin_approved_schemas_is_empty_store() {
+        let schemas = vec![
+            SchemaWithState::new(schema_with(Some("Fingerprint")), SchemaState::Approved),
+            SchemaWithState::new(schema_with(Some("Persona")), SchemaState::Approved),
+            SchemaWithState::new(schema_with(Some("Identity")), SchemaState::Approved),
+        ];
+        assert!(is_empty_user_store(&schemas));
+    }
+
+    #[test]
+    fn one_user_authored_approved_schema_is_not_empty() {
+        let schemas = vec![
+            SchemaWithState::new(schema_with(Some("Fingerprint")), SchemaState::Approved),
+            SchemaWithState::new(schema_with(Some("Recipe")), SchemaState::Approved),
+        ];
+        assert!(!is_empty_user_store(&schemas));
+    }
+
+    #[test]
+    fn user_authored_available_still_empty_until_approved() {
+        // Available (proposed, not yet approved) schemas do not count — user can't query them.
+        let schemas = vec![
+            SchemaWithState::new(schema_with(Some("Fingerprint")), SchemaState::Approved),
+            SchemaWithState::new(schema_with(Some("Recipe")), SchemaState::Available),
+        ];
+        assert!(is_empty_user_store(&schemas));
+    }
+
+    #[test]
+    fn blocked_user_schema_still_empty() {
+        let schemas = vec![SchemaWithState::new(
+            schema_with(Some("Recipe")),
+            SchemaState::Blocked,
+        )];
+        assert!(is_empty_user_store(&schemas));
+    }
+
+    #[test]
+    fn schema_without_descriptive_name_treated_as_user_authored() {
+        // Safe fallback: when we can't classify, run the agent rather than short-circuit.
+        let schemas = vec![SchemaWithState::new(schema_with(None), SchemaState::Approved)];
+        assert!(!is_empty_user_store(&schemas));
+    }
+
+    #[test]
+    fn all_twelve_phase_1_builtins_are_empty_store() {
+        use crate::schema_service::builtin_schemas::PHASE_1_DESCRIPTIVE_NAMES;
+        let schemas: Vec<SchemaWithState> = PHASE_1_DESCRIPTIVE_NAMES
+            .iter()
+            .map(|name| SchemaWithState::new(schema_with(Some(name)), SchemaState::Approved))
+            .collect();
+        assert_eq!(schemas.len(), 12);
+        assert!(is_empty_user_store(&schemas));
+    }
+
+    #[test]
+    fn empty_store_answer_mentions_import_paths() {
+        // Guardrail: if someone edits the canned message, keep the three primary paths.
+        assert!(EMPTY_STORE_AGENT_ANSWER.contains("Apple"));
+        assert!(EMPTY_STORE_AGENT_ANSWER.contains("Upload"));
+        assert!(EMPTY_STORE_AGENT_ANSWER.contains("organization"));
+    }
 }
