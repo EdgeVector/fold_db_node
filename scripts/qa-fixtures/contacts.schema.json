@@ -1,0 +1,26 @@
+{
+  "name": "QaDogfoodContact",
+  "descriptive_name": "QA Dogfood Apple Contact",
+  "schema_type": "Range",
+  "key": {
+    "range_field": "full_name"
+  },
+  "fields": ["contact_id", "full_name", "email", "phone"],
+  "field_classifications": {
+    "full_name": ["name:person", "word"],
+    "email": ["email"],
+    "phone": ["phone"]
+  },
+  "field_descriptions": {
+    "contact_id": "Address Book contact identifier",
+    "full_name": "Full display name",
+    "email": "Primary email address",
+    "phone": "Primary phone number"
+  },
+  "field_data_classifications": {
+    "contact_id": { "sensitivity_level": 0, "data_domain": "general" },
+    "full_name":  { "sensitivity_level": 3, "data_domain": "identity" },
+    "email":      { "sensitivity_level": 3, "data_domain": "identity" },
+    "phone":      { "sensitivity_level": 3, "data_domain": "identity" }
+  }
+}

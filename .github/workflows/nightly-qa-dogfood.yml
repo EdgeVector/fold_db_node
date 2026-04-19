@@ -1,0 +1,75 @@
+name: Nightly QA Dogfood Harness
+
+# Runs the fixture-only dogfood harness (M6 from the alpha-self-dogfood plan
+# in exemem-workspace/docs/plans/alpha-self-dogfood.md).
+#
+# Deterministic — no AI backend, no real Apple data. Exercises the 6 alpha
+# ingestion surfaces (Notes, Photos, Calendar, Contacts, Reminders, local
+# files) via /api/mutation + /api/query and asserts per-source round-trip.
+
+on:
+  schedule:
+    # 6am UTC = 11pm PT (previous day). Offset from nightly-ingestion (4am UTC)
+    # to avoid runner contention and let ingestion autofix finish first.
+    - cron: '0 6 * * *'
+  workflow_dispatch:
+    inputs:
+      per_source_count:
+        description: 'Number of fixture molecules per source (default 50)'
+        required: false
+        default: '50'
+
+concurrency:
+  group: nightly-qa-dogfood
+  cancel-in-progress: true
+
+jobs:
+  dogfood:
+    name: Dogfood harness (fixtures)
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+
+    env:
+      RUSTFLAGS: -C linker=clang -C link-arg=-fuse-ld=mold
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install mold linker
+        run: sudo apt-get update && sudo apt-get install -y mold
+
+      - uses: dtolnay/rust-toolchain@stable
+
+      - name: Configure git for private dependencies
+        run: git config --global url."https://x-access-token:${{ secrets.PRIVATE_DEPS_TOKEN }}@github.com/".insteadOf "https://github.com/"
+
+      - uses: Swatinem/rust-cache@v2
+
+      - name: Stub frontend dist for RustEmbed
+        run: mkdir -p src/server/static-react/dist && echo '<html></html>' > src/server/static-react/dist/index.html
+
+      - name: Build binaries
+        run: cargo build --bin folddb_server --bin schema_service
+
+      - name: Install jq
+        run: sudo apt-get install -y jq
+
+      - name: Run dogfood harness
+        id: dogfood
+        shell: bash
+        run: |
+          set -o pipefail
+          ./scripts/qa-harness-dogfood.sh \
+            --per-source-count "${{ github.event.inputs.per_source_count || '50' }}" \
+            --report-dir "$GITHUB_WORKSPACE/dogfood-report" \
+            2>&1 | tee /tmp/dogfood-output.txt
+
+      - name: Upload report artifact
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: qa-dogfood-report
+          path: |
+            dogfood-report/
+            /tmp/dogfood-output.txt
+          retention-days: 14

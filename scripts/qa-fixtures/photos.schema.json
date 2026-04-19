@@ -1,0 +1,25 @@
+{
+  "name": "QaDogfoodPhoto",
+  "descriptive_name": "QA Dogfood Apple Photo",
+  "schema_type": "Range",
+  "key": {
+    "range_field": "taken_at"
+  },
+  "fields": ["photo_id", "caption", "album", "taken_at"],
+  "field_classifications": {
+    "caption": ["word"],
+    "album": ["word"]
+  },
+  "field_descriptions": {
+    "photo_id": "Apple Photos asset identifier",
+    "caption": "User caption",
+    "album": "Album name",
+    "taken_at": "ISO-8601 capture timestamp"
+  },
+  "field_data_classifications": {
+    "photo_id": { "sensitivity_level": 0, "data_domain": "general" },
+    "caption":  { "sensitivity_level": 1, "data_domain": "general" },
+    "album":    { "sensitivity_level": 0, "data_domain": "general" },
+    "taken_at": { "sensitivity_level": 0, "data_domain": "general" }
+  }
+}

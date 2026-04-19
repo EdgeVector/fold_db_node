@@ -1,0 +1,27 @@
+{
+  "name": "QaDogfoodCalendarEvent",
+  "descriptive_name": "QA Dogfood Apple Calendar Event",
+  "schema_type": "Range",
+  "key": {
+    "range_field": "start_at"
+  },
+  "fields": ["event_id", "title", "location", "start_at", "end_at"],
+  "field_classifications": {
+    "title": ["word"],
+    "location": ["word", "location"]
+  },
+  "field_descriptions": {
+    "event_id": "Calendar event identifier",
+    "title": "Event title",
+    "location": "Event location",
+    "start_at": "ISO-8601 start timestamp",
+    "end_at": "ISO-8601 end timestamp"
+  },
+  "field_data_classifications": {
+    "event_id": { "sensitivity_level": 0, "data_domain": "general" },
+    "title":    { "sensitivity_level": 1, "data_domain": "general" },
+    "location": { "sensitivity_level": 1, "data_domain": "general" },
+    "start_at": { "sensitivity_level": 0, "data_domain": "general" },
+    "end_at":   { "sensitivity_level": 0, "data_domain": "general" }
+  }
+}
