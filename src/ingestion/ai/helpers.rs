@@ -1360,4 +1360,48 @@ Done."#;
         let result = sanitize_string_map_fields(schema.clone());
         assert_eq!(result, schema);
     }
+
+    // ---- malformed AI response regression tests ----
+    //
+    // Cover the cases where an upstream model emits something that no longer
+    // looks like the documented response envelope. The parser must surface an
+    // `IngestionError` in every case — never panic — so one bad call cannot
+    // take down the whole batch ingest.
+
+    #[test]
+    fn test_parse_ai_response_non_json_body_errors() {
+        let err = parse_ai_response("not JSON at all").expect_err("non-JSON body must not parse");
+        assert!(matches!(err, IngestionError::AIResponseValidationError(_)));
+    }
+
+    #[test]
+    fn test_parse_ai_response_top_level_string_errors() {
+        // Valid JSON but the top level is a string, not the expected object.
+        let err = parse_ai_response("\"hello\"").expect_err("top-level string must not parse");
+        assert!(matches!(err, IngestionError::AIResponseValidationError(_)));
+    }
+
+    #[test]
+    fn test_parse_ai_response_top_level_array_errors() {
+        let err = parse_ai_response("[1, 2, 3]").expect_err("top-level array must not parse");
+        assert!(matches!(err, IngestionError::AIResponseValidationError(_)));
+    }
+
+    #[test]
+    fn test_parse_ai_response_new_schemas_wrong_type_errors() {
+        // `new_schemas` is a bare string — this is the exact shape of the
+        // malformed AI body that the `.unwrap()` audit was guarding against.
+        // Must surface as an error, never panic.
+        let body = r#"{"new_schemas": "not a schema", "mutation_mappers": {}}"#;
+        let err = parse_ai_response(body).expect_err("new_schemas must not be a bare string");
+        assert!(matches!(err, IngestionError::AIResponseValidationError(_)));
+    }
+
+    #[test]
+    fn test_parse_ai_response_truncated_body_errors() {
+        // Simulates an AI response cut off mid-object (seen under timeouts).
+        let body = r#"{"new_schemas": {"name": "test""#;
+        let err = parse_ai_response(body).expect_err("truncated body must not parse");
+        assert!(matches!(err, IngestionError::AIResponseValidationError(_)));
+    }
 }

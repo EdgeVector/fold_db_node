@@ -179,11 +179,14 @@ impl IngestionService {
 
         // Compute identity_hash for structure-based deduplication (used by schema service)
         schema.compute_identity_hash();
-        if schema.get_identity_hash().is_none() {
-            return Err(IngestionError::SchemaCreationError(
-                "Schema must have identity_hash computed".to_string(),
-            ));
-        }
+        let identity_hash = schema
+            .get_identity_hash()
+            .ok_or_else(|| {
+                IngestionError::SchemaCreationError(
+                    "Schema must have identity_hash computed".to_string(),
+                )
+            })?
+            .clone();
 
         // Keep the AI-provided semantic name (e.g., "customer_orders").
         // If the AI left it blank or used the placeholder "Schema", fall back to identity_hash.
@@ -191,7 +194,7 @@ impl IngestionService {
         // The human-readable name lives in descriptive_name (used by the UI).
         let ai_name = schema.name.trim().to_string();
         if ai_name.is_empty() || ai_name.eq_ignore_ascii_case("schema") {
-            schema.name = schema.get_identity_hash().unwrap().clone();
+            schema.name = identity_hash;
         }
 
         // Serialize schema creation: the schema service call, local load, and
