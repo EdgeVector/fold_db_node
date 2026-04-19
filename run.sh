@@ -234,10 +234,27 @@ generate_openapi() {
 
 install_frontend_deps() {
     cd src/server/static-react
-    # Check if node_modules exists AND has a valid vite binary
+    local needs_install=false
+    local reason=""
+
     if [ ! -d "node_modules" ] || [ ! -x "node_modules/.bin/vite" ]; then
-        echo "Installing frontend dependencies..."
-        rm -rf node_modules  # Clean up any corrupted state
+        needs_install=true
+        reason="missing or corrupted node_modules"
+        rm -rf node_modules
+    elif [ ! -f "node_modules/.package-lock.json" ]; then
+        # npm writes .package-lock.json on every successful install; absence means stale.
+        needs_install=true
+        reason="node_modules/.package-lock.json missing (stale install)"
+    elif [ "package-lock.json" -nt "node_modules/.package-lock.json" ]; then
+        needs_install=true
+        reason="package-lock.json newer than installed deps"
+    elif [ "package.json" -nt "node_modules/.package-lock.json" ]; then
+        needs_install=true
+        reason="package.json newer than installed deps"
+    fi
+
+    if [ "$needs_install" = true ]; then
+        echo "Installing frontend dependencies ($reason)..."
         npm install
         if [ $? -ne 0 ]; then
             echo "Failed to install frontend dependencies. Exiting."
