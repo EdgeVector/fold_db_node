@@ -275,6 +275,19 @@ start_http_server() {
         extra_args="--demo"
     fi
 
+    # Preflight: fail fast with a clear error if something else is already
+    # bound to $HTTP_PORT. Otherwise folddb_server crashes with EADDRINUSE
+    # but Vite (started later) happily serves a dead UI that 401s forever.
+    local holder
+    holder=$(lsof -iTCP:"$HTTP_PORT" -sTCP:LISTEN -t 2>/dev/null | head -1)
+    if [ -n "$holder" ]; then
+        local holder_cmd
+        holder_cmd=$(ps -o command= -p "$holder" 2>/dev/null || echo "<unknown>")
+        echo "error: port $HTTP_PORT is already bound by PID $holder ($holder_cmd)." >&2
+        echo "       Stop that process or rerun without --port / FOLDDB_PORT to auto-slot a free port." >&2
+        return 1
+    fi
+
     echo "Starting the HTTP server on port $HTTP_PORT..."
     if [ -n "$features" ]; then
         FOLDDB_HOME="$FOLDDB_HOME" RUST_LOG=debug nohup cargo run --features "$features" --bin folddb_server -- --port "$HTTP_PORT" --schema-service-url "$schema_url" $extra_args > "$FOLDDB_HOME/server.log" 2>&1 &
@@ -294,12 +307,15 @@ start_http_server() {
             fi
             sleep 1
         else
-            echo "HTTP server process died. Check $FOLDDB_HOME/server.log for details."
+            echo "HTTP server process died. Tail of $FOLDDB_HOME/server.log:" >&2
+            tail -n 20 "$FOLDDB_HOME/server.log" >&2 2>/dev/null || true
             return 1
         fi
     done
 
-    echo "HTTP server failed to become healthy within $timeout seconds."
+    echo "HTTP server failed to become healthy within $timeout seconds." >&2
+    echo "Tail of $FOLDDB_HOME/server.log:" >&2
+    tail -n 20 "$FOLDDB_HOME/server.log" >&2 2>/dev/null || true
     kill $SERVER_PID 2>/dev/null || true
     rm -f "$FOLDDB_HOME/folddb.pid"
     return 1
@@ -413,15 +429,17 @@ done
 # $FOLDDB_HOME), scan 9101..=9199 for a free port and derive a per-slot
 # FOLDDB_HOME so parallel agents don't collide. Anything explicit (even one
 # of --port or --home) disables auto-slot — we assume the caller knows.
+#
+# Use lsof (not a bash /dev/tcp probe) because folddb_server may be bound to
+# an IPv6 listener; a /dev/tcp/127.0.0.1 probe would miss it and hand us a
+# port the backend can't actually bind, crashing it with EADDRINUSE while
+# Vite (started later) would happily serve a UI talking to nothing.
 if [ -z "$HTTP_PORT" ] && [ -z "$FOLDDB_HOME" ]; then
     for candidate in $(seq 9101 9199); do
-        if ! (exec 3<>/dev/tcp/127.0.0.1/"$candidate") 2>/dev/null; then
+        if ! lsof -iTCP:"$candidate" -sTCP:LISTEN -t >/dev/null 2>&1; then
             HTTP_PORT="$candidate"
             AUTO_SLOT=true
             break
-        else
-            exec 3<&- 2>/dev/null || true
-            exec 3>&- 2>/dev/null || true
         fi
     done
     if [ -z "$HTTP_PORT" ]; then
