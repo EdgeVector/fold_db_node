@@ -165,9 +165,7 @@ pub async fn register_with_exemem(
             log::warn!("Bootstrap after register skipped: no sled_pool handle");
         }
     } else {
-        log::warn!(
-            "Register response missing api_key or user_hash; cloud sync activation skipped"
-        );
+        log::warn!("Register response missing api_key or user_hash; cloud sync activation skipped");
     }
 
     Ok(response)
@@ -193,10 +191,8 @@ async fn enable_cloud_sync_in_config(
         session_token: None,
         user_hash: Some(user_hash),
     };
-    config.database = fold_db::storage::DatabaseConfig::with_cloud_sync(
-        config.database.path.clone(),
-        cloud_sync,
-    );
+    config.database =
+        fold_db::storage::DatabaseConfig::with_cloud_sync(config.database.path.clone(), cloud_sync);
 
     crate::fold_node::config::save_node_config(&config)?;
 
@@ -1370,7 +1366,10 @@ mod tests {
         std::env::set_var("FOLDDB_HOME", tmp.path());
         std::env::set_var(
             "NODE_CONFIG",
-            tmp.path().join("node_config.json").to_string_lossy().to_string(),
+            tmp.path()
+                .join("node_config.json")
+                .to_string_lossy()
+                .to_string(),
         );
 
         let node_manager = Arc::new(crate::server::node_manager::NodeManager::new(
@@ -1390,7 +1389,11 @@ mod tests {
 
         // Precondition: fresh-local node manager has no cloud_sync.
         assert!(
-            !node_manager.get_base_config().await.database.has_cloud_sync(),
+            !node_manager
+                .get_base_config()
+                .await
+                .database
+                .has_cloud_sync(),
             "precondition: base config should start without cloud_sync"
         );
 
