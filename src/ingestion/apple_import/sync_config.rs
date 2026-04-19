@@ -37,6 +37,13 @@ pub struct EnabledSources {
     pub notes: bool,
     pub reminders: bool,
     pub photos: bool,
+    // Accepts configs persisted before calendar auto-sync existed.
+    #[serde(default = "default_calendar_enabled")]
+    pub calendar: bool,
+}
+
+fn default_calendar_enabled() -> bool {
+    true
 }
 
 impl Default for EnabledSources {
@@ -45,6 +52,7 @@ impl Default for EnabledSources {
             notes: true,
             reminders: true,
             photos: false, // photos are expensive, off by default
+            calendar: true,
         }
     }
 }
@@ -146,6 +154,7 @@ mod tests {
         assert!(cfg.sources.notes);
         assert!(cfg.sources.reminders);
         assert!(!cfg.sources.photos);
+        assert!(cfg.sources.calendar);
         assert!(cfg.last_sync.is_none());
         assert!(cfg.next_sync.is_none());
     }
@@ -220,6 +229,23 @@ mod tests {
         assert_eq!(deserialized.enabled, cfg.enabled);
         assert_eq!(deserialized.schedule, cfg.schedule);
         assert_eq!(deserialized.sources.photos, cfg.sources.photos);
+        assert_eq!(deserialized.sources.calendar, cfg.sources.calendar);
         assert_eq!(deserialized.photos_limit, cfg.photos_limit);
+    }
+
+    #[test]
+    fn test_legacy_config_without_calendar_field_defaults_to_true() {
+        // Users with a config persisted before calendar auto-sync existed
+        // should pick up the new source enabled by default, not disabled.
+        let legacy = r#"{
+            "enabled": true,
+            "schedule": "daily",
+            "sources": { "notes": true, "reminders": true, "photos": false },
+            "photos_limit": 50,
+            "last_sync": null,
+            "next_sync": null
+        }"#;
+        let cfg: AppleSyncConfig = serde_json::from_str(legacy).unwrap();
+        assert!(cfg.sources.calendar);
     }
 }

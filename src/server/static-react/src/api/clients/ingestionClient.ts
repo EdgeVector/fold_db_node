@@ -689,6 +689,7 @@ export interface EnabledSources {
   notes: boolean;
   reminders: boolean;
   photos: boolean;
+  calendar: boolean;
 }
 
 // Create default instance
