@@ -17,6 +17,7 @@ pub mod schema;
 pub mod security;
 pub mod sharing;
 pub mod smart_folder;
+pub mod snapshot;
 pub mod sync;
 pub mod system;
 pub mod test_admin;

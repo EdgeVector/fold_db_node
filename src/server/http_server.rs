@@ -384,6 +384,7 @@ impl FoldHttpServer {
                 .configure(Self::configure_remote_routes)
                 .configure(Self::configure_auth_routes)
                 .configure(Self::configure_sync_routes)
+                .configure(Self::configure_snapshot_routes)
                 .configure(Self::configure_org_routes)
                 .configure(Self::configure_test_admin_routes),
         );
@@ -614,6 +615,16 @@ impl FoldHttpServer {
             .route(
                 "/sync/org/{org_hash}/status",
                 web::get().to(sync_routes::get_org_sync_status),
+            );
+    }
+
+    fn configure_snapshot_routes(cfg: &mut web::ServiceConfig) {
+        use super::routes::snapshot as snapshot_routes;
+
+        cfg.route("/snapshot/backup", web::post().to(snapshot_routes::backup))
+            .route(
+                "/snapshot/restore",
+                web::post().to(snapshot_routes::restore),
             );
     }
 
