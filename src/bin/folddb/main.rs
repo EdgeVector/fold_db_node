@@ -397,6 +397,10 @@ async fn dispatch_http(
             }
             _ => unreachable!("Cloud enable/disable handled before daemon dispatch"),
         },
+        Command::Snapshot { action } => match action {
+            cli::SnapshotCommand::Backup => commands::snapshot::backup(client, mode).await,
+            cli::SnapshotCommand::Restore => commands::snapshot::restore(client, mode).await,
+        },
         Command::Org { action } => dispatch_org(action, client, mode).await,
         Command::Discovery { action } => dispatch_discovery(action, client, mode).await,
         Command::RecoveryPhrase => unreachable!("Handled before daemon dispatch"),

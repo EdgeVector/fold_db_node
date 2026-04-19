@@ -317,6 +317,18 @@ impl FoldDbClient {
         self.post("/api/sync/trigger", &serde_json::json!({})).await
     }
 
+    // --- Snapshot ---
+
+    pub async fn snapshot_backup(&self) -> Result<Value, CliError> {
+        self.post("/api/snapshot/backup", &serde_json::json!({}))
+            .await
+    }
+
+    pub async fn snapshot_restore(&self) -> Result<Value, CliError> {
+        self.post("/api/snapshot/restore", &serde_json::json!({}))
+            .await
+    }
+
     // --- System ---
 
     pub async fn status(&self) -> Result<Value, CliError> {

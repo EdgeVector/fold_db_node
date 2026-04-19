@@ -1,6 +1,7 @@
 pub mod completions;
 pub mod daemon;
 pub mod setup;
+pub mod snapshot;
 pub mod system;
 
 #[derive(Debug)]

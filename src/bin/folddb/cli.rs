@@ -114,6 +114,12 @@ pub enum Command {
         action: CloudCommand,
     },
 
+    /// Backup/restore an encrypted snapshot of the local store via Exemem
+    Snapshot {
+        #[command(subcommand)]
+        action: SnapshotCommand,
+    },
+
     /// Manage organizations
     Org {
         #[command(subcommand)]
@@ -316,6 +322,14 @@ pub enum CloudCommand {
     Sync,
     /// Delete your Exemem account and all cloud data
     DeleteAccount,
+}
+
+#[derive(Subcommand, Debug)]
+pub enum SnapshotCommand {
+    /// Upload an encrypted snapshot of the current local store to Exemem
+    Backup,
+    /// Download the latest snapshot from Exemem and replay it into the local store
+    Restore,
 }
 
 #[derive(Subcommand, Debug)]
@@ -715,6 +729,28 @@ mod tests {
     }
 
     #[test]
+    fn parse_snapshot_backup() {
+        let cli = Cli::parse_from(["folddb", "snapshot", "backup"]);
+        match cli.command {
+            Command::Snapshot {
+                action: SnapshotCommand::Backup,
+            } => {}
+            _ => panic!("Expected Snapshot Backup"),
+        }
+    }
+
+    #[test]
+    fn parse_snapshot_restore() {
+        let cli = Cli::parse_from(["folddb", "snapshot", "restore"]);
+        match cli.command {
+            Command::Snapshot {
+                action: SnapshotCommand::Restore,
+            } => {}
+            _ => panic!("Expected Snapshot Restore"),
+        }
+    }
+
+    #[test]
     fn parse_completions() {
         let cli = Cli::parse_from(["folddb", "completions", "bash"]);
         match cli.command {
@@ -914,6 +950,8 @@ mod tests {
             vec!["folddb", "cloud", "status"],
             vec!["folddb", "cloud", "sync"],
             vec!["folddb", "cloud", "delete-account"],
+            vec!["folddb", "snapshot", "backup"],
+            vec!["folddb", "snapshot", "restore"],
             vec!["folddb", "org", "list"],
             vec!["folddb", "org", "create", "TestOrg"],
             vec!["folddb", "org", "invites"],
