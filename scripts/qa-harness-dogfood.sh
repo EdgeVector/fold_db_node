@@ -92,6 +92,7 @@ fi
 STACK_PIDS=()
 STACK_HOMES=()
 STACK_PORTS=()
+STACK_SCHEMA_PORTS=()
 
 arr_len() {
   # Usage: arr_len "${ARR[@]:-}"
@@ -146,6 +147,7 @@ boot_stack() {
   folddb_home="$(jq -r '.home'        "$slot_file")"
   STACK_HOMES+=("$folddb_home")
   STACK_PORTS+=("$backend_port")
+  STACK_SCHEMA_PORTS+=("$schema_port")
 
   log "[$label] backend=$backend_port schema=$schema_port vite=$vite_port home=$folddb_home"
 
@@ -174,28 +176,52 @@ cleanup() {
     log "teardown skipped (--no-teardown). stacks still running:"
     if [ "$(arr_len "${STACK_PIDS[@]:-}")" -gt 0 ]; then
       for i in "${!STACK_PIDS[@]}"; do
-        log "  pid=${STACK_PIDS[$i]} home=${STACK_HOMES[$i]:-?} backend=${STACK_PORTS[$i]:-?}"
+        log "  pid=${STACK_PIDS[$i]} home=${STACK_HOMES[$i]:-?} backend=${STACK_PORTS[$i]:-?} schema=${STACK_SCHEMA_PORTS[$i]:-?}"
       done
     fi
     return
   fi
+  # Pass 1 — graceful: SIGTERM run.sh + its direct children (npm/vite).
   for pid in "${STACK_PIDS[@]:-}"; do
     if kill -0 "$pid" 2>/dev/null; then
       pkill -P "$pid" 2>/dev/null || true
       kill "$pid" 2>/dev/null || true
     fi
   done
+  # Pass 2 — orphan binaries: run.sh starts the backend + schema service via
+  # `nohup cargo run --bin X -- --port N`. Killing run.sh / cargo does not
+  # reliably propagate to the actual `target/.../X --port N` binary, which is
+  # then reparented to init. Target by name+port — unambiguous because each
+  # slot's port is unique. The `cargo run` command line has `-- --port N`
+  # (with the `--` separator), so this pattern only matches the binary.
+  for port in "${STACK_PORTS[@]:-}"; do
+    [ -z "$port" ] && continue
+    pkill -f "folddb_server --port $port" 2>/dev/null || true
+  done
+  for port in "${STACK_SCHEMA_PORTS[@]:-}"; do
+    [ -z "$port" ] && continue
+    pkill -f "schema_service --port $port" 2>/dev/null || true
+  done
   sleep 2
+  # Pass 3 — SIGKILL anything still alive after the grace period.
   for pid in "${STACK_PIDS[@]:-}"; do
     if kill -0 "$pid" 2>/dev/null; then
       kill -9 "$pid" 2>/dev/null || true
       pkill -9 -P "$pid" 2>/dev/null || true
     fi
   done
+  for port in "${STACK_PORTS[@]:-}"; do
+    [ -z "$port" ] && continue
+    pkill -9 -f "folddb_server --port $port" 2>/dev/null || true
+  done
+  for port in "${STACK_SCHEMA_PORTS[@]:-}"; do
+    [ -z "$port" ] && continue
+    pkill -9 -f "schema_service --port $port" 2>/dev/null || true
+  done
+  # Slot data dirs + slot JSON: only touch our own (auto-slot dirs live under
+  # /tmp/folddb-slot-*; slot JSON keys are the backend ports we tracked).
   for home in "${STACK_HOMES[@]:-}"; do
     [ -z "$home" ] && continue
-    # only target our own isolated data dirs
-    case "$home" in /tmp/folddb-slot-*) pkill -f "FOLDDB_HOME=$home" 2>/dev/null || true ;; esac
     case "$home" in /tmp/folddb-slot-*) rm -rf "$home" 2>/dev/null || true ;; esac
   done
   for port in "${STACK_PORTS[@]:-}"; do
