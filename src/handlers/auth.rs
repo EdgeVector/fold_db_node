@@ -12,7 +12,9 @@ use crate::keychain;
 use crate::server::node_manager::NodeManager;
 use fold_db::{CloudCredentials, NodeConfigStore};
 use serde::{Deserialize, Serialize};
+use std::future::Future;
 use std::sync::{Arc, Mutex};
+use std::time::{Duration, Instant};
 
 pub(crate) fn exemem_api_url() -> String {
     crate::endpoints::exemem_api_url()
@@ -225,16 +227,116 @@ pub(crate) async fn signed_register(
 // Standalone auth refresh (no NodeManager dependency)
 // ============================================================================
 
+/// Bounded-retry throttle for the auth refresh callback.
+///
+/// The sync engine calls the refresh callback on every 401, on every sync
+/// cycle. Without a throttle, a persistent 401 (expired/revoked credentials,
+/// account issue, etc.) hammers the Exemem register endpoint forever.
+///
+/// Two-stage bound:
+/// * **Exponential backoff** between consecutive failures: 1s, 2s, 4s, 8s,
+///   16s, capped at [`Self::MAX_BACKOFF`].
+/// * **Exhaustion cooldown**: after [`Self::MAX_ATTEMPTS`] consecutive failures
+///   the throttle holds the caller off for [`Self::EXHAUSTION_COOLDOWN`]
+///   before allowing a single probe attempt. Any success resets both counters.
+///
+/// The stored-credentials fast path (no network) is unaffected — only the
+/// re-register network call is gated.
+#[derive(Debug, Clone, Copy)]
+pub(crate) struct RefreshThrottle {
+    consecutive_failures: u32,
+    last_attempt_at: Option<Instant>,
+}
+
+impl RefreshThrottle {
+    const MAX_ATTEMPTS: u32 = 5;
+    const BASE_BACKOFF: Duration = Duration::from_secs(1);
+    const MAX_BACKOFF: Duration = Duration::from_secs(300);
+    const EXHAUSTION_COOLDOWN: Duration = Duration::from_secs(3600);
+
+    pub(crate) fn new() -> Self {
+        Self {
+            consecutive_failures: 0,
+            last_attempt_at: None,
+        }
+    }
+
+    fn required_wait(&self) -> Duration {
+        if self.consecutive_failures == 0 {
+            return Duration::ZERO;
+        }
+        if self.consecutive_failures >= Self::MAX_ATTEMPTS {
+            return Self::EXHAUSTION_COOLDOWN;
+        }
+        let shift = self.consecutive_failures - 1;
+        let factor: u32 = 1u32.checked_shl(shift).unwrap_or(u32::MAX);
+        let raw = Self::BASE_BACKOFF.saturating_mul(factor);
+        std::cmp::min(raw, Self::MAX_BACKOFF)
+    }
+
+    /// Remaining cooldown, or `None` if a reregister attempt is allowed now.
+    pub(crate) fn remaining_cooldown(&self, now: Instant) -> Option<Duration> {
+        let last = self.last_attempt_at?;
+        let wait = self.required_wait();
+        let elapsed = now.saturating_duration_since(last);
+        if elapsed >= wait {
+            None
+        } else {
+            Some(wait - elapsed)
+        }
+    }
+
+    pub(crate) fn is_exhausted(&self) -> bool {
+        self.consecutive_failures >= Self::MAX_ATTEMPTS
+    }
+
+    pub(crate) fn record_attempt(&mut self, now: Instant) {
+        self.last_attempt_at = Some(now);
+    }
+
+    pub(crate) fn record_success(&mut self) {
+        self.consecutive_failures = 0;
+        self.last_attempt_at = None;
+    }
+
+    pub(crate) fn record_failure(&mut self) {
+        self.consecutive_failures = self.consecutive_failures.saturating_add(1);
+    }
+}
+
 /// Refresh Exemem credentials for the sync engine.
 ///
 /// See the module docs on `build_auth_refresh_callback` for the two-branch
 /// behaviour (use stored key if newer, else re-register).
 async fn refresh_auth_standalone(
     last_returned: Arc<Mutex<Option<String>>>,
+    throttle: Arc<Mutex<RefreshThrottle>>,
 ) -> Result<fold_db::sync::auth::SyncAuth, String> {
-    // Step 1: Try the stored credentials first. If we have a newer key than the
-    // one we last handed the sync engine, just hand it that new key — no need
-    // to burn a fresh one.
+    refresh_auth_inner(
+        last_returned,
+        throttle,
+        Instant::now(),
+        reregister_and_store,
+    )
+    .await
+}
+
+/// Testable core of [`refresh_auth_standalone`]. The `now` and re-register
+/// function are injected so tests can simulate time passing and HTTP failures
+/// without touching the network.
+async fn refresh_auth_inner<F, Fut>(
+    last_returned: Arc<Mutex<Option<String>>>,
+    throttle: Arc<Mutex<RefreshThrottle>>,
+    now: Instant,
+    reregister: F,
+) -> Result<fold_db::sync::auth::SyncAuth, String>
+where
+    F: FnOnce() -> Fut,
+    Fut: Future<Output = Result<String, String>>,
+{
+    // Step 1: Try the stored credentials first. If we have a newer key than
+    // the one we last handed the sync engine, just hand it that new key — no
+    // network call, no throttle gate.
     let stored = crate::keychain::load_credentials()
         .map_err(|e| format!("Auth refresh: failed to load credentials: {e}"))?;
 
@@ -246,6 +348,12 @@ async fn refresh_auth_standalone(
         if !already_returned {
             log::info!("Sync auth: returning stored api_key from credentials.json");
             *guard = Some(creds.api_key.clone());
+            // A fresh stored key means something else succeeded recently —
+            // reset the throttle so we're not penalising future re-registers.
+            throttle
+                .lock()
+                .map_err(|e| format!("Auth refresh: throttle mutex poisoned: {e}"))?
+                .record_success();
             return Ok(fold_db::sync::auth::SyncAuth::ApiKey(creds.api_key.clone()));
         }
         // Stored key is the same one we already returned → it's stale, fall through.
@@ -254,19 +362,69 @@ async fn refresh_auth_standalone(
         log::info!("Sync auth: no stored credentials, re-registering with Exemem");
     }
 
-    // Step 2: Re-register. This rotates the API key on the Exemem side.
-    let new_api_key = reregister_and_store().await?;
+    // Step 2: Gate on the throttle. If we're inside a backoff window or have
+    // exhausted the retry budget, return Err without touching the network.
+    {
+        let t = throttle
+            .lock()
+            .map_err(|e| format!("Auth refresh: throttle mutex poisoned: {e}"))?;
+        if let Some(wait) = t.remaining_cooldown(now) {
+            if t.is_exhausted() {
+                return Err(format!(
+                    "Auth refresh: exhausted after {} consecutive failures, offline for {}s",
+                    t.consecutive_failures,
+                    wait.as_secs()
+                ));
+            }
+            return Err(format!(
+                "Auth refresh: backing off for {}s after {} consecutive failures",
+                wait.as_secs(),
+                t.consecutive_failures
+            ));
+        }
+    }
 
-    let mut guard = last_returned
-        .lock()
-        .map_err(|e| format!("Auth refresh: last_returned mutex poisoned: {e}"))?;
-    *guard = Some(new_api_key.clone());
+    // Step 3: Record the attempt and hit the network.
+    {
+        let mut t = throttle
+            .lock()
+            .map_err(|e| format!("Auth refresh: throttle mutex poisoned: {e}"))?;
+        t.record_attempt(now);
+    }
 
-    log::info!("Sync auth refreshed successfully via re-registration");
+    match reregister().await {
+        Ok(new_api_key) => {
+            {
+                let mut t = throttle
+                    .lock()
+                    .map_err(|e| format!("Auth refresh: throttle mutex poisoned: {e}"))?;
+                t.record_success();
+            }
 
-    // The sync engine's presigned-URL endpoint authenticates with X-API-Key,
-    // not a bearer token, so we return ApiKey even after re-registration.
-    Ok(fold_db::sync::auth::SyncAuth::ApiKey(new_api_key))
+            let mut guard = last_returned
+                .lock()
+                .map_err(|e| format!("Auth refresh: last_returned mutex poisoned: {e}"))?;
+            *guard = Some(new_api_key.clone());
+
+            log::info!("Sync auth refreshed successfully via re-registration");
+
+            // The sync engine's presigned-URL endpoint authenticates with
+            // X-API-Key, not a bearer token, so we return ApiKey even after
+            // re-registration.
+            Ok(fold_db::sync::auth::SyncAuth::ApiKey(new_api_key))
+        }
+        Err(e) => {
+            let mut t = throttle
+                .lock()
+                .map_err(|err| format!("Auth refresh: throttle mutex poisoned: {err}"))?;
+            t.record_failure();
+            log::warn!(
+                "Sync auth re-register failed ({} consecutive): {e}",
+                t.consecutive_failures
+            );
+            Err(e)
+        }
+    }
 }
 
 /// Re-register this node with Exemem using the persisted Ed25519 keypair.
@@ -387,16 +545,20 @@ async fn reregister_and_store() -> Result<String, String> {
 ///    call — just catches the engine up to a key that a previous startup task
 ///    or register call already produced.
 /// 2. Only if the stored key is also stale does it re-register with the
-///    Exemem API (rotating the key) and return the new one.
+///    Exemem API (rotating the key) and return the new one. A
+///    [`RefreshThrottle`] gates this step so persistent register failures
+///    (Exemem down, bad credentials, revoked account) back off exponentially
+///    instead of hammering the endpoint on every sync cycle.
 ///
-/// The "last returned" API key is tracked in a mutex captured by the closure
-/// so repeated 401s eventually force a real re-registration instead of
-/// returning the same stale key forever.
+/// Both the "last returned" API key and the throttle state are held in
+/// mutexes captured by the closure so state persists across invocations.
 pub fn build_auth_refresh_callback() -> fold_db::sync::AuthRefreshCallback {
     let last_returned: Arc<Mutex<Option<String>>> = Arc::new(Mutex::new(None));
+    let throttle: Arc<Mutex<RefreshThrottle>> = Arc::new(Mutex::new(RefreshThrottle::new()));
     Arc::new(move || {
         let last_returned = last_returned.clone();
-        Box::pin(refresh_auth_standalone(last_returned))
+        let throttle = throttle.clone();
+        Box::pin(refresh_auth_standalone(last_returned, throttle))
     })
 }
 
@@ -996,6 +1158,10 @@ mod tests {
         tmp
     }
 
+    fn throttle() -> Arc<Mutex<RefreshThrottle>> {
+        Arc::new(Mutex::new(RefreshThrottle::new()))
+    }
+
     #[tokio::test]
     #[allow(clippy::await_holding_lock)]
     async fn refresh_auth_returns_stored_api_key_without_network() {
@@ -1006,7 +1172,7 @@ mod tests {
         let _tmp = setup_creds_in_temp_home("api_key_v2");
 
         let last_returned: Arc<Mutex<Option<String>>> = Arc::new(Mutex::new(None));
-        let result = refresh_auth_standalone(last_returned.clone()).await;
+        let result = refresh_auth_standalone(last_returned.clone(), throttle()).await;
 
         let auth = result.expect("should return stored api_key without hitting network");
         match auth {
@@ -1034,7 +1200,8 @@ mod tests {
         let tmp = setup_creds_in_temp_home("api_key_v1");
 
         let last_returned: Arc<Mutex<Option<String>>> = Arc::new(Mutex::new(None));
-        let first = refresh_auth_standalone(last_returned.clone())
+        let throttle = throttle();
+        let first = refresh_auth_standalone(last_returned.clone(), throttle.clone())
             .await
             .expect("first call");
         assert!(matches!(
@@ -1050,7 +1217,7 @@ mod tests {
         };
         crate::keychain::store_credentials(&creds).expect("store rotated creds");
 
-        let second = refresh_auth_standalone(last_returned.clone())
+        let second = refresh_auth_standalone(last_returned.clone(), throttle)
             .await
             .expect("second call should see newer stored key");
         match second {
@@ -1080,7 +1247,7 @@ mod tests {
         let last_returned: Arc<Mutex<Option<String>>> =
             Arc::new(Mutex::new(Some("api_key_stale".to_string())));
 
-        let result = refresh_auth_standalone(last_returned).await;
+        let result = refresh_auth_standalone(last_returned, throttle()).await;
         let err = result.expect_err("should attempt reregister and fail at HTTP");
         let reached_http = err.contains("failed to connect")
             || err.contains("Failed to read node identity")
@@ -1091,6 +1258,268 @@ mod tests {
         );
 
         std::env::remove_var("EXEMEM_API_URL");
+        std::env::remove_var("FOLDDB_HOME");
+    }
+
+    // ------------------------------------------------------------------
+    // RefreshThrottle (pure logic)
+    // ------------------------------------------------------------------
+
+    #[test]
+    fn throttle_allows_first_attempt_immediately() {
+        let t = RefreshThrottle::new();
+        assert!(t.remaining_cooldown(Instant::now()).is_none());
+        assert!(!t.is_exhausted());
+    }
+
+    #[test]
+    fn throttle_applies_exponential_backoff_after_failures() {
+        let mut t = RefreshThrottle::new();
+        let t0 = Instant::now();
+
+        t.record_attempt(t0);
+        t.record_failure();
+        // 1 failure → wait 1s (2^0 * base).
+        assert_eq!(
+            t.remaining_cooldown(t0 + Duration::from_millis(500)),
+            Some(Duration::from_millis(500))
+        );
+        assert!(t.remaining_cooldown(t0 + Duration::from_secs(1)).is_none());
+
+        let t1 = t0 + Duration::from_secs(1);
+        t.record_attempt(t1);
+        t.record_failure();
+        // 2 failures → wait 2s.
+        assert_eq!(
+            t.remaining_cooldown(t1 + Duration::from_millis(500)),
+            Some(Duration::from_millis(1500))
+        );
+
+        let t2 = t1 + Duration::from_secs(2);
+        t.record_attempt(t2);
+        t.record_failure();
+        // 3 failures → wait 4s.
+        assert_eq!(
+            t.remaining_cooldown(t2 + Duration::from_secs(1)),
+            Some(Duration::from_secs(3))
+        );
+    }
+
+    #[test]
+    fn throttle_enters_exhaustion_cooldown_after_max_attempts() {
+        let mut t = RefreshThrottle::new();
+        let mut now = Instant::now();
+        for _ in 0..RefreshThrottle::MAX_ATTEMPTS {
+            t.record_attempt(now);
+            t.record_failure();
+            now += Duration::from_secs(600); // skip past any per-attempt backoff
+        }
+        assert!(t.is_exhausted());
+
+        // remaining_cooldown is measured from the LAST attempt instant, so at
+        // that exact moment the full EXHAUSTION_COOLDOWN remains.
+        let last_attempt = t.last_attempt_at.unwrap();
+        let wait = t
+            .remaining_cooldown(last_attempt)
+            .expect("must be in cooldown");
+        assert_eq!(wait, RefreshThrottle::EXHAUSTION_COOLDOWN);
+
+        // Past the cooldown window, a probe attempt is allowed again.
+        let later = last_attempt + RefreshThrottle::EXHAUSTION_COOLDOWN + Duration::from_secs(1);
+        assert!(t.remaining_cooldown(later).is_none());
+    }
+
+    #[test]
+    fn throttle_success_resets_counter() {
+        let mut t = RefreshThrottle::new();
+        let t0 = Instant::now();
+        for _ in 0..3 {
+            t.record_attempt(t0);
+            t.record_failure();
+        }
+        t.record_success();
+        assert!(!t.is_exhausted());
+        assert!(t.remaining_cooldown(t0).is_none());
+    }
+
+    // ------------------------------------------------------------------
+    // refresh_auth_inner with injected reregister (no network)
+    // ------------------------------------------------------------------
+
+    #[tokio::test]
+    #[allow(clippy::await_holding_lock)]
+    async fn refresh_auth_inner_bounded_retries_after_persistent_failure() {
+        if std::env::var("CI").is_ok() {
+            return;
+        }
+        let _guard = env_lock();
+        // credentials.json exists but last_returned already matches, so the
+        // stored-key fast path is a no-op and we fall through to reregister.
+        let _tmp = setup_creds_in_temp_home("stale_key");
+        let last_returned: Arc<Mutex<Option<String>>> =
+            Arc::new(Mutex::new(Some("stale_key".to_string())));
+        let throttle = throttle();
+
+        let call_count = Arc::new(Mutex::new(0u32));
+        let make_reregister = |calls: Arc<Mutex<u32>>| {
+            move || {
+                let calls = calls.clone();
+                async move {
+                    *calls.lock().unwrap() += 1;
+                    Err::<String, String>("simulated 401 from Exemem".to_string())
+                }
+            }
+        };
+
+        let mut now = Instant::now();
+
+        // First MAX_ATTEMPTS calls: each one advances the clock past its own
+        // backoff window, so the call actually hits the reregister stub.
+        for i in 0..RefreshThrottle::MAX_ATTEMPTS {
+            let result = refresh_auth_inner(
+                last_returned.clone(),
+                throttle.clone(),
+                now,
+                make_reregister(call_count.clone()),
+            )
+            .await;
+            assert!(result.is_err(), "attempt {i} should fail");
+            now += RefreshThrottle::MAX_BACKOFF + Duration::from_secs(1);
+        }
+        assert_eq!(
+            *call_count.lock().unwrap(),
+            RefreshThrottle::MAX_ATTEMPTS,
+            "reregister should be invoked exactly MAX_ATTEMPTS times",
+        );
+        assert!(
+            throttle.lock().unwrap().is_exhausted(),
+            "throttle should be exhausted after MAX_ATTEMPTS failures",
+        );
+
+        // Subsequent calls within the exhaustion cooldown must return quickly
+        // WITHOUT invoking the reregister stub.
+        for _ in 0..5 {
+            let result = refresh_auth_inner(
+                last_returned.clone(),
+                throttle.clone(),
+                now + Duration::from_secs(60),
+                make_reregister(call_count.clone()),
+            )
+            .await;
+            let err = result.expect_err("must be suppressed by throttle");
+            assert!(
+                err.contains("exhausted") || err.contains("backing off"),
+                "expected throttle error, got: {err}"
+            );
+        }
+        assert_eq!(
+            *call_count.lock().unwrap(),
+            RefreshThrottle::MAX_ATTEMPTS,
+            "reregister must NOT be called again while throttle is exhausted",
+        );
+
+        std::env::remove_var("FOLDDB_HOME");
+    }
+
+    #[tokio::test]
+    #[allow(clippy::await_holding_lock)]
+    async fn refresh_auth_inner_backs_off_between_failures() {
+        if std::env::var("CI").is_ok() {
+            return;
+        }
+        let _guard = env_lock();
+        let _tmp = setup_creds_in_temp_home("stale_key");
+        let last_returned: Arc<Mutex<Option<String>>> =
+            Arc::new(Mutex::new(Some("stale_key".to_string())));
+        let throttle = throttle();
+
+        let call_count = Arc::new(Mutex::new(0u32));
+        let calls = call_count.clone();
+        let reregister = move || {
+            let calls = calls.clone();
+            async move {
+                *calls.lock().unwrap() += 1;
+                Err::<String, String>("simulated failure".to_string())
+            }
+        };
+
+        let t0 = Instant::now();
+        // First call → reregister runs, fails.
+        let _ = refresh_auth_inner(last_returned.clone(), throttle.clone(), t0, reregister.clone())
+            .await;
+        assert_eq!(*call_count.lock().unwrap(), 1);
+
+        // Immediate second call → throttle gates, reregister NOT called.
+        let result = refresh_auth_inner(
+            last_returned.clone(),
+            throttle.clone(),
+            t0 + Duration::from_millis(100),
+            reregister.clone(),
+        )
+        .await;
+        assert!(result.is_err());
+        assert_eq!(
+            *call_count.lock().unwrap(),
+            1,
+            "reregister must be gated during the 1s backoff after one failure",
+        );
+
+        // After the backoff window → reregister called again.
+        let _ = refresh_auth_inner(
+            last_returned.clone(),
+            throttle.clone(),
+            t0 + Duration::from_secs(2),
+            reregister,
+        )
+        .await;
+        assert_eq!(*call_count.lock().unwrap(), 2);
+
+        std::env::remove_var("FOLDDB_HOME");
+    }
+
+    #[tokio::test]
+    #[allow(clippy::await_holding_lock)]
+    async fn refresh_auth_inner_success_resets_throttle_and_returns_new_key() {
+        if std::env::var("CI").is_ok() {
+            return;
+        }
+        let _guard = env_lock();
+        let _tmp = setup_creds_in_temp_home("stale_key");
+        let last_returned: Arc<Mutex<Option<String>>> =
+            Arc::new(Mutex::new(Some("stale_key".to_string())));
+        let throttle = throttle();
+
+        // Prime the throttle with some failures.
+        {
+            let mut t = throttle.lock().unwrap();
+            for _ in 0..3 {
+                t.record_failure();
+            }
+        }
+        // But drop last_attempt so success path isn't blocked by backoff.
+        throttle.lock().unwrap().last_attempt_at = None;
+
+        let reregister = || async { Ok::<String, String>("fresh_api_key".to_string()) };
+
+        let result = refresh_auth_inner(
+            last_returned.clone(),
+            throttle.clone(),
+            Instant::now(),
+            reregister,
+        )
+        .await
+        .expect("reregister succeeded");
+        match result {
+            fold_db::sync::auth::SyncAuth::ApiKey(k) => assert_eq!(k, "fresh_api_key"),
+            fold_db::sync::auth::SyncAuth::BearerToken(_) => panic!("must be ApiKey"),
+        }
+        let t = *throttle.lock().unwrap();
+        assert_eq!(t.consecutive_failures, 0, "counter reset on success");
+        assert_eq!(
+            last_returned.lock().unwrap().as_deref(),
+            Some("fresh_api_key"),
+        );
+
         std::env::remove_var("FOLDDB_HOME");
     }
 
