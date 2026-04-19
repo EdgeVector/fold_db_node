@@ -970,6 +970,8 @@ pub async fn get_next_sync(sync_config: web::Data<SyncConfigState>) -> impl Resp
         "enabled": cfg.enabled,
         "next_sync": cfg.next_sync,
         "last_sync": cfg.last_sync,
+        "last_error": cfg.last_error,
+        "last_error_at": cfg.last_error_at,
     }))
 }
 
@@ -977,9 +979,17 @@ pub async fn get_next_sync(sync_config: web::Data<SyncConfigState>) -> impl Resp
 
 /// Spawn the background sync scheduler loop.
 ///
-/// The task wakes every 60 seconds, checks if `next_sync` has passed, and if
-/// so calls `sync_scheduler::run_sync` with the current user's node. After
-/// completion it updates `last_sync` / `next_sync` and persists the config.
+/// The task wakes every 60 seconds and asks `decide_tick` what to do:
+///   - `Skip`: not yet due. Continue.
+///   - `Run`: due and idle. Run the sync, persist `last_sync`/`next_sync` plus
+///     any error state, and release the re-entry guard.
+///   - `AlreadyRunning`: previous sync is still in flight (photos + LLM can
+///     easily outrun a 60s tick). Skip this tick; the running sync will
+///     persist `mark_sync_complete` when it finishes.
+///
+/// Uses `MissedTickBehavior::Skip` so the scheduler does not burst-fire
+/// catch-up ticks after long macOS sleep gaps — wall-clock time drives the
+/// schedule, not interval count.
 pub fn spawn_sync_scheduler(
     sync_config: SyncConfigState,
     app_state: actix_web::web::Data<AppState>,
@@ -988,15 +998,43 @@ pub fn spawn_sync_scheduler(
 ) {
     tokio::spawn(async move {
         let mut interval = tokio::time::interval(std::time::Duration::from_secs(60));
+        interval.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
+        let is_running = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));
         loop {
             interval.tick().await;
 
-            let should_sync = {
+            let decision = {
                 let cfg = sync_config.read().await;
-                cfg.enabled && cfg.next_sync.is_some_and(|next| chrono::Utc::now() >= next)
+                apple_import::sync_scheduler::decide_tick(
+                    &cfg,
+                    chrono::Utc::now(),
+                    is_running.load(std::sync::atomic::Ordering::SeqCst),
+                )
             };
 
-            if !should_sync {
+            match decision {
+                apple_import::sync_scheduler::TickDecision::Skip => continue,
+                apple_import::sync_scheduler::TickDecision::AlreadyRunning => {
+                    fold_db::log_feature!(
+                        fold_db::logging::features::LogFeature::Ingestion,
+                        warn,
+                        "Apple auto-sync: previous run still in flight, skipping tick"
+                    );
+                    continue;
+                }
+                apple_import::sync_scheduler::TickDecision::Run => {}
+            }
+
+            // Claim the re-entry guard. If a race lost it, bail.
+            if is_running
+                .compare_exchange(
+                    false,
+                    true,
+                    std::sync::atomic::Ordering::SeqCst,
+                    std::sync::atomic::Ordering::SeqCst,
+                )
+                .is_err()
+            {
                 continue;
             }
 
@@ -1012,14 +1050,21 @@ pub fn spawn_sync_scheduler(
             };
 
             // Resolve current user's node through the same path as HTTP routes.
-            let (user_id, node_arc) = match require_node(&app_state).await {
-                Ok(ctx) => ctx,
-                Err(_) => {
+            // `.ok()` drops the non-Send `HttpResponse` before any later await.
+            let node_ctx = require_node(&app_state).await.ok();
+            let (user_id, node_arc) = match node_ctx {
+                Some(ctx) => ctx,
+                None => {
                     fold_db::log_feature!(
                         fold_db::logging::features::LogFeature::Ingestion,
                         warn,
                         "Apple auto-sync: no active node, skipping"
                     );
+                    let now = chrono::Utc::now();
+                    let mut cfg = sync_config.write().await;
+                    cfg.record_error("no active node", now);
+                    let _ = cfg.save();
+                    is_running.store(false, std::sync::atomic::Ordering::SeqCst);
                     continue;
                 }
             };
@@ -1032,13 +1077,18 @@ pub fn spawn_sync_scheduler(
                         warn,
                         "Apple auto-sync: ingestion service not available, skipping"
                     );
+                    let now = chrono::Utc::now();
+                    let mut cfg = sync_config.write().await;
+                    cfg.record_error("ingestion service not available", now);
+                    let _ = cfg.save();
+                    is_running.store(false, std::sync::atomic::Ordering::SeqCst);
                     continue;
                 }
             };
 
             let tracker = progress_tracker.get_ref().clone();
 
-            apple_import::sync_scheduler::run_sync(
+            let outcome = apple_import::sync_scheduler::run_sync(
                 &sources,
                 photos_limit,
                 &user_id,
@@ -1049,8 +1099,13 @@ pub fn spawn_sync_scheduler(
             .await;
 
             {
+                let now = chrono::Utc::now();
                 let mut cfg = sync_config.write().await;
-                cfg.mark_sync_complete(chrono::Utc::now());
+                cfg.mark_sync_complete(now);
+                match outcome.summary() {
+                    Some(msg) => cfg.record_error(msg, now),
+                    None => cfg.clear_error(),
+                }
                 if let Err(e) = cfg.save() {
                     fold_db::log_feature!(
                         fold_db::logging::features::LogFeature::Ingestion,
@@ -1061,11 +1116,22 @@ pub fn spawn_sync_scheduler(
                 }
             }
 
-            fold_db::log_feature!(
-                fold_db::logging::features::LogFeature::Ingestion,
-                info,
-                "Apple auto-sync: scheduled import complete"
-            );
+            is_running.store(false, std::sync::atomic::Ordering::SeqCst);
+
+            if outcome.is_ok() {
+                fold_db::log_feature!(
+                    fold_db::logging::features::LogFeature::Ingestion,
+                    info,
+                    "Apple auto-sync: scheduled import complete"
+                );
+            } else {
+                fold_db::log_feature!(
+                    fold_db::logging::features::LogFeature::Ingestion,
+                    error,
+                    "Apple auto-sync: scheduled import finished with errors: {}",
+                    outcome.summary().unwrap_or_default()
+                );
+            }
         }
     });
 }

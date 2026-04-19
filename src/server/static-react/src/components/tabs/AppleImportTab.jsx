@@ -24,7 +24,13 @@ function AutoSyncSettings() {
     const timer = setInterval(async () => {
       const resp = await ingestionClient.getAppleNextSync()
       if (resp.success && resp.data) {
-        setConfig((prev) => prev ? { ...prev, next_sync: resp.data.next_sync, last_sync: resp.data.last_sync } : prev)
+        setConfig((prev) => prev ? {
+          ...prev,
+          next_sync: resp.data.next_sync,
+          last_sync: resp.data.last_sync,
+          last_error: resp.data.last_error,
+          last_error_at: resp.data.last_error_at,
+        } : prev)
       }
     }, 30000)
     return () => clearInterval(timer)
@@ -181,6 +187,20 @@ function AutoSyncSettings() {
                 {formatTime(config.next_sync)}
               </span>
             </p>
+            {config.last_error && (
+              <div
+                role="alert"
+                data-testid="auto-sync-error"
+                className="mt-2 rounded border border-red-500/40 bg-red-500/10 px-2 py-1 text-xs text-red-400"
+              >
+                <p>
+                  <span className="font-medium">Last sync error</span>
+                  {config.last_error_at ? ` (${formatTime(config.last_error_at)})` : ''}
+                  :
+                </p>
+                <p className="mt-0.5 break-words">{config.last_error}</p>
+              </div>
+            )}
           </div>
         </div>
       )}

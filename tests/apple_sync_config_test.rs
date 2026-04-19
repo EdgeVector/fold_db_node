@@ -21,6 +21,8 @@ fn test_daily_schedule_computes_24h() {
         photos_limit: 50,
         last_sync: Some(chrono::Utc::now()),
         next_sync: None,
+        last_error: None,
+        last_error_at: None,
     };
     cfg.recompute_next_sync();
     let next = cfg.next_sync.unwrap();
@@ -37,6 +39,8 @@ fn test_weekly_schedule_computes_168h() {
         photos_limit: 50,
         last_sync: Some(chrono::Utc::now()),
         next_sync: None,
+        last_error: None,
+        last_error_at: None,
     };
     cfg.recompute_next_sync();
     let next = cfg.next_sync.unwrap();
@@ -53,6 +57,8 @@ fn test_custom_schedule() {
         photos_limit: 50,
         last_sync: Some(chrono::Utc::now()),
         next_sync: None,
+        last_error: None,
+        last_error_at: None,
     };
     cfg.recompute_next_sync();
     let next = cfg.next_sync.unwrap();
@@ -69,6 +75,8 @@ fn test_disabled_clears_next_sync() {
         photos_limit: 50,
         last_sync: Some(chrono::Utc::now()),
         next_sync: Some(chrono::Utc::now()),
+        last_error: None,
+        last_error_at: None,
     };
     cfg.recompute_next_sync();
     assert!(cfg.next_sync.is_none());
@@ -83,6 +91,8 @@ fn test_mark_sync_complete_updates_times() {
         photos_limit: 50,
         last_sync: None,
         next_sync: None,
+        last_error: None,
+        last_error_at: None,
     };
     let now = chrono::Utc::now();
     cfg.mark_sync_complete(now);
@@ -104,6 +114,8 @@ fn test_serialization_roundtrip_daily() {
         photos_limit: 100,
         last_sync: Some(chrono::Utc::now()),
         next_sync: Some(chrono::Utc::now() + chrono::Duration::hours(24)),
+        last_error: None,
+        last_error_at: None,
     };
     let json = serde_json::to_string(&cfg).unwrap();
     let deserialized: AppleSyncConfig = serde_json::from_str(&json).unwrap();
@@ -124,6 +136,8 @@ fn test_serialization_roundtrip_custom() {
         photos_limit: 50,
         last_sync: None,
         next_sync: None,
+        last_error: None,
+        last_error_at: None,
     };
     let json = serde_json::to_string(&cfg).unwrap();
     let deserialized: AppleSyncConfig = serde_json::from_str(&json).unwrap();
@@ -140,6 +154,8 @@ fn test_no_last_sync_schedules_from_now() {
         photos_limit: 50,
         last_sync: None,
         next_sync: None,
+        last_error: None,
+        last_error_at: None,
     };
     cfg.recompute_next_sync();
     let after = chrono::Utc::now();

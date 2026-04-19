@@ -72,6 +72,13 @@ pub struct AppleSyncConfig {
     pub last_sync: Option<DateTime<Utc>>,
     /// Computed next sync time (None if disabled or never scheduled).
     pub next_sync: Option<DateTime<Utc>>,
+    /// Human-readable error from the most recent sync attempt (cleared on success).
+    /// Surfaced to the UI so a silent background failure stays visible.
+    #[serde(default)]
+    pub last_error: Option<String>,
+    /// Timestamp the last error was recorded.
+    #[serde(default)]
+    pub last_error_at: Option<DateTime<Utc>>,
 }
 
 impl Default for AppleSyncConfig {
@@ -83,6 +90,8 @@ impl Default for AppleSyncConfig {
             photos_limit: 50,
             last_sync: None,
             next_sync: None,
+            last_error: None,
+            last_error_at: None,
         }
     }
 }
@@ -103,6 +112,25 @@ impl AppleSyncConfig {
     pub fn mark_sync_complete(&mut self, at: DateTime<Utc>) {
         self.last_sync = Some(at);
         self.recompute_next_sync();
+    }
+
+    /// Pure helper: whether a scheduled sync is due as of `now`.
+    /// Does not consider re-entry — use the scheduler's `decide_tick` for the
+    /// full scheduling decision.
+    pub fn is_due(&self, now: DateTime<Utc>) -> bool {
+        self.enabled && self.next_sync.is_some_and(|next| now >= next)
+    }
+
+    /// Record an error from the most recent sync attempt.
+    pub fn record_error(&mut self, message: impl Into<String>, at: DateTime<Utc>) {
+        self.last_error = Some(message.into());
+        self.last_error_at = Some(at);
+    }
+
+    /// Clear any previously-recorded error after a successful sync.
+    pub fn clear_error(&mut self) {
+        self.last_error = None;
+        self.last_error_at = None;
     }
 
     /// Resolve the config file path (alongside node_config.json).
@@ -231,6 +259,65 @@ mod tests {
         assert_eq!(deserialized.sources.photos, cfg.sources.photos);
         assert_eq!(deserialized.sources.calendar, cfg.sources.calendar);
         assert_eq!(deserialized.photos_limit, cfg.photos_limit);
+    }
+
+    #[test]
+    fn is_due_false_when_disabled() {
+        let cfg = AppleSyncConfig {
+            enabled: false,
+            next_sync: Some(Utc::now() - Duration::hours(1)),
+            ..AppleSyncConfig::default()
+        };
+        assert!(!cfg.is_due(Utc::now()));
+    }
+
+    #[test]
+    fn is_due_false_before_next_sync() {
+        let now = Utc::now();
+        let cfg = AppleSyncConfig {
+            enabled: true,
+            next_sync: Some(now + Duration::hours(1)),
+            ..AppleSyncConfig::default()
+        };
+        assert!(!cfg.is_due(now));
+    }
+
+    #[test]
+    fn is_due_true_at_or_past_next_sync() {
+        let now = Utc::now();
+        let cfg = AppleSyncConfig {
+            enabled: true,
+            next_sync: Some(now - Duration::seconds(1)),
+            ..AppleSyncConfig::default()
+        };
+        assert!(cfg.is_due(now));
+    }
+
+    #[test]
+    fn record_and_clear_error() {
+        let mut cfg = AppleSyncConfig::default();
+        let at = Utc::now();
+        cfg.record_error("boom", at);
+        assert_eq!(cfg.last_error.as_deref(), Some("boom"));
+        assert_eq!(cfg.last_error_at, Some(at));
+        cfg.clear_error();
+        assert!(cfg.last_error.is_none());
+        assert!(cfg.last_error_at.is_none());
+    }
+
+    #[test]
+    fn test_legacy_config_without_error_fields_deserializes() {
+        let legacy = r#"{
+            "enabled": true,
+            "schedule": "daily",
+            "sources": { "notes": true, "reminders": true, "photos": false, "calendar": true },
+            "photos_limit": 50,
+            "last_sync": null,
+            "next_sync": null
+        }"#;
+        let cfg: AppleSyncConfig = serde_json::from_str(legacy).unwrap();
+        assert!(cfg.last_error.is_none());
+        assert!(cfg.last_error_at.is_none());
     }
 
     #[test]

@@ -660,12 +660,20 @@ export class UnifiedIngestionClient {
 
   /** Get next scheduled sync time */
   async getAppleNextSync(): Promise<
-    EnhancedApiResponse<{ enabled: boolean; next_sync: string | null; last_sync: string | null }>
+    EnhancedApiResponse<{
+      enabled: boolean;
+      next_sync: string | null;
+      last_sync: string | null;
+      last_error: string | null;
+      last_error_at: string | null;
+    }>
   > {
     return this.client.get<{
       enabled: boolean;
       next_sync: string | null;
       last_sync: string | null;
+      last_error: string | null;
+      last_error_at: string | null;
     }>(`/ingestion/apple-import/next-sync`, { cacheable: false });
   }
 }
@@ -678,6 +686,8 @@ export interface AppleSyncConfig {
   photos_limit: number;
   last_sync: string | null;
   next_sync: string | null;
+  last_error: string | null;
+  last_error_at: string | null;
 }
 
 export type SyncSchedule =
