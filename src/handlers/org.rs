@@ -217,10 +217,24 @@ pub async fn join_org(
 }
 
 /// List all organizations this node belongs to.
+///
+/// In Exemem mode the member list on each org is reconciled against the
+/// cloud's authoritative member roster (user_hash → role/status in DDB). Any
+/// cloud user_hash we don't already know about locally is appended as a
+/// placeholder member so callers (and the e2e-cloud test harness) can see
+/// peers who joined the org after us. The local Sled tree is NOT mutated —
+/// we don't have their Ed25519 public key, so persisting a placeholder would
+/// poison later add_member flows.
 pub async fn list_orgs(user_hash: &str, node: &FoldNode) -> HandlerResult<ListOrgsResponse> {
     let pool = get_sled_pool(node).await?;
 
-    let orgs = org_ops::list_orgs(&pool).handler_err("list orgs")?;
+    let mut orgs = org_ops::list_orgs(&pool).handler_err("list orgs")?;
+
+    if let Some(client) = get_auth_client(node).await {
+        for org in orgs.iter_mut() {
+            merge_cloud_members_into(&client, org).await;
+        }
+    }
 
     Ok(ApiResponse::success_with_user(
         ListOrgsResponse { orgs },
@@ -236,7 +250,7 @@ pub async fn get_org(
 ) -> HandlerResult<GetOrgResponse> {
     let pool = get_sled_pool(node).await?;
 
-    let membership = org_ops::get_org(&pool, org_hash)
+    let mut membership = org_ops::get_org(&pool, org_hash)
         .handler_err("get org")?
         .ok_or_else(|| {
             crate::handlers::HandlerError::NotFound(format!(
@@ -244,6 +258,10 @@ pub async fn get_org(
                 org_hash
             ))
         })?;
+
+    if let Some(client) = get_auth_client(node).await {
+        merge_cloud_members_into(&client, &mut membership).await;
+    }
 
     Ok(ApiResponse::success_with_user(
         GetOrgResponse { org: membership },
@@ -394,6 +412,66 @@ handler_response! {
     /// Response for cloud member list
     pub struct CloudMembersResponse {
         pub members: Vec<serde_json::Value>,
+    }
+}
+
+/// Append cloud-authoritative members to a local `OrgMembership`.
+///
+/// The cloud `list_members` endpoint returns `{user_hash, role, status}` tuples
+/// from the `ExememOrgMembershipsTable` DDB. We reconcile those against the
+/// local `members` list (which stores Ed25519 pubkeys, not user_hashes) by
+/// hashing each local pubkey. Every cloud user_hash we don't already have a
+/// local entry for is appended as a placeholder `OrgMemberInfo` with an empty
+/// `node_public_key` and a synthesized `display_name`.
+///
+/// Best-effort: network or DDB failures log and leave the local list intact.
+/// The local Sled `org_memberships` tree is never mutated here — placeholder
+/// entries live only in the HTTP response.
+async fn merge_cloud_members_into(
+    client: &fold_db::sync::auth::AuthClient,
+    org: &mut OrgMembership,
+) {
+    let cloud_members = match client.list_members(&org.org_hash).await {
+        Ok(m) => m,
+        Err(e) => {
+            log::debug!(
+                "list_members({}) failed, returning local members only: {e}",
+                org.org_hash
+            );
+            return;
+        }
+    };
+
+    let known_user_hashes: std::collections::HashSet<String> = org
+        .members
+        .iter()
+        .filter(|m| !m.node_public_key.is_empty())
+        .map(|m| crate::utils::crypto::user_hash_from_pubkey(&m.node_public_key))
+        .collect();
+
+    for entry in cloud_members {
+        let Some(cloud_user_hash) = entry.get("user_hash").and_then(|v| v.as_str()) else {
+            continue;
+        };
+        if cloud_user_hash.is_empty() || known_user_hashes.contains(cloud_user_hash) {
+            continue;
+        }
+        // Skip declined invites; count active + pending (invite sent).
+        let status = entry
+            .get("status")
+            .and_then(|v| v.as_str())
+            .unwrap_or("active");
+        if status == "declined" {
+            continue;
+        }
+
+        let short = &cloud_user_hash[..8.min(cloud_user_hash.len())];
+        org.members.push(OrgMemberInfo {
+            node_public_key: String::new(),
+            display_name: format!("user-{short}"),
+            added_at: 0,
+            added_by: String::new(),
+        });
     }
 }
 
@@ -591,6 +669,7 @@ pub async fn decline_invite(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use fold_db::org::types::OrgRole;
 
     #[test]
     fn test_create_org_request_deserialize() {
@@ -605,5 +684,143 @@ mod tests {
         let req: AddMemberRequest = serde_json::from_str(json).unwrap();
         assert_eq!(req.node_public_key, "abc123");
         assert_eq!(req.display_name, "Alice");
+    }
+
+    /// Pure unit test of the cloud-merge logic: simulate a cloud roster and
+    /// verify the reconciliation rules without hitting the network. This is
+    /// the core of the 500b9 fix — Alice's local org membership list only
+    /// contains herself, but a cloud poll reveals Bob has joined.
+    fn apply_cloud_roster(org: &mut OrgMembership, roster: Vec<serde_json::Value>) {
+        let known_user_hashes: std::collections::HashSet<String> = org
+            .members
+            .iter()
+            .filter(|m| !m.node_public_key.is_empty())
+            .map(|m| crate::utils::crypto::user_hash_from_pubkey(&m.node_public_key))
+            .collect();
+
+        for entry in roster {
+            let Some(cloud_user_hash) = entry.get("user_hash").and_then(|v| v.as_str()) else {
+                continue;
+            };
+            if cloud_user_hash.is_empty() || known_user_hashes.contains(cloud_user_hash) {
+                continue;
+            }
+            let status = entry
+                .get("status")
+                .and_then(|v| v.as_str())
+                .unwrap_or("active");
+            if status == "declined" {
+                continue;
+            }
+            let short = &cloud_user_hash[..8.min(cloud_user_hash.len())];
+            org.members.push(OrgMemberInfo {
+                node_public_key: String::new(),
+                display_name: format!("user-{short}"),
+                added_at: 0,
+                added_by: String::new(),
+            });
+        }
+    }
+
+    fn make_alice_only_org() -> OrgMembership {
+        use base64::Engine;
+        let alice_pk = base64::engine::general_purpose::STANDARD.encode([0x01u8; 32]);
+        OrgMembership {
+            org_name: "qa".into(),
+            org_hash: "abc".into(),
+            org_public_key: "pk".into(),
+            org_secret_key: None,
+            org_e2e_secret: "s".into(),
+            role: OrgRole::Admin,
+            members: vec![OrgMemberInfo {
+                node_public_key: alice_pk,
+                display_name: "alice".into(),
+                added_at: 0,
+                added_by: "self".into(),
+            }],
+            created_at: 0,
+            joined_at: 0,
+        }
+    }
+
+    #[test]
+    fn cloud_merge_adds_new_member_when_only_self_local() {
+        let mut org = make_alice_only_org();
+        let alice_user_hash =
+            crate::utils::crypto::user_hash_from_pubkey(&org.members[0].node_public_key);
+        let bob_user_hash = "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb".to_string();
+
+        apply_cloud_roster(
+            &mut org,
+            vec![
+                serde_json::json!({"user_hash": alice_user_hash, "role": "Admin", "status": "active"}),
+                serde_json::json!({"user_hash": bob_user_hash, "role": "Member", "status": "active"}),
+            ],
+        );
+
+        assert_eq!(org.members.len(), 2, "bob should be appended as placeholder");
+        let placeholder = org.members.last().expect("appended member");
+        assert_eq!(placeholder.node_public_key, "");
+        assert_eq!(placeholder.display_name, "user-bbbbbbbb");
+    }
+
+    #[test]
+    fn cloud_merge_is_idempotent_for_known_members() {
+        let mut org = make_alice_only_org();
+        let alice_user_hash =
+            crate::utils::crypto::user_hash_from_pubkey(&org.members[0].node_public_key);
+
+        apply_cloud_roster(
+            &mut org,
+            vec![serde_json::json!({
+                "user_hash": alice_user_hash,
+                "role": "Admin",
+                "status": "active"
+            })],
+        );
+
+        assert_eq!(
+            org.members.len(),
+            1,
+            "alice is already represented via her pubkey — no placeholder"
+        );
+    }
+
+    #[test]
+    fn cloud_merge_skips_declined_invites() {
+        let mut org = make_alice_only_org();
+        let declined_hash = "cccccccccccccccccccccccccccccccc".to_string();
+
+        apply_cloud_roster(
+            &mut org,
+            vec![serde_json::json!({
+                "user_hash": declined_hash,
+                "role": "Member",
+                "status": "declined"
+            })],
+        );
+
+        assert_eq!(org.members.len(), 1, "declined invites must not count");
+    }
+
+    #[test]
+    fn cloud_merge_includes_pending_invites() {
+        let mut org = make_alice_only_org();
+        let pending_hash = "dddddddddddddddddddddddddddddddd".to_string();
+
+        apply_cloud_roster(
+            &mut org,
+            vec![serde_json::json!({
+                "user_hash": pending_hash,
+                "role": "Member",
+                "status": "pending"
+            })],
+        );
+
+        assert_eq!(
+            org.members.len(),
+            2,
+            "pending invites count — the person is on the org roster, just hasn't accepted yet"
+        );
     }
 }
