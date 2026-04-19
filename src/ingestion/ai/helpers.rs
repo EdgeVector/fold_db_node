@@ -592,7 +592,27 @@ fn sanitize_string_map_fields(mut schema_val: Value) -> Value {
         }
     }
 
-    // 3. Sanitize key.hash_field and key.range_field
+    // 3a. If `key` is present but not an object (e.g. AI emitted `"key": "Single"`,
+    // confusing it with `schema_type`), drop it so the schema-creation fallback
+    // synthesizes a default KeyConfig from the first field.
+    let drop_key = schema_obj
+        .get("key")
+        .map(|v| !v.is_object() && !v.is_null())
+        .unwrap_or(false);
+    if drop_key {
+        let stripped = schema_obj.remove("key");
+        log_feature!(
+            LogFeature::Ingestion,
+            warn,
+            "Dropped malformed `key` field (expected object, got {}); falling back to default KeyConfig",
+            stripped
+                .as_ref()
+                .map(|v| v.to_string())
+                .unwrap_or_else(|| "missing".to_string())
+        );
+    }
+
+    // 3b. Sanitize key.hash_field and key.range_field
     if let Some(key_obj) = schema_obj.get_mut("key").and_then(|v| v.as_object_mut()) {
         for key_field in &["hash_field", "range_field"] {
             if let Some(val) = key_obj.get(*key_field) {
@@ -1122,6 +1142,93 @@ Done."#;
             result["field_descriptions"]["count"].as_str().unwrap(),
             "42"
         );
+    }
+
+    #[test]
+    fn test_sanitize_drops_bare_string_key() {
+        // AI sometimes emits `"key": "Single"` (confusing the `key` struct with
+        // the `schema_type` enum). The sanitizer must drop the malformed value so
+        // the schema-creation fallback can synthesize a default KeyConfig.
+        let schema = serde_json::json!({
+            "name": "test",
+            "schema_type": "Single",
+            "key": "Single",
+            "fields": ["id", "value"]
+        });
+
+        let result = sanitize_string_map_fields(schema);
+        assert!(
+            result.get("key").is_none(),
+            "malformed bare-string `key` should be stripped, got: {:?}",
+            result.get("key")
+        );
+    }
+
+    #[test]
+    fn test_sanitize_preserves_valid_key_object() {
+        let schema = serde_json::json!({
+            "name": "test",
+            "schema_type": "HashRange",
+            "key": {"hash_field": "id", "range_field": "date"},
+            "fields": ["id", "date"]
+        });
+
+        let result = sanitize_string_map_fields(schema.clone());
+        assert_eq!(result["key"], schema["key"]);
+    }
+
+    #[test]
+    fn test_sanitize_drops_malformed_key_array() {
+        // Non-object, non-null values of any shape should be dropped.
+        let schema = serde_json::json!({
+            "name": "test",
+            "key": ["id"],
+            "fields": ["id"]
+        });
+
+        let result = sanitize_string_map_fields(schema);
+        assert!(result.get("key").is_none());
+    }
+
+    #[test]
+    fn test_bare_string_key_roundtrips_through_validate_and_deserialize() {
+        // Regression for the CI failure: Anthropic emitted `"key": "Single"` for one
+        // of the 46 sample files, and `serde_json::from_value::<Schema>` rejected it
+        // with `invalid type: string "Single", expected struct KeyConfig`. After
+        // sanitization the payload must deserialize cleanly into the upstream schema
+        // type (with `key` absent, so the ingestion fallback fills it in).
+        use fold_db::schema::types::Schema;
+
+        let ai_json = serde_json::json!({
+            "new_schemas": {
+                "name": "quotes",
+                "descriptive_name": "Quotations",
+                "schema_type": "Single",
+                "key": "Single",
+                "fields": ["author", "text"],
+                "field_descriptions": {
+                    "author": "Who said it",
+                    "text": "The quote itself"
+                }
+            },
+            "mutation_mappers": {
+                "author": "quotes.author",
+                "text": "quotes.text"
+            }
+        });
+
+        let result = validate_and_convert_response(ai_json).unwrap();
+        let schema_val = result.new_schemas.expect("schema should be present");
+        assert!(
+            schema_val.get("key").is_none(),
+            "sanitized schema should have no `key` field; got: {:?}",
+            schema_val.get("key")
+        );
+
+        // This is the exact call that failed in CI (schema_creation.rs:45).
+        let schema: Schema = serde_json::from_value(schema_val)
+            .expect("sanitized schema must deserialize into fold_db::schema::types::Schema");
+        assert!(schema.key.is_none());
     }
 
     #[test]
