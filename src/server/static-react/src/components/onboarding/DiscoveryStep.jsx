@@ -49,10 +49,6 @@ export default function DiscoveryStep({ onNext, onSkip }) {
   }, [])
 
   const handleOptIn = async () => {
-    if (interests.size === 0) {
-      onNext()
-      return
-    }
     setOptingIn(true)
     setError(null)
 
@@ -142,6 +138,9 @@ export default function DiscoveryStep({ onNext, onSkip }) {
 
       <div className="mb-4">
         <p className="label">Select your interests</p>
+        <p className="text-xs text-tertiary mb-2">
+          Tap the tags below — you can change these anytime in Discovery.
+        </p>
         <div className="flex flex-wrap gap-2">
           {INTEREST_CATEGORIES.map(cat => (
             <InterestTag
@@ -172,24 +171,18 @@ export default function DiscoveryStep({ onNext, onSkip }) {
       )}
 
       <div className="flex gap-2 mt-4">
-        {interests.size > 0 ? (
-          <>
-            <button
-              onClick={handleOptIn}
-              disabled={optingIn}
-              className="btn-primary flex-1 text-center"
-            >
-              {optingIn ? 'Joining...' : 'Join & Continue'}
-            </button>
-            <button onClick={onSkip} className="btn-secondary flex-1 text-center">
-              Skip
-            </button>
-          </>
-        ) : (
-          <button onClick={onSkip} className="btn-secondary flex-1 text-center">
-            Skip
-          </button>
-        )}
+        <button
+          onClick={handleOptIn}
+          disabled={interests.size === 0 || optingIn}
+          aria-disabled={interests.size === 0 || optingIn}
+          title={interests.size === 0 ? 'Select at least one interest to continue' : undefined}
+          className="btn-primary flex-1 text-center"
+        >
+          {optingIn ? 'Joining...' : 'Join & Continue'}
+        </button>
+        <button onClick={onSkip} className="btn-secondary flex-1 text-center">
+          Skip
+        </button>
       </div>
     </div>
   )
