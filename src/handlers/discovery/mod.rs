@@ -927,24 +927,6 @@ pub async fn respond_to_request(
     }))
 }
 
-/// List locally stored received connection requests.
-pub async fn list_connection_requests(
-    node: &FoldNode,
-) -> HandlerResult<ConnectionRequestsResponse> {
-    let db = node
-        .get_fold_db()
-        .map_err(|e| HandlerError::Internal(format!("Failed to access database: {}", e)))?;
-    let store = get_metadata_store(&db);
-
-    let requests = connection::list_received_requests(&*store)
-        .await
-        .handler_err("list received requests")?;
-
-    Ok(ApiResponse::success(ConnectionRequestsResponse {
-        requests,
-    }))
-}
-
 /// List locally stored sent connection requests.
 pub async fn list_sent_requests(node: &FoldNode) -> HandlerResult<SentRequestsResponse> {
     let db = node

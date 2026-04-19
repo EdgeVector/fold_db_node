@@ -91,18 +91,8 @@ pub async fn clear_uploaded(store: &dyn KvStore, schema: Option<&str>) -> Result
 /// Deserialized from Sled to read existing embeddings.
 #[derive(Deserialize)]
 struct StoredEmbedding {
-    #[allow(dead_code)]
-    pub schema: String,
-    #[allow(dead_code)]
-    pub key: fold_db::schema::types::key_value::KeyValue,
-    #[serde(default)]
-    #[allow(dead_code)]
-    pub field_names: Vec<String>,
     #[serde(default)]
     pub field_name: String,
-    #[serde(default)]
-    #[allow(dead_code)]
-    pub fragment_idx: usize,
     #[serde(default)]
     pub fragment_text: Option<String>,
     pub embedding: Vec<f32>,
