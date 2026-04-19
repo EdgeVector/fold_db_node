@@ -2,6 +2,7 @@ pub mod async_query;
 pub mod calendar_sharing;
 pub mod config;
 pub mod connection;
+pub mod field_privacy;
 pub mod interests;
 pub mod moments;
 pub mod pseudonym;
