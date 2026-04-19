@@ -513,17 +513,25 @@ if [ "$SKIP_ORG" = false ]; then
     B_BACKEND=$1; B_SCHEMA=$2; B_VITE=$3; B_HOME=$4
     log "node B: backend=$B_BACKEND schema=$B_SCHEMA vite=$B_VITE home=$B_HOME"
 
-    # TODO M1 (docs/plans/alpha-self-dogfood.md §4 M1): once OrgSyncEngine ships,
-    # replace this block with:
-    #   1. folddb org create on node A → invite bundle
-    #   2. folddb org join < bundle on node B
-    #   3. tag a schema with org_hash, write molecule on A
-    #   4. poll node B for the molecule, assert observed within 2 sync cycles
+    # TODO real org-sync assertion:
+    #   M1 OrgSyncEngine code shipped 2026-04-19 (exemem-infra #123, fold_db
+    #   #560) but the two-node round-trip here needs:
+    #     a) exemem-infra dev deploy so ExememOrgSyncCounters-dev exists and
+    #        storage_service.presign_log_upload serves the new `count` field
+    #        (see gbrain projects/alpha-self-dogfood-m1, "Dev deploy" follow-up)
+    #     b) this harness running both nodes in CLOUD mode with invite codes
+    #        — today it uses --local --local-schema and no sync runs at all
+    #   Once both land, replace this block with:
+    #     1. folddb org create on node A → invite bundle
+    #     2. folddb org join < bundle on node B
+    #     3. tag a schema with org_hash, write 10 molecules on A and 10 on B
+    #     4. poll each for the other's 10 molecules, assert observed within 2
+    #        sync cycles (append-only + content-addressed = no conflict check)
     #
     # Until then, we only verify node B boots + is live, to keep the harness
     # exercising the multi-node plumbing (separate data dirs, own slot JSON).
     if curl -fsS --max-time 5 "http://localhost:$B_BACKEND/api/system/auto-identity" >/dev/null 2>&1; then
-      ORG_RESULT="PENDING|node B live; OrgSyncEngine (M1) not yet landed — see TODO in script"
+      ORG_RESULT="PENDING|node B live; real org round-trip blocked on exemem-infra dev deploy + cloud-mode harness (see gbrain projects/alpha-self-dogfood-m1)"
       log "[org] $ORG_RESULT"
     else
       ORG_RESULT="FAIL|node B backend not reachable after boot"

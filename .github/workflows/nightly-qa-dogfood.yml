@@ -23,6 +23,10 @@ concurrency:
   group: nightly-qa-dogfood
   cancel-in-progress: true
 
+permissions:
+  contents: read
+  issues: write
+
 jobs:
   dogfood:
     name: Dogfood harness (fixtures)
@@ -73,3 +77,103 @@ jobs:
             dogfood-report/
             /tmp/dogfood-output.txt
           retention-days: 14
+
+      # On nightly-schedule failure, funnel the regression into a single
+      # persistent GitHub issue rather than spamming one-shot issues per
+      # failure. If the issue already exists and is open, append a comment.
+      # If closed, reopen + comment. Manual workflow_dispatch runs do NOT
+      # trigger this step, so ad-hoc experiments don't pollute the tracker.
+      - name: File or update regression tracker issue
+        if: failure() && github.event_name == 'schedule'
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          REPORT_FILE: dogfood-report/report.md
+          RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+          TRACKER_TITLE: 'Nightly QA dogfood regression tracker'
+        shell: bash
+        run: |
+          set -euo pipefail
+          failing=""
+          if [ -f "$REPORT_FILE" ]; then
+            # report.md rows look like: | notes | FAIL | <detail> |
+            failing="$(awk -F'|' '/\| FAIL \|/ {gsub(/^ *| *$/,"",$2); printf "%s ", $2}' "$REPORT_FILE" | sed 's/ *$//')"
+          fi
+          # org-leg FAIL (not PENDING — PENDING is expected while M1 deploy is out)
+          if [ -f "$REPORT_FILE" ] && grep -q '^\- \*\*Status:\*\* FAIL' "$REPORT_FILE"; then
+            failing="${failing:+$failing }org-leg"
+          fi
+          [ -z "$failing" ] && failing="unknown (see harness.log)"
+
+          {
+            echo "### Nightly dogfood harness failed"
+            echo ""
+            echo "- **Run:** $RUN_URL"
+            echo "- **Date (UTC):** $(date -u '+%Y-%m-%d %H:%M')"
+            echo "- **Failing:** $failing"
+            echo ""
+            echo "See the \`qa-dogfood-report\` artifact on the run for the full"
+            echo "report, per-call JSON responses, and \`harness.log\`."
+            echo ""
+            if [ -f "$REPORT_FILE" ]; then
+              echo "<details><summary>report.md</summary>"
+              echo ""
+              echo '```markdown'
+              cat "$REPORT_FILE"
+              echo '```'
+              echo ""
+              echo "</details>"
+            fi
+          } > /tmp/issue-comment.md
+
+          # Find an existing tracker by exact title
+          existing="$(gh issue list \
+              --repo "${{ github.repository }}" \
+              --state all \
+              --search "in:title \"$TRACKER_TITLE\"" \
+              --json number,title,state \
+              --limit 20 \
+            | jq -r --arg t "$TRACKER_TITLE" '.[] | select(.title == $t) | "\(.number) \(.state)"' \
+            | head -1)"
+
+          if [ -n "$existing" ]; then
+            num="${existing%% *}"
+            state="${existing##* }"
+            echo "Tracker issue #$num state=$state — appending comment."
+            gh issue comment "$num" \
+              --repo "${{ github.repository }}" \
+              --body-file /tmp/issue-comment.md
+            if [ "$state" = "CLOSED" ]; then
+              gh issue reopen "$num" --repo "${{ github.repository }}"
+            fi
+          else
+            echo "No tracker issue yet — creating one."
+            # Ensure labels exist (idempotent; first nightly failure in a fresh
+            # repo would otherwise fail because labels are not pre-provisioned).
+            for label_spec in \
+              'nightly-qa:ededed:Regression surfaced by a nightly QA workflow' \
+              'dogfood-regression:b60205:Alpha dogfood harness found a broken source' \
+              'alpha-m6:5319e7:Tracks work under alpha-self-dogfood §4 M6' ; do
+              name="${label_spec%%:*}"; rest="${label_spec#*:}"
+              color="${rest%%:*}"; desc="${rest#*:}"
+              gh label create "$name" \
+                --repo "${{ github.repository }}" \
+                --color "$color" \
+                --description "$desc" \
+                --force 2>/dev/null || true
+            done
+            {
+              echo "This issue is auto-managed by \`.github/workflows/nightly-qa-dogfood.yml\`."
+              echo "It is re-opened and re-commented every time the nightly dogfood"
+              echo "harness fails. Close it once the regression is fixed; the workflow"
+              echo "will re-open it on the next failure."
+              echo ""
+              cat /tmp/issue-comment.md
+            } > /tmp/issue-body.md
+            gh issue create \
+              --repo "${{ github.repository }}" \
+              --title "$TRACKER_TITLE" \
+              --body-file /tmp/issue-body.md \
+              --label "nightly-qa" \
+              --label "dogfood-regression" \
+              --label "alpha-m6"
+          fi
