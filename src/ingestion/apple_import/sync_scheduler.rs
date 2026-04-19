@@ -69,6 +69,15 @@ pub async fn run_sync(
         )
         .await;
     }
+
+    if sources.calendar {
+        log_feature!(
+            LogFeature::Ingestion,
+            info,
+            "Apple auto-sync: importing calendar"
+        );
+        sync_calendar(user_id, node_arc.clone(), service.clone(), tracker.clone()).await;
+    }
 }
 
 // ── Per-source import helpers (macOS) ────────────────────────────────
@@ -329,6 +338,78 @@ async fn sync_photos(
     }
 }
 
+#[cfg(target_os = "macos")]
+async fn sync_calendar(
+    user_id: &str,
+    node_arc: Arc<crate::fold_node::FoldNode>,
+    service: Arc<IngestionService>,
+    tracker: ProgressTracker,
+) {
+    use super::calendar as cal;
+    use crate::ingestion::IngestionRequest;
+
+    let events = match tokio::task::spawn_blocking(|| cal::extract(None)).await {
+        Ok(Ok(e)) => e,
+        Ok(Err(e)) => {
+            log_feature!(
+                LogFeature::Ingestion,
+                warn,
+                "Auto-sync calendar extract failed: {}",
+                e
+            );
+            return;
+        }
+        Err(e) => {
+            log_feature!(
+                LogFeature::Ingestion,
+                warn,
+                "Auto-sync calendar task panicked: {}",
+                e
+            );
+            return;
+        }
+    };
+
+    if events.is_empty() {
+        return;
+    }
+
+    let records = cal::to_json_records(&events);
+    let node = node_arc.as_ref();
+
+    for chunk in records.chunks(10) {
+        let request = IngestionRequest {
+            data: serde_json::Value::Array(chunk.to_vec()),
+            auto_execute: true,
+            pub_key: "default".to_string(),
+            source_file_name: None,
+            progress_id: None,
+            file_hash: None,
+            source_folder: None,
+            image_descriptive_name: None,
+            org_hash: None,
+            image_bytes: None,
+        };
+
+        if let Err(e) = crate::handlers::ingestion::process_json(
+            request,
+            user_id,
+            &tracker,
+            node,
+            service.clone(),
+        )
+        .await
+        {
+            log_feature!(
+                LogFeature::Ingestion,
+                warn,
+                "Auto-sync calendar batch error: {}",
+                e
+            );
+        }
+    }
+}
+
 // ── Non-macOS stubs ──────────────────────────────────────────────────
 
 #[cfg(not(target_os = "macos"))]
@@ -371,5 +452,19 @@ async fn sync_photos(
         LogFeature::Ingestion,
         warn,
         "Auto-sync photos: not available on this platform"
+    );
+}
+
+#[cfg(not(target_os = "macos"))]
+async fn sync_calendar(
+    _user_id: &str,
+    _node_arc: Arc<crate::fold_node::FoldNode>,
+    _service: Arc<IngestionService>,
+    _tracker: ProgressTracker,
+) {
+    log_feature!(
+        LogFeature::Ingestion,
+        warn,
+        "Auto-sync calendar: not available on this platform"
     );
 }

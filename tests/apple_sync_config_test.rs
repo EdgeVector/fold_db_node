@@ -99,6 +99,7 @@ fn test_serialization_roundtrip_daily() {
             notes: true,
             reminders: false,
             photos: true,
+            calendar: true,
         },
         photos_limit: 100,
         last_sync: Some(chrono::Utc::now()),

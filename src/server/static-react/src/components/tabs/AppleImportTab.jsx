@@ -144,7 +144,7 @@ function AutoSyncSettings() {
 
           <div className="flex items-center gap-4">
             <label className="text-xs text-secondary w-16">Sources:</label>
-            {['notes', 'reminders', 'photos'].map((source) => (
+            {['notes', 'reminders', 'photos', 'calendar'].map((source) => (
               <label key={source} className="flex items-center gap-1 text-xs text-primary cursor-pointer">
                 <input
                   type="checkbox"
