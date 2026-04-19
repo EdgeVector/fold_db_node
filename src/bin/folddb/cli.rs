@@ -19,7 +19,12 @@ pub struct Cli {
     #[arg(long, global = true)]
     pub dev: bool,
 
-    /// Path to node config file (also reads NODE_CONFIG env var)
+    /// Path to node config file (also reads NODE_CONFIG env var).
+    ///
+    /// If the config lacks identity keys (the case when `run.sh` creates it),
+    /// the CLI auto-hydrates from `$FOLDDB_HOME/config/node_identity.json` or
+    /// the running daemon on `FOLDDB_PORT`, so this flag works in non-TTY
+    /// contexts (CI, cron, background agents).
     #[arg(long, global = true)]
     pub config: Option<String>,
 

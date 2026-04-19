@@ -470,3 +470,114 @@ fn status_json_mode_returns_raw_json() {
         serde_json::from_str(&output).expect("--json status should return valid JSON");
     assert!(json.get("data").is_some() || json.get("status").is_some());
 }
+
+// ---------------------------------------------------------------------------
+// Regression: --config should NOT re-enter the setup wizard in non-TTY
+// when the node already has an identity on disk / a daemon running.
+//
+// Repro: `run.sh` writes `node_config.json` without identity keys (those live
+// in `node_identity.json`). Pre-fix, any CLI call with --config in a non-TTY
+// context (CI, cron, background agent) would trip the interactive wizard and
+// fail with "Input cancelled: IO error: not a terminal".
+//
+// Filed as Alpha dogfood papercut 2026-04-19 (kanban e2db0).
+// ---------------------------------------------------------------------------
+
+#[test]
+fn config_without_public_key_uses_identity_file() {
+    let daemon = get_daemon();
+
+    // Write a stripped config — identical to what `run.sh` produces: NO identity keys.
+    let stripped_config = serde_json::json!({
+        "database": {
+            "path": daemon._tmpdir.path().join("db").to_str().unwrap()
+        },
+        "network_listen_address": "/ip4/0.0.0.0/tcp/0",
+        "security_config": {
+            "require_tls": false,
+            "encrypt_at_rest": false
+        },
+        "schema_service_url": "test://mock"
+    });
+    let stripped_path = daemon._tmpdir.path().join("stripped_config.json");
+    fs::write(
+        &stripped_path,
+        serde_json::to_string_pretty(&stripped_config).unwrap(),
+    )
+    .expect("write stripped config");
+
+    // Run a command that would otherwise hit the wizard. stdin is not a TTY
+    // under assert_cmd, so a regression would reproduce the original error.
+    let mut cmd = Command::cargo_bin("folddb").expect("find folddb binary");
+    cmd.arg("--config")
+        .arg(&stripped_path)
+        .arg("status")
+        .env("FOLDDB_PORT", daemon.port.to_string())
+        .env("FOLDDB_HOME", daemon._tmpdir.path())
+        .env_remove("NODE_CONFIG");
+
+    let output = cmd.output().expect("run status with stripped config");
+    assert!(
+        output.status.success(),
+        "status with stripped config should succeed via identity-file hydration.\nstdout: {}\nstderr: {}",
+        String::from_utf8_lossy(&output.stdout),
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    assert!(
+        stdout.contains("FoldDB v"),
+        "status output should contain version banner: {}",
+        stdout
+    );
+    // The original repro explicitly printed this wizard banner.
+    assert!(
+        !stdout.contains("Welcome to FoldDB!")
+            && !String::from_utf8_lossy(&output.stderr).contains("Welcome to FoldDB!"),
+        "CLI must not enter the setup wizard when identity is on disk"
+    );
+}
+
+#[test]
+fn no_identity_and_no_daemon_fails_cleanly_in_non_tty() {
+    // Isolated tmpdir — no identity file, no daemon. Non-TTY execution must
+    // fail with the new actionable hint, NOT drop into the wizard.
+    let tmp = tempfile::TempDir::new().expect("tempdir");
+    let config = serde_json::json!({
+        "database": { "path": tmp.path().join("db").to_str().unwrap() },
+        "network_listen_address": "/ip4/0.0.0.0/tcp/0",
+        "security_config": { "require_tls": false, "encrypt_at_rest": false },
+        "schema_service_url": "test://mock"
+    });
+    let config_path = tmp.path().join("config.json");
+    fs::write(&config_path, serde_json::to_string_pretty(&config).unwrap()).expect("write config");
+
+    let mut cmd = Command::cargo_bin("folddb").expect("find folddb binary");
+    cmd.arg("--config")
+        .arg(&config_path)
+        .arg("status")
+        // Point at a port nothing is listening on so the daemon probe returns None.
+        .env("FOLDDB_PORT", "59999")
+        .env("FOLDDB_HOME", tmp.path())
+        .env_remove("NODE_CONFIG");
+
+    let output = cmd.output().expect("run status with no identity");
+    assert!(
+        !output.status.success(),
+        "should fail when no identity source is available"
+    );
+    let combined = format!(
+        "{}{}",
+        String::from_utf8_lossy(&output.stdout),
+        String::from_utf8_lossy(&output.stderr)
+    );
+    assert!(
+        combined.contains("stdin is not a terminal") || combined.contains("daemon start"),
+        "should produce actionable non-TTY hint, got: {}",
+        combined
+    );
+    assert!(
+        !combined.contains("Welcome to FoldDB!"),
+        "must not drop into wizard: {}",
+        combined
+    );
+}

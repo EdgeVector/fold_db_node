@@ -89,13 +89,30 @@ async fn main() {
         }
     };
 
-    // If identity is missing OR config is incomplete, run the setup wizard.
-    // This handles both fresh installs and partial setup failures.
+    // Backfill identity before deciding whether setup is needed. `run.sh` writes
+    // `node_config.json` without identity keys — those live in `node_identity.json`
+    // (disk) and are returned by the daemon's `/api/system/auto-identity` endpoint.
+    // Without this hydration, any CLI call with --config or NODE_CONFIG re-enters
+    // the interactive wizard, which explodes in non-TTY contexts (CI, cron, agents).
+    if config.public_key.is_none() {
+        if let Some(pk) = read_identity_file_pubkey() {
+            config.public_key = Some(pk);
+        } else if let Some(pk) = fetch_pubkey_from_daemon(commands::daemon::default_port()).await {
+            config.public_key = Some(pk);
+        }
+    }
+
+    // If identity is still missing, run the setup wizard (interactive only).
     let needs_setup = config.public_key.is_none();
     if needs_setup {
-        if json_mode {
-            CliError::new("Not configured")
-                .with_hint("Run `folddb` interactively to set up")
+        use std::io::IsTerminal;
+        if json_mode || !std::io::stdin().is_terminal() {
+            CliError::new("Node not configured and stdin is not a terminal")
+                .with_hint(
+                    "Start the daemon first (`folddb daemon start`) so the CLI can read \
+                     its identity, or run `folddb` interactively from a terminal to \
+                     complete setup.",
+                )
                 .exit(json_mode);
         }
         config = match commands::setup::run_setup_wizard() {
@@ -1063,6 +1080,50 @@ fn show_recovery_phrase() -> Result<commands::CommandOutput, CliError> {
     Ok(commands::CommandOutput::Message(msg))
 }
 
+/// Read `public_key` from `$FOLDDB_HOME/config/node_identity.json`, if present.
+///
+/// Returns `None` for any failure — missing file, unreadable, unparseable, or
+/// missing `public_key` field. Callers fall back to other hydration paths.
+fn read_identity_file_pubkey() -> Option<String> {
+    let path = fold_db_node::utils::paths::folddb_home()
+        .ok()?
+        .join("config")
+        .join("node_identity.json");
+    read_identity_pubkey_at(&path)
+}
+
+/// Read `public_key` from a `node_identity.json` at an explicit path.
+///
+/// Split out for unit testing — lets the test avoid mutating `FOLDDB_HOME`
+/// (which is process-global and racy with other tests).
+fn read_identity_pubkey_at(path: &std::path::Path) -> Option<String> {
+    let json = std::fs::read_to_string(path).ok()?;
+    let v: serde_json::Value = serde_json::from_str(&json).ok()?;
+    v.get("public_key")
+        .and_then(|s| s.as_str())
+        .map(String::from)
+}
+
+/// Ask a running daemon for the node's public key via `/api/system/auto-identity`.
+///
+/// Short timeout (2s) — if the daemon isn't responding we fall through to the
+/// setup wizard (or the non-TTY error) rather than hanging the CLI.
+async fn fetch_pubkey_from_daemon(port: u16) -> Option<String> {
+    let url = format!("http://127.0.0.1:{}/api/system/auto-identity", port);
+    let client = reqwest::Client::builder()
+        .timeout(std::time::Duration::from_secs(2))
+        .build()
+        .ok()?;
+    let resp = client.get(&url).send().await.ok()?;
+    if !resp.status().is_success() {
+        return None;
+    }
+    let body: serde_json::Value = resp.json().await.ok()?;
+    body.get("public_key")
+        .and_then(|v| v.as_str())
+        .map(String::from)
+}
+
 #[cfg(test)]
 mod tests {
     use base64::Engine;
@@ -1085,5 +1146,43 @@ mod tests {
         let h1 = user_hash_from_pubkey(&b64(&[0x01u8; 32]));
         let h2 = user_hash_from_pubkey(&b64(&[0x02u8; 32]));
         assert_ne!(h1, h2);
+    }
+
+    #[test]
+    fn read_identity_pubkey_at_reads_public_key() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let path = dir.path().join("node_identity.json");
+        std::fs::write(
+            &path,
+            r#"{"private_key":"secret","public_key":"pk-base64"}"#,
+        )
+        .expect("write identity");
+
+        let pk = super::read_identity_pubkey_at(&path);
+        assert_eq!(pk.as_deref(), Some("pk-base64"));
+    }
+
+    #[test]
+    fn read_identity_pubkey_at_missing_file_returns_none() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let path = dir.path().join("does-not-exist.json");
+        assert!(super::read_identity_pubkey_at(&path).is_none());
+    }
+
+    #[test]
+    fn read_identity_pubkey_at_missing_field_returns_none() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let path = dir.path().join("node_identity.json");
+        // No public_key field — this is the "corrupt identity" case.
+        std::fs::write(&path, r#"{"private_key":"secret"}"#).expect("write identity");
+        assert!(super::read_identity_pubkey_at(&path).is_none());
+    }
+
+    #[test]
+    fn read_identity_pubkey_at_invalid_json_returns_none() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let path = dir.path().join("node_identity.json");
+        std::fs::write(&path, "not json").expect("write identity");
+        assert!(super::read_identity_pubkey_at(&path).is_none());
     }
 }
