@@ -43,6 +43,7 @@ pub mod org;
 pub mod query;
 pub mod response;
 pub mod sharing;
+pub mod snapshot;
 pub mod system;
 pub mod trust;
 
