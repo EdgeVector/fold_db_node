@@ -472,6 +472,81 @@ execute_action() {
       sleep "$secs"
       ;;
 
+    org_create)
+      # Action: { action: org_create, name: "qa-dogfood-org" }
+      # Creates an org on this node. Saves the full CreateOrgResponse (incl.
+      # invite_bundle + org.org_hash) so org_join on another role can reference it.
+      local org_name
+      org_name=$(echo "$action_json" | jq -r '.name // "qa-org"')
+      local resp
+      if ! resp=$(curl -fsS -X POST "http://127.0.0.1:$port/api/org" \
+          -H 'Content-Type: application/json' \
+          -H "X-User-Hash: $hash" \
+          -d "{\"name\":\"$org_name\"}" 2>&1); then
+        echo "[step] org_create failed: $resp" >&2
+        return 1
+      fi
+      # Handler returns ApiResponse<CreateOrgResponse> — success body is .data
+      # but older callers expect the inner fields. Save the whole response and
+      # unwrap in org_join below so both shapes work.
+      echo "$resp" > "$FOLDDB_TEST_SESSION_DIR/state/org-create-$role.json"
+      local org_hash
+      org_hash=$(echo "$resp" | jq -r '(.data.org.org_hash // .org.org_hash // "")')
+      [[ -n "$org_hash" && "$org_hash" != "null" ]] || {
+        echo "[step] org_create: no org_hash in response: $(echo "$resp" | head -c 300)" >&2
+        return 1
+      }
+      echo "[step] $role created org '$org_name' hash=$org_hash"
+      ;;
+
+    org_join)
+      # Action: { action: org_join, from_role: alice }
+      # Reads the org-create state from $from_role and POSTs the invite bundle.
+      local from_role
+      from_role=$(echo "$action_json" | jq -r '.from_role // ""')
+      [[ -n "$from_role" ]] || { echo "[step] org_join: from_role required" >&2; return 1; }
+      local create_file="$FOLDDB_TEST_SESSION_DIR/state/org-create-$from_role.json"
+      [[ -f "$create_file" ]] || {
+        echo "[step] org_join: no org-create state for role $from_role (file=$create_file)" >&2
+        return 1
+      }
+      local bundle
+      bundle=$(jq -c '.data.invite_bundle // .invite_bundle' "$create_file")
+      [[ -n "$bundle" && "$bundle" != "null" ]] || {
+        echo "[step] org_join: no invite_bundle in $create_file" >&2
+        return 1
+      }
+      local resp
+      if ! resp=$(curl -fsS -X POST "http://127.0.0.1:$port/api/org/join" \
+          -H 'Content-Type: application/json' \
+          -H "X-User-Hash: $hash" \
+          -d "$bundle" 2>&1); then
+        echo "[step] org_join failed: $resp" >&2
+        return 1
+      fi
+      local joined_hash
+      joined_hash=$(echo "$resp" | jq -r '(.data.org.org_hash // .org.org_hash // "")')
+      [[ -n "$joined_hash" && "$joined_hash" != "null" ]] || {
+        echo "[step] org_join: no org_hash in response: $(echo "$resp" | head -c 300)" >&2
+        return 1
+      }
+      echo "[step] $role joined org hash=$joined_hash (from $from_role)"
+      ;;
+
+    sync_trigger)
+      # Action: { action: sync_trigger }
+      # Forces a personal+org sync cycle on this node (upload pending + poll).
+      # Does not wait for completion — use `sleep` after to let the cycle run.
+      if ! curl -fsS -X POST "http://127.0.0.1:$port/api/sync/trigger" \
+          -H 'Content-Type: application/json' \
+          -H "X-User-Hash: $hash" \
+          -d '{}' > /dev/null 2>&1; then
+        echo "[step] sync_trigger failed on $role" >&2
+        return 1
+      fi
+      echo "[step] $role triggered sync"
+      ;;
+
     *)
       echo "[step] unknown action: $action" >&2
       return 1

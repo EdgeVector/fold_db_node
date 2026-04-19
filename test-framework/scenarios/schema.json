@@ -53,7 +53,10 @@
                     "expect_notification_min",
                     "accept_request",
                     "share_record",
-                    "sleep"
+                    "sleep",
+                    "org_create",
+                    "org_join",
+                    "sync_trigger"
                   ]
                 }
               },
@@ -78,7 +81,8 @@
               "pending_requests",
               "schema_record_count",
               "shared_record_count",
-              "my_pseudonym_count"
+              "my_pseudonym_count",
+              "org_member_count"
             ]
           },
           "op": {
@@ -87,7 +91,8 @@
           },
           "value": {},
           "schema": { "type": "string" },
-          "author_role": { "type": "string" }
+          "author_role": { "type": "string" },
+          "org_role": { "type": "string" }
         }
       }
     }

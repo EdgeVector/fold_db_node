@@ -128,7 +128,7 @@ jobs:
           cd test-framework
           set +e
           FAIL=0
-          for scenario in scenarios/face-discovery-self.yaml scenarios/face-discovery-3node.yaml; do
+          for scenario in scenarios/face-discovery-self.yaml scenarios/face-discovery-3node.yaml scenarios/org-sync-2node.yaml; do
             echo ""
             echo "================================================================"
             echo "  Running: $scenario"

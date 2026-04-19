@@ -1,0 +1,64 @@
+name: org-sync-2node
+description: |
+  Two-node org membership round-trip against dev Exemem cloud. Alice creates
+  an org, Bob joins via the invite bundle, each triggers a sync cycle twice
+  with a short sleep between, then both nodes must observe 2 members on the
+  org locally. Exercises:
+    - alpha M1 OrgSyncEngine (server-allocated seqs, exemem-infra ExememOrgSyncCounters-dev)
+    - alpha M2 folddb org CLI handlers (POST /api/org, POST /api/org/join)
+    - alpha BLOCKER 19bba (/api/auth/register activates cloud sync on both nodes)
+  Acceptance test for projects/alpha-org-member-propagation-gap (kanban 500b9)
+  and the QA harness org-leg (kanban 82387). See docs/plans/alpha-self-dogfood.md
+  in exemem-workspace §4 M1 for the exit criterion this scenario enforces.
+
+nodes:
+  - role: alice
+    display_name: Alice
+  - role: bob
+    display_name: Bob
+
+steps:
+  - id: alice_creates_org
+    roles: [alice]
+    actions:
+      - action: org_create
+        name: qa-dogfood-org
+
+  - id: bob_joins_org
+    roles: [bob]
+    actions:
+      - action: org_join
+        from_role: alice
+
+  # Two sync cycles per node: each trigger + sleep gives the OrgSyncEngine a
+  # window to upload pending entries (alice's add-member molecule after join,
+  # bob's self-membership molecule) and download the other side's entries.
+  - id: sync_round_1
+    roles: [alice, bob]
+    actions:
+      - action: sync_trigger
+      - action: sleep
+        seconds: 6
+
+  - id: sync_round_2
+    roles: [alice, bob]
+    actions:
+      - action: sync_trigger
+      - action: sleep
+        seconds: 8
+
+assertions:
+  # Both nodes must see each other as org members. Failure means either:
+  #  - register→sync-engine activation regressed (19bba), OR
+  #  - OrgSyncEngine upload/download regressed (M1 server-allocated seqs), OR
+  #  - seq counter / DDB routing drifted in storage_service.
+  - node: alice
+    field: org_member_count
+    org_role: alice
+    op: ">="
+    value: 2
+  - node: bob
+    field: org_member_count
+    org_role: alice
+    op: ">="
+    value: 2
