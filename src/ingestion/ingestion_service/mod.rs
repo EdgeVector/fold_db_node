@@ -309,9 +309,11 @@ impl IngestionService {
         } else {
             Some(flattened_data.clone())
         };
-        let rep = representative
-            .as_ref()
-            .expect("representative is Some when has_nested_children is true");
+        let rep = representative.as_ref().ok_or_else(|| {
+            IngestionError::InvalidInput(
+                "process_decomposed_path called with empty representative; caller must gate on check_has_nested_children".to_string(),
+            )
+        })?;
         let top_level_hash = crate::ingestion::decomposer::compute_structure_hash(rep);
 
         // AI proposal collection (part of the AIRecommendation phase, already entered by caller)

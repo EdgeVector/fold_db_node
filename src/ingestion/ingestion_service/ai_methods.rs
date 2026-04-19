@@ -167,9 +167,12 @@ impl IngestionService {
                         if let Ok(descriptions) =
                             serde_json::from_str::<serde_json::Map<String, Value>>(&json_str)
                         {
-                            let fd = schema_def
-                                .as_object_mut()
-                                .unwrap()
+                            let schema_obj = schema_def.as_object_mut().ok_or_else(|| {
+                                IngestionError::ai_response_validation_error(
+                                    "new_schemas must be a JSON object to backfill field_descriptions",
+                                )
+                            })?;
+                            let fd = schema_obj
                                 .entry("field_descriptions")
                                 .or_insert_with(|| Value::Object(serde_json::Map::new()));
                             if let Some(fd_obj) = fd.as_object_mut() {
