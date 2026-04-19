@@ -758,7 +758,11 @@ mod tests {
             ],
         );
 
-        assert_eq!(org.members.len(), 2, "bob should be appended as placeholder");
+        assert_eq!(
+            org.members.len(),
+            2,
+            "bob should be appended as placeholder"
+        );
         let placeholder = org.members.last().expect("appended member");
         assert_eq!(placeholder.node_public_key, "");
         assert_eq!(placeholder.display_name, "user-bbbbbbbb");
