@@ -7,6 +7,8 @@
 #[cfg(target_os = "macos")]
 pub mod calendar;
 #[cfg(target_os = "macos")]
+pub mod contacts;
+#[cfg(target_os = "macos")]
 pub mod notes;
 #[cfg(target_os = "macos")]
 pub mod photos;

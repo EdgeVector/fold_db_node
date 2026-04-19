@@ -144,7 +144,7 @@ function AutoSyncSettings() {
 
           <div className="flex items-center gap-4">
             <label className="text-xs text-secondary w-16">Sources:</label>
-            {['notes', 'reminders', 'photos', 'calendar'].map((source) => (
+            {['notes', 'reminders', 'photos', 'calendar', 'contacts'].map((source) => (
               <label key={source} className="flex items-center gap-1 text-xs text-primary cursor-pointer">
                 <input
                   type="checkbox"
@@ -219,6 +219,12 @@ const SOURCES = [
     label: 'Reminders',
     icon: "\u2705",
     description: 'Import all reminders from Apple Reminders, including completed items.',
+  },
+  {
+    key: 'contacts',
+    label: 'Contacts',
+    icon: "\uD83D\uDC64",
+    description: 'Import contacts from Apple Contacts. Contacts without a display name are skipped.',
   },
 ]
 
@@ -396,7 +402,7 @@ function useSourceImport(sourceKey, importFn) {
 
 export default function AppleImportTab({ onResult: _onResult }) {
   const [available, setAvailable] = useState(null) // null = loading, true/false
-  const [enabled, setEnabled] = useState({ notes: true, photos: true, calendar: true, reminders: true })
+  const [enabled, setEnabled] = useState({ notes: true, photos: true, calendar: true, reminders: true, contacts: true })
   const [photosLimit, setPhotosLimit] = useState(50)
 
   useEffect(() => {
@@ -419,8 +425,11 @@ export default function AppleImportTab({ onResult: _onResult }) {
   const reminders = useSourceImport('reminders', useCallback(
     () => ingestionClient.appleImportReminders(), []
   ))
+  const contacts = useSourceImport('contacts', useCallback(
+    () => ingestionClient.appleImportContacts(), []
+  ))
 
-  const imports = { notes, photos, calendar, reminders }
+  const imports = { notes, photos, calendar, reminders, contacts }
 
   const toggleSource = (key) => (val) => {
     setEnabled((prev) => ({ ...prev, [key]: val }))

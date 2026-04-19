@@ -9,7 +9,7 @@
 
 #[cfg(target_os = "macos")]
 mod tests {
-    use fold_db_node::ingestion::apple_import::{calendar, notes, photos, reminders};
+    use fold_db_node::ingestion::apple_import::{calendar, contacts, notes, photos, reminders};
     use fold_db_node::ingestion::apple_import::{content_hash, is_available};
     use serde_json::Value;
     use std::collections::HashSet;
@@ -871,6 +871,109 @@ mod tests {
 
     // =========================================================================
     // 15. Calendar — large batch with mixed event types for progress simulation
+    // =========================================================================
+
+    // =========================================================================
+    // 16. Contacts — successful extraction & round-trip
+    // =========================================================================
+
+    #[test]
+    fn contacts_parse_and_convert_roundtrip() {
+        let raw = concat!(
+            "<<<CON_START>>>Alice Example<<<SEP>>>Acme Corp<<<SEP>>>alice@example.com<<<SEP>>>+1-555-0100<<<SEP>>>1990-01-15<<<SEP>>>met at conference<<<CON_END>>>",
+            "<<<CON_START>>>Bob Example<<<SEP>>><<<SEP>>>bob@work.com,bob@home.com<<<SEP>>>+1-555-0101,+1-555-0102<<<SEP>>><<<SEP>>><<<CON_END>>>"
+        );
+
+        let parsed = contacts::parse_output(raw).unwrap();
+        assert_eq!(parsed.len(), 2);
+        assert_eq!(parsed[0].full_name, "Alice Example");
+        assert_eq!(parsed[0].organization, "Acme Corp");
+        assert_eq!(parsed[0].emails, vec!["alice@example.com"]);
+        assert_eq!(parsed[0].phones, vec!["+1-555-0100"]);
+
+        assert_eq!(parsed[1].full_name, "Bob Example");
+        assert!(parsed[1].organization.is_empty());
+        assert_eq!(parsed[1].emails, vec!["bob@work.com", "bob@home.com"]);
+        assert_eq!(parsed[1].phones, vec!["+1-555-0101", "+1-555-0102"]);
+
+        let records = contacts::to_json_records(&parsed);
+        assert_eq!(records.len(), 2);
+        for r in &records {
+            assert_has_string(r, "full_name");
+            assert_has_string(r, "content_hash");
+            assert_eq!(r["source"], "apple_contacts");
+            assert!(r.get("emails").is_some());
+            assert!(r.get("phones").is_some());
+        }
+    }
+
+    #[test]
+    fn contacts_empty_results() {
+        let parsed = contacts::parse_output("").unwrap();
+        assert!(parsed.is_empty());
+        let records = contacts::to_json_records(&parsed);
+        assert!(records.is_empty());
+    }
+
+    #[test]
+    fn contacts_skips_empty_name_rows() {
+        // Belt-and-suspenders: the AppleScript already filters these out,
+        // but a malformed payload should still never yield empty-key
+        // molecules in Sled.
+        let raw = "<<<CON_START>>><<<SEP>>>Acme<<<SEP>>>nobody@acme.com<<<SEP>>><<<SEP>>><<<SEP>>><<<CON_END>>>";
+        let parsed = contacts::parse_output(raw).unwrap();
+        assert!(parsed.is_empty());
+    }
+
+    #[test]
+    fn contacts_build_script_iterates_people() {
+        let script = contacts::build_script();
+        assert!(script.contains(r#"tell application "Contacts""#));
+        assert!(script.contains("repeat with p in every person"));
+        assert!(script.contains("emails of p"));
+        assert!(script.contains("phones of p"));
+        assert!(script.contains(r#"if fullName is not "" then"#));
+    }
+
+    #[test]
+    fn contacts_dedup_same_data_twice_produces_same_hashes() {
+        let raw = "<<<CON_START>>>Alice<<<SEP>>>Acme<<<SEP>>>a@x.com<<<SEP>>>+1<<<SEP>>><<<SEP>>><<<CON_END>>>";
+        let p1 = contacts::parse_output(raw).unwrap();
+        let p2 = contacts::parse_output(raw).unwrap();
+        let r1 = contacts::to_json_records(&p1);
+        let r2 = contacts::to_json_records(&p2);
+        assert_eq!(r1[0]["content_hash"], r2[0]["content_hash"]);
+    }
+
+    #[test]
+    fn contacts_batch_processing_many_records() {
+        let mut raw = String::new();
+        for i in 0..50 {
+            raw.push_str(&format!(
+                "<<<CON_START>>>Fixture {}<<<SEP>>>Org {}<<<SEP>>>u{}@x.com<<<SEP>>>+1-555-01{:02}<<<SEP>>><<<SEP>>><<<CON_END>>>",
+                i,
+                i % 3,
+                i,
+                i
+            ));
+        }
+        let parsed = contacts::parse_output(&raw).unwrap();
+        assert_eq!(parsed.len(), 50);
+        let records = contacts::to_json_records(&parsed);
+        assert_eq!(records.len(), 50);
+        let hashes: HashSet<&str> = records
+            .iter()
+            .map(|r| r["content_hash"].as_str().unwrap())
+            .collect();
+        assert_eq!(
+            hashes.len(),
+            50,
+            "50 distinct contacts should have unique hashes"
+        );
+    }
+
+    // =========================================================================
+    // 17. Calendar — large batch (continues from section 15)
     // =========================================================================
 
     #[test]

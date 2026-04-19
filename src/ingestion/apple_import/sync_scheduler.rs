@@ -78,6 +78,15 @@ pub async fn run_sync(
         );
         sync_calendar(user_id, node_arc.clone(), service.clone(), tracker.clone()).await;
     }
+
+    if sources.contacts {
+        log_feature!(
+            LogFeature::Ingestion,
+            info,
+            "Apple auto-sync: importing contacts"
+        );
+        sync_contacts(user_id, node_arc.clone(), service.clone(), tracker.clone()).await;
+    }
 }
 
 // ── Per-source import helpers (macOS) ────────────────────────────────
@@ -410,6 +419,78 @@ async fn sync_calendar(
     }
 }
 
+#[cfg(target_os = "macos")]
+async fn sync_contacts(
+    user_id: &str,
+    node_arc: Arc<crate::fold_node::FoldNode>,
+    service: Arc<IngestionService>,
+    tracker: ProgressTracker,
+) {
+    use super::contacts;
+    use crate::ingestion::IngestionRequest;
+
+    let contacts_vec = match tokio::task::spawn_blocking(contacts::extract).await {
+        Ok(Ok(c)) => c,
+        Ok(Err(e)) => {
+            log_feature!(
+                LogFeature::Ingestion,
+                warn,
+                "Auto-sync contacts extract failed: {}",
+                e
+            );
+            return;
+        }
+        Err(e) => {
+            log_feature!(
+                LogFeature::Ingestion,
+                warn,
+                "Auto-sync contacts task panicked: {}",
+                e
+            );
+            return;
+        }
+    };
+
+    if contacts_vec.is_empty() {
+        return;
+    }
+
+    let records = contacts::to_json_records(&contacts_vec);
+    let node = node_arc.as_ref();
+
+    for chunk in records.chunks(10) {
+        let request = IngestionRequest {
+            data: serde_json::Value::Array(chunk.to_vec()),
+            auto_execute: true,
+            pub_key: "default".to_string(),
+            source_file_name: None,
+            progress_id: None,
+            file_hash: None,
+            source_folder: None,
+            image_descriptive_name: None,
+            org_hash: None,
+            image_bytes: None,
+        };
+
+        if let Err(e) = crate::handlers::ingestion::process_json(
+            request,
+            user_id,
+            &tracker,
+            node,
+            service.clone(),
+        )
+        .await
+        {
+            log_feature!(
+                LogFeature::Ingestion,
+                warn,
+                "Auto-sync contacts batch error: {}",
+                e
+            );
+        }
+    }
+}
+
 // ── Non-macOS stubs ──────────────────────────────────────────────────
 
 #[cfg(not(target_os = "macos"))]
@@ -466,5 +547,19 @@ async fn sync_calendar(
         LogFeature::Ingestion,
         warn,
         "Auto-sync calendar: not available on this platform"
+    );
+}
+
+#[cfg(not(target_os = "macos"))]
+async fn sync_contacts(
+    _user_id: &str,
+    _node_arc: Arc<crate::fold_node::FoldNode>,
+    _service: Arc<IngestionService>,
+    _tracker: ProgressTracker,
+) {
+    log_feature!(
+        LogFeature::Ingestion,
+        warn,
+        "Auto-sync contacts: not available on this platform"
     );
 }
