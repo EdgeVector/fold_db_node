@@ -1445,8 +1445,13 @@ mod tests {
 
         let t0 = Instant::now();
         // First call → reregister runs, fails.
-        let _ = refresh_auth_inner(last_returned.clone(), throttle.clone(), t0, reregister.clone())
-            .await;
+        let _ = refresh_auth_inner(
+            last_returned.clone(),
+            throttle.clone(),
+            t0,
+            reregister.clone(),
+        )
+        .await;
         assert_eq!(*call_count.lock().unwrap(), 1);
 
         // Immediate second call → throttle gates, reregister NOT called.
