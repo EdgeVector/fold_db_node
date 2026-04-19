@@ -344,11 +344,12 @@ DEV_MODE=false
 RESET_DB=false
 EMPTY_DB=false
 DEMO_MODE=false
-# Auto-slot: when neither --port nor FOLDDB_PORT nor --home nor $FOLDDB_HOME
-# is set, pick the first free port in 9101..=9199 and derive FOLDDB_HOME
-# from it so N parallel agents can each run their own fold_db instance
-# without any coordination. The prod Tauri bundle owns 9001; dev lives in
-# the 9101 range.
+# Auto-slot: when neither --port nor FOLDDB_PORT is set, pick the first free
+# port in 9101..=9199 so N parallel agents can each run their own fold_db
+# instance without any coordination. If FOLDDB_HOME is also unset, derive
+# a per-slot FOLDDB_HOME from the chosen port; otherwise preserve the
+# caller's FOLDDB_HOME. The prod Tauri bundle owns 9001; dev lives in the
+# 9101 range.
 HTTP_PORT=""
 SCHEMA_PORT=""
 AUTO_SLOT=false
@@ -425,16 +426,18 @@ for i in "${!args[@]}"; do
     esac
 done
 
-# Auto-slot: if nothing is pinned (no --port, no FOLDDB_PORT, no --home, no
-# $FOLDDB_HOME), scan 9101..=9199 for a free port and derive a per-slot
-# FOLDDB_HOME so parallel agents don't collide. Anything explicit (even one
-# of --port or --home) disables auto-slot — we assume the caller knows.
+# Auto-slot: if no HTTP port was pinned (no --port, no FOLDDB_PORT), scan
+# 9101..=9199 for a free port so parallel agents don't collide. An explicit
+# FOLDDB_HOME does NOT disable the port scan — the caller may want an
+# isolated data dir but still let us find a free port for them. If
+# FOLDDB_HOME is also unset we derive a per-slot one from the chosen port;
+# otherwise we preserve what the caller set.
 #
 # Use lsof (not a bash /dev/tcp probe) because folddb_server may be bound to
 # an IPv6 listener; a /dev/tcp/127.0.0.1 probe would miss it and hand us a
 # port the backend can't actually bind, crashing it with EADDRINUSE while
 # Vite (started later) would happily serve a UI talking to nothing.
-if [ -z "$HTTP_PORT" ] && [ -z "$FOLDDB_HOME" ]; then
+if [ -z "$HTTP_PORT" ]; then
     for candidate in $(seq 9101 9199); do
         if ! lsof -iTCP:"$candidate" -sTCP:LISTEN -t >/dev/null 2>&1; then
             HTTP_PORT="$candidate"
@@ -446,8 +449,12 @@ if [ -z "$HTTP_PORT" ] && [ -z "$FOLDDB_HOME" ]; then
         echo "error: no free TCP port found in 9101..=9199 — every port that run.sh would try is occupied" >&2
         exit 1
     fi
-    FOLDDB_HOME="/tmp/folddb-slot-$HTTP_PORT"
-    echo "[run.sh] auto-slot: port=$HTTP_PORT, home=$FOLDDB_HOME"
+    if [ -z "$FOLDDB_HOME" ]; then
+        FOLDDB_HOME="/tmp/folddb-slot-$HTTP_PORT"
+        echo "[run.sh] auto-slot: port=$HTTP_PORT, home=$FOLDDB_HOME"
+    else
+        echo "[run.sh] auto-slot: port=$HTTP_PORT (home=$FOLDDB_HOME preserved)"
+    fi
 fi
 
 # Fill in remaining defaults for whichever of port/home wasn't pinned.
