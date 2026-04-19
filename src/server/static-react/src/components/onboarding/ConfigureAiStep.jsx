@@ -4,8 +4,8 @@ import { useAppDispatch } from '../../store/hooks'
 import { fetchIngestionConfig } from '../../store/ingestionSlice'
 
 const ANTHROPIC_MODELS = [
+  { value: 'claude-haiku-4-5-20251001', label: 'Claude Haiku 4.5 (recommended)' },
   { value: 'claude-sonnet-4-20250514', label: 'Claude Sonnet 4' },
-  { value: 'claude-haiku-4-5-20251001', label: 'Claude Haiku 4.5' },
 ]
 
 export default function ConfigureAiStep({ onNext, onSkip }) {
@@ -14,7 +14,7 @@ export default function ConfigureAiStep({ onNext, onSkip }) {
   const [ollamaModel, setOllamaModel] = useState('')
   const [ollamaUrl, setOllamaUrl] = useState('http://localhost:11434')
   const [anthropicApiKey, setAnthropicApiKey] = useState('')
-  const [anthropicModel, setAnthropicModel] = useState('claude-sonnet-4-20250514')
+  const [anthropicModel, setAnthropicModel] = useState('claude-haiku-4-5-20251001')
   const [ollamaModels, setOllamaModels] = useState([])
   const [ollamaModelsLoading, setOllamaModelsLoading] = useState(false)
   const [ollamaModelsError, setOllamaModelsError] = useState(null)

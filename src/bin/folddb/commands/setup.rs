@@ -254,7 +254,8 @@ pub fn run_setup_wizard() -> Result<NodeConfig, CliError> {
                 "provider": "Anthropic",
                 "anthropic": {
                     "api_key": api_key,
-                    "model": "claude-sonnet-4-20250514",
+                    // Ingestion default — see fold_db_node/src/ingestion/config.rs
+                    "model": "claude-haiku-4-5-20251001",
                     "base_url": "https://api.anthropic.com"
                 }
             }))

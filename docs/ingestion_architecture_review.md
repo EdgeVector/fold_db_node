@@ -147,7 +147,7 @@ async fn call(&self, prompt: &str, system_prompt: Option<&str>) -> Result<String
 
 Two implementations:
 
-- **`AnthropicBackend`**: Calls the Anthropic Messages API (`/v1/messages`). Configured via `AnthropicConfig` (api_key, model, base_url). Default model: `claude-sonnet-4-20250514`. Uses `reqwest` with configurable timeout.
+- **`AnthropicBackend`**: Calls the Anthropic Messages API (`/v1/messages`). Configured via `AnthropicConfig` (api_key, model, base_url). Default model: `claude-haiku-4-5-20251001` (Haiku 4.5 — matches Sonnet 4 quality on the 8-case ingestion eval at ~67% the cost; query path overrides to Sonnet 4 in `IngestionConfig::default()`). Uses `reqwest` with configurable timeout.
 
 - **`OllamaBackend`**: Calls the Ollama `/api/generate` endpoint. Configured via `OllamaConfig` (model, base_url). Default model: `llama3.3`, default URL: `http://localhost:11434`.
 
@@ -382,7 +382,7 @@ Configuration loads with this precedence (highest wins):
 | Setting | Default | Source |
 |---------|---------|--------|
 | `provider` | `Anthropic` | Config file or `AI_PROVIDER` env |
-| `anthropic.model` | `claude-sonnet-4-20250514` | Config file or `ANTHROPIC_MODEL` env |
+| `anthropic.model` | `claude-haiku-4-5-20251001` | Config file or `ANTHROPIC_MODEL` env |
 | `anthropic.api_key` | (empty) | `ANTHROPIC_API_KEY` env only |
 | `ollama.model` | `llama3.3` | Config file or `OLLAMA_MODEL` env |
 | `ollama.base_url` | `http://localhost:11434` | Config file or `OLLAMA_BASE_URL` env |
