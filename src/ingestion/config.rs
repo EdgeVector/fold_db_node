@@ -591,7 +591,10 @@ mod tests {
             Some(models::ANTHROPIC_SONNET),
         );
         // And the resolved query config picks Sonnet, not Haiku.
-        assert_eq!(config.query_config().anthropic.model, models::ANTHROPIC_SONNET);
+        assert_eq!(
+            config.query_config().anthropic.model,
+            models::ANTHROPIC_SONNET
+        );
         // Text model depends on system RAM — just verify it's non-empty
         assert!(!config.ollama.model.is_empty());
         assert_eq!(config.ollama.vision_model, models::OLLAMA_VISION);
