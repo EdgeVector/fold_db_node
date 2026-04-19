@@ -4,6 +4,15 @@
 //! whether the next sync time has been reached and, if so, triggers imports
 //! for all enabled sources. Content-hash dedup in the ingestion pipeline
 //! ensures unchanged items are skipped.
+//!
+//! ## Reliability invariants
+//!
+//! - Firing decision is wall-clock based (`Utc::now() >= next_sync`), not
+//!   tokio-timer based, so macOS sleep/wake cycles are tolerated — on wake,
+//!   the next tick sees `next_sync` in the past and fires immediately.
+//! - Every failure is propagated: per-source helpers return `Result<(),
+//!   String>`, the scheduler aggregates and records them in
+//!   `SyncConfig.last_error` so the UI and logs reveal the problem.
 
 use std::sync::Arc;
 use tokio::sync::RwLock;
@@ -23,10 +32,13 @@ pub fn create_sync_config_state() -> SyncConfigState {
     Arc::new(RwLock::new(AppleSyncConfig::load()))
 }
 
-/// Execute all enabled Apple-source imports once.
+/// Execute all enabled Apple-source imports once. Returns the list of
+/// per-source error messages collected during the run — empty on success.
 ///
-/// Framework-agnostic — the HTTP layer's scheduler loop calls this after
-/// resolving `node_arc` / `service` / `tracker` for the current user.
+/// The scheduler loop in `routes::apple_import::spawn_sync_scheduler`
+/// translates an empty result into `mark_sync_complete` and a non-empty
+/// result into `mark_sync_error`, ensuring every extractor failure
+/// surfaces in `last_error` (and therefore in the UI + structured logs).
 pub async fn run_sync(
     sources: &super::sync_config::EnabledSources,
     photos_limit: usize,
@@ -34,14 +46,20 @@ pub async fn run_sync(
     node_arc: Arc<crate::fold_node::FoldNode>,
     service: Arc<IngestionService>,
     tracker: ProgressTracker,
-) {
+) -> Vec<String> {
+    let mut errors: Vec<String> = Vec::new();
+
     if sources.notes {
         log_feature!(
             LogFeature::Ingestion,
             info,
             "Apple auto-sync: importing notes"
         );
-        sync_notes(user_id, node_arc.clone(), service.clone(), tracker.clone()).await;
+        if let Err(e) =
+            sync_notes(user_id, node_arc.clone(), service.clone(), tracker.clone()).await
+        {
+            errors.push(format!("notes: {e}"));
+        }
     }
 
     if sources.reminders {
@@ -50,7 +68,11 @@ pub async fn run_sync(
             info,
             "Apple auto-sync: importing reminders"
         );
-        sync_reminders(user_id, node_arc.clone(), service.clone(), tracker.clone()).await;
+        if let Err(e) =
+            sync_reminders(user_id, node_arc.clone(), service.clone(), tracker.clone()).await
+        {
+            errors.push(format!("reminders: {e}"));
+        }
     }
 
     if sources.photos {
@@ -60,14 +82,17 @@ pub async fn run_sync(
             "Apple auto-sync: importing photos (limit: {})",
             photos_limit
         );
-        sync_photos(
+        if let Err(e) = sync_photos(
             user_id,
             node_arc.clone(),
             service.clone(),
             tracker.clone(),
             photos_limit,
         )
-        .await;
+        .await
+        {
+            errors.push(format!("photos: {e}"));
+        }
     }
 
     if sources.calendar {
@@ -76,7 +101,11 @@ pub async fn run_sync(
             info,
             "Apple auto-sync: importing calendar"
         );
-        sync_calendar(user_id, node_arc.clone(), service.clone(), tracker.clone()).await;
+        if let Err(e) =
+            sync_calendar(user_id, node_arc.clone(), service.clone(), tracker.clone()).await
+        {
+            errors.push(format!("calendar: {e}"));
+        }
     }
 
     if sources.contacts {
@@ -85,8 +114,14 @@ pub async fn run_sync(
             info,
             "Apple auto-sync: importing contacts"
         );
-        sync_contacts(user_id, node_arc.clone(), service.clone(), tracker.clone()).await;
+        if let Err(e) =
+            sync_contacts(user_id, node_arc.clone(), service.clone(), tracker.clone()).await
+        {
+            errors.push(format!("contacts: {e}"));
+        }
     }
+
+    errors
 }
 
 // ── Per-source import helpers (macOS) ────────────────────────────────
@@ -97,7 +132,7 @@ async fn sync_notes(
     node_arc: Arc<crate::fold_node::FoldNode>,
     service: Arc<IngestionService>,
     tracker: ProgressTracker,
-) {
+) -> Result<(), String> {
     use super::notes;
     use crate::ingestion::IngestionRequest;
 
@@ -106,31 +141,33 @@ async fn sync_notes(
         Ok(Err(e)) => {
             log_feature!(
                 LogFeature::Ingestion,
-                warn,
+                error,
                 "Auto-sync notes extract failed: {}",
                 e
             );
-            return;
+            return Err(format!("extract failed: {e}"));
         }
         Err(e) => {
             log_feature!(
                 LogFeature::Ingestion,
-                warn,
+                error,
                 "Auto-sync notes task panicked: {}",
                 e
             );
-            return;
+            return Err(format!("task panicked: {e}"));
         }
     };
 
     if notes.is_empty() {
-        return;
+        return Ok(());
     }
 
     let records = notes::to_json_records(&notes);
     let node = node_arc.as_ref();
     let uid = user_id.to_string();
+    let total_batches = records.chunks(10).count();
 
+    let mut batch_errors: Vec<String> = Vec::new();
     for chunk in records.chunks(10) {
         let request = IngestionRequest {
             data: serde_json::Value::Array(chunk.to_vec()),
@@ -151,11 +188,23 @@ async fn sync_notes(
         {
             log_feature!(
                 LogFeature::Ingestion,
-                warn,
+                error,
                 "Auto-sync notes batch error: {}",
                 e
             );
+            batch_errors.push(e.to_string());
         }
+    }
+
+    if batch_errors.is_empty() {
+        Ok(())
+    } else {
+        Err(format!(
+            "{}/{} batches failed: {}",
+            batch_errors.len(),
+            total_batches,
+            batch_errors.join("; ")
+        ))
     }
 }
 
@@ -165,7 +214,7 @@ async fn sync_reminders(
     node_arc: Arc<crate::fold_node::FoldNode>,
     service: Arc<IngestionService>,
     tracker: ProgressTracker,
-) {
+) -> Result<(), String> {
     use super::reminders;
     use crate::ingestion::IngestionRequest;
 
@@ -174,25 +223,25 @@ async fn sync_reminders(
         Ok(Err(e)) => {
             log_feature!(
                 LogFeature::Ingestion,
-                warn,
+                error,
                 "Auto-sync reminders extract failed: {}",
                 e
             );
-            return;
+            return Err(format!("extract failed: {e}"));
         }
         Err(e) => {
             log_feature!(
                 LogFeature::Ingestion,
-                warn,
+                error,
                 "Auto-sync reminders task panicked: {}",
                 e
             );
-            return;
+            return Err(format!("task panicked: {e}"));
         }
     };
 
     if rems.is_empty() {
-        return;
+        return Ok(());
     }
 
     let records = reminders::to_json_records(&rems);
@@ -216,11 +265,13 @@ async fn sync_reminders(
     {
         log_feature!(
             LogFeature::Ingestion,
-            warn,
+            error,
             "Auto-sync reminders error: {}",
             e
         );
+        return Err(e.to_string());
     }
+    Ok(())
 }
 
 #[cfg(target_os = "macos")]
@@ -230,7 +281,7 @@ async fn sync_photos(
     service: Arc<IngestionService>,
     tracker: ProgressTracker,
     limit: usize,
-) {
+) -> Result<(), String> {
     use super::photos;
     use crate::ingestion::IngestionRequest;
 
@@ -239,28 +290,29 @@ async fn sync_photos(
         Ok(Err(e)) => {
             log_feature!(
                 LogFeature::Ingestion,
-                warn,
+                error,
                 "Auto-sync photos export failed: {}",
                 e
             );
-            return;
+            return Err(format!("export failed: {e}"));
         }
         Err(e) => {
             log_feature!(
                 LogFeature::Ingestion,
-                warn,
+                error,
                 "Auto-sync photos task panicked: {}",
                 e
             );
-            return;
+            return Err(format!("task panicked: {e}"));
         }
     };
 
     if paths.is_empty() {
-        return;
+        return Ok(());
     }
 
     let node = node_arc.as_ref();
+    let mut per_photo_errors: Vec<String> = Vec::new();
 
     for path in &paths {
         let file_path = path.to_path_buf();
@@ -327,23 +379,36 @@ async fn sync_photos(
                 {
                     log_feature!(
                         LogFeature::Ingestion,
-                        warn,
+                        error,
                         "Auto-sync photo {} error: {}",
                         file_name,
                         e
                     );
+                    per_photo_errors.push(format!("{file_name}: {e}"));
                 }
             }
             Err(e) => {
                 log_feature!(
                     LogFeature::Ingestion,
-                    warn,
+                    error,
                     "Auto-sync photo convert error {}: {}",
                     path.display(),
                     e
                 );
+                per_photo_errors.push(format!("{}: convert: {e}", path.display()));
             }
         }
+    }
+
+    if per_photo_errors.is_empty() {
+        Ok(())
+    } else {
+        Err(format!(
+            "{}/{} photos failed: {}",
+            per_photo_errors.len(),
+            paths.len(),
+            per_photo_errors.join("; ")
+        ))
     }
 }
 
@@ -353,7 +418,7 @@ async fn sync_calendar(
     node_arc: Arc<crate::fold_node::FoldNode>,
     service: Arc<IngestionService>,
     tracker: ProgressTracker,
-) {
+) -> Result<(), String> {
     use super::calendar as cal;
     use crate::ingestion::IngestionRequest;
 
@@ -362,30 +427,32 @@ async fn sync_calendar(
         Ok(Err(e)) => {
             log_feature!(
                 LogFeature::Ingestion,
-                warn,
+                error,
                 "Auto-sync calendar extract failed: {}",
                 e
             );
-            return;
+            return Err(format!("extract failed: {e}"));
         }
         Err(e) => {
             log_feature!(
                 LogFeature::Ingestion,
-                warn,
+                error,
                 "Auto-sync calendar task panicked: {}",
                 e
             );
-            return;
+            return Err(format!("task panicked: {e}"));
         }
     };
 
     if events.is_empty() {
-        return;
+        return Ok(());
     }
 
     let records = cal::to_json_records(&events);
     let node = node_arc.as_ref();
+    let total_batches = records.chunks(10).count();
 
+    let mut batch_errors: Vec<String> = Vec::new();
     for chunk in records.chunks(10) {
         let request = IngestionRequest {
             data: serde_json::Value::Array(chunk.to_vec()),
@@ -411,11 +478,23 @@ async fn sync_calendar(
         {
             log_feature!(
                 LogFeature::Ingestion,
-                warn,
+                error,
                 "Auto-sync calendar batch error: {}",
                 e
             );
+            batch_errors.push(e.to_string());
         }
+    }
+
+    if batch_errors.is_empty() {
+        Ok(())
+    } else {
+        Err(format!(
+            "{}/{} batches failed: {}",
+            batch_errors.len(),
+            total_batches,
+            batch_errors.join("; ")
+        ))
     }
 }
 
@@ -425,7 +504,7 @@ async fn sync_contacts(
     node_arc: Arc<crate::fold_node::FoldNode>,
     service: Arc<IngestionService>,
     tracker: ProgressTracker,
-) {
+) -> Result<(), String> {
     use super::contacts;
     use crate::ingestion::IngestionRequest;
 
@@ -434,30 +513,32 @@ async fn sync_contacts(
         Ok(Err(e)) => {
             log_feature!(
                 LogFeature::Ingestion,
-                warn,
+                error,
                 "Auto-sync contacts extract failed: {}",
                 e
             );
-            return;
+            return Err(format!("extract failed: {e}"));
         }
         Err(e) => {
             log_feature!(
                 LogFeature::Ingestion,
-                warn,
+                error,
                 "Auto-sync contacts task panicked: {}",
                 e
             );
-            return;
+            return Err(format!("task panicked: {e}"));
         }
     };
 
     if contacts_vec.is_empty() {
-        return;
+        return Ok(());
     }
 
     let records = contacts::to_json_records(&contacts_vec);
     let node = node_arc.as_ref();
+    let total_batches = records.chunks(10).count();
 
+    let mut batch_errors: Vec<String> = Vec::new();
     for chunk in records.chunks(10) {
         let request = IngestionRequest {
             data: serde_json::Value::Array(chunk.to_vec()),
@@ -483,11 +564,23 @@ async fn sync_contacts(
         {
             log_feature!(
                 LogFeature::Ingestion,
-                warn,
+                error,
                 "Auto-sync contacts batch error: {}",
                 e
             );
+            batch_errors.push(e.to_string());
         }
+    }
+
+    if batch_errors.is_empty() {
+        Ok(())
+    } else {
+        Err(format!(
+            "{}/{} batches failed: {}",
+            batch_errors.len(),
+            total_batches,
+            batch_errors.join("; ")
+        ))
     }
 }
 
@@ -499,12 +592,13 @@ async fn sync_notes(
     _node_arc: Arc<crate::fold_node::FoldNode>,
     _service: Arc<IngestionService>,
     _tracker: ProgressTracker,
-) {
+) -> Result<(), String> {
     log_feature!(
         LogFeature::Ingestion,
         warn,
         "Auto-sync notes: not available on this platform"
     );
+    Ok(())
 }
 
 #[cfg(not(target_os = "macos"))]
@@ -513,12 +607,13 @@ async fn sync_reminders(
     _node_arc: Arc<crate::fold_node::FoldNode>,
     _service: Arc<IngestionService>,
     _tracker: ProgressTracker,
-) {
+) -> Result<(), String> {
     log_feature!(
         LogFeature::Ingestion,
         warn,
         "Auto-sync reminders: not available on this platform"
     );
+    Ok(())
 }
 
 #[cfg(not(target_os = "macos"))]
@@ -528,12 +623,13 @@ async fn sync_photos(
     _service: Arc<IngestionService>,
     _tracker: ProgressTracker,
     _limit: usize,
-) {
+) -> Result<(), String> {
     log_feature!(
         LogFeature::Ingestion,
         warn,
         "Auto-sync photos: not available on this platform"
     );
+    Ok(())
 }
 
 #[cfg(not(target_os = "macos"))]
@@ -542,12 +638,13 @@ async fn sync_calendar(
     _node_arc: Arc<crate::fold_node::FoldNode>,
     _service: Arc<IngestionService>,
     _tracker: ProgressTracker,
-) {
+) -> Result<(), String> {
     log_feature!(
         LogFeature::Ingestion,
         warn,
         "Auto-sync calendar: not available on this platform"
     );
+    Ok(())
 }
 
 #[cfg(not(target_os = "macos"))]
@@ -556,10 +653,11 @@ async fn sync_contacts(
     _node_arc: Arc<crate::fold_node::FoldNode>,
     _service: Arc<IngestionService>,
     _tracker: ProgressTracker,
-) {
+) -> Result<(), String> {
     log_feature!(
         LogFeature::Ingestion,
         warn,
         "Auto-sync contacts: not available on this platform"
     );
+    Ok(())
 }

@@ -17,10 +17,8 @@ fn test_daily_schedule_computes_24h() {
     let mut cfg = AppleSyncConfig {
         enabled: true,
         schedule: SyncSchedule::Daily,
-        sources: EnabledSources::default(),
-        photos_limit: 50,
         last_sync: Some(chrono::Utc::now()),
-        next_sync: None,
+        ..AppleSyncConfig::default()
     };
     cfg.recompute_next_sync();
     let next = cfg.next_sync.unwrap();
@@ -33,10 +31,8 @@ fn test_weekly_schedule_computes_168h() {
     let mut cfg = AppleSyncConfig {
         enabled: true,
         schedule: SyncSchedule::Weekly,
-        sources: EnabledSources::default(),
-        photos_limit: 50,
         last_sync: Some(chrono::Utc::now()),
-        next_sync: None,
+        ..AppleSyncConfig::default()
     };
     cfg.recompute_next_sync();
     let next = cfg.next_sync.unwrap();
@@ -49,10 +45,8 @@ fn test_custom_schedule() {
     let mut cfg = AppleSyncConfig {
         enabled: true,
         schedule: SyncSchedule::Custom { hours: 6 },
-        sources: EnabledSources::default(),
-        photos_limit: 50,
         last_sync: Some(chrono::Utc::now()),
-        next_sync: None,
+        ..AppleSyncConfig::default()
     };
     cfg.recompute_next_sync();
     let next = cfg.next_sync.unwrap();
@@ -65,10 +59,9 @@ fn test_disabled_clears_next_sync() {
     let mut cfg = AppleSyncConfig {
         enabled: false,
         schedule: SyncSchedule::Daily,
-        sources: EnabledSources::default(),
-        photos_limit: 50,
         last_sync: Some(chrono::Utc::now()),
         next_sync: Some(chrono::Utc::now()),
+        ..AppleSyncConfig::default()
     };
     cfg.recompute_next_sync();
     assert!(cfg.next_sync.is_none());
@@ -79,10 +72,7 @@ fn test_mark_sync_complete_updates_times() {
     let mut cfg = AppleSyncConfig {
         enabled: true,
         schedule: SyncSchedule::Daily,
-        sources: EnabledSources::default(),
-        photos_limit: 50,
-        last_sync: None,
-        next_sync: None,
+        ..AppleSyncConfig::default()
     };
     let now = chrono::Utc::now();
     cfg.mark_sync_complete(now);
@@ -105,6 +95,7 @@ fn test_serialization_roundtrip_daily() {
         photos_limit: 100,
         last_sync: Some(chrono::Utc::now()),
         next_sync: Some(chrono::Utc::now() + chrono::Duration::hours(24)),
+        ..AppleSyncConfig::default()
     };
     let json = serde_json::to_string(&cfg).unwrap();
     let deserialized: AppleSyncConfig = serde_json::from_str(&json).unwrap();
@@ -121,10 +112,7 @@ fn test_serialization_roundtrip_custom() {
     let cfg = AppleSyncConfig {
         enabled: true,
         schedule: SyncSchedule::Custom { hours: 12 },
-        sources: EnabledSources::default(),
-        photos_limit: 50,
-        last_sync: None,
-        next_sync: None,
+        ..AppleSyncConfig::default()
     };
     let json = serde_json::to_string(&cfg).unwrap();
     let deserialized: AppleSyncConfig = serde_json::from_str(&json).unwrap();
@@ -137,10 +125,7 @@ fn test_no_last_sync_schedules_from_now() {
     let mut cfg = AppleSyncConfig {
         enabled: true,
         schedule: SyncSchedule::Daily,
-        sources: EnabledSources::default(),
-        photos_limit: 50,
-        last_sync: None,
-        next_sync: None,
+        ..AppleSyncConfig::default()
     };
     cfg.recompute_next_sync();
     let after = chrono::Utc::now();
