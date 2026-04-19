@@ -638,6 +638,16 @@ export class UnifiedIngestionClient {
     );
   }
 
+  /** Import contacts from Apple Contacts */
+  async appleImportContacts(): Promise<
+    EnhancedApiResponse<{ success: boolean; progress_id: string }>
+  > {
+    return this.client.post<{ success: boolean; progress_id: string }>(
+      `/ingestion/apple-import/contacts`,
+      {},
+    );
+  }
+
   // ── Apple Auto-Sync ─────────────────────────────────────────────
 
   /** Get the current Apple auto-sync configuration */
@@ -690,6 +700,7 @@ export interface EnabledSources {
   reminders: boolean;
   photos: boolean;
   calendar: boolean;
+  contacts: boolean;
 }
 
 // Create default instance

@@ -8,6 +8,7 @@ const mockAppleImportNotes = vi.fn()
 const mockAppleImportReminders = vi.fn()
 const mockAppleImportPhotos = vi.fn()
 const mockAppleImportCalendar = vi.fn()
+const mockAppleImportContacts = vi.fn()
 const mockGetJobProgress = vi.fn()
 const mockGetAppleSyncConfig = vi.fn()
 
@@ -18,6 +19,7 @@ vi.mock('../../../api/clients/ingestionClient', () => ({
     appleImportReminders: (...args) => mockAppleImportReminders(...args),
     appleImportPhotos: (...args) => mockAppleImportPhotos(...args),
     appleImportCalendar: (...args) => mockAppleImportCalendar(...args),
+    appleImportContacts: (...args) => mockAppleImportContacts(...args),
     getJobProgress: (...args) => mockGetJobProgress(...args),
     getAppleSyncConfig: (...args) => mockGetAppleSyncConfig(...args),
   },
@@ -49,7 +51,7 @@ describe('AppleImportTab', () => {
     })
   })
 
-  it('renders all four source cards when available', async () => {
+  it('renders all five source cards when available', async () => {
     mockGetAppleImportStatus.mockResolvedValue({ success: true, data: { available: true } })
     render(<AppleImportTab onResult={vi.fn()} />)
     await waitFor(() => {
@@ -57,6 +59,7 @@ describe('AppleImportTab', () => {
       expect(screen.getByText('Photos')).toBeTruthy()
       expect(screen.getByText('Calendar')).toBeTruthy()
       expect(screen.getByText('Reminders')).toBeTruthy()
+      expect(screen.getByText('Contacts')).toBeTruthy()
     })
   })
 
@@ -64,8 +67,8 @@ describe('AppleImportTab', () => {
     mockGetAppleImportStatus.mockResolvedValue({ success: true, data: { available: true } })
     render(<AppleImportTab onResult={vi.fn()} />)
     await waitFor(() => {
-      // All four sources enabled by default
-      expect(screen.getByText('Import All (4)')).toBeTruthy()
+      // All five sources enabled by default
+      expect(screen.getByText('Import All (5)')).toBeTruthy()
     })
   })
 
@@ -74,15 +77,16 @@ describe('AppleImportTab', () => {
     render(<AppleImportTab onResult={vi.fn()} />)
 
     await waitFor(() => {
-      expect(screen.getByText('Import All (4)')).toBeTruthy()
+      expect(screen.getByText('Import All (5)')).toBeTruthy()
     })
 
     // Toggle off one source (find the toggle switches - they are role="switch")
     const toggles = screen.getAllByRole('switch')
-    // toggles[0] = Notes, toggles[1] = Photos, toggles[2] = Calendar, toggles[3] = Reminders
+    // toggles[0] = Notes, toggles[1] = Photos, toggles[2] = Calendar,
+    // toggles[3] = Reminders, toggles[4] = Contacts (SOURCES order)
     fireEvent.click(toggles[0]) // Toggle off Notes
 
-    expect(screen.getByText('Import All (3)')).toBeTruthy()
+    expect(screen.getByText('Import All (4)')).toBeTruthy()
   })
 
   it('triggers parallel imports when Import All is clicked', async () => {
@@ -91,16 +95,17 @@ describe('AppleImportTab', () => {
     mockAppleImportReminders.mockResolvedValue({ success: true, data: { progress_id: 'rem-1' } })
     mockAppleImportPhotos.mockResolvedValue({ success: true, data: { progress_id: 'photos-1' } })
     mockAppleImportCalendar.mockResolvedValue({ success: true, data: { progress_id: 'cal-1' } })
+    mockAppleImportContacts.mockResolvedValue({ success: true, data: { progress_id: 'con-1' } })
     mockGetJobProgress.mockResolvedValue({ success: true, data: { progress_percentage: 50, status_message: 'Processing...' } })
 
     render(<AppleImportTab onResult={vi.fn()} />)
 
     await waitFor(() => {
-      expect(screen.getByText('Import All (4)')).toBeTruthy()
+      expect(screen.getByText('Import All (5)')).toBeTruthy()
     })
 
     await act(async () => {
-      fireEvent.click(screen.getByText('Import All (4)'))
+      fireEvent.click(screen.getByText('Import All (5)'))
       // Let setTimeout(0) callbacks fire
       vi.advanceTimersByTime(0)
     })
@@ -110,6 +115,7 @@ describe('AppleImportTab', () => {
       expect(mockAppleImportReminders).toHaveBeenCalled()
       expect(mockAppleImportPhotos).toHaveBeenCalled()
       expect(mockAppleImportCalendar).toHaveBeenCalled()
+      expect(mockAppleImportContacts).toHaveBeenCalled()
     })
   })
 
@@ -119,16 +125,17 @@ describe('AppleImportTab', () => {
     mockAppleImportReminders.mockResolvedValue({ success: true, data: { progress_id: 'rem-1' } })
     mockAppleImportPhotos.mockResolvedValue({ success: true, data: { progress_id: 'photos-1' } })
     mockAppleImportCalendar.mockResolvedValue({ success: true, data: { progress_id: 'cal-1' } })
+    mockAppleImportContacts.mockResolvedValue({ success: true, data: { progress_id: 'con-1' } })
     mockGetJobProgress.mockResolvedValue({ success: true, data: { progress_percentage: 50, status_message: 'Working...' } })
 
     render(<AppleImportTab onResult={vi.fn()} />)
 
     await waitFor(() => {
-      expect(screen.getByText('Import All (4)')).toBeTruthy()
+      expect(screen.getByText('Import All (5)')).toBeTruthy()
     })
 
     await act(async () => {
-      fireEvent.click(screen.getByText('Import All (4)'))
+      fireEvent.click(screen.getByText('Import All (5)'))
       vi.advanceTimersByTime(0)
     })
 
@@ -154,6 +161,7 @@ describe('AppleImportTab', () => {
     mockAppleImportReminders.mockResolvedValue({ success: true, data: { progress_id: 'r-1' } })
     mockAppleImportPhotos.mockResolvedValue({ success: true, data: { progress_id: 'p-1' } })
     mockAppleImportCalendar.mockResolvedValue({ success: true, data: { progress_id: 'c-1' } })
+    mockAppleImportContacts.mockResolvedValue({ success: true, data: { progress_id: 'con-1' } })
     mockGetJobProgress.mockResolvedValue({ success: true, data: { progress_percentage: 10, status_message: 'Working...' } })
 
     render(<AppleImportTab onResult={vi.fn()} />)
@@ -166,7 +174,7 @@ describe('AppleImportTab', () => {
     fireEvent.change(screen.getByDisplayValue('50'), { target: { value: '100' } })
 
     await act(async () => {
-      fireEvent.click(screen.getByText('Import All (4)'))
+      fireEvent.click(screen.getByText('Import All (5)'))
       vi.advanceTimersByTime(0)
     })
 

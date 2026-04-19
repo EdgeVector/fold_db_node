@@ -916,6 +916,178 @@ async fn run_apple_calendar_import(
     let _ = tracker.save(&job).await;
 }
 
+#[derive(Deserialize)]
+pub struct AppleContactsRequest {}
+
+/// POST /api/ingestion/apple-import/contacts
+pub async fn apple_import_contacts(
+    _request: web::Json<AppleContactsRequest>,
+    state: web::Data<AppState>,
+    ingestion_service: web::Data<IngestionServiceState>,
+    progress_tracker: web::Data<ProgressTracker>,
+) -> impl Responder {
+    if !apple_import::is_available() {
+        return HttpResponse::BadRequest().json(json!({
+            "success": false,
+            "error": "Apple import is only available on macOS",
+        }));
+    }
+
+    let (user_id, node_arc) = match require_node(&state).await {
+        Ok(ctx) => ctx,
+        Err(response) => return response,
+    };
+
+    let service = match ingestion_service.read().await.clone() {
+        Some(s) => s,
+        None => {
+            return HttpResponse::ServiceUnavailable().json(json!({
+                "success": false,
+                "error": "Ingestion service not available",
+            }))
+        }
+    };
+
+    let progress_id = uuid::Uuid::new_v4().to_string();
+    let tracker = progress_tracker.get_ref().clone();
+
+    let mut job = Job::new(progress_id.clone(), JobType::Other("apple-contacts".into()));
+    job = job.with_user(user_id.clone());
+    job.message = "Extracting contacts from Apple Contacts...".into();
+    job.progress_percentage = 5;
+    let _ = tracker.save(&job).await;
+
+    let pid = progress_id.clone();
+
+    tokio::spawn(async move {
+        fold_db::logging::core::run_with_user(&user_id, async move {
+            run_apple_contacts_import(pid, tracker, node_arc, service).await;
+        })
+        .await;
+    });
+
+    HttpResponse::Accepted().json(json!({
+        "success": true,
+        "progress_id": progress_id,
+    }))
+}
+
+#[cfg(target_os = "macos")]
+async fn run_apple_contacts_import(
+    progress_id: String,
+    tracker: ProgressTracker,
+    node_arc: std::sync::Arc<crate::fold_node::FoldNode>,
+    service: std::sync::Arc<crate::ingestion::ingestion_service::IngestionService>,
+) {
+    use crate::ingestion::apple_import::contacts as ctc;
+
+    let extract_result = tokio::task::spawn_blocking(ctc::extract).await;
+
+    let contacts = match extract_result {
+        Ok(Ok(c)) => c,
+        Ok(Err(e)) => {
+            let mut job = Job::new(progress_id.clone(), JobType::Other("apple-contacts".into()));
+            job.status = JobStatus::Failed;
+            job.message = format!("Failed to extract contacts: {}", e);
+            let _ = tracker.save(&job).await;
+            return;
+        }
+        Err(e) => {
+            let mut job = Job::new(progress_id.clone(), JobType::Other("apple-contacts".into()));
+            job.status = JobStatus::Failed;
+            job.message = format!("Extraction task panicked: {}", e);
+            let _ = tracker.save(&job).await;
+            return;
+        }
+    };
+
+    if contacts.is_empty() {
+        let mut job = Job::new(progress_id.clone(), JobType::Other("apple-contacts".into()));
+        job.status = JobStatus::Completed;
+        job.progress_percentage = 100;
+        job.message = "No contacts found".into();
+        job.result = Some(json!({ "total": 0, "ingested": 0 }));
+        let _ = tracker.save(&job).await;
+        return;
+    }
+
+    let total = contacts.len();
+    let records = ctc::to_json_records(&contacts);
+
+    let mut job = Job::new(progress_id.clone(), JobType::Other("apple-contacts".into()));
+    job.status = JobStatus::Running;
+    job.progress_percentage = 30;
+    job.message = format!("Extracted {} contacts, ingesting...", total);
+    let _ = tracker.save(&job).await;
+
+    let batch_size = 10;
+    let mut ingested = 0;
+    let node = node_arc.as_ref();
+
+    for (i, chunk) in records.chunks(batch_size).enumerate() {
+        let request = IngestionRequest {
+            data: serde_json::Value::Array(chunk.to_vec()),
+            auto_execute: true,
+            pub_key: "default".to_string(),
+            source_file_name: None,
+            progress_id: None,
+            file_hash: None,
+            source_folder: None,
+            image_descriptive_name: None,
+            org_hash: None,
+            image_bytes: None,
+        };
+
+        match crate::handlers::ingestion::process_json(
+            request,
+            &fold_db::logging::core::get_current_user_id().unwrap_or_default(),
+            &tracker,
+            node,
+            service.clone(),
+        )
+        .await
+        {
+            Ok(_) => ingested += chunk.len(),
+            Err(e) => {
+                log_feature!(
+                    LogFeature::Ingestion,
+                    warn,
+                    "Apple Contacts batch {} failed: {}",
+                    i,
+                    e
+                );
+            }
+        }
+
+        let pct = 30 + ((i + 1) * 70 / total.div_ceil(batch_size)).min(70);
+        let mut job = Job::new(progress_id.clone(), JobType::Other("apple-contacts".into()));
+        job.status = JobStatus::Running;
+        job.progress_percentage = pct as u8;
+        job.message = format!("Ingested {}/{} contacts...", ingested, total);
+        let _ = tracker.save(&job).await;
+    }
+
+    let mut job = Job::new(progress_id.clone(), JobType::Other("apple-contacts".into()));
+    job.status = JobStatus::Completed;
+    job.progress_percentage = 100;
+    job.message = format!("Imported {} contacts", ingested);
+    job.result = Some(json!({ "total": total, "ingested": ingested }));
+    let _ = tracker.save(&job).await;
+}
+
+#[cfg(not(target_os = "macos"))]
+async fn run_apple_contacts_import(
+    progress_id: String,
+    tracker: ProgressTracker,
+    _node_arc: std::sync::Arc<crate::fold_node::FoldNode>,
+    _service: std::sync::Arc<crate::ingestion::ingestion_service::IngestionService>,
+) {
+    let mut job = Job::new(progress_id, JobType::Other("apple-contacts".into()));
+    job.status = JobStatus::Failed;
+    job.message = "Apple import is only available on macOS".into();
+    let _ = tracker.save(&job).await;
+}
+
 // ── Auto-Sync Config Routes ─────────────────────────────────────────
 
 /// GET /api/ingestion/apple-import/sync-config
