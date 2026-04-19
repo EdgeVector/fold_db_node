@@ -96,12 +96,30 @@ pub fn get_exemem_config() -> serde_json::Value {
 /// existing users. Also writes user-hash / api-url into the Sled node config
 /// on success.
 ///
+/// On a successful register with credentials, also activates cloud sync on
+/// the node (equivalent to `/api/system/setup` with Exemem storage): the
+/// in-memory [`NodeConfig`] gets [`CloudSyncConfig`], it is persisted to
+/// disk, and the cached node is invalidated. The next node creation goes
+/// through the factory with `cloud_sync` set, which attaches the
+/// [`SyncEngine`] to the [`SyncCoordinator`] and starts the background
+/// sync timer. Without this activation, `is_sync_enabled()` stays false and
+/// writes do not upload — blocking snapshot round-trip and two-node org sync.
+///
+/// Also spawns a background [`bootstrap_from_cloud`] to download any
+/// pre-existing cloud state. On a fresh register both phases are essentially
+/// no-ops; the value is for callers whose node already has org memberships
+/// or had data persisted out-of-band.
+///
 /// Returns the raw JSON response from the Exemem CLI register endpoint with
 /// `api_url` added in.
 pub async fn register_with_exemem(
     node_manager: &Arc<NodeManager>,
     invite_code: Option<&str>,
 ) -> Result<serde_json::Value, String> {
+    // Capture the pre-invalidation SledPool so the spawned bootstrap has a
+    // handle even after `update_config` drops the cached node.
+    let sled_pool = node_manager.get_sled_pool().await;
+
     let mut response = signed_register(node_manager, invite_code).await?;
     if let Some(obj) = response.as_object_mut() {
         obj.insert(
@@ -109,7 +127,82 @@ pub async fn register_with_exemem(
             serde_json::Value::String(exemem_api_url()),
         );
     }
+
+    if let (Some(api_key), Some(user_hash)) = (
+        response.get("api_key").and_then(|v| v.as_str()),
+        response.get("user_hash").and_then(|v| v.as_str()),
+    ) {
+        let api_url = exemem_api_url();
+
+        if let Err(e) = enable_cloud_sync_in_config(
+            node_manager,
+            api_url.clone(),
+            api_key.to_string(),
+            user_hash.to_string(),
+        )
+        .await
+        {
+            log::error!("Failed to activate cloud sync after register: {}", e);
+        }
+
+        if let Some(sled_pool) = sled_pool {
+            let api_url_for_bootstrap = api_url;
+            let api_key_for_bootstrap = api_key.to_string();
+            let node_manager = node_manager.clone();
+            tokio::spawn(async move {
+                if let Err(e) = bootstrap_from_cloud(
+                    &api_url_for_bootstrap,
+                    &api_key_for_bootstrap,
+                    &node_manager,
+                    sled_pool,
+                )
+                .await
+                {
+                    log::error!("Background bootstrap after register failed: {}", e);
+                }
+            });
+        } else {
+            log::warn!("Bootstrap after register skipped: no sled_pool handle");
+        }
+    } else {
+        log::warn!("Register response missing api_key or user_hash; cloud sync activation skipped");
+    }
+
     Ok(response)
+}
+
+/// Activate cloud sync on the node using the provided Exemem credentials.
+///
+/// Updates the in-memory [`NodeConfig`] to use
+/// [`DatabaseConfig::with_cloud_sync`], persists the config, and invalidates
+/// the cached node so the next node creation goes through the factory with
+/// sync enabled. Mirrors the Exemem branch of
+/// [`crate::server::routes::config::apply_setup`].
+async fn enable_cloud_sync_in_config(
+    node_manager: &Arc<NodeManager>,
+    api_url: String,
+    api_key: String,
+    user_hash: String,
+) -> Result<(), String> {
+    let mut config = node_manager.get_base_config().await;
+    let cloud_sync = fold_db::storage::config::CloudSyncConfig {
+        api_url,
+        api_key,
+        session_token: None,
+        user_hash: Some(user_hash),
+    };
+    config.database =
+        fold_db::storage::DatabaseConfig::with_cloud_sync(config.database.path.clone(), cloud_sync);
+
+    crate::fold_node::config::save_node_config(&config)?;
+
+    node_manager
+        .update_config(crate::server::node_manager::NodeManagerConfig {
+            base_config: config,
+        })
+        .await;
+
+    Ok(())
 }
 
 /// Refresh the session token by calling the signed register endpoint.
@@ -1259,6 +1352,89 @@ mod tests {
 
         std::env::remove_var("EXEMEM_API_URL");
         std::env::remove_var("FOLDDB_HOME");
+    }
+
+    // ------------------------------------------------------------------
+    // enable_cloud_sync_in_config (register → cloud sync activation)
+    // ------------------------------------------------------------------
+
+    #[tokio::test]
+    #[allow(clippy::await_holding_lock)]
+    async fn enable_cloud_sync_activates_sync_on_next_node_creation() {
+        let _guard = env_lock();
+        let tmp = tempfile::tempdir().expect("tempdir");
+        std::env::set_var("FOLDDB_HOME", tmp.path());
+        std::env::set_var(
+            "NODE_CONFIG",
+            tmp.path()
+                .join("node_config.json")
+                .to_string_lossy()
+                .to_string(),
+        );
+
+        let node_manager = Arc::new(crate::server::node_manager::NodeManager::new(
+            crate::server::node_manager::NodeManagerConfig {
+                base_config: crate::fold_node::config::NodeConfig {
+                    database: fold_db::storage::DatabaseConfig::local(tmp.path().join("data")),
+                    storage_path: Some(tmp.path().join("data")),
+                    network_listen_address: "/ip4/0.0.0.0/tcp/0".to_string(),
+                    security_config: fold_db::security::SecurityConfig::from_env(),
+                    schema_service_url: Some("test://mock".to_string()),
+                    public_key: None,
+                    private_key: None,
+                    config_dir: Some(tmp.path().join("config")),
+                },
+            },
+        ));
+
+        // Precondition: fresh-local node manager has no cloud_sync.
+        assert!(
+            !node_manager
+                .get_base_config()
+                .await
+                .database
+                .has_cloud_sync(),
+            "precondition: base config should start without cloud_sync"
+        );
+
+        enable_cloud_sync_in_config(
+            &node_manager,
+            "https://exemem.example/api".to_string(),
+            "api_key_fresh".to_string(),
+            "user_hash_abc".to_string(),
+        )
+        .await
+        .expect("enable_cloud_sync_in_config should succeed in a writable temp home");
+
+        // In-memory config now reports cloud_sync on.
+        let updated = node_manager.get_base_config().await;
+        assert!(
+            updated.database.has_cloud_sync(),
+            "after enable, base config.database must have cloud_sync set"
+        );
+        let cs = updated
+            .database
+            .cloud_sync
+            .as_ref()
+            .expect("cloud_sync Some");
+        assert_eq!(cs.api_url, "https://exemem.example/api");
+        assert_eq!(cs.api_key, "api_key_fresh");
+        assert_eq!(cs.user_hash.as_deref(), Some("user_hash_abc"));
+
+        // On-disk config persisted so the next process start preserves activation.
+        let persisted = std::fs::read_to_string(tmp.path().join("node_config.json"))
+            .expect("node_config.json should be written");
+        let parsed: serde_json::Value =
+            serde_json::from_str(&persisted).expect("config file must be valid JSON");
+        assert_eq!(
+            parsed["database"]["cloud_sync"]["api_url"].as_str(),
+            Some("https://exemem.example/api"),
+            "persisted config must carry cloud_sync.api_url"
+        );
+
+        std::env::remove_var("NODE_CONFIG");
+        std::env::remove_var("FOLDDB_HOME");
+        drop(tmp);
     }
 
     // ------------------------------------------------------------------
