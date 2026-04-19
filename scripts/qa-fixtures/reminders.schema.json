@@ -1,0 +1,27 @@
+{
+  "name": "QaDogfoodReminder",
+  "descriptive_name": "QA Dogfood Apple Reminder",
+  "schema_type": "Range",
+  "key": {
+    "range_field": "due_at"
+  },
+  "fields": ["reminder_id", "title", "list", "due_at", "completed"],
+  "field_classifications": {
+    "title": ["word"],
+    "list": ["word"]
+  },
+  "field_descriptions": {
+    "reminder_id": "Reminder identifier",
+    "title": "Reminder title",
+    "list": "Reminder list name",
+    "due_at": "ISO-8601 due timestamp",
+    "completed": "Completion flag (string 'true' or 'false')"
+  },
+  "field_data_classifications": {
+    "reminder_id": { "sensitivity_level": 0, "data_domain": "general" },
+    "title":       { "sensitivity_level": 1, "data_domain": "general" },
+    "list":        { "sensitivity_level": 0, "data_domain": "general" },
+    "due_at":      { "sensitivity_level": 0, "data_domain": "general" },
+    "completed":   { "sensitivity_level": 0, "data_domain": "general" }
+  }
+}
