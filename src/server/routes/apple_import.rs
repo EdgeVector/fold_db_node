@@ -1142,6 +1142,8 @@ pub async fn get_next_sync(sync_config: web::Data<SyncConfigState>) -> impl Resp
         "enabled": cfg.enabled,
         "next_sync": cfg.next_sync,
         "last_sync": cfg.last_sync,
+        "last_error": cfg.last_error,
+        "last_error_at": cfg.last_error_at,
     }))
 }
 
@@ -1210,7 +1212,7 @@ pub fn spawn_sync_scheduler(
 
             let tracker = progress_tracker.get_ref().clone();
 
-            apple_import::sync_scheduler::run_sync(
+            let errors = apple_import::sync_scheduler::run_sync(
                 &sources,
                 photos_limit,
                 &user_id,
@@ -1222,7 +1224,19 @@ pub fn spawn_sync_scheduler(
 
             {
                 let mut cfg = sync_config.write().await;
-                cfg.mark_sync_complete(chrono::Utc::now());
+                let now = chrono::Utc::now();
+                if errors.is_empty() {
+                    cfg.mark_sync_complete(now);
+                } else {
+                    let aggregated = errors.join(" | ");
+                    fold_db::log_feature!(
+                        fold_db::logging::features::LogFeature::Ingestion,
+                        error,
+                        "Apple auto-sync: scheduled import finished with errors: {}",
+                        aggregated
+                    );
+                    cfg.mark_sync_error(now, aggregated);
+                }
                 if let Err(e) = cfg.save() {
                     fold_db::log_feature!(
                         fold_db::logging::features::LogFeature::Ingestion,
