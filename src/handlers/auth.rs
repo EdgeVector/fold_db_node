@@ -845,13 +845,29 @@ async fn finalize_restore(
         );
     }
 
-    // Spawn background bootstrap if we got Exemem credentials and a Sled handle.
-    if let (Some(api_key), Some(_user_hash), Some(sled_pool)) = (
+    // Activate cloud sync (mirrors `register_with_exemem`): without this the
+    // node's NodeConfig.database stays Local, so the next NodeManager
+    // `create_node` skips the SyncEngine attach and `is_sync_enabled()` stays
+    // false. That breaks `/api/snapshot/restore`, `/api/sync/status`, and any
+    // post-restore writes from uploading. Then spawn background bootstrap.
+    if let (Some(api_key), Some(user_hash), Some(sled_pool)) = (
         response.get("api_key").and_then(|v| v.as_str()),
         response.get("user_hash").and_then(|v| v.as_str()),
         sled_pool,
     ) {
         let api_url = exemem_api_url();
+
+        if let Err(e) = enable_cloud_sync_in_config(
+            node_manager,
+            api_url.clone(),
+            api_key.to_string(),
+            user_hash.to_string(),
+        )
+        .await
+        {
+            log::error!("Failed to activate cloud sync after restore: {}", e);
+        }
+
         let api_key = api_key.to_string();
         let node_manager = node_manager.clone();
 
