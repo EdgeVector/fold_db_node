@@ -9,12 +9,12 @@ export default function SchemaName({ schema, name, className = 'font-mono text-s
   const schemaName = name || schema?.name || ''
   const displayName = schema ? getSchemaDisplayName(schema) : schemaName
   const descriptive = schema?.descriptive_name
-  const differs = descriptive && descriptive !== schemaName
+  const showHashSuffix = !!(descriptive && descriptive.trim() && descriptive !== schemaName)
 
   return (
     <>
       <span className={className}>{displayName}</span>
-      {differs && (
+      {showHashSuffix && (
         <span className="ml-1.5 text-[10px] text-tertiary font-mono opacity-60" title={schemaName}>
           {truncateHash(schemaName)}
         </span>
