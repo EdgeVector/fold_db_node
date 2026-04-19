@@ -76,7 +76,7 @@ pub struct OptInRequest {
     pub field_privacy: Option<
         std::collections::HashMap<
             String,
-            fold_db::db_operations::native_index::anonymity::FieldPrivacyClass,
+            crate::discovery::field_privacy::FieldPrivacyClass,
         >,
     >,
     #[serde(default)]

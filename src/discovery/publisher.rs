@@ -2,7 +2,7 @@ use super::config::DiscoveryOptIn;
 use super::connection;
 use super::pseudonym;
 use super::types::*;
-use fold_db::db_operations::native_index::anonymity::{default_privacy_class, FieldPrivacyClass};
+use crate::discovery::field_privacy::{default_privacy_class, FieldPrivacyClass};
 use fold_db::storage::traits::KvStore;
 use serde::Deserialize;
 use uuid::Uuid;

@@ -566,10 +566,15 @@ impl LlmQueryService {
                         let mut privacy_map = HashMap::new();
                         for (field, class_val) in fp_obj {
                             if let Some(class_str) = class_val.as_str() {
+                                // Unknown strings (including the historical
+                                // "PublishIfAnonymous") collapse to AlwaysPublish
+                                // since the anonymity gate no longer exists —
+                                // there is no "publish only if content is
+                                // anonymous" middle ground anymore. See
+                                // `preferences/no-discovery-anonymity-gating`.
                                 let class = match class_str {
-                                    "NeverPublish" => fold_db::db_operations::native_index::anonymity::FieldPrivacyClass::NeverPublish,
-                                    "AlwaysPublish" => fold_db::db_operations::native_index::anonymity::FieldPrivacyClass::AlwaysPublish,
-                                    _ => fold_db::db_operations::native_index::anonymity::FieldPrivacyClass::PublishIfAnonymous,
+                                    "NeverPublish" => crate::discovery::field_privacy::FieldPrivacyClass::NeverPublish,
+                                    _ => crate::discovery::field_privacy::FieldPrivacyClass::AlwaysPublish,
                                 };
                                 field_classes.insert(field.clone(), class_str.to_string());
                                 privacy_map.insert(field.clone(), class);

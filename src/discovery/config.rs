@@ -1,4 +1,4 @@
-use fold_db::db_operations::native_index::anonymity::FieldPrivacyClass;
+use crate::discovery::field_privacy::FieldPrivacyClass;
 use fold_db::storage::traits::KvStore;
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
