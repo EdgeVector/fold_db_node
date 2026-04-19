@@ -1,4 +1,3 @@
-use crate::fold_node::config::NodeConfig;
 use crate::server::http_server::AppState;
 use crate::server::node_manager::NodeManagerConfig;
 use crate::utils::crypto::user_hash_from_pubkey;
@@ -158,33 +157,7 @@ pub struct SetupResponse {
     pub message: String,
 }
 
-/// Persist a NodeConfig to disk (same path the server loaded from)
-fn persist_node_config(config: &NodeConfig) -> Result<(), String> {
-    let config_path = std::env::var("NODE_CONFIG").unwrap_or_else(|_| {
-        crate::utils::paths::folddb_home()
-            .map(|h| {
-                h.join("config")
-                    .join("node_config.json")
-                    .to_string_lossy()
-                    .to_string()
-            })
-            .unwrap_or_else(|_| "config/node_config.json".to_string())
-    });
-
-    // Ensure config directory exists
-    if let Some(parent) = std::path::Path::new(&config_path).parent() {
-        std::fs::create_dir_all(parent)
-            .map_err(|e| format!("Failed to create config directory: {}", e))?;
-    }
-
-    let config_json = serde_json::to_string_pretty(config)
-        .map_err(|e| format!("Failed to serialize config: {}", e))?;
-
-    std::fs::write(&config_path, config_json)
-        .map_err(|e| format!("Failed to write config file: {}", e))?;
-
-    Ok(())
-}
+use crate::fold_node::config::save_node_config as persist_node_config;
 
 /// Apply setup configuration (storage and/or schema service URL)
 ///

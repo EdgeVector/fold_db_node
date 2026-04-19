@@ -179,3 +179,35 @@ pub fn load_node_config(
         Ok(config)
     }
 }
+
+/// Persist a [`NodeConfig`] to the same path [`load_node_config`] reads from.
+///
+/// Path resolution: `NODE_CONFIG` env var, else `$FOLDDB_HOME/config/node_config.json`,
+/// else `config/node_config.json`. Creates the parent directory if missing.
+pub fn save_node_config(config: &NodeConfig) -> Result<(), String> {
+    use std::fs;
+
+    let config_path = std::env::var("NODE_CONFIG").unwrap_or_else(|_| {
+        crate::utils::paths::folddb_home()
+            .map(|h| {
+                h.join("config")
+                    .join("node_config.json")
+                    .to_string_lossy()
+                    .to_string()
+            })
+            .unwrap_or_else(|_| "config/node_config.json".to_string())
+    });
+
+    if let Some(parent) = std::path::Path::new(&config_path).parent() {
+        fs::create_dir_all(parent)
+            .map_err(|e| format!("Failed to create config directory: {}", e))?;
+    }
+
+    let config_json = serde_json::to_string_pretty(config)
+        .map_err(|e| format!("Failed to serialize config: {}", e))?;
+
+    fs::write(&config_path, config_json)
+        .map_err(|e| format!("Failed to write config file: {}", e))?;
+
+    Ok(())
+}
