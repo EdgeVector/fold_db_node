@@ -11,10 +11,21 @@
 
 /**
  * Get the human-readable display name for a schema.
- * Prefers descriptive_name, falls back to the identity-hash name.
+ * Prefers descriptive_name, falls back to a short-hash label when the raw
+ * `name` is an identity hash (64 hex chars) so user-facing lists never
+ * render a 64-char hex string as a schema title.
  */
 export function getSchemaDisplayName(schema) {
-  return schema?.descriptive_name || schema?.name || ''
+  const descriptive = schema?.descriptive_name
+  if (typeof descriptive === 'string' && descriptive.trim()) return descriptive
+  const name = schema?.name || ''
+  if (isIdentityHash(name)) return `Schema ${name.slice(0, 8)}`
+  return name
+}
+
+/** @returns true when `s` is a 64-char lowercase hex identity hash. */
+export function isIdentityHash(s) {
+  return typeof s === 'string' && s.length === 64 && /^[0-9a-f]+$/.test(s)
 }
 
 /**
