@@ -154,12 +154,35 @@ async fn main() {
         }
     }
 
-    // Config set doesn't need daemon
-    if let Command::Config {
-        action: Some(cli::ConfigCommand::Set { key, value }),
-    } = &cli.command
-    {
-        match commands::system::config_set(key, value, config_path.as_deref()).await {
+    // Config commands don't need the daemon — show/path/set read or write the
+    // local config file directly. Running these without spinning up the daemon
+    // is important for setup debugging and for working in non-TTY contexts.
+    if let Command::Config { action } = &cli.command {
+        let action_ref = action.as_ref().unwrap_or(&cli::ConfigCommand::Show);
+        let result = match action_ref {
+            cli::ConfigCommand::Show => {
+                commands::system::config_show(&config, config_path.as_deref(), mode)
+            }
+            cli::ConfigCommand::Path => {
+                let path = config_path
+                    .clone()
+                    .or_else(|| std::env::var("NODE_CONFIG").ok())
+                    .or_else(|| {
+                        fold_db_node::utils::paths::folddb_home().ok().map(|h| {
+                            h.join("config")
+                                .join("node_config.json")
+                                .to_string_lossy()
+                                .to_string()
+                        })
+                    })
+                    .unwrap_or_else(|| "node_config.json".to_string());
+                Ok(commands::CommandOutput::Message(path))
+            }
+            cli::ConfigCommand::Set { key, value } => {
+                commands::system::config_set(key, value, config_path.as_deref()).await
+            }
+        };
+        match result {
             Ok(out) => output::render(&out, mode),
             Err(e) => e.exit(json_mode),
         }
@@ -191,14 +214,7 @@ async fn main() {
 
     let client = FoldDbClient::new(port, &user_hash);
 
-    let result = dispatch_http(
-        &cli.command,
-        &client,
-        &user_hash,
-        mode,
-        config_path.as_deref(),
-    )
-    .await;
+    let result = dispatch_http(&cli.command, &client, &user_hash, mode).await;
 
     match result {
         Ok(out) => output::render(&out, mode),
@@ -230,7 +246,6 @@ async fn dispatch_http(
     client: &FoldDbClient,
     user_hash: &str,
     mode: OutputMode,
-    config_path: Option<&str>,
 ) -> Result<commands::CommandOutput, CliError> {
     match command {
         Command::Schema { action } => dispatch_schema(action, client).await,
@@ -344,23 +359,7 @@ async fn dispatch_http(
 
             Ok(commands::CommandOutput::Message(msg.trim_end().to_string()))
         }
-        Command::Config { action } => {
-            let action = action.as_ref().unwrap_or(&cli::ConfigCommand::Show);
-            match action {
-                cli::ConfigCommand::Show => {
-                    let json = client.database_config().await?;
-                    Ok(commands::CommandOutput::RawJson(json))
-                }
-                cli::ConfigCommand::Path => {
-                    let path = config_path
-                        .map(|p| p.to_string())
-                        .or_else(|| std::env::var("NODE_CONFIG").ok())
-                        .unwrap_or_else(|| "node_config.json".to_string());
-                    Ok(commands::CommandOutput::Message(path))
-                }
-                cli::ConfigCommand::Set { .. } => unreachable!("Handled earlier"),
-            }
-        }
+        Command::Config { .. } => unreachable!("Config handled before daemon dispatch"),
         Command::Cloud { action } => match action {
             cli::CloudCommand::Status => {
                 let config_json = client.database_config().await?;
