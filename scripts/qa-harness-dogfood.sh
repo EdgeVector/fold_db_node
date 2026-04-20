@@ -25,6 +25,9 @@
 # reach dev Exemem to exercise OrgSyncEngine. See
 # test-framework/scenarios/org-sync-2node.yaml for the acceptance test
 # (runs nightly via .github/workflows/e2e-cloud.yml, which has AWS creds).
+# As of c1388 that scenario also covers: exact-count (13/14) on both
+# nodes (no lucky-run on partial sync) and a reverse-write leg
+# (Bob writes → Alice reads) so cross-direction org replay is gated too.
 #
 # Usage:
 #   ./scripts/qa-harness-dogfood.sh [--no-teardown] [--report-dir <path>]
@@ -630,9 +633,10 @@ done
 # local invariant. The cross-node propagation half — af4ba (schema arrives)
 # AND 4b171 (pre-tag molecule doesn't orphan peer's unfiltered query) —
 # lives in the cloud-e2e nightly (test-framework/scenarios/org-sync-2node.yaml)
-# where the scenario spawns two nodes on dev Exemem, writes a pre-tag
-# molecule, tags the schema, and asserts Bob's unfiltered /api/query still
-# succeeds with >=1 result after sync.
+# where the scenario spawns two nodes on dev Exemem, writes 1 pre-tag + 10
+# post-tag molecules on Alice + 3 reverse-write molecules on Bob, then
+# asserts exact counts (13 on Bob, 14 on Alice) after sync. Exact counts
+# replace the pre-c1388 ">=1" which a partial replay could satisfy.
 # ---------------------------------------------------------------------------
 
 # Pick the "files" source — its marker-field (`path`) is a stable disk path
@@ -822,7 +826,7 @@ if [ "$SKIP_ORG" = false ]; then
     log "node B: backend=$B_BACKEND schema=$B_SCHEMA vite=$B_VITE home=$B_HOME"
 
     if curl -fsS --max-time 5 "http://localhost:$B_BACKEND/api/system/auto-identity" >/dev/null 2>&1; then
-      ORG_RESULT="PENDING|node B live; real two-node org round-trip (4b171 + af4ba + 500b9) runs in test-framework/scenarios/org-sync-2node.yaml via nightly e2e-cloud (has AWS creds)"
+      ORG_RESULT="PENDING|node B live; real two-node org round-trip (4b171 + af4ba + 500b9 + c1388 exact-count + reverse-sync) runs in test-framework/scenarios/org-sync-2node.yaml via nightly e2e-cloud (has AWS creds)"
       log "[org] $ORG_RESULT"
     else
       ORG_RESULT="FAIL|node B backend not reachable after boot"

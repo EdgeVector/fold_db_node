@@ -12,13 +12,19 @@ description: |
     - 4b171 (run-5): pre-tag molecules don't orphan the peer's unfiltered
       query ("Atom not found for key"). Alice writes a molecule BEFORE
       tagging her schema with org_hash; Bob must still be able to run an
-      unfiltered /api/query after the schema arrives and the pre-tag
-      molecule replays into his Sled store.
+      unfiltered /api/query after the schema arrives and the org-prefix
+      replay delivers the post-tag population without the pre-tag ref
+      tripping the resolver.
+    - c1388 (run-5): qa-harness org leg was PENDING — this scenario is the
+      maintenance path. Hardened with exact-count assertions on BOTH nodes
+      (no lucky-run on partial sync) and a reverse-sync leg (Bob writes →
+      Alice reads) so cross-direction org replay is under test here too.
 
   Acceptance test for projects/alpha-org-member-propagation-gap (kanban 500b9),
   the QA harness org-leg (kanban 82387), and the run-5 COVERAGE gap c1388
-  (qa-harness org leg missed 4b171). See docs/plans/alpha-self-dogfood.md
-  in exemem-workspace §4 M1 for the exit criterion this scenario enforces.
+  (qa-harness org leg missed 4b171 and had no reverse-write leg). See
+  docs/plans/alpha-self-dogfood.md in exemem-workspace §4 M1 for the exit
+  criterion this scenario enforces.
 
 nodes:
   - role: alice
@@ -68,17 +74,125 @@ steps:
         schema_persisted_as: org_note
         from_role: alice
 
-  - id: alice_writes_post_tag_molecule
+  # -----------------------------------------------------------------
+  # Phase 3 — Alice writes 10 post-tag molecules
+  #
+  # 1 write is not enough signal: c1388 noted that a single post-tag
+  # mutation's "at-least-one" assertion could pass on a partial replay
+  # that silently dropped 90% of sequences (30a7b / 4439b class bugs).
+  # 10 molecules with distinct keys + an exact-count assertion on the
+  # peer forces every seq to land, closing the no-lucky-run gate.
+  # -----------------------------------------------------------------
+  - id: alice_writes_post_tag_01
     roles: [alice]
     actions:
       - action: mutation_write
         schema_persisted_as: org_note
         fields:
-          title: "post-tag-note"
-          body: "written after alice tagged the schema with org_hash"
-          modified_at: "2026-04-19T13:00:00Z"
+          title: "post-tag-01"
+          body: "alice post-tag item 01"
+          modified_at: "2026-04-19T13:00:01Z"
         key:
-          range: "2026-04-19T13:00:00Z"
+          range: "2026-04-19T13:00:01Z"
+  - id: alice_writes_post_tag_02
+    roles: [alice]
+    actions:
+      - action: mutation_write
+        schema_persisted_as: org_note
+        fields:
+          title: "post-tag-02"
+          body: "alice post-tag item 02"
+          modified_at: "2026-04-19T13:00:02Z"
+        key:
+          range: "2026-04-19T13:00:02Z"
+  - id: alice_writes_post_tag_03
+    roles: [alice]
+    actions:
+      - action: mutation_write
+        schema_persisted_as: org_note
+        fields:
+          title: "post-tag-03"
+          body: "alice post-tag item 03"
+          modified_at: "2026-04-19T13:00:03Z"
+        key:
+          range: "2026-04-19T13:00:03Z"
+  - id: alice_writes_post_tag_04
+    roles: [alice]
+    actions:
+      - action: mutation_write
+        schema_persisted_as: org_note
+        fields:
+          title: "post-tag-04"
+          body: "alice post-tag item 04"
+          modified_at: "2026-04-19T13:00:04Z"
+        key:
+          range: "2026-04-19T13:00:04Z"
+  - id: alice_writes_post_tag_05
+    roles: [alice]
+    actions:
+      - action: mutation_write
+        schema_persisted_as: org_note
+        fields:
+          title: "post-tag-05"
+          body: "alice post-tag item 05"
+          modified_at: "2026-04-19T13:00:05Z"
+        key:
+          range: "2026-04-19T13:00:05Z"
+  - id: alice_writes_post_tag_06
+    roles: [alice]
+    actions:
+      - action: mutation_write
+        schema_persisted_as: org_note
+        fields:
+          title: "post-tag-06"
+          body: "alice post-tag item 06"
+          modified_at: "2026-04-19T13:00:06Z"
+        key:
+          range: "2026-04-19T13:00:06Z"
+  - id: alice_writes_post_tag_07
+    roles: [alice]
+    actions:
+      - action: mutation_write
+        schema_persisted_as: org_note
+        fields:
+          title: "post-tag-07"
+          body: "alice post-tag item 07"
+          modified_at: "2026-04-19T13:00:07Z"
+        key:
+          range: "2026-04-19T13:00:07Z"
+  - id: alice_writes_post_tag_08
+    roles: [alice]
+    actions:
+      - action: mutation_write
+        schema_persisted_as: org_note
+        fields:
+          title: "post-tag-08"
+          body: "alice post-tag item 08"
+          modified_at: "2026-04-19T13:00:08Z"
+        key:
+          range: "2026-04-19T13:00:08Z"
+  - id: alice_writes_post_tag_09
+    roles: [alice]
+    actions:
+      - action: mutation_write
+        schema_persisted_as: org_note
+        fields:
+          title: "post-tag-09"
+          body: "alice post-tag item 09"
+          modified_at: "2026-04-19T13:00:09Z"
+        key:
+          range: "2026-04-19T13:00:09Z"
+  - id: alice_writes_post_tag_10
+    roles: [alice]
+    actions:
+      - action: mutation_write
+        schema_persisted_as: org_note
+        fields:
+          title: "post-tag-10"
+          body: "alice post-tag item 10"
+          modified_at: "2026-04-19T13:00:10Z"
+        key:
+          range: "2026-04-19T13:00:10Z"
 
   - id: bob_joins_org
     roles: [bob]
@@ -87,36 +201,33 @@ steps:
         from_role: alice
 
   # -----------------------------------------------------------------
-  # Phase 3 — Two sync cycles per node, give the OrgSyncEngine time to
-  # upload pending entries (alice's tagged schema + molecules, bob's
-  # self-membership) and download the other side's entries.
+  # Phase 4 — Two sync cycles per node so Alice's tagged schema +
+  # 10 post-tag molecules arrive on Bob, and Bob's self-membership
+  # arrives on Alice.
   # -----------------------------------------------------------------
   - id: sync_round_1
     roles: [alice, bob]
     actions:
       - action: sync_trigger
       - action: sleep
-        seconds: 6
+        seconds: 8
 
   - id: sync_round_2
     roles: [alice, bob]
     actions:
       - action: sync_trigger
       - action: sleep
-        seconds: 8
+        seconds: 10
 
   # -----------------------------------------------------------------
-  # Phase 4 — Bob pulls the schema registry and queries.
+  # Phase 5 — Bob pulls the schema registry and registers locally.
   #
-  # Run schema_register on Bob so he:
+  # schema_register on Bob:
   #   (a) loads the schema from the dev schema service (identity-hash
   #       name is globally unique),
   #   (b) flips his local state Available → Approved (d2f07 papercut:
   #       peer-synced org schemas arrive in state=Available which is
   #       not queryable).
-  # Then Bob runs an unfiltered /api/query. An HTTP non-2xx OR a result
-  # count < 1 hard-fails — that is 4b171. expect_min=1 ensures at least
-  # the pre-tag molecule resolves through the org replay.
   # -----------------------------------------------------------------
   - id: bob_registers_schema
     roles: [bob]
@@ -125,13 +236,66 @@ steps:
         fixture: qa-org-note.schema.json
         persist_as: org_note
 
+  # -----------------------------------------------------------------
+  # Phase 6 — Reverse sync: Bob writes 3 post-join molecules on the
+  # org-tagged schema. After one more sync round Alice must see them
+  # via her own unfiltered query. This closes the c1388 gap that the
+  # prior revision of this scenario (and run9-iter1-rapid10) never
+  # exercised — Alice→Bob replay worked, but Bob→Alice replay on the
+  # same org prefix was never under test.
+  # -----------------------------------------------------------------
+  - id: bob_writes_reverse_01
+    roles: [bob]
+    actions:
+      - action: mutation_write
+        schema_persisted_as: org_note
+        fields:
+          title: "bob-reverse-01"
+          body: "bob writes back on the org-shared schema"
+          modified_at: "2026-04-19T14:00:01Z"
+        key:
+          range: "2026-04-19T14:00:01Z"
+  - id: bob_writes_reverse_02
+    roles: [bob]
+    actions:
+      - action: mutation_write
+        schema_persisted_as: org_note
+        fields:
+          title: "bob-reverse-02"
+          body: "bob writes back on the org-shared schema"
+          modified_at: "2026-04-19T14:00:02Z"
+        key:
+          range: "2026-04-19T14:00:02Z"
+  - id: bob_writes_reverse_03
+    roles: [bob]
+    actions:
+      - action: mutation_write
+        schema_persisted_as: org_note
+        fields:
+          title: "bob-reverse-03"
+          body: "bob writes back on the org-shared schema"
+          modified_at: "2026-04-19T14:00:03Z"
+        key:
+          range: "2026-04-19T14:00:03Z"
+
+  - id: sync_round_3
+    roles: [alice, bob]
+    actions:
+      - action: sync_trigger
+      - action: sleep
+        seconds: 10
+
+  # -----------------------------------------------------------------
+  # Phase 7 — Unfiltered queries from both sides. An HTTP non-2xx on
+  # either role is 4b171 resurfacing. The exact-count assertions
+  # below are the c1388 hardening: ">=1" was too permissive.
+  # -----------------------------------------------------------------
   - id: bob_unfiltered_query
     roles: [bob]
     actions:
       - action: query_schema
         schema_persisted_as: org_note
         persist_as: bob_post_sync
-        expect_min: 1
 
   - id: alice_unfiltered_query
     roles: [alice]
@@ -139,36 +303,38 @@ steps:
       - action: query_schema
         schema_persisted_as: org_note
         persist_as: alice_post_sync
-        expect_min: 2
 
 assertions:
   # Org membership propagation (500b9 / 82387).
   - node: alice
     field: org_member_count
     org_role: alice
-    op: ">="
+    op: "=="
     value: 2
   - node: bob
     field: org_member_count
     org_role: alice
-    op: ">="
+    op: "=="
     value: 2
 
-  # 4b171 guard — Bob's unfiltered query on the org-shared schema must
-  # see at least the pre-tag molecule (+ ideally the post-tag one too,
-  # but expect_min on the step already hard-fails on 0; we use >=1 here
-  # so a slower sync that delivers only the pre-tag leg still counts as
-  # "4b171 didn't regress").
+  # 4b171 + exact-count guard on Bob. He sees the 10 post-tag molecules
+  # from Alice's org prefix + 3 of his own reverse writes = 13. The
+  # pre-tag molecule lives on Alice's PERSONAL prefix and intentionally
+  # does NOT replicate; 4b171 guarantees Bob's unfiltered query doesn't
+  # orphan on that ref, not that the pre-tag data itself syncs.
   - node: bob
     field: last_query_result_count
     query_name: bob_post_sync
-    op: ">="
-    value: 1
+    op: "=="
+    value: 13
 
-  # 3e063 guard — Alice still sees both her molecules after tagging
-  # (pre-tag + post-tag).
+  # 3e063 + reverse-sync + exact-count guard on Alice. She sees:
+  #   1 pre-tag  (via 3e063 dual-read fallback)
+  #  10 post-tag (her own org-prefix writes)
+  #   3 bob-reverse (org-prefix replay from Bob)
+  # = 14 total.
   - node: alice
     field: last_query_result_count
     query_name: alice_post_sync
-    op: ">="
-    value: 2
+    op: "=="
+    value: 14
