@@ -339,8 +339,7 @@ mod tests {
         let words_array: Vec<String> = mnemonic.words().map(|w| w.to_string()).collect();
 
         let resp =
-            restore_from_phrase(data, web::Json(serde_json::json!({ "words": words_array })))
-                .await;
+            restore_from_phrase(data, web::Json(serde_json::json!({ "words": words_array }))).await;
 
         // It gets past input parsing (not 400) — restore itself fails because
         // EXEMEM_API_URL is unroutable, but that's the downstream path.
@@ -371,10 +370,7 @@ mod tests {
         let body = test_body_json(resp).await;
         assert_eq!(body["ok"], false);
         assert!(
-            body["error"]
-                .as_str()
-                .unwrap_or("")
-                .contains("strings"),
+            body["error"].as_str().unwrap_or("").contains("strings"),
             "error should explain the array-of-strings requirement, got {:?}",
             body["error"]
         );
