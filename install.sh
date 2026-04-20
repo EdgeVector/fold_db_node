@@ -21,7 +21,7 @@ FoldDB is distributed via Homebrew on this platform.
 After installing:
 
     folddb daemon start         # start the daemon
-    open http://localhost:9101  # open the dashboard
+    open http://localhost:9001  # open the dashboard
 
 Documentation: https://github.com/EdgeVector/fold_db_node#readme
 EOF
