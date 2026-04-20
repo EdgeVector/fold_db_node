@@ -325,7 +325,6 @@ pub async fn add_member(
     // (especially useful in local mode where there's no cloud inbox)
     Ok(ApiResponse::success_with_user(
         AddMemberResponse {
-            ok: true,
             invite_bundle,
         },
         user_hash,
@@ -356,10 +355,7 @@ pub async fn remove_member(
             .handler_err("sync remove_member to cloud")?;
     }
 
-    Ok(ApiResponse::success_with_user(
-        OkResponse { ok: true },
-        user_hash,
-    ))
+    Ok(ApiResponse::success_with_user(OkResponse {}, user_hash))
 }
 
 /// Leave an organization (remove self).
@@ -389,18 +385,19 @@ pub async fn generate_invite(
 }
 
 handler_response! {
-    /// Response for adding a member
+    /// Response for adding a member.
+    ///
+    /// The `ok` flag lives on the `ApiResponse` envelope — do not duplicate it here.
     pub struct AddMemberResponse {
-        pub ok: bool,
         pub invite_bundle: OrgInviteBundle,
     }
 }
 
 handler_response! {
-    /// Response for removing a member or deleting an org
-    pub struct OkResponse {
-        pub ok: bool,
-    }
+    /// Response for removing a member or deleting an org.
+    ///
+    /// The `ok` flag lives on the `ApiResponse` envelope — no additional payload.
+    pub struct OkResponse {}
 }
 
 handler_response! {
@@ -555,10 +552,7 @@ pub async fn delete_org(
     // Purge local data and schemas since the org is completely gone
     purge_org_locally(org_hash, node, "deletion").await?;
 
-    Ok(ApiResponse::success_with_user(
-        OkResponse { ok: true },
-        user_hash,
-    ))
+    Ok(ApiResponse::success_with_user(OkResponse {}, user_hash))
 }
 handler_response! {
     /// Response for pending org invites
@@ -828,5 +822,37 @@ mod tests {
             2,
             "pending invites count — the person is on the org roster, just hasn't accepted yet"
         );
+    }
+
+    /// Regression: DELETE /api/org/{hash} must return exactly one `ok` key.
+    /// Before the fix, `OkResponse { ok: bool }` collided with the `ApiResponse`
+    /// envelope's own `ok` field via `#[serde(flatten)]`, producing invalid JSON
+    /// with two `"ok"` keys. Same shape applied to `AddMemberResponse`.
+    #[test]
+    fn response_envelope_emits_single_ok_key() {
+        fn assert_single_ok(json: &str) {
+            let occurrences = json.match_indices("\"ok\"").count();
+            assert_eq!(
+                occurrences, 1,
+                "expected exactly one `ok` key, got {occurrences} in {json}"
+            );
+        }
+
+        let delete_org_resp = ApiResponse::success_with_user(OkResponse {}, "user123");
+        assert_single_ok(&serde_json::to_string(&delete_org_resp).unwrap());
+
+        let add_member_resp = ApiResponse::success_with_user(
+            AddMemberResponse {
+                invite_bundle: OrgInviteBundle {
+                    org_name: "Org".into(),
+                    org_hash: "hash".into(),
+                    org_public_key: String::new(),
+                    org_e2e_secret: String::new(),
+                    members: Vec::new(),
+                },
+            },
+            "user123",
+        );
+        assert_single_ok(&serde_json::to_string(&add_member_resp).unwrap());
     }
 }
