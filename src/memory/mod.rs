@@ -45,6 +45,12 @@ use fold_db::schema::SchemaState;
 
 use crate::fold_node::FoldNode;
 
+/// Consolidation TransformViews over memories. See `consolidation.rs` for
+/// the architecture — gated on `transform-wasm` because it depends on the
+/// runtime WASM compiler.
+#[cfg(feature = "transform-wasm")]
+pub mod consolidation;
+
 /// Descriptive name the node uses to look up the memory schema. The schema
 /// service canonicalizes every schema to its identity_hash on insert, so the
 /// runtime `name` field on the schema will be a hash — call
