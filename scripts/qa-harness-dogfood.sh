@@ -609,9 +609,12 @@ done
 #
 # This leg catches 3e063 on a single local node — we don't need AWS creds for
 # that: "pre-tag molecules stay queryable after tagging the schema" is a
-# local invariant. af4ba is the cross-node propagation half and lives in the
-# cloud-e2e nightly (test-framework/scenarios/org-sync-2node.yaml) where a
-# separate assertion will pull schemas + molecules across two nodes.
+# local invariant. The cross-node propagation half — af4ba (schema arrives)
+# AND 4b171 (pre-tag molecule doesn't orphan peer's unfiltered query) —
+# lives in the cloud-e2e nightly (test-framework/scenarios/org-sync-2node.yaml)
+# where the scenario spawns two nodes on dev Exemem, writes a pre-tag
+# molecule, tags the schema, and asserts Bob's unfiltered /api/query still
+# succeeds with >=1 result after sync.
 # ---------------------------------------------------------------------------
 
 # Pick the "files" source — its marker-field (`path`) is a stable disk path
@@ -801,7 +804,7 @@ if [ "$SKIP_ORG" = false ]; then
     log "node B: backend=$B_BACKEND schema=$B_SCHEMA vite=$B_VITE home=$B_HOME"
 
     if curl -fsS --max-time 5 "http://localhost:$B_BACKEND/api/system/auto-identity" >/dev/null 2>&1; then
-      ORG_RESULT="PENDING|node B live; two-node org round-trip runs in test-framework/scenarios/org-sync-2node.yaml (nightly e2e-cloud)"
+      ORG_RESULT="PENDING|node B live; real two-node org round-trip (4b171 + af4ba + 500b9) runs in test-framework/scenarios/org-sync-2node.yaml via nightly e2e-cloud (has AWS creds)"
       log "[org] $ORG_RESULT"
     else
       ORG_RESULT="FAIL|node B backend not reachable after boot"

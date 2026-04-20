@@ -56,7 +56,11 @@
                     "sleep",
                     "org_create",
                     "org_join",
-                    "sync_trigger"
+                    "sync_trigger",
+                    "schema_register",
+                    "mutation_write",
+                    "set_org_hash",
+                    "query_schema"
                   ]
                 }
               },
@@ -82,7 +86,8 @@
               "schema_record_count",
               "shared_record_count",
               "my_pseudonym_count",
-              "org_member_count"
+              "org_member_count",
+              "last_query_result_count"
             ]
           },
           "op": {
@@ -92,7 +97,8 @@
           "value": {},
           "schema": { "type": "string" },
           "author_role": { "type": "string" },
-          "org_role": { "type": "string" }
+          "org_role": { "type": "string" },
+          "query_name": { "type": "string" }
         }
       }
     }

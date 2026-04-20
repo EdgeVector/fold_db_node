@@ -547,6 +547,206 @@ execute_action() {
       echo "[step] $role triggered sync"
       ;;
 
+    schema_register)
+      # Action: { action: schema_register, fixture: "<file under test-framework/fixtures/>", persist_as: "<key>" }
+      # Registers a fixture schema on the dev schema service (global registry),
+      # then loads + approves it on this node. Writes the returned identity-hash
+      # schema name to state/schema-$persist_as.json so later actions on any
+      # role can reference the same schema by persist_as.
+      local sr_fixture sr_persist_as sr_path
+      sr_fixture=$(echo "$action_json" | jq -r '.fixture // ""')
+      sr_persist_as=$(echo "$action_json" | jq -r '.persist_as // ""')
+      [[ -n "$sr_fixture" ]]    || { echo "[step] schema_register: fixture required" >&2; return 1; }
+      [[ -n "$sr_persist_as" ]] || { echo "[step] schema_register: persist_as required" >&2; return 1; }
+      sr_path="$framework_dir/fixtures/$sr_fixture"
+      [[ -f "$sr_path" ]] || { echo "[step] schema_register: fixture not found: $sr_path" >&2; return 1; }
+
+      local sr_state="$FOLDDB_TEST_SESSION_DIR/state/schema-$sr_persist_as.json"
+      local sr_name=""
+      if [[ -f "$sr_state" ]]; then
+        # Idempotent: another role already registered this schema globally.
+        sr_name=$(jq -r '.name // ""' "$sr_state")
+      fi
+      if [[ -z "$sr_name" ]]; then
+        local sr_body sr_resp
+        sr_body=$(jq -c --slurpfile s "$sr_path" -n '{schema: $s[0], mutation_mappers: {}}')
+        if ! sr_resp=$(curl -fsS -X POST "${FOLDDB_TEST_DEV_SCHEMA:?}/api/schemas" \
+            -H 'Content-Type: application/json' \
+            -d "$sr_body" 2>&1); then
+          echo "[step] schema_register: dev schema service rejected fixture: $sr_resp" >&2
+          return 1
+        fi
+        sr_name=$(echo "$sr_resp" | jq -r '.schema.name // ""')
+        if [[ -z "$sr_name" || "$sr_name" == "null" ]]; then
+          echo "[step] schema_register: no .schema.name in response: $(echo "$sr_resp" | head -c 300)" >&2
+          return 1
+        fi
+        jq -cn --arg name "$sr_name" --arg persist_as "$sr_persist_as" \
+               --arg fixture "$sr_fixture" \
+               '{name:$name, persist_as:$persist_as, fixture:$fixture}' > "$sr_state"
+      fi
+
+      # Pull the registry on this node and flip the schema to Approved. This
+      # is required on every role that will later query — d2f07 surfaced
+      # that peer-synced org schemas arrive in state=Available, which is
+      # not queryable. Load is idempotent; approve is idempotent.
+      if ! curl -fsS -X POST "http://127.0.0.1:$port/api/schemas/load" \
+          -H 'Content-Type: application/json' \
+          -H "X-User-Hash: $hash" -d '{}' > /dev/null 2>&1; then
+        echo "[step] schema_register: /api/schemas/load failed on $role" >&2
+        return 1
+      fi
+      if ! curl -fsS -X POST "http://127.0.0.1:$port/api/schema/$sr_name/approve" \
+          -H 'Content-Type: application/json' \
+          -H "X-User-Hash: $hash" -d '{}' > /dev/null 2>&1; then
+        echo "[step] schema_register: approve failed on $role for $sr_name" >&2
+        return 1
+      fi
+      echo "[step] $role registered+approved schema $sr_persist_as=$sr_name"
+      ;;
+
+    mutation_write)
+      # Action: { action: mutation_write, schema_persisted_as: "<key>",
+      #          fields: {..}, key: {"range": "..."}, mutation_type?: "create" }
+      # Writes one mutation on this role's node against a schema previously
+      # registered via schema_register.
+      local mw_persist_as mw_fields mw_key mw_mtype
+      mw_persist_as=$(echo "$action_json" | jq -r '.schema_persisted_as // ""')
+      mw_fields=$(echo "$action_json" | jq -c '.fields // {}')
+      mw_key=$(echo "$action_json" | jq -c '.key // {}')
+      mw_mtype=$(echo "$action_json" | jq -r '.mutation_type // "create"')
+      [[ -n "$mw_persist_as" ]] || { echo "[step] mutation_write: schema_persisted_as required" >&2; return 1; }
+
+      local mw_state="$FOLDDB_TEST_SESSION_DIR/state/schema-$mw_persist_as.json"
+      [[ -f "$mw_state" ]] || { echo "[step] mutation_write: no state for schema '$mw_persist_as' (run schema_register first)" >&2; return 1; }
+      local mw_name
+      mw_name=$(jq -r '.name // ""' "$mw_state")
+      [[ -n "$mw_name" ]] || { echo "[step] mutation_write: empty schema name in $mw_state" >&2; return 1; }
+
+      local mw_body
+      mw_body=$(jq -cn --arg s "$mw_name" \
+                       --arg mt "$mw_mtype" \
+                       --argjson fv "$mw_fields" \
+                       --argjson kv "$mw_key" \
+        '{type:"mutation", schema:$s, fields_and_values:$fv, key_value:$kv, mutation_type:$mt}')
+
+      local mw_resp
+      if ! mw_resp=$(curl -fsS -X POST "http://127.0.0.1:$port/api/mutation" \
+          -H 'Content-Type: application/json' \
+          -H "X-User-Hash: $hash" \
+          -d "$mw_body" 2>&1); then
+        echo "[step] mutation_write: non-2xx on $role for $mw_name: $mw_resp" >&2
+        return 1
+      fi
+      echo "[step] $role wrote mutation on $mw_persist_as=$mw_name"
+      ;;
+
+    set_org_hash)
+      # Action: { action: set_org_hash, schema_persisted_as: "<key>",
+      #          from_role: alice | from_hash: "<hex>" | clear: true }
+      # Tags the schema with org_hash. `from_role` resolves the org_hash
+      # from that role's org_create state file (the usual path). `from_hash`
+      # is an escape hatch for fake-tag scenarios. `clear: true` reverts to
+      # personal.
+      local soh_persist_as soh_from_role soh_from_hash soh_clear
+      soh_persist_as=$(echo "$action_json" | jq -r '.schema_persisted_as // ""')
+      soh_from_role=$(echo "$action_json" | jq -r '.from_role // ""')
+      soh_from_hash=$(echo "$action_json" | jq -r '.from_hash // ""')
+      soh_clear=$(echo "$action_json" | jq -r '.clear // false')
+      [[ -n "$soh_persist_as" ]] || { echo "[step] set_org_hash: schema_persisted_as required" >&2; return 1; }
+
+      local soh_state="$FOLDDB_TEST_SESSION_DIR/state/schema-$soh_persist_as.json"
+      [[ -f "$soh_state" ]] || { echo "[step] set_org_hash: no state for schema '$soh_persist_as'" >&2; return 1; }
+      local soh_name
+      soh_name=$(jq -r '.name // ""' "$soh_state")
+      [[ -n "$soh_name" ]] || { echo "[step] set_org_hash: empty schema name in $soh_state" >&2; return 1; }
+
+      local soh_body
+      if [[ "$soh_clear" == "true" ]]; then
+        soh_body='{"org_hash":null}'
+      elif [[ -n "$soh_from_role" ]]; then
+        local soh_create="$FOLDDB_TEST_SESSION_DIR/state/org-create-$soh_from_role.json"
+        [[ -f "$soh_create" ]] || { echo "[step] set_org_hash: no org-create state for role $soh_from_role" >&2; return 1; }
+        local soh_hash
+        soh_hash=$(jq -r '(.data.org.org_hash // .org.org_hash // "")' "$soh_create")
+        [[ -n "$soh_hash" && "$soh_hash" != "null" ]] || { echo "[step] set_org_hash: no org_hash in $soh_create" >&2; return 1; }
+        soh_body=$(jq -cn --arg h "$soh_hash" '{org_hash:$h}')
+      elif [[ -n "$soh_from_hash" ]]; then
+        soh_body=$(jq -cn --arg h "$soh_from_hash" '{org_hash:$h}')
+      else
+        echo "[step] set_org_hash: requires from_role OR from_hash OR clear:true" >&2
+        return 1
+      fi
+
+      local soh_resp
+      if ! soh_resp=$(curl -fsS -X POST "http://127.0.0.1:$port/api/schema/$soh_name/set-org-hash" \
+          -H 'Content-Type: application/json' \
+          -H "X-User-Hash: $hash" \
+          -d "$soh_body" 2>&1); then
+        echo "[step] set_org_hash: non-2xx on $role for $soh_name: $soh_resp" >&2
+        return 1
+      fi
+      echo "[step] $role tagged $soh_persist_as=$soh_name with org_hash body=$soh_body"
+      ;;
+
+    query_schema)
+      # Action: { action: query_schema, schema_persisted_as: "<key>",
+      #          persist_as: "<query_name>", [fields: [..]], [expect_min: N] }
+      # Runs an unfiltered /api/query on this role's node. Response saved to
+      # state/query-$persist_as-$role.json so the last_query_result_count
+      # assertion can inspect it. An HTTP non-2xx is a hard step failure —
+      # this is the primary 4b171 guard: the server must not return 500
+      # "Atom not found for key" for an unfiltered org-shared query.
+      local qs_persist_as qs_save_as qs_fields_override qs_expect_min
+      qs_persist_as=$(echo "$action_json" | jq -r '.schema_persisted_as // ""')
+      qs_save_as=$(echo "$action_json" | jq -r '.persist_as // ""')
+      qs_fields_override=$(echo "$action_json" | jq -c '.fields // null')
+      qs_expect_min=$(echo "$action_json" | jq -r '.expect_min // ""')
+      [[ -n "$qs_persist_as" ]] || { echo "[step] query_schema: schema_persisted_as required" >&2; return 1; }
+      [[ -n "$qs_save_as" ]]    || { echo "[step] query_schema: persist_as required" >&2; return 1; }
+
+      local qs_state="$FOLDDB_TEST_SESSION_DIR/state/schema-$qs_persist_as.json"
+      [[ -f "$qs_state" ]] || { echo "[step] query_schema: no state for schema '$qs_persist_as'" >&2; return 1; }
+      local qs_name qs_fixture qs_path qs_fields
+      qs_name=$(jq -r '.name // ""' "$qs_state")
+      qs_fixture=$(jq -r '.fixture // ""' "$qs_state")
+      [[ -n "$qs_name" ]] || { echo "[step] query_schema: empty schema name in $qs_state" >&2; return 1; }
+      if [[ "$qs_fields_override" != "null" && -n "$qs_fields_override" ]]; then
+        qs_fields="$qs_fields_override"
+      else
+        qs_path="$framework_dir/fixtures/$qs_fixture"
+        [[ -f "$qs_path" ]] || { echo "[step] query_schema: cannot resolve fields (fixture $qs_path missing, no fields override)" >&2; return 1; }
+        qs_fields=$(jq -c '.fields' "$qs_path")
+      fi
+
+      local qs_body qs_tmp qs_code qs_body_out
+      qs_body=$(jq -cn --arg s "$qs_name" --argjson f "$qs_fields" '{schema_name:$s, fields:$f}')
+      qs_tmp="$FOLDDB_TEST_SESSION_DIR/state/query-$qs_save_as-$role.body"
+      qs_code=$(curl -sS -o "$qs_tmp" -w '%{http_code}' -X POST \
+        "http://127.0.0.1:$port/api/query" \
+        -H 'Content-Type: application/json' \
+        -H "X-User-Hash: $hash" \
+        -d "$qs_body" || true)
+      qs_body_out="$FOLDDB_TEST_SESSION_DIR/state/query-$qs_save_as-$role.json"
+      mv "$qs_tmp" "$qs_body_out"
+      if [[ "$qs_code" != "200" ]]; then
+        echo "[step] query_schema: 4b171 guard FAILED — $role HTTP $qs_code on unfiltered query for $qs_name" >&2
+        echo "[step]   body: $(head -c 400 "$qs_body_out")" >&2
+        return 1
+      fi
+      local qs_count
+      qs_count=$(jq '.results | length' "$qs_body_out" 2>/dev/null || echo 0)
+      [[ "$qs_count" =~ ^[0-9]+$ ]] || qs_count=0
+      if [[ -n "$qs_expect_min" ]]; then
+        if (( qs_count < qs_expect_min )); then
+          echo "[step] query_schema: $role got $qs_count results < expect_min=$qs_expect_min for $qs_name" >&2
+          echo "[step]   body: $(head -c 400 "$qs_body_out")" >&2
+          return 1
+        fi
+      fi
+      echo "[step] $role queried $qs_persist_as=$qs_name → $qs_count results (saved as '$qs_save_as')"
+      ;;
+
     *)
       echo "[step] unknown action: $action" >&2
       return 1

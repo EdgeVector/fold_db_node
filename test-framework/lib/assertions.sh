@@ -96,6 +96,22 @@ get_shared_record_count() {
     '[(.data // .results // [])[] | select(.author_pub_key == $pk)] | length' 2>/dev/null || echo 0
 }
 
+# get_last_query_result_count QUERY_NAME ROLE
+# Returns the number of records in the saved response from a query_schema
+# action. The query_schema action persists the response at
+# state/query-<persist_as>-<role>.json; we count its `.results | length`.
+# Used to guard 4b171: Bob's unfiltered query on an org-shared schema must
+# return at least the pre-tag molecules Alice wrote before tagging.
+get_last_query_result_count() {
+  local query_name="$1" role="$2"
+  local file="$FOLDDB_TEST_SESSION_DIR/state/query-$query_name-$role.json"
+  if [[ ! -f "$file" ]]; then
+    echo 0
+    return 0
+  fi
+  jq '.results | length' "$file" 2>/dev/null || echo 0
+}
+
 # get_org_member_count NODE_PORT HASH ORG_HASH
 # Returns the number of members on the given org as seen by this node. The
 # other node's membership molecule propagates via the OrgSyncEngine (alpha M1),
@@ -162,6 +178,17 @@ run_assertion() {
     my_pseudonym_count)
       actual=$(curl -fsS "http://127.0.0.1:$port/api/discovery/my-pseudonyms" \
         -H "X-User-Hash: $hash" | jq '.count // 0')
+      ;;
+    last_query_result_count)
+      # assertion YAML:
+      #   { node: bob, field: last_query_result_count, query_name: bob_post_sync, op: ">=", value: 1 }
+      # `query_name` names the persist_as from a prior query_schema action.
+      # The response is per-role, so we scope by $node (the role whose query
+      # we're inspecting).
+      local query_name
+      query_name=$(echo "$assertion" | jq -r '.query_name // ""')
+      [[ -n "$query_name" ]] || { echo "[FAIL] last_query_result_count: query_name required" >&2; return 1; }
+      actual=$(get_last_query_result_count "$query_name" "$node")
       ;;
     org_member_count)
       # assertion YAML: { node: alice, field: org_member_count, org_role: alice, op: ">=", value: 2 }

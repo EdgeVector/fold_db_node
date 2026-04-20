@@ -1,14 +1,23 @@
 name: org-sync-2node
 description: |
-  Two-node org membership round-trip against dev Exemem cloud. Alice creates
-  an org, Bob joins via the invite bundle, each triggers a sync cycle twice
-  with a short sleep between, then both nodes must observe 2 members on the
-  org locally. Exercises:
-    - alpha M1 OrgSyncEngine (server-allocated seqs, exemem-infra ExememOrgSyncCounters-dev)
+  Two-node org round-trip against dev Exemem cloud. Exercises the full
+  alpha-thesis path that single-node dogfood can't reach:
+
+    - alpha M1 OrgSyncEngine (server-allocated seqs,
+      exemem-infra ExememOrgSyncCounters-dev)
     - alpha M2 folddb org CLI handlers (POST /api/org, POST /api/org/join)
     - alpha BLOCKER 19bba (/api/auth/register activates cloud sync on both nodes)
-  Acceptance test for projects/alpha-org-member-propagation-gap (kanban 500b9)
-  and the QA harness org-leg (kanban 82387). See docs/plans/alpha-self-dogfood.md
+    - af4ba (run-4): schema tagged after creation must propagate to peer nodes
+    - 3e063 (run-4): pre-tag molecules stay queryable on the author
+    - 4b171 (run-5): pre-tag molecules don't orphan the peer's unfiltered
+      query ("Atom not found for key"). Alice writes a molecule BEFORE
+      tagging her schema with org_hash; Bob must still be able to run an
+      unfiltered /api/query after the schema arrives and the pre-tag
+      molecule replays into his Sled store.
+
+  Acceptance test for projects/alpha-org-member-propagation-gap (kanban 500b9),
+  the QA harness org-leg (kanban 82387), and the run-5 COVERAGE gap c1388
+  (qa-harness org leg missed 4b171). See docs/plans/alpha-self-dogfood.md
   in exemem-workspace §4 M1 for the exit criterion this scenario enforces.
 
 nodes:
@@ -18,11 +27,58 @@ nodes:
     display_name: Bob
 
 steps:
+  # -----------------------------------------------------------------
+  # Phase 1 — Alice registers a schema and writes a pre-tag molecule
+  #
+  # This molecule lands on Alice's PERSONAL prefix (no org_hash yet).
+  # It's the exact population 4b171 orphaned on Bob after tagging.
+  # -----------------------------------------------------------------
+  - id: alice_registers_schema
+    roles: [alice]
+    actions:
+      - action: schema_register
+        fixture: qa-org-note.schema.json
+        persist_as: org_note
+
+  - id: alice_writes_pre_tag_molecule
+    roles: [alice]
+    actions:
+      - action: mutation_write
+        schema_persisted_as: org_note
+        fields:
+          title: "pre-tag-note"
+          body: "written before alice tagged the schema with org_hash"
+          modified_at: "2026-04-19T12:00:00Z"
+        key:
+          range: "2026-04-19T12:00:00Z"
+
+  # -----------------------------------------------------------------
+  # Phase 2 — Org lifecycle + schema tagging
+  # -----------------------------------------------------------------
   - id: alice_creates_org
     roles: [alice]
     actions:
       - action: org_create
         name: qa-dogfood-org
+
+  - id: alice_tags_schema_with_org_hash
+    roles: [alice]
+    actions:
+      - action: set_org_hash
+        schema_persisted_as: org_note
+        from_role: alice
+
+  - id: alice_writes_post_tag_molecule
+    roles: [alice]
+    actions:
+      - action: mutation_write
+        schema_persisted_as: org_note
+        fields:
+          title: "post-tag-note"
+          body: "written after alice tagged the schema with org_hash"
+          modified_at: "2026-04-19T13:00:00Z"
+        key:
+          range: "2026-04-19T13:00:00Z"
 
   - id: bob_joins_org
     roles: [bob]
@@ -30,9 +86,11 @@ steps:
       - action: org_join
         from_role: alice
 
-  # Two sync cycles per node: each trigger + sleep gives the OrgSyncEngine a
-  # window to upload pending entries (alice's add-member molecule after join,
-  # bob's self-membership molecule) and download the other side's entries.
+  # -----------------------------------------------------------------
+  # Phase 3 — Two sync cycles per node, give the OrgSyncEngine time to
+  # upload pending entries (alice's tagged schema + molecules, bob's
+  # self-membership) and download the other side's entries.
+  # -----------------------------------------------------------------
   - id: sync_round_1
     roles: [alice, bob]
     actions:
@@ -47,11 +105,44 @@ steps:
       - action: sleep
         seconds: 8
 
+  # -----------------------------------------------------------------
+  # Phase 4 — Bob pulls the schema registry and queries.
+  #
+  # Run schema_register on Bob so he:
+  #   (a) loads the schema from the dev schema service (identity-hash
+  #       name is globally unique),
+  #   (b) flips his local state Available → Approved (d2f07 papercut:
+  #       peer-synced org schemas arrive in state=Available which is
+  #       not queryable).
+  # Then Bob runs an unfiltered /api/query. An HTTP non-2xx OR a result
+  # count < 1 hard-fails — that is 4b171. expect_min=1 ensures at least
+  # the pre-tag molecule resolves through the org replay.
+  # -----------------------------------------------------------------
+  - id: bob_registers_schema
+    roles: [bob]
+    actions:
+      - action: schema_register
+        fixture: qa-org-note.schema.json
+        persist_as: org_note
+
+  - id: bob_unfiltered_query
+    roles: [bob]
+    actions:
+      - action: query_schema
+        schema_persisted_as: org_note
+        persist_as: bob_post_sync
+        expect_min: 1
+
+  - id: alice_unfiltered_query
+    roles: [alice]
+    actions:
+      - action: query_schema
+        schema_persisted_as: org_note
+        persist_as: alice_post_sync
+        expect_min: 2
+
 assertions:
-  # Both nodes must see each other as org members. Failure means either:
-  #  - register→sync-engine activation regressed (19bba), OR
-  #  - OrgSyncEngine upload/download regressed (M1 server-allocated seqs), OR
-  #  - seq counter / DDB routing drifted in storage_service.
+  # Org membership propagation (500b9 / 82387).
   - node: alice
     field: org_member_count
     org_role: alice
@@ -60,5 +151,24 @@ assertions:
   - node: bob
     field: org_member_count
     org_role: alice
+    op: ">="
+    value: 2
+
+  # 4b171 guard — Bob's unfiltered query on the org-shared schema must
+  # see at least the pre-tag molecule (+ ideally the post-tag one too,
+  # but expect_min on the step already hard-fails on 0; we use >=1 here
+  # so a slower sync that delivers only the pre-tag leg still counts as
+  # "4b171 didn't regress").
+  - node: bob
+    field: last_query_result_count
+    query_name: bob_post_sync
+    op: ">="
+    value: 1
+
+  # 3e063 guard — Alice still sees both her molecules after tagging
+  # (pre-tag + post-tag).
+  - node: alice
+    field: last_query_result_count
+    query_name: alice_post_sync
     op: ">="
     value: 2
