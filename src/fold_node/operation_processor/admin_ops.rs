@@ -275,10 +275,21 @@ impl OperationProcessor {
         let s3 = fold_db::sync::s3::S3Client::new(http.clone());
         let auth = fold_db::sync::auth::AuthClient::new(http, sync_setup.auth_url, sync_setup.auth);
 
-        // Get SledPool from the running database for snapshot
-        let config = self.node.config.clone();
-        let db_path = config.get_storage_path();
-        let pool = std::sync::Arc::new(fold_db::storage::SledPool::new(db_path));
+        // Reuse the running FoldDB's SledPool for the snapshot read.
+        // Opening a bespoke `SledPool::new(db_path)` here would hold a
+        // second OS file lock on the same directory as the main HTTP
+        // server's pool and fail with `WouldBlock`.
+        let pool = self
+            .node
+            .get_fold_db()
+            .map_err(|e| FoldDbError::Config(format!("Failed to get FoldDB: {e}")))?
+            .sled_pool()
+            .ok_or_else(|| {
+                FoldDbError::Config(
+                    "Running FoldDB has no SledPool — cannot snapshot for migration".to_string(),
+                )
+            })?
+            .clone();
         let base_store: std::sync::Arc<dyn fold_db::storage::traits::NamespacedStore> =
             std::sync::Arc::new(fold_db::storage::SledNamespacedStore::new(pool));
 

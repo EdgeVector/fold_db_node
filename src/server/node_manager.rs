@@ -409,6 +409,21 @@ impl NodeManager {
         None
     }
 
+    /// Get the shared SledPool, lazily creating it at the base config's
+    /// `database.path` if one does not yet exist.
+    ///
+    /// This is the only supported way for non-FoldNode code (discovery
+    /// resolver, identity-card writer, snapshot uploader, etc.) to touch
+    /// Sled. It guarantees a **single** `sled::Db` file-lock holder per
+    /// database path for the lifetime of the process — bespoke
+    /// `SledPool::new(path)` call sites at the same path race this pool
+    /// for the OS file lock and produce `WouldBlock` errors during the
+    /// register → org-create window.
+    pub async fn get_or_init_sled_pool(&self) -> Arc<SledPool> {
+        let path = self.config.read().await.base_config.database.path.clone();
+        self.get_or_create_pool(&path).await
+    }
+
     /// Check if an active node exists.
     pub async fn has_active_node(&self) -> bool {
         let shared = self.shared_node.read().await;
@@ -487,6 +502,76 @@ mod tests {
 
         // One pool across the entire cycle.
         assert!(manager.get_sled_pool().await.is_some());
+    }
+
+    /// Regression test for the register → org-create Sled lock race
+    /// (fd7c5): `get_or_init_sled_pool` must return **the same pool**
+    /// that a subsequent `create_node` would pick up, so helper code
+    /// (discovery resolver, identity-card writer, snapshot uploader)
+    /// cannot open a second `sled::Db` at the same path.
+    ///
+    /// Before the fix, `DiscoveryConfig::from_sled_fallback`,
+    /// `set_identity_card`, and `migrate_to_cloud` all called
+    /// `SledPool::new(data_path)` directly. Any one of those pools holding
+    /// the OS flock caused the next `create_node` (triggered by the first
+    /// `POST /api/org` after `POST /api/auth/register`) to fail with
+    /// `WouldBlock` inside `NodeConfigStore::with_crypto_key`.
+    #[tokio::test]
+    async fn get_or_init_sled_pool_returns_cached_pool() {
+        let tmp = tempfile::TempDir::new().unwrap();
+        let manager = NodeManager::new(test_config(tmp.path()));
+
+        // Helper lazily creates and caches the pool.
+        let pool_helper = manager.get_or_init_sled_pool().await;
+
+        // `create_node` must see the exact same Arc — not a fresh pool at
+        // the same path (which would race for the file lock).
+        let _node = manager.get_node("test_user").await.unwrap();
+        let pool_after_node = manager.get_sled_pool().await.expect("pool must exist");
+
+        assert!(
+            Arc::ptr_eq(&pool_helper, &pool_after_node),
+            "helper pool and node pool must be the same Arc — otherwise \
+             two sled::Db instances fight for the OS flock"
+        );
+    }
+
+    /// Regression test for fd7c5: simulate the register → org-create
+    /// race. A first `get_node` boots the node (mirroring register's
+    /// `ensure_default_identity`). A helper then borrows the shared pool
+    /// (mirroring `DiscoveryConfig::from_sled_fallback` or any other
+    /// caller that previously opened a bespoke pool). `invalidate_all`
+    /// runs. The second `get_node` (mirroring org-create) must succeed
+    /// — the shared pool is the only flock holder.
+    #[tokio::test]
+    async fn register_then_org_create_race_does_not_deadlock() {
+        let tmp = tempfile::TempDir::new().unwrap();
+        let manager = NodeManager::new(test_config(tmp.path()));
+
+        // Register path: first get_node creates node + pool.
+        let first = manager.get_node("test_user").await.unwrap();
+
+        // Helper path (discovery / identity card / snapshot): grab the
+        // shared pool via the sanctioned API and hold it open — mirrors
+        // the DiscoveryConfig::resolve fallback firing during the
+        // register→org-create window.
+        let helper_pool = manager.get_or_init_sled_pool().await;
+        let _helper_guard = helper_pool
+            .acquire_arc()
+            .expect("helper must be able to acquire the shared pool");
+
+        // Simulate the `enable_cloud_sync_in_config` invalidation.
+        manager.invalidate_all_nodes().await;
+
+        // Org-create path: recreating the node while the helper still
+        // holds a guard on the shared pool must succeed — no WouldBlock
+        // 500 to the client.
+        let second = manager
+            .get_node("test_user")
+            .await
+            .expect("create_node must not fail on Sled flock race");
+
+        assert!(!Arc::ptr_eq(&first, &second));
     }
 
     /// Changing the storage path must drop the cached pool so the new path

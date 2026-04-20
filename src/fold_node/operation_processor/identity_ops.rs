@@ -72,16 +72,28 @@ impl OperationProcessor {
         card.save()
             .map_err(|e| SchemaError::InvalidData(format!("Failed to save identity card: {e}")))?;
 
-        // Also save to Sled config store (best-effort)
-        if let Ok(folddb_home) = folddb_home() {
-            let data_path = folddb_home.join("data");
-            {
-                let pool = std::sync::Arc::new(fold_db::storage::SledPool::new(data_path));
-                if let Ok(store) = fold_db::NodeConfigStore::new(pool) {
-                    if let Err(e) = card.save_to_sled(&store) {
-                        log::warn!("Failed to save identity card to Sled: {}", e);
-                    }
-                }
+        // Also save to Sled config store (best-effort). Reuse the running
+        // FoldDB's pool so we don't race the main Sled file lock —
+        // `SledPool::new(data_path)` in the same process as the HTTP server
+        // would fight the NodeManager-owned pool for the OS flock and
+        // fail with `WouldBlock`.
+        let fold_db = match self.node.get_fold_db() {
+            Ok(db) => db,
+            Err(e) => {
+                log::warn!("Failed to save identity card to Sled: no FoldDB: {}", e);
+                return Ok(());
+            }
+        };
+        let pool = match fold_db.sled_pool() {
+            Some(p) => p.clone(),
+            None => {
+                log::warn!("Failed to save identity card to Sled: FoldDB has no pool");
+                return Ok(());
+            }
+        };
+        if let Ok(store) = fold_db::NodeConfigStore::new(pool) {
+            if let Err(e) = card.save_to_sled(&store) {
+                log::warn!("Failed to save identity card to Sled: {}", e);
             }
         }
 

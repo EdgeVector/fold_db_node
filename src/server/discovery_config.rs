@@ -10,9 +10,13 @@
 //! 2. The node's current `NodeManager` base config — derives the URL from
 //!    `endpoints::exemem_api_url()` and the master key from
 //!    `SHA256(private_key)`.
-//! 3. If no base config is loaded yet, the on-disk Sled `NodeConfigStore`
-//!    under `folddb_home/data` (the case where the user registered after
-//!    the HTTP server booted).
+//! 3. If no base config is loaded yet, read the on-disk Sled
+//!    `NodeConfigStore` through **`NodeManager`'s shared pool** (the case
+//!    where the user registered after the HTTP server booted). Using the
+//!    shared pool here is load-bearing: a bespoke `SledPool::new` at the
+//!    same path races the NodeManager-owned pool for the OS file lock
+//!    and produces a `WouldBlock` when `/api/org` creates a node right
+//!    after `/api/auth/register` activates cloud sync.
 
 use sha2::{Digest, Sha256};
 
@@ -38,7 +42,7 @@ impl DiscoveryConfig {
             return Some(cfg);
         }
 
-        Self::from_sled_fallback()
+        Self::from_sled_fallback(node_manager).await
     }
 
     fn from_env() -> Option<Self> {
@@ -59,17 +63,13 @@ impl DiscoveryConfig {
         Some(Self { url, master_key })
     }
 
-    fn from_sled_fallback() -> Option<Self> {
-        let data_path = crate::utils::paths::folddb_home()
-            .ok()
-            .map(|h| h.join("data"))
-            .or_else(|| {
-                std::env::var("FOLD_STORAGE_PATH")
-                    .ok()
-                    .map(std::path::PathBuf::from)
-            })?;
-
-        let pool = std::sync::Arc::new(fold_db::storage::SledPool::new(data_path));
+    async fn from_sled_fallback(node_manager: &NodeManager) -> Option<Self> {
+        // Always route through the NodeManager-owned pool so there is
+        // only one `sled::Db` lock holder for the data path. Creating a
+        // bespoke `SledPool::new(data_path)` here would race the
+        // NodeManager pool on the next `create_node` and surface as a
+        // `WouldBlock` 500 to the client.
+        let pool = node_manager.get_or_init_sled_pool().await;
         let store = fold_db::NodeConfigStore::new(pool).ok()?;
         let cloud = store.get_cloud_config()?;
 
