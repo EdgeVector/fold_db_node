@@ -98,9 +98,18 @@ jobs:
             # report.md rows look like: | notes | FAIL | <detail> |
             failing="$(awk -F'|' '/\| FAIL \|/ {gsub(/^ *| *$/,"",$2); printf "%s ", $2}' "$REPORT_FILE" | sed 's/ *$//')"
           fi
-          # org-leg FAIL (not PENDING — PENDING is expected while M1 deploy is out)
-          if [ -f "$REPORT_FILE" ] && grep -q '^\- \*\*Status:\*\* FAIL' "$REPORT_FILE"; then
-            failing="${failing:+$failing }org-leg"
+          # org-leg / set-org-hash-leg FAIL (not PENDING — PENDING is expected
+          # while M1 deploy is out). Both sub-sections use the same
+          # "- **Status:** FAIL" marker, so awk-scan each section separately.
+          if [ -f "$REPORT_FILE" ]; then
+            if awk '/^## Set-org-hash leg/,/^## Org-sync leg/' "$REPORT_FILE" \
+              | grep -q '^\- \*\*Status:\*\* FAIL'; then
+              failing="${failing:+$failing }set-org-hash-leg"
+            fi
+            if awk '/^## Org-sync leg/,0' "$REPORT_FILE" \
+              | grep -q '^\- \*\*Status:\*\* FAIL'; then
+              failing="${failing:+$failing }org-leg"
+            fi
           fi
           [ -z "$failing" ] && failing="unknown (see harness.log)"
 

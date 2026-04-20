@@ -593,6 +593,194 @@ for entry in "${SOURCES[@]}"; do
 done
 
 # ---------------------------------------------------------------------------
+# Set-org-hash leg — single-node regression coverage for pre-tag queryability
+#
+# Gap 249d8 (from alpha dogfood run 4): the per-source loop above exercises
+# /api/mutation + /api/query + /api/schema/{name}/keys, but never calls
+# POST /api/schema/{name}/set-org-hash. That blind-spot let two run-4 BLOCKERs
+# ship un-caught:
+#
+#   - 3e063: tagging a schema with an org_hash orphans every molecule written
+#     under the personal prefix before the tag. Any later query that targets
+#     the now-org-tagged field hits "Atom not found for key".
+#   - af4ba: the org-tagged schema itself never propagates to peer nodes over
+#     the org sync log, so even if the personal-prefix molecules were still
+#     queryable locally they would not be resolvable on a peer.
+#
+# This leg catches 3e063 on a single local node — we don't need AWS creds for
+# that: "pre-tag molecules stay queryable after tagging the schema" is a
+# local invariant. af4ba is the cross-node propagation half and lives in the
+# cloud-e2e nightly (test-framework/scenarios/org-sync-2node.yaml) where a
+# separate assertion will pull schemas + molecules across two nodes.
+# ---------------------------------------------------------------------------
+
+# Pick the "files" source — its marker-field (`path`) is a stable disk path
+# so the set-equality check is easy to read in the diff when it fails, and
+# the 50 molecules written earlier in the per-source loop are exactly the
+# "pre-tag" population we need to probe for orphaning.
+SET_ORG_HASH_SOURCE="files"
+# Deterministic fake org_hash (64 hex chars, shape-valid for the endpoint —
+# set-org-hash does not cross-check the org exists on this node, it just
+# writes the tag onto the schema + runtime fields).
+SET_ORG_HASH_FAKE="a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1"
+SET_ORG_HASH_RESULT="SKIP|set-org-hash leg not run"
+
+exercise_set_org_hash() {
+  local backend_port="$1"
+  local label="$SET_ORG_HASH_SOURCE"
+  local fake_hash="$SET_ORG_HASH_FAKE"
+
+  # Recover the registered schema identity-hash name and field list from the
+  # per-source artifacts. If the source itself failed earlier we can't run
+  # this leg, so surface that cleanly.
+  local schema_resp="$REPORT_DIR/schema-$label.resp.json"
+  local fixture_path="$FIXTURES_DIR/$(printf '%s.schema.json' "$label")"
+  local expected_sorted="$REPORT_DIR/expected-markers-$label.sorted.txt"
+  if [ ! -f "$schema_resp" ] || [ ! -f "$fixture_path" ] || [ ! -f "$expected_sorted" ]; then
+    SET_ORG_HASH_RESULT="SKIP|prerequisites missing (source '$label' did not run successfully)"
+    log "[set-org-hash] $SET_ORG_HASH_RESULT"
+    return 0
+  fi
+
+  local schema_name
+  schema_name="$(jq -r '.schema.name' "$schema_resp")"
+  if [ -z "$schema_name" ] || [ "$schema_name" = "null" ]; then
+    SET_ORG_HASH_RESULT="FAIL|could not read schema name from $schema_resp"
+    log "[set-org-hash] $SET_ORG_HASH_RESULT"
+    return 0
+  fi
+
+  local marker_field="path"  # matches SOURCES "files" entry
+
+  log "[set-org-hash] tag $schema_name with org_hash=$fake_hash"
+  local tag_resp
+  if ! tag_resp="$(api POST \
+      "http://localhost:$backend_port/api/schema/$schema_name/set-org-hash" \
+      "$(jq -cn --arg h "$fake_hash" '{org_hash:$h}')")"; then
+    SET_ORG_HASH_RESULT="FAIL|POST /api/schema/$schema_name/set-org-hash non-2xx: $tag_resp"
+    log "[set-org-hash] $SET_ORG_HASH_RESULT"
+    return 0
+  fi
+  printf '%s' "$tag_resp" > "$REPORT_DIR/set-org-hash-tag.resp.json"
+  local tagged_hash
+  tagged_hash="$(jq -r '.org_hash // .data.org_hash // empty' <<<"$tag_resp")"
+  if [ "$tagged_hash" != "$fake_hash" ]; then
+    SET_ORG_HASH_RESULT="FAIL|tag response org_hash=$tagged_hash != expected $fake_hash"
+    log "[set-org-hash] $SET_ORG_HASH_RESULT"
+    return 0
+  fi
+
+  # Confirm GET /api/schema/{name} round-trips the new tag through Sled.
+  local get_resp
+  if ! get_resp="$(api GET "http://localhost:$backend_port/api/schema/$schema_name" '')"; then
+    SET_ORG_HASH_RESULT="FAIL|GET /api/schema/$schema_name non-2xx after tag"
+    log "[set-org-hash] $SET_ORG_HASH_RESULT"
+    return 0
+  fi
+  printf '%s' "$get_resp" > "$REPORT_DIR/set-org-hash-get.resp.json"
+  local persisted_hash
+  persisted_hash="$(jq -r '.schema.schema.org_hash // .schema.org_hash // empty' <<<"$get_resp")"
+  if [ "$persisted_hash" != "$fake_hash" ]; then
+    SET_ORG_HASH_RESULT="FAIL|schema.org_hash after tag=$persisted_hash != $fake_hash (not persisted)"
+    log "[set-org-hash] $SET_ORG_HASH_RESULT"
+    return 0
+  fi
+
+  # ---- 3e063 assertion: pre-tag molecules must stay queryable ------------
+  log "[set-org-hash] re-query $schema_name; pre-tag molecules must survive"
+  local fields_json; fields_json="$(jq -c '.fields' "$fixture_path")"
+  local q
+  q="$(jq -cn --arg s "$schema_name" --argjson f "$fields_json" \
+    '{schema_name:$s, fields:$f}')"
+  local post_tag_qresp
+  if ! post_tag_qresp="$(api POST "http://localhost:$backend_port/api/query" "$q")"; then
+    SET_ORG_HASH_RESULT="FAIL|3e063: query after tag returned non-2xx (orphaned pre-tag molecules?)"
+    log "[set-org-hash] $SET_ORG_HASH_RESULT"
+    printf '%s' "$post_tag_qresp" > "$REPORT_DIR/set-org-hash-query-after-tag.resp.json" 2>/dev/null || true
+    return 0
+  fi
+  printf '%s' "$post_tag_qresp" > "$REPORT_DIR/set-org-hash-query-after-tag.resp.json"
+
+  local post_tag_n
+  post_tag_n="$(jq '.results | length' <<<"$post_tag_qresp" 2>/dev/null || echo 0)"
+  if ! [[ "$post_tag_n" =~ ^[0-9]+$ ]]; then post_tag_n=0; fi
+  if [ "$post_tag_n" -lt "$PER_SOURCE_COUNT" ]; then
+    SET_ORG_HASH_RESULT="FAIL|3e063: query after tag returned $post_tag_n of $PER_SOURCE_COUNT pre-tag molecules"
+    log "[set-org-hash] $SET_ORG_HASH_RESULT"
+    return 0
+  fi
+
+  local post_tag_markers="$REPORT_DIR/set-org-hash-markers-after-tag.txt"
+  local post_tag_sorted="$REPORT_DIR/set-org-hash-markers-after-tag.sorted.txt"
+  jq -r --arg f "$marker_field" '.results[] | .fields[$f] // empty' \
+    <<<"$post_tag_qresp" > "$post_tag_markers"
+  sort -u "$post_tag_markers" > "$post_tag_sorted"
+  local missing_after_tag="$REPORT_DIR/set-org-hash-missing-after-tag.txt"
+  comm -23 "$expected_sorted" "$post_tag_sorted" > "$missing_after_tag"
+  local missing_n
+  missing_n="$(awk 'NF' "$missing_after_tag" | wc -l | tr -d ' ')"
+  if [ "$missing_n" -gt 0 ]; then
+    local missing_preview
+    missing_preview="$(awk 'NF' "$missing_after_tag" | head -n 3 | paste -sd',' -)"
+    SET_ORG_HASH_RESULT="FAIL|3e063: $missing_n pre-tag molecules orphaned on '$marker_field' after set-org-hash [missing≤3: $missing_preview]"
+    log "[set-org-hash] $SET_ORG_HASH_RESULT"
+    return 0
+  fi
+  log "[set-org-hash] 3e063 ok: all $PER_SOURCE_COUNT pre-tag molecules still queryable"
+
+  # ---- clear path: {"org_hash": null} must revert + pre-tag molecules must
+  # still be queryable afterwards (a clear that orphans data would be worse
+  # than the tag that orphans it).
+  log "[set-org-hash] clear $schema_name org_hash"
+  local clear_resp
+  if ! clear_resp="$(api POST \
+      "http://localhost:$backend_port/api/schema/$schema_name/set-org-hash" \
+      '{"org_hash":null}')"; then
+    SET_ORG_HASH_RESULT="FAIL|POST .../set-org-hash {org_hash:null} non-2xx: $clear_resp"
+    log "[set-org-hash] $SET_ORG_HASH_RESULT"
+    return 0
+  fi
+  printf '%s' "$clear_resp" > "$REPORT_DIR/set-org-hash-clear.resp.json"
+
+  local get_after_clear
+  if ! get_after_clear="$(api GET "http://localhost:$backend_port/api/schema/$schema_name" '')"; then
+    SET_ORG_HASH_RESULT="FAIL|GET /api/schema/$schema_name non-2xx after clear"
+    log "[set-org-hash] $SET_ORG_HASH_RESULT"
+    return 0
+  fi
+  printf '%s' "$get_after_clear" > "$REPORT_DIR/set-org-hash-get-after-clear.resp.json"
+  local cleared_hash
+  cleared_hash="$(jq -r '.schema.schema.org_hash // .schema.org_hash // empty' <<<"$get_after_clear")"
+  if [ -n "$cleared_hash" ] && [ "$cleared_hash" != "null" ]; then
+    SET_ORG_HASH_RESULT="FAIL|org_hash not cleared after {org_hash:null}: $cleared_hash"
+    log "[set-org-hash] $SET_ORG_HASH_RESULT"
+    return 0
+  fi
+
+  local clear_qresp
+  if ! clear_qresp="$(api POST "http://localhost:$backend_port/api/query" "$q")"; then
+    SET_ORG_HASH_RESULT="FAIL|query after clear returned non-2xx"
+    log "[set-org-hash] $SET_ORG_HASH_RESULT"
+    return 0
+  fi
+  printf '%s' "$clear_qresp" > "$REPORT_DIR/set-org-hash-query-after-clear.resp.json"
+  local clear_n
+  clear_n="$(jq '.results | length' <<<"$clear_qresp" 2>/dev/null || echo 0)"
+  if ! [[ "$clear_n" =~ ^[0-9]+$ ]]; then clear_n=0; fi
+  if [ "$clear_n" -lt "$PER_SOURCE_COUNT" ]; then
+    SET_ORG_HASH_RESULT="FAIL|query after clear returned $clear_n of $PER_SOURCE_COUNT pre-tag molecules"
+    log "[set-org-hash] $SET_ORG_HASH_RESULT"
+    return 0
+  fi
+
+  SET_ORG_HASH_RESULT="PASS|source=$label schema=$schema_name tagged+queryable=$post_tag_n cleared+queryable=$clear_n (3e063 guard)"
+  log "[set-org-hash] PASS"
+  return 0
+}
+
+exercise_set_org_hash "$A_BACKEND"
+
+# ---------------------------------------------------------------------------
 # Org-sync leg — local plumbing check only
 #
 # This harness runs without AWS credentials, so it cannot reach dev Exemem
@@ -639,6 +827,11 @@ done
 
 VERDICT="PASS"
 [ "$FAIL_COUNT" -gt 0 ] && VERDICT="FAIL"
+# A failing set-org-hash leg is a verdict-breaking regression too (249d8 was
+# filed precisely so 3e063-class regressions aren't silent).
+case "$SET_ORG_HASH_RESULT" in
+  FAIL\|*) VERDICT="FAIL" ;;
+esac
 
 {
   printf '# QA dogfood harness report\n\n'
@@ -656,6 +849,11 @@ VERDICT="PASS"
     IFS='|' read -r src status detail <<<"$line"
     printf '| %s | %s | %s |\n' "$src" "$status" "$detail"
   done
+  printf '\n## Set-org-hash leg (single-node; 3e063 guard)\n\n'
+  IFS='|' read -r soh_status soh_detail <<<"$SET_ORG_HASH_RESULT"
+  printf -- '- **Status:** %s\n' "$soh_status"
+  printf -- '- **Detail:** %s\n' "$soh_detail"
+  printf -- '- **Scope:** tags the `%s` schema, asserts pre-tag molecules stay queryable, then clears the tag and re-asserts. Cross-node propagation (af4ba) lives in `test-framework/scenarios/org-sync-2node.yaml` (cloud e2e nightly).\n' "$SET_ORG_HASH_SOURCE"
   printf '\n## Org-sync leg\n\n'
   IFS='|' read -r org_status org_detail <<<"$ORG_RESULT"
   printf -- '- **Status:** %s\n' "$org_status"
@@ -664,7 +862,7 @@ VERDICT="PASS"
 } > "$REPORT_FILE"
 
 log "report: $REPORT_FILE"
-log "verdict: $VERDICT ($PASS_COUNT pass / $FAIL_COUNT fail of ${#SOURCES[@]} sources; org leg: ${ORG_RESULT%%|*})"
+log "verdict: $VERDICT ($PASS_COUNT pass / $FAIL_COUNT fail of ${#SOURCES[@]} sources; set-org-hash: ${SET_ORG_HASH_RESULT%%|*}; org leg: ${ORG_RESULT%%|*})"
 
 if [ "$VERDICT" = PASS ]; then
   exit 0
