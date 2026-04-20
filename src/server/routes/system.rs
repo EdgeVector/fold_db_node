@@ -41,9 +41,14 @@ pub async fn health_check() -> impl Responder {
         .get()
         .map(|t| t.elapsed().as_secs())
         .unwrap_or(0);
+    // Use FOLDDB_BUILD_VERSION (stamped from GITHUB_REF_NAME / git describe
+    // in build.rs) for parity with `folddb --version`. CARGO_PKG_VERSION
+    // reads the workspace manifest, which drifts: v0.3.6 tarballs reported
+    // CARGO_PKG_VERSION=0.3.1 via this endpoint during brew-install-dogfood-
+    // run-3 even though the binary itself correctly reported 0.3.6.
     HttpResponse::Ok().json(json!({
         "ok": true,
-        "version": env!("CARGO_PKG_VERSION"),
+        "version": env!("FOLDDB_BUILD_VERSION"),
         "uptime_s": uptime_s,
     }))
 }
@@ -130,6 +135,9 @@ mod tests {
         let body: serde_json::Value = test::read_body_json(resp).await;
         assert_eq!(body["ok"], true);
         assert!(body["version"].is_string(), "version must be a string");
+        // Must match the compile-time build stamp (FOLDDB_BUILD_VERSION),
+        // NOT Cargo.toml — see brew-install-dogfood-run-3 BLOCKER.
+        assert_eq!(body["version"], env!("FOLDDB_BUILD_VERSION"));
         assert!(body["uptime_s"].is_u64(), "uptime_s must be a u64");
     }
 
