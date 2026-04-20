@@ -12,6 +12,7 @@ use crate::fold_node::llm_query;
 use crate::server::routes::apple_import as apple_import_routes;
 use crate::server::routes::file_upload as file_upload_routes;
 use crate::server::routes::ingestion as ingestion_routes;
+use crate::server::routes::memory as memory_routes;
 use crate::server::routes::smart_folder as smart_folder_routes;
 use crate::utils::http_errors;
 use fold_db::error::{FoldDbError, FoldDbResult};
@@ -380,6 +381,7 @@ impl FoldHttpServer {
                 .configure(Self::configure_security_routes)
                 .configure(Self::configure_discovery_routes)
                 .configure(Self::configure_fingerprints_routes)
+                .configure(Self::configure_memory_routes)
                 .configure(Self::configure_trust_routes)
                 .configure(Self::configure_identity_routes)
                 .configure(Self::configure_sharing_routes)
@@ -468,6 +470,17 @@ impl FoldHttpServer {
                 web::post().to(view_routes::block_view),
             )
             .route("/views/load/{name}", web::post().to(view_routes::load_view));
+    }
+
+    /// Memory subsystem routes. Currently exposes schema registration so
+    /// external tools (dogfood harness, CLIs, MCP servers) can bring the
+    /// Memory schema up without embedding Rust. Expand as later phases
+    /// add consolidation-view registration, review lifecycle, etc.
+    fn configure_memory_routes(cfg: &mut web::ServiceConfig) {
+        cfg.route(
+            "/memory/register",
+            web::post().to(memory_routes::register_memory_schema),
+        );
     }
 
     fn configure_query_routes(cfg: &mut web::ServiceConfig) {
