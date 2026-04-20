@@ -85,7 +85,9 @@ pub async fn get_sled_pool(
 /// Reads api_url from Sled config store or DatabaseConfig. Auth credentials
 /// (session_token, api_key) come from credentials.json — the single source
 /// of truth for per-device secrets.
-async fn get_auth_client(node: &FoldNode) -> Option<fold_db::sync::auth::AuthClient> {
+pub(crate) async fn auth_client_for_node(
+    node: &FoldNode,
+) -> Option<fold_db::sync::auth::AuthClient> {
     // Load per-device credentials from credentials.json
     let creds = crate::keychain::load_credentials().ok().flatten()?;
 
@@ -129,7 +131,7 @@ async fn get_auth_client(node: &FoldNode) -> Option<fold_db::sync::auth::AuthCli
 pub async fn require_exemem(
     node: &FoldNode,
 ) -> Result<fold_db::sync::auth::AuthClient, crate::handlers::HandlerError> {
-    get_auth_client(node).await.ok_or_else(|| {
+    auth_client_for_node(node).await.ok_or_else(|| {
         crate::handlers::HandlerError::BadRequest(
             "Organizations require an Exemem account. Configure Exemem cloud sync to create or join orgs.".to_string(),
         )
@@ -144,7 +146,7 @@ pub async fn create_org(
     user_hash: &str,
     node: &FoldNode,
 ) -> HandlerResult<CreateOrgResponse> {
-    let cloud_client = get_auth_client(node).await;
+    let cloud_client = auth_client_for_node(node).await;
     let pool = get_sled_pool(node).await?;
 
     let creator_public_key = current_caller_pubkey(node);
@@ -196,7 +198,7 @@ pub async fn join_org(
 
     // Notify cloud FIRST that we accepted (status → active), so the storage
     // backend recognizes us as a member before we try to download org data.
-    if let Some(client) = get_auth_client(node).await {
+    if let Some(client) = auth_client_for_node(node).await {
         let org_hash = &membership.org_hash;
         if let Err(e) = client.accept_invite(org_hash).await {
             log::warn!("Failed to sync accept_invite to cloud: {}", e);
@@ -230,7 +232,7 @@ pub async fn list_orgs(user_hash: &str, node: &FoldNode) -> HandlerResult<ListOr
 
     let mut orgs = org_ops::list_orgs(&pool).handler_err("list orgs")?;
 
-    if let Some(client) = get_auth_client(node).await {
+    if let Some(client) = auth_client_for_node(node).await {
         for org in orgs.iter_mut() {
             merge_cloud_members_into(&client, org).await;
         }
@@ -259,7 +261,7 @@ pub async fn get_org(
             ))
         })?;
 
-    if let Some(client) = get_auth_client(node).await {
+    if let Some(client) = auth_client_for_node(node).await {
         merge_cloud_members_into(&client, &mut membership).await;
     }
 
@@ -299,7 +301,7 @@ pub async fn add_member(
 
     org_ops::add_member(&pool, org_hash, member).handler_err("add member")?;
 
-    if let Some(client) = get_auth_client(node).await {
+    if let Some(client) = auth_client_for_node(node).await {
         let target_user_hash = crate::utils::crypto::user_hash_from_pubkey(&req.node_public_key);
         client
             .add_member(org_hash, &target_user_hash, "Member")
@@ -347,7 +349,7 @@ pub async fn remove_member(
         purge_org_locally(org_hash, node, "removal").await?;
     }
 
-    if let Some(client) = get_auth_client(node).await {
+    if let Some(client) = auth_client_for_node(node).await {
         client
             .remove_member(org_hash, node_public_key)
             .await
@@ -427,7 +429,7 @@ handler_response! {
 /// Best-effort: network or DDB failures log and leave the local list intact.
 /// The local Sled `org_memberships` tree is never mutated here — placeholder
 /// entries live only in the HTTP response.
-async fn merge_cloud_members_into(
+pub(crate) async fn merge_cloud_members_into(
     client: &fold_db::sync::auth::AuthClient,
     org: &mut OrgMembership,
 ) {
@@ -572,7 +574,7 @@ pub async fn get_pending_invites(
 ) -> HandlerResult<PendingInvitesResponse> {
     let mut invites = Vec::new();
 
-    if let Some(client) = get_auth_client(node).await {
+    if let Some(client) = auth_client_for_node(node).await {
         let s3_client = fold_db::sync::s3::S3Client::new(shared_http_client());
 
         // 1. List objects in inbox/org_invites/
