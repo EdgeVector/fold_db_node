@@ -10,6 +10,7 @@ pub mod filesystem;
 pub mod fingerprints;
 pub mod ingestion;
 pub mod log;
+pub mod memory;
 pub mod org;
 pub mod query;
 pub mod remote;

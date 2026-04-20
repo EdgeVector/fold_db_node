@@ -1,0 +1,101 @@
+{
+  "description": "Curated fixture memories for dogfooding the memory agent. Three intentional semantic clusters + noise. Cluster labels drive the /eval command's scoring.",
+  "memories": [
+    {
+      "id": "mem_fix_deploy_1",
+      "body": "Always rebase on the base branch before pushing. CI fails otherwise because of cargo lock drift.",
+      "kind": "feedback",
+      "tags": ["deploy", "ci"],
+      "source": "fixture",
+      "expected_cluster": "deploy_policy"
+    },
+    {
+      "id": "mem_fix_deploy_2",
+      "body": "PR auto-merge must be enabled with --squash; anything else fights the merge queue.",
+      "kind": "feedback",
+      "tags": ["deploy", "pr"],
+      "source": "fixture",
+      "expected_cluster": "deploy_policy"
+    },
+    {
+      "id": "mem_fix_deploy_3",
+      "body": "After a PR merges, the task moves to trash and you switch back to master with a pull. That is the complete cycle.",
+      "kind": "feedback",
+      "tags": ["deploy", "kanban"],
+      "source": "fixture",
+      "expected_cluster": "deploy_policy"
+    },
+    {
+      "id": "mem_fix_schema_1",
+      "body": "The schema service deduplicates semantically equivalent schemas across nodes via embedding similarity on field descriptions.",
+      "kind": "reference",
+      "tags": ["schema-service", "patent"],
+      "source": "fixture",
+      "expected_cluster": "schema_service"
+    },
+    {
+      "id": "mem_fix_schema_2",
+      "body": "Bidirectional best-match verification prevents many-to-one field mappings during canonical field resolution.",
+      "kind": "reference",
+      "tags": ["schema-service", "canonical-fields"],
+      "source": "fixture",
+      "expected_cluster": "schema_service"
+    },
+    {
+      "id": "mem_fix_schema_3",
+      "body": "Schema expansion keeps a blocked old schema and a superset new schema with field mappers pointing shared fields to the existing molecules.",
+      "kind": "reference",
+      "tags": ["schema-service", "expansion"],
+      "source": "fixture",
+      "expected_cluster": "schema_service"
+    },
+    {
+      "id": "mem_fix_transform_1",
+      "body": "Transform views take multi-query input across source schemas; WASM emits multi-row typed output keyed by whatever the WASM chooses.",
+      "kind": "reference",
+      "tags": ["transform", "wasm"],
+      "source": "fixture",
+      "expected_cluster": "transforms"
+    },
+    {
+      "id": "mem_fix_transform_2",
+      "body": "View caches are reactive. Source mutation invalidates dependent view caches and spawns background precomputation for deep views.",
+      "kind": "reference",
+      "tags": ["transform", "reactive"],
+      "source": "fixture",
+      "expected_cluster": "transforms"
+    },
+    {
+      "id": "mem_fix_transform_3",
+      "body": "WASM views cannot be written to directly today; only identity views redirect mutations to source schemas. Writing to a WASM view errors.",
+      "kind": "reference",
+      "tags": ["transform", "writeback"],
+      "source": "fixture",
+      "expected_cluster": "transforms"
+    },
+    {
+      "id": "mem_fix_noise_1",
+      "body": "Mount Rainier Paradise trail is crowded on weekends; go weekdays for better photos.",
+      "kind": "project",
+      "tags": ["hiking", "washington"],
+      "source": "fixture",
+      "expected_cluster": "noise"
+    },
+    {
+      "id": "mem_fix_noise_2",
+      "body": "The espresso machine at home needs descaling every 3 months. Last done in February.",
+      "kind": "reference",
+      "tags": ["house"],
+      "source": "fixture",
+      "expected_cluster": "noise"
+    },
+    {
+      "id": "mem_fix_noise_3",
+      "body": "Fei prefers async review comments over synchronous Slack DMs for design feedback.",
+      "kind": "feedback",
+      "tags": ["team", "workflow"],
+      "source": "fixture",
+      "expected_cluster": "noise"
+    }
+  ]
+}
