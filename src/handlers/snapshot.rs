@@ -90,13 +90,32 @@ pub async fn restore(user_hash: &str, node: &FoldNode) -> HandlerResult<Snapshot
     let entries_replayed: usize = outcomes.iter().map(|o| o.entries_replayed).sum();
     let targets_restored = outcomes.len();
 
+    // bootstrap_all only invokes the SchemaCore reloader when post-snapshot
+    // log entries included schemas. When the restore is snapshot-only (0 log
+    // deltas on top — the common case) the reloader never fires, leaving the
+    // in-memory schema cache stale so `GET /api/schemas` can't see restored
+    // org-tagged schemas until the node is restarted. Reload unconditionally
+    // here — the operation is a cheap no-op when cache matches disk. Papercut
+    // 99e8a from Alpha E2E Dogfood Run 5, Flow 2.
+    db.schema_manager()
+        .reload_from_store()
+        .await
+        .handler_err("reload schema cache after restore")?;
+
+    let last_seqs: Vec<u64> = outcomes.iter().map(|o| o.last_seq).collect();
+    let seq_summary = match last_seqs.as_slice() {
+        [seq] => format!("seq={seq}"),
+        seqs => format!("seqs={seqs:?}"),
+    };
+
     Ok(ApiResponse::success_with_user(
         SnapshotRestoreResponse {
             success: true,
             targets_restored,
             entries_replayed,
             message: format!(
-                "Restored {targets_restored} target(s), replayed {entries_replayed} log entries"
+                "Restored snapshot for {targets_restored} target(s) ({seq_summary}); \
+                 {entries_replayed} additional log entries applied on top"
             ),
         },
         user_hash,

@@ -18,11 +18,16 @@
 use actix_web::{web, App, HttpResponse, HttpServer};
 use fold_db::crypto::provider::LocalCryptoProvider;
 use fold_db::crypto::CryptoProvider;
+use fold_db::schema::SchemaState;
 use fold_db::storage::inmemory_backend::InMemoryNamespacedStore;
 use fold_db::storage::traits::NamespacedStore;
+use fold_db::storage::SledNamespacedStore;
 use fold_db::sync::auth::{AuthClient, AuthRefreshCallback, SyncAuth};
 use fold_db::sync::s3::S3Client;
 use fold_db::sync::{SyncConfig, SyncEngine};
+use fold_db::test_helpers::TestSchemaBuilder;
+use fold_db_node::fold_node::config::NodeConfig;
+use fold_db_node::fold_node::FoldNode;
 use serde::Deserialize;
 use serde_json::json;
 use std::collections::HashMap;
@@ -510,4 +515,120 @@ async fn snapshot_restore_fails_with_wrong_key() {
     );
 
     handle.stop(true).await;
+}
+
+/// Regression for papercut 99e8a (Alpha E2E Dogfood Run 5, Flow 2).
+///
+/// After `POST /api/snapshot/restore` writes schemas to Sled, `GET /api/schemas`
+/// returned only the 12 canonical schemas until the node was restarted —
+/// restored org-tagged schemas were invisible. The root cause is that
+/// `SyncEngine::bootstrap_all` only invokes the registered schema reloader
+/// when post-snapshot *log entries* include schemas; a snapshot-only restore
+/// (the common case: 0 log deltas) skipped the reload and left the SchemaCore
+/// cache stale.
+///
+/// The fix in `handlers::snapshot::restore` adds an unconditional
+/// `SchemaCore::reload_from_store()` call after `bootstrap_all`. This test
+/// drives the actual handler end-to-end: snapshot a schema on node A, restore
+/// onto fresh node B via the handler, then assert the schema is visible via
+/// `schema_manager().get_schemas()` WITHOUT restarting node B.
+#[actix_web::test]
+async fn snapshot_restore_refreshes_schema_cache_without_restart() {
+    let user_prefix = "papercut_99e8a_user";
+    let storage: Storage = Arc::new(Mutex::new(HashMap::new()));
+    let (base_url, handle) = start_mock_server(user_prefix, storage.clone()).await;
+
+    // Same E2E key on both nodes — simulates BIP39-derived unified identity.
+    let crypto = crypto_for_key([0x99u8; 32]);
+
+    // Schema that exists on node A but NOT in the canonical 12 preloaded on
+    // node B — its visibility after restore is the assertion that matters.
+    const SCHEMA_NAME: &str = "papercut_99e8a_notes";
+    let schema_json = TestSchemaBuilder::new(SCHEMA_NAME)
+        .fields(&["body"])
+        .hash_key("title")
+        .range_key("date")
+        .build_json();
+
+    // --- Node A: real FoldNode, register schema, back up via SyncEngine ----
+    let tmp_a = tempfile::tempdir().unwrap();
+    let node_a = make_node(tmp_a.path().to_str().unwrap()).await;
+    let db_a = node_a.get_fold_db().expect("get fold_db A");
+
+    db_a.schema_manager()
+        .load_schema_from_json(&schema_json)
+        .await
+        .expect("load schema on A");
+    db_a.schema_manager()
+        .set_schema_state(SCHEMA_NAME, SchemaState::Approved)
+        .await
+        .expect("approve schema on A");
+
+    let pool_a = db_a.sled_pool().cloned().expect("A sled pool");
+    let store_a: Arc<dyn NamespacedStore> = Arc::new(SledNamespacedStore::new(pool_a));
+    let engine_a = make_engine(&base_url, crypto.clone(), store_a, "node-a");
+    engine_a
+        .backup_snapshot()
+        .await
+        .expect("backup_snapshot on A");
+
+    // --- Node B: fresh FoldNode, attach sync engine pointing at same mock --
+    let tmp_b = tempfile::tempdir().unwrap();
+    let node_b = make_node(tmp_b.path().to_str().unwrap()).await;
+    let db_b = node_b.get_fold_db().expect("get fold_db B");
+
+    let pool_b = db_b.sled_pool().cloned().expect("B sled pool");
+    let store_b: Arc<dyn NamespacedStore> = Arc::new(SledNamespacedStore::new(pool_b));
+    let engine_b = make_engine(&base_url, crypto, store_b, "node-b");
+    // `set_sync_engine` also wires the schema reloader callback — but that
+    // callback only fires when bootstrap_all sees schemas in *log entries*,
+    // which is exactly the bug we're guarding against.
+    db_b.set_sync_engine(engine_b).await;
+
+    // Sanity: the schema is NOT in node B's cache yet.
+    let before = db_b.schema_manager().get_schemas().expect("get_schemas B");
+    assert!(
+        !before.contains_key(SCHEMA_NAME),
+        "precondition: fresh node B must not yet have '{SCHEMA_NAME}', got: {:?}",
+        before.keys().collect::<Vec<_>>()
+    );
+
+    // --- Invoke the actual handler (the code path the bug fix landed in) --
+    let envelope = fold_db_node::handlers::snapshot::restore("test_user", &node_b)
+        .await
+        .expect("restore handler must succeed");
+    let response = envelope.data.expect("handler envelope must contain data");
+    assert!(response.success);
+    assert_eq!(
+        response.targets_restored, 1,
+        "personal target is the only one configured"
+    );
+    assert_eq!(
+        response.entries_replayed, 0,
+        "snapshot-only restore — the exact path the bug hid in"
+    );
+    assert!(
+        response.message.contains("Restored snapshot"),
+        "message should state that the snapshot was restored, got: {:?}",
+        response.message
+    );
+
+    // --- The regression assertion: schema visible WITHOUT restart ---------
+    let after = db_b.schema_manager().get_schemas().expect("get_schemas B");
+    assert!(
+        after.contains_key(SCHEMA_NAME),
+        "restored schema '{SCHEMA_NAME}' must be visible in SchemaCore after restore \
+         (no node restart) — got: {:?}",
+        after.keys().collect::<Vec<_>>()
+    );
+
+    handle.stop(true).await;
+}
+
+async fn make_node(db_path: &str) -> FoldNode {
+    let keypair = fold_db::security::Ed25519KeyPair::generate().unwrap();
+    let config = NodeConfig::new(db_path.into())
+        .with_schema_service_url("test://mock")
+        .with_identity(&keypair.public_key_base64(), &keypair.secret_key_base64());
+    FoldNode::new(config).await.expect("create FoldNode")
 }
