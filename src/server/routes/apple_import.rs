@@ -1413,11 +1413,15 @@ mod contacts_error_tests {
 
     #[test]
     fn wrap_permission_error_points_to_settings() {
-        let raw = "AppleScript error (Contacts.app): Not authorized to send Apple events to Contacts.";
+        let raw =
+            "AppleScript error (Contacts.app): Not authorized to send Apple events to Contacts.";
         let wrapped = wrap_contacts_extract_error(raw);
         assert!(wrapped.contains("System Settings"));
         assert!(wrapped.contains("Privacy & Security"));
-        assert!(wrapped.contains(raw), "raw error must be preserved for debuggability");
+        assert!(
+            wrapped.contains(raw),
+            "raw error must be preserved for debuggability"
+        );
     }
 
     #[test]
