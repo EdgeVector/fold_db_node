@@ -509,6 +509,20 @@ else
     export EXEMEM_ENV="${EXEMEM_ENV:-prod}"
 fi
 
+# Resolve the schema service URL once so the persisted node_config.json and the
+# in-memory runtime config agree. Without this, debugging is misleading: a
+# --local-schema node writes the prod URL to disk even though it talks to
+# 127.0.0.1 at runtime.
+SCHEMA_URL_PROD="https://axo709qs11.execute-api.us-east-1.amazonaws.com"
+SCHEMA_URL_DEV="https://y0q3m6vk75.execute-api.us-west-2.amazonaws.com"
+if [ "$LOCAL_SCHEMA" = true ]; then
+    CONFIG_SCHEMA_URL="http://127.0.0.1:${SCHEMA_PORT}"
+elif [ "$DEV_MODE" = true ]; then
+    CONFIG_SCHEMA_URL="$SCHEMA_URL_DEV"
+else
+    CONFIG_SCHEMA_URL="$SCHEMA_URL_PROD"
+fi
+
 # ============================================================================
 # Main Script
 # ============================================================================
@@ -552,23 +566,20 @@ if [ "$LOCAL_MODE" = false ] && [ "$EXEMEM_MODE" = false ] && [ -f "$CONFIG_FILE
         # Read credentials from saved config so the EXEMEM_MODE branch doesn't fail on empty key
         EXEMEM_API_KEY=$(python3 -c "import json; print(json.load(open('$CONFIG_FILE')).get('database',{}).get('api_key',''))" 2>/dev/null || echo "")
         export EXEMEM_API_KEY
-        # Update schema service URL if --local-schema was passed
-        if [ "$LOCAL_SCHEMA" = true ]; then
-            python3 -c "
+        # Align the persisted schema URL with the effective runtime URL for this
+        # invocation's flags (--local-schema / --dev / prod default).
+        python3 -c "
 import json
 with open('$CONFIG_FILE') as f: cfg = json.load(f)
-cfg['schema_service_url'] = 'http://127.0.0.1:${SCHEMA_PORT}'
+cfg['schema_service_url'] = '${CONFIG_SCHEMA_URL}'
 with open('$CONFIG_FILE', 'w') as f: json.dump(cfg, f, indent=2)
 " 2>/dev/null
-        fi
     fi
 fi
 
 # Set up configuration based on mode
 if [ "$LOCAL_MODE" = true ]; then
     echo "Setting up LOCAL configuration (Sled storage)..."
-    # Determine schema_service_url for config
-    CONFIG_SCHEMA_URL="https://axo709qs11.execute-api.us-east-1.amazonaws.com"
 
     cat > "$CONFIG_FILE" <<EOF
 {
@@ -602,7 +613,6 @@ elif [ "$EXEMEM_MODE" = true ]; then
     if [ "$DEV_MODE" = true ]; then
         EXEMEM_API_URL="https://ygyu7ritx8.execute-api.us-west-2.amazonaws.com"
     fi
-    CONFIG_SCHEMA_URL="https://axo709qs11.execute-api.us-east-1.amazonaws.com"
 
     # Build optional JSON fields
     if [ -n "$EXEMEM_SESSION_TOKEN" ]; then
@@ -657,7 +667,6 @@ EOF
 else
     # Default: local Sled storage (same as --local)
     echo "Setting up LOCAL configuration (Sled storage)..."
-    CONFIG_SCHEMA_URL="https://axo709qs11.execute-api.us-east-1.amazonaws.com"
 
     cat > "$CONFIG_FILE" <<EOF
 {
@@ -693,25 +702,21 @@ install_frontend_deps
 # Load API keys
 load_api_keys
 
-# Schema service setup
-# Prod: https://axo709qs11.execute-api.us-east-1.amazonaws.com (TODO: schema.folddb.com once DNS fixed)
-# Dev:  https://y0q3m6vk75.execute-api.us-west-2.amazonaws.com
-SCHEMA_SERVICE_URL="https://axo709qs11.execute-api.us-east-1.amazonaws.com"
+# Schema service setup — reuse the URL already resolved for the persisted config.
+SCHEMA_SERVICE_URL="$CONFIG_SCHEMA_URL"
 SCHEMA_SERVICE_PID=""
 
-if [ "$DEV_MODE" = true ]; then
-    SCHEMA_SERVICE_URL="https://y0q3m6vk75.execute-api.us-west-2.amazonaws.com"
-    echo "Using DEV schema service"
-fi
-
 if [ "$LOCAL_SCHEMA" = true ]; then
-    SCHEMA_SERVICE_URL="http://127.0.0.1:${SCHEMA_PORT}"
     start_local_schema_service
 else
-    echo "Using global schema service at: $SCHEMA_SERVICE_URL"
+    if [ "$DEV_MODE" = true ]; then
+        echo "Using DEV schema service at: $SCHEMA_SERVICE_URL"
+    else
+        echo "Using global schema service at: $SCHEMA_SERVICE_URL"
+    fi
     if ! check_schema_service "$SCHEMA_SERVICE_URL"; then
         echo ""
-        echo "ERROR: Global schema service at $SCHEMA_SERVICE_URL is not reachable."
+        echo "ERROR: Schema service at $SCHEMA_SERVICE_URL is not reachable."
         echo ""
         echo "The schema service is required for FoldDB to operate."
         echo "Options:"
