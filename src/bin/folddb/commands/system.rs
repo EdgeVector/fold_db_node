@@ -240,7 +240,10 @@ mod tests {
             panic!("expected RawJson");
         };
         assert_eq!(json["schema_service_url_source"], "default");
-        assert!(json["schema_service_url"].as_str().unwrap().starts_with("http"));
+        assert!(json["schema_service_url"]
+            .as_str()
+            .unwrap()
+            .starts_with("http"));
     }
 
     #[test]
