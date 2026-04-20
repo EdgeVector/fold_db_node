@@ -169,6 +169,15 @@ export interface FileUploadResponse {
   new_schema_created?: boolean;
   mutations_generated?: number;
   mutations_executed?: number;
+  progress_id?: string;
+  progress_url?: string;
+  results_url?: string;
+  message?: string;
+  file_path?: string;
+  duplicate?: boolean;
+  ingested_at?: string;
+  source_folder?: string;
+  converted_json_path?: string;
 }
 
 // Ollama model info returned by the backend proxy

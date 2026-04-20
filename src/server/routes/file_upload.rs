@@ -316,6 +316,15 @@ async fn write_unencrypted_for_processing(
     Ok(temp_path)
 }
 
+/// Build the progress + results URLs that `/api/ingestion/upload` surfaces
+/// so callers can poll without guessing at endpoint names.
+pub(crate) fn upload_tracking_urls(progress_id: &str) -> (String, String) {
+    (
+        format!("/api/ingestion/progress/{}", progress_id),
+        format!("/api/process-results/{}", progress_id),
+    )
+}
+
 /// Read a multipart field's bytes into a UTF-8 string.
 async fn read_field_text(field: &mut actix_multipart::Field) -> Option<String> {
     let mut bytes = Vec::new();
@@ -584,10 +593,13 @@ pub async fn upload_file(
             );
 
             {
+                let (progress_url, results_url) = upload_tracking_urls(&progress_id);
                 let mut response = json!({
                     "success": true,
                     "progress_id": progress_id,
-                    "message": "File upload and ingestion started. Use progress_id to track status.",
+                    "progress_url": progress_url,
+                    "results_url": results_url,
+                    "message": "File upload and ingestion started. Poll progress_url for status; fetch results_url for stored mutations.",
                     "file_path": form_data.file_path.to_string_lossy().to_string(),
                     "duplicate": false
                 });
@@ -701,7 +713,7 @@ pub async fn serve_file(
 
 #[cfg(test)]
 mod tests {
-    use super::{parse_multipart, MAX_UPLOAD_SIZE};
+    use super::{parse_multipart, upload_tracking_urls, MAX_UPLOAD_SIZE};
     use actix_web::{web, App, HttpResponse};
     use fold_db::storage::UploadStorage;
     use sha2::{Digest, Sha256};
@@ -824,6 +836,17 @@ mod tests {
         hasher2.update(content);
         let hash2 = format!("{:x}", hasher2.finalize());
         assert_eq!(hash1, hash2);
+    }
+
+    #[test]
+    fn test_upload_tracking_urls_point_to_real_endpoints() {
+        // Guards against papercut da38d: /api/ingestion/upload must return
+        // pointers to both the progress and the process-results endpoints so
+        // callers do not have to guess the poll URLs.
+        let progress_id = "abc-123";
+        let (progress_url, results_url) = upload_tracking_urls(progress_id);
+        assert_eq!(progress_url, "/api/ingestion/progress/abc-123");
+        assert_eq!(results_url, "/api/process-results/abc-123");
     }
 
     #[test]
