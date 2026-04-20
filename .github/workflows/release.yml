@@ -180,13 +180,19 @@ jobs:
         run: |
           set -euo pipefail
           VERSION="${VERSION_TAG#v}"
-          # NB: no top-level `version` — `brew audit --strict` rejects it as
-          # redundant when the URL already contains the version string. Brew
-          # scans the version out of each URL at load time.
+          # Explicit `version` is required: Homebrew's URL version scanner
+          # misparses the Linux tarball filename
+          # (`folddb-x86_64-unknown-linux-gnu.tar.gz`) and extracts
+          # `64-unknown-linux-gnu` as the version, landing the Cellar at
+          # `Cellar/folddb/64-unknown-linux-gnu/` instead of
+          # `Cellar/folddb/\${VERSION}/`. On macOS detection works, so
+          # `brew audit --strict` reports this as redundant there — accept
+          # the warning; a broken Linux Cellar path is worse.
           cat > tap/Formula/folddb.rb <<RUBY
           class Folddb < Formula
             desc "Local-first database for personal data sovereignty"
             homepage "https://folddb.com"
+            version "${VERSION}"
             license "Apache-2.0"
 
             on_macos do
