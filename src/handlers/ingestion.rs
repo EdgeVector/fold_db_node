@@ -9,7 +9,6 @@ use crate::handlers::response::{ApiResponse, HandlerError, HandlerResult, IntoHa
 use crate::ingestion::ingestion_service::IngestionService;
 use crate::ingestion::progress::{IngestionProgress, ProgressService, ProgressTracker};
 use crate::ingestion::IngestionRequest;
-use fold_db::progress::JobType;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use std::sync::Arc;
@@ -53,14 +52,14 @@ handler_response! {
 // Handler Functions
 // ============================================================================
 
-/// Get all ingestion/indexing progress for a user
+/// Get all tracked progress for a user.
 ///
-/// # Arguments
-/// * `user_hash` - The user's hash for isolation
-/// * `tracker` - Progress tracker instance
-///
-/// # Returns
-/// * `HandlerResult<ProgressListResponse>` - List of progress items wrapped in standard envelope
+/// Returns every `Job` the user owns, regardless of `JobType`. Apple import
+/// sources (`apple-notes`, `apple-photos`, `apple-calendar`, `apple-reminders`,
+/// `apple-contacts`), smart-folder scans, database resets, and agent jobs all
+/// share the same progress tracker and surface through this endpoint so the
+/// header progress indicator can show them. The React client filters by
+/// `is_complete` / `is_failed` and labels by `job_type`.
 pub async fn get_all_progress(
     user_hash: &str,
     tracker: &ProgressTracker,
@@ -70,11 +69,7 @@ pub async fn get_all_progress(
         .await
         .handler_err("list progress")?;
 
-    let progress: Vec<IngestionProgress> = jobs
-        .into_iter()
-        .filter(|j| matches!(j.job_type, JobType::Ingestion | JobType::Indexing))
-        .map(|j| j.into())
-        .collect();
+    let progress: Vec<IngestionProgress> = jobs.into_iter().map(|j| j.into()).collect();
 
     Ok(ApiResponse::success_with_user(
         ProgressListResponse { progress },
@@ -282,11 +277,51 @@ pub async fn process_json(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use fold_db::progress::{Job, JobType};
 
     #[test]
     fn test_progress_list_response_serialization() {
         let response = ProgressListResponse { progress: vec![] };
         let json = serde_json::to_string(&response).unwrap();
         assert!(json.contains("progress"));
+    }
+
+    #[tokio::test]
+    async fn get_all_progress_includes_apple_import_jobs() {
+        // Regression test for papercut 65383: Apple import jobs use
+        // `JobType::Other("apple-*")` and were dropped by the old filter that
+        // only matched `Ingestion | Indexing`, so the bulk progress endpoint
+        // returned [] while 5 Apple sources were actively running.
+        let tracker = fold_db::progress::create_tracker().await;
+        let user = "u1";
+        for source in [
+            "apple-notes",
+            "apple-photos",
+            "apple-calendar",
+            "apple-reminders",
+            "apple-contacts",
+        ] {
+            let mut job = Job::new(format!("job-{source}"), JobType::Other(source.into()))
+                .with_user(user.to_string());
+            job.update_progress(42, format!("importing {source}"));
+            tracker.save(&job).await.unwrap();
+        }
+
+        let resp = get_all_progress(user, &tracker).await.unwrap();
+        let progress = resp.data.unwrap().progress;
+        assert_eq!(progress.len(), 5, "all 5 Apple sources must surface");
+        let mut types: Vec<_> = progress.iter().map(|p| p.job_type.clone()).collect();
+        types.sort();
+        assert_eq!(
+            types,
+            vec![
+                "apple-calendar",
+                "apple-contacts",
+                "apple-notes",
+                "apple-photos",
+                "apple-reminders",
+            ]
+        );
+        assert!(progress.iter().all(|p| !p.is_complete));
     }
 }
