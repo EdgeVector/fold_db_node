@@ -24,7 +24,7 @@ jobs:
             os: macos-13
             name: folddb-x86_64-apple-darwin
           - target: x86_64-unknown-linux-gnu
-            os: ubuntu-latest
+            os: ubuntu-22.04
             name: folddb-x86_64-unknown-linux-gnu
 
     runs-on: ${{ matrix.os }}
