@@ -161,7 +161,8 @@ async fn main() {
         let action_ref = action.as_ref().unwrap_or(&cli::ConfigCommand::Show);
         let result = match action_ref {
             cli::ConfigCommand::Show => {
-                commands::system::config_show(&config, config_path.as_deref(), mode)
+                let daemon_info = commands::system::gather_daemon_info(&config).await;
+                commands::system::config_show(&config, config_path.as_deref(), mode, &daemon_info)
             }
             cli::ConfigCommand::Path => {
                 let path = config_path
