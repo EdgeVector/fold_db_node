@@ -13,8 +13,10 @@ use crate::utils::crypto::user_hash_from_pubkey;
 use base64::Engine as _;
 use fold_db::fold_db_core::factory;
 use fold_db::security::Ed25519KeyPair;
+use fold_db::storage::SledPool;
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
+use std::path::PathBuf;
 use std::sync::Arc;
 use tokio::sync::RwLock;
 
@@ -57,6 +59,13 @@ pub struct NodeManager {
     config: RwLock<NodeManagerConfig>,
     /// Shared node slot. `None` until first request creates it.
     shared_node: RwLock<Option<Arc<FoldNode>>>,
+    /// Shared SledPool that survives node invalidations at the same storage path.
+    /// Two pools pointing at the same path cannot both hold Sled's file lock at
+    /// once, so reusing one pool across `create_node`/`invalidate_all_nodes`
+    /// cycles prevents a `WouldBlock` race when a client hits the server
+    /// immediately after `update_config` (e.g. `/api/sync/status` right after
+    /// `/api/auth/register` activates cloud sync).
+    shared_pool: RwLock<Option<(PathBuf, Arc<SledPool>)>>,
 }
 
 impl NodeManager {
@@ -65,6 +74,7 @@ impl NodeManager {
         Self {
             config: RwLock::new(config),
             shared_node: RwLock::new(None),
+            shared_pool: RwLock::new(None),
         }
     }
 
@@ -154,12 +164,18 @@ impl NodeManager {
             None
         };
 
+        // Reuse the cached SledPool if one exists for the same path. This is
+        // what prevents a WouldBlock race when a node is recreated at the same
+        // path (e.g. after cloud-sync activation during /api/auth/register).
+        let pool = self.get_or_create_pool(&node_config.database.path).await;
+
         // Create FoldDB with user context set
         let db = fold_db::logging::core::run_with_user(user_id, async {
-            factory::create_fold_db_with_auth_refresh(
+            factory::create_fold_db_with_pool_and_auth_refresh(
                 &node_config.database,
                 &e2e_keys,
                 auth_refresh,
+                Some(pool),
             )
             .await
         })
@@ -262,6 +278,10 @@ impl NodeManager {
 
     /// Invalidate the cached node, forcing recreation on next access.
     /// Used when configuration changes require the node to be recreated.
+    ///
+    /// The shared `SledPool` is intentionally preserved so that the next
+    /// `create_node` reopens Sled through the same pool instead of racing the
+    /// old pool for the file lock.
     pub async fn invalidate_all_nodes(&self) {
         let mut shared = self.shared_node.write().await;
         *shared = None;
@@ -269,13 +289,51 @@ impl NodeManager {
 
     /// Update the configuration and invalidate the cached node.
     /// The next request will create a fresh node with the new config.
+    ///
+    /// If the storage path changed, the cached pool is dropped too so the new
+    /// path gets its own pool. Otherwise the pool survives for the reason in
+    /// [`Self::invalidate_all_nodes`].
     pub async fn update_config(&self, new_config: NodeManagerConfig) {
+        let new_path = new_config.base_config.database.path.clone();
         {
             let mut config = self.config.write().await;
             *config = new_config;
         }
 
+        {
+            let mut pool_slot = self.shared_pool.write().await;
+            if let Some((cached_path, _)) = pool_slot.as_ref() {
+                if cached_path != &new_path {
+                    *pool_slot = None;
+                }
+            }
+        }
+
         self.invalidate_all_nodes().await;
+    }
+
+    /// Get the cached SledPool for `path`, creating and storing a new one if
+    /// none exists (or if a pool for a different path was cached).
+    async fn get_or_create_pool(&self, path: &std::path::Path) -> Arc<SledPool> {
+        {
+            let slot = self.shared_pool.read().await;
+            if let Some((cached_path, pool)) = slot.as_ref() {
+                if cached_path == path {
+                    return Arc::clone(pool);
+                }
+            }
+        }
+
+        let mut slot = self.shared_pool.write().await;
+        if let Some((cached_path, pool)) = slot.as_ref() {
+            if cached_path == path {
+                return Arc::clone(pool);
+            }
+        }
+        let pool = Arc::new(SledPool::new(path.to_path_buf()));
+        pool.start_idle_reaper(std::time::Duration::from_secs(30));
+        *slot = Some((path.to_path_buf(), Arc::clone(&pool)));
+        pool
     }
 
     /// Set a pre-existing node.
@@ -327,14 +385,21 @@ impl NodeManager {
         Ok(public_key)
     }
 
-    /// Get a clone of the SledPool from the currently loaded node.
+    /// Get a clone of the shared SledPool.
     ///
-    /// The pool is `Arc`-wrapped, so cloning shares the same pool instance.
-    /// This is used by bootstrap-after-restore to get a Sled handle that
-    /// survives node invalidation.
+    /// Returns the NodeManager-owned pool first (which survives node
+    /// invalidations and reuses the same Sled file-lock holder). Falls back to
+    /// the loaded node's pool for legacy paths that set the node directly via
+    /// [`Self::set_node`] (tests / embedded scenarios).
     ///
-    /// Returns None if no node is loaded yet.
+    /// Returns None if no pool has been created yet.
     pub async fn get_sled_pool(&self) -> Option<std::sync::Arc<fold_db::storage::SledPool>> {
+        {
+            let slot = self.shared_pool.read().await;
+            if let Some((_, pool)) = slot.as_ref() {
+                return Some(Arc::clone(pool));
+            }
+        }
         let shared = self.shared_node.read().await;
         if let Some(node) = shared.as_ref() {
             if let Ok(fold_db) = node.get_fold_db() {
@@ -348,5 +413,101 @@ impl NodeManager {
     pub async fn has_active_node(&self) -> bool {
         let shared = self.shared_node.read().await;
         shared.is_some()
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::fold_node::config::NodeConfig;
+
+    fn test_config(path: &std::path::Path) -> NodeManagerConfig {
+        let keypair = fold_db::security::Ed25519KeyPair::generate().unwrap();
+        let base_config = NodeConfig::new(path.to_path_buf())
+            .with_schema_service_url("test://mock")
+            .with_identity(&keypair.public_key_base64(), &keypair.secret_key_base64());
+        NodeManagerConfig { base_config }
+    }
+
+    /// Regression test for the register -> sync-status Sled lock race.
+    ///
+    /// Before the fix, `invalidate_all_nodes` dropped the NodeManager's
+    /// reference to the node (and thus its SledPool). The next `get_node`
+    /// would call the factory which created a fresh `SledPool`, and Sled
+    /// would fail with `WouldBlock` because the previous pool still held
+    /// the OS file lock (e.g. via a pending background bootstrap task).
+    ///
+    /// After the fix, NodeManager owns the pool and passes it into the
+    /// factory on every `create_node`, so the same Sled file-lock holder
+    /// is reused and the second `get_node` succeeds immediately.
+    #[tokio::test]
+    async fn node_recreation_after_invalidate_reuses_pool() {
+        let tmp = tempfile::TempDir::new().unwrap();
+        let manager = NodeManager::new(test_config(tmp.path()));
+
+        let user_hash = "test_user";
+
+        let first = manager.get_node(user_hash).await.unwrap();
+        let pool_before = manager.get_sled_pool().await.expect("pool must exist");
+
+        // Simulate the register flow: invalidate while something else still
+        // holds a reference to the node (and its SledPool).
+        let _holder = first.clone();
+        manager.invalidate_all_nodes().await;
+
+        // Immediately recreate the node — this must succeed without a
+        // WouldBlock / "could not acquire lock" error.
+        let second = manager
+            .get_node(user_hash)
+            .await
+            .expect("recreation must not fail on Sled file lock");
+        let pool_after = manager.get_sled_pool().await.expect("pool must exist");
+
+        // Same pool instance — reused, not recreated.
+        assert!(Arc::ptr_eq(&pool_before, &pool_after));
+        // Different FoldNode instances — invalidation did replace the node.
+        assert!(!Arc::ptr_eq(&first, &second));
+    }
+
+    /// Rapid-fire invalidate/recreate cycles must all succeed. Mirrors the
+    /// register flow where a background bootstrap keeps the pool busy while
+    /// the foreground path serves follow-up requests.
+    #[tokio::test]
+    async fn rapid_invalidate_recreate_cycles_succeed() {
+        let tmp = tempfile::TempDir::new().unwrap();
+        let manager = NodeManager::new(test_config(tmp.path()));
+        let user_hash = "test_user";
+
+        let mut holders = Vec::new();
+        for _ in 0..5 {
+            let node = manager.get_node(user_hash).await.expect("get_node");
+            holders.push(node);
+            manager.invalidate_all_nodes().await;
+        }
+
+        // One pool across the entire cycle.
+        assert!(manager.get_sled_pool().await.is_some());
+    }
+
+    /// Changing the storage path must drop the cached pool so the new path
+    /// gets its own lock holder.
+    #[tokio::test]
+    async fn update_config_with_new_path_drops_pool() {
+        let tmp = tempfile::TempDir::new().unwrap();
+        let manager = NodeManager::new(test_config(&tmp.path().join("a")));
+        let user_hash = "test_user";
+
+        let _ = manager.get_node(user_hash).await.unwrap();
+        let pool_a = manager.get_sled_pool().await.unwrap();
+
+        // Update config to a different path.
+        manager
+            .update_config(test_config(&tmp.path().join("b")))
+            .await;
+
+        let _ = manager.get_node(user_hash).await.unwrap();
+        let pool_b = manager.get_sled_pool().await.unwrap();
+
+        assert!(!Arc::ptr_eq(&pool_a, &pool_b));
     }
 }
