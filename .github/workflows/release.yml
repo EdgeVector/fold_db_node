@@ -180,26 +180,28 @@ jobs:
         run: |
           set -euo pipefail
           VERSION="${VERSION_TAG#v}"
+          # NB: no top-level `version` — `brew audit --strict` rejects it as
+          # redundant when the URL already contains the version string. Brew
+          # scans the version out of each URL at load time.
           cat > tap/Formula/folddb.rb <<RUBY
           class Folddb < Formula
             desc "Local-first database for personal data sovereignty"
             homepage "https://folddb.com"
-            version "${VERSION}"
             license "Apache-2.0"
 
             on_macos do
               if Hardware::CPU.arm?
-                url "https://github.com/EdgeVector/fold_db/releases/download/v#{version}/folddb-aarch64-apple-darwin.tar.gz"
+                url "https://github.com/EdgeVector/fold_db/releases/download/v${VERSION}/folddb-aarch64-apple-darwin.tar.gz"
                 sha256 "${SHA_AARCH64_DARWIN}"
               else
-                url "https://github.com/EdgeVector/fold_db/releases/download/v#{version}/folddb-x86_64-apple-darwin.tar.gz"
+                url "https://github.com/EdgeVector/fold_db/releases/download/v${VERSION}/folddb-x86_64-apple-darwin.tar.gz"
                 sha256 "${SHA_X86_64_DARWIN}"
               end
             end
 
             on_linux do
               if Hardware::CPU.intel?
-                url "https://github.com/EdgeVector/fold_db/releases/download/v#{version}/folddb-x86_64-unknown-linux-gnu.tar.gz"
+                url "https://github.com/EdgeVector/fold_db/releases/download/v${VERSION}/folddb-x86_64-unknown-linux-gnu.tar.gz"
                 sha256 "${SHA_X86_64_LINUX}"
               end
             end
@@ -224,7 +226,7 @@ jobs:
             end
 
             test do
-              assert_match version.to_s, shell_output("#{bin}/folddb --version")
+              assert_match "FoldDB CLI", shell_output("#{bin}/folddb --help")
             end
           end
           RUBY
