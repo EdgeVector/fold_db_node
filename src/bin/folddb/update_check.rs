@@ -8,7 +8,7 @@ use std::time::Duration;
 
 const GITHUB_RELEASES_URL: &str =
     "https://api.github.com/repos/EdgeVector/fold_db_node/releases/latest";
-const CURRENT_VERSION: &str = env!("CARGO_PKG_VERSION");
+const CURRENT_VERSION: &str = env!("FOLDDB_BUILD_VERSION");
 const CHECK_TIMEOUT: Duration = Duration::from_secs(3);
 
 /// Spawns a background task that checks for updates.

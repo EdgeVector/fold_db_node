@@ -8,7 +8,7 @@ const DEFAULT_DEV_SCHEMA_PORT: u16 = 9102;
 
 /// Command line options for the schema service binary.
 #[derive(Parser, Debug)]
-#[command(author, version, about)]
+#[command(author, version = env!("FOLDDB_BUILD_VERSION"), about)]
 struct Cli {
     /// Port for the schema service
     #[arg(long, default_value_t = DEFAULT_DEV_SCHEMA_PORT)]

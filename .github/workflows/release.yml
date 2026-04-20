@@ -69,6 +69,29 @@ jobs:
             --bin schema_service \
             --bin folddb_mcp
 
+      # Hard gate: every binary must self-report the pushed tag. Catches the
+      # class of bug where CARGO_PKG_VERSION drifts from the release line
+      # (shipped v0.3.1 binaries once reported 0.1.0 because build.rs was
+      # never wired up). Each matrix job is native to its runner, so
+      # `./...release/folddb --version` works for every target.
+      - name: Verify --version matches tag
+        shell: bash
+        run: |
+          set -euo pipefail
+          expected="${GITHUB_REF_NAME#v}"
+          for bin in folddb folddb_server schema_service folddb_mcp; do
+            actual=$(target/${{ matrix.target }}/release/$bin --version | awk '{print $NF}')
+            echo "$bin --version -> $actual (expected $expected)"
+            if [ "$actual" = "0.1.0" ]; then
+              echo "::error::$bin reports 0.1.0 — FOLDDB_BUILD_VERSION was not stamped from GITHUB_REF_NAME"
+              exit 1
+            fi
+            if [ "$actual" != "$expected" ]; then
+              echo "::error::$bin reports '$actual', expected '$expected' from tag $GITHUB_REF_NAME"
+              exit 1
+            fi
+          done
+
       - name: Package binaries
         run: |
           mkdir -p dist
