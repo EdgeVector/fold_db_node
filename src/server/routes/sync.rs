@@ -137,6 +137,34 @@ mod tests {
         .await;
     }
 
+    /// `/api/sync/org/{hash}/status` returns the `sync_enabled: false` envelope
+    /// in local-only mode (no sync engine present).
+    ///
+    /// Regression guard for the PAPERCUT fix that added a cloud-member
+    /// reconciliation pass inside `FoldNode::get_org_sync_status` — the
+    /// early-exit path when `sync_engine()` is `None` must still be taken
+    /// BEFORE any cloud call is attempted.
+    #[tokio::test]
+    async fn test_get_org_sync_status_local_mode_returns_disabled_envelope() {
+        let temp_dir = tempdir().unwrap();
+        let state = create_test_state(&temp_dir).await;
+
+        fold_db::logging::core::run_with_user("test_user", async move {
+            let req = test::TestRequest::get().to_http_request();
+            let path = web::Path::from("deadbeefdeadbeefdeadbeefdeadbeef".to_string());
+            let resp = get_org_sync_status(path, state).await.respond_to(&req);
+            assert_eq!(resp.status(), 200);
+
+            let body = resp.into_body();
+            let bytes = actix_web::body::to_bytes(body).await.unwrap_or_default();
+            let response: serde_json::Value = serde_json::from_slice(&bytes).unwrap_or_default();
+
+            assert_eq!(response["sync_enabled"], false);
+            assert_eq!(response["org_hash"], "deadbeefdeadbeefdeadbeefdeadbeef");
+        })
+        .await;
+    }
+
     #[tokio::test]
     async fn test_trigger_sync_local_mode() {
         let temp_dir = tempdir().unwrap();

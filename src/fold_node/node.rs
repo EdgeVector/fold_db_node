@@ -1037,7 +1037,7 @@ impl FoldNode {
 
         // Get the org membership
         let membership = org_ops::get_org(&pool, org_hash)?;
-        let membership = match membership {
+        let mut membership = match membership {
             Some(m) => m,
             None => {
                 return Err(FoldDbError::Database(format!(
@@ -1046,6 +1046,14 @@ impl FoldNode {
                 )));
             }
         };
+
+        // Reconcile against the cloud-authoritative member roster so the status
+        // reflects peers who joined via the cloud reconciler (e.g. Bob joining
+        // after Alice created the org). The local `org_memberships` sled tree
+        // is not mutated — placeholder entries live only in the response.
+        if let Some(client) = crate::handlers::org::auth_client_for_node(self).await {
+            crate::handlers::org::merge_cloud_members_into(&client, &mut membership).await;
+        }
 
         let has_org = sync_engine.has_org_sync().await;
         let status = sync_engine.status().await;
