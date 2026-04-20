@@ -108,22 +108,47 @@ pub async fn get_recovery_phrase(data: web::Data<AppState>) -> HttpResponse {
 
 /// POST /api/auth/restore
 /// Restore node identity from a 24-word BIP39 recovery phrase.
+///
+/// Accepts `words` as either a space-separated string or a JSON array of
+/// strings — the array shape matches what `GET /api/auth/recovery-phrase`
+/// returns, so a user can round-trip the response verbatim.
 pub async fn restore_from_phrase(
     data: web::Data<AppState>,
     body: web::Json<serde_json::Value>,
 ) -> HttpResponse {
-    let Some(words) = body.get("words").and_then(|v| v.as_str()) else {
-        return HttpResponse::BadRequest().json(serde_json::json!({
-            "ok": false,
-            "error": "Missing 'words' field"
-        }));
+    let words = match body.get("words") {
+        Some(v) if v.is_string() => v.as_str().unwrap().to_string(),
+        Some(v) if v.is_array() => {
+            let arr = v.as_array().unwrap();
+            let mut parts = Vec::with_capacity(arr.len());
+            for item in arr {
+                let Some(s) = item.as_str() else {
+                    return HttpResponse::BadRequest().json(serde_json::json!({
+                        "ok": false,
+                        "error": "Expected 'words' array to contain only strings"
+                    }));
+                };
+                parts.push(s);
+            }
+            parts.join(" ")
+        }
+        Some(_) => {
+            return HttpResponse::BadRequest().json(serde_json::json!({
+                "ok": false,
+                "error": "Expected 'words' as a space-separated string or array of strings"
+            }));
+        }
+        None => {
+            return HttpResponse::BadRequest().json(serde_json::json!({
+                "ok": false,
+                "error": "Missing 'words' field"
+            }));
+        }
     };
 
     match handlers_auth::restore_from_phrase(
         &data.node_manager,
-        handlers_auth::RestoreFromPhraseInput {
-            words: words.to_string(),
-        },
+        handlers_auth::RestoreFromPhraseInput { words },
     )
     .await
     {
@@ -270,6 +295,114 @@ mod tests {
         );
 
         std::env::remove_var("EXEMEM_API_URL");
+        std::env::remove_var("FOLDDB_HOME");
+    }
+
+    // ------------------------------------------------------------------
+    // Accept `words` as array (matches GET /api/auth/recovery-phrase shape)
+    // ------------------------------------------------------------------
+
+    fn test_app_state(tmp: &tempfile::TempDir) -> web::Data<AppState> {
+        let node_manager = std::sync::Arc::new(crate::server::node_manager::NodeManager::new(
+            crate::server::node_manager::NodeManagerConfig {
+                base_config: crate::fold_node::config::NodeConfig {
+                    database: fold_db::storage::DatabaseConfig::local(tmp.path().join("data")),
+                    storage_path: Some(tmp.path().join("data")),
+                    network_listen_address: "/ip4/0.0.0.0/tcp/0".to_string(),
+                    security_config: fold_db::security::SecurityConfig::from_env(),
+                    schema_service_url: Some("test://mock".to_string()),
+                    public_key: None,
+                    private_key: None,
+                    config_dir: Some(tmp.path().join("config")),
+                },
+            },
+        ));
+        web::Data::new(AppState { node_manager })
+    }
+
+    #[tokio::test]
+    #[allow(clippy::await_holding_lock)]
+    async fn restore_accepts_words_as_array() {
+        // Round-trip the exact shape `GET /api/auth/recovery-phrase` emits:
+        // `{"words": [...24 strings...]}`. Should proceed past input parsing
+        // and attempt the restore (we assert it's NOT the "Missing 'words'"
+        // BadRequest from the input-validation branch).
+        let _guard = env_lock();
+        let tmp = setup_empty_home();
+        std::fs::create_dir_all(tmp.path().join("config")).expect("create config dir");
+        std::env::set_var("EXEMEM_API_URL", "http://127.0.0.1:1");
+
+        let data = test_app_state(&tmp);
+
+        let entropy = [0u8; 32];
+        let mnemonic = bip39::Mnemonic::from_entropy(&entropy).expect("mnemonic");
+        let words_array: Vec<String> = mnemonic.words().map(|w| w.to_string()).collect();
+
+        let resp =
+            restore_from_phrase(data, web::Json(serde_json::json!({ "words": words_array })))
+                .await;
+
+        // It gets past input parsing (not 400) — restore itself fails because
+        // EXEMEM_API_URL is unroutable, but that's the downstream path.
+        assert_ne!(
+            resp.status(),
+            actix_web::http::StatusCode::BAD_REQUEST,
+            "array shape must be accepted by input parsing"
+        );
+
+        std::env::remove_var("EXEMEM_API_URL");
+        std::env::remove_var("FOLDDB_HOME");
+    }
+
+    #[tokio::test]
+    #[allow(clippy::await_holding_lock)]
+    async fn restore_rejects_array_with_non_string_elements() {
+        let _guard = env_lock();
+        let tmp = setup_empty_home();
+        let data = test_app_state(&tmp);
+
+        let resp = restore_from_phrase(
+            data,
+            web::Json(serde_json::json!({ "words": ["nest", 42, "song"] })),
+        )
+        .await;
+
+        assert_eq!(resp.status(), actix_web::http::StatusCode::BAD_REQUEST);
+        let body = test_body_json(resp).await;
+        assert_eq!(body["ok"], false);
+        assert!(
+            body["error"]
+                .as_str()
+                .unwrap_or("")
+                .contains("strings"),
+            "error should explain the array-of-strings requirement, got {:?}",
+            body["error"]
+        );
+
+        std::env::remove_var("FOLDDB_HOME");
+    }
+
+    #[tokio::test]
+    #[allow(clippy::await_holding_lock)]
+    async fn restore_rejects_words_as_number() {
+        let _guard = env_lock();
+        let tmp = setup_empty_home();
+        let data = test_app_state(&tmp);
+
+        let resp = restore_from_phrase(data, web::Json(serde_json::json!({ "words": 42 }))).await;
+
+        assert_eq!(resp.status(), actix_web::http::StatusCode::BAD_REQUEST);
+        let body = test_body_json(resp).await;
+        assert_eq!(body["ok"], false);
+        assert!(
+            body["error"]
+                .as_str()
+                .unwrap_or("")
+                .contains("space-separated string or array"),
+            "error should describe accepted shapes, got {:?}",
+            body["error"]
+        );
+
         std::env::remove_var("FOLDDB_HOME");
     }
 }
