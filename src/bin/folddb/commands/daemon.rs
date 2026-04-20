@@ -44,14 +44,21 @@ fn is_process_alive(pid: u32) -> bool {
     unsafe { libc::kill(pid as i32, 0) == 0 }
 }
 
-/// Check if the daemon is healthy by hitting the health endpoint
+/// Check if the daemon is healthy by hitting the unauthenticated `/api/health`
+/// endpoint. `/api/system/status` requires `X-User-Hash` and returns 401
+/// without it, which conflates "auth missing" with "daemon missing" — use the
+/// dedicated health route instead so this probe doubles as the route external
+/// uptime monitors and load balancers hit.
 pub async fn check_daemon_health(port: u16) -> bool {
-    let url = format!("http://127.0.0.1:{}/api/system/status", port);
+    let url = format!("http://127.0.0.1:{}/api/health", port);
     let client = reqwest::Client::builder()
         .timeout(std::time::Duration::from_secs(2))
         .build()
         .unwrap();
-    client.get(url).send().await.is_ok()
+    match client.get(url).send().await {
+        Ok(resp) => resp.status().is_success(),
+        Err(_) => false,
+    }
 }
 
 /// Resolve the daemon port from FOLDDB_PORT env var or default 9001.
