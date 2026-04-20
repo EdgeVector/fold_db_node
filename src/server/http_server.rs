@@ -101,6 +101,9 @@ impl FoldHttpServer {
     /// * There is an error binding to the specified address
     /// * There is an error starting the server
     pub async fn run(&self) -> FoldDbResult<()> {
+        // Record server start time for the unauthenticated /api/health probe.
+        system_routes::mark_server_start();
+
         // Check for interrupted bootstrap and resume if needed
         if let Some((api_url, api_key)) = crate::server::routes::auth::check_bootstrap_pending() {
             log_feature!(
@@ -366,6 +369,7 @@ impl FoldHttpServer {
         cfg.service(
             web::scope("/api")
                 .configure(Self::configure_openapi_routes)
+                .configure(Self::configure_health_route)
                 .configure(Self::configure_schema_routes)
                 .configure(Self::configure_view_routes)
                 .configure(Self::configure_query_routes)
@@ -417,6 +421,13 @@ impl FoldHttpServer {
                     .body(doc)
             }),
         );
+    }
+
+    /// Unauthenticated `/api/health` liveness route. Deliberately carries no
+    /// node, user-context, or auth requirements so external uptime probes and
+    /// `curl` can verify the daemon is up.
+    fn configure_health_route(cfg: &mut web::ServiceConfig) {
+        cfg.route("/health", web::get().to(system_routes::health_check));
     }
 
     fn configure_schema_routes(cfg: &mut web::ServiceConfig) {

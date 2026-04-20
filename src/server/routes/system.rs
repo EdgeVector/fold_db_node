@@ -8,8 +8,45 @@ use actix_web::{web, HttpResponse, Responder};
 use fold_db::log_feature;
 use fold_db::logging::features::LogFeature;
 use serde_json::json;
+use std::sync::OnceLock;
+use std::time::Instant;
 
 // Note: /api/system/sync-status reuses super::sync::get_sync_status (same handler).
+
+/// Server start time. Initialized in `FoldHttpServer::run()`; read by
+/// `/api/health` to report uptime. Kept as a process-global `OnceLock` so
+/// the liveness probe can answer without depending on any per-request node
+/// or user context.
+static SERVER_START: OnceLock<Instant> = OnceLock::new();
+
+/// Record server start time. Called exactly once from `FoldHttpServer::run()`.
+pub fn mark_server_start() {
+    let _ = SERVER_START.set(Instant::now());
+}
+
+/// Unauthenticated liveness endpoint. Returns `{ok, version, uptime_s}` with
+/// no middleware gating. Use this — not `/api/system/status` — for uptime
+/// monitors, load balancers, and `curl`-style probes. `/api/system/status`
+/// leaks node state and therefore requires `X-User-Hash`.
+#[utoipa::path(
+    get,
+    path = "/api/health",
+    tag = "system",
+    responses(
+        (status = 200, description = "Server is alive", body = serde_json::Value)
+    )
+)]
+pub async fn health_check() -> impl Responder {
+    let uptime_s = SERVER_START
+        .get()
+        .map(|t| t.elapsed().as_secs())
+        .unwrap_or(0);
+    HttpResponse::Ok().json(json!({
+        "ok": true,
+        "version": env!("CARGO_PKG_VERSION"),
+        "uptime_s": uptime_s,
+    }))
+}
 
 /// Get system status information
 #[utoipa::path(
@@ -69,9 +106,32 @@ pub async fn get_node_public_key(state: web::Data<AppState>) -> impl Responder {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::server::middleware::auth::UserContextMiddleware;
     use crate::server::routes::common::test_helpers::create_test_state;
-    use actix_web::test;
+    use actix_web::{test, App};
     use tempfile::tempdir;
+
+    /// `/api/health` must answer 200 with no auth, no `X-User-Hash`, and no
+    /// `AppState`. Regression guard for the brew-install dogfood papercut
+    /// (2026-04-20) where external monitors had no unauth liveness probe.
+    #[actix_web::test]
+    async fn health_endpoint_is_unauthenticated() {
+        let app = test::init_service(
+            App::new()
+                .wrap(UserContextMiddleware)
+                .route("/api/health", actix_web::web::get().to(health_check)),
+        )
+        .await;
+
+        let req = test::TestRequest::get().uri("/api/health").to_request();
+        let resp = test::call_service(&app, req).await;
+        assert_eq!(resp.status(), 200, "health must be 200 without credentials");
+
+        let body: serde_json::Value = test::read_body_json(resp).await;
+        assert_eq!(body["ok"], true);
+        assert!(body["version"].is_string(), "version must be a string");
+        assert!(body["uptime_s"].is_u64(), "uptime_s must be a u64");
+    }
 
     #[tokio::test]
     async fn test_system_status() {
