@@ -36,6 +36,7 @@ handler_response! {
         pub success: bool,
         pub targets_restored: usize,
         pub entries_replayed: usize,
+        pub schemas_refreshed: usize,
         pub message: String,
     }
 }
@@ -87,16 +88,33 @@ pub async fn restore(user_hash: &str, node: &FoldNode) -> HandlerResult<Snapshot
         .await
         .handler_err("restore from snapshot")?;
 
+    // `bootstrap_all` only fires the schema reloader when *log* entries
+    // include a schemas/schema_states namespace. A snapshot-only restore
+    // (entries_replayed == 0) writes schemas straight into Sled but leaves
+    // SchemaCore's in-memory cache stale, so `/api/schemas` would keep
+    // serving the pre-restore view until the node restarts. Refresh the
+    // cache here so callers see restored schemas immediately. (Papercut
+    // 99e8a, alpha-e2e dogfood run 5 flow 2.)
+    let schemas_refreshed = db
+        .schema_manager()
+        .reload_from_store()
+        .await
+        .handler_err("reload schema cache after restore")?;
+
     let entries_replayed: usize = outcomes.iter().map(|o| o.entries_replayed).sum();
     let targets_restored = outcomes.len();
+    let last_seq = outcomes.iter().map(|o| o.last_seq).max().unwrap_or(0);
 
     Ok(ApiResponse::success_with_user(
         SnapshotRestoreResponse {
             success: true,
             targets_restored,
             entries_replayed,
+            schemas_refreshed,
             message: format!(
-                "Restored {targets_restored} target(s), replayed {entries_replayed} log entries"
+                "Restored snapshot into {targets_restored} target(s) (seq={last_seq}); \
+                 refreshed {schemas_refreshed} schema(s) in cache, \
+                 {entries_replayed} additional log entries applied on top"
             ),
         },
         user_hash,

@@ -40,8 +40,14 @@ pub async fn restore(client: &FoldDbClient, mode: OutputMode) -> Result<CommandO
         .or_else(|| json.get("entries_replayed"))
         .and_then(|v| v.as_u64())
         .unwrap_or(0);
+    let schemas = json
+        .pointer("/data/schemas_refreshed")
+        .or_else(|| json.get("schemas_refreshed"))
+        .and_then(|v| v.as_u64())
+        .unwrap_or(0);
     let msg = format!(
-        "Restored {targets} target(s), replayed {entries} log entries.\n\
+        "Restored snapshot into {targets} target(s); refreshed {schemas} schema(s) in cache, \
+         {entries} additional log entries applied on top.\n\
          Run `folddb daemon start` if the daemon isn't already running to resume delta sync."
     );
     Ok(CommandOutput::Message(msg))
