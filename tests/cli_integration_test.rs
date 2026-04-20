@@ -581,3 +581,42 @@ fn no_identity_and_no_daemon_fails_cleanly_in_non_tty() {
         combined
     );
 }
+
+// ---------------------------------------------------------------------------
+// Regression: `folddb ingest file` must target an endpoint that exists.
+//
+// Repro (alpha dogfood run 4, kanban 27e5f): pre-fix the CLI posted to
+// `/api/ingest`, which the daemon doesn't route, so every invocation
+// returned 404 regardless of daemon state. The fix routes the command at
+// `/api/ingestion/process` with the proper `IngestionRequest` payload.
+//
+// The test daemon has no AI provider configured, so the endpoint answers
+// 503 `ingestion_unavailable`. That's fine — a 503 proves the route exists
+// and the request was well-formed; a 404 would reproduce the bug.
+// ---------------------------------------------------------------------------
+#[test]
+fn ingest_file_targets_ingestion_process_endpoint() {
+    let daemon = get_daemon();
+
+    let payload = serde_json::json!({ "title": "hello", "body": "world" });
+    let input_path = daemon._tmpdir.path().join("ingest-regression.json");
+    fs::write(&input_path, serde_json::to_string(&payload).unwrap()).expect("write ingest input");
+
+    let output = cli_with_daemon(daemon)
+        .arg("ingest")
+        .arg("file")
+        .arg(&input_path)
+        .output()
+        .expect("run ingest file");
+
+    let combined = format!(
+        "{}{}",
+        String::from_utf8_lossy(&output.stdout),
+        String::from_utf8_lossy(&output.stderr)
+    );
+    assert!(
+        !combined.contains("404"),
+        "ingest file must not 404 on a nonexistent endpoint: {}",
+        combined
+    );
+}
