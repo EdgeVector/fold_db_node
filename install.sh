@@ -1,69 +1,71 @@
 #!/bin/sh
-# FoldDB Installer
-# Usage: curl -fsSL https://raw.githubusercontent.com/EdgeVector/fold_db/master/install.sh | sh
+# FoldDB Installer (fallback for non-brew paths — air-gapped, Linux arm64 builds-from-source)
+#
+# Prefer Homebrew on macOS and Linux x86_64:
+#     brew install edgevector/folddb/folddb
+#
+# This script downloads the latest tarball from the EdgeVector/fold_db
+# release mirror, verifies its sha256 against SHA256SUMS.txt, and installs
+# folddb, folddb_server, and schema_service into /usr/local/bin (or
+# $HOME/.local/bin as a fallback when /usr/local/bin is not writable).
+#
+# Usage: curl -fsSL https://raw.githubusercontent.com/EdgeVector/fold_db_node/main/install.sh | sh
 
 set -e
 
 REPO="EdgeVector/fold_db"
-BINARIES="folddb_server folddb"
+BINARIES="folddb folddb_server schema_service"
 
-# Detect OS
+# Detect OS/arch → Rust target triple.
 OS="$(uname -s)"
-case "$OS" in
-  Darwin) OS_LABEL="macos" ;;
-  Linux)  OS_LABEL="linux" ;;
-  *)
-    echo "Error: Unsupported operating system: $OS"
-    exit 1
-    ;;
-esac
-
-# Detect architecture
 ARCH="$(uname -m)"
-case "$ARCH" in
-  arm64|aarch64) ARCH_LABEL="aarch64" ;;
-  x86_64|amd64)  ARCH_LABEL="x86_64" ;;
+case "$OS-$ARCH" in
+  Darwin-arm64|Darwin-aarch64) TARGET="aarch64-apple-darwin" ;;
+  Darwin-x86_64|Darwin-amd64)  TARGET="x86_64-apple-darwin" ;;
+  Linux-x86_64|Linux-amd64)    TARGET="x86_64-unknown-linux-gnu" ;;
   *)
-    echo "Error: Unsupported architecture: $ARCH"
+    echo "Error: no pre-built tarball for ${OS}-${ARCH}."
+    echo "Build from source:"
+    echo "  cargo install --git https://github.com/EdgeVector/fold_db_node folddb folddb_server schema_service"
     exit 1
     ;;
 esac
 
-# Linux only supports x86_64 for now
-if [ "$OS_LABEL" = "linux" ] && [ "$ARCH_LABEL" = "aarch64" ]; then
-  echo "Error: Linux arm64/aarch64 builds are not yet available."
-  echo "Please build from source: cargo install --git https://github.com/$REPO"
-  exit 1
-fi
+# Nudge Homebrew users toward the tap (but still proceed on explicit curl invocation).
+case "$TARGET" in
+  *-apple-darwin|x86_64-unknown-linux-gnu)
+    if command -v brew >/dev/null 2>&1; then
+      echo "Homebrew detected. The recommended install is:"
+      echo "  brew install edgevector/folddb/folddb"
+      echo ""
+      echo "Continuing with direct tarball install in 3s... (Ctrl-C to abort)"
+      sleep 3
+    fi
+    ;;
+esac
 
-echo "Detected platform: ${OS_LABEL}-${ARCH_LABEL}"
+echo "Detected target: ${TARGET}"
 
-# Get latest release tag
-echo "Fetching latest release..."
-LATEST_URL="https://api.github.com/repos/$REPO/releases/latest"
-
+# Resolve latest release tag.
+LATEST_URL="https://api.github.com/repos/${REPO}/releases/latest"
 if command -v curl >/dev/null 2>&1; then
   RELEASE_JSON="$(curl -fsSL "$LATEST_URL")"
 elif command -v wget >/dev/null 2>&1; then
   RELEASE_JSON="$(wget -qO- "$LATEST_URL")"
 else
-  echo "Error: curl or wget is required to download FoldDB."
+  echo "Error: curl or wget is required."
   exit 1
 fi
-
-# Extract tag name (works without jq)
 TAG="$(echo "$RELEASE_JSON" | grep '"tag_name"' | head -1 | sed 's/.*"tag_name"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1/')"
-
 if [ -z "$TAG" ]; then
-  echo "Error: Could not determine latest release version."
-  echo "Visit https://github.com/$REPO/releases to download manually."
+  echo "Error: could not determine latest release tag."
+  echo "Visit https://github.com/${REPO}/releases to download manually."
   exit 1
 fi
+VERSION="${TAG#v}"
+echo "Latest version: ${VERSION}"
 
-VERSION="$(echo "$TAG" | sed 's/^v//')"
-echo "Latest version: $VERSION"
-
-# Determine install directory
+# Choose install dir.
 INSTALL_DIR="/usr/local/bin"
 NEED_SUDO=false
 if [ ! -w "$INSTALL_DIR" ]; then
@@ -76,82 +78,81 @@ if [ ! -w "$INSTALL_DIR" ]; then
 fi
 
 TMP_DIR="$(mktemp -d)"
+trap 'rm -rf "$TMP_DIR"' EXIT
 
-# Download SHA256SUMS.txt (best-effort — older releases may not have it)
-CHECKSUMS_URL="https://github.com/$REPO/releases/download/$TAG/SHA256SUMS.txt"
-CHECKSUMS_FILE="$TMP_DIR/SHA256SUMS.txt"
-HAS_CHECKSUMS=false
-echo "Downloading checksums..."
+TARBALL="folddb-${TARGET}.tar.gz"
+TARBALL_URL="https://github.com/${REPO}/releases/download/${TAG}/${TARBALL}"
+CHECKSUMS_URL="https://github.com/${REPO}/releases/download/${TAG}/SHA256SUMS.txt"
+
+echo "Downloading ${TARBALL}..."
 if command -v curl >/dev/null 2>&1; then
-  curl -fsSL -o "$CHECKSUMS_FILE" "$CHECKSUMS_URL" 2>/dev/null && HAS_CHECKSUMS=true
+  curl -fSL --progress-bar -o "${TMP_DIR}/${TARBALL}" "$TARBALL_URL"
+else
+  wget -q --show-progress -O "${TMP_DIR}/${TARBALL}" "$TARBALL_URL"
+fi
+
+# SHA256 verification — releases cut before the checksum rollout may omit this file.
+echo "Fetching SHA256SUMS.txt..."
+HAS_CHECKSUMS=false
+if command -v curl >/dev/null 2>&1; then
+  curl -fsSL -o "${TMP_DIR}/SHA256SUMS.txt" "$CHECKSUMS_URL" 2>/dev/null && HAS_CHECKSUMS=true
 elif command -v wget >/dev/null 2>&1; then
-  wget -q -O "$CHECKSUMS_FILE" "$CHECKSUMS_URL" 2>/dev/null && HAS_CHECKSUMS=true
+  wget -q -O "${TMP_DIR}/SHA256SUMS.txt" "$CHECKSUMS_URL" 2>/dev/null && HAS_CHECKSUMS=true
 fi
 
-if [ "$HAS_CHECKSUMS" = false ]; then
-  echo "Warning: SHA256SUMS.txt not found for this release — skipping verification."
-fi
-
-# Download and install each binary
-for BINARY_NAME in $BINARIES; do
-  ARTIFACT="${BINARY_NAME}-${OS_LABEL}-${ARCH_LABEL}"
-  DOWNLOAD_URL="https://github.com/$REPO/releases/download/$TAG/$ARTIFACT"
-  TMP_FILE="$TMP_DIR/$ARTIFACT"
-
-  echo "Downloading $ARTIFACT..."
-  if command -v curl >/dev/null 2>&1; then
-    curl -fSL --progress-bar -o "$TMP_FILE" "$DOWNLOAD_URL"
-  elif command -v wget >/dev/null 2>&1; then
-    wget -q --show-progress -O "$TMP_FILE" "$DOWNLOAD_URL"
+if [ "$HAS_CHECKSUMS" = true ]; then
+  EXPECTED="$(grep "  ${TARBALL}\$" "${TMP_DIR}/SHA256SUMS.txt" | awk '{print $1}')"
+  if [ -z "$EXPECTED" ]; then
+    echo "Error: ${TARBALL} not listed in SHA256SUMS.txt."
+    exit 1
   fi
-
-  # Verify checksum if available
-  if [ "$HAS_CHECKSUMS" = true ]; then
-    EXPECTED_SHA="$(grep "  ${ARTIFACT}\$" "$CHECKSUMS_FILE" | cut -d' ' -f1 || true)"
-    if [ -n "$EXPECTED_SHA" ]; then
-      if command -v sha256sum >/dev/null 2>&1; then
-        ACTUAL_SHA="$(sha256sum "$TMP_FILE" | cut -d' ' -f1)"
-      elif command -v shasum >/dev/null 2>&1; then
-        ACTUAL_SHA="$(shasum -a 256 "$TMP_FILE" | cut -d' ' -f1)"
-      else
-        ACTUAL_SHA=""
-        echo "Warning: No sha256sum or shasum found — skipping verification for $ARTIFACT."
-      fi
-      if [ -n "$ACTUAL_SHA" ] && [ "$ACTUAL_SHA" != "$EXPECTED_SHA" ]; then
-        echo "Error: Checksum mismatch for $ARTIFACT!"
-        echo "  Expected: $EXPECTED_SHA"
-        echo "  Actual:   $ACTUAL_SHA"
-        rm -rf "$TMP_DIR"
-        exit 1
-      elif [ -n "$ACTUAL_SHA" ]; then
-        echo "Checksum verified for $ARTIFACT."
-      fi
-    fi
-  fi
-
-  chmod +x "$TMP_FILE"
-
-  if [ "$NEED_SUDO" = true ]; then
-    sudo mv "$TMP_FILE" "$INSTALL_DIR/$BINARY_NAME"
+  if command -v sha256sum >/dev/null 2>&1; then
+    ACTUAL="$(sha256sum "${TMP_DIR}/${TARBALL}" | awk '{print $1}')"
+  elif command -v shasum >/dev/null 2>&1; then
+    ACTUAL="$(shasum -a 256 "${TMP_DIR}/${TARBALL}" | awk '{print $1}')"
   else
-    mv "$TMP_FILE" "$INSTALL_DIR/$BINARY_NAME"
+    echo "Error: no sha256sum/shasum available to verify download."
+    exit 1
+  fi
+  if [ "$EXPECTED" != "$ACTUAL" ]; then
+    echo "Error: checksum mismatch for ${TARBALL}"
+    echo "  expected: $EXPECTED"
+    echo "  actual:   $ACTUAL"
+    exit 1
+  fi
+  echo "Checksum verified."
+else
+  echo "Warning: SHA256SUMS.txt not found for ${TAG} — continuing without verification."
+fi
+
+# Extract + install.
+echo "Extracting ${TARBALL}..."
+tar -xzf "${TMP_DIR}/${TARBALL}" -C "${TMP_DIR}"
+
+for BINARY_NAME in $BINARIES; do
+  if [ ! -f "${TMP_DIR}/${BINARY_NAME}" ]; then
+    echo "Error: ${BINARY_NAME} not found in tarball."
+    exit 1
+  fi
+  chmod +x "${TMP_DIR}/${BINARY_NAME}"
+  if [ "$NEED_SUDO" = true ]; then
+    sudo mv "${TMP_DIR}/${BINARY_NAME}" "${INSTALL_DIR}/${BINARY_NAME}"
+  else
+    mv "${TMP_DIR}/${BINARY_NAME}" "${INSTALL_DIR}/${BINARY_NAME}"
   fi
 done
 
-# Cleanup
-rm -rf "$TMP_DIR"
-
-# Check PATH
+# PATH hint if non-default dir.
 case ":$PATH:" in
-  *":$INSTALL_DIR:"*) ;;
+  *":${INSTALL_DIR}:"*) ;;
   *)
     echo ""
-    echo "NOTE: $INSTALL_DIR is not in your PATH."
-    echo "Add it by running:  export PATH=\"$INSTALL_DIR:\$PATH\""
+    echo "NOTE: ${INSTALL_DIR} is not in your PATH."
+    echo "Add it by running:  export PATH=\"${INSTALL_DIR}:\$PATH\""
     ;;
 esac
 
 echo ""
 echo "FoldDB v${VERSION} installed!"
-echo "  Run 'folddb_server' to start, then visit http://localhost:9101"
+echo "  Run 'folddb daemon start' to launch the daemon, then visit http://localhost:9101"
 echo "  Run 'folddb --help' for the CLI"
