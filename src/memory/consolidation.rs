@@ -18,40 +18,52 @@
 //! target add wasm32-unknown-unknown`. For CI: gated, runs when explicitly
 //! requested with `--features transform-wasm`.
 //!
-//! ## Flow
+//! ## Flow — service-first (no local-only primitives)
+//!
+//! Per the project invariant (see gbrain
+//! `preferences/everything-through-schema-service`), every schema, view,
+//! and transform MUST be registered with the schema service. The local
+//! node caches projections on demand.
 //!
 //! ```text
 //! register_topic_clusters_view(node, memory_canonical)
 //!   │
 //!   ├── compile transform source → WASM bytes (one-shot cargo build, ~10-30s)
 //!   │
-//!   ├── build TransformView:
-//!   │     input_queries = [ Memory(all fields) ]
-//!   │     output_fields = { body, derived_from, size, signature }
-//!   │     wasm_transform = compiled bytes
+//!   ├── node.register_transform_on_service(RegisterTransformRequest)
+//!   │     → service hashes bytes (sha256), classifies against input
+//!   │       queries' data classifications, persists. Returns TransformRecord.
 //!   │
-//!   ├── processor.create_view(view)
+//!   ├── node.add_view_to_service(AddViewRequest)
+//!   │     → service stores StoredView with canonical output-schema
+//!   │       definition + transform linkage. Schema service is the source
+//!   │       of truth for what this view is.
 //!   │
-//!   └── processor.approve_view(name)
+//!   ├── node.load_view_from_service(name)
+//!   │     → node fetches StoredView + output schema, converts to local
+//!   │       TransformView, registers in the local view registry.
+//!   │
+//!   └── processor.approve_view(name) — makes the view queryable locally.
 //!
 //! After that:
 //!   - Any mutation on Memory invalidates this view's cache.
 //!   - Querying TopicClusters triggers recompute if cache is empty.
 //!   - Background precomputation rehydrates deep views automatically.
+//!   - Second device: skip the compile/register steps, just call
+//!     load_view_from_service + approve_view.
 //! ```
 
 use std::collections::HashMap;
 
 use fold_db::error::{FoldDbError, FoldDbResult};
+use fold_db::schema::types::data_classification::DataClassification;
 use fold_db::schema::types::field_value_type::FieldValueType;
-use fold_db::schema::types::key_config::KeyConfig;
 use fold_db::schema::types::operations::Query;
 use fold_db::schema::types::schema::DeclarativeSchemaType as SchemaType;
-use fold_db::view::types::TransformView;
 
 use crate::fold_node::{wasm_compiler, FoldNode, OperationProcessor};
 use crate::memory::fields;
-use crate::schema_service::types::{RegisterTransformRequest, TransformAddOutcome};
+use crate::schema_service::types::{AddViewRequest, RegisterTransformRequest, TransformAddOutcome};
 
 /// Descriptive name of the TopicClusters view.
 pub const TOPIC_CLUSTERS_VIEW_NAME: &str = "TopicClusters";
@@ -274,27 +286,31 @@ pub struct TopicClustersRegistration {
     pub outcome: TransformAddOutcome,
 }
 
-/// Register the `TopicClusters` TransformView end-to-end:
+/// Register the `TopicClusters` TransformView end-to-end, SERVICE-FIRST.
+///
+/// Per the project invariant (see gbrain
+/// `preferences/everything-through-schema-service`), every schema, view,
+/// and transform MUST be registered with the schema service. No local-only
+/// primitives. This function is the canonical path:
 ///
 /// 1. Compile the clustering WASM via `fold_node::wasm_compiler`.
-/// 2. Register the WASM with the Global Transform Registry on the schema
-///    service via `node.register_transform_on_service`. The service
-///    content-addresses it by sha256 and classifies it against the input
-///    queries' data classifications. This is the audit / cross-node
-///    sharing layer.
-/// 3. Build a local [`TransformView`] referencing the same WASM bytes inline.
-/// 4. `create_view` + `approve_view` on the local node so the view
-///    orchestrator can execute it.
+/// 2. **Register the transform** with the schema service via
+///    `node.register_transform_on_service`. Service hashes + classifies.
+/// 3. **Register the view** with the schema service via
+///    `node.add_view_to_service`. Service stores a `StoredView` with the
+///    canonical output-schema definition (field names, types, descriptions,
+///    classifications) and the WASM bytes (which internally dedupe against
+///    the transform hash registered in step 2).
+/// 4. **Load the view locally** via `node.load_view_from_service`. The node
+///    pulls the `StoredView` + its output schema, converts to a
+///    `TransformView`, and registers it in the local view registry. The
+///    view orchestrator takes it from there (invalidate on source mutation,
+///    background precompute on deep chains).
 ///
-/// Both sides hold the same bytes until the runtime fetches bytes by hash
-/// on demand (a future platform improvement). The registry step is what
-/// makes the transform auditable and content-addressed globally.
-///
-/// Idempotent: re-registering with identical WASM + input queries returns
-/// `TransformAddOutcome::AlreadyExists` from the registry, and
-/// `create_view` on the local side will error if the view already exists
-/// (caller should catch and re-approve if needed). For the dogfood flow,
-/// run `reset` before re-registering.
+/// Idempotent end-to-end: transform returns `AlreadyExists` on identical
+/// bytes; `add_view_to_service` and `load_view_from_service` should no-op
+/// gracefully on re-registration. For the dogfood flow, run `reset`
+/// between full re-registrations to be safe.
 pub async fn register_topic_clusters_view(
     node: &FoldNode,
     memory_canonical: &str,
@@ -317,23 +333,73 @@ pub async fn register_topic_clusters_view(
         ],
     );
 
-    // Output schema: one row per cluster, keyed by signature.
-    let mut output_fields: HashMap<String, FieldValueType> = HashMap::new();
-    output_fields.insert(cluster_fields::BODY.to_string(), FieldValueType::String);
-    output_fields.insert(
+    // Output field types — canonical field definitions for the view's
+    // output schema. The service will store these and use them for
+    // cross-node semantic matching on the output schema's identity.
+    let mut output_field_types: HashMap<String, FieldValueType> = HashMap::new();
+    output_field_types.insert(cluster_fields::BODY.to_string(), FieldValueType::String);
+    output_field_types.insert(
         cluster_fields::DERIVED_FROM.to_string(),
         FieldValueType::Array(Box::new(FieldValueType::String)),
     );
-    output_fields.insert(cluster_fields::SIZE.to_string(), FieldValueType::Integer);
-    output_fields.insert(
+    output_field_types.insert(cluster_fields::SIZE.to_string(), FieldValueType::Integer);
+    output_field_types.insert(
         cluster_fields::SIGNATURE.to_string(),
         FieldValueType::String,
     );
 
-    // Step 1: Register with the Global Transform Registry on the schema
-    // service. This is the audit + classification + cross-node sharing
-    // layer. The service hashes the WASM by sha256 and classifies it
-    // against the input queries' data classifications.
+    // Human-readable descriptions for each output field. Required by the
+    // service for semantic similarity matching across schemas.
+    let mut field_descriptions: HashMap<String, String> = HashMap::new();
+    field_descriptions.insert(
+        cluster_fields::BODY.to_string(),
+        "Stub summary of the cluster (Phase 1a deterministic; Phase 2 LLM-backed).".to_string(),
+    );
+    field_descriptions.insert(
+        cluster_fields::DERIVED_FROM.to_string(),
+        "Sorted list of source memory IDs in this cluster. Used for dedup + provenance."
+            .to_string(),
+    );
+    field_descriptions.insert(
+        cluster_fields::SIZE.to_string(),
+        "Number of source memories in this cluster.".to_string(),
+    );
+    field_descriptions.insert(
+        cluster_fields::SIGNATURE.to_string(),
+        "Stable deterministic identifier for this cluster, derived from sorted member IDs. Also the row key.".to_string(),
+    );
+
+    // Data classifications — general sensitivity, since clustering over
+    // memory bodies doesn't inherently expose sensitive data beyond what
+    // the source memories already carry.
+    let mut field_data_classifications: HashMap<String, DataClassification> = HashMap::new();
+    for name in [
+        cluster_fields::BODY,
+        cluster_fields::DERIVED_FROM,
+        cluster_fields::SIZE,
+        cluster_fields::SIGNATURE,
+    ] {
+        field_data_classifications.insert(
+            name.to_string(),
+            DataClassification {
+                sensitivity_level: 0,
+                data_domain: "general".to_string(),
+            },
+        );
+    }
+    let mut field_classifications: HashMap<String, Vec<String>> = HashMap::new();
+    for name in [
+        cluster_fields::BODY,
+        cluster_fields::DERIVED_FROM,
+        cluster_fields::SIZE,
+        cluster_fields::SIGNATURE,
+    ] {
+        field_classifications.insert(name.to_string(), vec!["word".to_string()]);
+    }
+
+    // Step 1: Register the transform with the Global Transform Registry.
+    // This is the audit + classification layer. The returned hash is what
+    // the StoredView will carry as `transform_hash`.
     let registry_request = RegisterTransformRequest {
         name: TOPIC_CLUSTERS_VIEW_NAME.to_string(),
         version: "0.1.0".to_string(),
@@ -343,7 +409,7 @@ pub async fn register_topic_clusters_view(
                 .to_string(),
         ),
         input_queries: vec![input_query.clone()],
-        output_fields: output_fields.clone(),
+        output_fields: output_field_types.clone(),
         source_url: None,
         wasm_bytes: wasm_bytes.clone(),
     };
@@ -357,38 +423,63 @@ pub async fn register_topic_clusters_view(
                 TOPIC_CLUSTERS_VIEW_NAME, e
             ))
         })?;
-
     log::info!(
-        "memory: Global Transform Registry confirmed `{}` — hash={} outcome={:?} assigned_classification={:?}",
-        TOPIC_CLUSTERS_VIEW_NAME,
+        "memory: transform registered — hash={} outcome={:?} assigned_classification={:?}",
         registry_response.hash,
         registry_response.outcome,
         registry_response.record.assigned_classification
     );
 
-    // Step 2: Build the local TransformView referencing the same WASM bytes.
-    let view = TransformView::new(
-        TOPIC_CLUSTERS_VIEW_NAME,
+    // Step 2: Register the view with the schema service. This stores the
+    // canonical output-schema definition + the transform linkage.
+    let output_field_names: Vec<String> = output_field_types.keys().cloned().collect();
+    let add_view_request = AddViewRequest {
+        name: TOPIC_CLUSTERS_VIEW_NAME.to_string(),
+        descriptive_name: TOPIC_CLUSTERS_VIEW_NAME.to_string(),
+        input_queries: vec![input_query],
+        output_fields: output_field_names,
+        field_descriptions,
+        field_classifications,
+        field_data_classifications,
+        wasm_bytes: Some(wasm_bytes),
         // WASM-backed views must use Range or Single — Hash isn't supported
         // (see `ViewResolver::execute_wasm_transform`, which builds
         // `KeyValue::new(None, Some(key_str))` for every emitted key).
-        SchemaType::Range,
-        Some(KeyConfig::new(
-            None,
-            Some(cluster_fields::SIGNATURE.to_string()),
-        )),
-        vec![input_query],
-        Some(wasm_bytes),
-        output_fields,
+        schema_type: SchemaType::Range,
+    };
+    node.add_view_to_service(&add_view_request)
+        .await
+        .map_err(|e| {
+            FoldDbError::Config(format!(
+                "memory: failed to register `{}` view with the schema service: {}",
+                TOPIC_CLUSTERS_VIEW_NAME, e
+            ))
+        })?;
+    log::info!(
+        "memory: view registered with schema service as `{}`",
+        TOPIC_CLUSTERS_VIEW_NAME
     );
 
+    // Step 3: Load the view locally via the standard load_view_from_service
+    // path. This fetches the StoredView + its output schema and registers
+    // them locally. The local view is a projection of the service-stored
+    // definition; the service remains the source of truth.
+    node.load_view_from_service(TOPIC_CLUSTERS_VIEW_NAME)
+        .await
+        .map_err(|e| {
+            FoldDbError::Config(format!(
+                "memory: failed to load `{}` view locally from schema service: {}",
+                TOPIC_CLUSTERS_VIEW_NAME, e
+            ))
+        })?;
+    log::info!(
+        "memory: loaded `{}` view locally; approving for queries",
+        TOPIC_CLUSTERS_VIEW_NAME
+    );
+
+    // load_view_from_service registers but doesn't approve. Approve so the
+    // view orchestrator will execute it.
     let processor = OperationProcessor::new(std::sync::Arc::new(node.clone()));
-    processor.create_view(view).await.map_err(|e| {
-        FoldDbError::Config(format!(
-            "memory: failed to register local `{}` view: {}",
-            TOPIC_CLUSTERS_VIEW_NAME, e
-        ))
-    })?;
     processor
         .approve_view(TOPIC_CLUSTERS_VIEW_NAME)
         .await
@@ -400,7 +491,7 @@ pub async fn register_topic_clusters_view(
         })?;
 
     log::info!(
-        "memory: local `{}` view registered + approved on source schema `{}`",
+        "memory: `{}` ready; source schema `{}` → clusters materialize on query",
         TOPIC_CLUSTERS_VIEW_NAME,
         memory_canonical
     );

@@ -29,7 +29,8 @@ use fold_db_node::schema_service::server::{
     AddSchemaResponse, SchemaAddOutcome, SchemaServiceState,
 };
 use fold_db_node::schema_service::types::{
-    RegisterTransformRequest, RegisterTransformResponse, TransformAddOutcome,
+    AddViewRequest, AddViewResponse, RegisterTransformRequest, RegisterTransformResponse,
+    TransformAddOutcome, ViewAddOutcome,
 };
 use serde_json::{json, Value};
 use std::collections::{HashMap, HashSet};
@@ -128,6 +129,49 @@ async fn handle_register_transform(
     }
 }
 
+async fn handle_add_view(
+    payload: web::Json<AddViewRequest>,
+    state: web::Data<SchemaServiceState>,
+) -> HttpResponse {
+    let req = payload.into_inner();
+    match state.add_view(req).await {
+        Ok(ViewAddOutcome::Added(view, schema)) => HttpResponse::Created().json(AddViewResponse {
+            view,
+            output_schema: schema,
+            replaced_schema: None,
+        }),
+        Ok(ViewAddOutcome::AddedWithExistingSchema(view, schema)) => {
+            HttpResponse::Ok().json(AddViewResponse {
+                view,
+                output_schema: schema,
+                replaced_schema: None,
+            })
+        }
+        Ok(ViewAddOutcome::Expanded(view, schema, old_name)) => {
+            HttpResponse::Created().json(AddViewResponse {
+                view,
+                output_schema: schema,
+                replaced_schema: Some(old_name),
+            })
+        }
+        Err(e) => HttpResponse::BadRequest().json(json!({ "error": e.to_string() })),
+    }
+}
+
+async fn handle_get_view(
+    path: web::Path<String>,
+    state: web::Data<SchemaServiceState>,
+) -> HttpResponse {
+    let name = path.into_inner();
+    match state.get_view_by_name(&name) {
+        Ok(Some(v)) => HttpResponse::Ok().json(v),
+        Ok(None) => {
+            HttpResponse::NotFound().json(json!({"error": format!("view `{}` not found", name)}))
+        }
+        Err(e) => HttpResponse::InternalServerError().json(json!({"error": e.to_string()})),
+    }
+}
+
 struct SpawnedService {
     url: String,
     _temp_dir: TempDir,
@@ -156,7 +200,9 @@ async fn spawn_schema_service() -> SpawnedService {
                 .route("/schemas", web::post().to(handle_add_schema))
                 .route("/schemas/available", web::get().to(handle_available))
                 .route("/schema/{name}", web::get().to(handle_get_schema))
-                .route("/transforms", web::post().to(handle_register_transform)),
+                .route("/transforms", web::post().to(handle_register_transform))
+                .route("/views", web::post().to(handle_add_view))
+                .route("/view/{name}", web::get().to(handle_get_view)),
         )
     })
     .listen(listener)
