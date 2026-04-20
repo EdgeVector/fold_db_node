@@ -29,6 +29,57 @@ pub async fn apple_import_status() -> impl Responder {
     }))
 }
 
+/// Persist a failed job via `Job::fail`, preserving the in-flight job's
+/// `user_id` so the Sled-backed tracker can actually write it, and ensuring
+/// `completed_at` + `error` are populated (not just `status_message`).
+///
+/// Falls back to a fresh `Job` if the in-flight job can't be loaded — the
+/// save will then fail under Sled (needs `user_id`) but the in-memory
+/// tracker used by tests still captures the failure.
+#[cfg(any(target_os = "macos", test))]
+async fn save_failed_job(
+    tracker: &ProgressTracker,
+    progress_id: &str,
+    job_type: &str,
+    error: String,
+) {
+    let mut job = match tracker.load(progress_id).await {
+        Ok(Some(existing)) => existing,
+        _ => Job::new(progress_id.to_string(), JobType::Other(job_type.into())),
+    };
+    job.fail(error);
+    let _ = tracker.save(&job).await;
+}
+
+/// Translate a raw `IngestionError::Extraction` from the Apple Contacts
+/// extractor into a user-facing message. `run_osascript` already wraps
+/// timeouts with a Settings hint; this adds a product-level preamble so the
+/// UI shows "Apple Contacts import failed …" rather than a bare AppleScript
+/// error code.
+#[cfg(target_os = "macos")]
+fn wrap_contacts_extract_error(raw: &str) -> String {
+    let lower = raw.to_ascii_lowercase();
+    if lower.contains("timed out") {
+        // run_osascript timeout message is already user-facing; keep it verbatim
+        // behind the product prefix.
+        format!("Apple Contacts import failed: {}", raw)
+    } else if lower.contains("not authorized") || lower.contains("permission") {
+        format!(
+            "Apple Contacts import failed: macOS did not allow Contacts access. \
+             Grant permission in System Settings → Privacy & Security → Automation \
+             (or Contacts), then retry. Underlying error: {}",
+            raw
+        )
+    } else {
+        format!(
+            "Apple Contacts import failed while talking to Contacts.app. \
+             Make sure Contacts.app is installed and responsive, then retry. \
+             Underlying error: {}",
+            raw
+        )
+    }
+}
+
 #[derive(Deserialize)]
 pub struct AppleNotesRequest {
     pub folder: Option<String>,
@@ -986,17 +1037,23 @@ async fn run_apple_contacts_import(
     let contacts = match extract_result {
         Ok(Ok(c)) => c,
         Ok(Err(e)) => {
-            let mut job = Job::new(progress_id.clone(), JobType::Other("apple-contacts".into()));
-            job.status = JobStatus::Failed;
-            job.message = format!("Failed to extract contacts: {}", e);
-            let _ = tracker.save(&job).await;
+            save_failed_job(
+                &tracker,
+                &progress_id,
+                "apple-contacts",
+                wrap_contacts_extract_error(&e.to_string()),
+            )
+            .await;
             return;
         }
         Err(e) => {
-            let mut job = Job::new(progress_id.clone(), JobType::Other("apple-contacts".into()));
-            job.status = JobStatus::Failed;
-            job.message = format!("Extraction task panicked: {}", e);
-            let _ = tracker.save(&job).await;
+            save_failed_job(
+                &tracker,
+                &progress_id,
+                "apple-contacts",
+                format!("Apple Contacts import crashed unexpectedly: {}", e),
+            )
+            .await;
             return;
         }
     };
@@ -1334,6 +1391,92 @@ mod tests {
         assert_eq!(out.len(), 2);
         assert_eq!(out[0].text, "a@b.c");
         assert_eq!(out[1].text, "d@e.f, g@h.i");
+    }
+}
+
+#[cfg(all(test, target_os = "macos"))]
+mod contacts_error_tests {
+    use super::{save_failed_job, wrap_contacts_extract_error};
+    use fold_db::progress::{create_tracker, Job, JobStatus, JobType};
+
+    #[test]
+    fn wrap_timeout_preserves_run_osascript_hint() {
+        let raw = "osascript timed out after 300 seconds talking to Contacts.app. \
+                   The app may be unresponsive, syncing with iCloud, or missing \
+                   Automation permission. Grant access in System Settings → \
+                   Privacy & Security → Automation (and Full Disk Access for Photos.app).";
+        let wrapped = wrap_contacts_extract_error(raw);
+        assert!(wrapped.starts_with("Apple Contacts import failed: "));
+        assert!(wrapped.contains("timed out"));
+        assert!(wrapped.contains("Automation"));
+    }
+
+    #[test]
+    fn wrap_permission_error_points_to_settings() {
+        let raw = "AppleScript error (Contacts.app): Not authorized to send Apple events to Contacts.";
+        let wrapped = wrap_contacts_extract_error(raw);
+        assert!(wrapped.contains("System Settings"));
+        assert!(wrapped.contains("Privacy & Security"));
+        assert!(wrapped.contains(raw), "raw error must be preserved for debuggability");
+    }
+
+    #[test]
+    fn wrap_generic_error_wraps_with_product_prefix() {
+        let raw = "AppleScript error (Contacts.app): execution error: -1728";
+        let wrapped = wrap_contacts_extract_error(raw);
+        assert!(wrapped.starts_with("Apple Contacts import failed while talking to Contacts.app."));
+        assert!(wrapped.contains(raw));
+    }
+
+    #[tokio::test]
+    async fn save_failed_job_populates_error_and_completed_at() {
+        // Repro for a2a0c: before this fix, the contacts handler created a bare
+        // Job and only set status + message, leaving error=None and
+        // completed_at=None in the IngestionProgress response.
+        let tracker = create_tracker().await;
+
+        let mut seed = Job::new("pid".into(), JobType::Other("apple-contacts".into()));
+        seed = seed.with_user("user-123".into());
+        seed.update_progress(5, "Extracting contacts from Apple Contacts...".into());
+        tracker.save(&seed).await.expect("seed save");
+
+        save_failed_job(&tracker, "pid", "apple-contacts", "boom".into()).await;
+
+        let loaded = tracker.load("pid").await.unwrap().expect("job present");
+        assert!(matches!(loaded.status, JobStatus::Failed));
+        assert_eq!(loaded.error.as_deref(), Some("boom"));
+        assert!(
+            loaded.completed_at.is_some(),
+            "completed_at must be set on failure, got None",
+        );
+        assert!(
+            loaded.message.contains("boom"),
+            "status_message should wrap the error, got: {}",
+            loaded.message,
+        );
+        assert_eq!(
+            loaded.user_id.as_deref(),
+            Some("user-123"),
+            "user_id from the in-flight job must be preserved so Sled saves",
+        );
+    }
+
+    #[tokio::test]
+    async fn save_failed_job_falls_back_when_job_missing() {
+        // If the seed save never landed (e.g. tracker hiccup) we should still
+        // record a terminal failure rather than silently drop it.
+        let tracker = create_tracker().await;
+
+        save_failed_job(&tracker, "missing", "apple-contacts", "oops".into()).await;
+
+        let loaded = tracker
+            .load("missing")
+            .await
+            .unwrap()
+            .expect("fallback job persisted");
+        assert!(matches!(loaded.status, JobStatus::Failed));
+        assert_eq!(loaded.error.as_deref(), Some("oops"));
+        assert!(loaded.completed_at.is_some());
     }
 }
 
