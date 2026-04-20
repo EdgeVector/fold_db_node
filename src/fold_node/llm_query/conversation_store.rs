@@ -38,6 +38,8 @@ fn build_schema() -> DeclarativeSchemaDefinition {
         None,
     );
 
+    schema.descriptive_name = Some("AI Conversations".to_string());
+
     schema
         .field_classifications
         .insert("session_id".to_string(), vec!["word".to_string()]);
@@ -152,5 +154,21 @@ pub async fn save_conversation_turn(
             session_id,
             e
         ),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn build_schema_sets_descriptive_name() {
+        let schema = build_schema();
+        assert_eq!(
+            schema.descriptive_name,
+            Some("AI Conversations".to_string()),
+            "ai_conversations must expose a human-readable descriptive_name so the UI does not render it as a raw hash"
+        );
+        assert_eq!(schema.name, AI_CONVERSATIONS_SCHEMA);
     }
 }
