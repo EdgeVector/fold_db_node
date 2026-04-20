@@ -324,9 +324,7 @@ pub async fn add_member(
     // Return the invite bundle so the UI can show it for manual sharing
     // (especially useful in local mode where there's no cloud inbox)
     Ok(ApiResponse::success_with_user(
-        AddMemberResponse {
-            invite_bundle,
-        },
+        AddMemberResponse { invite_bundle },
         user_hash,
     ))
 }
