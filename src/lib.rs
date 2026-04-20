@@ -5,6 +5,7 @@ pub mod fold_node;
 pub mod handlers;
 pub mod ingestion;
 pub mod keychain;
+pub mod memory;
 pub mod schema_service;
 #[cfg(feature = "os-keychain")]
 pub mod secure_store;
