@@ -176,6 +176,14 @@ pub enum SchemaCommand {
         /// Schema name
         name: String,
     },
+    /// Tag an existing schema as org-scoped so its writes partition onto the
+    /// org sync log (prefix = org_hash). Pass an empty string to clear.
+    SetOrg {
+        /// Schema name
+        name: String,
+        /// Org hash (hex SHA256 of org public key). Empty string clears.
+        org_hash: String,
+    },
     /// Load schemas from schema service
     Load,
 }
@@ -409,6 +417,34 @@ mod tests {
                 action: SchemaCommand::Block { name },
             } => assert_eq!(name, "bad_schema"),
             _ => panic!("Expected Schema Block"),
+        }
+    }
+
+    #[test]
+    fn parse_schema_set_org() {
+        let cli = Cli::parse_from(["folddb", "schema", "set-org", "MyNotes", "deadbeef"]);
+        match cli.command {
+            Command::Schema {
+                action: SchemaCommand::SetOrg { name, org_hash },
+            } => {
+                assert_eq!(name, "MyNotes");
+                assert_eq!(org_hash, "deadbeef");
+            }
+            _ => panic!("Expected Schema SetOrg"),
+        }
+    }
+
+    #[test]
+    fn parse_schema_set_org_clear() {
+        let cli = Cli::parse_from(["folddb", "schema", "set-org", "MyNotes", ""]);
+        match cli.command {
+            Command::Schema {
+                action: SchemaCommand::SetOrg { name, org_hash },
+            } => {
+                assert_eq!(name, "MyNotes");
+                assert_eq!(org_hash, "");
+            }
+            _ => panic!("Expected Schema SetOrg"),
         }
     }
 

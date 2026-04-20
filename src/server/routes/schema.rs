@@ -166,6 +166,63 @@ pub async fn block_schema(path: web::Path<String>, state: web::Data<AppState>) -
     )
 }
 
+/// Request body for tagging a schema with an org_hash.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct SetOrgHashRequest {
+    /// Org hash (hex SHA256 of the org's Ed25519 public key). `null` clears.
+    pub org_hash: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct SetOrgHashResponse {
+    pub schema_name: String,
+    pub org_hash: Option<String>,
+}
+
+/// Tag an existing schema as org-scoped so subsequent writes partition onto
+/// the org sync log. Pass `{"org_hash": null}` to revert to personal.
+#[utoipa::path(
+    post,
+    path = "/api/schema/{name}/set-org-hash",
+    tag = "schemas",
+    params(
+        ("name" = String, Path, description = "Schema name")
+    ),
+    request_body = SetOrgHashRequest,
+    responses(
+        (status = 200, description = "Schema tagged successfully"),
+        (status = 404, description = "Schema not found"),
+        (status = 500, description = "Server error")
+    )
+)]
+pub async fn set_schema_org_hash(
+    path: web::Path<String>,
+    body: web::Json<SetOrgHashRequest>,
+    state: web::Data<AppState>,
+) -> impl Responder {
+    let schema_name = path.into_inner();
+    let org_hash = body.into_inner().org_hash;
+    let (user_hash, node) = node_or_return!(state);
+    let op = OperationProcessor::new(node.clone());
+    let response_name = schema_name.clone();
+    let response_org_hash = org_hash.clone();
+    handler_result_to_response(
+        async {
+            op.set_schema_org_hash(&schema_name, org_hash)
+                .await
+                .typed_handler_err()?;
+            Ok(ApiResponse::success_with_user(
+                SetOrgHashResponse {
+                    schema_name: response_name,
+                    org_hash: response_org_hash,
+                },
+                user_hash,
+            ))
+        }
+        .await,
+    )
+}
+
 /// Query parameters for schema keys pagination
 #[derive(Debug, Deserialize)]
 pub struct SchemaKeysQuery {

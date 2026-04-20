@@ -434,6 +434,10 @@ impl FoldHttpServer {
             .route(
                 "/schema/{name}/block",
                 web::post().to(schema_routes::block_schema),
+            )
+            .route(
+                "/schema/{name}/set-org-hash",
+                web::post().to(schema_routes::set_schema_org_hash),
             );
     }
 

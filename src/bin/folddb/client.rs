@@ -137,6 +137,18 @@ impl FoldDbClient {
         self.post("/api/schemas/load", &serde_json::json!({})).await
     }
 
+    pub async fn schema_set_org(
+        &self,
+        name: &str,
+        org_hash: Option<&str>,
+    ) -> Result<Value, CliError> {
+        self.post(
+            &format!("/api/schema/{}/set-org-hash", name),
+            &serde_json::json!({ "org_hash": org_hash }),
+        )
+        .await
+    }
+
     // --- Query ---
 
     pub async fn query(

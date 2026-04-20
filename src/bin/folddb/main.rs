@@ -473,6 +473,20 @@ async fn dispatch_schema(
                 name
             )))
         }
+        cli::SchemaCommand::SetOrg { name, org_hash } => {
+            let trimmed = org_hash.trim();
+            let org_hash_opt = if trimmed.is_empty() {
+                None
+            } else {
+                Some(trimmed)
+            };
+            client.schema_set_org(name, org_hash_opt).await?;
+            let display = org_hash_opt.unwrap_or("<cleared>");
+            Ok(commands::CommandOutput::Message(format!(
+                "Schema '{}' org_hash set to {}",
+                name, display
+            )))
+        }
         cli::SchemaCommand::Load => {
             let json = client.schema_load().await?;
             Ok(commands::CommandOutput::RawJson(json))
