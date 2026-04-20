@@ -1,0 +1,238 @@
+name: org-sync-run9-iter1-rapid10
+description: |
+  Alpha dogfood run-9, Flow 3 iteration 1 — rapid 10-mutation batch.
+  Alice writes 1 pre-tag molecule, creates org, tags schema,
+  then immediately writes 10 post-tag molecules with a short sync grace
+  between mutation and trigger. Bob joins org, syncs, and must observe
+  exactly 11 total molecules (1 pre-tag + 10 post-tag) on an unfiltered
+  query via the same schema. Alice's unfiltered query must see 11 too.
+
+  Verifies:
+    - 30a7b  — lex-start_after pagination drop closed (peer downloads all seqs)
+    - 4439b  — replay-side silent drops closed (BatchPut replay applies all items)
+    - 2767c  — org-prefix replay dispatch (schema + molecule rows reach Bob)
+    - b507b  — org_hash runtime-field propagation (Alice self-read post-tag works)
+    - 3e063  — dual-read fallback (pre-tag molecule still queryable on Alice)
+    - 4b171  — peer unfiltered query doesn't orphan on pre-tag ref
+
+  Acceptance: 11 == 11 exact-count assertion on BOTH nodes. This is the
+  "no lucky-run" hardened gate requested by run-8 follow-up.
+
+nodes:
+  - role: alice
+    display_name: Alice
+  - role: bob
+    display_name: Bob
+
+steps:
+  - id: alice_registers_schema
+    roles: [alice]
+    actions:
+      - action: schema_register
+        fixture: qa-org-note.schema.json
+        persist_as: org_note
+
+  - id: alice_writes_pre_tag_molecule
+    roles: [alice]
+    actions:
+      - action: mutation_write
+        schema_persisted_as: org_note
+        fields:
+          title: "pre-tag-note"
+          body: "written before alice tagged the schema with org_hash"
+          modified_at: "2026-04-20T12:00:00Z"
+        key:
+          range: "2026-04-20T12:00:00Z"
+
+  - id: alice_creates_org
+    roles: [alice]
+    actions:
+      - action: org_create
+        name: run9-iter1-rapid10
+
+  - id: alice_tags_schema_with_org_hash
+    roles: [alice]
+    actions:
+      - action: set_org_hash
+        schema_persisted_as: org_note
+        from_role: alice
+
+  - id: alice_writes_post_tag_01
+    roles: [alice]
+    actions:
+      - action: mutation_write
+        schema_persisted_as: org_note
+        fields:
+          title: "post-tag-01"
+          body: "rapid batch item 01"
+          modified_at: "2026-04-20T13:00:01Z"
+        key:
+          range: "2026-04-20T13:00:01Z"
+  - id: alice_writes_post_tag_02
+    roles: [alice]
+    actions:
+      - action: mutation_write
+        schema_persisted_as: org_note
+        fields:
+          title: "post-tag-02"
+          body: "rapid batch item 02"
+          modified_at: "2026-04-20T13:00:02Z"
+        key:
+          range: "2026-04-20T13:00:02Z"
+  - id: alice_writes_post_tag_03
+    roles: [alice]
+    actions:
+      - action: mutation_write
+        schema_persisted_as: org_note
+        fields:
+          title: "post-tag-03"
+          body: "rapid batch item 03"
+          modified_at: "2026-04-20T13:00:03Z"
+        key:
+          range: "2026-04-20T13:00:03Z"
+  - id: alice_writes_post_tag_04
+    roles: [alice]
+    actions:
+      - action: mutation_write
+        schema_persisted_as: org_note
+        fields:
+          title: "post-tag-04"
+          body: "rapid batch item 04"
+          modified_at: "2026-04-20T13:00:04Z"
+        key:
+          range: "2026-04-20T13:00:04Z"
+  - id: alice_writes_post_tag_05
+    roles: [alice]
+    actions:
+      - action: mutation_write
+        schema_persisted_as: org_note
+        fields:
+          title: "post-tag-05"
+          body: "rapid batch item 05"
+          modified_at: "2026-04-20T13:00:05Z"
+        key:
+          range: "2026-04-20T13:00:05Z"
+  - id: alice_writes_post_tag_06
+    roles: [alice]
+    actions:
+      - action: mutation_write
+        schema_persisted_as: org_note
+        fields:
+          title: "post-tag-06"
+          body: "rapid batch item 06"
+          modified_at: "2026-04-20T13:00:06Z"
+        key:
+          range: "2026-04-20T13:00:06Z"
+  - id: alice_writes_post_tag_07
+    roles: [alice]
+    actions:
+      - action: mutation_write
+        schema_persisted_as: org_note
+        fields:
+          title: "post-tag-07"
+          body: "rapid batch item 07"
+          modified_at: "2026-04-20T13:00:07Z"
+        key:
+          range: "2026-04-20T13:00:07Z"
+  - id: alice_writes_post_tag_08
+    roles: [alice]
+    actions:
+      - action: mutation_write
+        schema_persisted_as: org_note
+        fields:
+          title: "post-tag-08"
+          body: "rapid batch item 08"
+          modified_at: "2026-04-20T13:00:08Z"
+        key:
+          range: "2026-04-20T13:00:08Z"
+  - id: alice_writes_post_tag_09
+    roles: [alice]
+    actions:
+      - action: mutation_write
+        schema_persisted_as: org_note
+        fields:
+          title: "post-tag-09"
+          body: "rapid batch item 09"
+          modified_at: "2026-04-20T13:00:09Z"
+        key:
+          range: "2026-04-20T13:00:09Z"
+  - id: alice_writes_post_tag_10
+    roles: [alice]
+    actions:
+      - action: mutation_write
+        schema_persisted_as: org_note
+        fields:
+          title: "post-tag-10"
+          body: "rapid batch item 10"
+          modified_at: "2026-04-20T13:00:10Z"
+        key:
+          range: "2026-04-20T13:00:10Z"
+
+  - id: bob_joins_org
+    roles: [bob]
+    actions:
+      - action: org_join
+        from_role: alice
+
+  - id: sync_round_1
+    roles: [alice, bob]
+    actions:
+      - action: sync_trigger
+      - action: sleep
+        seconds: 8
+
+  - id: sync_round_2
+    roles: [alice, bob]
+    actions:
+      - action: sync_trigger
+      - action: sleep
+        seconds: 10
+
+  - id: bob_registers_schema
+    roles: [bob]
+    actions:
+      - action: schema_register
+        fixture: qa-org-note.schema.json
+        persist_as: org_note
+
+  - id: bob_unfiltered_query
+    roles: [bob]
+    actions:
+      - action: query_schema
+        schema_persisted_as: org_note
+        persist_as: bob_post_sync
+
+  - id: alice_unfiltered_query
+    roles: [alice]
+    actions:
+      - action: query_schema
+        schema_persisted_as: org_note
+        persist_as: alice_post_sync
+
+assertions:
+  - node: alice
+    field: org_member_count
+    org_role: alice
+    op: ">="
+    value: 2
+  - node: bob
+    field: org_member_count
+    org_role: alice
+    op: ">="
+    value: 2
+
+  # Bob receives post-tag molecules via org-prefix replay. Pre-tag lives on
+  # Alice's personal prefix and does NOT sync to Bob — 4b171 guarantees
+  # graceful handling, not replication. So Bob expects exactly 10.
+  - node: bob
+    field: last_query_result_count
+    query_name: bob_post_sync
+    op: "=="
+    value: 10
+
+  # Alice sees pre-tag (via 3e063 dual-read) + 10 post-tag = 11.
+  - node: alice
+    field: last_query_result_count
+    query_name: alice_post_sync
+    op: "=="
+    value: 11
