@@ -1836,7 +1836,7 @@ checksum = "3f9eec918d3f24069decb9af1554cad7c880e2da24a9afd88aca000531ab82c1"
 [[package]]
 name = "fold_db"
 version = "0.3.0"
-source = "git+https://github.com/EdgeVector/fold_db.git?branch=mainline#dbaf9f9f34039d37cc2ae54df24c04f700dcb9fd"
+source = "git+https://github.com/EdgeVector/fold_db.git?branch=mainline#bb246ac779364fdc1f874f3ce16a9f9a7e029487"
 dependencies = [
  "aes-gcm",
  "async-trait",
