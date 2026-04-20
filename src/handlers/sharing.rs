@@ -65,9 +65,8 @@ crate::handlers::handler_response! {
 }
 
 crate::handlers::handler_response! {
-    pub struct OkResponse {
-        pub ok: bool,
-    }
+    /// The `ok` flag lives on the `ApiResponse` envelope — no additional payload.
+    pub struct OkResponse {}
 }
 
 crate::handlers::handler_response! {
@@ -178,10 +177,7 @@ pub async fn deactivate_rule(
         reconfigure_and_force_sync(&node_clone).await;
     });
 
-    Ok(ApiResponse::success_with_user(
-        OkResponse { ok: true },
-        user_hash,
-    ))
+    Ok(ApiResponse::success_with_user(OkResponse {}, user_hash))
 }
 
 /// Build a `ShareInvite` from a stored rule.
