@@ -70,7 +70,7 @@ pub fn handle_initialize(id: Value) -> JsonRpcResponse {
             },
             "serverInfo": {
                 "name": "folddb",
-                "version": env!("CARGO_PKG_VERSION")
+                "version": env!("FOLDDB_BUILD_VERSION")
             }
         }),
     )

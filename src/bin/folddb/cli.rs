@@ -5,7 +5,7 @@ use std::path::PathBuf;
 
 /// FoldDB CLI - human-first command-line access to FoldDB
 #[derive(Parser, Debug)]
-#[command(name = "folddb", author, version, about)]
+#[command(name = "folddb", author, version = env!("FOLDDB_BUILD_VERSION"), about)]
 pub struct Cli {
     /// Output all results as JSON (for scripting)
     #[arg(long, global = true)]

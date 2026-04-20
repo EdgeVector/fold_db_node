@@ -21,7 +21,7 @@ const DEFAULT_DEV_HTTP_PORT: u16 = 9101;
 #[derive(Parser, Debug)]
 #[command(
     author,
-    version,
+    version = env!("FOLDDB_BUILD_VERSION"),
     about = "FoldDB Server — run locally, open the UI at http://localhost:9101"
 )]
 struct Cli {

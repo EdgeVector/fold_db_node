@@ -45,7 +45,7 @@ pub async fn get_system_status(
                 .duration_since(std::time::UNIX_EPOCH)
                 .unwrap_or_default()
                 .as_secs(),
-            version: env!("CARGO_PKG_VERSION").to_string(),
+            version: env!("FOLDDB_BUILD_VERSION").to_string(),
             schema_service_url: node.schema_service_url(),
         },
         user_hash,

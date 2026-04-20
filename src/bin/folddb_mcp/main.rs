@@ -12,7 +12,7 @@ use clap::Parser;
 /// Connects to a running FoldDB HTTP server on localhost and handles Ed25519 signing
 /// transparently. Communicates via JSON-RPC 2.0 over stdin/stdout.
 #[derive(Parser, Debug)]
-#[command(name = "folddb-mcp", version, about)]
+#[command(name = "folddb-mcp", version = env!("FOLDDB_BUILD_VERSION"), about)]
 struct Args {
     /// Port of the FoldDB HTTP server (also reads FOLDDB_PORT env var)
     #[arg(long, default_value = "9001")]
