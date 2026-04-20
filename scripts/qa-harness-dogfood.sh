@@ -114,8 +114,16 @@ arr_len() {
 boot_stack() {
   # Boot one ./run.sh --local --local-schema, extract the slot JSON.
   # Emits three lines on stdout: BACKEND_PORT SCHEMA_PORT VITE_PORT FOLDDB_HOME
+  #
+  # On failure, writes a one-line reason to $REPORT_DIR/boot-fail-$label.txt
+  # so the caller (running in a command-substitution subshell) can still
+  # surface *why* the boot failed. Without this the caller only sees the
+  # non-zero exit and has to guess from the run log — that's exactly the
+  # silent-skip trap gap aee77 closed.
   local label="$1"
   local run_log="$REPORT_DIR/run-$label.log"
+  local fail_reason_file="$REPORT_DIR/boot-fail-$label.txt"
+  : > "$fail_reason_file"
 
   log "[$label] starting ./run.sh --local --local-schema"
   nohup ./run.sh --local --local-schema > "$run_log" 2>&1 &
@@ -127,8 +135,11 @@ boot_stack() {
   local slot_file=""
   for _ in $(seq 1 600); do
     if ! kill -0 "$pid" 2>/dev/null; then
+      local tail_line
+      tail_line="$(tail -5 "$run_log" 2>/dev/null | tr '\n' ' ' | sed 's/[[:space:]]\+/ /g' | cut -c1-400)"
       log "[$label] FAIL: run.sh exited before slot info appeared"
       tail -20 "$run_log" | sed 's/^/    /' | tee -a "$LOG_FILE"
+      printf 'run.sh exited before slot info appeared; tail: %s\n' "$tail_line" > "$fail_reason_file"
       return 1
     fi
     local line
@@ -147,6 +158,7 @@ boot_stack() {
   done
   if [ -z "$slot_file" ]; then
     log "[$label] FAIL: no slot info within 600s"
+    printf 'no slot info within 600s (backend_port=%s)\n' "${backend_port:-?}" > "$fail_reason_file"
     return 1
   fi
 
@@ -161,8 +173,14 @@ boot_stack() {
   log "[$label] backend=$backend_port schema=$schema_port vite=$vite_port home=$folddb_home"
 
   # Wait for backend + vite liveness
-  wait_http "http://localhost:$backend_port/api/system/auto-identity" 60 "[$label] backend" || return 1
-  wait_http "http://localhost:$vite_port/" 60 "[$label] vite" || return 1
+  if ! wait_http "http://localhost:$backend_port/api/system/auto-identity" 60 "[$label] backend"; then
+    printf 'backend not reachable on port %s within 60s\n' "$backend_port" > "$fail_reason_file"
+    return 1
+  fi
+  if ! wait_http "http://localhost:$vite_port/" 60 "[$label] vite"; then
+    printf 'vite not reachable on port %s within 60s\n' "$vite_port" > "$fail_reason_file"
+    return 1
+  fi
 
   printf '%s %s %s %s\n' "$backend_port" "$schema_port" "$vite_port" "$folddb_home"
 }
@@ -811,7 +829,17 @@ if [ "$SKIP_ORG" = false ]; then
       log "[org] $ORG_RESULT"
     fi
   else
-    ORG_RESULT="FAIL|node B boot failed"
+    # boot_stack dropped a one-line reason file (see boot_stack docstring).
+    # Surface it so the report shows WHY node B failed to boot instead of a
+    # bare "node B boot failed" — that was the aee77 silent-skip trap.
+    B_BOOT_REASON=""
+    if [ -f "$REPORT_DIR/boot-fail-node-b.txt" ]; then
+      B_BOOT_REASON="$(tr '\n' ' ' < "$REPORT_DIR/boot-fail-node-b.txt" | sed 's/[[:space:]]\+/ /g' | sed 's/^ *//;s/ *$//')"
+    fi
+    if [ -z "$B_BOOT_REASON" ]; then
+      B_BOOT_REASON="no reason captured (see $REPORT_DIR/run-node-b.log)"
+    fi
+    ORG_RESULT="FAIL|node B boot failed: $B_BOOT_REASON"
     log "[org] $ORG_RESULT"
   fi
 fi
@@ -833,6 +861,16 @@ VERDICT="PASS"
 # A failing set-org-hash leg is a verdict-breaking regression too (249d8 was
 # filed precisely so 3e063-class regressions aren't silent).
 case "$SET_ORG_HASH_RESULT" in
+  FAIL\|*) VERDICT="FAIL" ;;
+esac
+# A failing org-sync leg (e.g. node B boot failure) must flip the verdict
+# too. Before aee77 this was a silent skip: the harness exited 0 even though
+# the org leg could not run, masking a regression in the multi-node boot
+# path. The real two-node round-trip still runs in the cloud-e2e nightly;
+# this local plumbing check is the gate for "can a second node even boot
+# from the same run.sh entrypoint?". PENDING is not a failure — the real
+# assertion lives elsewhere; SKIP (--skip-org) is not a failure either.
+case "$ORG_RESULT" in
   FAIL\|*) VERDICT="FAIL" ;;
 esac
 
