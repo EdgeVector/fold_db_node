@@ -1,5 +1,6 @@
-use fold_db::error::FoldDbResult;
-use fold_db::schema::SchemaWithState;
+use fold_db::error::{FoldDbError, FoldDbResult};
+use fold_db::schema::types::field::Field;
+use fold_db::schema::{SchemaError, SchemaWithState};
 
 use super::OperationProcessor;
 
@@ -60,6 +61,39 @@ impl OperationProcessor {
     pub async fn block_schema(&self, schema_name: &str) -> FoldDbResult<()> {
         let db = self.get_db()?;
         Ok(db.schema_manager().block_schema(schema_name).await?)
+    }
+
+    /// Tag an existing schema with an org_hash, or clear it with `None`.
+    ///
+    /// When set, subsequent writes to this schema partition onto the org sync
+    /// log (key prefix `{org_hash}:…`) instead of the personal one. Also sets
+    /// `trust_domain` to `org:{org_hash}` so field access policies inherit the
+    /// org domain by default (symmetric with `populate_runtime_fields`).
+    ///
+    /// Does NOT rewrite molecules already stored under the personal prefix —
+    /// only affects writes performed after the tag lands.
+    pub async fn set_schema_org_hash(
+        &self,
+        schema_name: &str,
+        org_hash: Option<String>,
+    ) -> FoldDbResult<()> {
+        let db = self.get_db()?;
+        let mgr = db.schema_manager();
+        let mut schema = mgr
+            .get_schema_metadata(schema_name)?
+            .ok_or_else(|| FoldDbError::Schema(SchemaError::NotFound(schema_name.to_string())))?;
+
+        schema.org_hash = org_hash.clone();
+        schema.trust_domain = org_hash.as_ref().map(|h| format!("org:{}", h));
+
+        // Mirror populate_runtime_fields's propagation so in-memory writes use
+        // the new prefix too (field-level storage_key() reads FieldCommon.org_hash).
+        for field in schema.runtime_fields.values_mut() {
+            field.common_mut().set_org_hash(schema.org_hash.clone());
+        }
+
+        mgr.update_schema(&schema).await?;
+        Ok(())
     }
 
     /// Load schemas from the schema service.
