@@ -207,7 +207,7 @@ async fn main() {
         });
 
     // Data commands go through the daemon HTTP API
-    let port = match commands::daemon::ensure_running(dev).await {
+    let port = match commands::daemon::ensure_running().await {
         Ok(p) => p,
         Err(e) => e.exit(json_mode),
     };

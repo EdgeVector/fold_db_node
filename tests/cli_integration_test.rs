@@ -583,6 +583,120 @@ fn no_identity_and_no_daemon_fails_cleanly_in_non_tty() {
 }
 
 // ---------------------------------------------------------------------------
+// Regression: the CLI must NOT auto-spawn a `folddb_server` daemon.
+//
+// Pre-fix (alpha dogfood run-5, kanban 4f115), running any data command from
+// a worktree / CI / scratch session with `FOLDDB_PORT` unset caused the CLI
+// to silently spawn a production daemon on port 9001 from `~/.folddb` — a
+// safety risk that could corrupt real user state. The CLI now refuses to
+// spawn and tells the operator to start the daemon explicitly.
+// ---------------------------------------------------------------------------
+#[test]
+fn cli_does_not_auto_spawn_daemon_when_port_unset() {
+    // Isolated tmpdir with a valid identity so we bypass the setup wizard
+    // and land on the `ensure_running` guard.
+    let tmp = tempfile::TempDir::new().expect("tempdir");
+    let keypair = fold_db::security::Ed25519KeyPair::generate().expect("generate keypair");
+
+    let config = serde_json::json!({
+        "database": { "path": tmp.path().join("db").to_str().unwrap() },
+        "network_listen_address": "/ip4/0.0.0.0/tcp/0",
+        "security_config": { "require_tls": false, "encrypt_at_rest": false },
+        "schema_service_url": "test://mock",
+        "public_key": keypair.public_key_base64(),
+        "private_key": keypair.secret_key_base64()
+    });
+    let config_path = tmp.path().join("config.json");
+    fs::write(&config_path, serde_json::to_string_pretty(&config).unwrap()).expect("write config");
+
+    let mut cmd = Command::cargo_bin("folddb").expect("find folddb binary");
+    cmd.arg("--config")
+        .arg(&config_path)
+        .arg("status")
+        // Deliberately leave FOLDDB_PORT unset.
+        .env_remove("FOLDDB_PORT")
+        .env("FOLDDB_HOME", tmp.path())
+        .env_remove("NODE_CONFIG");
+
+    let output = cmd.output().expect("run status without FOLDDB_PORT");
+    assert!(
+        !output.status.success(),
+        "CLI must refuse to auto-spawn when FOLDDB_PORT is unset.\nstdout: {}\nstderr: {}",
+        String::from_utf8_lossy(&output.stdout),
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let combined = format!(
+        "{}{}",
+        String::from_utf8_lossy(&output.stdout),
+        String::from_utf8_lossy(&output.stderr)
+    );
+    assert!(
+        combined.contains("FOLDDB_PORT") && combined.contains("daemon start"),
+        "error must point at FOLDDB_PORT and `folddb daemon start`, got: {}",
+        combined
+    );
+    // Safety net: no PID file should have been written into the isolated
+    // FOLDDB_HOME (auto-spawn would write one).
+    let pid_path = tmp.path().join("folddb.pid");
+    assert!(
+        !pid_path.exists(),
+        "CLI must not have spawned a daemon (pid file present at {})",
+        pid_path.display()
+    );
+}
+
+#[test]
+fn cli_reports_missing_daemon_when_port_explicit() {
+    // When FOLDDB_PORT *is* set but nothing is listening, the CLI should
+    // still fail with a clear message — no retry storm, no spawn attempt.
+    let tmp = tempfile::TempDir::new().expect("tempdir");
+    let keypair = fold_db::security::Ed25519KeyPair::generate().expect("generate keypair");
+
+    let config = serde_json::json!({
+        "database": { "path": tmp.path().join("db").to_str().unwrap() },
+        "network_listen_address": "/ip4/0.0.0.0/tcp/0",
+        "security_config": { "require_tls": false, "encrypt_at_rest": false },
+        "schema_service_url": "test://mock",
+        "public_key": keypair.public_key_base64(),
+        "private_key": keypair.secret_key_base64()
+    });
+    let config_path = tmp.path().join("config.json");
+    fs::write(&config_path, serde_json::to_string_pretty(&config).unwrap()).expect("write config");
+
+    // Grab-and-release a free port — minimises the chance of colliding with
+    // a leaked daemon from another test run or worktree.
+    let listener = std::net::TcpListener::bind("127.0.0.1:0").expect("bind free port");
+    let free_port = listener.local_addr().unwrap().port();
+    drop(listener);
+
+    let mut cmd = Command::cargo_bin("folddb").expect("find folddb binary");
+    cmd.arg("--config")
+        .arg(&config_path)
+        .arg("status")
+        .env("FOLDDB_PORT", free_port.to_string())
+        .env("FOLDDB_HOME", tmp.path())
+        .env_remove("NODE_CONFIG");
+
+    let output = cmd.output().expect("run status with dead port");
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(
+        !output.status.success(),
+        "CLI must fail when the explicit port has no daemon.\nstdout: {}\nstderr: {}",
+        stdout,
+        stderr
+    );
+    let combined = format!("{}{}", stdout, stderr);
+    assert!(
+        combined.contains(&free_port.to_string()) && combined.contains("daemon start"),
+        "error should mention the requested port and suggest `daemon start`, got: {}",
+        combined
+    );
+    let pid_path = tmp.path().join("folddb.pid");
+    assert!(!pid_path.exists(), "CLI must not have spawned a daemon");
+}
+
+// ---------------------------------------------------------------------------
 // Regression: `folddb ingest file` must target an endpoint that exists.
 //
 // Repro (alpha dogfood run 4, kanban 27e5f): pre-fix the CLI posted to

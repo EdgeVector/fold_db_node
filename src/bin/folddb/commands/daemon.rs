@@ -62,6 +62,16 @@ pub fn default_port() -> u16 {
         .unwrap_or(9001)
 }
 
+/// Whether the caller explicitly set FOLDDB_PORT. Used by `ensure_running`
+/// to decide whether to default to prod port 9001 is safe — if the env
+/// var isn't set we refuse to auto-spawn anything from `~/.folddb`.
+fn folddb_port_is_set() -> bool {
+    std::env::var("FOLDDB_PORT")
+        .ok()
+        .and_then(|p| p.parse::<u16>().ok())
+        .is_some()
+}
+
 /// Check if dev mode is persisted in the config file (via `config set env dev`).
 pub fn is_dev_in_config() -> bool {
     let config_path = folddb_home().join("config").join("node_config.json");
@@ -70,14 +80,6 @@ pub fn is_dev_in_config() -> bool {
         .and_then(|s| serde_json::from_str::<serde_json::Value>(&s).ok())
         .and_then(|v| v.get("env").and_then(|e| e.as_str()).map(|s| s == "dev"))
         .unwrap_or(false)
-}
-
-/// Resolve whether to use dev mode: explicit --dev flag wins, else check config.
-pub fn resolve_dev(explicit_dev: bool) -> bool {
-    if explicit_dev {
-        return true;
-    }
-    is_dev_in_config()
 }
 
 /// Check if a port is already in use by trying to bind to it
@@ -228,17 +230,22 @@ pub async fn status() -> Result<String, CliError> {
     }
 }
 
-/// Ensure the daemon is running, starting it if necessary.
-/// Returns the port the daemon is listening on.
-pub async fn ensure_running(dev: bool) -> Result<u16, CliError> {
+/// Ensure the daemon is reachable. Returns the port it's listening on.
+///
+/// The CLI talks to an **already-running** daemon. It never spawns a daemon
+/// implicitly: silently starting `folddb_server` against `~/.folddb` on the
+/// prod port (9001) can corrupt real user state when the CLI was run from a
+/// worktree / CI / scratch session that never meant to touch prod. Use
+/// `folddb daemon start` to start one deliberately.
+pub async fn ensure_running() -> Result<u16, CliError> {
     let port = default_port();
+    let port_was_explicit = folddb_port_is_set();
 
     // Retry the health check before deciding the daemon is down. Under CI
     // load (or on a laptop with a busy CPU), a single 2s health check can
-    // time out even when the daemon is healthy — which used to push us
-    // straight into starting a second daemon and hitting `port already in
-    // use`. Three tries with a short backoff covers the transient case
-    // without adding noticeable latency to the happy path.
+    // time out even when the daemon is healthy — three tries with a short
+    // backoff covers the transient case without adding noticeable latency
+    // to the happy path.
     for attempt in 0..3 {
         if check_daemon_health(port).await {
             return Ok(port);
@@ -248,8 +255,21 @@ pub async fn ensure_running(dev: bool) -> Result<u16, CliError> {
         }
     }
 
-    // Warn if PID file exists but health check failed on our port —
-    // daemon may be running on a different port
+    // If FOLDDB_PORT is unset, the CLI is about to talk to (or spawn against)
+    // the prod port 9001. Refuse so we never silently reach into `~/.folddb`
+    // from a context that didn't opt in to the prod instance.
+    if !port_was_explicit {
+        return Err(CliError::new(
+            "No folddb daemon running and FOLDDB_PORT is not set",
+        )
+        .with_hint(
+            "Set FOLDDB_PORT to an existing daemon's port, or run `folddb daemon start --port <N>` first. \
+             The CLI does not auto-spawn a daemon — it would pick prod port 9001 and write to ~/.folddb.",
+        ));
+    }
+
+    // A port was explicitly requested but no daemon is answering on it.
+    // Warn if a PID file exists but on a different port.
     if let Some(pid) = read_running_pid() {
         eprintln!(
             "Warning: daemon PID {} exists but port {} is not responding.",
@@ -259,11 +279,6 @@ pub async fn ensure_running(dev: bool) -> Result<u16, CliError> {
         eprintln!("Run `folddb daemon stop` first, or set FOLDDB_PORT to match.");
     }
 
-    // If the port is already bound by something, don't try to start a
-    // daemon on it — `start()` would just fail with "address in use" and
-    // the real symptom (a wedged or non-responding daemon already holding
-    // the port) would be hidden behind a confusing error. Fail cleanly
-    // with a hint the user can act on.
     if is_port_in_use(port) {
         return Err(CliError::new(format!(
             "Port {} is in use but the daemon's health endpoint isn't responding",
@@ -274,11 +289,14 @@ pub async fn ensure_running(dev: bool) -> Result<u16, CliError> {
         ));
     }
 
-    let effective_dev = resolve_dev(dev);
-    eprintln!("Starting daemon on :{}...", port);
-    let msg = start(port, effective_dev).await?;
-    eprintln!("{}", msg);
-    Ok(port)
+    Err(CliError::new(format!(
+        "No folddb daemon running on port {}",
+        port
+    ))
+    .with_hint(format!(
+        "Start one explicitly: `folddb daemon start --port {}`. The CLI does not auto-spawn a daemon.",
+        port
+    )))
 }
 
 // ---------------------------------------------------------------------------
