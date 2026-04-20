@@ -1,0 +1,231 @@
+name: org-sync-run9-iter3-async19
+description: |
+  Alpha dogfood run-9, Flow 3 iteration 3 — 1+9 asymmetric batch. Alice
+  writes 1 post-tag molecule, waits a full sync cycle, then writes 9 more.
+  Tests the cursor-advance path where Bob observes a single entry, then
+  has to catch up with a 9-entry batch. Exercises both the rapid-write
+  4439b replay path AND the 30a7b pagination fix on a non-contiguous
+  upload cadence.
+
+nodes:
+  - role: alice
+    display_name: Alice
+  - role: bob
+    display_name: Bob
+
+steps:
+  - id: alice_registers_schema
+    roles: [alice]
+    actions:
+      - action: schema_register
+        fixture: qa-org-note.schema.json
+        persist_as: org_note
+
+  - id: alice_writes_pre_tag_molecule
+    roles: [alice]
+    actions:
+      - action: mutation_write
+        schema_persisted_as: org_note
+        fields:
+          title: "pre-tag-note"
+          body: "written before alice tagged the schema with org_hash"
+          modified_at: "2026-04-20T15:00:00Z"
+        key:
+          range: "2026-04-20T15:00:00Z"
+
+  - id: alice_creates_org
+    roles: [alice]
+    actions:
+      - action: org_create
+        name: run9-iter3-async19
+
+  - id: alice_tags_schema_with_org_hash
+    roles: [alice]
+    actions:
+      - action: set_org_hash
+        schema_persisted_as: org_note
+        from_role: alice
+
+  - id: alice_writes_single_post_tag
+    roles: [alice]
+    actions:
+      - action: mutation_write
+        schema_persisted_as: org_note
+        fields:
+          title: "async-01"
+          body: "singleton post-tag write"
+          modified_at: "2026-04-20T15:05:01Z"
+        key:
+          range: "2026-04-20T15:05:01Z"
+
+  - id: bob_joins_org
+    roles: [bob]
+    actions:
+      - action: org_join
+        from_role: alice
+
+  - id: sync_after_single
+    roles: [alice, bob]
+    actions:
+      - action: sync_trigger
+      - action: sleep
+        seconds: 8
+
+  - id: alice_batch9_02
+    roles: [alice]
+    actions:
+      - action: mutation_write
+        schema_persisted_as: org_note
+        fields:
+          title: "async-02"
+          body: "batch9 item 02"
+          modified_at: "2026-04-20T15:10:02Z"
+        key:
+          range: "2026-04-20T15:10:02Z"
+  - id: alice_batch9_03
+    roles: [alice]
+    actions:
+      - action: mutation_write
+        schema_persisted_as: org_note
+        fields:
+          title: "async-03"
+          body: "batch9 item 03"
+          modified_at: "2026-04-20T15:10:03Z"
+        key:
+          range: "2026-04-20T15:10:03Z"
+  - id: alice_batch9_04
+    roles: [alice]
+    actions:
+      - action: mutation_write
+        schema_persisted_as: org_note
+        fields:
+          title: "async-04"
+          body: "batch9 item 04"
+          modified_at: "2026-04-20T15:10:04Z"
+        key:
+          range: "2026-04-20T15:10:04Z"
+  - id: alice_batch9_05
+    roles: [alice]
+    actions:
+      - action: mutation_write
+        schema_persisted_as: org_note
+        fields:
+          title: "async-05"
+          body: "batch9 item 05"
+          modified_at: "2026-04-20T15:10:05Z"
+        key:
+          range: "2026-04-20T15:10:05Z"
+  - id: alice_batch9_06
+    roles: [alice]
+    actions:
+      - action: mutation_write
+        schema_persisted_as: org_note
+        fields:
+          title: "async-06"
+          body: "batch9 item 06"
+          modified_at: "2026-04-20T15:10:06Z"
+        key:
+          range: "2026-04-20T15:10:06Z"
+  - id: alice_batch9_07
+    roles: [alice]
+    actions:
+      - action: mutation_write
+        schema_persisted_as: org_note
+        fields:
+          title: "async-07"
+          body: "batch9 item 07"
+          modified_at: "2026-04-20T15:10:07Z"
+        key:
+          range: "2026-04-20T15:10:07Z"
+  - id: alice_batch9_08
+    roles: [alice]
+    actions:
+      - action: mutation_write
+        schema_persisted_as: org_note
+        fields:
+          title: "async-08"
+          body: "batch9 item 08"
+          modified_at: "2026-04-20T15:10:08Z"
+        key:
+          range: "2026-04-20T15:10:08Z"
+  - id: alice_batch9_09
+    roles: [alice]
+    actions:
+      - action: mutation_write
+        schema_persisted_as: org_note
+        fields:
+          title: "async-09"
+          body: "batch9 item 09"
+          modified_at: "2026-04-20T15:10:09Z"
+        key:
+          range: "2026-04-20T15:10:09Z"
+  - id: alice_batch9_10
+    roles: [alice]
+    actions:
+      - action: mutation_write
+        schema_persisted_as: org_note
+        fields:
+          title: "async-10"
+          body: "batch9 item 10"
+          modified_at: "2026-04-20T15:10:10Z"
+        key:
+          range: "2026-04-20T15:10:10Z"
+
+  - id: sync_final_1
+    roles: [alice, bob]
+    actions:
+      - action: sync_trigger
+      - action: sleep
+        seconds: 8
+
+  - id: sync_final_2
+    roles: [alice, bob]
+    actions:
+      - action: sync_trigger
+      - action: sleep
+        seconds: 10
+
+  - id: bob_registers_schema
+    roles: [bob]
+    actions:
+      - action: schema_register
+        fixture: qa-org-note.schema.json
+        persist_as: org_note
+
+  - id: bob_unfiltered_query
+    roles: [bob]
+    actions:
+      - action: query_schema
+        schema_persisted_as: org_note
+        persist_as: bob_post_sync
+
+  - id: alice_unfiltered_query
+    roles: [alice]
+    actions:
+      - action: query_schema
+        schema_persisted_as: org_note
+        persist_as: alice_post_sync
+
+assertions:
+  - node: alice
+    field: org_member_count
+    org_role: alice
+    op: ">="
+    value: 2
+  - node: bob
+    field: org_member_count
+    org_role: alice
+    op: ">="
+    value: 2
+
+  - node: bob
+    field: last_query_result_count
+    query_name: bob_post_sync
+    op: "=="
+    value: 10
+
+  - node: alice
+    field: last_query_result_count
+    query_name: alice_post_sync
+    op: "=="
+    value: 11
