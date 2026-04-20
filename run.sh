@@ -25,7 +25,9 @@ set -e
 # Environment Variables:
 #   FOLDDB_HOME      Where all instance-specific state lives (default: .folddb)
 #   FOLDDB_PORT      HTTP server port (alternative to --port)
-#   VITE_PORT        Vite frontend port (default: first free in 5173..=5199)
+#   VITE_PORT        Vite frontend port (pin to a specific port; disables scan)
+#   VITE_PORT_BASE   First port in the Vite auto-slot scan (default: 5173)
+#   VITE_PORT_COUNT  How many ports the scan covers (default: 127 → 5173..=5299)
 #
 # Examples:
 #   ./run.sh                           # Local Sled mode with prod schema service
@@ -469,24 +471,31 @@ if [ -z "$FOLDDB_HOME" ]; then
 fi
 export FOLDDB_HOME
 
-# Vite port: scan 5173..=5199 for the first free slot so that parallel
-# `run.sh` invocations don't collide on the frontend. An explicit
-# $VITE_PORT disables the scan. Independent from the backend HTTP_PORT
-# auto-slot above — Vite port collisions happen even when the backend
-# was explicitly pinned.
+# Vite port: scan VITE_PORT_BASE..VITE_PORT_BASE+VITE_PORT_COUNT-1 for the
+# first free slot so that parallel `run.sh` invocations don't collide on
+# the frontend. Defaults cover 5173..=5299 (127 ports); override
+# VITE_PORT_BASE / VITE_PORT_COUNT for stacks that already hold a chunk
+# of 5173+. An explicit $VITE_PORT pins a single port and disables the
+# scan. Independent from the backend HTTP_PORT auto-slot above — Vite
+# port collisions happen even when the backend was explicitly pinned.
 #
 # Use lsof (not a bash /dev/tcp probe) because Vite binds IPv6 by default;
 # a /dev/tcp/127.0.0.1 probe would miss an IPv6-only listener and hand us
 # a port Vite can't actually bind.
 if [ -z "${VITE_PORT:-}" ]; then
-    for candidate in $(seq 5173 5199); do
+    vite_port_base="${VITE_PORT_BASE:-5173}"
+    vite_port_count="${VITE_PORT_COUNT:-127}"
+    vite_port_end=$((vite_port_base + vite_port_count - 1))
+    for candidate in $(seq "$vite_port_base" "$vite_port_end"); do
         if ! lsof -iTCP:"$candidate" -sTCP:LISTEN -t >/dev/null 2>&1; then
             VITE_PORT="$candidate"
             break
         fi
     done
     if [ -z "${VITE_PORT:-}" ]; then
-        echo "error: no free TCP port found in 5173..=5199 for Vite dev server" >&2
+        echo "error: no free TCP port found in ${vite_port_base}..=${vite_port_end} for Vite dev server" >&2
+        echo "       Free a port, or widen the range via VITE_PORT_BASE / VITE_PORT_COUNT," >&2
+        echo "       or pin a specific one with VITE_PORT=<port>." >&2
         exit 1
     fi
 fi

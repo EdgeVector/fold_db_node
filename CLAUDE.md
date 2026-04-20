@@ -53,9 +53,9 @@ Always use `run.sh` to start the dev server — never start binaries manually:
 The script handles process cleanup, building, schema service startup, and frontend (Vite).
 - Backend: http://localhost:9101 (dev default; auto-picked in 9101..=9199 when parallel agents run)
 - Schema service: http://localhost:9102
-- UI: http://localhost:5173 (dev default; auto-picked in 5173..=5199 when parallel agents run)
+- UI: http://localhost:5173 (dev default; auto-picked in 5173..=5299 when parallel agents run)
 
-Dev uses the 9101 range so it doesn't collide with the prod Tauri bundle, which owns 9001 (and falls back to 9002..=9010). The Vite frontend auto-slots independently in 5173..=5199. Check `~/.folddb-slots/*.json` for the backend/schema/vite ports a running `run.sh` picked, or pin any of them with `--port`, `--schema-port`, or `VITE_PORT`.
+Dev uses the 9101 range so it doesn't collide with the prod Tauri bundle, which owns 9001 (and falls back to 9002..=9010). The Vite frontend auto-slots independently in 5173..=5299 (127 ports). Check `~/.folddb-slots/*.json` for the backend/schema/vite ports a running `run.sh` picked, or pin any of them with `--port`, `--schema-port`, or `VITE_PORT`. Widen/shift the Vite scan with `VITE_PORT_BASE` / `VITE_PORT_COUNT` if another stack already holds the 5173+ block.
 
 ## Feature Flags
 
