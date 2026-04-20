@@ -65,19 +65,22 @@ fn display_name_from_pubkey(public_key: &str) -> String {
     format!("node-{}", &public_key[..8.min(public_key.len())])
 }
 
-/// Get the SledPool from a FoldNode, falling back to a local pool if unavailable.
+/// Get the SledPool from a FoldNode.
+///
+/// Fails loudly when the FoldDB was assembled without a pool. Earlier
+/// versions silently fell back to a bespoke `SledPool::new(meta_db)`,
+/// which hid the underlying bug (no pool attached) and created a second
+/// OS flock holder near the main data directory. Per CLAUDE.md — no
+/// fallbacks, no silent failures.
 pub async fn get_sled_pool(
     node: &FoldNode,
 ) -> Result<std::sync::Arc<fold_db::storage::SledPool>, crate::handlers::HandlerError> {
     let db_guard = node.get_fold_db().handler_err("lock database")?;
-    if let Some(pool) = db_guard.sled_pool().cloned() {
-        Ok(pool)
-    } else {
-        let meta_path = node.config.get_storage_path().join("meta_db");
-        Ok(std::sync::Arc::new(fold_db::storage::SledPool::new(
-            meta_path,
-        )))
-    }
+    db_guard.sled_pool().cloned().ok_or_else(|| {
+        crate::handlers::HandlerError::Internal(
+            "Org operation requires a SledPool but FoldDB was initialized without one".to_string(),
+        )
+    })
 }
 
 /// Helper to get an AuthClient.
