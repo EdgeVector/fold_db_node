@@ -376,6 +376,25 @@ impl FoldNode {
             .await
     }
 
+    /// Register a WASM transform with the Global Transform Registry on the
+    /// schema service. The service computes the sha256 hash, classifies the
+    /// transform against the input queries' data classifications, and
+    /// persists the bytes. Returns the registration response containing the
+    /// canonical hash and TransformRecord.
+    ///
+    /// Callers then build a [`fold_db::view::types::TransformView`] that
+    /// references the WASM bytes; over time the view can be simplified to
+    /// reference only the hash once the runtime fetches bytes on demand.
+    pub async fn register_transform_on_service(
+        &self,
+        request: &crate::schema_service::types::RegisterTransformRequest,
+    ) -> FoldDbResult<crate::schema_service::types::RegisterTransformResponse> {
+        let url = self.require_real_schema_service()?;
+        crate::fold_node::SchemaServiceClient::new(&url)
+            .register_transform(request)
+            .await
+    }
+
     /// Batch check whether proposed schemas can reuse existing ones.
     /// Returns empty matches for test/mock schema service URLs.
     pub async fn batch_check_schema_reuse(

@@ -28,6 +28,9 @@ use fold_db_node::memory::{self, fields};
 use fold_db_node::schema_service::server::{
     AddSchemaResponse, SchemaAddOutcome, SchemaServiceState,
 };
+use fold_db_node::schema_service::types::{
+    RegisterTransformRequest, RegisterTransformResponse, TransformAddOutcome,
+};
 use serde_json::{json, Value};
 use std::collections::{HashMap, HashSet};
 use std::net::TcpListener;
@@ -101,6 +104,30 @@ async fn handle_available(state: web::Data<SchemaServiceState>) -> HttpResponse 
     }
 }
 
+async fn handle_register_transform(
+    payload: web::Json<RegisterTransformRequest>,
+    state: web::Data<SchemaServiceState>,
+) -> HttpResponse {
+    let req = payload.into_inner();
+    match state.register_transform(req).await {
+        Ok((record, TransformAddOutcome::Added)) => {
+            HttpResponse::Created().json(RegisterTransformResponse {
+                hash: record.hash.clone(),
+                record,
+                outcome: TransformAddOutcome::Added,
+            })
+        }
+        Ok((record, TransformAddOutcome::AlreadyExists)) => {
+            HttpResponse::Ok().json(RegisterTransformResponse {
+                hash: record.hash.clone(),
+                record,
+                outcome: TransformAddOutcome::AlreadyExists,
+            })
+        }
+        Err(e) => HttpResponse::BadRequest().json(json!({ "error": e.to_string() })),
+    }
+}
+
 struct SpawnedService {
     url: String,
     _temp_dir: TempDir,
@@ -128,7 +155,8 @@ async fn spawn_schema_service() -> SpawnedService {
                 .route("/schemas", web::get().to(handle_list_schemas))
                 .route("/schemas", web::post().to(handle_add_schema))
                 .route("/schemas/available", web::get().to(handle_available))
-                .route("/schema/{name}", web::get().to(handle_get_schema)),
+                .route("/schema/{name}", web::get().to(handle_get_schema))
+                .route("/transforms", web::post().to(handle_register_transform)),
         )
     })
     .listen(listener)
@@ -291,11 +319,28 @@ async fn topic_clusters_view_emits_one_row_per_cluster() {
     node.wait_for_background_tasks(std::time::Duration::from_secs(10))
         .await;
 
-    // 3. Register the TopicClusters view. This compiles the WASM — slow.
-    let view_name = register_topic_clusters_view(&node, &canonical)
+    // 3. Register the TopicClusters view. This compiles the WASM (slow on
+    //    first call), registers it with the Global Transform Registry on
+    //    the schema service (hash + classification), then creates + approves
+    //    the local view.
+    let registration = register_topic_clusters_view(&node, &canonical)
         .await
         .expect("register topic clusters view");
-    assert_eq!(view_name, TOPIC_CLUSTERS_VIEW_NAME);
+    assert_eq!(registration.view_name, TOPIC_CLUSTERS_VIEW_NAME);
+    assert!(
+        !registration.transform_hash.is_empty(),
+        "schema service must return a non-empty content-hash for the WASM"
+    );
+    assert_eq!(
+        registration.transform_hash.len(),
+        64,
+        "hash should be sha256 hex (64 chars), got `{}`",
+        registration.transform_hash
+    );
+    eprintln!(
+        "Global Transform Registry confirmed TopicClusters: hash={} outcome={:?}",
+        registration.transform_hash, registration.outcome
+    );
 
     // View orchestrator hasn't seen a source mutation since the view was
     // registered, so its cache is Empty. Querying will trigger compute.

@@ -7,7 +7,7 @@ use std::future::Future;
 
 use crate::schema_service::types::{
     AddViewRequest, AddViewResponse, BatchSchemaReuseRequest, BatchSchemaReuseResponse,
-    SchemaLookupEntry, StoredView,
+    RegisterTransformRequest, RegisterTransformResponse, SchemaLookupEntry, StoredView,
 };
 
 /// Internal error wrapper used by retryable schema-service calls.
@@ -359,6 +359,59 @@ impl SchemaServiceClient {
                 })
         })
         .await
+    }
+
+    /// Register a WASM transform with the Global Transform Registry.
+    ///
+    /// The schema service content-addresses the WASM by sha256, classifies it
+    /// against the input queries' schemas' data classifications, and persists
+    /// the bytes. Returns `{hash, record, outcome}` — `outcome` is `Added`
+    /// the first time and `AlreadyExists` on identical re-registration.
+    ///
+    /// This is the canonical path for bringing a transform into existence
+    /// before referencing it from a [`fold_db::view::types::TransformView`].
+    /// See `docs/design/global_transform_registry.md`.
+    pub async fn register_transform(
+        &self,
+        request: &RegisterTransformRequest,
+    ) -> FoldDbResult<RegisterTransformResponse> {
+        let url = format!("{}/api/transforms", self.base_url);
+
+        let response = self
+            .client
+            .post(&url)
+            .json(request)
+            .send()
+            .await
+            .map_err(|error| {
+                FoldDbError::Config(format!(
+                    "Failed to submit transform to schema service at {}: {}. Is the schema service running?",
+                    url, error
+                ))
+            })?;
+
+        let status = response.status();
+
+        if status == StatusCode::CREATED || status == StatusCode::OK {
+            return response
+                .json::<RegisterTransformResponse>()
+                .await
+                .map_err(|error| {
+                    FoldDbError::Config(format!(
+                        "Failed to parse register_transform response: {}",
+                        error
+                    ))
+                });
+        }
+
+        let body = response
+            .text()
+            .await
+            .unwrap_or_else(|_| "<empty>".to_string());
+        Err(FoldDbError::Config(format!(
+            "Schema service register_transform failed with status {}: {}",
+            status, body
+        )))
     }
 
     /// Register a view with the global schema service.

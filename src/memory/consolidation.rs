@@ -51,6 +51,7 @@ use fold_db::view::types::TransformView;
 
 use crate::fold_node::{wasm_compiler, FoldNode, OperationProcessor};
 use crate::memory::fields;
+use crate::schema_service::types::{RegisterTransformRequest, TransformAddOutcome};
 
 /// Descriptive name of the TopicClusters view.
 pub const TOPIC_CLUSTERS_VIEW_NAME: &str = "TopicClusters";
@@ -260,16 +261,44 @@ pub fn compile_cluster_memories_transform() -> FoldDbResult<Vec<u8>> {
     })
 }
 
-/// Register the `TopicClusters` TransformView against the given memory schema.
+/// Result of registering the TopicClusters consolidation end-to-end.
+#[derive(Debug, Clone)]
+pub struct TopicClustersRegistration {
+    /// Local view name (always `TOPIC_CLUSTERS_VIEW_NAME`).
+    pub view_name: String,
+    /// Schema service's canonical content-hash for the WASM (sha256).
+    /// Use this to audit, share, or dedup the transform across nodes.
+    pub transform_hash: String,
+    /// Whether the schema service added the transform or returned an
+    /// existing record with the same hash.
+    pub outcome: TransformAddOutcome,
+}
+
+/// Register the `TopicClusters` TransformView end-to-end:
 ///
-/// Returns the canonical view name (same as [`TOPIC_CLUSTERS_VIEW_NAME`] —
-/// returned explicitly for parity with the memory-schema registration flow).
-/// Compiles the WASM once per call; cache the result if you need to register
-/// against multiple nodes.
+/// 1. Compile the clustering WASM via `fold_node::wasm_compiler`.
+/// 2. Register the WASM with the Global Transform Registry on the schema
+///    service via `node.register_transform_on_service`. The service
+///    content-addresses it by sha256 and classifies it against the input
+///    queries' data classifications. This is the audit / cross-node
+///    sharing layer.
+/// 3. Build a local [`TransformView`] referencing the same WASM bytes inline.
+/// 4. `create_view` + `approve_view` on the local node so the view
+///    orchestrator can execute it.
+///
+/// Both sides hold the same bytes until the runtime fetches bytes by hash
+/// on demand (a future platform improvement). The registry step is what
+/// makes the transform auditable and content-addressed globally.
+///
+/// Idempotent: re-registering with identical WASM + input queries returns
+/// `TransformAddOutcome::AlreadyExists` from the registry, and
+/// `create_view` on the local side will error if the view already exists
+/// (caller should catch and re-approve if needed). For the dogfood flow,
+/// run `reset` before re-registering.
 pub async fn register_topic_clusters_view(
     node: &FoldNode,
     memory_canonical: &str,
-) -> FoldDbResult<String> {
+) -> FoldDbResult<TopicClustersRegistration> {
     log::info!("memory: compiling cluster_memories WASM transform (may take 10-30s on first call)");
     let wasm_bytes = compile_cluster_memories_transform()?;
     log::info!(
@@ -301,6 +330,43 @@ pub async fn register_topic_clusters_view(
         FieldValueType::String,
     );
 
+    // Step 1: Register with the Global Transform Registry on the schema
+    // service. This is the audit + classification + cross-node sharing
+    // layer. The service hashes the WASM by sha256 and classifies it
+    // against the input queries' data classifications.
+    let registry_request = RegisterTransformRequest {
+        name: TOPIC_CLUSTERS_VIEW_NAME.to_string(),
+        version: "0.1.0".to_string(),
+        description: Some(
+            "Memory consolidation via bag-of-words + union-find clustering. \
+             Deterministic; Phase 2 replaces with an LLM-backed summarizer."
+                .to_string(),
+        ),
+        input_queries: vec![input_query.clone()],
+        output_fields: output_fields.clone(),
+        source_url: None,
+        wasm_bytes: wasm_bytes.clone(),
+    };
+
+    let registry_response = node
+        .register_transform_on_service(&registry_request)
+        .await
+        .map_err(|e| {
+            FoldDbError::Config(format!(
+                "memory: failed to register `{}` WASM with the Global Transform Registry: {}",
+                TOPIC_CLUSTERS_VIEW_NAME, e
+            ))
+        })?;
+
+    log::info!(
+        "memory: Global Transform Registry confirmed `{}` — hash={} outcome={:?} assigned_classification={:?}",
+        TOPIC_CLUSTERS_VIEW_NAME,
+        registry_response.hash,
+        registry_response.outcome,
+        registry_response.record.assigned_classification
+    );
+
+    // Step 2: Build the local TransformView referencing the same WASM bytes.
     let view = TransformView::new(
         TOPIC_CLUSTERS_VIEW_NAME,
         // WASM-backed views must use Range or Single — Hash isn't supported
@@ -319,7 +385,7 @@ pub async fn register_topic_clusters_view(
     let processor = OperationProcessor::new(std::sync::Arc::new(node.clone()));
     processor.create_view(view).await.map_err(|e| {
         FoldDbError::Config(format!(
-            "memory: failed to register `{}` view: {}",
+            "memory: failed to register local `{}` view: {}",
             TOPIC_CLUSTERS_VIEW_NAME, e
         ))
     })?;
@@ -328,16 +394,20 @@ pub async fn register_topic_clusters_view(
         .await
         .map_err(|e| {
             FoldDbError::Config(format!(
-                "memory: failed to approve `{}` view: {}",
+                "memory: failed to approve local `{}` view: {}",
                 TOPIC_CLUSTERS_VIEW_NAME, e
             ))
         })?;
 
     log::info!(
-        "memory: registered `{}` view on source schema `{}`",
+        "memory: local `{}` view registered + approved on source schema `{}`",
         TOPIC_CLUSTERS_VIEW_NAME,
         memory_canonical
     );
 
-    Ok(TOPIC_CLUSTERS_VIEW_NAME.to_string())
+    Ok(TopicClustersRegistration {
+        view_name: TOPIC_CLUSTERS_VIEW_NAME.to_string(),
+        transform_hash: registry_response.hash,
+        outcome: registry_response.outcome,
+    })
 }
