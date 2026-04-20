@@ -195,7 +195,12 @@ jobs:
         uses: actions/checkout@v4
         with:
           repository: EdgeVector/homebrew-folddb
-          token: ${{ secrets.PRIVATE_DEPS_TOKEN }}
+          # PRIVATE_DEPS_TOKEN's identity (iceh6) has read-only collaborator role
+          # on homebrew-folddb, so `git push` from bump-tap 403s. GH_PAT is an
+          # org-scoped PAT with write access. Used only in bump-tap; the build
+          # job keeps PRIVATE_DEPS_TOKEN since that's what insteadOf rewriting
+          # needs for private dep clones. (projects/4a2c7)
+          token: ${{ secrets.GH_PAT }}
           path: tap
 
       - name: Write updated formula
@@ -266,7 +271,7 @@ jobs:
 
       - name: Commit and open PR
         env:
-          GH_TOKEN: ${{ secrets.PRIVATE_DEPS_TOKEN }}
+          GH_TOKEN: ${{ secrets.GH_PAT }}
           VERSION_TAG: ${{ github.ref_name }}
         run: |
           set -euo pipefail
