@@ -2,6 +2,8 @@ use fold_db::schema::types::{KeyConfig, KeyValue, Mutation, MutationType};
 use fold_db_node::fold_node::config::NodeConfig;
 use std::collections::HashMap;
 
+pub mod schema_service;
+
 #[allow(dead_code)]
 pub fn create_test_node_config() -> NodeConfig {
     let dir = tempfile::tempdir().unwrap();

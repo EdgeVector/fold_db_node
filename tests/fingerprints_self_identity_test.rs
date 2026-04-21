@@ -22,11 +22,8 @@
 //! canonical_names layer, and Persona traversal are all exercised
 //! in one pass.
 
-use actix_web::{web, App, HttpResponse, HttpServer};
 use fold_db::schema::types::field::HashRangeFilter;
 use fold_db::schema::types::operations::Query;
-use fold_db::schema_service::state::SchemaServiceState;
-use fold_db::schema_service::types::{AddSchemaResponse, SchemaAddOutcome};
 use fold_db_node::fingerprints::canonical_names;
 use fold_db_node::fingerprints::registration::register_phase_1_schemas;
 use fold_db_node::fingerprints::resolver::{PersonaResolver, PersonaSpec};
@@ -35,119 +32,12 @@ use fold_db_node::fingerprints::self_identity::bootstrap_self_identity;
 use fold_db_node::fold_node::config::NodeConfig;
 use fold_db_node::fold_node::{FoldNode, OperationProcessor};
 use serde_json::{json, Value};
-use std::collections::{HashMap, HashSet};
-use std::net::TcpListener;
+use std::collections::HashSet;
 use std::sync::Arc;
 use tempfile::TempDir;
 
-// ── In-process schema service setup (lifted from other integration tests) ──
-
-async fn handle_add_schema(
-    payload: web::Json<serde_json::Value>,
-    state: web::Data<SchemaServiceState>,
-) -> HttpResponse {
-    let req = payload.into_inner();
-    let schema: fold_db::schema::types::Schema = match serde_json::from_value(req["schema"].clone())
-    {
-        Ok(s) => s,
-        Err(e) => {
-            return HttpResponse::BadRequest()
-                .json(json!({ "error": format!("deserialize schema: {}", e) }))
-        }
-    };
-    let mappers: HashMap<String, String> =
-        serde_json::from_value(req["mutation_mappers"].clone()).unwrap_or_default();
-    match state.add_schema(schema, mappers).await {
-        Ok(outcome) => match outcome {
-            SchemaAddOutcome::Added(s, m) => HttpResponse::Created().json(AddSchemaResponse {
-                schema: s,
-                mutation_mappers: m,
-                replaced_schema: None,
-            }),
-            SchemaAddOutcome::AlreadyExists(s, _) => HttpResponse::Ok().json(AddSchemaResponse {
-                schema: s,
-                mutation_mappers: HashMap::new(),
-                replaced_schema: None,
-            }),
-            SchemaAddOutcome::Expanded(old, s, m) => {
-                HttpResponse::Created().json(AddSchemaResponse {
-                    schema: s,
-                    mutation_mappers: m,
-                    replaced_schema: Some(old),
-                })
-            }
-        },
-        Err(e) => HttpResponse::BadRequest().json(json!({ "error": e.to_string() })),
-    }
-}
-
-async fn handle_get_schema(
-    path: web::Path<String>,
-    state: web::Data<SchemaServiceState>,
-) -> HttpResponse {
-    let name = path.into_inner();
-    match state.get_schema_by_name(&name) {
-        Ok(Some(s)) => HttpResponse::Ok().json(s),
-        _ => HttpResponse::NotFound().json(json!({ "error": "not found" })),
-    }
-}
-
-async fn handle_list_schemas(state: web::Data<SchemaServiceState>) -> HttpResponse {
-    match state.get_schema_names() {
-        Ok(names) => HttpResponse::Ok().json(json!({ "schemas": names })),
-        Err(e) => HttpResponse::InternalServerError().json(json!({ "error": e.to_string() })),
-    }
-}
-
-async fn handle_available(state: web::Data<SchemaServiceState>) -> HttpResponse {
-    match state.get_all_schemas_cached() {
-        Ok(s) => HttpResponse::Ok().json(json!({ "schemas": s })),
-        Err(e) => HttpResponse::InternalServerError().json(json!({ "error": e.to_string() })),
-    }
-}
-
-struct SpawnedService {
-    url: String,
-    _temp_dir: TempDir,
-}
-
-async fn spawn_schema_service() -> SpawnedService {
-    let temp_dir = TempDir::new().unwrap();
-    let db_path = temp_dir
-        .path()
-        .join("self_identity_test_registry")
-        .to_string_lossy()
-        .to_string();
-    let state = SchemaServiceState::new(db_path).unwrap();
-    fold_db::schema_service::builtin_schemas::seed(&state)
-        .await
-        .expect("seed built-in schemas");
-    let state_data = web::Data::new(state);
-    let listener = TcpListener::bind(("127.0.0.1", 0)).unwrap();
-    let port = listener.local_addr().unwrap().port();
-    let state_clone = state_data.clone();
-
-    let server = HttpServer::new(move || {
-        App::new().app_data(state_clone.clone()).service(
-            web::scope("/v1")
-                .route("/schemas", web::get().to(handle_list_schemas))
-                .route("/schemas", web::post().to(handle_add_schema))
-                .route("/schemas/available", web::get().to(handle_available))
-                .route("/schema/{name}", web::get().to(handle_get_schema)),
-        )
-    })
-    .listen(listener)
-    .unwrap()
-    .run();
-
-    actix_web::rt::spawn(server);
-    actix_web::rt::time::sleep(std::time::Duration::from_millis(200)).await;
-
-    SpawnedService {
-        url: format!("http://127.0.0.1:{}", port),
-        _temp_dir: temp_dir,
-    }
-}
+mod common;
+use common::schema_service::spawn_schema_service_with_builtins as spawn_schema_service;
 
 async fn create_node(schema_service_url: &str) -> (Arc<FoldNode>, TempDir) {
     let tmp = TempDir::new().unwrap();
