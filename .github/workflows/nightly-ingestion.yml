@@ -173,7 +173,7 @@ jobs:
             - src/ingestion/smart_folder/ (smart folder scan + ingest)
             - src/ingestion/ai/ (AI backend, prompt, response parsing)
             - src/ingestion/mutation_generator.rs (field mapping)
-            - src/fold_node/schema_client.rs (schema service client)
+            - ../schema_service/crates/client/ (schema_service_client crate)
 
             Failure context:
             $(cat /tmp/claude-prompt-context.txt)
