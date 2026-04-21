@@ -685,6 +685,7 @@ async fn run_apple_photos_import(
     tracker: ProgressTracker,
     _node_arc: std::sync::Arc<crate::fold_node::FoldNode>,
     _service: std::sync::Arc<crate::ingestion::ingestion_service::IngestionService>,
+    _upload_storage: fold_db::storage::UploadStorage,
 ) {
     let mut job = Job::new(progress_id, JobType::Other("apple-photos".into()));
     job.status = JobStatus::Failed;
