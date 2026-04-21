@@ -39,8 +39,15 @@ const OSASCRIPT_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(30
 ///
 /// `app_label` names the target macOS app (e.g. "Reminders.app") so the
 /// timeout error can point the user at the correct System Settings pane.
+/// It is also used to pre-launch the target app via Launch Services so
+/// the script doesn't hit error -600 ("Application isn't running") when
+/// AppleScript's auto-launch of `tell application "X"` fails — a common
+/// failure mode on Sonoma+ for apps that aren't already running
+/// (Calendar, Contacts, Photos). Apps already running are a no-op.
 #[cfg(target_os = "macos")]
 pub fn run_osascript(script: &str, app_label: &str) -> Result<String, IngestionError> {
+    ensure_app_launched(app_label);
+
     let child = std::process::Command::new("osascript")
         .arg("-e")
         .arg(script)
@@ -87,6 +94,56 @@ pub fn run_osascript(script: &str, app_label: &str) -> Result<String, IngestionE
                 app_label,
             )))
         }
+    }
+}
+
+/// Pre-launch the target macOS app via Launch Services so the subsequent
+/// `tell application "X"` block doesn't fail with `-600 Application
+/// isn't running`. `app_label` is a filename-style label like
+/// `"Calendar.app"`; we strip the `.app` suffix for the `open -a`
+/// argument. Flags:
+///   * `-g` — do not bring the app to the foreground.
+///   * `-j` — launch hidden so the ingestion doesn't disturb focus.
+///
+/// Errors are swallowed: if the launch fails (e.g. the app is not
+/// installed, or `open` itself errors), we still run the script and let
+/// its own error path produce the user-facing message — doubling up on
+/// errors here would obscure the real cause.
+#[cfg(target_os = "macos")]
+fn ensure_app_launched(app_label: &str) {
+    let app_name = app_name_from_label(app_label);
+    let _ = std::process::Command::new("open")
+        .arg("-g")
+        .arg("-j")
+        .arg("-a")
+        .arg(app_name)
+        .stdout(std::process::Stdio::null())
+        .stderr(std::process::Stdio::null())
+        .status();
+}
+
+/// Translate a `"X.app"` label into the bare `"X"` form expected by
+/// `open -a`. Labels without the `.app` suffix pass through unchanged.
+#[cfg(target_os = "macos")]
+fn app_name_from_label(app_label: &str) -> &str {
+    app_label.strip_suffix(".app").unwrap_or(app_label)
+}
+
+#[cfg(all(test, target_os = "macos"))]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn app_name_from_label_strips_dot_app_suffix() {
+        assert_eq!(app_name_from_label("Calendar.app"), "Calendar");
+        assert_eq!(app_name_from_label("Contacts.app"), "Contacts");
+        assert_eq!(app_name_from_label("Photos.app"), "Photos");
+    }
+
+    #[test]
+    fn app_name_from_label_passes_through_bare_names() {
+        assert_eq!(app_name_from_label("Calendar"), "Calendar");
+        assert_eq!(app_name_from_label(""), "");
     }
 }
 
