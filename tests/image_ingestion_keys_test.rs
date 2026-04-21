@@ -280,7 +280,7 @@ async fn test_image_ingestion_pipeline_produces_keys() {
     // use fold_db_node::ingestion::ingestion_service::IngestionService;
     // use fold_db_node::ingestion::{create_progress_tracker, IngestionConfig, IngestionRequest, ProgressService};
     use actix_web::{web, App, HttpResponse, HttpServer};
-    use fold_db_node::schema_service::server::SchemaServiceState;
+    use fold_db::schema_service::state::SchemaServiceState;
     use std::net::TcpListener;
     use tempfile::TempDir;
 
@@ -296,7 +296,7 @@ async fn test_image_ingestion_pipeline_produces_keys() {
             serde_json::from_value(req["mutation_mappers"].clone()).unwrap_or_default();
         match state.add_schema(schema, mappers).await {
             Ok(outcome) => {
-                use fold_db_node::schema_service::server::{AddSchemaResponse, SchemaAddOutcome};
+                use fold_db::schema_service::types::{AddSchemaResponse, SchemaAddOutcome};
                 match outcome {
                     SchemaAddOutcome::Added(s, m) => {
                         HttpResponse::Created().json(AddSchemaResponse {
@@ -364,7 +364,7 @@ async fn test_image_ingestion_pipeline_produces_keys() {
     let state_clone = state_data.clone();
     let server = HttpServer::new(move || {
         App::new().app_data(state_clone.clone()).service(
-            web::scope("/api")
+            web::scope("/v1")
                 .route("/schemas", web::get().to(handle_list))
                 .route("/schemas", web::post().to(handle_add_schema))
                 .route("/schemas/available", web::get().to(handle_available))

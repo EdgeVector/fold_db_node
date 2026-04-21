@@ -92,6 +92,10 @@ assert_cmd = "2"
 predicates = "3"
 actix-web = "4.3"
 wat = "1"
+# In-process test fixture for spinning up a real schema service. Path dep
+# ties workspace-local test runs to the new schema_service repo during
+# Phase 0 of the extraction. Never pulled into non-dev builds.
+schema_service_server_http = { path = "../schema_service/crates/server_http" }
 
 [lib]
 name = "fold_db_node"
@@ -100,10 +104,6 @@ path = "src/lib.rs"
 [[bin]]
 name = "folddb_server"
 path = "src/bin/folddb_server.rs"
-
-[[bin]]
-name = "schema_service"
-path = "src/bin/schema_service.rs"
 
 [[bin]]
 name = "openapi_dump"

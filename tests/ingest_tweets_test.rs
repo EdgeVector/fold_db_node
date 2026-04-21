@@ -13,13 +13,14 @@
 //! Run with: `cargo test --test ingest_tweets_test -- --ignored --nocapture`
 
 use fold_db::logging::core::run_with_user;
+use fold_db::schema_service::state::SchemaServiceState;
+use fold_db::schema_service::types::{
+    AddSchemaResponse, ErrorResponse, SchemaAddOutcome, SchemasListResponse,
+};
 use fold_db_node::fold_node::node::FoldNode;
 use fold_db_node::ingestion::ingestion_service::IngestionService;
 use fold_db_node::ingestion::smart_folder::read_file_as_json;
 use fold_db_node::ingestion::{create_progress_tracker, IngestionRequest, ProgressService};
-use fold_db_node::schema_service::server::{
-    AddSchemaResponse, ErrorResponse, SchemaAddOutcome, SchemaServiceState, SchemasListResponse,
-};
 mod common;
 
 use actix_web::{web, App, HttpResponse, HttpServer};
@@ -129,7 +130,7 @@ async fn spawn_local_schema_service() -> (String, actix_web::dev::ServerHandle, 
     let state_clone = state_data.clone();
     let server = HttpServer::new(move || {
         App::new().app_data(state_clone.clone()).service(
-            web::scope("/api")
+            web::scope("/v1")
                 .route("/schemas", web::get().to(handle_list_schemas))
                 .route("/schemas", web::post().to(handle_add_schema))
                 .route(

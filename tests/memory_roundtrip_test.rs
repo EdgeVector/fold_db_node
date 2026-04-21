@@ -19,12 +19,11 @@ use actix_web::{web, App, HttpResponse, HttpServer};
 use fold_db::db_operations::IndexResult;
 use fold_db::schema::types::key_value::KeyValue;
 use fold_db::schema::types::operations::MutationType;
+use fold_db::schema_service::state::SchemaServiceState;
+use fold_db::schema_service::types::{AddSchemaResponse, SchemaAddOutcome};
 use fold_db_node::fold_node::config::NodeConfig;
 use fold_db_node::fold_node::{FoldNode, OperationProcessor};
 use fold_db_node::memory::{self, fields};
-use fold_db_node::schema_service::server::{
-    AddSchemaResponse, SchemaAddOutcome, SchemaServiceState,
-};
 use serde_json::{json, Value};
 use std::collections::HashMap;
 use std::net::TcpListener;
@@ -111,7 +110,7 @@ async fn spawn_schema_service() -> SpawnedService {
         .to_string_lossy()
         .to_string();
     let state = SchemaServiceState::new(db_path).unwrap();
-    fold_db_node::schema_service::builtin_schemas::seed(&state)
+    fold_db::schema_service::builtin_schemas::seed(&state)
         .await
         .expect("seed built-in schemas");
     let state_data = web::Data::new(state);
@@ -121,7 +120,7 @@ async fn spawn_schema_service() -> SpawnedService {
 
     let server = HttpServer::new(move || {
         App::new().app_data(state_clone.clone()).service(
-            web::scope("/api")
+            web::scope("/v1")
                 .route("/schemas", web::get().to(handle_list_schemas))
                 .route("/schemas", web::post().to(handle_add_schema))
                 .route("/schemas/available", web::get().to(handle_available))

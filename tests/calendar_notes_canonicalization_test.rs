@@ -8,7 +8,8 @@
 //! 5. Shares canonical fields across schemas in the same domain
 
 use fold_db::schema::types::data_classification::DataClassification;
-use fold_db_node::schema_service::server::{SchemaAddOutcome, SchemaServiceState};
+use fold_db::schema_service::state::SchemaServiceState;
+use fold_db::schema_service::types::SchemaAddOutcome;
 use serde_json::json;
 use std::collections::HashMap;
 use tempfile::tempdir;

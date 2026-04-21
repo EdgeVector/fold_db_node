@@ -1922,6 +1922,7 @@ dependencies = [
  "regex",
  "reqwest 0.11.27",
  "rust-embed",
+ "schema_service_server_http",
  "serde",
  "serde_json",
  "sha2",
@@ -4466,6 +4467,31 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "91c1b7e4904c873ef0710c1f407dde2e6287de2bebc1bbbf7d430bb7cbffd939"
 dependencies = [
  "windows-sys 0.61.2",
+]
+
+[[package]]
+name = "schema_service_server_http"
+version = "0.1.0"
+dependencies = [
+ "actix-cors",
+ "actix-web",
+ "clap",
+ "fold_db",
+ "log",
+ "schema_service_server_shared",
+ "serde",
+ "tokio",
+]
+
+[[package]]
+name = "schema_service_server_shared"
+version = "0.1.0"
+dependencies = [
+ "actix-web",
+ "fold_db",
+ "log",
+ "serde",
+ "serde_json",
 ]
 
 [[package]]

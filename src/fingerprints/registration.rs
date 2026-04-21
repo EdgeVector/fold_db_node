@@ -7,7 +7,7 @@
 //!
 //! **The twelve Phase 1 fingerprint schemas are system primitives,
 //! not user data. They are built into the schema service itself
-//! (see `crate::schema_service::builtin_schemas`), not proposed by
+//! (see `fold_db::schema_service::builtin_schemas`), not proposed by
 //! fold_db_node at startup.** fold_db_node's job is to fetch them
 //! by descriptive name, load the canonical version locally, and
 //! populate the `descriptive_name → canonical_name` lookup.
@@ -63,7 +63,7 @@ use fold_db::schema::types::Schema;
 use fold_db::schema::SchemaState;
 
 use crate::fold_node::FoldNode;
-use crate::schema_service::builtin_schemas::PHASE_1_DESCRIPTIVE_NAMES;
+use fold_db::schema_service::builtin_schemas::PHASE_1_DESCRIPTIVE_NAMES;
 
 use super::canonical_names::{self, CanonicalNames};
 
@@ -145,7 +145,7 @@ pub async fn lookup_phase_1_schemas(node: &FoldNode) -> FoldDbResult<Registratio
                 "fingerprints: schema service is missing built-in schema '{}'. \
                      The service must be running a build that seeds
                      phase-1 built-in schemas (see
-                     `src/schema_service/builtin_schemas.rs`). \
+                     `fold_db::schema_service::builtin_schemas`). \
                      fold_db_node refuses to start without all twelve.",
                 descriptive
             ))
