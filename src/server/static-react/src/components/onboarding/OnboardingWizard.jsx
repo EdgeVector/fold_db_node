@@ -29,15 +29,15 @@ export function isCloudAlreadyActive() {
 
 function ProgressIndicator({ currentStep, steps }) {
   return (
-    <div className="flex items-center justify-center gap-1 mb-6">
+    <div className="flex items-start justify-center gap-1 mb-6">
       {steps.map((step, i) => {
         const isCurrent = step.id === currentStep
         const isPast = steps.findIndex(s => s.id === currentStep) > i
         return (
-          <div key={step.id} className="flex items-center gap-1">
+          <div key={step.id} className="flex items-start gap-1">
             <div className="flex flex-col items-center">
               <div
-                className={`w-7 h-7 flex items-center justify-center text-xs font-bold border transition-colors ${
+                className={`w-7 h-7 flex items-center justify-center text-xs font-bold border transition-colors shrink-0 ${
                   isCurrent
                     ? 'border-gruvbox-yellow text-gruvbox-yellow bg-gruvbox-yellow/10'
                     : isPast
@@ -47,14 +47,14 @@ function ProgressIndicator({ currentStep, steps }) {
               >
                 {isPast ? '\u2713' : step.number}
               </div>
-              <span className={`text-[10px] mt-1 ${
+              <span className={`block w-14 h-[26px] text-center text-[10px] leading-tight mt-1 ${
                 isCurrent ? 'text-gruvbox-yellow' : isPast ? 'text-gruvbox-green' : 'text-tertiary'
               }`}>
                 {step.label}
               </span>
             </div>
             {i < steps.length - 1 && (
-              <div className={`w-8 h-px mt-[-12px] ${isPast ? 'bg-gruvbox-green' : 'bg-border'}`} />
+              <div className={`w-4 h-px mt-[13px] shrink-0 ${isPast ? 'bg-gruvbox-green' : 'bg-border'}`} />
             )}
           </div>
         )
