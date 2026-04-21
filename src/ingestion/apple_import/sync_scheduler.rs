@@ -46,6 +46,7 @@ pub async fn run_sync(
     node_arc: Arc<crate::fold_node::FoldNode>,
     service: Arc<IngestionService>,
     tracker: ProgressTracker,
+    upload_storage: fold_db::storage::UploadStorage,
 ) -> Vec<String> {
     let mut errors: Vec<String> = Vec::new();
 
@@ -88,6 +89,7 @@ pub async fn run_sync(
             service.clone(),
             tracker.clone(),
             photos_limit,
+            upload_storage.clone(),
         )
         .await
         {
@@ -281,8 +283,10 @@ async fn sync_photos(
     service: Arc<IngestionService>,
     tracker: ProgressTracker,
     limit: usize,
+    upload_storage: fold_db::storage::UploadStorage,
 ) -> Result<(), String> {
     use super::photos;
+    use crate::ingestion::helpers::store_file_content_addressed;
     use crate::ingestion::IngestionRequest;
 
     let paths = match tokio::task::spawn_blocking(move || photos::export(None, limit)).await {
@@ -312,6 +316,7 @@ async fn sync_photos(
     }
 
     let node = node_arc.as_ref();
+    let encryption_key = node.get_encryption_key();
     let mut per_photo_errors: Vec<String> = Vec::new();
 
     for path in &paths {
@@ -352,8 +357,43 @@ async fn sync_photos(
                     }
                 }
 
-                // Read image bytes for face detection before ingestion
-                let image_bytes = std::fs::read(&file_path).ok();
+                // Read raw bytes once. Used for both face detection and the
+                // content-addressed store (which the data browser fetches from
+                // via `/api/file/<hash>` to render inline previews).
+                let raw_bytes = match std::fs::read(&file_path) {
+                    Ok(b) => b,
+                    Err(e) => {
+                        log_feature!(
+                            LogFeature::Ingestion,
+                            warn,
+                            "Auto-sync photo {} read failed: {}",
+                            file_name,
+                            e
+                        );
+                        per_photo_errors.push(format!("{file_name}: read: {e}"));
+                        continue;
+                    }
+                };
+
+                let file_hash = match store_file_content_addressed(
+                    &raw_bytes,
+                    &upload_storage,
+                    &encryption_key,
+                )
+                .await
+                {
+                    Ok(h) => Some(h),
+                    Err(e) => {
+                        log_feature!(
+                            LogFeature::Ingestion,
+                            warn,
+                            "Auto-sync photo {} store failed, continuing without preview: {}",
+                            file_name,
+                            e
+                        );
+                        None
+                    }
+                };
 
                 let request = IngestionRequest {
                     data: json_value,
@@ -361,11 +401,11 @@ async fn sync_photos(
                     pub_key: "default".to_string(),
                     source_file_name: Some(file_name.to_string()),
                     progress_id: None,
-                    file_hash: None,
+                    file_hash,
                     source_folder: None,
                     image_descriptive_name: descriptive_name,
                     org_hash: None,
-                    image_bytes,
+                    image_bytes: Some(raw_bytes),
                 };
 
                 if let Err(e) = crate::handlers::ingestion::process_json(
@@ -623,6 +663,7 @@ async fn sync_photos(
     _service: Arc<IngestionService>,
     _tracker: ProgressTracker,
     _limit: usize,
+    _upload_storage: fold_db::storage::UploadStorage,
 ) -> Result<(), String> {
     log_feature!(
         LogFeature::Ingestion,

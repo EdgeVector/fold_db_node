@@ -421,6 +421,7 @@ pub async fn apple_import_photos(
     state: web::Data<AppState>,
     ingestion_service: web::Data<IngestionServiceState>,
     progress_tracker: web::Data<ProgressTracker>,
+    upload_storage: web::Data<fold_db::storage::UploadStorage>,
 ) -> impl Responder {
     if !apple_import::is_available() {
         return HttpResponse::BadRequest().json(json!({
@@ -456,10 +457,20 @@ pub async fn apple_import_photos(
     let album = request.album.clone();
     let limit = request.limit.unwrap_or(50);
     let pid = progress_id.clone();
+    let upload_storage_clone = upload_storage.get_ref().clone();
 
     tokio::spawn(async move {
         fold_db::logging::core::run_with_user(&user_id, async move {
-            run_apple_photos_import(album, limit, pid, tracker, node_arc, service).await;
+            run_apple_photos_import(
+                album,
+                limit,
+                pid,
+                tracker,
+                node_arc,
+                service,
+                upload_storage_clone,
+            )
+            .await;
         })
         .await;
     });
@@ -478,8 +489,10 @@ async fn run_apple_photos_import(
     tracker: ProgressTracker,
     node_arc: std::sync::Arc<crate::fold_node::FoldNode>,
     service: std::sync::Arc<crate::ingestion::ingestion_service::IngestionService>,
+    upload_storage: fold_db::storage::UploadStorage,
 ) {
     use crate::ingestion::apple_import::photos;
+    use crate::ingestion::helpers::store_file_content_addressed;
 
     let photos_result =
         tokio::task::spawn_blocking(move || photos::export(album.as_deref(), limit)).await;
@@ -520,6 +533,7 @@ async fn run_apple_photos_import(
     let _ = tracker.save(&job).await;
 
     let node = node_arc.as_ref();
+    let encryption_key = node.get_encryption_key();
     let mut ingested = 0;
 
     for (i, path) in paths.iter().enumerate() {
@@ -568,7 +582,39 @@ async fn run_apple_photos_import(
                     }
                 }
 
-                let image_bytes = std::fs::read(&file_path).ok();
+                let raw_bytes = match std::fs::read(&file_path) {
+                    Ok(b) => b,
+                    Err(e) => {
+                        log_feature!(
+                            LogFeature::Ingestion,
+                            warn,
+                            "Failed to read photo {} for storage: {}",
+                            file_name,
+                            e
+                        );
+                        continue;
+                    }
+                };
+
+                let file_hash = match store_file_content_addressed(
+                    &raw_bytes,
+                    &upload_storage,
+                    &encryption_key,
+                )
+                .await
+                {
+                    Ok(h) => Some(h),
+                    Err(e) => {
+                        log_feature!(
+                            LogFeature::Ingestion,
+                            warn,
+                            "Failed to store photo {} content-addressed (preview unavailable): {}",
+                            file_name,
+                            e
+                        );
+                        None
+                    }
+                };
 
                 let request = IngestionRequest {
                     data: json_value,
@@ -576,11 +622,11 @@ async fn run_apple_photos_import(
                     pub_key: "default".to_string(),
                     source_file_name: Some(file_name.to_string()),
                     progress_id: None,
-                    file_hash: None,
+                    file_hash,
                     source_folder: None,
                     image_descriptive_name: descriptive_name,
                     org_hash: None,
-                    image_bytes,
+                    image_bytes: Some(raw_bytes),
                 };
 
                 match crate::handlers::ingestion::process_json(
@@ -639,6 +685,7 @@ async fn run_apple_photos_import(
     tracker: ProgressTracker,
     _node_arc: std::sync::Arc<crate::fold_node::FoldNode>,
     _service: std::sync::Arc<crate::ingestion::ingestion_service::IngestionService>,
+    _upload_storage: fold_db::storage::UploadStorage,
 ) {
     let mut job = Job::new(progress_id, JobType::Other("apple-photos".into()));
     job.status = JobStatus::Failed;
@@ -1159,6 +1206,7 @@ pub fn spawn_sync_scheduler(
     app_state: actix_web::web::Data<AppState>,
     ingestion_service: actix_web::web::Data<IngestionServiceState>,
     progress_tracker: actix_web::web::Data<ProgressTracker>,
+    upload_storage: actix_web::web::Data<fold_db::storage::UploadStorage>,
 ) {
     tokio::spawn(async move {
         let mut interval = tokio::time::interval(std::time::Duration::from_secs(60));
@@ -1219,6 +1267,7 @@ pub fn spawn_sync_scheduler(
                 node_arc,
                 service,
                 tracker,
+                upload_storage.get_ref().clone(),
             )
             .await;
 

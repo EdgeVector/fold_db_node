@@ -165,6 +165,30 @@ pub fn spawn_file_ingestion_tasks(
     });
 }
 
+/// Content-address the given file bytes: compute SHA256, encrypt the payload,
+/// and write it to `upload_storage` under its hash. Returns the hex hash so the
+/// caller can put it on the ingestion request (which ends up as
+/// `metadata.file_hash` on the atom, letting the data browser fetch the file
+/// back via `/api/file/<hash>` for inline previews).
+///
+/// `save_file_if_not_exists` is idempotent, so re-calling this for the same
+/// bytes is cheap — duplicate photos won't double-encrypt or double-store.
+pub async fn store_file_content_addressed(
+    raw_bytes: &[u8],
+    upload_storage: &fold_db::storage::UploadStorage,
+    encryption_key: &[u8; 32],
+) -> Result<String, String> {
+    use sha2::{Digest, Sha256};
+    let file_hash = format!("{:x}", Sha256::digest(raw_bytes));
+    let encrypted = fold_db::crypto::envelope::encrypt_envelope(encryption_key, raw_bytes)
+        .map_err(|e| format!("Failed to encrypt file: {}", e))?;
+    upload_storage
+        .save_file_if_not_exists(&file_hash, &encrypted, None)
+        .await
+        .map_err(|e| format!("Failed to store encrypted file: {}", e))?;
+    Ok(file_hash)
+}
+
 /// Process a single file for smart ingest using shared smart_folder module.
 /// Reads the file, computes its SHA256 hash, encrypts and stores in upload storage,
 /// then ingests the JSON content with file_hash metadata.
@@ -183,19 +207,16 @@ pub async fn process_single_file_via_smart_folder(
 ) -> Result<(), String> {
     // Try native parser first (handles json, js/Twitter, csv, txt, md),
     // fall back to file_to_markdown for unsupported types (images, PDFs, etc.)
-    let (data, file_hash, raw_bytes, image_descriptive_name) =
+    // The hash returned by either path is discarded — we re-derive it inside
+    // `store_file_content_addressed` over the same bytes so the store/path
+    // invariant lives in one place. The rehash cost is negligible vs. the AI
+    // calls that dominate this path.
+    let (data, raw_bytes, image_descriptive_name) =
         match crate::ingestion::smart_folder::read_file_with_hash(file_path) {
-            Ok(result) => {
-                let (data, hash, bytes) = result;
-                (data, hash, bytes, None)
-            }
+            Ok((data, _hash, bytes)) => (data, bytes, None),
             Err(_) => {
                 let raw_bytes =
                     std::fs::read(file_path).map_err(|e| format!("Failed to read file: {}", e))?;
-                let hash_hex = {
-                    use sha2::{Digest, Sha256};
-                    format!("{:x}", Sha256::digest(&raw_bytes))
-                };
                 let mut data =
                     crate::ingestion::file_handling::json_processor::convert_file_to_json(
                         &file_path.to_path_buf(),
@@ -221,18 +242,12 @@ pub async fn process_single_file_via_smart_folder(
                     )
                     .await;
                 }
-                (data, hash_hex, raw_bytes, image_descriptive_name)
+                (data, raw_bytes, image_descriptive_name)
             }
         };
 
-    // Encrypt and store the raw file in upload storage (content-addressed)
-    let encrypted_data = fold_db::crypto::envelope::encrypt_envelope(encryption_key, &raw_bytes)
-        .map_err(|e| format!("Failed to encrypt file: {}", e))?;
-    // Content-addressed: user_id=None (same file = same hash = same object)
-    upload_storage
-        .save_file_if_not_exists(&file_hash, &encrypted_data, None)
-        .await
-        .map_err(|e| format!("Failed to store encrypted file: {}", e))?;
+    let file_hash =
+        store_file_content_addressed(&raw_bytes, upload_storage, encryption_key).await?;
 
     let node = node_arc.as_ref();
     let pub_key = node.get_node_public_key().to_string();
