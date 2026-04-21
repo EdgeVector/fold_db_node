@@ -37,7 +37,28 @@ jobs:
       RUSTFLAGS: -C linker=clang -C link-arg=-fuse-ld=mold
 
     steps:
-      - uses: actions/checkout@v4
+      - name: Checkout fold_db_node
+        uses: actions/checkout@v4
+        with:
+          path: fold_db_node
+
+      # Phase 0 T3: schema_service lives in its own repo now. Check it out as
+      # a sibling so ../schema_service resolves the way it does in the
+      # workspace checkout that developers use locally.
+      - name: Checkout schema_service (sibling)
+        uses: actions/checkout@v4
+        with:
+          repository: EdgeVector/schema_service
+          ref: main
+          token: ${{ secrets.PRIVATE_DEPS_TOKEN }}
+          path: schema_service
+
+      # schema_service ships a .cargo/config.toml that patches the fold_db
+      # git dep to a sibling ../fold_db checkout for local dev. CI does not
+      # have that sibling, so strip the patch — the git dep resolves normally.
+      # (Matches the same step in schema_service's own CI.)
+      - name: Remove local-dev cargo patch in schema_service
+        run: rm -f schema_service/.cargo/config.toml
 
       - name: Install mold linker
         run: sudo apt-get update && sudo apt-get install -y mold
@@ -48,18 +69,29 @@ jobs:
         run: git config --global url."https://x-access-token:${{ secrets.PRIVATE_DEPS_TOKEN }}@github.com/".insteadOf "https://github.com/"
 
       - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: |
+            fold_db_node
+            schema_service
 
       - name: Stub frontend dist for RustEmbed
+        working-directory: fold_db_node
         run: mkdir -p src/server/static-react/dist && echo '<html></html>' > src/server/static-react/dist/index.html
 
-      - name: Build binaries
-        run: cargo build --bin folddb_server --bin schema_service
+      - name: Build folddb_server
+        working-directory: fold_db_node
+        run: cargo build --bin folddb_server
+
+      - name: Build schema_service (submodule)
+        working-directory: schema_service
+        run: cargo build -p schema_service_server_http --bin schema_service
 
       - name: Install jq
         run: sudo apt-get install -y jq
 
       - name: Run dogfood harness
         id: dogfood
+        working-directory: fold_db_node
         shell: bash
         run: |
           set -o pipefail
