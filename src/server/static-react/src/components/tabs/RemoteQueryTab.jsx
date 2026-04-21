@@ -60,7 +60,7 @@ function RemoteQueryTab({ onResult: _onResult }) {
   }
 
   return (
-    <div className="p-6 max-w-4xl mx-auto">
+    <div className="p-6">
       <div className="mb-6">
         <h2 className="text-lg font-medium text-primary">Remote Query</h2>
         <p className="text-sm text-secondary mt-1">
