@@ -1,6 +1,13 @@
-import React, { useState, useEffect } from 'react'
+import React, { useState, useEffect, useCallback } from 'react'
 import { activateExemem } from '../../api/clients/activateExemem'
-import { getSubscriptionStatus, createCheckoutSession, createPortalSession, formatBytes, usagePercent, CloudApiError } from '../../api/clients/subscriptionClient'
+import {
+  getSubscriptionStatus,
+  createCheckoutSession,
+  createPortalSession,
+  formatBytes,
+  usagePercent,
+  CloudApiError,
+} from '../../api/clients/subscriptionClient'
 
 // Poll configuration for post-Stripe-checkout upgrade detection. Stripe redirects
 // back to the app before the webhook that flips the user to `plan=paid` has
@@ -9,24 +16,66 @@ export const UPGRADE_POLL_INTERVAL_MS = 2000
 export const UPGRADE_POLL_MAX_MS = 20000
 export const CANCELLED_BANNER_MS = 5000
 
-export default function CloudMigrationSettings() {
+// Cloud state is a single source of truth derived from the server — never
+// fabricated. Values:
+//   'checking'      — detecting cloud mode / validating credentials
+//   'not_connected' — no cloud credentials on this device; show the invite form
+//   'connected'     — credentials validated against Exemem; storageInfo is real
+//   'stale'         — credentials exist but Exemem rejected them (401/403);
+//                     user must re-enter an invite code or reset
+//   'unreachable'   — credentials exist but Exemem is unreachable (5xx, network,
+//                     CORS, DNS). Do NOT fabricate plan data; offer retry/reset.
+const CLOUD_STATE = {
+  CHECKING: 'checking',
+  NOT_CONNECTED: 'not_connected',
+  CONNECTED: 'connected',
+  STALE: 'stale',
+  UNREACHABLE: 'unreachable',
+} as const
+
+type CloudStateValue = (typeof CLOUD_STATE)[keyof typeof CLOUD_STATE]
+
+interface StorageInfoView {
+  plan: string
+  used_bytes: number
+  quota_bytes: number
+  has_subscription: boolean
+}
+
+interface InviteCodeEntry {
+  code: string
+  redeemed_by?: string | null
+}
+
+type UpgradeStatus = 'idle' | 'pending' | 'complete' | 'timeout' | 'cancelled'
+
+export default function CloudMigrationSettings(): React.ReactElement {
   const backupSkipped = localStorage.getItem('folddb_cloud_backup_skipped') === '1'
-  const [registering, setRegistering] = useState(false)
-  const [error, setError] = useState(null)
-  const [inviteCode, setInviteCode] = useState('')
+  const [registering, setRegistering] = useState<boolean>(false)
+  const [error, setError] = useState<string | null>(null)
+  const [inviteCode, setInviteCode] = useState<string>('')
 
-  // Storage tier state (cloud mode only)
-  const [isCloudMode, setIsCloudMode] = useState(false)
-  const [storageInfo, setStorageInfo] = useState(null)
-  const [upgrading, setUpgrading] = useState(false)
-  const [_hasCredentials, setHasCredentials] = useState(null)
-  const [recoveryWords, setRecoveryWords] = useState(null)
-  const [showRecovery, setShowRecovery] = useState(false)
-  const [inviteCodes, setInviteCodes] = useState(null)
-  const [creatingCode, setCreatingCode] = useState(false)
+  // Single cloud-connection state machine. See CLOUD_STATE above for the
+  // invariants each value represents. `storageInfo` is only populated when
+  // `cloudState === CLOUD_STATE.CONNECTED` — we never synthesize plan data.
+  const [cloudState, setCloudState] = useState<CloudStateValue>(CLOUD_STATE.CHECKING)
+  const [storageInfo, setStorageInfo] = useState<StorageInfoView | null>(null)
+  const [upgrading, setUpgrading] = useState<boolean>(false)
+  const [recoveryWords, setRecoveryWords] = useState<string[] | null>(null)
+  const [showRecovery, setShowRecovery] = useState<boolean>(false)
+  const [inviteCodes, setInviteCodes] = useState<InviteCodeEntry[] | null>(null)
+  const [creatingCode, setCreatingCode] = useState<boolean>(false)
 
-  // Stripe checkout redirect handling: 'idle' | 'pending' | 'complete' | 'timeout' | 'cancelled'
-  const [upgradeStatus, setUpgradeStatus] = useState('idle')
+  const [upgradeStatus, setUpgradeStatus] = useState<UpgradeStatus>('idle')
+
+  // Extract a human-readable message from an unknown thrown value. Error
+  // instances return their .message; everything else is stringified so we
+  // don't silently drop context.
+  const errorMessage = (err: unknown): string | undefined => {
+    if (err instanceof Error && err.message) return err.message
+    if (typeof err === 'string') return err
+    return undefined
+  }
 
   // Handle Stripe checkout return: poll for webhook-driven plan flip or show cancelled banner.
   useEffect(() => {
@@ -82,67 +131,86 @@ export default function CloudMigrationSettings() {
     }
   }, [])
 
-  useEffect(() => {
-    // Check if already in cloud mode via localStorage OR keychain
-    const hasCloudConfig = localStorage.getItem('exemem_api_url') && localStorage.getItem('exemem_api_key')
-
-    const detectCloudMode = async () => {
-      // Check keychain credentials as fallback
-      let keychainCreds = false
-      try {
-        const resp = await fetch('/api/auth/credentials')
-        if (resp.ok) {
-          const data = await resp.json()
-          keychainCreds = data.ok && data.has_credentials
-        }
-        setHasCredentials(keychainCreds)
-      } catch {
-        setHasCredentials(false)
-      }
-
-      if (hasCloudConfig || keychainCreds) {
-        setIsCloudMode(true)
-        try {
-          const status = await getSubscriptionStatus()
-          setStorageInfo({
-            plan: status.plan,
-            used_bytes: status.storage.used_bytes,
-            quota_bytes: status.storage.quota_bytes,
-            has_subscription: status.has_subscription,
-          })
-        } catch (err) {
-          // Auth rejection means the creds we have are stale/revoked. Reset
-          // to the invite-code form so the user isn't stuck in a "Connected
-          // but offline" limbo that also re-triggers keychain password prompts
-          // on every credential read.
-          if (err instanceof CloudApiError && (err.status === 401 || err.status === 403)) {
-            localStorage.removeItem('exemem_api_url')
-            localStorage.removeItem('exemem_api_key')
-            try {
-              await fetch('/api/auth/credentials', { method: 'DELETE' })
-            } catch {
-              // Best-effort — if the local node is unreachable the page won't
-              // be loading anyway.
-            }
-            setHasCredentials(false)
-            setIsCloudMode(false)
-            setStorageInfo(null)
-            return
-          }
-          // Transient error (network down, 5xx) — keep cloud mode and show
-          // the offline fallback banner.
-          setStorageInfo({
-            plan: 'free',
-            used_bytes: 0,
-            quota_bytes: 1073741824, // 1 GB
-            has_subscription: false,
-            offline: true,
-          })
-        }
-      }
+  // Wipe all cloud credentials — localStorage, keychain, and cached client
+  // state — so the UI drops back to the invite-code form. Used both on the
+  // auto-reject path (stale creds detected) and as a user-triggered escape
+  // hatch when the page is in UNREACHABLE or STALE state.
+  const resetCloudCredentials = useCallback(async () => {
+    localStorage.removeItem('exemem_api_url')
+    localStorage.removeItem('exemem_api_key')
+    try {
+      await fetch('/api/auth/credentials', { method: 'DELETE' })
+    } catch {
+      // Best-effort — if the local node is unreachable the page won't be
+      // loading anyway.
     }
-    detectCloudMode()
+    setStorageInfo(null)
+    setCloudState(CLOUD_STATE.NOT_CONNECTED)
+    setError(null)
   }, [])
+
+  // Validate cloud credentials against Exemem and drive `cloudState`.
+  // Exported via `useCallback` so the unreachable-state "Retry" button can
+  // re-run the same probe.
+  const validateCloudSession = useCallback(async () => {
+    setCloudState(CLOUD_STATE.CHECKING)
+
+    // Presence check: localStorage first (fast path), then the node's
+    // keychain-backed credentials endpoint (source of truth across browser
+    // sessions on the same device).
+    const hasLocalCreds = !!(
+      localStorage.getItem('exemem_api_url') && localStorage.getItem('exemem_api_key')
+    )
+    let hasKeychainCreds = false
+    try {
+      const resp = await fetch('/api/auth/credentials')
+      if (resp.ok) {
+        const data = await resp.json()
+        hasKeychainCreds = !!(data.ok && data.has_credentials)
+      }
+    } catch {
+      // Local node unreachable — treat as no keychain creds; the page itself
+      // would be failing to load if this were persistent.
+    }
+
+    if (!hasLocalCreds && !hasKeychainCreds) {
+      setStorageInfo(null)
+      setCloudState(CLOUD_STATE.NOT_CONNECTED)
+      return
+    }
+
+    // Validate by hitting an authenticated endpoint. Success = connected with
+    // real storage info. 401/403 = credentials rejected. Anything else =
+    // unreachable (we do NOT fabricate plan data — the user sees the real
+    // state).
+    try {
+      const status = await getSubscriptionStatus()
+      setStorageInfo({
+        plan: status.plan,
+        used_bytes: status.storage.used_bytes,
+        quota_bytes: status.storage.quota_bytes,
+        has_subscription: status.has_subscription,
+      })
+      setCloudState(CLOUD_STATE.CONNECTED)
+    } catch (err: unknown) {
+      if (err instanceof CloudApiError && (err.status === 401 || err.status === 403)) {
+        // Credentials rejected — wipe them so the invite form re-appears, and
+        // the user isn't stuck in a "Connected but offline" limbo that also
+        // re-triggers keychain password prompts on every credential read.
+        await resetCloudCredentials()
+        setCloudState(CLOUD_STATE.STALE)
+        return
+      }
+      // Network / 5xx / CORS / DNS — keep creds (might be a transient outage),
+      // but surface it honestly and offer reset as an escape hatch.
+      setStorageInfo(null)
+      setCloudState(CLOUD_STATE.UNREACHABLE)
+    }
+  }, [resetCloudCredentials])
+
+  useEffect(() => {
+    validateCloudSession()
+  }, [validateCloudSession])
 
   const handleEnableCloud = async () => {
     if (!inviteCode.trim()) {
@@ -155,8 +223,8 @@ export default function CloudMigrationSettings() {
       await activateExemem(inviteCode)
       // Reload to pick up new config
       window.location.reload()
-    } catch (err) {
-      setError(err.message || 'Failed to enable cloud backup')
+    } catch (err: unknown) {
+      setError(errorMessage(err) || 'Failed to enable cloud backup')
       setRegistering(false)
     }
   }
@@ -167,8 +235,8 @@ export default function CloudMigrationSettings() {
     try {
       const url = await createCheckoutSession()
       window.location.href = url
-    } catch (err) {
-      setError(err.message || 'Failed to start checkout')
+    } catch (err: unknown) {
+      setError(errorMessage(err) || 'Failed to start checkout')
       setUpgrading(false)
     }
   }
@@ -241,15 +309,15 @@ export default function CloudMigrationSettings() {
     try {
       const url = await createPortalSession()
       window.location.href = url
-    } catch (err) {
-      setError(err.message || 'Failed to open billing portal')
+    } catch (err: unknown) {
+      setError(errorMessage(err) || 'Failed to open billing portal')
     }
   }
 
   // Shell render when a Stripe redirect banner should show but cloud-mode
   // detection hasn't finished yet (storageInfo still null). Keeps the banner
   // visible without blocking on the async detect.
-  if (upgradeStatus !== 'idle' && !(isCloudMode && storageInfo)) {
+  if (upgradeStatus !== 'idle' && !(cloudState === CLOUD_STATE.CONNECTED && storageInfo)) {
     return (
       <div className="flex flex-col gap-6 w-full text-gruvbox-bright">
         <h3 className="text-sm font-bold uppercase tracking-widest text-gruvbox-light">Cloud Storage</h3>
@@ -258,8 +326,53 @@ export default function CloudMigrationSettings() {
     )
   }
 
+  // Checking: quick loading shell so we don't flash the invite form while
+  // validating credentials.
+  if (cloudState === CLOUD_STATE.CHECKING) {
+    return (
+      <div className="flex flex-col gap-6 w-full text-gruvbox-bright">
+        <h3 className="text-sm font-bold uppercase tracking-widest text-gruvbox-light">Cloud Storage</h3>
+        <p className="text-xs text-gruvbox-dim">Checking connection to Exemem…</p>
+      </div>
+    )
+  }
+
+  // Unreachable: credentials exist locally but Exemem did not respond. We do
+  // NOT render the full tier panel with fabricated plan data — that used to
+  // confuse users into thinking they had a Free Plan that the server never
+  // confirmed. Show the real state + actionable buttons instead.
+  if (cloudState === CLOUD_STATE.UNREACHABLE) {
+    return (
+      <div className="flex flex-col gap-6 w-full text-gruvbox-bright">
+        <h3 className="text-sm font-bold uppercase tracking-widest text-gruvbox-light">Cloud Storage</h3>
+        <div className="flex items-start gap-3 p-4 border border-gruvbox-yellow bg-gruvbox-yellow/5 rounded-md">
+          <span className="text-gruvbox-yellow text-sm flex-shrink-0">!</span>
+          <div className="flex-1 space-y-3">
+            <p className="text-xs text-gruvbox-yellow leading-relaxed">
+              Couldn't reach Exemem. Your cloud credentials are stored on this device, but we can't confirm your account or storage usage right now.
+            </p>
+            <div className="flex gap-3">
+              <button
+                onClick={validateCloudSession}
+                className="px-4 py-2 text-xs font-bold border border-gruvbox-blue text-gruvbox-blue hover:bg-gruvbox-blue/10 rounded-md transition-colors cursor-pointer"
+              >
+                Retry
+              </button>
+              <button
+                onClick={resetCloudCredentials}
+                className="px-4 py-2 text-xs font-bold border border-border text-gruvbox-dim hover:text-gruvbox-bright rounded-md transition-colors cursor-pointer"
+              >
+                Reset cloud credentials
+              </button>
+            </div>
+          </div>
+        </div>
+      </div>
+    )
+  }
+
   // Cloud mode: show storage tier info
-  if (isCloudMode && storageInfo) {
+  if (cloudState === CLOUD_STATE.CONNECTED && storageInfo) {
     const pct = usagePercent(storageInfo.used_bytes, storageInfo.quota_bytes)
     const barColor = pct > 90 ? 'bg-gruvbox-red' : pct > 80 ? 'bg-gruvbox-orange' : 'bg-gruvbox-green'
     const isFree = storageInfo.plan === 'free'
@@ -269,15 +382,6 @@ export default function CloudMigrationSettings() {
         <h3 className="text-sm font-bold uppercase tracking-widest text-gruvbox-light">Cloud Storage</h3>
 
         {renderUpgradeBanner()}
-
-        {storageInfo.offline && (
-          <div className="flex items-start gap-3 p-3 border border-gruvbox-yellow bg-gruvbox-yellow/5 rounded-md">
-            <span className="text-gruvbox-yellow text-sm flex-shrink-0">!</span>
-            <p className="text-xs text-gruvbox-yellow leading-relaxed">
-              Connected to Exemem but couldn't reach the cloud API. Storage info may be outdated.
-            </p>
-          </div>
-        )}
 
         {/* Usage bar */}
         <div className="flex flex-col gap-2">
@@ -438,7 +542,7 @@ export default function CloudMigrationSettings() {
                   } else {
                     setError(createData.error || 'Failed to create invite code')
                   }
-                } catch (e) { setError(e?.message || 'Failed to create invite code') }
+                } catch (e: unknown) { setError(errorMessage(e) || 'Failed to create invite code') }
                 finally { setCreatingCode(false) }
               }}
               disabled={creatingCode}
@@ -462,7 +566,7 @@ export default function CloudMigrationSettings() {
                   if (!resp.ok) { setError(`Failed to load invite codes (HTTP ${resp.status})`); return }
                   const data = await resp.json()
                   if (data.ok) setInviteCodes(data.codes)
-                } catch (e) { setError(e?.message || 'Failed to load invite codes') }
+                } catch (e: unknown) { setError(errorMessage(e) || 'Failed to load invite codes') }
               }}
               className="text-xs text-gruvbox-blue underline cursor-pointer bg-transparent border-none"
             >
@@ -496,12 +600,27 @@ export default function CloudMigrationSettings() {
     )
   }
 
-  // Not in cloud mode: show one-click setup
+  // NOT_CONNECTED or STALE: both render the one-click setup form, but STALE
+  // shows an explanatory banner first so the user understands why they need
+  // to re-enter an invite code (their previous credentials were rejected).
   return (
     <div className="flex flex-col gap-6 w-full text-gruvbox-bright">
 
+      {/* Stale-credentials banner (shown only when we just wiped rejected creds) */}
+      {cloudState === CLOUD_STATE.STALE && (
+        <div className="flex items-start gap-3 p-4 border border-gruvbox-red bg-gruvbox-red/5 rounded-md">
+          <span className="text-gruvbox-red text-sm flex-shrink-0">!</span>
+          <div>
+            <p className="text-sm font-bold text-gruvbox-red">Cloud credentials rejected</p>
+            <p className="text-xs text-gruvbox-light mt-1">
+              Exemem no longer recognizes the credentials stored on this device. Enter a new invite code below to re-enable cloud backup.
+            </p>
+          </div>
+        </div>
+      )}
+
       {/* Skipped backup reminder */}
-      {backupSkipped && (
+      {cloudState !== CLOUD_STATE.STALE && backupSkipped && (
         <div className="flex items-start gap-3 p-4 border border-gruvbox-yellow bg-gruvbox-yellow/5 rounded-md">
           <div className="text-gruvbox-yellow mt-0.5 flex-shrink-0">
             <svg className="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
