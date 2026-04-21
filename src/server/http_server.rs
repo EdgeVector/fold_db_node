@@ -265,6 +265,7 @@ impl FoldHttpServer {
             app_state.clone(),
             ingestion_service_data.clone(),
             progress_tracker_data.clone(),
+            upload_storage_data.clone(),
         );
 
         // Start the HTTP server
