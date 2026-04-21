@@ -31,7 +31,7 @@ async fn spawn_mock_service(
             .app_data(schemas_data.clone())
             .app_data(views_data.clone())
             .route(
-                "/api/schema/{name}",
+                "/v1/schema/{name}",
                 web::get().to(
                     |path: web::Path<String>,
                      schemas: web::Data<HashMap<String, Schema>>| async move {
@@ -45,7 +45,7 @@ async fn spawn_mock_service(
                 ),
             )
             .route(
-                "/api/view/{name}",
+                "/v1/view/{name}",
                 web::get().to(
                     |path: web::Path<String>,
                      views: web::Data<HashMap<String, StoredView>>| async move {

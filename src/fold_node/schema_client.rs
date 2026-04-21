@@ -5,7 +5,7 @@ use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::future::Future;
 
-use crate::schema_service::types::{
+use fold_db::schema_service::types::{
     AddViewRequest, AddViewResponse, BatchSchemaReuseRequest, BatchSchemaReuseResponse,
     SchemaLookupEntry, StoredView,
 };
@@ -132,7 +132,7 @@ impl SchemaServiceClient {
         schema: &Schema,
         mutation_mappers: HashMap<String, String>,
     ) -> FoldDbResult<AddSchemaResponse> {
-        let url = format!("{}/api/schemas", self.base_url);
+        let url = format!("{}/v1/schemas", self.base_url);
         let request = AddSchemaRequest {
             schema: schema.clone(),
             mutation_mappers,
@@ -271,7 +271,7 @@ impl SchemaServiceClient {
             schemas: Vec<serde_json::Value>,
         }
 
-        let url = format!("{}/api/schemas", self.base_url);
+        let url = format!("{}/v1/schemas", self.base_url);
         let resp: SchemasListResponse = self.get_json(&url, "schemas").await?;
         Ok(resp
             .schemas
@@ -287,14 +287,14 @@ impl SchemaServiceClient {
             schemas: Vec<Schema>,
         }
 
-        let url = format!("{}/api/schemas/available", self.base_url);
+        let url = format!("{}/v1/schemas/available", self.base_url);
         let resp: AvailableSchemasResponse = self.get_json(&url, "available schemas").await?;
         Ok(resp.schemas)
     }
 
     /// Get a specific schema definition from the schema service
     pub async fn get_schema(&self, name: &str) -> FoldDbResult<Schema> {
-        let url = format!("{}/api/schema/{}", self.base_url, name);
+        let url = format!("{}/v1/schema/{}", self.base_url, name);
         self.get_json(&url, &format!("schema '{}'", name)).await
     }
 
@@ -305,7 +305,7 @@ impl SchemaServiceClient {
         &self,
         entries: &[SchemaLookupEntry],
     ) -> FoldDbResult<BatchSchemaReuseResponse> {
-        let url = format!("{}/api/schemas/batch-check-reuse", self.base_url);
+        let url = format!("{}/v1/schemas/batch-check-reuse", self.base_url);
         let request = BatchSchemaReuseRequest {
             schemas: entries.to_vec(),
         };
@@ -363,7 +363,7 @@ impl SchemaServiceClient {
 
     /// Register a view with the global schema service.
     pub async fn add_view(&self, request: &AddViewRequest) -> FoldDbResult<AddViewResponse> {
-        let url = format!("{}/api/views", self.base_url);
+        let url = format!("{}/v1/views", self.base_url);
 
         let response = self
             .client
@@ -403,7 +403,7 @@ impl SchemaServiceClient {
             views: Vec<String>,
         }
 
-        let url = format!("{}/api/views", self.base_url);
+        let url = format!("{}/v1/views", self.base_url);
         let resp: ViewsListResponse = self.get_json(&url, "views").await?;
         Ok(resp.views)
     }
@@ -415,14 +415,14 @@ impl SchemaServiceClient {
             views: Vec<StoredView>,
         }
 
-        let url = format!("{}/api/views/available", self.base_url);
+        let url = format!("{}/v1/views/available", self.base_url);
         let resp: AvailableViewsResponse = self.get_json(&url, "available views").await?;
         Ok(resp.views)
     }
 
     /// Get a specific view by name.
     pub async fn get_view(&self, name: &str) -> FoldDbResult<StoredView> {
-        let url = format!("{}/api/view/{}", self.base_url, name);
+        let url = format!("{}/v1/view/{}", self.base_url, name);
         self.get_json(&url, &format!("view '{}'", name)).await
     }
 }
@@ -430,9 +430,10 @@ impl SchemaServiceClient {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::schema_service::server::{ErrorResponse, SchemaAddOutcome, SchemaServiceState};
     use actix_web::{rt::time::sleep, web, App, HttpResponse, HttpServer};
     use fold_db::schema::types::SchemaType;
+    use fold_db::schema_service::state::SchemaServiceState;
+    use fold_db::schema_service::types::{ErrorResponse, SchemaAddOutcome};
     use std::net::TcpListener;
     use std::sync::atomic::{AtomicU32, Ordering};
     use std::sync::Arc;
@@ -538,7 +539,7 @@ mod tests {
 
     // ----- Integration: retry against a flaky mock server -----
 
-    /// Spawn a mock POST /api/schemas endpoint that returns 500 for the first
+    /// Spawn a mock POST /v1/schemas endpoint that returns 500 for the first
     /// `fail_count` requests, then a valid AddSchemaResponse thereafter.
     /// Returns (base_url, handle, request_counter).
     async fn spawn_flaky_add_schema(
@@ -554,7 +555,7 @@ mod tests {
         let server = HttpServer::new(move || {
             let counter = counter_for_handler.clone();
             App::new().route(
-                "/api/schemas",
+                "/v1/schemas",
                 web::post().to(move |_payload: web::Json<serde_json::Value>| {
                     let counter = counter.clone();
                     async move {
@@ -664,7 +665,7 @@ mod tests {
         let server = HttpServer::new(move || {
             let state = server_state.clone();
             App::new().app_data(web::Data::new(state)).service(
-                web::scope("/api").route(
+                web::scope("/v1").route(
                     "/schemas",
                     web::post().to(
                         |payload: web::Json<AddSchemaRequest>,
@@ -785,7 +786,7 @@ mod tests {
 
         let server = HttpServer::new(|| {
             App::new().route(
-                "/api/schemas",
+                "/v1/schemas",
                 web::get().to(|| async {
                     HttpResponse::Ok().json(serde_json::json!({
                         "schemas": [

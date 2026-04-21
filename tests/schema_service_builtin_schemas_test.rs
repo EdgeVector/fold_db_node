@@ -6,9 +6,9 @@
 //! exercises the schema service's own seeding contract. If this test
 //! fails, fold_db_node's fingerprints subsystem cannot start.
 
+use fold_db::schema_service::builtin_schemas::{self, PHASE_1_DESCRIPTIVE_NAMES};
 use fold_db::schema_service::state::SchemaServiceState;
-use fold_db_node::schema_service::builtin_schemas::{self, PHASE_1_DESCRIPTIVE_NAMES};
-use fold_db_node::schema_service::SchemaServiceServer;
+use schema_service_server_http::SchemaServiceServer;
 use std::collections::HashSet;
 use tempfile::TempDir;
 

@@ -380,14 +380,14 @@ impl FoldNode {
     /// Returns empty matches for test/mock schema service URLs.
     pub async fn batch_check_schema_reuse(
         &self,
-        entries: &[crate::schema_service::types::SchemaLookupEntry],
-    ) -> FoldDbResult<crate::schema_service::types::BatchSchemaReuseResponse> {
+        entries: &[fold_db::schema_service::types::SchemaLookupEntry],
+    ) -> FoldDbResult<fold_db::schema_service::types::BatchSchemaReuseResponse> {
         let schema_service_url = self.schema_service_url().ok_or_else(|| {
             FoldDbError::Config("Schema service URL is not configured".to_string())
         })?;
 
         if Self::is_test_schema_service(&schema_service_url) {
-            return Ok(crate::schema_service::types::BatchSchemaReuseResponse {
+            return Ok(fold_db::schema_service::types::BatchSchemaReuseResponse {
                 matches: std::collections::HashMap::new(),
             });
         }
@@ -400,8 +400,8 @@ impl FoldNode {
     /// Register a view with the global schema service.
     pub async fn add_view_to_service(
         &self,
-        request: &crate::schema_service::types::AddViewRequest,
-    ) -> FoldDbResult<crate::schema_service::types::AddViewResponse> {
+        request: &fold_db::schema_service::types::AddViewRequest,
+    ) -> FoldDbResult<fold_db::schema_service::types::AddViewResponse> {
         let url = self.require_real_schema_service()?;
         crate::fold_node::SchemaServiceClient::new(&url)
             .add_view(request)
@@ -587,7 +587,7 @@ impl FoldNode {
     /// Convert a StoredView (from schema service) to a TransformView (local DB)
     /// by extracting key_config and typed output_fields from the output schema.
     fn stored_view_to_transform_view(
-        stored: &crate::schema_service::types::StoredView,
+        stored: &fold_db::schema_service::types::StoredView,
         output_schema: &fold_db::schema::types::Schema,
     ) -> FoldDbResult<fold_db::view::types::TransformView> {
         use fold_db::schema::types::field_value_type::FieldValueType;

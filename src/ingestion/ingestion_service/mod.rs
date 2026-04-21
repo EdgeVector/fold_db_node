@@ -29,8 +29,8 @@ use sha2::{Digest, Sha256};
 use std::collections::HashMap;
 use std::sync::Arc;
 
-use crate::schema_service::types::{BatchSchemaReuseResponse, SchemaLookupEntry};
 use decomposition::{AiProposal, CachedSchema, SchemaCache};
+use fold_db::schema_service::types::{BatchSchemaReuseResponse, SchemaLookupEntry};
 
 /// Shorthand to wrap any `Display` error as a `SchemaCreationError`.
 pub(crate) fn schema_err(e: impl std::fmt::Display) -> IngestionError {
