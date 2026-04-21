@@ -1,5 +1,16 @@
 // Subscription API Client — calls the Exemem cloud API directly for storage tier management
 
+export class CloudApiError extends Error {
+  status: number;
+  body: string;
+  constructor(status: number, body: string) {
+    super(`Cloud API error (${status}): ${body}`);
+    this.name = "CloudApiError";
+    this.status = status;
+    this.body = body;
+  }
+}
+
 export interface StorageInfo {
   used_bytes: number;
   quota_bytes: number;
@@ -73,7 +84,7 @@ async function cloudFetch(
 
   if (!resp.ok) {
     const body = await resp.text();
-    throw new Error(`Cloud API error (${resp.status}): ${body}`);
+    throw new CloudApiError(resp.status, body);
   }
 
   return resp.json();

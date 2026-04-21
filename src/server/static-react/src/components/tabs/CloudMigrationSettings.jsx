@@ -1,6 +1,6 @@
 import React, { useState, useEffect } from 'react'
 import { activateExemem } from '../../api/clients/activateExemem'
-import { getSubscriptionStatus, createCheckoutSession, createPortalSession, formatBytes, usagePercent } from '../../api/clients/subscriptionClient'
+import { getSubscriptionStatus, createCheckoutSession, createPortalSession, formatBytes, usagePercent, CloudApiError } from '../../api/clients/subscriptionClient'
 
 // Poll configuration for post-Stripe-checkout upgrade detection. Stripe redirects
 // back to the app before the webhook that flips the user to `plan=paid` has
@@ -110,8 +110,27 @@ export default function CloudMigrationSettings() {
             quota_bytes: status.storage.quota_bytes,
             has_subscription: status.has_subscription,
           })
-        } catch {
-          // Cloud API not reachable — still show connected state with defaults
+        } catch (err) {
+          // Auth rejection means the creds we have are stale/revoked. Reset
+          // to the invite-code form so the user isn't stuck in a "Connected
+          // but offline" limbo that also re-triggers keychain password prompts
+          // on every credential read.
+          if (err instanceof CloudApiError && (err.status === 401 || err.status === 403)) {
+            localStorage.removeItem('exemem_api_url')
+            localStorage.removeItem('exemem_api_key')
+            try {
+              await fetch('/api/auth/credentials', { method: 'DELETE' })
+            } catch {
+              // Best-effort — if the local node is unreachable the page won't
+              // be loading anyway.
+            }
+            setHasCredentials(false)
+            setIsCloudMode(false)
+            setStorageInfo(null)
+            return
+          }
+          // Transient error (network down, 5xx) — keep cloud mode and show
+          // the offline fallback banner.
           setStorageInfo({
             plan: 'free',
             used_bytes: 0,

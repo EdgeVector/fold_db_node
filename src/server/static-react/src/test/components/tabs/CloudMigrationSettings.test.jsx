@@ -12,19 +12,30 @@ import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest'
 import { render, screen, act, waitFor } from '@testing-library/react'
 import CloudMigrationSettings from '../../../components/tabs/CloudMigrationSettings.jsx'
 
-vi.mock('../../../api/clients/subscriptionClient', () => ({
-  getSubscriptionStatus: vi.fn(),
-  createCheckoutSession: vi.fn(),
-  createPortalSession: vi.fn(),
-  formatBytes: (n) => `${n} B`,
-  usagePercent: (used, quota) => (quota <= 0 ? 0 : (used / quota) * 100),
-}))
+vi.mock('../../../api/clients/subscriptionClient', () => {
+  class CloudApiError extends Error {
+    constructor(status, body = '') {
+      super(`Cloud API error (${status}): ${body}`)
+      this.name = 'CloudApiError'
+      this.status = status
+      this.body = body
+    }
+  }
+  return {
+    getSubscriptionStatus: vi.fn(),
+    createCheckoutSession: vi.fn(),
+    createPortalSession: vi.fn(),
+    formatBytes: (n) => `${n} B`,
+    usagePercent: (used, quota) => (quota <= 0 ? 0 : (used / quota) * 100),
+    CloudApiError,
+  }
+})
 
 vi.mock('../../../api/clients/activateExemem', () => ({
   activateExemem: vi.fn(),
 }))
 
-import { getSubscriptionStatus } from '../../../api/clients/subscriptionClient'
+import { getSubscriptionStatus, CloudApiError } from '../../../api/clients/subscriptionClient'
 
 function setUrlParam(param) {
   const search = param ? `?subscription=${param}` : ''
@@ -146,5 +157,94 @@ describe('CloudMigrationSettings Stripe checkout return', () => {
 
     expect(screen.getByTestId('upgrade-banner-cancelled')).toBeInTheDocument()
     expect(window.location.search).toBe('')
+  })
+})
+
+describe('CloudMigrationSettings partial-creds reset', () => {
+  // When localStorage has stale creds from a previous instance and the cloud
+  // rejects them (401/403), we must drop back to the invite-code form instead
+  // of showing a phantom "Connected but offline" banner — that limbo state
+  // causes repeated keychain password prompts every time a handler reads the
+  // local credentials file.
+
+  it('auth rejection: clears localStorage, deletes local creds, shows invite form', async () => {
+    localStorage.setItem('exemem_api_url', 'https://stale.example')
+    localStorage.setItem('exemem_api_key', 'stale-key')
+
+    getSubscriptionStatus.mockRejectedValue(new CloudApiError(401, 'AUTH_FAILED'))
+
+    const fetchMock = vi.fn(async (url, init) => {
+      if (String(url).includes('/api/auth/credentials')) {
+        if (init && init.method === 'DELETE') {
+          return { ok: true, json: async () => ({ ok: true }) }
+        }
+        return { ok: true, json: async () => ({ ok: true, has_credentials: true }) }
+      }
+      return { ok: false, status: 404, json: async () => ({}) }
+    })
+    global.fetch = fetchMock
+
+    render(<CloudMigrationSettings />)
+
+    // Wait for the detect effect's catch branch to actually run.
+    await waitFor(() => expect(localStorage.getItem('exemem_api_url')).toBeNull())
+    expect(localStorage.getItem('exemem_api_key')).toBeNull()
+    expect(
+      fetchMock.mock.calls.some(
+        ([url, init]) =>
+          String(url).includes('/api/auth/credentials') && init && init.method === 'DELETE',
+      ),
+    ).toBe(true)
+    // Invite-code form should be the only state rendered.
+    expect(screen.getAllByText(/Enable Cloud Backup/i).length).toBeGreaterThan(0)
+  })
+
+  it('transient error: keeps cloud mode and shows offline banner', async () => {
+    localStorage.setItem('exemem_api_url', 'https://api.example')
+    localStorage.setItem('exemem_api_key', 'good-key')
+
+    getSubscriptionStatus.mockRejectedValue(new Error('network down'))
+
+    global.fetch = vi.fn(async (url) => {
+      if (String(url).includes('/api/auth/credentials')) {
+        return { ok: true, json: async () => ({ ok: true, has_credentials: true }) }
+      }
+      return { ok: false, status: 404, json: async () => ({}) }
+    })
+
+    render(<CloudMigrationSettings />)
+
+    // Offline banner text is static copy on the cloud-mode render branch.
+    await waitFor(() =>
+      expect(
+        screen.getByText(/couldn't reach the cloud API/i),
+      ).toBeInTheDocument(),
+    )
+    // Stale-creds reset path must NOT fire for transient errors.
+    expect(localStorage.getItem('exemem_api_url')).toBe('https://api.example')
+    expect(localStorage.getItem('exemem_api_key')).toBe('good-key')
+  })
+
+  it('5xx cloud error: keeps cloud mode (not a stale-creds signal)', async () => {
+    localStorage.setItem('exemem_api_url', 'https://api.example')
+    localStorage.setItem('exemem_api_key', 'good-key')
+
+    getSubscriptionStatus.mockRejectedValue(new CloudApiError(503, 'service unavailable'))
+
+    global.fetch = vi.fn(async (url) => {
+      if (String(url).includes('/api/auth/credentials')) {
+        return { ok: true, json: async () => ({ ok: true, has_credentials: true }) }
+      }
+      return { ok: false, status: 404, json: async () => ({}) }
+    })
+
+    render(<CloudMigrationSettings />)
+
+    await waitFor(() =>
+      expect(
+        screen.getByText(/couldn't reach the cloud API/i),
+      ).toBeInTheDocument(),
+    )
+    expect(localStorage.getItem('exemem_api_url')).toBe('https://api.example')
   })
 })
