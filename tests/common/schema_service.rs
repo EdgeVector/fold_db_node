@@ -10,7 +10,7 @@
 
 use actix_web::dev::ServerHandle;
 use actix_web::{web, App, HttpServer};
-use fold_db::schema_service::state::SchemaServiceState;
+use schema_service_core::state::SchemaServiceState;
 use schema_service_server_http::configure_routes;
 use std::net::TcpListener;
 use tempfile::TempDir;
@@ -47,9 +47,13 @@ async fn spawn_inner(seed_builtins: bool) -> SpawnedSchemaService {
         .to_string_lossy()
         .to_string();
 
-    let state = SchemaServiceState::new(db_path).expect("create SchemaServiceState");
+    let state = SchemaServiceState::new(
+        db_path,
+        ::std::sync::Arc::new(::schema_service_core::embedder::MockEmbeddingModel),
+    )
+    .expect("create SchemaServiceState");
     if seed_builtins {
-        fold_db::schema_service::builtin_schemas::seed(&state)
+        schema_service_core::builtin_schemas::seed(&state)
             .await
             .expect("seed built-in schemas");
     }

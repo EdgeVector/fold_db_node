@@ -6,10 +6,10 @@
 //! - Chain expansions (A → B → C) produce correct field_mapper lineage
 //! - Old schema name is returned in the Expanded variant for blocking
 
-use fold_db::db_operations::native_index::MockEmbeddingModel;
 use fold_db::schema::types::data_classification::DataClassification;
-use fold_db::schema_service::state::SchemaServiceState;
-use fold_db::schema_service::types::SchemaAddOutcome;
+use schema_service_core::embedder::MockEmbeddingModel;
+use schema_service_core::state::SchemaServiceState;
+use schema_service_core::types::SchemaAddOutcome;
 use serde_json::json;
 use std::collections::HashMap;
 use std::sync::Arc;
@@ -45,7 +45,7 @@ fn create_test_state() -> SchemaServiceState {
         .to_string();
     std::mem::forget(temp_dir);
 
-    SchemaServiceState::new_with_embedder(db_path, Arc::new(MockEmbeddingModel))
+    SchemaServiceState::new(db_path, Arc::new(MockEmbeddingModel))
         .expect("failed to initialize schema service state")
 }
 

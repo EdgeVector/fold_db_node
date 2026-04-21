@@ -17,6 +17,11 @@ face-detection = ["fold_db/face-detection"]
 # Core database library
 fold_db = { git = "https://github.com/EdgeVector/fold_db.git", branch = "mainline", features = ["cli"] }
 
+# Schema service registry brain. Phase 2 T2: all former
+# `fold_db::schema_service::*` types come from here now. Path dep resolves
+# to the sibling `../schema_service` checkout (CI clones it as sibling).
+schema_service_core = { path = "../schema_service/crates/core" }
+
 # HTTP Server
 actix-web = "4.3"
 actix-http = "3"
@@ -96,6 +101,9 @@ wat = "1"
 # ties workspace-local test runs to the new schema_service repo during
 # Phase 0 of the extraction. Never pulled into non-dev builds.
 schema_service_server_http = { path = "../schema_service/crates/server_http" }
+# test-utils exposes MockEmbeddingModel for test fixtures that call
+# SchemaServiceState::new() directly. Only enabled in dev-deps.
+schema_service_core = { path = "../schema_service/crates/core", features = ["test-utils"] }
 
 [lib]
 name = "fold_db_node"

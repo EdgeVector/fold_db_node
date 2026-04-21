@@ -13,13 +13,13 @@ use fold_db::schema::types::field_value_type::FieldValueType;
 use fold_db::schema::types::key_value::KeyValue;
 use fold_db::schema::types::operations::Query;
 use fold_db::schema::types::schema::DeclarativeSchemaType as SchemaType;
-use fold_db::schema_service::state::SchemaServiceState;
-use fold_db::schema_service::types::RegisterTransformRequest;
 use fold_db::view::types::TransformView;
 use fold_db::MutationType;
 use fold_db_node::fold_node::config::NodeConfig;
 use fold_db_node::fold_node::FoldNode;
 use fold_db_node::fold_node::OperationProcessor;
+use schema_service_core::state::SchemaServiceState;
+use schema_service_core::types::RegisterTransformRequest;
 use serde_json::json;
 use sha2::{Digest, Sha256};
 use std::collections::HashMap;
@@ -142,7 +142,11 @@ async fn transform_registry_e2e_medical_summary() {
         .join("transform_registry")
         .to_string_lossy()
         .to_string();
-    let schema_state = SchemaServiceState::new(registry_path).expect("create SchemaServiceState");
+    let schema_state = SchemaServiceState::new(
+        registry_path,
+        ::std::sync::Arc::new(::schema_service_core::embedder::MockEmbeddingModel),
+    )
+    .expect("create SchemaServiceState");
 
     // Step 2: Register the medical_records schema in the global registry
     // (needed so resolve_input_classifications can look up field classifications)
@@ -230,7 +234,7 @@ async fn transform_registry_e2e_medical_summary() {
     assert!(
         matches!(
             outcome,
-            fold_db::schema_service::types::TransformAddOutcome::Added
+            schema_service_core::types::TransformAddOutcome::Added
         ),
         "transform should be newly added"
     );
@@ -418,7 +422,11 @@ async fn transform_registry_idempotent_reregistration() {
         .join("idempotent_test")
         .to_string_lossy()
         .to_string();
-    let state = SchemaServiceState::new(registry_path).expect("create state");
+    let state = SchemaServiceState::new(
+        registry_path,
+        ::std::sync::Arc::new(::schema_service_core::embedder::MockEmbeddingModel),
+    )
+    .expect("create state");
 
     // Register medical_records schema first (all fields need classifications)
     let mut data_classifications = HashMap::new();
@@ -476,7 +484,7 @@ async fn transform_registry_idempotent_reregistration() {
         .expect("first registration");
     assert!(matches!(
         outcome1,
-        fold_db::schema_service::types::TransformAddOutcome::Added
+        schema_service_core::types::TransformAddOutcome::Added
     ));
 
     // Second registration — same WASM bytes → idempotent
@@ -486,7 +494,7 @@ async fn transform_registry_idempotent_reregistration() {
         .expect("second registration");
     assert!(matches!(
         outcome2,
-        fold_db::schema_service::types::TransformAddOutcome::AlreadyExists
+        schema_service_core::types::TransformAddOutcome::AlreadyExists
     ));
     assert_eq!(record1.hash, record2.hash, "hash should be identical");
 }

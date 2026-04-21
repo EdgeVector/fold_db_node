@@ -1,6 +1,6 @@
 use fold_db::schema::types::data_classification::DataClassification;
-use fold_db::schema_service::state::SchemaServiceState;
-use fold_db::schema_service::types::SchemaAddOutcome;
+use schema_service_core::state::SchemaServiceState;
+use schema_service_core::types::SchemaAddOutcome;
 use serde_json::json;
 use std::collections::HashMap;
 use tempfile::tempdir;
@@ -78,8 +78,11 @@ async fn closeness_treats_different_names_as_distinct_schemas() {
         .to_string_lossy()
         .to_string();
 
-    let state = SchemaServiceState::new(db_path.clone())
-        .expect("failed to initialize schema service state");
+    let state = SchemaServiceState::new(
+        db_path.clone(),
+        ::std::sync::Arc::new(::schema_service_core::embedder::MockEmbeddingModel),
+    )
+    .expect("failed to initialize schema service state");
 
     let existing_schema = json_to_schema(json!({
         "name": "UserProfile",
@@ -125,8 +128,11 @@ async fn closeness_rejects_identical_schema_with_same_name() {
         .to_string_lossy()
         .to_string();
 
-    let state = SchemaServiceState::new(db_path.clone())
-        .expect("failed to initialize schema service state");
+    let state = SchemaServiceState::new(
+        db_path.clone(),
+        ::std::sync::Arc::new(::schema_service_core::embedder::MockEmbeddingModel),
+    )
+    .expect("failed to initialize schema service state");
 
     let existing_schema = json_to_schema(json!({
         "name": "UserProfile",
@@ -171,8 +177,11 @@ async fn closeness_always_returns_schema_on_success() {
         .to_string_lossy()
         .to_string();
 
-    let state = SchemaServiceState::new(db_path.clone())
-        .expect("failed to initialize schema service state");
+    let state = SchemaServiceState::new(
+        db_path.clone(),
+        ::std::sync::Arc::new(::schema_service_core::embedder::MockEmbeddingModel),
+    )
+    .expect("failed to initialize schema service state");
 
     let new_schema = json_to_schema(json!({
         "name": "TestSchema",
@@ -207,8 +216,11 @@ async fn closeness_always_returns_schema_on_rejection() {
         .to_string_lossy()
         .to_string();
 
-    let state = SchemaServiceState::new(db_path.clone())
-        .expect("failed to initialize schema service state");
+    let state = SchemaServiceState::new(
+        db_path.clone(),
+        ::std::sync::Arc::new(::schema_service_core::embedder::MockEmbeddingModel),
+    )
+    .expect("failed to initialize schema service state");
 
     let existing_schema = json_to_schema(json!({
         "name": "Original",
@@ -262,8 +274,11 @@ async fn closeness_allows_dissimilar_schemas() {
         .to_string_lossy()
         .to_string();
 
-    let state = SchemaServiceState::new(db_path.clone())
-        .expect("failed to initialize schema service state");
+    let state = SchemaServiceState::new(
+        db_path.clone(),
+        ::std::sync::Arc::new(::schema_service_core::embedder::MockEmbeddingModel),
+    )
+    .expect("failed to initialize schema service state");
 
     let existing_schema = json_to_schema(json!({
         "name": "UserProfile",
@@ -315,8 +330,11 @@ async fn closeness_handles_similar_but_slightly_different_schemas() {
         .to_string_lossy()
         .to_string();
 
-    let state = SchemaServiceState::new(db_path.clone())
-        .expect("failed to initialize schema service state");
+    let state = SchemaServiceState::new(
+        db_path.clone(),
+        ::std::sync::Arc::new(::schema_service_core::embedder::MockEmbeddingModel),
+    )
+    .expect("failed to initialize schema service state");
 
     let existing_schema = json_to_schema(json!({
         "name": "User",
@@ -378,8 +396,11 @@ async fn closeness_uses_normalized_comparison_for_properties() {
         .to_string_lossy()
         .to_string();
 
-    let state = SchemaServiceState::new(db_path.clone())
-        .expect("failed to initialize schema service state");
+    let state = SchemaServiceState::new(
+        db_path.clone(),
+        ::std::sync::Arc::new(::schema_service_core::embedder::MockEmbeddingModel),
+    )
+    .expect("failed to initialize schema service state");
 
     let existing_schema = json_to_schema(json!({
         "name": "TestSchema",
@@ -430,8 +451,11 @@ async fn closeness_includes_schema_name_in_identity() {
         .to_string_lossy()
         .to_string();
 
-    let state = SchemaServiceState::new(db_path.clone())
-        .expect("failed to initialize schema service state");
+    let state = SchemaServiceState::new(
+        db_path.clone(),
+        ::std::sync::Arc::new(::schema_service_core::embedder::MockEmbeddingModel),
+    )
+    .expect("failed to initialize schema service state");
 
     let existing_schema = json_to_schema(json!({
         "name": "VeryLongDescriptiveSchemaName",
@@ -481,8 +505,11 @@ async fn closeness_with_object_style_fields() {
         .to_string_lossy()
         .to_string();
 
-    let state = SchemaServiceState::new(db_path.clone())
-        .expect("failed to initialize schema service state");
+    let state = SchemaServiceState::new(
+        db_path.clone(),
+        ::std::sync::Arc::new(::schema_service_core::embedder::MockEmbeddingModel),
+    )
+    .expect("failed to initialize schema service state");
 
     let existing_schema = json_to_schema(convert_object_fields_to_array(json!({
         "name": "ExistingObject",
@@ -535,8 +562,11 @@ async fn closeness_creates_field_mappers_for_high_field_overlap() {
         .to_string_lossy()
         .to_string();
 
-    let state = SchemaServiceState::new(db_path.clone())
-        .expect("failed to initialize schema service state");
+    let state = SchemaServiceState::new(
+        db_path.clone(),
+        ::std::sync::Arc::new(::schema_service_core::embedder::MockEmbeddingModel),
+    )
+    .expect("failed to initialize schema service state");
 
     let existing_schema = json_to_schema(convert_object_fields_to_array(json!({
         "name": "BaseEntity",
@@ -601,8 +631,11 @@ async fn closeness_with_multiple_existing_schemas_same_name_matches() {
         .to_string_lossy()
         .to_string();
 
-    let state = SchemaServiceState::new(db_path.clone())
-        .expect("failed to initialize schema service state");
+    let state = SchemaServiceState::new(
+        db_path.clone(),
+        ::std::sync::Arc::new(::schema_service_core::embedder::MockEmbeddingModel),
+    )
+    .expect("failed to initialize schema service state");
 
     // Use semantically distinct names to avoid false embedding matches
     let schema1 = json_to_schema(json!({
@@ -682,8 +715,11 @@ async fn closeness_with_multiple_existing_schemas_different_name_is_distinct() {
         .to_string_lossy()
         .to_string();
 
-    let state = SchemaServiceState::new(db_path.clone())
-        .expect("failed to initialize schema service state");
+    let state = SchemaServiceState::new(
+        db_path.clone(),
+        ::std::sync::Arc::new(::schema_service_core::embedder::MockEmbeddingModel),
+    )
+    .expect("failed to initialize schema service state");
 
     let schema1 = json_to_schema(json!({
         "name": "Schema1",
@@ -737,8 +773,11 @@ async fn closeness_with_nested_objects_same_name() {
         .to_string_lossy()
         .to_string();
 
-    let state = SchemaServiceState::new(db_path.clone())
-        .expect("failed to initialize schema service state");
+    let state = SchemaServiceState::new(
+        db_path.clone(),
+        ::std::sync::Arc::new(::schema_service_core::embedder::MockEmbeddingModel),
+    )
+    .expect("failed to initialize schema service state");
 
     let existing_schema = json_to_schema(json!({
         "name": "NestedSchema",
@@ -783,8 +822,11 @@ async fn closeness_with_nested_objects_different_name_is_distinct() {
         .to_string_lossy()
         .to_string();
 
-    let state = SchemaServiceState::new(db_path.clone())
-        .expect("failed to initialize schema service state");
+    let state = SchemaServiceState::new(
+        db_path.clone(),
+        ::std::sync::Arc::new(::schema_service_core::embedder::MockEmbeddingModel),
+    )
+    .expect("failed to initialize schema service state");
 
     let existing_schema = json_to_schema(json!({
         "name": "NestedSchema",
@@ -829,8 +871,11 @@ async fn closeness_field_overlap_below_threshold_without_high_similarity() {
         .to_string_lossy()
         .to_string();
 
-    let state = SchemaServiceState::new(db_path.clone())
-        .expect("failed to initialize schema service state");
+    let state = SchemaServiceState::new(
+        db_path.clone(),
+        ::std::sync::Arc::new(::schema_service_core::embedder::MockEmbeddingModel),
+    )
+    .expect("failed to initialize schema service state");
 
     let existing_schema = json_to_schema(convert_object_fields_to_array(json!({
         "name": "LowOverlap",
@@ -890,8 +935,11 @@ async fn closeness_respects_field_mapper_preservation() {
         .to_string_lossy()
         .to_string();
 
-    let state = SchemaServiceState::new(db_path.clone())
-        .expect("failed to initialize schema service state");
+    let state = SchemaServiceState::new(
+        db_path.clone(),
+        ::std::sync::Arc::new(::schema_service_core::embedder::MockEmbeddingModel),
+    )
+    .expect("failed to initialize schema service state");
 
     let existing_schema = json_to_schema(convert_object_fields_to_array(json!({
         "name": "Original",
@@ -974,8 +1022,11 @@ async fn closeness_same_domain_different_names_stay_separate() {
         .to_string_lossy()
         .to_string();
 
-    let state =
-        SchemaServiceState::new(db_path).expect("failed to initialize schema service state");
+    let state = SchemaServiceState::new(
+        db_path,
+        ::std::sync::Arc::new(::schema_service_core::embedder::MockEmbeddingModel),
+    )
+    .expect("failed to initialize schema service state");
 
     // First schema: holiday illustrations (image-like fields)
     let mut illustrations = json_to_schema(json!({
@@ -1071,8 +1122,11 @@ async fn closeness_near_synonymous_names_stay_separate() {
         .to_string_lossy()
         .to_string();
 
-    let state =
-        SchemaServiceState::new(db_path).expect("failed to initialize schema service state");
+    let state = SchemaServiceState::new(
+        db_path,
+        ::std::sync::Arc::new(::schema_service_core::embedder::MockEmbeddingModel),
+    )
+    .expect("failed to initialize schema service state");
 
     let posts = json_to_schema(json!({
         "name": "blog_posts",
@@ -1124,8 +1178,11 @@ async fn closeness_exact_same_name_and_fields_merges() {
         .to_string_lossy()
         .to_string();
 
-    let state =
-        SchemaServiceState::new(db_path).expect("failed to initialize schema service state");
+    let state = SchemaServiceState::new(
+        db_path,
+        ::std::sync::Arc::new(::schema_service_core::embedder::MockEmbeddingModel),
+    )
+    .expect("failed to initialize schema service state");
 
     let schema1 = json_to_schema(json!({
         "name": "blog_posts",

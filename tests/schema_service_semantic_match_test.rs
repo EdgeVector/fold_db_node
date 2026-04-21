@@ -1,9 +1,9 @@
 #![cfg(feature = "test-utils")]
 
-use fold_db::db_operations::native_index::{MockEmbeddingModel, ScriptedEmbeddingModel};
 use fold_db::schema::types::data_classification::DataClassification;
-use fold_db::schema_service::state::SchemaServiceState;
-use fold_db::schema_service::types::SchemaAddOutcome;
+use schema_service_core::embedder::{MockEmbeddingModel, ScriptedEmbeddingModel};
+use schema_service_core::state::SchemaServiceState;
+use schema_service_core::types::SchemaAddOutcome;
 use serde_json::json;
 use std::collections::HashMap;
 use std::sync::Arc;
@@ -42,7 +42,7 @@ fn create_test_state() -> SchemaServiceState {
     // Leak the tempdir so it doesn't get cleaned up while the state is in use
     std::mem::forget(temp_dir);
 
-    SchemaServiceState::new_with_embedder(db_path, Arc::new(MockEmbeddingModel))
+    SchemaServiceState::new(db_path, Arc::new(MockEmbeddingModel))
         .expect("failed to initialize schema service state")
 }
 
@@ -378,6 +378,21 @@ async fn high_field_overlap_with_similar_name_creates_superset() {
 /// Test that semantic field matching with real embeddings correctly identifies
 /// "creator" as a synonym for "artist" while keeping "medium" as a distinct field.
 /// Requires the FastEmbedModel (downloads on first run), so marked #[ignore].
+/// Local adapter for this test: wrap fold_db's `FastEmbedModel` so it
+/// satisfies `schema_service_core::Embedder`. The production equivalent
+/// lives in `schema_service_server_shared::FoldDbFastEmbedder`; we inline
+/// it here to keep fold_db_node off that dependency.
+struct FastEmbedAdapter(fold_db::db_operations::native_index::FastEmbedModel);
+
+impl schema_service_core::Embedder for FastEmbedAdapter {
+    fn embed_text(&self, text: &str) -> Result<Vec<f32>, schema_service_core::EmbedError> {
+        use fold_db::db_operations::native_index::Embedder as _;
+        self.0
+            .embed_text(text)
+            .map_err(|e| schema_service_core::EmbedError::EmbedFailed(e.to_string()))
+    }
+}
+
 #[tokio::test]
 #[ignore]
 async fn semantic_field_rename_real_embeddings() {
@@ -391,7 +406,7 @@ async fn semantic_field_rename_real_embeddings() {
         .to_string();
     std::mem::forget(temp_dir);
 
-    let state = SchemaServiceState::new_with_embedder(db_path, Arc::new(FastEmbedModel::new()))
+    let state = SchemaServiceState::new(db_path, Arc::new(FastEmbedAdapter(FastEmbedModel::new())))
         .expect("failed to init state");
 
     // Schema A: artwork with "artist"
@@ -511,7 +526,7 @@ fn create_scripted_state(responses: HashMap<String, Vec<f32>>) -> SchemaServiceS
     std::mem::forget(temp_dir);
 
     let embedder = ScriptedEmbeddingModel::new(responses);
-    SchemaServiceState::new_with_embedder(db_path, Arc::new(embedder))
+    SchemaServiceState::new(db_path, Arc::new(embedder))
         .expect("failed to initialize schema service state")
 }
 

@@ -11,7 +11,7 @@ use fold_db_node::fold_node::FoldNode;
 use std::collections::HashMap;
 use std::net::TcpListener;
 
-use fold_db::schema_service::types::StoredView;
+use schema_service_core::types::StoredView;
 
 mod common;
 

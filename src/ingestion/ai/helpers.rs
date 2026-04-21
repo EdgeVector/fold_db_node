@@ -367,7 +367,7 @@ pub fn validate_schema_has_descriptive_name(schema_val: &Value) -> IngestionResu
         ));
     }
 
-    if fold_db::schema_service::name_validator::is_generic_name(name) {
+    if schema_service_core::name_validator::is_generic_name(name) {
         log_feature!(
             LogFeature::Ingestion,
             warn,

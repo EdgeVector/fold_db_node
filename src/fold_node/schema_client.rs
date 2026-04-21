@@ -5,7 +5,7 @@ use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::future::Future;
 
-use fold_db::schema_service::types::{
+use schema_service_core::types::{
     AddViewRequest, AddViewResponse, BatchSchemaReuseRequest, BatchSchemaReuseResponse,
     SchemaLookupEntry, StoredView,
 };
@@ -432,8 +432,8 @@ mod tests {
     use super::*;
     use actix_web::{rt::time::sleep, web, App, HttpResponse, HttpServer};
     use fold_db::schema::types::SchemaType;
-    use fold_db::schema_service::state::SchemaServiceState;
-    use fold_db::schema_service::types::{ErrorResponse, SchemaAddOutcome};
+    use schema_service_core::state::SchemaServiceState;
+    use schema_service_core::types::{ErrorResponse, SchemaAddOutcome};
     use std::net::TcpListener;
     use std::sync::atomic::{AtomicU32, Ordering};
     use std::sync::Arc;
@@ -727,8 +727,11 @@ mod tests {
             .join("test_schema_db")
             .to_string_lossy()
             .to_string();
-        let state =
-            SchemaServiceState::new(db_path).expect("failed to create schema service state");
+        let state = SchemaServiceState::new(
+            db_path,
+            ::std::sync::Arc::new(::schema_service_core::embedder::MockEmbeddingModel),
+        )
+        .expect("failed to create schema service state");
 
         let (base_url, handle) = spawn_schema_service(state).await;
 

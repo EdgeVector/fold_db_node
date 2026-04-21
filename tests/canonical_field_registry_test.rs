@@ -1,6 +1,6 @@
 use fold_db::schema::types::data_classification::DataClassification;
-use fold_db::schema_service::state::SchemaServiceState;
-use fold_db::schema_service::types::SchemaAddOutcome;
+use schema_service_core::state::SchemaServiceState;
+use schema_service_core::types::SchemaAddOutcome;
 use serde_json::json;
 use std::collections::HashMap;
 use tempfile::tempdir;
@@ -38,8 +38,11 @@ async fn canonical_registry_renames_semantically_equivalent_fields() {
         .to_string_lossy()
         .to_string();
 
-    let state =
-        SchemaServiceState::new(db_path).expect("failed to initialize schema service state");
+    let state = SchemaServiceState::new(
+        db_path,
+        ::std::sync::Arc::new(::schema_service_core::embedder::MockEmbeddingModel),
+    )
+    .expect("failed to initialize schema service state");
 
     // First schema registers "artist", "title", "year" as canonical fields
     let schema_a = json_to_schema(json!({
@@ -113,8 +116,11 @@ async fn canonical_registry_does_not_rename_exact_matches() {
         .to_string_lossy()
         .to_string();
 
-    let state =
-        SchemaServiceState::new(db_path).expect("failed to initialize schema service state");
+    let state = SchemaServiceState::new(
+        db_path,
+        ::std::sync::Arc::new(::schema_service_core::embedder::MockEmbeddingModel),
+    )
+    .expect("failed to initialize schema service state");
 
     let schema_a = json_to_schema(json!({
         "name": "MusicRecords",
@@ -183,8 +189,11 @@ async fn canonical_registry_persists_across_restarts() {
 
     // First instance: register canonical fields
     {
-        let state = SchemaServiceState::new(db_path.clone())
-            .expect("failed to initialize schema service state");
+        let state = SchemaServiceState::new(
+            db_path.clone(),
+            ::std::sync::Arc::new(::schema_service_core::embedder::MockEmbeddingModel),
+        )
+        .expect("failed to initialize schema service state");
 
         let schema = json_to_schema(json!({
             "name": "BookRecords",
@@ -205,8 +214,11 @@ async fn canonical_registry_persists_across_restarts() {
 
     // Second instance: canonical fields should be loaded from sled
     {
-        let state =
-            SchemaServiceState::new(db_path).expect("failed to reopen schema service state");
+        let state = SchemaServiceState::new(
+            db_path,
+            ::std::sync::Arc::new(::schema_service_core::embedder::MockEmbeddingModel),
+        )
+        .expect("failed to reopen schema service state");
 
         // Add schema with semantically equivalent field "writer" (close to "author")
         let schema = json_to_schema(json!({
@@ -258,8 +270,11 @@ async fn canonical_registry_ignores_dissimilar_fields() {
         .to_string_lossy()
         .to_string();
 
-    let state =
-        SchemaServiceState::new(db_path).expect("failed to initialize schema service state");
+    let state = SchemaServiceState::new(
+        db_path,
+        ::std::sync::Arc::new(::schema_service_core::embedder::MockEmbeddingModel),
+    )
+    .expect("failed to initialize schema service state");
 
     let schema_a = json_to_schema(json!({
         "name": "WeatherData",
@@ -328,8 +343,11 @@ async fn canonical_registry_empty_on_first_schema() {
         .to_string_lossy()
         .to_string();
 
-    let state =
-        SchemaServiceState::new(db_path).expect("failed to initialize schema service state");
+    let state = SchemaServiceState::new(
+        db_path,
+        ::std::sync::Arc::new(::schema_service_core::embedder::MockEmbeddingModel),
+    )
+    .expect("failed to initialize schema service state");
 
     let schema = json_to_schema(json!({
         "name": "FirstSchema",
