@@ -15,140 +15,19 @@
 
 use fold_db::schema::types::data_classification::DataClassification;
 use fold_db::schema::types::{Schema, SchemaType};
-use fold_db::schema_service::state::SchemaServiceState;
-use fold_db::schema_service::types::{
-    AddSchemaResponse, ErrorResponse, SchemaAddOutcome, SchemasListResponse,
-};
 use fold_db_node::fold_node::node::FoldNode;
 use fold_db_node::fold_node::OperationProcessor;
 mod common;
 
-use actix_web::{web, App, HttpResponse, HttpServer};
 use fold_db::schema::types::KeyConfig;
 use fold_db::schema::SchemaState;
-use serde::Deserialize;
 use std::collections::HashMap;
-use std::net::TcpListener;
 use tempfile::TempDir;
 
-// -- Inline schema service handlers (same as paintings test) --
+use common::schema_service::{spawn_schema_service, SpawnedSchemaService};
 
-#[derive(Debug, Deserialize)]
-struct AddSchemaRequest {
-    schema: Schema,
-    mutation_mappers: HashMap<String, String>,
-}
-
-async fn handle_list_schemas(state: web::Data<SchemaServiceState>) -> HttpResponse {
-    match state.get_schema_names() {
-        Ok(names) => HttpResponse::Ok().json(SchemasListResponse { schemas: names }),
-        Err(e) => HttpResponse::InternalServerError().json(ErrorResponse {
-            error: format!("Failed to list schemas: {}", e),
-        }),
-    }
-}
-
-async fn handle_get_available_schemas(state: web::Data<SchemaServiceState>) -> HttpResponse {
-    match state.get_all_schemas_cached() {
-        Ok(schemas) => HttpResponse::Ok().json(serde_json::json!({ "schemas": schemas })),
-        Err(e) => HttpResponse::InternalServerError().json(ErrorResponse {
-            error: format!("Failed to get schemas: {}", e),
-        }),
-    }
-}
-
-async fn handle_get_schema(
-    path: web::Path<String>,
-    state: web::Data<SchemaServiceState>,
-) -> HttpResponse {
-    let schema_name = path.into_inner();
-    match state.get_schema_by_name(&schema_name) {
-        Ok(Some(schema)) => HttpResponse::Ok().json(schema),
-        Ok(None) => HttpResponse::NotFound().json(ErrorResponse {
-            error: "Schema not found".to_string(),
-        }),
-        Err(e) => HttpResponse::InternalServerError().json(ErrorResponse {
-            error: format!("Failed to get schema: {}", e),
-        }),
-    }
-}
-
-async fn handle_add_schema(
-    payload: web::Json<AddSchemaRequest>,
-    state: web::Data<SchemaServiceState>,
-) -> HttpResponse {
-    let request = payload.into_inner();
-    match state
-        .add_schema(request.schema, request.mutation_mappers)
-        .await
-    {
-        Ok(SchemaAddOutcome::Added(schema, mutation_mappers)) => {
-            HttpResponse::Created().json(AddSchemaResponse {
-                schema,
-                mutation_mappers,
-                replaced_schema: None,
-            })
-        }
-        Ok(SchemaAddOutcome::AlreadyExists(schema, _)) => {
-            HttpResponse::Ok().json(AddSchemaResponse {
-                schema,
-                mutation_mappers: HashMap::new(),
-                replaced_schema: None,
-            })
-        }
-        Ok(SchemaAddOutcome::Expanded(old_name, schema, mutation_mappers)) => {
-            HttpResponse::Created().json(AddSchemaResponse {
-                schema,
-                mutation_mappers,
-                replaced_schema: Some(old_name),
-            })
-        }
-        Err(error) => HttpResponse::BadRequest().json(ErrorResponse {
-            error: format!("Failed to add schema: {}", error),
-        }),
-    }
-}
-
-// -- Test helpers --
-
-async fn spawn_local_schema_service() -> (String, actix_web::dev::ServerHandle, TempDir) {
-    let temp_dir = TempDir::new().expect("failed to create tempdir for schema service");
-    let db_path = temp_dir
-        .path()
-        .join("test_schema_db")
-        .to_string_lossy()
-        .to_string();
-
-    let state = SchemaServiceState::new(db_path).expect("failed to create schema service state");
-    let state_data = web::Data::new(state);
-
-    let listener =
-        TcpListener::bind(("127.0.0.1", 0)).expect("failed to bind schema service listener");
-    let bound_address = listener.local_addr().expect("failed to read bound address");
-
-    let state_clone = state_data.clone();
-    let server = HttpServer::new(move || {
-        App::new().app_data(state_clone.clone()).service(
-            web::scope("/v1")
-                .route("/schemas", web::get().to(handle_list_schemas))
-                .route("/schemas", web::post().to(handle_add_schema))
-                .route(
-                    "/schemas/available",
-                    web::get().to(handle_get_available_schemas),
-                )
-                .route("/schema/{name}", web::get().to(handle_get_schema)),
-        )
-    })
-    .listen(listener)
-    .expect("failed to listen")
-    .run();
-
-    let handle = server.handle();
-    actix_web::rt::spawn(server);
-    actix_web::rt::time::sleep(std::time::Duration::from_millis(100)).await;
-
-    let base_url = format!("http://127.0.0.1:{}", bound_address.port());
-    (base_url, handle, temp_dir)
+async fn spawn_local_schema_service() -> SpawnedSchemaService {
+    spawn_schema_service().await
 }
 
 /// Build a Schema programmatically with given fields and descriptive name.
@@ -203,7 +82,8 @@ fn build_schema(
 /// 6. Verify: field_mappers resolved correctly (shared fields point to same molecules)
 #[actix_web::test]
 async fn test_schema_expansion_on_fresh_db() {
-    let (schema_url, schema_handle, _schema_temp_dir) = spawn_local_schema_service().await;
+    let svc = spawn_local_schema_service().await;
+    let schema_url = svc.url.clone();
     eprintln!("Schema service at {}", schema_url);
 
     let keypair = fold_db::security::Ed25519KeyPair::generate().unwrap();
@@ -420,7 +300,7 @@ async fn test_schema_expansion_on_fresh_db() {
     );
 
     // Cleanup
-    schema_handle.stop(true).await;
+    svc.handle.stop(true).await;
     eprintln!("Test passed: schema expansion on fresh DB works correctly");
 }
 
@@ -430,7 +310,8 @@ async fn test_schema_expansion_on_fresh_db() {
 /// was changed to log::warn + continue instead of hard error.
 #[actix_web::test]
 async fn test_expansion_without_old_schema_warns_but_succeeds() {
-    let (schema_url, schema_handle, _schema_temp_dir) = spawn_local_schema_service().await;
+    let svc = spawn_local_schema_service().await;
+    let schema_url = svc.url.clone();
 
     let keypair = fold_db::security::Ed25519KeyPair::generate().unwrap();
     let user_id = keypair.public_key_base64();
@@ -490,6 +371,6 @@ async fn test_expansion_without_old_schema_warns_but_succeeds() {
         );
     }
 
-    schema_handle.stop(true).await;
+    svc.handle.stop(true).await;
     eprintln!("Test passed: expansion without old schema warns but succeeds");
 }
