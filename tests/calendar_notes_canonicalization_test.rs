@@ -8,8 +8,8 @@
 //! 5. Shares canonical fields across schemas in the same domain
 
 use fold_db::schema::types::data_classification::DataClassification;
-use fold_db::schema_service::state::SchemaServiceState;
-use fold_db::schema_service::types::SchemaAddOutcome;
+use schema_service_core::state::SchemaServiceState;
+use schema_service_core::types::SchemaAddOutcome;
 use serde_json::json;
 use std::collections::HashMap;
 use tempfile::tempdir;
@@ -44,7 +44,11 @@ fn create_state() -> SchemaServiceState {
         .to_string();
     std::mem::forget(temp_dir);
 
-    SchemaServiceState::new(db_path).expect("failed to initialize schema service state")
+    SchemaServiceState::new(
+        db_path,
+        ::std::sync::Arc::new(::schema_service_core::embedder::MockEmbeddingModel),
+    )
+    .expect("failed to initialize schema service state")
 }
 
 // ---------------------------------------------------------------------------

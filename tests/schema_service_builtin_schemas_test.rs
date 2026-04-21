@@ -6,8 +6,8 @@
 //! exercises the schema service's own seeding contract. If this test
 //! fails, fold_db_node's fingerprints subsystem cannot start.
 
-use fold_db::schema_service::builtin_schemas::{self, PHASE_1_DESCRIPTIVE_NAMES};
-use fold_db::schema_service::state::SchemaServiceState;
+use schema_service_core::builtin_schemas::{self, PHASE_1_DESCRIPTIVE_NAMES};
+use schema_service_core::state::SchemaServiceState;
 use schema_service_server_http::SchemaServiceServer;
 use std::collections::HashSet;
 use tempfile::TempDir;
@@ -31,7 +31,11 @@ async fn new_with_builtins_installs_all_twelve_on_fresh_store() {
     // state internal; checking via a second handle is the easiest way
     // to inspect the underlying storage.)
     drop(_server); // release the original state's sled handle
-    let state = SchemaServiceState::new(db_path).unwrap();
+    let state = SchemaServiceState::new(
+        db_path,
+        ::std::sync::Arc::new(::schema_service_core::embedder::MockEmbeddingModel),
+    )
+    .unwrap();
     let all_names: HashSet<String> = state
         .get_schema_names()
         .expect("list schemas")
@@ -76,7 +80,11 @@ async fn seed_is_idempotent_across_multiple_calls() {
         .to_string_lossy()
         .to_string();
 
-    let state = SchemaServiceState::new(db_path).unwrap();
+    let state = SchemaServiceState::new(
+        db_path,
+        ::std::sync::Arc::new(::schema_service_core::embedder::MockEmbeddingModel),
+    )
+    .unwrap();
 
     // Seed once.
     builtin_schemas::seed(&state).await.expect("first seed");

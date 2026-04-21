@@ -2,7 +2,7 @@
 //! constants.
 //!
 //! The constants themselves live in
-//! `fold_db::schema_service::builtin_schemas` because that module is
+//! `schema_service_core::builtin_schemas` because that module is
 //! the canonical home for the built-in schema definitions. This
 //! re-export keeps the existing `use crate::fingerprints::schemas::*`
 //! import sites working without requiring every consumer to reach
@@ -16,7 +16,7 @@
 //! `canonical_names::lookup(DESCRIPTIVE_NAME)` to get the runtime
 //! name before issuing mutations or queries.
 
-pub use fold_db::schema_service::builtin_schemas::{
+pub use schema_service_core::builtin_schemas::{
     EDGE, EDGE_BY_FINGERPRINT, EXTRACTION_STATUS, FINGERPRINT, IDENTITY, IDENTITY_RECEIPT,
     INGESTION_ERROR, MENTION, MENTION_BY_FINGERPRINT, MENTION_BY_SOURCE, PERSONA,
     PHASE_1_DESCRIPTIVE_NAMES, RECEIVED_SHARE,

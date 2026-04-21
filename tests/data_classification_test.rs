@@ -1,6 +1,6 @@
 use fold_db::schema::types::data_classification::DataClassification;
-use fold_db::schema_service::state::SchemaServiceState;
-use fold_db::schema_service::types::SchemaAddOutcome;
+use schema_service_core::state::SchemaServiceState;
+use schema_service_core::types::SchemaAddOutcome;
 use serde_json::json;
 use std::collections::HashMap;
 use tempfile::tempdir;
@@ -62,8 +62,11 @@ async fn new_fields_without_classification_use_llm_or_error() {
         .to_string_lossy()
         .to_string();
 
-    let state =
-        SchemaServiceState::new(db_path).expect("failed to initialize schema service state");
+    let state = SchemaServiceState::new(
+        db_path,
+        ::std::sync::Arc::new(::schema_service_core::embedder::MockEmbeddingModel),
+    )
+    .expect("failed to initialize schema service state");
 
     // Build schema WITHOUT classifications
     let mut schema: fold_db::schema::types::Schema = serde_json::from_value(json!({
@@ -123,8 +126,11 @@ async fn accepts_valid_classifications() {
         .to_string_lossy()
         .to_string();
 
-    let state =
-        SchemaServiceState::new(db_path).expect("failed to initialize schema service state");
+    let state = SchemaServiceState::new(
+        db_path,
+        ::std::sync::Arc::new(::schema_service_core::embedder::MockEmbeddingModel),
+    )
+    .expect("failed to initialize schema service state");
 
     let mut classifications = HashMap::new();
     classifications.insert(
@@ -214,8 +220,11 @@ async fn classification_stored_on_canonical_field() {
         .to_string_lossy()
         .to_string();
 
-    let state =
-        SchemaServiceState::new(db_path).expect("failed to initialize schema service state");
+    let state = SchemaServiceState::new(
+        db_path,
+        ::std::sync::Arc::new(::schema_service_core::embedder::MockEmbeddingModel),
+    )
+    .expect("failed to initialize schema service state");
 
     let mut classifications = HashMap::new();
     classifications.insert(
@@ -296,8 +305,11 @@ async fn canonical_classification_propagates_to_schema() {
         .to_string_lossy()
         .to_string();
 
-    let state =
-        SchemaServiceState::new(db_path).expect("failed to initialize schema service state");
+    let state = SchemaServiceState::new(
+        db_path,
+        ::std::sync::Arc::new(::schema_service_core::embedder::MockEmbeddingModel),
+    )
+    .expect("failed to initialize schema service state");
 
     // First schema registers "email" as canonical with classification
     let mut classifications = HashMap::new();
@@ -377,8 +389,11 @@ async fn field_rename_carries_classification() {
         .to_string_lossy()
         .to_string();
 
-    let state =
-        SchemaServiceState::new(db_path).expect("failed to initialize schema service state");
+    let state = SchemaServiceState::new(
+        db_path,
+        ::std::sync::Arc::new(::schema_service_core::embedder::MockEmbeddingModel),
+    )
+    .expect("failed to initialize schema service state");
 
     // First schema: "artist" becomes canonical
     let schema_a = json_to_schema(json!({
@@ -481,8 +496,11 @@ async fn legacy_canonical_field_loads_without_classification() {
     }
 
     // Open schema service — should load legacy canonical fields without error
-    let state =
-        SchemaServiceState::new(db_path).expect("should load despite legacy canonical fields");
+    let state = SchemaServiceState::new(
+        db_path,
+        ::std::sync::Arc::new(::schema_service_core::embedder::MockEmbeddingModel),
+    )
+    .expect("should load despite legacy canonical fields");
 
     // Add a schema that reuses "author" — should not crash
     let schema = json_to_schema(json!({
@@ -518,8 +536,11 @@ async fn expansion_merges_classifications() {
         .to_string_lossy()
         .to_string();
 
-    let state =
-        SchemaServiceState::new(db_path).expect("failed to initialize schema service state");
+    let state = SchemaServiceState::new(
+        db_path,
+        ::std::sync::Arc::new(::schema_service_core::embedder::MockEmbeddingModel),
+    )
+    .expect("failed to initialize schema service state");
 
     // First schema: 2 fields
     let mut classifications1 = HashMap::new();

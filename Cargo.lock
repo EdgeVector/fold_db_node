@@ -1922,6 +1922,7 @@ dependencies = [
  "regex",
  "reqwest 0.11.27",
  "rust-embed",
+ "schema_service_core",
  "schema_service_server_http",
  "serde",
  "serde_json",
@@ -4470,6 +4471,21 @@ dependencies = [
 ]
 
 [[package]]
+name = "schema_service_core"
+version = "0.1.0"
+dependencies = [
+ "async-trait",
+ "fold_db",
+ "log",
+ "reqwest 0.11.27",
+ "serde",
+ "serde_json",
+ "sha2",
+ "sled",
+ "tokio",
+]
+
+[[package]]
 name = "schema_service_server_http"
 version = "0.1.0"
 dependencies = [
@@ -4478,6 +4494,7 @@ dependencies = [
  "clap",
  "fold_db",
  "log",
+ "schema_service_core",
  "schema_service_server_shared",
  "serde",
  "tokio",
@@ -4490,6 +4507,7 @@ dependencies = [
  "actix-web",
  "fold_db",
  "log",
+ "schema_service_core",
  "serde",
  "serde_json",
 ]

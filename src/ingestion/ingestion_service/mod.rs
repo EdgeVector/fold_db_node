@@ -30,7 +30,7 @@ use std::collections::HashMap;
 use std::sync::Arc;
 
 use decomposition::{AiProposal, CachedSchema, SchemaCache};
-use fold_db::schema_service::types::{BatchSchemaReuseResponse, SchemaLookupEntry};
+use schema_service_core::types::{BatchSchemaReuseResponse, SchemaLookupEntry};
 
 /// Shorthand to wrap any `Display` error as a `SchemaCreationError`.
 pub(crate) fn schema_err(e: impl std::fmt::Display) -> IngestionError {

@@ -86,7 +86,7 @@ const EMPTY_STORE_AGENT_ANSWER: &str = "You haven't ingested any data yet. To ge
 /// so we run the agent rather than incorrectly short-circuiting.
 fn is_empty_user_store(schemas: &[SchemaWithState]) -> bool {
     use fold_db::schema::SchemaState;
-    use fold_db::schema_service::builtin_schemas::PHASE_1_DESCRIPTIVE_NAMES;
+    use schema_service_core::builtin_schemas::PHASE_1_DESCRIPTIVE_NAMES;
     schemas
         .iter()
         .filter(|s| s.state == SchemaState::Approved)
@@ -625,7 +625,7 @@ mod tests {
 
     #[test]
     fn all_twelve_phase_1_builtins_are_empty_store() {
-        use fold_db::schema_service::builtin_schemas::PHASE_1_DESCRIPTIVE_NAMES;
+        use schema_service_core::builtin_schemas::PHASE_1_DESCRIPTIVE_NAMES;
         let schemas: Vec<SchemaWithState> = PHASE_1_DESCRIPTIVE_NAMES
             .iter()
             .map(|name| SchemaWithState::new(schema_with(Some(name)), SchemaState::Approved))

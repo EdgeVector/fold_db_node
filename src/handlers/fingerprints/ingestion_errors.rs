@@ -34,7 +34,7 @@ use std::sync::Arc;
 // ── Response types ───────────────────────────────────────────────
 
 /// Flattened IngestionError row for the Failed records panel. Matches
-/// the schema in `fold_db::schema_service::builtin_schemas` 1:1 minus
+/// the schema in `schema_service_core::builtin_schemas` 1:1 minus
 /// the `last_retry_at` optional timestamp which the Phase 1 UI does
 /// not yet render.
 #[derive(Debug, Clone, Serialize, Deserialize)]

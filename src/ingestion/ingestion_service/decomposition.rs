@@ -8,7 +8,7 @@ use crate::ingestion::{AISchemaResponse, IngestionError, IngestionResult};
 use fold_db::log_feature;
 use fold_db::logging::features::LogFeature;
 use fold_db::schema::types::KeyValue;
-use fold_db::schema_service::types::BatchSchemaReuseResponse;
+use schema_service_core::types::BatchSchemaReuseResponse;
 use serde_json::Value;
 use std::collections::HashMap;
 
