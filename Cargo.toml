@@ -22,6 +22,11 @@ fold_db = { git = "https://github.com/EdgeVector/fold_db.git", branch = "mainlin
 # to the sibling `../schema_service` checkout (CI clones it as sibling).
 schema_service_core = { path = "../schema_service/crates/core" }
 
+# Typed /v1/* HTTP client for the schema service. Phase 3 T2: replaces the
+# in-tree `src/fold_node/schema_client.rs`. Same sibling-checkout pattern
+# as `schema_service_core`.
+schema_service_client = { path = "../schema_service/crates/client" }
+
 # HTTP Server
 actix-web = "4.3"
 actix-http = "3"

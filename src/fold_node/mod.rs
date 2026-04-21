@@ -14,7 +14,6 @@ pub mod llm_query;
 pub mod node;
 mod operation_processor;
 pub mod response_types;
-pub mod schema_client;
 pub mod wasm_compiler;
 // Re-export the FoldNode struct for easier imports
 pub use crate::server::{start_embedded_server, start_embedded_server_lazy, EmbeddedServerHandle};
@@ -27,4 +26,4 @@ pub use node::FoldNode;
 pub use node::MutationOutcome;
 pub use node::ViewLoadResult;
 pub use operation_processor::OperationProcessor;
-pub use schema_client::SchemaServiceClient;
+pub use schema_service_client::SchemaServiceClient;

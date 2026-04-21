@@ -369,7 +369,7 @@ impl FoldNode {
     pub async fn add_schema_to_service(
         &self,
         schema: &fold_db::schema::types::Schema,
-    ) -> FoldDbResult<crate::fold_node::schema_client::AddSchemaResponse> {
+    ) -> FoldDbResult<schema_service_core::types::AddSchemaResponse> {
         let url = self.require_real_schema_service()?;
         crate::fold_node::SchemaServiceClient::new(&url)
             .add_schema(schema, std::collections::HashMap::new())
