@@ -38,7 +38,7 @@ async fn main() {
     match &cli.command {
         Command::Daemon { action } => {
             let result = match action {
-                DaemonCommand::Start { port } => commands::daemon::start(*port, dev)
+                DaemonCommand::Start { port, open } => commands::daemon::start(*port, dev, *open)
                     .await
                     .map(commands::CommandOutput::Message),
                 DaemonCommand::Stop => {

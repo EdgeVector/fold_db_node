@@ -312,6 +312,9 @@ pub enum DaemonCommand {
         /// Port to listen on (default: 9001)
         #[arg(long, default_value = "9001")]
         port: u16,
+        /// Open the dashboard in your default browser once the daemon is ready
+        #[arg(long, short = 'o')]
+        open: bool,
     },
     /// Stop the running daemon
     Stop,

@@ -95,12 +95,16 @@ fn is_port_in_use(port: u16) -> bool {
 }
 
 /// Start the daemon
-pub async fn start(port: u16, dev: bool) -> Result<String, CliError> {
+pub async fn start(port: u16, dev: bool, open: bool) -> Result<String, CliError> {
     if let Some(pid) = read_running_pid() {
         if check_daemon_health(port).await {
+            let url = format!("http://localhost:{}", port);
+            if open {
+                let _ = open_in_browser(&url);
+            }
             return Ok(format!(
-                "Daemon already running (PID {}, port {})",
-                pid, port
+                "FoldDB is already running at {}\n(PID {} — stop with `folddb daemon stop`)",
+                url, pid,
             ));
         }
         stop_process(pid);
@@ -160,12 +164,21 @@ pub async fn start(port: u16, dev: bool) -> Result<String, CliError> {
     fs::write(pid_file(), pid.to_string())
         .map_err(|e| CliError::new(format!("Failed to write PID file: {}", e)))?;
 
-    // Poll for health (up to 30 seconds)
+    eprintln!("Starting FoldDB daemon…");
+
+    // Poll for health (up to 30 seconds). Show a progress dot each second after
+    // t=2s so the user sees that something is happening during the fastembed /
+    // ONNX init that dominates first-boot latency.
+    use std::io::Write;
     let timeout = 30;
+    let mut printed_dots = false;
     for i in 0..timeout {
         tokio::time::sleep(std::time::Duration::from_secs(1)).await;
 
         if !is_process_alive(pid) {
+            if printed_dots {
+                eprintln!();
+            }
             let log_tail = read_log_tail(&log_path);
             let _ = fs::remove_file(pid_file());
             return Err(CliError::new("Daemon process died during startup")
@@ -173,16 +186,31 @@ pub async fn start(port: u16, dev: bool) -> Result<String, CliError> {
         }
 
         if check_daemon_health(port).await {
-            let env = if dev { " (dev)" } else { "" };
-            return Ok(format!("Daemon started on :{}{}  (PID {})", port, env, pid));
+            if printed_dots {
+                eprintln!();
+            }
+            let env_suffix = if dev { " (dev)" } else { "" };
+            let url = format!("http://localhost:{}", port);
+            if open {
+                let _ = open_in_browser(&url);
+            }
+            return Ok(format!(
+                "FoldDB is running at {}{}\n(PID {} — stop with `folddb daemon stop`)",
+                url, env_suffix, pid,
+            ));
         }
 
-        if i == 5 {
-            eprintln!("Waiting for daemon to start...");
+        if i >= 2 {
+            eprint!(".");
+            let _ = std::io::stderr().flush();
+            printed_dots = true;
         }
     }
 
     // Timeout
+    if printed_dots {
+        eprintln!();
+    }
     stop_process(pid);
     let _ = fs::remove_file(pid_file());
     let log_tail = read_log_tail(&log_path);
@@ -190,6 +218,26 @@ pub async fn start(port: u16, dev: bool) -> Result<String, CliError> {
         CliError::new(format!("Daemon failed to start within {}s", timeout))
             .with_hint(format!("Last log output:\n{}", log_tail)),
     )
+}
+
+/// Try to open `url` in the user's default browser. Best-effort — if the open
+/// command fails we still return success from `daemon start` since the URL is
+/// in the output and the user can click/paste it themselves.
+fn open_in_browser(url: &str) -> std::io::Result<()> {
+    #[cfg(target_os = "macos")]
+    let cmd = "open";
+    #[cfg(all(unix, not(target_os = "macos")))]
+    let cmd = "xdg-open";
+    #[cfg(not(unix))]
+    let cmd: &str = {
+        // No brew tap for Windows — but keep the code path compilable.
+        return Err(std::io::Error::new(
+            std::io::ErrorKind::Unsupported,
+            "browser open not implemented for this platform",
+        ));
+    };
+    let _child = Command::new(cmd).arg(url).spawn()?;
+    Ok(())
 }
 
 /// Stop the daemon
