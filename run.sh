@@ -178,21 +178,40 @@ start_local_schema_service() {
     local schema_env=""
     [ -n "$ollama_model" ] && schema_env="$schema_env OLLAMA_MODEL=$ollama_model"
     [ -n "$ollama_url" ] && schema_env="$schema_env OLLAMA_BASE_URL=$ollama_url"
-    nohup env $schema_env cargo run --bin schema_service -- --port "$SCHEMA_PORT" --db-path "$FOLDDB_HOME/schema_registry" > "$FOLDDB_HOME/schema_service.log" 2>&1 &
+
+    # Phase 0 T3: the dev binary moved to the sibling submodule at
+    # ../schema_service. Resolve absolute paths for everything we pass to the
+    # spawned process, then enter the submodule so cargo picks up its
+    # .cargo/config.toml (which patches the fold_db git dep to ../fold_db for
+    # local dev). Pre-build synchronously so the 30s liveness loop below
+    # doesn't race a cold cargo build.
+    local schema_service_dir home_abs schema_db_path schema_log
+    schema_service_dir="$(cd ../schema_service && pwd)"
+    home_abs="$(cd "$FOLDDB_HOME" && pwd)"
+    schema_db_path="$home_abs/schema_registry"
+    schema_log="$home_abs/schema_service.log"
+
+    echo "Building schema_service binary from $schema_service_dir..."
+    ( cd "$schema_service_dir" && cargo build -p schema_service_server_http --bin schema_service )
+
+    pushd "$schema_service_dir" > /dev/null
+    nohup env $schema_env cargo run -p schema_service_server_http --bin schema_service -- --port "$SCHEMA_PORT" --db-path "$schema_db_path" > "$schema_log" 2>&1 &
     SCHEMA_SERVICE_PID=$!
+    popd > /dev/null
     echo "$SCHEMA_SERVICE_PID" > "$FOLDDB_HOME/schema.pid"
 
     echo "Waiting for local schema service to be ready..."
     for i in {1..30}; do
         if kill -0 $SCHEMA_SERVICE_PID 2>/dev/null; then
-            if curl -s "http://127.0.0.1:${SCHEMA_PORT}/api/health" > /dev/null 2>&1; then
+            # Submodule binary serves routes under /v1/ (old /api/ prefix dropped in Phase 0).
+            if curl -s "http://127.0.0.1:${SCHEMA_PORT}/v1/health" > /dev/null 2>&1; then
                 echo "Local schema service started successfully with PID: $SCHEMA_SERVICE_PID"
-                echo "Schema service logs: $FOLDDB_HOME/schema_service.log"
+                echo "Schema service logs: $schema_log"
                 return 0
             fi
             sleep 1
         else
-            echo "Schema service process died. Check $FOLDDB_HOME/schema_service.log for details."
+            echo "Schema service process died. Check $schema_log for details."
             exit 1
         fi
     done

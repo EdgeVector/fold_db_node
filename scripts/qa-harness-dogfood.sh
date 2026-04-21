@@ -442,7 +442,9 @@ register_schema_on_service() {
   body="$(jq -c --slurpfile s "$file" -n '{schema: $s[0], mutation_mappers: {}}')"
   local response
   # Schema service doesn't require X-User-Hash — the registry is global.
-  response="$(USER_HASH="" api POST "http://localhost:$schema_port/api/schemas" "$body")" \
+  # Phase 0 T0 renamed every schema_service route from /api/* to /v1/*, and
+  # T3 now boots the binary from ../schema_service (which only serves /v1/*).
+  response="$(USER_HASH="" api POST "http://localhost:$schema_port/v1/schemas" "$body")" \
     || return 1
   printf '%s' "$response" > "$out_file"
   jq -r '.schema.name' <<<"$response"

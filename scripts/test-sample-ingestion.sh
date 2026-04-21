@@ -74,7 +74,9 @@ echo "Schema port: $SP"
 echo ""
 echo "Building..."
 cd "$REPO_DIR"
-cargo build --bin folddb_server --bin schema_service 2>&1 | tail -1
+cargo build --bin folddb_server 2>&1 | tail -1
+# Phase 0 T3: schema_service binary lives in the sibling submodule.
+( cd "$REPO_DIR/../schema_service" && cargo build -p schema_service_server_http --bin schema_service ) 2>&1 | tail -1
 
 # Stub frontend dist for RustEmbed
 mkdir -p src/server/static-react/dist
