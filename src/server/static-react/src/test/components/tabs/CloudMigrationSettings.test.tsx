@@ -10,7 +10,7 @@
 import React from 'react'
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest'
 import { render, screen, act, waitFor } from '@testing-library/react'
-import CloudMigrationSettings from '../../../components/tabs/CloudMigrationSettings.jsx'
+import CloudMigrationSettings from '../../../components/tabs/CloudMigrationSettings'
 
 vi.mock('../../../api/clients/subscriptionClient', () => {
   class CloudApiError extends Error {
@@ -88,9 +88,12 @@ describe('CloudMigrationSettings Stripe checkout return', () => {
     expect(screen.queryByTestId('upgrade-banner-complete')).toBeNull()
     expect(screen.queryByTestId('upgrade-banner-timeout')).toBeNull()
     expect(screen.queryByTestId('upgrade-banner-cancelled')).toBeNull()
-    // The "not cloud mode" form renders the Enable Cloud Backup headline
-    // synchronously on the initial render (isCloudMode starts false).
-    expect(screen.getAllByText(/Enable Cloud Backup/i).length).toBeGreaterThan(0)
+    // No cloud credentials → NOT_CONNECTED state → the "Enable Cloud Backup"
+    // invite form renders. Wrapped in waitFor because validateCloudSession
+    // runs asynchronously after mount (CHECKING → NOT_CONNECTED).
+    await waitFor(() =>
+      expect(screen.getAllByText(/Enable Cloud Backup/i).length).toBeGreaterThan(0),
+    )
   })
 
   it('success: polls until plan=paid and shows complete banner', async () => {
@@ -199,7 +202,7 @@ describe('CloudMigrationSettings partial-creds reset', () => {
     expect(screen.getAllByText(/Enable Cloud Backup/i).length).toBeGreaterThan(0)
   })
 
-  it('transient error: keeps cloud mode and shows offline banner', async () => {
+  it('transient error: UNREACHABLE state with retry/reset, credentials preserved', async () => {
     localStorage.setItem('exemem_api_url', 'https://api.example')
     localStorage.setItem('exemem_api_key', 'good-key')
 
@@ -214,18 +217,25 @@ describe('CloudMigrationSettings partial-creds reset', () => {
 
     render(<CloudMigrationSettings />)
 
-    // Offline banner text is static copy on the cloud-mode render branch.
+    // UNREACHABLE state: show the honest "Couldn't reach Exemem" copy and the
+    // two actionable buttons. No fabricated Free Plan card, no storage bar,
+    // no Create Code button — the previous behavior synthesized those out of
+    // nothing, which misled users into thinking they had a confirmed account.
     await waitFor(() =>
-      expect(
-        screen.getByText(/couldn't reach the cloud API/i),
-      ).toBeInTheDocument(),
+      expect(screen.getByText(/Couldn't reach Exemem/i)).toBeInTheDocument(),
     )
-    // Stale-creds reset path must NOT fire for transient errors.
+    expect(screen.getByRole('button', { name: /Retry/i })).toBeInTheDocument()
+    expect(screen.getByRole('button', { name: /Reset cloud credentials/i })).toBeInTheDocument()
+    expect(screen.queryByText(/Free Plan/i)).toBeNull()
+    expect(screen.queryByRole('button', { name: /Create Code/i })).toBeNull()
+
+    // Stale-creds reset path must NOT auto-fire for transient errors — users
+    // on flaky wifi shouldn't lose their session.
     expect(localStorage.getItem('exemem_api_url')).toBe('https://api.example')
     expect(localStorage.getItem('exemem_api_key')).toBe('good-key')
   })
 
-  it('5xx cloud error: keeps cloud mode (not a stale-creds signal)', async () => {
+  it('5xx cloud error: UNREACHABLE state (not a stale-creds signal)', async () => {
     localStorage.setItem('exemem_api_url', 'https://api.example')
     localStorage.setItem('exemem_api_key', 'good-key')
 
@@ -241,9 +251,7 @@ describe('CloudMigrationSettings partial-creds reset', () => {
     render(<CloudMigrationSettings />)
 
     await waitFor(() =>
-      expect(
-        screen.getByText(/couldn't reach the cloud API/i),
-      ).toBeInTheDocument(),
+      expect(screen.getByText(/Couldn't reach Exemem/i)).toBeInTheDocument(),
     )
     expect(localStorage.getItem('exemem_api_url')).toBe('https://api.example')
   })

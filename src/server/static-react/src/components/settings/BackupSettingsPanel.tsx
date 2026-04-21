@@ -1,16 +1,34 @@
-import { useState, useEffect, useRef, useCallback } from 'react'
+import React, { useState, useEffect, useRef, useCallback } from 'react'
 import { getSyncStatus, triggerSync } from '../../api/clients/systemClient'
+import { getSubscriptionStatus, CloudApiError } from '../../api/clients/subscriptionClient'
 
 const POLL_INTERVAL_MS = 10_000
 
-function BackupSettingsPanel() {
-  const [status, setStatus] = useState(null)
-  const [loading, setLoading] = useState(true)
-  const [syncing, setSyncing] = useState(false)
-  const [triggerResult, setTriggerResult] = useState(null)
-  const [hasCredentials, setHasCredentials] = useState(false)
-  const pollRef = useRef(null)
-  const resultTimeoutRef = useRef(null)
+// Validated against Exemem, not just checked for presence. "Starting…" is only
+// shown while credentials are 'valid' but sync hasn't reported enabled yet;
+// when they're 'stale' we surface that honestly instead of looping forever.
+type CredentialsState = 'unknown' | 'none' | 'valid' | 'stale'
+
+interface SyncStatusData {
+  enabled?: boolean
+  state?: string
+  pending_count?: number
+  encryption_active?: boolean
+}
+
+interface TriggerResult {
+  type: 'success' | 'error'
+  message: string
+}
+
+function BackupSettingsPanel(): React.ReactElement {
+  const [status, setStatus] = useState<SyncStatusData | null>(null)
+  const [loading, setLoading] = useState<boolean>(true)
+  const [syncing, setSyncing] = useState<boolean>(false)
+  const [triggerResult, setTriggerResult] = useState<TriggerResult | null>(null)
+  const [credentialsState, setCredentialsState] = useState<CredentialsState>('unknown')
+  const pollRef = useRef<ReturnType<typeof setInterval> | null>(null)
+  const resultTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null)
 
   const fetchStatus = useCallback(async () => {
     try {
@@ -25,19 +43,48 @@ function BackupSettingsPanel() {
     }
   }, [])
 
-  // Detect if user has Exemem credentials (signed up but sync may not be running)
+  // Validate Exemem credentials against the cloud API (not just check local
+  // presence). We previously drove "Starting…" off mere presence, which meant
+  // stale/revoked credentials left users stuck in an eternal "Starting…"
+  // state. Now: 401/403 → 'stale', success → 'valid', absent → 'none',
+  // transient failure → leave 'unknown' so the rest of the UI falls back to
+  // neutral copy instead of claiming sync is about to start.
   useEffect(() => {
-    const hasLocalCreds = localStorage.getItem('exemem_api_url') && localStorage.getItem('exemem_api_key')
-    if (hasLocalCreds) {
-      setHasCredentials(true)
-      return
+    const hasLocalCreds = !!(
+      localStorage.getItem('exemem_api_url') && localStorage.getItem('exemem_api_key')
+    )
+    const validate = async () => {
+      let hasCreds = hasLocalCreds
+      if (!hasCreds) {
+        try {
+          const resp = await fetch('/api/auth/credentials')
+          if (resp.ok) {
+            const data = await resp.json()
+            hasCreds = !!(data.ok && data.has_credentials)
+          }
+        } catch {
+          // Local node not reachable — treat as 'unknown', default below.
+        }
+      }
+      if (!hasCreds) {
+        setCredentialsState('none')
+        return
+      }
+      try {
+        await getSubscriptionStatus()
+        setCredentialsState('valid')
+      } catch (err: unknown) {
+        if (err instanceof CloudApiError && (err.status === 401 || err.status === 403)) {
+          setCredentialsState('stale')
+        } else {
+          // Transient cloud outage — don't falsely show "Starting…" or
+          // "Disabled"; leave credentialsState === 'unknown' so the panel
+          // shows neutral copy.
+          setCredentialsState('unknown')
+        }
+      }
     }
-    fetch('/api/auth/credentials')
-      .then(r => r.json())
-      .then(data => {
-        if (data.ok && data.has_credentials) setHasCredentials(true)
-      })
-      .catch(() => {})
+    validate()
   }, [])
 
   useEffect(() => {
@@ -98,21 +145,29 @@ function BackupSettingsPanel() {
           <div>
             <h4 className="text-sm font-semibold text-primary">Cloud Backup</h4>
             <p className="text-xs text-secondary mt-1">
-              {enabled
-                ? 'Your data is being synced to Exemem cloud storage with end-to-end encryption.'
-                : hasCredentials
-                  ? 'Cloud backup is registered. Sync should activate shortly.'
-                  : 'Cloud backup is not configured. Sign up for Exemem above to enable backup sync.'}
+              {enabled && 'Your data is being synced to Exemem cloud storage with end-to-end encryption.'}
+              {!enabled && credentialsState === 'valid' && 'Cloud backup is registered. Sync should activate shortly.'}
+              {!enabled && credentialsState === 'stale' && 'Cloud backup credentials were rejected by Exemem. Re-enter an invite code in Cloud Storage above to restore sync.'}
+              {!enabled && credentialsState === 'none' && 'Cloud backup is not configured. Sign up for Exemem above to enable backup sync.'}
+              {!enabled && credentialsState === 'unknown' && 'Cloud backup status is unavailable right now. Check your Exemem connection above.'}
             </p>
           </div>
           <div className={`px-3 py-1 rounded-full text-xs font-medium ${
             enabled
               ? 'bg-gruvbox-green/20 text-gruvbox-green'
-              : hasCredentials
+              : credentialsState === 'valid'
                 ? 'bg-gruvbox-yellow/20 text-gruvbox-yellow'
-                : 'bg-gruvbox-red/20 text-gruvbox-red'
+                : credentialsState === 'stale'
+                  ? 'bg-gruvbox-red/20 text-gruvbox-red'
+                  : credentialsState === 'unknown'
+                    ? 'bg-gruvbox-dim/20 text-gruvbox-dim'
+                    : 'bg-gruvbox-red/20 text-gruvbox-red'
           }`}>
-            {enabled ? 'Enabled' : hasCredentials ? 'Starting...' : 'Disabled'}
+            {enabled && 'Enabled'}
+            {!enabled && credentialsState === 'valid' && 'Starting...'}
+            {!enabled && credentialsState === 'stale' && 'Rejected'}
+            {!enabled && credentialsState === 'none' && 'Disabled'}
+            {!enabled && credentialsState === 'unknown' && 'Unknown'}
           </div>
         </div>
       </div>
@@ -180,7 +235,7 @@ function BackupSettingsPanel() {
             </>
           )}
         </button>
-        {!enabled && !hasCredentials && (
+        {!enabled && credentialsState === 'none' && (
           <p className="text-xs text-secondary mt-2">
             Enable cloud storage to use manual backup.
           </p>
@@ -201,7 +256,7 @@ function BackupSettingsPanel() {
   )
 }
 
-function getStateDotClass(state, enabled) {
+function getStateDotClass(state: string | undefined, enabled: boolean): string {
   if (!enabled) return ''
   switch (state) {
     case 'idle': return 'status-dot-success'
@@ -212,7 +267,7 @@ function getStateDotClass(state, enabled) {
   }
 }
 
-function getStateLabel(state, enabled) {
+function getStateLabel(state: string | undefined, enabled: boolean): string {
   if (!enabled) return 'Not configured'
   switch (state) {
     case 'idle': return 'Up to date'
