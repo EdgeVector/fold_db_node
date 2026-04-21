@@ -11,7 +11,7 @@ The app/node layer for FoldDB — HTTP server, CLI, React UI, ingestion pipeline
 | CLI (`folddb`) | `src/bin/folddb/` | Query, mutate, ingest, search, ask |
 | Ingestion pipeline | `src/ingestion/` | AI-powered file → schema → mutation |
 | Fingerprints | `src/fingerprints/` | Personas, Identities, face detection, sharing |
-| Schema service | `src/bin/schema_service.rs` | Local schema registry (port 9102 in dev) |
+| Schema service client | consumes [`schema_service_client`](https://github.com/EdgeVector/schema_service) crate | Typed client to `schema.folddb.com` (or local dev binary on port 9102) |
 
 ## Key API Endpoints
 

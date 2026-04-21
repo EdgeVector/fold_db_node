@@ -30,16 +30,13 @@ npm test
 npm run test:e2e
 ```
 
-## Binaries
+## Schema service
 
-### `schema_service`
-Standalone HTTP server for schema registry. Single source of truth for schema creation across FoldDB nodes.
+The schema service lives in its own repo, [EdgeVector/schema_service](https://github.com/EdgeVector/schema_service), and is deployed as a Lambda at `schema.folddb.com` via [EdgeVector/schema-infra](https://github.com/EdgeVector/schema-infra). fold_db_node consumes it as a client.
 
-- Source: `src/bin/schema_service.rs`, implementation in `src/schema_service/`
-- Default port: 9002 (`DEFAULT_SCHEMA_SERVICE_PORT`)
-- Storage: Sled at `--db-path` (default: `schema_registry`)
-- Run: `cargo run --bin schema_service -- --port 9002 --db-path schema_registry`
-- Used by `fold_db_node` HTTP server via `schema_service_url` config (use `test://mock` in integration tests)
+- **Client**: the `schema_service_client` crate (published from the `schema_service` workspace). `fold_db_node::fold_node` re-exports `SchemaServiceClient` for internal use. Integration tests can inject `test://mock` via the `schema_service_url` config.
+- **Dev binary** (optional): `cargo run -p schema_service_server_http --bin schema_service -- --port 9102 --db-path schema_registry` in the sibling `schema_service/` checkout. `./run.sh --local-schema` orchestrates this automatically.
+- **No in-tree code**: `src/bin/schema_service.rs` and `src/schema_service/` were removed in Phase 0; `src/fold_node/schema_client.rs` was removed in Phase 3 T2.
 
 ## Local Development
 
