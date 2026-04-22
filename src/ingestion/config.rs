@@ -333,29 +333,6 @@ impl Default for IngestionConfig {
 }
 
 impl IngestionConfig {
-    /// Build an effective config for the LLM query use case.
-    ///
-    /// Kept for backwards compatibility with callers still reading
-    /// `IngestionConfig` fields directly. New code should call
-    /// [`IngestionConfig::resolve`] instead and read `ResolvedModel` fields.
-    /// PR 3 migrates the last remaining caller (`llm_query::service`) and
-    /// removes this method.
-    pub fn query_config(&self) -> Self {
-        let resolved = self.resolve(Role::QueryChat);
-        let mut config = self.clone();
-        config.provider = resolved.provider.clone();
-        match resolved.provider {
-            AIProvider::Ollama => {
-                config.ollama.model = resolved.model;
-                config.ollama.generation_params = resolved.generation_params;
-            }
-            AIProvider::Anthropic => {
-                config.anthropic.model = resolved.model;
-            }
-        }
-        config
-    }
-
     /// Resolve a role → concrete [`ResolvedModel`]. Pure data; does not build
     /// a backend. Used by the UI/stats endpoints and by [`Self::build_backend`]
     /// (landing in PR 2).
@@ -443,16 +420,26 @@ impl IngestionConfig {
     }
 
     /// Build a live [`AiBackend`](crate::ingestion::ai::client::AiBackend) for
-    /// this role, wrapped in a [`MeteredBackend`](crate::ingestion::ai::metered::MeteredBackend)
-    /// so every call records metrics tagged with `role`.
+    /// this role. Records metrics against the process-wide singleton store
+    /// ([`AiMetricsStore::global`](crate::ingestion::metrics::AiMetricsStore::global))
+    /// so every role across every service lands in the same counters.
     ///
     /// Returns `(Some(backend), None)` on success, `(None, Some(error))` on
-    /// init failure — same shape as the legacy free-function
-    /// [`crate::ingestion::ai::client::build_backend`] so callers can keep the
-    /// "keep service alive and report status" pattern.
-    ///
-    /// PR 3 migrates every callsite to this method and deletes the free function.
+    /// init failure so callers can keep the "init failed but keep service
+    /// alive and report status" pattern.
     pub fn build_backend(
+        &self,
+        role: Role,
+    ) -> (
+        Option<std::sync::Arc<dyn crate::ingestion::ai::client::AiBackend>>,
+        Option<String>,
+    ) {
+        self.build_backend_with_metrics(role, crate::ingestion::metrics::AiMetricsStore::global())
+    }
+
+    /// Same as [`Self::build_backend`] but with an explicit metrics store —
+    /// for tests that need to avoid the global singleton.
+    pub fn build_backend_with_metrics(
         &self,
         role: Role,
         metrics: std::sync::Arc<crate::ingestion::metrics::AiMetricsStore>,

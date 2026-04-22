@@ -6,10 +6,7 @@ mod prompts;
 pub mod web_tools;
 
 use super::types::{FollowupAnalysis, Message, QueryPlan};
-use crate::ingestion::{
-    ai::client::{build_backend, AiBackend},
-    config::IngestionConfig,
-};
+use crate::ingestion::{ai::client::AiBackend, config::IngestionConfig, Role};
 use fold_db::llm_registry::prompts::query as qp;
 use fold_db::schema::SchemaWithState;
 use serde_json::Value;
@@ -21,13 +18,12 @@ pub struct LlmQueryService {
 }
 
 impl LlmQueryService {
-    /// Create a new LLM query service.
-    ///
-    /// Uses `config.query_config()` to apply per-use-case provider/model overrides.
-    /// If no query overrides are set, inherits from the primary ingestion config.
+    /// Create a new LLM query service that resolves through `Role::QueryChat`.
+    /// Defaults to Anthropic Sonnet; overrides applied per
+    /// `IngestionConfig::overrides[Role::QueryChat]`. Metrics record against
+    /// the process-wide singleton store.
     pub fn new(config: IngestionConfig) -> Result<Self, String> {
-        let effective = config.query_config();
-        let (backend, init_error) = build_backend(&effective);
+        let (backend, init_error) = config.build_backend(Role::QueryChat);
         let backend = backend.ok_or_else(|| {
             init_error.unwrap_or_else(|| "AI backend initialization failed".to_string())
         })?;

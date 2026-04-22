@@ -1,28 +1,57 @@
 //! AI interaction methods for IngestionService.
 
 use super::IngestionService;
-use crate::ingestion::{AISchemaResponse, IngestionError, IngestionResult};
+use crate::ingestion::{AISchemaResponse, IngestionError, IngestionResult, Role};
 use fold_db::log_feature;
 use fold_db::logging::features::LogFeature;
 use serde_json::Value;
 
 impl IngestionService {
-    /// Call the underlying AI API with a raw prompt string.
+    /// Call the underlying AI API with a raw prompt string, tagged as
+    /// `Role::IngestionText`. Uses the cached backend from construction.
     ///
-    /// This is the low-level API used by smart_folder scanning and other
-    /// components that need raw AI text completion without schema parsing.
+    /// For other roles (smart_folder classifier, discovery interests,
+    /// mutation agent) call [`Self::call_ai_raw_as`] — it builds a
+    /// role-tagged backend on demand so per-role metrics stay accurate.
     pub async fn call_ai_raw(&self, prompt: &str) -> IngestionResult<String> {
         let detail = self.init_error.as_deref().unwrap_or("unknown reason");
+        let resolved = self.config.resolve(Role::IngestionText);
         self.backend
             .as_ref()
             .ok_or_else(|| {
                 IngestionError::configuration_error(format!(
                     "{:?} backend not initialized ({})",
-                    self.config.provider, detail
+                    resolved.provider, detail
                 ))
             })?
             .call(prompt)
             .await
+    }
+
+    /// Call the underlying AI API with a role tag. Builds a fresh
+    /// role-tagged backend per call — overhead is a small reqwest::Client
+    /// construction relative to the LLM round-trip. Records metrics against
+    /// the shared store so `/api/ingestion/stats` counts this role
+    /// correctly.
+    ///
+    /// Returns an error if the resolved provider for `role` can't be
+    /// initialised (missing Anthropic key, empty Ollama URL, etc.).
+    pub async fn call_ai_raw_as(&self, role: Role, prompt: &str) -> IngestionResult<String> {
+        // Fast path: the default IngestionText backend is already cached.
+        if role == Role::IngestionText {
+            return self.call_ai_raw(prompt).await;
+        }
+        let (backend, err) = self
+            .config
+            .build_backend_with_metrics(role, self.metrics.clone());
+        match backend {
+            Some(b) => b.call(prompt).await,
+            None => Err(IngestionError::configuration_error(format!(
+                "Role::{:?} backend not initialised ({})",
+                role,
+                err.unwrap_or_else(|| "unknown reason".to_string())
+            ))),
+        }
     }
 
     /// Get AI schema recommendation with validation retries.

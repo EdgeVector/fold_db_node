@@ -16,8 +16,15 @@ use dashmap::DashMap;
 use parking_lot::Mutex;
 use serde::Serialize;
 use std::sync::atomic::{AtomicU64, Ordering};
-use std::sync::Arc;
+use std::sync::{Arc, OnceLock};
 use std::time::{Duration, Instant};
+
+/// Process-wide AI metrics singleton. Lazily initialized on first call.
+/// Every service (`IngestionService`, `LlmQueryService`, `anthropic_vision`,
+/// etc.) records against the same store so `/api/ingestion/stats` returns
+/// unified counts. Tests that need isolation build their own store via
+/// [`AiMetricsStore::new`] and record directly — no global state leakage.
+static GLOBAL: OnceLock<Arc<AiMetricsStore>> = OnceLock::new();
 
 /// Per-role counters. Lock-free on the hot path (counters are atomics); the
 /// mutex is only acquired to update `last_called_at` which is not on the
@@ -108,6 +115,15 @@ impl AiMetricsStore {
     /// ingestion service.
     pub fn new() -> Self {
         Self::default()
+    }
+
+    /// Return the process-wide singleton metrics store, initializing on
+    /// first call. Every production caller should use this. Tests that need
+    /// isolation can build their own store via [`Self::new`] instead.
+    pub fn global() -> Arc<AiMetricsStore> {
+        GLOBAL
+            .get_or_init(|| Arc::new(AiMetricsStore::new()))
+            .clone()
     }
 
     /// Record a single call. Creates the per-role entry on first use.
