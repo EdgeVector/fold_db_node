@@ -175,6 +175,13 @@ impl FoldDbClient {
         self.post("/api/query", &body).await
     }
 
+    /// Raw `/api/query` POST for callers that need features beyond the simple
+    /// schema+fields+hash/range shape of [`Self::query`] — e.g. `sort_order`,
+    /// `value_filters`, etc. Body is passed through verbatim.
+    pub async fn raw_query(&self, body: &Value) -> Result<Value, CliError> {
+        self.post("/api/query", body).await
+    }
+
     // --- Search ---
 
     pub async fn search(&self, term: &str) -> Result<Value, CliError> {

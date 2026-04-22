@@ -4,6 +4,7 @@ pub mod org;
 pub mod setup;
 pub mod snapshot;
 pub mod system;
+pub mod trigger;
 
 #[derive(Debug)]
 pub enum CommandOutput {
