@@ -45,6 +45,12 @@ jobs:
       - name: Checkout repository
         uses: actions/checkout@v4
 
+      # Strip the local-dev cargo patch that redirects schema_service
+      # deps to a sibling workspace checkout — CI has no sibling, so
+      # the git dep + Cargo.lock pin must resolve instead.
+      - name: Remove local-dev cargo patch
+        run: rm -f .cargo/config.toml
+
       - name: Install mold linker
         run: sudo apt-get update && sudo apt-get install -y mold
 
