@@ -125,7 +125,8 @@ fn make_stored_view(
 }
 
 /// Create a StoredView with an explicit trigger list — used by tests
-/// exercising the canonical→exec trigger adapter.
+/// exercising trigger pass-through from the schema service into a
+/// registered TransformView.
 fn make_stored_view_with_triggers(
     name: &str,
     source_schema: &str,
@@ -380,16 +381,17 @@ async fn load_view_converts_stored_view_fields_correctly() {
     handle.stop(true).await;
 }
 
-/// End-to-end check for the canonical→exec trigger adapter (Trigger
-/// Stabilization G3): a StoredView with Scheduled + OnWriteCoalesced +
-/// Manual triggers is served by the mock schema service, loaded through
-/// `load_view_from_service`, and the registered TransformView's
-/// `triggers` vec must carry the fold_db-side variants produced by
-/// `fold_node::trigger_adapter::canonical_to_exec`. Without the adapter
-/// the triggers would be dropped and `effective_triggers()` would return
-/// `[OnWrite]` for everything.
+/// End-to-end check for trigger pass-through after the trigger-type
+/// consolidation (fold_db PR #587 + schema_service PR #19): a StoredView
+/// with Scheduled + OnWriteCoalesced + Manual triggers is served by the
+/// mock schema service, loaded through `load_view_from_service`, and the
+/// registered TransformView's `triggers` vec must arrive byte-identical.
+/// `schema_service_core::types::Trigger` is now `pub use
+/// fold_db::triggers::Trigger`, so no translation happens — but if a
+/// future regression drops or rewrites the field, every assertion below
+/// fails.
 #[actix_web::test]
-async fn load_view_adapts_canonical_triggers_to_exec_triggers() {
+async fn load_view_passes_canonical_triggers_through_unchanged() {
     let output_schema = make_output_schema("triggered_output", &["value"]);
     let source_schema = make_test_schema("TriggerSource", &["value", "date"]);
 
@@ -399,7 +401,6 @@ async fn load_view_adapts_canonical_triggers_to_exec_triggers() {
 
     let triggers = vec![
         Trigger::Scheduled {
-            // Every 5 minutes → adapter should approximate interval_ms = 300_000.
             cron: "*/5 * * * *".to_string(),
             timezone: "UTC".to_string(),
             window: None,
@@ -423,7 +424,7 @@ async fn load_view_adapts_canonical_triggers_to_exec_triggers() {
             "TriggerSource",
             &["value"],
             "triggered_output",
-            triggers,
+            triggers.clone(),
         ),
     );
 
@@ -439,31 +440,11 @@ async fn load_view_adapts_canonical_triggers_to_exec_triggers() {
         .unwrap()
         .unwrap();
 
-    // Compare against exec-layer Trigger shape from fold_db.
-    use fold_db::triggers::types::Trigger as ExecTrigger;
     assert_eq!(
-        view.triggers.len(),
-        3,
-        "all 3 canonical triggers should survive adaptation, got {:?}",
+        view.triggers, triggers,
+        "all 3 canonical triggers should pass through byte-identical, got {:?}",
         view.triggers
     );
-    assert_eq!(
-        view.triggers[0],
-        ExecTrigger::Scheduled {
-            interval_ms: 300_000
-        },
-        "5-minute cron should approximate to 300_000 ms"
-    );
-    assert_eq!(
-        view.triggers[1],
-        ExecTrigger::OnWriteCoalesced {
-            min_batch: 4,
-            debounce_ms: 150,
-            max_wait_ms: 2_000,
-        },
-        "OnWriteCoalesced should adapt field-for-field"
-    );
-    assert_eq!(view.triggers[2], ExecTrigger::Manual);
 
     handle.stop(true).await;
 }
