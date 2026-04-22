@@ -13,6 +13,19 @@ import ManageInterestsPanel from './discovery/ManageInterestsPanel'
 import DiscoverySectionNav from './discovery/DiscoverySectionNav'
 import { groupByCategory } from './discovery/discoveryUtils'
 
+function DiscoveryIntro() {
+  return (
+    <div className="text-sm text-secondary max-w-2xl">
+      <span className="text-primary font-medium">Discover</span> is for meeting
+      new people on the Exemem network. Pick a few topics to share in{' '}
+      <span className="text-primary">Share</span>, then browse{' '}
+      <span className="text-primary">Meet people</span> for matches. Once
+      someone accepts your request, they move into <em>People</em> where you
+      can exchange identity cards, share calendars, and tag moments together.
+    </div>
+  )
+}
+
 export default function DiscoveryTab({ onResult }) {
   const { approvedSchemas } = useApprovedSchemas()
   const [configs, setConfigs] = useState([])
@@ -210,11 +223,12 @@ export default function DiscoveryTab({ onResult }) {
   if (!serviceAvailable) {
     return (
       <div className="space-y-4">
+        <DiscoveryIntro />
         <div className="card p-6 text-center rounded">
-          <h3 className="text-lg text-primary mb-2">Discovery Not Available</h3>
+          <h3 className="text-lg text-primary mb-2">Discover needs Exemem Cloud</h3>
           <p className="text-secondary text-sm">
-            Discovery requires an Exemem cloud account. Enable cloud backup in
-            Settings to join the discovery network and find users with similar data.
+            Finding other people happens through the Exemem network. Enable cloud
+            backup in Settings to join — then come back here.
           </p>
         </div>
       </div>
@@ -223,6 +237,7 @@ export default function DiscoveryTab({ onResult }) {
 
   return (
     <div className="space-y-4">
+      <DiscoveryIntro />
       <DiscoverySectionNav activeSection={activeSection} onChange={setActiveSection} />
 
       {error && <div className="text-sm text-gruvbox-red">{error}</div>}

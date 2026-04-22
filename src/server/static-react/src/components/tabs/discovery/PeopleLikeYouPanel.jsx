@@ -88,11 +88,12 @@ export default function PeopleLikeYouPanel({ onResult }) {
   if (categoriesUsed === 0) {
     return (
       <div className="card p-8 text-center space-y-4 rounded">
-        <h3 className="text-lg text-primary font-semibold">Opt into discovery first</h3>
+        <h3 className="text-lg text-primary font-semibold">Tell Discover what you&rsquo;re into first</h3>
         <p className="text-secondary text-sm max-w-md mx-auto">
-          To find people with similar interests, you need to detect your interest categories
-          and publish your embeddings to the network. Visit the <strong>Your Interests</strong> tab
-          to get started.
+          Before we can match you with other people, pick a few topics to share.
+          Head to <strong>Share &rsaquo; Your interests</strong> to detect topics from
+          your data, then <strong>Share &rsaquo; Data types</strong> to choose what goes
+          on the network.
         </p>
       </div>
     )
