@@ -599,11 +599,14 @@ impl FoldNode {
     }
 
     /// Convert a StoredView (from schema service) to a TransformView (local DB)
-    /// by extracting key_config and typed output_fields from the output schema.
+    /// by extracting key_config and typed output_fields from the output schema,
+    /// and adapting canonical `schema_service_core` triggers into fold_db's
+    /// exec-layer triggers via [`trigger_adapter::canonical_to_exec`].
     fn stored_view_to_transform_view(
         stored: &schema_service_core::types::StoredView,
         output_schema: &fold_db::schema::types::Schema,
     ) -> FoldDbResult<fold_db::view::types::TransformView> {
+        use crate::fold_node::trigger_adapter;
         use fold_db::schema::types::field_value_type::FieldValueType;
 
         let fields = output_schema.fields.as_deref().unwrap_or(&[]);
@@ -617,14 +620,33 @@ impl FoldNode {
             output_fields.insert(field_name.clone(), field_type);
         }
 
-        Ok(fold_db::view::types::TransformView::new(
+        let mut transform_view = fold_db::view::types::TransformView::new(
             &stored.name,
             stored.schema_type.clone(),
             output_schema.key.clone(),
             stored.input_queries.clone(),
             stored.wasm_bytes.clone(),
             output_fields,
-        ))
+        );
+
+        // Adapt canonical → exec triggers. Without this, the TriggerRunner
+        // would see an empty triggers vec and default to `[OnWrite]`,
+        // silently dropping Scheduled/ScheduledIfDirty/Manual configs.
+        let now_ms = chrono::Utc::now().timestamp_millis();
+        let mut exec_triggers = Vec::with_capacity(stored.triggers.len());
+        for (idx, canonical) in stored.triggers.iter().enumerate() {
+            let (exec, _schemas) =
+                trigger_adapter::canonical_to_exec(canonical, now_ms).map_err(|e| {
+                    FoldDbError::Config(format!(
+                        "Failed to adapt trigger #{} for view '{}': {}",
+                        idx, stored.name, e
+                    ))
+                })?;
+            exec_triggers.push(exec);
+        }
+        transform_view.triggers = exec_triggers;
+
+        Ok(transform_view)
     }
 
     /// Execute a batch of mutations.

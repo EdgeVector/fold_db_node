@@ -11,7 +11,7 @@ use fold_db_node::fold_node::FoldNode;
 use std::collections::HashMap;
 use std::net::TcpListener;
 
-use schema_service_core::types::{StoredView, Trigger};
+use schema_service_core::types::{SchemaEnvelope, StoredView, Trigger};
 
 mod common;
 
@@ -37,7 +37,14 @@ async fn spawn_mock_service(
                      schemas: web::Data<HashMap<String, Schema>>| async move {
                         let name = path.into_inner();
                         match schemas.get(&name) {
-                            Some(schema) => HttpResponse::Ok().json(schema),
+                            // The client now deserializes into
+                            // `SchemaEnvelope` (Schema + `system: bool`),
+                            // so the mock must wrap the schema to avoid
+                            // a "missing field `system`" decode error.
+                            Some(schema) => HttpResponse::Ok().json(SchemaEnvelope {
+                                schema: schema.clone(),
+                                system: false,
+                            }),
                             None => HttpResponse::NotFound()
                                 .json(serde_json::json!({"error": "not found"})),
                         }
@@ -108,6 +115,24 @@ fn make_stored_view(
     source_fields: &[&str],
     output_schema_name: &str,
 ) -> StoredView {
+    make_stored_view_with_triggers(
+        name,
+        source_schema,
+        source_fields,
+        output_schema_name,
+        vec![Trigger::Manual],
+    )
+}
+
+/// Create a StoredView with an explicit trigger list — used by tests
+/// exercising the canonical→exec trigger adapter.
+fn make_stored_view_with_triggers(
+    name: &str,
+    source_schema: &str,
+    source_fields: &[&str],
+    output_schema_name: &str,
+    triggers: Vec<Trigger>,
+) -> StoredView {
     StoredView {
         name: name.to_string(),
         input_queries: vec![Query::new(
@@ -118,7 +143,7 @@ fn make_stored_view(
         wasm_bytes: None,
         output_schema_name: output_schema_name.to_string(),
         schema_type: SchemaType::Range,
-        triggers: vec![Trigger::Manual],
+        triggers,
     }
 }
 
@@ -351,6 +376,94 @@ async fn load_view_converts_stored_view_fields_correctly() {
         Some(&FieldValueType::String),
         "name should be String type from output schema"
     );
+
+    handle.stop(true).await;
+}
+
+/// End-to-end check for the canonical→exec trigger adapter (Trigger
+/// Stabilization G3): a StoredView with Scheduled + OnWriteCoalesced +
+/// Manual triggers is served by the mock schema service, loaded through
+/// `load_view_from_service`, and the registered TransformView's
+/// `triggers` vec must carry the fold_db-side variants produced by
+/// `fold_node::trigger_adapter::canonical_to_exec`. Without the adapter
+/// the triggers would be dropped and `effective_triggers()` would return
+/// `[OnWrite]` for everything.
+#[actix_web::test]
+async fn load_view_adapts_canonical_triggers_to_exec_triggers() {
+    let output_schema = make_output_schema("triggered_output", &["value"]);
+    let source_schema = make_test_schema("TriggerSource", &["value", "date"]);
+
+    let mut schemas = HashMap::new();
+    schemas.insert("triggered_output".to_string(), output_schema);
+    schemas.insert("TriggerSource".to_string(), source_schema);
+
+    let triggers = vec![
+        Trigger::Scheduled {
+            // Every 5 minutes → adapter should approximate interval_ms = 300_000.
+            cron: "*/5 * * * *".to_string(),
+            timezone: "UTC".to_string(),
+            window: None,
+            skip_if_idle: false,
+            schemas: vec!["TriggerSource".to_string()],
+        },
+        Trigger::OnWriteCoalesced {
+            schemas: vec!["TriggerSource".to_string()],
+            min_batch: 4,
+            debounce_ms: 150,
+            max_wait_ms: 2_000,
+        },
+        Trigger::Manual,
+    ];
+
+    let mut views = HashMap::new();
+    views.insert(
+        "TriggeredView".to_string(),
+        make_stored_view_with_triggers(
+            "TriggeredView",
+            "TriggerSource",
+            &["value"],
+            "triggered_output",
+            triggers,
+        ),
+    );
+
+    let (url, handle) = spawn_mock_service(schemas, views).await;
+    let node = make_node(&url).await;
+
+    node.load_view_from_service("TriggeredView").await.unwrap();
+
+    let db = node.get_fold_db().unwrap();
+    let view = db
+        .schema_manager()
+        .get_view("TriggeredView")
+        .unwrap()
+        .unwrap();
+
+    // Compare against exec-layer Trigger shape from fold_db.
+    use fold_db::triggers::types::Trigger as ExecTrigger;
+    assert_eq!(
+        view.triggers.len(),
+        3,
+        "all 3 canonical triggers should survive adaptation, got {:?}",
+        view.triggers
+    );
+    assert_eq!(
+        view.triggers[0],
+        ExecTrigger::Scheduled {
+            interval_ms: 300_000
+        },
+        "5-minute cron should approximate to 300_000 ms"
+    );
+    assert_eq!(
+        view.triggers[1],
+        ExecTrigger::OnWriteCoalesced {
+            min_batch: 4,
+            debounce_ms: 150,
+            max_wait_ms: 2_000,
+        },
+        "OnWriteCoalesced should adapt field-for-field"
+    );
+    assert_eq!(view.triggers[2], ExecTrigger::Manual);
 
     handle.stop(true).await;
 }
