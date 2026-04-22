@@ -13,6 +13,7 @@ pub mod file_handling;
 pub mod helpers;
 pub mod ingestion_service;
 pub mod key_extraction;
+pub mod metrics;
 pub mod mutation_generator;
 pub mod progress;
 pub mod roles;
@@ -38,6 +39,7 @@ pub fn is_image_file(filename: &str) -> bool {
 pub use ai::helpers::AISchemaResponse;
 pub use config::{IngestionConfig, ResolvedModel};
 pub use error::IngestionError;
+pub use metrics::{AiMetricsStore, RoleMetricsSnapshot};
 pub use progress::{
     create_progress_tracker, IngestionProgress, IngestionResults, IngestionStep, ProgressService,
     ProgressTracker, SchemaWriteRecord,

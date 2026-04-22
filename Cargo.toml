@@ -87,6 +87,11 @@ instant-distance = "0.6"
 thiserror = "1.0"
 keyring = { version = "3", optional = true }
 colored = "3.1.1"
+
+# Concurrent hash map for AiMetricsStore (per-role atomic counters).
+dashmap = "6"
+# Lightweight mutex for last_called_at timestamp on RoleMetrics.
+parking_lot = "0.12"
 libc = "0.2"
 ed25519-dalek = { version = "2.0", features = ["rand_core"] }
 
