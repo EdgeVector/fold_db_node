@@ -4,17 +4,17 @@ import { version } from '../../package.json'
 const SIDEBAR_ITEMS = [
   { id: 'agent', label: 'Agent', icon: '\u{1F916}', group: 'MAIN' },
   { id: 'data-browser', label: 'Browse', icon: '\u{1F4CA}', group: 'DATA' },
-  { id: 'query', label: 'Query', icon: '\u{1F50D}', group: 'DATA' },
-  { id: 'schemas', label: 'Schemas', icon: '\u{1F4CB}', group: 'DATA' },
   { id: 'smart-folder', label: 'Import', icon: '\u{1F4E5}', group: 'IMPORT' },
   { id: 'file-upload', label: 'Files', icon: '\u{1F4C4}', group: 'IMPORT' },
   { id: 'apple-import', label: 'Apple', icon: '\u{1F34E}', group: 'IMPORT' },
   { id: 'people', label: 'People', icon: '\u{1F465}', group: 'SOCIAL' },
   { id: 'discovery', label: 'Discover', icon: '\u{1F310}', group: 'SOCIAL' },
+  { id: 'query', label: 'Query', icon: '\u{1F50D}', group: 'ADMIN' },
+  { id: 'schemas', label: 'Schemas', icon: '\u{1F4CB}', group: 'ADMIN' },
   { id: 'settings', label: 'Settings', icon: '\u2699\uFE0F', group: 'SYSTEM' },
 ]
 
-const GROUPS = ['MAIN', 'DATA', 'IMPORT', 'SOCIAL', 'SYSTEM']
+const GROUPS = ['MAIN', 'DATA', 'IMPORT', 'SOCIAL', 'ADMIN', 'SYSTEM']
 
 function Sidebar({ activeTab, onTabChange }) {
   const [mobileOpen, setMobileOpen] = useState(false)
