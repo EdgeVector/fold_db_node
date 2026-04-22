@@ -11,18 +11,43 @@ import CrossUserSharingPanel from './sharing/CrossUserSharingPanel'
 import ImportedIdentitiesPanel from './personas/ImportedIdentitiesPanel'
 import ReceivedCardsPanel from './personas/ReceivedCardsPanel'
 
-const SUB_TABS = [
-  { id: 'personas', label: 'Personas' },
-  { id: 'suggestions', label: 'Suggestions' },
-  { id: 'my-card', label: 'My Card' },
-  { id: 'received', label: 'Inbound Cards' },
-  { id: 'identities', label: 'Identities' },
-  { id: 'failed', label: 'Failed' },
-  { id: 'contacts', label: 'Contacts' },
-  { id: 'feed', label: 'Feed' },
-  { id: 'sharing', label: 'Trust Grants' },
-  { id: 'cross-user', label: 'Cross-User Sharing' },
-  { id: 'shared', label: 'Shared Moments' },
+const SUB_TAB_GROUPS = [
+  {
+    label: 'Contacts',
+    tabs: [
+      { id: 'personas', label: 'Personas' },
+      { id: 'suggestions', label: 'Suggestions' },
+    ],
+  },
+  {
+    label: 'Identity',
+    tabs: [
+      { id: 'my-card', label: 'My Card' },
+      { id: 'received', label: 'Received Cards' },
+    ],
+  },
+  {
+    label: 'Network',
+    tabs: [
+      { id: 'contacts', label: 'Trusted' },
+      { id: 'feed', label: 'Feed' },
+      { id: 'shared', label: 'Moments' },
+    ],
+  },
+  {
+    label: 'Sharing',
+    tabs: [
+      { id: 'sharing', label: 'Trust Grants' },
+      { id: 'cross-user', label: 'Cross-User Rules' },
+    ],
+  },
+  {
+    label: 'Admin',
+    tabs: [
+      { id: 'identities', label: 'Identity Records' },
+      { id: 'failed', label: 'Ingestion Errors' },
+    ],
+  },
 ]
 
 export default function PeopleTab({ onResult }) {
@@ -59,15 +84,27 @@ export default function PeopleTab({ onResult }) {
 
   return (
     <div>
-      <div className="flex border-b border-border mb-4">
-        {SUB_TABS.map(tab => (
-          <button
-            key={tab.id}
-            onClick={() => setActiveSubTab(tab.id)}
-            className={`tab ${activeSubTab === tab.id ? 'tab-active' : ''}`}
+      <div className="border-b border-border mb-4 flex flex-wrap items-end gap-x-6 gap-y-2">
+        {SUB_TAB_GROUPS.map((group, idx) => (
+          <div
+            key={group.label}
+            className={`flex flex-col ${idx > 0 ? 'sm:border-l sm:border-border sm:pl-6' : ''}`}
           >
-            {tab.label}
-          </button>
+            <div className="text-[10px] uppercase tracking-widest text-tertiary px-2 pb-1">
+              {group.label}
+            </div>
+            <div className="flex flex-wrap">
+              {group.tabs.map(tab => (
+                <button
+                  key={tab.id}
+                  onClick={() => setActiveSubTab(tab.id)}
+                  className={`tab ${activeSubTab === tab.id ? 'tab-active' : ''}`}
+                >
+                  {tab.label}
+                </button>
+              ))}
+            </div>
+          </div>
         ))}
       </div>
       {renderContent()}
