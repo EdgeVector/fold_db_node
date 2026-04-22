@@ -505,14 +505,83 @@ impl LlmQueryService {
                     .and_then(|r| r.as_str())
                     .ok_or("create_view tool requires 'rust_transform' parameter")?;
 
-                // Compile Rust → WASM
-                log::info!("create_view: compiling Rust transform for view '{}'", name);
-                let wasm_bytes =
-                    crate::fold_node::wasm_compiler::compile_rust_to_wasm(rust_transform)?;
+                // Register the transform with schema_service — it compiles, validates,
+                // and persists the WASM. fold_db_node no longer compiles locally; trust
+                // and validation live in schema_service (see
+                // `preferences/fold_db_vs_fold_db_node_boundary` and
+                // `projects/trigger-feature` Phase 2c).
+                let schema_service_url = node.schema_service_url().ok_or(
+                    "create_view requires a configured schema_service_url — start the node with --local-schema or point at a real schema service",
+                )?;
+                if crate::fold_node::FoldNode::is_test_schema_service(&schema_service_url) {
+                    return Err(
+                        "create_view cannot run against a test/mock schema service — it needs a real service to compile the rust_transform".to_string(),
+                    );
+                }
+                let base = schema_service_url.trim_end_matches('/');
+
+                let register_req = schema_service_core::types::RegisterTransformRequest {
+                    name: name.to_string(),
+                    version: "1.0.0".to_string(),
+                    description: None,
+                    input_queries: input_queries.clone(),
+                    output_fields: output_fields.clone(),
+                    source_url: None,
+                    rust_source: rust_transform.to_string(),
+                };
+
                 log::info!(
-                    "create_view: compiled {} bytes of WASM for view '{}'",
+                    "create_view: submitting rust_transform for view '{}' to schema service at {}",
+                    name,
+                    base
+                );
+                let http = reqwest::Client::new();
+                let register_resp = http
+                    .post(format!("{}/v1/transforms", base))
+                    .json(&register_req)
+                    .send()
+                    .await
+                    .map_err(|e| format!("Failed to POST /v1/transforms: {}", e))?;
+
+                if !register_resp.status().is_success() {
+                    let status = register_resp.status();
+                    let body = register_resp.text().await.unwrap_or_default();
+                    return Err(format!(
+                        "Schema service rejected transform registration ({}): {}",
+                        status, body
+                    ));
+                }
+                let register_body: schema_service_core::types::RegisterTransformResponse =
+                    register_resp
+                        .json()
+                        .await
+                        .map_err(|e| format!("Invalid register_transform response: {}", e))?;
+                let hash = register_body.hash;
+
+                let wasm_resp = http
+                    .get(format!("{}/v1/transform/{}/wasm", base, hash))
+                    .send()
+                    .await
+                    .map_err(|e| {
+                        format!("Failed to fetch compiled WASM for hash {}: {}", hash, e)
+                    })?;
+                if !wasm_resp.status().is_success() {
+                    return Err(format!(
+                        "Schema service returned {} fetching compiled WASM for hash {}",
+                        wasm_resp.status(),
+                        hash
+                    ));
+                }
+                let wasm_bytes = wasm_resp
+                    .bytes()
+                    .await
+                    .map_err(|e| format!("Failed to read WASM bytes: {}", e))?
+                    .to_vec();
+                log::info!(
+                    "create_view: schema service compiled {} bytes of WASM for view '{}' (hash {})",
                     wasm_bytes.len(),
-                    name
+                    name,
+                    hash
                 );
 
                 let view = TransformView::new(
@@ -533,6 +602,7 @@ impl LlmQueryService {
                     "success": true,
                     "message": format!("View '{}' created successfully with WASM transform", name),
                     "view_name": name,
+                    "transform_hash": hash,
                 }))
             }
 
@@ -1069,7 +1139,7 @@ impl LlmQueryService {
                         "scan_folder" => "Scanning folder...",
                         "list_schemas" => "Listing schemas...",
                         "list_orgs" => "Listing organizations...",
-                        "create_view" => "Compiling WASM view...",
+                        "create_view" => "Registering WASM view with schema service...",
                         "update_record" => "Updating record...",
                         "web_search" => "Searching the web...",
                         "fetch_url" => "Fetching URL...",
