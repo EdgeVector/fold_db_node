@@ -319,4 +319,76 @@ mod tests {
         assert!(out.contains("boom"), "error message not rendered");
         assert!(out.contains("42"), "duration_ms not rendered");
     }
+
+    /// Build a firing row with explicit per-column values. `error` is stored as
+    /// JSON null when absent, matching the schema's optional-field encoding.
+    fn firing_row(
+        view: &str,
+        fired_at_ms: i64,
+        duration_ms: i64,
+        status: &str,
+        input_rows: i64,
+        output_rows: i64,
+        error: Option<&str>,
+    ) -> Value {
+        json!({
+            "key": { "hash": "trig:x", "range": fired_at_ms.to_string() },
+            "fields": {
+                "trigger_id": "trig:x",
+                "view_name": view,
+                "fired_at": fired_at_ms,
+                "duration_ms": duration_ms,
+                "status": status,
+                "input_row_count": input_rows,
+                "output_row_count": output_rows,
+                "error_message": match error {
+                    Some(s) => json!(s),
+                    None => Value::Null,
+                },
+            }
+        })
+    }
+
+    /// Full-stdout snapshot for the rendered `trigger log` table. Pins column
+    /// headers, column order, row order, and per-cell formatting for a known
+    /// fixture of three firings. `fired_at` is formatted via local time, so
+    /// its cells are computed through `format_fired_at` rather than hardcoded
+    /// — the rest of the table is hardcoded verbatim.
+    #[test]
+    fn render_table_full_output_snapshot() {
+        // Three firings, newest-first (matches the server's range-key desc
+        // ordering that `filter_rows_for_view` preserves).
+        let rows = vec![
+            firing_row("target", 1_700_172_800_000, 120, "success", 10, 5, None),
+            firing_row(
+                "target",
+                1_700_086_400_000,
+                2_500,
+                "error",
+                7,
+                0,
+                Some("transform timeout"),
+            ),
+            firing_row("target", 1_700_000_000_000, 42, "success", 1, 1, None),
+        ];
+
+        let t0 = format_fired_at(&rows[0]);
+        let t1 = format_fired_at(&rows[1]);
+        let t2 = format_fired_at(&rows[2]);
+
+        let expected = format!(
+            "\
+┌─────────────────────┬─────────────┬─────────┬────────────┬─────────────┬───────────────────┐
+│ fired_at            ┆ duration_ms ┆ status  ┆ input_rows ┆ output_rows ┆ error             │
+╞═════════════════════╪═════════════╪═════════╪════════════╪═════════════╪═══════════════════╡
+│ {t0} ┆ 120         ┆ success ┆ 10         ┆ 5           ┆                   │
+├╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌┼╌╌╌╌╌╌╌╌╌╌╌╌╌┼╌╌╌╌╌╌╌╌╌┼╌╌╌╌╌╌╌╌╌╌╌╌┼╌╌╌╌╌╌╌╌╌╌╌╌╌┼╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌┤
+│ {t1} ┆ 2500        ┆ error   ┆ 7          ┆ 0           ┆ transform timeout │
+├╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌┼╌╌╌╌╌╌╌╌╌╌╌╌╌┼╌╌╌╌╌╌╌╌╌┼╌╌╌╌╌╌╌╌╌╌╌╌┼╌╌╌╌╌╌╌╌╌╌╌╌╌┼╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌┤
+│ {t2} ┆ 42          ┆ success ┆ 1          ┆ 1           ┆                   │
+└─────────────────────┴─────────────┴─────────┴────────────┴─────────────┴───────────────────┘",
+        );
+
+        assert_eq!(render_table(&rows), expected);
+    }
 }
