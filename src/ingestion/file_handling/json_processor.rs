@@ -43,9 +43,7 @@ pub async fn convert_file_to_json(file_path: &PathBuf) -> Result<Value, Ingestio
         if crate::ingestion::file_handling::anthropic_vision::supports_extension(ext) {
             return crate::ingestion::file_handling::anthropic_vision::convert_image_to_json(
                 file_path,
-                &ingestion_config.anthropic,
-                ingestion_config.timeout_seconds,
-                ingestion_config.max_retries,
+                &ingestion_config,
             )
             .await;
         }

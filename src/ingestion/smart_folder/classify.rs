@@ -267,12 +267,16 @@ pub fn create_smart_folder_prompt(tree_display: &str, file_paths: &[String]) -> 
     sf_prompts::build_smart_folder_prompt(tree_display, file_paths)
 }
 
-/// Call the LLM for file analysis using the provided IngestionService
+/// Call the LLM for file analysis using the provided IngestionService.
+/// Records metrics as `Role::SmartFolder` so the classifier's calls are
+/// visible separately from primary ingestion extraction.
 pub async fn call_llm_for_file_analysis(
     prompt: &str,
     service: &crate::ingestion::ingestion_service::IngestionService,
 ) -> IngestionResult<String> {
-    service.call_ai_raw(prompt).await
+    service
+        .call_ai_raw_as(crate::ingestion::Role::SmartFolder, prompt)
+        .await
 }
 
 /// Parse LLM response into file recommendations

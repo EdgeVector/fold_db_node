@@ -28,9 +28,11 @@
 
 use serde_json::{json, Value};
 use std::path::Path;
+use std::time::Instant;
 
 use crate::ingestion::{
-    ai::client::AnthropicBackend, config::AnthropicConfig, IngestionError, IngestionResult,
+    ai::client::AnthropicBackend, config::AnthropicConfig, metrics::AiMetricsStore,
+    IngestionConfig, IngestionError, IngestionResult, Role,
 };
 
 /// Matches Anthropic's accepted media types. Anything else returns an error
@@ -61,7 +63,9 @@ const VISION_PROMPT: &str = "Describe this image thoroughly and in detail: what 
     of text, etc.), transcribe the text faithfully. Output structured Markdown.";
 
 /// Convert an image file to the `FileMarkdown`-shaped JSON the rest of the
-/// ingestion pipeline expects.
+/// ingestion pipeline expects. Resolves through `Role::Vision` so the model +
+/// credentials come from the unified config; records per-role metrics so the
+/// UI's Active Models table shows vision call counts + latency.
 ///
 /// Returns an error when:
 /// - the file extension isn't an Anthropic-supported image format
@@ -69,9 +73,7 @@ const VISION_PROMPT: &str = "Describe this image thoroughly and in detail: what 
 /// - the Anthropic API call fails
 pub async fn convert_image_to_json(
     file_path: &Path,
-    anthropic_config: &AnthropicConfig,
-    timeout_seconds: u64,
-    max_retries: u32,
+    config: &IngestionConfig,
 ) -> IngestionResult<Value> {
     let file_type = file_path
         .extension()
@@ -95,19 +97,32 @@ pub async fn convert_image_to_json(
     })?;
     let size_bytes = bytes.len() as u64;
 
-    let backend = AnthropicBackend::new(anthropic_config.clone(), timeout_seconds, max_retries)
-        .map_err(|e| {
-            IngestionError::configuration_error(format!(
-                "Failed to build Anthropic backend for vision: {e}"
-            ))
-        })?;
+    let resolved = config.resolve(Role::Vision);
+    let anthropic_config = AnthropicConfig {
+        api_key: resolved.api_key.clone(),
+        model: resolved.model.clone(),
+        base_url: resolved.anthropic_base_url.clone(),
+    };
+    let backend = AnthropicBackend::new(
+        anthropic_config,
+        resolved.timeout_seconds,
+        resolved.max_retries,
+    )
+    .map_err(|e| {
+        IngestionError::configuration_error(format!(
+            "Failed to build Anthropic backend for vision: {e}"
+        ))
+    })?;
 
-    let markdown = backend
-        .call_vision(&bytes, media_type, VISION_PROMPT)
-        .await
-        .map_err(|e| {
-            IngestionError::FileConversionFailed(format!("Anthropic vision call failed: {e}"))
-        })?;
+    // `call_vision` is not part of the `AiBackend` trait (different signature:
+    // image bytes + media type), so the `MeteredBackend` decorator can't wrap
+    // it. Record metrics inline against the shared global store.
+    let start = Instant::now();
+    let call_result = backend.call_vision(&bytes, media_type, VISION_PROMPT).await;
+    AiMetricsStore::global().record_call(Role::Vision, start.elapsed(), call_result.is_ok());
+    let markdown = call_result.map_err(|e| {
+        IngestionError::FileConversionFailed(format!("Anthropic vision call failed: {e}"))
+    })?;
 
     Ok(json!({
         "source":            source,

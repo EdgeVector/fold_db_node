@@ -9,7 +9,7 @@ mod flat_path;
 mod schema_creation;
 
 use crate::fold_node::{FileIngestionRecord, FoldNode};
-use crate::ingestion::ai::client::{build_backend, AiBackend};
+use crate::ingestion::ai::client::AiBackend;
 use crate::ingestion::config::AIProvider;
 use crate::ingestion::decomposer;
 use crate::ingestion::progress::{
@@ -123,7 +123,14 @@ pub(crate) async fn get_schema_manager(node: &FoldNode) -> IngestionResult<Arc<S
 /// AI-powered ingestion service that works with FoldNode
 pub struct IngestionService {
     pub(super) config: IngestionConfig,
+    /// Default AI backend (tagged as `Role::IngestionText`). Built once at
+    /// construction. Other roles (`MutationAgent`, `SmartFolder`, etc.) build
+    /// their own backends on demand via `config.build_backend(role, metrics)`.
     pub(super) backend: Option<Arc<dyn AiBackend>>,
+    /// Shared per-role metrics store. Injected into every backend built for
+    /// this service (including on-demand backends for other roles) so all
+    /// LLM traffic lands in the same counters.
+    pub(super) metrics: Arc<crate::ingestion::metrics::AiMetricsStore>,
     /// Stores the reason if the configured provider failed to initialise.
     pub(super) init_error: Option<String>,
     /// Serializes schema creation to prevent race conditions when multiple
@@ -148,14 +155,22 @@ impl IngestionService {
     /// `get_status()` can report the correct provider/model — actual
     /// ingestion calls will fail at runtime with a clear error.
     pub fn new(config: IngestionConfig) -> IngestionResult<Self> {
-        let (backend, init_error) = build_backend(&config);
+        let metrics = crate::ingestion::metrics::AiMetricsStore::global();
+        let (backend, init_error) = config.build_backend(crate::ingestion::Role::IngestionText);
         Ok(Self {
             config,
             backend,
+            metrics,
             init_error,
             schema_creation_lock: tokio::sync::Mutex::new(()),
             shared_schema_cache: Arc::new(std::sync::RwLock::new(HashMap::new())),
         })
+    }
+
+    /// Access the shared AI metrics store (read-only). Used by the
+    /// `/api/ingestion/stats` endpoint introduced in PR 4.
+    pub fn metrics(&self) -> Arc<crate::ingestion::metrics::AiMetricsStore> {
+        self.metrics.clone()
     }
 
     /// Create a new per-call `SchemaCache` backed by the shared cross-file store.
@@ -531,18 +546,21 @@ impl IngestionService {
         matches!(self.config.provider, AIProvider::Ollama)
     }
 
-    /// Get status information
+    /// Get status information. Reports the IngestionText role's resolved
+    /// provider + model — the primary ingestion path. PR 4 adds a richer
+    /// `/api/ingestion/config/roles` endpoint that lists all 7 roles.
     pub fn get_status(&self) -> IngestionResult<IngestionStatus> {
-        let (provider_name, model) = match self.config.provider {
-            AIProvider::Ollama => ("Ollama".to_string(), self.config.ollama.model.clone()),
-            AIProvider::Anthropic => ("Anthropic".to_string(), self.config.anthropic.model.clone()),
+        let resolved = self.config.resolve(crate::ingestion::Role::IngestionText);
+        let provider_name = match resolved.provider {
+            AIProvider::Ollama => "Ollama".to_string(),
+            AIProvider::Anthropic => "Anthropic".to_string(),
         };
 
         Ok(IngestionStatus {
             enabled: self.config.enabled,
             configured: self.config.is_ready(),
             provider: provider_name,
-            model,
+            model: resolved.model,
             auto_execute_mutations: self.config.auto_execute_mutations,
         })
     }

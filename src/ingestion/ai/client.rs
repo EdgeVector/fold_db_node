@@ -320,36 +320,6 @@ fn try_init<B: AiBackend + 'static>(
     }
 }
 
-/// Build the correct backend from an `IngestionConfig`.
-///
-/// Returns `Ok(None)` when the configured provider fails validation so that
-/// `IngestionService` can still be constructed and report status.
-///
-/// PR 3 migrates all callers to
-/// [`IngestionConfig::build_backend`](crate::ingestion::config::IngestionConfig::build_backend)
-/// which also wires up per-role metrics. This free function will be deleted
-/// in that PR.
-pub fn build_backend(config: &IngestionConfig) -> (Option<Arc<dyn AiBackend>>, Option<String>) {
-    match config.provider {
-        AIProvider::Ollama => try_init(
-            "Ollama",
-            OllamaBackend::new(
-                config.ollama.clone(),
-                config.timeout_seconds,
-                config.max_retries,
-            ),
-        ),
-        AIProvider::Anthropic => try_init(
-            "Anthropic",
-            AnthropicBackend::new(
-                config.anthropic.clone(),
-                config.timeout_seconds,
-                config.max_retries,
-            ),
-        ),
-    }
-}
-
 /// Build a backend from a fully-resolved model spec. Called by
 /// [`IngestionConfig::build_backend`](crate::ingestion::config::IngestionConfig::build_backend)
 /// after `resolve(role)` produces the `ResolvedModel`. Separated from
