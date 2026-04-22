@@ -107,6 +107,16 @@ export type Schema = BackendSchema & {
     success: boolean;
     error?: string;
   };
+
+  /**
+   * Backend-provided flag marking infrastructure schemas seeded by the schema
+   * service (e.g. `edge`, `fingerprint`, `identity`, `persona`) rather than
+   * user-proposed ones. Mirrors `SchemaEnvelope.system` in schema_service_core.
+   * Optional because the local `/schemas` endpoint currently returns
+   * `SchemaWithState` which omits it — the UI falls back to a hard-coded name
+   * set in that case (see `isSystemSchema` in SchemaTab).
+   */
+  system?: boolean;
 };
 
 // ============================================================================

@@ -3,6 +3,8 @@ import {
   getSchemaDisplayName,
   isIdentityHash,
   buildSchemaOptions,
+  isSystemSchema,
+  SYSTEM_SCHEMA_NAMES,
 } from '../schemaUtils'
 
 const HASH = '04bc93e1986aac6d624eef2a0e5340947d8fe78baab3c908a113a3602fc6b3e8'
@@ -52,5 +54,29 @@ describe('buildSchemaOptions', () => {
   it('uses the human-readable label for hash-named schemas without descriptive_name', () => {
     const options = buildSchemaOptions([{ name: HASH }])
     expect(options).toEqual([{ value: HASH, label: 'Schema 04bc93e1' }])
+  })
+})
+
+describe('isSystemSchema', () => {
+  it('trusts the backend-provided system flag when present', () => {
+    expect(isSystemSchema({ name: 'my_custom', system: true })).toBe(true)
+    // Backend flag overrides the name-based heuristic — if the backend says
+    // "edge" is a user schema (e.g. user-proposed with a colliding name),
+    // respect it.
+    expect(isSystemSchema({ name: 'edge', system: false })).toBe(false)
+  })
+
+  it('falls back to the known-name allow-list when `system` is absent', () => {
+    for (const name of SYSTEM_SCHEMA_NAMES) {
+      expect(isSystemSchema({ name })).toBe(true)
+    }
+    expect(isSystemSchema({ name: 'user_profiles' })).toBe(false)
+    expect(isSystemSchema({ name: 'IDENTITY' })).toBe(false) // case-sensitive
+  })
+
+  it('handles null/undefined safely', () => {
+    expect(isSystemSchema(null)).toBe(false)
+    expect(isSystemSchema(undefined)).toBe(false)
+    expect(isSystemSchema({})).toBe(false)
   })
 })

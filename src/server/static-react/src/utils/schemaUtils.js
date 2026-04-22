@@ -78,6 +78,32 @@ export function toErrorMessage(error) {
 }
 
 /**
+ * Names of infrastructure schemas seeded by the schema service.
+ * Used as a fallback when the backend doesn't pass `system: true` on the
+ * schema envelope — once `SchemaEnvelope.system` is threaded through the
+ * `/schemas` HTTP response, `isSystemSchema` will prefer it and this
+ * allow-list becomes a safety net for older responses.
+ */
+export const SYSTEM_SCHEMA_NAMES = new Set([
+  'edge',
+  'edge_by_fingerprint',
+  'fingerprint',
+  'identity',
+  'persona',
+])
+
+/**
+ * Whether a schema is a system/built-in schema (vs. user-proposed).
+ * Prefers the backend-provided `system` flag; falls back to a known-name
+ * set for older responses that predate the SchemaEnvelope cascade.
+ */
+export function isSystemSchema(schema) {
+  if (!schema) return false
+  if (typeof schema.system === 'boolean') return schema.system
+  return SYSTEM_SCHEMA_NAMES.has(schema.name)
+}
+
+/**
  * Truncate a hash string for display.
  * @param {string} name - The hash/name string
  * @param {number} [threshold=16] - Show full string if shorter than this
