@@ -11,7 +11,7 @@ use fold_db_node::fold_node::FoldNode;
 use std::collections::HashMap;
 use std::net::TcpListener;
 
-use schema_service_core::types::StoredView;
+use schema_service_core::types::{StoredView, Trigger};
 
 mod common;
 
@@ -118,6 +118,7 @@ fn make_stored_view(
         wasm_bytes: None,
         output_schema_name: output_schema_name.to_string(),
         schema_type: SchemaType::Range,
+        triggers: vec![Trigger::Manual],
     }
 }
 
