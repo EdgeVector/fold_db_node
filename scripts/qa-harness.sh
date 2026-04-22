@@ -313,20 +313,61 @@ log "running smoke test..."
 APP_URL="http://localhost:$VITE_PORT"
 BROWSE_ERR="$REPORT_DIR/harness.log"
 
-# land on root, click "Skip setup entirely" so we're out of onboarding
+# -----------------------------------------------------------------------------
+# Dismiss the onboarding wizard.
+#
+# A fresh FOLDDB_HOME triggers the 6-step onboarding wizard (see
+# OnboardingWizard.jsx), which is a full-viewport overlay that intercepts every
+# hash route — `/#agent`, `/#query`, etc. all render the wizard, not the tab.
+# Previously we tried to click the "Skip setup entirely" button via snapshot
+# ref-lookup; that was racy against the React mount and silently no-op'd, so
+# every tab smoke reported the wizard's 549-char body length and passed.
+#
+# Instead we set the persistence flag the wizard writes on completion
+# (ONBOARDING_STORAGE_KEY = 'folddb_onboarding_complete') and reload so
+# useDatabaseInit re-evaluates with the flag present. This is deterministic
+# and independent of wizard UI changes.
+# -----------------------------------------------------------------------------
+
 "$BROWSE_BIN" goto "$APP_URL/" >/dev/null 2>>"$BROWSE_ERR"
 
-SKIP_REF="$("$BROWSE_BIN" snapshot -i 2>>"$BROWSE_ERR" | grep -F '"Skip setup entirely"' | awk '{print $1}' | head -1 || true)"
-if [ -n "$SKIP_REF" ]; then
-  "$BROWSE_BIN" click "$SKIP_REF" >/dev/null 2>>"$BROWSE_ERR" || true
+# Wait up to 15s for the React app to render *something* (wizard or app shell).
+# Without this, localStorage.setItem can race the app's first mount and get
+# overwritten — or worse, run before the JS bundle attaches.
+for i in $(seq 1 15); do
+  rendered="$("$BROWSE_BIN" js "document.body.innerText.length > 0" 2>>"$BROWSE_ERR" | tail -1 | tr -d ' ')"
+  [ "$rendered" = "true" ] && break
   sleep 1
+done
+
+"$BROWSE_BIN" js "localStorage.setItem('folddb_onboarding_complete', '1'); 'ok'" >/dev/null 2>>"$BROWSE_ERR" || true
+"$BROWSE_BIN" reload >/dev/null 2>>"$BROWSE_ERR" || true
+sleep 2
+
+# Confirm the dismissal stuck. If the wizard is still present here, tab smokes
+# below will all see it — fail fast with a clear reason rather than reporting
+# 7 identical "ok" tabs.
+wizard_still_up="$("$BROWSE_BIN" js "document.body.innerText.includes('Skip setup entirely')" 2>>"$BROWSE_ERR" | tail -1 | tr -d ' ')"
+if [ "$wizard_still_up" = "true" ]; then
+  log "FAIL: onboarding wizard still showing after localStorage dismissal + reload"
+  FAIL=$((FAIL + 1))
 fi
 
 TABS="agent data-browser query schemas people discovery settings"
+BODY_LENS=""
 for tab in $TABS; do
   "$BROWSE_BIN" goto "$APP_URL/#$tab" >/dev/null 2>>"$BROWSE_ERR" || true
   sleep 1
   "$BROWSE_BIN" screenshot "$REPORT_DIR/screenshots/$tab.png" >/dev/null 2>>"$BROWSE_ERR" || true
+
+  # Wizard-intercept guard: if any tab URL still renders the wizard, the
+  # smoke is lying about coverage — the tab's code never ran.
+  wizard_here="$("$BROWSE_BIN" js "document.body.innerText.includes('Skip setup entirely')" 2>>"$BROWSE_ERR" | tail -1 | tr -d ' ')"
+  if [ "$wizard_here" = "true" ]; then
+    log "FAIL tab=$tab onboarding wizard intercepted the route"
+    FAIL=$((FAIL + 1))
+    continue
+  fi
 
   # title sanity: document body should not be empty
   body_len="$("$BROWSE_BIN" js "document.body.innerText.length" 2>>"$BROWSE_ERR" | tail -1 | tr -cd '0-9')"
@@ -335,8 +376,20 @@ for tab in $TABS; do
     FAIL=$((FAIL + 1))
     continue
   fi
+  BODY_LENS="$BODY_LENS $body_len"
   log "ok tab=$tab body-length=$body_len"
 done
+
+# If every tab reported the *exact same* body length, the tabs aren't
+# actually rendering different content — some overlay or error boundary is
+# swallowing them. This is the specific regression that kept the wizard
+# false-positive hidden, so guard against it explicitly.
+uniq_lens="$(printf '%s\n' $BODY_LENS | sort -u | wc -l | tr -d ' ')"
+tab_count="$(printf '%s\n' $BODY_LENS | wc -l | tr -d ' ')"
+if [ "$tab_count" -gt 1 ] && [ "$uniq_lens" = 1 ]; then
+  log "FAIL: all $tab_count tabs reported identical body-length ($BODY_LENS) — overlay likely intercepting routes"
+  FAIL=$((FAIL + 1))
+fi
 
 # console error count across whole session
 err_count="$("$BROWSE_BIN" console --errors 2>>"$BROWSE_ERR" | grep -c '\[error\]' || true)"
