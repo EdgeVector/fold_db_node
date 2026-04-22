@@ -1,9 +1,11 @@
 //! Configuration for the ingestion module
 
+use crate::ingestion::roles::Role;
 use fold_db::llm_registry::models;
 use fold_db::log_feature;
 use fold_db::logging::features::LogFeature;
 use serde::{Deserialize, Serialize};
+use std::collections::HashMap;
 use std::env;
 
 /// Specifies the AI provider to use for ingestion.
@@ -30,7 +32,7 @@ pub enum VisionBackend {
 }
 
 /// Generation parameters for Ollama models.
-#[derive(Debug, Clone, Serialize, Deserialize, utoipa::ToSchema)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, utoipa::ToSchema)]
 pub struct OllamaGenerationParams {
     /// Context window size in tokens (2048..=250000).
     pub num_ctx: u32,
@@ -211,28 +213,75 @@ impl AnthropicConfig {
     }
 }
 
-/// Per-use-case provider/model override.
+/// Per-role provider/model/sampling override.
 ///
-/// When `provider` is `None`, the use case inherits from the parent config.
-/// When set, it uses its own provider and model independently.
-#[derive(Debug, Clone, Serialize, Deserialize, Default, utoipa::ToSchema)]
+/// When a field is `None`, the role inherits from role defaults or the parent
+/// config. When set, it wins field-by-field. Keyed by [`Role`] in
+/// [`IngestionConfig::overrides`] and [`SavedConfig::overrides`].
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, Default, utoipa::ToSchema)]
 pub struct UseCaseOverride {
-    /// Provider for this use case. `None` = inherit from parent.
+    /// Provider for this role. `None` = inherit.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub provider: Option<AIProvider>,
-    /// Ollama model override. `None` = inherit from parent's ollama.model.
+    /// Ollama model override. `None` = inherit from role default or
+    /// parent's `ollama.model` / `vision_model` / `ocr_model`.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub ollama_model: Option<String>,
-    /// Anthropic model override. `None` = inherit from parent's anthropic.model.
+    /// Anthropic model override. `None` = inherit from role default or
+    /// parent's `anthropic.model`.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub anthropic_model: Option<String>,
+    /// Sampling parameters override. `None` = inherit from role default merged
+    /// with parent's hardware-scoped params (`num_ctx`, `num_predict`). When
+    /// `Some`, replaces sampling wholesale.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub generation_params: Option<OllamaGenerationParams>,
 }
 
 impl UseCaseOverride {
     /// Returns true if any field is set (not fully inheriting).
     pub fn is_set(&self) -> bool {
-        self.provider.is_some() || self.ollama_model.is_some() || self.anthropic_model.is_some()
+        self.provider.is_some()
+            || self.ollama_model.is_some()
+            || self.anthropic_model.is_some()
+            || self.generation_params.is_some()
     }
+
+    /// Inverse of [`Self::is_set`]. Plumbing for
+    /// `#[serde(skip_serializing_if = ...)]` which takes a function path.
+    pub fn is_not_set(&self) -> bool {
+        !self.is_set()
+    }
+}
+
+/// Fully-resolved model info for a role. Produced by
+/// [`IngestionConfig::resolve`]. Combines role defaults, global Ollama
+/// hardware-scoped params, and per-role overrides into the concrete values
+/// needed to construct an [`AiBackend`](crate::ingestion::ai::client::AiBackend).
+///
+/// `api_key`, `anthropic_base_url`, and `ollama_base_url` are provider-global
+/// and are NOT overridable per role (by design — prevents config sprawl). See
+/// TODOS if per-role base_url is ever needed.
+#[derive(Debug, Clone)]
+pub struct ResolvedModel {
+    /// The role this was resolved for. Echo-back for logging and metrics.
+    pub role: Role,
+    /// Resolved provider.
+    pub provider: AIProvider,
+    /// Resolved model ID (e.g. `claude-haiku-4-5-20251001` or `qwen3-vl:2b`).
+    pub model: String,
+    /// Global Anthropic API key. Empty string when `provider = Ollama`.
+    pub api_key: String,
+    /// Global Anthropic base URL.
+    pub anthropic_base_url: String,
+    /// Global Ollama base URL.
+    pub ollama_base_url: String,
+    /// Sampling params. Only consulted when `provider = Ollama`.
+    pub generation_params: OllamaGenerationParams,
+    /// Request timeout (seconds).
+    pub timeout_seconds: u64,
+    /// HTTP retry budget.
+    pub max_retries: u32,
 }
 
 /// Configuration for the ingestion module.
@@ -255,14 +304,20 @@ pub struct IngestionConfig {
     #[serde(default)]
     pub vision_backend: VisionBackend,
 
-    /// Override for LLM query (natural language search, chat, agent).
-    /// When unset, inherits from the primary provider/model above.
+    /// Per-role provider / model / sampling overrides. Keyed by [`Role`].
+    /// When a role has no entry, [`IngestionConfig::resolve`] falls through
+    /// to role defaults + global config.
     #[serde(default)]
-    pub query: UseCaseOverride,
+    pub overrides: HashMap<Role, UseCaseOverride>,
 }
 
 impl Default for IngestionConfig {
     fn default() -> Self {
+        // Ingestion defaults to Haiku (via AnthropicConfig::default), but
+        // natural-language query / agent reasoning is more demanding, so the
+        // Role::QueryChat path now gets Sonnet via Role::default_anthropic_model().
+        // No explicit override needed — it falls out of role defaults. Kept
+        // empty so "no overrides configured" is the honest default state.
         Self {
             provider: AIProvider::default(),
             ollama: OllamaConfig::default(),
@@ -272,15 +327,7 @@ impl Default for IngestionConfig {
             timeout_seconds: 300,
             auto_execute_mutations: true,
             vision_backend: VisionBackend::default(),
-            // Ingestion defaults to Haiku (see AnthropicConfig::default), but
-            // natural-language query / agent reasoning is more demanding, so
-            // pin the query path to Sonnet by default. Users can flip it in
-            // the AI settings panel.
-            query: UseCaseOverride {
-                provider: None,
-                ollama_model: None,
-                anthropic_model: Some(models::ANTHROPIC_SONNET.to_string()),
-            },
+            overrides: HashMap::new(),
         }
     }
 }
@@ -288,26 +335,111 @@ impl Default for IngestionConfig {
 impl IngestionConfig {
     /// Build an effective config for the LLM query use case.
     ///
-    /// If `self.query` has overrides, they take precedence over the primary config.
-    /// Otherwise returns a clone of self (query inherits from ingestion).
+    /// Kept for backwards compatibility with callers still reading
+    /// `IngestionConfig` fields directly. New code should call
+    /// [`IngestionConfig::resolve`] instead and read `ResolvedModel` fields.
+    /// PR 3 migrates the last remaining caller (`llm_query::service`) and
+    /// removes this method.
     pub fn query_config(&self) -> Self {
-        if !self.query.is_set() {
-            return self.clone();
-        }
-
+        let resolved = self.resolve(Role::QueryChat);
         let mut config = self.clone();
-
-        if let Some(ref provider) = self.query.provider {
-            config.provider = provider.clone();
+        config.provider = resolved.provider.clone();
+        match resolved.provider {
+            AIProvider::Ollama => {
+                config.ollama.model = resolved.model;
+                config.ollama.generation_params = resolved.generation_params;
+            }
+            AIProvider::Anthropic => {
+                config.anthropic.model = resolved.model;
+            }
         }
-        if let Some(ref model) = self.query.ollama_model {
-            config.ollama.model = model.clone();
-        }
-        if let Some(ref model) = self.query.anthropic_model {
-            config.anthropic.model = model.clone();
-        }
-
         config
+    }
+
+    /// Resolve a role → concrete [`ResolvedModel`]. Pure data; does not build
+    /// a backend. Used by the UI/stats endpoints and by [`Self::build_backend`]
+    /// (landing in PR 2).
+    ///
+    /// Precedence, field-by-field:
+    /// 1. Per-role override (`self.overrides.get(role)`)
+    /// 2. Role default (`Role::default_*`)
+    /// 3. Global config (`self.provider`, `self.ollama.*`, `self.anthropic.*`)
+    pub fn resolve(&self, role: Role) -> ResolvedModel {
+        let override_opt = self.overrides.get(&role);
+
+        // 1. Provider: override > role-aware default (vision_backend, OCR=Ollama) > global
+        let provider = override_opt
+            .and_then(|o| o.provider.clone())
+            .unwrap_or_else(|| match role {
+                Role::Vision => match self.vision_backend {
+                    VisionBackend::Anthropic => AIProvider::Anthropic,
+                    VisionBackend::Ollama => AIProvider::Ollama,
+                },
+                // OCR has no Anthropic path today — always Ollama.
+                Role::Ocr => AIProvider::Ollama,
+                _ => self.provider.clone(),
+            });
+
+        // 2. Model: override > role default > global ollama.{model,vision_model,ocr_model}
+        //    or global anthropic.model.
+        let model = match provider {
+            AIProvider::Anthropic => override_opt
+                .and_then(|o| o.anthropic_model.clone())
+                .unwrap_or_else(|| {
+                    // Only fall through to the global `anthropic.model` when it
+                    // has been explicitly customised; otherwise prefer the
+                    // role-aware default so QueryChat keeps Sonnet.
+                    let role_default = role.default_anthropic_model();
+                    if self.anthropic.model == models::ANTHROPIC_HAIKU {
+                        role_default.to_string()
+                    } else {
+                        self.anthropic.model.clone()
+                    }
+                }),
+            AIProvider::Ollama => override_opt
+                .and_then(|o| o.ollama_model.clone())
+                .or_else(|| role.default_ollama_model().map(String::from))
+                .unwrap_or_else(|| match role {
+                    Role::Vision => self.ollama.vision_model.clone(),
+                    Role::Ocr => self.ollama.ocr_model.clone(),
+                    _ => self.ollama.model.clone(),
+                }),
+        };
+
+        // 3. Sampling: if override has explicit generation_params, use wholesale.
+        //    Otherwise start from role defaults, overlay hardware-scoped fields
+        //    from the global config (num_ctx and num_predict respect the user's
+        //    RAM / Ollama setup).
+        let generation_params =
+            if let Some(gp) = override_opt.and_then(|o| o.generation_params.clone()) {
+                gp
+            } else {
+                let mut gp = role.default_generation_params();
+                gp.num_ctx = self.ollama.generation_params.num_ctx;
+                gp.num_predict = self.ollama.generation_params.num_predict;
+                gp
+            };
+
+        ResolvedModel {
+            role,
+            provider,
+            model,
+            api_key: self.anthropic.api_key.clone(),
+            anthropic_base_url: self.anthropic.base_url.clone(),
+            ollama_base_url: self.ollama.base_url.clone(),
+            generation_params,
+            timeout_seconds: self.timeout_seconds,
+            max_retries: self.max_retries,
+        }
+    }
+
+    /// Whether a role has a user-set override. Drives the `[*]` badge in the
+    /// UI's Active Models table.
+    pub fn is_override_active(&self, role: Role) -> bool {
+        self.overrides
+            .get(&role)
+            .map(|o| o.is_set())
+            .unwrap_or(false)
     }
 }
 
@@ -378,7 +510,7 @@ impl IngestionConfig {
                 config.ollama = saved.ollama;
                 config.anthropic = saved.anthropic;
                 config.vision_backend = saved.vision_backend;
-                config.query = saved.query;
+                config.overrides = saved.overrides;
                 true
             }
         };
@@ -484,6 +616,11 @@ impl IngestionConfig {
                 .unwrap_or_default();
         }
 
+        // Dual-write: project overrides[QueryChat] into the legacy `query`
+        // field so an older binary (feature flag off) can still read the user's
+        // QueryChat override during a rollback.
+        to_save.prepare_for_save();
+
         if let Some(parent) = config_path.parent() {
             std::fs::create_dir_all(parent)?;
         }
@@ -526,6 +663,8 @@ impl IngestionConfig {
         if saved.anthropic.api_key == "***configured***" {
             saved.anthropic.api_key = String::new();
         }
+        // Forward-migrate legacy `query` field into `overrides`.
+        saved.normalize();
         Ok(saved)
     }
 
@@ -542,6 +681,16 @@ impl IngestionConfig {
 
 /// Provider/model settings persisted to disk by the UI.
 /// Runtime fields (enabled, retries, timeout) are controlled via env vars only.
+///
+/// # Schema migration
+///
+/// Older configs have a top-level `query: UseCaseOverride` field. Newer
+/// configs use `overrides: HashMap<Role, UseCaseOverride>`. Both fields are
+/// read on load — [`Self::normalize`] seeds `overrides[QueryChat]` from the
+/// legacy `query` field when present. During the rollout window, saves emit
+/// BOTH fields (dual-write) so an older binary can still read the user's
+/// QueryChat override if the feature flag gets rolled back. The legacy
+/// `query` field will be dropped two releases after PR 4 ships.
 #[derive(Debug, Clone, Serialize, Deserialize, Default, utoipa::ToSchema)]
 pub struct SavedConfig {
     pub provider: AIProvider,
@@ -552,9 +701,39 @@ pub struct SavedConfig {
     /// Persisted so the UI can surface the chosen backend.
     #[serde(default)]
     pub vision_backend: VisionBackend,
-    /// Per-use-case overrides. When set, query uses its own provider/model.
-    #[serde(default)]
+    /// Legacy — pre-overrides schema. Read on load, migrated into `overrides`.
+    /// Also written on save (dual-write) until two releases after PR 4 ships.
+    #[serde(default, skip_serializing_if = "UseCaseOverride::is_not_set")]
     pub query: UseCaseOverride,
+    /// Per-role overrides. The new canonical shape (2026-04-22+).
+    #[serde(default)]
+    pub overrides: HashMap<Role, UseCaseOverride>,
+}
+
+impl SavedConfig {
+    /// Forward-migrate a freshly-deserialized config. If the legacy `query`
+    /// field is populated and `overrides.QueryChat` is absent, move `query`
+    /// into `overrides[QueryChat]`. Idempotent: no-op once the new shape is
+    /// present.
+    fn normalize(&mut self) {
+        if self.query.is_set() && !self.overrides.contains_key(&Role::QueryChat) {
+            let legacy = std::mem::take(&mut self.query);
+            self.overrides.insert(Role::QueryChat, legacy);
+        }
+    }
+
+    /// Project `overrides[QueryChat]` down to the legacy `query` field for
+    /// dual-write. Called by [`IngestionConfig::save_to_file`] just before
+    /// serialization. An older binary (feature flag OFF) reading the saved
+    /// file will see the legacy field and preserve the user's QueryChat
+    /// override during a rollback.
+    fn prepare_for_save(&mut self) {
+        self.query = self
+            .overrides
+            .get(&Role::QueryChat)
+            .cloned()
+            .unwrap_or_default();
+    }
 }
 
 // ---- env var helpers ----
@@ -585,14 +764,11 @@ mod tests {
         // Ingestion default is Haiku — see AnthropicConfig::default for rationale.
         assert_eq!(config.anthropic.model, models::ANTHROPIC_HAIKU);
         assert_eq!(config.anthropic.base_url, models::ANTHROPIC_API_URL);
-        // Query path is pinned to Sonnet via the explicit override.
+        // No explicit overrides by default — role defaults do the work.
+        assert!(config.overrides.is_empty());
+        // The resolved QueryChat role still picks Sonnet via role defaults.
         assert_eq!(
-            config.query.anthropic_model.as_deref(),
-            Some(models::ANTHROPIC_SONNET),
-        );
-        // And the resolved query config picks Sonnet, not Haiku.
-        assert_eq!(
-            config.query_config().anthropic.model,
+            config.resolve(Role::QueryChat).model,
             models::ANTHROPIC_SONNET
         );
         // Text model depends on system RAM — just verify it's non-empty
@@ -710,5 +886,393 @@ mod tests {
 
         config.provider = AIProvider::Ollama;
         assert!(config.is_ready());
+    }
+
+    // ---- resolve() — basic role resolution, no overrides ----
+
+    #[test]
+    fn resolve_ingestion_text_defaults_to_anthropic_haiku() {
+        let config = IngestionConfig::default();
+        let r = config.resolve(Role::IngestionText);
+        assert_eq!(r.role, Role::IngestionText);
+        assert_eq!(r.provider, AIProvider::Anthropic);
+        assert_eq!(r.model, models::ANTHROPIC_HAIKU);
+    }
+
+    #[test]
+    fn resolve_query_chat_defaults_to_anthropic_sonnet() {
+        // Regression protection: the legacy `query` override used to pin
+        // Sonnet explicitly. Now Sonnet comes from `Role::default_anthropic_model`.
+        let config = IngestionConfig::default();
+        let r = config.resolve(Role::QueryChat);
+        assert_eq!(r.provider, AIProvider::Anthropic);
+        assert_eq!(r.model, models::ANTHROPIC_SONNET);
+    }
+
+    #[test]
+    fn resolve_smart_folder_defaults_to_haiku_and_zero_temperature() {
+        let config = IngestionConfig::default();
+        let r = config.resolve(Role::SmartFolder);
+        assert_eq!(r.provider, AIProvider::Anthropic);
+        assert_eq!(r.model, models::ANTHROPIC_HAIKU);
+        // Classifier: deterministic.
+        assert!(
+            (r.generation_params.temperature - models::TEMPERATURE_DETERMINISTIC).abs()
+                < f32::EPSILON
+        );
+    }
+
+    #[test]
+    fn resolve_vision_picks_ollama_when_vision_backend_is_ollama() {
+        let config = IngestionConfig {
+            vision_backend: VisionBackend::Ollama,
+            ..Default::default()
+        };
+        let r = config.resolve(Role::Vision);
+        assert_eq!(r.provider, AIProvider::Ollama);
+        assert_eq!(r.model, config.ollama.vision_model);
+    }
+
+    #[test]
+    fn resolve_vision_picks_anthropic_when_vision_backend_is_anthropic() {
+        let config = IngestionConfig {
+            vision_backend: VisionBackend::Anthropic,
+            ..Default::default()
+        };
+        let r = config.resolve(Role::Vision);
+        assert_eq!(r.provider, AIProvider::Anthropic);
+        assert_eq!(r.model, models::ANTHROPIC_HAIKU);
+    }
+
+    #[test]
+    fn resolve_ocr_always_uses_ollama_regardless_of_global_provider() {
+        let config = IngestionConfig {
+            provider: AIProvider::Anthropic,
+            ..Default::default()
+        };
+        let r = config.resolve(Role::Ocr);
+        assert_eq!(r.provider, AIProvider::Ollama);
+        assert_eq!(r.model, config.ollama.ocr_model);
+    }
+
+    #[test]
+    fn resolve_propagates_global_hardware_scoped_generation_params() {
+        // num_ctx and num_predict are hardware-scoped — the role default must
+        // respect the user's system setting rather than hardcoding a value.
+        let mut config = IngestionConfig::default();
+        config.ollama.generation_params.num_ctx = 99_999;
+        config.ollama.generation_params.num_predict = 88_888;
+        let r = config.resolve(Role::SmartFolder);
+        assert_eq!(r.generation_params.num_ctx, 99_999);
+        assert_eq!(r.generation_params.num_predict, 88_888);
+    }
+
+    // ---- resolve() with overrides ----
+
+    #[test]
+    fn resolve_override_provider_flips_to_ollama() {
+        let mut config = IngestionConfig::default();
+        config.overrides.insert(
+            Role::IngestionText,
+            UseCaseOverride {
+                provider: Some(AIProvider::Ollama),
+                ..Default::default()
+            },
+        );
+        let r = config.resolve(Role::IngestionText);
+        assert_eq!(r.provider, AIProvider::Ollama);
+        assert_eq!(r.model, config.ollama.model);
+    }
+
+    #[test]
+    fn resolve_override_anthropic_model_wins() {
+        let mut config = IngestionConfig::default();
+        config.overrides.insert(
+            Role::QueryChat,
+            UseCaseOverride {
+                anthropic_model: Some("claude-opus-custom".to_string()),
+                ..Default::default()
+            },
+        );
+        let r = config.resolve(Role::QueryChat);
+        assert_eq!(r.provider, AIProvider::Anthropic);
+        assert_eq!(r.model, "claude-opus-custom");
+    }
+
+    #[test]
+    fn resolve_override_ollama_model_wins_when_provider_is_ollama() {
+        let mut config = IngestionConfig {
+            provider: AIProvider::Ollama,
+            ..Default::default()
+        };
+        config.overrides.insert(
+            Role::IngestionText,
+            UseCaseOverride {
+                provider: Some(AIProvider::Ollama),
+                ollama_model: Some("codellama:70b".to_string()),
+                ..Default::default()
+            },
+        );
+        let r = config.resolve(Role::IngestionText);
+        assert_eq!(r.provider, AIProvider::Ollama);
+        assert_eq!(r.model, "codellama:70b");
+    }
+
+    #[test]
+    fn resolve_override_generation_params_replaces_wholesale() {
+        let mut config = IngestionConfig::default();
+        let custom_gp = OllamaGenerationParams {
+            temperature: 1.9,
+            num_ctx: 123,
+            num_predict: 456,
+            top_p: 0.5,
+            top_k: 42,
+            repeat_penalty: 1.5,
+            presence_penalty: 0.3,
+            min_p: 0.1,
+        };
+        config.overrides.insert(
+            Role::SmartFolder,
+            UseCaseOverride {
+                generation_params: Some(custom_gp.clone()),
+                ..Default::default()
+            },
+        );
+        let r = config.resolve(Role::SmartFolder);
+        assert!((r.generation_params.temperature - 1.9).abs() < f32::EPSILON);
+        assert_eq!(r.generation_params.num_ctx, 123);
+        assert_eq!(r.generation_params.num_predict, 456);
+        assert_eq!(r.generation_params.top_k, 42);
+    }
+
+    // ---- is_override_active() ----
+
+    #[test]
+    fn is_override_active_returns_false_when_no_entry() {
+        let config = IngestionConfig::default();
+        for role in Role::ALL {
+            assert!(!config.is_override_active(*role));
+        }
+    }
+
+    #[test]
+    fn is_override_active_returns_false_when_entry_has_all_none_fields() {
+        let mut config = IngestionConfig::default();
+        config
+            .overrides
+            .insert(Role::IngestionText, UseCaseOverride::default());
+        assert!(!config.is_override_active(Role::IngestionText));
+    }
+
+    #[test]
+    fn is_override_active_returns_true_when_entry_has_any_field_set() {
+        let mut config = IngestionConfig::default();
+        config.overrides.insert(
+            Role::Vision,
+            UseCaseOverride {
+                provider: Some(AIProvider::Anthropic),
+                ..Default::default()
+            },
+        );
+        assert!(config.is_override_active(Role::Vision));
+        assert!(!config.is_override_active(Role::Ocr));
+    }
+
+    // ---- Serde migration — legacy `query` → overrides[QueryChat] ----
+
+    /// CRITICAL: every user's on-disk config today has the legacy `query`
+    /// field. Failing to migrate it into `overrides[QueryChat]` silently
+    /// loses their Sonnet override. This test protects that contract.
+    #[test]
+    fn legacy_query_field_migrates_into_overrides_querychat() {
+        let legacy_json = r#"{
+            "provider": "Anthropic",
+            "ollama": {
+                "model": "llama3.3",
+                "base_url": "http://localhost:11434",
+                "vision_model": "qwen3-vl:2b",
+                "ocr_model": "glm-ocr:latest"
+            },
+            "anthropic": {
+                "api_key": "",
+                "model": "claude-haiku-4-5-20251001",
+                "base_url": "https://api.anthropic.com"
+            },
+            "query": {
+                "anthropic_model": "claude-sonnet-4-20250514"
+            }
+        }"#;
+        let mut saved: SavedConfig = serde_json::from_str(legacy_json).unwrap();
+        saved.normalize();
+        let migrated = saved
+            .overrides
+            .get(&Role::QueryChat)
+            .expect("legacy `query` should migrate into overrides[QueryChat]");
+        assert_eq!(
+            migrated.anthropic_model.as_deref(),
+            Some("claude-sonnet-4-20250514")
+        );
+        // Legacy field cleared after migration.
+        assert!(!saved.query.is_set());
+    }
+
+    #[test]
+    fn new_overrides_format_deserializes_directly() {
+        let new_json = r#"{
+            "provider": "Anthropic",
+            "ollama": {
+                "model": "llama3.3",
+                "base_url": "http://localhost:11434",
+                "vision_model": "qwen3-vl:2b",
+                "ocr_model": "glm-ocr:latest"
+            },
+            "anthropic": {
+                "api_key": "",
+                "model": "claude-haiku-4-5-20251001",
+                "base_url": "https://api.anthropic.com"
+            },
+            "overrides": {
+                "Vision": { "provider": "Anthropic" }
+            }
+        }"#;
+        let mut saved: SavedConfig = serde_json::from_str(new_json).unwrap();
+        saved.normalize();
+        let vision_override = saved.overrides.get(&Role::Vision).unwrap();
+        assert_eq!(vision_override.provider, Some(AIProvider::Anthropic));
+    }
+
+    #[test]
+    fn both_legacy_and_new_fields_present_overrides_wins() {
+        let both_json = r#"{
+            "provider": "Anthropic",
+            "ollama": {
+                "model": "llama3.3",
+                "base_url": "http://localhost:11434",
+                "vision_model": "qwen3-vl:2b",
+                "ocr_model": "glm-ocr:latest"
+            },
+            "anthropic": {
+                "api_key": "",
+                "model": "claude-haiku-4-5-20251001",
+                "base_url": "https://api.anthropic.com"
+            },
+            "query": { "anthropic_model": "legacy-sonnet" },
+            "overrides": {
+                "QueryChat": { "anthropic_model": "new-sonnet" }
+            }
+        }"#;
+        let mut saved: SavedConfig = serde_json::from_str(both_json).unwrap();
+        saved.normalize();
+        assert_eq!(
+            saved
+                .overrides
+                .get(&Role::QueryChat)
+                .unwrap()
+                .anthropic_model
+                .as_deref(),
+            Some("new-sonnet"),
+            "when both present, `overrides` wins; legacy is dropped"
+        );
+    }
+
+    #[test]
+    fn normalize_is_idempotent() {
+        let legacy_json = r#"{
+            "provider": "Anthropic",
+            "ollama": { "model": "m", "base_url": "u", "vision_model": "v", "ocr_model": "o" },
+            "query": { "anthropic_model": "sonnet" }
+        }"#;
+        let mut saved: SavedConfig = serde_json::from_str(legacy_json).unwrap();
+        saved.normalize();
+        let first = saved.overrides.clone();
+        saved.normalize();
+        assert_eq!(saved.overrides, first);
+    }
+
+    #[test]
+    fn prepare_for_save_projects_overrides_querychat_into_legacy_query() {
+        let mut saved = SavedConfig::default();
+        saved.overrides.insert(
+            Role::QueryChat,
+            UseCaseOverride {
+                anthropic_model: Some("sonnet-via-overrides".to_string()),
+                ..Default::default()
+            },
+        );
+        saved.prepare_for_save();
+        assert_eq!(
+            saved.query.anthropic_model.as_deref(),
+            Some("sonnet-via-overrides")
+        );
+    }
+
+    #[test]
+    fn prepare_for_save_clears_legacy_query_when_no_querychat_override() {
+        let mut saved = SavedConfig::default();
+        saved.query.anthropic_model = Some("stale".to_string());
+        saved.prepare_for_save();
+        assert!(!saved.query.is_set());
+    }
+
+    /// CRITICAL: full roundtrip — legacy JSON on disk loads, migrates, saves
+    /// in the new shape (with dual-write), reloads cleanly.
+    #[test]
+    fn legacy_roundtrip_preserves_querychat_override_end_to_end() {
+        let legacy_json = r#"{
+            "provider": "Anthropic",
+            "ollama": {
+                "model": "llama3.3",
+                "base_url": "http://localhost:11434",
+                "vision_model": "qwen3-vl:2b",
+                "ocr_model": "glm-ocr:latest"
+            },
+            "anthropic": {
+                "api_key": "",
+                "model": "claude-haiku-4-5-20251001",
+                "base_url": "https://api.anthropic.com"
+            },
+            "query": { "anthropic_model": "claude-sonnet-4-20250514" }
+        }"#;
+
+        // 1. Load legacy.
+        let mut saved: SavedConfig = serde_json::from_str(legacy_json).unwrap();
+        saved.normalize();
+
+        // 2. Prepare for save (dual-write).
+        saved.prepare_for_save();
+
+        // 3. Re-serialize.
+        let reserialized = serde_json::to_string(&saved).unwrap();
+
+        // 4. Reload.
+        let mut reloaded: SavedConfig = serde_json::from_str(&reserialized).unwrap();
+        reloaded.normalize();
+
+        // The QueryChat override survived end-to-end.
+        assert_eq!(
+            reloaded
+                .overrides
+                .get(&Role::QueryChat)
+                .unwrap()
+                .anthropic_model
+                .as_deref(),
+            Some("claude-sonnet-4-20250514")
+        );
+
+        // And the legacy `query` field is also populated for old-binary compat.
+        assert_eq!(
+            reloaded.query.anthropic_model.as_deref(),
+            Some("claude-sonnet-4-20250514"),
+            "dual-write preserves backwards compat during the rollout window"
+        );
+    }
+
+    #[test]
+    fn config_without_any_overrides_round_trips_cleanly() {
+        let saved = SavedConfig::default();
+        let json = serde_json::to_string(&saved).unwrap();
+        let back: SavedConfig = serde_json::from_str(&json).unwrap();
+        assert!(back.overrides.is_empty());
+        assert!(!back.query.is_set());
     }
 }

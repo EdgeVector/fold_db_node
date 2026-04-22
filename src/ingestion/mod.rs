@@ -15,6 +15,7 @@ pub mod ingestion_service;
 pub mod key_extraction;
 pub mod mutation_generator;
 pub mod progress;
+pub mod roles;
 pub mod service_state;
 pub mod smart_folder;
 pub mod structure_analyzer;
@@ -35,12 +36,13 @@ pub fn is_image_file(filename: &str) -> bool {
 
 // Public re-exports
 pub use ai::helpers::AISchemaResponse;
-pub use config::IngestionConfig;
+pub use config::{IngestionConfig, ResolvedModel};
 pub use error::IngestionError;
 pub use progress::{
     create_progress_tracker, IngestionProgress, IngestionResults, IngestionStep, ProgressService,
     ProgressTracker, SchemaWriteRecord,
 };
+pub use roles::Role;
 pub use structure_analyzer::StructureAnalyzer;
 
 /// Result type for ingestion operations
