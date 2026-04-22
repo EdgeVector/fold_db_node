@@ -137,6 +137,12 @@ pub enum Command {
         action: DiscoveryCommand,
     },
 
+    /// Inspect view trigger activity (TriggerFiring audit log)
+    Trigger {
+        #[command(subcommand)]
+        action: TriggerCommand,
+    },
+
     /// Display your 24-word recovery phrase
     RecoveryPhrase,
 
@@ -363,6 +369,21 @@ pub enum OrgCommand {
     Join {
         /// Invite bundle JSON (reads stdin if omitted)
         invite_json: Option<String>,
+    },
+}
+
+#[derive(Subcommand, Debug)]
+pub enum TriggerCommand {
+    /// Show recent firings of triggers attached to a view
+    Log {
+        /// View name to look up trigger firings for
+        view: String,
+        /// Look back window (e.g. `24h`, `30m`, `7d`, `600s`)
+        #[arg(long, default_value = "24h")]
+        last: String,
+        /// Maximum rows to display (cap: 1000)
+        #[arg(long, default_value = "50")]
+        limit: usize,
     },
 }
 
@@ -962,6 +983,38 @@ mod tests {
     }
 
     #[test]
+    fn parse_trigger_log_defaults() {
+        let cli = Cli::parse_from(["folddb", "trigger", "log", "my_view"]);
+        match cli.command {
+            Command::Trigger {
+                action: TriggerCommand::Log { view, last, limit },
+            } => {
+                assert_eq!(view, "my_view");
+                assert_eq!(last, "24h");
+                assert_eq!(limit, 50);
+            }
+            _ => panic!("Expected Trigger Log"),
+        }
+    }
+
+    #[test]
+    fn parse_trigger_log_with_overrides() {
+        let cli = Cli::parse_from([
+            "folddb", "trigger", "log", "v", "--last", "1h", "--limit", "10",
+        ]);
+        match cli.command {
+            Command::Trigger {
+                action: TriggerCommand::Log { view, last, limit },
+            } => {
+                assert_eq!(view, "v");
+                assert_eq!(last, "1h");
+                assert_eq!(limit, 10);
+            }
+            _ => panic!("Expected Trigger Log"),
+        }
+    }
+
+    #[test]
     fn parse_all_subcommands_exist() {
         let commands: Vec<Vec<&str>> = vec![
             vec!["folddb", "schema", "list"],
@@ -1002,6 +1055,9 @@ mod tests {
             vec!["folddb", "org", "join", "{}"],
             vec!["folddb", "discovery", "status"],
             vec!["folddb", "discovery", "publish"],
+            vec!["folddb", "trigger", "log", "v"],
+            vec!["folddb", "trigger", "log", "v", "--last", "30m"],
+            vec!["folddb", "trigger", "log", "v", "--limit", "25"],
             vec!["folddb", "recovery-phrase"],
             vec!["folddb", "restore"],
             vec!["folddb", "reset"],

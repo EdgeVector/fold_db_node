@@ -708,6 +708,86 @@ fn cli_reports_missing_daemon_when_port_explicit() {
 // 503 `ingestion_unavailable`. That's fine — a 503 proves the route exists
 // and the request was well-formed; a 404 would reproduce the bug.
 // ---------------------------------------------------------------------------
+// ---------------------------------------------------------------------------
+// Trigger commands
+//
+// Smoke tests for `folddb trigger log`. The TriggerFiring schema is registered
+// at daemon startup by fold_db core, so hitting `/api/query` for it must
+// succeed even with zero firing rows — an unknown view yields the
+// "No firings found" message, and `--json` mode proxies through the raw query
+// envelope. Proves the CLI → daemon wiring end-to-end without depending on
+// any trigger having actually fired during the test run.
+// ---------------------------------------------------------------------------
+#[test]
+fn trigger_log_empty_for_unknown_view_human_mode() {
+    let daemon = get_daemon();
+    let assert = cli_with_daemon(daemon)
+        .arg("trigger")
+        .arg("log")
+        .arg("nonexistent_trigger_log_view")
+        .arg("--last")
+        .arg("1h")
+        .assert()
+        .success();
+    let stdout = String::from_utf8_lossy(&assert.get_output().stdout);
+    assert!(
+        stdout.contains("No firings found"),
+        "expected 'No firings found' for unknown view, got: {}",
+        stdout
+    );
+    assert!(
+        stdout.contains("nonexistent_trigger_log_view"),
+        "message should name the view: {}",
+        stdout
+    );
+    assert!(
+        stdout.contains("1h"),
+        "message should echo the --last window: {}",
+        stdout
+    );
+}
+
+#[test]
+fn trigger_log_json_mode_returns_query_envelope() {
+    let daemon = get_daemon();
+    let assert = cli_json_with_daemon(daemon)
+        .arg("trigger")
+        .arg("log")
+        .arg("nonexistent_trigger_log_view")
+        .arg("--last")
+        .arg("24h")
+        .assert()
+        .success();
+    let stdout = String::from_utf8_lossy(&assert.get_output().stdout);
+    let json: Value =
+        serde_json::from_str(&stdout).expect("trigger log --json should return valid JSON");
+    assert_eq!(
+        json.get("ok").and_then(|v| v.as_bool()),
+        Some(true),
+        "envelope should be ok:true, got: {}",
+        stdout
+    );
+    assert!(
+        json.get("results").is_some(),
+        "envelope should carry a results array, got: {}",
+        stdout
+    );
+}
+
+#[test]
+fn trigger_log_rejects_invalid_last() {
+    let daemon = get_daemon();
+    cli_with_daemon(daemon)
+        .arg("trigger")
+        .arg("log")
+        .arg("any_view")
+        .arg("--last")
+        .arg("not-a-duration")
+        .assert()
+        .failure()
+        .stderr(predicate::str::contains("--last"));
+}
+
 #[test]
 fn ingest_file_targets_ingestion_process_endpoint() {
     let daemon = get_daemon();

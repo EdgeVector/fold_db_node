@@ -420,6 +420,7 @@ async fn dispatch_http(
         },
         Command::Org { action } => commands::org::dispatch(action, client, mode).await,
         Command::Discovery { action } => dispatch_discovery(action, client, mode).await,
+        Command::Trigger { action } => dispatch_trigger(action, client, mode).await,
         Command::RecoveryPhrase => unreachable!("Handled before daemon dispatch"),
         Command::Reset { confirm } => {
             if !confirm {
@@ -568,6 +569,18 @@ async fn dispatch_discovery(
                 "Published {} schema(s) to the discovery network.",
                 published
             )))
+        }
+    }
+}
+
+async fn dispatch_trigger(
+    action: &cli::TriggerCommand,
+    client: &FoldDbClient,
+    mode: OutputMode,
+) -> Result<commands::CommandOutput, CliError> {
+    match action {
+        cli::TriggerCommand::Log { view, last, limit } => {
+            commands::trigger::log(client, view, last, *limit, mode).await
         }
     }
 }
