@@ -672,7 +672,7 @@ export default function MyIdentityCardPanel() {
                 Scan with your phone's QR reader. The payload is the
                 signed card JSON — verifiable without a network call.
                 Peers receive this card through the messaging service;
-                see their Inbound Cards tab.
+                see their Received Cards tab.
               </p>
             </div>
           )}

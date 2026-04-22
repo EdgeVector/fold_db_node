@@ -101,7 +101,7 @@ function EmptyMomentsState() {
   return (
     <div className="text-center py-12 space-y-3">
       <div className="text-4xl">📸</div>
-      <h3 className="text-lg font-medium text-primary">No Shared Moments Yet</h3>
+      <h3 className="text-lg font-medium text-primary">No Moments Yet</h3>
       <p className="text-sm text-secondary max-w-md mx-auto">
         When you and a connected peer both opt in to photo moment sharing, photos
         taken at similar times and locations will appear here as shared moments.
@@ -215,7 +215,7 @@ export default function SharedMomentsTab({ onResult }) {
       {/* Header */}
       <div className="flex items-center justify-between">
         <div>
-          <h2 className="text-lg font-semibold text-primary">Shared Moments</h2>
+          <h2 className="text-lg font-semibold text-primary">Moments</h2>
           <p className="text-sm text-secondary">
             Photos taken at similar times and places with connected peers
           </p>
