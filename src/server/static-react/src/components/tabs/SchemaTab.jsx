@@ -10,8 +10,9 @@ import {
 } from '../../store/schemaSlice'
 import SchemaName from '../shared/SchemaName'
 import { MagnifyingGlassIcon } from '@heroicons/react/24/outline'
-import { toErrorMessage } from '../../utils/schemaUtils'
+import { toErrorMessage, isSystemSchema } from '../../utils/schemaUtils'
 import { getAllFieldPolicies, setFieldPolicy as setFieldPolicyApi } from '../../api/clients/sharingClient'
+import schemaClient from '../../api/clients/schemaClient'
 import { useOrgNames } from '../../hooks/useOrgNames'
 
 const TRUST_TIERS = ['Public', 'Outer', 'Trusted', 'Inner', 'Owner']
@@ -465,6 +466,10 @@ function SchemaTab({ onResult, onSchemaUpdated }) {
 
   const [schemaFilter, setSchemaFilter] = useState('all') // 'all' | 'personal' | 'org'
   const [stateFilter, setStateFilter] = useState('all') // 'all' | 'approved' | 'blocked'
+  // null = use default (expanded if any system schema holds data); boolean = user override.
+  const [systemSectionOverride, setSystemSectionOverride] = useState(null)
+  // Per-system-schema key counts, used to guarantee we never hide a data-bearing schema.
+  const [systemKeyCounts, setSystemKeyCounts] = useState({})
 
   // Only show local schemas (approved or blocked) — never show "available" (global catalog)
   const localSchemas = schemas.filter(s => {
@@ -484,12 +489,52 @@ function SchemaTab({ onResult, onSchemaUpdated }) {
     return true
   })
 
+  // Partition into user vs system schemas. Backend `system: bool` wins when
+  // present; otherwise isSystemSchema falls back to a known-name allow-list.
+  const userSchemas = []
+  const systemSchemas = []
+  for (const s of filteredSchemas) (isSystemSchema(s) ? systemSchemas : userSchemas).push(s)
+
+  // Stable key for the useEffect dependency so it doesn't re-run every render.
+  const systemSchemaNamesKey = systemSchemas.map(s => s.name).sort().join('|')
+
+  // Fetch a 1-row sample per system schema to decide whether it's data-bearing.
+  // Cheap: each call returns total_count without streaming actual rows.
+  useEffect(() => {
+    let cancelled = false
+    for (const s of systemSchemas) {
+      if (systemKeyCounts[s.name] !== undefined) continue
+      schemaClient.listSchemaKeys(s.name, 0, 1).then(res => {
+        if (cancelled || !res?.success) return
+        const count = res.data?.total_count ?? 0
+        setSystemKeyCounts(prev => ({ ...prev, [s.name]: count }))
+      }).catch(() => {
+        // Treat as unknown; don't block UI if the keys endpoint errors.
+      })
+    }
+    return () => { cancelled = true }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [systemSchemaNamesKey])
+
+  const anySystemHasData = systemSchemas.some(s => (systemKeyCounts[s.name] ?? 0) > 0)
+  // Default: expanded iff any system schema has data (so we never silently hide
+  // data). Explicit user toggle overrides.
+  const systemSectionExpanded = systemSectionOverride ?? anySystemHasData
+
   // Count schemas by state for the filter badges
   const stateCounts = localSchemas.reduce((acc, s) => {
     const state = (s.state || '').toLowerCase()
     acc[state] = (acc[state] || 0) + 1
     return acc
   }, {})
+
+  const renderSectionHeader = (label, count, extra = null) => (
+    <div className="flex items-center gap-2 pt-2">
+      <h3 className="text-sm font-semibold text-secondary uppercase tracking-wide">{label}</h3>
+      <span className="text-xs text-tertiary">({count})</span>
+      {extra}
+    </div>
+  )
 
   return (
     <div className="space-y-4">
@@ -527,10 +572,56 @@ function SchemaTab({ onResult, onSchemaUpdated }) {
           )
         })}
       </div>
-      {filteredSchemas.length > 0 ? (
-        filteredSchemas.map(renderSchema)
-      ) : (
+
+      {filteredSchemas.length === 0 && (
         <p className="text-secondary">No schemas match the current filters.</p>
+      )}
+
+      {userSchemas.length > 0 && (
+        <div className="space-y-3">
+          {renderSectionHeader('User schemas', userSchemas.length)}
+          {userSchemas.map(renderSchema)}
+        </div>
+      )}
+
+      {systemSchemas.length > 0 && (
+        <div className="space-y-3">
+          {renderSectionHeader(
+            'System schemas',
+            systemSchemas.length,
+            <button
+              onClick={() => setSystemSectionOverride(!systemSectionExpanded)}
+              className="ml-auto text-xs text-secondary hover:text-primary flex items-center gap-1"
+              aria-expanded={systemSectionExpanded}
+              aria-controls="system-schemas-section"
+            >
+              {systemSectionExpanded ? (
+                <>
+                  <ChevronDownIcon className="w-3.5 h-3.5" />
+                  Hide
+                </>
+              ) : (
+                <>
+                  <ChevronRightIcon className="w-3.5 h-3.5" />
+                  Show
+                  {anySystemHasData && (
+                    <span className="ml-1 px-1.5 py-0.5 text-[10px] rounded bg-gruvbox-yellow/20 text-gruvbox-yellow font-medium">
+                      has data
+                    </span>
+                  )}
+                </>
+              )}
+            </button>,
+          )}
+          <p className="text-xs text-tertiary -mt-2">
+            Built-in infrastructure schemas seeded by the schema service.
+          </p>
+          {systemSectionExpanded && (
+            <div id="system-schemas-section" className="space-y-3">
+              {systemSchemas.map(renderSchema)}
+            </div>
+          )}
+        </div>
       )}
     </div>
   )

@@ -10,6 +10,10 @@ vi.mock('../../../api/clients/schemaClient', () => ({
     getSchema: vi.fn(() => Promise.resolve({
       success: true,
       data: { name: 'test-schema', state: 'approved', fields: {} }
+    })),
+    listSchemaKeys: vi.fn(() => Promise.resolve({
+      success: true,
+      data: { keys: [], total_count: 0 }
     }))
   }
 }))
@@ -164,5 +168,54 @@ describe('SchemaTab Component', () => {
       expect(screen.getByText('name')).toBeInTheDocument()
       expect(screen.getByText('email')).toBeInTheDocument()
     })
+  })
+
+  it('groups schemas into System and User sections and hides empty system schemas by default', async () => {
+    const schemaState = createTestSchemaState({
+      schemas: {
+        identity: { name: 'identity', state: 'Approved', fields: [] },
+        persona: { name: 'persona', state: 'Approved', fields: [] },
+        user_profiles: { name: 'user_profiles', state: 'Approved', fields: [] },
+      },
+    })
+
+    await renderWithRedux(<SchemaTab {...mockProps} />, { preloadedState: schemaState })
+
+    await waitFor(() => {
+      expect(screen.getByText('User schemas')).toBeInTheDocument()
+      expect(screen.getByText('System schemas')).toBeInTheDocument()
+    })
+
+    // User schema is always visible.
+    expect(screen.getByText('user_profiles')).toBeInTheDocument()
+    // System section is collapsed by default when nothing has data, so system
+    // schemas are not rendered.
+    expect(screen.queryByText('identity')).not.toBeInTheDocument()
+    expect(screen.queryByText('persona')).not.toBeInTheDocument()
+
+    // Clicking "Show" expands the section.
+    fireEvent.click(screen.getByText('Show'))
+    await waitFor(() => {
+      expect(screen.getByText('identity')).toBeInTheDocument()
+      expect(screen.getByText('persona')).toBeInTheDocument()
+    })
+  })
+
+  it('trusts the backend-provided `system: false` flag even for known system names', async () => {
+    // If the backend ever reclassifies a name in the known-system allow-list,
+    // the flag must win. Here `identity` is explicitly system=false.
+    const schemaState = createTestSchemaState({
+      schemas: {
+        identity: { name: 'identity', state: 'Approved', fields: [], system: false },
+      },
+    })
+
+    await renderWithRedux(<SchemaTab {...mockProps} />, { preloadedState: schemaState })
+
+    await waitFor(() => {
+      expect(screen.getByText('User schemas')).toBeInTheDocument()
+      expect(screen.getByText('identity')).toBeInTheDocument()
+    })
+    expect(screen.queryByText('System schemas')).not.toBeInTheDocument()
   })
 })
