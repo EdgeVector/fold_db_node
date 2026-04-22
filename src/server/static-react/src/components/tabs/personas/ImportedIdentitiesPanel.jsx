@@ -63,8 +63,8 @@ export default function ImportedIdentitiesPanel() {
       {!loading && !error && identities.length === 0 && (
         <div className="text-sm text-secondary" data-testid="imported-identities-empty">
           No Identity cards on this node yet. Your own card is issued
-          when you complete the setup wizard; peer cards are imported
-          via the Import Card tab.
+          when you complete the setup wizard; peer cards arrive via
+          the messaging service and land in Inbound Cards.
         </div>
       )}
 

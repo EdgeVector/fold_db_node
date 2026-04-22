@@ -6,20 +6,22 @@ import {
 } from '../../../api/clients/fingerprintsClient'
 
 /**
- * "Received" panel — messaging-delivered Identity Card inbox.
+ * Inbound Identity Cards panel — the only UX for importing a peer's
+ * card. Replaces the previous manual paste/QR import flow.
  *
- * Pairs with the send half in MyIdentityCardPanel → Send to contact.
- * Rows arrive via the discovery poll loop, which stores
- * `identity_card_send` payloads as `pending` inbox entries. This
- * panel lists them and lets the user accept (which runs the
- * existing Ed25519 verifier + writes an Identity record) or
- * dismiss (which records the rejection without importing).
+ * Pairs with the outbound send half in MyIdentityCardPanel → Send to
+ * contact. Rows arrive via the discovery poll loop, which pulls
+ * `identity_card_send` payloads off the messaging_service inbox for
+ * this node's pseudonyms and stores them as `pending` rows. This
+ * panel lists them and lets the user Accept (runs the Ed25519
+ * verifier + writes an Identity record) or Reject (records the
+ * rejection without importing — row flips to `dismissed`).
  *
  * Status transitions:
  *   pending → accepted     (user clicks Accept, verify succeeds)
  *   pending → pending+error (user clicks Accept, verify failed;
- *                            row retains error so user can dismiss)
- *   pending → dismissed    (user clicks Dismiss)
+ *                            row retains error so user can reject)
+ *   pending → dismissed    (user clicks Reject)
  */
 export default function ReceivedCardsPanel() {
   const [rows, setRows] = useState([])
@@ -121,7 +123,7 @@ export default function ReceivedCardsPanel() {
   return (
     <div className="card p-4 space-y-3" data-testid="received-cards-panel">
       <div className="flex items-center justify-between">
-        <h3 className="text-base font-semibold">Received cards</h3>
+        <h3 className="text-base font-semibold">Inbound identity cards</h3>
         <button
           type="button"
           className="btn-secondary text-xs"
@@ -134,9 +136,10 @@ export default function ReceivedCardsPanel() {
       </div>
 
       <p className="text-[11px] text-tertiary">
-        Identity Cards peers have sent to this node via messaging.
-        Accept runs the Ed25519 verifier and writes an Identity
-        record; Dismiss leaves an audit row without importing.
+        Identity Cards peers have sent to this node via the
+        messaging service. Accept runs the Ed25519 verifier and
+        installs the card as a local Identity record; Reject
+        discards it with an audit row and never writes the Identity.
       </p>
 
       <div
@@ -223,11 +226,11 @@ export default function ReceivedCardsPanel() {
                     className="btn-secondary text-[11px] py-0.5"
                     onClick={() => handleDismiss(row)}
                     disabled={pendingAction[row.message_id] != null}
-                    data-testid={`received-card-dismiss-${row.message_id}`}
+                    data-testid={`received-card-reject-${row.message_id}`}
                   >
                     {pendingAction[row.message_id] === 'dismiss'
-                      ? 'Dismissing…'
-                      : 'Dismiss'}
+                      ? 'Rejecting…'
+                      : 'Reject'}
                   </button>
                 </div>
               )}

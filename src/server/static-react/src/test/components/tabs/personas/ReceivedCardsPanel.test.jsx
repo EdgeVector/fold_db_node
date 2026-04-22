@@ -49,7 +49,7 @@ describe('ReceivedCardsPanel', () => {
     })
   })
 
-  it('renders one row per received card with accept + dismiss for pending', async () => {
+  it('renders one row per received card with accept + reject for pending', async () => {
     listReceivedCards.mockResolvedValue(
       ok({
         received_cards: [row({ message_id: 'msg_a' }), row({ message_id: 'msg_b' })],
@@ -60,11 +60,11 @@ describe('ReceivedCardsPanel', () => {
       expect(screen.getByTestId('received-card-row-msg_a')).toBeInTheDocument()
     })
     expect(screen.getByTestId('received-card-accept-msg_a')).toBeInTheDocument()
-    expect(screen.getByTestId('received-card-dismiss-msg_a')).toBeInTheDocument()
+    expect(screen.getByTestId('received-card-reject-msg_a')).toBeInTheDocument()
     expect(screen.getByTestId('received-card-accept-msg_b')).toBeInTheDocument()
   })
 
-  it('hides accept + dismiss buttons on already-resolved rows', async () => {
+  it('hides accept + reject buttons on already-resolved rows', async () => {
     listReceivedCards.mockResolvedValue(
       ok({
         received_cards: [
@@ -82,7 +82,7 @@ describe('ReceivedCardsPanel', () => {
       expect(screen.getByTestId('received-card-row-msg_ok')).toBeInTheDocument()
     })
     expect(screen.queryByTestId('received-card-accept-msg_ok')).toBeNull()
-    expect(screen.queryByTestId('received-card-dismiss-msg_ok')).toBeNull()
+    expect(screen.queryByTestId('received-card-reject-msg_ok')).toBeNull()
     expect(screen.queryByTestId('received-card-accept-msg_no')).toBeNull()
   })
 
@@ -257,14 +257,14 @@ describe('ReceivedCardsPanel', () => {
     )
     render(<ReceivedCardsPanel />)
     await waitFor(() => {
-      expect(screen.getByTestId('received-card-dismiss-msg_z')).toBeInTheDocument()
+      expect(screen.getByTestId('received-card-reject-msg_z')).toBeInTheDocument()
     })
-    fireEvent.click(screen.getByTestId('received-card-dismiss-msg_z'))
+    fireEvent.click(screen.getByTestId('received-card-reject-msg_z'))
     await waitFor(() => {
       expect(dismissReceivedCard).toHaveBeenCalledWith('msg_z')
     })
     await waitFor(() => {
-      expect(screen.queryByTestId('received-card-dismiss-msg_z')).toBeNull()
+      expect(screen.queryByTestId('received-card-reject-msg_z')).toBeNull()
     })
   })
 })
