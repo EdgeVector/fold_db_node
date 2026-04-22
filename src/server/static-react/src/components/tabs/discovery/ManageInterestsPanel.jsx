@@ -23,27 +23,35 @@ export default function ManageInterestsPanel({
 }) {
   if (!hasSchemas) return <EmptyState />
 
+  const totalSchemas = approvedSchemas.length
+
   return (
     <div className="space-y-4">
+      <p className="text-sm text-secondary">
+        Pick which of your data types are visible on the discovery network. Only
+        anonymized fingerprints are shared — never the raw content. Change your
+        mind anytime and hit <em>Update network</em> to push it.
+      </p>
+
       {/* Bulk Actions */}
       <div className="flex items-center justify-between">
         <div className="text-xs text-secondary">
-          {configs.length} of {approvedSchemas.length} schemas opted in
+          Sharing {configs.length} of {totalSchemas} data type{totalSchemas !== 1 ? 's' : ''}
         </div>
         <div className="flex gap-2">
           <button
             onClick={() => onBulkAction('publish-all')}
-            disabled={toggling || configs.length === approvedSchemas.length}
+            disabled={toggling || configs.length === totalSchemas}
             className="btn-secondary btn-sm"
           >
-            Opt In All
+            Share all
           </button>
           <button
             onClick={() => onBulkAction('unpublish-all')}
             disabled={toggling || configs.length === 0}
             className="btn-secondary btn-sm text-gruvbox-red"
           >
-            Opt Out All
+            Stop sharing all
           </button>
         </div>
       </div>
@@ -77,16 +85,14 @@ export default function ManageInterestsPanel({
           disabled={publishing}
           className="btn-primary w-full"
         >
-          {publishing
-            ? 'Publishing...'
-            : `Publish ${configs.length} Schema${configs.length !== 1 ? 's' : ''} to Network`}
+          {publishing ? 'Updating...' : 'Update network share'}
         </button>
       )}
 
       {/* Last Publish Result */}
       {lastPublishResult && lastPublishResult.accepted !== undefined && (
         <div className="card-success p-3 rounded text-xs text-secondary">
-          Last publish: {lastPublishResult.accepted} accepted, {lastPublishResult.quarantined} quarantined, {lastPublishResult.skipped} skipped of {lastPublishResult.total} total
+          Last update: {lastPublishResult.accepted} accepted, {lastPublishResult.quarantined} quarantined, {lastPublishResult.skipped} skipped of {lastPublishResult.total} total
         </div>
       )}
     </div>

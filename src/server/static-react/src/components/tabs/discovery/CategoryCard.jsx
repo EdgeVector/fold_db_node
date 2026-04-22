@@ -87,7 +87,7 @@ export default function CategoryCard({
             className="accent-gruvbox-green"
           />
           <span className="text-xs text-secondary">
-            Also publish face embeddings <span className="text-tertiary">(faces in photos become searchable on the network)</span>
+            Also share face fingerprints <span className="text-tertiary">(people in your photos become findable on the network)</span>
           </span>
         </label>
       )}

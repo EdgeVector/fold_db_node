@@ -83,6 +83,11 @@ export default function InterestsPanel({ onResult }) {
         </div>
       )}
 
+      <p className="text-sm text-secondary max-w-2xl">
+        Topics we spotted in your data. Click any to enable or disable it — only
+        enabled topics affect the people we match you with.
+      </p>
+
       {categories.length > 0 ? (
         <div className="flex flex-wrap gap-2">
           {categories.map(cat => (
@@ -105,7 +110,8 @@ export default function InterestsPanel({ onResult }) {
       ) : (
         <div className="card p-6 text-center">
           <p className="text-secondary text-sm">
-            No interests detected yet. Ingest some data and click Re-detect to discover your interest categories.
+            No topics detected yet. Import some data first, then click Detect to
+            find the topics you care about.
           </p>
         </div>
       )}
@@ -115,7 +121,7 @@ export default function InterestsPanel({ onResult }) {
         disabled={detecting}
         className="btn-secondary"
       >
-        {detecting ? 'Detecting...' : 'Re-detect Interests'}
+        {detecting ? 'Detecting...' : hasProfile ? 'Re-detect topics' : 'Detect topics'}
       </button>
     </div>
   )
