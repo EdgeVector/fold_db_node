@@ -42,12 +42,16 @@ jobs:
           token: ${{ secrets.PRIVATE_DEPS_TOKEN }}
           path: schema_service
 
-      # schema_service ships a .cargo/config.toml that patches the fold_db
-      # git dep to a sibling ../fold_db checkout for local dev. CI does not
-      # have that sibling, so strip the patch — the git dep resolves normally.
-      # (Matches the same step in schema_service's own CI.)
-      - name: Remove local-dev cargo patch in schema_service
-        run: rm -f schema_service/.cargo/config.toml
+      # Both repos ship a .cargo/config.toml that patches their git deps
+      # to sibling path checkouts for local dev. CI pins via lockfiles
+      # instead, so strip both — schema_service's patches fold_db to
+      # `../fold_db` (absent), and fold_db_node's patches schema_service
+      # to `../schema_service` (present, but we want the Cargo.lock pin
+      # to win so PR CI stays stable across schema_service main drift).
+      - name: Remove local-dev cargo patches
+        run: |
+          rm -f schema_service/.cargo/config.toml
+          rm -f fold_db_node/.cargo/config.toml
 
       - name: Install mold linker
         run: sudo apt-get update && sudo apt-get install -y mold

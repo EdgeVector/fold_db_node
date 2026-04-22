@@ -290,14 +290,19 @@ impl IngestionService {
                 if let Some(url) = node.schema_service_url() {
                     if !crate::fold_node::node::FoldNode::is_test_schema_service(&url) {
                         let client = crate::fold_node::SchemaServiceClient::new(&url);
-                        let old_schema = client.get_schema(old_name).await.map_err(|e| {
+                        let old_envelope = client.get_schema(old_name).await.map_err(|e| {
                             IngestionError::SchemaCreationError(format!(
                                 "Schema expansion aborted: failed to fetch old schema '{}' \
                                  from schema service (new schema '{}' not loaded): {}",
                                 old_name, schema_response.name, e
                             ))
                         })?;
-                        let old_json = serde_json::to_string(&old_schema).map_err(schema_err)?;
+                        // Serialize the inner Schema — the local
+                        // `load_schema_from_json` path expects the Schema
+                        // wire shape, not the envelope. The `system` flag
+                        // on the envelope is not needed locally.
+                        let old_json =
+                            serde_json::to_string(&old_envelope.schema).map_err(schema_err)?;
                         schema_manager
                             .load_schema_from_json(&old_json)
                             .await

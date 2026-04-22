@@ -4474,6 +4474,7 @@ dependencies = [
 [[package]]
 name = "schema_service_client"
 version = "0.1.0"
+source = "git+https://github.com/EdgeVector/schema_service.git?branch=main#3d083b332b8e22bb8e42b89e6c4a5f84cdaa33d2"
 dependencies = [
  "fold_db",
  "log",
@@ -4487,6 +4488,7 @@ dependencies = [
 [[package]]
 name = "schema_service_core"
 version = "0.1.0"
+source = "git+https://github.com/EdgeVector/schema_service.git?branch=main#3d083b332b8e22bb8e42b89e6c4a5f84cdaa33d2"
 dependencies = [
  "async-trait",
  "fold_db",
@@ -4502,6 +4504,7 @@ dependencies = [
 [[package]]
 name = "schema_service_server_http"
 version = "0.1.0"
+source = "git+https://github.com/EdgeVector/schema_service.git?branch=main#3d083b332b8e22bb8e42b89e6c4a5f84cdaa33d2"
 dependencies = [
  "actix-cors",
  "actix-web",
@@ -4517,6 +4520,7 @@ dependencies = [
 [[package]]
 name = "schema_service_server_shared"
 version = "0.1.0"
+source = "git+https://github.com/EdgeVector/schema_service.git?branch=main#3d083b332b8e22bb8e42b89e6c4a5f84cdaa33d2"
 dependencies = [
  "actix-web",
  "fold_db",

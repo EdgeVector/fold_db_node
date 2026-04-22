@@ -40,18 +40,13 @@ jobs:
       - name: Configure git for private dependencies
         run: git config --global url."https://x-access-token:${{ secrets.PRIVATE_DEPS_TOKEN }}@github.com/".insteadOf "https://github.com/"
 
-      # Phase 0 T1: schema_service_server_http is a dev-dep with a path ref
-      # to `../schema_service/crates/server_http`. Check the repo out as a
-      # sibling so the path resolves the same way workspace developers use
-      # it locally. Matches the pattern in nightly-*.yml.
-      - name: Checkout schema_service (sibling)
-        run: git clone --depth 1 --branch main https://x-access-token:${{ secrets.PRIVATE_DEPS_TOKEN }}@github.com/EdgeVector/schema_service.git ../schema_service
-
-      # schema_service ships a .cargo/config.toml that patches fold_db to a
-      # sibling `../fold_db` checkout for local dev. CI does not have that
-      # sibling, so strip the patch — the git dep resolves normally.
-      - name: Remove local-dev cargo patch in schema_service
-        run: rm -f ../schema_service/.cargo/config.toml
+      # schema_service crates are git-dep'd in Cargo.toml and pinned via
+      # Cargo.lock. `.cargo/config.toml` patches them to sibling paths
+      # for local dev — strip it so CI consumes the lockfile-pinned git
+      # dep and main-branch drift in schema_service can't silently break
+      # PR CI here.
+      - name: Remove local-dev cargo patch
+        run: rm -f .cargo/config.toml
 
       - name: Cache Rust artifacts
         uses: Swatinem/rust-cache@v2
@@ -112,11 +107,8 @@ jobs:
         run: git config --global url."https://x-access-token:${{ secrets.PRIVATE_DEPS_TOKEN }}@github.com/".insteadOf "https://github.com/"
 
       # See comment on same step in the rust-tests job above.
-      - name: Checkout schema_service (sibling)
-        run: git clone --depth 1 --branch main https://x-access-token:${{ secrets.PRIVATE_DEPS_TOKEN }}@github.com/EdgeVector/schema_service.git ../schema_service
-
-      - name: Remove local-dev cargo patch in schema_service
-        run: rm -f ../schema_service/.cargo/config.toml
+      - name: Remove local-dev cargo patch
+        run: rm -f .cargo/config.toml
 
       - name: Cache Rust artifacts
         uses: Swatinem/rust-cache@v2

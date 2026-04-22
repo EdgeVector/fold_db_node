@@ -356,13 +356,19 @@ impl FoldNode {
     }
 
     /// Fetch available schemas from the schema service.
+    ///
+    /// The service wraps each schema in a `SchemaEnvelope` (Schema +
+    /// `system: bool`). Current callers only need the raw Schema, so we
+    /// flatten here. If a caller later needs to distinguish system vs
+    /// user schemas, add a sibling method that returns the envelopes.
     pub async fn fetch_available_schemas(
         &self,
     ) -> FoldDbResult<Vec<fold_db::schema::types::Schema>> {
         let url = self.require_real_schema_service()?;
-        crate::fold_node::SchemaServiceClient::new(&url)
+        let envelopes = crate::fold_node::SchemaServiceClient::new(&url)
             .get_available_schemas()
-            .await
+            .await?;
+        Ok(envelopes.into_iter().map(|e| e.schema).collect())
     }
 
     /// Add a new schema to the schema service.
@@ -510,7 +516,11 @@ impl FoldNode {
                 ))
             })?;
 
-            // Fetch output schema (needed for key_config + typed output_fields)
+            // Fetch output schema (needed for key_config + typed output_fields).
+            // The `system` flag on the envelope is not load-bearing here —
+            // view output schemas can be either user or system-seeded; the
+            // registration path treats them the same. Unwrap to the inner
+            // Schema immediately.
             let output_schema = client
                 .get_schema(&stored_view.output_schema_name)
                 .await
@@ -519,7 +529,8 @@ impl FoldNode {
                         "Output schema '{}' for view '{}' not found on service: {}",
                         stored_view.output_schema_name, name, e
                     ))
-                })?;
+                })?
+                .schema;
 
             // Ensure output schema is loaded locally
             if self
@@ -557,9 +568,12 @@ impl FoldNode {
                     continue;
                 }
 
-                // Try as schema on service
-                if let Ok(schema) = client.get_schema(source).await {
-                    let schema_json = serde_json::to_string(&schema).map_err(|e| {
+                // Try as schema on service. Serialize the inner Schema
+                // rather than the envelope — `load_schema_from_json` below
+                // parses into `Schema`, and the `system` flag is not needed
+                // on the local side.
+                if let Ok(envelope) = client.get_schema(source).await {
+                    let schema_json = serde_json::to_string(&envelope.schema).map_err(|e| {
                         FoldDbError::Config(format!(
                             "Failed to serialize schema '{}': {}",
                             source, e

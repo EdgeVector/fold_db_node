@@ -1,0 +1,15 @@
+# Local-dev override: when this repo is checked out alongside a sibling
+# `../schema_service` (the workspace layout), redirect the git deps to
+# the sibling path so parallel schema_service hacking is picked up
+# without publishing. The production dep spec in Cargo.toml is a git
+# dep pinned via Cargo.lock — that's what PR CI and release builds
+# consume, so main-branch drift in schema_service can't silently break
+# fold_db_node.
+#
+# CI removes this file before building so the git dep + lockfile pin
+# take effect (see `.github/workflows/ci-tests.yml` and nightlies).
+# Mirrors the same pattern used by schema_service for its fold_db dep.
+[patch."https://github.com/EdgeVector/schema_service.git"]
+schema_service_core        = { path = "../schema_service/crates/core" }
+schema_service_client      = { path = "../schema_service/crates/client" }
+schema_service_server_http = { path = "../schema_service/crates/server_http" }
