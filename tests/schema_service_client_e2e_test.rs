@@ -73,8 +73,12 @@ async fn add_schema_creates_and_round_trips_via_get_schema() {
         .await
         .expect("get_schema for newly-added schema should succeed");
 
-    assert_eq!(fetched.name, stored_name);
-    let fields = fetched.fields.as_ref().expect("fetched schema has fields");
+    assert_eq!(fetched.schema.name, stored_name);
+    let fields = fetched
+        .schema
+        .fields
+        .as_ref()
+        .expect("fetched schema has fields");
     for expected in ["id", "body", "created_at"] {
         assert!(
             fields.contains(&expected.to_string()),
@@ -84,9 +88,13 @@ async fn add_schema_creates_and_round_trips_via_get_schema() {
         );
     }
     assert_eq!(
-        fetched.descriptive_name.as_deref(),
+        fetched.schema.descriptive_name.as_deref(),
         Some("Client E2E Alpha"),
         "descriptive_name must round-trip via /v1/schema/{{name}}"
+    );
+    assert!(
+        !fetched.system,
+        "user-added schemas must surface system=false"
     );
 }
 
@@ -125,11 +133,15 @@ async fn add_schema_appears_in_list_schemas_and_available_schemas() {
     let defs = client.get_available_schemas().await.unwrap();
     let found = defs
         .iter()
-        .find(|s| s.name == stored_name)
+        .find(|s| s.schema.name == stored_name)
         .expect("available_schemas must include the just-added schema");
-    let fields = found.fields.as_ref().unwrap();
+    let fields = found.schema.fields.as_ref().unwrap();
     assert!(fields.contains(&"id".to_string()));
     assert!(fields.contains(&"value".to_string()));
+    assert!(
+        !found.system,
+        "user-added schemas must surface system=false in available_schemas"
+    );
 }
 
 #[actix_web::test]
@@ -208,7 +220,7 @@ async fn expansion_submission_reports_replaced_schema() {
         .get_schema(&base_name)
         .await
         .expect("old schema should still be fetchable by the node during expansion apply");
-    assert_eq!(old.name, base_name);
+    assert_eq!(old.schema.name, base_name);
 }
 
 #[actix_web::test]
@@ -268,6 +280,6 @@ async fn get_schema_missing_returns_permanent_error() {
     assert!(
         result.is_err(),
         "get_schema for an unknown name must return an error, got {:?}",
-        result.ok().map(|s| s.name)
+        result.ok().map(|s| s.schema.name)
     );
 }

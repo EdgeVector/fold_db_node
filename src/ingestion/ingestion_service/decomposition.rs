@@ -427,28 +427,35 @@ impl IngestionService {
 
         let (schema_name, merged_mappers) = if let Some(reuse_match) = batch_reuse_result {
             if reuse_match.is_superset {
+                // `reuse_match.schema` is a `SchemaEnvelope` (Schema +
+                // `system: bool`) as of schema_service PR #8. The reuse
+                // path doesn't care about the flag — a superset match is
+                // a superset regardless of whether the target is a user
+                // or system schema — so we bind the inner `Schema` and
+                // proceed as before.
+                let matched_schema = &reuse_match.schema.schema;
                 log_feature!(
                     LogFeature::Ingestion,
                     info,
                     "Batch reuse hit for structure hash '{}': reusing schema '{}' (superset match)",
                     structure_hash,
-                    reuse_match.schema.name
+                    matched_schema.name
                 );
                 // Reuse: load schema locally if needed, approve, build mappers
                 let schema_manager = super::get_schema_manager(node).await?;
                 let already_loaded = schema_manager
-                    .get_schema_metadata(&reuse_match.schema.name)
+                    .get_schema_metadata(&matched_schema.name)
                     .map(|opt| opt.is_some())
                     .unwrap_or(false);
                 if !already_loaded {
                     let json_str =
-                        serde_json::to_string(&reuse_match.schema).map_err(super::schema_err)?;
+                        serde_json::to_string(matched_schema).map_err(super::schema_err)?;
                     schema_manager
                         .load_schema_from_json(&json_str)
                         .await
                         .map_err(super::schema_err)?;
                     schema_manager
-                        .approve(&reuse_match.schema.name)
+                        .approve(&matched_schema.name)
                         .await
                         .map_err(super::schema_err)?;
                 }
@@ -459,7 +466,7 @@ impl IngestionService {
                         .iter()
                         .map(|(k, v)| (k.clone(), v.clone())),
                 );
-                (reuse_match.schema.name.clone(), mappers)
+                (matched_schema.name.clone(), mappers)
             } else {
                 // Not a superset — fall through to creation
                 let (name, service_mappers) = self
