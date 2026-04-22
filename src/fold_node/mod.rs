@@ -14,7 +14,6 @@ pub mod llm_query;
 pub mod node;
 mod operation_processor;
 pub mod response_types;
-pub mod wasm_compiler;
 // Re-export the FoldNode struct for easier imports
 pub use crate::server::{start_embedded_server, start_embedded_server_lazy, EmbeddedServerHandle};
 pub use config::load_node_config;
