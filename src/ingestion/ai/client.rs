@@ -306,25 +306,30 @@ impl AnthropicBackend {
 
 // ---- Factory ----
 
+fn try_init<B: AiBackend + 'static>(
+    name: &str,
+    result: IngestionResult<B>,
+) -> (Option<Arc<dyn AiBackend>>, Option<String>) {
+    match result {
+        Ok(b) => (Some(Arc::new(b)), None),
+        Err(e) => {
+            let msg = format!("{} init failed: {}", name, e);
+            log::warn!("{}", msg);
+            (None, Some(msg))
+        }
+    }
+}
+
 /// Build the correct backend from an `IngestionConfig`.
 ///
 /// Returns `Ok(None)` when the configured provider fails validation so that
 /// `IngestionService` can still be constructed and report status.
+///
+/// PR 3 migrates all callers to
+/// [`IngestionConfig::build_backend`](crate::ingestion::config::IngestionConfig::build_backend)
+/// which also wires up per-role metrics. This free function will be deleted
+/// in that PR.
 pub fn build_backend(config: &IngestionConfig) -> (Option<Arc<dyn AiBackend>>, Option<String>) {
-    fn try_init<B: AiBackend + 'static>(
-        name: &str,
-        result: IngestionResult<B>,
-    ) -> (Option<Arc<dyn AiBackend>>, Option<String>) {
-        match result {
-            Ok(b) => (Some(Arc::new(b)), None),
-            Err(e) => {
-                let msg = format!("{} init failed: {}", name, e);
-                log::warn!("{}", msg);
-                (None, Some(msg))
-            }
-        }
-    }
-
     match config.provider {
         AIProvider::Ollama => try_init(
             "Ollama",
@@ -342,6 +347,53 @@ pub fn build_backend(config: &IngestionConfig) -> (Option<Arc<dyn AiBackend>>, O
                 config.max_retries,
             ),
         ),
+    }
+}
+
+/// Build a backend from a fully-resolved model spec. Called by
+/// [`IngestionConfig::build_backend`](crate::ingestion::config::IngestionConfig::build_backend)
+/// after `resolve(role)` produces the `ResolvedModel`. Separated from
+/// the legacy `build_backend(config)` so the legacy function can be removed
+/// in PR 3 without rewriting this one.
+///
+/// Needs `&IngestionConfig` alongside `&ResolvedModel` because Ollama and
+/// Anthropic backends take full provider config structs (including fields
+/// like `OllamaConfig.vision_model` and `OllamaConfig.ocr_model` that aren't
+/// on `ResolvedModel` by design — see eng review Q on base_url scoping).
+pub fn build_backend_from_resolved(
+    resolved: &crate::ingestion::config::ResolvedModel,
+    config: &IngestionConfig,
+) -> (Option<Arc<dyn AiBackend>>, Option<String>) {
+    use crate::ingestion::config::{AnthropicConfig, OllamaConfig};
+    match resolved.provider {
+        AIProvider::Ollama => {
+            // Replace the global ollama.model with the resolved per-role model.
+            // vision_model/ocr_model are preserved from the global config since
+            // they're only consulted by file_to_markdown in the vision/ocr paths
+            // (and those paths read them off IngestionConfig directly today).
+            let ollama = OllamaConfig {
+                model: resolved.model.clone(),
+                base_url: resolved.ollama_base_url.clone(),
+                vision_model: config.ollama.vision_model.clone(),
+                ocr_model: config.ollama.ocr_model.clone(),
+                generation_params: resolved.generation_params.clone(),
+            };
+            try_init(
+                "Ollama",
+                OllamaBackend::new(ollama, resolved.timeout_seconds, resolved.max_retries),
+            )
+        }
+        AIProvider::Anthropic => {
+            let anthropic = AnthropicConfig {
+                api_key: resolved.api_key.clone(),
+                model: resolved.model.clone(),
+                base_url: resolved.anthropic_base_url.clone(),
+            };
+            try_init(
+                "Anthropic",
+                AnthropicBackend::new(anthropic, resolved.timeout_seconds, resolved.max_retries),
+            )
+        }
     }
 }
 

@@ -441,6 +441,39 @@ impl IngestionConfig {
             .map(|o| o.is_set())
             .unwrap_or(false)
     }
+
+    /// Build a live [`AiBackend`](crate::ingestion::ai::client::AiBackend) for
+    /// this role, wrapped in a [`MeteredBackend`](crate::ingestion::ai::metered::MeteredBackend)
+    /// so every call records metrics tagged with `role`.
+    ///
+    /// Returns `(Some(backend), None)` on success, `(None, Some(error))` on
+    /// init failure — same shape as the legacy free-function
+    /// [`crate::ingestion::ai::client::build_backend`] so callers can keep the
+    /// "keep service alive and report status" pattern.
+    ///
+    /// PR 3 migrates every callsite to this method and deletes the free function.
+    pub fn build_backend(
+        &self,
+        role: Role,
+        metrics: std::sync::Arc<crate::ingestion::metrics::AiMetricsStore>,
+    ) -> (
+        Option<std::sync::Arc<dyn crate::ingestion::ai::client::AiBackend>>,
+        Option<String>,
+    ) {
+        use crate::ingestion::ai::client::{build_backend_from_resolved, AiBackend};
+        use crate::ingestion::ai::metered::MeteredBackend;
+        use std::sync::Arc;
+
+        let resolved = self.resolve(role);
+        let (inner, err) = build_backend_from_resolved(&resolved, self);
+        match inner {
+            Some(b) => {
+                let wrapped: Arc<dyn AiBackend> = Arc::new(MeteredBackend::new(b, role, metrics));
+                (Some(wrapped), err)
+            }
+            None => (None, err),
+        }
+    }
 }
 
 impl IngestionConfig {
