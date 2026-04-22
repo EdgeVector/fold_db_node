@@ -669,9 +669,10 @@ export default function MyIdentityCardPanel() {
                 data-testid="my-identity-card-qr-svg"
               />
               <p className="text-[10px] text-gray-600 max-w-[256px] text-center">
-                Scan with your phone's QR reader or another node's
-                Import Card flow. The payload is the signed card
-                JSON — verifiable without a network call.
+                Scan with your phone's QR reader. The payload is the
+                signed card JSON — verifiable without a network call.
+                Peers receive this card through the messaging service;
+                see their Inbound Cards tab.
               </p>
             </div>
           )}
