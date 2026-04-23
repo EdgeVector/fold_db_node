@@ -653,6 +653,20 @@ pub fn build_auth_refresh_callback() -> fold_db::sync::AuthRefreshCallback {
     })
 }
 
+/// Build an `AuthRefreshCallback` iff the given database config has cloud sync
+/// enabled. Centralizes the "cloud sync ? attach : skip" decision so the two
+/// node-creation paths (`FoldNode::new` and `NodeManager::create_node`) can't
+/// drift.
+pub fn auth_refresh_for(
+    database_config: &fold_db::storage::DatabaseConfig,
+) -> Option<fold_db::sync::AuthRefreshCallback> {
+    if database_config.has_cloud_sync() {
+        Some(build_auth_refresh_callback())
+    } else {
+        None
+    }
+}
+
 /// Sign a payload with the node's Ed25519 private key.
 /// Returns the base64-encoded signature.
 pub(crate) fn sign_payload(private_key_b64: &str, payload: &str) -> Result<String, String> {
@@ -760,20 +774,14 @@ pub async fn restore_from_phrase(
     let pre_restore_config = node_manager.get_base_config().await;
     let id_path = identity_path();
 
-    // Write identity to disk ($FOLDDB_HOME/config/node_identity.json)
-    let identity_json = serde_json::json!({
-        "private_key": private_key_b64,
-        "public_key": public_key_b64,
-    });
-
-    crate::sensitive_io::write_sensitive(
-        &id_path,
-        serde_json::to_string_pretty(&identity_json)
-            .unwrap()
-            .as_bytes(),
-    )
-    .map_err(|e| HandlerError::Internal(format!("Failed to write identity: {}", e)))?;
-
+    // Run the full in-memory restore first — update config, register, activate
+    // cloud sync, spawn bootstrap. Only persist the identity file to disk AFTER
+    // register succeeds. Rationale: if the identity file exists before register
+    // succeeds, a crash in the window leaves the node booting with an identity
+    // that Exemem doesn't recognize (silent corruption on the previous rollback
+    // path if `remove_file` itself fails). Write-after-success means a crash
+    // leaves either no file (user re-restores) or a valid file (register
+    // succeeded).
     match finalize_restore(
         node_manager,
         &public_key_b64,
@@ -782,24 +790,45 @@ pub async fn restore_from_phrase(
     )
     .await
     {
-        Ok(response) => Ok(response),
-        Err(e) => {
-            // Rollback: remove the freshly-written identity file and restore
-            // the pre-restore in-memory config so the node doesn't boot with
-            // a half-restored identity on next restart.
-            log::error!(
-                "restore_from_phrase failed, rolling back identity file: {}",
-                e
-            );
-            if let Err(rm_err) = std::fs::remove_file(&id_path) {
-                if rm_err.kind() != std::io::ErrorKind::NotFound {
-                    log::error!(
-                        "restore_from_phrase rollback: failed to delete {:?}: {}",
-                        id_path,
-                        rm_err
-                    );
-                }
+        Ok(response) => {
+            // Register succeeded — persist the identity to disk so the node
+            // rehydrates on next boot.
+            let identity_json = serde_json::json!({
+                "private_key": private_key_b64,
+                "public_key": public_key_b64,
+            });
+
+            if let Err(e) = crate::sensitive_io::write_sensitive(
+                &id_path,
+                serde_json::to_string_pretty(&identity_json)
+                    .unwrap()
+                    .as_bytes(),
+            ) {
+                // Identity-file write failure after a successful register is
+                // bad: the node is usable in-memory but won't come up on
+                // restart. Roll back the in-memory config and surface the
+                // error so the UI can tell the user to retry.
+                log::error!(
+                    "restore_from_phrase: register succeeded but identity write failed: {}",
+                    e
+                );
+                node_manager
+                    .update_config(crate::server::node_manager::NodeManagerConfig {
+                        base_config: pre_restore_config,
+                    })
+                    .await;
+                return Err(HandlerError::Internal(format!(
+                    "Failed to persist restored identity: {}",
+                    e
+                )));
             }
+
+            Ok(response)
+        }
+        Err(e) => {
+            // Rollback: restore the pre-restore in-memory config. No identity
+            // file was written, so there's nothing to delete.
+            log::error!("restore_from_phrase failed, rolling back: {}", e);
             node_manager
                 .update_config(crate::server::node_manager::NodeManagerConfig {
                     base_config: pre_restore_config,
