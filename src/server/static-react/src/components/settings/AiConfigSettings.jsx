@@ -2,6 +2,7 @@ import { useState, useEffect, useRef, useCallback } from 'react'
 import { ingestionClient } from '../../api/clients'
 import { useAppSelector, useAppDispatch } from '../../store/hooks'
 import { selectIngestionConfig, saveIngestionConfig } from '../../store/ingestionSlice'
+import ActiveModelsTable from './ActiveModelsTable'
 
 // Smart model recommendations based on environment
 const isLocalOllama = (url) => {
@@ -242,6 +243,14 @@ function useAiConfig({ configSaveStatus, setConfigSaveStatus, onClose }) {
     saveAiConfig,
     content: (
       <div className="space-y-4">
+        <ActiveModelsTable />
+        <div>
+          <div className="label">Default Text Provider</div>
+          <p className="text-xs text-secondary mt-1">
+            Fallback for text-capable roles that don't have a per-role override above.
+            Vision is controlled by the Vision Backend selector; OCR always runs on Ollama.
+          </p>
+        </div>
         <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
           <div>
             <label className="label">Provider</label>

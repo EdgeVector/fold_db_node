@@ -49,6 +49,74 @@ export interface IngestionConfig {
   ollama: OllamaConfig;
   anthropic: AnthropicConfig;
   vision_backend?: VisionBackend;
+  overrides?: Record<Role, UseCaseOverride>;
+}
+
+/**
+ * The seven named AI use cases inside fold_db_node. See
+ * `fold_db_node/src/ingestion/roles.rs` for canonical order + docs.
+ */
+export type Role =
+  | "IngestionText"
+  | "Vision"
+  | "Ocr"
+  | "SmartFolder"
+  | "DiscoveryInterests"
+  | "MutationAgent"
+  | "QueryChat";
+
+export interface UseCaseOverride {
+  provider?: "Anthropic" | "Ollama";
+  ollama_model?: string;
+  anthropic_model?: string;
+  generation_params?: OllamaGenerationParams;
+}
+
+/** Single row in the Active Models table. Served by GET /api/ingestion/config/roles. */
+export interface RoleInfo {
+  role: Role;
+  display_name: string;
+  doc: string;
+  is_text_capable: boolean;
+  provider: "Anthropic" | "Ollama";
+  model: string;
+  override_active: boolean;
+  /** "ok" | "missing_api_key" | "ollama_not_configured" */
+  status: string;
+  generation_params: OllamaGenerationParams;
+}
+
+export interface RolesResponse {
+  roles: RoleInfo[];
+}
+
+export interface TestRoleRequest {
+  role: Role;
+  prompt: string;
+}
+
+export interface TestRoleResponse {
+  role: Role;
+  provider: "Anthropic" | "Ollama";
+  model: string;
+  latency_ms: number;
+  response?: string;
+  error?: string;
+}
+
+export interface RoleMetricsSnapshot {
+  role: Role;
+  call_count: number;
+  avg_latency_ms: number;
+  error_count: number;
+  /** Seconds since the last call, or null if the role was never called. */
+  last_called_elapsed_s: number | null;
+}
+
+export interface StatsResponse {
+  stats: RoleMetricsSnapshot[];
+  /** "since_process_start" — counters reset on node restart. */
+  window: string;
 }
 
 export interface ValidationRequest {
@@ -274,6 +342,50 @@ export class UnifiedIngestionClient {
         cacheable: false, // Never cache config operations
       },
     );
+  }
+
+  /**
+   * List every AI role with its resolved provider + model + override
+   * status. Always returns 7 rows in canonical order. Drives the Active
+   * Models table at the top of the AI Config panel.
+   */
+  async getRoles(): Promise<EnhancedApiResponse<RolesResponse>> {
+    return this.client.get<RolesResponse>("/ingestion/config/roles", {
+      timeout: API_TIMEOUTS.QUICK,
+      retries: API_RETRIES.STANDARD,
+      cacheable: false,
+    });
+  }
+
+  /**
+   * Fire a single test prompt for a role and return the model's response.
+   * Text-capable roles only — Vision/OCR reject with 400.
+   */
+  async testRole(
+    role: Role,
+    prompt: string,
+  ): Promise<EnhancedApiResponse<TestRoleResponse>> {
+    return this.client.post<TestRoleResponse>(
+      "/ingestion/config/test-role",
+      { role, prompt },
+      {
+        timeout: API_TIMEOUTS.AI_PROCESSING,
+        retries: API_RETRIES.NONE,
+        cacheable: false,
+      },
+    );
+  }
+
+  /**
+   * Per-role AI call metrics since the process started. Always returns 7
+   * rows — zero counts for roles that haven't been called.
+   */
+  async getAiStats(): Promise<EnhancedApiResponse<StatsResponse>> {
+    return this.client.get<StatsResponse>("/ingestion/stats", {
+      timeout: API_TIMEOUTS.QUICK,
+      retries: API_RETRIES.STANDARD,
+      cacheable: false,
+    });
   }
 
   /** Validate JSON data structure for ingestion */

@@ -3,6 +3,7 @@
 //! All actix-web glue for ingestion lives here. The pure pipeline logic is
 //! parameterized and lives in `crate::ingestion`.
 
+use crate::ingestion::config::{AIProvider, OllamaGenerationParams};
 use crate::ingestion::helpers::{
     fetch_ollama_models, resolve_folder_path, spawn_file_ingestion_tasks, start_file_progress,
     validate_folder, BatchFolderResponse, FolderValidationError, OllamaModelInfo,
@@ -12,6 +13,7 @@ use crate::ingestion::progress::ProgressService;
 use crate::ingestion::service_state::{get_ingestion_service, IngestionServiceState};
 use crate::ingestion::IngestionRequest;
 use crate::ingestion::ProgressTracker;
+use crate::ingestion::{AiMetricsStore, Role, RoleMetricsSnapshot};
 use crate::server::http_server::AppState;
 use crate::server::routes::{handler_error_to_response, require_node, require_user_context};
 use actix_web::{web, HttpResponse, Responder};
@@ -20,6 +22,7 @@ use fold_db::logging::features::LogFeature;
 use serde::{Deserialize, Serialize};
 use serde_json::json;
 use std::sync::Arc;
+use std::time::Instant;
 
 use crate::ingestion::batch_controller::{BatchControllerMap, BatchStatus, BatchStatusResponse};
 
@@ -248,6 +251,203 @@ pub async fn save_ingestion_config(
         })),
     }
 }
+
+// ── AI Role Registry (PR 4 additions) ──────────────────────────────
+
+/// Resolved info for a single AI role, shown in the Active Models UI table.
+#[derive(Debug, Clone, Serialize, Deserialize, utoipa::ToSchema)]
+pub struct RoleInfo {
+    pub role: Role,
+    pub display_name: String,
+    pub doc: String,
+    pub is_text_capable: bool,
+    pub provider: AIProvider,
+    pub model: String,
+    pub override_active: bool,
+    /// `"ok"` if the role can be called today, otherwise a short machine-
+    /// readable status (`"missing_api_key"`, `"ollama_not_configured"`). The
+    /// UI renders a red badge on non-ok rows.
+    pub status: String,
+    pub generation_params: OllamaGenerationParams,
+}
+
+/// Response body for `/api/ingestion/config/roles`. Always returns 7 rows in
+/// `Role::ALL` order so the UI never has to handle an empty case.
+#[derive(Debug, Serialize, Deserialize, utoipa::ToSchema)]
+pub struct RolesResponse {
+    pub roles: Vec<RoleInfo>,
+}
+
+/// Request body for `/api/ingestion/config/test-role`. User-supplied prompt —
+/// no curated defaults on the server (avoids a prompt-asset-maintenance
+/// tax that would grow with every new role).
+#[derive(Debug, Deserialize, utoipa::ToSchema)]
+pub struct TestRoleRequest {
+    pub role: Role,
+    pub prompt: String,
+}
+
+/// Response body for `/api/ingestion/config/test-role`.
+#[derive(Debug, Serialize, utoipa::ToSchema)]
+pub struct TestRoleResponse {
+    pub role: Role,
+    pub provider: AIProvider,
+    pub model: String,
+    pub latency_ms: f64,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub response: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub error: Option<String>,
+}
+
+/// Response body for `/api/ingestion/stats`.
+#[derive(Debug, Serialize, utoipa::ToSchema)]
+pub struct StatsResponse {
+    pub stats: Vec<RoleMetricsSnapshot>,
+    /// `"since_process_start"` — counters reset on node restart. Documented
+    /// so the UI can show an appropriate caveat in the badge text.
+    pub window: String,
+}
+
+/// Build a `RoleInfo` row from the config. Does not fire any LLM calls; pure
+/// data resolution.
+fn role_info_from_config(config: &crate::ingestion::IngestionConfig, role: Role) -> RoleInfo {
+    let resolved = config.resolve(role);
+    let status = match resolved.provider {
+        AIProvider::Anthropic => {
+            if resolved.api_key.is_empty() {
+                "missing_api_key".to_string()
+            } else {
+                "ok".to_string()
+            }
+        }
+        AIProvider::Ollama => {
+            if resolved.ollama_base_url.is_empty() {
+                "ollama_not_configured".to_string()
+            } else {
+                "ok".to_string()
+            }
+        }
+    };
+    RoleInfo {
+        role,
+        display_name: role.display_name().to_string(),
+        doc: role.doc().to_string(),
+        is_text_capable: role.is_text_capable(),
+        provider: resolved.provider,
+        model: resolved.model,
+        override_active: config.is_override_active(role),
+        status,
+        generation_params: resolved.generation_params,
+    }
+}
+
+/// List every AI Role with its resolved provider + model + override status.
+/// Always returns 7 rows in `Role::ALL` order.
+#[utoipa::path(
+    get,
+    path = "/api/ingestion/config/roles",
+    tag = "ingestion",
+    responses((status = 200, description = "Active models per role", body = RolesResponse))
+)]
+pub async fn get_roles() -> impl Responder {
+    let config = crate::ingestion::config::IngestionConfig::load_or_default();
+    let roles: Vec<RoleInfo> = Role::ALL
+        .iter()
+        .map(|r| role_info_from_config(&config, *r))
+        .collect();
+    HttpResponse::Ok().json(RolesResponse { roles })
+}
+
+/// Fire a single LLM test call with a user-supplied prompt against a
+/// specific role. Vision/OCR return 400 — they need image bytes, not a
+/// text prompt. Records metrics against the global store like any other
+/// call.
+#[utoipa::path(
+    post,
+    path = "/api/ingestion/config/test-role",
+    tag = "ingestion",
+    request_body = TestRoleRequest,
+    responses(
+        (status = 200, description = "LLM response + model info", body = TestRoleResponse),
+        (status = 400, description = "Vision/OCR role requested, or empty prompt"),
+        (status = 500, description = "Backend init or call failed"),
+    )
+)]
+pub async fn test_role(request: web::Json<TestRoleRequest>) -> impl Responder {
+    let req = request.into_inner();
+    if req.prompt.trim().is_empty() {
+        return HttpResponse::BadRequest().json(json!({
+            "success": false,
+            "error": "prompt is required",
+        }));
+    }
+    if !req.role.is_text_capable() {
+        return HttpResponse::BadRequest().json(json!({
+            "success": false,
+            "error": format!(
+                "Role::{:?} requires an image upload — not supported in the text test endpoint",
+                req.role
+            ),
+        }));
+    }
+    let config = crate::ingestion::config::IngestionConfig::load_or_default();
+    let resolved = config.resolve(req.role);
+    let (backend, err) = config.build_backend(req.role);
+    let backend = match backend {
+        Some(b) => b,
+        None => {
+            return HttpResponse::InternalServerError().json(TestRoleResponse {
+                role: req.role,
+                provider: resolved.provider,
+                model: resolved.model,
+                latency_ms: 0.0,
+                response: None,
+                error: Some(err.unwrap_or_else(|| "backend init failed".to_string())),
+            });
+        }
+    };
+    let start = Instant::now();
+    let call = backend.call(&req.prompt).await;
+    let latency_ms = start.elapsed().as_secs_f64() * 1000.0;
+    match call {
+        Ok(response) => HttpResponse::Ok().json(TestRoleResponse {
+            role: req.role,
+            provider: resolved.provider,
+            model: resolved.model,
+            latency_ms,
+            response: Some(response),
+            error: None,
+        }),
+        Err(e) => HttpResponse::InternalServerError().json(TestRoleResponse {
+            role: req.role,
+            provider: resolved.provider,
+            model: resolved.model,
+            latency_ms,
+            response: None,
+            error: Some(e.to_string()),
+        }),
+    }
+}
+
+/// Return per-role AI call metrics (call counts, average latency, error
+/// counts). Always returns 7 rows — zero-counts for roles that haven't been
+/// called since the process started.
+#[utoipa::path(
+    get,
+    path = "/api/ingestion/stats",
+    tag = "ingestion",
+    responses((status = 200, description = "Per-role AI stats", body = StatsResponse))
+)]
+pub async fn get_ai_stats() -> impl Responder {
+    let stats = AiMetricsStore::global().snapshot_all();
+    HttpResponse::Ok().json(StatsResponse {
+        stats,
+        window: "since_process_start".to_string(),
+    })
+}
+
+// ── end AI Role Registry ───────────────────────────────────────────
 
 /// Get ingestion progress by ID
 #[utoipa::path(

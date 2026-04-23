@@ -536,6 +536,18 @@ impl FoldHttpServer {
             web::post().to(ingestion_routes::save_ingestion_config),
         )
         .route(
+            "/ingestion/config/roles",
+            web::get().to(ingestion_routes::get_roles),
+        )
+        .route(
+            "/ingestion/config/test-role",
+            web::post().to(ingestion_routes::test_role),
+        )
+        .route(
+            "/ingestion/stats",
+            web::get().to(ingestion_routes::get_ai_stats),
+        )
+        .route(
             "/ingestion/progress",
             web::get().to(ingestion_routes::get_all_progress),
         )
