@@ -403,7 +403,7 @@ async fn load_view_passes_canonical_triggers_through_unchanged() {
         Trigger::Scheduled {
             cron: "*/5 * * * *".to_string(),
             timezone: "UTC".to_string(),
-            max_catch_up_age: None,
+            window: None,
             skip_if_idle: false,
             schemas: vec!["TriggerSource".to_string()],
         },
