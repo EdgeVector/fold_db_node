@@ -186,10 +186,112 @@ jobs:
             security delete-keychain "$KEYCHAIN_PATH"
           fi
 
+  # Smoke-test the signed+notarized DMG actually launches and reports the right version.
+  # Catches binary drift, bundle-version drift, and broken builds before they reach users.
+  dmg-smoke:
+    needs: build-macos
+    runs-on: macos-14
+    timeout-minutes: 10
+    steps:
+      - name: Download DMG artifact
+        uses: actions/download-artifact@v4
+        with:
+          pattern: FoldDB_*_aarch64.dmg
+          path: ${{ runner.temp }}/dmg
+          merge-multiple: true
+
+      - name: Resolve DMG and expected version
+        id: find
+        run: |
+          DMG=$(ls "$RUNNER_TEMP/dmg"/*.dmg | head -1)
+          if [[ -z "$DMG" ]]; then
+            echo "::error::No DMG artifact found"
+            exit 1
+          fi
+          # Filename is FoldDB_<version>_aarch64.dmg
+          FILENAME=$(basename "$DMG")
+          VERSION="${FILENAME#FoldDB_}"
+          VERSION="${VERSION%_aarch64.dmg}"
+          echo "dmg=$DMG" >> "$GITHUB_OUTPUT"
+          echo "expected_version=$VERSION" >> "$GITHUB_OUTPUT"
+          echo "Testing DMG: $DMG (expected version: $VERSION)"
+
+      - name: Mount DMG
+        id: mount
+        run: |
+          MOUNT_POINT=$(hdiutil attach "${{ steps.find.outputs.dmg }}" -nobrowse -readonly | tail -1 | awk '{print $NF}')
+          echo "mount_point=$MOUNT_POINT" >> "$GITHUB_OUTPUT"
+          echo "Mounted at: $MOUNT_POINT"
+          ls -la "$MOUNT_POINT"
+
+      - name: Copy .app and verify Info.plist version
+        run: |
+          cp -R "${{ steps.mount.outputs.mount_point }}/FoldDB.app" "$RUNNER_TEMP/FoldDB.app"
+          INFO="$RUNNER_TEMP/FoldDB.app/Contents/Info.plist"
+          BUNDLE_VERSION=$(plutil -extract CFBundleShortVersionString raw "$INFO")
+          EXPECTED="${{ steps.find.outputs.expected_version }}"
+          echo "Info.plist CFBundleShortVersionString: $BUNDLE_VERSION"
+          echo "Expected:                              $EXPECTED"
+          if [[ "$BUNDLE_VERSION" != "$EXPECTED" ]]; then
+            echo "::error::Bundle version drift — Info.plist says $BUNDLE_VERSION but artifact is $EXPECTED"
+            exit 1
+          fi
+
+      - name: Launch app and probe /api/health
+        env:
+          EXPECTED_VERSION: ${{ steps.find.outputs.expected_version }}
+        run: |
+          BIN="$RUNNER_TEMP/FoldDB.app/Contents/MacOS/FoldDB"
+          "$BIN" > "$RUNNER_TEMP/app.log" 2>&1 &
+          APP_PID=$!
+          echo "APP_PID=$APP_PID" >> "$GITHUB_ENV"
+          echo "Launched $BIN (pid $APP_PID)"
+
+          # Wait up to 45s for /api/health to come up
+          for i in $(seq 1 45); do
+            if curl -sSf http://localhost:9001/api/health >/dev/null 2>&1; then
+              echo "Health endpoint up after ${i}s"
+              break
+            fi
+            if ! kill -0 "$APP_PID" 2>/dev/null; then
+              echo "::error::App process exited before /api/health came up"
+              cat "$RUNNER_TEMP/app.log"
+              exit 1
+            fi
+            sleep 1
+          done
+
+          HEALTH=$(curl -sSf http://localhost:9001/api/health)
+          echo "Health response: $HEALTH"
+          ACTUAL=$(echo "$HEALTH" | jq -r '.version')
+
+          if [[ "$ACTUAL" != "$EXPECTED_VERSION" ]]; then
+            echo "::error::Binary version drift — /api/health says '$ACTUAL' but DMG is '$EXPECTED_VERSION'"
+            echo "=== app.log ==="
+            cat "$RUNNER_TEMP/app.log"
+            exit 1
+          fi
+
+          echo "DMG smoke passed: binary version $ACTUAL matches artifact $EXPECTED_VERSION"
+
+      - name: Dump app log on failure
+        if: failure()
+        run: cat "$RUNNER_TEMP/app.log" || true
+
+      - name: Teardown
+        if: always()
+        run: |
+          if [[ -n "$APP_PID" ]]; then
+            kill "$APP_PID" 2>/dev/null || true
+          fi
+          if [[ -n "${{ steps.mount.outputs.mount_point }}" ]]; then
+            hdiutil detach "${{ steps.mount.outputs.mount_point }}" -force || true
+          fi
+
   # Attach DMGs to the GitHub Release (only on tag push)
   release:
     if: startsWith(github.ref, 'refs/tags/v')
-    needs: build-macos
+    needs: [build-macos, dmg-smoke]
     runs-on: ubuntu-latest
     steps:
       - name: Download all artifacts
