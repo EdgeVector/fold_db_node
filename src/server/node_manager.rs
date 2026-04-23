@@ -293,8 +293,18 @@ impl NodeManager {
     /// If the storage path changed, the cached pool is dropped too so the new
     /// path gets its own pool. Otherwise the pool survives for the reason in
     /// [`Self::invalidate_all_nodes`].
+    ///
+    /// The `shared_node` write lock is held across the config update and the
+    /// invalidation so no concurrent `get_node` fast-path can observe the new
+    /// config while still returning a node that was built from the old config.
+    /// Any reader blocks until both updates are visible together.
     pub async fn update_config(&self, new_config: NodeManagerConfig) {
         let new_path = new_config.base_config.database.path.clone();
+
+        // Acquire the node slot first so fast-path readers block until config
+        // AND the cached node are updated atomically together.
+        let mut shared = self.shared_node.write().await;
+
         {
             let mut config = self.config.write().await;
             *config = new_config;
@@ -309,7 +319,7 @@ impl NodeManager {
             }
         }
 
-        self.invalidate_all_nodes().await;
+        *shared = None;
     }
 
     /// Get the cached SledPool for `path`, creating and storing a new one if
