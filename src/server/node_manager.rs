@@ -158,11 +158,7 @@ impl NodeManager {
 
         // Build auth-refresh callback for Exemem mode so the sync engine can
         // automatically recover from expired tokens (401) by re-registering.
-        let auth_refresh = if node_config.database.has_cloud_sync() {
-            Some(crate::server::routes::auth::build_auth_refresh_callback())
-        } else {
-            None
-        };
+        let auth_refresh = crate::handlers::auth::auth_refresh_for(&node_config.database);
 
         // Reuse the cached SledPool if one exists for the same path. This is
         // what prevents a WouldBlock race when a node is recreated at the same

@@ -289,11 +289,7 @@ impl FoldNode {
 
         // Build auth-refresh callback for Exemem mode so the sync engine can
         // automatically recover from expired tokens (401) by re-registering.
-        let auth_refresh = if config.database.has_cloud_sync() {
-            Some(crate::server::routes::auth::build_auth_refresh_callback())
-        } else {
-            None
-        };
+        let auth_refresh = crate::handlers::auth::auth_refresh_for(&config.database);
 
         let db = fold_db::fold_db_core::factory::create_fold_db_with_auth_refresh(
             &config.database,
