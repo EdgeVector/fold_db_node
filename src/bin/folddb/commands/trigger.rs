@@ -93,6 +93,7 @@ pub async fn log(
             "input_row_count",
             "output_row_count",
             "error_message",
+            "skip_reason",
         ],
         "sort_order": "desc",
         "value_filters": [
@@ -153,13 +154,28 @@ fn render_table(rows: &[Value]) -> String {
         table.add_row(vec![
             Cell::new(format_fired_at(row)),
             Cell::new(field_int_str(row, "duration_ms")),
-            Cell::new(field_str(row, "status").unwrap_or_default()),
+            Cell::new(format_status(row)),
             Cell::new(field_int_str(row, "input_row_count")),
             Cell::new(field_int_str(row, "output_row_count")),
             Cell::new(field_str(row, "error_message").unwrap_or_default()),
         ]);
     }
     table.to_string()
+}
+
+/// Render the status cell. For `skipped` rows, append the `skip_reason`
+/// so operators can filter `folddb trigger log | grep skipped:catch_up_budget`
+/// without pulling `--json`. Non-skip statuses render bare.
+fn format_status(row: &Value) -> String {
+    let status = field_str(row, "status").unwrap_or_default();
+    if status == "skipped" {
+        match field_str(row, "skip_reason") {
+            Some(reason) if !reason.is_empty() => format!("skipped:{}", reason),
+            _ => status,
+        }
+    } else {
+        status
+    }
 }
 
 fn field_value<'a>(row: &'a Value, name: &str) -> Option<&'a Value> {
@@ -331,6 +347,29 @@ mod tests {
         output_rows: i64,
         error: Option<&str>,
     ) -> Value {
+        firing_row_with_skip(
+            view,
+            fired_at_ms,
+            duration_ms,
+            status,
+            input_rows,
+            output_rows,
+            error,
+            None,
+        )
+    }
+
+    #[allow(clippy::too_many_arguments)] // mirrors schema shape for test clarity
+    fn firing_row_with_skip(
+        view: &str,
+        fired_at_ms: i64,
+        duration_ms: i64,
+        status: &str,
+        input_rows: i64,
+        output_rows: i64,
+        error: Option<&str>,
+        skip_reason: Option<&str>,
+    ) -> Value {
         json!({
             "key": { "hash": "trig:x", "range": fired_at_ms.to_string() },
             "fields": {
@@ -345,19 +384,52 @@ mod tests {
                     Some(s) => json!(s),
                     None => Value::Null,
                 },
+                "skip_reason": match skip_reason {
+                    Some(s) => json!(s),
+                    None => Value::Null,
+                },
             }
         })
     }
 
+    #[test]
+    fn format_status_renders_skipped_with_reason() {
+        let skipped = firing_row_with_skip(
+            "v",
+            1_700_000_000_000,
+            0,
+            "skipped",
+            0,
+            0,
+            None,
+            Some("catch_up_budget"),
+        );
+        assert_eq!(format_status(&skipped), "skipped:catch_up_budget");
+
+        // skip_reason missing on a non-skip row (server didn't send it):
+        // render the bare status.
+        let success = firing_row("v", 1, 42, "success", 1, 1, None);
+        assert_eq!(format_status(&success), "success");
+
+        // A "skipped" row with null / missing skip_reason falls back to the
+        // bare status rather than rendering "skipped:" with a trailing colon.
+        let skipped_no_reason = firing_row("v", 1, 0, "skipped", 0, 0, None);
+        assert_eq!(format_status(&skipped_no_reason), "skipped");
+    }
+
     /// Full-stdout snapshot for the rendered `trigger log` table. Pins column
     /// headers, column order, row order, and per-cell formatting for a known
-    /// fixture of three firings. `fired_at` is formatted via local time, so
-    /// its cells are computed through `format_fired_at` rather than hardcoded
-    /// — the rest of the table is hardcoded verbatim.
+    /// fixture of four firings (success, error, skipped, success). `fired_at`
+    /// is formatted via local time, so its cells are computed through
+    /// `format_fired_at` rather than hardcoded — the rest of the table is
+    /// hardcoded verbatim.
     #[test]
     fn render_table_full_output_snapshot() {
-        // Three firings, newest-first (matches the server's range-key desc
-        // ordering that `filter_rows_for_view` preserves).
+        // Four firings, newest-first (matches the server's range-key desc
+        // ordering that `filter_rows_for_view` preserves). The skipped row
+        // carries skip_reason=catch_up_budget so the status cell renders as
+        // `skipped:catch_up_budget` (wider than plain status values — this
+        // drives the status column width in the snapshot).
         let rows = vec![
             firing_row("target", 1_700_172_800_000, 120, "success", 10, 5, None),
             firing_row(
@@ -369,24 +441,37 @@ mod tests {
                 0,
                 Some("transform timeout"),
             ),
+            firing_row_with_skip(
+                "target",
+                1_700_043_200_000,
+                0,
+                "skipped",
+                0,
+                0,
+                None,
+                Some("catch_up_budget"),
+            ),
             firing_row("target", 1_700_000_000_000, 42, "success", 1, 1, None),
         ];
 
         let t0 = format_fired_at(&rows[0]);
         let t1 = format_fired_at(&rows[1]);
         let t2 = format_fired_at(&rows[2]);
+        let t3 = format_fired_at(&rows[3]);
 
         let expected = format!(
             "\
-┌─────────────────────┬─────────────┬─────────┬────────────┬─────────────┬───────────────────┐
-│ fired_at            ┆ duration_ms ┆ status  ┆ input_rows ┆ output_rows ┆ error             │
-╞═════════════════════╪═════════════╪═════════╪════════════╪═════════════╪═══════════════════╡
-│ {t0} ┆ 120         ┆ success ┆ 10         ┆ 5           ┆                   │
-├╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌┼╌╌╌╌╌╌╌╌╌╌╌╌╌┼╌╌╌╌╌╌╌╌╌┼╌╌╌╌╌╌╌╌╌╌╌╌┼╌╌╌╌╌╌╌╌╌╌╌╌╌┼╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌┤
-│ {t1} ┆ 2500        ┆ error   ┆ 7          ┆ 0           ┆ transform timeout │
-├╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌┼╌╌╌╌╌╌╌╌╌╌╌╌╌┼╌╌╌╌╌╌╌╌╌┼╌╌╌╌╌╌╌╌╌╌╌╌┼╌╌╌╌╌╌╌╌╌╌╌╌╌┼╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌┤
-│ {t2} ┆ 42          ┆ success ┆ 1          ┆ 1           ┆                   │
-└─────────────────────┴─────────────┴─────────┴────────────┴─────────────┴───────────────────┘",
+┌─────────────────────┬─────────────┬─────────────────────────┬────────────┬─────────────┬───────────────────┐
+│ fired_at            ┆ duration_ms ┆ status                  ┆ input_rows ┆ output_rows ┆ error             │
+╞═════════════════════╪═════════════╪═════════════════════════╪════════════╪═════════════╪═══════════════════╡
+│ {t0} ┆ 120         ┆ success                 ┆ 10         ┆ 5           ┆                   │
+├╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌┼╌╌╌╌╌╌╌╌╌╌╌╌╌┼╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌┼╌╌╌╌╌╌╌╌╌╌╌╌┼╌╌╌╌╌╌╌╌╌╌╌╌╌┼╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌┤
+│ {t1} ┆ 2500        ┆ error                   ┆ 7          ┆ 0           ┆ transform timeout │
+├╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌┼╌╌╌╌╌╌╌╌╌╌╌╌╌┼╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌┼╌╌╌╌╌╌╌╌╌╌╌╌┼╌╌╌╌╌╌╌╌╌╌╌╌╌┼╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌┤
+│ {t2} ┆ 0           ┆ skipped:catch_up_budget ┆ 0          ┆ 0           ┆                   │
+├╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌┼╌╌╌╌╌╌╌╌╌╌╌╌╌┼╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌┼╌╌╌╌╌╌╌╌╌╌╌╌┼╌╌╌╌╌╌╌╌╌╌╌╌╌┼╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌╌┤
+│ {t3} ┆ 42          ┆ success                 ┆ 1          ┆ 1           ┆                   │
+└─────────────────────┴─────────────┴─────────────────────────┴────────────┴─────────────┴───────────────────┘",
         );
 
         assert_eq!(render_table(&rows), expected);
