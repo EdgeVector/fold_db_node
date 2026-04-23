@@ -134,16 +134,14 @@ pub async fn register_with_exemem(
     ) {
         let api_url = exemem_api_url();
 
-        if let Err(e) = enable_cloud_sync_in_config(
+        enable_cloud_sync_in_config(
             node_manager,
             api_url.clone(),
             api_key.to_string(),
             user_hash.to_string(),
         )
         .await
-        {
-            log::error!("Failed to activate cloud sync after register: {}", e);
-        }
+        .map_err(|e| format!("Failed to activate cloud sync after register: {}", e))?;
 
         if let Some(sled_pool) = sled_pool {
             let api_url_for_bootstrap = api_url;
@@ -857,16 +855,14 @@ async fn finalize_restore(
     ) {
         let api_url = exemem_api_url();
 
-        if let Err(e) = enable_cloud_sync_in_config(
+        enable_cloud_sync_in_config(
             node_manager,
             api_url.clone(),
             api_key.to_string(),
             user_hash.to_string(),
         )
         .await
-        {
-            log::error!("Failed to activate cloud sync after restore: {}", e);
-        }
+        .map_err(|e| format!("Failed to activate cloud sync after restore: {}", e))?;
 
         let api_key = api_key.to_string();
         let node_manager = node_manager.clone();
