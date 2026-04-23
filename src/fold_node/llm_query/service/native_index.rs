@@ -510,6 +510,15 @@ impl LlmQueryService {
                 // and validation live in schema_service (see
                 // `preferences/fold_db_vs_fold_db_node_boundary` and
                 // `projects/trigger-feature` Phase 2c).
+                //
+                // As of the Transform Worker Split (schema_service PRs #28 /
+                // #30), the deployed Lambda may enqueue a `cargo build` to an
+                // out-of-process worker and return 202 + `job_id`. The SDK's
+                // `register_transform` wrapper hides that behind a
+                // sync-looking call: it polls until the worker commits, then
+                // returns the final `TransformRecord`. Dev/local schema
+                // services still serve the synchronous path unchanged — both
+                // routes land in the same wrapper.
                 let schema_service_url = node.schema_service_url().ok_or(
                     "create_view requires a configured schema_service_url — start the node with --local-schema or point at a real schema service",
                 )?;
@@ -518,16 +527,15 @@ impl LlmQueryService {
                         "create_view cannot run against a test/mock schema service — it needs a real service to compile the rust_transform".to_string(),
                     );
                 }
-                let base = schema_service_url.trim_end_matches('/');
 
                 // 1 billion wasmtime fuel units — roughly hundreds of ms of
                 // guest work on a modern CPU, enough for the row-at-a-time
-                // transforms the LLM emits today. Tracked in TODO-T5: once
-                // the create_view tool schema exposes a `max_gas` parameter,
-                // let the LLM pick per-transform; this constant is the
-                // fallback until then. Required by schema_service since
-                // MDT-E (PR #25, 2026-04-22) and enforced on every device
-                // per the WasmTransformSpec contract in fold_db.
+                // transforms the LLM emits today. Follow-up: expose a
+                // `max_gas` parameter on the create_view tool so the LLM can
+                // override per-transform; this constant is the fallback.
+                // Required by schema_service since MDT-E (PR #25,
+                // 2026-04-22) and enforced on every device per the
+                // WasmTransformSpec contract in fold_db.
                 const CREATE_VIEW_DEFAULT_MAX_GAS: u64 = 1_000_000_000;
 
                 let register_req = schema_service_core::types::RegisterTransformRequest {
@@ -544,31 +552,28 @@ impl LlmQueryService {
                 log::info!(
                     "create_view: submitting rust_transform for view '{}' to schema service at {}",
                     name,
-                    base
+                    &schema_service_url
                 );
-                let http = reqwest::Client::new();
-                let register_resp = http
-                    .post(format!("{}/v1/transforms", base))
-                    .json(&register_req)
-                    .send()
+                let schema_client =
+                    schema_service_client::SchemaServiceClient::new(&schema_service_url);
+                let record = schema_client
+                    .register_transform(&register_req)
                     .await
-                    .map_err(|e| format!("Failed to POST /v1/transforms: {}", e))?;
+                    .map_err(|e| {
+                        format!(
+                            "Schema service rejected transform registration for '{}': {}",
+                            name, e
+                        )
+                    })?;
+                let hash = record.hash.clone();
 
-                if !register_resp.status().is_success() {
-                    let status = register_resp.status();
-                    let body = register_resp.text().await.unwrap_or_default();
-                    return Err(format!(
-                        "Schema service rejected transform registration ({}): {}",
-                        status, body
-                    ));
-                }
-                let register_body: schema_service_core::types::RegisterTransformResponse =
-                    register_resp
-                        .json()
-                        .await
-                        .map_err(|e| format!("Invalid register_transform response: {}", e))?;
-                let hash = register_body.hash;
-
+                // `register_transform` returns metadata only; the actual WASM
+                // blob lives under a separate endpoint (content-addressed so
+                // multiple view definitions can share the same bytes).
+                // `schema_service_client` doesn't wrap this yet — a raw GET
+                // is adequate since the base URL is already validated.
+                let base = schema_service_url.trim_end_matches('/');
+                let http = reqwest::Client::new();
                 let wasm_resp = http
                     .get(format!("{}/v1/transform/{}/wasm", base, hash))
                     .send()

@@ -4570,9 +4570,10 @@ dependencies = [
 [[package]]
 name = "schema_service_client"
 version = "0.1.0"
-source = "git+https://github.com/EdgeVector/schema_service.git?branch=main#fbb71f6bdb50ed9c31c94e61188a86798b5559fb"
+source = "git+https://github.com/EdgeVector/schema_service.git?branch=main#07b3d1a0a8df09ca2ca945aced4369e6fd42479f"
 dependencies = [
  "fold_db",
+ "futures",
  "log",
  "reqwest 0.11.27",
  "schema_service_core",
@@ -4584,7 +4585,7 @@ dependencies = [
 [[package]]
 name = "schema_service_core"
 version = "0.1.0"
-source = "git+https://github.com/EdgeVector/schema_service.git?branch=main#fbb71f6bdb50ed9c31c94e61188a86798b5559fb"
+source = "git+https://github.com/EdgeVector/schema_service.git?branch=main#07b3d1a0a8df09ca2ca945aced4369e6fd42479f"
 dependencies = [
  "async-trait",
  "chrono-tz",
@@ -4605,7 +4606,7 @@ dependencies = [
 [[package]]
 name = "schema_service_server_http"
 version = "0.1.0"
-source = "git+https://github.com/EdgeVector/schema_service.git?branch=main#fbb71f6bdb50ed9c31c94e61188a86798b5559fb"
+source = "git+https://github.com/EdgeVector/schema_service.git?branch=main#07b3d1a0a8df09ca2ca945aced4369e6fd42479f"
 dependencies = [
  "actix-cors",
  "actix-web",
@@ -4621,7 +4622,7 @@ dependencies = [
 [[package]]
 name = "schema_service_server_shared"
 version = "0.1.0"
-source = "git+https://github.com/EdgeVector/schema_service.git?branch=main#fbb71f6bdb50ed9c31c94e61188a86798b5559fb"
+source = "git+https://github.com/EdgeVector/schema_service.git?branch=main#07b3d1a0a8df09ca2ca945aced4369e6fd42479f"
 dependencies = [
  "actix-web",
  "chrono",
@@ -6049,7 +6050,7 @@ dependencies = [
 [[package]]
 name = "wasm_compiler"
 version = "0.1.0"
-source = "git+https://github.com/EdgeVector/schema_service.git?branch=main#fbb71f6bdb50ed9c31c94e61188a86798b5559fb"
+source = "git+https://github.com/EdgeVector/schema_service.git?branch=main#07b3d1a0a8df09ca2ca945aced4369e6fd42479f"
 dependencies = [
  "log",
  "tempfile",
