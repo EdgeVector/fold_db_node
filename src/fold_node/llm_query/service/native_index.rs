@@ -520,6 +520,16 @@ impl LlmQueryService {
                 }
                 let base = schema_service_url.trim_end_matches('/');
 
+                // 1 billion wasmtime fuel units — roughly hundreds of ms of
+                // guest work on a modern CPU, enough for the row-at-a-time
+                // transforms the LLM emits today. Tracked in TODO-T5: once
+                // the create_view tool schema exposes a `max_gas` parameter,
+                // let the LLM pick per-transform; this constant is the
+                // fallback until then. Required by schema_service since
+                // MDT-E (PR #25, 2026-04-22) and enforced on every device
+                // per the WasmTransformSpec contract in fold_db.
+                const CREATE_VIEW_DEFAULT_MAX_GAS: u64 = 1_000_000_000;
+
                 let register_req = schema_service_core::types::RegisterTransformRequest {
                     name: name.to_string(),
                     version: "1.0.0".to_string(),
@@ -528,6 +538,7 @@ impl LlmQueryService {
                     output_fields: output_fields.clone(),
                     source_url: None,
                     rust_source: rust_transform.to_string(),
+                    max_gas: CREATE_VIEW_DEFAULT_MAX_GAS,
                 };
 
                 log::info!(
@@ -584,12 +595,23 @@ impl LlmQueryService {
                     hash
                 );
 
+                // MDT-E: TransformView now carries WasmTransformSpec (bytes +
+                // per-invocation fuel ceiling) instead of raw bytes. Pair the
+                // compiled bytes with the same max_gas the schema service just
+                // validated. gas_model is left as None — the fit harness runs
+                // on the service side and its output is carried via the
+                // transform registry record, not re-derived here.
+                let wasm_transform_spec = fold_db::view::types::WasmTransformSpec {
+                    bytes: wasm_bytes,
+                    max_gas: CREATE_VIEW_DEFAULT_MAX_GAS,
+                    gas_model: None,
+                };
                 let view = TransformView::new(
                     name.to_string(),
                     schema_type,
                     key_config,
                     input_queries,
-                    Some(wasm_bytes),
+                    Some(wasm_transform_spec),
                     output_fields,
                 );
 

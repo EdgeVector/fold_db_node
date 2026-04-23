@@ -620,12 +620,28 @@ impl FoldNode {
             output_fields.insert(field_name.clone(), field_type);
         }
 
+        // MDT-E: fold_db::view::types::TransformView expects
+        // Option<WasmTransformSpec> (bytes + fuel ceiling) where it previously
+        // took Option<Vec<u8>>. StoredView still carries raw `wasm_bytes` as a
+        // dev/legacy fallback, so wrap with a default fuel ceiling when
+        // converting. The registered-transform path (stored.transform_hash)
+        // carries max_gas via the TransformRecord and will be preferred once
+        // `TransformResolver` threads it through — tracked in
+        // `projects/transform-worker-split` follow-ups.
+        const STORED_VIEW_DEFAULT_MAX_GAS: u64 = 1_000_000_000;
+        let wasm_transform_spec = stored.wasm_bytes.clone().map(|bytes| {
+            fold_db::view::types::WasmTransformSpec {
+                bytes,
+                max_gas: STORED_VIEW_DEFAULT_MAX_GAS,
+                gas_model: None,
+            }
+        });
         let mut transform_view = fold_db::view::types::TransformView::new(
             &stored.name,
             stored.schema_type.clone(),
             output_schema.key.clone(),
             stored.input_queries.clone(),
-            stored.wasm_bytes.clone(),
+            wasm_transform_spec,
             output_fields,
         );
 

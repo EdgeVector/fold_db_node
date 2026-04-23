@@ -48,12 +48,23 @@ pub struct CreateViewRequest {
 
 impl CreateViewRequest {
     fn into_transform_view(self) -> Result<TransformView, String> {
+        // MDT-E: TransformView now takes Option<WasmTransformSpec>. Pair the
+        // decoded bytes with a default fuel ceiling; this route accepts inline
+        // WASM (dev/local flow) and has no submission-time max_gas. Callers
+        // that want per-transform fuel should register via the schema service,
+        // which carries max_gas on the TransformRecord.
+        const ROUTE_DEFAULT_MAX_GAS: u64 = 1_000_000_000;
         let b64_engine = base64::engine::general_purpose::STANDARD;
         let wasm_transform = self
             .wasm_transform
             .map(|b64| b64_engine.decode(&b64))
             .transpose()
-            .map_err(|e| format!("Invalid base64 for wasm_transform: {}", e))?;
+            .map_err(|e| format!("Invalid base64 for wasm_transform: {}", e))?
+            .map(|bytes| fold_db::view::types::WasmTransformSpec {
+                bytes,
+                max_gas: ROUTE_DEFAULT_MAX_GAS,
+                gas_model: None,
+            });
 
         Ok(TransformView::new(
             self.name,
