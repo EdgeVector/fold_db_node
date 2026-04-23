@@ -273,7 +273,7 @@ pub async fn get_identity_card(
     node: &FoldNode,
 ) -> HandlerResult<serde_json::Value> {
     let op = OperationProcessor::new(std::sync::Arc::new(node.clone()));
-    let card = op.get_identity_card().typed_handler_err()?;
+    let card = op.get_identity_card().await.typed_handler_err()?;
     Ok(ApiResponse::success_with_user(
         serde_json::json!({ "identity_card": card }),
         user_hash,
@@ -297,6 +297,7 @@ pub async fn set_identity_card(
 ) -> HandlerResult<serde_json::Value> {
     let op = OperationProcessor::new(std::sync::Arc::new(node.clone()));
     op.set_identity_card(req.display_name.clone(), req.contact_hint, req.birthday)
+        .await
         .typed_handler_err()?;
 
     let node_arc = std::sync::Arc::new(node.clone());
@@ -509,7 +510,7 @@ pub async fn send_verified_invite(
     user_hash: &str,
 ) -> HandlerResult<serde_json::Value> {
     let op = OperationProcessor::new(std::sync::Arc::new(node.clone()));
-    let identity_card = op.get_identity_card().typed_handler_err()?;
+    let identity_card = op.get_identity_card().await.typed_handler_err()?;
     let sender_name = resolve_sender_name_from_identity(identity_card)?;
     let invite_id = publisher
         .send_verified_invite(invite_token, recipient_email, &sender_name)

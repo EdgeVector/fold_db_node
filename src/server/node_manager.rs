@@ -361,30 +361,48 @@ impl NodeManager {
     /// creates the local-mode node so subsequent authenticated requests are fast.
     /// Returns the base-64 public key string.
     pub async fn ensure_default_identity(&self) -> Result<String, NodeManagerError> {
-        // Fast path: identity already populated in the base config
-        {
+        // Fast path: identity already populated in the base config.
+        // We still eagerly build the node in this branch — callers like
+        // `restore_from_phrase` rely on `get_sled_pool()` returning `Some`
+        // right after this call, and the pool only exists once a node has
+        // been created. Skipping node creation on the fast path silently
+        // broke the restore → bootstrap flow on pristine nodes (the pool
+        // was None, so the bootstrap spawn was suppressed with no surface
+        // error — the node came up looking activated but never downloaded
+        // peer data).
+        let public_key = {
             let config = self.config.read().await;
             if let Some(pk) = &config.base_config.public_key {
                 if !pk.is_empty() {
-                    return Ok(pk.clone());
+                    Some(pk.clone())
+                } else {
+                    None
                 }
+            } else {
+                None
             }
-        }
+        };
 
-        // Generate (or load) an identity for the "default" local user
-        let keypair = Self::load_or_generate_identity("default").await?;
-        let public_key = keypair.public_key_base64();
+        let public_key = match public_key {
+            Some(pk) => pk,
+            None => {
+                // Slow path: generate or load identity from disk.
+                let keypair = Self::load_or_generate_identity("default").await?;
+                let pk = keypair.public_key_base64();
+                {
+                    let mut config = self.config.write().await;
+                    config.base_config = config
+                        .base_config
+                        .clone()
+                        .with_identity(&pk, &keypair.secret_key_base64());
+                }
+                pk
+            }
+        };
 
-        // Persist the identity into the base config so future reads find it
-        {
-            let mut config = self.config.write().await;
-            config.base_config = config
-                .base_config
-                .clone()
-                .with_identity(&public_key, &keypair.secret_key_base64());
-        }
-
-        // Eagerly create the node so the first authenticated request doesn't block
+        // Eagerly create the node so (a) the first authenticated request
+        // doesn't block on Sled open, and (b) `get_sled_pool()` immediately
+        // returns the live pool.
         let user_hash = user_hash_from_pubkey(&public_key);
         let _ = self.get_node(&user_hash).await;
 
