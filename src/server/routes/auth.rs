@@ -273,8 +273,11 @@ mod tests {
             node_manager: node_manager.clone(),
         });
 
-        // Valid 24-word phrase.
-        let entropy = [0u8; 32];
+        // Valid 24-word phrase. Non-zero entropy because ed25519-compact
+        // rejects all-zero seeds when deriving the keypair at node-creation
+        // time (triggered now that `ensure_default_identity` eagerly builds
+        // the node on the fast path).
+        let entropy = [0x42u8; 32];
         let mnemonic = bip39::Mnemonic::from_entropy(&entropy).expect("mnemonic");
         let words = mnemonic.words().collect::<Vec<_>>().join(" ");
 
@@ -334,7 +337,7 @@ mod tests {
 
         let data = test_app_state(&tmp);
 
-        let entropy = [0u8; 32];
+        let entropy = [0x42u8; 32];
         let mnemonic = bip39::Mnemonic::from_entropy(&entropy).expect("mnemonic");
         let words_array: Vec<String> = mnemonic.words().map(|w| w.to_string()).collect();
 

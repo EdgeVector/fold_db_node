@@ -54,47 +54,85 @@ fn save_consumed_nonce(nonce: &str) {
 impl OperationProcessor {
     // ===== Identity Card =====
 
+    /// Storage key inside the synced `metadata` namespace.
+    const IDENTITY_CARD_KEY: &'static str = "identity_card";
+
     /// Get the current identity card (or None if not set).
-    pub fn get_identity_card(&self) -> Result<Option<IdentityCard>, SchemaError> {
+    ///
+    /// Reads from the synced `metadata` namespace first — this is what lets a
+    /// restored device inherit the owner's card without re-entering it. If
+    /// the synced store is empty, fall back to the legacy per-device JSON
+    /// file at `$FOLDDB_HOME/config/identity_card.json` and promote it into
+    /// the synced store on the next `set_identity_card`.
+    pub async fn get_identity_card(&self) -> Result<Option<IdentityCard>, SchemaError> {
+        use fold_db::storage::traits::TypedStore;
+        use fold_db::storage::TypedKvStore;
+
+        let fold_db = self
+            .node
+            .get_fold_db()
+            .map_err(|e| SchemaError::InvalidData(format!("FoldDB not available: {e}")))?;
+        let raw = fold_db.db_ops().metadata().raw_metadata_kv();
+        let typed: TypedKvStore<dyn fold_db::storage::traits::KvStore> = TypedKvStore::new(raw);
+        match typed
+            .get_item::<IdentityCard>(Self::IDENTITY_CARD_KEY)
+            .await
+        {
+            Ok(Some(card)) => return Ok(Some(card)),
+            Ok(None) => {}
+            Err(e) => {
+                log::warn!(
+                    "identity_card: synced-store read failed ({e}); falling back to legacy JSON"
+                );
+            }
+        }
+
+        // Legacy fallback: per-device JSON file. Kept readable so a client
+        // that upgraded before ever calling `set_identity_card` on the new
+        // code path still sees its card.
         IdentityCard::load()
             .map_err(|e| SchemaError::InvalidData(format!("Failed to load identity card: {e}")))
     }
 
-    /// Set or update the identity card (file + Sled).
-    pub fn set_identity_card(
+    /// Set or update the identity card.
+    ///
+    /// Writes to the synced `metadata` namespace — writes propagate to every
+    /// other device restored from the same mnemonic via the sync log. Also
+    /// still writes the legacy JSON file so older code paths (and rollbacks)
+    /// continue to see the card locally.
+    pub async fn set_identity_card(
         &self,
         display_name: String,
         contact_hint: Option<String>,
         birthday: Option<String>,
     ) -> Result<(), SchemaError> {
-        let card = IdentityCard::new(display_name, contact_hint, birthday);
-        // Save to file (backward compat)
-        card.save()
-            .map_err(|e| SchemaError::InvalidData(format!("Failed to save identity card: {e}")))?;
+        use fold_db::storage::traits::TypedStore;
+        use fold_db::storage::TypedKvStore;
 
-        // Also save to Sled config store (best-effort). Reuse the running
-        // FoldDB's pool so we don't race the main Sled file lock —
-        // `SledPool::new(data_path)` in the same process as the HTTP server
-        // would fight the NodeManager-owned pool for the OS flock and
-        // fail with `WouldBlock`.
-        let fold_db = match self.node.get_fold_db() {
-            Ok(db) => db,
-            Err(e) => {
-                log::warn!("Failed to save identity card to Sled: no FoldDB: {}", e);
-                return Ok(());
-            }
-        };
-        let pool = match fold_db.sled_pool() {
-            Some(p) => p.clone(),
-            None => {
-                log::warn!("Failed to save identity card to Sled: FoldDB has no pool");
-                return Ok(());
-            }
-        };
-        if let Ok(store) = fold_db::NodeConfigStore::new(pool) {
-            if let Err(e) = card.save_to_sled(&store) {
-                log::warn!("Failed to save identity card to Sled: {}", e);
-            }
+        let card = IdentityCard::new(display_name, contact_hint, birthday);
+
+        // Save to the synced metadata namespace — this is the authoritative
+        // multi-device source of truth. Writes here flow through the
+        // `SyncingKvStore` and propagate to peer devices on the same
+        // personal prefix.
+        let fold_db = self
+            .node
+            .get_fold_db()
+            .map_err(|e| SchemaError::InvalidData(format!("FoldDB not available: {e}")))?;
+        let raw = fold_db.db_ops().metadata().raw_metadata_kv();
+        let typed: TypedKvStore<dyn fold_db::storage::traits::KvStore> = TypedKvStore::new(raw);
+        typed
+            .put_item(Self::IDENTITY_CARD_KEY, &card)
+            .await
+            .map_err(|e| {
+                SchemaError::InvalidData(format!("Failed to save identity card (synced): {e}"))
+            })?;
+
+        // Legacy mirror on disk — still written so old reads (and any
+        // external inspection tool) keep working. One release after
+        // everything reads from the synced store we can drop this.
+        if let Err(e) = card.save() {
+            log::warn!("identity_card: legacy JSON write failed (non-fatal): {e}");
         }
 
         Ok(())
