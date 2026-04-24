@@ -130,6 +130,51 @@ fn deterministic_error_id(row: &IngestionErrorRecord<'_>) -> String {
         .collect()
 }
 
+/// Extractor name stamped on meta-level IngestionError rows emitted
+/// by [`emit_zero_yield_meta_error`]. Distinct from real extractor
+/// names so the row coexists with (does not overwrite) any
+/// per-extractor error row that might share the same source key.
+pub const META_EXTRACTOR_ZERO_YIELD: &str = "meta_zero_yield";
+
+/// `error_class` for the zero-extractor-yield meta error. See
+/// TODO-6 in the workspace backlog.
+pub const ERROR_CLASS_ZERO_EXTRACTOR_YIELD: &str = "ZeroExtractorYield";
+
+/// Emit a meta-level IngestionError surfacing the silent-gap case
+/// where a source record was flagged as expected-to-yield but every
+/// applicable extractor ran empty and no per-extractor IngestionError
+/// was written.
+///
+/// This is the TODO-6 "zero-extractors-succeeded meta-error check".
+/// Without it, a bug where extractors return empty without erroring
+/// is indistinguishable from legitimately empty records. The caller
+/// opts in by flagging the record as `expected_to_yield` when they
+/// have reason to believe it contains identity content (e.g. a
+/// photo import script where operators confirm the corpus is
+/// face-bearing, or an email import where every record has a
+/// structured sender address).
+///
+/// Best-effort via [`write_ingestion_error`]: failures are logged
+/// loudly but never propagate.
+pub async fn emit_zero_yield_meta_error(
+    node: Arc<FoldNode>,
+    source_schema: &str,
+    source_key: &str,
+    error_msg: &str,
+) {
+    write_ingestion_error(
+        node,
+        IngestionErrorRecord {
+            source_schema,
+            source_key,
+            extractor: META_EXTRACTOR_ZERO_YIELD,
+            error_class: ERROR_CLASS_ZERO_EXTRACTOR_YIELD,
+            error_msg,
+        },
+    )
+    .await;
+}
+
 /// Sanity-check that the canonical_names registry has the
 /// IngestionError schema before we try to write. Returns an error
 /// that is intended to be swallowed by the caller — it only exists
@@ -226,5 +271,36 @@ mod tests {
             rec.fields.get("error_msg").unwrap(),
             &json!("line 1\nline 2\n  nested")
         );
+    }
+
+    #[test]
+    fn meta_zero_yield_id_does_not_collide_with_face_detect_id() {
+        // The meta-error row must coexist with a real extractor's row
+        // for the same (source_schema, source_key) — otherwise
+        // overwriting would bury evidence of one or the other.
+        let face = IngestionErrorRecord {
+            source_schema: "Photos",
+            source_key: "IMG_1234",
+            extractor: "face_detect",
+            error_class: "FaceDetectorTimeout",
+            error_msg: "timed out",
+        };
+        let meta = IngestionErrorRecord {
+            source_schema: "Photos",
+            source_key: "IMG_1234",
+            extractor: META_EXTRACTOR_ZERO_YIELD,
+            error_class: ERROR_CLASS_ZERO_EXTRACTOR_YIELD,
+            error_msg: "zero yield despite expected_to_yield",
+        };
+        assert_ne!(deterministic_error_id(&face), deterministic_error_id(&meta));
+    }
+
+    #[test]
+    fn meta_zero_yield_constants_are_stable_strings() {
+        // Downstream tooling (UI Failed panel filter, dashboards)
+        // keys off these literals. Changing them is a breaking
+        // change and should surface here rather than silently drift.
+        assert_eq!(META_EXTRACTOR_ZERO_YIELD, "meta_zero_yield");
+        assert_eq!(ERROR_CLASS_ZERO_EXTRACTOR_YIELD, "ZeroExtractorYield");
     }
 }

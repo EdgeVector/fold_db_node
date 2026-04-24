@@ -786,6 +786,10 @@ fn build_attendee_ingestion_records(
             crate::handlers::fingerprints::ingest_text::TextRecordDto {
                 source_key,
                 text: e.attendees.join(", "),
+                // Calendar attendees are a deliberate identity-bearing
+                // field — if text_regex extracts nothing, that's a
+                // silent gap worth surfacing (TODO-6).
+                expected_to_yield: true,
             }
         })
         .collect()
