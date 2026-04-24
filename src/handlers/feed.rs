@@ -51,7 +51,7 @@ pub async fn get_feed(
     user_hash: &str,
     node: &FoldNode,
 ) -> HandlerResult<FeedResponse> {
-    let processor = OperationProcessor::new(std::sync::Arc::new(node.clone()));
+    let processor = OperationProcessor::from_ref(node);
     let limit = request.limit.unwrap_or(DEFAULT_FEED_LIMIT);
     let friends: HashSet<&str> = request.friend_hashes.iter().map(|s| s.as_str()).collect();
 

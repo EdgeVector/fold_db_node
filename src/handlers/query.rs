@@ -37,7 +37,7 @@ pub async fn execute_query(
     user_hash: &str,
     node: &FoldNode,
 ) -> HandlerResult<QueryResponse> {
-    let processor = OperationProcessor::new(std::sync::Arc::new(node.clone()));
+    let processor = OperationProcessor::from_ref(node);
     let caller_pub_key = current_caller_pubkey(node);
 
     let results = processor
@@ -60,7 +60,7 @@ pub async fn native_index_search(
     user_hash: &str,
     node: &FoldNode,
 ) -> HandlerResult<IndexSearchResponse> {
-    let processor = OperationProcessor::new(std::sync::Arc::new(node.clone()));
+    let processor = OperationProcessor::from_ref(node);
 
     let results = processor
         .native_index_search(query_string)
