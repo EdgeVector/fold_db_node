@@ -36,6 +36,20 @@
 //! Name extraction is NOT in this module. It requires either an LLM
 //! call or a dedicated NER model and is deferred to a separate
 //! extractor (P2-6).
+//!
+//! ## Shared-inbox collision protection (TODO-2)
+//!
+//! Emails from shared inboxes (`info@`, `sales@`, `support@`, …) are
+//! NOT person-level identifiers — dozens of unrelated senders can
+//! reply from the same address. Without demotion, every sender who
+//! ever replied from `info@acme.com` would be CoOccurrence-edge-linked
+//! to each other through that single fingerprint, producing one giant
+//! mistaken cluster in the Persona resolver.
+//!
+//! Defense: `classify_email_strength` returns a per-email strength in
+//! [0, 1]. Shared-inbox local parts drop to 0.5 so their CoOccurrence
+//! edges land at 0.15 (below the 0.2 cap the design calls for) and
+//! cannot cross a realistic resolver threshold.
 
 use std::collections::HashMap;
 
@@ -58,6 +72,80 @@ use crate::fingerprints::schemas::{
 /// identity signal than two faces in a group shot.
 const CO_OCCURRENCE_WEIGHT: f32 = 0.3;
 
+/// Strength multiplier applied to emails whose local-part is a
+/// shared-inbox pattern (see `SHARED_INBOX_LOCAL_PARTS`). 0.5 is
+/// chosen so that an edge involving one such email lands at
+/// 0.3 * 0.5 = 0.15, comfortably below the 0.2 cap the design calls
+/// for and below any realistic resolver threshold. The edge weight
+/// formula uses `min(a.strength, b.strength)` so two shared-inbox
+/// endpoints stay at the same 0.15 floor — no need to compound
+/// lower, clustering is already neutralized.
+const SHARED_INBOX_STRENGTH: f32 = 0.5;
+
+/// Local-parts (case-insensitive) that indicate a shared inbox rather
+/// than a person's mailbox. Keep this conservative — false positives
+/// here silently cripple clustering for any real person who happened
+/// to pick a collision-y username (`hello@`, `hi@`). The entries
+/// below are all multi-person-by-convention and very unlikely to be
+/// anyone's primary address.
+const SHARED_INBOX_LOCAL_PARTS: &[&str] = &[
+    "info",
+    "sales",
+    "support",
+    "help",
+    "helpdesk",
+    "contact",
+    "admin",
+    "administrator",
+    "noreply",
+    "no-reply",
+    "do-not-reply",
+    "donotreply",
+    "team",
+    "office",
+    "hr",
+    "jobs",
+    "careers",
+    "press",
+    "media",
+    "marketing",
+    "billing",
+    "accounts",
+    "accounting",
+    "finance",
+    "legal",
+    "privacy",
+    "security",
+    "abuse",
+    "postmaster",
+    "webmaster",
+    "mailer-daemon",
+];
+
+/// Classify how person-identifying an email address is.
+///
+/// Returns a strength in [0.0, 1.0] — 1.0 for a normal personal
+/// mailbox, [`SHARED_INBOX_STRENGTH`] for anything whose local-part
+/// matches [`SHARED_INBOX_LOCAL_PARTS`]. Used by the text extractor
+/// to demote CoOccurrence edge weights so shared inboxes cannot be
+/// absorbed into person Personas by the resolver. See TODO-2 in
+/// workspace `TODOS.md`.
+///
+/// Malformed input (no `@`) returns 1.0 — refusing to classify is
+/// safer than silently demoting a misread address. Callers that
+/// have already validated the email shape lose nothing.
+pub fn classify_email_strength(email: &str) -> f32 {
+    let Some((local, _domain)) = email.split_once('@') else {
+        return 1.0;
+    };
+    let local_lower = local.to_lowercase();
+    if SHARED_INBOX_LOCAL_PARTS.contains(&local_lower.as_str()) {
+        SHARED_INBOX_STRENGTH
+    } else {
+        1.0
+    }
+}
+
 /// Extractor name used in Mention + ExtractionStatus records.
 pub const EXTRACTOR_NAME: &str = "text_regex";
 
@@ -67,6 +155,11 @@ pub struct ExtractedSignal {
     pub kind: &'static str,
     pub value: String,
     pub fingerprint_id: String,
+    /// Per-signal strength in [0, 1]. Used as a multiplier on edge
+    /// weights to demote weakly-identifying signals (shared-inbox
+    /// emails, etc.) without removing them entirely. 1.0 for every
+    /// signal that is a plausible per-person identifier.
+    pub strength: f32,
 }
 
 /// The full planned output for one text record.
@@ -162,17 +255,21 @@ pub fn plan_text_extraction(
         ));
     }
 
-    // CoOccurrence edges — every unordered pair.
+    // CoOccurrence edges — every unordered pair. The per-signal
+    // strength multiplier demotes edges that touch a shared-inbox
+    // email (see `classify_email_strength`): one weak endpoint →
+    // 0.15, two weak endpoints → 0.075.
     for i in 0..unique.len() {
         for j in (i + 1)..unique.len() {
             let a = &unique[i].fingerprint_id;
             let b = &unique[j].fingerprint_id;
             let eg_id = edge_id(a, b, edge_kind::CO_OCCURRENCE);
+            let weight = CO_OCCURRENCE_WEIGHT * unique[i].strength.min(unique[j].strength);
 
             plan.records.push(PlannedRecord::hash(
                 EDGE,
                 eg_id.clone(),
-                edge_fields(&eg_id, a, b, CO_OCCURRENCE_WEIGHT, mention_id, now_iso8601),
+                edge_fields(&eg_id, a, b, weight, mention_id, now_iso8601),
             ));
             plan.records.push(PlannedRecord::hash_range(
                 EDGE_BY_FINGERPRINT,
@@ -203,10 +300,13 @@ pub fn extract_signals(text: &str) -> Vec<ExtractedSignal> {
     for m in email_re.find_iter(text) {
         let raw = m.as_str();
         let fp_id = fingerprint_id_for_string(kind::EMAIL, raw);
+        let value = raw.to_lowercase();
+        let strength = classify_email_strength(&value);
         signals.push(ExtractedSignal {
             kind: kind::EMAIL,
-            value: raw.to_lowercase(),
+            value,
             fingerprint_id: fp_id,
+            strength,
         });
     }
 
@@ -230,6 +330,7 @@ pub fn extract_signals(text: &str) -> Vec<ExtractedSignal> {
             kind: kind::PHONE,
             value: canonical,
             fingerprint_id: fp_id,
+            strength: 1.0,
         });
     }
 
@@ -302,6 +403,7 @@ pub fn extract_signals(text: &str) -> Vec<ExtractedSignal> {
             kind: kind::FULL_NAME,
             value: raw.to_string(),
             fingerprint_id: fp_id,
+            strength: 1.0,
         });
     }
 
@@ -605,5 +707,155 @@ mod tests {
         let kinds: Vec<&str> = signals.iter().map(|s| s.kind).collect();
         assert!(kinds.contains(&kind::EMAIL));
         assert!(kinds.contains(&kind::FULL_NAME));
+    }
+
+    // ── Shared-inbox collision protection (TODO-2) ───────────────
+
+    #[test]
+    fn classify_email_strength_full_for_personal_mailbox() {
+        assert_eq!(classify_email_strength("tom@acme.com"), 1.0);
+        assert_eq!(classify_email_strength("alice.bob+tag@example.co.uk"), 1.0);
+    }
+
+    #[test]
+    fn classify_email_strength_demoted_for_shared_inboxes() {
+        for local in [
+            "info", "sales", "support", "noreply", "no-reply", "admin", "help", "team", "hr",
+            "billing", "privacy",
+        ] {
+            let email = format!("{local}@acme.com");
+            assert_eq!(
+                classify_email_strength(&email),
+                SHARED_INBOX_STRENGTH,
+                "expected {email} to be demoted"
+            );
+        }
+    }
+
+    #[test]
+    fn classify_email_strength_is_case_insensitive() {
+        assert_eq!(
+            classify_email_strength("INFO@acme.com"),
+            SHARED_INBOX_STRENGTH
+        );
+        assert_eq!(
+            classify_email_strength("Sales@ACME.COM"),
+            SHARED_INBOX_STRENGTH
+        );
+    }
+
+    #[test]
+    fn classify_email_strength_full_for_username_lookalikes() {
+        // These were considered for the denylist but rejected — they're
+        // too often real peoples' usernames. Assert the guard so future
+        // edits to the denylist don't quietly flip them.
+        assert_eq!(classify_email_strength("hello@acme.com"), 1.0);
+        assert_eq!(classify_email_strength("hi@acme.com"), 1.0);
+        assert_eq!(classify_email_strength("me@acme.com"), 1.0);
+        assert_eq!(classify_email_strength("tom@acme.com"), 1.0);
+    }
+
+    #[test]
+    fn classify_email_strength_full_on_malformed_input() {
+        // No `@` → we cannot classify, so don't demote.
+        assert_eq!(classify_email_strength("not-an-email"), 1.0);
+        assert_eq!(classify_email_strength(""), 1.0);
+    }
+
+    #[test]
+    fn shared_inbox_signal_carries_demoted_strength() {
+        let signals = extract_signals("Reply went to info@acme.com and tom@acme.com.");
+        let info = signals
+            .iter()
+            .find(|s| s.value == "info@acme.com")
+            .expect("info signal extracted");
+        let tom = signals
+            .iter()
+            .find(|s| s.value == "tom@acme.com")
+            .expect("tom signal extracted");
+        assert_eq!(info.strength, SHARED_INBOX_STRENGTH);
+        assert_eq!(tom.strength, 1.0);
+    }
+
+    #[test]
+    fn edges_touching_shared_inbox_get_demoted_weight() {
+        let plan = plan_text_extraction(
+            "Notes",
+            "note_shared",
+            "Cc info@acme.com and Tom Tang about the rollout.",
+            "mn_shared",
+            "es_shared",
+            "2026-04-15T00:00:00Z",
+        );
+        let edge_record = plan
+            .records
+            .iter()
+            .find(|r| r.descriptive_schema == EDGE)
+            .expect("one CoOccurrence edge is produced");
+        let weight = edge_record
+            .fields
+            .get("weight")
+            .and_then(|v| v.as_f64())
+            .expect("edge carries a weight");
+        // Co-occurrence base 0.3 * shared-inbox strength 0.5 = 0.15.
+        assert!(
+            (weight - 0.15).abs() < 1e-6,
+            "expected shared-inbox edge weight 0.15, got {weight}"
+        );
+    }
+
+    #[test]
+    fn edges_between_personal_emails_keep_base_weight() {
+        let plan = plan_text_extraction(
+            "Notes",
+            "note_pair",
+            "tom@acme.com and alice@example.com collaborated",
+            "mn_pair",
+            "es_pair",
+            "2026-04-15T00:00:00Z",
+        );
+        let edge_record = plan
+            .records
+            .iter()
+            .find(|r| r.descriptive_schema == EDGE)
+            .expect("one CoOccurrence edge is produced");
+        let weight = edge_record
+            .fields
+            .get("weight")
+            .and_then(|v| v.as_f64())
+            .expect("edge carries a weight");
+        assert!(
+            (weight - 0.3).abs() < 1e-6,
+            "expected base edge weight 0.3, got {weight}"
+        );
+    }
+
+    #[test]
+    fn edges_between_two_shared_inboxes_stay_at_the_demoted_floor() {
+        let plan = plan_text_extraction(
+            "Notes",
+            "note_both_shared",
+            "Forwarded from info@acme.com to support@acme.com for triage.",
+            "mn_both",
+            "es_both",
+            "2026-04-15T00:00:00Z",
+        );
+        let edge_record = plan
+            .records
+            .iter()
+            .find(|r| r.descriptive_schema == EDGE)
+            .expect("one CoOccurrence edge is produced");
+        let weight = edge_record
+            .fields
+            .get("weight")
+            .and_then(|v| v.as_f64())
+            .expect("edge carries a weight");
+        // min(0.5, 0.5) * 0.3 = 0.15 — same floor as one weak endpoint.
+        // Clustering is already neutralized at 0.15; we do NOT need to
+        // compound below that.
+        assert!(
+            (weight - 0.15).abs() < 1e-6,
+            "expected floored edge weight 0.15, got {weight}"
+        );
     }
 }
