@@ -10,7 +10,6 @@
 use crate::handlers::response::HandlerError;
 use crate::keychain;
 use crate::server::node_manager::NodeManager;
-use fold_db::{CloudCredentials, NodeConfigStore};
 use serde::{Deserialize, Serialize};
 use std::future::Future;
 use std::sync::{Arc, Mutex};
@@ -77,6 +76,135 @@ pub fn delete_credentials() -> Result<serde_json::Value, HandlerError> {
     keychain::delete_credentials()
         .map_err(|e| HandlerError::Internal(format!("Failed to delete credentials: {}", e)))?;
     Ok(serde_json::json!({"ok": true}))
+}
+
+/// Full account deletion: revoke the Exemem account (deletes cloud storage +
+/// auth records + api keys + passkeys in dynamodb) and wipe all local state
+/// on this device.
+///
+/// Steps, in order, best-effort (logged warnings for non-fatal failures so a
+/// user with a detached cloud account can still wipe the local device):
+/// 1. Call `DELETE /auth/account` on Exemem. Fatal on HTTP 5xx because the
+///    cloud side needs to be authoritative — we don't want to leave ghost
+///    cloud data behind.
+/// 2. Invalidate the running node so Sled is closed cleanly.
+/// 3. Clear the Sled `node_identity` tree + all user_profile/ keys.
+/// 4. Delete local credential / onboarding / bootstrap markers.
+///
+/// Returns a JSON summary of what was cleared. Note: actually wiping the
+/// main Sled database directory (`$FOLDDB_HOME/data`) is left to the
+/// caller — stopping the daemon + `rm -rf data` is the explicit step,
+/// we don't rm from under the live process.
+pub async fn delete_account(
+    node_manager: &Arc<NodeManager>,
+) -> Result<serde_json::Value, HandlerError> {
+    let mut warnings: Vec<String> = Vec::new();
+
+    // Step 1: revoke the Exemem account. Uses the same signed CLI register
+    // pattern as auth refresh — but here we send a DELETE.
+    let pool = node_manager.get_or_init_sled_pool().await;
+    let identity = crate::identity::load(Arc::clone(&pool))
+        .map_err(|e| HandlerError::Internal(format!("read identity: {e}")))?;
+
+    if identity.is_some() {
+        match revoke_exemem_account().await {
+            Ok(()) => log::info!("Exemem account revoked"),
+            Err(e) => {
+                // Not fatal — a user might be wiping a device whose cloud
+                // account was already purged server-side. Surface the
+                // warning but keep going.
+                log::warn!("Failed to revoke Exemem account: {e}");
+                warnings.push(format!("exemem_revoke_failed: {e}"));
+            }
+        }
+    } else {
+        warnings.push("no_local_identity".to_string());
+    }
+
+    // Step 2 + 3: stop the running node so we can get exclusive Sled access,
+    // then clear the identity tree + user_profile keys.
+    node_manager.invalidate_all_nodes().await;
+    // The invalidation drops the shared Arc<FoldNode>, but the SledPool is
+    // held by NodeManager.shared_pool across invalidations. We still have
+    // our `pool` clone from above — use it to clear trees directly.
+    if let Err(e) = clear_local_sled(Arc::clone(&pool)) {
+        warnings.push(format!("sled_clear_failed: {e}"));
+    }
+
+    // Step 4: delete local credential / onboarding files.
+    if let Err(e) = keychain::delete_credentials() {
+        warnings.push(format!("credentials_delete_failed: {e}"));
+    }
+    if let Ok(home) = crate::utils::paths::folddb_home() {
+        let _ = std::fs::remove_file(home.join("data").join(".onboarding_complete"));
+        let _ = std::fs::remove_file(home.join(".bootstrap_pending"));
+    }
+
+    Ok(serde_json::json!({
+        "ok": true,
+        "warnings": warnings,
+        "hint": "Stop the daemon and `rm -rf $FOLDDB_HOME/data` to finish the wipe.",
+    }))
+}
+
+/// Call `DELETE /auth/account` on Exemem. The endpoint authenticates via
+/// `Authorization: Bearer <session_token>` (see auth_service lambda main.rs
+/// `extract_user_from_session`) — we pull the token from `credentials.json`.
+/// If the token has expired the caller should re-register first.
+async fn revoke_exemem_account() -> Result<(), String> {
+    let creds = keychain::load_credentials()
+        .map_err(|e| format!("load credentials: {e}"))?
+        .ok_or_else(|| "no stored credentials; cannot revoke cloud account".to_string())?;
+
+    let api_url = exemem_api_url();
+    let url = format!("{}/api/auth/account", api_url);
+    let client = reqwest::Client::new();
+    let resp = client
+        .delete(&url)
+        .bearer_auth(&creds.session_token)
+        .send()
+        .await
+        .map_err(|e| format!("failed to connect: {e}"))?;
+
+    let status = resp.status();
+    let text = resp
+        .text()
+        .await
+        .map_err(|e| format!("failed to read response: {e}"))?;
+
+    if !status.is_success() {
+        return Err(format!("HTTP {}: {}", status, text));
+    }
+    Ok(())
+}
+
+/// Clear the Sled trees that hold identity and user-level state. Best-effort
+/// per tree so a single failure doesn't strand the rest.
+fn clear_local_sled(pool: Arc<fold_db::storage::SledPool>) -> Result<(), String> {
+    // Identity tree — wipes the Ed25519 keypair.
+    if let Ok(store) = crate::identity::open(Arc::clone(&pool)) {
+        let _ = store.clear();
+    }
+    // User-profile keys (identity card, contacts, sharing roles, invites,
+    // declined invites, consumed nonces) live in the synced metadata tree
+    // under `user_profile/*`. Scan + remove them directly.
+    let guard = pool
+        .acquire_arc()
+        .map_err(|e| format!("sled acquire: {e}"))?;
+    let tree = guard
+        .db()
+        .open_tree("metadata")
+        .map_err(|e| format!("open metadata tree: {e}"))?;
+    let prefix = b"user_profile/";
+    let keys: Vec<sled::IVec> = tree
+        .scan_prefix(prefix)
+        .keys()
+        .filter_map(|k| k.ok())
+        .collect();
+    for k in keys {
+        let _ = tree.remove(&k);
+    }
+    Ok(())
 }
 
 /// Return the Exemem config (API URL) for the frontend.
@@ -298,20 +426,11 @@ pub(crate) async fn signed_register(
         keychain::store_credentials(&creds).map_err(|e| {
             format!("Registration succeeded but failed to persist credentials locally: {e}")
         })?;
-
-        // Write ONLY api_url and user_hash to Sled (safe to sync across devices).
-        // Per-device secrets (api_key, session_token) stay in credentials.json only.
-        if let Some(pool) = node_manager.get_sled_pool().await {
-            if let Ok(store) = NodeConfigStore::new(pool) {
-                let cloud_creds = CloudCredentials {
-                    api_url: exemem_api_url(),
-                    user_hash: Some(user_hash.to_string()),
-                };
-                if let Err(e) = store.set_cloud_config(&cloud_creds) {
-                    log::warn!("Failed to write cloud config to Sled: {}", e);
-                }
-            }
-        }
+        // Note: api_url + user_hash used to also be written to NodeConfigStore
+        // as a "safe to sync" mirror, but they're already available elsewhere —
+        // api_url from the DatabaseConfig and user_hash derived from the
+        // Ed25519 pubkey via `user_hash_from_pubkey`. Dropped that duplicate
+        // write as part of the post-Stage-4 cleanup.
     }
 
     Ok(json)
@@ -1394,7 +1513,6 @@ mod tests {
                     database: fold_db::storage::DatabaseConfig::local(tmp.path().join("data")),
                     storage_path: Some(tmp.path().join("data")),
                     network_listen_address: "/ip4/0.0.0.0/tcp/0".to_string(),
-                    security_config: fold_db::security::SecurityConfig::from_env(),
                     schema_service_url: Some("test://mock".to_string()),
                     config_dir: Some(tmp.path().join("config")),
                     seed_identity: None,

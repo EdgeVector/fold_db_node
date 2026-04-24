@@ -1,7 +1,7 @@
 use crate::error::CliError;
 use base64::Engine;
 use dialoguer::{Confirm, Input};
-use fold_db::security::{Ed25519KeyPair, KeyUtils, SecurityConfig};
+use fold_db::security::{Ed25519KeyPair, KeyUtils};
 use fold_db::storage::{CloudSyncConfig, DatabaseConfig};
 use fold_db_node::fold_node::config::NodeConfig;
 use fold_db_node::identity;
@@ -392,7 +392,6 @@ pub async fn run_setup_wizard() -> Result<NodeConfig, CliError> {
         database,
         storage_path,
         network_listen_address: "/ip4/0.0.0.0/tcp/0".to_string(),
-        security_config: SecurityConfig::from_env(),
         schema_service_url: Some(default_schema_service_url()),
         config_dir: None,
         seed_identity: None,
