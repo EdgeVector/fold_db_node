@@ -124,10 +124,9 @@ pub async fn moment_opt_in(
     // Authorization gate: load contact book and match the requested peer
     // pseudonym against known contacts. See `authorize_moment_peer`.
     let op = OperationProcessor::new(std::sync::Arc::new(node.clone()));
-    let book_path = op
-        .contact_book_path()
-        .map_err(|e| HandlerError::Internal(format!("contact book path: {}", e)))?;
-    let contact_book = ContactBook::load_from(&book_path)
+    let contact_book = op
+        .load_contact_book()
+        .await
         .map_err(|e| HandlerError::Internal(format!("load contact book: {}", e)))?;
     match authorize_moment_peer(&contact_book, &req.peer_pseudonym) {
         MomentPeerAuthz::Authorized => {}

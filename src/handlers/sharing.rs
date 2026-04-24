@@ -230,10 +230,9 @@ pub async fn generate_invite(
     // key is populated via the discovery connection flow; if it's missing
     // the two nodes haven't exchanged messaging pseudonyms yet.
     let op = crate::fold_node::OperationProcessor::new(std::sync::Arc::new(node.clone()));
-    let book_path = op
-        .contact_book_path()
-        .map_err(|e| HandlerError::Internal(format!("Failed to resolve contacts path: {e}")))?;
-    let book = crate::trust::contact_book::ContactBook::load_from(&book_path)
+    let book = op
+        .load_contact_book()
+        .await
         .map_err(|e| HandlerError::Internal(format!("Failed to load contacts: {e}")))?;
 
     let contact = book.get(&rule.recipient_pubkey).ok_or_else(|| {
@@ -361,10 +360,9 @@ pub async fn generate_and_send_invite(
 
     // Look up recipient contact + messaging pseudonym + X25519 pubkey.
     let op = crate::fold_node::OperationProcessor::new(std::sync::Arc::new(node.clone()));
-    let book_path = op
-        .contact_book_path()
-        .map_err(|e| HandlerError::Internal(format!("Failed to resolve contacts path: {e}")))?;
-    let book = crate::trust::contact_book::ContactBook::load_from(&book_path)
+    let book = op
+        .load_contact_book()
+        .await
         .map_err(|e| HandlerError::Internal(format!("Failed to load contacts: {e}")))?;
 
     let contact = book.get(&rule.recipient_pubkey).ok_or_else(|| {

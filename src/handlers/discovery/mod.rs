@@ -18,7 +18,7 @@ use crate::fold_node::OperationProcessor;
 use crate::handlers::response::{
     ApiResponse, HandlerError, HandlerResult, IntoHandlerError, IntoTypedHandlerError,
 };
-use crate::trust::contact_book::{Contact, ContactBook, TrustDirection};
+use crate::trust::contact_book::{Contact, TrustDirection};
 use crate::trust::identity_card::IdentityCard;
 use crate::trust::sharing_roles::SharingRoleConfig;
 use base64::{engine::general_purpose::STANDARD as B64, Engine};
@@ -585,10 +585,7 @@ async fn connect_inner(
 ) -> HandlerResult<()> {
     // Check if already connected to this pseudonym
     let op = OperationProcessor::new(std::sync::Arc::new(node.clone()));
-    let book_path = op
-        .contact_book_path()
-        .map_err(|e| HandlerError::Internal(format!("Failed to resolve contacts path: {e}")))?;
-    let contact_book = ContactBook::load_from(&book_path).unwrap_or_default();
+    let contact_book = op.load_contact_book().await.unwrap_or_default();
     if contact_book.active_contacts().iter().any(|c| {
         c.pseudonym.as_deref() == Some(target_str)
             || c.messaging_pseudonym.as_deref() == Some(target_str)
@@ -842,13 +839,13 @@ pub async fn respond_to_request(
             role.domain.clone(),
             role_name.to_string(),
         );
-        let book_path = op
-            .contact_book_path()
-            .map_err(|e| HandlerError::Internal(format!("Failed to resolve contacts path: {e}")))?;
-        let mut book = ContactBook::load_from(&book_path)
+        let mut book = op
+            .load_contact_book()
+            .await
             .map_err(|e| HandlerError::Internal(format!("Failed to load contacts: {e}")))?;
         book.upsert_contact(contact);
-        book.save_to(&book_path)
+        op.save_contact_book(&book)
+            .await
             .map_err(|e| HandlerError::Internal(format!("Failed to save contacts: {e}")))?;
 
         // Build and send encrypted acceptance message with identity card
@@ -1230,10 +1227,9 @@ pub async fn send_data_share(
 ) -> HandlerResult<DataShareResponse> {
     // 1. Look up recipient in contact book
     let op = OperationProcessor::new(std::sync::Arc::new(node.clone()));
-    let book_path = op
-        .contact_book_path()
-        .map_err(|e| HandlerError::Internal(format!("Failed to resolve contacts path: {e}")))?;
-    let book = ContactBook::load_from(&book_path)
+    let book = op
+        .load_contact_book()
+        .await
         .map_err(|e| HandlerError::Internal(format!("Failed to load contacts: {e}")))?;
 
     let contact = book.get(&req.recipient_public_key).ok_or_else(|| {
@@ -1510,10 +1506,7 @@ pub async fn initiate_referral_query(
 
     // Load contact book
     let op = OperationProcessor::new(std::sync::Arc::new(node.clone()));
-    let book_path = op
-        .contact_book_path()
-        .map_err(|e| HandlerError::Internal(format!("Failed to resolve contacts path: {e}")))?;
-    let contact_book = ContactBook::load_from(&book_path).unwrap_or_default();
+    let contact_book = op.load_contact_book().await.unwrap_or_default();
 
     // Filter to contacts with both messaging pseudonym and public key
     let eligible: Vec<Contact> = contact_book

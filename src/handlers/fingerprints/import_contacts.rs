@@ -46,7 +46,11 @@ pub struct ImportContactsResponse {
 }
 
 pub async fn import_contacts(node: Arc<FoldNode>) -> HandlerResult<ImportContactsResponse> {
-    let book = ContactBook::load()
+    let db = node
+        .get_fold_db()
+        .map_err(|e| HandlerError::Internal(format!("FoldDB not available: {}", e)))?;
+    let book = ContactBook::load(&db)
+        .await
         .map_err(|e| HandlerError::Internal(format!("failed to load contact book: {}", e)))?;
 
     let contacts: Vec<_> = book.active_contacts().into_iter().cloned().collect();

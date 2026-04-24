@@ -1,16 +1,27 @@
 //! Contact book — maps public keys to human-readable identity info.
 //!
-//! Stored at `$FOLDDB_HOME/config/contact_book.json`. Local-only, never synced.
-//! Populated when trust invites are accepted.
+//! Stored under the synced `user_profile/contacts/<pubkey>` keys via
+//! [`UserProfileStore`]. Each contact is an independent record; writes
+//! propagate to peer devices via the sync log so restored devices see
+//! the same trust relationships automatically. There is no per-device
+//! JSON file — trust is user-level by nature (Alice trusts Bob, not
+//! "Alice's laptop trusts Bob").
 
 use chrono::{DateTime, Utc};
+use fold_db::fold_db_core::FoldDB;
+use fold_db::schema::SchemaError;
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
-use std::path::{Path, PathBuf};
 
-use crate::utils::paths::folddb_home;
+use crate::user_profile::UserProfileStore;
 
-const CONTACT_BOOK_FILE: &str = "config/contact_book.json";
+/// Sub-prefix under `UserProfileStore` for contact records.
+/// Each contact is stored at `contacts/<base64_pubkey>`.
+const CONTACTS_PREFIX: &str = "contacts/";
+
+fn contact_key(public_key: &str) -> String {
+    format!("{CONTACTS_PREFIX}{public_key}")
+}
 
 /// Direction of the trust relationship.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -101,7 +112,11 @@ impl Contact {
     }
 }
 
-/// The contact book — all known trust contacts.
+/// In-memory view of every contact for this user. Load with
+/// [`ContactBook::load`], mutate via [`Self::upsert_contact`] /
+/// [`Self::revoke`] / [`Self::mark_mutual`], persist with
+/// [`ContactBook::save`]. All persistence flows through the synced
+/// user-profile store, so saves propagate to peer devices.
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
 pub struct ContactBook {
     /// Map from public key to contact info.
@@ -113,36 +128,43 @@ impl ContactBook {
         Self::default()
     }
 
-    fn file_path() -> Result<PathBuf, String> {
-        Ok(folddb_home()?.join(CONTACT_BOOK_FILE))
+    /// Load every contact from the synced user-profile store.
+    pub async fn load(db: &FoldDB) -> Result<Self, SchemaError> {
+        let store = UserProfileStore::from_db(db);
+        let rows: Vec<(String, Contact)> = store.scan(CONTACTS_PREFIX).await?;
+        let contacts = rows
+            .into_iter()
+            .map(|(key, contact)| {
+                // Strip the `contacts/` sub-prefix to recover the pubkey.
+                let pubkey = key
+                    .strip_prefix(CONTACTS_PREFIX)
+                    .unwrap_or(&key)
+                    .to_string();
+                (pubkey, contact)
+            })
+            .collect();
+        Ok(Self { contacts })
     }
 
-    pub fn load() -> Result<Self, String> {
-        Self::load_from(&Self::file_path()?)
-    }
-
-    pub fn load_from(path: &Path) -> Result<Self, String> {
-        if !path.exists() {
-            return Ok(Self::new());
+    /// Persist every contact in this book. Writes each contact as its own
+    /// record at `user_profile/contacts/<pubkey>`. There's no atomic
+    /// "write the whole book" operation — each contact converges
+    /// independently via its own sync-log entry, which is the right
+    /// shape for multi-device: a peer adding a contact doesn't conflict
+    /// with us adding a different one.
+    pub async fn save(&self, db: &FoldDB) -> Result<(), SchemaError> {
+        let store = UserProfileStore::from_db(db);
+        for (pubkey, contact) in &self.contacts {
+            store.put(&contact_key(pubkey), contact).await?;
         }
-        let data = std::fs::read_to_string(path)
-            .map_err(|e| format!("Failed to read contact book: {e}"))?;
-        serde_json::from_str(&data).map_err(|e| format!("Failed to parse contact book: {e}"))
-    }
-
-    pub fn save(&self) -> Result<(), String> {
-        self.save_to(&Self::file_path()?)
-    }
-
-    pub fn save_to(&self, path: &Path) -> Result<(), String> {
-        if let Some(parent) = path.parent() {
-            std::fs::create_dir_all(parent)
-                .map_err(|e| format!("Failed to create config directory: {e}"))?;
-        }
-        let data = serde_json::to_string_pretty(self)
-            .map_err(|e| format!("Failed to serialize contact book: {e}"))?;
-        std::fs::write(path, data).map_err(|e| format!("Failed to write contact book: {e}"))?;
         Ok(())
+    }
+
+    /// Persist a single contact. Preferred over [`Self::save`] when only
+    /// one contact changed — avoids re-writing the whole book.
+    pub async fn save_one(db: &FoldDB, contact: &Contact) -> Result<(), SchemaError> {
+        let store = UserProfileStore::from_db(db);
+        store.put(&contact_key(&contact.public_key), contact).await
     }
 
     /// Add or update a contact. Preserves existing roles on update.
@@ -207,11 +229,21 @@ impl ContactBook {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use tempfile::TempDir;
 
-    fn test_contact(key: &str, name: &str) -> Contact {
+    async fn setup_db() -> (std::sync::Arc<FoldDB>, tempfile::TempDir) {
+        let tmp = tempfile::tempdir().unwrap();
+        let keypair = fold_db::security::Ed25519KeyPair::generate().unwrap();
+        let config = crate::fold_node::NodeConfig::new(tmp.path().to_path_buf())
+            .with_schema_service_url("test://mock")
+            .with_identity(&keypair.public_key_base64(), &keypair.secret_key_base64());
+        let node = crate::fold_node::FoldNode::new(config).await.unwrap();
+        let db = node.get_fold_db().unwrap();
+        (db, tmp)
+    }
+
+    fn make_contact(pubkey: &str, name: &str) -> Contact {
         Contact {
-            public_key: key.to_string(),
+            public_key: pubkey.to_string(),
             display_name: name.to_string(),
             contact_hint: None,
             direction: TrustDirection::Outgoing,
@@ -225,67 +257,81 @@ mod tests {
         }
     }
 
-    #[test]
-    fn test_contact_book_roundtrip() {
-        let tmp = TempDir::new().unwrap();
-        let path = tmp.path().join("contacts.json");
+    #[tokio::test]
+    async fn empty_book_loads_empty() {
+        let (db, _tmp) = setup_db().await;
+        let book = ContactBook::load(&db).await.unwrap();
+        assert!(book.contacts.is_empty());
+    }
 
+    #[tokio::test]
+    async fn save_then_load_roundtrips() {
+        let (db, _tmp) = setup_db().await;
         let mut book = ContactBook::new();
-        book.upsert_contact(test_contact("pk_alice", "Alice"));
-        book.upsert_contact(test_contact("pk_bob", "Bob"));
-        book.save_to(&path).unwrap();
+        book.upsert_contact(make_contact("pk_alice", "Alice"));
+        book.upsert_contact(make_contact("pk_bob", "Bob"));
+        book.save(&db).await.unwrap();
 
-        let loaded = ContactBook::load_from(&path).unwrap();
+        let loaded = ContactBook::load(&db).await.unwrap();
         assert_eq!(loaded.contacts.len(), 2);
         assert_eq!(loaded.get("pk_alice").unwrap().display_name, "Alice");
+        assert_eq!(loaded.get("pk_bob").unwrap().display_name, "Bob");
     }
 
-    #[test]
-    fn test_revoke_keeps_history() {
+    #[tokio::test]
+    async fn save_one_persists_single_contact() {
+        let (db, _tmp) = setup_db().await;
+        ContactBook::save_one(&db, &make_contact("pk_carol", "Carol"))
+            .await
+            .unwrap();
+        let loaded = ContactBook::load(&db).await.unwrap();
+        assert_eq!(loaded.contacts.len(), 1);
+        assert_eq!(loaded.get("pk_carol").unwrap().display_name, "Carol");
+    }
+
+    #[tokio::test]
+    async fn revoke_sticks_across_reload() {
+        let (db, _tmp) = setup_db().await;
         let mut book = ContactBook::new();
-        book.upsert_contact(test_contact("pk_alice", "Alice"));
-        assert_eq!(book.active_contacts().len(), 1);
+        book.upsert_contact(make_contact("pk_alice", "Alice"));
+        book.save(&db).await.unwrap();
 
         book.revoke("pk_alice");
-        assert_eq!(book.active_contacts().len(), 0);
-        assert!(book.get("pk_alice").unwrap().revoked);
+        book.save(&db).await.unwrap();
+
+        let loaded = ContactBook::load(&db).await.unwrap();
+        assert!(loaded.get("pk_alice").unwrap().revoked);
+        assert!(loaded.active_contacts().is_empty());
     }
 
-    #[test]
-    fn test_upsert_updates_existing() {
+    #[tokio::test]
+    async fn active_contacts_filters_revoked() {
         let mut book = ContactBook::new();
-        book.upsert_contact(test_contact("pk_alice", "Alice"));
-        book.upsert_contact(Contact {
-            public_key: "pk_alice".to_string(),
-            display_name: "Alice Chen".to_string(),
-            contact_hint: Some("alice@example.com".to_string()),
-            direction: TrustDirection::Mutual,
-            connected_at: Utc::now(),
-            pseudonym: None,
-            messaging_pseudonym: None,
-            messaging_public_key: None,
-            identity_pseudonym: None,
-            revoked: false,
-            roles: HashMap::new(),
-        });
-        let alice = book.get("pk_alice").unwrap();
-        assert_eq!(alice.display_name, "Alice Chen");
-        assert_eq!(alice.direction, TrustDirection::Mutual);
+        book.upsert_contact(make_contact("a", "A"));
+        book.upsert_contact(make_contact("b", "B"));
+        book.revoke("a");
+        let active = book.active_contacts();
+        assert_eq!(active.len(), 1);
+        assert_eq!(active[0].display_name, "B");
     }
 
-    #[test]
-    fn test_mark_mutual() {
+    #[tokio::test]
+    async fn upsert_preserves_existing_roles_on_empty_update() {
         let mut book = ContactBook::new();
-        book.upsert_contact(test_contact("pk_alice", "Alice"));
-        assert_eq!(
-            book.get("pk_alice").unwrap().direction,
-            TrustDirection::Outgoing
-        );
+        let mut first = make_contact("pk_x", "X");
+        first.roles.insert("personal".into(), "friend".into());
+        book.upsert_contact(first);
+        book.upsert_contact(make_contact("pk_x", "X-updated"));
+        let c = book.get("pk_x").unwrap();
+        assert_eq!(c.display_name, "X-updated");
+        assert_eq!(c.roles.get("personal").unwrap(), "friend");
+    }
 
-        book.mark_mutual("pk_alice");
-        assert_eq!(
-            book.get("pk_alice").unwrap().direction,
-            TrustDirection::Mutual
-        );
+    #[tokio::test]
+    async fn mark_mutual_updates_direction() {
+        let mut book = ContactBook::new();
+        book.upsert_contact(make_contact("pk", "name"));
+        book.mark_mutual("pk");
+        assert_eq!(book.get("pk").unwrap().direction, TrustDirection::Mutual);
     }
 }

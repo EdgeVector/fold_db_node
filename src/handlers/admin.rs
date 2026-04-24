@@ -66,7 +66,7 @@ crate::handlers::handler_response! {
 pub async fn upsert_contact(
     req: &UpsertContactRequest,
     user_hash: &str,
-    _node: &FoldNode,
+    node: &FoldNode,
 ) -> HandlerResult<UpsertContactResponse> {
     require_enabled()?;
 
@@ -104,9 +104,14 @@ pub async fn upsert_contact(
         roles,
     };
 
-    let mut book = ContactBook::load().handler_err("load contact book")?;
+    let db = node
+        .get_fold_db()
+        .map_err(|e| HandlerError::Internal(format!("FoldDB not available: {e}")))?;
+    let mut book = ContactBook::load(&db)
+        .await
+        .handler_err("load contact book")?;
     book.upsert_contact(contact);
-    book.save().handler_err("save contact book")?;
+    book.save(&db).await.handler_err("save contact book")?;
 
     log::warn!(
         "test-admin: upserted contact {} ({}) — bypassing discovery handshake",

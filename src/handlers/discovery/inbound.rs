@@ -276,11 +276,7 @@ async fn dispatch_decrypted_message(
             // Mutual contact detection via network intersection
             let mutual_contacts = if let Some(ref keys) = payload.network_keys {
                 let op = OperationProcessor::new(std::sync::Arc::new(node.clone()));
-                let our_book = op
-                    .contact_book_path()
-                    .ok()
-                    .map(|p| ContactBook::load_from(&p).unwrap_or_default())
-                    .unwrap_or_default();
+                let our_book = op.load_contact_book().await.unwrap_or_default();
                 let our_keys: std::collections::HashSet<&str> = our_book
                     .active_contacts()
                     .iter()
@@ -441,10 +437,7 @@ async fn dispatch_decrypted_message(
             // arbitrary mutations onto this node just by knowing our messaging
             // pseudonym + pubkey. See fix doc: trust-boundary hole.
             let op = OperationProcessor::new(std::sync::Arc::new(node.clone()));
-            let book_path = op
-                .contact_book_path()
-                .map_err(|e| HandlerError::Internal(format!("contact book path: {e}")))?;
-            let contact_book = ContactBook::load_from(&book_path).unwrap_or_default();
+            let contact_book = op.load_contact_book().await.unwrap_or_default();
             match authorize_data_share_sender(&contact_book, &payload) {
                 DataShareAuthz::Authorized => {}
                 DataShareAuthz::UnknownSender => {
@@ -988,13 +981,13 @@ async fn process_accepted_connection(
         role.domain.clone(),
         default_role.to_string(),
     );
-    let book_path = op
-        .contact_book_path()
-        .map_err(|e| HandlerError::Internal(format!("Failed to resolve contacts path: {e}")))?;
-    let mut book = ContactBook::load_from(&book_path)
+    let mut book = op
+        .load_contact_book()
+        .await
         .map_err(|e| HandlerError::Internal(format!("Failed to load contacts: {e}")))?;
     book.upsert_contact(contact);
-    book.save_to(&book_path)
+    op.save_contact_book(&book)
+        .await
         .map_err(|e| HandlerError::Internal(format!("Failed to save contacts: {e}")))?;
 
     Ok(())
@@ -1045,10 +1038,7 @@ async fn handle_incoming_referral_query(
     publisher: &DiscoveryPublisher,
 ) -> Result<DispatchOutcome, HandlerError> {
     let op = OperationProcessor::new(std::sync::Arc::new(node.clone()));
-    let book_path = op
-        .contact_book_path()
-        .map_err(|e| HandlerError::Internal(format!("contact book path: {e}")))?;
-    let contact_book = ContactBook::load_from(&book_path).unwrap_or_default();
+    let contact_book = op.load_contact_book().await.unwrap_or_default();
 
     // Check if we know the subject. See `referral_contact_matches` for the
     // primary/legacy-fallback match strategy.
@@ -1181,18 +1171,15 @@ async fn handle_incoming_referral_response(
     // render an explicit "Unknown contact" label.
     let voucher_display_name = {
         let op = OperationProcessor::new(std::sync::Arc::new(node.clone()));
-        match op.contact_book_path() {
-            Ok(book_path) => {
-                let contact_book = ContactBook::load_from(&book_path).unwrap_or_default();
-                contact_book
-                    .active_contacts()
-                    .iter()
-                    .find(|c| referral_voucher_matches(c, payload))
-                    .map(|c| c.display_name.clone())
-                    .unwrap_or_else(|| "Unknown contact".to_string())
-            }
+        match op.load_contact_book().await {
+            Ok(contact_book) => contact_book
+                .active_contacts()
+                .iter()
+                .find(|c| referral_voucher_matches(c, payload))
+                .map(|c| c.display_name.clone())
+                .unwrap_or_else(|| "Unknown contact".to_string()),
             Err(e) => {
-                log::warn!("Failed to resolve contact book path for voucher lookup: {e}");
+                log::warn!("Failed to load contact book for voucher lookup: {e}");
                 "Unknown contact".to_string()
             }
         }
