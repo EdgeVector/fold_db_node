@@ -23,6 +23,17 @@ use std::sync::Arc;
 pub struct TextRecordDto {
     pub source_key: String,
     pub text: String,
+    /// Caller signals that this record is expected to contain
+    /// identity content (e.g. an email record with a structured
+    /// sender address, not a freeform note that says "coffee
+    /// good"). When `true` and the extractor ran empty with no
+    /// IngestionError written, a meta-level `ZeroExtractorYield`
+    /// IngestionError is emitted so the silent-gap case is
+    /// surfaced in the Failed panel. Absent/false means "no claim"
+    /// — the zero-yield check is skipped and the record is treated
+    /// as legitimately empty. See TODO-6 in the workspace backlog.
+    #[serde(default)]
+    pub expected_to_yield: bool,
 }
 
 #[derive(Debug, Clone, Deserialize)]
@@ -79,6 +90,7 @@ pub async fn ingest_text_signals_batch(
 
     for rec in request.records {
         let source_key = rec.source_key.clone();
+        let expected_to_yield = rec.expected_to_yield;
 
         match ingest_text_signals(
             node.clone(),
@@ -97,6 +109,19 @@ pub async fn ingest_text_signals_batch(
                 successful_records += 1;
                 total_signals += signal_count;
                 total_records_written += records_written;
+                // TODO-6: surface the silent-gap case. The writer
+                // succeeded and the extractor saw zero signals; if
+                // the caller flagged this record as expected to
+                // yield, emit the meta-level ZeroExtractorYield row.
+                if expected_to_yield && ran_empty {
+                    crate::fingerprints::ingestion_error_writer::emit_zero_yield_meta_error(
+                        node.clone(),
+                        &request.source_schema,
+                        &source_key,
+                        "text_regex ran with zero fingerprints despite expected_to_yield=true",
+                    )
+                    .await;
+                }
                 per_record.push(TextRecordResult {
                     source_key,
                     ok: true,
@@ -170,6 +195,21 @@ mod tests {
         assert_eq!(req.source_schema, "Notes");
         assert_eq!(req.records.len(), 2);
         assert_eq!(req.records[0].source_key, "note_1");
+        // TODO-6 field is optional; both records omit it, so both
+        // default to false and the zero-yield check is a no-op.
+        assert!(!req.records[0].expected_to_yield);
+        assert!(!req.records[1].expected_to_yield);
+    }
+
+    #[test]
+    fn expected_to_yield_round_trips_true() {
+        let raw = json!({
+            "source_key": "email_1",
+            "text": "no parseable signal",
+            "expected_to_yield": true
+        });
+        let dto: TextRecordDto = serde_json::from_value(raw).expect("deserialize");
+        assert!(dto.expected_to_yield);
     }
 
     #[test]

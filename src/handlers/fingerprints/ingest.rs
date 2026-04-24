@@ -84,6 +84,17 @@ pub struct PhotoFacesDto {
     /// record so the UI can distinguish "not yet processed" from
     /// "processed and empty."
     pub faces: Vec<DetectedFaceDto>,
+    /// Caller signals that this record is expected to contain
+    /// identity content (e.g. the upstream filter flagged it as a
+    /// human-taken photo, not scenery). When `true` and every
+    /// applicable extractor ran empty with no IngestionError
+    /// written, a meta-level `ZeroExtractorYield` IngestionError is
+    /// emitted so the silent-gap case is surfaced in the Failed
+    /// panel. Absent/false means "no claim" — the zero-yield check
+    /// is skipped and the record is treated as legitimately empty.
+    /// See TODO-6 in the workspace backlog.
+    #[serde(default)]
+    pub expected_to_yield: bool,
 }
 
 /// Full batch ingest request body.
@@ -164,6 +175,7 @@ pub async fn ingest_photo_faces_batch(
 
     for photo in request.photos {
         let source_key = photo.source_key.clone();
+        let expected_to_yield = photo.expected_to_yield;
         let faces: Vec<DetectedFace> = photo.faces.into_iter().map(DetectedFace::from).collect();
 
         // Validate before handing to the planner. Empty embeddings
@@ -202,6 +214,21 @@ pub async fn ingest_photo_faces_batch(
                 successful_photos += 1;
                 total_faces += face_count;
                 total_records_written += records_written;
+                // TODO-6: surface the silent-gap case. The writer
+                // succeeded (so no per-extractor IngestionError was
+                // emitted) and the extractor saw zero faces; if the
+                // caller flagged this record as expected to yield,
+                // emit the meta-level ZeroExtractorYield row so the
+                // Failed panel shows it.
+                if expected_to_yield && ran_empty {
+                    crate::fingerprints::ingestion_error_writer::emit_zero_yield_meta_error(
+                        node.clone(),
+                        &request.source_schema,
+                        &source_key,
+                        "face_detect ran with zero fingerprints despite expected_to_yield=true",
+                    )
+                    .await;
+                }
                 per_photo.push(PhotoIngestResult {
                     source_key,
                     ok: true,
@@ -464,5 +491,28 @@ mod tests {
         assert_eq!(face.embedding, vec![1.0, 2.0]);
         assert_eq!(face.bbox, [0.0, 1.0, 2.0, 3.0]);
         assert_eq!(face.confidence, 0.5);
+    }
+
+    #[test]
+    fn expected_to_yield_defaults_false_when_absent() {
+        // Omitting the field must still deserialize — existing callers
+        // (e.g. migrate_photos) predate TODO-6 and do not send it.
+        let raw = json!({
+            "source_key": "IMG_1",
+            "faces": []
+        });
+        let dto: PhotoFacesDto = serde_json::from_value(raw).expect("deserialize");
+        assert!(!dto.expected_to_yield);
+    }
+
+    #[test]
+    fn expected_to_yield_round_trips_true() {
+        let raw = json!({
+            "source_key": "IMG_1",
+            "faces": [],
+            "expected_to_yield": true
+        });
+        let dto: PhotoFacesDto = serde_json::from_value(raw).expect("deserialize");
+        assert!(dto.expected_to_yield);
     }
 }

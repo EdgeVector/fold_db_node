@@ -37,7 +37,7 @@ pub use ingest::{
     PhotoFacesDto, PhotoIngestResult,
 };
 pub use ingest_text::{
-    ingest_text_signals_batch, IngestTextSignalsRequest, IngestTextSignalsResponse,
+    ingest_text_signals_batch, IngestTextSignalsRequest, IngestTextSignalsResponse, TextRecordDto,
 };
 pub use ingestion_errors::{
     list_ingestion_errors, resolve_ingestion_error, IngestionErrorView, ListIngestionErrorsResponse,
