@@ -8,6 +8,20 @@ import {
 } from '../../../api/clients/fingerprintsClient'
 import { listContacts } from '../../../api/clients/trustClient'
 
+// Trigger a browser file-save for an in-memory blob. Factored out so
+// the two download handlers (SVG + PNG) share the same anchor-click
+// plumbing and URL lifecycle.
+function triggerDownload(blob, filename) {
+  const url = URL.createObjectURL(blob)
+  const a = document.createElement('a')
+  a.href = url
+  a.download = filename
+  document.body.appendChild(a)
+  a.click()
+  a.remove()
+  URL.revokeObjectURL(url)
+}
+
 /**
  * "My Identity Card" panel — shows the node owner's signed Identity
  * Card and lets them copy the canonical payload for sharing.
@@ -43,6 +57,9 @@ export default function MyIdentityCardPanel() {
   // QR code is off by default — takes up 200+px of vertical space
   // and most of the time the user just wants to copy JSON.
   const [showQr, setShowQr] = useState(false)
+  // Ref to the rendered <svg> so the download handlers can serialize
+  // it without re-rendering the QR with a different library.
+  const qrRef = useRef(null)
 
   // Send-to-contact state. Contacts are fetched lazily on first
   // open of the picker so we don't pay the trust-client cost for
@@ -187,6 +204,84 @@ export default function MyIdentityCardPanel() {
       setSendingTo(null)
     }
   }, [])
+
+  // Sanitize the card's display_name for use as the download
+  // filename stem. Falls back to "identity-card" when the name is
+  // empty or reduces to an empty slug after stripping punctuation
+  // (e.g. a name that's entirely emoji).
+  const identityFilename = useCallback(
+    ext => {
+      const slug = (card?.display_name ?? '')
+        .toLowerCase()
+        .replace(/[^a-z0-9]+/g, '-')
+        .replace(/^-+|-+$/g, '')
+      const stem = slug ? `identity-${slug}` : 'identity-card'
+      return `${stem}.${ext}`
+    },
+    [card],
+  )
+
+  // Serialize the rendered QR <svg> and trigger a file download.
+  // Re-serializing through XMLSerializer instead of using
+  // svgEl.outerHTML because qrcode.react does not emit an xmlns
+  // attribute, which some SVG consumers reject.
+  const downloadQrSvg = useCallback(() => {
+    const svgEl = qrRef.current
+    if (!svgEl) return
+    const serialized = new XMLSerializer().serializeToString(svgEl)
+    const withNs = serialized.includes('xmlns=')
+      ? serialized
+      : serialized.replace(
+          '<svg',
+          '<svg xmlns="http://www.w3.org/2000/svg"',
+        )
+    const blob = new Blob([withNs], { type: 'image/svg+xml;charset=utf-8' })
+    triggerDownload(blob, identityFilename('svg'))
+  }, [identityFilename])
+
+  // Rasterize the SVG through a canvas at 2x for crisp output on
+  // retina displays and print. Canvas is filled with white first so
+  // the exported PNG has a solid background (email-signature and
+  // business-card use cases assume opaque white, not transparent).
+  const downloadQrPng = useCallback(() => {
+    const svgEl = qrRef.current
+    if (!svgEl) return
+    const serialized = new XMLSerializer().serializeToString(svgEl)
+    const withNs = serialized.includes('xmlns=')
+      ? serialized
+      : serialized.replace(
+          '<svg',
+          '<svg xmlns="http://www.w3.org/2000/svg"',
+        )
+    const svgBlob = new Blob([withNs], { type: 'image/svg+xml;charset=utf-8' })
+    const svgUrl = URL.createObjectURL(svgBlob)
+    const img = new Image()
+    const baseSize = 256
+    const scale = 2
+    const renderSize = baseSize * scale
+    img.onload = () => {
+      const canvas = document.createElement('canvas')
+      canvas.width = renderSize
+      canvas.height = renderSize
+      const ctx = canvas.getContext('2d')
+      if (!ctx) {
+        URL.revokeObjectURL(svgUrl)
+        return
+      }
+      ctx.fillStyle = '#ffffff'
+      ctx.fillRect(0, 0, renderSize, renderSize)
+      ctx.drawImage(img, 0, 0, renderSize, renderSize)
+      canvas.toBlob(blob => {
+        URL.revokeObjectURL(svgUrl)
+        if (!blob) return
+        triggerDownload(blob, identityFilename('png'))
+      }, 'image/png')
+    }
+    img.onerror = () => {
+      URL.revokeObjectURL(svgUrl)
+    }
+    img.src = svgUrl
+  }, [identityFilename])
 
   const closeAttach = useCallback(() => {
     stopCamera()
@@ -662,6 +757,7 @@ export default function MyIdentityCardPanel() {
                 low-light phone scans.
               */}
               <QRCodeSVG
+                ref={qrRef}
                 value={JSON.stringify(card)}
                 size={256}
                 level="M"
@@ -673,6 +769,29 @@ export default function MyIdentityCardPanel() {
                 signed card JSON — verifiable without a network call.
                 Peers receive this card through the messaging service;
                 see their Received Cards tab.
+              </p>
+              <div className="flex gap-2">
+                <button
+                  type="button"
+                  className="btn-secondary text-xs"
+                  onClick={downloadQrPng}
+                  data-testid="my-identity-card-qr-download-png"
+                >
+                  Download PNG
+                </button>
+                <button
+                  type="button"
+                  className="btn-secondary text-xs"
+                  onClick={downloadQrSvg}
+                  data-testid="my-identity-card-qr-download-svg"
+                >
+                  Download SVG
+                </button>
+              </div>
+              <p className="text-[10px] text-gray-600 max-w-[256px] text-center">
+                PNG for email signatures and printable cards; SVG for
+                business cards and anywhere a vector format is
+                preferred.
               </p>
             </div>
           )}

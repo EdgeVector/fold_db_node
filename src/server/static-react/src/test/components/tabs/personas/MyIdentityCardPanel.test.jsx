@@ -1,6 +1,6 @@
 import React from 'react'
 import { render, screen, fireEvent, waitFor } from '@testing-library/react'
-import { describe, it, expect, beforeEach, vi } from 'vitest'
+import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest'
 import MyIdentityCardPanel from '../../../../components/tabs/personas/MyIdentityCardPanel'
 
 vi.mock('../../../../api/clients/fingerprintsClient', () => ({
@@ -249,6 +249,132 @@ describe('MyIdentityCardPanel', () => {
       fireEvent.click(screen.getByTestId('my-identity-card-qr-toggle'))
       fireEvent.click(screen.getByTestId('my-identity-card-qr-toggle'))
       expect(screen.queryByTestId('my-identity-card-qr')).toBeNull()
+    })
+  })
+
+  describe('QR export (TODO-9)', () => {
+    // Capture every blob passed to URL.createObjectURL so the
+    // download assertions can inspect what the handler tried to
+    // save. Cleared per-test via beforeEach's vi.clearAllMocks.
+    let createdBlobs
+    let anchorClicks
+    let origCreateObjectURL
+    let origRevokeObjectURL
+
+    beforeEach(() => {
+      createdBlobs = []
+      anchorClicks = []
+      // jsdom does not implement these by default; stub them so the
+      // handlers run to completion without blowing up on missing
+      // browser primitives. Stash the originals so the afterEach can
+      // restore them (vi.restoreAllMocks doesn't touch direct
+      // assignments on URL).
+      origCreateObjectURL = globalThis.URL.createObjectURL
+      origRevokeObjectURL = globalThis.URL.revokeObjectURL
+      globalThis.URL.createObjectURL = vi.fn(blob => {
+        createdBlobs.push(blob)
+        return `blob:mock:${createdBlobs.length}`
+      })
+      globalThis.URL.revokeObjectURL = vi.fn()
+      // Intercept anchor clicks on the prototype so we observe the
+      // download filename without touching document.createElement
+      // (spying on that recursed infinitely across test files).
+      vi.spyOn(HTMLAnchorElement.prototype, 'click').mockImplementation(
+        function clickSpy() {
+          anchorClicks.push({ href: this.href, download: this.download })
+        },
+      )
+    })
+
+    afterEach(() => {
+      globalThis.URL.createObjectURL = origCreateObjectURL
+      globalThis.URL.revokeObjectURL = origRevokeObjectURL
+      vi.restoreAllMocks()
+    })
+
+    it('exposes Download PNG and Download SVG buttons once QR is open', async () => {
+      getMyIdentityCard.mockResolvedValue(ok(card()))
+      render(<MyIdentityCardPanel />)
+      await waitFor(() => {
+        expect(screen.getByTestId('my-identity-card-qr-toggle')).toBeInTheDocument()
+      })
+      // Hidden while the QR panel is collapsed.
+      expect(
+        screen.queryByTestId('my-identity-card-qr-download-png'),
+      ).toBeNull()
+      expect(
+        screen.queryByTestId('my-identity-card-qr-download-svg'),
+      ).toBeNull()
+
+      fireEvent.click(screen.getByTestId('my-identity-card-qr-toggle'))
+
+      expect(
+        screen.getByTestId('my-identity-card-qr-download-png'),
+      ).toBeInTheDocument()
+      expect(
+        screen.getByTestId('my-identity-card-qr-download-svg'),
+      ).toBeInTheDocument()
+    })
+
+    it('downloads an SVG file named after the card owner', async () => {
+      getMyIdentityCard.mockResolvedValue(ok(card({ display_name: 'Tom Tang' })))
+      render(<MyIdentityCardPanel />)
+      await waitFor(() => {
+        expect(screen.getByTestId('my-identity-card-qr-toggle')).toBeInTheDocument()
+      })
+      fireEvent.click(screen.getByTestId('my-identity-card-qr-toggle'))
+      fireEvent.click(screen.getByTestId('my-identity-card-qr-download-svg'))
+
+      expect(anchorClicks).toHaveLength(1)
+      expect(anchorClicks[0].download).toBe('identity-tom-tang.svg')
+      expect(createdBlobs).toHaveLength(1)
+      expect(createdBlobs[0].type).toContain('image/svg+xml')
+    })
+
+    it('falls back to a generic filename when display_name is empty', async () => {
+      getMyIdentityCard.mockResolvedValue(ok(card({ display_name: '' })))
+      render(<MyIdentityCardPanel />)
+      await waitFor(() => {
+        expect(screen.getByTestId('my-identity-card-qr-toggle')).toBeInTheDocument()
+      })
+      fireEvent.click(screen.getByTestId('my-identity-card-qr-toggle'))
+      fireEvent.click(screen.getByTestId('my-identity-card-qr-download-svg'))
+
+      expect(anchorClicks[0].download).toBe('identity-card.svg')
+    })
+
+    it('sanitizes punctuation and case in the display name', async () => {
+      getMyIdentityCard.mockResolvedValue(
+        ok(card({ display_name: 'O\u2019Brien & Co.' })),
+      )
+      render(<MyIdentityCardPanel />)
+      await waitFor(() => {
+        expect(screen.getByTestId('my-identity-card-qr-toggle')).toBeInTheDocument()
+      })
+      fireEvent.click(screen.getByTestId('my-identity-card-qr-toggle'))
+      fireEvent.click(screen.getByTestId('my-identity-card-qr-download-svg'))
+
+      expect(anchorClicks[0].download).toBe('identity-o-brien-co.svg')
+    })
+
+    it('PNG button starts the rasterize pipeline by creating an SVG blob', async () => {
+      // jsdom does not fire Image.onload under vitest, so we can't
+      // observe the final PNG blob — but we can verify that clicking
+      // Download PNG immediately produced an SVG blob URL and set it
+      // as the Image src, which is the handler's first side effect.
+      getMyIdentityCard.mockResolvedValue(ok(card()))
+      render(<MyIdentityCardPanel />)
+      await waitFor(() => {
+        expect(screen.getByTestId('my-identity-card-qr-toggle')).toBeInTheDocument()
+      })
+      fireEvent.click(screen.getByTestId('my-identity-card-qr-toggle'))
+      fireEvent.click(screen.getByTestId('my-identity-card-qr-download-png'))
+
+      expect(createdBlobs).toHaveLength(1)
+      expect(createdBlobs[0].type).toContain('image/svg+xml')
+      // No anchor click yet — that only fires after Image.onload +
+      // canvas.toBlob, which won't run in this environment.
+      expect(anchorClicks).toHaveLength(0)
     })
   })
 
