@@ -583,7 +583,7 @@ async fn connect_inner(
     target_str: &str,
 ) -> HandlerResult<()> {
     // Check if already connected to this pseudonym
-    let op = OperationProcessor::new(std::sync::Arc::new(node.clone()));
+    let op = OperationProcessor::from_ref(node);
     let contact_book = op.load_contact_book().await.unwrap_or_default();
     if contact_book.active_contacts().iter().any(|c| {
         c.pseudonym.as_deref() == Some(target_str)
@@ -789,7 +789,7 @@ pub async fn respond_to_request(
     };
 
     let role_name = req.role.as_deref().unwrap_or("acquaintance");
-    let op = OperationProcessor::new(std::sync::Arc::new(node.clone()));
+    let op = OperationProcessor::from_ref(node);
     let config = op
         .load_sharing_roles()
         .await
@@ -1224,7 +1224,7 @@ pub async fn send_data_share(
     master_key: &[u8],
 ) -> HandlerResult<DataShareResponse> {
     // 1. Look up recipient in contact book
-    let op = OperationProcessor::new(std::sync::Arc::new(node.clone()));
+    let op = OperationProcessor::from_ref(node);
     let book = op
         .load_contact_book()
         .await
@@ -1503,7 +1503,7 @@ pub async fn initiate_referral_query(
     }
 
     // Load contact book
-    let op = OperationProcessor::new(std::sync::Arc::new(node.clone()));
+    let op = OperationProcessor::from_ref(node);
     let contact_book = op.load_contact_book().await.unwrap_or_default();
 
     // Filter to contacts with both messaging pseudonym and public key
