@@ -776,7 +776,11 @@ pub async fn respond_to_request(
 
     // If accepting, require identity card and validate role upfront
     let identity_card = if req.action == "accept" {
-        let card = IdentityCard::load()
+        let db = node
+            .get_fold_db()
+            .map_err(|e| HandlerError::Internal(format!("FoldDB not available: {e}")))?;
+        let card = IdentityCard::load(&db)
+            .await
             .map_err(|e| HandlerError::Internal(format!("Failed to load identity card: {e}")))?
             .ok_or_else(|| {
                 HandlerError::BadRequest(
@@ -1275,16 +1279,17 @@ pub async fn send_data_share(
 
     // 2. Get sender identity
     let sender_public_key = node.get_node_public_key().to_string();
-    let sender_display_name = IdentityCard::load()
+    let db = node
+        .get_fold_db()
+        .map_err(|e| HandlerError::Internal(format!("Failed to access database: {}", e)))?;
+    let sender_display_name = IdentityCard::load(&db)
+        .await
         .ok()
         .flatten()
         .map(|c| c.display_name)
         .unwrap_or_else(|| "Unknown".to_string());
 
     // 3. Load each record
-    let db = node
-        .get_fold_db()
-        .map_err(|e| HandlerError::Internal(format!("Failed to access database: {}", e)))?;
 
     let mut shared_records = Vec::with_capacity(req.records.len());
 

@@ -213,7 +213,13 @@ impl FoldNode {
                         // Subsequent restarts are no-ops because the
                         // existing Me persona trips the idempotency
                         // guard in ensure_me_persona_if_absent.
-                        match crate::trust::identity_card::IdentityCard::load() {
+                        let card_result = match node.get_fold_db() {
+                            Ok(db) => crate::trust::identity_card::IdentityCard::load(&db).await,
+                            Err(e) => Err(fold_db::schema::SchemaError::InvalidData(format!(
+                                "FoldDB not ready: {e}"
+                            ))),
+                        };
+                        match card_result {
                             Ok(Some(card)) => {
                                 let node_arc = Arc::new(node.clone());
                                 match crate::fingerprints::self_identity::ensure_me_persona_if_absent(
@@ -1333,19 +1339,10 @@ async fn migrate_config_files_to_sled(node: &FoldNode) {
     // run Ollama locally while a phone uses Anthropic). It stays in
     // ingestion_config.json which is never synced.
 
-    // 3. Migrate identity card
-    if let Ok(Some(card)) = crate::trust::identity_card::IdentityCard::load() {
-        if let Err(e) = store.set_display_name(&card.display_name) {
-            log::warn!("Failed to migrate display_name to Sled: {}", e);
-        } else {
-            migrated_any = true;
-        }
-        if let Some(ref hint) = card.contact_hint {
-            if let Err(e) = store.set_contact_hint(hint) {
-                log::warn!("Failed to migrate contact_hint to Sled: {}", e);
-            }
-        }
-    }
+    // Identity card is NOT migrated here — as of the user-profile refactor
+    // it lives in the synced `user_profile/identity_card` key (reachable
+    // via `IdentityCard::load(&db).await`). NodeConfigStore's display_name
+    // / contact_hint fields are legacy and no longer the source of truth.
 
     if migrated_any {
         log::info!("Migrated config files to Sled config store");

@@ -54,88 +54,38 @@ fn save_consumed_nonce(nonce: &str) {
 impl OperationProcessor {
     // ===== Identity Card =====
 
-    /// Storage key inside the synced `metadata` namespace.
+    /// Storage sub-key inside `UserProfileStore` (lives under the synced
+    /// `user_profile/` prefix of the `metadata` namespace).
     const IDENTITY_CARD_KEY: &'static str = "identity_card";
 
-    /// Get the current identity card (or None if not set).
-    ///
-    /// Reads from the synced `metadata` namespace first — this is what lets a
-    /// restored device inherit the owner's card without re-entering it. If
-    /// the synced store is empty, fall back to the legacy per-device JSON
-    /// file at `$FOLDDB_HOME/config/identity_card.json` and promote it into
-    /// the synced store on the next `set_identity_card`.
-    pub async fn get_identity_card(&self) -> Result<Option<IdentityCard>, SchemaError> {
-        use fold_db::storage::traits::TypedStore;
-        use fold_db::storage::TypedKvStore;
-
+    fn user_profile(&self) -> Result<crate::user_profile::UserProfileStore, SchemaError> {
         let fold_db = self
             .node
             .get_fold_db()
             .map_err(|e| SchemaError::InvalidData(format!("FoldDB not available: {e}")))?;
-        let raw = fold_db.db_ops().metadata().raw_metadata_kv();
-        let typed: TypedKvStore<dyn fold_db::storage::traits::KvStore> = TypedKvStore::new(raw);
-        match typed
-            .get_item::<IdentityCard>(Self::IDENTITY_CARD_KEY)
-            .await
-        {
-            Ok(Some(card)) => return Ok(Some(card)),
-            Ok(None) => {}
-            Err(e) => {
-                log::warn!(
-                    "identity_card: synced-store read failed ({e}); falling back to legacy JSON"
-                );
-            }
-        }
+        Ok(crate::user_profile::UserProfileStore::from_db(&fold_db))
+    }
 
-        // Legacy fallback: per-device JSON file. Kept readable so a client
-        // that upgraded before ever calling `set_identity_card` on the new
-        // code path still sees its card.
-        IdentityCard::load()
-            .map_err(|e| SchemaError::InvalidData(format!("Failed to load identity card: {e}")))
+    /// Get the current identity card (or None if not set).
+    ///
+    /// Reads from the synced user-profile store. Writes to this store
+    /// propagate to every device restored from the same mnemonic via the
+    /// sync log.
+    pub async fn get_identity_card(&self) -> Result<Option<IdentityCard>, SchemaError> {
+        self.user_profile()?.get(Self::IDENTITY_CARD_KEY).await
     }
 
     /// Set or update the identity card.
-    ///
-    /// Writes to the synced `metadata` namespace — writes propagate to every
-    /// other device restored from the same mnemonic via the sync log. Also
-    /// still writes the legacy JSON file so older code paths (and rollbacks)
-    /// continue to see the card locally.
     pub async fn set_identity_card(
         &self,
         display_name: String,
         contact_hint: Option<String>,
         birthday: Option<String>,
     ) -> Result<(), SchemaError> {
-        use fold_db::storage::traits::TypedStore;
-        use fold_db::storage::TypedKvStore;
-
         let card = IdentityCard::new(display_name, contact_hint, birthday);
-
-        // Save to the synced metadata namespace — this is the authoritative
-        // multi-device source of truth. Writes here flow through the
-        // `SyncingKvStore` and propagate to peer devices on the same
-        // personal prefix.
-        let fold_db = self
-            .node
-            .get_fold_db()
-            .map_err(|e| SchemaError::InvalidData(format!("FoldDB not available: {e}")))?;
-        let raw = fold_db.db_ops().metadata().raw_metadata_kv();
-        let typed: TypedKvStore<dyn fold_db::storage::traits::KvStore> = TypedKvStore::new(raw);
-        typed
-            .put_item(Self::IDENTITY_CARD_KEY, &card)
+        self.user_profile()?
+            .put(Self::IDENTITY_CARD_KEY, &card)
             .await
-            .map_err(|e| {
-                SchemaError::InvalidData(format!("Failed to save identity card (synced): {e}"))
-            })?;
-
-        // Legacy mirror on disk — still written so old reads (and any
-        // external inspection tool) keep working. One release after
-        // everything reads from the synced store we can drop this.
-        if let Err(e) = card.save() {
-            log::warn!("identity_card: legacy JSON write failed (non-fatal): {e}");
-        }
-
-        Ok(())
     }
 
     // ===== Contact Book =====
@@ -158,14 +108,19 @@ impl OperationProcessor {
 
     /// Create a signed trust invite token for direct sharing.
     /// The `proposed_role` is the role name (e.g., "friend", "doctor") to propose.
-    pub fn create_trust_invite(&self, proposed_role: &str) -> Result<TrustInvite, SchemaError> {
-        let identity = IdentityCard::load()
-            .map_err(|e| SchemaError::InvalidData(format!("Failed to load identity card: {e}")))?
-            .ok_or_else(|| {
-                SchemaError::InvalidData(
-                    "Identity card not set. Please set your display name first.".to_string(),
-                )
-            })?;
+    pub async fn create_trust_invite(
+        &self,
+        proposed_role: &str,
+    ) -> Result<TrustInvite, SchemaError> {
+        let db = self
+            .node
+            .get_fold_db()
+            .map_err(|e| SchemaError::InvalidData(format!("FoldDB not available: {e}")))?;
+        let identity = IdentityCard::load(&db).await?.ok_or_else(|| {
+            SchemaError::InvalidData(
+                "Identity card not set. Please set your display name first.".to_string(),
+            )
+        })?;
 
         let private_key = self.node.get_node_private_key();
         let public_key = self.node.get_node_public_key();
@@ -308,7 +263,7 @@ impl OperationProcessor {
 
         // Create reciprocal invite if requested
         if trust_back {
-            let reciprocal = self.create_trust_invite(role_name)?;
+            let reciprocal = self.create_trust_invite(role_name).await?;
             Ok(Some(reciprocal))
         } else {
             Ok(None)

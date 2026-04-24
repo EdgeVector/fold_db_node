@@ -160,10 +160,40 @@ pub fn derive_recovery_phrase(private_key_base64: &str) -> Result<Vec<String>, C
     Ok(mnemonic.words().map(|w| w.to_string()).collect())
 }
 
+/// Open the node, save the identity card to the synced user-profile store,
+/// and drop the handle. The daemon will reopen the same Sled dir later.
+async fn save_identity_card_via_local_node(card: IdentityCard) -> Result<(), CliError> {
+    let home = fold_db_node::utils::paths::folddb_home()
+        .map_err(|e| CliError::new(format!("Cannot resolve FOLDDB_HOME: {}", e)))?;
+    let data_dir = home.join("data");
+    std::fs::create_dir_all(&data_dir)
+        .map_err(|e| CliError::new(format!("Cannot create data dir: {}", e)))?;
+
+    // Reuse the identity the CLI just wrote to disk so the node opens with
+    // the right pubkey/pool.
+    let config_path = home.join("config").join("node_config.json");
+    let config = fold_db_node::fold_node::load_node_config(
+        Some(config_path.to_string_lossy().as_ref()),
+        None,
+    )
+    .map_err(|e| CliError::new(format!("Cannot load node config: {}", e)))?;
+
+    let node = fold_db_node::fold_node::FoldNode::new(config)
+        .await
+        .map_err(|e| CliError::new(format!("Cannot open node for setup: {}", e)))?;
+    let db = node
+        .get_fold_db()
+        .map_err(|e| CliError::new(format!("Cannot access FoldDB: {}", e)))?;
+    card.save(&db)
+        .await
+        .map_err(|e| CliError::new(format!("Failed to save identity card: {}", e)))?;
+    Ok(())
+}
+
 /// Run the interactive setup wizard.
 ///
 /// Returns a fully populated `NodeConfig` with identity keys embedded.
-pub fn run_setup_wizard() -> Result<NodeConfig, CliError> {
+pub async fn run_setup_wizard() -> Result<NodeConfig, CliError> {
     eprintln!();
     eprintln!("Welcome to FoldDB!");
     eprintln!();
@@ -224,15 +254,16 @@ pub fn run_setup_wizard() -> Result<NodeConfig, CliError> {
     };
 
     eprintln!();
-    eprintln!("This info stays on your device. It's only shared when");
-    eprintln!("YOU invite someone to connect — never uploaded to any");
-    eprintln!("cloud service.");
+    eprintln!("This info is synced with your other devices restored from");
+    eprintln!("the same recovery phrase. It's never uploaded in plaintext —");
+    eprintln!("the sync log is end-to-end encrypted with keys derived from");
+    eprintln!("your recovery phrase.");
     eprintln!();
 
-    // Save identity card
+    // Save identity card via a short-lived FoldNode. The daemon will
+    // re-open the same Sled data dir later and pick up the saved card.
     let card = IdentityCard::new(name, email, birthday);
-    card.save()
-        .map_err(|e| CliError::new(format!("Failed to save identity card: {}", e)))?;
+    save_identity_card_via_local_node(card).await?;
 
     // --- AI setup ---
     eprintln!("Configure AI for data ingestion:");
