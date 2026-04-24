@@ -1,4 +1,4 @@
-export const STARTER_SUGGESTIONS = [
+export const STARTER_SUGGESTIONS: readonly string[] = [
   'What data do I have?',
   'What taxes did I pay?',
   'Show my upcoming travel plans',

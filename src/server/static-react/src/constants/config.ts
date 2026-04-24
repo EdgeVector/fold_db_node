@@ -11,4 +11,4 @@ export const BROWSER_CONFIG = {
     USER_ID: 'fold_user_id',
     USER_HASH: 'fold_user_hash',
   },
-};
+} as const;
