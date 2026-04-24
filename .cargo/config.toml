@@ -1,14 +1,26 @@
-# Local-dev override: when this repo is checked out alongside a sibling
-# `../schema_service` (the workspace layout), redirect the git deps to
-# the sibling path so parallel schema_service hacking is picked up
-# without publishing. The production dep spec in Cargo.toml is a git
-# dep pinned via Cargo.lock — that's what PR CI and release builds
-# consume, so main-branch drift in schema_service can't silently break
-# fold_db_node.
+# Local-dev override: redirect cross-repo git deps to sibling checkouts
+# when this repo is checked out alongside the workspace layout
+# (`../fold_db`, `../schema_service`). Parallel hacking across repos
+# works without publishing intermediate rev bumps.
 #
-# CI removes this file before building so the git dep + lockfile pin
-# take effect (see `.github/workflows/ci-tests.yml` and nightlies).
-# Mirrors the same pattern used by schema_service for its fold_db dep.
+# Why patching fold_db matters: without this [patch], the sibling
+# `schema_service` brings in its OWN pinned `fold_db` rev (e.g.
+# `rev = "46edee9..."`) while `fold_db_node/Cargo.toml` uses
+# `branch = "mainline"` (HEAD). Cargo treats those as different
+# source specs and compiles TWO copies of `fold_db` — every type
+# re-exported through `schema_service_core` then mismatches the
+# same-named type from the direct `fold_db` dep, producing a wall
+# of `expected fold_db::X, found schema_service_core::Y` errors.
+# Patching both git sources to the single sibling path unifies them.
+#
+# Production dep specs in Cargo.toml are git deps pinned via
+# Cargo.lock — that's what PR CI and release builds consume, so
+# main-branch drift in siblings can't silently break fold_db_node.
+# CI removes this file before building (see `.github/workflows/
+# ci-tests.yml` lines 49, 111) so the lockfile pins take effect.
+[patch."https://github.com/EdgeVector/fold_db.git"]
+fold_db = { path = "../fold_db" }
+
 [patch."https://github.com/EdgeVector/schema_service.git"]
 schema_service_core        = { path = "../schema_service/crates/core" }
 schema_service_client      = { path = "../schema_service/crates/client" }

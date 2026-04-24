@@ -1,17 +1,66 @@
 #!/usr/bin/env bash
-# Pre-commit hook: cargo fmt gate.
+# Pre-commit hook: cargo fmt gate + Cargo.lock sanity check.
 #
-# Why this exists: CI runs `cargo fmt --all -- --check`. Forgetting to run
-# fmt locally before committing → push → PR fails CI → churn of manual
-# fmt-fix commits. This hook catches that at commit time.
+# Why this exists:
+#   1. CI runs `cargo fmt --all -- --check`. Forgetting to run fmt locally
+#      → push → PR fails CI → churn of manual fmt-fix commits.
+#   2. `.cargo/config.toml` patches cross-repo git deps to sibling paths.
+#      Running `cargo check` with those patches active mutates Cargo.lock
+#      to drop the `source = "git+..."` line for patched packages. If
+#      that mutated lock is committed, CI breaks — CI removes
+#      `.cargo/config.toml` and then can't resolve the patched crates
+#      (no source, no path). The hook rejects the commit so the dev
+#      notices before pushing.
 #
 # To install (idempotent): scripts/install-hooks.sh
 # To bypass (use sparingly): git commit --no-verify
 
 set -euo pipefail
 
-# Only gate when .rs files are staged.
-RS_FILES=$(git diff --cached --name-only --diff-filter=ACMR | grep '\.rs$' || true)
+STAGED=$(git diff --cached --name-only --diff-filter=ACMR || true)
+
+# --- Cargo.lock sanity check ---------------------------------------------
+# Packages whose [[package]] entry MUST keep `source = "git+..."` when
+# committed, because `.cargo/config.toml` patches them to sibling paths
+# that only exist in a workspace checkout (not in CI).
+LOCK_PATCHED_CRATES=(
+    fold_db
+    schema_service_core
+    schema_service_client
+    schema_service_server_http
+)
+
+if echo "$STAGED" | grep -qx 'Cargo.lock'; then
+    # Inspect the staged version of Cargo.lock (not the working tree).
+    STAGED_LOCK=$(git show ":Cargo.lock")
+    for crate in "${LOCK_PATCHED_CRATES[@]}"; do
+        block=$(printf '%s\n' "$STAGED_LOCK" | awk -v c="$crate" '
+            $0 == "[[package]]" { inblock = 1; buf = $0; seen = 0; next }
+            inblock && /^$/     { if (seen) { print buf; exit } inblock = 0; buf = ""; next }
+            inblock             { buf = buf "\n" $0; if ($0 == "name = \"" c "\"") seen = 1 }
+            END                 { if (inblock && seen) print buf }
+        ')
+        if [ -z "$block" ]; then
+            continue
+        fi
+        if ! printf '%s\n' "$block" | grep -q '^source = '; then
+            echo "pre-commit: Cargo.lock has a [[package]] entry for \`$crate\`" >&2
+            echo "pre-commit: with NO \`source = \` line. That happens when you" >&2
+            echo "pre-commit: ran \`cargo check\` with .cargo/config.toml active" >&2
+            echo "pre-commit: and the patched-to-path lockfile got staged." >&2
+            echo "pre-commit:" >&2
+            echo "pre-commit: Fix: \`git checkout Cargo.lock\` to restore the" >&2
+            echo "pre-commit: git-sourced committed lock. Your local \`cargo check\`" >&2
+            echo "pre-commit: will re-mutate the working-tree copy, but don't" >&2
+            echo "pre-commit: stage that mutation." >&2
+            echo "pre-commit: See CLAUDE.md 'Local-dev gotchas' for context." >&2
+            exit 1
+        fi
+    done
+fi
+
+# --- cargo fmt gate ------------------------------------------------------
+RS_FILES=$(echo "$STAGED" | grep '\.rs$' || true)
 if [ -z "$RS_FILES" ]; then
     exit 0
 fi

@@ -55,6 +55,22 @@ The script handles process cleanup, building, schema service startup, and fronte
 
 Dev uses the 9101 range so it doesn't collide with the prod Tauri bundle, which owns 9001 (and falls back to 9002..=9010). The Vite frontend auto-slots independently in 5173..=5299 (127 ports). Check `~/.folddb-slots/*.json` for the backend/schema/vite ports a running `run.sh` picked, or pin any of them with `--port`, `--schema-port`, or `VITE_PORT`. Widen/shift the Vite scan with `VITE_PORT_BASE` / `VITE_PORT_COUNT` if another stack already holds the 5173+ block.
 
+## Local-dev gotchas (read if `cargo check` explodes)
+
+Two mines, both already defused — but if you find yourself debugging either, this is what's going on:
+
+### Dual `fold_db` in the dep graph → wall of type-mismatch errors
+
+Symptoms: dozens of errors like `expected fold_db::triggers::Trigger, found schema_service_core::types::Trigger`, all from types re-exported through `schema_service_core`. Root cause: cargo compiles **two copies** of `fold_db` because `fold_db_node/Cargo.toml` says `branch = "mainline"` and the sibling `schema_service/Cargo.toml` says `rev = "..."` — different source specs, so cargo treats them as different packages even when both SHAs match.
+
+**Defense:** `.cargo/config.toml` patches **both** `fold_db` and `schema_service` to their sibling paths (`../fold_db`, `../schema_service/crates/*`). Every git-spec variation collapses onto one local path = one `fold_db` in the graph. If you remove or rename the sibling, the patch silently no-ops and the two-copies problem comes back — that's the fingerprint.
+
+### Fresh clone fails on RustEmbed (`static-react/dist` missing)
+
+Symptom: `#[derive(RustEmbed)] folder '...src/server/static-react/dist' does not exist`. Happens after `git clone`, after creating a worktree, or any time `cargo clean` wipes a previous stub.
+
+**Defense:** [build.rs](build.rs) writes a stub `dist/index.html` if the directory is absent. A real `npm --prefix src/server/static-react run build` overwrites the stub. CI always builds the frontend before Rust jobs, so prod is unaffected.
+
 ## Feature Flags
 
 - `os-keychain` — Encrypts node identity, E2E key, and credentials at rest using an OS keychain master key. Enabled in Tauri release builds. Disabled by default for dev/test (plaintext with 0o600 permissions).
