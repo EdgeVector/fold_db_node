@@ -6,6 +6,8 @@
  * as per Section 2.1.12 of .cursorrules compliance requirements.
  */
 
+import { SCHEMA_STATES } from "./schemas";
+
 // ============================================================================
 // SCHEMA CACHE CONFIGURATION CONSTANTS
 // ============================================================================
@@ -52,16 +54,39 @@ export const SCHEMA_ACTION_TYPES = {
   CLEAR_OPERATION_ERROR: "schemas/clearOperationError",
   INVALIDATE_CACHE: "schemas/invalidateCache",
   RESET_SCHEMAS: "schemas/resetSchemas",
-};
+} as const;
+
+export type SchemaActionType = (typeof SCHEMA_ACTION_TYPES)[keyof typeof SCHEMA_ACTION_TYPES];
 
 // ============================================================================
 // DEFAULT STATE VALUES
 // ============================================================================
 
+export interface SchemaCacheMeta {
+  ttl: number;
+  version: string;
+  lastUpdated: number | null;
+}
+
+export interface DefaultSchemaState {
+  schemas: Record<string, unknown>;
+  loading: {
+    fetch: boolean;
+    operations: Record<string, boolean>;
+  };
+  errors: {
+    fetch: string | null;
+    operations: Record<string, string>;
+  };
+  lastFetched: number | null;
+  cache: SchemaCacheMeta;
+  activeSchema: string | null;
+}
+
 /**
  * Complete default schema state
  */
-export const DEFAULT_SCHEMA_STATE = {
+export const DEFAULT_SCHEMA_STATE: DefaultSchemaState = {
   schemas: {},
   loading: {
     fetch: false,
@@ -113,22 +138,18 @@ export const SCHEMA_ERROR_MESSAGES = {
   // General errors
   UNKNOWN_ERROR: "An unknown error occurred",
   OPERATION_CANCELLED: "Operation was cancelled by user",
-};
+} as const;
 
 // ============================================================================
 // SCHEMA STATES AND VALIDATION CONSTANTS
 // ============================================================================
 
-/**
- * Valid schema states - extends base SCHEMA_STATES with Redux-specific UI states
- */
-import { SCHEMA_STATES } from "./schemas";
 export { SCHEMA_STATES };
 
 /**
  * Schema operations that require specific states
  */
-export const SCHEMA_OPERATION_REQUIREMENTS = {
+export const SCHEMA_OPERATION_REQUIREMENTS: Record<string, string[]> = {
   [SCHEMA_ACTION_TYPES.APPROVE_SCHEMA]: [
     SCHEMA_STATES.AVAILABLE,
     SCHEMA_STATES.BLOCKED,
@@ -146,5 +167,4 @@ export const SCHEMA_OPERATION_REQUIREMENTS = {
 /**
  * Schema states that allow read operations (SCHEMA-002 compliance)
  */
-export const READABLE_SCHEMA_STATES = [SCHEMA_STATES.APPROVED];
-
+export const READABLE_SCHEMA_STATES: string[] = [SCHEMA_STATES.APPROVED];

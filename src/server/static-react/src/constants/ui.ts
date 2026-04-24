@@ -11,10 +11,24 @@
 export const TAB_TRANSITION_DURATION_MS = 200;
 export const FORM_FIELD_DEBOUNCE_MS = 300;
 
+export interface TabDefinition {
+  id: string;
+  label: string;
+  icon: string;
+  group: "main" | "advanced";
+}
+
+export interface SidebarItem {
+  id: string;
+  label: string;
+  icon: string;
+  group: string;
+}
+
 // Tab Definitions
 // Main tabs: core user-facing features (5 tabs max visible)
 // Advanced tabs: developer/power-user tools in "More" dropdown
-export const DEFAULT_TABS = [
+export const DEFAULT_TABS: readonly TabDefinition[] = [
   // Core experience
   { id: "agent", label: "Agent", icon: "💬", group: "main" },
   { id: "smart-folder", label: "Import", icon: "📂", group: "main" },
@@ -47,7 +61,7 @@ export const DEFAULT_TABS = [
 ];
 
 // Sidebar Navigation Items (used by Sidebar component)
-export const SIDEBAR_ITEMS = [
+export const SIDEBAR_ITEMS: readonly SidebarItem[] = [
   { id: "agent", label: "Agent", icon: "\u{1F916}", group: "MAIN" },
   { id: "data-browser", label: "Browse", icon: "\u{1F4CA}", group: "DATA" },
   { id: "query", label: "Query", icon: "\u{1F50D}", group: "DATA" },
@@ -67,7 +81,7 @@ export const BUTTON_TEXT = {
   executeMutation: "Execute Mutation",
   confirm: "Confirm",
   cancel: "Cancel",
-};
+} as const;
 
 // Form Label Constants
 export const FORM_LABELS = {
@@ -79,7 +93,7 @@ export const FORM_LABELS = {
   rangeKeyOptional: "Range key is optional",
   operationType: "Operation Type",
   operationHelp: "Select the type of operation to perform",
-};
+} as const;
 
 // UI State Constants
 export const UI_STATES = {
@@ -87,23 +101,28 @@ export const UI_STATES = {
   error: "Error",
   success: "Success",
   idle: "Ready",
-};
+} as const;
 
 // Mutation Type Constants
-export const MUTATION_TYPES = [
+export interface MutationTypeOption {
+  value: string;
+  label: string;
+}
+
+export const MUTATION_TYPES: readonly MutationTypeOption[] = [
   { value: "Insert", label: "Insert" },
   { value: "Update", label: "Update" },
 ];
 
 // Backend mutation type normalization map
-export const MUTATION_TYPE_API_MAP = {
+export const MUTATION_TYPE_API_MAP: Record<string, string> = {
   Insert: "create",
   Create: "create",
   Update: "update",
 };
 
 // Schema Badge Colors
-export const SCHEMA_BADGE_COLORS = {
+export const SCHEMA_BADGE_COLORS: Record<string, string> = {
   approved: "badge badge-success",
   available: "badge badge-info",
   blocked: "badge badge-error",
@@ -115,7 +134,7 @@ export const AUTH_INDICATORS = {
   authenticated: "🔐",
   unauthenticated: "🔓",
   loading: "⏳",
-};
+} as const;
 
 // Help Text Constants
 export const HELP_TEXT = {
@@ -129,7 +148,7 @@ export const HELP_TEXT = {
     pending: "Schema approval is pending review",
     unknown: "Schema state is unknown or invalid",
   },
-};
+} as const;
 
 // Range Schema Configuration
 export const RANGE_SCHEMA_CONFIG = {
@@ -143,4 +162,4 @@ export const RANGE_SCHEMA_CONFIG = {
     className: "badge badge-info",
   },
   tooltip: "This schema supports range-based queries",
-};
+} as const;

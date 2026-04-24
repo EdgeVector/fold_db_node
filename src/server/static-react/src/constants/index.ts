@@ -4,7 +4,7 @@
 
 export {
   BROWSER_CONFIG,
-} from "./config.js";
+} from "./config";
 
 export {
   SCHEMA_STATES,
