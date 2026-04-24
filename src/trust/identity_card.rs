@@ -1,18 +1,23 @@
-//! Identity card — local-only personal info for trust invites.
+//! Identity card — display name + contact info shared across all devices
+//! restored from the same mnemonic.
 //!
-//! Stored at `$FOLDDB_HOME/config/identity_card.json`. Never synced to Exemem.
-//! Only shared inside E2E-encrypted trust invites with specific peers.
+//! Stored in the synced `user_profile/identity_card` key via
+//! [`UserProfileStore`]. Writes propagate to peer devices via the sync log.
+//! There is no per-device JSON file and no unsynced Sled copy — the card
+//! is user-level by nature (same user on every device), so there's exactly
+//! one canonical location.
 
-use fold_db::NodeConfigStore;
+use fold_db::fold_db_core::FoldDB;
+use fold_db::schema::SchemaError;
 use serde::{Deserialize, Serialize};
-use std::path::{Path, PathBuf};
 
-use crate::utils::paths::folddb_home;
+use crate::user_profile::UserProfileStore;
 
-const IDENTITY_CARD_FILE: &str = "config/identity_card.json";
+/// Storage sub-key under `UserProfileStore`.
+const IDENTITY_CARD_KEY: &str = "identity_card";
 
-/// A user's local identity card. Never leaves the device except inside
-/// E2E-encrypted trust invites to specific peers.
+/// A user's identity card. Propagates across every device that shares the
+/// user's Ed25519 identity.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct IdentityCard {
     /// Human-readable display name (required).
@@ -62,130 +67,72 @@ impl IdentityCard {
         Ok(())
     }
 
-    /// Resolve the path to the identity card file.
-    fn file_path() -> Result<PathBuf, String> {
-        Ok(folddb_home()?.join(IDENTITY_CARD_FILE))
+    /// Load the identity card from the synced user-profile store. Returns
+    /// `None` if the user has not set one yet.
+    pub async fn load(db: &FoldDB) -> Result<Option<Self>, SchemaError> {
+        UserProfileStore::from_db(db).get(IDENTITY_CARD_KEY).await
     }
 
-    /// Load the identity card from disk. Returns `None` if the file doesn't exist.
-    pub fn load() -> Result<Option<Self>, String> {
-        Self::load_from(&Self::file_path()?)
-    }
-
-    /// Load from a specific path (for testing).
-    pub fn load_from(path: &Path) -> Result<Option<Self>, String> {
-        if !path.exists() {
-            return Ok(None);
-        }
-        let data = std::fs::read_to_string(path)
-            .map_err(|e| format!("Failed to read identity card: {e}"))?;
-        let card: Self = serde_json::from_str(&data)
-            .map_err(|e| format!("Failed to parse identity card: {e}"))?;
-        Ok(Some(card))
-    }
-
-    /// Save the identity card to disk.
-    pub fn save(&self) -> Result<(), String> {
-        self.save_to(&Self::file_path()?)
-    }
-
-    /// Save to a specific path (for testing).
-    pub fn save_to(&self, path: &Path) -> Result<(), String> {
-        if let Some(parent) = path.parent() {
-            std::fs::create_dir_all(parent)
-                .map_err(|e| format!("Failed to create config directory: {e}"))?;
-        }
-        let data = serde_json::to_string_pretty(self)
-            .map_err(|e| format!("Failed to serialize identity card: {e}"))?;
-        std::fs::write(path, data).map_err(|e| format!("Failed to write identity card: {e}"))?;
-        Ok(())
-    }
-
-    /// Load the identity card from the Sled config store.
-    ///
-    /// Returns `None` if the store has no display_name (not yet migrated).
-    pub fn load_from_sled(store: &NodeConfigStore) -> Option<Self> {
-        let display_name = store.get_display_name()?;
-        let contact_hint = store.get_contact_hint();
-        let birthday = store.get("birthday");
-        Some(Self {
-            display_name,
-            contact_hint,
-            birthday,
-        })
-    }
-
-    /// Save the identity card to the Sled config store.
-    pub fn save_to_sled(&self, store: &NodeConfigStore) -> Result<(), String> {
-        store
-            .set_display_name(&self.display_name)
-            .map_err(|e| format!("Failed to save display_name to Sled: {e}"))?;
-        if let Some(ref hint) = self.contact_hint {
-            store
-                .set_contact_hint(hint)
-                .map_err(|e| format!("Failed to save contact_hint to Sled: {e}"))?;
-        }
-        if let Some(ref bday) = self.birthday {
-            store
-                .set("birthday", bday)
-                .map_err(|e| format!("Failed to save birthday to Sled: {e}"))?;
-        }
-        Ok(())
-    }
-
-    /// Delete the identity card from disk.
-    pub fn delete() -> Result<(), String> {
-        let path = Self::file_path()?;
-        if path.exists() {
-            std::fs::remove_file(&path)
-                .map_err(|e| format!("Failed to delete identity card: {e}"))?;
-        }
-        Ok(())
+    /// Save the identity card. Writes propagate to every peer device.
+    pub async fn save(&self, db: &FoldDB) -> Result<(), SchemaError> {
+        UserProfileStore::from_db(db)
+            .put(IDENTITY_CARD_KEY, self)
+            .await
     }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
-    use tempfile::TempDir;
 
-    #[test]
-    fn test_identity_card_roundtrip() {
-        let tmp = TempDir::new().unwrap();
-        let path = tmp.path().join("identity_card.json");
+    async fn setup_db() -> (std::sync::Arc<FoldDB>, tempfile::TempDir) {
+        let tmp = tempfile::tempdir().unwrap();
+        let keypair = fold_db::security::Ed25519KeyPair::generate().unwrap();
+        let config = crate::fold_node::NodeConfig::new(tmp.path().to_path_buf())
+            .with_schema_service_url("test://mock")
+            .with_identity(&keypair.public_key_base64(), &keypair.secret_key_base64());
+        let node = crate::fold_node::FoldNode::new(config).await.unwrap();
+        let db = node.get_fold_db().unwrap();
+        (db, tmp)
+    }
 
+    #[tokio::test]
+    async fn save_then_load_roundtrips() {
+        let (db, _tmp) = setup_db().await;
         let card = IdentityCard::new(
             "Alice".to_string(),
             Some("alice@example.com".to_string()),
             Some("03-15".to_string()),
         );
-        card.save_to(&path).unwrap();
+        card.save(&db).await.unwrap();
 
-        let loaded = IdentityCard::load_from(&path).unwrap().unwrap();
+        let loaded = IdentityCard::load(&db).await.unwrap().unwrap();
         assert_eq!(loaded.display_name, "Alice");
         assert_eq!(loaded.contact_hint.as_deref(), Some("alice@example.com"));
         assert_eq!(loaded.birthday.as_deref(), Some("03-15"));
     }
 
-    #[test]
-    fn test_load_nonexistent_returns_none() {
-        let tmp = TempDir::new().unwrap();
-        let path = tmp.path().join("nonexistent.json");
-        assert!(IdentityCard::load_from(&path).unwrap().is_none());
+    #[tokio::test]
+    async fn load_absent_returns_none() {
+        let (db, _tmp) = setup_db().await;
+        let loaded = IdentityCard::load(&db).await.unwrap();
+        assert!(loaded.is_none());
     }
 
-    #[test]
-    fn test_identity_card_without_optional_fields() {
-        let tmp = TempDir::new().unwrap();
-        let path = tmp.path().join("identity_card.json");
-
-        let card = IdentityCard::new("Bob".to_string(), None, None);
-        card.save_to(&path).unwrap();
-
-        let loaded = IdentityCard::load_from(&path).unwrap().unwrap();
-        assert_eq!(loaded.display_name, "Bob");
-        assert!(loaded.contact_hint.is_none());
-        assert!(loaded.birthday.is_none());
+    #[tokio::test]
+    async fn save_overwrites_existing() {
+        let (db, _tmp) = setup_db().await;
+        IdentityCard::new("Alice".into(), None, None)
+            .save(&db)
+            .await
+            .unwrap();
+        IdentityCard::new("Alice v2".into(), Some("new@example.com".into()), None)
+            .save(&db)
+            .await
+            .unwrap();
+        let loaded = IdentityCard::load(&db).await.unwrap().unwrap();
+        assert_eq!(loaded.display_name, "Alice v2");
+        assert_eq!(loaded.contact_hint.as_deref(), Some("new@example.com"));
     }
 
     #[test]
@@ -199,19 +146,5 @@ mod tests {
         assert!(IdentityCard::validate_birthday("03-32").is_err());
         assert!(IdentityCard::validate_birthday("not-a-date").is_err());
         assert!(IdentityCard::validate_birthday("3-5").is_ok()); // permissive parsing
-    }
-
-    #[test]
-    fn test_backward_compat_no_birthday() {
-        let tmp = TempDir::new().unwrap();
-        let path = tmp.path().join("identity_card.json");
-
-        // Old format without birthday field
-        let json = r#"{"display_name": "Alice", "contact_hint": "alice@example.com"}"#;
-        std::fs::write(&path, json).unwrap();
-
-        let loaded = IdentityCard::load_from(&path).unwrap().unwrap();
-        assert_eq!(loaded.display_name, "Alice");
-        assert!(loaded.birthday.is_none());
     }
 }

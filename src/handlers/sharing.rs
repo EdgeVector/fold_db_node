@@ -260,11 +260,15 @@ pub async fn generate_invite(
     target_pk.copy_from_slice(&messaging_pk_bytes);
 
     let my_pubkey = current_caller_pubkey(node);
-    let my_display_name = crate::trust::identity_card::IdentityCard::load()
-        .ok()
-        .flatten()
-        .map(|c| c.display_name)
-        .unwrap_or_else(|| format!("node-{}", &my_pubkey[..8.min(my_pubkey.len())]));
+    let my_display_name = match node.get_fold_db() {
+        Ok(db) => crate::trust::identity_card::IdentityCard::load(&db)
+            .await
+            .ok()
+            .flatten()
+            .map(|c| c.display_name)
+            .unwrap_or_else(|| format!("node-{}", &my_pubkey[..8.min(my_pubkey.len())])),
+        Err(_) => format!("node-{}", &my_pubkey[..8.min(my_pubkey.len())]),
+    };
 
     let invite = build_encrypted_invite(
         &rule,
@@ -391,11 +395,15 @@ pub async fn generate_and_send_invite(
     target_pk.copy_from_slice(&messaging_pk_bytes);
 
     let my_pubkey = current_caller_pubkey(node);
-    let my_display_name = crate::trust::identity_card::IdentityCard::load()
-        .ok()
-        .flatten()
-        .map(|c| c.display_name)
-        .unwrap_or_else(|| format!("node-{}", &my_pubkey[..8.min(my_pubkey.len())]));
+    let my_display_name = match node.get_fold_db() {
+        Ok(db) => crate::trust::identity_card::IdentityCard::load(&db)
+            .await
+            .ok()
+            .flatten()
+            .map(|c| c.display_name)
+            .unwrap_or_else(|| format!("node-{}", &my_pubkey[..8.min(my_pubkey.len())])),
+        Err(_) => format!("node-{}", &my_pubkey[..8.min(my_pubkey.len())]),
+    };
 
     // Encrypt the raw e2e_secret to the recipient's messaging pubkey (inner
     // layer). The outer envelope is a second X25519 layer applied by

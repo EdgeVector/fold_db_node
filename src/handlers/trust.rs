@@ -383,6 +383,7 @@ pub async fn create_trust_invite(
     let op = OperationProcessor::new(std::sync::Arc::new(node.clone()));
     let invite = op
         .create_trust_invite(&req.proposed_role)
+        .await
         .typed_handler_err()?;
     let token = invite
         .to_token()

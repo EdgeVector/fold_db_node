@@ -115,7 +115,7 @@ async fn main() {
                 )
                 .exit(json_mode);
         }
-        config = match commands::setup::run_setup_wizard() {
+        config = match commands::setup::run_setup_wizard().await {
             Ok(c) => c,
             Err(e) => e.exit(false),
         };

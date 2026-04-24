@@ -11,6 +11,7 @@ pub mod secure_store;
 pub mod sensitive_io;
 pub mod server;
 pub mod trust;
+pub mod user_profile;
 pub mod utils;
 
 // Re-export core library for convenience
