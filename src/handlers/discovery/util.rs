@@ -8,7 +8,7 @@
 use super::get_metadata_store;
 use crate::discovery::config;
 use crate::fold_node::node::FoldNode;
-use crate::handlers::response::{HandlerError, IntoHandlerError};
+use crate::handlers::response::{get_db_guard, HandlerError, IntoHandlerError};
 
 // =========================================================================
 // Connect in-flight sentinel (shared between outbound `connect` and tests)
@@ -93,9 +93,7 @@ pub(crate) async fn collect_our_pseudonyms(
     node: &FoldNode,
     master_key: &[u8],
 ) -> Result<Vec<uuid::Uuid>, HandlerError> {
-    let db = node
-        .get_fold_db()
-        .map_err(|e| HandlerError::Internal(format!("Failed to access database: {}", e)))?;
+    let db = get_db_guard(node)?;
     let db_ops = db.get_db_ops();
     let store = get_metadata_store(&db);
 

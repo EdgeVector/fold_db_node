@@ -248,9 +248,7 @@ pub async fn async_query(
 
             send_encrypted_message(&sender, &contact, &payload).await?;
 
-            let db = node.get_fold_db().map_err(|e| {
-                crate::handlers::HandlerError::Internal(format!("Failed to access database: {e}"))
-            })?;
+            let db = crate::handlers::get_db_guard(&node)?;
             let store = db.get_db_ops().raw_metadata_store();
             let local_query = LocalAsyncQuery {
                 request_id: request_id.clone(),
@@ -308,9 +306,7 @@ pub async fn async_browse(
 
             send_encrypted_message(&sender, &contact, &payload).await?;
 
-            let db = node.get_fold_db().map_err(|e| {
-                crate::handlers::HandlerError::Internal(format!("Failed to access database: {e}"))
-            })?;
+            let db = crate::handlers::get_db_guard(&node)?;
             let store = db.get_db_ops().raw_metadata_store();
             let local_query = LocalAsyncQuery {
                 request_id: request_id.clone(),
@@ -424,9 +420,7 @@ pub async fn list_async_queries(state: web::Data<AppState>) -> impl Responder {
 
     handler_result_to_response(
         async {
-            let db = node.get_fold_db().map_err(|e| {
-                crate::handlers::HandlerError::Internal(format!("Failed to access database: {e}"))
-            })?;
+            let db = crate::handlers::get_db_guard(&node)?;
             let store = db.get_db_ops().raw_metadata_store();
 
             let queries = crate::discovery::async_query::list_async_queries(&*store)
@@ -454,9 +448,7 @@ pub async fn get_async_query(
 
     handler_result_to_response(
         async {
-            let db = node.get_fold_db().map_err(|e| {
-                crate::handlers::HandlerError::Internal(format!("Failed to access database: {e}"))
-            })?;
+            let db = crate::handlers::get_db_guard(&node)?;
             let store = db.get_db_ops().raw_metadata_store();
 
             let query = crate::discovery::async_query::get_async_query(&*store, &request_id)
@@ -482,9 +474,7 @@ pub async fn delete_async_query(
 
     handler_result_to_response(
         async {
-            let db = node.get_fold_db().map_err(|e| {
-                crate::handlers::HandlerError::Internal(format!("Failed to access database: {e}"))
-            })?;
+            let db = crate::handlers::get_db_guard(&node)?;
             let store = db.get_db_ops().raw_metadata_store();
 
             crate::discovery::async_query::delete_async_query(&*store, &request_id)

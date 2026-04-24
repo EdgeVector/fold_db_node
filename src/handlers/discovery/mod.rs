@@ -16,7 +16,7 @@ pub use crate::discovery::types::{
 use crate::fold_node::node::FoldNode;
 use crate::fold_node::OperationProcessor;
 use crate::handlers::response::{
-    ApiResponse, HandlerError, HandlerResult, IntoHandlerError, IntoTypedHandlerError,
+    get_db_guard, ApiResponse, HandlerError, HandlerResult, IntoHandlerError, IntoTypedHandlerError,
 };
 use crate::trust::contact_book::{Contact, TrustDirection};
 use crate::trust::identity_card::IdentityCard;
@@ -258,9 +258,7 @@ pub(super) fn get_metadata_store(
 
 /// List all discovery opt-in configs.
 pub async fn list_opt_ins(node: &FoldNode) -> HandlerResult<DiscoveryOptInListResponse> {
-    let db = node
-        .get_fold_db()
-        .map_err(|e| HandlerError::Internal(format!("Failed to access database: {}", e)))?;
+    let db = get_db_guard(node)?;
     let store = get_metadata_store(&db);
 
     let configs = config::list_opt_ins(&*store)
@@ -275,9 +273,7 @@ pub async fn opt_in(
     req: &OptInRequest,
     node: &FoldNode,
 ) -> HandlerResult<DiscoveryOptInListResponse> {
-    let db = node
-        .get_fold_db()
-        .map_err(|e| HandlerError::Internal(format!("Failed to access database: {}", e)))?;
+    let db = get_db_guard(node)?;
     let store = get_metadata_store(&db);
 
     let mut opt_in_config = DiscoveryOptIn::new(req.schema_name.clone(), req.category.clone());
@@ -315,9 +311,7 @@ pub async fn opt_out(
     auth_token: &str,
     master_key: &[u8],
 ) -> HandlerResult<DiscoveryOptInListResponse> {
-    let db = node
-        .get_fold_db()
-        .map_err(|e| HandlerError::Internal(format!("Failed to access database: {}", e)))?;
+    let db = get_db_guard(node)?;
     let store = get_metadata_store(&db);
 
     // Remove local config
@@ -390,9 +384,7 @@ pub async fn publish(
     auth_token: &str,
     master_key: &[u8],
 ) -> HandlerResult<DiscoveryPublishResponse> {
-    let db = node
-        .get_fold_db()
-        .map_err(|e| HandlerError::Internal(format!("Failed to access database: {}", e)))?;
+    let db = get_db_guard(node)?;
 
     let db_ops = db.get_db_ops();
     let metadata_store = db_ops.raw_metadata_store();
@@ -477,9 +469,7 @@ pub async fn search(
     master_key: &[u8],
 ) -> HandlerResult<DiscoveryNetworkSearchResponse> {
     // Generate embedding from query text
-    let db = node
-        .get_fold_db()
-        .map_err(|e| HandlerError::Internal(format!("Failed to access database: {}", e)))?;
+    let db = get_db_guard(node)?;
 
     let db_ops = db.get_db_ops();
     let native_index_mgr = db_ops
@@ -541,9 +531,7 @@ pub async fn connect(
     // primitive, so we do get → check TTL → put. Narrower than true CAS but
     // sufficient: concurrency here is within a single fold_db node process.
     let target_str = req.target_pseudonym.to_string();
-    let db = node
-        .get_fold_db()
-        .map_err(|e| HandlerError::Internal(format!("Failed to access database: {e}")))?;
+    let db = get_db_guard(node)?;
     let store = get_metadata_store(&db);
 
     let now_ts = chrono::Utc::now().timestamp();
@@ -595,9 +583,7 @@ async fn connect_inner(
     }
 
     // Check if there's already a pending sent request to this pseudonym
-    let db = node
-        .get_fold_db()
-        .map_err(|e| HandlerError::Internal(format!("Failed to access database: {e}")))?;
+    let db = get_db_guard(node)?;
     let store = get_metadata_store(&db);
     let sent_requests = connection::list_sent_requests(&*store)
         .await
@@ -641,9 +627,7 @@ async fn connect_inner(
     target_pk.copy_from_slice(&target_pk_bytes);
 
     // 2. Pick a sender pseudonym — use first published pseudonym we have
-    let db = node
-        .get_fold_db()
-        .map_err(|e| HandlerError::Internal(format!("Failed to access database: {}", e)))?;
+    let db = get_db_guard(node)?;
     let store = get_metadata_store(&db);
     let configs = config::list_opt_ins(&*store)
         .await
@@ -801,9 +785,7 @@ pub async fn respond_to_request(
             .ok_or_else(|| HandlerError::BadRequest(format!("Unknown role: {role_name}")))?;
     }
 
-    let db = node
-        .get_fold_db()
-        .map_err(|e| HandlerError::Internal(format!("Failed to access database: {}", e)))?;
+    let db = get_db_guard(node)?;
     let store = get_metadata_store(&db);
 
     // Update local status
@@ -928,9 +910,7 @@ pub async fn respond_to_request(
 
 /// List locally stored sent connection requests.
 pub async fn list_sent_requests(node: &FoldNode) -> HandlerResult<SentRequestsResponse> {
-    let db = node
-        .get_fold_db()
-        .map_err(|e| HandlerError::Internal(format!("Failed to access database: {}", e)))?;
+    let db = get_db_guard(node)?;
     let store = get_metadata_store(&db);
 
     let requests = connection::list_sent_requests(&*store)
@@ -988,9 +968,7 @@ pub async fn browse_categories(
 
 /// Get the current interest profile.
 pub async fn get_interests(node: &FoldNode) -> HandlerResult<InterestProfile> {
-    let db = node
-        .get_fold_db()
-        .map_err(|e| HandlerError::Internal(format!("Failed to access database: {}", e)))?;
+    let db = get_db_guard(node)?;
     let store = get_metadata_store(&db);
 
     let profile = interests::load_interest_profile(&*store)
@@ -1014,9 +992,7 @@ pub async fn toggle_interest(
     req: &ToggleInterestRequest,
     node: &FoldNode,
 ) -> HandlerResult<InterestProfile> {
-    let db = node
-        .get_fold_db()
-        .map_err(|e| HandlerError::Internal(format!("Failed to access database: {}", e)))?;
+    let db = get_db_guard(node)?;
     let store = get_metadata_store(&db);
 
     let profile = interests::toggle_interest_category(&*store, &req.category, req.enabled)
@@ -1028,9 +1004,7 @@ pub async fn toggle_interest(
 
 /// Manually trigger interest detection.
 pub async fn detect_interests(node: &FoldNode) -> HandlerResult<InterestProfile> {
-    let db = node
-        .get_fold_db()
-        .map_err(|e| HandlerError::Internal(format!("Failed to access database: {}", e)))?;
+    let db = get_db_guard(node)?;
 
     let db_ops = db.get_db_ops();
     let metadata_store = db_ops.raw_metadata_store();
@@ -1064,9 +1038,7 @@ pub async fn similar_profiles(
     auth_token: &str,
     master_key: &[u8],
 ) -> HandlerResult<SimilarProfilesResponse> {
-    let db = node
-        .get_fold_db()
-        .map_err(|e| HandlerError::Internal(format!("Failed to access database: {}", e)))?;
+    let db = get_db_guard(node)?;
 
     let db_ops = db.get_db_ops();
     let metadata_store = db_ops.raw_metadata_store();
@@ -1273,9 +1245,7 @@ pub async fn send_data_share(
 
     // 2. Get sender identity
     let sender_public_key = node.get_node_public_key().to_string();
-    let db = node
-        .get_fold_db()
-        .map_err(|e| HandlerError::Internal(format!("Failed to access database: {}", e)))?;
+    let db = get_db_guard(node)?;
     let sender_display_name = IdentityCard::load(&db)
         .await
         .ok()
@@ -1457,9 +1427,7 @@ pub async fn initiate_referral_query(
     auth_token: &str,
     master_key: &[u8],
 ) -> HandlerResult<serde_json::Value> {
-    let db = node
-        .get_fold_db()
-        .map_err(|e| HandlerError::Internal(format!("Failed to access database: {e}")))?;
+    let db = get_db_guard(node)?;
     let store = get_metadata_store(&db);
 
     // Find the connection request by scanning prefix

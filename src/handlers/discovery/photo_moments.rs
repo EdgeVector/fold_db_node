@@ -8,7 +8,9 @@ use crate::discovery::types::{
 };
 use crate::fold_node::node::FoldNode;
 use crate::fold_node::OperationProcessor;
-use crate::handlers::response::{ApiResponse, HandlerError, HandlerResult, IntoHandlerError};
+use crate::handlers::response::{
+    get_db_guard, ApiResponse, HandlerError, HandlerResult, IntoHandlerError,
+};
 use crate::trust::contact_book::{Contact, ContactBook};
 use serde::{Deserialize, Serialize};
 
@@ -144,9 +146,7 @@ pub async fn moment_opt_in(
         }
     }
 
-    let db = node
-        .get_fold_db()
-        .map_err(|e| HandlerError::Internal(format!("Failed to access database: {}", e)))?;
+    let db = get_db_guard(node)?;
     let store = get_metadata_store(&db);
 
     let opt_in = moments::MomentOptIn {
@@ -171,9 +171,7 @@ pub async fn moment_opt_out(
     req: &MomentOptOutRequest,
     node: &FoldNode,
 ) -> HandlerResult<MomentOptInListResponse> {
-    let db = node
-        .get_fold_db()
-        .map_err(|e| HandlerError::Internal(format!("Failed to access database: {}", e)))?;
+    let db = get_db_guard(node)?;
     let store = get_metadata_store(&db);
 
     moments::remove_moment_opt_in(&*store, &req.peer_pseudonym)
@@ -189,9 +187,7 @@ pub async fn moment_opt_out(
 
 /// List all moment opt-ins.
 pub async fn moment_opt_in_list(node: &FoldNode) -> HandlerResult<MomentOptInListResponse> {
-    let db = node
-        .get_fold_db()
-        .map_err(|e| HandlerError::Internal(format!("Failed to access database: {}", e)))?;
+    let db = get_db_guard(node)?;
     let store = get_metadata_store(&db);
 
     let opt_ins = moments::list_moment_opt_ins(&*store)
@@ -207,9 +203,7 @@ pub async fn moment_scan(
     master_key: &[u8],
     photo_metadata: &[PhotoMetadata],
 ) -> HandlerResult<MomentScanResponse> {
-    let db = node
-        .get_fold_db()
-        .map_err(|e| HandlerError::Internal(format!("Failed to access database: {}", e)))?;
+    let db = get_db_guard(node)?;
     let store = get_metadata_store(&db);
 
     if photo_metadata.len() > MAX_PHOTO_BATCH {
@@ -286,9 +280,7 @@ pub async fn moment_receive_hashes(
     req: &MomentHashReceiveRequest,
     node: &FoldNode,
 ) -> HandlerResult<()> {
-    let db = node
-        .get_fold_db()
-        .map_err(|e| HandlerError::Internal(format!("Failed to access database: {}", e)))?;
+    let db = get_db_guard(node)?;
     let store = get_metadata_store(&db);
 
     let has_opt_in = moments::has_moment_opt_in(&*store, &req.sender_pseudonym)
@@ -317,9 +309,7 @@ pub async fn moment_receive_hashes(
 
 /// Detect shared moments by comparing our hashes with received peer hashes.
 pub async fn moment_detect(node: &FoldNode) -> HandlerResult<MomentDetectResponse> {
-    let db = node
-        .get_fold_db()
-        .map_err(|e| HandlerError::Internal(format!("Failed to access database: {}", e)))?;
+    let db = get_db_guard(node)?;
     let store = get_metadata_store(&db);
 
     let opt_ins = moments::list_moment_opt_ins(&*store)
@@ -349,9 +339,7 @@ pub async fn moment_detect(node: &FoldNode) -> HandlerResult<MomentDetectRespons
 
 /// List all detected shared moments.
 pub async fn moment_list(node: &FoldNode) -> HandlerResult<SharedMomentsResponse> {
-    let db = node
-        .get_fold_db()
-        .map_err(|e| HandlerError::Internal(format!("Failed to access database: {}", e)))?;
+    let db = get_db_guard(node)?;
     let store = get_metadata_store(&db);
 
     let shared_moments = moments::list_shared_moments(&*store)

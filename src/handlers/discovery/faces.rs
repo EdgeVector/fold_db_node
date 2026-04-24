@@ -3,7 +3,9 @@
 use super::{DiscoveryNetworkSearchResponse, MAX_TOP_K};
 use crate::discovery::publisher::DiscoveryPublisher;
 use crate::fold_node::node::FoldNode;
-use crate::handlers::response::{ApiResponse, HandlerError, HandlerResult, IntoHandlerError};
+use crate::handlers::response::{
+    get_db_guard, ApiResponse, HandlerError, HandlerResult, IntoHandlerError,
+};
 use serde::{Deserialize, Serialize};
 
 // === Face Discovery ===
@@ -49,9 +51,7 @@ pub async fn list_faces(
     schema: &str,
     key: &str,
 ) -> HandlerResult<ListFacesResponse> {
-    let db = node
-        .get_fold_db()
-        .map_err(|e| HandlerError::Internal(format!("Failed to access database: {}", e)))?;
+    let db = get_db_guard(node)?;
 
     let db_ops = db.get_db_ops();
     let native_index_mgr = db_ops
@@ -83,9 +83,7 @@ pub async fn face_search(
 ) -> HandlerResult<DiscoveryNetworkSearchResponse> {
     let face_index = req.face_index.unwrap_or(0);
 
-    let db = node
-        .get_fold_db()
-        .map_err(|e| HandlerError::Internal(format!("Failed to access database: {}", e)))?;
+    let db = get_db_guard(node)?;
 
     let db_ops = db.get_db_ops();
     let native_index_mgr = db_ops
