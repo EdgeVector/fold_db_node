@@ -401,17 +401,19 @@ impl RefreshThrottle {
 /// Refresh Exemem credentials for the sync engine.
 ///
 /// See the module docs on `build_auth_refresh_callback` for the two-branch
-/// behaviour (use stored key if newer, else re-register).
+/// behaviour (use stored key if newer, else re-register). The node's
+/// identity keypair is captured in a `Arc<NodeIdentity>` at callback-
+/// construction time so this path never needs to touch the Sled identity
+/// tree (which would race the live daemon for the file lock) and never
+/// needs to read a JSON file (Stage 4 deleted `node_identity.json`).
 async fn refresh_auth_standalone(
+    identity: Arc<crate::identity::NodeIdentity>,
     last_returned: Arc<Mutex<Option<String>>>,
     throttle: Arc<Mutex<RefreshThrottle>>,
 ) -> Result<fold_db::sync::auth::SyncAuth, String> {
-    refresh_auth_inner(
-        last_returned,
-        throttle,
-        Instant::now(),
-        reregister_and_store,
-    )
+    refresh_auth_inner(last_returned, throttle, Instant::now(), || {
+        reregister_and_store(identity)
+    })
     .await
 }
 
@@ -521,56 +523,27 @@ where
     }
 }
 
-/// Re-register this node with Exemem using the persisted Ed25519 keypair.
+/// Re-register this node with Exemem using its Ed25519 keypair.
 ///
-/// Standalone: does not depend on `NodeManager`. Loads the node identity from
-/// disk, signs a register request, calls the Exemem CLI register endpoint,
-/// stores the new credentials locally, and returns the new `api_key`.
-async fn reregister_and_store() -> Result<String, String> {
-    // 1. Load the node's persisted identity (Ed25519 keypair).
-    //    Try the NodeManager identity path first (identity/{hash}.json),
-    //    fall back to config/node_identity.json for backward compat.
-    let folddb_home = crate::utils::paths::folddb_home()
-        .map_err(|e| format!("Cannot resolve FOLDDB_HOME: {e}"))?;
-    let identity_path = {
-        use sha2::{Digest, Sha256};
-        let mut hasher = Sha256::new();
-        hasher.update(b"default");
-        let hash_hex = format!("{:x}", hasher.finalize());
-        let hashed_path = folddb_home
-            .join("identity")
-            .join(format!("{hash_hex}.json"));
-        if hashed_path.exists() {
-            hashed_path
-        } else {
-            // Backward compat: config/node_identity.json
-            folddb_home.join("config").join("node_identity.json")
-        }
-    };
-
-    let identity_bytes = crate::sensitive_io::read_sensitive(&identity_path)
-        .map_err(|e| format!("Failed to read node identity for auth refresh: {e}"))?;
-    let identity_json = String::from_utf8(identity_bytes)
-        .map_err(|e| format!("Node identity is not valid UTF-8: {e}"))?;
-
-    #[derive(serde::Deserialize)]
-    struct Identity {
-        private_key: String,
-        public_key: String,
-    }
-    let identity: Identity = serde_json::from_str(&identity_json)
-        .map_err(|e| format!("Failed to parse node identity: {e}"))?;
-
-    // 2. Decode public key from base64 to hex (CLI register expects hex).
+/// Takes the identity as an `Arc<NodeIdentity>` captured at callback-
+/// construction time rather than re-reading from Sled or disk. Before
+/// Stage 4, this read `node_identity.json` directly — after Stage 4 the
+/// keypair lives in the Sled `node_identity` tree, and the sync engine
+/// is holding that Sled pool for writes, so opening a second standalone
+/// pool here would `WouldBlock`. The `Arc` clone is effectively free.
+async fn reregister_and_store(
+    identity: Arc<crate::identity::NodeIdentity>,
+) -> Result<String, String> {
+    // 1. Decode public key from base64 to hex (CLI register expects hex).
     let public_key_hex = base64_to_hex(&identity.public_key)
         .ok_or_else(|| "Failed to decode public key from base64".to_string())?;
 
-    // 3. Sign "{public_key_hex}:{timestamp}".
+    // 2. Sign "{public_key_hex}:{timestamp}".
     let timestamp = chrono::Utc::now().timestamp();
     let payload = format!("{}:{}", public_key_hex, timestamp);
     let signature_b64 = sign_payload(&identity.private_key, &payload)?;
 
-    // 4. POST to Exemem CLI register endpoint.
+    // 3. POST to Exemem CLI register endpoint.
     let api_url = exemem_api_url();
     let url = format!("{}/api/auth/cli/register", api_url);
     let register_body = serde_json::json!({
@@ -603,7 +576,7 @@ async fn reregister_and_store() -> Result<String, String> {
         return Err(format!("Auth refresh: register failed: {error}"));
     }
 
-    // 5. Extract and store new credentials.
+    // 4. Extract and store new credentials.
     let session_token = json
         .get("session_token")
         .and_then(|v| v.as_str())
@@ -644,15 +617,22 @@ async fn reregister_and_store() -> Result<String, String> {
 ///    (Exemem down, bad credentials, revoked account) back off exponentially
 ///    instead of hammering the endpoint on every sync cycle.
 ///
-/// Both the "last returned" API key and the throttle state are held in
-/// mutexes captured by the closure so state persists across invocations.
-pub fn build_auth_refresh_callback() -> fold_db::sync::AuthRefreshCallback {
+/// The identity is captured up-front as an `Arc<NodeIdentity>` so the
+/// callback never needs to re-open the Sled `node_identity` tree — that
+/// pool is owned by the live daemon and a second opener would race the
+/// file lock. Both the "last returned" API key and the throttle state
+/// are held in mutexes captured by the closure so state persists across
+/// invocations.
+pub fn build_auth_refresh_callback(
+    identity: Arc<crate::identity::NodeIdentity>,
+) -> fold_db::sync::AuthRefreshCallback {
     let last_returned: Arc<Mutex<Option<String>>> = Arc::new(Mutex::new(None));
     let throttle: Arc<Mutex<RefreshThrottle>> = Arc::new(Mutex::new(RefreshThrottle::new()));
     Arc::new(move || {
+        let identity = identity.clone();
         let last_returned = last_returned.clone();
         let throttle = throttle.clone();
-        Box::pin(refresh_auth_standalone(last_returned, throttle))
+        Box::pin(refresh_auth_standalone(identity, last_returned, throttle))
     })
 }
 
@@ -662,9 +642,10 @@ pub fn build_auth_refresh_callback() -> fold_db::sync::AuthRefreshCallback {
 /// drift.
 pub fn auth_refresh_for(
     database_config: &fold_db::storage::DatabaseConfig,
+    identity: Arc<crate::identity::NodeIdentity>,
 ) -> Option<fold_db::sync::AuthRefreshCallback> {
     if database_config.has_cloud_sync() {
-        Some(build_auth_refresh_callback())
+        Some(build_auth_refresh_callback(identity))
     } else {
         None
     }
@@ -1256,6 +1237,19 @@ mod tests {
             .expect("env lock poisoned")
     }
 
+    /// Dummy identity for tests that exercise the credential-cache fast
+    /// path (where identity isn't actually read). For tests that hit the
+    /// reregister network path, this fake keypair is still fine because
+    /// the HTTP call is made to a non-routable address that fails before
+    /// the signature is checked.
+    fn dummy_identity() -> Arc<crate::identity::NodeIdentity> {
+        use base64::Engine as _;
+        Arc::new(crate::identity::NodeIdentity {
+            private_key: base64::engine::general_purpose::STANDARD.encode([0x42u8; 32]),
+            public_key: base64::engine::general_purpose::STANDARD.encode([0x24u8; 32]),
+        })
+    }
+
     /// Set FOLDDB_HOME to a temp dir, write credentials.json containing
     /// `api_key`, and return the temp dir guard.
     fn setup_creds_in_temp_home(api_key: &str) -> tempfile::TempDir {
@@ -1285,7 +1279,8 @@ mod tests {
         let _tmp = setup_creds_in_temp_home("api_key_v2");
 
         let last_returned: Arc<Mutex<Option<String>>> = Arc::new(Mutex::new(None));
-        let result = refresh_auth_standalone(last_returned.clone(), throttle()).await;
+        let result =
+            refresh_auth_standalone(dummy_identity(), last_returned.clone(), throttle()).await;
 
         let auth = result.expect("should return stored api_key without hitting network");
         match auth {
@@ -1314,9 +1309,10 @@ mod tests {
 
         let last_returned: Arc<Mutex<Option<String>>> = Arc::new(Mutex::new(None));
         let throttle = throttle();
-        let first = refresh_auth_standalone(last_returned.clone(), throttle.clone())
-            .await
-            .expect("first call");
+        let first =
+            refresh_auth_standalone(dummy_identity(), last_returned.clone(), throttle.clone())
+                .await
+                .expect("first call");
         assert!(matches!(
             first,
             fold_db::sync::auth::SyncAuth::ApiKey(ref k) if k == "api_key_v1"
@@ -1330,7 +1326,7 @@ mod tests {
         };
         crate::keychain::store_credentials(&creds).expect("store rotated creds");
 
-        let second = refresh_auth_standalone(last_returned.clone(), throttle)
+        let second = refresh_auth_standalone(dummy_identity(), last_returned.clone(), throttle)
             .await
             .expect("second call should see newer stored key");
         match second {
@@ -1360,14 +1356,14 @@ mod tests {
         let last_returned: Arc<Mutex<Option<String>>> =
             Arc::new(Mutex::new(Some("api_key_stale".to_string())));
 
-        let result = refresh_auth_standalone(last_returned, throttle()).await;
+        let result = refresh_auth_standalone(dummy_identity(), last_returned, throttle()).await;
         let err = result.expect_err("should attempt reregister and fail at HTTP");
-        let reached_http = err.contains("failed to connect")
-            || err.contains("Failed to read node identity")
-            || err.contains("Cannot resolve FOLDDB_HOME");
+        // Identity is now passed in as an Arc, so the only reason reregister
+        // can fail before the HTTP exchange is a connection error — the
+        // "Failed to read node identity" branch is dead after Stage 4.
         assert!(
-            reached_http,
-            "expected error from reregister path, got: {err}"
+            err.contains("failed to connect"),
+            "expected connection error from reregister path, got: {err}"
         );
 
         std::env::remove_var("EXEMEM_API_URL");

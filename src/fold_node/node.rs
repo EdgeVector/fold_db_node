@@ -327,7 +327,11 @@ impl FoldNode {
 
         // Build auth-refresh callback for Exemem mode so the sync engine can
         // automatically recover from expired tokens (401) by re-registering.
-        let auth_refresh = crate::handlers::auth::auth_refresh_for(&config.database);
+        // Pass the identity in — the callback captures it so sync never has
+        // to re-read the Sled `node_identity` tree (that pool is owned by
+        // this FoldNode and a second opener would race the file lock).
+        let auth_refresh =
+            crate::handlers::auth::auth_refresh_for(&config.database, Arc::clone(&identity));
 
         let db = fold_db::fold_db_core::factory::create_fold_db_with_pool_and_auth_refresh(
             &config.database,
