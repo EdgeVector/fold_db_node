@@ -1015,6 +1015,18 @@ impl FoldHttpServer {
         .route(
             "/schema/{name}/policies",
             web::get().to(trust_routes::get_all_field_policies),
+        )
+        .service(
+            web::scope("/trust-domains")
+                .route("", web::get().to(trust_routes::list_trust_domains))
+                .route(
+                    "/{domain}/add",
+                    web::post().to(trust_routes::add_trust_domain_grant),
+                )
+                .route(
+                    "/{domain}/remove/{key}",
+                    web::delete().to(trust_routes::remove_trust_domain_grant),
+                ),
         );
     }
 

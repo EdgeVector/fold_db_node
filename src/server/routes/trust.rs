@@ -49,6 +49,40 @@ pub async fn resolve_trust(path: web::Path<String>, state: web::Data<AppState>) 
     handler_result_to_response(trust_handlers::resolve_trust(public_key, &user_hash, &node).await)
 }
 
+// ===== Trust domains =====
+
+/// GET /api/trust-domains
+pub async fn list_trust_domains(state: web::Data<AppState>) -> impl Responder {
+    let (user_hash, node) = node_or_return!(state);
+    handler_result_to_response(trust_handlers::list_trust_domains(&user_hash, &node).await)
+}
+
+/// POST /api/trust-domains/{domain}/add
+pub async fn add_trust_domain_grant(
+    path: web::Path<String>,
+    body: web::Json<trust_handlers::TrustDomainAddRequest>,
+    state: web::Data<AppState>,
+) -> impl Responder {
+    let domain = path.into_inner();
+    let (user_hash, node) = node_or_return!(state);
+    handler_result_to_response(
+        trust_handlers::add_trust_domain_grant(&domain, &body, &user_hash, &node).await,
+    )
+}
+
+/// DELETE /api/trust-domains/{domain}/remove/{key}
+pub async fn remove_trust_domain_grant(
+    path: web::Path<(String, String)>,
+    state: web::Data<AppState>,
+) -> impl Responder {
+    let (domain, raw_key) = path.into_inner();
+    let public_key = fix_pubkey_from_path(&raw_key);
+    let (user_hash, node) = node_or_return!(state);
+    handler_result_to_response(
+        trust_handlers::remove_trust_domain_grant(&domain, &public_key, &user_hash, &node).await,
+    )
+}
+
 // ===== Schema policy =====
 
 /// PUT /api/schema/{name}/field/{field}/policy
