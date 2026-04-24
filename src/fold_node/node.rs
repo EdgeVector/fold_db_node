@@ -791,7 +791,6 @@ impl FoldNode {
 
     /// Get the unified progress tracker
     /// This is the single source of truth for all job progress (ingestion, indexing, reset, etc.)
-    /// Local deployments use Sled storage, cloud deployments use DynamoDB
     pub fn get_progress_tracker(&self) -> fold_db::progress::ProgressTracker {
         self.db.get_progress_tracker()
     }

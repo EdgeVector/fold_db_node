@@ -162,8 +162,9 @@ pub struct ResetDatabaseRequest {
 /// # Multi-Tenancy Support
 ///
 /// This endpoint respects multi-tenancy by only clearing data for the
-/// current user (identified via x-user-hash header). It uses the scan-free
-/// DynamoDbResetManager to efficiently delete data partitioned by user.
+/// current user (identified via x-user-hash header). Only the current
+/// user's Sled trees are cleared; other users on the same node are
+/// unaffected.
 #[utoipa::path(
     post,
     path = "/api/system/reset-database",

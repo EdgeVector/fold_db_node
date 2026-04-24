@@ -81,7 +81,7 @@ fn config_file_exists() -> bool {
 /// # Architecture
 ///
 /// The server uses lazy per-user node initialization:
-/// - On startup: Only configuration is loaded, no DynamoDB access
+/// - On startup: Only configuration is loaded; no per-user state is touched.
 /// - On first request for a user: Node is created with user context
 /// - Subsequent requests: Node is cached and reused
 ///
@@ -134,9 +134,17 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         println!("  UI:     http://localhost:{}", http_port);
         println!();
     } else {
-        // Config file exists — honour explicit CLI overrides only
+        // Config file exists — honour explicit CLI overrides only.
+        //
+        // `--data-dir` overrides only the local Sled path. If the config file
+        // declares cloud sync, that configuration is preserved — we're
+        // pointing the local backing store somewhere else, not turning cloud
+        // sync off. Both `database.path` and `storage_path` are updated so
+        // `get_storage_path()` and the FOLD_STORAGE_PATH env propagation
+        // below see the same value.
         if let Some(dir) = data_dir {
-            config.database = fold_db::storage::config::DatabaseConfig::local(dir);
+            config.database.path = dir.clone();
+            config.storage_path = Some(dir);
         }
         if let Some(url) = schema_service_url {
             config.schema_service_url = Some(url);
@@ -167,8 +175,6 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     // Initialize logging system with environment configuration
     let log_config = fold_db::logging::config::LogConfig::from_env().unwrap_or_default();
-
-    // DynamoDB logging was only used with the legacy Cloud backend which has been removed.
 
     if let Err(e) = fold_db::logging::LoggingSystem::init_with_config(log_config).await {
         eprintln!("Failed to initialize logging system: {}", e);
