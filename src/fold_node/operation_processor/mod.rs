@@ -27,6 +27,14 @@ impl OperationProcessor {
         Self { node }
     }
 
+    /// Convenience constructor from a `&FoldNode`. Clones the node (cheap —
+    /// `FoldNode` is `Arc`-wrapped internally) and wraps it in a new `Arc`.
+    /// Handlers and callsites that hold `&FoldNode` should use this instead
+    /// of spelling out `OperationProcessor::new(Arc::new(node.clone()))`.
+    pub fn from_ref(node: &FoldNode) -> Self {
+        Self::new(Arc::new(node.clone()))
+    }
+
     /// Get the FoldDB instance. Shorthand for `self.node.get_fold_db()`.
     fn get_db(&self) -> FoldDbResult<Arc<FoldDB>> {
         self.node.get_fold_db()

@@ -1,6 +1,5 @@
 use fold_db::log_feature;
 use fold_db::logging::features::LogFeature;
-use fold_db::security::SecurityConfig;
 
 use serde::{Deserialize, Serialize};
 use std::path::PathBuf;
@@ -31,9 +30,6 @@ pub struct NodeConfig {
     /// Network listening address
     #[serde(default = "default_network_listen_address")]
     pub network_listen_address: String,
-    /// Security configuration
-    #[serde(default)]
-    pub security_config: SecurityConfig,
     /// URL of the schema service (optional, if not provided will load from local directories)
     #[serde(default)]
     pub schema_service_url: Option<String>,
@@ -65,7 +61,6 @@ impl Default for NodeConfig {
             database: DatabaseConfig::default(),
             storage_path: None,
             network_listen_address: default_network_listen_address(),
-            security_config: SecurityConfig::from_env(),
             schema_service_url: None,
             config_dir: None,
             seed_identity: None,
@@ -80,7 +75,6 @@ impl NodeConfig {
             database: DatabaseConfig::local(storage_path.clone()),
             storage_path: Some(storage_path),
             network_listen_address: default_network_listen_address(),
-            security_config: SecurityConfig::from_env(),
             schema_service_url: None,
             config_dir: None,
             seed_identity: None,

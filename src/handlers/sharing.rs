@@ -229,7 +229,7 @@ pub async fn generate_invite(
     // Look up recipient's messaging public key from the contact book. This
     // key is populated via the discovery connection flow; if it's missing
     // the two nodes haven't exchanged messaging pseudonyms yet.
-    let op = crate::fold_node::OperationProcessor::new(std::sync::Arc::new(node.clone()));
+    let op = crate::fold_node::OperationProcessor::from_ref(node);
     let book = op
         .load_contact_book()
         .await
@@ -359,7 +359,7 @@ pub async fn generate_and_send_invite(
         .ok_or_else(|| HandlerError::NotFound(format!("Rule not found: {}", req.rule_id)))?;
 
     // Look up recipient contact + messaging pseudonym + X25519 pubkey.
-    let op = crate::fold_node::OperationProcessor::new(std::sync::Arc::new(node.clone()));
+    let op = crate::fold_node::OperationProcessor::from_ref(node);
     let book = op
         .load_contact_book()
         .await

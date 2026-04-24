@@ -123,7 +123,7 @@ pub async fn moment_opt_in(
 ) -> HandlerResult<MomentOptInListResponse> {
     // Authorization gate: load contact book and match the requested peer
     // pseudonym against known contacts. See `authorize_moment_peer`.
-    let op = OperationProcessor::new(std::sync::Arc::new(node.clone()));
+    let op = OperationProcessor::from_ref(node);
     let contact_book = op
         .load_contact_book()
         .await

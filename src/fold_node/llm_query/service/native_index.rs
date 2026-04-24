@@ -159,8 +159,7 @@ impl LlmQueryService {
         node: &crate::fold_node::node::FoldNode,
         progress_tracker: Option<&crate::ingestion::ProgressTracker>,
     ) -> Result<Value, String> {
-        let processor =
-            crate::fold_node::OperationProcessor::new(std::sync::Arc::new(node.clone()));
+        let processor = crate::fold_node::OperationProcessor::from_ref(node);
 
         match tool {
             "query" => {

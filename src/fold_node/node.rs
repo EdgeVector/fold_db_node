@@ -16,7 +16,6 @@ use fold_db::org::OrgMembership;
 use fold_db::security::{PublicKeyInfo, SecurityConfig, SecurityManager};
 use fold_db::storage::SledPool;
 use fold_db::sync::org_sync::SyncPartitioner;
-use fold_db::CloudCredentials;
 
 /// Result of loading a view (and its dependencies) from the schema service.
 #[derive(Debug, Default, Serialize)]
@@ -168,7 +167,7 @@ impl FoldNode {
                 );
             }
         } else {
-            log::info!("No schema service URL configured - using local schema management only");
+            log::debug!("No schema service URL configured - using local schema management only");
         }
     }
 
@@ -179,8 +178,7 @@ impl FoldNode {
         identity: Arc<NodeIdentity>,
         e2e_keys: fold_db::crypto::E2eKeys,
     ) -> FoldDbResult<Self> {
-        let (node_id, security_manager, security_config) =
-            Self::init_internals(&config, &db).await?;
+        let (node_id, security_manager) = Self::init_internals(&config, &db).await?;
 
         // Register the node's public key with the verifier for signature verification
         Self::register_node_public_key(&security_manager, &identity.public_key).await?;
@@ -188,7 +186,6 @@ impl FoldNode {
         let node = Self {
             db,
             config: NodeConfig {
-                security_config,
                 // The seed_identity (if any) has already been written to
                 // the Sled identity tree during resolve_identity — drop
                 // the plaintext copy from the config we hand to the node
@@ -203,9 +200,6 @@ impl FoldNode {
         };
 
         Self::log_schema_service(&config);
-
-        // Migrate config files to Sled config store (one-time, idempotent)
-        migrate_config_files_to_sled(&node).await;
 
         // Configure org sync if the sync engine is enabled and orgs exist
         node.configure_org_sync_if_needed().await;
@@ -327,7 +321,11 @@ impl FoldNode {
 
         // Build auth-refresh callback for Exemem mode so the sync engine can
         // automatically recover from expired tokens (401) by re-registering.
-        let auth_refresh = crate::handlers::auth::auth_refresh_for(&config.database);
+        // Pass the identity in — the callback captures it so sync never has
+        // to re-read the Sled `node_identity` tree (that pool is owned by
+        // this FoldNode and a second opener would race the file lock).
+        let auth_refresh =
+            crate::handlers::auth::auth_refresh_for(&config.database, Arc::clone(&identity));
 
         let db = fold_db::fold_db_core::factory::create_fold_db_with_pool_and_auth_refresh(
             &config.database,
@@ -709,30 +707,27 @@ impl FoldNode {
     }
 
     async fn init_internals(
-        config: &NodeConfig,
+        _config: &NodeConfig,
         db: &Arc<FoldDB>,
-    ) -> FoldDbResult<(String, Arc<SecurityManager>, SecurityConfig)> {
+    ) -> FoldDbResult<(String, Arc<SecurityManager>)> {
         // Retrieve or generate the persistent node_id from fold_db
         let node_id = db
             .get_node_id()
             .await
             .map_err(|e| FoldDbError::Config(format!("Failed to get node_id: {}", e)))?;
 
-        // Initialize security manager with node configuration
-        let security_config = config.security_config.clone();
-
+        // Build SecurityConfig from env at init time. It's only used here,
+        // not stored back on the node — keeping a cached copy on NodeConfig
+        // just gave the struct a dead field.
+        let security_config = SecurityConfig::from_env();
         let db_ops = db.db_ops().clone();
-
         let security_manager = Arc::new(
-            SecurityManager::new_with_persistence(
-                config.security_config.clone(),
-                Arc::clone(&db_ops),
-            )
-            .await
-            .map_err(|e| FoldDbError::SecurityError(e.to_string()))?,
+            SecurityManager::new_with_persistence(security_config, Arc::clone(&db_ops))
+                .await
+                .map_err(|e| FoldDbError::SecurityError(e.to_string()))?,
         );
 
-        Ok((node_id, security_manager, security_config))
+        Ok((node_id, security_manager))
     }
 
     /// Register the node's public key with the security manager's verifier
@@ -796,7 +791,6 @@ impl FoldNode {
 
     /// Get the unified progress tracker
     /// This is the single source of truth for all job progress (ingestion, indexing, reset, etc.)
-    /// Local deployments use Sled storage, cloud deployments use DynamoDB
     pub fn get_progress_tracker(&self) -> fold_db::progress::ProgressTracker {
         self.db.get_progress_tracker()
     }
@@ -1208,74 +1202,6 @@ pub struct FileIngestionRecord {
     pub source_folder: Option<String>,
     pub source_file_name: Option<String>,
     pub progress_id: Option<String>,
-}
-
-// =========================================================================
-// Config file → Sled migration (Phase 4)
-// =========================================================================
-
-/// Migrate config files to the Sled-backed NodeConfigStore.
-///
-/// This is a one-time, idempotent migration. If the Sled config store already
-/// has data, we skip entirely. Otherwise we read the legacy JSON config files
-/// and write their contents into Sled.
-async fn migrate_config_files_to_sled(node: &FoldNode) {
-    let db = match node.get_fold_db() {
-        Ok(db) => db,
-        Err(_) => return,
-    };
-
-    // Reuse the FoldDB's own config store so sensitive fields (node
-    // identity private key) are encrypted at rest via the E2E key that
-    // was wired in by the factory.
-    let store = match db.config_store() {
-        Some(s) => s,
-        None => {
-            log::warn!("FoldDB has no config store; skipping Sled migration");
-            return;
-        }
-    };
-
-    if !store.is_empty() {
-        return; // Already migrated
-    }
-
-    let mut migrated_any = false;
-
-    // Note: node identity is no longer migrated into `NodeConfigStore` —
-    // it lives in the dedicated `node_identity` Sled tree (see
-    // `crate::identity::IdentityStore`), which uses the OS keychain
-    // master key instead of an E2E key derived from the identity itself.
-    // The legacy `$FOLDDB_HOME/config/node_identity.json` path is no
-    // longer read by any code path; pre-production nodes upgrading to
-    // Stage 4 get a fresh generated keypair on first boot.
-
-    // Migrate cloud config (api_url + user_hash only — per-device secrets
-    // stay in credentials.json and are NOT written to Sled)
-    if let Ok(Some(creds)) = crate::keychain::load_credentials() {
-        let cloud = CloudCredentials {
-            api_url: crate::endpoints::exemem_api_url(),
-            user_hash: Some(creds.user_hash),
-        };
-        if let Err(e) = store.set_cloud_config(&cloud) {
-            log::warn!("Failed to migrate cloud config to Sled: {}", e);
-        } else {
-            migrated_any = true;
-        }
-    }
-
-    // AI config is NOT migrated to Sled — it's per-device (a laptop might
-    // run Ollama locally while a phone uses Anthropic). It stays in
-    // ingestion_config.json which is never synced.
-
-    // Identity card is NOT migrated here — as of the user-profile refactor
-    // it lives in the synced `user_profile/identity_card` key (reachable
-    // via `IdentityCard::load(&db).await`). NodeConfigStore's display_name
-    // / contact_hint fields are legacy and no longer the source of truth.
-
-    if migrated_any {
-        log::info!("Migrated config files to Sled config store");
-    }
 }
 
 #[cfg(test)]

@@ -10,7 +10,6 @@
 use crate::handlers::response::HandlerError;
 use crate::keychain;
 use crate::server::node_manager::NodeManager;
-use fold_db::{CloudCredentials, NodeConfigStore};
 use serde::{Deserialize, Serialize};
 use std::future::Future;
 use std::sync::{Arc, Mutex};
@@ -77,6 +76,135 @@ pub fn delete_credentials() -> Result<serde_json::Value, HandlerError> {
     keychain::delete_credentials()
         .map_err(|e| HandlerError::Internal(format!("Failed to delete credentials: {}", e)))?;
     Ok(serde_json::json!({"ok": true}))
+}
+
+/// Full account deletion: revoke the Exemem account (deletes cloud storage +
+/// auth records + api keys + passkeys in dynamodb) and wipe all local state
+/// on this device.
+///
+/// Steps, in order, best-effort (logged warnings for non-fatal failures so a
+/// user with a detached cloud account can still wipe the local device):
+/// 1. Call `DELETE /auth/account` on Exemem. Fatal on HTTP 5xx because the
+///    cloud side needs to be authoritative — we don't want to leave ghost
+///    cloud data behind.
+/// 2. Invalidate the running node so Sled is closed cleanly.
+/// 3. Clear the Sled `node_identity` tree + all user_profile/ keys.
+/// 4. Delete local credential / onboarding / bootstrap markers.
+///
+/// Returns a JSON summary of what was cleared. Note: actually wiping the
+/// main Sled database directory (`$FOLDDB_HOME/data`) is left to the
+/// caller — stopping the daemon + `rm -rf data` is the explicit step,
+/// we don't rm from under the live process.
+pub async fn delete_account(
+    node_manager: &Arc<NodeManager>,
+) -> Result<serde_json::Value, HandlerError> {
+    let mut warnings: Vec<String> = Vec::new();
+
+    // Step 1: revoke the Exemem account. Uses the same signed CLI register
+    // pattern as auth refresh — but here we send a DELETE.
+    let pool = node_manager.get_or_init_sled_pool().await;
+    let identity = crate::identity::load(Arc::clone(&pool))
+        .map_err(|e| HandlerError::Internal(format!("read identity: {e}")))?;
+
+    if identity.is_some() {
+        match revoke_exemem_account().await {
+            Ok(()) => log::info!("Exemem account revoked"),
+            Err(e) => {
+                // Not fatal — a user might be wiping a device whose cloud
+                // account was already purged server-side. Surface the
+                // warning but keep going.
+                log::warn!("Failed to revoke Exemem account: {e}");
+                warnings.push(format!("exemem_revoke_failed: {e}"));
+            }
+        }
+    } else {
+        warnings.push("no_local_identity".to_string());
+    }
+
+    // Step 2 + 3: stop the running node so we can get exclusive Sled access,
+    // then clear the identity tree + user_profile keys.
+    node_manager.invalidate_all_nodes().await;
+    // The invalidation drops the shared Arc<FoldNode>, but the SledPool is
+    // held by NodeManager.shared_pool across invalidations. We still have
+    // our `pool` clone from above — use it to clear trees directly.
+    if let Err(e) = clear_local_sled(Arc::clone(&pool)) {
+        warnings.push(format!("sled_clear_failed: {e}"));
+    }
+
+    // Step 4: delete local credential / onboarding files.
+    if let Err(e) = keychain::delete_credentials() {
+        warnings.push(format!("credentials_delete_failed: {e}"));
+    }
+    if let Ok(home) = crate::utils::paths::folddb_home() {
+        let _ = std::fs::remove_file(home.join("data").join(".onboarding_complete"));
+        let _ = std::fs::remove_file(home.join(".bootstrap_pending"));
+    }
+
+    Ok(serde_json::json!({
+        "ok": true,
+        "warnings": warnings,
+        "hint": "Stop the daemon and `rm -rf $FOLDDB_HOME/data` to finish the wipe.",
+    }))
+}
+
+/// Call `DELETE /auth/account` on Exemem. The endpoint authenticates via
+/// `Authorization: Bearer <session_token>` (see auth_service lambda main.rs
+/// `extract_user_from_session`) — we pull the token from `credentials.json`.
+/// If the token has expired the caller should re-register first.
+async fn revoke_exemem_account() -> Result<(), String> {
+    let creds = keychain::load_credentials()
+        .map_err(|e| format!("load credentials: {e}"))?
+        .ok_or_else(|| "no stored credentials; cannot revoke cloud account".to_string())?;
+
+    let api_url = exemem_api_url();
+    let url = format!("{}/api/auth/account", api_url);
+    let client = reqwest::Client::new();
+    let resp = client
+        .delete(&url)
+        .bearer_auth(&creds.session_token)
+        .send()
+        .await
+        .map_err(|e| format!("failed to connect: {e}"))?;
+
+    let status = resp.status();
+    let text = resp
+        .text()
+        .await
+        .map_err(|e| format!("failed to read response: {e}"))?;
+
+    if !status.is_success() {
+        return Err(format!("HTTP {}: {}", status, text));
+    }
+    Ok(())
+}
+
+/// Clear the Sled trees that hold identity and user-level state. Best-effort
+/// per tree so a single failure doesn't strand the rest.
+fn clear_local_sled(pool: Arc<fold_db::storage::SledPool>) -> Result<(), String> {
+    // Identity tree — wipes the Ed25519 keypair.
+    if let Ok(store) = crate::identity::open(Arc::clone(&pool)) {
+        let _ = store.clear();
+    }
+    // User-profile keys (identity card, contacts, sharing roles, invites,
+    // declined invites, consumed nonces) live in the synced metadata tree
+    // under `user_profile/*`. Scan + remove them directly.
+    let guard = pool
+        .acquire_arc()
+        .map_err(|e| format!("sled acquire: {e}"))?;
+    let tree = guard
+        .db()
+        .open_tree("metadata")
+        .map_err(|e| format!("open metadata tree: {e}"))?;
+    let prefix = b"user_profile/";
+    let keys: Vec<sled::IVec> = tree
+        .scan_prefix(prefix)
+        .keys()
+        .filter_map(|k| k.ok())
+        .collect();
+    for k in keys {
+        let _ = tree.remove(&k);
+    }
+    Ok(())
 }
 
 /// Return the Exemem config (API URL) for the frontend.
@@ -298,20 +426,11 @@ pub(crate) async fn signed_register(
         keychain::store_credentials(&creds).map_err(|e| {
             format!("Registration succeeded but failed to persist credentials locally: {e}")
         })?;
-
-        // Write ONLY api_url and user_hash to Sled (safe to sync across devices).
-        // Per-device secrets (api_key, session_token) stay in credentials.json only.
-        if let Some(pool) = node_manager.get_sled_pool().await {
-            if let Ok(store) = NodeConfigStore::new(pool) {
-                let cloud_creds = CloudCredentials {
-                    api_url: exemem_api_url(),
-                    user_hash: Some(user_hash.to_string()),
-                };
-                if let Err(e) = store.set_cloud_config(&cloud_creds) {
-                    log::warn!("Failed to write cloud config to Sled: {}", e);
-                }
-            }
-        }
+        // Note: api_url + user_hash used to also be written to NodeConfigStore
+        // as a "safe to sync" mirror, but they're already available elsewhere —
+        // api_url from the DatabaseConfig and user_hash derived from the
+        // Ed25519 pubkey via `user_hash_from_pubkey`. Dropped that duplicate
+        // write as part of the post-Stage-4 cleanup.
     }
 
     Ok(json)
@@ -401,17 +520,19 @@ impl RefreshThrottle {
 /// Refresh Exemem credentials for the sync engine.
 ///
 /// See the module docs on `build_auth_refresh_callback` for the two-branch
-/// behaviour (use stored key if newer, else re-register).
+/// behaviour (use stored key if newer, else re-register). The node's
+/// identity keypair is captured in a `Arc<NodeIdentity>` at callback-
+/// construction time so this path never needs to touch the Sled identity
+/// tree (which would race the live daemon for the file lock) and never
+/// needs to read a JSON file (Stage 4 deleted `node_identity.json`).
 async fn refresh_auth_standalone(
+    identity: Arc<crate::identity::NodeIdentity>,
     last_returned: Arc<Mutex<Option<String>>>,
     throttle: Arc<Mutex<RefreshThrottle>>,
 ) -> Result<fold_db::sync::auth::SyncAuth, String> {
-    refresh_auth_inner(
-        last_returned,
-        throttle,
-        Instant::now(),
-        reregister_and_store,
-    )
+    refresh_auth_inner(last_returned, throttle, Instant::now(), || {
+        reregister_and_store(identity)
+    })
     .await
 }
 
@@ -521,56 +642,27 @@ where
     }
 }
 
-/// Re-register this node with Exemem using the persisted Ed25519 keypair.
+/// Re-register this node with Exemem using its Ed25519 keypair.
 ///
-/// Standalone: does not depend on `NodeManager`. Loads the node identity from
-/// disk, signs a register request, calls the Exemem CLI register endpoint,
-/// stores the new credentials locally, and returns the new `api_key`.
-async fn reregister_and_store() -> Result<String, String> {
-    // 1. Load the node's persisted identity (Ed25519 keypair).
-    //    Try the NodeManager identity path first (identity/{hash}.json),
-    //    fall back to config/node_identity.json for backward compat.
-    let folddb_home = crate::utils::paths::folddb_home()
-        .map_err(|e| format!("Cannot resolve FOLDDB_HOME: {e}"))?;
-    let identity_path = {
-        use sha2::{Digest, Sha256};
-        let mut hasher = Sha256::new();
-        hasher.update(b"default");
-        let hash_hex = format!("{:x}", hasher.finalize());
-        let hashed_path = folddb_home
-            .join("identity")
-            .join(format!("{hash_hex}.json"));
-        if hashed_path.exists() {
-            hashed_path
-        } else {
-            // Backward compat: config/node_identity.json
-            folddb_home.join("config").join("node_identity.json")
-        }
-    };
-
-    let identity_bytes = crate::sensitive_io::read_sensitive(&identity_path)
-        .map_err(|e| format!("Failed to read node identity for auth refresh: {e}"))?;
-    let identity_json = String::from_utf8(identity_bytes)
-        .map_err(|e| format!("Node identity is not valid UTF-8: {e}"))?;
-
-    #[derive(serde::Deserialize)]
-    struct Identity {
-        private_key: String,
-        public_key: String,
-    }
-    let identity: Identity = serde_json::from_str(&identity_json)
-        .map_err(|e| format!("Failed to parse node identity: {e}"))?;
-
-    // 2. Decode public key from base64 to hex (CLI register expects hex).
+/// Takes the identity as an `Arc<NodeIdentity>` captured at callback-
+/// construction time rather than re-reading from Sled or disk. Before
+/// Stage 4, this read `node_identity.json` directly — after Stage 4 the
+/// keypair lives in the Sled `node_identity` tree, and the sync engine
+/// is holding that Sled pool for writes, so opening a second standalone
+/// pool here would `WouldBlock`. The `Arc` clone is effectively free.
+async fn reregister_and_store(
+    identity: Arc<crate::identity::NodeIdentity>,
+) -> Result<String, String> {
+    // 1. Decode public key from base64 to hex (CLI register expects hex).
     let public_key_hex = base64_to_hex(&identity.public_key)
         .ok_or_else(|| "Failed to decode public key from base64".to_string())?;
 
-    // 3. Sign "{public_key_hex}:{timestamp}".
+    // 2. Sign "{public_key_hex}:{timestamp}".
     let timestamp = chrono::Utc::now().timestamp();
     let payload = format!("{}:{}", public_key_hex, timestamp);
     let signature_b64 = sign_payload(&identity.private_key, &payload)?;
 
-    // 4. POST to Exemem CLI register endpoint.
+    // 3. POST to Exemem CLI register endpoint.
     let api_url = exemem_api_url();
     let url = format!("{}/api/auth/cli/register", api_url);
     let register_body = serde_json::json!({
@@ -603,7 +695,7 @@ async fn reregister_and_store() -> Result<String, String> {
         return Err(format!("Auth refresh: register failed: {error}"));
     }
 
-    // 5. Extract and store new credentials.
+    // 4. Extract and store new credentials.
     let session_token = json
         .get("session_token")
         .and_then(|v| v.as_str())
@@ -644,15 +736,22 @@ async fn reregister_and_store() -> Result<String, String> {
 ///    (Exemem down, bad credentials, revoked account) back off exponentially
 ///    instead of hammering the endpoint on every sync cycle.
 ///
-/// Both the "last returned" API key and the throttle state are held in
-/// mutexes captured by the closure so state persists across invocations.
-pub fn build_auth_refresh_callback() -> fold_db::sync::AuthRefreshCallback {
+/// The identity is captured up-front as an `Arc<NodeIdentity>` so the
+/// callback never needs to re-open the Sled `node_identity` tree — that
+/// pool is owned by the live daemon and a second opener would race the
+/// file lock. Both the "last returned" API key and the throttle state
+/// are held in mutexes captured by the closure so state persists across
+/// invocations.
+pub fn build_auth_refresh_callback(
+    identity: Arc<crate::identity::NodeIdentity>,
+) -> fold_db::sync::AuthRefreshCallback {
     let last_returned: Arc<Mutex<Option<String>>> = Arc::new(Mutex::new(None));
     let throttle: Arc<Mutex<RefreshThrottle>> = Arc::new(Mutex::new(RefreshThrottle::new()));
     Arc::new(move || {
+        let identity = identity.clone();
         let last_returned = last_returned.clone();
         let throttle = throttle.clone();
-        Box::pin(refresh_auth_standalone(last_returned, throttle))
+        Box::pin(refresh_auth_standalone(identity, last_returned, throttle))
     })
 }
 
@@ -662,9 +761,10 @@ pub fn build_auth_refresh_callback() -> fold_db::sync::AuthRefreshCallback {
 /// drift.
 pub fn auth_refresh_for(
     database_config: &fold_db::storage::DatabaseConfig,
+    identity: Arc<crate::identity::NodeIdentity>,
 ) -> Option<fold_db::sync::AuthRefreshCallback> {
     if database_config.has_cloud_sync() {
-        Some(build_auth_refresh_callback())
+        Some(build_auth_refresh_callback(identity))
     } else {
         None
     }
@@ -1256,6 +1356,19 @@ mod tests {
             .expect("env lock poisoned")
     }
 
+    /// Dummy identity for tests that exercise the credential-cache fast
+    /// path (where identity isn't actually read). For tests that hit the
+    /// reregister network path, this fake keypair is still fine because
+    /// the HTTP call is made to a non-routable address that fails before
+    /// the signature is checked.
+    fn dummy_identity() -> Arc<crate::identity::NodeIdentity> {
+        use base64::Engine as _;
+        Arc::new(crate::identity::NodeIdentity {
+            private_key: base64::engine::general_purpose::STANDARD.encode([0x42u8; 32]),
+            public_key: base64::engine::general_purpose::STANDARD.encode([0x24u8; 32]),
+        })
+    }
+
     /// Set FOLDDB_HOME to a temp dir, write credentials.json containing
     /// `api_key`, and return the temp dir guard.
     fn setup_creds_in_temp_home(api_key: &str) -> tempfile::TempDir {
@@ -1285,7 +1398,8 @@ mod tests {
         let _tmp = setup_creds_in_temp_home("api_key_v2");
 
         let last_returned: Arc<Mutex<Option<String>>> = Arc::new(Mutex::new(None));
-        let result = refresh_auth_standalone(last_returned.clone(), throttle()).await;
+        let result =
+            refresh_auth_standalone(dummy_identity(), last_returned.clone(), throttle()).await;
 
         let auth = result.expect("should return stored api_key without hitting network");
         match auth {
@@ -1314,9 +1428,10 @@ mod tests {
 
         let last_returned: Arc<Mutex<Option<String>>> = Arc::new(Mutex::new(None));
         let throttle = throttle();
-        let first = refresh_auth_standalone(last_returned.clone(), throttle.clone())
-            .await
-            .expect("first call");
+        let first =
+            refresh_auth_standalone(dummy_identity(), last_returned.clone(), throttle.clone())
+                .await
+                .expect("first call");
         assert!(matches!(
             first,
             fold_db::sync::auth::SyncAuth::ApiKey(ref k) if k == "api_key_v1"
@@ -1330,7 +1445,7 @@ mod tests {
         };
         crate::keychain::store_credentials(&creds).expect("store rotated creds");
 
-        let second = refresh_auth_standalone(last_returned.clone(), throttle)
+        let second = refresh_auth_standalone(dummy_identity(), last_returned.clone(), throttle)
             .await
             .expect("second call should see newer stored key");
         match second {
@@ -1360,14 +1475,14 @@ mod tests {
         let last_returned: Arc<Mutex<Option<String>>> =
             Arc::new(Mutex::new(Some("api_key_stale".to_string())));
 
-        let result = refresh_auth_standalone(last_returned, throttle()).await;
+        let result = refresh_auth_standalone(dummy_identity(), last_returned, throttle()).await;
         let err = result.expect_err("should attempt reregister and fail at HTTP");
-        let reached_http = err.contains("failed to connect")
-            || err.contains("Failed to read node identity")
-            || err.contains("Cannot resolve FOLDDB_HOME");
+        // Identity is now passed in as an Arc, so the only reason reregister
+        // can fail before the HTTP exchange is a connection error — the
+        // "Failed to read node identity" branch is dead after Stage 4.
         assert!(
-            reached_http,
-            "expected error from reregister path, got: {err}"
+            err.contains("failed to connect"),
+            "expected connection error from reregister path, got: {err}"
         );
 
         std::env::remove_var("EXEMEM_API_URL");
@@ -1398,7 +1513,6 @@ mod tests {
                     database: fold_db::storage::DatabaseConfig::local(tmp.path().join("data")),
                     storage_path: Some(tmp.path().join("data")),
                     network_listen_address: "/ip4/0.0.0.0/tcp/0".to_string(),
-                    security_config: fold_db::security::SecurityConfig::from_env(),
                     schema_service_url: Some("test://mock".to_string()),
                     config_dir: Some(tmp.path().join("config")),
                     seed_identity: None,

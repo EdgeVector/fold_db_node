@@ -5,7 +5,6 @@ use actix_web::{web, HttpResponse, Responder};
 use fold_db::log_feature;
 use fold_db::logging::features::LogFeature;
 use fold_db::storage::config::DatabaseConfig;
-use fold_db::{CloudCredentials, NodeConfigStore};
 use serde::{Deserialize, Serialize};
 use serde_json::json;
 use std::path::Path;
@@ -201,20 +200,8 @@ pub async fn apply_setup(
                 config.database =
                     DatabaseConfig::with_cloud_sync(config.database.path.clone(), cloud_sync);
                 changes.push("storage (exemem)");
-
-                // Write ONLY api_url to Sled (safe to sync). Per-device secrets
-                // (api_key, session_token) are stored in credentials.json only.
-                if let Some(pool) = state.node_manager.get_sled_pool().await {
-                    if let Ok(store) = NodeConfigStore::new(pool) {
-                        let creds = CloudCredentials {
-                            api_url: api_url.clone(),
-                            user_hash: None,
-                        };
-                        if let Err(e) = store.set_cloud_config(&creds) {
-                            log::warn!("Failed to write cloud config to Sled: {}", e);
-                        }
-                    }
-                }
+                // api_url is persisted via the DatabaseConfig -> node_config.json
+                // write below. No separate Sled copy.
             }
         }
     }
