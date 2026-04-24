@@ -130,8 +130,10 @@ impl NodeManager {
         // E2E seed available for FoldDB initialization. This is the single
         // identity read per create_node — the same pool threads through to
         // FoldDB below, so no double file-lock holder.
-        let id = identity::load_or_generate(Arc::clone(&pool))
-            .map_err(NodeManagerError::SecurityError)?;
+        let id = Arc::new(
+            identity::load_or_generate(Arc::clone(&pool))
+                .map_err(NodeManagerError::SecurityError)?,
+        );
         let seed = FoldNode::extract_ed25519_seed(&id.private_key).map_err(|e| {
             NodeManagerError::ConfigurationError(format!("Failed to extract seed: {}", e))
         })?;
@@ -139,7 +141,11 @@ impl NodeManager {
             NodeManagerError::ConfigurationError(format!("Failed to derive E2E keys: {}", e))
         })?;
 
-        let auth_refresh = crate::handlers::auth::auth_refresh_for(&node_config.database);
+        // The auth-refresh callback captures the identity Arc so the sync
+        // engine can re-sign register requests on 401 without re-opening
+        // the Sled identity tree (we're holding its pool for writes).
+        let auth_refresh =
+            crate::handlers::auth::auth_refresh_for(&node_config.database, Arc::clone(&id));
 
         let db = fold_db::logging::core::run_with_user(user_id, async {
             factory::create_fold_db_with_pool_and_auth_refresh(
