@@ -30,7 +30,9 @@ use crate::discovery::publisher::DiscoveryPublisher;
 use crate::discovery::received_card::{self, LocalReceivedCard};
 use crate::fold_node::node::FoldNode;
 use crate::fold_node::OperationProcessor;
-use crate::handlers::response::{ApiResponse, HandlerError, HandlerResult, IntoHandlerError};
+use crate::handlers::response::{
+    get_db_guard, ApiResponse, HandlerError, HandlerResult, IntoHandlerError,
+};
 use crate::trust::contact_book::{Contact, ContactBook, TrustDirection};
 use base64::{engine::general_purpose::STANDARD as B64, Engine};
 use std::collections::HashMap;
@@ -47,9 +49,7 @@ pub async fn poll_and_decrypt_requests(
         auth_token.to_string(),
     );
 
-    let db = node
-        .get_fold_db()
-        .map_err(|e| HandlerError::Internal(format!("Failed to access database: {}", e)))?;
+    let db = get_db_guard(node)?;
     let store = get_metadata_store(&db);
 
     // Get our published pseudonyms via the shared helper — same derivation as the

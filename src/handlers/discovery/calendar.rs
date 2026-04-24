@@ -3,7 +3,9 @@
 use super::{get_metadata_store, MAX_CALENDAR_BATCH};
 use crate::discovery::calendar_sharing::{self, EventFingerprint, PeerEventSet, SharedEvent};
 use crate::fold_node::node::FoldNode;
-use crate::handlers::response::{ApiResponse, HandlerError, HandlerResult, IntoHandlerError};
+use crate::handlers::response::{
+    get_db_guard, ApiResponse, HandlerError, HandlerResult, IntoHandlerError,
+};
 use serde::{Deserialize, Serialize};
 
 #[cfg(feature = "ts-bindings")]
@@ -72,9 +74,7 @@ pub struct SharedEventsResponse {
 pub async fn calendar_sharing_status(
     node: &FoldNode,
 ) -> HandlerResult<CalendarSharingStatusResponse> {
-    let db = node
-        .get_fold_db()
-        .map_err(|e| HandlerError::Internal(format!("Failed to access database: {}", e)))?;
+    let db = get_db_guard(node)?;
     let store = get_metadata_store(&db);
 
     let opted_in = calendar_sharing::is_opted_in(&*store)
@@ -100,9 +100,7 @@ pub async fn calendar_sharing_status(
 pub async fn calendar_sharing_opt_in(
     node: &FoldNode,
 ) -> HandlerResult<CalendarSharingStatusResponse> {
-    let db = node
-        .get_fold_db()
-        .map_err(|e| HandlerError::Internal(format!("Failed to access database: {}", e)))?;
+    let db = get_db_guard(node)?;
     let store = get_metadata_store(&db);
 
     calendar_sharing::set_opt_in(&*store, true)
@@ -128,9 +126,7 @@ pub async fn calendar_sharing_opt_in(
 pub async fn calendar_sharing_opt_out(
     node: &FoldNode,
 ) -> HandlerResult<CalendarSharingStatusResponse> {
-    let db = node
-        .get_fold_db()
-        .map_err(|e| HandlerError::Internal(format!("Failed to access database: {}", e)))?;
+    let db = get_db_guard(node)?;
     let store = get_metadata_store(&db);
 
     calendar_sharing::set_opt_in(&*store, false)
@@ -156,9 +152,7 @@ pub async fn sync_calendar_events(
     req: &SyncCalendarEventsRequest,
     node: &FoldNode,
 ) -> HandlerResult<SyncCalendarEventsResponse> {
-    let db = node
-        .get_fold_db()
-        .map_err(|e| HandlerError::Internal(format!("Failed to access database: {}", e)))?;
+    let db = get_db_guard(node)?;
     let store = get_metadata_store(&db);
 
     if req.events.len() > MAX_CALENDAR_BATCH {
@@ -207,9 +201,7 @@ pub async fn store_peer_events(
     req: &StorePeerEventsRequest,
     node: &FoldNode,
 ) -> HandlerResult<SyncCalendarEventsResponse> {
-    let db = node
-        .get_fold_db()
-        .map_err(|e| HandlerError::Internal(format!("Failed to access database: {}", e)))?;
+    let db = get_db_guard(node)?;
     let store = get_metadata_store(&db);
 
     if req.fingerprints.len() > MAX_CALENDAR_BATCH {
@@ -258,9 +250,7 @@ pub async fn store_peer_events(
 
 /// Detect shared events between local calendar and peer calendars.
 pub async fn get_shared_events(node: &FoldNode) -> HandlerResult<SharedEventsResponse> {
-    let db = node
-        .get_fold_db()
-        .map_err(|e| HandlerError::Internal(format!("Failed to access database: {}", e)))?;
+    let db = get_db_guard(node)?;
     let store = get_metadata_store(&db);
 
     let opted_in = calendar_sharing::is_opted_in(&*store)

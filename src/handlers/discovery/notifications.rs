@@ -2,15 +2,13 @@
 
 use super::get_metadata_store;
 use crate::fold_node::node::FoldNode;
-use crate::handlers::response::{ApiResponse, HandlerError, HandlerResult};
+use crate::handlers::response::{get_db_guard, ApiResponse, HandlerError, HandlerResult};
 
 // === Notification handlers ===
 
 /// List all notifications stored in the metadata store.
 pub async fn list_notifications(node: &FoldNode) -> HandlerResult<serde_json::Value> {
-    let db = node
-        .get_fold_db()
-        .map_err(|e| HandlerError::Internal(format!("Failed to access database: {e}")))?;
+    let db = get_db_guard(node)?;
     let store = get_metadata_store(&db);
 
     let entries = store
@@ -38,9 +36,7 @@ pub async fn list_notifications(node: &FoldNode) -> HandlerResult<serde_json::Va
 
 /// Return the count of notifications without loading all bodies.
 pub async fn notification_count(node: &FoldNode) -> HandlerResult<serde_json::Value> {
-    let db = node
-        .get_fold_db()
-        .map_err(|e| HandlerError::Internal(format!("Failed to access database: {e}")))?;
+    let db = get_db_guard(node)?;
     let store = get_metadata_store(&db);
     let entries = store
         .scan_prefix(b"notification:")
@@ -56,9 +52,7 @@ pub async fn dismiss_notification(
     node: &FoldNode,
     notification_id: &str,
 ) -> HandlerResult<serde_json::Value> {
-    let db = node
-        .get_fold_db()
-        .map_err(|e| HandlerError::Internal(format!("Failed to access database: {e}")))?;
+    let db = get_db_guard(node)?;
     let store = get_metadata_store(&db);
 
     store
