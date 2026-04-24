@@ -39,6 +39,10 @@ export default [
         btoa: 'readonly',
         atob: 'readonly',
         ResizeObserver: 'readonly',
+        Blob: 'readonly',
+        XMLSerializer: 'readonly',
+        Image: 'readonly',
+        HTMLAnchorElement: 'readonly',
       },
       parserOptions: {
         ecmaVersion: 'latest',
