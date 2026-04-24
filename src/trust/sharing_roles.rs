@@ -1,17 +1,29 @@
 //! Sharing roles — user-facing abstraction over trust tiers.
 //!
 //! Users assign roles ("friend", "doctor", "trainer") instead of managing
-//! raw trust tiers. Each role maps to a (domain, tier) pair.
-//! Stored at `$FOLDDB_HOME/config/sharing_roles.json`.
+//! raw trust tiers. Each role maps to a (domain, tier) pair. Role
+//! definitions are user-level — they propagate across every device restored
+//! from the same mnemonic so Alice's custom roles follow her to every
+//! device. Stored under `user_profile/sharing_roles/<name>` via
+//! [`UserProfileStore`].
+//!
+//! First-time load on a device with no synced roles seeds the built-in
+//! defaults (`friend`, `doctor`, etc.) and persists them.
 
 use fold_db::access::AccessTier;
+use fold_db::fold_db_core::FoldDB;
+use fold_db::schema::SchemaError;
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
-use std::path::{Path, PathBuf};
 
-use crate::utils::paths::folddb_home;
+use crate::user_profile::UserProfileStore;
 
-const SHARING_ROLES_FILE: &str = "config/sharing_roles.json";
+/// Sub-prefix under `UserProfileStore`. One record per role name.
+const SHARING_ROLES_PREFIX: &str = "sharing_roles/";
+
+fn role_key(name: &str) -> String {
+    format!("{SHARING_ROLES_PREFIX}{name}")
+}
 
 /// A sharing role maps a user-friendly name to a (domain, tier) pair.
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -22,7 +34,7 @@ pub struct SharingRole {
     pub description: String,
 }
 
-/// All role definitions for this node. User-editable.
+/// All role definitions for this user.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct SharingRoleConfig {
     pub roles: HashMap<String, SharingRole>,
@@ -112,37 +124,32 @@ impl Default for SharingRoleConfig {
 }
 
 impl SharingRoleConfig {
-    fn file_path() -> Result<PathBuf, String> {
-        Ok(folddb_home()?.join(SHARING_ROLES_FILE))
-    }
-
-    pub fn load() -> Result<Self, String> {
-        Self::load_from(&Self::file_path()?)
-    }
-
-    pub fn load_from(path: &Path) -> Result<Self, String> {
-        if !path.exists() {
-            let config = Self::default();
-            config.save_to(path)?;
-            return Ok(config);
+    /// Load all role definitions from the synced user-profile store. If the
+    /// store is empty (first-time load on a fresh device or first run after
+    /// this migration), seed the built-in defaults and persist them so
+    /// peer devices see the same baseline.
+    pub async fn load(db: &FoldDB) -> Result<Self, SchemaError> {
+        let store = UserProfileStore::from_db(db);
+        let rows: Vec<(String, SharingRole)> = store.scan(SHARING_ROLES_PREFIX).await?;
+        if rows.is_empty() {
+            let defaults = Self::default();
+            defaults.save(db).await?;
+            return Ok(defaults);
         }
-        let data =
-            std::fs::read_to_string(path).map_err(|e| format!("Failed to read roles: {e}"))?;
-        serde_json::from_str(&data).map_err(|e| format!("Failed to parse roles: {e}"))
+        let roles: HashMap<String, SharingRole> = rows
+            .into_iter()
+            .map(|(_, role)| (role.name.clone(), role))
+            .collect();
+        Ok(Self { roles })
     }
 
-    pub fn save(&self) -> Result<(), String> {
-        self.save_to(&Self::file_path()?)
-    }
-
-    pub fn save_to(&self, path: &Path) -> Result<(), String> {
-        if let Some(parent) = path.parent() {
-            std::fs::create_dir_all(parent)
-                .map_err(|e| format!("Failed to create config dir: {e}"))?;
+    /// Persist every role definition. Each role is keyed by name.
+    pub async fn save(&self, db: &FoldDB) -> Result<(), SchemaError> {
+        let store = UserProfileStore::from_db(db);
+        for (name, role) in &self.roles {
+            store.put(&role_key(name), role).await?;
         }
-        let data = serde_json::to_string_pretty(self)
-            .map_err(|e| format!("Failed to serialize roles: {e}"))?;
-        std::fs::write(path, data).map_err(|e| format!("Failed to write roles: {e}"))
+        Ok(())
     }
 
     pub fn get_role(&self, name: &str) -> Option<&SharingRole> {
@@ -157,7 +164,17 @@ impl SharingRoleConfig {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use tempfile::TempDir;
+
+    async fn setup_db() -> (std::sync::Arc<FoldDB>, tempfile::TempDir) {
+        let tmp = tempfile::tempdir().unwrap();
+        let keypair = fold_db::security::Ed25519KeyPair::generate().unwrap();
+        let config = crate::fold_node::NodeConfig::new(tmp.path().to_path_buf())
+            .with_schema_service_url("test://mock")
+            .with_identity(&keypair.public_key_base64(), &keypair.secret_key_base64());
+        let node = crate::fold_node::FoldNode::new(config).await.unwrap();
+        let db = node.get_fold_db().unwrap();
+        (db, tmp)
+    }
 
     #[test]
     fn test_default_roles() {
@@ -187,26 +204,36 @@ mod tests {
         assert!(personal.iter().all(|r| r.domain == "personal"));
     }
 
-    #[test]
-    fn test_roundtrip() {
-        let tmp = TempDir::new().unwrap();
-        let path = tmp.path().join("roles.json");
+    #[tokio::test]
+    async fn first_load_seeds_defaults() {
+        let (db, _tmp) = setup_db().await;
+        let config = SharingRoleConfig::load(&db).await.unwrap();
+        assert!(!config.roles.is_empty());
+        assert!(config.get_role("friend").is_some());
 
-        let config = SharingRoleConfig::default();
-        config.save_to(&path).unwrap();
-
-        let loaded = SharingRoleConfig::load_from(&path).unwrap();
-        assert_eq!(loaded.roles.len(), config.roles.len());
+        // Reload should return the same persisted roles, not re-seed.
+        let again = SharingRoleConfig::load(&db).await.unwrap();
+        assert_eq!(again.roles.len(), config.roles.len());
     }
 
-    #[test]
-    fn test_load_creates_default_if_missing() {
-        let tmp = TempDir::new().unwrap();
-        let path = tmp.path().join("nonexistent.json");
-        assert!(!path.exists());
+    #[tokio::test]
+    async fn save_then_load_roundtrips_custom_role() {
+        let (db, _tmp) = setup_db().await;
+        let mut config = SharingRoleConfig::load(&db).await.unwrap();
+        config.roles.insert(
+            "lawyer".to_string(),
+            SharingRole {
+                name: "lawyer".to_string(),
+                domain: "legal".to_string(),
+                tier: AccessTier::Inner,
+                description: "Legal counsel".to_string(),
+            },
+        );
+        config.save(&db).await.unwrap();
 
-        let config = SharingRoleConfig::load_from(&path).unwrap();
-        assert!(!config.roles.is_empty());
-        assert!(path.exists()); // Should have been created
+        let loaded = SharingRoleConfig::load(&db).await.unwrap();
+        let lawyer = loaded.get_role("lawyer").unwrap();
+        assert_eq!(lawyer.domain, "legal");
+        assert_eq!(lawyer.tier, AccessTier::Inner);
     }
 }

@@ -20,7 +20,6 @@ use crate::handlers::response::{
 };
 use crate::trust::contact_book::{Contact, TrustDirection};
 use crate::trust::identity_card::IdentityCard;
-use crate::trust::sharing_roles::SharingRoleConfig;
 use base64::{engine::general_purpose::STANDARD as B64, Engine};
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
@@ -791,10 +790,9 @@ pub async fn respond_to_request(
 
     let role_name = req.role.as_deref().unwrap_or("acquaintance");
     let op = OperationProcessor::new(std::sync::Arc::new(node.clone()));
-    let roles_path = op
-        .sharing_roles_path()
-        .map_err(|e| HandlerError::Internal(format!("Failed to resolve roles path: {e}")))?;
-    let config = SharingRoleConfig::load_from(&roles_path)
+    let config = op
+        .load_sharing_roles()
+        .await
         .map_err(|e| HandlerError::Internal(format!("Failed to load roles: {e}")))?;
 
     if req.action == "accept" {

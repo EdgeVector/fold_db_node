@@ -1,16 +1,23 @@
 //! Declined invites — tracks invites the user chose to decline.
 //!
-//! Stored at `$FOLDDB_HOME/config/declined_invites.json`. Local-only.
-//! Prevents the same invite from being shown again and allows the user
-//! to review past decisions.
+//! Stored under `user_profile/invites/declined/<nonce>` via
+//! [`UserProfileStore`]. User-level: a decision to decline an invite
+//! propagates to every device the user owns, so they don't see the same
+//! invite pop up again on another device.
 
 use chrono::{DateTime, Utc};
+use fold_db::fold_db_core::FoldDB;
+use fold_db::schema::SchemaError;
 use serde::{Deserialize, Serialize};
-use std::path::{Path, PathBuf};
 
-use crate::utils::paths::folddb_home;
+use crate::user_profile::UserProfileStore;
 
-const DECLINED_INVITES_FILE: &str = "config/declined_invites.json";
+/// Sub-prefix under `UserProfileStore`. One record per nonce.
+const DECLINED_INVITES_PREFIX: &str = "invites/declined/";
+
+fn declined_key(nonce: &str) -> String {
+    format!("{DECLINED_INVITES_PREFIX}{nonce}")
+}
 
 /// A record of a declined trust invite.
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -29,42 +36,31 @@ pub struct DeclinedInvite {
     pub nonce: String,
 }
 
-/// All declined invites for this node.
+/// All declined invites for this user. Load with [`DeclinedInviteStore::load`]
+/// and persist with [`Self::save`]. Each nonce gets its own record in the
+/// synced store.
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
 pub struct DeclinedInviteStore {
     pub invites: Vec<DeclinedInvite>,
 }
 
 impl DeclinedInviteStore {
-    fn file_path() -> Result<PathBuf, String> {
-        Ok(folddb_home()?.join(DECLINED_INVITES_FILE))
+    /// Load every declined-invite record from the synced user-profile store.
+    pub async fn load(db: &FoldDB) -> Result<Self, SchemaError> {
+        let store = UserProfileStore::from_db(db);
+        let rows: Vec<(String, DeclinedInvite)> = store.scan(DECLINED_INVITES_PREFIX).await?;
+        Ok(Self {
+            invites: rows.into_iter().map(|(_, v)| v).collect(),
+        })
     }
 
-    pub fn load() -> Result<Self, String> {
-        Self::load_from(&Self::file_path()?)
-    }
-
-    pub fn load_from(path: &Path) -> Result<Self, String> {
-        if !path.exists() {
-            return Ok(Self::default());
+    /// Persist every declined invite. Each invite is keyed by its nonce.
+    pub async fn save(&self, db: &FoldDB) -> Result<(), SchemaError> {
+        let store = UserProfileStore::from_db(db);
+        for invite in &self.invites {
+            store.put(&declined_key(&invite.nonce), invite).await?;
         }
-        let data = std::fs::read_to_string(path)
-            .map_err(|e| format!("Failed to read declined invites: {e}"))?;
-        serde_json::from_str(&data).map_err(|e| format!("Failed to parse declined invites: {e}"))
-    }
-
-    pub fn save(&self) -> Result<(), String> {
-        self.save_to(&Self::file_path()?)
-    }
-
-    pub fn save_to(&self, path: &Path) -> Result<(), String> {
-        if let Some(parent) = path.parent() {
-            std::fs::create_dir_all(parent)
-                .map_err(|e| format!("Failed to create config dir: {e}"))?;
-        }
-        let data = serde_json::to_string_pretty(self)
-            .map_err(|e| format!("Failed to serialize declined invites: {e}"))?;
-        std::fs::write(path, data).map_err(|e| format!("Failed to write declined invites: {e}"))
+        Ok(())
     }
 
     /// Record a declined invite.
@@ -80,10 +76,81 @@ impl DeclinedInviteStore {
         self.invites.iter().any(|i| i.nonce == nonce)
     }
 
-    /// Remove a decline record (user changed their mind).
-    pub fn undecline(&mut self, nonce: &str) -> bool {
+    /// Remove a decline record (user changed their mind). Also deletes the
+    /// synced record so peer devices stop seeing it as declined.
+    pub async fn undecline(&mut self, db: &FoldDB, nonce: &str) -> Result<bool, SchemaError> {
         let len = self.invites.len();
         self.invites.retain(|i| i.nonce != nonce);
-        self.invites.len() < len
+        if self.invites.len() < len {
+            let store = UserProfileStore::from_db(db);
+            store.delete(&declined_key(nonce)).await?;
+            Ok(true)
+        } else {
+            Ok(false)
+        }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    async fn setup_db() -> (std::sync::Arc<FoldDB>, tempfile::TempDir) {
+        let tmp = tempfile::tempdir().unwrap();
+        let keypair = fold_db::security::Ed25519KeyPair::generate().unwrap();
+        let config = crate::fold_node::NodeConfig::new(tmp.path().to_path_buf())
+            .with_schema_service_url("test://mock")
+            .with_identity(&keypair.public_key_base64(), &keypair.secret_key_base64());
+        let node = crate::fold_node::FoldNode::new(config).await.unwrap();
+        let db = node.get_fold_db().unwrap();
+        (db, tmp)
+    }
+
+    fn mk_declined(nonce: &str) -> DeclinedInvite {
+        DeclinedInvite {
+            sender_pub_key: "pk".into(),
+            sender_display_name: "Sender".into(),
+            sender_contact_hint: None,
+            proposed_role: "friend".into(),
+            declined_at: Utc::now(),
+            nonce: nonce.into(),
+        }
+    }
+
+    #[tokio::test]
+    async fn decline_then_load_roundtrips() {
+        let (db, _tmp) = setup_db().await;
+        let mut store = DeclinedInviteStore::default();
+        store.decline(mk_declined("n1"));
+        store.decline(mk_declined("n2"));
+        store.save(&db).await.unwrap();
+
+        let loaded = DeclinedInviteStore::load(&db).await.unwrap();
+        assert_eq!(loaded.invites.len(), 2);
+        assert!(loaded.is_declined("n1"));
+        assert!(loaded.is_declined("n2"));
+        assert!(!loaded.is_declined("n3"));
+    }
+
+    #[tokio::test]
+    async fn decline_is_idempotent_on_duplicate_nonce() {
+        let mut store = DeclinedInviteStore::default();
+        store.decline(mk_declined("n1"));
+        store.decline(mk_declined("n1"));
+        assert_eq!(store.invites.len(), 1);
+    }
+
+    #[tokio::test]
+    async fn undecline_removes_from_store_and_sled() {
+        let (db, _tmp) = setup_db().await;
+        let mut store = DeclinedInviteStore::default();
+        store.decline(mk_declined("n1"));
+        store.save(&db).await.unwrap();
+
+        assert!(store.undecline(&db, "n1").await.unwrap());
+        assert!(!store.undecline(&db, "n1").await.unwrap());
+
+        let loaded = DeclinedInviteStore::load(&db).await.unwrap();
+        assert!(!loaded.is_declined("n1"));
     }
 }

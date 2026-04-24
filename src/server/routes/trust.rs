@@ -361,8 +361,8 @@ pub async fn verify_invite_code(
 
 /// GET /api/sharing/roles
 pub async fn list_sharing_roles(state: web::Data<AppState>) -> impl Responder {
-    let (_user_hash, _node) = node_or_return!(state);
-    handler_result_to_response(trust_handlers::list_sharing_roles())
+    let (_user_hash, node) = node_or_return!(state);
+    handler_result_to_response(trust_handlers::list_sharing_roles(&node).await)
 }
 
 /// POST /api/contacts/{key}/role
@@ -421,7 +421,7 @@ pub async fn decline_trust_invite(
     body: web::Json<serde_json::Value>,
     state: web::Data<AppState>,
 ) -> impl Responder {
-    let (_user_hash, _node) = node_or_return!(state);
+    let (_user_hash, node) = node_or_return!(state);
     let token = match body.get("token").and_then(|v| v.as_str()) {
         Some(t) => t.to_string(),
         None => {
@@ -429,13 +429,13 @@ pub async fn decline_trust_invite(
                 .json(serde_json::json!({"error": "Missing 'token' field"}));
         }
     };
-    handler_result_to_response(trust_handlers::decline_trust_invite(&token).await)
+    handler_result_to_response(trust_handlers::decline_trust_invite(&token, &node).await)
 }
 
 /// GET /api/trust/invite/declined
 pub async fn list_declined_invites(state: web::Data<AppState>) -> impl Responder {
-    let (_user_hash, _node) = node_or_return!(state);
-    handler_result_to_response(trust_handlers::list_declined_invites().await)
+    let (_user_hash, node) = node_or_return!(state);
+    handler_result_to_response(trust_handlers::list_declined_invites(&node).await)
 }
 
 /// DELETE /api/trust/invite/declined/{nonce}
@@ -444,16 +444,16 @@ pub async fn undecline_invite(
     state: web::Data<AppState>,
 ) -> impl Responder {
     let nonce = path.into_inner();
-    let (_user_hash, _node) = node_or_return!(state);
-    handler_result_to_response(trust_handlers::undecline_invite(&nonce).await)
+    let (_user_hash, node) = node_or_return!(state);
+    handler_result_to_response(trust_handlers::undecline_invite(&nonce, &node).await)
 }
 
 // ===== Sent invites =====
 
 /// GET /api/trust/invite/sent
 pub async fn list_sent_invites(state: web::Data<AppState>) -> impl Responder {
-    let (_user_hash, _node) = node_or_return!(state);
-    handler_result_to_response(trust_handlers::list_sent_invites().await)
+    let (_user_hash, node) = node_or_return!(state);
+    handler_result_to_response(trust_handlers::list_sent_invites(&node).await)
 }
 
 /// GET /api/sharing/exemem-status — check Exemem connectivity and token validity

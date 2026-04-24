@@ -32,7 +32,6 @@ use crate::fold_node::node::FoldNode;
 use crate::fold_node::OperationProcessor;
 use crate::handlers::response::{ApiResponse, HandlerError, HandlerResult, IntoHandlerError};
 use crate::trust::contact_book::{Contact, ContactBook, TrustDirection};
-use crate::trust::sharing_roles::SharingRoleConfig;
 use base64::{engine::general_purpose::STANDARD as B64, Engine};
 use std::collections::HashMap;
 
@@ -955,10 +954,9 @@ async fn process_accepted_connection(
         .ok_or_else(|| HandlerError::Internal("No identity card in acceptance".to_string()))?;
 
     let op = OperationProcessor::new(std::sync::Arc::new(node.clone()));
-    let roles_path = op
-        .sharing_roles_path()
-        .map_err(|e| HandlerError::Internal(format!("Failed to resolve roles path: {e}")))?;
-    let config = SharingRoleConfig::load_from(&roles_path)
+    let config = op
+        .load_sharing_roles()
+        .await
         .map_err(|e| HandlerError::Internal(format!("Failed to load roles: {e}")))?;
     let role = config
         .get_role(default_role)

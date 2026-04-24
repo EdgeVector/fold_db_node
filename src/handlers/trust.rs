@@ -541,8 +541,13 @@ pub async fn verify_invite_code(
 // ===== Sharing roles =====
 
 /// List all role definitions.
-pub fn list_sharing_roles() -> HandlerResult<serde_json::Value> {
-    let config = crate::trust::sharing_roles::SharingRoleConfig::load().unwrap_or_default();
+pub async fn list_sharing_roles(node: &FoldNode) -> HandlerResult<serde_json::Value> {
+    let db = node
+        .get_fold_db()
+        .map_err(|e| HandlerError::Internal(format!("FoldDB not available: {e}")))?;
+    let config = crate::trust::sharing_roles::SharingRoleConfig::load(&db)
+        .await
+        .map_err(|e| HandlerError::Internal(format!("Failed to load roles: {e}")))?;
     Ok(ApiResponse::success(
         serde_json::json!({"roles": config.roles}),
     ))
@@ -647,13 +652,19 @@ pub async fn apply_defaults_all(
 // ===== Declined invites =====
 
 /// Decline a trust invite (record locally).
-pub async fn decline_trust_invite(token: &str) -> HandlerResult<serde_json::Value> {
+pub async fn decline_trust_invite(
+    token: &str,
+    node: &FoldNode,
+) -> HandlerResult<serde_json::Value> {
     let invite = TrustInvite::from_token(token)
         .map_err(fold_db::schema::SchemaError::InvalidData)
         .typed_handler_err()?;
 
-    let mut store = crate::trust::declined_invites::DeclinedInviteStore::load()
-        .map_err(fold_db::schema::SchemaError::InvalidData)
+    let db = node
+        .get_fold_db()
+        .map_err(|e| HandlerError::Internal(format!("FoldDB not available: {e}")))?;
+    let mut store = crate::trust::declined_invites::DeclinedInviteStore::load(&db)
+        .await
         .typed_handler_err()?;
 
     store.decline(crate::trust::declined_invites::DeclinedInvite {
@@ -665,10 +676,7 @@ pub async fn decline_trust_invite(token: &str) -> HandlerResult<serde_json::Valu
         nonce: invite.nonce.clone(),
     });
 
-    store
-        .save()
-        .map_err(fold_db::schema::SchemaError::InvalidData)
-        .typed_handler_err()?;
+    store.save(&db).await.typed_handler_err()?;
 
     Ok(ApiResponse::success(serde_json::json!({
         "declined": true,
@@ -677,9 +685,12 @@ pub async fn decline_trust_invite(token: &str) -> HandlerResult<serde_json::Valu
 }
 
 /// List all declined invites.
-pub async fn list_declined_invites() -> HandlerResult<serde_json::Value> {
-    let store = crate::trust::declined_invites::DeclinedInviteStore::load()
-        .map_err(fold_db::schema::SchemaError::InvalidData)
+pub async fn list_declined_invites(node: &FoldNode) -> HandlerResult<serde_json::Value> {
+    let db = node
+        .get_fold_db()
+        .map_err(|e| HandlerError::Internal(format!("FoldDB not available: {e}")))?;
+    let store = crate::trust::declined_invites::DeclinedInviteStore::load(&db)
+        .await
         .typed_handler_err()?;
     Ok(ApiResponse::success(
         serde_json::json!({"declined_invites": store.invites}),
@@ -687,15 +698,14 @@ pub async fn list_declined_invites() -> HandlerResult<serde_json::Value> {
 }
 
 /// Undo a decline (change mind).
-pub async fn undecline_invite(nonce: &str) -> HandlerResult<serde_json::Value> {
-    let mut store = crate::trust::declined_invites::DeclinedInviteStore::load()
-        .map_err(fold_db::schema::SchemaError::InvalidData)
+pub async fn undecline_invite(nonce: &str, node: &FoldNode) -> HandlerResult<serde_json::Value> {
+    let db = node
+        .get_fold_db()
+        .map_err(|e| HandlerError::Internal(format!("FoldDB not available: {e}")))?;
+    let mut store = crate::trust::declined_invites::DeclinedInviteStore::load(&db)
+        .await
         .typed_handler_err()?;
-    let removed = store.undecline(nonce);
-    store
-        .save()
-        .map_err(fold_db::schema::SchemaError::InvalidData)
-        .typed_handler_err()?;
+    let removed = store.undecline(&db, nonce).await.typed_handler_err()?;
     Ok(ApiResponse::success(
         serde_json::json!({"undeclined": removed}),
     ))
@@ -704,9 +714,12 @@ pub async fn undecline_invite(nonce: &str) -> HandlerResult<serde_json::Value> {
 // ===== Sent invites =====
 
 /// List all sent invites with status.
-pub async fn list_sent_invites() -> HandlerResult<serde_json::Value> {
-    let store = crate::trust::sent_invites::SentInviteStore::load()
-        .map_err(fold_db::schema::SchemaError::InvalidData)
+pub async fn list_sent_invites(node: &FoldNode) -> HandlerResult<serde_json::Value> {
+    let db = node
+        .get_fold_db()
+        .map_err(|e| HandlerError::Internal(format!("FoldDB not available: {e}")))?;
+    let store = crate::trust::sent_invites::SentInviteStore::load(&db)
+        .await
         .typed_handler_err()?;
     Ok(ApiResponse::success(
         serde_json::json!({"sent_invites": store.invites}),
