@@ -26,6 +26,34 @@ fn main() {
 
     let version = resolve_version();
     println!("cargo:rustc-env=FOLDDB_BUILD_VERSION={version}");
+
+    ensure_react_dist_stub();
+}
+
+/// `src/server/static_assets.rs` uses `#[derive(RustEmbed)]` pointing at
+/// `src/server/static-react/dist`. That directory is a Vite build output
+/// (gitignored), so a fresh clone or a new worktree can't even `cargo
+/// check` until someone runs `npm install && npm run build` inside
+/// `static-react/`. Agents kept re-discovering this from scratch.
+///
+/// Write a tiny stub index so rustc-level compilation works. A real
+/// `npm run build` overwrites the stub. CI always builds the frontend
+/// before running Rust jobs, so prod and CI are unaffected.
+fn ensure_react_dist_stub() {
+    let dist = std::path::Path::new("src/server/static-react/dist");
+    if dist.exists() && dist.join("index.html").exists() {
+        return;
+    }
+    if let Err(e) = std::fs::create_dir_all(dist) {
+        println!("cargo:warning=failed to create static-react/dist stub dir: {e}");
+        return;
+    }
+    let stub = b"<!-- fold_db_node build.rs stub \
+                 (run `npm --prefix src/server/static-react run build` \
+                 for the real UI). -->\n";
+    if let Err(e) = std::fs::write(dist.join("index.html"), stub) {
+        println!("cargo:warning=failed to write static-react/dist stub: {e}");
+    }
 }
 
 fn resolve_version() -> String {
