@@ -1,4 +1,4 @@
-const STOPWORDS = new Set([
+const STOPWORDS: Set<string> = new Set([
   'the','and','for','are','but','not','you','all','can','her','was','one',
   'our','out','get','has','him','his','how','new','now','old','see','two',
   'way','who','did','its','let','put','say','she','too','use','that','this',
@@ -8,17 +8,60 @@ const STOPWORDS = new Set([
 
 const SEARCH_BATCH = 8
 
-export function makeSchemaId(name) { return `schema:${name}` }
-function makeWordId(term)   { return `word:${term}` }
+export interface KeyValue {
+  hash?: string;
+  range?: string;
+}
 
-function formatKey(kv) {
-  const parts = []
+export interface GraphNode {
+  id: string;
+  label?: string;
+  type?: 'word' | 'schema';
+  field?: string;
+}
+
+export interface GraphLink {
+  id: string;
+  source: string;
+  target: string;
+  keyLabel?: string;
+  field?: string;
+  hash?: string;
+  range?: string;
+}
+
+export interface GraphData {
+  nodes: GraphNode[];
+  links: GraphLink[];
+}
+
+export interface SearchResult {
+  schema_name: string;
+  value?: string;
+  field: string;
+  key_value?: KeyValue;
+}
+
+export interface RecordLike {
+  fields?: Record<string, unknown>;
+  [key: string]: unknown;
+}
+
+export function makeSchemaId(name: string): string { return `schema:${name}` }
+function makeWordId(term: string): string { return `word:${term}` }
+
+function formatKey(kv: KeyValue | null | undefined): string {
+  const parts: string[] = []
   if (kv?.hash)  parts.push(kv.hash.slice(0, 12))
   if (kv?.range) parts.push(kv.range.slice(0, 12))
   return parts.join(' / ') || '—'
 }
 
-export function mergeGraphData(prev, newNodes, newLinks) {
+export function mergeGraphData(
+  prev: GraphData,
+  newNodes: GraphNode[],
+  newLinks: GraphLink[],
+): GraphData {
   const nodeMap = new Map(prev.nodes.map(n => [n.id, n]))
   const linkMap = new Map(prev.links.map(l => [l.id, l]))
   for (const n of newNodes) if (!nodeMap.has(n.id)) nodeMap.set(n.id, n)
@@ -26,8 +69,8 @@ export function mergeGraphData(prev, newNodes, newLinks) {
   return { nodes: Array.from(nodeMap.values()), links: Array.from(linkMap.values()) }
 }
 
-export function extractWordsFromRecord(record) {
-  const words = new Set()
+export function extractWordsFromRecord(record: RecordLike | null | undefined): Set<string> {
+  const words = new Set<string>()
   const fields = record?.fields ?? (typeof record === 'object' ? record : {})
   for (const value of Object.values(fields ?? {})) {
     if (typeof value !== 'string') continue
@@ -38,10 +81,10 @@ export function extractWordsFromRecord(record) {
   return words
 }
 
-export function buildFromResults(results) {
-  const nodes = []
-  const links = []
-  const seenWords = new Set()
+export function buildFromResults(results: SearchResult[]): GraphData {
+  const nodes: GraphNode[] = []
+  const links: GraphLink[] = []
+  const seenWords = new Set<string>()
   for (const r of results) {
     const schemaId = makeSchemaId(r.schema_name)
     const wordLabel = String(r.value ?? r.field ?? '')
@@ -65,7 +108,21 @@ export function buildFromResults(results) {
   return { nodes, links }
 }
 
-export async function searchBatch(words, nativeIndexClient, onBatchResult, onWordComplete) {
+export interface NativeIndexSearchResponse {
+  success: boolean;
+  data?: { results?: SearchResult[] };
+}
+
+export interface NativeIndexClient {
+  search(word: string): Promise<NativeIndexSearchResponse>;
+}
+
+export async function searchBatch(
+  words: Iterable<string>,
+  nativeIndexClient: NativeIndexClient,
+  onBatchResult: (results: SearchResult[]) => void,
+  onWordComplete: () => void,
+): Promise<void> {
   const pending = [...words]
   while (pending.length > 0) {
     const batch = pending.splice(0, SEARCH_BATCH)
