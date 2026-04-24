@@ -10,17 +10,25 @@
  * }
  */
 
-function isPlainObject(value) {
+export type FieldMap = Record<string, unknown>;
+export type RangeMap = Record<string, FieldMap>;
+export type HashRangeData = Record<string, RangeMap>;
+
+export interface QueryRecord {
+  fields?: FieldMap;
+  key?: { hash?: string; range?: string };
+  metadata?: unknown;
+}
+
+function isPlainObject(value: unknown): value is Record<string, unknown> {
   return value !== null && typeof value === 'object' && !Array.isArray(value);
 }
 
 /**
  * Detect whether the provided data matches the hash->range->fields shape.
  * Performs a shallow, sample-based validation to keep it fast for large datasets.
- * @param {unknown} maybeData - Either entire results object or results.data
- * @returns {boolean}
  */
-export function isHashRangeFieldsShape(maybeData) {
+export function isHashRangeFieldsShape(maybeData: unknown): boolean {
   const data = extractData(maybeData);
   if (!isPlainObject(data)) return false;
 
@@ -41,13 +49,10 @@ export function isHashRangeFieldsShape(maybeData) {
     for (let j = 0; j < Math.min(3, rangeKeys.length); j++) {
       const fieldsVal = hashVal[rangeKeys[j]];
       if (!isPlainObject(fieldsVal)) return false;
-      // Spot check field map keys exist
       const fieldNames = Object.keys(fieldsVal);
       if (fieldNames.length === 0) {
-        // Allow empty field maps
         continue;
       }
-      // No further deep type checks to keep it permissive
     }
   }
 
@@ -57,11 +62,9 @@ export function isHashRangeFieldsShape(maybeData) {
 /**
  * Transform an array of query results [{fields, key: {hash, range}, metadata}]
  * into the nested hash->range->fields shape expected by the structured view.
- * @param {Array} results
- * @returns {object}
  */
-function transformQueryResultsArray(results) {
-  const nested = {};
+function transformQueryResultsArray(results: QueryRecord[]): HashRangeData {
+  const nested: HashRangeData = {};
   for (const record of results) {
     const hash = record.key?.hash || '_default';
     const range = record.key?.range || '_default';
@@ -75,26 +78,20 @@ function transformQueryResultsArray(results) {
  * Extracts the underlying data object whether caller passed results or results.data.
  * Also handles the array-of-records format returned by queries by transforming it
  * into the nested hash->range->fields shape.
- * @param {unknown} maybeData
- * @returns {any}
  */
-export function extractData(maybeData) {
-  let data = maybeData;
+export function extractData(maybeData: unknown): unknown {
+  let data: unknown = maybeData;
   if (data && isPlainObject(data) && Object.prototype.hasOwnProperty.call(data, 'data')) {
-    data = data.data;
+    data = (data as Record<string, unknown>).data;
   }
-  // Transform array-of-records format to nested hash->range->fields
   if (Array.isArray(data) && data.length > 0 && data[0] && isPlainObject(data[0]) && ('key' in data[0] || 'fields' in data[0])) {
-    return transformQueryResultsArray(data);
+    return transformQueryResultsArray(data as QueryRecord[]);
   }
   return data;
 }
 
-/**
- * Counts the total number of hashes and ranges across the dataset.
- * @param {object} data
- */
-export function summarizeCounts(maybeData) {
+/** Counts the total number of hashes and ranges across the dataset. */
+export function summarizeCounts(maybeData: unknown): { hashes: number; ranges: number } {
   const data = extractData(maybeData) || {};
   if (!isPlainObject(data)) return { hashes: 0, ranges: 0 };
   const hashes = Object.keys(data).length;
@@ -108,28 +105,24 @@ export function summarizeCounts(maybeData) {
   return { hashes, ranges };
 }
 
-/**
- * Returns a sorted list of hash keys for stable rendering.
- */
-export function getSortedHashKeys(maybeData) {
+/** Returns a sorted list of hash keys for stable rendering. */
+export function getSortedHashKeys(maybeData: unknown): string[] {
   const data = extractData(maybeData) || {};
   if (!isPlainObject(data)) return [];
   return Object.keys(data).sort(naturalComparator);
 }
 
-/**
- * Returns a sorted list of range keys under a given hash key.
- */
-export function getSortedRangeKeys(maybeData, hashKey) {
+/** Returns a sorted list of range keys under a given hash key. */
+export function getSortedRangeKeys(maybeData: unknown, hashKey: string): string[] {
   const data = extractData(maybeData) || {};
-  const ranges = isPlainObject(data) && isPlainObject(data[hashKey]) ? data[hashKey] : {};
+  const ranges = isPlainObject(data) && isPlainObject(data[hashKey])
+    ? (data[hashKey] as Record<string, unknown>)
+    : {};
   return Object.keys(ranges).sort(naturalComparator);
 }
 
-/**
- * Natural-ish comparator for stable ordering of mixed numeric/string keys.
- */
-function naturalComparator(a, b) {
+/** Natural-ish comparator for stable ordering of mixed numeric/string keys. */
+function naturalComparator(a: string, b: string): number {
   const an = toNumberOrNaN(a);
   const bn = toNumberOrNaN(b);
   if (!Number.isNaN(an) && !Number.isNaN(bn)) {
@@ -138,27 +131,23 @@ function naturalComparator(a, b) {
   return String(a).localeCompare(String(b));
 }
 
-function toNumberOrNaN(v) {
+function toNumberOrNaN(v: unknown): number {
   const n = Number(v);
   return Number.isFinite(n) ? n : Number.NaN;
 }
 
-/**
- * Safely get fields object at given hash and range.
- */
-export function getFieldsAt(maybeData, hashKey, rangeKey) {
+/** Safely get fields object at given hash and range. */
+export function getFieldsAt(maybeData: unknown, hashKey: string, rangeKey: string): FieldMap | null {
   const data = extractData(maybeData) || {};
   if (!isPlainObject(data)) return null;
   const rangeObj = data[hashKey];
   if (!isPlainObject(rangeObj)) return null;
-  const fields = rangeObj[rangeKey];
-  return isPlainObject(fields) ? fields : null;
+  const fields = (rangeObj as Record<string, unknown>)[rangeKey];
+  return isPlainObject(fields) ? (fields as FieldMap) : null;
 }
 
-/**
- * Slice helpers for lazy rendering.
- */
-export function sliceKeys(keys, start, count) {
+/** Slice helpers for lazy rendering. */
+export function sliceKeys<T>(keys: T[], start: number, count: number): T[] {
   return keys.slice(start, Math.min(start + count, keys.length));
 }
 
@@ -171,5 +160,3 @@ export default {
   getFieldsAt,
   sliceKeys,
 };
-
-
