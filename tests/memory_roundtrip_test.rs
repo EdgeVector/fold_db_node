@@ -35,7 +35,7 @@ async fn create_node(schema_service_url: &str) -> (Arc<FoldNode>, TempDir) {
     let keypair = fold_db::security::Ed25519KeyPair::generate().unwrap();
     let config = NodeConfig::new(path.into())
         .with_schema_service_url(schema_service_url)
-        .with_identity(&keypair.public_key_base64(), &keypair.secret_key_base64());
+        .with_seed_identity(fold_db_node::identity::identity_from_keypair(&keypair));
     let node = FoldNode::new(config).await.expect("create FoldNode");
     (Arc::new(node), tmp)
 }

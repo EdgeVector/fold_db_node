@@ -60,7 +60,7 @@ async fn test_smart_folder_tweets_ingest_and_query() {
     let keypair = Ed25519KeyPair::generate().unwrap();
     let user_id = keypair.public_key_base64();
     config = config
-        .with_identity(&user_id, &keypair.secret_key_base64())
+        .with_seed_identity(fold_db_node::identity::identity_from_keypair(&keypair))
         .with_schema_service_url(&schema_url);
     let node = FoldNode::new(config).await.unwrap();
 

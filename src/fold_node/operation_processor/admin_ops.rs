@@ -258,7 +258,7 @@ impl OperationProcessor {
         // it and upload to S3.
         // Derive E2E keys from the node's Ed25519 identity (unified identity).
         let e2e_keys = {
-            let priv_key = &self.node.private_key;
+            let priv_key = &self.node.identity.private_key;
             let seed = crate::fold_node::FoldNode::extract_ed25519_seed(priv_key)
                 .map_err(|e| FoldDbError::Config(format!("Failed to extract seed: {e}")))?;
             fold_db::crypto::E2eKeys::from_ed25519_seed(&seed)

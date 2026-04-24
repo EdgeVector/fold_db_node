@@ -262,9 +262,8 @@ mod tests {
                     network_listen_address: "/ip4/0.0.0.0/tcp/0".to_string(),
                     security_config: fold_db::security::SecurityConfig::from_env(),
                     schema_service_url: Some("test://mock".to_string()),
-                    public_key: None,
-                    private_key: None,
                     config_dir: Some(tmp.path().join("config")),
+                    seed_identity: None,
                 },
             },
         ));
@@ -289,12 +288,15 @@ mod tests {
             "restore should fail when Exemem API is unreachable"
         );
 
-        // Identity file must be gone after rollback.
-        let id_path = tmp.path().join("config").join("node_identity.json");
+        // After rollback the Sled identity tree must be empty — the restore
+        // wrote the keypair up-front and the error path rolls it back. Use
+        // the node_manager's own pool so this check doesn't contend with
+        // the live Sled file lock that the manager is still holding.
+        let pool = node_manager.get_or_init_sled_pool().await;
+        let loaded = crate::identity::load(pool).expect("read identity");
         assert!(
-            !id_path.exists(),
-            "rollback should have deleted {:?}",
-            id_path
+            loaded.is_none(),
+            "rollback should have cleared the persisted identity"
         );
 
         std::env::remove_var("EXEMEM_API_URL");
@@ -314,9 +316,8 @@ mod tests {
                     network_listen_address: "/ip4/0.0.0.0/tcp/0".to_string(),
                     security_config: fold_db::security::SecurityConfig::from_env(),
                     schema_service_url: Some("test://mock".to_string()),
-                    public_key: None,
-                    private_key: None,
                     config_dir: Some(tmp.path().join("config")),
+                    seed_identity: None,
                 },
             },
         ));

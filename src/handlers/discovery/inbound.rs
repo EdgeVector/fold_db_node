@@ -1438,7 +1438,7 @@ mod dispatch_tests {
         let keypair = fold_db::security::Ed25519KeyPair::generate().unwrap();
         let config = crate::fold_node::NodeConfig::new(dir.path().to_path_buf())
             .with_schema_service_url("test://mock")
-            .with_identity(&keypair.public_key_base64(), &keypair.secret_key_base64());
+            .with_seed_identity(crate::identity::identity_from_keypair(&keypair));
         let node = FoldNode::new(config).await.unwrap();
         (node, dir)
     }

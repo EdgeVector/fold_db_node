@@ -93,7 +93,7 @@ async fn test_schema_expansion_on_fresh_db() {
     let temp_dir_1 = TempDir::new().unwrap();
     let config_1 =
         fold_db_node::fold_node::config::NodeConfig::new(temp_dir_1.path().to_path_buf())
-            .with_identity(&user_id, &keypair.secret_key_base64())
+            .with_seed_identity(fold_db_node::identity::identity_from_keypair(&keypair))
             .with_schema_service_url(&schema_url);
     let node_1 = FoldNode::new(config_1).await.unwrap();
 
@@ -153,7 +153,7 @@ async fn test_schema_expansion_on_fresh_db() {
     let temp_dir_2 = TempDir::new().unwrap();
     let config_2 =
         fold_db_node::fold_node::config::NodeConfig::new(temp_dir_2.path().to_path_buf())
-            .with_identity(&user_id, &keypair.secret_key_base64())
+            .with_seed_identity(fold_db_node::identity::identity_from_keypair(&keypair))
             .with_schema_service_url(&schema_url);
     let node_2 = FoldNode::new(config_2).await.unwrap();
 
@@ -314,13 +314,12 @@ async fn test_expansion_without_old_schema_warns_but_succeeds() {
     let schema_url = svc.url.clone();
 
     let keypair = fold_db::security::Ed25519KeyPair::generate().unwrap();
-    let user_id = keypair.public_key_base64();
 
     // Create Schema A on the schema service
     let temp_dir_1 = TempDir::new().unwrap();
     let config_1 =
         fold_db_node::fold_node::config::NodeConfig::new(temp_dir_1.path().to_path_buf())
-            .with_identity(&user_id, &keypair.secret_key_base64())
+            .with_seed_identity(fold_db_node::identity::identity_from_keypair(&keypair))
             .with_schema_service_url(&schema_url);
     let node_1 = FoldNode::new(config_1).await.unwrap();
 
@@ -336,7 +335,7 @@ async fn test_expansion_without_old_schema_warns_but_succeeds() {
     let temp_dir_2 = TempDir::new().unwrap();
     let config_2 =
         fold_db_node::fold_node::config::NodeConfig::new(temp_dir_2.path().to_path_buf())
-            .with_identity(&user_id, &keypair.secret_key_base64())
+            .with_seed_identity(fold_db_node::identity::identity_from_keypair(&keypair))
             .with_schema_service_url(&schema_url);
     let node_2 = FoldNode::new(config_2).await.unwrap();
 

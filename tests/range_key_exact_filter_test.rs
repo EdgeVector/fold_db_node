@@ -21,7 +21,7 @@ async fn test_exact_range_key_filtering_with_blogpost() {
     let keypair = fold_db::security::Ed25519KeyPair::generate().unwrap();
     let config = NodeConfig::new(temp_db_path.into())
         .with_schema_service_url("test://mock")
-        .with_identity(&keypair.public_key_base64(), &keypair.secret_key_base64());
+        .with_seed_identity(fold_db_node::identity::identity_from_keypair(&keypair));
     let node = FoldNode::new(config)
         .await
         .expect("Failed to create FoldNode");
@@ -270,7 +270,7 @@ async fn test_range_key_set_in_query_object() {
     let keypair = fold_db::security::Ed25519KeyPair::generate().unwrap();
     let config = NodeConfig::new(temp_db_path.into())
         .with_schema_service_url("test://mock")
-        .with_identity(&keypair.public_key_base64(), &keypair.secret_key_base64());
+        .with_seed_identity(fold_db_node::identity::identity_from_keypair(&keypair));
     let node = FoldNode::new(config)
         .await
         .expect("Failed to create FoldNode");

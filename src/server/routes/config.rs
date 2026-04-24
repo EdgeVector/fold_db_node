@@ -305,11 +305,13 @@ pub async fn get_database_status(state: web::Data<AppState>) -> impl Responder {
     let initialized = if state.node_manager.has_active_node().await {
         true
     } else if has_saved_config {
-        // For returning users, try to auto-initialize from saved config
-        let config = state.node_manager.get_base_config().await;
-        match &config.public_key {
-            Some(pk) if !pk.is_empty() => {
-                let user_hash = user_hash_from_pubkey(pk);
+        // For returning users, try to auto-initialize. The public key lives
+        // in the Sled `node_identity` tree (not on NodeConfig) — read it
+        // via the shared pool.
+        let pool = state.node_manager.get_or_init_sled_pool().await;
+        match crate::identity::load(pool).ok().flatten() {
+            Some(id) if !id.public_key.is_empty() => {
+                let user_hash = user_hash_from_pubkey(&id.public_key);
                 state
                     .node_manager
                     .get_node(&user_hash)

@@ -98,7 +98,7 @@ async fn test_schema_names_are_semantic_not_hashes() {
     let keypair = fold_db::security::Ed25519KeyPair::generate().unwrap();
     let user_id = keypair.public_key_base64();
     config = config
-        .with_identity(&user_id, &keypair.secret_key_base64())
+        .with_seed_identity(fold_db_node::identity::identity_from_keypair(&keypair))
         .with_schema_service_url(&schema_url);
     let node = FoldNode::new(config).await.unwrap();
 
@@ -256,7 +256,7 @@ async fn test_text_files_get_distinct_schemas() {
     let keypair = fold_db::security::Ed25519KeyPair::generate().unwrap();
     let user_id = keypair.public_key_base64();
     config = config
-        .with_identity(&user_id, &keypair.secret_key_base64())
+        .with_seed_identity(fold_db_node::identity::identity_from_keypair(&keypair))
         .with_schema_service_url(&schema_url);
     let node = FoldNode::new(config).await.unwrap();
 
