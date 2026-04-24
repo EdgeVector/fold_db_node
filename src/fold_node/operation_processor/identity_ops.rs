@@ -74,7 +74,10 @@ impl OperationProcessor {
             .map_err(|e| SchemaError::InvalidData(format!("FoldDB not available: {e}")))?;
         let raw = fold_db.db_ops().metadata().raw_metadata_kv();
         let typed: TypedKvStore<dyn fold_db::storage::traits::KvStore> = TypedKvStore::new(raw);
-        match typed.get_item::<IdentityCard>(Self::IDENTITY_CARD_KEY).await {
+        match typed
+            .get_item::<IdentityCard>(Self::IDENTITY_CARD_KEY)
+            .await
+        {
             Ok(Some(card)) => return Ok(Some(card)),
             Ok(None) => {}
             Err(e) => {
