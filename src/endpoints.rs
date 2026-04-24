@@ -25,7 +25,10 @@ impl Environment {
                 Self::Dev
             }
             Err(_) => {
-                log::warn!("EXEMEM_ENV not set, defaulting to dev");
+                // EXEMEM_ENV is unset on every local dev boot — noisy if
+                // logged at warn-level. Keep at debug; release builds set
+                // EXEMEM_ENV=prod via build config.
+                log::debug!("EXEMEM_ENV not set, defaulting to dev");
                 Self::Dev
             }
         }

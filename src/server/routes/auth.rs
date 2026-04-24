@@ -49,6 +49,16 @@ pub async fn delete_credentials() -> HttpResponse {
     }
 }
 
+/// DELETE /api/auth/account
+/// Revoke the Exemem cloud account and wipe all local user-level state on
+/// this device. See [`handlers_auth::delete_account`] for details.
+pub async fn delete_account(data: web::Data<AppState>) -> HttpResponse {
+    match handlers_auth::delete_account(&data.node_manager).await {
+        Ok(json) => HttpResponse::Ok().json(json),
+        Err(e) => handler_error_to_response(e),
+    }
+}
+
 // ============================================================================
 // Exemem config & registration
 // ============================================================================
@@ -260,7 +270,6 @@ mod tests {
                     database: fold_db::storage::DatabaseConfig::local(tmp.path().join("data")),
                     storage_path: Some(tmp.path().join("data")),
                     network_listen_address: "/ip4/0.0.0.0/tcp/0".to_string(),
-                    security_config: fold_db::security::SecurityConfig::from_env(),
                     schema_service_url: Some("test://mock".to_string()),
                     config_dir: Some(tmp.path().join("config")),
                     seed_identity: None,
@@ -314,7 +323,6 @@ mod tests {
                     database: fold_db::storage::DatabaseConfig::local(tmp.path().join("data")),
                     storage_path: Some(tmp.path().join("data")),
                     network_listen_address: "/ip4/0.0.0.0/tcp/0".to_string(),
-                    security_config: fold_db::security::SecurityConfig::from_env(),
                     schema_service_url: Some("test://mock".to_string()),
                     config_dir: Some(tmp.path().join("config")),
                     seed_identity: None,

@@ -9,7 +9,6 @@ use crate::handlers::handler_response;
 use crate::handlers::response::{ApiResponse, HandlerResult, IntoHandlerError};
 use fold_db::org::operations as org_ops;
 use fold_db::org::types::{OrgInviteBundle, OrgMemberInfo, OrgMembership};
-use fold_db::NodeConfigStore;
 use serde::Deserialize;
 use std::sync::Arc;
 
@@ -103,28 +102,15 @@ pub(crate) async fn auth_client_for_node(
         return None;
     };
 
-    // Get api_url: try Sled config store first, then DatabaseConfig
-    let api_url = if let Ok(db_guard) = node.get_fold_db() {
-        if let Some(pool) = db_guard.sled_pool().cloned() {
-            drop(db_guard);
-            NodeConfigStore::new(pool)
-                .ok()
-                .and_then(|store| store.get_cloud_config())
-                .map(|cloud| cloud.api_url)
-        } else {
-            drop(db_guard);
-            None
-        }
-    } else {
-        None
-    }
-    .or_else(|| {
-        node.config
-            .database
-            .cloud_sync
-            .as_ref()
-            .map(|cs| cs.api_url.clone())
-    })?;
+    // Get api_url from the DatabaseConfig. The cloud_sync config carries
+    // api_url as the source of truth; NodeConfigStore used to have a
+    // redundant copy but nothing writes there post-cleanup.
+    let api_url = node
+        .config
+        .database
+        .cloud_sync
+        .as_ref()
+        .map(|cs| cs.api_url.clone())?;
 
     let http = shared_http_client();
     Some(fold_db::sync::auth::AuthClient::new(http, api_url, auth))
