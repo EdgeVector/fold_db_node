@@ -9,13 +9,22 @@
  * - Query-by-key record fetching
  */
 
+export interface SchemaLike {
+  name?: string;
+  descriptive_name?: string;
+  org_hash?: string;
+  system?: boolean;
+  fields?: unknown;
+  transform_fields?: unknown;
+}
+
 /**
  * Get the human-readable display name for a schema.
  * Prefers descriptive_name, falls back to a short-hash label when the raw
  * `name` is an identity hash (64 hex chars) so user-facing lists never
  * render a 64-char hex string as a schema title.
  */
-export function getSchemaDisplayName(schema) {
+export function getSchemaDisplayName(schema: SchemaLike | null | undefined): string {
   const descriptive = schema?.descriptive_name
   if (typeof descriptive === 'string' && descriptive.trim()) return descriptive
   const name = schema?.name || ''
@@ -23,26 +32,31 @@ export function getSchemaDisplayName(schema) {
   return name
 }
 
-/** @returns true when `s` is a 64-char lowercase hex identity hash. */
-export function isIdentityHash(s) {
+/** Returns true when `s` is a 64-char lowercase hex identity hash. */
+export function isIdentityHash(s: unknown): boolean {
   return typeof s === 'string' && s.length === 64 && /^[0-9a-f]+$/.test(s)
+}
+
+export interface SchemaOption {
+  value: string;
+  label: string;
 }
 
 /**
  * Build a schema options array for SelectField dropdowns.
  * When orgNames map is provided, org schemas show their org name in the label.
- * @param {Object[]} schemas - Array of schema objects
- * @param {Object} [orgNames] - Map of org_hash → org_name
- * @returns {{ value: string, label: string }[]}
  */
-export function buildSchemaOptions(schemas, orgNames) {
+export function buildSchemaOptions(
+  schemas: SchemaLike[] | null | undefined,
+  orgNames?: Record<string, string>,
+): SchemaOption[] {
   return (schemas || [])
     .map(schema => {
       let label = getSchemaDisplayName(schema)
       if (orgNames && schema.org_hash && orgNames[schema.org_hash]) {
         label = `${label}  [${orgNames[schema.org_hash]}]`
       }
-      return { value: schema.name, label }
+      return { value: schema.name ?? '', label }
     })
     .sort((a, b) => a.label.localeCompare(b.label))
 }
@@ -51,7 +65,7 @@ export function buildSchemaOptions(schemas, orgNames) {
  * Extract field names from a schema object.
  * Handles both array-of-strings and object-with-field-keys formats.
  */
-export function getFieldNames(schemaObj) {
+export function getFieldNames(schemaObj: SchemaLike | null | undefined): string[] {
   if (!schemaObj) return []
   const f = schemaObj.fields || schemaObj.transform_fields
   if (Array.isArray(f)) return f.slice()
@@ -59,20 +73,16 @@ export function getFieldNames(schemaObj) {
   return []
 }
 
-/**
- * Toggle a value in a Set (immutable — returns a new Set).
- */
-export function toggleSetItem(set, item) {
+/** Toggle a value in a Set (immutable — returns a new Set). */
+export function toggleSetItem<T>(set: Iterable<T>, item: T): Set<T> {
   const next = new Set(set)
   if (next.has(item)) next.delete(item)
   else next.add(item)
   return next
 }
 
-/**
- * Convert an unknown error value to a string message.
- */
-export function toErrorMessage(error) {
+/** Convert an unknown error value to a string message. */
+export function toErrorMessage(error: unknown): string {
   if (error instanceof Error) return error.message
   return String(error)
 }
@@ -84,7 +94,7 @@ export function toErrorMessage(error) {
  * `/schemas` HTTP response, `isSystemSchema` will prefer it and this
  * allow-list becomes a safety net for older responses.
  */
-export const SYSTEM_SCHEMA_NAMES = new Set([
+export const SYSTEM_SCHEMA_NAMES: Set<string> = new Set([
   'edge',
   'edge_by_fingerprint',
   'fingerprint',
@@ -97,20 +107,14 @@ export const SYSTEM_SCHEMA_NAMES = new Set([
  * Prefers the backend-provided `system` flag; falls back to a known-name
  * set for older responses that predate the SchemaEnvelope cascade.
  */
-export function isSystemSchema(schema) {
+export function isSystemSchema(schema: SchemaLike | null | undefined): boolean {
   if (!schema) return false
   if (typeof schema.system === 'boolean') return schema.system
-  return SYSTEM_SCHEMA_NAMES.has(schema.name)
+  return SYSTEM_SCHEMA_NAMES.has(schema.name ?? '')
 }
 
-/**
- * Truncate a hash string for display.
- * @param {string} name - The hash/name string
- * @param {number} [threshold=16] - Show full string if shorter than this
- * @param {number} [keep=12] - Number of leading characters to keep
- * @returns {string}
- */
-export function truncateHash(name, threshold = 16, keep = 12) {
+/** Truncate a hash string for display. */
+export function truncateHash(name: string, threshold = 16, keep = 12): string {
   if (typeof name !== 'string') return name
   if (name.length > threshold) return name.slice(0, keep) + '...'
   return name
