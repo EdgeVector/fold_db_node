@@ -21,6 +21,8 @@ Thumbs.db
 # Project specific
 /data/
 /config/
+/prod_config/
+/prod_data/
 .folddb/
 *.log
 *.env
