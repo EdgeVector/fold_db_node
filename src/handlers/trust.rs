@@ -118,6 +118,23 @@ pub struct AssignRoleRequest {
     pub role_name: String,
 }
 
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct TrustDomainAddRequest {
+    pub public_key: String,
+    pub tier: AccessTier,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct TrustDomainEntry {
+    pub domain: String,
+    pub grants: Vec<TrustGrantEntry>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct TrustDomainsResponse {
+    pub domains: Vec<TrustDomainEntry>,
+}
+
 // ===== Trust management =====
 
 /// Assign a role to a public key (role determines tier).
@@ -180,6 +197,100 @@ pub async fn resolve_trust(
         .typed_handler_err()?;
     Ok(ApiResponse::success_with_user(
         TrustResolveResponse { public_key, tier },
+        user_hash,
+    ))
+}
+
+// ===== Trust domains =====
+
+/// List all trust domains and their grants.
+pub async fn list_trust_domains(
+    user_hash: &str,
+    node: &FoldNode,
+) -> HandlerResult<TrustDomainsResponse> {
+    let op = OperationProcessor::new(std::sync::Arc::new(node.clone()));
+    let db = op
+        .get_db_public()
+        .map_err(|e| HandlerError::Internal(e.to_string()))?;
+    let domains = db.db_ops().list_trust_domains().await.typed_handler_err()?;
+    let mut entries = Vec::with_capacity(domains.len());
+    for domain in domains {
+        let map = db
+            .db_ops()
+            .load_trust_map_for_domain(&domain)
+            .await
+            .typed_handler_err()?;
+        let grants = map
+            .into_iter()
+            .map(|(public_key, tier)| TrustGrantEntry { public_key, tier })
+            .collect();
+        entries.push(TrustDomainEntry { domain, grants });
+    }
+    Ok(ApiResponse::success_with_user(
+        TrustDomainsResponse { domains: entries },
+        user_hash,
+    ))
+}
+
+/// Grant trust to a public key in a specific domain at the requested tier.
+pub async fn add_trust_domain_grant(
+    domain: &str,
+    req: &TrustDomainAddRequest,
+    user_hash: &str,
+    node: &FoldNode,
+) -> HandlerResult<serde_json::Value> {
+    if domain.is_empty() {
+        return Err(HandlerError::BadRequest(
+            "Trust domain name must not be empty".to_string(),
+        ));
+    }
+    if req.public_key.trim().is_empty() {
+        return Err(HandlerError::BadRequest(
+            "public_key must not be empty".to_string(),
+        ));
+    }
+    let op = OperationProcessor::new(std::sync::Arc::new(node.clone()));
+    op.grant_trust_for_domain(&req.public_key, domain, req.tier)
+        .await
+        .typed_handler_err()?;
+    Ok(ApiResponse::success_with_user(
+        serde_json::json!({
+            "domain": domain,
+            "public_key": req.public_key,
+            "tier": req.tier,
+            "granted": true,
+        }),
+        user_hash,
+    ))
+}
+
+/// Revoke trust for a public key in a specific domain.
+pub async fn remove_trust_domain_grant(
+    domain: &str,
+    public_key: &str,
+    user_hash: &str,
+    node: &FoldNode,
+) -> HandlerResult<serde_json::Value> {
+    if domain.is_empty() {
+        return Err(HandlerError::BadRequest(
+            "Trust domain name must not be empty".to_string(),
+        ));
+    }
+    if public_key.trim().is_empty() {
+        return Err(HandlerError::BadRequest(
+            "public_key must not be empty".to_string(),
+        ));
+    }
+    let op = OperationProcessor::new(std::sync::Arc::new(node.clone()));
+    op.revoke_trust_for_domain(public_key, domain)
+        .await
+        .typed_handler_err()?;
+    Ok(ApiResponse::success_with_user(
+        serde_json::json!({
+            "domain": domain,
+            "public_key": public_key,
+            "revoked": true,
+        }),
         user_hash,
     ))
 }
