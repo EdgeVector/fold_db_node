@@ -3,6 +3,7 @@ pub mod endpoints;
 pub mod fingerprints;
 pub mod fold_node;
 pub mod handlers;
+pub mod identity;
 pub mod ingestion;
 pub mod keychain;
 pub mod memory;

@@ -13,7 +13,7 @@ async fn test_node_starts_without_schema_service() {
     let keypair = fold_db::security::Ed25519KeyPair::generate().unwrap();
     let config = NodeConfig::new(test_db_path.to_path_buf())
         .with_network_listen_address("/ip4/127.0.0.1/tcp/9002")
-        .with_identity(&keypair.public_key_base64(), &keypair.secret_key_base64());
+        .with_seed_identity(fold_db_node::identity::identity_from_keypair(&keypair));
 
     // Attempt to create the node - should succeed without schema service URL
     let result = FoldNode::new(config).await;
@@ -39,7 +39,7 @@ async fn test_node_new_loads_schemas_for_testing() {
     let config = NodeConfig::new(test_db_path.to_path_buf())
         .with_network_listen_address("/ip4/127.0.0.1/tcp/9003")
         .with_schema_service_url("test://mock")
-        .with_identity(&keypair.public_key_base64(), &keypair.secret_key_base64());
+        .with_seed_identity(fold_db_node::identity::identity_from_keypair(&keypair));
 
     // Create a new node using FoldNode::new() with mock service
     let node = FoldNode::new(config)

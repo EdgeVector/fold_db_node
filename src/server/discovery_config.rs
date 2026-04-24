@@ -53,13 +53,16 @@ impl DiscoveryConfig {
     }
 
     async fn from_base_config(node_manager: &NodeManager) -> Option<Self> {
-        let base = node_manager.get_base_config().await;
-        let priv_key_b64 = base.private_key.as_ref()?;
-        if priv_key_b64.is_empty() {
+        // Identity now lives in the Sled `node_identity` tree, not on
+        // NodeConfig. Read it via the shared NodeManager-owned pool so
+        // every consumer hits the single file-lock holder.
+        let pool = node_manager.get_or_init_sled_pool().await;
+        let id = crate::identity::load(pool).ok().flatten()?;
+        if id.private_key.is_empty() {
             return None;
         }
         let url = format!("{}/api", crate::endpoints::exemem_api_url());
-        let master_key = Sha256::digest(priv_key_b64.as_bytes()).to_vec();
+        let master_key = Sha256::digest(id.private_key.as_bytes()).to_vec();
         Some(Self { url, master_key })
     }
 

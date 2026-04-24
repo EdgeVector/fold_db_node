@@ -19,7 +19,7 @@ async fn setup_node() -> (FoldNode, String, TempDir) {
     let pub_key = keypair.public_key_base64();
     let config = NodeConfig::new(path)
         .with_schema_service_url("test://mock")
-        .with_identity(&pub_key, &keypair.secret_key_base64())
+        .with_seed_identity(fold_db_node::identity::identity_from_keypair(&keypair))
         .with_config_dir(config_dir);
     let node = FoldNode::new(config).await.unwrap();
     (node, pub_key, temp_dir)

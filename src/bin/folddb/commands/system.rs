@@ -64,6 +64,10 @@ pub fn config_show(
             } else {
                 serde_json::Value::Null
             };
+            let public_key = fold_db_node::identity::load_standalone(&config.get_storage_path())
+                .ok()
+                .flatten()
+                .map(|id| id.public_key);
             let out = serde_json::json!({
                 "config_path": resolved_path,
                 "mode": mode_label,
@@ -72,7 +76,7 @@ pub fn config_show(
                 "schema_service_url_source": schema_url_source,
                 "cloud_api_url": cloud_val,
                 "network_listen_address": config.network_listen_address,
-                "public_key": config.public_key,
+                "public_key": public_key,
                 "daemon_port": daemon_info.port,
                 "daemon_running": daemon_info.running,
                 "orgs": orgs_val,
@@ -141,8 +145,10 @@ pub async fn gather_daemon_info(config: &NodeConfig) -> DaemonInfo {
 /// when the request fails or the daemon response is shaped unexpectedly —
 /// `config show` renders an empty list in that case.
 async fn fetch_org_names(config: &NodeConfig, port: u16) -> Option<Vec<String>> {
-    let pk = config.public_key.as_ref()?;
-    let user_hash = fold_db_node::utils::crypto::user_hash_from_pubkey(pk);
+    let id = fold_db_node::identity::load_standalone(&config.get_storage_path())
+        .ok()
+        .flatten()?;
+    let user_hash = fold_db_node::utils::crypto::user_hash_from_pubkey(&id.public_key);
     let client = crate::client::FoldDbClient::new(port, &user_hash);
     let json = client.org_list().await.ok()?;
     let arr = json
@@ -251,9 +257,7 @@ mod tests {
     use fold_db_node::fold_node::config::NodeConfig;
 
     fn local_config() -> NodeConfig {
-        let mut c = NodeConfig::new(std::path::PathBuf::from("/tmp/fdb-data"));
-        c.public_key = Some("test-pubkey".to_string());
-        c
+        NodeConfig::new(std::path::PathBuf::from("/tmp/fdb-data"))
     }
 
     fn info_down() -> DaemonInfo {
@@ -330,7 +334,10 @@ mod tests {
     #[test]
     fn json_show_does_not_leak_secrets() {
         let mut config = local_config();
-        config.private_key = Some("PRIVATE-KEY-NEVER-SHOW".to_string());
+        // Identity is no longer on NodeConfig — it lives in the Sled
+        // `node_identity` tree, which this synthetic config isn't
+        // pointing at. That's the strongest no-leak invariant: the
+        // JSON path can't even READ a private key from config state.
         config.database.cloud_sync = Some(fold_db::storage::config::CloudSyncConfig {
             api_url: "https://example.test".to_string(),
             api_key: "API-KEY-NEVER-SHOW".to_string(),

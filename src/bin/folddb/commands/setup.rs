@@ -4,19 +4,14 @@ use dialoguer::{Confirm, Input};
 use fold_db::security::{Ed25519KeyPair, KeyUtils, SecurityConfig};
 use fold_db::storage::{CloudSyncConfig, DatabaseConfig};
 use fold_db_node::fold_node::config::NodeConfig;
+use fold_db_node::identity;
 use fold_db_node::trust::identity_card::IdentityCard;
-use serde::{Deserialize, Serialize};
+use serde::Deserialize;
 use std::fs;
 use std::path::PathBuf;
 
 fn default_schema_service_url() -> String {
     fold_db_node::endpoints::schema_service_url()
-}
-
-#[derive(Serialize, Deserialize)]
-struct NodeIdentity {
-    private_key: String,
-    public_key: String,
 }
 
 /// Response from the Exemem CLI registration endpoint.
@@ -29,14 +24,6 @@ pub struct ExememRegisterResponse {
     pub api_key: Option<String>,
     #[serde(default)]
     pub message: Option<String>,
-}
-
-/// Check whether a persisted node identity exists at `$FOLDDB_HOME/config/node_identity.json`.
-pub fn identity_file_exists() -> bool {
-    let path = fold_db_node::utils::paths::folddb_home()
-        .map(|h| h.join("config").join("node_identity.json"))
-        .unwrap_or_else(|_| PathBuf::from("config/node_identity.json"));
-    path.exists()
 }
 
 fn hex_encode(bytes: &[u8]) -> String {
@@ -199,26 +186,24 @@ pub async fn run_setup_wizard() -> Result<NodeConfig, CliError> {
     eprintln!();
 
     // --- Generate or reuse identity ---
-    let identity = if identity_file_exists() {
-        // Resume from partial setup — reuse existing identity
-        eprintln!("Found existing identity. Resuming setup...");
-        eprintln!();
-        let identity_path = fold_db_node::utils::paths::folddb_home()
-            .map(|h| h.join("config").join("node_identity.json"))
-            .map_err(|e| CliError::new(format!("Cannot find identity: {}", e)))?;
-        let json = fs::read_to_string(&identity_path)
-            .map_err(|e| CliError::new(format!("Failed to read identity: {}", e)))?;
-        serde_json::from_str::<NodeIdentity>(&json)
-            .map_err(|e| CliError::new(format!("Failed to parse identity: {}", e)))?
-    } else {
-        eprint!("Generating node identity...");
-        let keypair = Ed25519KeyPair::generate()
-            .map_err(|e| CliError::new(format!("Failed to generate keypair: {}", e)))?;
-        eprintln!(" done.");
-        eprintln!();
-        NodeIdentity {
-            private_key: keypair.secret_key_base64(),
-            public_key: keypair.public_key_base64(),
+    let data_path = fold_db_node::utils::paths::folddb_home()
+        .map(|h| h.join("data"))
+        .unwrap_or_else(|_| PathBuf::from("data"));
+    let identity = match identity::load_standalone(&data_path)
+        .map_err(|e| CliError::new(format!("Failed to read identity: {e}")))?
+    {
+        Some(existing) => {
+            eprintln!("Found existing identity. Resuming setup...");
+            eprintln!();
+            existing
+        }
+        None => {
+            eprint!("Generating node identity...");
+            let fresh = identity::generate_identity()
+                .map_err(|e| CliError::new(format!("Failed to generate keypair: {e}")))?;
+            eprintln!(" done.");
+            eprintln!();
+            fresh
         }
     };
 
@@ -389,7 +374,10 @@ pub async fn run_setup_wizard() -> Result<NodeConfig, CliError> {
         DatabaseConfig::local(default_path)
     };
 
-    // --- Persist identity ---
+    // --- Persist identity into the Sled node_identity tree ---
+    identity::save_standalone(&database.path, &identity)
+        .map_err(|e| CliError::new(format!("Failed to persist node identity: {}", e)))?;
+
     let config_dir = fold_db_node::utils::paths::folddb_home()
         .map(|h| h.join("config"))
         .unwrap_or_else(|_| PathBuf::from("config"));
@@ -397,12 +385,8 @@ pub async fn run_setup_wizard() -> Result<NodeConfig, CliError> {
         fs::create_dir_all(&config_dir)
             .map_err(|e| CliError::new(format!("Failed to create config dir: {}", e)))?;
     }
-    let identity_json = serde_json::to_string_pretty(&identity)
-        .map_err(|e| CliError::new(format!("Failed to serialize identity: {}", e)))?;
-    fs::write(config_dir.join("node_identity.json"), &identity_json)
-        .map_err(|e| CliError::new(format!("Failed to write node_identity.json: {}", e)))?;
 
-    // --- Build NodeConfig ---
+    // --- Build NodeConfig (no identity fields — identity lives in Sled) ---
     let storage_path = Some(database.path.clone());
     let config = NodeConfig {
         database,
@@ -410,9 +394,8 @@ pub async fn run_setup_wizard() -> Result<NodeConfig, CliError> {
         network_listen_address: "/ip4/0.0.0.0/tcp/0".to_string(),
         security_config: SecurityConfig::from_env(),
         schema_service_url: Some(default_schema_service_url()),
-        public_key: Some(identity.public_key),
-        private_key: Some(identity.private_key),
         config_dir: None,
+        seed_identity: None,
     };
 
     // Persist config

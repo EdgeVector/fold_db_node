@@ -223,17 +223,20 @@ pub(crate) async fn signed_register(
     node_manager: &Arc<NodeManager>,
     invite_code: Option<&str>,
 ) -> Result<serde_json::Value, String> {
-    // Get the node's keys from identity (works even during onboarding before user context)
+    // Get the node's keys from the Sled identity store (works even during
+    // onboarding before user context). `ensure_default_identity` guarantees
+    // the pool + tree exist; the subsequent `identity::load` never hits
+    // a cold path.
     let public_key_b64 = node_manager
         .ensure_default_identity()
         .await
         .map_err(|e| format!("Failed to initialize node identity: {e}"))?;
 
-    let private_key_b64 = node_manager
-        .get_base_config()
-        .await
-        .private_key
-        .ok_or("Node private key not available".to_string())?;
+    let pool = node_manager.get_or_init_sled_pool().await;
+    let id = crate::identity::load(pool)
+        .map_err(|e| format!("Failed to read node identity: {e}"))?
+        .ok_or("Node identity not available")?;
+    let private_key_b64 = id.private_key;
 
     // Decode base64 → hex (CLI register endpoint expects hex)
     let public_key_hex =
@@ -699,14 +702,13 @@ pub(crate) fn base64_to_hex(b64: &str) -> Option<String> {
 pub async fn get_recovery_phrase(
     node_manager: &Arc<NodeManager>,
 ) -> Result<Vec<String>, HandlerError> {
-    let private_key_b64 = node_manager
-        .get_base_config()
-        .await
-        .private_key
-        .ok_or_else(|| HandlerError::Internal("Node private key not available".to_string()))?;
+    let pool = node_manager.get_or_init_sled_pool().await;
+    let id = crate::identity::load(pool)
+        .map_err(|e| HandlerError::Internal(format!("Failed to read node identity: {e}")))?
+        .ok_or_else(|| HandlerError::Internal("Node identity not configured".to_string()))?;
 
     use base64::Engine;
-    let seed_bytes = match base64::engine::general_purpose::STANDARD.decode(&private_key_b64) {
+    let seed_bytes = match base64::engine::general_purpose::STANDARD.decode(&id.private_key) {
         Ok(bytes) if bytes.len() == 32 => bytes,
         _ => {
             return Err(HandlerError::Internal(
@@ -719,13 +721,6 @@ pub async fn get_recovery_phrase(
         .map_err(|e| HandlerError::Internal(format!("Failed to generate mnemonic: {}", e)))?;
 
     Ok(mnemonic.words().map(|w| w.to_string()).collect())
-}
-
-/// Resolve the path to `$FOLDDB_HOME/config/node_identity.json`.
-pub(crate) fn identity_path() -> std::path::PathBuf {
-    crate::utils::paths::folddb_home()
-        .map(|h| h.join("config").join("node_identity.json"))
-        .unwrap_or_else(|_| std::path::PathBuf::from("config/node_identity.json"))
 }
 
 // ============================================================================
@@ -772,16 +767,16 @@ pub async fn restore_from_phrase(
     // Snapshot pre-restore config so we can roll back the in-memory state
     // if register fails.
     let pre_restore_config = node_manager.get_base_config().await;
-    let id_path = identity_path();
 
-    // Run the full in-memory restore first — update config, register, activate
-    // cloud sync, spawn bootstrap. Only persist the identity file to disk AFTER
-    // register succeeds. Rationale: if the identity file exists before register
-    // succeeds, a crash in the window leaves the node booting with an identity
-    // that Exemem doesn't recognize (silent corruption on the previous rollback
-    // path if `remove_file` itself fails). Write-after-success means a crash
-    // leaves either no file (user re-restores) or a valid file (register
-    // succeeded).
+    // `finalize_restore` persists the restored keypair to the Sled
+    // `node_identity` tree up-front. If register then fails we roll the
+    // identity back to whatever was there before (or clear it, for a
+    // fresh node) — the identity Sled tree is the single source of
+    // truth, so the rollback path has nothing else to clean up.
+    let pool = node_manager.get_or_init_sled_pool().await;
+    let prior_identity = crate::identity::load(Arc::clone(&pool))
+        .map_err(|e| HandlerError::Internal(format!("Failed to read prior identity: {e}")))?;
+
     match finalize_restore(
         node_manager,
         &public_key_b64,
@@ -790,45 +785,16 @@ pub async fn restore_from_phrase(
     )
     .await
     {
-        Ok(response) => {
-            // Register succeeded — persist the identity to disk so the node
-            // rehydrates on next boot.
-            let identity_json = serde_json::json!({
-                "private_key": private_key_b64,
-                "public_key": public_key_b64,
-            });
-
-            if let Err(e) = crate::sensitive_io::write_sensitive(
-                &id_path,
-                serde_json::to_string_pretty(&identity_json)
-                    .unwrap()
-                    .as_bytes(),
-            ) {
-                // Identity-file write failure after a successful register is
-                // bad: the node is usable in-memory but won't come up on
-                // restart. Roll back the in-memory config and surface the
-                // error so the UI can tell the user to retry.
-                log::error!(
-                    "restore_from_phrase: register succeeded but identity write failed: {}",
-                    e
-                );
-                node_manager
-                    .update_config(crate::server::node_manager::NodeManagerConfig {
-                        base_config: pre_restore_config,
-                    })
-                    .await;
-                return Err(HandlerError::Internal(format!(
-                    "Failed to persist restored identity: {}",
-                    e
-                )));
-            }
-
-            Ok(response)
-        }
+        Ok(response) => Ok(response),
         Err(e) => {
-            // Rollback: restore the pre-restore in-memory config. No identity
-            // file was written, so there's nothing to delete.
             log::error!("restore_from_phrase failed, rolling back: {}", e);
+            // Roll the Sled identity back so the next boot doesn't pick up
+            // the half-restored keypair as if it were valid.
+            if let Some(prior) = prior_identity {
+                let _ = crate::identity::save(Arc::clone(&pool), &prior);
+            } else {
+                let _ = crate::identity::open(pool).and_then(|s| s.clear());
+            }
             node_manager
                 .update_config(crate::server::node_manager::NodeManagerConfig {
                     base_config: pre_restore_config,
@@ -848,18 +814,30 @@ async fn finalize_restore(
     private_key_b64: &str,
     pre_restore_config: crate::fold_node::config::NodeConfig,
 ) -> Result<serde_json::Value, String> {
+    // Write the restored identity into the Sled `node_identity` tree
+    // BEFORE anything else opens the pool. `ensure_default_identity`
+    // would otherwise generate a fresh keypair and we'd lose the restore.
+    let pool = node_manager.get_or_init_sled_pool().await;
+    let restored = crate::identity::NodeIdentity {
+        private_key: private_key_b64.to_string(),
+        public_key: public_key_b64.to_string(),
+    };
+    crate::identity::save(Arc::clone(&pool), &restored)
+        .map_err(|e| format!("Failed to persist restored identity: {e}"))?;
+
     // Ensure the shared local node exists (opens Sled) before we grab the handle.
     let _ = node_manager.ensure_default_identity().await;
 
     // Grab the SledPool BEFORE update_config() invalidates all nodes.
     let sled_pool = node_manager.get_sled_pool().await;
 
-    // Update the in-memory config so signed_register uses the restored key.
-    let mut base_config = pre_restore_config;
-    base_config.public_key = Some(public_key_b64.to_string());
-    base_config.private_key = Some(private_key_b64.to_string());
+    // Invalidate caches so the next create_node picks up the restored identity
+    // from Sled. NodeConfig carries no identity fields anymore, so the base
+    // config we pass through is otherwise untouched.
     node_manager
-        .update_config(crate::server::node_manager::NodeManagerConfig { base_config })
+        .update_config(crate::server::node_manager::NodeManagerConfig {
+            base_config: pre_restore_config,
+        })
         .await;
 
     // Register with Exemem (idempotent — returns fresh token for existing users).
@@ -1158,16 +1136,17 @@ async fn bootstrap_from_cloud_inner(
     sled_pool: Arc<fold_db::storage::SledPool>,
 ) -> Result<(), String> {
     // Derive E2E encryption keys from the restored identity (unified identity:
-    // one Ed25519 key for everything, no separate e2e.key).
-    let config = node_manager.get_base_config().await;
-    let priv_key = config
-        .private_key
-        .as_ref()
-        .ok_or_else(|| "bootstrap_from_cloud: node private key not set".to_string())?;
-    let seed = crate::fold_node::FoldNode::extract_ed25519_seed(priv_key)
+    // one Ed25519 key for everything, no separate e2e.key). Identity lives in
+    // the Sled `node_identity` tree — read via the pool we were passed so we
+    // don't race the caller for the file lock.
+    let id = crate::identity::load(Arc::clone(&sled_pool))
+        .map_err(|e| format!("bootstrap_from_cloud: {e}"))?
+        .ok_or_else(|| "bootstrap_from_cloud: node identity not configured".to_string())?;
+    let seed = crate::fold_node::FoldNode::extract_ed25519_seed(&id.private_key)
         .map_err(|e| format!("Failed to extract seed: {e}"))?;
     let e2e_keys = fold_db::crypto::E2eKeys::from_ed25519_seed(&seed)
         .map_err(|e| format!("Failed to derive E2E keys: {e}"))?;
+    let config = node_manager.get_base_config().await;
     let data_dir = config.get_storage_path();
     let data_dir_str = data_dir
         .to_str()
@@ -1421,9 +1400,8 @@ mod tests {
                     network_listen_address: "/ip4/0.0.0.0/tcp/0".to_string(),
                     security_config: fold_db::security::SecurityConfig::from_env(),
                     schema_service_url: Some("test://mock".to_string()),
-                    public_key: None,
-                    private_key: None,
                     config_dir: Some(tmp.path().join("config")),
+                    seed_identity: None,
                 },
             },
         ));

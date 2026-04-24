@@ -15,6 +15,7 @@ use client::FoldDbClient;
 use error::CliError;
 use output::OutputMode;
 
+use fold_db_node::fold_node::config::NodeConfig;
 use fold_db_node::utils::crypto::user_hash_from_pubkey;
 
 #[tokio::main]
@@ -89,21 +90,19 @@ async fn main() {
         }
     };
 
-    // Backfill identity before deciding whether setup is needed. `run.sh` writes
-    // `node_config.json` without identity keys — those live in `node_identity.json`
-    // (disk) and are returned by the daemon's `/api/system/auto-identity` endpoint.
-    // Without this hydration, any CLI call with --config or NODE_CONFIG re-enters
-    // the interactive wizard, which explodes in non-TTY contexts (CI, cron, agents).
-    if config.public_key.is_none() {
-        if let Some(pk) = read_identity_file_pubkey() {
-            config.public_key = Some(pk);
-        } else if let Some(pk) = fetch_pubkey_from_daemon(commands::daemon::default_port()).await {
-            config.public_key = Some(pk);
-        }
-    }
+    // Decide whether setup is needed by checking for a persisted node
+    // identity. Two sources: the Sled `node_identity` tree at this
+    // config's data path (source of truth), or the running daemon's
+    // `/api/system/auto-identity` endpoint (useful when the CLI runs
+    // against a different $FOLDDB_HOME than the daemon). Without this
+    // check, any CLI call with --config or NODE_CONFIG re-enters the
+    // interactive wizard, which explodes in non-TTY contexts (CI, cron).
+    let data_path = config.get_storage_path();
+    let identity_public_key = read_identity_pubkey(&data_path)
+        .or(fetch_pubkey_from_daemon(commands::daemon::default_port()).await);
 
     // If identity is still missing, run the setup wizard (interactive only).
-    let needs_setup = config.public_key.is_none();
+    let needs_setup = identity_public_key.is_none();
     if needs_setup {
         use std::io::IsTerminal;
         if json_mode || !std::io::stdin().is_terminal() {
@@ -123,7 +122,7 @@ async fn main() {
 
     // Recovery phrase reads from local identity file — no daemon needed
     if let Command::RecoveryPhrase = &cli.command {
-        match show_recovery_phrase() {
+        match show_recovery_phrase(&config) {
             Ok(out) => {
                 output::render(&out, mode);
                 return;
@@ -190,16 +189,18 @@ async fn main() {
         return;
     }
 
-    // Derive user hash from config — error if no public key (incomplete setup)
+    // Derive user hash from the identity we loaded (or re-hydrate it now
+    // in case the setup wizard just wrote one). Errors if there's still
+    // no identity — that's an incomplete setup.
     let user_hash = cli
         .user_hash
         .clone()
         .or_else(|| std::env::var("FOLD_USER_HASH").ok())
         .unwrap_or_else(|| {
-            config
-                .public_key
-                .as_ref()
-                .map(|pk| user_hash_from_pubkey(pk))
+            identity_public_key
+                .clone()
+                .or_else(|| read_identity_pubkey(&data_path))
+                .map(|pk| user_hash_from_pubkey(&pk))
                 .unwrap_or_else(|| {
                     CliError::new("No public key configured — cannot derive user hash")
                         .with_hint("Run `folddb setup` to configure your node")
@@ -726,18 +727,21 @@ async fn cloud_enable(
         Err(e) => return Some(Err(CliError::new(format!("Input cancelled: {}", e)))),
     };
 
-    let pub_key_b64 = match &config.public_key {
-        Some(k) => k.clone(),
-        None => {
-            return Some(Err(CliError::new("No public key in config")));
+    let id = match fold_db_node::identity::load_standalone(&config.get_storage_path()) {
+        Ok(Some(id)) => id,
+        Ok(None) => {
+            return Some(Err(
+                CliError::new("No node identity found").with_hint("Run `folddb setup` first")
+            ));
+        }
+        Err(e) => {
+            return Some(Err(CliError::new(format!(
+                "Failed to read node identity: {e}"
+            ))));
         }
     };
-    let private_key_b64 = match &config.private_key {
-        Some(k) => k.clone(),
-        None => {
-            return Some(Err(CliError::new("No private key in config")));
-        }
-    };
+    let pub_key_b64 = id.public_key.clone();
+    let private_key_b64 = id.private_key.clone();
     let pub_key_bytes = match base64::engine::general_purpose::STANDARD.decode(&pub_key_b64) {
         Ok(b) => b,
         Err(e) => {
@@ -794,10 +798,9 @@ async fn cloud_enable(
         return Some(Err(CliError::new(format!("Failed to write config: {}", e))));
     }
 
-    // Show recovery phrase
-    let private_key = config.private_key.as_deref().unwrap_or("");
+    // Show recovery phrase (identity already loaded above for registration)
     let mut msg = "Cloud backup enabled!\n".to_string();
-    if let Ok(words) = commands::setup::derive_recovery_phrase(private_key) {
+    if let Ok(words) = commands::setup::derive_recovery_phrase(&private_key_b64) {
         msg.push_str("\n\x1b[33m  RECOVERY PHRASE (save these 24 words):\x1b[0m\n\n");
         for (i, word) in words.iter().enumerate() {
             msg.push_str(&format!("  {:2}. {:<12}", i + 1, word));
@@ -822,9 +825,7 @@ async fn cloud_enable(
     // If daemon is running, apply config live via HTTP (same mechanism the UI uses)
     if commands::daemon::read_running_pid().is_some() {
         let port = commands::daemon::default_port();
-        let user_hash_str = fold_db_node::utils::crypto::user_hash_from_pubkey(
-            config.public_key.as_deref().unwrap_or(""),
-        );
+        let user_hash_str = fold_db_node::utils::crypto::user_hash_from_pubkey(&pub_key_b64);
         let client = FoldDbClient::new(port, &user_hash_str);
         match client
             .apply_setup(&serde_json::json!({
@@ -1072,25 +1073,19 @@ async fn cloud_delete_account(
     }
 }
 
-/// Show the 24-word recovery phrase derived from the local identity file.
-fn show_recovery_phrase() -> Result<commands::CommandOutput, CliError> {
-    let identity_path = fold_db_node::utils::paths::folddb_home()
-        .map(|h| h.join("config").join("node_identity.json"))
-        .map_err(|e| CliError::new(format!("Cannot find FOLDDB_HOME: {}", e)))?;
+/// Show the 24-word recovery phrase derived from the local identity.
+///
+/// Reads the node identity from the Sled `node_identity` tree (see
+/// `fold_db_node::identity::IdentityStore`). Works without the daemon
+/// running because `load_standalone` opens a short-lived pool and
+/// releases the flock on return.
+fn show_recovery_phrase(config: &NodeConfig) -> Result<commands::CommandOutput, CliError> {
+    let data_path = config.get_storage_path();
+    let id = fold_db_node::identity::load_standalone(&data_path)
+        .map_err(|e| CliError::new(format!("Failed to read identity: {}", e)))?
+        .ok_or_else(|| CliError::new("No identity found").with_hint("Run `folddb setup` first"))?;
 
-    if !identity_path.exists() {
-        return Err(CliError::new("No identity found").with_hint("Run `folddb setup` first"));
-    }
-
-    let identity_json = std::fs::read_to_string(&identity_path)
-        .map_err(|e| CliError::new(format!("Failed to read identity: {}", e)))?;
-    let identity: serde_json::Value = serde_json::from_str(&identity_json)
-        .map_err(|e| CliError::new(format!("Failed to parse identity: {}", e)))?;
-    let private_key = identity["private_key"]
-        .as_str()
-        .ok_or_else(|| CliError::new("Identity file missing private_key"))?;
-
-    let words = commands::setup::derive_recovery_phrase(private_key)?;
+    let words = commands::setup::derive_recovery_phrase(&id.private_key)?;
 
     let mut msg = String::new();
     msg.push_str("\x1b[33m  RECOVERY PHRASE (save these 24 words):\x1b[0m\n\n");
@@ -1107,28 +1102,15 @@ fn show_recovery_phrase() -> Result<commands::CommandOutput, CliError> {
     Ok(commands::CommandOutput::Message(msg))
 }
 
-/// Read `public_key` from `$FOLDDB_HOME/config/node_identity.json`, if present.
-///
-/// Returns `None` for any failure — missing file, unreadable, unparseable, or
-/// missing `public_key` field. Callers fall back to other hydration paths.
-fn read_identity_file_pubkey() -> Option<String> {
-    let path = fold_db_node::utils::paths::folddb_home()
-        .ok()?
-        .join("config")
-        .join("node_identity.json");
-    read_identity_pubkey_at(&path)
-}
-
-/// Read `public_key` from a `node_identity.json` at an explicit path.
-///
-/// Split out for unit testing — lets the test avoid mutating `FOLDDB_HOME`
-/// (which is process-global and racy with other tests).
-fn read_identity_pubkey_at(path: &std::path::Path) -> Option<String> {
-    let json = std::fs::read_to_string(path).ok()?;
-    let v: serde_json::Value = serde_json::from_str(&json).ok()?;
-    v.get("public_key")
-        .and_then(|s| s.as_str())
-        .map(String::from)
+/// Read the node's public key from the Sled identity tree at this
+/// node's data path, if present. Returns `None` if the tree is empty
+/// or unreadable (missing FOLDDB_HOME, locked pool, etc.) — callers
+/// fall back to the daemon / setup wizard paths.
+fn read_identity_pubkey(data_path: &std::path::Path) -> Option<String> {
+    fold_db_node::identity::load_standalone(data_path)
+        .ok()
+        .flatten()
+        .map(|id| id.public_key)
 }
 
 /// Ask a running daemon for the node's public key via `/api/system/auto-identity`.
@@ -1176,40 +1158,23 @@ mod tests {
     }
 
     #[test]
-    fn read_identity_pubkey_at_reads_public_key() {
+    fn read_identity_pubkey_missing_store_returns_none() {
         let dir = tempfile::tempdir().expect("tempdir");
-        let path = dir.path().join("node_identity.json");
-        std::fs::write(
-            &path,
-            r#"{"private_key":"secret","public_key":"pk-base64"}"#,
-        )
-        .expect("write identity");
-
-        let pk = super::read_identity_pubkey_at(&path);
-        assert_eq!(pk.as_deref(), Some("pk-base64"));
+        // No Sled tree has been written at this path yet.
+        assert!(super::read_identity_pubkey(dir.path()).is_none());
     }
 
     #[test]
-    fn read_identity_pubkey_at_missing_file_returns_none() {
+    fn read_identity_pubkey_reads_from_sled_standalone() {
         let dir = tempfile::tempdir().expect("tempdir");
-        let path = dir.path().join("does-not-exist.json");
-        assert!(super::read_identity_pubkey_at(&path).is_none());
-    }
-
-    #[test]
-    fn read_identity_pubkey_at_missing_field_returns_none() {
-        let dir = tempfile::tempdir().expect("tempdir");
-        let path = dir.path().join("node_identity.json");
-        // No public_key field — this is the "corrupt identity" case.
-        std::fs::write(&path, r#"{"private_key":"secret"}"#).expect("write identity");
-        assert!(super::read_identity_pubkey_at(&path).is_none());
-    }
-
-    #[test]
-    fn read_identity_pubkey_at_invalid_json_returns_none() {
-        let dir = tempfile::tempdir().expect("tempdir");
-        let path = dir.path().join("node_identity.json");
-        std::fs::write(&path, "not json").expect("write identity");
-        assert!(super::read_identity_pubkey_at(&path).is_none());
+        let id = fold_db_node::identity::NodeIdentity {
+            private_key: "priv".to_string(),
+            public_key: "pk-from-sled".to_string(),
+        };
+        fold_db_node::identity::save_standalone(dir.path(), &id).expect("save");
+        assert_eq!(
+            super::read_identity_pubkey(dir.path()).as_deref(),
+            Some("pk-from-sled")
+        );
     }
 }

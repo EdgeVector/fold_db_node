@@ -60,7 +60,7 @@ mod tests {
         let keypair = Ed25519KeyPair::generate().unwrap();
         let config = NodeConfig::new(temp_dir.path().to_path_buf())
             .with_schema_service_url("test://mock")
-            .with_identity(&keypair.public_key_base64(), &keypair.secret_key_base64());
+            .with_seed_identity(crate::identity::identity_from_keypair(&keypair));
         let node = FoldNode::new(config).await.unwrap();
         let processor = OperationProcessor::new(Arc::new(node.clone()));
         (processor, node)

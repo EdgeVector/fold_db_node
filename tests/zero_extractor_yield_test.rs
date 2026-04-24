@@ -45,7 +45,7 @@ async fn setup_node() -> (
     let keypair = Ed25519KeyPair::generate().unwrap();
     let config = NodeConfig::new(path.into())
         .with_schema_service_url(&service.url)
-        .with_identity(&keypair.public_key_base64(), &keypair.secret_key_base64());
+        .with_seed_identity(fold_db_node::identity::identity_from_keypair(&keypair));
     let node = FoldNode::new(config).await.expect("create FoldNode");
     let node = Arc::new(node);
     register_phase_1_schemas(&node)

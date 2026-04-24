@@ -9,23 +9,13 @@
 
 use crate::fold_node::config::NodeConfig;
 use crate::fold_node::FoldNode;
+use crate::identity;
 use crate::utils::crypto::user_hash_from_pubkey;
-use base64::Engine as _;
 use fold_db::fold_db_core::factory;
-use fold_db::security::Ed25519KeyPair;
 use fold_db::storage::SledPool;
-use serde::{Deserialize, Serialize};
-use sha2::{Digest, Sha256};
 use std::path::PathBuf;
 use std::sync::Arc;
 use tokio::sync::RwLock;
-
-/// Persisted node identity keypair
-#[derive(Serialize, Deserialize)]
-struct NodeIdentity {
-    private_key: String,
-    public_key: String,
-}
 
 /// Error type for node manager operations
 #[derive(Debug, thiserror::Error)]
@@ -102,39 +92,14 @@ impl NodeManager {
         Ok(node)
     }
 
-    /// Create a new node instance for a user
+    /// Create a new node instance for a user.
+    ///
+    /// Identity handling lives entirely inside [`FoldNode::new_with_db`] —
+    /// it reads / generates the keypair from the `node_identity` Sled
+    /// tree using the same pool we hand to the FoldDB factory. No
+    /// separate identity files, no pre-load here.
     async fn create_node(&self, user_id: &str) -> Result<Arc<FoldNode>, NodeManagerError> {
-        // Clone the base config and set user_id
         let mut node_config = self.config.read().await.base_config.clone();
-
-        // DatabaseConfig is always local Sled storage; user isolation is handled differently.
-        // No per-user config mutation needed.
-
-        // Use keys from config if already set (from node_config.json or Sled).
-        // Only generate a default identity if none is configured.
-        if node_config.public_key.is_none() || node_config.private_key.is_none() {
-            let keypair = Self::load_or_generate_identity("default").await?;
-            node_config = node_config
-                .with_identity(&keypair.public_key_base64(), &keypair.secret_key_base64());
-        }
-
-        // E2E encryption keys — unified identity: derived from the node's
-        // Ed25519 seed. In the pre-signup state (no identity yet) we use an
-        // ephemeral in-memory random key that will be replaced once the user
-        // creates an identity and the node is re-initialized.
-        let e2e_keys = if let Some(ref priv_key) = node_config.private_key {
-            let seed = crate::fold_node::FoldNode::extract_ed25519_seed(priv_key).map_err(|e| {
-                NodeManagerError::ConfigurationError(format!("Failed to extract seed: {}", e))
-            })?;
-            fold_db::crypto::E2eKeys::from_ed25519_seed(&seed).map_err(|e| {
-                NodeManagerError::ConfigurationError(format!("Failed to derive E2E keys: {}", e))
-            })?
-        } else {
-            // Pre-signup: ephemeral, in-memory only — never persisted.
-            let mut secret = [0u8; 32];
-            rand::RngCore::fill_bytes(&mut rand::thread_rng(), &mut secret);
-            fold_db::crypto::E2eKeys::from_secret(&secret)
-        };
 
         // Ensure the Exemem factory can find the correct storage path.
         // The factory reads FOLD_STORAGE_PATH to locate the Sled database;
@@ -142,9 +107,9 @@ impl NodeManager {
         // lock conflicts in multi-node setups.
         std::env::set_var("FOLD_STORAGE_PATH", node_config.get_storage_path());
 
-        // Inject per-device credentials from credentials.json into the DatabaseConfig.
-        // credentials.json is the single source of truth for api_key and session_token.
-        // The config file may have a stale key; Sled must not store per-device secrets.
+        // Inject per-device credentials from credentials.json into the
+        // DatabaseConfig. credentials.json is the single source of truth for
+        // api_key and session_token. Sled must not store per-device secrets.
         if node_config.database.has_cloud_sync() {
             if let Ok(Some(creds)) = crate::keychain::load_credentials() {
                 if let Some(ref mut cloud) = node_config.database.cloud_sync {
@@ -156,16 +121,26 @@ impl NodeManager {
             }
         }
 
-        // Build auth-refresh callback for Exemem mode so the sync engine can
-        // automatically recover from expired tokens (401) by re-registering.
-        let auth_refresh = crate::handlers::auth::auth_refresh_for(&node_config.database);
-
-        // Reuse the cached SledPool if one exists for the same path. This is
-        // what prevents a WouldBlock race when a node is recreated at the same
-        // path (e.g. after cloud-sync activation during /api/auth/register).
+        // Shared pool that survives node invalidations at the same path —
+        // prevents the WouldBlock race when a node is recreated after a
+        // cloud-sync activation mid-register.
         let pool = self.get_or_create_pool(&node_config.database.path).await;
 
-        // Create FoldDB with user context set
+        // Resolve identity up-front against the shared pool so we have the
+        // E2E seed available for FoldDB initialization. This is the single
+        // identity read per create_node — the same pool threads through to
+        // FoldDB below, so no double file-lock holder.
+        let id = identity::load_or_generate(Arc::clone(&pool))
+            .map_err(NodeManagerError::SecurityError)?;
+        let seed = FoldNode::extract_ed25519_seed(&id.private_key).map_err(|e| {
+            NodeManagerError::ConfigurationError(format!("Failed to extract seed: {}", e))
+        })?;
+        let e2e_keys = fold_db::crypto::E2eKeys::from_ed25519_seed(&seed).map_err(|e| {
+            NodeManagerError::ConfigurationError(format!("Failed to derive E2E keys: {}", e))
+        })?;
+
+        let auth_refresh = crate::handlers::auth::auth_refresh_for(&node_config.database);
+
         let db = fold_db::logging::core::run_with_user(user_id, async {
             factory::create_fold_db_with_pool_and_auth_refresh(
                 &node_config.database,
@@ -178,7 +153,6 @@ impl NodeManager {
         .await
         .map_err(|e| NodeManagerError::StorageError(e.to_string()))?;
 
-        // Create FoldDB node with user context set
         let node = fold_db::logging::core::run_with_user(user_id, async {
             FoldNode::new_with_db(node_config, db).await
         })
@@ -186,90 +160,6 @@ impl NodeManager {
         .map_err(|e| NodeManagerError::NodeCreationError(e.to_string()))?;
 
         Ok(Arc::new(node))
-    }
-
-    /// Load an existing identity keypair from disk, or generate a new random one.
-    ///
-    /// Key file path: `~/.fold_db/identity/{sha256(user_id)}.json`
-    /// The SHA-256 hash is used as the filename to avoid path injection from arbitrary user_ids.
-    async fn load_or_generate_identity(user_id: &str) -> Result<Ed25519KeyPair, NodeManagerError> {
-        // Build the key file path: $FOLDDB_HOME/identity/{hash}.json
-        let folddb_home = crate::utils::paths::folddb_home().map_err(|e| {
-            NodeManagerError::ConfigurationError(format!("Cannot resolve FOLDDB_HOME: {e}"))
-        })?;
-
-        let mut hasher = Sha256::new();
-        hasher.update(user_id.as_bytes());
-        let hash_hex = format!("{:x}", hasher.finalize());
-
-        let identity_dir = folddb_home.join("identity");
-        let identity_path = identity_dir.join(format!("{hash_hex}.json"));
-
-        if identity_path.exists() {
-            // Load existing keypair
-            let content = tokio::fs::read_to_string(&identity_path)
-                .await
-                .map_err(|e| {
-                    NodeManagerError::SecurityError(format!("Failed to read identity file: {e}"))
-                })?;
-
-            let identity: NodeIdentity = serde_json::from_str(&content).map_err(|e| {
-                NodeManagerError::SecurityError(format!("Invalid identity file: {e}"))
-            })?;
-
-            let secret_bytes = base64::engine::general_purpose::STANDARD
-                .decode(&identity.private_key)
-                .map_err(|e| {
-                    NodeManagerError::SecurityError(format!("Invalid private key encoding: {e}"))
-                })?;
-
-            Ed25519KeyPair::from_secret_key(&secret_bytes)
-                .map_err(|e| NodeManagerError::SecurityError(e.to_string()))
-        } else {
-            // Generate a new random keypair
-            let keypair = Ed25519KeyPair::generate()
-                .map_err(|e| NodeManagerError::SecurityError(e.to_string()))?;
-
-            let identity = NodeIdentity {
-                private_key: keypair.secret_key_base64(),
-                public_key: keypair.public_key_base64(),
-            };
-
-            // Ensure directory exists
-            tokio::fs::create_dir_all(&identity_dir)
-                .await
-                .map_err(|e| {
-                    NodeManagerError::SecurityError(format!(
-                        "Failed to create identity directory: {e}"
-                    ))
-                })?;
-
-            // Write the identity file
-            let content = serde_json::to_string_pretty(&identity).map_err(|e| {
-                NodeManagerError::SecurityError(format!("Failed to serialize identity: {e}"))
-            })?;
-            tokio::fs::write(&identity_path, &content)
-                .await
-                .map_err(|e| {
-                    NodeManagerError::SecurityError(format!("Failed to write identity file: {e}"))
-                })?;
-
-            // Restrict permissions to owner-only (Unix)
-            #[cfg(unix)]
-            {
-                use std::os::unix::fs::PermissionsExt;
-                let perms = std::fs::Permissions::from_mode(0o600);
-                std::fs::set_permissions(&identity_path, perms).map_err(|e| {
-                    NodeManagerError::SecurityError(format!(
-                        "Failed to set identity file permissions: {e}"
-                    ))
-                })?;
-            }
-
-            log::info!("Generated new node identity at {}", identity_path.display());
-
-            Ok(keypair)
-        }
     }
 
     /// Invalidate the cached node, forcing recreation on next access.
@@ -357,56 +247,17 @@ impl NodeManager {
 
     /// Ensure a default identity exists and return its public key.
     ///
-    /// On first call this generates a keypair (persisted to disk) and eagerly
-    /// creates the local-mode node so subsequent authenticated requests are fast.
-    /// Returns the base-64 public key string.
+    /// Reads (or creates + persists) the keypair from the Sled identity
+    /// tree, then eagerly builds the node so (a) the first authenticated
+    /// request doesn't block on Sled open, and (b) `get_sled_pool()`
+    /// immediately returns the live pool — callers like `restore_from_phrase`
+    /// rely on the pool being `Some` right after this call.
     pub async fn ensure_default_identity(&self) -> Result<String, NodeManagerError> {
-        // Fast path: identity already populated in the base config.
-        // We still eagerly build the node in this branch — callers like
-        // `restore_from_phrase` rely on `get_sled_pool()` returning `Some`
-        // right after this call, and the pool only exists once a node has
-        // been created. Skipping node creation on the fast path silently
-        // broke the restore → bootstrap flow on pristine nodes (the pool
-        // was None, so the bootstrap spawn was suppressed with no surface
-        // error — the node came up looking activated but never downloaded
-        // peer data).
-        let public_key = {
-            let config = self.config.read().await;
-            if let Some(pk) = &config.base_config.public_key {
-                if !pk.is_empty() {
-                    Some(pk.clone())
-                } else {
-                    None
-                }
-            } else {
-                None
-            }
-        };
-
-        let public_key = match public_key {
-            Some(pk) => pk,
-            None => {
-                // Slow path: generate or load identity from disk.
-                let keypair = Self::load_or_generate_identity("default").await?;
-                let pk = keypair.public_key_base64();
-                {
-                    let mut config = self.config.write().await;
-                    config.base_config = config
-                        .base_config
-                        .clone()
-                        .with_identity(&pk, &keypair.secret_key_base64());
-                }
-                pk
-            }
-        };
-
-        // Eagerly create the node so (a) the first authenticated request
-        // doesn't block on Sled open, and (b) `get_sled_pool()` immediately
-        // returns the live pool.
-        let user_hash = user_hash_from_pubkey(&public_key);
+        let pool = self.get_or_init_sled_pool().await;
+        let id = identity::load_or_generate(pool).map_err(NodeManagerError::SecurityError)?;
+        let user_hash = user_hash_from_pubkey(&id.public_key);
         let _ = self.get_node(&user_hash).await;
-
-        Ok(public_key)
+        Ok(id.public_key)
     }
 
     /// Get a clone of the shared SledPool.
@@ -464,7 +315,7 @@ mod tests {
         let keypair = fold_db::security::Ed25519KeyPair::generate().unwrap();
         let base_config = NodeConfig::new(path.to_path_buf())
             .with_schema_service_url("test://mock")
-            .with_identity(&keypair.public_key_base64(), &keypair.secret_key_base64());
+            .with_seed_identity(crate::identity::identity_from_keypair(&keypair));
         NodeManagerConfig { base_config }
     }
 

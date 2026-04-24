@@ -18,7 +18,7 @@ async fn setup_node() -> (FoldNode, TempDir) {
     let keypair = fold_db::security::Ed25519KeyPair::generate().unwrap();
     let config = NodeConfig::new(temp_db_path.into())
         .with_schema_service_url("test://mock")
-        .with_identity(&keypair.public_key_base64(), &keypair.secret_key_base64());
+        .with_seed_identity(fold_db_node::identity::identity_from_keypair(&keypair));
     let node = FoldNode::new(config)
         .await
         .expect("Failed to create FoldNode");
@@ -165,8 +165,6 @@ async fn test_set_schema_org_hash_persists_across_node_restart() {
     // Identity must be stable across restarts so the second FoldNode reuses
     // the same Sled state rather than booting as a fresh node.
     let keypair = fold_db::security::Ed25519KeyPair::generate().unwrap();
-    let pubkey = keypair.public_key_base64();
-    let seckey = keypair.secret_key_base64();
 
     let org_hash = "deadbeefcafefeed".to_string();
     let expected_trust_domain = format!("org:{}", org_hash);
@@ -175,7 +173,7 @@ async fn test_set_schema_org_hash_persists_across_node_restart() {
     let pool = {
         let config = NodeConfig::new(db_path.clone())
             .with_schema_service_url("test://mock")
-            .with_identity(&pubkey, &seckey);
+            .with_seed_identity(fold_db_node::identity::identity_from_keypair(&keypair));
         let node = FoldNode::new(config)
             .await
             .expect("Failed to create first FoldNode");
@@ -228,7 +226,7 @@ async fn test_set_schema_org_hash_persists_across_node_restart() {
     // --- Second boot: same path, expect trust_domain still set. ---
     let config = NodeConfig::new(db_path)
         .with_schema_service_url("test://mock")
-        .with_identity(&pubkey, &seckey);
+        .with_seed_identity(fold_db_node::identity::identity_from_keypair(&keypair));
     let node = FoldNode::new(config)
         .await
         .expect("Failed to create second FoldNode on same path");

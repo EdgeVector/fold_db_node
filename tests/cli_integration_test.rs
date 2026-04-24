@@ -594,17 +594,23 @@ fn no_identity_and_no_daemon_fails_cleanly_in_non_tty() {
 #[test]
 fn cli_does_not_auto_spawn_daemon_when_port_unset() {
     // Isolated tmpdir with a valid identity so we bypass the setup wizard
-    // and land on the `ensure_running` guard.
+    // and land on the `ensure_running` guard. Identity now lives in the
+    // Sled `node_identity` tree, not in `node_config.json`.
     let tmp = tempfile::TempDir::new().expect("tempdir");
     let keypair = fold_db::security::Ed25519KeyPair::generate().expect("generate keypair");
+    let data_path = tmp.path().join("db");
+    fold_db_node::identity::save_standalone(
+        &data_path,
+        &fold_db_node::identity::identity_from_keypair(&keypair),
+    )
+    .expect("seed identity");
 
     let config = serde_json::json!({
-        "database": { "path": tmp.path().join("db").to_str().unwrap() },
+        "database": { "path": data_path.to_str().unwrap() },
+        "storage_path": data_path.to_str().unwrap(),
         "network_listen_address": "/ip4/0.0.0.0/tcp/0",
         "security_config": { "require_tls": false, "encrypt_at_rest": false },
-        "schema_service_url": "test://mock",
-        "public_key": keypair.public_key_base64(),
-        "private_key": keypair.secret_key_base64()
+        "schema_service_url": "test://mock"
     });
     let config_path = tmp.path().join("config.json");
     fs::write(&config_path, serde_json::to_string_pretty(&config).unwrap()).expect("write config");
@@ -651,14 +657,19 @@ fn cli_reports_missing_daemon_when_port_explicit() {
     // still fail with a clear message — no retry storm, no spawn attempt.
     let tmp = tempfile::TempDir::new().expect("tempdir");
     let keypair = fold_db::security::Ed25519KeyPair::generate().expect("generate keypair");
+    let data_path = tmp.path().join("db");
+    fold_db_node::identity::save_standalone(
+        &data_path,
+        &fold_db_node::identity::identity_from_keypair(&keypair),
+    )
+    .expect("seed identity");
 
     let config = serde_json::json!({
-        "database": { "path": tmp.path().join("db").to_str().unwrap() },
+        "database": { "path": data_path.to_str().unwrap() },
+        "storage_path": data_path.to_str().unwrap(),
         "network_listen_address": "/ip4/0.0.0.0/tcp/0",
         "security_config": { "require_tls": false, "encrypt_at_rest": false },
-        "schema_service_url": "test://mock",
-        "public_key": keypair.public_key_base64(),
-        "private_key": keypair.secret_key_base64()
+        "schema_service_url": "test://mock"
     });
     let config_path = tmp.path().join("config.json");
     fs::write(&config_path, serde_json::to_string_pretty(&config).unwrap()).expect("write config");

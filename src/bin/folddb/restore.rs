@@ -1,22 +1,32 @@
 //! Restore identity from a 24-word BIP39 recovery phrase.
 //!
-//! Atomic: if any step fails after identity is written, the partial
-//! identity file is removed so the user can retry cleanly.
+//! Atomic: if any step fails after identity is written, the Sled
+//! identity tree is cleared so the user can retry cleanly.
 
 use crate::commands::CommandOutput;
 use crate::error::CliError;
 use dialoguer::{Confirm, Input};
+use fold_db_node::identity::{self, NodeIdentity};
+use std::path::{Path, PathBuf};
 
-/// Check whether a persisted node identity exists.
-fn identity_file_exists() -> bool {
+fn data_path() -> PathBuf {
     fold_db_node::utils::paths::folddb_home()
-        .map(|h| h.join("config").join("node_identity.json").exists())
-        .unwrap_or(false)
+        .map(|h| h.join("data"))
+        .unwrap_or_else(|_| PathBuf::from("data"))
+}
+
+/// Check whether an identity is already persisted in the Sled
+/// `node_identity` tree.
+fn identity_exists() -> bool {
+    identity::load_standalone(&data_path())
+        .ok()
+        .flatten()
+        .is_some()
 }
 
 /// Run the interactive restore flow.
 pub async fn run_restore() -> Result<CommandOutput, CliError> {
-    if identity_file_exists() {
+    if identity_exists() {
         let overwrite = Confirm::new()
             .with_prompt("An identity already exists. Overwrite it?")
             .default(false)
@@ -55,24 +65,23 @@ pub async fn run_restore() -> Result<CommandOutput, CliError> {
     let private_key_b64 = base64::engine::general_purpose::STANDARD.encode(signing_key.to_bytes());
     let public_key_b64 = base64::engine::general_purpose::STANDARD.encode(verifying_key.to_bytes());
 
-    // Save identity (this is the point of no return — rollback if anything after fails)
+    let restored = NodeIdentity {
+        private_key: private_key_b64.clone(),
+        public_key: public_key_b64.clone(),
+    };
+
+    // Save into the Sled identity tree. This is the point of no return
+    // — if anything below fails we clear the tree so the user can retry.
+    let data_path = data_path();
+    identity::save_standalone(&data_path, &restored)
+        .map_err(|e| CliError::new(format!("Failed to write identity: {}", e)))?;
+
     let config_dir = fold_db_node::utils::paths::folddb_home()
         .map(|h| h.join("config"))
-        .unwrap_or_else(|_| std::path::PathBuf::from("config"));
+        .unwrap_or_else(|_| PathBuf::from("config"));
     std::fs::create_dir_all(&config_dir)
         .map_err(|e| CliError::new(format!("Failed to create config dir: {}", e)))?;
-
-    let identity_path = config_dir.join("node_identity.json");
     let config_path = config_dir.join("node_config.json");
-
-    let identity_json = serde_json::to_string_pretty(&serde_json::json!({
-        "private_key": private_key_b64,
-        "public_key": public_key_b64,
-    }))
-    .map_err(|e| CliError::new(format!("Failed to serialize identity: {}", e)))?;
-
-    std::fs::write(&identity_path, &identity_json)
-        .map_err(|e| CliError::new(format!("Failed to write identity: {}", e)))?;
 
     eprintln!("Public key: {}", public_key_b64);
 
@@ -87,9 +96,12 @@ pub async fn run_restore() -> Result<CommandOutput, CliError> {
     match result {
         Ok(msg) => Ok(CommandOutput::Message(msg)),
         Err(e) => {
-            // Rollback: remove partial identity so user can retry
-            eprintln!("Rolling back identity file due to error...");
-            let _ = std::fs::remove_file(&identity_path);
+            eprintln!("Rolling back identity due to error...");
+            // Clear the Sled identity tree — symmetrical with save_standalone.
+            if let Ok((pool, store)) = identity::open_standalone(&data_path) {
+                let _ = store.clear();
+                drop(pool);
+            }
             let _ = std::fs::remove_file(&config_path);
             Err(e)
         }
@@ -100,7 +112,7 @@ fn try_register_and_configure(
     public_key_b64: &str,
     private_key_b64: &str,
     verifying_key: &ed25519_dalek::VerifyingKey,
-    config_path: &std::path::Path,
+    config_path: &Path,
 ) -> Result<String, CliError> {
     let api_url = fold_db_node::endpoints::exemem_api_url();
     let pub_key_hex: String = verifying_key
@@ -111,7 +123,6 @@ fn try_register_and_configure(
 
     eprint!("Registering with Exemem...");
 
-    // Use setup's register function
     match crate::commands::setup::register_with_exemem(&api_url, &pub_key_hex, private_key_b64) {
         Ok(resp) => {
             eprintln!(" done.");
@@ -124,10 +135,7 @@ fn try_register_and_configure(
                 }
             };
 
-            let data_path = fold_db_node::utils::paths::folddb_home()
-                .map(|h| h.join("data"))
-                .unwrap_or_else(|_| std::path::PathBuf::from("data"));
-
+            let data_path = data_path();
             let config = fold_db_node::fold_node::config::NodeConfig {
                 database: fold_db::storage::DatabaseConfig::with_cloud_sync(
                     data_path.clone(),
@@ -142,9 +150,8 @@ fn try_register_and_configure(
                 network_listen_address: "/ip4/0.0.0.0/tcp/0".to_string(),
                 security_config: fold_db::security::SecurityConfig::from_env(),
                 schema_service_url: Some(fold_db_node::endpoints::schema_service_url()),
-                public_key: Some(public_key_b64.to_string()),
-                private_key: Some(private_key_b64.to_string()),
                 config_dir: None,
+                seed_identity: None,
             };
 
             let config_json = serde_json::to_string_pretty(&config)
@@ -152,12 +159,12 @@ fn try_register_and_configure(
             std::fs::write(config_path, config_json)
                 .map_err(|e| CliError::new(format!("Failed to write config: {}", e)))?;
 
-            // Write the bootstrap pending marker so the daemon picks up the
-            // restore and actually downloads the user's database from cloud on
-            // the next start. Without this, the user ends up with a
-            // registered-but-empty local DB.
             fold_db_node::server::routes::auth::write_bootstrap_marker(&api_url, &api_key)
                 .map_err(|e| CliError::new(format!("Failed to write bootstrap marker: {}", e)))?;
+
+            // Silence unused-var warning: `public_key_b64` is used above for the
+            // eprintln in the caller; kept as a parameter for clarity there.
+            let _ = public_key_b64;
 
             mark_onboarding_complete();
 
@@ -170,25 +177,23 @@ fn try_register_and_configure(
         Err(e) => {
             eprintln!(" failed: {} (will use local-only mode).", e);
 
-            let data_path = fold_db_node::utils::paths::folddb_home()
-                .map(|h| h.join("data"))
-                .unwrap_or_else(|_| std::path::PathBuf::from("data"));
-
+            let data_path = data_path();
             let config = fold_db_node::fold_node::config::NodeConfig {
                 database: fold_db::storage::DatabaseConfig::local(data_path.clone()),
                 storage_path: Some(data_path),
                 network_listen_address: "/ip4/0.0.0.0/tcp/0".to_string(),
                 security_config: fold_db::security::SecurityConfig::from_env(),
                 schema_service_url: Some(fold_db_node::endpoints::schema_service_url()),
-                public_key: Some(public_key_b64.to_string()),
-                private_key: Some(private_key_b64.to_string()),
                 config_dir: None,
+                seed_identity: None,
             };
 
             let config_json = serde_json::to_string_pretty(&config)
                 .map_err(|e| CliError::new(format!("Failed to serialize config: {}", e)))?;
             std::fs::write(config_path, config_json)
                 .map_err(|e| CliError::new(format!("Failed to write config: {}", e)))?;
+
+            let _ = public_key_b64;
 
             mark_onboarding_complete();
 

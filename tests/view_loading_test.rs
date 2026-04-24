@@ -160,8 +160,10 @@ async fn make_node(schema_service_url: &str) -> FoldNode {
     let config = NodeConfig {
         database: DatabaseConfig::local(db_path),
         schema_service_url: Some(schema_service_url.to_string()),
-        private_key: Some(private_key),
-        public_key: Some(public_key),
+        seed_identity: Some(fold_db_node::identity::NodeIdentity {
+            private_key,
+            public_key,
+        }),
         ..Default::default()
     };
     FoldNode::new(config).await.unwrap()

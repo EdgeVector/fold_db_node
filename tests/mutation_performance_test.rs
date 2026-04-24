@@ -64,7 +64,7 @@ async fn run_mutation_performance_test() {
     let keypair = fold_db::security::Ed25519KeyPair::generate().unwrap();
     let config = NodeConfig::new(temp_db_path.to_path_buf())
         .with_schema_service_url("test://mock")
-        .with_identity(&keypair.public_key_base64(), &keypair.secret_key_base64());
+        .with_seed_identity(fold_db_node::identity::identity_from_keypair(&keypair));
 
     let node = FoldNode::new(config)
         .await

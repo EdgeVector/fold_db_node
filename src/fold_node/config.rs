@@ -7,7 +7,15 @@ use std::path::PathBuf;
 
 pub use fold_db::storage::config::DatabaseConfig;
 
+use crate::identity::NodeIdentity;
+
 /// Configuration for a FoldNode instance.
+///
+/// Note: node identity (Ed25519 keypair) lives in the `node_identity`
+/// Sled tree via [`crate::identity::IdentityStore`], not on this config.
+/// Setup/restore/test paths may pre-seed a keypair for first boot via
+/// [`Self::with_seed_identity`], which writes into the store before
+/// [`crate::fold_node::FoldNode::new`] reads from it.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct NodeConfig {
     /// Database storage configuration
@@ -29,18 +37,22 @@ pub struct NodeConfig {
     /// URL of the schema service (optional, if not provided will load from local directories)
     #[serde(default)]
     pub schema_service_url: Option<String>,
-    /// Explicitly provided node public key (Base64)
-    #[serde(default)]
-    pub public_key: Option<String>,
-    /// Explicitly provided node private key (Base64)
-    #[serde(default)]
-    pub private_key: Option<String>,
     /// Explicit config directory override.
     /// When set, trust modules (contact book, sharing roles, etc.) use this
     /// instead of resolving `$FOLDDB_HOME`. This eliminates env-var races in
     /// parallel tests.
     #[serde(default)]
     pub config_dir: Option<PathBuf>,
+
+    /// Transient bootstrap hatch: if set, `FoldNode::new` writes this
+    /// keypair into the `node_identity` Sled tree before resolving
+    /// identity. Only written on first boot (when the tree is empty);
+    /// subsequent boots ignore it and use the persisted value. Used by
+    /// setup / restore / test flows that generate a keypair before the
+    /// daemon starts. Never serialized — `node_config.json` must not
+    /// carry secrets.
+    #[serde(skip)]
+    pub seed_identity: Option<NodeIdentity>,
 }
 
 fn default_network_listen_address() -> String {
@@ -55,9 +67,8 @@ impl Default for NodeConfig {
             network_listen_address: default_network_listen_address(),
             security_config: SecurityConfig::from_env(),
             schema_service_url: None,
-            public_key: None,
-            private_key: None,
             config_dir: None,
+            seed_identity: None,
         }
     }
 }
@@ -71,9 +82,8 @@ impl NodeConfig {
             network_listen_address: default_network_listen_address(),
             security_config: SecurityConfig::from_env(),
             schema_service_url: None,
-            public_key: None,
-            private_key: None,
             config_dir: None,
+            seed_identity: None,
         }
     }
 
@@ -102,10 +112,12 @@ impl NodeConfig {
         self
     }
 
-    /// Set the node identity keys
-    pub fn with_identity(mut self, public_key: &str, private_key: &str) -> Self {
-        self.public_key = Some(public_key.to_string());
-        self.private_key = Some(private_key.to_string());
+    /// Pre-seed the node identity into the Sled identity store on first
+    /// boot. Used by setup / restore / test flows that generate a keypair
+    /// outside the live daemon and want the node to adopt it instead of
+    /// auto-generating a fresh one. See the `seed_identity` field docs.
+    pub fn with_seed_identity(mut self, identity: NodeIdentity) -> Self {
+        self.seed_identity = Some(identity);
         self
     }
 

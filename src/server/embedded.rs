@@ -160,8 +160,7 @@ mod tests {
         config.schema_service_url = Some("mock://test".to_string());
 
         let keypair = fold_db::security::Ed25519KeyPair::generate().unwrap();
-        config.public_key = Some(keypair.public_key_base64());
-        config.private_key = Some(keypair.secret_key_base64());
+        config.seed_identity = Some(crate::identity::identity_from_keypair(&keypair));
 
         // Create the node
         let node = FoldNode::new(config).await.unwrap();

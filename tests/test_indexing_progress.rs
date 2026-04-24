@@ -14,7 +14,7 @@ async fn test_indexing_progress_tracking() {
     let mut config = common::create_test_node_config();
     let keypair = fold_db::security::Ed25519KeyPair::generate().unwrap();
     let user_id = keypair.public_key_base64();
-    config = config.with_identity(&user_id, &keypair.secret_key_base64());
+    config = config.with_seed_identity(fold_db_node::identity::identity_from_keypair(&keypair));
     let node = FoldNode::new(config).await.unwrap();
 
     // Create a schema
