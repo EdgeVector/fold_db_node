@@ -4,7 +4,7 @@ use std::collections::HashSet;
 use std::path::PathBuf;
 use std::sync::Mutex;
 
-use crate::trust::contact_book::{Contact, ContactBook, TrustDirection};
+use crate::trust::contact_book::{Contact, TrustDirection};
 use crate::trust::identity_card::IdentityCard;
 use crate::trust::sharing_roles::SharingRoleConfig;
 use crate::trust::trust_invite::TrustInvite;
@@ -91,16 +91,14 @@ impl OperationProcessor {
     // ===== Contact Book =====
 
     /// List all active contacts.
-    pub fn list_contacts(&self) -> Result<Vec<Contact>, SchemaError> {
-        let book = ContactBook::load()
-            .map_err(|e| SchemaError::InvalidData(format!("Failed to load contact book: {e}")))?;
+    pub async fn list_contacts(&self) -> Result<Vec<Contact>, SchemaError> {
+        let book = self.load_contact_book().await?;
         Ok(book.active_contacts().into_iter().cloned().collect())
     }
 
     /// Get a specific contact by public key.
-    pub fn get_contact(&self, public_key: &str) -> Result<Option<Contact>, SchemaError> {
-        let book = ContactBook::load()
-            .map_err(|e| SchemaError::InvalidData(format!("Failed to load contact book: {e}")))?;
+    pub async fn get_contact(&self, public_key: &str) -> Result<Option<Contact>, SchemaError> {
+        let book = self.load_contact_book().await?;
         Ok(book.get(public_key).filter(|c| !c.revoked).cloned())
     }
 
@@ -223,8 +221,7 @@ impl OperationProcessor {
             }
         }
         // Also check if sender is already in our contacts (re-accept scenario)
-        let existing_book = ContactBook::load()
-            .map_err(|e| SchemaError::InvalidData(format!("Failed to load contact book: {e}")))?;
+        let existing_book = self.load_contact_book().await?;
         if existing_book
             .get(&invite.sender_pub_key)
             .filter(|c| !c.revoked)
@@ -255,11 +252,9 @@ impl OperationProcessor {
             roles,
         };
 
-        let mut book = ContactBook::load()
-            .map_err(|e| SchemaError::InvalidData(format!("Failed to load contact book: {e}")))?;
+        let mut book = self.load_contact_book().await?;
         book.upsert_contact(contact);
-        book.save()
-            .map_err(|e| SchemaError::InvalidData(format!("Failed to save contact book: {e}")))?;
+        self.save_contact_book(&book).await?;
 
         // Create reciprocal invite if requested
         if trust_back {
@@ -279,11 +274,9 @@ impl OperationProcessor {
         }
 
         // Mark revoked in contact book
-        let mut book = ContactBook::load()
-            .map_err(|e| SchemaError::InvalidData(format!("Failed to load contact book: {e}")))?;
+        let mut book = self.load_contact_book().await?;
         book.revoke(public_key);
-        book.save()
-            .map_err(|e| SchemaError::InvalidData(format!("Failed to save contact book: {e}")))?;
+        self.save_contact_book(&book).await?;
 
         Ok(())
     }

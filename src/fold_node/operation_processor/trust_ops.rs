@@ -136,13 +136,28 @@ impl OperationProcessor {
 
     // ===== Role-based trust operations =====
 
-    /// Resolve the contact book file path from the node's config directory.
-    pub(crate) fn contact_book_path(&self) -> Result<std::path::PathBuf, SchemaError> {
-        let config_dir = self
-            .node
-            .get_config_dir()
-            .map_err(|e| SchemaError::InvalidData(format!("Cannot resolve config dir: {e}")))?;
-        Ok(config_dir.join("contact_book.json"))
+    /// Load every contact for this user from the synced user-profile store.
+    pub async fn load_contact_book(&self) -> Result<ContactBook, SchemaError> {
+        let db = self.get_db().map_err(to_schema_err)?;
+        ContactBook::load(&db).await
+    }
+
+    /// Persist the contact book to the synced user-profile store. Each
+    /// contact is written as an independent record; writes propagate to
+    /// every device restored from the same mnemonic via the sync log.
+    pub async fn save_contact_book(&self, book: &ContactBook) -> Result<(), SchemaError> {
+        let db = self.get_db().map_err(to_schema_err)?;
+        book.save(&db).await
+    }
+
+    /// Persist a single contact. Cheaper than re-writing the whole book
+    /// when only one record changed.
+    pub async fn save_contact(
+        &self,
+        contact: &crate::trust::contact_book::Contact,
+    ) -> Result<(), SchemaError> {
+        let db = self.get_db().map_err(to_schema_err)?;
+        ContactBook::save_one(&db, contact).await
     }
 
     /// Resolve the sharing roles file path from the node's config directory.
@@ -173,16 +188,13 @@ impl OperationProcessor {
             .await?;
 
         // Update contact book with role assignment
-        let book_path = self.contact_book_path()?;
-        let mut book = ContactBook::load_from(&book_path)
-            .map_err(|e| SchemaError::InvalidData(format!("Failed to load contacts: {e}")))?;
+        let mut book = self.load_contact_book().await?;
         if let Some(contact) = book.contacts.get_mut(public_key) {
             contact
                 .roles
                 .insert(role.domain.clone(), role_name.to_string());
         }
-        book.save_to(&book_path)
-            .map_err(|e| SchemaError::InvalidData(format!("Failed to save contacts: {e}")))?;
+        self.save_contact_book(&book).await?;
 
         Ok(())
     }
@@ -195,14 +207,11 @@ impl OperationProcessor {
     ) -> Result<(), SchemaError> {
         self.revoke_trust_for_domain(public_key, domain).await?;
 
-        let book_path = self.contact_book_path()?;
-        let mut book = ContactBook::load_from(&book_path)
-            .map_err(|e| SchemaError::InvalidData(format!("Failed to load contacts: {e}")))?;
+        let mut book = self.load_contact_book().await?;
         if let Some(contact) = book.contacts.get_mut(public_key) {
             contact.roles.remove(domain);
         }
-        book.save_to(&book_path)
-            .map_err(|e| SchemaError::InvalidData(format!("Failed to save contacts: {e}")))?;
+        self.save_contact_book(&book).await?;
 
         Ok(())
     }
@@ -229,9 +238,7 @@ impl OperationProcessor {
         }
 
         // 2. Get contact info
-        let book_path = self.contact_book_path()?;
-        let book = ContactBook::load_from(&book_path)
-            .map_err(|e| SchemaError::InvalidData(format!("Failed to load contacts: {e}")))?;
+        let book = self.load_contact_book().await?;
         let contact = book.get(public_key).filter(|c| !c.revoked);
         let display_name = contact.map(|c| c.display_name.clone()).unwrap_or_default();
         let domain_roles = contact.map(|c| c.roles.clone()).unwrap_or_default();

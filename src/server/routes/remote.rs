@@ -94,12 +94,16 @@ struct ContactMessagingInfo {
 }
 
 /// Validate a contact for async messaging: load, check revocation, extract messaging keys.
-fn validate_contact_for_messaging(
+async fn validate_contact_for_messaging(
+    node: &crate::fold_node::FoldNode,
     contact_public_key: &str,
 ) -> Result<ContactMessagingInfo, crate::handlers::HandlerError> {
     use crate::trust::contact_book::ContactBook;
 
-    let book = ContactBook::load().map_err(|e| {
+    let db = node.get_fold_db().map_err(|e| {
+        crate::handlers::HandlerError::Internal(format!("FoldDB not available: {e}"))
+    })?;
+    let book = ContactBook::load(&db).await.map_err(|e| {
         crate::handlers::HandlerError::Internal(format!("Failed to load contacts: {e}"))
     })?;
     let contact = book
@@ -226,7 +230,7 @@ pub async fn async_query(
         async {
             use crate::discovery::async_query::{LocalAsyncQuery, QueryRequestPayload};
 
-            let contact = validate_contact_for_messaging(&req.contact_public_key)?;
+            let contact = validate_contact_for_messaging(&node, &req.contact_public_key).await?;
             let sender = resolve_sender_info(&state, &node).await?;
 
             let request_id = uuid::Uuid::new_v4().to_string();
@@ -288,7 +292,7 @@ pub async fn async_browse(
         async {
             use crate::discovery::async_query::{LocalAsyncQuery, SchemaListRequestPayload};
 
-            let contact = validate_contact_for_messaging(&req.contact_public_key)?;
+            let contact = validate_contact_for_messaging(&node, &req.contact_public_key).await?;
             let sender = resolve_sender_info(&state, &node).await?;
 
             let request_id = uuid::Uuid::new_v4().to_string();
@@ -381,7 +385,7 @@ pub async fn send_identity_card(
                 ))
             })?;
 
-            let contact = validate_contact_for_messaging(&req.contact_public_key)?;
+            let contact = validate_contact_for_messaging(&node, &req.contact_public_key).await?;
             let sender = resolve_sender_info(&state, &node).await?;
 
             let message_id = uuid::Uuid::new_v4().to_string();

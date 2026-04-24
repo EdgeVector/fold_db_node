@@ -337,7 +337,7 @@ pub async fn set_identity_card(
 /// List all active contacts.
 pub async fn list_contacts(user_hash: &str, node: &FoldNode) -> HandlerResult<serde_json::Value> {
     let op = OperationProcessor::new(std::sync::Arc::new(node.clone()));
-    let contacts = op.list_contacts().typed_handler_err()?;
+    let contacts = op.list_contacts().await.typed_handler_err()?;
     Ok(ApiResponse::success_with_user(
         serde_json::json!({ "contacts": contacts }),
         user_hash,
@@ -351,7 +351,7 @@ pub async fn get_contact(
     node: &FoldNode,
 ) -> HandlerResult<serde_json::Value> {
     let op = OperationProcessor::new(std::sync::Arc::new(node.clone()));
-    let contact = op.get_contact(public_key).typed_handler_err()?;
+    let contact = op.get_contact(public_key).await.typed_handler_err()?;
     Ok(ApiResponse::success_with_user(
         serde_json::json!({ "contact": contact }),
         user_hash,
