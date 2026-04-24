@@ -1,53 +1,21 @@
 use chrono::Utc;
 use fold_db::schema::SchemaError;
-use std::collections::HashSet;
-use std::path::PathBuf;
-use std::sync::Mutex;
 
 use crate::trust::contact_book::{Contact, TrustDirection};
 use crate::trust::identity_card::IdentityCard;
 use crate::trust::sharing_roles::SharingRoleConfig;
 use crate::trust::trust_invite::TrustInvite;
-use crate::utils::paths::folddb_home;
+use crate::user_profile::UserProfileStore;
 
 use super::OperationProcessor;
 
-/// Track consumed invite nonces to prevent replay. Persisted to disk.
-static CONSUMED_NONCES: Mutex<Option<HashSet<String>>> = Mutex::new(None);
+/// Sub-prefix under `UserProfileStore` for consumed invite nonces.
+/// Each nonce is a separate record — we never list them all, we only
+/// check containment for replay defense.
+const CONSUMED_NONCES_PREFIX: &str = "invites/consumed/";
 
-const CONSUMED_NONCES_FILE: &str = "config/consumed_nonces.json";
-
-fn load_consumed_nonces() -> HashSet<String> {
-    let mut guard = CONSUMED_NONCES.lock().unwrap_or_else(|p| p.into_inner());
-    if let Some(ref set) = *guard {
-        return set.clone();
-    }
-    let path = folddb_home()
-        .map(|h| h.join(CONSUMED_NONCES_FILE))
-        .unwrap_or_else(|_| PathBuf::from(CONSUMED_NONCES_FILE));
-    let set = if path.exists() {
-        std::fs::read_to_string(&path)
-            .ok()
-            .and_then(|s| serde_json::from_str(&s).ok())
-            .unwrap_or_default()
-    } else {
-        HashSet::new()
-    };
-    *guard = Some(set.clone());
-    set
-}
-
-fn save_consumed_nonce(nonce: &str) {
-    let mut guard = CONSUMED_NONCES.lock().unwrap_or_else(|p| p.into_inner());
-    let set = guard.get_or_insert_with(HashSet::new);
-    set.insert(nonce.to_string());
-    let path = folddb_home()
-        .map(|h| h.join(CONSUMED_NONCES_FILE))
-        .unwrap_or_else(|_| PathBuf::from(CONSUMED_NONCES_FILE));
-    if let Some(parent) = path.parent() {
-        let _ = std::fs::create_dir_all(parent);
-    }
-    let _ = std::fs::write(&path, serde_json::to_string(set).unwrap_or_default());
+fn consumed_nonce_key(nonce: &str) -> String {
+    format!("{CONSUMED_NONCES_PREFIX}{nonce}")
 }
 
 /// Identity card and contact book operations.
@@ -58,12 +26,12 @@ impl OperationProcessor {
     /// `user_profile/` prefix of the `metadata` namespace).
     const IDENTITY_CARD_KEY: &'static str = "identity_card";
 
-    fn user_profile(&self) -> Result<crate::user_profile::UserProfileStore, SchemaError> {
+    fn user_profile(&self) -> Result<UserProfileStore, SchemaError> {
         let fold_db = self
             .node
             .get_fold_db()
             .map_err(|e| SchemaError::InvalidData(format!("FoldDB not available: {e}")))?;
-        Ok(crate::user_profile::UserProfileStore::from_db(&fold_db))
+        Ok(UserProfileStore::from_db(&fold_db))
     }
 
     /// Get the current identity card (or None if not set).
@@ -102,6 +70,20 @@ impl OperationProcessor {
         Ok(book.get(public_key).filter(|c| !c.revoked).cloned())
     }
 
+    // ===== Consumed invite nonces (replay defense) =====
+
+    async fn is_nonce_consumed(&self, nonce: &str) -> Result<bool, SchemaError> {
+        let store = self.user_profile()?;
+        let found: Option<serde_json::Value> = store.get(&consumed_nonce_key(nonce)).await?;
+        Ok(found.is_some())
+    }
+
+    async fn mark_nonce_consumed(&self, nonce: &str) -> Result<(), SchemaError> {
+        self.user_profile()?
+            .put(&consumed_nonce_key(nonce), &serde_json::json!({}))
+            .await
+    }
+
     // ===== Trust Invites =====
 
     /// Create a signed trust invite token for direct sharing.
@@ -126,16 +108,19 @@ impl OperationProcessor {
         let invite = TrustInvite::create(private_key, public_key, &identity, proposed_role)
             .map_err(|e| SchemaError::InvalidData(format!("Failed to create trust invite: {e}")))?;
 
-        // Record in sent invites
-        if let Ok(mut store) = crate::trust::sent_invites::SentInviteStore::load() {
-            store.record(crate::trust::sent_invites::SentInvite {
-                nonce: invite.nonce.clone(),
-                recipient_hint: "unknown".to_string(),
-                proposed_role: proposed_role.to_string(),
-                created_at: invite.created_at,
-                status: crate::trust::sent_invites::SentInviteStatus::Pending,
-            });
-            let _ = store.save();
+        // Record in sent invites — synced so every device sees it.
+        let mut sent = crate::trust::sent_invites::SentInviteStore::load(&db)
+            .await
+            .unwrap_or_default();
+        sent.record(crate::trust::sent_invites::SentInvite {
+            nonce: invite.nonce.clone(),
+            recipient_hint: "unknown".to_string(),
+            proposed_role: proposed_role.to_string(),
+            created_at: invite.created_at,
+            status: crate::trust::sent_invites::SentInviteStatus::Pending,
+        });
+        if let Err(e) = sent.save(&db).await {
+            log::warn!("create_trust_invite: failed to save sent invite: {e}");
         }
 
         Ok(invite)
@@ -160,31 +145,34 @@ impl OperationProcessor {
             ));
         }
 
+        let db = self
+            .node
+            .get_fold_db()
+            .map_err(|e| SchemaError::InvalidData(format!("FoldDB not available: {e}")))?;
+
         // Replay prevention: check nonce hasn't been consumed
-        let consumed = load_consumed_nonces();
-        if consumed.contains(&invite.nonce) {
+        if self.is_nonce_consumed(&invite.nonce).await? {
             return Err(SchemaError::PermissionDenied(
                 "Trust invite has already been used (replay detected)".to_string(),
             ));
         }
 
         // Check if this invite was previously declined
-        if let Ok(declined) = crate::trust::declined_invites::DeclinedInviteStore::load() {
-            if declined.is_declined(&invite.nonce) {
-                return Err(SchemaError::InvalidData(
-                    "This invite was previously declined. Remove the decline first to accept."
-                        .to_string(),
-                ));
-            }
+        let declined = crate::trust::declined_invites::DeclinedInviteStore::load(&db)
+            .await
+            .unwrap_or_default();
+        if declined.is_declined(&invite.nonce) {
+            return Err(SchemaError::InvalidData(
+                "This invite was previously declined. Remove the decline first to accept."
+                    .to_string(),
+            ));
         }
 
         // Resolve the role name: accept_role overrides the proposed_role from the invite
         let role_name = accept_role.unwrap_or(&invite.proposed_role);
 
         // Look up the role in SharingRoleConfig to get domain and tier
-        let roles_path = self.sharing_roles_path()?;
-        let config = SharingRoleConfig::load_from(&roles_path)
-            .map_err(|e| SchemaError::InvalidData(format!("Failed to load roles: {e}")))?;
+        let config = SharingRoleConfig::load(&db).await?;
         let role = config
             .get_role(role_name)
             .ok_or_else(|| SchemaError::InvalidData(format!("Unknown role: {role_name}")))?;
@@ -194,30 +182,28 @@ impl OperationProcessor {
             .await?;
 
         // Mark nonce as consumed
-        save_consumed_nonce(&invite.nonce);
+        self.mark_nonce_consumed(&invite.nonce).await?;
 
         // Determine direction: check if we previously sent an invite to this sender.
         // If yes, this is a reciprocal accept -> mutual trust.
         // Also mark the matching sent invite as accepted.
         let mut is_mutual = false;
-        if let Ok(mut sent) = crate::trust::sent_invites::SentInviteStore::load() {
-            // Mark matching pending invite as accepted. We detect mutual trust
-            // by finding a sent invite whose nonce was consumed by the sender,
-            // but since we don't have cross-node nonce data, we fall back to
-            // checking if the sender is already in our contact book (below).
-            // Here we just mark the most recent pending invite as accepted.
-            let has_pending = sent
-                .invites
-                .iter()
-                .any(|i| i.status == crate::trust::sent_invites::SentInviteStatus::Pending);
-            if has_pending {
-                for inv in sent.invites.iter_mut().rev() {
-                    if inv.status == crate::trust::sent_invites::SentInviteStatus::Pending {
-                        inv.status = crate::trust::sent_invites::SentInviteStatus::Accepted;
-                        break;
-                    }
+        let mut sent = crate::trust::sent_invites::SentInviteStore::load(&db)
+            .await
+            .unwrap_or_default();
+        let has_pending = sent
+            .invites
+            .iter()
+            .any(|i| i.status == crate::trust::sent_invites::SentInviteStatus::Pending);
+        if has_pending {
+            for inv in sent.invites.iter_mut().rev() {
+                if inv.status == crate::trust::sent_invites::SentInviteStatus::Pending {
+                    inv.status = crate::trust::sent_invites::SentInviteStatus::Accepted;
+                    break;
                 }
-                let _ = sent.save();
+            }
+            if let Err(e) = sent.save(&db).await {
+                log::warn!("accept_trust_invite: failed to save sent invites: {e}");
             }
         }
         // Also check if sender is already in our contacts (re-accept scenario)

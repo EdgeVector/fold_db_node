@@ -160,13 +160,11 @@ impl OperationProcessor {
         ContactBook::save_one(&db, contact).await
     }
 
-    /// Resolve the sharing roles file path from the node's config directory.
-    pub(crate) fn sharing_roles_path(&self) -> Result<std::path::PathBuf, SchemaError> {
-        let config_dir = self
-            .node
-            .get_config_dir()
-            .map_err(|e| SchemaError::InvalidData(format!("Cannot resolve config dir: {e}")))?;
-        Ok(config_dir.join("sharing_roles.json"))
+    /// Load the sharing-roles config from the synced user-profile store.
+    /// Seeds default roles on first load (see `SharingRoleConfig::load`).
+    pub async fn load_sharing_roles(&self) -> Result<SharingRoleConfig, SchemaError> {
+        let db = self.get_db().map_err(to_schema_err)?;
+        SharingRoleConfig::load(&db).await
     }
 
     /// Assign a sharing role to a contact. Translates the role to a domain-specific
@@ -176,9 +174,7 @@ impl OperationProcessor {
         public_key: &str,
         role_name: &str,
     ) -> Result<(), SchemaError> {
-        let roles_path = self.sharing_roles_path()?;
-        let config = SharingRoleConfig::load_from(&roles_path)
-            .map_err(|e| SchemaError::InvalidData(format!("Failed to load roles: {e}")))?;
+        let config = self.load_sharing_roles().await?;
         let role = config
             .get_role(role_name)
             .ok_or_else(|| SchemaError::InvalidData(format!("Unknown role: {role_name}")))?;
