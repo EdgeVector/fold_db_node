@@ -1,5 +1,11 @@
 //! HTTP routes for the fingerprint subsystem. Thin actix adapters
 //! over `crate::handlers::fingerprints`; no business logic here.
+//!
+//! Participates in the TODO-3 privacy fence: no route here may
+//! import from `crate::handlers::discovery::*`, import from
+//! `crate::server::routes::discovery::*`, or mount under
+//! `/api/discovery/`. Enforced by
+//! `tests/identity_sharing_fence_test.rs`.
 
 #[cfg(feature = "face-detection")]
 pub mod detect_faces;
