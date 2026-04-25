@@ -15,7 +15,7 @@ face-detection = ["fold_db/face-detection"]
 
 [dependencies]
 # Core database library
-fold_db = { git = "https://github.com/EdgeVector/fold_db.git", rev = "1c5676188b796fd4c7dafaab281579818dc4d86c", features = ["cli"] }
+fold_db = { git = "https://github.com/EdgeVector/fold_db.git", rev = "a0434b2539c24a955649b19d8aa6b0b532c4c1cc", features = ["cli"] }
 
 # Schema service registry brain. Phase 2 T2: all former
 # `fold_db::schema_service::*` types come from here now. Git dep pinned
