@@ -9,6 +9,15 @@
 //! framework-agnostic shape; the HTTP routes layer
 //! (`crate::server::routes::fingerprints`) wraps them in actix
 //! responses.
+//!
+//! ## Privacy fence
+//!
+//! Everything under this directory participates in the TODO-3 fence:
+//! no handler here may import `crate::handlers::discovery::*`,
+//! import `crate::server::routes::discovery::*`, or reference an
+//! `/api/discovery/` URL. Identity Card exchange, Persona sharing,
+//! and received-card acceptance all flow through the E2E messaging
+//! layer only. Enforced by `tests/identity_sharing_fence_test.rs`.
 
 #[cfg(feature = "face-detection")]
 pub mod detect_faces;

@@ -15,10 +15,17 @@
 //! local, with Phase 3 direct peer sharing going through the existing E2E
 //! messaging layer.
 //!
-//! This module MUST NOT import from `crate::handlers::discovery::*` or
-//! `crate::server::routes::discovery::*`. See TODO-3 in
-//! `exemem-workspace/TODOS.md`. A CI grep check in Phase 3 will enforce this
-//! rule once the sharing module lands.
+//! This module — along with the sibling `src/handlers/fingerprints/` and
+//! `src/server/routes/fingerprints/` trees — MUST NOT import from
+//! `crate::handlers::discovery::*` or `crate::server::routes::discovery::*`,
+//! and MUST NOT hardcode any `/api/discovery/` URL. Direct peer sharing and
+//! Identity Card exchange go through the existing E2E messaging layer only.
+//!
+//! Enforced structurally by `tests/identity_sharing_fence_test.rs` — it
+//! greps every `.rs` file under those trees on every `cargo test` run and
+//! fails the build if any forbidden import or URL appears. See TODO-3 in
+//! `exemem-workspace/TODOS.md`. The fix when the fence fires is almost
+//! never to loosen it; route the new capability through messaging instead.
 //!
 //! ## Storage model
 //!
