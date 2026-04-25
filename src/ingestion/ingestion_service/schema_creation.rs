@@ -8,6 +8,57 @@ use fold_db::logging::features::LogFeature;
 use serde_json::Value;
 use std::collections::HashMap;
 
+/// Default-fill `field_data_classifications` for any field listed in
+/// `fields` that doesn't already have an entry. Schemas registered before
+/// PR #361 (and any with corrupt persistence) reach the local node missing
+/// this map; fold_db's loader rejects them with `"Schema 'X' has unclassified
+/// fields …"`. Filling with `sensitivity_level=1, data_domain="general"`
+/// matches the intent of the original PR — keep legacy schemas loadable
+/// instead of becoming unrecoverable once they're already in the registry.
+///
+/// Mutates `schema_value` in place. No-op if `schema_value` isn't a JSON
+/// object, if `fields` is missing/non-array, or if every field is already
+/// classified.
+fn backfill_field_data_classifications(schema_value: &mut Value) {
+    let Some(obj) = schema_value.as_object_mut() else {
+        return;
+    };
+    let field_names: Vec<String> = obj
+        .get("fields")
+        .and_then(|v| v.as_array())
+        .map(|arr| {
+            arr.iter()
+                .filter_map(|v| v.as_str().map(String::from))
+                .collect()
+        })
+        .unwrap_or_default();
+    if field_names.is_empty() {
+        return;
+    }
+    let classifications = obj
+        .entry("field_data_classifications".to_string())
+        .or_insert_with(|| Value::Object(serde_json::Map::new()));
+    // The map can be present-but-null (rare, from hand-edited JSON).
+    // Replace null with an empty object before populating.
+    if classifications.is_null() {
+        *classifications = Value::Object(serde_json::Map::new());
+    }
+    let Some(classifications_obj) = classifications.as_object_mut() else {
+        return;
+    };
+    for field_name in field_names {
+        if !classifications_obj.contains_key(&field_name) {
+            classifications_obj.insert(
+                field_name,
+                serde_json::json!({
+                    "sensitivity_level": 1,
+                    "data_domain": "general"
+                }),
+            );
+        }
+    }
+}
+
 impl IngestionService {
     /// Determine which schema to use based on AI response.
     /// Returns (schema_name, service_mutation_mappers) — the service mappers include
@@ -224,33 +275,7 @@ impl IngestionService {
                 error
             ))
         })?;
-        if let Some(obj) = schema_value.as_object_mut() {
-            let field_names: Vec<String> = obj
-                .get("fields")
-                .and_then(|v| v.as_array())
-                .map(|arr| {
-                    arr.iter()
-                        .filter_map(|v| v.as_str().map(String::from))
-                        .collect()
-                })
-                .unwrap_or_default();
-            let classifications = obj
-                .entry("field_data_classifications".to_string())
-                .or_insert_with(|| serde_json::Value::Object(serde_json::Map::new()));
-            if let Some(classifications_obj) = classifications.as_object_mut() {
-                for field_name in field_names {
-                    if !classifications_obj.contains_key(&field_name) {
-                        classifications_obj.insert(
-                            field_name,
-                            serde_json::json!({
-                                "sensitivity_level": 1,
-                                "data_domain": "general"
-                            }),
-                        );
-                    }
-                }
-            }
-        }
+        backfill_field_data_classifications(&mut schema_value);
         let json_str = serde_json::to_string(&schema_value).map_err(|error| {
             IngestionError::ai_response_validation_error(format!(
                 "Failed to serialize schema definition: {}",
@@ -301,8 +326,20 @@ impl IngestionService {
                         // `load_schema_from_json` path expects the Schema
                         // wire shape, not the envelope. The `system` flag
                         // on the envelope is not needed locally.
-                        let old_json =
-                            serde_json::to_string(&old_envelope.schema).map_err(schema_err)?;
+                        //
+                        // Apply the same `field_data_classifications` backfill
+                        // we apply to the new schema above. The dev cloud's
+                        // schema-service S3 store has accumulated legacy
+                        // schemas from pre-PR-#361 ingestions whose fields
+                        // serialize without classifications; without backfill
+                        // here, fold_db's validator rejects them and aborts
+                        // expansion before the new schema can land. (Surfaced
+                        // by the e2e face-discovery scenario hitting an old
+                        // "Photography" entry from prior nightly runs.)
+                        let mut old_value =
+                            serde_json::to_value(&old_envelope.schema).map_err(schema_err)?;
+                        backfill_field_data_classifications(&mut old_value);
+                        let old_json = serde_json::to_string(&old_value).map_err(schema_err)?;
                         schema_manager
                             .load_schema_from_json(&old_json)
                             .await
@@ -433,5 +470,99 @@ impl IngestionService {
         );
 
         Ok(org_schema_name)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::backfill_field_data_classifications;
+    use serde_json::json;
+
+    fn default_dc() -> serde_json::Value {
+        json!({"sensitivity_level": 1, "data_domain": "general"})
+    }
+
+    #[test]
+    fn backfill_inserts_map_when_absent() {
+        // Mirrors the on-wire shape returned by `client.get_schema()` for legacy
+        // schemas: serde skips empty `field_data_classifications`, so the key
+        // is missing entirely from the JSON object.
+        let mut v = json!({
+            "name": "legacy",
+            "fields": ["a", "b"],
+        });
+        backfill_field_data_classifications(&mut v);
+        let fdc = v.get("field_data_classifications").unwrap();
+        assert_eq!(fdc.get("a").unwrap(), &default_dc());
+        assert_eq!(fdc.get("b").unwrap(), &default_dc());
+    }
+
+    #[test]
+    fn backfill_only_fills_missing_entries() {
+        // Existing classifications must be preserved as-is; only fields without
+        // an entry get the default. This guards against clobbering real
+        // sensitivity levels assigned upstream.
+        let mut v = json!({
+            "fields": ["a", "b", "c"],
+            "field_data_classifications": {
+                "a": {"sensitivity_level": 3, "data_domain": "health"}
+            }
+        });
+        backfill_field_data_classifications(&mut v);
+        let fdc = v.get("field_data_classifications").unwrap();
+        assert_eq!(
+            fdc.get("a").unwrap(),
+            &json!({"sensitivity_level": 3, "data_domain": "health"})
+        );
+        assert_eq!(fdc.get("b").unwrap(), &default_dc());
+        assert_eq!(fdc.get("c").unwrap(), &default_dc());
+    }
+
+    #[test]
+    fn backfill_replaces_null_value_with_object() {
+        // Defensive: hand-edited fixtures occasionally have `null` instead of
+        // omitting the key. Treat null as "no classifications" rather than
+        // panicking or skipping.
+        let mut v = json!({
+            "fields": ["a"],
+            "field_data_classifications": null,
+        });
+        backfill_field_data_classifications(&mut v);
+        assert_eq!(
+            v.get("field_data_classifications")
+                .unwrap()
+                .get("a")
+                .unwrap(),
+            &default_dc()
+        );
+    }
+
+    #[test]
+    fn backfill_no_op_when_all_fields_classified() {
+        let original = json!({
+            "fields": ["a"],
+            "field_data_classifications": {
+                "a": {"sensitivity_level": 0, "data_domain": "general"}
+            }
+        });
+        let mut v = original.clone();
+        backfill_field_data_classifications(&mut v);
+        assert_eq!(v, original);
+    }
+
+    #[test]
+    fn backfill_no_op_on_non_object_value() {
+        let mut v = json!(["not", "an", "object"]);
+        backfill_field_data_classifications(&mut v);
+        assert_eq!(v, json!(["not", "an", "object"]));
+    }
+
+    #[test]
+    fn backfill_no_op_when_fields_missing() {
+        let mut v = json!({"name": "x"});
+        backfill_field_data_classifications(&mut v);
+        // No fields → nothing to classify; the map shouldn't get inserted just
+        // to stay empty.
+        assert!(v.get("field_data_classifications").is_none());
     }
 }
