@@ -465,9 +465,7 @@ async fn dispatch_decrypted_message(
 
             // Part B: schema gate — schema service owns schema creation. Do
             // not allow a shared payload to install or auto-approve schemas.
-            let db = node
-                .get_fold_db()
-                .map_err(|e| HandlerError::Internal(format!("Failed to get db: {e}")))?;
+            let db = node.get_fold_db().handler_err("get db")?;
             let schema_states = db
                 .schema_manager()
                 .get_schema_states()
@@ -954,19 +952,14 @@ async fn process_accepted_connection(
         .ok_or_else(|| HandlerError::Internal("No identity card in acceptance".to_string()))?;
 
     let op = OperationProcessor::from_ref(node);
-    let config = op
-        .load_sharing_roles()
-        .await
-        .map_err(|e| HandlerError::Internal(format!("Failed to load roles: {e}")))?;
+    let config = op.load_sharing_roles().await.handler_err("load roles")?;
     let role = config
         .get_role(default_role)
         .ok_or_else(|| HandlerError::Internal(format!("Unknown role: {default_role}")))?;
 
     op.grant_trust_for_domain(&identity.node_public_key, &role.domain, role.tier)
         .await
-        .map_err(|e: fold_db::schema::SchemaError| {
-            HandlerError::Internal(format!("Failed to grant trust: {e}"))
-        })?;
+        .handler_err("grant trust")?;
 
     let contact = Contact::from_discovery(
         identity.node_public_key.clone(),
@@ -979,14 +972,11 @@ async fn process_accepted_connection(
         role.domain.clone(),
         default_role.to_string(),
     );
-    let mut book = op
-        .load_contact_book()
-        .await
-        .map_err(|e| HandlerError::Internal(format!("Failed to load contacts: {e}")))?;
+    let mut book = op.load_contact_book().await.handler_err("load contacts")?;
     book.upsert_contact(contact);
     op.save_contact_book(&book)
         .await
-        .map_err(|e| HandlerError::Internal(format!("Failed to save contacts: {e}")))?;
+        .handler_err("save contacts")?;
 
     Ok(())
 }
@@ -1284,9 +1274,7 @@ async fn process_data_share(
     node: &FoldNode,
     payload: &DataSharePayload,
 ) -> Result<(), HandlerError> {
-    let db = node
-        .get_fold_db()
-        .map_err(|e| HandlerError::Internal(format!("Failed to get db: {e}")))?;
+    let db = node.get_fold_db().handler_err("get db")?;
 
     for record in &payload.records {
         // Write the mutation with the sender's pub_key. The dispatch arm has

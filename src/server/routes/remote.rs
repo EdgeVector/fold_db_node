@@ -1,5 +1,5 @@
 use crate::fold_node::OperationProcessor;
-use crate::handlers::{ApiResponse, IntoTypedHandlerError};
+use crate::handlers::{ApiResponse, IntoHandlerError, IntoTypedHandlerError};
 use crate::server::http_server::AppState;
 use crate::server::routes::{handler_result_to_response, node_or_return};
 use actix_web::{web, Responder};
@@ -103,9 +103,7 @@ async fn validate_contact_for_messaging(
     let db = node.get_fold_db().map_err(|e| {
         crate::handlers::HandlerError::Internal(format!("FoldDB not available: {e}"))
     })?;
-    let book = ContactBook::load(&db).await.map_err(|e| {
-        crate::handlers::HandlerError::Internal(format!("Failed to load contacts: {e}"))
-    })?;
+    let book = ContactBook::load(&db).await.handler_err("load contacts")?;
     let contact = book
         .get(contact_public_key)
         .ok_or_else(|| crate::handlers::HandlerError::BadRequest("Contact not found".into()))?;
@@ -211,9 +209,7 @@ async fn send_encrypted_message<P: serde::Serialize>(
     publisher
         .connect(target, encrypted_b64, Some(sender.pseudonym))
         .await
-        .map_err(|e| {
-            crate::handlers::HandlerError::Internal(format!("Failed to send message: {e}"))
-        })?;
+        .handler_err("send message")?;
 
     Ok(())
 }
@@ -265,9 +261,7 @@ pub async fn async_query(
             };
             crate::discovery::async_query::save_async_query(&*store, &local_query)
                 .await
-                .map_err(|e| {
-                    crate::handlers::HandlerError::Internal(format!("Failed to save query: {e}"))
-                })?;
+                .handler_err("save query")?;
 
             Ok(ApiResponse::success_with_user(
                 serde_json::json!({"request_id": request_id}),
@@ -323,9 +317,7 @@ pub async fn async_browse(
             };
             crate::discovery::async_query::save_async_query(&*store, &local_query)
                 .await
-                .map_err(|e| {
-                    crate::handlers::HandlerError::Internal(format!("Failed to save query: {e}"))
-                })?;
+                .handler_err("save query")?;
 
             Ok(ApiResponse::success_with_user(
                 serde_json::json!({"request_id": request_id}),
@@ -425,9 +417,7 @@ pub async fn list_async_queries(state: web::Data<AppState>) -> impl Responder {
 
             let queries = crate::discovery::async_query::list_async_queries(&*store)
                 .await
-                .map_err(|e| {
-                    crate::handlers::HandlerError::Internal(format!("Failed to list queries: {e}"))
-                })?;
+                .handler_err("list queries")?;
 
             Ok(ApiResponse::success_with_user(
                 serde_json::json!({"queries": queries}),
@@ -453,9 +443,7 @@ pub async fn get_async_query(
 
             let query = crate::discovery::async_query::get_async_query(&*store, &request_id)
                 .await
-                .map_err(|e| {
-                    crate::handlers::HandlerError::Internal(format!("Failed to get query: {e}"))
-                })?
+                .handler_err("get query")?
                 .ok_or_else(|| crate::handlers::HandlerError::NotFound("Query not found".into()))?;
 
             Ok(ApiResponse::success_with_user(query, user_hash))
@@ -479,9 +467,7 @@ pub async fn delete_async_query(
 
             crate::discovery::async_query::delete_async_query(&*store, &request_id)
                 .await
-                .map_err(|e| {
-                    crate::handlers::HandlerError::Internal(format!("Failed to delete query: {e}"))
-                })?;
+                .handler_err("delete query")?;
 
             Ok(ApiResponse::success_with_user(
                 serde_json::json!({"ok": true}),

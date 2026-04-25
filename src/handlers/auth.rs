@@ -7,7 +7,7 @@
 //! data from HTTP, call these handlers, and convert results to `HttpResponse`.
 //! No business logic lives in the route layer.
 
-use crate::handlers::response::HandlerError;
+use crate::handlers::response::{HandlerError, IntoHandlerError};
 use crate::keychain;
 use crate::server::node_manager::NodeManager;
 use serde::{Deserialize, Serialize};
@@ -66,15 +66,13 @@ pub fn store_credentials(req: StoreCredentialsRequest) -> Result<serde_json::Val
         session_token: req.session_token,
         api_key: req.api_key,
     };
-    keychain::store_credentials(&creds)
-        .map_err(|e| HandlerError::Internal(format!("Failed to store credentials: {}", e)))?;
+    keychain::store_credentials(&creds).handler_err("store credentials")?;
     Ok(serde_json::json!({"ok": true}))
 }
 
 /// Delete credentials from local storage (logout).
 pub fn delete_credentials() -> Result<serde_json::Value, HandlerError> {
-    keychain::delete_credentials()
-        .map_err(|e| HandlerError::Internal(format!("Failed to delete credentials: {}", e)))?;
+    keychain::delete_credentials().handler_err("delete credentials")?;
     Ok(serde_json::json!({"ok": true}))
 }
 
@@ -804,7 +802,7 @@ pub async fn get_recovery_phrase(
 ) -> Result<Vec<String>, HandlerError> {
     let pool = node_manager.get_or_init_sled_pool().await;
     let id = crate::identity::load(pool)
-        .map_err(|e| HandlerError::Internal(format!("Failed to read node identity: {e}")))?
+        .handler_err("read node identity")?
         .ok_or_else(|| HandlerError::Internal("Node identity not configured".to_string()))?;
 
     use base64::Engine;
@@ -817,8 +815,7 @@ pub async fn get_recovery_phrase(
         }
     };
 
-    let mnemonic = bip39::Mnemonic::from_entropy(&seed_bytes)
-        .map_err(|e| HandlerError::Internal(format!("Failed to generate mnemonic: {}", e)))?;
+    let mnemonic = bip39::Mnemonic::from_entropy(&seed_bytes).handler_err("generate mnemonic")?;
 
     Ok(mnemonic.words().map(|w| w.to_string()).collect())
 }
@@ -857,7 +854,7 @@ pub async fn restore_from_phrase(
 
     // Derive Ed25519 keypair from seed
     let key_pair = fold_db::security::Ed25519KeyPair::from_secret_key(&entropy)
-        .map_err(|e| HandlerError::Internal(format!("Failed to derive keypair: {}", e)))?;
+        .handler_err("derive keypair")?;
 
     use base64::Engine;
     let private_key_b64 = base64::engine::general_purpose::STANDARD.encode(&entropy);
@@ -874,8 +871,8 @@ pub async fn restore_from_phrase(
     // fresh node) — the identity Sled tree is the single source of
     // truth, so the rollback path has nothing else to clean up.
     let pool = node_manager.get_or_init_sled_pool().await;
-    let prior_identity = crate::identity::load(Arc::clone(&pool))
-        .map_err(|e| HandlerError::Internal(format!("Failed to read prior identity: {e}")))?;
+    let prior_identity =
+        crate::identity::load(Arc::clone(&pool)).handler_err("read prior identity")?;
 
     match finalize_restore(
         node_manager,
