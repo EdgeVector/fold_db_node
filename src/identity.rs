@@ -60,6 +60,20 @@ pub fn generate_identity() -> Result<NodeIdentity, String> {
     Ok(identity_from_keypair(&keypair))
 }
 
+/// Load the persistent Ed25519 signing keypair from a [`NodeIdentity`].
+///
+/// The fold_db factory takes this as a required parameter so molecule
+/// signatures match the node's public identity. Loading at boot from the
+/// persisted private key (instead of generating a fresh keypair inside
+/// fold_db) guarantees that property across restarts.
+pub fn signer_from_identity(
+    identity: &NodeIdentity,
+) -> Result<Arc<fold_db::security::Ed25519KeyPair>, String> {
+    let keypair = fold_db::security::Ed25519KeyPair::from_secret_key_base64(&identity.private_key)
+        .map_err(|e| format!("Failed to load signing keypair from node identity: {e}"))?;
+    Ok(Arc::new(keypair))
+}
+
 /// Opens the identity tree on `pool` and returns a handle. Clones of
 /// the pool share the same file-lock holder, so multiple handles are
 /// safe concurrently.

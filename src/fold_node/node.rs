@@ -327,9 +327,17 @@ impl FoldNode {
         let auth_refresh =
             crate::handlers::auth::auth_refresh_for(&config.database, Arc::clone(&identity));
 
+        // Load the persistent signing keypair from the node identity so
+        // molecule signatures match the node's public key. The factory
+        // requires this — generating a fresh keypair on each boot would
+        // produce signatures that drift from the node's persistent identity.
+        let signer =
+            identity::signer_from_identity(&identity).map_err(FoldDbError::SecurityError)?;
+
         let db = fold_db::fold_db_core::factory::create_fold_db_with_pool_and_auth_refresh(
             &config.database,
             &e2e_keys,
+            signer,
             auth_refresh,
             Some(pool),
         )

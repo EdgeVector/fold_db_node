@@ -1267,6 +1267,12 @@ async fn bootstrap_from_cloud_inner(
     let base_store: Arc<dyn fold_db::storage::traits::NamespacedStore> =
         Arc::new(fold_db::storage::SledNamespacedStore::new(sled_pool));
 
+    // Load the persistent signing keypair so merged-molecule writes
+    // produced by SyncEngine during bootstrap replay trace to the same
+    // node identity as direct writes.
+    let signer = crate::identity::signer_from_identity(&id)
+        .map_err(|e| format!("bootstrap_from_cloud: {e}"))?;
+
     let engine = Arc::new(fold_db::sync::SyncEngine::new(
         sync_setup.device_id,
         sync_crypto,
@@ -1274,6 +1280,7 @@ async fn bootstrap_from_cloud_inner(
         auth,
         base_store,
         fold_db::sync::SyncConfig::default(),
+        signer,
     ));
 
     // --- Phase 1: personal bootstrap ---------------------------------------
