@@ -425,6 +425,12 @@ impl OperationProcessor {
         let base_store: std::sync::Arc<dyn fold_db::storage::traits::NamespacedStore> =
             std::sync::Arc::new(fold_db::storage::SledNamespacedStore::new(pool));
 
+        // Load the persistent signing keypair so merged-molecule writes
+        // produced by SyncEngine during the snapshot upload trace to the
+        // same node identity as direct writes.
+        let signer = crate::identity::signer_from_identity(&self.node.identity)
+            .map_err(FoldDbError::SecurityError)?;
+
         let engine = std::sync::Arc::new(fold_db::sync::SyncEngine::new(
             sync_setup.device_id,
             sync_crypto.clone(),
@@ -432,6 +438,7 @@ impl OperationProcessor {
             auth,
             base_store.clone(),
             fold_db::sync::SyncConfig::default(),
+            signer,
         ));
 
         // Acquire the device lock

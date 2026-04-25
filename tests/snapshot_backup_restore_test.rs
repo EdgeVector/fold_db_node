@@ -18,6 +18,7 @@
 use actix_web::{web, App, HttpResponse, HttpServer};
 use fold_db::crypto::provider::LocalCryptoProvider;
 use fold_db::crypto::CryptoProvider;
+use fold_db::security::Ed25519KeyPair;
 use fold_db::storage::inmemory_backend::InMemoryNamespacedStore;
 use fold_db::storage::traits::NamespacedStore;
 use fold_db::sync::auth::{AuthClient, AuthRefreshCallback, SyncAuth};
@@ -238,6 +239,7 @@ fn make_engine(
         base_url.to_string(),
         SyncAuth::ApiKey("test".to_string()),
     );
+    let signer = Arc::new(Ed25519KeyPair::generate().expect("ephemeral test signer"));
     Arc::new(SyncEngine::new(
         device_id.to_string(),
         crypto,
@@ -245,6 +247,7 @@ fn make_engine(
         auth,
         store,
         SyncConfig::default(),
+        signer,
     ))
 }
 
@@ -391,6 +394,7 @@ async fn backup_snapshot_retries_once_on_stale_auth() {
         mock.base_url.clone(),
         SyncAuth::ApiKey("stale-key".to_string()),
     );
+    let signer = Arc::new(Ed25519KeyPair::generate().expect("ephemeral test signer"));
     let mut engine = SyncEngine::new(
         "stale-device".to_string(),
         crypto,
@@ -398,6 +402,7 @@ async fn backup_snapshot_retries_once_on_stale_auth() {
         auth,
         store,
         SyncConfig::default(),
+        signer,
     );
     let refresh_invocations = Arc::new(AtomicUsize::new(0));
     let cb_counter = refresh_invocations.clone();
