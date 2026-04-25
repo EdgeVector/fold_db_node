@@ -10,7 +10,7 @@ use crate::handlers::fingerprints as fp_handlers;
 use crate::handlers::fingerprints::DetectFacesRequest;
 use crate::server::http_server::AppState;
 use crate::server::routes::{handler_result_to_response, node_or_return};
-use actix_web::{web, HttpResponse, Responder};
+use actix_web::{web, Responder};
 
 /// POST /api/fingerprints/detect-faces
 ///

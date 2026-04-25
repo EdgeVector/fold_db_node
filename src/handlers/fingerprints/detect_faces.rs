@@ -155,11 +155,9 @@ mod tests {
         assert!(decoded.is_empty());
     }
 
-    // TODO: wire into integration harness — add a happy-path test
-    // using a real face fixture from `test-framework/fixtures/faces/`
-    // once the test harness can spin up a FoldNode with the
-    // face-detection feature enabled and ONNX models available.
-    #[ignore]
-    #[test]
-    fn detect_faces_on_real_image_fixture() {}
+    // Happy-path coverage lives in `tests/detect_faces_handler_test.rs`,
+    // which spins up a FoldNode with a mock `FaceProcessor` injected via
+    // `NativeIndexManager::set_face_processor`. Real-ONNX coverage stays
+    // in the `FACE_TEST_IMAGE`-gated test under fold_db plus the
+    // `face-discovery-*` YAML scenarios.
 }
