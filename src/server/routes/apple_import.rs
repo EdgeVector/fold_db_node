@@ -15,17 +15,102 @@ use serde_json::json;
 
 use crate::ingestion::apple_import;
 use crate::ingestion::apple_import::sync_scheduler::SyncConfigState;
+use crate::ingestion::ingestion_service::IngestionService;
 use crate::ingestion::service_state::IngestionServiceState;
 #[cfg(target_os = "macos")]
 use crate::ingestion::IngestionRequest;
 use crate::server::http_server::AppState;
-use crate::server::routes::common::{node_or_return, require_node};
+use crate::server::routes::common::require_node;
 
 /// GET /api/ingestion/apple-import/status
 /// Returns whether Apple import is available (macOS only).
 pub async fn apple_import_status() -> impl Responder {
     HttpResponse::Ok().json(json!({
         "available": apple_import::is_available(),
+    }))
+}
+
+/// Context shared by every Apple import handler.
+///
+/// Constructed by [`init_apple_import_job`] after all preflight checks pass
+/// and the initial job row has been written. Each handler destructures this
+/// to access the per-user node, ingestion service, and progress bookkeeping.
+struct AppleImportContext {
+    user_id: String,
+    node_arc: std::sync::Arc<crate::fold_node::FoldNode>,
+    service: std::sync::Arc<IngestionService>,
+    progress_id: String,
+    tracker: ProgressTracker,
+}
+
+/// Run the preflight for an Apple import handler and record the initial job.
+///
+/// Replaces the ~25 lines of identical boilerplate at the top of every
+/// `apple_import_*` handler: platform check, per-user node resolution,
+/// ingestion service lookup, progress id + tracker setup, and the initial
+/// `progress_percentage = 5` job save.
+///
+/// On failure, returns the appropriate `HttpResponse` for the caller to
+/// propagate unchanged.
+async fn init_apple_import_job(
+    job_type: &str,
+    initial_message: &str,
+    state: &web::Data<AppState>,
+    ingestion_service: &web::Data<IngestionServiceState>,
+    progress_tracker: &web::Data<ProgressTracker>,
+) -> Result<AppleImportContext, HttpResponse> {
+    if !apple_import::is_available() {
+        return Err(HttpResponse::BadRequest().json(json!({
+            "success": false,
+            "error": "Apple import is only available on macOS",
+        })));
+    }
+
+    let (user_id, node_arc) = require_node(state).await?;
+    let service = ingestion_service.read().await.clone().ok_or_else(|| {
+        HttpResponse::ServiceUnavailable().json(json!({
+            "success": false,
+            "error": "Ingestion service not available",
+        }))
+    })?;
+
+    let progress_id = uuid::Uuid::new_v4().to_string();
+    let tracker = progress_tracker.get_ref().clone();
+
+    let mut job = Job::new(progress_id.clone(), JobType::Other(job_type.into()));
+    job = job.with_user(user_id.clone());
+    job.message = initial_message.into();
+    job.progress_percentage = 5;
+    let _ = tracker.save(&job).await;
+
+    Ok(AppleImportContext {
+        user_id,
+        node_arc,
+        service,
+        progress_id,
+        tracker,
+    })
+}
+
+/// Spawn `work` on the runtime under the caller's user context and return the
+/// standard `202 Accepted { success, progress_id }` response that every Apple
+/// import handler emits.
+fn spawn_apple_import_task<F, Fut>(user_id: String, progress_id: String, work: F) -> HttpResponse
+where
+    F: FnOnce() -> Fut + Send + 'static,
+    Fut: std::future::Future<Output = ()> + Send + 'static,
+{
+    let response_id = progress_id.clone();
+    tokio::spawn(async move {
+        fold_db::logging::core::run_with_user(&user_id, async move {
+            work().await;
+        })
+        .await;
+    });
+
+    HttpResponse::Accepted().json(json!({
+        "success": true,
+        "progress_id": response_id,
     }))
 }
 
@@ -41,48 +126,30 @@ pub async fn apple_import_notes(
     ingestion_service: web::Data<IngestionServiceState>,
     progress_tracker: web::Data<ProgressTracker>,
 ) -> impl Responder {
-    if !apple_import::is_available() {
-        return HttpResponse::BadRequest().json(json!({
-            "success": false,
-            "error": "Apple import is only available on macOS",
-        }));
-    }
-
-    let (user_id, node_arc) = node_or_return!(state);
-
-    let service = match ingestion_service.read().await.clone() {
-        Some(s) => s,
-        None => {
-            return HttpResponse::ServiceUnavailable().json(json!({
-                "success": false,
-                "error": "Ingestion service not available",
-            }))
-        }
+    let AppleImportContext {
+        user_id,
+        node_arc,
+        service,
+        progress_id,
+        tracker,
+    } = match init_apple_import_job(
+        "apple-notes",
+        "Extracting notes from Apple Notes...",
+        &state,
+        &ingestion_service,
+        &progress_tracker,
+    )
+    .await
+    {
+        Ok(ctx) => ctx,
+        Err(response) => return response,
     };
-
-    let progress_id = uuid::Uuid::new_v4().to_string();
-    let tracker = progress_tracker.get_ref().clone();
-
-    let mut job = Job::new(progress_id.clone(), JobType::Other("apple-notes".into()));
-    job = job.with_user(user_id.clone());
-    job.message = "Extracting notes from Apple Notes...".into();
-    job.progress_percentage = 5;
-    let _ = tracker.save(&job).await;
 
     let folder = request.folder.clone();
     let pid = progress_id.clone();
-
-    tokio::spawn(async move {
-        fold_db::logging::core::run_with_user(&user_id, async move {
-            run_apple_notes_import(folder, pid, tracker, node_arc, service).await;
-        })
-        .await;
-    });
-
-    HttpResponse::Accepted().json(json!({
-        "success": true,
-        "progress_id": progress_id,
-    }))
+    spawn_apple_import_task(user_id, progress_id, move || async move {
+        run_apple_notes_import(folder, pid, tracker, node_arc, service).await;
+    })
 }
 
 #[cfg(target_os = "macos")]
@@ -215,51 +282,30 @@ pub async fn apple_import_reminders(
     ingestion_service: web::Data<IngestionServiceState>,
     progress_tracker: web::Data<ProgressTracker>,
 ) -> impl Responder {
-    if !apple_import::is_available() {
-        return HttpResponse::BadRequest().json(json!({
-            "success": false,
-            "error": "Apple import is only available on macOS",
-        }));
-    }
-
-    let (user_id, node_arc) = node_or_return!(state);
-
-    let service = match ingestion_service.read().await.clone() {
-        Some(s) => s,
-        None => {
-            return HttpResponse::ServiceUnavailable().json(json!({
-                "success": false,
-                "error": "Ingestion service not available",
-            }))
-        }
+    let AppleImportContext {
+        user_id,
+        node_arc,
+        service,
+        progress_id,
+        tracker,
+    } = match init_apple_import_job(
+        "apple-reminders",
+        "Extracting reminders...",
+        &state,
+        &ingestion_service,
+        &progress_tracker,
+    )
+    .await
+    {
+        Ok(ctx) => ctx,
+        Err(response) => return response,
     };
-
-    let progress_id = uuid::Uuid::new_v4().to_string();
-    let tracker = progress_tracker.get_ref().clone();
-
-    let mut job = Job::new(
-        progress_id.clone(),
-        JobType::Other("apple-reminders".into()),
-    );
-    job = job.with_user(user_id.clone());
-    job.message = "Extracting reminders...".into();
-    job.progress_percentage = 5;
-    let _ = tracker.save(&job).await;
 
     let list = request.list.clone();
     let pid = progress_id.clone();
-
-    tokio::spawn(async move {
-        fold_db::logging::core::run_with_user(&user_id, async move {
-            run_apple_reminders_import(list, pid, tracker, node_arc, service).await;
-        })
-        .await;
-    });
-
-    HttpResponse::Accepted().json(json!({
-        "success": true,
-        "progress_id": progress_id,
-    }))
+    spawn_apple_import_task(user_id, progress_id, move || async move {
+        run_apple_reminders_import(list, pid, tracker, node_arc, service).await;
+    })
 }
 
 #[cfg(target_os = "macos")]
@@ -417,59 +463,41 @@ pub async fn apple_import_photos(
     progress_tracker: web::Data<ProgressTracker>,
     upload_storage: web::Data<fold_db::storage::UploadStorage>,
 ) -> impl Responder {
-    if !apple_import::is_available() {
-        return HttpResponse::BadRequest().json(json!({
-            "success": false,
-            "error": "Apple import is only available on macOS",
-        }));
-    }
-
-    let (user_id, node_arc) = node_or_return!(state);
-
-    let service = match ingestion_service.read().await.clone() {
-        Some(s) => s,
-        None => {
-            return HttpResponse::ServiceUnavailable().json(json!({
-                "success": false,
-                "error": "Ingestion service not available",
-            }));
-        }
+    let AppleImportContext {
+        user_id,
+        node_arc,
+        service,
+        progress_id,
+        tracker,
+    } = match init_apple_import_job(
+        "apple-photos",
+        "Exporting photos from Apple Photos...",
+        &state,
+        &ingestion_service,
+        &progress_tracker,
+    )
+    .await
+    {
+        Ok(ctx) => ctx,
+        Err(response) => return response,
     };
-
-    let progress_id = uuid::Uuid::new_v4().to_string();
-    let tracker = progress_tracker.get_ref().clone();
-
-    let mut job = Job::new(progress_id.clone(), JobType::Other("apple-photos".into()));
-    job = job.with_user(user_id.clone());
-    job.message = "Exporting photos from Apple Photos...".into();
-    job.progress_percentage = 5;
-    let _ = tracker.save(&job).await;
 
     let album = request.album.clone();
     let limit = request.limit.unwrap_or(50);
     let pid = progress_id.clone();
     let upload_storage_clone = upload_storage.get_ref().clone();
-
-    tokio::spawn(async move {
-        fold_db::logging::core::run_with_user(&user_id, async move {
-            run_apple_photos_import(
-                album,
-                limit,
-                pid,
-                tracker,
-                node_arc,
-                service,
-                upload_storage_clone,
-            )
-            .await;
-        })
+    spawn_apple_import_task(user_id, progress_id, move || async move {
+        run_apple_photos_import(
+            album,
+            limit,
+            pid,
+            tracker,
+            node_arc,
+            service,
+            upload_storage_clone,
+        )
         .await;
-    });
-
-    HttpResponse::Accepted().json(json!({
-        "success": true,
-        "progress_id": progress_id,
-    }))
+    })
 }
 
 #[cfg(target_os = "macos")]
@@ -696,48 +724,30 @@ pub async fn apple_import_calendar(
     ingestion_service: web::Data<IngestionServiceState>,
     progress_tracker: web::Data<ProgressTracker>,
 ) -> impl Responder {
-    if !apple_import::is_available() {
-        return HttpResponse::BadRequest().json(json!({
-            "success": false,
-            "error": "Apple import is only available on macOS",
-        }));
-    }
-
-    let (user_id, node_arc) = node_or_return!(state);
-
-    let service = match ingestion_service.read().await.clone() {
-        Some(s) => s,
-        None => {
-            return HttpResponse::ServiceUnavailable().json(json!({
-                "success": false,
-                "error": "Ingestion service not available",
-            }))
-        }
+    let AppleImportContext {
+        user_id,
+        node_arc,
+        service,
+        progress_id,
+        tracker,
+    } = match init_apple_import_job(
+        "apple-calendar",
+        "Extracting events from Apple Calendar...",
+        &state,
+        &ingestion_service,
+        &progress_tracker,
+    )
+    .await
+    {
+        Ok(ctx) => ctx,
+        Err(response) => return response,
     };
-
-    let progress_id = uuid::Uuid::new_v4().to_string();
-    let tracker = progress_tracker.get_ref().clone();
-
-    let mut job = Job::new(progress_id.clone(), JobType::Other("apple-calendar".into()));
-    job = job.with_user(user_id.clone());
-    job.message = "Extracting events from Apple Calendar...".into();
-    job.progress_percentage = 5;
-    let _ = tracker.save(&job).await;
 
     let calendar = request.calendar.clone();
     let pid = progress_id.clone();
-
-    tokio::spawn(async move {
-        fold_db::logging::core::run_with_user(&user_id, async move {
-            run_apple_calendar_import(calendar, pid, tracker, node_arc, service).await;
-        })
-        .await;
-    });
-
-    HttpResponse::Accepted().json(json!({
-        "success": true,
-        "progress_id": progress_id,
-    }))
+    spawn_apple_import_task(user_id, progress_id, move || async move {
+        run_apple_calendar_import(calendar, pid, tracker, node_arc, service).await;
+    })
 }
 
 /// Build the `TextRecordDto` batch that feeds the attendee-email
@@ -965,47 +975,29 @@ pub async fn apple_import_contacts(
     ingestion_service: web::Data<IngestionServiceState>,
     progress_tracker: web::Data<ProgressTracker>,
 ) -> impl Responder {
-    if !apple_import::is_available() {
-        return HttpResponse::BadRequest().json(json!({
-            "success": false,
-            "error": "Apple import is only available on macOS",
-        }));
-    }
-
-    let (user_id, node_arc) = node_or_return!(state);
-
-    let service = match ingestion_service.read().await.clone() {
-        Some(s) => s,
-        None => {
-            return HttpResponse::ServiceUnavailable().json(json!({
-                "success": false,
-                "error": "Ingestion service not available",
-            }))
-        }
+    let AppleImportContext {
+        user_id,
+        node_arc,
+        service,
+        progress_id,
+        tracker,
+    } = match init_apple_import_job(
+        "apple-contacts",
+        "Extracting contacts from Apple Contacts...",
+        &state,
+        &ingestion_service,
+        &progress_tracker,
+    )
+    .await
+    {
+        Ok(ctx) => ctx,
+        Err(response) => return response,
     };
 
-    let progress_id = uuid::Uuid::new_v4().to_string();
-    let tracker = progress_tracker.get_ref().clone();
-
-    let mut job = Job::new(progress_id.clone(), JobType::Other("apple-contacts".into()));
-    job = job.with_user(user_id.clone());
-    job.message = "Extracting contacts from Apple Contacts...".into();
-    job.progress_percentage = 5;
-    let _ = tracker.save(&job).await;
-
     let pid = progress_id.clone();
-
-    tokio::spawn(async move {
-        fold_db::logging::core::run_with_user(&user_id, async move {
-            run_apple_contacts_import(pid, tracker, node_arc, service).await;
-        })
-        .await;
-    });
-
-    HttpResponse::Accepted().json(json!({
-        "success": true,
-        "progress_id": progress_id,
-    }))
+    spawn_apple_import_task(user_id, progress_id, move || async move {
+        run_apple_contacts_import(pid, tracker, node_arc, service).await;
+    })
 }
 
 #[cfg(target_os = "macos")]
