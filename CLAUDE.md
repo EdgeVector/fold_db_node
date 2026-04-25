@@ -61,9 +61,17 @@ Two mines, both already defused — but if you find yourself debugging either, t
 
 ### Dual `fold_db` in the dep graph → wall of type-mismatch errors
 
-Symptoms: dozens of errors like `expected fold_db::triggers::Trigger, found schema_service_core::types::Trigger`, all from types re-exported through `schema_service_core`. Root cause: cargo compiles **two copies** of `fold_db` because `fold_db_node/Cargo.toml` says `branch = "mainline"` and the sibling `schema_service/Cargo.toml` says `rev = "..."` — different source specs, so cargo treats them as different packages even when both SHAs match.
+Symptoms: dozens of errors like `expected fold_db::triggers::Trigger, found schema_service_core::types::Trigger`, all from types re-exported through `schema_service_core`. Root cause: cargo compiles **two copies** of `fold_db` whenever `fold_db_node/Cargo.toml` and the sibling `schema_service/Cargo.toml` use different source specs (e.g. `branch = "mainline"` vs `rev = "..."`) — cargo treats them as different packages even when both SHAs match.
 
-**Defense:** `.cargo/config.toml` patches **both** `fold_db` and `schema_service` to their sibling paths (`../fold_db`, `../schema_service/crates/*`). Every git-spec variation collapses onto one local path = one `fold_db` in the graph. If you remove or rename the sibling, the patch silently no-ops and the two-copies problem comes back — that's the fingerprint.
+**Defense (production):** both repos pin fold_db to the **same explicit `rev`**. `fold_db_node/Cargo.toml` and `schema_service/Cargo.toml` must match: bump them in lockstep. To bump:
+
+1. Land your fold_db PR; copy the squash-commit SHA from `mainline`.
+2. Open a `schema_service` PR setting `fold_db = { ..., rev = "<sha>" }`. Merge.
+3. Open a `fold_db_node` PR setting the same `rev` AND running `cargo update -p schema_service_core` to pull schema_service's new pin into Cargo.lock. Merge.
+
+If only one side bumps, CI here surfaces the dual-`fold_db` errors above. (Pre-2026-04, this repo used `branch = "mainline"`; that worked **only** while mainline HEAD coincidentally matched schema_service's pin. Don't go back to branch tracking unless schema_service drops its rev pin too — but it can't, because its CDK Docker build needs deterministic pinning without a parent lockfile.)
+
+**Defense (local dev):** `.cargo/config.toml` patches **both** `fold_db` and `schema_service` to their sibling paths (`../fold_db`, `../schema_service/crates/*`). Every git-spec variation collapses onto one local path = one `fold_db` in the graph. If you remove or rename the sibling, the patch silently no-ops and the two-copies problem comes back — that's the fingerprint.
 
 ### Fresh clone fails on RustEmbed (`static-react/dist` missing)
 
