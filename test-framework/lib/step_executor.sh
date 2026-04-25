@@ -66,25 +66,49 @@ execute_action() {
       [[ -n "$progress_id" ]] || { echo "[step] no progress_id from scan" >&2; return 1; }
       echo "[step] scan started: $progress_id"
 
-      # Poll for scan result. Distinguish "not ready" (empty list) from
-      # "endpoint broken" (curl failure). Bail after 5 consecutive HTTP errors
-      # so a broken scan endpoint fails fast instead of silently hanging 60s
-      # and masking the real failure as a scan-returned-0 error.
+      # Poll for scan result. The smart-folder scan endpoint returns:
+      #   200 + { recommended_files: [...] }  → done
+      #   404 + { error: "Scan not yet complete" } → still processing (poll again)
+      #   5xx / connection error → real failure
+      # Capture HTTP status separately so 404 (in-progress) doesn't get conflated
+      # with a broken endpoint. Bail after 5 consecutive *non-200, non-404*
+      # responses (or curl transport failures) so a genuinely dead endpoint fails
+      # fast instead of silently hanging 60s.
       local scan_result="" files_to_ingest="[]"
       local poll_i scan_errs=0
       for ((poll_i=0; poll_i<60; poll_i++)); do
-        if ! scan_result=$(curl -fsS --max-time 5 \
+        local scan_raw scan_code curl_rc
+        scan_raw=$(curl -sS --max-time 5 -w '\n__SCAN_HTTP__%{http_code}' \
             "http://127.0.0.1:$port/api/ingestion/smart-folder/scan/$progress_id" \
-            -H "X-User-Hash: $hash" 2>&1); then
+            -H "X-User-Hash: $hash" 2>&1) && curl_rc=0 || curl_rc=$?
+        if (( curl_rc != 0 )); then
           scan_errs=$((scan_errs + 1))
           if (( scan_errs >= 5 )); then
-            echo "[step] scan endpoint failing repeatedly: $scan_result" >&2
+            echo "[step] scan endpoint failing repeatedly (curl rc=$curl_rc): $scan_raw" >&2
             return 1
           fi
           sleep 1
           continue
         fi
-        scan_errs=0
+        scan_code="${scan_raw##*__SCAN_HTTP__}"
+        scan_result="${scan_raw%$'\n'__SCAN_HTTP__*}"
+        case "$scan_code" in
+          200) scan_errs=0 ;;
+          404)
+            # Scan still running — poll again without burning the error budget.
+            sleep 1
+            continue
+            ;;
+          *)
+            scan_errs=$((scan_errs + 1))
+            if (( scan_errs >= 5 )); then
+              echo "[step] scan endpoint failing repeatedly (http $scan_code): $scan_result" >&2
+              return 1
+            fi
+            sleep 1
+            continue
+            ;;
+        esac
         local recs
         recs=$(echo "$scan_result" | jq '(.recommended_files // []) | length')
         if (( recs > 0 )); then
@@ -570,7 +594,11 @@ execute_action() {
       if [[ -z "$sr_name" ]]; then
         local sr_body sr_resp
         sr_body=$(jq -c --slurpfile s "$sr_path" -n '{schema: $s[0], mutation_mappers: {}}')
-        if ! sr_resp=$(curl -fsS -X POST "${FOLDDB_TEST_DEV_SCHEMA:?}/api/schemas" \
+        # Phase 1 cutover (schema_service repo) dropped /api/* dispatch — the new
+        # server_lambda only matches /v1/*. The CDK still registers /api/* routes
+        # but they fall through to the Lambda's catch-all 404. Use the canonical
+        # /v1/schemas path that schema_service_client uses.
+        if ! sr_resp=$(curl -fsS -X POST "${FOLDDB_TEST_DEV_SCHEMA:?}/v1/schemas" \
             -H 'Content-Type: application/json' \
             -d "$sr_body" 2>&1); then
           echo "[step] schema_register: dev schema service rejected fixture: $sr_resp" >&2
