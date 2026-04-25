@@ -4,8 +4,8 @@
 use crate::handlers::fingerprints as fp_handlers;
 use crate::handlers::fingerprints::IngestPhotoFacesRequest;
 use crate::server::http_server::AppState;
-use crate::server::routes::{handler_error_to_response, node_or_return};
-use actix_web::{web, HttpResponse, Responder};
+use crate::server::routes::{handler_result_to_response, node_or_return};
+use actix_web::{web, Responder};
 
 /// POST /api/fingerprints/ingest-photo-faces
 ///
@@ -23,8 +23,5 @@ pub async fn ingest_photo_faces(
     let (_user_hash, node) = node_or_return!(state);
     let request = body.into_inner();
 
-    match fp_handlers::ingest_photo_faces_batch(node, request).await {
-        Ok(response) => HttpResponse::Ok().json(response),
-        Err(e) => handler_error_to_response(e),
-    }
+    handler_result_to_response(fp_handlers::ingest_photo_faces_batch(node, request).await)
 }

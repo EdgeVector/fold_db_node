@@ -4,8 +4,8 @@
 
 use crate::handlers::fingerprints as fp_handlers;
 use crate::server::http_server::AppState;
-use crate::server::routes::{handler_error_to_response, node_or_return};
-use actix_web::{web, HttpResponse, Responder};
+use crate::server::routes::{handler_result_to_response, node_or_return};
+use actix_web::{web, Responder};
 use serde::Deserialize;
 
 /// Body payload for `PATCH /api/fingerprints/personas/{id}`.
@@ -47,10 +47,7 @@ pub struct UpdatePersonaRequest {
 pub async fn list_personas(state: web::Data<AppState>) -> impl Responder {
     let (_user_hash, node) = node_or_return!(state);
 
-    match fp_handlers::list_personas(node).await {
-        Ok(response) => HttpResponse::Ok().json(response),
-        Err(e) => handler_error_to_response(e),
-    }
+    handler_result_to_response(fp_handlers::list_personas(node).await)
 }
 
 /// GET /api/fingerprints/personas/{id} — return a single Persona's
@@ -60,10 +57,7 @@ pub async fn get_persona(path: web::Path<String>, state: web::Data<AppState>) ->
 
     let persona_id = path.into_inner();
 
-    match fp_handlers::get_persona(node, persona_id).await {
-        Ok(response) => HttpResponse::Ok().json(response),
-        Err(e) => handler_error_to_response(e),
-    }
+    handler_result_to_response(fp_handlers::get_persona(node, persona_id).await)
 }
 
 /// DELETE /api/fingerprints/personas/{id} — delete a Persona record.
@@ -73,10 +67,7 @@ pub async fn get_persona(path: web::Path<String>, state: web::Data<AppState>) ->
 pub async fn delete_persona(path: web::Path<String>, state: web::Data<AppState>) -> impl Responder {
     let (_user_hash, node) = node_or_return!(state);
     let persona_id = path.into_inner();
-    match fp_handlers::delete_persona(node, persona_id).await {
-        Ok(response) => HttpResponse::Ok().json(response),
-        Err(e) => handler_error_to_response(e),
-    }
+    handler_result_to_response(fp_handlers::delete_persona(node, persona_id).await)
 }
 
 /// PATCH /api/fingerprints/personas/{id} — update mutable fields on
@@ -108,10 +99,7 @@ pub async fn update_persona(
         clear_identity_id: body.clear_identity_id,
     };
 
-    match fp_handlers::apply_persona_patch(node, persona_id, patch).await {
-        Ok(response) => HttpResponse::Ok().json(response),
-        Err(e) => handler_error_to_response(e),
-    }
+    handler_result_to_response(fp_handlers::apply_persona_patch(node, persona_id, patch).await)
 }
 
 /// POST /api/fingerprints/personas/{id}/merge — merge another
@@ -125,8 +113,7 @@ pub async fn merge_personas(
 ) -> impl Responder {
     let (_user_hash, node) = node_or_return!(state);
     let survivor_id = path.into_inner();
-    match fp_handlers::merge_personas(node, survivor_id, body.into_inner()).await {
-        Ok(response) => HttpResponse::Ok().json(response),
-        Err(e) => handler_error_to_response(e),
-    }
+    handler_result_to_response(
+        fp_handlers::merge_personas(node, survivor_id, body.into_inner()).await,
+    )
 }
