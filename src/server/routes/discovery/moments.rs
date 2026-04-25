@@ -1,6 +1,6 @@
 //! Photo moment detection endpoints.
 
-use super::get_discovery_config;
+use super::discovery_config_or_return;
 use crate::handlers::discovery as discovery_handlers;
 use crate::server::http_server::AppState;
 use crate::server::routes::{handler_error_to_response, node_or_return};
@@ -49,10 +49,7 @@ pub async fn moment_scan(
 ) -> impl Responder {
     let (_user_hash, node) = node_or_return!(state);
 
-    let (_url, key) = match get_discovery_config(&state).await {
-        Ok(c) => c,
-        Err(response) => return response,
-    };
+    let (_url, key) = discovery_config_or_return!(state);
 
     match discovery_handlers::moment_scan(&node, &key, &body).await {
         Ok(response) => HttpResponse::Ok().json(response),

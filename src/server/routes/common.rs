@@ -103,6 +103,25 @@ macro_rules! node_or_return {
 }
 pub(crate) use node_or_return;
 
+/// Macro that calls `require_user_context` and returns early on error.
+///
+/// Replaces the 4-line match boilerplate:
+/// ```ignore
+/// let user_id = match require_user_context() {
+///     Ok(hash) => hash,
+///     Err(response) => return response,
+/// };
+/// ```
+macro_rules! user_context_or_return {
+    () => {
+        match $crate::server::routes::common::require_user_context() {
+            Ok(hash) => hash,
+            Err(response) => return response,
+        }
+    };
+}
+pub(crate) use user_context_or_return;
+
 /// Historical name retained to avoid churning dozens of call sites. Since
 /// `FoldNode` is `Sync` and no handler ever takes it mutably, we simply
 /// return the `Arc<FoldNode>` directly — callers that do `node.method()`

@@ -19,7 +19,7 @@ use crate::ingestion::service_state::IngestionServiceState;
 #[cfg(target_os = "macos")]
 use crate::ingestion::IngestionRequest;
 use crate::server::http_server::AppState;
-use crate::server::routes::common::require_node;
+use crate::server::routes::common::{node_or_return, require_node};
 
 /// GET /api/ingestion/apple-import/status
 /// Returns whether Apple import is available (macOS only).
@@ -48,10 +48,7 @@ pub async fn apple_import_notes(
         }));
     }
 
-    let (user_id, node_arc) = match require_node(&state).await {
-        Ok(ctx) => ctx,
-        Err(response) => return response,
-    };
+    let (user_id, node_arc) = node_or_return!(state);
 
     let service = match ingestion_service.read().await.clone() {
         Some(s) => s,
@@ -225,10 +222,7 @@ pub async fn apple_import_reminders(
         }));
     }
 
-    let (user_id, node_arc) = match require_node(&state).await {
-        Ok(ctx) => ctx,
-        Err(response) => return response,
-    };
+    let (user_id, node_arc) = node_or_return!(state);
 
     let service = match ingestion_service.read().await.clone() {
         Some(s) => s,
@@ -430,10 +424,7 @@ pub async fn apple_import_photos(
         }));
     }
 
-    let (user_id, node_arc) = match require_node(&state).await {
-        Ok(ctx) => ctx,
-        Err(response) => return response,
-    };
+    let (user_id, node_arc) = node_or_return!(state);
 
     let service = match ingestion_service.read().await.clone() {
         Some(s) => s,
@@ -712,10 +703,7 @@ pub async fn apple_import_calendar(
         }));
     }
 
-    let (user_id, node_arc) = match require_node(&state).await {
-        Ok(ctx) => ctx,
-        Err(response) => return response,
-    };
+    let (user_id, node_arc) = node_or_return!(state);
 
     let service = match ingestion_service.read().await.clone() {
         Some(s) => s,
@@ -984,10 +972,7 @@ pub async fn apple_import_contacts(
         }));
     }
 
-    let (user_id, node_arc) = match require_node(&state).await {
-        Ok(ctx) => ctx,
-        Err(response) => return response,
-    };
+    let (user_id, node_arc) = node_or_return!(state);
 
     let service = match ingestion_service.read().await.clone() {
         Some(s) => s,

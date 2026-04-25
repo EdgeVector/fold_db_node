@@ -11,7 +11,7 @@ use crate::ingestion::smart_folder::batch::spawn_batch_coordinator;
 use crate::ingestion::ProgressTracker;
 use crate::server::http_server::AppState;
 use crate::server::routes::ingestion::{folder_error_to_response, require_ingestion_context};
-use crate::server::routes::{require_node, require_user_context};
+use crate::server::routes::{require_node, user_context_or_return};
 use actix_web::{web, HttpResponse, Responder};
 use fold_db::log_feature;
 use fold_db::logging::features::LogFeature;
@@ -94,10 +94,7 @@ pub async fn smart_folder_scan(
         request.folder_path
     );
 
-    let user_id = match require_user_context() {
-        Ok(hash) => hash,
-        Err(response) => return response,
-    };
+    let user_id = user_context_or_return!();
 
     let folder_path = resolve_folder_path(&request.folder_path);
 

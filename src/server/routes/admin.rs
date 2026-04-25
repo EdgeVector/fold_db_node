@@ -1,5 +1,5 @@
 use crate::server::http_server::AppState;
-use crate::server::routes::require_user_context;
+use crate::server::routes::user_context_or_return;
 use actix_web::{web, HttpResponse, Responder};
 use fold_db::log_feature;
 use fold_db::logging::features::LogFeature;
@@ -187,10 +187,7 @@ pub async fn reset_database(
         ));
     }
 
-    let user_id = match require_user_context() {
-        Ok(hash) => hash,
-        Err(response) => return response,
-    };
+    let user_id = user_context_or_return!();
 
     let job_id = match create_async_job(
         "reset",
@@ -283,10 +280,7 @@ pub async fn migrate_to_cloud(
     progress_tracker: web::Data<ProgressTracker>,
     req: web::Json<MigrateToCloudRequest>,
 ) -> impl Responder {
-    let user_id = match require_user_context() {
-        Ok(hash) => hash,
-        Err(response) => return response,
-    };
+    let user_id = user_context_or_return!();
 
     if req.api_url.is_empty() || req.api_key.is_empty() {
         return HttpResponse::BadRequest()

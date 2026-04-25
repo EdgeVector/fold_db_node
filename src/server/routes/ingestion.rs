@@ -15,7 +15,7 @@ use crate::ingestion::IngestionRequest;
 use crate::ingestion::ProgressTracker;
 use crate::ingestion::{AiMetricsStore, Role, RoleMetricsSnapshot};
 use crate::server::http_server::AppState;
-use crate::server::routes::{handler_error_to_response, require_node, require_user_context};
+use crate::server::routes::{handler_error_to_response, require_node, user_context_or_return};
 use actix_web::{web, HttpResponse, Responder};
 use fold_db::log_feature;
 use fold_db::logging::features::LogFeature;
@@ -469,10 +469,7 @@ pub async fn get_progress(
         id
     );
 
-    let user_hash = match require_user_context() {
-        Ok(hash) => hash,
-        Err(response) => return response,
-    };
+    let user_hash = user_context_or_return!();
 
     match crate::handlers::ingestion::get_progress(&id, &user_hash, progress_tracker.get_ref())
         .await
@@ -496,10 +493,7 @@ pub async fn get_all_progress(progress_tracker: web::Data<ProgressTracker>) -> i
         "Received request for all progress"
     );
 
-    let user_hash = match require_user_context() {
-        Ok(hash) => hash,
-        Err(response) => return response,
-    };
+    let user_hash = user_context_or_return!();
 
     match crate::handlers::ingestion::get_all_progress(&user_hash, progress_tracker.get_ref()).await
     {
@@ -516,10 +510,7 @@ pub async fn get_all_progress(progress_tracker: web::Data<ProgressTracker>) -> i
     responses((status = 200, description = "Progress summary counts"))
 )]
 pub async fn get_progress_summary(progress_tracker: web::Data<ProgressTracker>) -> impl Responder {
-    let user_hash = match require_user_context() {
-        Ok(hash) => hash,
-        Err(response) => return response,
-    };
+    let user_hash = user_context_or_return!();
 
     let response =
         match crate::handlers::ingestion::get_all_progress(&user_hash, progress_tracker.get_ref())
