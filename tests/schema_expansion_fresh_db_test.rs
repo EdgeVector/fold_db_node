@@ -235,23 +235,27 @@ async fn test_schema_expansion_on_fresh_db() {
     } // drop db_2 guard before using processor
 
     let processor_2 = OperationProcessor::new(std::sync::Arc::new(node_2.clone()));
-    // list_schemas returns only active (non-blocked) schemas
-    let active_schemas = processor_2.list_schemas().await.unwrap();
+    // list_schemas returns only active (non-blocked) schemas, including the
+    // built-in TriggerFiring schema auto-registered by FoldDB. Filter it out
+    // so we only count user-supplied schemas for the expansion assertion.
+    let active_schemas: Vec<_> = processor_2
+        .list_schemas()
+        .await
+        .unwrap()
+        .into_iter()
+        .filter(|s| s.schema.name != fold_db::triggers::TRIGGER_FIRING_SCHEMA_NAME)
+        .collect();
 
-    eprintln!("Active schemas: {}", active_schemas.len());
+    eprintln!("Active user schemas: {}", active_schemas.len());
     for s in &active_schemas {
-        eprintln!(
-            "  Active: {} fields={:?}",
-            &s.schema.name[..16],
-            s.schema.fields
-        );
+        eprintln!("  Active: {} fields={:?}", s.schema.name, s.schema.fields);
     }
     eprintln!("add_resp_b fields: {:?}", add_resp_b.schema.fields);
 
     assert_eq!(
         active_schemas.len(),
         1,
-        "Should have exactly 1 active schema"
+        "Should have exactly 1 active user schema"
     );
     assert_eq!(
         active_schemas[0].schema.name, add_resp_b.schema.name,

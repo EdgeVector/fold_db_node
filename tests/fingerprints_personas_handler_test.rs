@@ -26,6 +26,7 @@ use fold_db_node::fingerprints::schemas::{
     EDGE, EDGE_BY_FINGERPRINT, FINGERPRINT, MENTION, MENTION_BY_FINGERPRINT, MENTION_BY_SOURCE,
     PERSONA,
 };
+use fold_db_node::fingerprints::self_identity::bootstrap_self_identity;
 use fold_db_node::fingerprints::writer::write_records;
 use fold_db_node::fold_node::config::NodeConfig;
 use fold_db_node::fold_node::FoldNode;
@@ -48,6 +49,18 @@ async fn create_node(schema_service_url: &str) -> (Arc<FoldNode>, TempDir) {
         .with_seed_identity(fold_db_node::identity::identity_from_keypair(&keypair));
     let node = FoldNode::new(config).await.expect("create FoldNode");
     (Arc::new(node), tmp)
+}
+
+/// Register Phase 1 schemas + seed the Me persona. In production
+/// `FoldNode::new` runs both steps once an `IdentityCard` has been
+/// saved by the setup wizard; tests stand in for the wizard by
+/// invoking `bootstrap_self_identity` directly so the assertions
+/// that expect a built-in self-persona stay accurate.
+async fn register_and_bootstrap(node: &Arc<FoldNode>) {
+    register_phase_1_schemas(node).await.unwrap();
+    bootstrap_self_identity(node.clone(), "Tom Tang".to_string())
+        .await
+        .expect("bootstrap self identity");
 }
 
 // ── Synthetic-data helpers ────────────────────────────────────────
@@ -191,7 +204,7 @@ async fn list_personas_on_empty_node_returns_zero_entries() {
 
     let service = spawn_schema_service().await;
     let (node, _tmp) = create_node(&service.url).await;
-    register_phase_1_schemas(&node).await.unwrap();
+    register_and_bootstrap(&node).await;
 
     let response = list_personas(node.clone()).await.expect("list ok");
     let data = response.data.expect("response has data");
@@ -204,7 +217,7 @@ async fn list_personas_returns_summary_with_resolved_counts() {
 
     let service = spawn_schema_service().await;
     let (node, _tmp) = create_node(&service.url).await;
-    register_phase_1_schemas(&node).await.unwrap();
+    register_and_bootstrap(&node).await;
 
     // Build a tiny graph: fp_A ← StrongMatch(0.97) → fp_B
     // Two mentions covering both.
@@ -269,7 +282,7 @@ async fn get_persona_returns_detail_with_resolved_cluster() {
 
     let service = spawn_schema_service().await;
     let (node, _tmp) = create_node(&service.url).await;
-    register_phase_1_schemas(&node).await.unwrap();
+    register_and_bootstrap(&node).await;
 
     let fp_a = fp_from_seed(0.1);
     let fp_b = fp_from_seed(0.2);
@@ -314,7 +327,7 @@ async fn get_persona_returns_not_found_for_unknown_id() {
 
     let service = spawn_schema_service().await;
     let (node, _tmp) = create_node(&service.url).await;
-    register_phase_1_schemas(&node).await.unwrap();
+    register_and_bootstrap(&node).await;
 
     let result = get_persona(node.clone(), "ps_nonexistent".to_string()).await;
     let err = result.expect_err("must be NotFound");
