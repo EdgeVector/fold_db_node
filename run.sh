@@ -78,6 +78,49 @@ cleanup_processes() {
     echo "Cleaned up existing processes."
 }
 
+# Reap slot files in ~/.folddb-slots/ whose owning run.sh PID is dead. For each
+# dead slot, kill any lingering server children we can identify (via PID files
+# in the slot's home, plus a port-listener fallback) and remove the slot file.
+# Runs at startup so successive invocations clean up after predecessors that
+# were SIGKILL'd or whose parent agent crashed before the EXIT trap could fire.
+sweep_dead_slots() {
+    local slot_dir="$HOME/.folddb-slots"
+    [ -d "$slot_dir" ] || return 0
+    local cleaned=0
+    for slot_file in "$slot_dir"/*.json; do
+        [ -e "$slot_file" ] || continue
+        local owner_pid slot_home slot_port
+        # Tolerant parsing — missing fields just skip the slot.
+        owner_pid="$(grep -oE '"pid":[[:space:]]*[0-9]+' "$slot_file" 2>/dev/null | grep -oE '[0-9]+$' || true)"
+        slot_home="$(grep -oE '"home":[[:space:]]*"[^"]*"' "$slot_file" 2>/dev/null | sed -E 's/.*"home":[[:space:]]*"([^"]*)".*/\1/' || true)"
+        slot_port="$(grep -oE '"port":[[:space:]]*[0-9]+' "$slot_file" 2>/dev/null | grep -oE '[0-9]+$' || true)"
+        # Active session — leave alone.
+        [ -n "$owner_pid" ] && kill -0 "$owner_pid" 2>/dev/null && continue
+        # Owner is dead (or pid field missing). Kill any server children we can
+        # find via the slot's home PID files.
+        if [ -n "$slot_home" ] && [ -d "$slot_home" ]; then
+            kill_pid_file "$slot_home/folddb.pid"
+            kill_pid_file "$slot_home/schema.pid"
+            kill_pid_file "$slot_home/vite.pid"
+        fi
+        # Belt-and-braces: kill anything still listening on the slot's port —
+        # catches the case where slot_home was deleted before the server was.
+        if [ -n "$slot_port" ]; then
+            local stuck
+            stuck="$(lsof -nP -iTCP:"$slot_port" -sTCP:LISTEN -t 2>/dev/null || true)"
+            if [ -n "$stuck" ]; then
+                kill $stuck 2>/dev/null || true
+                sleep 1
+                kill -9 $stuck 2>/dev/null || true
+            fi
+        fi
+        rm -f "$slot_file"
+        cleaned=$((cleaned + 1))
+    done
+    [ $cleaned -gt 0 ] && echo "Reaped $cleaned stale slot file(s) from crashed prior session(s)."
+    return 0
+}
+
 # Cleanup handler for script exit
 on_exit() {
     echo "Shutting down..."
@@ -90,6 +133,9 @@ on_exit() {
     fi
 }
 trap on_exit EXIT
+
+# Reap slot/server state from prior sessions before we pick our own slot.
+sweep_dead_slots
 
 reset_db() {
     echo "Resetting database from test_db template..."
