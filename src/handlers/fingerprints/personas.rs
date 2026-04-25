@@ -27,7 +27,7 @@ use crate::fingerprints::canonical_names;
 use crate::fingerprints::resolver::{PersonaResolver, PersonaSpec, ResolveDiagnostics};
 use crate::fingerprints::schemas::{EDGE, FINGERPRINT, MENTION, MENTION_BY_FINGERPRINT, PERSONA};
 use crate::fold_node::FoldNode;
-use crate::handlers::response::{ApiResponse, HandlerError, HandlerResult};
+use crate::handlers::response::{require_non_empty, ApiResponse, HandlerError, HandlerResult};
 use fold_db::schema::types::key_value::KeyValue;
 use fold_db::schema::types::operations::{MutationType, Query};
 use serde::{Deserialize, Serialize};
@@ -887,11 +887,7 @@ pub async fn apply_persona_patch(
         }
     }
     if let Some(ref name) = patch.name {
-        if name.trim().is_empty() {
-            return Err(HandlerError::BadRequest(
-                "name must not be empty".to_string(),
-            ));
-        }
+        require_non_empty(name, "name must not be empty")?;
     }
     if let Some(ref relationship) = patch.relationship {
         if !ALLOWED_RELATIONSHIPS.contains(&relationship.as_str()) {

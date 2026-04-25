@@ -12,7 +12,7 @@
 
 use crate::fingerprints::ingest_text::{ingest_text_signals, TextIngestionOutcome};
 use crate::fold_node::FoldNode;
-use crate::handlers::response::{ApiResponse, HandlerError, HandlerResult};
+use crate::handlers::response::{require_non_empty, ApiResponse, HandlerResult};
 use chrono::Utc;
 use serde::{Deserialize, Serialize};
 use std::sync::Arc;
@@ -68,11 +68,10 @@ pub async fn ingest_text_signals_batch(
     node: Arc<FoldNode>,
     request: IngestTextSignalsRequest,
 ) -> HandlerResult<IngestTextSignalsResponse> {
-    if request.source_schema.trim().is_empty() {
-        return Err(HandlerError::BadRequest(
-            "source_schema must be a non-empty string".to_string(),
-        ));
-    }
+    require_non_empty(
+        &request.source_schema,
+        "source_schema must be a non-empty string",
+    )?;
 
     let now_iso8601 = Utc::now().to_rfc3339();
     let total_records = request.records.len();

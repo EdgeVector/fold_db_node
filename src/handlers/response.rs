@@ -259,3 +259,47 @@ pub fn get_db_guard(
     node.get_fold_db()
         .map_err(|e| HandlerError::Internal(format!("Failed to access database: {}", e)))
 }
+
+/// Validate that a string field is non-empty after trimming.
+///
+/// Replaces the repeated 3-line pattern:
+/// ```ignore
+/// if value.trim().is_empty() {
+///     return Err(HandlerError::BadRequest("X must not be empty".to_string()));
+/// }
+/// ```
+/// with a single line:
+/// ```ignore
+/// require_non_empty(value, "X must not be empty")?;
+/// ```
+pub fn require_non_empty(value: &str, message: &str) -> Result<(), HandlerError> {
+    if value.trim().is_empty() {
+        return Err(HandlerError::BadRequest(message.to_string()));
+    }
+    Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn require_non_empty_accepts_populated_string() {
+        assert!(require_non_empty("hello", "msg").is_ok());
+    }
+
+    #[test]
+    fn require_non_empty_rejects_empty_string() {
+        let err = require_non_empty("", "field is required").unwrap_err();
+        match err {
+            HandlerError::BadRequest(msg) => assert_eq!(msg, "field is required"),
+            other => panic!("expected BadRequest, got {:?}", other),
+        }
+    }
+
+    #[test]
+    fn require_non_empty_rejects_whitespace_only() {
+        let err = require_non_empty("   \t\n", "field is required").unwrap_err();
+        assert!(matches!(err, HandlerError::BadRequest(_)));
+    }
+}

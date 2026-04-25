@@ -36,7 +36,7 @@
 use crate::fingerprints::extractors::face::DetectedFace;
 use crate::fingerprints::ingest_photo::{ingest_photo_faces, IngestionOutcome};
 use crate::fold_node::FoldNode;
-use crate::handlers::response::{ApiResponse, HandlerError, HandlerResult};
+use crate::handlers::response::{require_non_empty, ApiResponse, HandlerResult};
 use chrono::Utc;
 use serde::{Deserialize, Serialize};
 use std::sync::Arc;
@@ -153,11 +153,10 @@ pub async fn ingest_photo_faces_batch(
     node: Arc<FoldNode>,
     request: IngestPhotoFacesRequest,
 ) -> HandlerResult<IngestPhotoFacesResponse> {
-    if request.source_schema.trim().is_empty() {
-        return Err(HandlerError::BadRequest(
-            "source_schema must be a non-empty string".to_string(),
-        ));
-    }
+    require_non_empty(
+        &request.source_schema,
+        "source_schema must be a non-empty string",
+    )?;
 
     let now_iso8601 = Utc::now().to_rfc3339();
     let total_photos = request.photos.len();

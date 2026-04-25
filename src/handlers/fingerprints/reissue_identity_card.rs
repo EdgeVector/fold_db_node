@@ -55,7 +55,7 @@ use crate::fingerprints::schemas::{IDENTITY, PERSONA};
 use crate::fingerprints::self_identity::IdentityCardPayload;
 use crate::fold_node::FoldNode;
 use crate::handlers::fingerprints::my_identity_card::MyIdentityCardResponse;
-use crate::handlers::response::{ApiResponse, HandlerError, HandlerResult};
+use crate::handlers::response::{require_non_empty, ApiResponse, HandlerError, HandlerResult};
 
 /// Request body for the reissue endpoint. Both fields are optional
 /// — the handler enforces "at least one op" up front.
@@ -119,11 +119,7 @@ pub async fn reissue_identity_card(
         ));
     }
     if let Some(ref name) = request.display_name {
-        if name.trim().is_empty() {
-            return Err(HandlerError::BadRequest(
-                "display_name must not be empty".to_string(),
-            ));
-        }
+        require_non_empty(name, "display_name must not be empty")?;
     }
 
     let identity_canonical = canonical_names::lookup(IDENTITY).map_err(|e| {
