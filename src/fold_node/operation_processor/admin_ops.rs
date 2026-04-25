@@ -2,7 +2,26 @@ use crate::fold_node::config::DatabaseConfig;
 use crate::ingestion::ingestion_service::IngestionService;
 use fold_db::error::{FoldDbError, FoldDbResult};
 use fold_db::fold_db_core::orchestration::IndexingStatus;
+use fold_db::storage::SledPool;
 use std::collections::HashMap;
+use std::sync::Arc;
+
+/// Raw `(key, value)` pairs read from a Sled tree, used by the reset
+/// flow to round-trip the preserved trees through a directory wipe.
+type StashedEntries = Vec<(Vec<u8>, Vec<u8>)>;
+
+/// Sled trees that survive a database reset.
+///
+/// `node_identity` holds the device's Ed25519 keypair (from which the
+/// E2E sync key is derived). Wiping it would force a fresh identity on
+/// next start, which means the device can no longer decrypt anything it
+/// previously wrote — even if the data weren't already gone.
+///
+/// `org_memberships` holds each joined org's `org_e2e_secret`. Losing
+/// them disconnects the user from every org without a server-side
+/// "leave org" call; the user would have to re-accept invites to regain
+/// access, even though they're still members on the cloud.
+const RESET_PRESERVED_TREES: &[&str] = &["node_identity", "org_memberships"];
 
 use super::OperationProcessor;
 
@@ -84,6 +103,29 @@ impl OperationProcessor {
     }
 
     /// Reset the database (destructive operation).
+    ///
+    /// Wipes user data (molecules, schemas, atoms, sync cursors, all
+    /// other Sled trees) AND, when cloud sync is enabled, deletes the
+    /// remote sync log + snapshots so the next sync cycle does not
+    /// re-bootstrap the just-deleted state.
+    ///
+    /// Two trees are preserved across the reset:
+    /// - `node_identity` — the Ed25519 keypair (E2E key derives from it)
+    /// - `org_memberships` — joined orgs and their shared E2E secrets
+    ///
+    /// Org cloud logs (`{org_hash}/log/*`) are NOT touched. They are
+    /// shared state across org members; leaving an org is a separate
+    /// flow (`org_service`, not reset).
+    ///
+    /// Failure modes:
+    /// - **Cloud purge fails**: returns an error WITHOUT wiping local
+    ///   data. The opposite ordering would leave the user with an empty
+    ///   local DB plus an intact cloud log — the next sync would replay
+    ///   the cloud log on top, producing exactly the bug this method
+    ///   exists to fix.
+    /// - **Stash read fails / restore write fails**: also surfaced as
+    ///   errors. Identity loss is irreversible without the recovery
+    ///   phrase, so we'd rather abort than silently regenerate.
     pub async fn perform_database_reset(
         &self,
         #[allow(unused_variables)] user_id_override: Option<&str>,
@@ -91,12 +133,81 @@ impl OperationProcessor {
         let config = self.node.config.clone();
         let db_path = config.get_storage_path();
 
-        // Drop the database guard to release Sled locks before deleting files
+        // Hold a clone of the running FoldDB (and its SledPool) so we
+        // can read the preserved trees AND drive the cloud purge before
+        // wiping the directory. Both must happen with the live pool
+        // because the tree contents and the SyncEngine become
+        // unreachable once the dir is gone.
+        let fold_db = self
+            .node
+            .get_fold_db()
+            .map_err(|e| FoldDbError::Config(format!("Failed to get FoldDB: {e}")))?;
+        let pool = fold_db
+            .sled_pool()
+            .ok_or_else(|| {
+                FoldDbError::Config(
+                    "FoldDB has no SledPool — cannot reset a non-Sled-backed database".into(),
+                )
+            })?
+            .clone();
+
+        // === Step 1: Stash the preserved trees as raw bytes. ===
+        //
+        // Raw byte copy avoids any decrypt/re-encrypt round-trip
+        // (identity is encrypted with the OS keychain master key when
+        // `os-keychain` is on, plaintext otherwise — we don't care
+        // which, the bytes are valid in the new tree as-is).
+        let mut stashed: Vec<(&str, StashedEntries)> =
+            Vec::with_capacity(RESET_PRESERVED_TREES.len());
+        for name in RESET_PRESERVED_TREES {
+            let entries = read_tree_raw(&pool, name)?;
+            log::info!("reset: stashed {} entries from '{}'", entries.len(), name);
+            stashed.push((name, entries));
+        }
+
+        // === Step 2: Stop sync + purge personal cloud log. ===
+        //
+        // `stop_sync` aborts the background timer so no new entries
+        // race the purge. `purge_personal_log` then takes the device
+        // lock and deletes every `{user_hash}/log/*.enc` and every
+        // `{user_hash}/snapshots/*.enc`. Org prefixes are untouched.
+        if let Some(engine) = fold_db.sync_engine() {
+            if let Err(e) = fold_db.stop_sync().await {
+                // Final-sync failures are non-fatal here — the purge
+                // will delete whatever was/wasn't uploaded.
+                log::warn!("reset: stop_sync returned error (continuing with purge): {e}");
+            }
+            match engine.purge_personal_log().await {
+                Ok(outcome) => log::info!(
+                    "reset: purged cloud log ({} log objects, {} snapshots)",
+                    outcome.deleted_log_objects,
+                    outcome.deleted_snapshots,
+                ),
+                Err(e) => {
+                    return Err(FoldDbError::Other(format!(
+                        "Failed to purge cloud sync log: {e} — local data NOT wiped \
+                         (cloud would otherwise restore it on next sync). \
+                         Check connectivity and retry."
+                    )));
+                }
+            }
+        }
+
+        // === Step 3: Drop refs to the running pool, wipe the dir. ===
+        //
+        // The running pool's Arc is shared with the FoldNode (which
+        // outlives us — `node_manager.invalidate_all_nodes()` runs
+        // *after* this method returns), so we don't get exclusive
+        // ownership of the flock here. We drop our own clones, wipe
+        // the directory anyway (the existing pre-fix reset also did
+        // this and worked in production), and let the new standalone
+        // pool below acquire a flock on the freshly-created inode.
+        drop(pool);
+        drop(fold_db);
         if let Ok(db) = self.get_db() {
             drop(db);
         }
 
-        // All configs use local Sled storage — reset by removing and recreating the directory
         if db_path.exists() {
             if let Err(e) = std::fs::remove_dir_all(&db_path) {
                 log::error!("Failed to delete database folder: {}", e);
@@ -108,6 +219,27 @@ impl OperationProcessor {
             return Err(FoldDbError::Io(e));
         }
 
+        // === Step 4: Restore preserved trees into a fresh pool. ===
+        //
+        // Standalone pool acquires a brand-new flock on the freshly
+        // recreated directory inode (the running pool's flock, if it
+        // still exists, is on the deleted inode and doesn't conflict).
+        // Drop releases the flock so `invalidate_all_nodes()` can build
+        // a fresh FoldNode against the same path.
+        let restore_pool = Arc::new(SledPool::new(db_path.clone()));
+        for (name, entries) in &stashed {
+            write_tree_raw(&restore_pool, name, entries)?;
+        }
+        drop(restore_pool);
+
+        log::info!(
+            "reset: complete — identity preserved, {} org memberships preserved, cloud log purged",
+            stashed
+                .iter()
+                .find(|(n, _)| *n == "org_memberships")
+                .map(|(_, e)| e.len())
+                .unwrap_or(0)
+        );
         Ok(())
     }
 
@@ -355,5 +487,131 @@ impl OperationProcessor {
             entry_count
         );
         Ok(())
+    }
+}
+
+/// Read every `(key, value)` from `tree_name` as raw bytes.
+///
+/// Returns an empty vec if the tree doesn't exist yet (e.g., fresh
+/// install before any identity is generated). Used by
+/// [`OperationProcessor::perform_database_reset`] to stash preserved
+/// trees before wiping the storage directory.
+fn read_tree_raw(pool: &Arc<SledPool>, tree_name: &str) -> FoldDbResult<StashedEntries> {
+    let guard = pool
+        .acquire_arc()
+        .map_err(|e| FoldDbError::Database(format!("acquire pool to read '{tree_name}': {e}")))?;
+    let tree = guard
+        .db()
+        .open_tree(tree_name)
+        .map_err(|e| FoldDbError::Database(format!("open tree '{tree_name}' for read: {e}")))?;
+    let mut entries = Vec::new();
+    for entry in tree.iter() {
+        let (k, v) =
+            entry.map_err(|e| FoldDbError::Database(format!("iterate '{tree_name}': {e}")))?;
+        entries.push((k.to_vec(), v.to_vec()));
+    }
+    Ok(entries)
+}
+
+/// Write each `(key, value)` raw byte pair into `tree_name`.
+///
+/// The tree is created if it doesn't exist. Flushed before returning so
+/// the bytes are durable before the standalone pool's flock releases.
+fn write_tree_raw(
+    pool: &Arc<SledPool>,
+    tree_name: &str,
+    entries: &StashedEntries,
+) -> FoldDbResult<()> {
+    let guard = pool
+        .acquire_arc()
+        .map_err(|e| FoldDbError::Database(format!("acquire pool to write '{tree_name}': {e}")))?;
+    let tree = guard
+        .db()
+        .open_tree(tree_name)
+        .map_err(|e| FoldDbError::Database(format!("open tree '{tree_name}' for write: {e}")))?;
+    for (k, v) in entries {
+        tree.insert(k.as_slice(), v.as_slice())
+            .map_err(|e| FoldDbError::Database(format!("insert into '{tree_name}': {e}")))?;
+    }
+    tree.flush()
+        .map_err(|e| FoldDbError::Database(format!("flush '{tree_name}': {e}")))?;
+    Ok(())
+}
+
+#[cfg(test)]
+mod reset_helpers_tests {
+    //! Unit tests for the raw-byte tree round-trip helpers used by
+    //! [`OperationProcessor::perform_database_reset`].
+    //!
+    //! End-to-end testing of `perform_database_reset` itself requires a
+    //! full FoldNode + SyncEngine stack — that lives in integration
+    //! tests. These tests cover the part that's pure file I/O so the
+    //! reset's preserve-and-restore contract has unit-level coverage.
+
+    use super::*;
+
+    fn temp_pool() -> (Arc<SledPool>, tempfile::TempDir) {
+        let tmp = tempfile::tempdir().expect("tempdir");
+        let pool = Arc::new(SledPool::new(tmp.path().to_path_buf()));
+        (pool, tmp)
+    }
+
+    #[test]
+    fn read_then_write_round_trips_node_identity() {
+        let (pool, _tmp) = temp_pool();
+        // Seed the source tree with two entries.
+        {
+            let guard = pool.acquire_arc().unwrap();
+            let tree = guard.db().open_tree("node_identity").unwrap();
+            tree.insert(b"private_key", b"priv-bytes".as_ref()).unwrap();
+            tree.insert(b"public_key", b"pub-bytes".as_ref()).unwrap();
+            tree.flush().unwrap();
+        }
+
+        // Stash, then restore into a fresh pool against a different
+        // path — this models the wipe-and-recreate flow that
+        // `perform_database_reset` performs.
+        let stashed = read_tree_raw(&pool, "node_identity").unwrap();
+        assert_eq!(stashed.len(), 2);
+
+        let (dest_pool, _dest_tmp) = temp_pool();
+        write_tree_raw(&dest_pool, "node_identity", &stashed).unwrap();
+
+        let restored = read_tree_raw(&dest_pool, "node_identity").unwrap();
+        assert_eq!(stashed, restored, "raw bytes must round-trip exactly");
+    }
+
+    #[test]
+    fn read_returns_empty_for_missing_tree() {
+        let (pool, _tmp) = temp_pool();
+        // Tree never created — should return empty, not error. This
+        // matches the fresh-install case where `node_identity` doesn't
+        // exist yet at the moment of reset.
+        let entries = read_tree_raw(&pool, "node_identity").unwrap();
+        assert!(entries.is_empty());
+    }
+
+    #[test]
+    fn write_empty_entries_is_a_noop() {
+        let (pool, _tmp) = temp_pool();
+        write_tree_raw(&pool, "org_memberships", &Vec::new()).unwrap();
+        let entries = read_tree_raw(&pool, "org_memberships").unwrap();
+        assert!(entries.is_empty());
+    }
+
+    #[test]
+    fn preserved_trees_constant_includes_identity_and_orgs() {
+        // Regression guard: the preserved-tree list is the entire
+        // contract this reset relies on. If a refactor accidentally
+        // drops one, the symptom is silent identity loss on next
+        // reset — a lot worse than a failing test.
+        assert!(
+            RESET_PRESERVED_TREES.contains(&"node_identity"),
+            "node_identity must survive reset (E2E key derives from it)"
+        );
+        assert!(
+            RESET_PRESERVED_TREES.contains(&"org_memberships"),
+            "org_memberships must survive reset (org E2E secrets are not recoverable)"
+        );
     }
 }

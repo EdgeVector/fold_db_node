@@ -429,7 +429,13 @@ async fn dispatch_http(
                     return Err(CliError::new("Database reset requires --confirm flag"));
                 }
                 let confirmed = dialoguer::Confirm::new()
-                    .with_prompt("This will permanently delete all data. Are you sure?")
+                    .with_prompt(
+                        "This will permanently delete all local data. \
+                         If cloud sync is enabled, your remote sync log will also be deleted \
+                         (other devices on this account lose unsynced changes on next sync). \
+                         Your node identity and org memberships are preserved. \
+                         Are you sure?",
+                    )
                     .default(false)
                     .interact()
                     .map_err(|e| CliError::new(format!("Prompt failed: {}", e)))?;

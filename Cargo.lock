@@ -1881,7 +1881,7 @@ checksum = "3f9eec918d3f24069decb9af1554cad7c880e2da24a9afd88aca000531ab82c1"
 [[package]]
 name = "fold_db"
 version = "0.3.0"
-source = "git+https://github.com/EdgeVector/fold_db.git?branch=mainline#55d7dacf3033e51fb590e9cb157c140b387ebb83"
+source = "git+https://github.com/EdgeVector/fold_db.git?rev=21585574330503ed70fd1341aa6b3951fe9c2949#21585574330503ed70fd1341aa6b3951fe9c2949"
 dependencies = [
  "aes-gcm",
  "async-trait",
@@ -2756,6 +2756,25 @@ name = "impl-more"
 version = "0.1.9"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "e8a5a9a0ff0086c7a148acb942baaabeadf9504d10400b5a05645853729b9cd2"
+
+[[package]]
+name = "include_dir"
+version = "0.7.4"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "923d117408f1e49d914f1a379a309cffe4f18c05cf4e3d12e613a15fc81bd0dd"
+dependencies = [
+ "include_dir_macros",
+]
+
+[[package]]
+name = "include_dir_macros"
+version = "0.7.4"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "7cab85a7ed0bd5f0e76d93846e0147172bed2e2d3f859bcc33a8d9699cad1a75"
+dependencies = [
+ "proc-macro2",
+ "quote",
+]
 
 [[package]]
 name = "indexmap"
@@ -4570,7 +4589,7 @@ dependencies = [
 [[package]]
 name = "schema_service_client"
 version = "0.1.0"
-source = "git+https://github.com/EdgeVector/schema_service.git?branch=main#07b3d1a0a8df09ca2ca945aced4369e6fd42479f"
+source = "git+https://github.com/EdgeVector/schema_service.git?branch=main#785c17b3a279155629932d3f7efcce70cee3ad43"
 dependencies = [
  "fold_db",
  "futures",
@@ -4585,12 +4604,13 @@ dependencies = [
 [[package]]
 name = "schema_service_core"
 version = "0.1.0"
-source = "git+https://github.com/EdgeVector/schema_service.git?branch=main#07b3d1a0a8df09ca2ca945aced4369e6fd42479f"
+source = "git+https://github.com/EdgeVector/schema_service.git?branch=main#785c17b3a279155629932d3f7efcce70cee3ad43"
 dependencies = [
  "async-trait",
  "chrono-tz",
  "croner",
  "fold_db",
+ "include_dir",
  "log",
  "reqwest 0.11.27",
  "serde",
@@ -4606,7 +4626,7 @@ dependencies = [
 [[package]]
 name = "schema_service_server_http"
 version = "0.1.0"
-source = "git+https://github.com/EdgeVector/schema_service.git?branch=main#07b3d1a0a8df09ca2ca945aced4369e6fd42479f"
+source = "git+https://github.com/EdgeVector/schema_service.git?branch=main#785c17b3a279155629932d3f7efcce70cee3ad43"
 dependencies = [
  "actix-cors",
  "actix-web",
@@ -4622,7 +4642,7 @@ dependencies = [
 [[package]]
 name = "schema_service_server_shared"
 version = "0.1.0"
-source = "git+https://github.com/EdgeVector/schema_service.git?branch=main#07b3d1a0a8df09ca2ca945aced4369e6fd42479f"
+source = "git+https://github.com/EdgeVector/schema_service.git?branch=main#785c17b3a279155629932d3f7efcce70cee3ad43"
 dependencies = [
  "actix-web",
  "chrono",
@@ -6050,7 +6070,7 @@ dependencies = [
 [[package]]
 name = "wasm_compiler"
 version = "0.1.0"
-source = "git+https://github.com/EdgeVector/schema_service.git?branch=main#07b3d1a0a8df09ca2ca945aced4369e6fd42479f"
+source = "git+https://github.com/EdgeVector/schema_service.git?branch=main#785c17b3a279155629932d3f7efcce70cee3ad43"
 dependencies = [
  "log",
  "tempfile",

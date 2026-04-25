@@ -198,6 +198,8 @@ function StatusSection() {
               <li>All schemas will be removed</li>
               <li>All stored data will be deleted</li>
               <li>Network connections will be reset</li>
+              <li>If cloud sync is on, your remote sync log is also deleted &mdash; other devices on this account lose their unsynced changes on the next sync</li>
+              <li>Your node identity and org memberships are preserved &mdash; you stay logged in</li>
               <li>This action cannot be undone</li>
             </ul>
           </div>

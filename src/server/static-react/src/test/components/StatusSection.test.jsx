@@ -152,6 +152,10 @@ describe('StatusSection Component', () => {
       expect(screen.getByText(/This will permanently delete all data/)).toBeInTheDocument()
       expect(screen.getByText(/All schemas will be removed/)).toBeInTheDocument()
       expect(screen.getByText(/This action cannot be undone/)).toBeInTheDocument()
+      // Cloud-aware reset: warn that the remote sync log is also deleted
+      // and that identity/orgs are preserved (cloud-aware reset behavior).
+      expect(screen.getByText(/remote sync log/i)).toBeInTheDocument()
+      expect(screen.getByText(/node identity and org memberships are preserved/i)).toBeInTheDocument()
     })
 
     it('closes confirmation dialog when cancel is clicked', () => {

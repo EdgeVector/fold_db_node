@@ -97,7 +97,7 @@ function useDatabaseConfig({ configSaveStatus, setConfigSaveStatus, onClose }) {
             <TrashIcon className="w-5 h-5 text-gruvbox-red" />
             <h4 className="text-md font-semibold text-gruvbox-red">Danger Zone</h4>
           </div>
-          <p className="text-sm text-secondary mb-4">Permanently delete all data and restart. Cannot be undone.</p>
+          <p className="text-sm text-secondary mb-4">Permanently delete all local data and (if cloud sync is on) the remote sync log. Cannot be undone. Your node identity and org memberships are preserved.</p>
           {!isResetting ? (
             <button onClick={handleResetDatabase} className="btn-danger flex items-center gap-2"><TrashIcon className="w-4 h-4" /> Reset Database</button>
           ) : (
