@@ -12,7 +12,9 @@
 
 use crate::discovery::connection::get_pseudonym_public_key_b64;
 use crate::fold_node::node::FoldNode;
-use crate::handlers::response::{ApiResponse, HandlerError, HandlerResult, IntoHandlerError};
+use crate::handlers::response::{
+    require_non_empty, ApiResponse, HandlerError, HandlerResult, IntoHandlerError,
+};
 use crate::trust::contact_book::{Contact, ContactBook, TrustDirection};
 use chrono::Utc;
 use serde::{Deserialize, Serialize};
@@ -71,19 +73,14 @@ pub async fn upsert_contact(
     require_enabled()?;
 
     // Validate inputs
-    if req.node_public_key.trim().is_empty() {
-        return Err(HandlerError::BadRequest(
-            "node_public_key cannot be empty".to_string(),
-        ));
-    }
+    require_non_empty(&req.node_public_key, "node_public_key cannot be empty")?;
     let _ = Uuid::parse_str(&req.messaging_pseudonym).map_err(|e| {
         HandlerError::BadRequest(format!("messaging_pseudonym must be a valid UUID: {}", e))
     })?;
-    if req.messaging_public_key.trim().is_empty() {
-        return Err(HandlerError::BadRequest(
-            "messaging_public_key cannot be empty".to_string(),
-        ));
-    }
+    require_non_empty(
+        &req.messaging_public_key,
+        "messaging_public_key cannot be empty",
+    )?;
 
     let role_domain = "personal".to_string();
     let role_name = req.role.clone().unwrap_or_else(|| "friend".to_string());

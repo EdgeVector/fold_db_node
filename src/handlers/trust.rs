@@ -10,7 +10,9 @@
 use crate::discovery::publisher::DiscoveryPublisher;
 use crate::fold_node::node::FoldNode;
 use crate::fold_node::OperationProcessor;
-use crate::handlers::response::{ApiResponse, HandlerError, HandlerResult, IntoTypedHandlerError};
+use crate::handlers::response::{
+    require_non_empty, ApiResponse, HandlerError, HandlerResult, IntoTypedHandlerError,
+};
 use crate::trust::identity_card::IdentityCard;
 use crate::trust::trust_invite::TrustInvite;
 use fold_db::access::AccessTier;
@@ -31,11 +33,10 @@ pub(crate) fn resolve_sender_name_from_identity(
         ));
     };
     let name = card.display_name;
-    if name.trim().is_empty() {
-        return Err(HandlerError::BadRequest(
-            "Cannot send invite — set your display name in Settings first.".to_string(),
-        ));
-    }
+    require_non_empty(
+        &name,
+        "Cannot send invite — set your display name in Settings first.",
+    )?;
     Ok(name)
 }
 
@@ -244,11 +245,7 @@ pub async fn add_trust_domain_grant(
             "Trust domain name must not be empty".to_string(),
         ));
     }
-    if req.public_key.trim().is_empty() {
-        return Err(HandlerError::BadRequest(
-            "public_key must not be empty".to_string(),
-        ));
-    }
+    require_non_empty(&req.public_key, "public_key must not be empty")?;
     let op = OperationProcessor::from_ref(node);
     op.grant_trust_for_domain(&req.public_key, domain, req.tier)
         .await
@@ -276,11 +273,7 @@ pub async fn remove_trust_domain_grant(
             "Trust domain name must not be empty".to_string(),
         ));
     }
-    if public_key.trim().is_empty() {
-        return Err(HandlerError::BadRequest(
-            "public_key must not be empty".to_string(),
-        ));
-    }
+    require_non_empty(public_key, "public_key must not be empty")?;
     let op = OperationProcessor::from_ref(node);
     op.revoke_trust_for_domain(public_key, domain)
         .await
