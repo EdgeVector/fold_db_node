@@ -84,18 +84,18 @@ pub async fn require_node(
     Ok((user_hash, node))
 }
 
-/// Macro that calls `require_node_read` and returns early on error.
+/// Macro that calls `require_node` and returns early on error.
 ///
 /// Replaces the 4-line match boilerplate used in every route handler:
 /// ```ignore
-/// let (user_hash, node) = match require_node_read(&state).await {
+/// let (user_hash, node) = match require_node(&state).await {
 ///     Ok(res) => res,
 ///     Err(response) => return response,
 /// };
 /// ```
 macro_rules! node_or_return {
     ($state:expr) => {
-        match $crate::server::routes::common::require_node_read(&$state).await {
+        match $crate::server::routes::common::require_node(&$state).await {
             Ok(res) => res,
             Err(response) => return response,
         }
@@ -121,16 +121,6 @@ macro_rules! user_context_or_return {
     };
 }
 pub(crate) use user_context_or_return;
-
-/// Historical name retained to avoid churning dozens of call sites. Since
-/// `FoldNode` is `Sync` and no handler ever takes it mutably, we simply
-/// return the `Arc<FoldNode>` directly — callers that do `node.method()`
-/// work unchanged via `Arc`'s `Deref`.
-pub async fn require_node_read(
-    state: &web::Data<AppState>,
-) -> Result<(String, Arc<FoldNode>), HttpResponse> {
-    require_node(state).await
-}
 
 #[cfg(test)]
 pub mod test_helpers {

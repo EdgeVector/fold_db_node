@@ -30,20 +30,20 @@ LOCK_PATCHED_CRATES=(
     schema_service_server_http
 )
 
-if echo "$STAGED" | grep -qx 'Cargo.lock'; then
+if grep -qxF 'Cargo.lock' <<<"$STAGED"; then
     # Inspect the staged version of Cargo.lock (not the working tree).
     STAGED_LOCK=$(git show ":Cargo.lock")
     for crate in "${LOCK_PATCHED_CRATES[@]}"; do
-        block=$(printf '%s\n' "$STAGED_LOCK" | awk -v c="$crate" '
+        block=$(awk -v c="$crate" '
             $0 == "[[package]]" { inblock = 1; buf = $0; seen = 0; next }
             inblock && /^$/     { if (seen) { print buf; exit } inblock = 0; buf = ""; next }
             inblock             { buf = buf "\n" $0; if ($0 == "name = \"" c "\"") seen = 1 }
             END                 { if (inblock && seen) print buf }
-        ')
+        ' <<<"$STAGED_LOCK")
         if [ -z "$block" ]; then
             continue
         fi
-        if ! printf '%s\n' "$block" | grep -q '^source = '; then
+        if ! grep -q '^source = ' <<<"$block"; then
             echo "pre-commit: Cargo.lock has a [[package]] entry for \`$crate\`" >&2
             echo "pre-commit: with NO \`source = \` line. That happens when you" >&2
             echo "pre-commit: ran \`cargo check\` with .cargo/config.toml active" >&2

@@ -1197,13 +1197,6 @@ fn string_array_field(fields: &Value, name: &str) -> Vec<String> {
         .unwrap_or_default()
 }
 
-// Silence unused-import warning for HashMap — reserved for future
-// field handling where HashMap-shaped records may appear.
-#[allow(dead_code)]
-fn _unused_hashmap() {
-    let _: HashMap<String, String> = HashMap::new();
-}
-
 /// Request body for [`merge_personas`]. The URL names the survivor
 /// (`{id}` in `POST /personas/{id}/merge`); the body names the
 /// persona whose seeds + aliases get folded in and then deleted.

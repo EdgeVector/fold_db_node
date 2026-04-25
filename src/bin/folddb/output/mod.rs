@@ -1,6 +1,5 @@
 pub mod human;
 pub mod json;
-pub mod spinner;
 
 use crate::commands::CommandOutput;
 
