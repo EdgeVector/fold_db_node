@@ -50,13 +50,17 @@ get_pending_requests() {
 
 # get_schema_record_count NODE_PORT HASH SCHEMA_NAME
 # Returns the number of records in a schema (looks up by descriptive_name).
+# Filters to state=Approved so we don't pick a stale Available copy when the
+# dev-cloud schema service has accumulated multiple schemas with the same
+# descriptive_name from prior nightly runs (e.g. several "Photography"
+# schemas — only the one this node ingested into is Approved + queryable).
 get_schema_record_count() {
   local port="$1" hash="$2" schema_name="$3"
   # Look up schema by descriptive_name, then query all records
   local schema_hash
   schema_hash=$(curl -fsS "http://127.0.0.1:$port/api/schemas" \
     -H "X-User-Hash: $hash" \
-    | jq -r --arg name "$schema_name" '.schemas[] | select(.descriptive_name == $name) | .name' \
+    | jq -r --arg name "$schema_name" '.schemas[] | select(.descriptive_name == $name and .state == "Approved") | .name' \
     | head -1)
   if [[ -z "$schema_hash" ]]; then
     echo 0
@@ -71,12 +75,13 @@ get_schema_record_count() {
 # get_shared_record_count NODE_PORT HASH SCHEMA_NAME EXPECTED_AUTHOR_PUBKEY
 # Returns the count of records in a schema whose author_pub_key matches the expected key.
 # Used to verify the shared_by attribution feature (PR #396).
+# Filters to state=Approved (see get_schema_record_count for rationale).
 get_shared_record_count() {
   local port="$1" hash="$2" schema_name="$3" expected_pk="$4"
   local schema_hash
   schema_hash=$(curl -fsS "http://127.0.0.1:$port/api/schemas" \
     -H "X-User-Hash: $hash" \
-    | jq -r --arg name "$schema_name" '.schemas[] | select(.descriptive_name == $name) | .name' \
+    | jq -r --arg name "$schema_name" '.schemas[] | select(.descriptive_name == $name and .state == "Approved") | .name' \
     | head -1)
   [[ -n "$schema_hash" ]] || { echo 0; return 0; }
 

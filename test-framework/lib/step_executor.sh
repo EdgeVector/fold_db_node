@@ -148,12 +148,15 @@ execute_action() {
           continue
         fi
         ing_errs=0
-        n=$(echo "$schemas_resp" | jq '[.schemas[] | select(.descriptive_name == "Photography")] | length')
+        # Count + look up Photography only when state=Approved. Available copies
+        # left over from prior dev-cloud test runs are loaded but unqueryable;
+        # filtering avoids picking one and timing out waiting for records.
+        n=$(echo "$schemas_resp" | jq '[.schemas[] | select(.descriptive_name == "Photography" and .state == "Approved")] | length')
         if (( n > 0 )); then
           # Check if records exist
           local schema_hash
           schema_hash=$(curl -fsS "http://127.0.0.1:$port/api/schemas" -H "X-User-Hash: $hash" \
-            | jq -r '.schemas[] | select(.descriptive_name == "Photography") | .name' | head -1)
+            | jq -r '.schemas[] | select(.descriptive_name == "Photography" and .state == "Approved") | .name' | head -1)
           if [[ -n "$schema_hash" ]]; then
             local recs
             recs=$(curl -fsS "http://127.0.0.1:$port/api/schema/$schema_hash/keys" \
@@ -204,9 +207,10 @@ execute_action() {
     opt_in_photography)
       local publish_faces schema_hash
       publish_faces=$(echo "$action_json" | jq -r '.publish_faces // false')
-      # Resolve Photography schema hash
+      # Resolve Photography schema hash; require Approved state — see ingest_photo
+      # poll loop above for the dev-cloud "duplicate descriptive_name" rationale.
       schema_hash=$(curl -fsS "http://127.0.0.1:$port/api/schemas" -H "X-User-Hash: $hash" \
-        | jq -r '.schemas[] | select(.descriptive_name == "Photography") | .name' | head -1)
+        | jq -r '.schemas[] | select(.descriptive_name == "Photography" and .state == "Approved") | .name' | head -1)
       [[ -n "$schema_hash" ]] || { echo "[step] Photography schema not found" >&2; return 1; }
       curl -fsS -X POST "http://127.0.0.1:$port/api/discovery/opt-in" \
         -H "Content-Type: application/json" \
@@ -249,7 +253,7 @@ execute_action() {
       face_index=$(echo "$action_json" | jq -r '.face_index // 0')
       schema_name=$(echo "$action_json" | jq -r '.schema // "Photography"')
       schema_hash=$(curl -fsS "http://127.0.0.1:$port/api/schemas" -H "X-User-Hash: $hash" \
-        | jq -r --arg name "$schema_name" '.schemas[] | select(.descriptive_name == $name) | .name' | head -1)
+        | jq -r --arg name "$schema_name" '.schemas[] | select(.descriptive_name == $name and .state == "Approved") | .name' | head -1)
       [[ -n "$schema_hash" ]] || { echo "[step] schema $schema_name not found" >&2; return 1; }
       # Get the first record key
       record_key=$(echo "$action_json" | jq -r '.record_key // ""')
@@ -479,7 +483,7 @@ execute_action() {
         | jq -r '(.contacts // .)[0].public_key')
       [[ -n "$contact_pk" && "$contact_pk" != "null" ]] || { echo "[step] no contact to share with" >&2; return 1; }
       schema_hash=$(curl -fsS "http://127.0.0.1:$port/api/schemas" -H "X-User-Hash: $hash" \
-        | jq -r --arg name "$schema_name" '.schemas[] | select(.descriptive_name == $name) | .name' | head -1)
+        | jq -r --arg name "$schema_name" '.schemas[] | select(.descriptive_name == $name and .state == "Approved") | .name' | head -1)
       record_key=$(curl -fsS "http://127.0.0.1:$port/api/schema/$schema_hash/keys" \
         -H "X-User-Hash: $hash" | jq -r '(.keys // [])[0].hash // (.keys // [])[0].range // ""')
       curl -fsS -X POST "http://127.0.0.1:$port/api/discovery/share" \
