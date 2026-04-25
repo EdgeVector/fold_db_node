@@ -1,6 +1,6 @@
 //! Discovery opt-in / opt-out configuration endpoints.
 
-use super::{get_auth_token, get_discovery_config};
+use super::{auth_token_or_return, discovery_config_or_return};
 use crate::handlers::discovery as discovery_handlers;
 use crate::server::http_server::AppState;
 use crate::server::routes::{handler_error_to_response, node_or_return};
@@ -34,10 +34,7 @@ pub async fn opt_in(
 pub async fn my_pseudonyms(state: web::Data<AppState>) -> impl Responder {
     let (_user_hash, node) = node_or_return!(state);
 
-    let (_url, key) = match get_discovery_config(&state).await {
-        Ok(c) => c,
-        Err(response) => return response,
-    };
+    let (_url, key) = discovery_config_or_return!(state);
 
     match discovery_handlers::my_pseudonyms(&node, &key).await {
         Ok(response) => HttpResponse::Ok().json(response),
@@ -63,15 +60,9 @@ pub async fn opt_out(
 ) -> impl Responder {
     let (_user_hash, node) = node_or_return!(state);
 
-    let (url, key) = match get_discovery_config(&state).await {
-        Ok(c) => c,
-        Err(response) => return response,
-    };
+    let (url, key) = discovery_config_or_return!(state);
 
-    let auth_token = match get_auth_token(&req) {
-        Ok(t) => t,
-        Err(response) => return response,
-    };
+    let auth_token = auth_token_or_return!(req);
 
     match discovery_handlers::opt_out(&body, &node, &url, &auth_token, &key).await {
         Ok(response) => HttpResponse::Ok().json(response),

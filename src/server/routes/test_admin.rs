@@ -5,7 +5,7 @@
 
 use crate::handlers::admin as admin_handlers;
 use crate::server::http_server::AppState;
-use crate::server::routes::discovery::get_discovery_config;
+use crate::server::routes::discovery::discovery_config_or_return;
 use crate::server::routes::{
     handler_error_to_response, handler_result_to_response, node_or_return,
 };
@@ -25,10 +25,7 @@ pub async fn upsert_contact(
 pub async fn my_messaging_keys(state: web::Data<AppState>) -> impl Responder {
     let (user_hash, node) = node_or_return!(state);
 
-    let (_url, master_key) = match get_discovery_config(&state).await {
-        Ok(c) => c,
-        Err(response) => return response,
-    };
+    let (_url, master_key) = discovery_config_or_return!(state);
 
     match admin_handlers::my_messaging_keys(&user_hash, &node, &master_key).await {
         Ok(resp) => HttpResponse::Ok().json(resp),

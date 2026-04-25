@@ -11,7 +11,7 @@ use crate::ingestion::service_state::{get_ingestion_service, IngestionServiceSta
 use crate::ingestion::{IngestionRequest, ProgressTracker};
 use crate::server::http_server::AppState;
 use crate::server::routes::ingestion::ingestion_unavailable;
-use crate::server::routes::require_node;
+use crate::server::routes::node_or_return;
 use actix_multipart::Multipart;
 use actix_web::{web, HttpResponse, Responder};
 use fold_db::log_feature;
@@ -358,10 +358,7 @@ pub async fn upload_file(
 ) -> impl Responder {
     log_feature!(LogFeature::Ingestion, info, "Received file upload request");
 
-    let (user_id, node_arc) = match require_node(&state).await {
-        Ok(res) => res,
-        Err(response) => return response,
-    };
+    let (user_id, node_arc) = node_or_return!(state);
     let encryption_key = {
         let node = node_arc.as_ref();
         node.get_encryption_key()
@@ -643,10 +640,7 @@ pub async fn serve_file(
 ) -> impl Responder {
     let file_hash = path.into_inner();
 
-    let (_user_id, node_arc) = match require_node(&state).await {
-        Ok(res) => res,
-        Err(response) => return response,
-    };
+    let (_user_id, node_arc) = node_or_return!(state);
     let encryption_key = {
         let node = node_arc.as_ref();
         node.get_encryption_key()

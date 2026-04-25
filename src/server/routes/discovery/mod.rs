@@ -59,6 +59,44 @@ pub(crate) async fn get_discovery_config(
     }
 }
 
+/// Macro that calls `get_discovery_config` and returns early on error.
+///
+/// Replaces the 4-line match boilerplate:
+/// ```ignore
+/// let (url, key) = match get_discovery_config(&state).await {
+///     Ok(c) => c,
+///     Err(response) => return response,
+/// };
+/// ```
+macro_rules! discovery_config_or_return {
+    ($state:expr) => {
+        match $crate::server::routes::discovery::get_discovery_config(&$state).await {
+            Ok(c) => c,
+            Err(response) => return response,
+        }
+    };
+}
+pub(crate) use discovery_config_or_return;
+
+/// Macro that calls `get_auth_token` and returns early on error.
+///
+/// Replaces the 4-line match boilerplate:
+/// ```ignore
+/// let auth_token = match get_auth_token(&req) {
+///     Ok(t) => t,
+///     Err(response) => return response,
+/// };
+/// ```
+macro_rules! auth_token_or_return {
+    ($req:expr) => {
+        match $crate::server::routes::discovery::get_auth_token(&$req) {
+            Ok(t) => t,
+            Err(response) => return response,
+        }
+    };
+}
+pub(crate) use auth_token_or_return;
+
 /// Extract the auth token from env var, local credential store, or the incoming request's
 /// Authorization header. Env var is checked first to avoid unnecessary file reads
 /// in dev/CLI mode.
