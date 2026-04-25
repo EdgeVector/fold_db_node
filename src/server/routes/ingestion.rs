@@ -65,6 +65,31 @@ pub(crate) async fn require_ingestion_context(
     Ok((user_id, node_arc, service))
 }
 
+/// Macro that calls `require_ingestion_context` and returns early on error.
+///
+/// Replaces:
+/// ```ignore
+/// let (user_id, node_arc, service) =
+///     match require_ingestion_context(&state, &ingestion_service).await {
+///         Ok(ctx) => ctx,
+///         Err(response) => return response,
+///     };
+/// ```
+macro_rules! ingestion_context_or_return {
+    ($state:expr, $ingestion_service:expr) => {
+        match $crate::server::routes::ingestion::require_ingestion_context(
+            &$state,
+            &$ingestion_service,
+        )
+        .await
+        {
+            Ok(ctx) => ctx,
+            Err(response) => return response,
+        }
+    };
+}
+pub(crate) use ingestion_context_or_return;
+
 // ── Core ingestion routes ──────────────────────────────────────────
 
 /// Process JSON ingestion request
@@ -87,11 +112,7 @@ pub async fn process_json(
         "Received JSON ingestion request"
     );
 
-    let (user_id, node_arc, service) =
-        match require_ingestion_context(&state, &ingestion_service).await {
-            Ok(ctx) => ctx,
-            Err(response) => return response,
-        };
+    let (user_id, node_arc, service) = ingestion_context_or_return!(state, ingestion_service);
 
     // Lock briefly — handler clones the node and spawns a background task
     let node = node_arc.as_ref();
@@ -588,11 +609,7 @@ pub async fn batch_folder_ingest(
         request.folder_path
     );
 
-    let (user_id, node_arc, service) =
-        match require_ingestion_context(&state, &ingestion_service).await {
-            Ok(ctx) => ctx,
-            Err(response) => return response,
-        };
+    let (user_id, node_arc, service) = ingestion_context_or_return!(state, ingestion_service);
 
     let folder_path = resolve_folder_path(&request.folder_path);
 

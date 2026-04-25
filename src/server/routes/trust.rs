@@ -295,20 +295,51 @@ fn require_json_str<'a>(body: &'a serde_json::Value, field: &str) -> Result<&'a 
     })
 }
 
+/// Macro that calls `require_publisher` and returns early on error.
+///
+/// Replaces:
+/// ```ignore
+/// let publisher = match require_publisher(&state).await {
+///     Ok(p) => p,
+///     Err(r) => return r,
+/// };
+/// ```
+macro_rules! publisher_or_return {
+    ($state:expr) => {
+        match require_publisher(&$state).await {
+            Ok(p) => p,
+            Err(r) => return r,
+        }
+    };
+}
+
+/// Macro that calls `require_json_str` and returns early on error,
+/// converting the borrowed `&str` into an owned `String`.
+///
+/// Replaces:
+/// ```ignore
+/// let token = match require_json_str(&body, "token") {
+///     Ok(t) => t.to_string(),
+///     Err(r) => return r,
+/// };
+/// ```
+macro_rules! json_str_or_return {
+    ($body:expr, $field:literal) => {
+        match require_json_str(&$body, $field) {
+            Ok(v) => v.to_string(),
+            Err(r) => return r,
+        }
+    };
+}
+
 /// POST /api/trust/invite/share
 pub async fn share_trust_invite(
     body: web::Json<serde_json::Value>,
     state: web::Data<AppState>,
 ) -> impl Responder {
     let (user_hash, _node) = node_or_return!(state);
-    let publisher = match require_publisher(&state).await {
-        Ok(p) => p,
-        Err(r) => return r,
-    };
-    let invite_token = match require_json_str(&body, "token") {
-        Ok(t) => t.to_string(),
-        Err(r) => return r,
-    };
+    let publisher = publisher_or_return!(state);
+    let invite_token = json_str_or_return!(body, "token");
     handler_result_to_response(
         trust_handlers::share_trust_invite(&publisher, &invite_token, &user_hash).await,
     )
@@ -320,10 +351,7 @@ pub async fn fetch_shared_invite(
     state: web::Data<AppState>,
 ) -> impl Responder {
     let (_user_hash, _node) = node_or_return!(state);
-    let publisher = match require_publisher(&state).await {
-        Ok(p) => p,
-        Err(r) => return r,
-    };
+    let publisher = publisher_or_return!(state);
     let invite_id = match query.get("id") {
         Some(id) => id.clone(),
         None => {
@@ -340,18 +368,9 @@ pub async fn send_verified_invite(
     state: web::Data<AppState>,
 ) -> impl Responder {
     let (user_hash, node) = node_or_return!(state);
-    let publisher = match require_publisher(&state).await {
-        Ok(p) => p,
-        Err(r) => return r,
-    };
-    let invite_token = match require_json_str(&body, "token") {
-        Ok(t) => t.to_string(),
-        Err(r) => return r,
-    };
-    let recipient_email = match require_json_str(&body, "recipient_email") {
-        Ok(e) => e.to_string(),
-        Err(r) => return r,
-    };
+    let publisher = publisher_or_return!(state);
+    let invite_token = json_str_or_return!(body, "token");
+    let recipient_email = json_str_or_return!(body, "recipient_email");
     // SECURITY: sender_name is intentionally NOT read from the request body.
     // The handler resolves it from the server-owned identity card to prevent
     // clients from spoofing a display name (e.g. "PayPal Security Team") in
@@ -374,18 +393,9 @@ pub async fn verify_invite_code(
     state: web::Data<AppState>,
 ) -> impl Responder {
     let (_user_hash, _node) = node_or_return!(state);
-    let publisher = match require_publisher(&state).await {
-        Ok(p) => p,
-        Err(r) => return r,
-    };
-    let invite_id = match require_json_str(&body, "invite_id") {
-        Ok(id) => id.to_string(),
-        Err(r) => return r,
-    };
-    let code = match require_json_str(&body, "code") {
-        Ok(c) => c.to_string(),
-        Err(r) => return r,
-    };
+    let publisher = publisher_or_return!(state);
+    let invite_id = json_str_or_return!(body, "invite_id");
+    let code = json_str_or_return!(body, "code");
     handler_result_to_response(
         trust_handlers::verify_invite_code(&publisher, &invite_id, &code).await,
     )
