@@ -15,7 +15,9 @@ use crate::ingestion::IngestionRequest;
 use crate::ingestion::ProgressTracker;
 use crate::ingestion::{AiMetricsStore, Role, RoleMetricsSnapshot};
 use crate::server::http_server::AppState;
-use crate::server::routes::{handler_error_to_response, require_node, user_context_or_return};
+use crate::server::routes::{
+    handler_error_to_response, handler_result_to_response, require_node, user_context_or_return,
+};
 use actix_web::{web, HttpResponse, Responder};
 use fold_db::log_feature;
 use fold_db::logging::features::LogFeature;
@@ -495,11 +497,9 @@ pub async fn get_all_progress(progress_tracker: web::Data<ProgressTracker>) -> i
 
     let user_hash = user_context_or_return!();
 
-    match crate::handlers::ingestion::get_all_progress(&user_hash, progress_tracker.get_ref()).await
-    {
-        Ok(response) => HttpResponse::Ok().json(response),
-        Err(e) => handler_error_to_response(e),
-    }
+    handler_result_to_response(
+        crate::handlers::ingestion::get_all_progress(&user_hash, progress_tracker.get_ref()).await,
+    )
 }
 
 /// Lightweight progress summary — just counts, no per-job details.

@@ -9,7 +9,7 @@ use actix_web::{web, HttpResponse};
 
 use crate::handlers::auth as handlers_auth;
 use crate::server::http_server::AppState;
-use crate::server::routes::common::handler_error_to_response;
+use crate::server::routes::common::{handler_error_to_response, handler_result_to_response};
 
 // Re-exports so existing `routes::auth::*` call sites keep compiling and so
 // the binary/public API surface is unchanged.
@@ -156,15 +156,13 @@ pub async fn restore_from_phrase(
         }
     };
 
-    match handlers_auth::restore_from_phrase(
-        &data.node_manager,
-        handlers_auth::RestoreFromPhraseInput { words },
+    handler_result_to_response(
+        handlers_auth::restore_from_phrase(
+            &data.node_manager,
+            handlers_auth::RestoreFromPhraseInput { words },
+        )
+        .await,
     )
-    .await
-    {
-        Ok(response) => HttpResponse::Ok().json(response),
-        Err(e) => handler_error_to_response(e),
-    }
 }
 
 /// GET /api/auth/restore/status

@@ -68,14 +68,12 @@ pub async fn generate_invite(
             Ok(response) => return HttpResponse::Ok().json(response),
             Err(e) if is_auth_error(&e) => {
                 if let Some(new_token) = try_refresh_token(&state).await {
-                    return match sharing_handlers::generate_and_send_invite(
-                        &body, &user_hash, &node, &url, &new_token, &key,
-                    )
-                    .await
-                    {
-                        Ok(response) => HttpResponse::Ok().json(response),
-                        Err(e) => handler_error_to_response(e),
-                    };
+                    return handler_result_to_response(
+                        sharing_handlers::generate_and_send_invite(
+                            &body, &user_hash, &node, &url, &new_token, &key,
+                        )
+                        .await,
+                    );
                 }
                 return handler_error_to_response(e);
             }

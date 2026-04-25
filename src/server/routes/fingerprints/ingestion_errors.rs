@@ -3,8 +3,8 @@
 
 use crate::handlers::fingerprints as fp_handlers;
 use crate::server::http_server::AppState;
-use crate::server::routes::{handler_error_to_response, node_or_return};
-use actix_web::{web, HttpResponse, Responder};
+use crate::server::routes::{handler_result_to_response, node_or_return};
+use actix_web::{web, Responder};
 use serde::Deserialize;
 
 /// Query string for `GET /api/fingerprints/ingestion-errors`.
@@ -26,10 +26,7 @@ pub async fn list_ingestion_errors(
     let (_user_hash, node) = node_or_return!(state);
     let include_resolved = query.include_resolved;
 
-    match fp_handlers::list_ingestion_errors(node, include_resolved).await {
-        Ok(response) => HttpResponse::Ok().json(response),
-        Err(e) => handler_error_to_response(e),
-    }
+    handler_result_to_response(fp_handlers::list_ingestion_errors(node, include_resolved).await)
 }
 
 /// Body payload for `PATCH /api/fingerprints/ingestion-errors/{id}`.
@@ -56,8 +53,7 @@ pub async fn resolve_ingestion_error(
     let (_user_hash, node) = node_or_return!(state);
     let error_id = path.into_inner();
 
-    match fp_handlers::resolve_ingestion_error(node, error_id, body.resolved).await {
-        Ok(response) => HttpResponse::Ok().json(response),
-        Err(e) => handler_error_to_response(e),
-    }
+    handler_result_to_response(
+        fp_handlers::resolve_ingestion_error(node, error_id, body.resolved).await,
+    )
 }

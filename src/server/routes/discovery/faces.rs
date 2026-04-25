@@ -3,7 +3,9 @@
 use super::{auth_token_or_return, discovery_config_or_return, is_auth_error, try_refresh_token};
 use crate::handlers::discovery as discovery_handlers;
 use crate::server::http_server::AppState;
-use crate::server::routes::{handler_error_to_response, node_or_return};
+use crate::server::routes::{
+    handler_error_to_response, handler_result_to_response, node_or_return,
+};
 use actix_web::{web, HttpRequest, HttpResponse, Responder};
 
 /// GET /api/discovery/faces/{schema}/{key} — List face embeddings for a record.
@@ -15,10 +17,7 @@ pub async fn list_faces(
 
     let (schema, key) = path.into_inner();
 
-    match discovery_handlers::list_faces(&node, &schema, &key).await {
-        Ok(response) => HttpResponse::Ok().json(response),
-        Err(e) => handler_error_to_response(e),
-    }
+    handler_result_to_response(discovery_handlers::list_faces(&node, &schema, &key).await)
 }
 
 /// POST /api/discovery/face-search — Search discovery network by face embedding.

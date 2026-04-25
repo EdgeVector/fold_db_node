@@ -3,8 +3,8 @@
 
 use crate::handlers::fingerprints as fp_handlers;
 use crate::server::http_server::AppState;
-use crate::server::routes::{handler_error_to_response, node_or_return};
-use actix_web::{web, HttpResponse, Responder};
+use crate::server::routes::{handler_result_to_response, node_or_return};
+use actix_web::{web, Responder};
 use serde::Deserialize;
 
 /// GET /api/fingerprints/suggestions — run the dense-subgraph sweep
@@ -12,10 +12,7 @@ use serde::Deserialize;
 /// MIN_FINGERPRINTS / MIN_MENTIONS gates.
 pub async fn list_suggested_personas(state: web::Data<AppState>) -> impl Responder {
     let (_user_hash, node) = node_or_return!(state);
-    match fp_handlers::list_suggested_personas(node).await {
-        Ok(response) => HttpResponse::Ok().json(response),
-        Err(e) => handler_error_to_response(e),
-    }
+    handler_result_to_response(fp_handlers::list_suggested_personas(node).await)
 }
 
 /// Body payload for `POST /api/fingerprints/suggestions/accept`.
@@ -39,8 +36,5 @@ pub async fn accept_suggested_persona(
         name: body.name,
         relationship: body.relationship,
     };
-    match fp_handlers::accept_suggested_persona(node, req).await {
-        Ok(response) => HttpResponse::Ok().json(response),
-        Err(e) => handler_error_to_response(e),
-    }
+    handler_result_to_response(fp_handlers::accept_suggested_persona(node, req).await)
 }

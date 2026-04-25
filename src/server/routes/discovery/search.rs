@@ -3,7 +3,9 @@
 use super::{auth_token_or_return, discovery_config_or_return, is_auth_error, try_refresh_token};
 use crate::handlers::discovery as discovery_handlers;
 use crate::server::http_server::AppState;
-use crate::server::routes::{handler_error_to_response, node_or_return};
+use crate::server::routes::{
+    handler_error_to_response, handler_result_to_response, node_or_return,
+};
 use actix_web::{web, HttpRequest, HttpResponse, Responder};
 
 /// POST /api/discovery/search — Search the discovery network.
@@ -66,8 +68,7 @@ pub async fn similar_profiles(req: HttpRequest, state: web::Data<AppState>) -> i
 
     let auth_token = auth_token_or_return!(req);
 
-    match discovery_handlers::similar_profiles(&node, &url, &auth_token, &key).await {
-        Ok(response) => HttpResponse::Ok().json(response),
-        Err(e) => handler_error_to_response(e),
-    }
+    handler_result_to_response(
+        discovery_handlers::similar_profiles(&node, &url, &auth_token, &key).await,
+    )
 }

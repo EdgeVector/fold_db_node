@@ -9,7 +9,7 @@
 use crate::handlers::fingerprints as fp_handlers;
 use crate::handlers::fingerprints::DetectFacesRequest;
 use crate::server::http_server::AppState;
-use crate::server::routes::{handler_error_to_response, node_or_return};
+use crate::server::routes::{handler_result_to_response, node_or_return};
 use actix_web::{web, HttpResponse, Responder};
 
 /// POST /api/fingerprints/detect-faces
@@ -25,8 +25,5 @@ pub async fn detect_faces(
     let (_user_hash, node) = node_or_return!(state);
     let request = body.into_inner();
 
-    match fp_handlers::detect_faces(node, request).await {
-        Ok(response) => HttpResponse::Ok().json(response),
-        Err(e) => handler_error_to_response(e),
-    }
+    handler_result_to_response(fp_handlers::detect_faces(node, request).await)
 }
