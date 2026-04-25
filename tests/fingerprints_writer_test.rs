@@ -24,6 +24,7 @@ use fold_db_node::fingerprints::canonical_names;
 use fold_db_node::fingerprints::extractors::face::{plan_face_extraction, DetectedFace};
 use fold_db_node::fingerprints::registration::register_phase_1_schemas;
 use fold_db_node::fingerprints::schemas;
+use fold_db_node::fingerprints::self_identity::bootstrap_self_identity;
 use fold_db_node::fingerprints::writer::write_records;
 use fold_db_node::fold_node::config::NodeConfig;
 use fold_db_node::fold_node::{FoldNode, OperationProcessor};
@@ -66,6 +67,15 @@ async fn face_extraction_plan_writes_all_records_through_schema_service() {
         .await
         .expect("register_phase_1_schemas must succeed");
     assert_eq!(reg.total(), 12);
+
+    // Seed the self-identity records. In production this happens
+    // inside FoldNode::new once an IdentityCard has been saved by the
+    // setup wizard; the test stands in for the wizard so the
+    // assertions below (which expect a self_identity Fingerprint
+    // alongside the two face embeddings) stay accurate.
+    bootstrap_self_identity(node.clone(), "Tom Tang".to_string())
+        .await
+        .expect("bootstrap self identity");
 
     // 2. Build a plan for a synthetic two-face photo.
     let faces = vec![synthetic_face(0.1), synthetic_face(0.2)];

@@ -50,14 +50,19 @@ async fn test_node_new_loads_schemas_for_testing() {
     let fold_db = node.get_fold_db().expect("Failed to get FoldDB");
     let schema_manager = fold_db.schema_manager();
 
-    // Verify that NO schemas were auto-loaded (mock service doesn't load schemas)
+    // FoldDB auto-registers the built-in TriggerFiring schema on every boot
+    // (see fold_db_core::FoldDB::new). The mock schema service skips Phase 1
+    // fingerprint registration, so TriggerFiring should be the only schema
+    // present.
     let schemas = schema_manager.get_schemas().expect("Failed to get schemas");
-
-    // Verify that no schemas are loaded initially with mock service
+    let user_schemas: Vec<_> = schemas
+        .keys()
+        .filter(|name| name.as_str() != fold_db::triggers::TRIGGER_FIRING_SCHEMA_NAME)
+        .collect();
     assert_eq!(
-        schemas.len(),
+        user_schemas.len(),
         0,
-        "No schemas should be auto-loaded with mock schema service"
+        "No user schemas should be auto-loaded with mock schema service"
     );
 
     println!("✅ FoldNode correctly starts with mock schema service for testing!");
