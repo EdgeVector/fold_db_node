@@ -33,9 +33,8 @@ fn node_keypair(node: &FoldNode) -> Result<Ed25519KeyPair, HandlerError> {
     let private_key_b64 = node.get_node_private_key();
     let key_bytes = B64
         .decode(private_key_b64)
-        .map_err(|e| HandlerError::Internal(format!("Failed to decode node private key: {e}")))?;
-    Ed25519KeyPair::from_secret_key(&key_bytes)
-        .map_err(|e| HandlerError::Internal(format!("Failed to build node keypair: {e}")))
+        .handler_err("decode node private key")?;
+    Ed25519KeyPair::from_secret_key(&key_bytes).handler_err("build node keypair")
 }
 
 /// Reconfigure the sync engine's sharing targets from the current on-disk
@@ -201,7 +200,7 @@ fn build_encrypted_invite(
         recipient_messaging_pubkey,
         &rule.share_e2e_secret,
     )
-    .map_err(|e| HandlerError::Internal(format!("Failed to encrypt invite secret: {e}")))?;
+    .handler_err("encrypt invite secret")?;
 
     Ok(ShareInvite {
         sender_pubkey,
@@ -230,10 +229,7 @@ pub async fn generate_invite(
     // key is populated via the discovery connection flow; if it's missing
     // the two nodes haven't exchanged messaging pseudonyms yet.
     let op = crate::fold_node::OperationProcessor::from_ref(node);
-    let book = op
-        .load_contact_book()
-        .await
-        .map_err(|e| HandlerError::Internal(format!("Failed to load contacts: {e}")))?;
+    let book = op.load_contact_book().await.handler_err("load contacts")?;
 
     let contact = book.get(&rule.recipient_pubkey).ok_or_else(|| {
         HandlerError::BadRequest(format!(
@@ -360,10 +356,7 @@ pub async fn generate_and_send_invite(
 
     // Look up recipient contact + messaging pseudonym + X25519 pubkey.
     let op = crate::fold_node::OperationProcessor::from_ref(node);
-    let book = op
-        .load_contact_book()
-        .await
-        .map_err(|e| HandlerError::Internal(format!("Failed to load contacts: {e}")))?;
+    let book = op.load_contact_book().await.handler_err("load contacts")?;
 
     let contact = book.get(&rule.recipient_pubkey).ok_or_else(|| {
         HandlerError::BadRequest(format!(

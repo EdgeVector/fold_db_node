@@ -11,7 +11,8 @@ use crate::discovery::publisher::DiscoveryPublisher;
 use crate::fold_node::node::FoldNode;
 use crate::fold_node::OperationProcessor;
 use crate::handlers::response::{
-    require_non_empty, ApiResponse, HandlerError, HandlerResult, IntoTypedHandlerError,
+    require_non_empty, ApiResponse, HandlerError, HandlerResult, IntoHandlerError,
+    IntoTypedHandlerError,
 };
 use crate::trust::identity_card::IdentityCard;
 use crate::trust::trust_invite::TrustInvite;
@@ -341,8 +342,7 @@ pub async fn get_all_field_policies(
         .get_all_field_policies(&schema_name)
         .await
         .typed_handler_err()?;
-    let policies_json = serde_json::to_value(&policies)
-        .map_err(|e| HandlerError::Internal(format!("Failed to serialize policies: {}", e)))?;
+    let policies_json = serde_json::to_value(&policies).handler_err("serialize policies")?;
     Ok(ApiResponse::success_with_user(
         serde_json::json!({
             "schema_name": schema_name,
@@ -651,7 +651,7 @@ pub async fn list_sharing_roles(node: &FoldNode) -> HandlerResult<serde_json::Va
         .map_err(|e| HandlerError::Internal(format!("FoldDB not available: {e}")))?;
     let config = crate::trust::sharing_roles::SharingRoleConfig::load(&db)
         .await
-        .map_err(|e| HandlerError::Internal(format!("Failed to load roles: {e}")))?;
+        .handler_err("load roles")?;
     Ok(ApiResponse::success(
         serde_json::json!({"roles": config.roles}),
     ))
@@ -723,7 +723,7 @@ pub async fn apply_defaults_all(
     let schemas = db
         .schema_manager()
         .get_schemas_with_states()
-        .map_err(|e| HandlerError::Internal(format!("Failed to get schemas with states: {}", e)))?;
+        .handler_err("get schemas with states")?;
     drop(db);
 
     let mut total_applied = 0usize;

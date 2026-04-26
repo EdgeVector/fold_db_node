@@ -2,7 +2,7 @@
 
 use super::get_metadata_store;
 use crate::fold_node::node::FoldNode;
-use crate::handlers::response::{get_db_guard, ApiResponse, HandlerError, HandlerResult};
+use crate::handlers::response::{get_db_guard, ApiResponse, HandlerResult, IntoHandlerError};
 
 // === Notification handlers ===
 
@@ -14,7 +14,7 @@ pub async fn list_notifications(node: &FoldNode) -> HandlerResult<serde_json::Va
     let entries = store
         .scan_prefix(b"notification:")
         .await
-        .map_err(|e| HandlerError::Internal(format!("Failed to scan notifications: {e}")))?;
+        .handler_err("scan notifications")?;
 
     let notifications: Vec<serde_json::Value> = entries
         .iter()
@@ -41,7 +41,7 @@ pub async fn notification_count(node: &FoldNode) -> HandlerResult<serde_json::Va
     let entries = store
         .scan_prefix(b"notification:")
         .await
-        .map_err(|e| HandlerError::Internal(format!("Failed to scan notifications: {e}")))?;
+        .handler_err("scan notifications")?;
     Ok(ApiResponse::success(serde_json::json!({
         "count": entries.len(),
     })))
@@ -58,7 +58,7 @@ pub async fn dismiss_notification(
     store
         .delete(notification_id.as_bytes())
         .await
-        .map_err(|e| HandlerError::Internal(format!("Failed to dismiss notification: {e}")))?;
+        .handler_err("dismiss notification")?;
 
     Ok(ApiResponse::success(serde_json::json!({"dismissed": true})))
 }

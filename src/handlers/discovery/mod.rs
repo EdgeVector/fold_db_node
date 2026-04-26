@@ -761,7 +761,7 @@ pub async fn respond_to_request(
             .map_err(|e| HandlerError::Internal(format!("FoldDB not available: {e}")))?;
         let card = IdentityCard::load(&db)
             .await
-            .map_err(|e| HandlerError::Internal(format!("Failed to load identity card: {e}")))?
+            .handler_err("load identity card")?
             .ok_or_else(|| {
                 HandlerError::BadRequest(
                     "Cannot accept connection: identity card not set up. Please set your display name first.".to_string(),
@@ -774,10 +774,7 @@ pub async fn respond_to_request(
 
     let role_name = req.role.as_deref().unwrap_or("acquaintance");
     let op = OperationProcessor::from_ref(node);
-    let config = op
-        .load_sharing_roles()
-        .await
-        .map_err(|e| HandlerError::Internal(format!("Failed to load roles: {e}")))?;
+    let config = op.load_sharing_roles().await.handler_err("load roles")?;
 
     if req.action == "accept" {
         config
@@ -800,9 +797,7 @@ pub async fn respond_to_request(
         // Grant trust for the sender's public key
         op.grant_trust_for_domain(&updated.sender_public_key, &role.domain, role.tier)
             .await
-            .map_err(|e: fold_db::schema::SchemaError| {
-                HandlerError::Internal(format!("Failed to grant trust: {e}"))
-            })?;
+            .handler_err("grant trust")?;
 
         // Create contact (direction = Incoming because they initiated the request)
         let contact = Contact::from_discovery(
@@ -819,14 +814,11 @@ pub async fn respond_to_request(
             role.domain.clone(),
             role_name.to_string(),
         );
-        let mut book = op
-            .load_contact_book()
-            .await
-            .map_err(|e| HandlerError::Internal(format!("Failed to load contacts: {e}")))?;
+        let mut book = op.load_contact_book().await.handler_err("load contacts")?;
         book.upsert_contact(contact);
         op.save_contact_book(&book)
             .await
-            .map_err(|e| HandlerError::Internal(format!("Failed to save contacts: {e}")))?;
+            .handler_err("save contacts")?;
 
         // Build and send encrypted acceptance message with identity card
         let reply_pk_bytes = B64
@@ -1197,10 +1189,7 @@ pub async fn send_data_share(
 ) -> HandlerResult<DataShareResponse> {
     // 1. Look up recipient in contact book
     let op = OperationProcessor::from_ref(node);
-    let book = op
-        .load_contact_book()
-        .await
-        .map_err(|e| HandlerError::Internal(format!("Failed to load contacts: {e}")))?;
+    let book = op.load_contact_book().await.handler_err("load contacts")?;
 
     let contact = book.get(&req.recipient_public_key).ok_or_else(|| {
         HandlerError::NotFound(format!(
@@ -1590,8 +1579,7 @@ pub async fn initiate_referral_query(
     local_req.referral_query_id = Some(query_id.clone());
     local_req.referral_contacts_queried = queried_count;
 
-    let updated = serde_json::to_vec(&local_req)
-        .map_err(|e| HandlerError::Internal(format!("Failed to serialize request: {e}")))?;
+    let updated = serde_json::to_vec(&local_req).handler_err("serialize request")?;
     store
         .put(&sled_key, updated)
         .await
