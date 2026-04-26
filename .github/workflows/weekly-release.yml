@@ -18,6 +18,7 @@ on:
 
 permissions:
   contents: write
+  pull-requests: write
 
 env:
   CARGO_TERM_COLOR: always
@@ -67,7 +68,7 @@ jobs:
           echo "new_version=$NEW_VERSION" >> "$GITHUB_OUTPUT"
           echo "Next version: $NEW_VERSION"
 
-  tag-and-release:
+  open-release-pr:
     needs: check-changes
     if: needs.check-changes.outputs.has_changes == 'true'
     runs-on: ubuntu-latest
@@ -82,16 +83,31 @@ jobs:
           git config user.name "github-actions[bot]"
           git config user.email "github-actions[bot]@users.noreply.github.com"
 
-      - name: Update version in Cargo.toml
+      # Direct pushes to main are blocked by the repo's merge-queue ruleset
+      # ("Changes must be made through the merge queue"). Push the bump on a
+      # release branch and open a PR — the existing auto-merge.yml workflow
+      # picks it up and `gh pr merge --auto` (no strategy flag) lets the
+      # queue squash-merge it. The tag step lives in the companion
+      # weekly-release-tag.yml workflow, which fires on the merged commit.
+      - name: Bump version on release branch + open PR
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
           VERSION="${{ needs.check-changes.outputs.new_version }}"
+          BRANCH="release/v$VERSION"
+
           sed -i "s/^version = \".*\"/version = \"$VERSION\"/" Cargo.toml
+          git checkout -b "$BRANCH"
           git add Cargo.toml
           git commit -m "chore: bump version to $VERSION for weekly release"
-          git push origin main
+          git push origin "$BRANCH"
 
-      - name: Create and push tag
-        run: |
-          VERSION="${{ needs.check-changes.outputs.new_version }}"
-          git tag -a "v$VERSION" -m "Weekly release v$VERSION"
-          git push origin "v$VERSION"
+          PR_URL=$(gh pr create --base main --head "$BRANCH" \
+            --title "chore: bump version to v$VERSION for weekly release" \
+            --body "Automated weekly release. Once this merges, \`weekly-release-tag.yml\` fires on the merged commit and pushes \`v$VERSION\`.")
+          echo "Opened $PR_URL"
+
+          # No --squash flag: the repo's merge-queue ruleset enforces SQUASH
+          # itself, and gh refuses inconsistent strategy hints (auto-merge.yml
+          # has a load-bearing comment about this).
+          gh pr merge --auto "$PR_URL"

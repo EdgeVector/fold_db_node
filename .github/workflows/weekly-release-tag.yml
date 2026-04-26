@@ -1,0 +1,60 @@
+name: Weekly Release — Tag
+
+# Companion to weekly-release.yml. The release flow is two-step because
+# direct pushes to main are blocked by the merge-queue ruleset:
+#   1. weekly-release.yml opens a PR that bumps Cargo.toml's version and
+#      enables auto-merge. The merge queue squash-merges it onto main.
+#   2. (this workflow) detects the merged squash commit by message,
+#      extracts the version, and pushes the tag pointing at the merged
+#      SHA. Tags don't go through the queue, so this push works.
+
+on:
+  push:
+    branches: [main]
+
+permissions:
+  contents: write
+
+jobs:
+  tag-on-bump:
+    runs-on: ubuntu-latest
+    # Match the bump commit message (with or without a trailing PR ref).
+    if: |
+      startsWith(github.event.head_commit.message, 'chore: bump version to ')
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          token: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Configure git
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+
+      - name: Extract version from commit message
+        id: extract
+        env:
+          MSG: ${{ github.event.head_commit.message }}
+        run: |
+          # Match `chore: bump version to <semver>` followed by anything.
+          # Tolerates the squash suffix `(#PR)` and any trailing body.
+          VERSION=$(printf '%s\n' "$MSG" \
+            | head -1 \
+            | sed -nE 's/^chore: bump version to ([0-9]+\.[0-9]+\.[0-9]+).*/\1/p')
+
+          if [ -z "$VERSION" ]; then
+            echo "Head commit looked like a release bump but the version did not parse:" >&2
+            echo "$MSG" >&2
+            exit 1
+          fi
+
+          echo "version=$VERSION" >> "$GITHUB_OUTPUT"
+          echo "Tagging v$VERSION"
+
+      - name: Create and push tag
+        run: |
+          VERSION="${{ steps.extract.outputs.version }}"
+          # Tag the merged commit (current HEAD on main).
+          git tag -a "v$VERSION" -m "Weekly release v$VERSION"
+          git push origin "v$VERSION"
