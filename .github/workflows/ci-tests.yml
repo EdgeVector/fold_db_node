@@ -126,6 +126,63 @@ jobs:
       - name: Run CLI integration tests
         run: cargo test --test cli_integration_test -- --nocapture
 
+  # Face-detection integration tests — separate job because the
+  # `face-detection` feature pulls in ort/ndarray/image and triggers a
+  # ~15 MB ONNX model download in fold_db's build.rs. Cold compile is
+  # several minutes; Swatinem cache keys this distinctly from the main
+  # rust-tests cache so warm runs are fast.
+  face-detection-tests:
+    name: Face Detection Tests
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+
+    env:
+      RUSTFLAGS: -C linker=clang -C link-arg=-fuse-ld=mold
+
+    steps:
+      - name: Free disk space
+        run: |
+          sudo rm -rf /usr/share/dotnet /usr/local/lib/android /opt/ghc /usr/local/share/powershell /usr/share/swift
+          sudo apt-get clean
+          df -h /
+
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Install mold linker
+        run: sudo apt-get update && sudo apt-get install -y mold
+
+      - name: Install Rust
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Configure git for private dependencies
+        run: git config --global url."https://x-access-token:${{ secrets.PRIVATE_DEPS_TOKEN }}@github.com/".insteadOf "https://github.com/"
+
+      # See comment on same step in the rust-tests job above.
+      - name: Remove local-dev cargo patch
+        run: rm -f .cargo/config.toml
+
+      - name: Cache Rust artifacts
+        uses: Swatinem/rust-cache@v2
+        with:
+          key: face-detection
+
+      - name: Stub frontend dist for rust_embed
+        run: mkdir -p src/server/static-react/dist && echo '<html></html>' > src/server/static-react/dist/index.html
+
+      - name: Add swap space
+        run: |
+          sudo fallocate -l 4G /swap2
+          sudo chmod 600 /swap2
+          sudo mkswap /swap2
+          sudo swapon /swap2
+
+      # Runs the integration test added in #704. Currently the only
+      # face-detection-gated test target; future face tests should land
+      # in the same `--test <name>` slot or convert this to `--tests`.
+      - name: Run face-detection integration tests
+        run: cargo test --features face-detection --test detect_faces_handler_test -- --nocapture
+
   # Heavy integration tests disabled — tweets ingestion test is flaky with a 5-minute
   # timeout and fails consistently in CI. The nightly ingestion workflow
   # (nightly-ingestion.yml) covers this more reliably with a full server.
