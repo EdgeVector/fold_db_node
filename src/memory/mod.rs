@@ -157,7 +157,7 @@ pub fn memory_schema() -> Schema {
 /// existing canonical is reused.
 pub async fn register_memory_schema(node: &FoldNode) -> FoldDbResult<String> {
     let schema = memory_schema();
-    log::info!(
+    tracing::info!(
         "memory: proposing schema '{}' (identity_hash={}) to schema service",
         MEMORY_DESCRIPTIVE_NAME,
         schema.name
@@ -197,7 +197,7 @@ pub async fn register_memory_schema(node: &FoldNode) -> FoldDbResult<String> {
             ))
         })?;
 
-    log::info!(
+    tracing::info!(
         "memory: registered schema, canonical_name={}",
         canonical_name
     );

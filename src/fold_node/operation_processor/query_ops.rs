@@ -228,7 +228,7 @@ impl OperationProcessor {
         Box::pin(async move {
             // Circular reference guard
             if visited.contains(schema_name) {
-                log::debug!(
+                tracing::debug!(
                     "Circular reference detected for schema '{}', stopping rehydration",
                     schema_name
                 );
@@ -266,7 +266,7 @@ impl OperationProcessor {
                 {
                     Ok(r) => r,
                     Err(e) => {
-                        log::warn!(
+                        tracing::warn!(
                             "Rehydration: failed to query child schema '{}': {}",
                             child_schema_name,
                             e
@@ -286,7 +286,7 @@ impl OperationProcessor {
                         )
                         .await
                     {
-                        log::warn!(
+                        tracing::warn!(
                             "Rehydration: recursive rehydration failed for child schema '{}': {}",
                             child_schema_name,
                             e
@@ -547,7 +547,7 @@ impl OperationProcessor {
             .ok_or_else(|| FoldDbError::Database(format!("Schema '{}' not found", schema_name)))?;
 
         if schema.runtime_fields.is_empty() {
-            log::warn!(
+            tracing::warn!(
                 "list_schema_keys: schema '{}' has no runtime_fields (schema_type={:?}, fields={:?}, field_molecule_uuids={:?})",
                 schema_name,
                 schema.schema_type,
@@ -591,7 +591,7 @@ impl OperationProcessor {
         }
 
         if all_keys.is_empty() {
-            log::warn!(
+            tracing::warn!(
                 "list_schema_keys: no keys found across any field for schema '{}' (field_molecule_uuids={:?})",
                 schema_name,
                 schema.field_molecule_uuids,

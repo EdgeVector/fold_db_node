@@ -170,7 +170,7 @@ impl DiscoveryPublisher {
             let stored: StoredEmbedding = match serde_json::from_slice(value_bytes) {
                 Ok(s) => s,
                 Err(e) => {
-                    log::warn!("Failed to deserialize StoredEmbedding: {}", e);
+                    tracing::warn!("Failed to deserialize StoredEmbedding: {}", e);
                     skipped += 1;
                     continue;
                 }

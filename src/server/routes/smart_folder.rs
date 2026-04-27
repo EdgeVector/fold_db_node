@@ -113,7 +113,7 @@ pub async fn smart_folder_scan(
     job.message = "Starting scan...".to_string();
     job.progress_percentage = 0;
     if let Err(e) = tracker.save(&job).await {
-        log::warn!("Failed to save scan progress: {}", e);
+        tracing::warn!("Failed to save scan progress: {}", e);
     }
 
     let node_arc = require_node(&state).await.ok().map(|(_uid, arc)| arc);
@@ -392,7 +392,7 @@ pub async fn adjust_scan_results(
     let llm_response = match smart_folder::call_llm_for_file_analysis(&prompt, &service).await {
         Ok(r) => r,
         Err(e) => {
-            log::error!("LLM error during scan adjustment: {}", e);
+            tracing::error!("LLM error during scan adjustment: {}", e);
             return HttpResponse::InternalServerError().json(json!({
                 "success": false,
                 "message": format!("AI error: {}", e)
@@ -445,7 +445,7 @@ pub async fn adjust_scan_results(
             })
         }
         Err(e) => {
-            log::error!("Failed to parse LLM adjustment response: {}", e);
+            tracing::error!("Failed to parse LLM adjustment response: {}", e);
             HttpResponse::InternalServerError().json(json!({
                 "success": false,
                 "message": format!("Failed to parse AI response: {}", e)

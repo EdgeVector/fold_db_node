@@ -740,7 +740,7 @@ pub(crate) async fn generate_mutations_for_item(
     // parent in mutation_mappers, so this flattening aligns with what the AI produces.
     let fields_and_values: HashMap<String, Value> = mutation_generator::flatten_json_object(obj);
 
-    if log::log_enabled!(log::Level::Debug) {
+    if tracing::enabled!(tracing::Level::DEBUG) {
         let nested_count = obj.values().filter(|v| v.is_object()).count();
         if nested_count > 0 {
             log_feature!(

@@ -207,7 +207,7 @@ impl ProgressService {
 
     async fn save_job(&self, job: &Job) {
         if let Err(e) = self.tracker.save(job).await {
-            log::warn!("Failed to save progress: {}", e);
+            tracing::warn!("Failed to save progress: {}", e);
         }
     }
 

@@ -104,7 +104,7 @@ pub async fn list_received_cards(store: &dyn KvStore) -> Result<Vec<LocalReceive
     for (_key, value) in entries {
         match serde_json::from_slice(&value) {
             Ok(r) => rows.push(r),
-            Err(e) => log::warn!("Failed to deserialize received card: {}", e),
+            Err(e) => tracing::warn!("Failed to deserialize received card: {}", e),
         }
     }
     rows.sort_by(|a, b| b.received_at.cmp(&a.received_at));

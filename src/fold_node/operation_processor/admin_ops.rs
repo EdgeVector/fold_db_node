@@ -161,7 +161,7 @@ impl OperationProcessor {
             Vec::with_capacity(RESET_PRESERVED_TREES.len());
         for name in RESET_PRESERVED_TREES {
             let entries = read_tree_raw(&pool, name)?;
-            log::info!("reset: stashed {} entries from '{}'", entries.len(), name);
+            tracing::info!("reset: stashed {} entries from '{}'", entries.len(), name);
             stashed.push((name, entries));
         }
 
@@ -175,10 +175,10 @@ impl OperationProcessor {
             if let Err(e) = fold_db.stop_sync().await {
                 // Final-sync failures are non-fatal here — the purge
                 // will delete whatever was/wasn't uploaded.
-                log::warn!("reset: stop_sync returned error (continuing with purge): {e}");
+                tracing::warn!("reset: stop_sync returned error (continuing with purge): {e}");
             }
             match engine.purge_personal_log().await {
-                Ok(outcome) => log::info!(
+                Ok(outcome) => tracing::info!(
                     "reset: purged cloud log ({} log objects, {} snapshots)",
                     outcome.deleted_log_objects,
                     outcome.deleted_snapshots,
@@ -210,12 +210,12 @@ impl OperationProcessor {
 
         if db_path.exists() {
             if let Err(e) = std::fs::remove_dir_all(&db_path) {
-                log::error!("Failed to delete database folder: {}", e);
+                tracing::error!("Failed to delete database folder: {}", e);
                 return Err(FoldDbError::Io(e));
             }
         }
         if let Err(e) = std::fs::create_dir_all(&db_path) {
-            log::error!("Failed to recreate database folder: {}", e);
+            tracing::error!("Failed to recreate database folder: {}", e);
             return Err(FoldDbError::Io(e));
         }
 
@@ -232,7 +232,7 @@ impl OperationProcessor {
         }
         drop(restore_pool);
 
-        log::info!(
+        tracing::info!(
             "reset: complete — identity preserved, {} org memberships preserved, cloud log purged",
             stashed
                 .iter()
@@ -383,7 +383,7 @@ impl OperationProcessor {
     /// The caller should update the config to enable `cloud_sync` and
     /// restart the node after this completes.
     pub async fn migrate_to_cloud(&self, api_url: &str, api_key: &str) -> FoldDbResult<()> {
-        log::info!("Starting cloud sync setup: {}", api_url);
+        tracing::info!("Starting cloud sync setup: {}", api_url);
 
         // Create a temporary SyncEngine to perform the initial upload.
         // The existing Sled data is already encrypted — we just need to snapshot
@@ -456,7 +456,7 @@ impl OperationProcessor {
 
         let ns_count = snapshot.namespaces.len();
         let entry_count: usize = snapshot.namespaces.iter().map(|n| n.entries.len()).sum();
-        log::info!(
+        tracing::info!(
             "Created snapshot: {} namespaces, {} entries",
             ns_count,
             entry_count
@@ -491,7 +491,7 @@ impl OperationProcessor {
         // Release lock
         let _ = engine.release_lock().await;
 
-        log::info!(
+        tracing::info!(
             "Cloud sync setup complete: uploaded {} namespaces ({} entries)",
             ns_count,
             entry_count

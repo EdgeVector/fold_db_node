@@ -260,7 +260,7 @@ pub async fn reissue_identity_card(
             })?;
     }
 
-    log::info!(
+    tracing::info!(
         "fingerprints.handler: reissued Identity Card for pub_key='{}' (display_name='{}')",
         pub_key,
         new_display_name,

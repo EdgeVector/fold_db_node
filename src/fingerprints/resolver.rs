@@ -325,7 +325,7 @@ impl PersonaResolver {
 
         let clean = diagnostics.is_clean();
         if !clean {
-            log::warn!(
+            tracing::warn!(
                 "fingerprints.resolver: persona {} resolved with diagnostics \
                  (fps={}, edges={}, mentions={}, missing_seeds={}, excluded_edges={}, \
                  forbidden_edges={}, below_threshold={}, excluded_mentions={}, dangling_edges={})",
@@ -341,7 +341,7 @@ impl PersonaResolver {
                 diagnostics.dangling_edge_ids.len(),
             );
         } else {
-            log::debug!(
+            tracing::debug!(
                 "fingerprints.resolver: persona {} resolved cleanly (fps={}, edges={}, mentions={})",
                 spec.persona_id,
                 visited_fps.len(),

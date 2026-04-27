@@ -177,7 +177,7 @@ pub async fn list_async_queries(store: &dyn KvStore) -> Result<Vec<LocalAsyncQue
     for (_key, value) in entries {
         match serde_json::from_slice(&value) {
             Ok(q) => queries.push(q),
-            Err(e) => log::warn!("Failed to deserialize async query: {}", e),
+            Err(e) => tracing::warn!("Failed to deserialize async query: {}", e),
         }
     }
 

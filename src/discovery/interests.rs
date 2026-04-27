@@ -82,7 +82,7 @@ async fn get_or_compute_centroids(
     };
     if let Ok(bytes) = serde_json::to_vec(&cached) {
         if let Err(e) = metadata_store.put(cache_key.as_bytes(), bytes).await {
-            log::warn!("Failed to cache interest centroids: {}", e);
+            tracing::warn!("Failed to cache interest centroids: {}", e);
         }
     }
 

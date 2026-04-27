@@ -164,7 +164,7 @@ pub fn parse_output(raw: &str) -> Result<Vec<Contact>, IngestionError> {
         let body = cap.get(1).map(|m| m.as_str()).unwrap_or("");
         let fields: Vec<&str> = body.split("<<<SEP>>>").collect();
         if fields.len() != 6 {
-            log::warn!(
+            tracing::warn!(
                 "apple_contacts.parse_output: skipping malformed record with {} fields",
                 fields.len()
             );

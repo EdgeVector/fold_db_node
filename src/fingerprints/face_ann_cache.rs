@@ -315,7 +315,7 @@ pub async fn ensure_cache_ready(node: &FoldNode) -> FoldDbResult<()> {
     }
     let count = rebuild_from_store(node).await?;
     CACHE_INITIALIZED.store(true, Ordering::Release);
-    log::info!("face_ann_cache: lazy rebuild on first ingest complete ({count} faces indexed)");
+    tracing::info!("face_ann_cache: lazy rebuild on first ingest complete ({count} faces indexed)");
     Ok(())
 }
 
@@ -411,7 +411,7 @@ pub async fn rebuild_from_store(node: &FoldNode) -> FoldDbResult<usize> {
         match FaceEmbedding::new(raw) {
             Ok(embedding) => entries.push((id.to_string(), embedding)),
             Err(e) => {
-                log::warn!(
+                tracing::warn!(
                     "face_ann_cache: skipping malformed embedding for fingerprint '{id}': {e}"
                 );
                 skipped += 1;
@@ -422,7 +422,7 @@ pub async fn rebuild_from_store(node: &FoldNode) -> FoldDbResult<usize> {
     let count = entries.len();
     cache().replace_all(entries);
 
-    log::info!(
+    tracing::info!(
         "face_ann_cache: rebuilt from store ({count} face fingerprints indexed, {skipped} skipped)"
     );
 

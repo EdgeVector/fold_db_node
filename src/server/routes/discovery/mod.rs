@@ -141,11 +141,11 @@ pub(crate) fn is_auth_error(err: &crate::handlers::HandlerError) -> bool {
 pub(crate) async fn try_refresh_token(state: &web::Data<AppState>) -> Option<String> {
     match crate::server::routes::auth::refresh_session_token(state).await {
         Ok(token) => {
-            log::info!("Discovery auth: refreshed session token after 401");
+            tracing::info!("Discovery auth: refreshed session token after 401");
             Some(token)
         }
         Err(e) => {
-            log::warn!("Discovery auth: token refresh failed: {}", e);
+            tracing::warn!("Discovery auth: token refresh failed: {}", e);
             None
         }
     }

@@ -39,7 +39,7 @@ pub fn get_or_create_master_key() -> Result<[u8; 32], String> {
             entry
                 .set_secret(&key)
                 .map_err(|e| format!("Failed to store master key in OS keychain: {}", e))?;
-            log::info!("Generated and stored new master key in OS keychain");
+            tracing::info!("Generated and stored new master key in OS keychain");
             Ok(key)
         }
         Err(e) => Err(format!("Failed to read master key from OS keychain: {}", e)),

@@ -81,7 +81,7 @@ pub async fn ingest_text_signals_batch(
     let mut total_signals = 0usize;
     let mut total_records_written = 0usize;
 
-    log::info!(
+    tracing::info!(
         "fingerprints.ingest_text: starting batch ingest of {} records under schema '{}'",
         total_records,
         request.source_schema
@@ -132,7 +132,7 @@ pub async fn ingest_text_signals_batch(
             }
             Err(e) => {
                 let msg = format!("{}", e);
-                log::warn!(
+                tracing::warn!(
                     "fingerprints.ingest_text: record '{}' on schema '{}' failed: {}",
                     source_key,
                     request.source_schema,
@@ -150,7 +150,7 @@ pub async fn ingest_text_signals_batch(
         }
     }
 
-    log::info!(
+    tracing::info!(
         "fingerprints.ingest_text: batch complete: {}/{} successful, {} signals, {} records written",
         successful_records,
         total_records,

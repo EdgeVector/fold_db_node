@@ -46,7 +46,7 @@ async fn reconfigure_and_force_sync(node: &FoldNode) {
     node.configure_org_sync_if_needed().await;
     if let Ok(db) = node.get_fold_db() {
         if let Err(e) = db.force_sync().await {
-            log::warn!("force_sync after sharing reconfigure failed: {e}");
+            tracing::warn!("force_sync after sharing reconfigure failed: {e}");
         }
     }
 }

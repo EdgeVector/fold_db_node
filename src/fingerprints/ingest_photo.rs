@@ -186,7 +186,7 @@ pub async fn ingest_photo_faces(
     let similarity_records_written = match similarity_edges {
         Ok(n) => n,
         Err(e) => {
-            log::warn!(
+            tracing::warn!(
                 "fingerprints.ingest: similarity-edge emission failed for {}:{} — \
                  Fingerprints/Mentions wrote successfully but similarity graph is stale. Error: {}",
                 source_schema,
@@ -242,7 +242,7 @@ async fn emit_similarity_edges_for_faces(
         let embedding = match FaceEmbedding::new(face.embedding.clone()) {
             Ok(e) => e,
             Err(e) => {
-                log::warn!(
+                tracing::warn!(
                     "fingerprints.ingest: skipping similarity-edge emission for fingerprint {} — malformed embedding: {}",
                     fp_id,
                     e

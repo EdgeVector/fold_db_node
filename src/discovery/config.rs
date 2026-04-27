@@ -105,7 +105,7 @@ pub async fn list_opt_ins(store: &dyn KvStore) -> Result<Vec<DiscoveryOptIn>, St
     for (_key, value) in results {
         match serde_json::from_slice::<DiscoveryOptIn>(&value) {
             Ok(config) => configs.push(config),
-            Err(e) => log::warn!("Failed to deserialize discovery config: {}", e),
+            Err(e) => tracing::warn!("Failed to deserialize discovery config: {}", e),
         }
     }
     Ok(configs)

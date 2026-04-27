@@ -73,7 +73,7 @@ impl LlmQueryService {
             for term in &search_terms {
                 match native_index_mgr.search_all_classifications(term).await {
                     Ok(mut results) => {
-                        log::debug!(
+                        tracing::debug!(
                             "LLM Query: Term '{}' returned {} results",
                             term,
                             results.len()
@@ -81,13 +81,13 @@ impl LlmQueryService {
                         all_results.append(&mut results);
                     }
                     Err(e) => {
-                        log::warn!("Native index search failed for term '{}': {}", term, e);
+                        tracing::warn!("Native index search failed for term '{}': {}", term, e);
                     }
                 }
             }
         }
 
-        log::info!(
+        tracing::info!(
             "LLM Query: Found {} results from native index",
             all_results.len()
         );
@@ -115,14 +115,14 @@ impl LlmQueryService {
         original_query: &str,
         results: &[fold_db::db_operations::IndexResult],
     ) -> Result<String, String> {
-        log::info!(
+        tracing::info!(
             "LLM Query: Sending {} results to AI for interpretation",
             results.len()
         );
         if results.is_empty() {
-            log::warn!("LLM Query: No results to send to AI");
+            tracing::warn!("LLM Query: No results to send to AI");
         } else {
-            log::debug!(
+            tracing::debug!(
                 "LLM Query: Sample result - schema={}, field={}, key_value={:?}",
                 results[0].schema_name,
                 results[0].field,
@@ -376,7 +376,7 @@ impl LlmQueryService {
                         crate::ingestion::smart_folder::scanner::compute_file_hash(&full_path)
                     {
                         if node.is_file_ingested(&pub_key, &hash).await.is_some() {
-                            log::info!(
+                            tracing::info!(
                                 "Agent ingest_files: skipping already-ingested file: {}",
                                 relative
                             );
@@ -548,7 +548,7 @@ impl LlmQueryService {
                     max_gas: CREATE_VIEW_DEFAULT_MAX_GAS,
                 };
 
-                log::info!(
+                tracing::info!(
                     "create_view: submitting rust_transform for view '{}' to schema service at {}",
                     name,
                     &schema_service_url
@@ -592,7 +592,7 @@ impl LlmQueryService {
                     .await
                     .map_err(|e| format!("Failed to read WASM bytes: {}", e))?
                     .to_vec();
-                log::info!(
+                tracing::info!(
                     "create_view: schema service compiled {} bytes of WASM for view '{}' (hash {})",
                     wasm_bytes.len(),
                     name,
@@ -755,7 +755,7 @@ impl LlmQueryService {
                     .ok_or("web_search tool requires 'query' parameter")?;
                 let count = params.get("count").and_then(|c| c.as_u64()).unwrap_or(5) as usize;
 
-                log::info!("Agent web_search: query='{}', count={}", query, count);
+                tracing::info!("Agent web_search: query='{}', count={}", query, count);
                 let results = super::web_tools::web_search(query, count).await?;
 
                 Ok(serde_json::json!({
@@ -771,7 +771,7 @@ impl LlmQueryService {
                     .and_then(|u| u.as_str())
                     .ok_or("fetch_url tool requires 'url' parameter")?;
 
-                log::info!("Agent fetch_url: url='{}'", url);
+                tracing::info!("Agent fetch_url: url='{}'", url);
                 let content = super::web_tools::fetch_url(url).await?;
 
                 Ok(serde_json::json!({
@@ -804,7 +804,7 @@ impl LlmQueryService {
                     .and_then(|s| s.as_str())
                     .map(|s| s.to_string());
 
-                log::info!(
+                tracing::info!(
                     "Agent ingest_json: source_context={:?}, data_type={}",
                     source_context,
                     if data.is_array() { "array" } else { "object" }
@@ -913,7 +913,7 @@ impl LlmQueryService {
 
                 let key_value = fold_db::schema::types::KeyValue::new(hash_key, range_key);
 
-                log::info!(
+                tracing::info!(
                     "Agent update_record: schema={}, key={:?}, fields={:?}",
                     schema_name,
                     key_value,
@@ -996,7 +996,7 @@ impl LlmQueryService {
         {
             Ok(result) => result,
             Err(_elapsed) => {
-                log::error!(
+                tracing::error!(
                     "Agent: query timed out after {}s",
                     Self::AGENT_QUERY_TIMEOUT.as_secs()
                 );
@@ -1050,7 +1050,7 @@ impl LlmQueryService {
         let system_prompt = self.build_agent_system_prompt_with_orgs(schemas, &orgs);
         let today = chrono::Local::now().format("%A, %B %-d, %Y").to_string();
 
-        log::info!(
+        tracing::info!(
             "Agent: Starting query with max {} iterations, {} prior messages: {}",
             max_iterations,
             prior_history.len(),
@@ -1073,7 +1073,7 @@ impl LlmQueryService {
                 today
             );
 
-            log::debug!("Agent: Iteration {} - calling LLM", iteration + 1);
+            tracing::debug!("Agent: Iteration {} - calling LLM", iteration + 1);
 
             let pct = 5 + (iteration * 90 / max_iterations.max(1)).min(90) as u8;
             update_agent_progress(
@@ -1086,7 +1086,7 @@ impl LlmQueryService {
 
             let response = self.call_llm(&full_prompt).await?;
 
-            log::debug!(
+            tracing::debug!(
                 "Agent: LLM response: {}",
                 &response[..response.len().min(200)]
             );
@@ -1099,7 +1099,7 @@ impl LlmQueryService {
                 }
                 Err(e) if e.contains("empty response") => {
                     consecutive_empty_errors += 1;
-                    log::warn!(
+                    tracing::warn!(
                         "Agent: empty LLM response on iteration {} ({}/{})",
                         iteration + 1,
                         consecutive_empty_errors,
@@ -1129,7 +1129,7 @@ impl LlmQueryService {
                 super::super::types::AgentAction::Answer(answer) => {
                     // Reject empty answers — the agent must provide a substantive response
                     if answer.trim().is_empty() {
-                        log::warn!(
+                        tracing::warn!(
                             "Agent: LLM returned empty answer on iteration {}",
                             iteration + 1
                         );
@@ -1139,7 +1139,7 @@ impl LlmQueryService {
                         continue;
                     }
 
-                    log::info!(
+                    tracing::info!(
                         "Agent: Completed after {} iterations with {} tool calls",
                         iteration + 1,
                         tool_calls.len()
@@ -1154,7 +1154,7 @@ impl LlmQueryService {
                     return Ok((answer, tool_calls));
                 }
                 super::super::types::AgentAction::ToolCall { tool, params } => {
-                    log::info!("Agent: Calling tool '{}' with params: {}", tool, params);
+                    tracing::info!("Agent: Calling tool '{}' with params: {}", tool, params);
 
                     // Update progress: executing tool
                     let tool_pct = 10 + (iteration * 90 / max_iterations.max(1)).min(85) as u8;
@@ -1186,12 +1186,12 @@ impl LlmQueryService {
                     {
                         Ok(val) => val,
                         Err(e) => {
-                            log::warn!("Agent: Tool '{}' failed: {}", tool, e);
+                            tracing::warn!("Agent: Tool '{}' failed: {}", tool, e);
                             serde_json::json!({ "error": e })
                         }
                     };
 
-                    log::debug!(
+                    tracing::debug!(
                         "Agent: Tool '{}' returned: {}",
                         tool,
                         &result.to_string()[..result.to_string().len().min(200)]

@@ -48,7 +48,7 @@ impl LlmQueryService {
         } else {
             prompt.clone()
         };
-        log::debug!("AI Query Prompt Preview: {}", prompt_preview);
+        tracing::debug!("AI Query Prompt Preview: {}", prompt_preview);
 
         let response = self.call_llm(&prompt).await?;
 
@@ -60,7 +60,7 @@ impl LlmQueryService {
         for schema_state in schemas {
             if schema_state.schema.name.to_lowercase() == target_schema_lower {
                 if query_plan.query.schema_name != schema_state.schema.name {
-                    log::info!(
+                    tracing::info!(
                         "🤖 AI Autocorrect: Normalizing schema name '{}' -> '{}'",
                         query_plan.query.schema_name,
                         schema_state.schema.name

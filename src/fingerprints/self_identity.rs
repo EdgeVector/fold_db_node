@@ -202,13 +202,13 @@ pub async fn ensure_me_persona_if_absent(
     display_name: String,
 ) -> FoldDbResult<Option<SelfIdentityOutcome>> {
     if me_persona_exists(&node).await? {
-        log::debug!(
+        tracing::debug!(
             "fingerprints.self_identity: Me persona already present on this node — skipping bootstrap"
         );
         return Ok(None);
     }
     let outcome = bootstrap_self_identity(node, display_name).await?;
-    log::info!(
+    tracing::info!(
         "fingerprints.self_identity: bootstrapped Me persona (id={}, identity={})",
         outcome.me_persona_id,
         outcome.self_identity_id

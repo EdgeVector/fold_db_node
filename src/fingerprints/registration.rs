@@ -115,7 +115,7 @@ pub async fn register_phase_1_schemas(node: &FoldNode) -> FoldDbResult<Registrat
 /// canonical_names registry.
 pub async fn lookup_phase_1_schemas(node: &FoldNode) -> FoldDbResult<RegistrationOutcome> {
     let started = std::time::Instant::now();
-    log::info!(
+    tracing::info!(
         "fingerprints.registration: fetching {} Phase 1 built-in schemas from schema service",
         PHASE_1_DESCRIPTIVE_NAMES.len()
     );
@@ -197,7 +197,7 @@ pub async fn lookup_phase_1_schemas(node: &FoldNode) -> FoldDbResult<Registratio
     let mapping = outcome.build_canonical_names()?;
     canonical_names::install(mapping)?;
 
-    log::info!(
+    tracing::info!(
         "fingerprints.registration: Phase 1 registration complete in {:?} ({} schemas loaded and approved)",
         started.elapsed(),
         outcome.total()

@@ -18,7 +18,7 @@ impl Environment {
             Ok("prod") | Ok("production") => Self::Prod,
             Ok("dev") | Ok("development") => Self::Dev,
             Ok(other) => {
-                log::error!(
+                tracing::error!(
                     "EXEMEM_ENV has unknown value '{}', defaulting to dev",
                     other
                 );
@@ -28,7 +28,7 @@ impl Environment {
                 // EXEMEM_ENV is unset on every local dev boot — noisy if
                 // logged at warn-level. Keep at debug; release builds set
                 // EXEMEM_ENV=prod via build config.
-                log::debug!("EXEMEM_ENV not set, defaulting to dev");
+                tracing::debug!("EXEMEM_ENV not set, defaulting to dev");
                 Self::Dev
             }
         }

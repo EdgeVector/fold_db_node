@@ -69,7 +69,7 @@ async fn ensure_schema(node: &FoldNode) {
     let schema_manager = match node.get_fold_db() {
         Ok(guard) => guard.schema_manager().clone(),
         Err(e) => {
-            log::error!("Failed to get FoldDB for conversation schema: {}", e);
+            tracing::error!("Failed to get FoldDB for conversation schema: {}", e);
             return;
         }
     };
@@ -82,7 +82,7 @@ async fn ensure_schema(node: &FoldNode) {
             }
         }
         Err(e) => {
-            log::error!("Failed to get schema states: {}", e);
+            tracing::error!("Failed to get schema states: {}", e);
             return;
         }
     }
@@ -91,18 +91,18 @@ async fn ensure_schema(node: &FoldNode) {
     let schema_json = match serde_json::to_string(&schema) {
         Ok(s) => s,
         Err(e) => {
-            log::error!("Failed to serialize conversation schema: {}", e);
+            tracing::error!("Failed to serialize conversation schema: {}", e);
             return;
         }
     };
 
     if let Err(e) = schema_manager.load_schema_from_json(&schema_json).await {
-        log::error!("Failed to load conversation schema: {}", e);
+        tracing::error!("Failed to load conversation schema: {}", e);
         return;
     }
 
     if let Err(e) = schema_manager.approve(AI_CONVERSATIONS_SCHEMA).await {
-        log::error!("Failed to approve conversation schema: {}", e);
+        tracing::error!("Failed to approve conversation schema: {}", e);
     }
 }
 
@@ -144,12 +144,12 @@ pub async fn save_conversation_turn(
     );
 
     match node.mutate_batch(vec![mutation]).await {
-        Ok(ids) => log::info!(
+        Ok(ids) => tracing::info!(
             "Saved conversation turn for session {}: {:?}",
             session_id,
             ids
         ),
-        Err(e) => log::error!(
+        Err(e) => tracing::error!(
             "Failed to save conversation turn for session {}: {}",
             session_id,
             e

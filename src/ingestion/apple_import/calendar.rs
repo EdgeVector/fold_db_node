@@ -177,7 +177,7 @@ pub fn parse_output(raw: &str) -> Result<Vec<CalendarEvent>, IngestionError> {
         // else is a malformed record; skip silently because callers
         // must never abort ingestion on one bad row.
         if fields.len() < 8 || fields.len() > 9 {
-            log::warn!(
+            tracing::warn!(
                 "apple_calendar.parse_output: skipping malformed record with {} fields",
                 fields.len()
             );

@@ -388,7 +388,7 @@ pub async fn send_identity_card(
 
             send_encrypted_message(&sender, &contact, &payload).await?;
 
-            log::info!(
+            tracing::info!(
                 "fingerprints.handler: sent identity card to contact '{}' (message_id={})",
                 contact.display_name,
                 message_id,

@@ -120,7 +120,7 @@ impl OperationProcessor {
             status: crate::trust::sent_invites::SentInviteStatus::Pending,
         });
         if let Err(e) = sent.save(&db).await {
-            log::warn!("create_trust_invite: failed to save sent invite: {e}");
+            tracing::warn!("create_trust_invite: failed to save sent invite: {e}");
         }
 
         Ok(invite)
@@ -203,7 +203,7 @@ impl OperationProcessor {
                 }
             }
             if let Err(e) = sent.save(&db).await {
-                log::warn!("accept_trust_invite: failed to save sent invites: {e}");
+                tracing::warn!("accept_trust_invite: failed to save sent invites: {e}");
             }
         }
         // Also check if sender is already in our contacts (re-accept scenario)

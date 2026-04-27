@@ -693,7 +693,7 @@ impl IngestionConfig {
     /// to handle failures.
     pub fn load_or_default() -> Self {
         Self::load().unwrap_or_else(|e| {
-            log::warn!("Failed to load ingestion config: {e}. Using defaults.");
+            tracing::warn!("Failed to load ingestion config: {e}. Using defaults.");
             IngestionConfig::default()
         })
     }

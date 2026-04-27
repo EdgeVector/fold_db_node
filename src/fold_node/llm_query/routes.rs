@@ -28,7 +28,7 @@ impl LlmQueryState {
         let service = match LlmQueryService::new(config) {
             Ok(svc) => Some(Arc::new(svc)),
             Err(e) => {
-                log::warn!("LLM Query service not available: {}. LLM query endpoints will return errors until configured.", e);
+                tracing::warn!("LLM Query service not available: {}. LLM query endpoints will return errors until configured.", e);
                 None
             }
         };
@@ -46,10 +46,10 @@ impl LlmQueryState {
             Ok(svc) => {
                 let mut guard = self.service.write().await;
                 *guard = Some(Arc::new(svc));
-                log::info!("LlmQueryService reloaded with new configuration");
+                tracing::info!("LlmQueryService reloaded with new configuration");
             }
             Err(e) => {
-                log::warn!("Failed to reload LlmQueryService: {}", e);
+                tracing::warn!("Failed to reload LlmQueryService: {}", e);
             }
         }
     }

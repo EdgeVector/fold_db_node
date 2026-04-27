@@ -116,7 +116,7 @@ pub async fn write_records(
     let started = std::time::Instant::now();
     let input_count = records.len();
 
-    log::info!(
+    tracing::info!(
         "fingerprints.writer: starting batch write ({} records)",
         input_count
     );
@@ -161,7 +161,7 @@ pub async fn write_records(
     let other_count = outcome
         .total()
         .saturating_sub(fp_count + mn_count + eg_count);
-    log::info!(
+    tracing::info!(
         "fingerprints.writer: batch write complete in {:?}: \
          {} total (Fingerprint={}, Mention={}, Edge={}, other={})",
         started.elapsed(),

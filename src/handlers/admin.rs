@@ -110,7 +110,7 @@ pub async fn upsert_contact(
     book.upsert_contact(contact);
     book.save(&db).await.handler_err("save contact book")?;
 
-    log::warn!(
+    tracing::warn!(
         "test-admin: upserted contact {} ({}) — bypassing discovery handshake",
         req.display_name,
         &req.node_public_key[..8.min(req.node_public_key.len())]

@@ -63,7 +63,7 @@ pub async fn write_ingestion_error(node: Arc<FoldNode>, row: IngestionErrorRecor
     let planned = build_ingestion_error_record(&row);
     match write_records(node, &[planned]).await {
         Ok(outcome) => {
-            log::info!(
+            tracing::info!(
                 "fingerprints.ingestion_error_writer: recorded failure \
                  (source={}:{}, extractor={}, class={}, written={})",
                 row.source_schema,
@@ -76,7 +76,7 @@ pub async fn write_ingestion_error(node: Arc<FoldNode>, row: IngestionErrorRecor
         Err(e) => {
             // Loud but non-fatal — we cannot make the situation
             // worse than it already is by propagating.
-            log::error!(
+            tracing::error!(
                 "fingerprints.ingestion_error_writer: FAILED TO RECORD FAILURE \
                  (source={}:{}, extractor={}, original_error={}): {}",
                 row.source_schema,

@@ -240,7 +240,7 @@ pub async fn list_personas(node: Arc<FoldNode>) -> HandlerResult<ListPersonasRes
         _ => a.name.cmp(&b.name),
     });
 
-    log::info!(
+    tracing::info!(
         "fingerprints.handler: list_personas resolved {} personas in {:?}",
         personas.len(),
         started.elapsed()
@@ -319,7 +319,7 @@ pub async fn delete_persona(
             HandlerError::Internal(format!("failed to delete persona '{}': {}", persona_id, e))
         })?;
 
-    log::info!(
+    tracing::info!(
         "fingerprints.handler: deleted persona '{}' (underlying fingerprints/edges/mentions untouched)",
         persona_id
     );
@@ -396,7 +396,7 @@ pub async fn get_persona(
 
     let diagnostics = result.diagnostics().cloned();
 
-    log::info!(
+    tracing::info!(
         "fingerprints.handler: get_persona '{}' resolved in {:?} (fps={}, edges={}, mentions={}, clean={})",
         persona_id,
         started.elapsed(),
@@ -483,7 +483,7 @@ async fn fetch_fingerprint_views(
             HandlerError::Internal(format!("fingerprint '{}' query failed: {}", id, e))
         })?;
         let Some(record) = records.first() else {
-            log::warn!(
+            tracing::warn!(
                 "fingerprints.handler: fingerprint '{}' not found during enrichment",
                 id
             );
@@ -628,7 +628,7 @@ async fn fetch_edge_views(
             .await
             .map_err(|e| HandlerError::Internal(format!("edge '{}' query failed: {}", id, e)))?;
         let Some(record) = records.first() else {
-            log::warn!(
+            tracing::warn!(
                 "fingerprints.handler: edge '{}' not found during enrichment",
                 id
             );
@@ -690,7 +690,7 @@ async fn fetch_mention_views(
             .await
             .map_err(|e| HandlerError::Internal(format!("mention '{}' query failed: {}", id, e)))?;
         let Some(record) = records.first() else {
-            log::warn!(
+            tracing::warn!(
                 "fingerprints.handler: mention '{}' not found during enrichment",
                 id
             );
@@ -1049,7 +1049,7 @@ pub async fn apply_persona_patch(
             HandlerError::Internal(format!("failed to update persona '{}': {}", persona_id, e))
         })?;
 
-    log::info!(
+    tracing::info!(
         "fingerprints.handler: applied patch to persona '{}' \
          (threshold={:?}, add_edge={:?}, rm_edge={:?}, add_mention={:?}, rm_mention={:?})",
         persona_id,
@@ -1393,7 +1393,7 @@ pub async fn merge_personas(
             ))
         })?;
 
-    log::info!(
+    tracing::info!(
         "fingerprints.handler: merged persona '{}' into '{}'",
         absorbed_id,
         survivor_id

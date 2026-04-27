@@ -114,7 +114,7 @@ impl OperationProcessor {
             match result {
                 Ok(_) => loaded_count += 1,
                 Err(e) => {
-                    log::error!("Failed to load schema {}: {}", schema_name, e);
+                    tracing::error!("Failed to load schema {}: {}", schema_name, e);
                     failed_schemas.push(schema_name);
                 }
             }

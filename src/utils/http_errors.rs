@@ -11,7 +11,7 @@ pub fn json_error_handler(err: JsonPayloadError, req: &HttpRequest) -> actix_web
     let path = req.path().to_string();
     let method = req.method().to_string();
 
-    log::error!(
+    tracing::error!(
         "JSON payload error: \"{}\" for {} request to {}",
         detail,
         method,
