@@ -93,8 +93,7 @@ use fold_db_node::server::middleware::otel::W3CParentContext;
 /// `trace_id` and 16-hex `span_id` are from the W3C trace-context spec
 /// example, so they are easy to grep for in failure output while still
 /// being a valid concrete trace.
-const UPSTREAM_TRACEPARENT: &str =
-    "00-0af7651916cd43dd8448eb211c80319c-b7ad6b7169203331-01";
+const UPSTREAM_TRACEPARENT: &str = "00-0af7651916cd43dd8448eb211c80319c-b7ad6b7169203331-01";
 const UPSTREAM_TRACE_ID: &str = "0af7651916cd43dd8448eb211c80319c";
 
 /// Captures the trace_id observed by the handler so the test body can
@@ -163,9 +162,8 @@ async fn upstream_traceparent_propagates_through_ingress_and_egress() {
     // so it owns the global subscriber for the run. We hold the guard
     // for the whole test body so the FMT worker's flush thread keeps
     // draining as events come in.
-    let guard =
-        observability::init_node("fold_db_node-e2e-test", env!("CARGO_PKG_VERSION"))
-            .expect("init_node");
+    let guard = observability::init_node("fold_db_node-e2e-test", env!("CARGO_PKG_VERSION"))
+        .expect("init_node");
 
     // -- 3. Spawn the wiremock stand-in for schema_service --------------
     //
@@ -175,8 +173,7 @@ async fn upstream_traceparent_propagates_through_ingress_and_egress() {
     let mock_server = MockServer::start().await;
     Mock::given(method("GET"))
         .respond_with(
-            ResponseTemplate::new(200)
-                .set_body_json(serde_json::json!({ "schemas": [] })),
+            ResponseTemplate::new(200).set_body_json(serde_json::json!({ "schemas": [] })),
         )
         .mount(&mock_server)
         .await;
