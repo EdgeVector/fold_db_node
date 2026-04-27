@@ -19,7 +19,7 @@
 # CI removes this file before building (see `.github/workflows/
 # ci-tests.yml` lines 49, 111) so the lockfile pins take effect.
 [patch."https://github.com/EdgeVector/fold_db.git"]
-fold_db = { path = "../fold_db" }
+fold_db = { path = "../fold_db/crates/core" }
 
 [patch."https://github.com/EdgeVector/schema_service.git"]
 schema_service_core        = { path = "../schema_service/crates/core" }
