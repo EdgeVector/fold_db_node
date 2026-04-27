@@ -24,6 +24,7 @@ impl FoldDbClient {
     /// If the daemon is not running, attempts to auto-start it via `folddb daemon start`.
     pub async fn connect(port: u16) -> Result<Self, McpError> {
         let base_url = format!("http://127.0.0.1:{}", port);
+        // trace-egress: loopback (MCP client -> local daemon; inject_w3c wrapping deferred — pending fold_db rev bump)
         let http = reqwest::Client::new();
 
         // Health check — if it fails, try to auto-start the daemon

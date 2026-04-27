@@ -314,6 +314,7 @@ pub async fn process_single_file_via_smart_folder(
 /// Lives here (not in an HTTP module) so it can be called from any context.
 pub async fn fetch_ollama_models(base_url: &str) -> Result<Vec<OllamaModelInfo>, String> {
     let url = format!("{}/api/tags", base_url);
+    // trace-egress: skip-3p (Ollama, third-party)
     let client = reqwest::Client::builder()
         .timeout(std::time::Duration::from_secs(5))
         .build()

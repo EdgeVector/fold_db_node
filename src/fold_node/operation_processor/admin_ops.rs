@@ -403,6 +403,7 @@ impl OperationProcessor {
             fold_db::crypto::LocalCryptoProvider::from_key(e2e_keys.encryption_key()),
         );
 
+        // trace-egress: propagate (shared with skip-s3 — see docs/observability/egress-classification-notes.md)
         let http = std::sync::Arc::new(reqwest::Client::new());
         let s3 = fold_db::sync::s3::S3Client::new(http.clone());
         let auth = fold_db::sync::auth::AuthClient::new(http, sync_setup.auth_url, sync_setup.auth);
@@ -468,6 +469,7 @@ impl OperationProcessor {
 
         // Upload as latest.enc
         let auth_client = fold_db::sync::auth::AuthClient::new(
+            // trace-egress: propagate (auth Lambda; AuthClient::post wraps with inject_w3c)
             std::sync::Arc::new(reqwest::Client::new()),
             api_url.to_string(),
             fold_db::sync::auth::SyncAuth::ApiKey(api_key.to_string()),
@@ -479,6 +481,7 @@ impl OperationProcessor {
             .map_err(|e| FoldDbError::Other(format!("Failed to get presigned URL: {e}")))?;
 
         let s3_client =
+            // trace-egress: skip-s3 (presigned URL upload; injecting headers breaks SigV4)
             fold_db::sync::s3::S3Client::new(std::sync::Arc::new(reqwest::Client::new()));
         s3_client
             .upload(&url, sealed)

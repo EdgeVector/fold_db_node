@@ -981,6 +981,7 @@ async fn cloud_delete_account(
     };
 
     eprint!("Deleting account...");
+    // trace-egress: propagate (Exemem auth Lambda; inject_w3c wrapping deferred — pending fold_db rev bump)
     let http = reqwest::Client::new();
     let resp = http
         .delete(format!("{}/api/auth/account", api_url))
@@ -1125,6 +1126,7 @@ fn read_identity_pubkey(data_path: &std::path::Path) -> Option<String> {
 /// setup wizard (or the non-TTY error) rather than hanging the CLI.
 async fn fetch_pubkey_from_daemon(port: u16) -> Option<String> {
     let url = format!("http://127.0.0.1:{}/api/system/auto-identity", port);
+    // trace-egress: loopback (CLI -> local daemon; inject_w3c wrapping deferred — pending fold_db rev bump)
     let client = reqwest::Client::builder()
         .timeout(std::time::Duration::from_secs(2))
         .build()

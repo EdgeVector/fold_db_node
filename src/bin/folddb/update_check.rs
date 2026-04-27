@@ -28,6 +28,7 @@ pub fn spawn_update_check() {
 }
 
 async fn check_latest_version() -> Result<Option<String>, ()> {
+    // trace-egress: skip-3p (GitHub Releases API)
     let client = reqwest::Client::builder()
         .timeout(CHECK_TIMEOUT)
         .user_agent("folddb-cli")

@@ -572,6 +572,7 @@ impl LlmQueryService {
                 // `schema_service_client` doesn't wrap this yet — a raw GET
                 // is adequate since the base URL is already validated.
                 let base = schema_service_url.trim_end_matches('/');
+                // trace-egress: propagate (schema service; inject_w3c wrapping deferred — pending fold_db rev bump)
                 let http = reqwest::Client::new();
                 let wasm_resp = http
                     .get(format!("{}/v1/transform/{}/wasm", base, hash))
