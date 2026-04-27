@@ -38,8 +38,7 @@ impl FoldDbClient {
         );
         let resp = request.send().await.map_err(|e| {
             if e.is_connect() {
-                CliError::new("Daemon not responding")
-                    .with_hint("Run `folddb daemon start` first")
+                CliError::new("Daemon not responding").with_hint("Run `folddb daemon start` first")
             } else {
                 CliError::new(format!("HTTP request failed: {}", e))
             }
@@ -57,8 +56,7 @@ impl FoldDbClient {
         );
         let resp = request.send().await.map_err(|e| {
             if e.is_connect() {
-                CliError::new("Daemon not responding")
-                    .with_hint("Run `folddb daemon start` first")
+                CliError::new("Daemon not responding").with_hint("Run `folddb daemon start` first")
             } else {
                 CliError::new(format!("HTTP request failed: {}", e))
             }

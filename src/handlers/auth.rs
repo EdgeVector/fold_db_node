@@ -390,8 +390,7 @@ pub(crate) async fn signed_register(
         register_body["invite_code"] = serde_json::Value::String(code.to_string());
     }
 
-    let request =
-        observability::propagation::inject_w3c(client.post(&url).json(&register_body));
+    let request = observability::propagation::inject_w3c(client.post(&url).json(&register_body));
     let resp = request
         .send()
         .await
@@ -674,8 +673,7 @@ async fn reregister_and_store(
 
     // trace-egress: propagate (Exemem auth Lambda; .send() wrapped with inject_w3c below)
     let client = reqwest::Client::new();
-    let request =
-        observability::propagation::inject_w3c(client.post(&url).json(&register_body));
+    let request = observability::propagation::inject_w3c(client.post(&url).json(&register_body));
     let resp = request
         .send()
         .await
