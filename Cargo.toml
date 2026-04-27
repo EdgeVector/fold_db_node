@@ -139,6 +139,11 @@ tracing-subscriber = "0.3"
 # to the feature for test builds — Cargo unifies with the [dependencies]
 # entry, same git source.
 schema_service_core = { git = "https://github.com/EdgeVector/schema_service.git", branch = "main", features = ["test-utils"] }
+# Mock HTTP server for the Phase 2 D1 headline trace-propagation test
+# (tests/observability_e2e_trace_propagation.rs). Stands in for the
+# real schema service so the test can capture the egress traceparent
+# header without spawning a second observable in the same process.
+wiremock = "0.6"
 
 [lib]
 name = "fold_db_node"

@@ -470,6 +470,16 @@ dependencies = [
 ]
 
 [[package]]
+name = "assert-json-diff"
+version = "2.0.2"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "47e4f2b81832e72834d7518d8487a0396a28cc408186a2e8854c0f98011faf12"
+dependencies = [
+ "serde",
+ "serde_json",
+]
+
+[[package]]
 name = "assert_cmd"
 version = "2.2.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -1395,6 +1405,24 @@ dependencies = [
 ]
 
 [[package]]
+name = "deadpool"
+version = "0.12.3"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "0be2b1d1d6ec8d846f05e137292d0b89133caf95ef33695424c09568bdd39b1b"
+dependencies = [
+ "deadpool-runtime",
+ "lazy_static",
+ "num_cpus",
+ "tokio",
+]
+
+[[package]]
+name = "deadpool-runtime"
+version = "0.1.4"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "092966b41edc516079bdf31ec78a2e0588d1d0c08f78b91d8307215928642b2b"
+
+[[package]]
 name = "debugid"
 version = "0.8.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -1890,7 +1918,6 @@ checksum = "3f9eec918d3f24069decb9af1554cad7c880e2da24a9afd88aca000531ab82c1"
 [[package]]
 name = "fold_db"
 version = "0.3.0"
-source = "git+https://github.com/EdgeVector/fold_db.git?rev=a0434b2539c24a955649b19d8aa6b0b532c4c1cc#a0434b2539c24a955649b19d8aa6b0b532c4c1cc"
 dependencies = [
  "aes-gcm",
  "async-trait",
@@ -1910,6 +1937,7 @@ dependencies = [
  "hmac",
  "image",
  "log",
+ "observability",
  "once_cell",
  "ort",
  "rand 0.8.5",
@@ -2004,6 +2032,7 @@ dependencies = [
  "utoipa",
  "uuid",
  "wat",
+ "wiremock",
  "x25519-dalek",
 ]
 
@@ -2516,6 +2545,7 @@ dependencies = [
  "http 1.4.0",
  "http-body 1.0.1",
  "httparse",
+ "httpdate",
  "itoa",
  "pin-project-lite",
  "smallvec",
@@ -3496,7 +3526,6 @@ dependencies = [
 [[package]]
 name = "observability"
 version = "0.1.0"
-source = "git+https://github.com/EdgeVector/fold_db.git?rev=8c6af2a0537d642516417f2666cb2c238daf09b9#8c6af2a0537d642516417f2666cb2c238daf09b9"
 dependencies = [
  "http 1.4.0",
  "once_cell",
@@ -4725,7 +4754,6 @@ dependencies = [
 [[package]]
 name = "schema_service_client"
 version = "0.1.0"
-source = "git+https://github.com/EdgeVector/schema_service.git?branch=main#ae8653a6ad1bf973bdde9c5a87f12f60df37d35e"
 dependencies = [
  "fold_db",
  "futures",
@@ -4740,7 +4768,6 @@ dependencies = [
 [[package]]
 name = "schema_service_core"
 version = "0.1.0"
-source = "git+https://github.com/EdgeVector/schema_service.git?branch=main#ae8653a6ad1bf973bdde9c5a87f12f60df37d35e"
 dependencies = [
  "async-trait",
  "chrono-tz",
@@ -4762,7 +4789,6 @@ dependencies = [
 [[package]]
 name = "schema_service_server_http"
 version = "0.1.0"
-source = "git+https://github.com/EdgeVector/schema_service.git?branch=main#ae8653a6ad1bf973bdde9c5a87f12f60df37d35e"
 dependencies = [
  "actix-cors",
  "actix-web",
@@ -4778,7 +4804,6 @@ dependencies = [
 [[package]]
 name = "schema_service_server_shared"
 version = "0.1.0"
-source = "git+https://github.com/EdgeVector/schema_service.git?branch=main#ae8653a6ad1bf973bdde9c5a87f12f60df37d35e"
 dependencies = [
  "actix-web",
  "chrono",
@@ -6323,7 +6348,6 @@ dependencies = [
 [[package]]
 name = "wasm_compiler"
 version = "0.1.0"
-source = "git+https://github.com/EdgeVector/schema_service.git?branch=main#ae8653a6ad1bf973bdde9c5a87f12f60df37d35e"
 dependencies = [
  "log",
  "serde",
@@ -7066,6 +7090,29 @@ checksum = "524e57b2c537c0f9b1e69f1965311ec12182b4122e45035b1508cd24d2adadb1"
 dependencies = [
  "cfg-if",
  "windows-sys 0.48.0",
+]
+
+[[package]]
+name = "wiremock"
+version = "0.6.5"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "08db1edfb05d9b3c1542e521aea074442088292f00b5f28e435c714a98f85031"
+dependencies = [
+ "assert-json-diff",
+ "base64 0.22.1",
+ "deadpool",
+ "futures",
+ "http 1.4.0",
+ "http-body-util",
+ "hyper 1.9.0",
+ "hyper-util",
+ "log",
+ "once_cell",
+ "regex",
+ "serde",
+ "serde_json",
+ "tokio",
+ "url",
 ]
 
 [[package]]
