@@ -18,7 +18,7 @@ impl FoldDbClient {
             base_url: format!("http://127.0.0.1:{}", port),
             user_hash: user_hash.to_string(),
             // 10 min timeout — LLM agent queries and large ingestion can be slow
-            // trace-egress: loopback (CLI -> local daemon; inject_w3c wrapping deferred — pending fold_db rev bump)
+            // trace-egress: loopback (CLI -> local daemon; .send() wrapped via inject_w3c in get/post helpers)
             client: reqwest::Client::builder()
                 .timeout(std::time::Duration::from_secs(600))
                 .build()
@@ -31,40 +31,36 @@ impl FoldDbClient {
     }
 
     async fn get(&self, path: &str) -> Result<Value, CliError> {
-        let resp = self
-            .client
-            .get(self.url(path))
-            .header("X-User-Hash", &self.user_hash)
-            .send()
-            .await
-            .map_err(|e| {
-                if e.is_connect() {
-                    CliError::new("Daemon not responding")
-                        .with_hint("Run `folddb daemon start` first")
-                } else {
-                    CliError::new(format!("HTTP request failed: {}", e))
-                }
-            })?;
+        let request = observability::propagation::inject_w3c(
+            self.client
+                .get(self.url(path))
+                .header("X-User-Hash", &self.user_hash),
+        );
+        let resp = request.send().await.map_err(|e| {
+            if e.is_connect() {
+                CliError::new("Daemon not responding").with_hint("Run `folddb daemon start` first")
+            } else {
+                CliError::new(format!("HTTP request failed: {}", e))
+            }
+        })?;
 
         self.parse_response(resp).await
     }
 
     async fn post(&self, path: &str, body: &Value) -> Result<Value, CliError> {
-        let resp = self
-            .client
-            .post(self.url(path))
-            .header("X-User-Hash", &self.user_hash)
-            .json(body)
-            .send()
-            .await
-            .map_err(|e| {
-                if e.is_connect() {
-                    CliError::new("Daemon not responding")
-                        .with_hint("Run `folddb daemon start` first")
-                } else {
-                    CliError::new(format!("HTTP request failed: {}", e))
-                }
-            })?;
+        let request = observability::propagation::inject_w3c(
+            self.client
+                .post(self.url(path))
+                .header("X-User-Hash", &self.user_hash)
+                .json(body),
+        );
+        let resp = request.send().await.map_err(|e| {
+            if e.is_connect() {
+                CliError::new("Daemon not responding").with_hint("Run `folddb daemon start` first")
+            } else {
+                CliError::new(format!("HTTP request failed: {}", e))
+            }
+        })?;
 
         self.parse_response(resp).await
     }

@@ -24,12 +24,13 @@ impl FoldDbClient {
     /// If the daemon is not running, attempts to auto-start it via `folddb daemon start`.
     pub async fn connect(port: u16) -> Result<Self, McpError> {
         let base_url = format!("http://127.0.0.1:{}", port);
-        // trace-egress: loopback (MCP client -> local daemon; inject_w3c wrapping deferred — pending fold_db rev bump)
+        // trace-egress: loopback (MCP client -> local daemon; .send() wrapped with inject_w3c below)
         let http = reqwest::Client::new();
 
         // Health check — if it fails, try to auto-start the daemon
         let status_url = format!("{}/api/system/status", base_url);
-        if http.get(&status_url).send().await.is_err() {
+        let probe = observability::propagation::inject_w3c(http.get(&status_url));
+        if probe.send().await.is_err() {
             eprintln!(
                 "[folddb-mcp] Daemon not running on port {}. Attempting to auto-start...",
                 port
@@ -40,7 +41,8 @@ impl FoldDbClient {
             let mut connected = false;
             for attempt in 1..=DAEMON_START_RETRIES {
                 tokio::time::sleep(std::time::Duration::from_millis(DAEMON_RETRY_DELAY_MS)).await;
-                if http.get(&status_url).send().await.is_ok() {
+                let retry = observability::propagation::inject_w3c(http.get(&status_url));
+                if retry.send().await.is_ok() {
                     eprintln!(
                         "[folddb-mcp] Daemon started successfully (attempt {}/{})",
                         attempt, DAEMON_START_RETRIES
@@ -62,13 +64,11 @@ impl FoldDbClient {
         }
 
         // Fetch public key and derive user_hash
-        let pub_resp: Value = http
-            .get(format!("{}/api/system/public-key", base_url))
-            .header("x-user-hash", "mcp_bootstrap")
-            .send()
-            .await?
-            .json()
-            .await?;
+        let pubkey_request = observability::propagation::inject_w3c(
+            http.get(format!("{}/api/system/public-key", base_url))
+                .header("x-user-hash", "mcp_bootstrap"),
+        );
+        let pub_resp: Value = pubkey_request.send().await?.json().await?;
 
         // Response format: {"public_key": "<base64>", "success": true, ...}
         let pub_b64 = pub_resp
@@ -136,29 +136,25 @@ impl FoldDbClient {
 
     /// GET request.
     pub async fn get(&self, path: &str) -> Result<Value, McpError> {
-        let resp = self
-            .http
-            .get(format!("{}{}", self.base_url, path))
-            .header("x-user-hash", &self.user_hash)
-            .send()
-            .await?
-            .json()
-            .await?;
+        let request = observability::propagation::inject_w3c(
+            self.http
+                .get(format!("{}{}", self.base_url, path))
+                .header("x-user-hash", &self.user_hash),
+        );
+        let resp = request.send().await?.json().await?;
         Ok(resp)
     }
 
     /// POST request.
     pub async fn post(&self, path: &str, body: &Value) -> Result<Value, McpError> {
-        let resp = self
-            .http
-            .post(format!("{}{}", self.base_url, path))
-            .header("x-user-hash", &self.user_hash)
-            .header("Content-Type", "application/json")
-            .json(body)
-            .send()
-            .await?
-            .json()
-            .await?;
+        let request = observability::propagation::inject_w3c(
+            self.http
+                .post(format!("{}{}", self.base_url, path))
+                .header("x-user-hash", &self.user_hash)
+                .header("Content-Type", "application/json")
+                .json(body),
+        );
+        let resp = request.send().await?.json().await?;
         Ok(resp)
     }
 }

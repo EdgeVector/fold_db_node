@@ -981,13 +981,13 @@ async fn cloud_delete_account(
     };
 
     eprint!("Deleting account...");
-    // trace-egress: propagate (Exemem auth Lambda; inject_w3c wrapping deferred — pending fold_db rev bump)
+    // trace-egress: propagate (Exemem auth Lambda; .send() wrapped with inject_w3c below)
     let http = reqwest::Client::new();
-    let resp = http
-        .delete(format!("{}/api/auth/account", api_url))
-        .header("X-API-Key", &api_key)
-        .send()
-        .await;
+    let delete_request = observability::propagation::inject_w3c(
+        http.delete(format!("{}/api/auth/account", api_url))
+            .header("X-API-Key", &api_key),
+    );
+    let resp = delete_request.send().await;
 
     match resp {
         Ok(r) if r.status().is_success() => {
@@ -997,11 +997,11 @@ async fn cloud_delete_account(
             // Fail LOUDLY if the purge errors — we previously swallowed this and
             // told the user "All cloud data purged" while objects remained.
             eprint!("Purging cloud storage...");
-            let purge_resp = http
-                .post(format!("{}/api/storage-admin/purge-account", api_url))
-                .header("X-API-Key", &api_key)
-                .send()
-                .await;
+            let purge_request = observability::propagation::inject_w3c(
+                http.post(format!("{}/api/storage-admin/purge-account", api_url))
+                    .header("X-API-Key", &api_key),
+            );
+            let purge_resp = purge_request.send().await;
             let purge_body: serde_json::Value = match purge_resp {
                 Ok(pr) => {
                     let status = pr.status();
@@ -1126,12 +1126,13 @@ fn read_identity_pubkey(data_path: &std::path::Path) -> Option<String> {
 /// setup wizard (or the non-TTY error) rather than hanging the CLI.
 async fn fetch_pubkey_from_daemon(port: u16) -> Option<String> {
     let url = format!("http://127.0.0.1:{}/api/system/auto-identity", port);
-    // trace-egress: loopback (CLI -> local daemon; inject_w3c wrapping deferred — pending fold_db rev bump)
+    // trace-egress: loopback (CLI -> local daemon; .send() wrapped with inject_w3c below)
     let client = reqwest::Client::builder()
         .timeout(std::time::Duration::from_secs(2))
         .build()
         .ok()?;
-    let resp = client.get(&url).send().await.ok()?;
+    let request = observability::propagation::inject_w3c(client.get(&url));
+    let resp = request.send().await.ok()?;
     if !resp.status().is_success() {
         return None;
     }

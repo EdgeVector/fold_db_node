@@ -156,11 +156,12 @@ async fn revoke_exemem_account() -> Result<(), String> {
 
     let api_url = exemem_api_url();
     let url = format!("{}/api/auth/account", api_url);
-    // trace-egress: propagate (Exemem auth Lambda; inject_w3c wrapping deferred — pending fold_db rev bump)
+    // trace-egress: propagate (Exemem auth Lambda; .send() wrapped with inject_w3c below)
     let client = reqwest::Client::new();
-    let resp = client
-        .delete(&url)
-        .bearer_auth(&creds.session_token)
+    let request = observability::propagation::inject_w3c(
+        client.delete(&url).bearer_auth(&creds.session_token),
+    );
+    let resp = request
         .send()
         .await
         .map_err(|e| format!("failed to connect: {e}"))?;
@@ -376,7 +377,7 @@ pub(crate) async fn signed_register(
     let signature_b64 = sign_payload(&private_key_b64, &payload)?;
 
     // Call Exemem CLI register endpoint with signature
-    // trace-egress: propagate (Exemem auth Lambda; inject_w3c wrapping deferred — pending fold_db rev bump)
+    // trace-egress: propagate (Exemem auth Lambda; .send() wrapped with inject_w3c below)
     let client = reqwest::Client::new();
     let url = format!("{}/api/auth/cli/register", exemem_api_url());
 
@@ -389,9 +390,8 @@ pub(crate) async fn signed_register(
         register_body["invite_code"] = serde_json::Value::String(code.to_string());
     }
 
-    let resp = client
-        .post(&url)
-        .json(&register_body)
+    let request = observability::propagation::inject_w3c(client.post(&url).json(&register_body));
+    let resp = request
         .send()
         .await
         .map_err(|e| format!("Failed to connect to Exemem API: {}", e))?;
@@ -671,11 +671,10 @@ async fn reregister_and_store(
         "signature": signature_b64
     });
 
-    // trace-egress: propagate (Exemem auth Lambda; inject_w3c wrapping deferred — pending fold_db rev bump)
+    // trace-egress: propagate (Exemem auth Lambda; .send() wrapped with inject_w3c below)
     let client = reqwest::Client::new();
-    let resp = client
-        .post(&url)
-        .json(&register_body)
+    let request = observability::propagation::inject_w3c(client.post(&url).json(&register_body));
+    let resp = request
         .send()
         .await
         .map_err(|e| format!("Auth refresh: failed to connect to Exemem API: {e}"))?;

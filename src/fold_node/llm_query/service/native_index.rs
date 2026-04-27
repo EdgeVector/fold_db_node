@@ -572,15 +572,14 @@ impl LlmQueryService {
                 // `schema_service_client` doesn't wrap this yet — a raw GET
                 // is adequate since the base URL is already validated.
                 let base = schema_service_url.trim_end_matches('/');
-                // trace-egress: propagate (schema service; inject_w3c wrapping deferred — pending fold_db rev bump)
+                // trace-egress: propagate (schema service; .send() wrapped with inject_w3c below)
                 let http = reqwest::Client::new();
-                let wasm_resp = http
-                    .get(format!("{}/v1/transform/{}/wasm", base, hash))
-                    .send()
-                    .await
-                    .map_err(|e| {
-                        format!("Failed to fetch compiled WASM for hash {}: {}", hash, e)
-                    })?;
+                let request = observability::propagation::inject_w3c(
+                    http.get(format!("{}/v1/transform/{}/wasm", base, hash)),
+                );
+                let wasm_resp = request.send().await.map_err(|e| {
+                    format!("Failed to fetch compiled WASM for hash {}: {}", hash, e)
+                })?;
                 if !wasm_resp.status().is_success() {
                     return Err(format!(
                         "Schema service returned {} fetching compiled WASM for hash {}",
