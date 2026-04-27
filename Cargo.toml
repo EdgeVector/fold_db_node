@@ -28,11 +28,19 @@ schema_service_core = { git = "https://github.com/EdgeVector/schema_service.git"
 # pattern as `schema_service_core`.
 schema_service_client = { git = "https://github.com/EdgeVector/schema_service.git", branch = "main" }
 
+# Shared telemetry substrate. Lives in fold_db's workspace (`crates/observability`)
+# but pinned independently here because the fold_db `rev` above is pre-workspace
+# and lockstep-bumped with schema_service. observability has no `fold_db`
+# dep itself, so a divergent rev avoids the dual-`fold_db` trap CLAUDE.md
+# warns about. See `docs/observability/ingress-middleware-notes.md`.
+observability = { git = "https://github.com/EdgeVector/fold_db.git", rev = "8c6af2a0537d642516417f2666cb2c238daf09b9" }
+
 # HTTP Server
 actix-web = "4.3"
 actix-http = "3"
 actix-cors = "0.6"
 actix-multipart = "0.6"
+tracing-actix-web = "0.7"
 
 # CLI
 clap = { version = "4.4", features = ["derive", "string"] }
@@ -58,6 +66,17 @@ serde_json = "1.0"
 ts-rs = { version = "10.1.0", optional = true, features = ["uuid-impl", "chrono-impl"] }
 tokio = { version = "1.0", features = ["macros", "rt-multi-thread", "sync", "time", "fs", "signal", "io-util"] }
 log = { version = "0.4", features = ["std"] }
+tracing = "0.1"
+# Versions match observability's Cargo.toml so cargo unifies them in the
+# dep graph (otherwise we'd link two copies of opentelemetry types and
+# `set_parent` calls wouldn't typecheck).
+tracing-opentelemetry = "0.28"
+opentelemetry = "0.27"
+# observability::propagation::extract_parent_context takes &http::HeaderMap
+# (1.x). actix-http re-exports the same `http` crate's HeaderName / Value
+# types but its own HeaderMap is a different container, so we have to
+# rebuild an http::HeaderMap on ingress.
+http = "1"
 toml = "0.8"
 tempfile = "3.8"
 uuid = { version = "1.0", features = ["v4", "serde"] }
@@ -111,6 +130,10 @@ wat = "1"
 # git-dep + local patch pattern as the production deps above. Never
 # pulled into non-dev builds.
 schema_service_server_http = { git = "https://github.com/EdgeVector/schema_service.git", branch = "main" }
+# Dev-only: assemble a tracing subscriber + OpenTelemetry layer in the
+# otel middleware test so set_parent has somewhere to land.
+opentelemetry_sdk = "0.27"
+tracing-subscriber = "0.3"
 # test-utils exposes MockEmbeddingModel for test fixtures that call
 # SchemaServiceState::new() directly. Re-declared here only to opt in
 # to the feature for test builds — Cargo unifies with the [dependencies]
