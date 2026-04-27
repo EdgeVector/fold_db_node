@@ -51,12 +51,13 @@ fn is_process_alive(pid: u32) -> bool {
 /// uptime monitors and load balancers hit.
 pub async fn check_daemon_health(port: u16) -> bool {
     let url = format!("http://127.0.0.1:{}/api/health", port);
-    // trace-egress: loopback (CLI -> local daemon health probe; inject_w3c wrapping deferred — pending fold_db rev bump)
+    // trace-egress: loopback (CLI -> local daemon health probe; .send() wrapped with inject_w3c below)
     let client = reqwest::Client::builder()
         .timeout(std::time::Duration::from_secs(2))
         .build()
         .unwrap();
-    match client.get(url).send().await {
+    let request = observability::propagation::inject_w3c(client.get(url));
+    match request.send().await {
         Ok(resp) => resp.status().is_success(),
         Err(_) => false,
     }

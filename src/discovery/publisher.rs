@@ -118,7 +118,7 @@ impl DiscoveryPublisher {
         Self {
             master_key,
             discovery_url,
-            // trace-egress: propagate (discovery service; inject_w3c wrapping deferred — pending fold_db rev bump)
+            // trace-egress: propagate (discovery service; .send() wrapped via Self::wrap_request below)
             http_client: reqwest::Client::builder()
                 .timeout(std::time::Duration::from_secs(30))
                 .connect_timeout(std::time::Duration::from_secs(10))
@@ -127,6 +127,14 @@ impl DiscoveryPublisher {
                 .unwrap_or_else(|_| reqwest::Client::new()),
             auth_token,
         }
+    }
+
+    /// Inject W3C `traceparent` (and tracestate) into every outgoing request
+    /// from this publisher so the downstream discovery service stitches into
+    /// the same trace as the local span. Centralised here so the 12 outgoing
+    /// call sites don't each have to remember to wrap.
+    fn wrap_request(&self, builder: reqwest::RequestBuilder) -> reqwest::RequestBuilder {
+        observability::propagation::inject_w3c(builder)
     }
 
     /// Publish all records for an opted-in schema.
@@ -299,10 +307,12 @@ impl DiscoveryPublisher {
         };
 
         let response = self
-            .http_client
-            .post(format!("{}/discover/upload", self.discovery_url))
-            .header("Authorization", format!("Bearer {}", self.auth_token))
-            .json(&request)
+            .wrap_request(
+                self.http_client
+                    .post(format!("{}/discover/upload", self.discovery_url))
+                    .header("Authorization", format!("Bearer {}", self.auth_token))
+                    .json(&request),
+            )
             .send()
             .await
             .map_err(|e| format!("Failed to upload to discovery service: {}", e))?;
@@ -378,10 +388,12 @@ impl DiscoveryPublisher {
         let request = DiscoveryOptOutRequest { pseudonyms };
 
         let response = self
-            .http_client
-            .post(format!("{}/discover/opt-out", self.discovery_url))
-            .header("Authorization", format!("Bearer {}", self.auth_token))
-            .json(&request)
+            .wrap_request(
+                self.http_client
+                    .post(format!("{}/discover/opt-out", self.discovery_url))
+                    .header("Authorization", format!("Bearer {}", self.auth_token))
+                    .json(&request),
+            )
             .send()
             .await
             .map_err(|e| format!("Failed to opt-out from discovery service: {}", e))?;
@@ -436,10 +448,12 @@ impl DiscoveryPublisher {
         };
 
         let response = self
-            .http_client
-            .post(format!("{}/discover/search", self.discovery_url))
-            .header("Authorization", format!("Bearer {}", self.auth_token))
-            .json(&request)
+            .wrap_request(
+                self.http_client
+                    .post(format!("{}/discover/search", self.discovery_url))
+                    .header("Authorization", format!("Bearer {}", self.auth_token))
+                    .json(&request),
+            )
             .send()
             .await
             .map_err(|e| format!("Failed to search discovery service: {}", e))?;
@@ -475,10 +489,12 @@ impl DiscoveryPublisher {
         };
 
         let response = self
-            .http_client
-            .post(format!("{}/messaging/connect", self.discovery_url))
-            .header("Authorization", format!("Bearer {}", self.auth_token))
-            .json(&request)
+            .wrap_request(
+                self.http_client
+                    .post(format!("{}/messaging/connect", self.discovery_url))
+                    .header("Authorization", format!("Bearer {}", self.auth_token))
+                    .json(&request),
+            )
             .send()
             .await
             .map_err(|e| format!("Failed to send connection request: {}", e))?;
@@ -519,9 +535,11 @@ impl DiscoveryPublisher {
         }
 
         let response = self
-            .http_client
-            .get(&url)
-            .header("Authorization", format!("Bearer {}", self.auth_token))
+            .wrap_request(
+                self.http_client
+                    .get(&url)
+                    .header("Authorization", format!("Bearer {}", self.auth_token)),
+            )
             .send()
             .await
             .map_err(|e| format!("Failed to poll messages: {}", e))?;
@@ -546,9 +564,11 @@ impl DiscoveryPublisher {
     /// Browse categories on the discovery network.
     pub async fn browse_categories(&self) -> Result<Vec<BrowseCategory>, String> {
         let response = self
-            .http_client
-            .get(format!("{}/discover/browse/categories", self.discovery_url))
-            .header("Authorization", format!("Bearer {}", self.auth_token))
+            .wrap_request(
+                self.http_client
+                    .get(format!("{}/discover/browse/categories", self.discovery_url))
+                    .header("Authorization", format!("Bearer {}", self.auth_token)),
+            )
             .send()
             .await
             .map_err(|e| format!("Failed to browse categories: {}", e))?;
@@ -578,9 +598,11 @@ impl DiscoveryPublisher {
         );
 
         let response = self
-            .http_client
-            .get(&url)
-            .header("Authorization", format!("Bearer {}", self.auth_token))
+            .wrap_request(
+                self.http_client
+                    .get(&url)
+                    .header("Authorization", format!("Bearer {}", self.auth_token)),
+            )
             .send()
             .await
             .map_err(|e| format!("Failed to get public key: {}", e))?;
@@ -609,9 +631,11 @@ impl DiscoveryPublisher {
     /// Legacy: Poll for incoming connection requests.
     pub async fn poll_requests(&self) -> Result<Vec<IncomingConnectionRequest>, String> {
         let response = self
-            .http_client
-            .get(format!("{}/messaging/requests", self.discovery_url))
-            .header("Authorization", format!("Bearer {}", self.auth_token))
+            .wrap_request(
+                self.http_client
+                    .get(format!("{}/messaging/requests", self.discovery_url))
+                    .header("Authorization", format!("Bearer {}", self.auth_token)),
+            )
             .send()
             .await
             .map_err(|e| format!("Failed to poll connection requests: {}", e))?;
@@ -638,10 +662,12 @@ impl DiscoveryPublisher {
     /// Upload a trust invite token to the discovery service, returning a short invite ID.
     pub async fn store_trust_invite(&self, token: &str) -> Result<String, String> {
         let response = self
-            .http_client
-            .post(format!("{}/messaging/trust-invite", self.discovery_url))
-            .header("Authorization", format!("Bearer {}", self.auth_token))
-            .json(&serde_json::json!({ "token": token }))
+            .wrap_request(
+                self.http_client
+                    .post(format!("{}/messaging/trust-invite", self.discovery_url))
+                    .header("Authorization", format!("Bearer {}", self.auth_token))
+                    .json(&serde_json::json!({ "token": token })),
+            )
             .send()
             .await
             .map_err(|e| format!("Failed to store trust invite: {e}"))?;
@@ -670,9 +696,11 @@ impl DiscoveryPublisher {
             self.discovery_url, invite_id
         );
         let response = self
-            .http_client
-            .get(&url)
-            .header("Authorization", format!("Bearer {}", self.auth_token))
+            .wrap_request(
+                self.http_client
+                    .get(&url)
+                    .header("Authorization", format!("Bearer {}", self.auth_token)),
+            )
             .send()
             .await
             .map_err(|e| format!("Failed to fetch trust invite: {e}"))?;
@@ -702,17 +730,19 @@ impl DiscoveryPublisher {
         sender_name: &str,
     ) -> Result<String, String> {
         let response = self
-            .http_client
-            .post(format!(
-                "{}/messaging/trust-invite/send",
-                self.discovery_url
-            ))
-            .header("Authorization", format!("Bearer {}", self.auth_token))
-            .json(&serde_json::json!({
-                "token": token,
-                "recipient_email": recipient_email,
-                "sender_name": sender_name,
-            }))
+            .wrap_request(
+                self.http_client
+                    .post(format!(
+                        "{}/messaging/trust-invite/send",
+                        self.discovery_url
+                    ))
+                    .header("Authorization", format!("Bearer {}", self.auth_token))
+                    .json(&serde_json::json!({
+                        "token": token,
+                        "recipient_email": recipient_email,
+                        "sender_name": sender_name,
+                    })),
+            )
             .send()
             .await
             .map_err(|e| format!("Failed to send verified invite: {e}"))?;
@@ -737,16 +767,18 @@ impl DiscoveryPublisher {
     /// Verify a code and fetch the trust invite token.
     pub async fn verify_invite_code(&self, invite_id: &str, code: &str) -> Result<String, String> {
         let response = self
-            .http_client
-            .post(format!(
-                "{}/messaging/trust-invite/verify",
-                self.discovery_url
-            ))
-            .header("Authorization", format!("Bearer {}", self.auth_token))
-            .json(&serde_json::json!({
-                "invite_id": invite_id,
-                "code": code,
-            }))
+            .wrap_request(
+                self.http_client
+                    .post(format!(
+                        "{}/messaging/trust-invite/verify",
+                        self.discovery_url
+                    ))
+                    .header("Authorization", format!("Bearer {}", self.auth_token))
+                    .json(&serde_json::json!({
+                        "invite_id": invite_id,
+                        "code": code,
+                    })),
+            )
             .send()
             .await
             .map_err(|e| format!("Failed to verify invite code: {e}"))?;
@@ -919,5 +951,53 @@ mod uploaded_tracking_tests {
             .await
             .unwrap();
         assert_eq!(derived.len(), 1);
+    }
+}
+
+#[cfg(test)]
+mod egress_propagation_tests {
+    use super::*;
+    use opentelemetry::global;
+    use opentelemetry::trace::TracerProvider;
+    use opentelemetry_sdk::propagation::TraceContextPropagator;
+    use opentelemetry_sdk::trace::TracerProvider as SdkTracerProvider;
+    use tracing_subscriber::layer::SubscriberExt;
+
+    /// Verify the wiring: a request prepared via `DiscoveryPublisher::wrap_request`
+    /// while inside an active span carries a W3C `traceparent` header. Catches
+    /// regressions where someone removes the `inject_w3c` call or adds a new
+    /// outgoing site without routing it through `wrap_request`.
+    #[test]
+    fn wrap_request_injects_traceparent_inside_active_span() {
+        global::set_text_map_propagator(TraceContextPropagator::new());
+        let provider = SdkTracerProvider::builder().build();
+        let tracer = provider.tracer("publisher-egress-test");
+        let otel_layer = tracing_opentelemetry::layer().with_tracer(tracer);
+        let subscriber = tracing_subscriber::registry().with(otel_layer);
+
+        tracing::subscriber::with_default(subscriber, || {
+            let span = tracing::info_span!("egress.test");
+            let _enter = span.enter();
+
+            let publisher = DiscoveryPublisher::new(
+                vec![1, 2, 3, 4],
+                "http://mock".to_string(),
+                "tok".to_string(),
+            );
+            let builder = publisher.http_client.get("http://mock/discover/anything");
+            let wrapped = publisher.wrap_request(builder);
+            let request = wrapped.build().expect("build request");
+
+            let traceparent = request
+                .headers()
+                .get("traceparent")
+                .expect("traceparent must be injected for spans with otel data")
+                .to_str()
+                .expect("traceparent must be ASCII");
+            assert!(
+                traceparent.starts_with("00-"),
+                "expected W3C v00 traceparent, got {traceparent}"
+            );
+        });
     }
 }
