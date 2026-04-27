@@ -62,6 +62,9 @@ jobs:
           sudo mkswap /swap2
           sudo swapon /swap2
 
+      - name: Lint tracing egress classifiers
+        run: bash scripts/lint-tracing-egress.sh
+
       - name: Check formatting
         run: cargo fmt --all -- --check
 

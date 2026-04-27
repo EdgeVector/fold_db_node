@@ -51,6 +51,7 @@ fn is_process_alive(pid: u32) -> bool {
 /// uptime monitors and load balancers hit.
 pub async fn check_daemon_health(port: u16) -> bool {
     let url = format!("http://127.0.0.1:{}/api/health", port);
+    // trace-egress: loopback (CLI -> local daemon health probe; inject_w3c wrapping deferred — pending fold_db rev bump)
     let client = reqwest::Client::builder()
         .timeout(std::time::Duration::from_secs(2))
         .build()

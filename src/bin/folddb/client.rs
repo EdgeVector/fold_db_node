@@ -18,6 +18,7 @@ impl FoldDbClient {
             base_url: format!("http://127.0.0.1:{}", port),
             user_hash: user_hash.to_string(),
             // 10 min timeout — LLM agent queries and large ingestion can be slow
+            // trace-egress: loopback (CLI -> local daemon; inject_w3c wrapping deferred — pending fold_db rev bump)
             client: reqwest::Client::builder()
                 .timeout(std::time::Duration::from_secs(600))
                 .build()

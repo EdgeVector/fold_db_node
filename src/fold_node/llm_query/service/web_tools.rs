@@ -33,6 +33,7 @@ pub async fn web_search(query: &str, count: usize) -> Result<Vec<WebSearchResult
 
     let count = count.min(MAX_RESULTS);
 
+    // trace-egress: skip-3p (Brave Search API)
     let client = reqwest::Client::builder()
         .timeout(std::time::Duration::from_secs(15))
         .build()
@@ -92,6 +93,7 @@ fn parse_brave_response(body: &Value) -> Result<Vec<WebSearchResult>, String> {
 
 /// Fetch a URL and extract its text content (strips HTML tags).
 pub async fn fetch_url(url: &str) -> Result<String, String> {
+    // trace-egress: skip-3p (arbitrary user-supplied URL)
     let client = reqwest::Client::builder()
         .timeout(std::time::Duration::from_secs(15))
         .redirect(reqwest::redirect::Policy::limited(5))

@@ -118,10 +118,12 @@ impl DiscoveryPublisher {
         Self {
             master_key,
             discovery_url,
+            // trace-egress: propagate (discovery service; inject_w3c wrapping deferred — pending fold_db rev bump)
             http_client: reqwest::Client::builder()
                 .timeout(std::time::Duration::from_secs(30))
                 .connect_timeout(std::time::Duration::from_secs(10))
                 .build()
+                // trace-egress: propagate (fallback path; same target as builder above)
                 .unwrap_or_else(|_| reqwest::Client::new()),
             auth_token,
         }

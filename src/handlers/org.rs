@@ -490,6 +490,7 @@ async fn purge_org_locally(
 /// Shared HTTP client for org operations. Uses a single connection pool across all requests.
 fn shared_http_client() -> Arc<reqwest::Client> {
     use std::sync::LazyLock;
+    // trace-egress: propagate (shared with skip-s3 — see docs/observability/egress-classification-notes.md)
     static CLIENT: LazyLock<Arc<reqwest::Client>> =
         LazyLock::new(|| Arc::new(reqwest::Client::new()));
     Arc::clone(&CLIENT)
