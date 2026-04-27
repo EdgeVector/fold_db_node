@@ -1,4 +1,5 @@
 use super::middleware::auth::UserContextMiddleware;
+use super::middleware::otel::W3CParentContext;
 use super::node_manager::NodeManager;
 use super::routes::log as log_routes;
 use super::routes::{
@@ -23,6 +24,7 @@ use fold_db::logging::features::LogFeature;
 
 use actix_web::{web, App, HttpRequest, HttpResponse, HttpServer as ActixHttpServer};
 use std::sync::Arc;
+use tracing_actix_web::TracingLogger;
 
 /// HTTP server for the Fold node.
 ///
@@ -290,9 +292,18 @@ impl FoldHttpServer {
             let json_config =
                 web::JsonConfig::default().error_handler(http_errors::json_error_handler);
 
+            // Middleware order: the *last* `.wrap` is the OUTERMOST on
+            // the request path. To get the on-the-wire order
+            // CORS → TracingLogger → W3CParentContext → UserContext → handler,
+            // register them in reverse — the handler-adjacent layer first,
+            // CORS last. TracingLogger creates the root span; W3CParentContext,
+            // running as its inner, attaches any incoming `traceparent` as
+            // that span's parent.
             App::new()
-                .wrap(cors)
                 .wrap(UserContextMiddleware)
+                .wrap(W3CParentContext)
+                .wrap(TracingLogger::default())
+                .wrap(cors)
                 .app_data(app_state.clone())
                 .app_data(llm_query_state.clone())
                 .app_data(upload_storage_data.clone())
