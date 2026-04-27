@@ -7,6 +7,7 @@ pub mod identity;
 pub mod ingestion;
 pub mod keychain;
 pub mod memory;
+pub mod observability_setup;
 #[cfg(feature = "os-keychain")]
 pub mod secure_store;
 pub mod sensitive_io;

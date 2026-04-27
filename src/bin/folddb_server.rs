@@ -1,6 +1,7 @@
 use clap::Parser;
 use fold_db_node::{
     fold_node::config::load_node_config,
+    observability_setup::init_node_with_web,
     server::{
         http_server::FoldHttpServer,
         node_manager::{NodeManager, NodeManagerConfig},
@@ -173,12 +174,27 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         println!();
     }
 
-    // Initialize logging system with environment configuration
-    let log_config = fold_db::logging::config::LogConfig::from_env().unwrap_or_default();
-
-    if let Err(e) = fold_db::logging::LoggingSystem::init_with_config(log_config).await {
-        eprintln!("Failed to initialize logging system: {}", e);
-    }
+    // Initialize observability stack: FMT (file) + RELOAD + RING + WEB
+    // + OTel. The guard MUST be held for the lifetime of the process —
+    // dropping it stops the FMT worker mid-flush and may lose
+    // buffered log lines.
+    //
+    // Phase 3 / T5 wires WEB here so `/api/logs/stream` can subscribe
+    // to a tracing-native broadcast. RING handles `/api/logs`,
+    // RELOAD handles `PUT /api/logs/level`. Legacy
+    // `LoggingSystem::init_with_fallback` still runs inside
+    // `FoldHttpServer::new` so call sites that haven't migrated to
+    // `tracing::*` keep emitting through the bridge.
+    let obs_guard =
+        init_node_with_web("fold_db_node").map_err(|e| -> Box<dyn std::error::Error> {
+            format!("Failed to initialize observability stack: {}", e).into()
+        })?;
+    let obs_handles = obs_guard.handles();
+    // The guard owns the FMT worker; leak it for the process lifetime
+    // so the daemon — which only exits via SIGTERM — keeps the writer
+    // draining instead of stopping it mid-flush.
+    let _obs_guard: &'static fold_db_node::observability_setup::NodeObsGuard =
+        Box::leak(Box::new(obs_guard));
 
     // Create NodeManager — nodes are created lazily per-user on first request
     let node_manager_config = NodeManagerConfig {
@@ -188,7 +204,9 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     // Start the HTTP server
     let bind_address = format!("127.0.0.1:{}", http_port);
-    let http_server = FoldHttpServer::new(node_manager, &bind_address).await?;
+    let http_server = FoldHttpServer::new(node_manager, &bind_address)
+        .await?
+        .with_obs_handles(obs_handles);
 
     http_server
         .run()

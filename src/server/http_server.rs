@@ -43,6 +43,16 @@ pub struct FoldHttpServer {
     node_manager: Arc<NodeManager>,
     /// The HTTP server bind address
     bind_address: String,
+    /// RING / WEB handles surfaced from the observability setup. The
+    /// log endpoints subscribe to these instead of the legacy
+    /// `LoggingSystem` plumbing. `None` when the binary did not call
+    /// `init_node_with_web` — in that case the log endpoints fall back
+    /// to a 503 rather than panicking.
+    obs_handles: Option<crate::observability_setup::ObsHandles>,
+    /// RELOAD handle for runtime EnvFilter updates from
+    /// `PUT /api/logs/level`. `Arc` because `ReloadHandle` is not
+    /// `Clone` and needs shared access from the Actix handler.
+    obs_reload: Option<Arc<observability::layers::reload::ReloadHandle>>,
 }
 
 /// Shared application state for the HTTP server.
@@ -80,12 +90,33 @@ impl FoldHttpServer {
     /// Returns a `FoldDbError` if:
     /// * There is an error starting the HTTP server
     pub async fn new(node_manager: NodeManager, bind_address: &str) -> FoldDbResult<Self> {
+        // Phase 3 / T5 callers (the daemon binary) build the
+        // observability stack themselves so they can hold the guard
+        // for the lifetime of the process and pass the handles in via
+        // `with_obs_handles`. Embedded servers and tests that don't
+        // care about live-streamed logs construct without handles —
+        // `LoggingSystem::init_with_fallback` keeps the legacy
+        // tracing → log bridge alive for code paths that still call
+        // `log_feature!` while the migration is in flight.
         fold_db::logging::LoggingSystem::init_with_fallback(None).await;
 
         Ok(Self {
             node_manager: Arc::new(node_manager),
             bind_address: bind_address.to_string(),
+            obs_handles: None,
+            obs_reload: None,
         })
+    }
+
+    /// Wire RING / WEB / RELOAD handles from a `NodeObsGuard` so the
+    /// `/api/logs*` endpoints can serve from the tracing pipeline. Call
+    /// this after `init_node_with_web` in the binary's `main`. The
+    /// handles are cheap to clone — the binary keeps the guard, this
+    /// server keeps the handles.
+    pub fn with_obs_handles(mut self, handles: crate::observability_setup::ObsHandles) -> Self {
+        self.obs_reload = Some(handles.reload.clone());
+        self.obs_handles = Some(handles);
+        self
     }
 
     /// Run the HTTP server.
@@ -263,6 +294,13 @@ impl FoldHttpServer {
         let progress_tracker = fold_db::progress::create_tracker().await;
         let progress_tracker_data = web::Data::new(progress_tracker);
 
+        // Observability handles for `/api/logs*`. Wrapped in `Option`
+        // so handlers return 503 when the daemon was started without
+        // the tracing-native stack (embedded contexts, e2e tests).
+        let obs_ring_data = web::Data::new(self.obs_handles.as_ref().map(|h| h.ring.clone()));
+        let obs_web_data = web::Data::new(self.obs_handles.as_ref().map(|h| h.web.clone()));
+        let obs_reload_data = web::Data::new(self.obs_reload.clone());
+
         // Spawn Apple auto-sync background scheduler
         crate::server::routes::apple_import::spawn_sync_scheduler(
             sync_config_data.get_ref().clone(),
@@ -313,6 +351,9 @@ impl FoldHttpServer {
                 .app_data(ingestion_service_data.clone())
                 .app_data(batch_controller_map_data.clone())
                 .app_data(sync_config_data.clone())
+                .app_data(obs_ring_data.clone())
+                .app_data(obs_web_data.clone())
+                .app_data(obs_reload_data.clone())
                 .app_data(json_config)
                 .configure(Self::configure_api)
                 // Serve embedded static assets (React build)
