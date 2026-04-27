@@ -126,10 +126,10 @@ impl FoldHttpServer {
                     )
                     .await
                     {
-                        log::error!("Bootstrap resume failed: {}", e);
+                        tracing::error!("Bootstrap resume failed: {}", e);
                     }
                 } else {
-                    log::warn!("Cannot resume bootstrap: no Sled pool available yet");
+                    tracing::warn!("Cannot resume bootstrap: no Sled pool available yet");
                 }
             });
         }
@@ -162,9 +162,9 @@ impl FoldHttpServer {
         // `AppState::discovery_config()` — no process-wide env mutation.
         // Log whether it is currently available so operators can debug.
         match super::discovery_config::DiscoveryConfig::resolve(&self.node_manager).await {
-            Some(cfg) => log::info!("Discovery configuration resolved: url={}", cfg.url),
+            Some(cfg) => tracing::info!("Discovery configuration resolved: url={}", cfg.url),
             None => {
-                log::info!("Discovery configuration not yet available (no identity registered)")
+                tracing::info!("Discovery configuration not yet available (no identity registered)")
             }
         }
 
@@ -188,11 +188,11 @@ impl FoldHttpServer {
                 let creds = match crate::keychain::load_credentials() {
                     Ok(Some(c)) => c,
                     Ok(None) => {
-                        log::info!("No Exemem credentials stored; skipping startup refresh");
+                        tracing::info!("No Exemem credentials stored; skipping startup refresh");
                         return;
                     }
                     Err(e) => {
-                        log::warn!("Failed to load Exemem credentials (non-fatal): {}", e);
+                        tracing::warn!("Failed to load Exemem credentials (non-fatal): {}", e);
                         return;
                     }
                 };
@@ -204,18 +204,18 @@ impl FoldHttpServer {
                 let now = chrono::Utc::now().timestamp();
                 match session_token_needs_refresh(&creds.session_token, now, MIN_REMAINING_SECS) {
                     Ok(false) => {
-                        log::info!(
+                        tracing::info!(
                             "Exemem session token still valid (>12h remaining); skipping startup refresh"
                         );
                         return;
                     }
                     Ok(true) => {
-                        log::info!("Exemem session token near expiry; refreshing...");
+                        tracing::info!("Exemem session token near expiry; refreshing...");
                     }
                     Err(e) => {
                         // Malformed token — treat as "needs refresh" rather than
                         // a silent skip, so we recover from a corrupted token.
-                        log::warn!("Unable to parse stored session token ({}); refreshing", e);
+                        tracing::warn!("Unable to parse stored session token ({}); refreshing", e);
                     }
                 }
 
@@ -225,12 +225,14 @@ impl FoldHttpServer {
                 )
                 .await
                 {
-                    Ok(Ok(_)) => log::info!("Exemem session token refreshed successfully"),
+                    Ok(Ok(_)) => tracing::info!("Exemem session token refreshed successfully"),
                     Ok(Err(e)) => {
-                        log::warn!("Exemem session token refresh failed (non-fatal): {}", e)
+                        tracing::warn!("Exemem session token refresh failed (non-fatal): {}", e)
                     }
                     Err(_) => {
-                        log::warn!("Exemem session token refresh timed out after 10s (non-fatal)")
+                        tracing::warn!(
+                            "Exemem session token refresh timed out after 10s (non-fatal)"
+                        )
                     }
                 }
             });

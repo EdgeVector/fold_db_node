@@ -31,7 +31,7 @@ pub async fn hydrate_index_results(
     // Limit the number of results to hydrate for performance
     let hydrate_count = results.len().min(MAX_HYDRATE_RESULTS);
 
-    log::debug!(
+    tracing::debug!(
         "Hydrating {} of {} index results",
         hydrate_count,
         results.len()
@@ -129,7 +129,7 @@ pub async fn hydrate_index_results(
                         if let Some(field_value) = field_data.get(&result.key_value) {
                             // Extract the actual value from FieldValue
                             result.value = field_value.value.clone();
-                            log::trace!(
+                            tracing::trace!(
                                 "Hydrated result {}: schema={}, field={}, key={:?}",
                                 idx,
                                 result.schema_name,
@@ -141,7 +141,7 @@ pub async fn hydrate_index_results(
                 }
             }
             Err(e) => {
-                log::warn!(
+                tracing::warn!(
                     "Failed to hydrate results for schema {}: {}",
                     schema_name,
                     e
@@ -150,6 +150,6 @@ pub async fn hydrate_index_results(
         }
     }
 
-    log::debug!("Hydration complete");
+    tracing::debug!("Hydration complete");
     results
 }

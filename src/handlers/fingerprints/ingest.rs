@@ -166,7 +166,7 @@ pub async fn ingest_photo_faces_batch(
     let mut total_faces = 0usize;
     let mut total_records_written = 0usize;
 
-    log::info!(
+    tracing::info!(
         "fingerprints.ingest: starting batch ingest of {} photos under schema '{}'",
         total_photos,
         request.source_schema
@@ -252,7 +252,7 @@ pub async fn ingest_photo_faces_batch(
         }
     }
 
-    log::info!(
+    tracing::info!(
         "fingerprints.ingest: batch complete: {}/{} successful, {} faces, {} records written",
         successful_photos,
         total_photos,
@@ -329,7 +329,7 @@ async fn record_photo_failure(
     error_msg: &str,
     per_photo: &mut Vec<PhotoIngestResult>,
 ) {
-    log::warn!(
+    tracing::warn!(
         "fingerprints.ingest: photo '{}' on schema '{}' failed ({}): {}",
         source_key,
         source_schema,

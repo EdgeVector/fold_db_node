@@ -190,7 +190,7 @@ pub async fn join_org(
     if let Some(client) = auth_client_for_node(node).await {
         let org_hash = &membership.org_hash;
         if let Err(e) = client.accept_invite(org_hash).await {
-            log::warn!("Failed to sync accept_invite to cloud: {}", e);
+            tracing::warn!("Failed to sync accept_invite to cloud: {}", e);
         }
         // Delete the invite from S3 inbox
         let file_name = format!("{}.enc", org_hash);
@@ -420,7 +420,7 @@ pub(crate) async fn merge_cloud_members_into(
     let cloud_members = match client.list_members(&org.org_hash).await {
         Ok(m) => m,
         Err(e) => {
-            log::debug!(
+            tracing::debug!(
                 "list_members({}) failed, returning local members only: {e}",
                 org.org_hash
             );
@@ -501,7 +501,7 @@ async fn delete_inbox_file(client: &fold_db::sync::auth::AuthClient, file_name: 
     if let Ok(presigned) = client.presign_inbox_delete(file_name).await {
         let s3 = fold_db::sync::s3::S3Client::new(shared_http_client());
         if let Err(e) = s3.delete(&presigned).await {
-            log::warn!("Failed to delete {} from inbox: {}", file_name, e);
+            tracing::warn!("Failed to delete {} from inbox: {}", file_name, e);
         }
     }
 }
@@ -570,7 +570,7 @@ pub async fn get_pending_invites(
                 let file_name = match obj.key.split('/').next_back() {
                     Some(name) => name,
                     None => {
-                        log::error!("Unexpected empty S3 key in inbox listing");
+                        tracing::error!("Unexpected empty S3 key in inbox listing");
                         continue;
                     }
                 };
@@ -579,7 +579,11 @@ pub async fn get_pending_invites(
                 let presigned = match client.presign_inbox_download(file_name).await {
                     Ok(p) => p,
                     Err(e) => {
-                        log::error!("Failed to presign download for invite {}: {}", file_name, e);
+                        tracing::error!(
+                            "Failed to presign download for invite {}: {}",
+                            file_name,
+                            e
+                        );
                         continue;
                     }
                 };
@@ -587,14 +591,14 @@ pub async fn get_pending_invites(
                 let encrypted_bytes = match s3_client.download(&presigned).await {
                     Ok(Some(bytes)) => bytes,
                     Ok(None) => {
-                        log::error!(
+                        tracing::error!(
                             "Invite {} exists in listing but download returned empty",
                             file_name
                         );
                         continue;
                     }
                     Err(e) => {
-                        log::error!("Failed to download invite {}: {}", file_name, e);
+                        tracing::error!("Failed to download invite {}: {}", file_name, e);
                         continue;
                     }
                 };
@@ -604,14 +608,14 @@ pub async fn get_pending_invites(
                     match fold_db::crypto::inbox::open_box_base64(my_sec, &encrypted_bytes) {
                         Ok(p) => p,
                         Err(e) => {
-                            log::error!("Failed to decrypt invite {}: {}", file_name, e);
+                            tracing::error!("Failed to decrypt invite {}: {}", file_name, e);
                             continue;
                         }
                     };
                 match serde_json::from_slice::<OrgInviteBundle>(&plaintext) {
                     Ok(bundle) => invites.push(bundle),
                     Err(e) => {
-                        log::error!("Failed to deserialize invite {}: {}", file_name, e);
+                        tracing::error!("Failed to deserialize invite {}: {}", file_name, e);
                     }
                 }
             }

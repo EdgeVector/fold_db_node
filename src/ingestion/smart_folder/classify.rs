@@ -60,7 +60,7 @@ pub(crate) async fn classify_image_directories(
     let svc = match service {
         Some(s) => s,
         None => {
-            log::info!(
+            tracing::info!(
                 "No ingestion service provided for image classification, keeping all images"
             );
             return Ok(Vec::new());
@@ -73,7 +73,7 @@ pub(crate) async fn classify_image_directories(
     let llm_response = match call_llm_for_file_analysis(&prompt, svc).await {
         Ok(r) => r,
         Err(e) => {
-            log::warn!(
+            tracing::warn!(
                 "LLM unavailable for image directory classification: {}. Keeping all images.",
                 e
             );
@@ -175,7 +175,7 @@ fn parse_image_directory_response(
     let json_str = match crate::ingestion::ai::helpers::extract_json_from_response(response) {
         Ok(s) => s,
         Err(e) => {
-            log::warn!(
+            tracing::warn!(
                 "Failed to extract JSON from image directory response: {}",
                 e
             );
@@ -186,7 +186,7 @@ fn parse_image_directory_response(
     let parsed: HashMap<String, String> = match serde_json::from_str(&json_str) {
         Ok(m) => m,
         Err(e) => {
-            log::warn!("Failed to parse image directory JSON: {}", e);
+            tracing::warn!("Failed to parse image directory JSON: {}", e);
             return Vec::new();
         }
     };

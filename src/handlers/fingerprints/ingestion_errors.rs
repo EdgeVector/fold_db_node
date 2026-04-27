@@ -109,7 +109,7 @@ pub async fn list_ingestion_errors(
     // Newest first. Empty strings sort to the bottom naturally.
     errors.sort_by(|a, b| b.created_at.cmp(&a.created_at));
 
-    log::info!(
+    tracing::info!(
         "fingerprints.handler: list_ingestion_errors returned {} rows in {:?} (include_resolved={})",
         errors.len(),
         started.elapsed(),
@@ -190,7 +190,7 @@ pub async fn resolve_ingestion_error(
             ))
         })?;
 
-    log::info!(
+    tracing::info!(
         "fingerprints.handler: ingestion error '{}' resolved={}",
         error_id,
         resolved

@@ -111,7 +111,7 @@ pub async fn detect_faces(
         })
         .collect();
 
-    log::info!(
+    tracing::info!(
         "fingerprints.detect_faces: detected {} face(s) in {} byte image",
         faces.len(),
         image_bytes.len()

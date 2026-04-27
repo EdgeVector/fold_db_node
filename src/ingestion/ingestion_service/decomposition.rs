@@ -105,7 +105,7 @@ impl SchemaCache {
                     self.local.len(),
                     e
                 );
-                log::error!("{}", msg);
+                tracing::error!("{}", msg);
                 Err(msg)
             }
         }

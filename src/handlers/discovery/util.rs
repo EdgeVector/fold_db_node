@@ -74,7 +74,7 @@ pub(crate) async fn release_connect_sentinel(
 ) {
     let key = format!("{}{}", CONNECT_IN_FLIGHT_PREFIX, target_pseudonym);
     if let Err(e) = store.delete(key.as_bytes()).await {
-        log::warn!(
+        tracing::warn!(
             "Failed to release connect_in_flight sentinel for {}: {}",
             target_pseudonym,
             e
@@ -158,7 +158,7 @@ pub(crate) async fn collect_our_pseudonyms(
     // the 1000th, causing addressed messages to be missed. No cap needed:
     // pseudonyms are 16 bytes each, and the server-filter branch already guards
     // URL length.
-    log::debug!(
+    tracing::debug!(
         "our_pseudonyms[0..5]: {:?}",
         pseudonyms
             .iter()

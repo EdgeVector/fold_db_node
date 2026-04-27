@@ -106,12 +106,12 @@ pub async fn delete_account(
 
     if identity.is_some() {
         match revoke_exemem_account().await {
-            Ok(()) => log::info!("Exemem account revoked"),
+            Ok(()) => tracing::info!("Exemem account revoked"),
             Err(e) => {
                 // Not fatal — a user might be wiping a device whose cloud
                 // account was already purged server-side. Surface the
                 // warning but keep going.
-                log::warn!("Failed to revoke Exemem account: {e}");
+                tracing::warn!("Failed to revoke Exemem account: {e}");
                 warnings.push(format!("exemem_revoke_failed: {e}"));
             }
         }
@@ -284,14 +284,16 @@ pub async fn register_with_exemem(
                 )
                 .await
                 {
-                    log::error!("Background bootstrap after register failed: {}", e);
+                    tracing::error!("Background bootstrap after register failed: {}", e);
                 }
             });
         } else {
-            log::warn!("Bootstrap after register skipped: no sled_pool handle");
+            tracing::warn!("Bootstrap after register skipped: no sled_pool handle");
         }
     } else {
-        log::warn!("Register response missing api_key or user_hash; cloud sync activation skipped");
+        tracing::warn!(
+            "Register response missing api_key or user_hash; cloud sync activation skipped"
+        );
     }
 
     Ok(response)
@@ -561,7 +563,7 @@ where
             .map_err(|e| format!("Auth refresh: last_returned mutex poisoned: {e}"))?;
         let already_returned = guard.as_deref() == Some(creds.api_key.as_str());
         if !already_returned {
-            log::info!("Sync auth: returning stored api_key from credentials.json");
+            tracing::info!("Sync auth: returning stored api_key from credentials.json");
             *guard = Some(creds.api_key.clone());
             // A fresh stored key means something else succeeded recently —
             // reset the throttle so we're not penalising future re-registers.
@@ -572,9 +574,9 @@ where
             return Ok(fold_db::sync::auth::SyncAuth::ApiKey(creds.api_key.clone()));
         }
         // Stored key is the same one we already returned → it's stale, fall through.
-        log::info!("Sync auth: stored api_key is stale, re-registering with Exemem");
+        tracing::info!("Sync auth: stored api_key is stale, re-registering with Exemem");
     } else {
-        log::info!("Sync auth: no stored credentials, re-registering with Exemem");
+        tracing::info!("Sync auth: no stored credentials, re-registering with Exemem");
     }
 
     // Step 2: Gate on the throttle. If we're inside a backoff window or have
@@ -621,7 +623,7 @@ where
                 .map_err(|e| format!("Auth refresh: last_returned mutex poisoned: {e}"))?;
             *guard = Some(new_api_key.clone());
 
-            log::info!("Sync auth refreshed successfully via re-registration");
+            tracing::info!("Sync auth refreshed successfully via re-registration");
 
             // The sync engine's presigned-URL endpoint authenticates with
             // X-API-Key, not a bearer token, so we return ApiKey even after
@@ -633,7 +635,7 @@ where
                 .lock()
                 .map_err(|err| format!("Auth refresh: throttle mutex poisoned: {err}"))?;
             t.record_failure();
-            log::warn!(
+            tracing::warn!(
                 "Sync auth re-register failed ({} consecutive): {e}",
                 t.consecutive_failures
             );
@@ -886,7 +888,7 @@ pub async fn restore_from_phrase(
     {
         Ok(response) => Ok(response),
         Err(e) => {
-            log::error!("restore_from_phrase failed, rolling back: {}", e);
+            tracing::error!("restore_from_phrase failed, rolling back: {}", e);
             // Roll the Sled identity back so the next boot doesn't pick up
             // the half-restored keypair as if it were valid.
             if let Some(prior) = prior_identity {
@@ -976,11 +978,11 @@ async fn finalize_restore(
         tokio::spawn(async move {
             if let Err(e) = bootstrap_from_cloud(&api_url, &api_key, &node_manager, sled_pool).await
             {
-                log::error!("Background bootstrap after restore failed: {}", e);
+                tracing::error!("Background bootstrap after restore failed: {}", e);
             }
         });
     } else {
-        log::warn!(
+        tracing::warn!(
             "Bootstrap after restore skipped: missing api_key, user_hash, or sled_pool handle"
         );
     }
@@ -1078,13 +1080,13 @@ pub(crate) fn write_bootstrap_status(status: &BootstrapStatus) {
     let path = match bootstrap_status_path() {
         Some(p) => p,
         None => {
-            log::error!("write_bootstrap_status: cannot resolve FOLDDB_HOME");
+            tracing::error!("write_bootstrap_status: cannot resolve FOLDDB_HOME");
             return;
         }
     };
     if let Some(parent) = path.parent() {
         if let Err(e) = std::fs::create_dir_all(parent) {
-            log::error!(
+            tracing::error!(
                 "write_bootstrap_status: failed to create {:?}: {}",
                 parent,
                 e
@@ -1095,12 +1097,12 @@ pub(crate) fn write_bootstrap_status(status: &BootstrapStatus) {
     let json = match serde_json::to_string_pretty(status) {
         Ok(s) => s,
         Err(e) => {
-            log::error!("write_bootstrap_status: serialize failed: {}", e);
+            tracing::error!("write_bootstrap_status: serialize failed: {}", e);
             return;
         }
     };
     if let Err(e) = std::fs::write(&path, json) {
-        log::error!("write_bootstrap_status: write {:?} failed: {}", path, e);
+        tracing::error!("write_bootstrap_status: write {:?} failed: {}", path, e);
     }
 }
 
@@ -1118,7 +1120,7 @@ pub(crate) fn clear_bootstrap_status() {
     if let Some(path) = bootstrap_status_path() {
         if let Err(e) = std::fs::remove_file(&path) {
             if e.kind() != std::io::ErrorKind::NotFound {
-                log::error!("clear_bootstrap_status: failed to remove {:?}: {}", path, e);
+                tracing::error!("clear_bootstrap_status: failed to remove {:?}: {}", path, e);
             }
         }
     }
@@ -1170,7 +1172,7 @@ pub fn write_bootstrap_marker(api_url: &str, api_key: &str) -> Result<(), String
         .map_err(|e| format!("write_bootstrap_marker: serialize failed: {}", e))?;
     std::fs::write(&path, serialized)
         .map_err(|e| format!("write_bootstrap_marker: write {:?} failed: {}", path, e))?;
-    log::info!("Wrote bootstrap marker at {:?}", path);
+    tracing::info!("Wrote bootstrap marker at {:?}", path);
     Ok(())
 }
 
@@ -1178,7 +1180,7 @@ pub fn write_bootstrap_marker(api_url: &str, api_key: &str) -> Result<(), String
 fn clear_bootstrap_marker() {
     if let Some(path) = bootstrap_marker_path() {
         let _ = std::fs::remove_file(&path);
-        log::info!("Cleared bootstrap marker");
+        tracing::info!("Cleared bootstrap marker");
     }
 }
 
@@ -1209,7 +1211,7 @@ async fn bootstrap_from_cloud(
     node_manager: &Arc<NodeManager>,
     sled_pool: Arc<fold_db::storage::SledPool>,
 ) -> Result<(), String> {
-    log::info!("Starting database bootstrap from cloud after identity restore");
+    tracing::info!("Starting database bootstrap from cloud after identity restore");
     write_bootstrap_marker(api_url, api_key)?;
     write_bootstrap_status(&BootstrapStatus::in_progress());
 
@@ -1299,7 +1301,7 @@ async fn bootstrap_from_cloud_inner(
         1,
     ));
 
-    log::info!(
+    tracing::info!(
         "Bootstrap phase 1 (personal) complete: last_seq={}, entries_replayed={}",
         personal_outcome.last_seq,
         personal_outcome.entries_replayed
@@ -1311,7 +1313,7 @@ async fn bootstrap_from_cloud_inner(
     {
         Some(org_config) => {
             let org_count = org_config.membership_count;
-            log::info!(
+            tracing::info!(
                 "Bootstrap phase 1.5: configuring {} org sync target(s)",
                 org_count
             );
@@ -1331,17 +1333,19 @@ async fn bootstrap_from_cloud_inner(
                 .await
                 .map_err(|e| format!("Bootstrap failed (phase 2: org targets): {e}"))?;
 
-            log::info!(
+            tracing::info!(
                 "Bootstrap phase 2 complete: {} target(s) replayed",
                 outcomes.len()
             );
         }
         None => {
-            log::info!("Bootstrap phase 1.5: no org memberships, skipping org sync configuration");
+            tracing::info!(
+                "Bootstrap phase 1.5: no org memberships, skipping org sync configuration"
+            );
         }
     }
 
-    log::info!("Database bootstrap complete after restore");
+    tracing::info!("Database bootstrap complete after restore");
     Ok(())
 }
 

@@ -74,7 +74,7 @@ pub async fn poll_and_decrypt_requests(
             .handler_err("poll messages")?;
         messages.extend(chunk_messages);
     }
-    log::info!(
+    tracing::info!(
         "Polled {} pseudonyms in {} chunks, got {} messages",
         our_pseudonyms.len(),
         our_pseudonyms.len().div_ceil(POLL_CHUNK_SIZE),
@@ -89,7 +89,7 @@ pub async fn poll_and_decrypt_requests(
     // absent, so the next poll retries the same message.
     //
     // CLAUDE.md "no silent failures": we no longer swallow dispatch errors with
-    // `log::warn!; continue;`. Errors are collected and logged at the end, and
+    // `tracing::warn!; continue;`. Errors are collected and logged at the end, and
     // the dedup store write itself is checked (no `let _ = ...`).
     let mut dispatch_errors: Vec<(String, HandlerError)> = Vec::new();
     for msg in &messages {
@@ -111,7 +111,7 @@ pub async fn poll_and_decrypt_requests(
         let raw = match connection::decrypt_message_raw(&secret, &encrypted_bytes) {
             Ok(v) => v,
             Err(e) => {
-                log::debug!(
+                tracing::debug!(
                     "Failed to decrypt message {} for target {}: {}",
                     msg.message_id,
                     target,
@@ -151,7 +151,7 @@ pub async fn poll_and_decrypt_requests(
         match outcome {
             Ok(DispatchOutcome::Handled) | Ok(DispatchOutcome::Skipped { .. }) => {
                 if let Ok(DispatchOutcome::Skipped { ref reason }) = outcome {
-                    log::warn!(
+                    tracing::warn!(
                         "Permanently skipping message {}: {}",
                         msg.message_id,
                         reason
@@ -173,7 +173,7 @@ pub async fn poll_and_decrypt_requests(
                 }
             }
             Err(e) => {
-                log::error!(
+                tracing::error!(
                     "Transient dispatch failure for message {} (will retry next poll): {}",
                     msg.message_id,
                     e
@@ -184,7 +184,7 @@ pub async fn poll_and_decrypt_requests(
     }
 
     if !dispatch_errors.is_empty() {
-        log::error!(
+        tracing::error!(
             "poll_and_decrypt_requests: {} message(s) failed dispatch and will be retried on the next poll",
             dispatch_errors.len()
         );
@@ -197,10 +197,10 @@ pub async fn poll_and_decrypt_requests(
         match prune_msg_processed_markers(&*store, now_secs(), DEDUP_RETENTION_SECS).await {
             Ok(deleted) => {
                 if deleted > 0 {
-                    log::info!("Pruned {} stale msg_processed markers", deleted);
+                    tracing::info!("Pruned {} stale msg_processed markers", deleted);
                 }
             }
-            Err(e) => log::error!("Failed to prune msg_processed markers: {}", e),
+            Err(e) => tracing::error!("Failed to prune msg_processed markers: {}", e),
         }
     }
 
@@ -441,7 +441,7 @@ async fn dispatch_decrypted_message(
                 DataShareAuthz::Authorized => {}
                 DataShareAuthz::UnknownSender => {
                     let pk_preview: String = payload.sender_public_key.chars().take(8).collect();
-                    log::warn!(
+                    tracing::warn!(
                         "Rejecting data_share (msg {}): unknown sender pubkey {}",
                         msg.message_id,
                         pk_preview
@@ -452,7 +452,7 @@ async fn dispatch_decrypted_message(
                 }
                 DataShareAuthz::RevokedSender => {
                     let pk_preview: String = payload.sender_public_key.chars().take(8).collect();
-                    log::warn!(
+                    tracing::warn!(
                         "Rejecting data_share (msg {}): revoked sender pubkey {}",
                         msg.message_id,
                         pk_preview
@@ -473,7 +473,7 @@ async fn dispatch_decrypted_message(
             match validate_data_share_schemas(&schema_states, &payload) {
                 DataShareSchemaCheck::AllApproved => {}
                 DataShareSchemaCheck::UnknownOrUnapproved { schema_name } => {
-                    log::warn!(
+                    tracing::warn!(
                         "Rejecting data_share (msg {}): schema '{}' not installed/approved on this node",
                         msg.message_id,
                         schema_name
@@ -485,7 +485,7 @@ async fn dispatch_decrypted_message(
             }
 
             process_data_share(node, &payload).await?;
-            log::info!(
+            tracing::info!(
                 "Received {} records from {}",
                 payload.records.len(),
                 payload.sender_display_name
@@ -614,7 +614,7 @@ async fn handle_incoming_share_invite(
         )));
     }
 
-    log::info!(
+    tracing::info!(
         "Received share_invite from {} (prefix {})",
         payload.sender_pubkey,
         payload.share_prefix
@@ -637,7 +637,7 @@ async fn handle_incoming_query(
     use crate::fold_node::OperationProcessor;
     use fold_db::schema::types::operations::Query;
 
-    log::info!(
+    tracing::info!(
         "Processing incoming query request {} for schema '{}'",
         payload.request_id,
         payload.schema_name
@@ -722,7 +722,7 @@ async fn handle_incoming_query_response(
     store: &dyn fold_db::storage::traits::KvStore,
     payload: &QueryResponsePayload,
 ) -> Result<DispatchOutcome, HandlerError> {
-    log::info!("Received query response for request {}", payload.request_id);
+    tracing::info!("Received query response for request {}", payload.request_id);
 
     // Check existence first so "unknown request_id" is classified as a
     // permanent skip rather than a retriable error. Load failure itself is
@@ -731,7 +731,7 @@ async fn handle_incoming_query_response(
         .await
         .map_err(|e| HandlerError::Internal(format!("load async query: {e}")))?;
     if existing.is_none() {
-        log::warn!(
+        tracing::warn!(
             "Query response for unknown request {} (pruned or never sent from this node)",
             payload.request_id
         );
@@ -790,7 +790,7 @@ async fn handle_incoming_identity_card(
         .and_then(|v| v.as_str())
         .unwrap_or("");
     if card_pub_key != payload.sender_public_key {
-        log::warn!(
+        tracing::warn!(
             "Rejecting identity_card_send (msg {}): card.pub_key='{}' does not match sender_public_key='{}'",
             payload.message_id,
             card_pub_key,
@@ -815,7 +815,7 @@ async fn handle_incoming_identity_card(
     received_card::save_received_card(store, &row)
         .await
         .map_err(|e| HandlerError::Internal(format!("save received card: {e}")))?;
-    log::info!(
+    tracing::info!(
         "fingerprints.inbound: stored identity_card_send (msg_id={}) from pubkey='{}' as pending",
         payload.message_id,
         payload.sender_public_key,
@@ -834,7 +834,7 @@ async fn handle_incoming_schema_list_request(
 ) -> Result<DispatchOutcome, HandlerError> {
     use crate::fold_node::OperationProcessor;
 
-    log::info!(
+    tracing::info!(
         "Processing incoming schema list request {}",
         payload.request_id
     );
@@ -910,7 +910,7 @@ async fn handle_incoming_schema_list_response(
     store: &dyn fold_db::storage::traits::KvStore,
     payload: &SchemaListResponsePayload,
 ) -> Result<DispatchOutcome, HandlerError> {
-    log::info!(
+    tracing::info!(
         "Received schema list response for request {}",
         payload.request_id
     );
@@ -919,7 +919,7 @@ async fn handle_incoming_schema_list_response(
         .await
         .map_err(|e| HandlerError::Internal(format!("load async query: {e}")))?;
     if existing.is_none() {
-        log::warn!(
+        tracing::warn!(
             "Schema list response for unknown request {} (pruned or never sent from this node)",
             payload.request_id
         );
@@ -1097,7 +1097,7 @@ async fn handle_incoming_referral_query(
         .connect(sender_uuid, encrypted_b64, Some(our_pseudonym))
         .await
         .map_err(|e| HandlerError::Internal(format!("send referral response: {e}")))?;
-    log::info!(
+    tracing::info!(
         "Sent referral response for query {} (known as {})",
         payload.query_id,
         contact.display_name
@@ -1137,7 +1137,7 @@ async fn handle_incoming_referral_response(
                 }
             }
             Err(e) => {
-                log::warn!("Corrupt connection request row during referral scan: {e}");
+                tracing::warn!("Corrupt connection request row during referral scan: {e}");
             }
         }
     }
@@ -1145,7 +1145,7 @@ async fn handle_incoming_referral_response(
     let (sled_key, mut local_req) = match (found_key, found_req) {
         (Some(k), Some(r)) => (k, r),
         _ => {
-            log::warn!("Referral response for unknown query {}", payload.query_id);
+            tracing::warn!("Referral response for unknown query {}", payload.query_id);
             return Ok(DispatchOutcome::Skipped {
                 reason: format!("referral response for unknown query {}", payload.query_id),
             });
@@ -1167,7 +1167,7 @@ async fn handle_incoming_referral_response(
                 .map(|c| c.display_name.clone())
                 .unwrap_or_else(|| "Unknown contact".to_string()),
             Err(e) => {
-                log::warn!("Failed to load contact book for voucher lookup: {e}");
+                tracing::warn!("Failed to load contact book for voucher lookup: {e}");
                 "Unknown contact".to_string()
             }
         }
@@ -1187,7 +1187,7 @@ async fn handle_incoming_referral_response(
         .put(&sled_key, updated)
         .await
         .map_err(|e| HandlerError::Internal(format!("save vouched connection request: {e}")))?;
-    log::info!(
+    tracing::info!(
         "Added vouch for referral query {} (known as '{}')",
         payload.query_id,
         payload.known_as
@@ -1354,7 +1354,7 @@ async fn process_data_share(
                                 ))
                             })?;
                         if count > 0 {
-                            log::info!(
+                            tracing::info!(
                                 "Detected {} face(s) in shared photo '{}'",
                                 count,
                                 file_name
@@ -1394,7 +1394,7 @@ async fn process_data_share(
         .await
         .map_err(|e| HandlerError::Internal(format!("store data share notification: {e}")))?;
 
-    log::info!(
+    tracing::info!(
         "Received {} records from {} (schemas: {})",
         payload.records.len(),
         payload.sender_display_name,

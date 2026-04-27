@@ -162,7 +162,7 @@ impl IngestionService {
         // Run face detection on images after mutations are stored.
         #[cfg(feature = "face-detection")]
         {
-            log::info!(
+            tracing::info!(
                 "process_flat_path: face-detection gate schema='{}' mutations_executed={} \
                  image_bytes_present={} key_count={}",
                 schema_name,
@@ -292,7 +292,7 @@ impl IngestionService {
     ) {
         // Log to plain target (not `log_feature!`) so the line appears even
         // if the Ingestion feature target is filtered out of the sink.
-        log::info!(
+        tracing::info!(
             "run_face_detection: entered schema='{}' keys={} image_bytes={}",
             schema_name,
             mutation_keys.len(),
@@ -302,7 +302,7 @@ impl IngestionService {
             Ok(db) => db,
             Err(e) => {
                 FACE_DETECTION_FAILURE_COUNT.fetch_add(1, Ordering::Relaxed);
-                log::error!(
+                tracing::error!(
                     "run_face_detection: failed to acquire FoldDB ({}); failure_count={}",
                     e,
                     FACE_DETECTION_FAILURE_COUNT.load(Ordering::Relaxed)
@@ -315,13 +315,13 @@ impl IngestionService {
         let native_idx = match db_ops.native_index_manager() {
             Some(mgr) => mgr,
             None => {
-                log::warn!("run_face_detection: no native_index_manager; skipping");
+                tracing::warn!("run_face_detection: no native_index_manager; skipping");
                 return;
             }
         };
 
         if !native_idx.has_face_processor() {
-            log::warn!(
+            tracing::warn!(
                 "run_face_detection: has_face_processor=false for schema='{}'; skipping",
                 schema_name
             );
@@ -335,14 +335,14 @@ impl IngestionService {
                 continue;
             }
             let started = std::time::Instant::now();
-            log::info!(
+            tracing::info!(
                 "run_face_detection: calling index_faces schema='{}' key={:?}",
                 schema_name,
                 key
             );
             match native_idx.index_faces(schema_name, key, image_bytes).await {
                 Ok(count) => {
-                    log::info!(
+                    tracing::info!(
                         "run_face_detection: index_faces returned count={} schema='{}' key={:?} elapsed={:?}",
                         count,
                         schema_name,
@@ -352,7 +352,7 @@ impl IngestionService {
                 }
                 Err(e) => {
                     FACE_DETECTION_FAILURE_COUNT.fetch_add(1, Ordering::Relaxed);
-                    log::error!(
+                    tracing::error!(
                         "run_face_detection: index_faces failed schema='{}' key={:?}: {}; failure_count={} elapsed={:?}",
                         schema_name,
                         key,
@@ -363,7 +363,7 @@ impl IngestionService {
                 }
             }
         }
-        log::info!(
+        tracing::info!(
             "run_face_detection: exited schema='{}' unique_keys={}",
             schema_name,
             seen.len()

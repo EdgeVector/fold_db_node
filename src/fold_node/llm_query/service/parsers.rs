@@ -198,7 +198,7 @@ impl LlmQueryService {
         // Heuristic: if the JSON has `schema_name` it's likely a bare query the
         // model forgot to wrap in {"tool": "query", "params": ...}
         if parsed.get("schema_name").is_some() {
-            log::info!("Agent: auto-wrapping bare query params as tool call");
+            tracing::info!("Agent: auto-wrapping bare query params as tool call");
             return Ok(AgentAction::ToolCall {
                 tool: "query".to_string(),
                 params: parsed,
@@ -207,7 +207,7 @@ impl LlmQueryService {
 
         // If it has `terms` it's likely a bare search
         if parsed.get("terms").is_some() {
-            log::info!("Agent: auto-wrapping bare search params as tool call");
+            tracing::info!("Agent: auto-wrapping bare search params as tool call");
             return Ok(AgentAction::ToolCall {
                 tool: "search".to_string(),
                 params: parsed,
@@ -216,7 +216,7 @@ impl LlmQueryService {
 
         // If it has `path` it's likely a bare scan_folder
         if parsed.get("path").is_some() && parsed.get("tool").is_none() {
-            log::info!("Agent: auto-wrapping bare scan params as tool call");
+            tracing::info!("Agent: auto-wrapping bare scan params as tool call");
             return Ok(AgentAction::ToolCall {
                 tool: "scan_folder".to_string(),
                 params: parsed,
@@ -225,7 +225,7 @@ impl LlmQueryService {
 
         // If it has `data` (object or array) it's likely a bare ingest_json
         if parsed.get("data").is_some() && parsed.get("tool").is_none() {
-            log::info!("Agent: auto-wrapping bare data as ingest_json tool call");
+            tracing::info!("Agent: auto-wrapping bare data as ingest_json tool call");
             return Ok(AgentAction::ToolCall {
                 tool: "ingest_json".to_string(),
                 params: parsed,
@@ -234,7 +234,7 @@ impl LlmQueryService {
 
         // If it has `query` (string) it's likely a bare web_search
         if parsed.get("query").and_then(|q| q.as_str()).is_some() && parsed.get("tool").is_none() {
-            log::info!("Agent: auto-wrapping bare query string as web_search tool call");
+            tracing::info!("Agent: auto-wrapping bare query string as web_search tool call");
             return Ok(AgentAction::ToolCall {
                 tool: "web_search".to_string(),
                 params: parsed,
@@ -243,7 +243,7 @@ impl LlmQueryService {
 
         // If it has `url` (string) it's likely a bare fetch_url
         if parsed.get("url").and_then(|u| u.as_str()).is_some() && parsed.get("tool").is_none() {
-            log::info!("Agent: auto-wrapping bare url as fetch_url tool call");
+            tracing::info!("Agent: auto-wrapping bare url as fetch_url tool call");
             return Ok(AgentAction::ToolCall {
                 tool: "fetch_url".to_string(),
                 params: parsed,

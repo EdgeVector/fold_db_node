@@ -157,14 +157,14 @@ pub async fn import_identity_card(
                 e
             ))
         })?;
-        log::info!(
+        tracing::info!(
             "fingerprints.handler: imported Identity Card for pub_key='{}' (display_name='{}', face={})",
             req.card.pub_key,
             req.card.display_name,
             req.card.face_embedding.is_some(),
         );
     } else {
-        log::info!(
+        tracing::info!(
             "fingerprints.handler: Identity for pub_key='{}' already present — skipping write",
             req.card.pub_key,
         );

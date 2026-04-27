@@ -439,7 +439,7 @@ pub async fn publish(
                 total_skipped += result.skipped;
             }
             Err(e) => {
-                log::error!(
+                tracing::error!(
                     "Failed to publish schema '{}': {}",
                     opt_in_config.schema_name,
                     e
@@ -888,7 +888,7 @@ pub async fn respond_to_request(
             .connect(sender_pseudonym, encrypted_b64, Some(our_pseudonym))
             .await
         {
-            log::warn!(
+            tracing::warn!(
                 "Failed to send acceptance message (trust still created): {}",
                 e
             );
@@ -1116,7 +1116,7 @@ pub async fn similar_profiles(
         {
             Ok(r) => r,
             Err(e) => {
-                log::warn!(
+                tracing::warn!(
                     "Similar profiles search failed for category '{}': {}",
                     cat_name,
                     e
@@ -1271,7 +1271,7 @@ pub async fn send_data_share(
         let records_map = match result_map {
             Ok(rm) => fold_db::fold_db_core::query::records_from_field_map(&rm),
             Err(e) => {
-                log::warn!(
+                tracing::warn!(
                     "Failed to query records for schema '{}': {}",
                     record_req.schema_name,
                     e
@@ -1296,7 +1296,7 @@ pub async fn send_data_share(
         let (key, record) = match matching_record {
             Some((k, r)) => (k, r),
             None => {
-                log::warn!(
+                tracing::warn!(
                     "Record not found for key '{}' in schema '{}'",
                     record_req.record_key,
                     record_req.schema_name
@@ -1331,7 +1331,7 @@ pub async fn send_data_share(
             match upload_storage.read_file(hash, None).await {
                 Ok(bytes) => Some(B64.encode(&bytes)),
                 Err(e) => {
-                    log::debug!("Could not read file '{}' for sharing: {}", hash, e);
+                    tracing::debug!("Could not read file '{}' for sharing: {}", hash, e);
                     None
                 }
             }
@@ -1394,7 +1394,7 @@ pub async fn send_data_share(
         .await
         .handler_err("send data share message")?;
 
-    log::info!(
+    tracing::info!(
         "Shared {} records with contact (pseudonym {})",
         shared_count,
         target_pseudonym
@@ -1500,7 +1500,7 @@ pub async fn initiate_referral_query(
         let target_pseudonym: uuid::Uuid = match messaging_pseudonym_str.parse() {
             Ok(u) => u,
             Err(e) => {
-                log::warn!(
+                tracing::warn!(
                     "Invalid messaging pseudonym UUID for contact {}: {}",
                     contact.display_name,
                     e
@@ -1516,14 +1516,14 @@ pub async fn initiate_referral_query(
                 arr
             }
             Ok(_) => {
-                log::warn!(
+                tracing::warn!(
                     "Messaging public key wrong length for contact {}",
                     contact.display_name
                 );
                 continue;
             }
             Err(e) => {
-                log::warn!(
+                tracing::warn!(
                     "Invalid messaging public key for contact {}: {}",
                     contact.display_name,
                     e
@@ -1549,7 +1549,7 @@ pub async fn initiate_referral_query(
         let encrypted = match connection::encrypt_message(&pk_bytes, &payload) {
             Ok(e) => e,
             Err(e) => {
-                log::warn!(
+                tracing::warn!(
                     "Failed to encrypt referral query for {}: {}",
                     contact.display_name,
                     e
@@ -1564,7 +1564,7 @@ pub async fn initiate_referral_query(
             .connect(target_pseudonym, encrypted_b64, Some(our_pseudonym))
             .await
         {
-            log::warn!(
+            tracing::warn!(
                 "Failed to send referral query to {}: {}",
                 contact.display_name,
                 e

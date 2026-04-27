@@ -252,7 +252,7 @@ async fn get_discovery_config_and_token(
                         if let Ok(expiry) = parts[2].parse::<i64>() {
                             let now = chrono::Utc::now().timestamp();
                             if now > expiry {
-                                log::warn!(
+                                tracing::warn!(
                                     "Exemem session token expired ({} seconds ago). \
                                      Re-authenticate in Settings to refresh.",
                                     now - expiry

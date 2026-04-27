@@ -189,7 +189,7 @@ pub async fn import_contacts(node: Arc<FoldNode>) -> HandlerResult<ImportContact
         .await
         .map_err(|e| HandlerError::Internal(format!("contact import write failed: {}", e)))?;
 
-    log::info!(
+    tracing::info!(
         "fingerprints.import_contacts: {} contacts → {} fingerprints, {} edges, {} records written",
         contacts.len(),
         fp_count,

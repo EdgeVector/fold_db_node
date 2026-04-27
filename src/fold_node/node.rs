@@ -94,7 +94,7 @@ impl FoldNode {
             store
                 .set(seed)
                 .map_err(|e| FoldDbError::SecurityError(format!("identity seed write: {e}")))?;
-            log::info!("Seeded node identity into Sled from config.seed_identity");
+            tracing::info!("Seeded node identity into Sled from config.seed_identity");
             return Ok(seed.clone());
         }
         let fresh = identity::generate_identity()
@@ -102,7 +102,7 @@ impl FoldNode {
         store
             .set(&fresh)
             .map_err(|e| FoldDbError::SecurityError(format!("identity write: {e}")))?;
-        log::info!("Generated fresh node identity and persisted to Sled");
+        tracing::info!("Generated fresh node identity and persisted to Sled");
         Ok(fresh)
     }
 
@@ -112,7 +112,7 @@ impl FoldNode {
         let seed = Self::extract_ed25519_seed(&identity.private_key)?;
         let keys = fold_db::crypto::E2eKeys::from_ed25519_seed(&seed)
             .map_err(|e| FoldDbError::Config(format!("Failed to derive E2E keys: {}", e)))?;
-        log::info!("E2E keys derived from node identity (no separate e2e.key)");
+        tracing::info!("E2E keys derived from node identity (no separate e2e.key)");
         Ok(keys)
     }
 
@@ -167,7 +167,9 @@ impl FoldNode {
                 );
             }
         } else {
-            log::debug!("No schema service URL configured - using local schema management only");
+            tracing::debug!(
+                "No schema service URL configured - using local schema management only"
+            );
         }
     }
 
@@ -218,7 +220,7 @@ impl FoldNode {
             if !Self::is_test_schema_service(&url) {
                 match crate::fingerprints::registration::register_phase_1_schemas(&node).await {
                     Ok(outcome) => {
-                        log::info!(
+                        tracing::info!(
                             "fingerprints: Phase 1 registration complete ({} schemas)",
                             outcome.total()
                         );
@@ -249,18 +251,18 @@ impl FoldNode {
                                 .await
                                 {
                                     Ok(Some(outcome)) => {
-                                        log::info!(
+                                        tracing::info!(
                                             "fingerprints: Me persona bootstrapped at startup (ps_id={})",
                                             outcome.me_persona_id
                                         );
                                     }
                                     Ok(None) => {
-                                        log::debug!(
+                                        tracing::debug!(
                                             "fingerprints: Me persona already present — no bootstrap needed"
                                         );
                                     }
                                     Err(e) => {
-                                        log::warn!(
+                                        tracing::warn!(
                                             "fingerprints: Me persona bootstrap failed: {}",
                                             e
                                         );
@@ -268,13 +270,13 @@ impl FoldNode {
                                 }
                             }
                             Ok(None) => {
-                                log::info!(
+                                tracing::info!(
                                     "fingerprints: no IdentityCard on disk yet — Me persona will be \
                                      bootstrapped when the setup wizard saves a card"
                                 );
                             }
                             Err(e) => {
-                                log::warn!(
+                                tracing::warn!(
                                     "fingerprints: failed to load IdentityCard for Me bootstrap: {}",
                                     e
                                 );
@@ -282,7 +284,7 @@ impl FoldNode {
                         }
                     }
                     Err(e) => {
-                        log::warn!(
+                        tracing::warn!(
                             "fingerprints: Phase 1 registration failed — subsystem dormant \
                              until next restart. Error: {}",
                             e
@@ -1108,7 +1110,7 @@ impl FoldNode {
         };
 
         if let Err(e) = sync_engine.sync().await {
-            log::warn!("Immediate sync trigger failed: {}", e);
+            tracing::warn!("Immediate sync trigger failed: {}", e);
         }
     }
 

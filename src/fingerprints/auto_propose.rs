@@ -87,7 +87,7 @@ pub async fn run_sweep_and_create_personas(node: Arc<FoldNode>) -> SweepOutcome 
     let now_ms = now_millis();
     let last_ms = LAST_SWEEP_MS.load(Ordering::Acquire);
     if now_ms.saturating_sub(last_ms) < DEBOUNCE_MS {
-        log::debug!(
+        tracing::debug!(
             "auto_propose: skipping sweep — last ran {}ms ago (debounce {}ms)",
             now_ms - last_ms,
             DEBOUNCE_MS
@@ -104,7 +104,7 @@ pub async fn run_sweep_and_create_personas(node: Arc<FoldNode>) -> SweepOutcome 
     let response = match list_suggested_personas(node.clone()).await {
         Ok(r) => r,
         Err(e) => {
-            log::warn!("auto_propose: sweep failed: {}", e);
+            tracing::warn!("auto_propose: sweep failed: {}", e);
             return SweepOutcome::default();
         }
     };
@@ -118,7 +118,7 @@ pub async fn run_sweep_and_create_personas(node: Arc<FoldNode>) -> SweepOutcome 
     let persona_canonical = match canonical_names::lookup(PERSONA) {
         Ok(c) => c,
         Err(e) => {
-            log::warn!(
+            tracing::warn!(
                 "auto_propose: canonical_names missing '{}'; skipping create phase: {}",
                 PERSONA,
                 e
@@ -151,7 +151,7 @@ pub async fn run_sweep_and_create_personas(node: Arc<FoldNode>) -> SweepOutcome 
         {
             Ok(_) => {
                 created += 1;
-                log::info!(
+                tracing::info!(
                     "auto_propose: auto-created tentative persona '{}' ({}): {} seeds",
                     persona_id,
                     sug.suggested_name,
@@ -159,7 +159,7 @@ pub async fn run_sweep_and_create_personas(node: Arc<FoldNode>) -> SweepOutcome 
                 );
             }
             Err(e) => {
-                log::warn!(
+                tracing::warn!(
                     "auto_propose: failed to auto-create persona for cluster {}: {}",
                     sug.suggested_id,
                     e
@@ -168,7 +168,7 @@ pub async fn run_sweep_and_create_personas(node: Arc<FoldNode>) -> SweepOutcome 
         }
     }
 
-    log::info!(
+    tracing::info!(
         "auto_propose: sweep complete — {} candidates, {} created in {:?}",
         candidates,
         created,

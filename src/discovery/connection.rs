@@ -381,7 +381,7 @@ pub async fn list_received_requests(
     for (_key, value) in entries {
         match serde_json::from_slice(&value) {
             Ok(req) => requests.push(req),
-            Err(e) => log::warn!("Failed to deserialize connection request: {}", e),
+            Err(e) => tracing::warn!("Failed to deserialize connection request: {}", e),
         }
     }
 
@@ -445,7 +445,7 @@ pub async fn list_sent_requests(store: &dyn KvStore) -> Result<Vec<LocalSentRequ
     for (_key, value) in entries {
         match serde_json::from_slice(&value) {
             Ok(req) => requests.push(req),
-            Err(e) => log::warn!("Failed to deserialize sent request: {}", e),
+            Err(e) => tracing::warn!("Failed to deserialize sent request: {}", e),
         }
     }
 

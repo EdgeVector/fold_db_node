@@ -272,7 +272,7 @@ fn date_overlap_score(start_a: &str, end_a: &str, start_b: &str, end_b: &str) ->
     ) else {
         // Parse failure: do NOT substitute a string-prefix score. Unparseable
         // dates must not inflate similarity.
-        log::warn!(
+        tracing::warn!(
             "calendar_sharing: failed to parse one of start/end datetimes \
              (a: {:?}..{:?}, b: {:?}..{:?}); returning 0.0 overlap",
             start_a,

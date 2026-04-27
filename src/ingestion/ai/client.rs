@@ -314,7 +314,7 @@ fn try_init<B: AiBackend + 'static>(
         Ok(b) => (Some(Arc::new(b)), None),
         Err(e) => {
             let msg = format!("{} init failed: {}", name, e);
-            log::warn!("{}", msg);
+            tracing::warn!("{}", msg);
             (None, Some(msg))
         }
     }

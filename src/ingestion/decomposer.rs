@@ -94,7 +94,7 @@ pub fn decompose(data: &Value) -> DecompositionResult {
         let objects: Vec<Value> = arr.iter().filter(|v| v.is_object()).cloned().collect();
         let non_objects = arr.len() - objects.len();
         if non_objects > 0 {
-            log::warn!(
+            tracing::warn!(
                 "Decomposition: field '{}' has {} non-object element(s) in array of {} — dropped (only objects are decomposed)",
                 field_name, non_objects, arr.len()
             );

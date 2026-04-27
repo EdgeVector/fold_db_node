@@ -157,7 +157,7 @@ pub async fn list_suggested_personas(node: Arc<FoldNode>) -> HandlerResult<ListS
             .then_with(|| a.suggested_name.cmp(&b.suggested_name))
     });
 
-    log::info!(
+    tracing::info!(
         "fingerprints.handler: list_suggested_personas returned {} candidates in {:?}",
         suggestions.len(),
         started.elapsed()
@@ -241,7 +241,7 @@ pub async fn accept_suggested_persona(
             ))
         })?;
 
-    log::info!(
+    tracing::info!(
         "fingerprints.handler: accepted suggested persona '{}' with {} seeds",
         persona_id,
         req.fingerprint_ids.len()

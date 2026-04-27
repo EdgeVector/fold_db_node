@@ -412,18 +412,18 @@ pub async fn set_identity_card(
     .await
     {
         Ok(Some(outcome)) => {
-            log::info!(
+            tracing::info!(
                 "fingerprints: Me persona bootstrapped from set_identity_card (ps_id={})",
                 outcome.me_persona_id
             );
         }
         Ok(None) => {
-            log::debug!(
+            tracing::debug!(
                 "fingerprints: Me persona already present — set_identity_card is a no-op for bootstrap"
             );
         }
         Err(e) => {
-            log::warn!(
+            tracing::warn!(
                 "fingerprints: Me persona bootstrap from set_identity_card failed: {}",
                 e
             );
