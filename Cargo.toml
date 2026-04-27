@@ -33,7 +33,12 @@ schema_service_client = { git = "https://github.com/EdgeVector/schema_service.gi
 # and lockstep-bumped with schema_service. observability has no `fold_db`
 # dep itself, so a divergent rev avoids the dual-`fold_db` trap CLAUDE.md
 # warns about. See `docs/observability/ingress-middleware-notes.md`.
-observability = { git = "https://github.com/EdgeVector/fold_db.git", rev = "8c6af2a0537d642516417f2666cb2c238daf09b9" }
+#
+# Phase 3 / T5: bumped to pull in `layers::web::WebLayer` (PR #640) so the
+# `/api/logs/stream` SSE endpoint can subscribe to a tracing-native broadcast.
+# Upstream `init_node` doesn't compose the WEB layer yet — the local
+# `observability_setup::init_node_with_web` helper in this crate wires it.
+observability = { git = "https://github.com/EdgeVector/fold_db.git", rev = "4574614708cbb539443c2c1918b942afd88aaaba" }
 
 # HTTP Server
 actix-web = "4.3"
@@ -96,6 +101,14 @@ rand = "0.8"
 tokio-stream = { version = "0.1", features = ["sync"] }
 once_cell = "1"
 async-trait = "0.1"
+
+# Tracing subscriber composition. Phase 3 / T5 wires the observability
+# stack (FMT + RELOAD + RING + WEB) directly here because upstream
+# `observability::init_node` does not yet compose the WEB layer.
+# See `src/observability_setup.rs`.
+tracing-subscriber = { version = "0.3", features = ["env-filter", "registry"] }
+tracing-log = "0.2"
+opentelemetry_sdk = "0.27"
 
 # Approximate nearest neighbor index for the face fingerprint cache.
 # Pure-Rust HNSW implementation, suitable for in-memory 512-dim

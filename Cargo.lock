@@ -1918,6 +1918,7 @@ checksum = "3f9eec918d3f24069decb9af1554cad7c880e2da24a9afd88aca000531ab82c1"
 [[package]]
 name = "fold_db"
 version = "0.3.0"
+source = "git+https://github.com/EdgeVector/fold_db.git?rev=a0434b2539c24a955649b19d8aa6b0b532c4c1cc#a0434b2539c24a955649b19d8aa6b0b532c4c1cc"
 dependencies = [
  "aes-gcm",
  "async-trait",
@@ -1937,7 +1938,6 @@ dependencies = [
  "hmac",
  "image",
  "log",
- "observability",
  "once_cell",
  "ort",
  "rand 0.8.5",
@@ -2001,7 +2001,7 @@ dependencies = [
  "libc",
  "log",
  "mime_guess",
- "observability",
+ "observability 0.1.0 (git+https://github.com/EdgeVector/fold_db.git?rev=4574614708cbb539443c2c1918b942afd88aaaba)",
  "once_cell",
  "opentelemetry",
  "opentelemetry_sdk",
@@ -2025,6 +2025,7 @@ dependencies = [
  "toml",
  "tracing",
  "tracing-actix-web",
+ "tracing-log",
  "tracing-opentelemetry",
  "tracing-subscriber",
  "ts-rs",
@@ -3526,6 +3527,31 @@ dependencies = [
 [[package]]
 name = "observability"
 version = "0.1.0"
+source = "git+https://github.com/EdgeVector/fold_db.git?rev=4574614708cbb539443c2c1918b942afd88aaaba#4574614708cbb539443c2c1918b942afd88aaaba"
+dependencies = [
+ "http 1.4.0",
+ "once_cell",
+ "opentelemetry",
+ "opentelemetry-http",
+ "opentelemetry_sdk",
+ "reqwest 0.11.27",
+ "serde",
+ "serde_json",
+ "thiserror 1.0.69",
+ "tokio",
+ "tracing",
+ "tracing-appender",
+ "tracing-log",
+ "tracing-opentelemetry",
+ "tracing-subscriber",
+ "uuid",
+ "xxhash-rust",
+]
+
+[[package]]
+name = "observability"
+version = "0.1.0"
+source = "git+https://github.com/EdgeVector/fold_db.git?rev=8c6af2a0537d642516417f2666cb2c238daf09b9#8c6af2a0537d642516417f2666cb2c238daf09b9"
 dependencies = [
  "http 1.4.0",
  "once_cell",
@@ -4754,20 +4780,24 @@ dependencies = [
 [[package]]
 name = "schema_service_client"
 version = "0.1.0"
+source = "git+https://github.com/EdgeVector/schema_service.git?branch=main#5b4355bcf3fff6ce0d9f27e11596ddde666fc8d1"
 dependencies = [
  "fold_db",
  "futures",
  "log",
+ "observability 0.1.0 (git+https://github.com/EdgeVector/fold_db.git?rev=8c6af2a0537d642516417f2666cb2c238daf09b9)",
  "reqwest 0.11.27",
  "schema_service_core",
  "serde",
  "serde_json",
  "tokio",
+ "tracing",
 ]
 
 [[package]]
 name = "schema_service_core"
 version = "0.1.0"
+source = "git+https://github.com/EdgeVector/schema_service.git?branch=main#5b4355bcf3fff6ce0d9f27e11596ddde666fc8d1"
 dependencies = [
  "async-trait",
  "chrono-tz",
@@ -4775,6 +4805,7 @@ dependencies = [
  "fold_db",
  "include_dir",
  "log",
+ "observability 0.1.0 (git+https://github.com/EdgeVector/fold_db.git?rev=8c6af2a0537d642516417f2666cb2c238daf09b9)",
  "reqwest 0.11.27",
  "serde",
  "serde_json",
@@ -4789,21 +4820,30 @@ dependencies = [
 [[package]]
 name = "schema_service_server_http"
 version = "0.1.0"
+source = "git+https://github.com/EdgeVector/schema_service.git?branch=main#5b4355bcf3fff6ce0d9f27e11596ddde666fc8d1"
 dependencies = [
  "actix-cors",
  "actix-web",
  "clap",
  "fold_db",
+ "futures-util",
+ "http 1.4.0",
  "log",
+ "observability 0.1.0 (git+https://github.com/EdgeVector/fold_db.git?rev=8c6af2a0537d642516417f2666cb2c238daf09b9)",
+ "opentelemetry",
  "schema_service_core",
  "schema_service_server_shared",
  "serde",
  "tokio",
+ "tracing",
+ "tracing-actix-web",
+ "tracing-opentelemetry",
 ]
 
 [[package]]
 name = "schema_service_server_shared"
 version = "0.1.0"
+source = "git+https://github.com/EdgeVector/schema_service.git?branch=main#5b4355bcf3fff6ce0d9f27e11596ddde666fc8d1"
 dependencies = [
  "actix-web",
  "chrono",
@@ -6348,6 +6388,7 @@ dependencies = [
 [[package]]
 name = "wasm_compiler"
 version = "0.1.0"
+source = "git+https://github.com/EdgeVector/schema_service.git?branch=main#5b4355bcf3fff6ce0d9f27e11596ddde666fc8d1"
 dependencies = [
  "log",
  "serde",
@@ -6355,6 +6396,7 @@ dependencies = [
  "thiserror 1.0.69",
  "tokio",
  "toml",
+ "tracing",
 ]
 
 [[package]]
