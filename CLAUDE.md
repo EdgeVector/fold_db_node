@@ -65,7 +65,7 @@ Symptoms: dozens of errors like `expected fold_db::triggers::Trigger, found sche
 
 **Defense (production):** both repos pin fold_db to the **same explicit `rev`**. `fold_db_node/Cargo.toml` and `schema_service/Cargo.toml` must match: bump them in lockstep. To bump:
 
-1. Land your fold_db PR; copy the squash-commit SHA from `mainline`.
+1. Land your fold_db PR; copy the squash-commit SHA from `main`.
 2. Open a `schema_service` PR setting `fold_db = { ..., rev = "<sha>" }`. Merge.
 3. Open a `fold_db_node` PR setting the same `rev` AND running `cargo update -p schema_service_core` to pull schema_service's new pin into Cargo.lock. Merge.
 
