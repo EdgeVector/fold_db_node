@@ -39,13 +39,10 @@ schema_service_client = { git = "https://github.com/EdgeVector/schema_service.gi
 # Upstream `init_node` doesn't compose the WEB layer yet — the local
 # `observability_setup::init_node_with_web` helper in this crate wires it.
 #
-# Phase 4 / T9: bumped to b757b425 so `init_node` composes the OTLP traces
-# exporter (PR #648), the SpanMetrics layer (PR #646), the OTLP metrics
-# exporter (PR #650), and the Sentry ERROR sink (PR #647), all gated on
-# their respective env vars (PR #651). The end-to-end soak test
-# `tests/observability_e2e_soak.rs` exercises the trace pipeline through
-# this composed `init_node` against a wiremock OTLP collector.
-observability = { git = "https://github.com/EdgeVector/fold_db.git", rev = "b757b42502da9f1dda58d2e11170139314f9c7aa" }
+# Cloud cleanup C3: bumped to a315c4a0 (fold_db PR #660) which ripped out
+# the OTLP traces, OTLP metrics, and SpanMetrics layers. The Sentry ERROR
+# sink (PR #647) survives, off by default until SENTRY_DSN is set.
+observability = { git = "https://github.com/EdgeVector/fold_db.git", rev = "a315c4a06a21261f5f8fc23be76539301ae830b0" }
 
 # HTTP Server
 actix-web = "4.3"
@@ -172,13 +169,6 @@ wiremock = "0.6"
 # `tests/observability_sentry_error_e2e.rs`.
 sentry = { version = "0.47", default-features = false, features = ["backtrace", "contexts", "release-health", "transport", "test"] }
 sentry-tracing = "0.47"
-# Phase 4 / T9: decode the OTLP HTTP/protobuf payloads captured by
-# wiremock in `tests/observability_e2e_soak.rs`. `gen-tonic-messages`
-# pulls in `prost::Message` impls for the generated structs (no tonic
-# transport — we never open a gRPC channel). Version pinned to 0.27 to
-# match the `opentelemetry` 0.27 stack already in the dep graph.
-opentelemetry-proto = { version = "0.27", default-features = false, features = ["gen-tonic-messages", "trace"] }
-prost = "0.13"
 
 [lib]
 name = "fold_db_node"
