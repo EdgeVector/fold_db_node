@@ -405,7 +405,7 @@ version = "1.1.5"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "40c48f72fd53cd289104fc64099abca73db4166ad86ea0b4341abe65af83dadc"
 dependencies = [
- "windows-sys 0.61.2",
+ "windows-sys 0.60.2",
 ]
 
 [[package]]
@@ -416,7 +416,7 @@ checksum = "291e6a250ff86cd4a820112fb8898808a366d8f9f58ce16d1f538353ad55747d"
 dependencies = [
  "anstyle",
  "once_cell_polyfill",
- "windows-sys 0.61.2",
+ "windows-sys 0.60.2",
 ]
 
 [[package]]
@@ -949,7 +949,7 @@ version = "3.1.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "faf9468729b8cbcea668e36183cb69d317348c2e08e994829fb56ebfdfbaac34"
 dependencies = [
- "windows-sys 0.59.0",
+ "windows-sys 0.60.2",
 ]
 
 [[package]]
@@ -1657,7 +1657,7 @@ dependencies = [
  "libc",
  "option-ext",
  "redox_users 0.5.2",
- "windows-sys 0.59.0",
+ "windows-sys 0.60.2",
 ]
 
 [[package]]
@@ -1809,7 +1809,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "39cab71617ae0d63f51a36d69f866391735b51691dbda63cf6f96d042b63efeb"
 dependencies = [
  "libc",
- "windows-sys 0.59.0",
+ "windows-sys 0.60.2",
 ]
 
 [[package]]
@@ -2055,14 +2055,12 @@ dependencies = [
  "libc",
  "log",
  "mime_guess",
- "observability 0.1.0 (git+https://github.com/EdgeVector/fold_db.git?rev=b757b42502da9f1dda58d2e11170139314f9c7aa)",
+ "observability 0.1.0 (git+https://github.com/EdgeVector/fold_db.git?rev=a315c4a06a21261f5f8fc23be76539301ae830b0)",
  "once_cell",
  "opentelemetry",
- "opentelemetry-proto",
  "opentelemetry_sdk",
  "parking_lot 0.12.5",
  "predicates",
- "prost",
  "rand 0.8.5",
  "regex",
  "reqwest 0.11.27",
@@ -3505,7 +3503,7 @@ version = "0.50.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "7957b9740744892f114936ab4a57b3f487491bbeafaf8083688b16841a4240e5"
 dependencies = [
- "windows-sys 0.59.0",
+ "windows-sys 0.60.2",
 ]
 
 [[package]]
@@ -3796,13 +3794,12 @@ dependencies = [
 [[package]]
 name = "observability"
 version = "0.1.0"
-source = "git+https://github.com/EdgeVector/fold_db.git?rev=b757b42502da9f1dda58d2e11170139314f9c7aa#b757b42502da9f1dda58d2e11170139314f9c7aa"
+source = "git+https://github.com/EdgeVector/fold_db.git?rev=a315c4a06a21261f5f8fc23be76539301ae830b0#a315c4a06a21261f5f8fc23be76539301ae830b0"
 dependencies = [
  "http 1.4.0",
  "once_cell",
  "opentelemetry",
  "opentelemetry-http",
- "opentelemetry-otlp",
  "opentelemetry_sdk",
  "reqwest 0.11.27",
  "sentry",
@@ -3945,37 +3942,6 @@ dependencies = [
  "bytes",
  "http 1.4.0",
  "opentelemetry",
- "reqwest 0.12.28",
-]
-
-[[package]]
-name = "opentelemetry-otlp"
-version = "0.27.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "91cf61a1868dacc576bf2b2a1c3e9ab150af7272909e80085c3173384fe11f76"
-dependencies = [
- "async-trait",
- "futures-core",
- "http 1.4.0",
- "opentelemetry",
- "opentelemetry-http",
- "opentelemetry-proto",
- "opentelemetry_sdk",
- "prost",
- "reqwest 0.12.28",
- "thiserror 1.0.69",
-]
-
-[[package]]
-name = "opentelemetry-proto"
-version = "0.27.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "a6e05acbfada5ec79023c85368af14abd0b307c015e9064d249b2a950ef459a6"
-dependencies = [
- "opentelemetry",
- "opentelemetry_sdk",
- "prost",
- "tonic",
 ]
 
 [[package]]
@@ -4166,7 +4132,7 @@ dependencies = [
  "console_error_panic_hook",
  "console_log",
  "image",
- "itertools 0.12.1",
+ "itertools 0.14.0",
  "js-sys",
  "libloading",
  "log",
@@ -4455,29 +4421,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "prost"
-version = "0.13.5"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "2796faa41db3ec313a31f7624d9286acf277b52de526150b7e69f3debf891ee5"
-dependencies = [
- "bytes",
- "prost-derive",
-]
-
-[[package]]
-name = "prost-derive"
-version = "0.13.5"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "8a56d757972c98b346a9b766e3f02746cde6dd1cd1d1d563472929fdd74bec4d"
-dependencies = [
- "anyhow",
- "itertools 0.12.1",
- "proc-macro2",
- "quote",
- "syn 2.0.117",
-]
-
-[[package]]
 name = "psm"
 version = "0.1.30"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -4572,7 +4515,7 @@ dependencies = [
  "once_cell",
  "socket2 0.6.3",
  "tracing",
- "windows-sys 0.59.0",
+ "windows-sys 0.60.2",
 ]
 
 [[package]]
@@ -5066,7 +5009,7 @@ dependencies = [
  "errno",
  "libc",
  "linux-raw-sys 0.12.1",
- "windows-sys 0.59.0",
+ "windows-sys 0.60.2",
 ]
 
 [[package]]
@@ -5147,7 +5090,7 @@ dependencies = [
 [[package]]
 name = "schema_service_client"
 version = "0.1.0"
-source = "git+https://github.com/EdgeVector/schema_service.git?branch=main#5b4355bcf3fff6ce0d9f27e11596ddde666fc8d1"
+source = "git+https://github.com/EdgeVector/schema_service.git?branch=main#3b5d5adef36d854d16354c80204e66cbca9b6c05"
 dependencies = [
  "fold_db",
  "futures",
@@ -5164,7 +5107,7 @@ dependencies = [
 [[package]]
 name = "schema_service_core"
 version = "0.1.0"
-source = "git+https://github.com/EdgeVector/schema_service.git?branch=main#5b4355bcf3fff6ce0d9f27e11596ddde666fc8d1"
+source = "git+https://github.com/EdgeVector/schema_service.git?branch=main#3b5d5adef36d854d16354c80204e66cbca9b6c05"
 dependencies = [
  "async-trait",
  "chrono-tz",
@@ -5187,7 +5130,7 @@ dependencies = [
 [[package]]
 name = "schema_service_server_http"
 version = "0.1.0"
-source = "git+https://github.com/EdgeVector/schema_service.git?branch=main#5b4355bcf3fff6ce0d9f27e11596ddde666fc8d1"
+source = "git+https://github.com/EdgeVector/schema_service.git?branch=main#3b5d5adef36d854d16354c80204e66cbca9b6c05"
 dependencies = [
  "actix-cors",
  "actix-web",
@@ -5210,7 +5153,7 @@ dependencies = [
 [[package]]
 name = "schema_service_server_shared"
 version = "0.1.0"
-source = "git+https://github.com/EdgeVector/schema_service.git?branch=main#5b4355bcf3fff6ce0d9f27e11596ddde666fc8d1"
+source = "git+https://github.com/EdgeVector/schema_service.git?branch=main#3b5d5adef36d854d16354c80204e66cbca9b6c05"
 dependencies = [
  "actix-web",
  "chrono",
@@ -5606,7 +5549,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "3a766e1110788c36f4fa1c2b71b387a7815aa65f88ce0229841826633d93723e"
 dependencies = [
  "libc",
- "windows-sys 0.61.2",
+ "windows-sys 0.60.2",
 ]
 
 [[package]]
@@ -5989,7 +5932,7 @@ dependencies = [
  "getrandom 0.4.2",
  "once_cell",
  "rustix 1.1.4",
- "windows-sys 0.59.0",
+ "windows-sys 0.60.2",
 ]
 
 [[package]]
@@ -6272,27 +6215,6 @@ name = "toml_write"
 version = "0.1.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "5d99f8c9a7727884afe522e9bd5edbfc91a3312b36a77b5fb8926e4c31a41801"
-
-[[package]]
-name = "tonic"
-version = "0.12.3"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "877c5b330756d856ffcc4553ab34a5684481ade925ecc54bcd1bf02b1d0d4d52"
-dependencies = [
- "async-trait",
- "base64 0.22.1",
- "bytes",
- "http 1.4.0",
- "http-body 1.0.1",
- "http-body-util",
- "percent-encoding",
- "pin-project",
- "prost",
- "tokio-stream",
- "tower-layer",
- "tower-service",
- "tracing",
-]
 
 [[package]]
 name = "tower"
@@ -6921,7 +6843,7 @@ dependencies = [
 [[package]]
 name = "wasm_compiler"
 version = "0.1.0"
-source = "git+https://github.com/EdgeVector/schema_service.git?branch=main#5b4355bcf3fff6ce0d9f27e11596ddde666fc8d1"
+source = "git+https://github.com/EdgeVector/schema_service.git?branch=main#3b5d5adef36d854d16354c80204e66cbca9b6c05"
 dependencies = [
  "log",
  "serde",
@@ -7329,7 +7251,7 @@ version = "0.1.11"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "c2a7b1c03c876122aa43f3020e6c3c3ee5c05081c9a00739faf7503aeba10d22"
 dependencies = [
- "windows-sys 0.59.0",
+ "windows-sys 0.60.2",
 ]
 
 [[package]]
