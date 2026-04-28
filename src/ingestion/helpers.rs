@@ -13,6 +13,7 @@ use fold_db::logging::features::LogFeature;
 use serde::{Deserialize, Serialize};
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
+use tracing::Instrument;
 
 /// Response for batch folder ingestion
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -129,40 +130,43 @@ pub fn spawn_file_ingestion_tasks(
     let node_arc_clone = node_arc.clone();
     let user_id_clone = user_id.to_string();
 
-    tokio::spawn(async move {
-        fold_db::logging::core::run_with_user(&user_id_clone, async move {
-            for (file_path, progress_id) in files {
-                let progress_service = ProgressService::new(progress_tracker_clone.clone());
+    tokio::spawn(
+        async move {
+            fold_db::logging::core::run_with_user(&user_id_clone, async move {
+                for (file_path, progress_id) in files {
+                    let progress_service = ProgressService::new(progress_tracker_clone.clone());
 
-                if let Err(e) = process_single_file_via_smart_folder(
-                    &file_path,
-                    &progress_id,
-                    &progress_service,
-                    &node_arc_clone,
-                    auto_execute,
-                    &ingestion_service,
-                    &upload_storage,
-                    &encryption_key,
-                    force_reingest,
-                    None,
-                )
-                .await
-                {
-                    log_feature!(
-                        LogFeature::Ingestion,
-                        error,
-                        "Failed to process file {}: {}",
-                        file_path.display(),
-                        e
-                    );
-                    progress_service
-                        .fail_progress(&progress_id, format!("Processing failed: {}", e))
-                        .await;
+                    if let Err(e) = process_single_file_via_smart_folder(
+                        &file_path,
+                        &progress_id,
+                        &progress_service,
+                        &node_arc_clone,
+                        auto_execute,
+                        &ingestion_service,
+                        &upload_storage,
+                        &encryption_key,
+                        force_reingest,
+                        None,
+                    )
+                    .await
+                    {
+                        log_feature!(
+                            LogFeature::Ingestion,
+                            error,
+                            "Failed to process file {}: {}",
+                            file_path.display(),
+                            e
+                        );
+                        progress_service
+                            .fail_progress(&progress_id, format!("Processing failed: {}", e))
+                            .await;
+                    }
                 }
-            }
-        })
-        .await
-    });
+            })
+            .await
+        }
+        .instrument(tracing::Span::current()),
+    );
 }
 
 /// Content-address the given file bytes: compute SHA256, encrypt the payload,

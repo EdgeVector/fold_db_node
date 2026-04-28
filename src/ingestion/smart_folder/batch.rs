@@ -12,6 +12,7 @@ use fold_db::log_feature;
 use fold_db::logging::features::LogFeature;
 use std::sync::Arc;
 use tokio::sync::Notify;
+use tracing::Instrument;
 
 /// Result of trying to pop the next file from the batch controller.
 enum PopResult {
@@ -131,7 +132,7 @@ pub fn spawn_batch_coordinator(
     let user_id = user_id.to_string();
     let map = batch_controller_map;
 
-    tokio::spawn(async move {
+    let coordinator = async move {
         let user_id_inner = user_id.clone();
         fold_db::logging::core::run_with_user(&user_id, async move {
             let batch_user_id =
@@ -248,25 +249,29 @@ pub fn spawn_batch_coordinator(
             // Run interest detection after successful batch completion
             if batch_completed {
                 let node_for_interests = node_arc.clone();
-                tokio::spawn(async move {
-                    if let Err(e) =
-                        crate::discovery::interests::run_interest_detection(&node_for_interests)
-                            .await
-                    {
-                        log_feature!(
-                            LogFeature::Ingestion,
-                            warn,
-                            "Interest detection after batch completion failed: {}",
-                            e
-                        );
+                tokio::spawn(
+                    async move {
+                        if let Err(e) =
+                            crate::discovery::interests::run_interest_detection(&node_for_interests)
+                                .await
+                        {
+                            log_feature!(
+                                LogFeature::Ingestion,
+                                warn,
+                                "Interest detection after batch completion failed: {}",
+                                e
+                            );
+                        }
                     }
-                });
+                    .instrument(tracing::Span::current()),
+                );
             }
 
             // Clean up the controller after a short delay so final status
             // polls can still read it before it's removed.
             let map_cleanup = map.clone();
             let batch_id_cleanup = batch_id.clone();
+            // lint:spawn-bare-ok deferred 5-min cleanup — independent of request lifecycle.
             tokio::spawn(async move {
                 tokio::time::sleep(std::time::Duration::from_secs(300)).await;
                 let mut map_guard = map_cleanup.lock().await;
@@ -274,5 +279,6 @@ pub fn spawn_batch_coordinator(
             });
         })
         .await
-    });
+    };
+    tokio::spawn(coordinator.instrument(tracing::Span::current()));
 }

@@ -12,6 +12,7 @@ use fold_db::logging::features::LogFeature;
 use fold_db::progress::{Job, JobStatus, JobType, ProgressTracker};
 use serde::{Deserialize, Serialize};
 use serde_json::json;
+use tracing::Instrument;
 
 use crate::ingestion::apple_import;
 use crate::ingestion::apple_import::sync_scheduler::SyncConfigState;
@@ -101,12 +102,15 @@ where
     Fut: std::future::Future<Output = ()> + Send + 'static,
 {
     let response_id = progress_id.clone();
-    tokio::spawn(async move {
-        fold_db::logging::core::run_with_user(&user_id, async move {
-            work().await;
-        })
-        .await;
-    });
+    tokio::spawn(
+        async move {
+            fold_db::logging::core::run_with_user(&user_id, async move {
+                work().await;
+            })
+            .await;
+        }
+        .instrument(tracing::Span::current()),
+    );
 
     HttpResponse::Accepted().json(json!({
         "success": true,
@@ -1189,6 +1193,7 @@ pub fn spawn_sync_scheduler(
     progress_tracker: actix_web::web::Data<ProgressTracker>,
     upload_storage: actix_web::web::Data<fold_db::storage::UploadStorage>,
 ) {
+    // lint:spawn-bare-ok boot-time Apple auto-sync scheduler — perpetual worker, no per-request parent span.
     tokio::spawn(async move {
         let mut interval = tokio::time::interval(std::time::Duration::from_secs(60));
         loop {

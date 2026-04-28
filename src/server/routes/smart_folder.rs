@@ -21,6 +21,7 @@ use serde_json::json;
 use std::path::Path;
 use std::sync::Arc;
 use tokio::sync::Mutex;
+use tracing::Instrument;
 
 /// Request for smart folder scanning
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -120,57 +121,63 @@ pub async fn smart_folder_scan(
     let service_opt = get_ingestion_service(ingestion_service.get_ref()).await;
 
     let pid = progress_id.clone();
-    tokio::spawn(async move {
-        let user_id_inner = user_id.clone();
-        fold_db::logging::core::run_with_user(&user_id, async move {
-            let tracker_cb = tracker.clone();
-            let pid_cb = pid.clone();
-            let progress_user_id = fold_db::logging::core::get_current_user_id()
-                .unwrap_or_else(|| user_id_inner.clone());
-            let on_progress: smart_folder::ScanProgressFn = Box::new(move |pct, msg| {
-                let tracker_inner = tracker_cb.clone();
-                let pid_inner = pid_cb.clone();
-                let uid = progress_user_id.clone();
-                tokio::spawn(async move {
-                    fold_db::logging::core::run_with_user(&uid, async move {
-                        if let Ok(Some(mut job)) = tracker_inner.load(&pid_inner).await {
-                            job.update_progress(pct, msg);
-                            let _ = tracker_inner.save(&job).await;
+    tokio::spawn(
+        async move {
+            let user_id_inner = user_id.clone();
+            fold_db::logging::core::run_with_user(&user_id, async move {
+                let tracker_cb = tracker.clone();
+                let pid_cb = pid.clone();
+                let progress_user_id = fold_db::logging::core::get_current_user_id()
+                    .unwrap_or_else(|| user_id_inner.clone());
+                let on_progress: smart_folder::ScanProgressFn = Box::new(move |pct, msg| {
+                    let tracker_inner = tracker_cb.clone();
+                    let pid_inner = pid_cb.clone();
+                    let uid = progress_user_id.clone();
+                    tokio::spawn(
+                        async move {
+                            fold_db::logging::core::run_with_user(&uid, async move {
+                                if let Ok(Some(mut job)) = tracker_inner.load(&pid_inner).await {
+                                    job.update_progress(pct, msg);
+                                    let _ = tracker_inner.save(&job).await;
+                                }
+                            })
+                            .await
                         }
-                    })
-                    .await
+                        .instrument(tracing::Span::current()),
+                    );
                 });
-            });
 
-            let node_ref = node_arc.as_deref();
-            let result = smart_folder::perform_smart_folder_scan_with_progress(
-                &folder_path,
-                max_depth,
-                max_files,
-                service_opt.as_deref(),
-                node_ref,
-                Some(&on_progress),
-            )
-            .await;
+                let node_ref = node_arc.as_deref();
+                let result = smart_folder::perform_smart_folder_scan_with_progress(
+                    &folder_path,
+                    max_depth,
+                    max_files,
+                    service_opt.as_deref(),
+                    node_ref,
+                    Some(&on_progress),
+                )
+                .await;
 
-            tokio::task::yield_now().await;
-            tokio::time::sleep(std::time::Duration::from_millis(50)).await;
+                tokio::task::yield_now().await;
+                tokio::time::sleep(std::time::Duration::from_millis(50)).await;
 
-            if let Ok(Some(mut job)) = tracker.load(&pid).await {
-                match result {
-                    Ok(response) => {
-                        let result_json = serde_json::to_value(&response).ok();
-                        job.complete(result_json);
+                if let Ok(Some(mut job)) = tracker.load(&pid).await {
+                    match result {
+                        Ok(response) => {
+                            let result_json = serde_json::to_value(&response).ok();
+                            job.complete(result_json);
+                        }
+                        Err(e) => {
+                            job.fail(e.to_string());
+                        }
                     }
-                    Err(e) => {
-                        job.fail(e.to_string());
-                    }
+                    let _ = tracker.save(&job).await;
                 }
-                let _ = tracker.save(&job).await;
-            }
-        })
-        .await
-    });
+            })
+            .await
+        }
+        .instrument(tracing::Span::current()),
+    );
 
     HttpResponse::Accepted().json(SmartFolderScanStartResponse {
         success: true,
