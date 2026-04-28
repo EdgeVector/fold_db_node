@@ -1,6 +1,3 @@
-use fold_db::log_feature;
-use fold_db::logging::features::LogFeature;
-
 use serde::{Deserialize, Serialize};
 use std::path::PathBuf;
 
@@ -167,12 +164,11 @@ pub fn load_node_config(
         match serde_json::from_str::<NodeConfig>(&config_str) {
             Ok(cfg) => Ok(cfg),
             Err(e) => {
-                log_feature!(
-                    LogFeature::HttpServer,
-                    error,
-                    "Failed to parse node configuration: {}",
-                    e
-                );
+                tracing::error!(
+                target: "fold_node::http_server",
+                        "Failed to parse node configuration: {}",
+                        e
+                    );
                 Err(std::io::Error::new(std::io::ErrorKind::InvalidData, e))
             }
         }

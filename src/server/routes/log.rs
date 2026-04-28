@@ -1,22 +1,17 @@
-//! Log-related HTTP endpoints.
-//!
-//! Phase 3 / T5 rewires three of these from the legacy
-//! `fold_db::logging::LoggingSystem` plumbing to the observability
-//! crate's tracing-native layers:
+//! Log-related HTTP endpoints, all backed by the observability crate's
+//! tracing-native layers:
 //!
 //! - `GET /api/logs`         → [`observability::layers::ring::RingHandle::query`]
 //! - `GET /api/logs/stream`  → [`observability::layers::web::WebHandle::subscribe`]
 //! - `PUT /api/logs/level`   → [`observability::layers::reload::ReloadHandle::update`]
 //!
-//! The remaining endpoints (`/api/logs/config`, `/api/logs/config/reload`,
-//! `/api/logs/features`) still hit `LoggingSystem` because they expose
-//! per-feature config that the tracing pipeline doesn't model. T7 will
-//! retire those alongside `LoggingSystem` itself.
+//! The legacy `/api/logs/config`, `/api/logs/config/reload`, and
+//! `/api/logs/features` endpoints were retired alongside `LoggingSystem`
+//! itself: there is no on-disk `LogConfig` to swap and per-feature levels
+//! are now expressed as `RUST_LOG=fold_node::schema=debug,...` env-filter
+//! syntax — the dashboard owns the merged directive and sends it via
+//! `PUT /api/logs/level`.
 
-use crate::fold_node::OperationProcessor;
-use crate::handlers::{ApiResponse, HandlerError, IntoHandlerError};
-use crate::server::http_server::AppState;
-use crate::server::routes::{handler_result_to_response, node_or_return};
 use actix_web::{web, HttpResponse, Responder};
 use futures_util::stream::StreamExt;
 use observability::layers::reload::ReloadHandle;
@@ -34,17 +29,6 @@ pub struct LogListResponse {
     pub logs: serde_json::Value,
     pub count: usize,
     pub timestamp: u64,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize, utoipa::ToSchema)]
-pub struct LogConfigResponse {
-    pub config: serde_json::Value,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct LogFeaturesResponse {
-    pub features: serde_json::Value,
-    pub available_levels: Vec<String>,
 }
 
 #[derive(Serialize, Deserialize, utoipa::ToSchema)]
@@ -144,34 +128,6 @@ pub async fn stream_logs(web_handle: web::Data<Option<WebHandle>>) -> impl Respo
         .streaming(stream)
 }
 
-/// Get current logging configuration. Still backed by `LoggingSystem` —
-/// retired in T7 alongside the legacy logging crate.
-#[utoipa::path(
-    get,
-    path = "/api/logs/config",
-    tag = "logs",
-    responses((status = 200, description = "Logging configuration"))
-)]
-pub async fn get_config(state: web::Data<AppState>) -> impl Responder {
-    let (user_hash, node) = node_or_return!(state);
-    let op = OperationProcessor::new(node.clone());
-    handler_result_to_response(
-        async {
-            let config = op.get_log_config().await.ok_or_else(|| {
-                HandlerError::Internal("Log configuration not available".to_string())
-            })?;
-            let config_json = serde_json::to_value(config).handler_err("serialize log config")?;
-            Ok(ApiResponse::success_with_user(
-                LogConfigResponse {
-                    config: config_json,
-                },
-                user_hash,
-            ))
-        }
-        .await,
-    )
-}
-
 /// Update feature-specific log level at runtime.
 ///
 /// Translated to the RELOAD handle's `EnvFilter` directive vocabulary:
@@ -224,65 +180,6 @@ pub async fn update_feature_level(
             "error": format!("Failed to apply directive '{}': {}", directive, e)
         })),
     }
-}
-
-/// Reload logging configuration from file. Still backed by
-/// `LoggingSystem` — retired in T7.
-#[utoipa::path(
-    post,
-    path = "/api/logs/config/reload",
-    tag = "logs",
-    responses((status = 200, description = "Reloaded"), (status = 400, description = "Bad request"))
-)]
-pub async fn reload_config(state: web::Data<AppState>) -> impl Responder {
-    let (user_hash, node) = node_or_return!(state);
-    let op = OperationProcessor::new(node.clone());
-    handler_result_to_response(
-        async {
-            op.reload_log_config("config/logging.toml")
-                .await
-                .map_err(HandlerError::from)?;
-            Ok(ApiResponse::success_with_user(
-                crate::handlers::response::SuccessResponse {
-                    success: true,
-                    message: Some("Configuration reloaded successfully".to_string()),
-                },
-                user_hash,
-            ))
-        }
-        .await,
-    )
-}
-
-/// Get available log features and their current levels. Still backed by
-/// `LoggingSystem` — retired in T7.
-#[utoipa::path(
-    get,
-    path = "/api/logs/features",
-    tag = "logs",
-    responses((status = 200, description = "Features", body = serde_json::Value))
-)]
-pub async fn get_features(state: web::Data<AppState>) -> impl Responder {
-    let (user_hash, node) = node_or_return!(state);
-    let op = OperationProcessor::new(node.clone());
-    handler_result_to_response(
-        async {
-            let features = op
-                .get_log_features()
-                .await
-                .ok_or_else(|| HandlerError::Internal("Log features not available".to_string()))?;
-            let features_json =
-                serde_json::to_value(features).handler_err("serialize log features")?;
-            Ok(ApiResponse::success_with_user(
-                LogFeaturesResponse {
-                    features: features_json,
-                    available_levels: LOG_LEVELS.iter().map(|s| s.to_string()).collect(),
-                },
-                user_hash,
-            ))
-        }
-        .await,
-    )
 }
 
 #[cfg(test)]

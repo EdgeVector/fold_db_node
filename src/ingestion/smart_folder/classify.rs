@@ -110,9 +110,8 @@ pub(crate) async fn classify_image_directories(
 
     if !skipped_recs.is_empty() {
         llm_candidates.retain(|p| !remove_set.contains(p));
-        fold_db::log_feature!(
-            fold_db::logging::features::LogFeature::Ingestion,
-            info,
+        tracing::info!(
+            target: "fold_node::ingestion",
             "Image directory classification: {} images in {} non-personal dirs removed",
             skipped_recs.len(),
             non_personal_dirs.len(),

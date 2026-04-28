@@ -1,8 +1,6 @@
 use crate::server::http_server::AppState;
 use crate::server::routes::user_context_or_return;
 use actix_web::{web, HttpResponse, Responder};
-use fold_db::log_feature;
-use fold_db::logging::features::LogFeature;
 use fold_db::progress::{Job, JobType, ProgressTracker};
 use serde::{Deserialize, Serialize};
 use tracing::Instrument;
@@ -28,33 +26,30 @@ impl JobHandle {
             Ok(Some(mut job)) => {
                 f(&mut job);
                 if let Err(e) = self.tracker.save(&job).await {
-                    log_feature!(
-                        LogFeature::HttpServer,
-                        error,
-                        "Failed to save job {} for '{}': {}",
-                        operation,
-                        self.job_id,
-                        e
-                    );
+                    tracing::error!(
+                    target: "fold_node::http_server",
+                                "Failed to save job {} for '{}': {}",
+                                operation,
+                                self.job_id,
+                                e
+                            );
                 }
             }
             Ok(None) => {
-                log_feature!(
-                    LogFeature::HttpServer,
-                    warn,
-                    "Job '{}' not found during {}",
-                    self.job_id,
-                    operation
-                );
+                tracing::warn!(
+                target: "fold_node::http_server",
+                        "Job '{}' not found during {}",
+                        self.job_id,
+                        operation
+                    );
             }
             Err(e) => {
-                log_feature!(
-                    LogFeature::HttpServer,
-                    error,
-                    "Failed to load job '{}': {}",
-                    self.job_id,
-                    e
-                );
+                tracing::error!(
+                target: "fold_node::http_server",
+                        "Failed to load job '{}': {}",
+                        self.job_id,
+                        e
+                    );
             }
         }
     }
@@ -67,9 +62,8 @@ impl JobHandle {
 
     async fn fail(&self, error: impl Into<String>) {
         let error = error.into();
-        log_feature!(
-            LogFeature::HttpServer,
-            error,
+        tracing::error!(
+            target: "fold_node::http_server",
             "Job '{}' failed: {}",
             self.job_id,
             error
@@ -126,9 +120,8 @@ async fn create_async_job(
     job.update_progress(5, initial_msg.into());
 
     if let Err(e) = tracker.save(&job).await {
-        log_feature!(
-            LogFeature::HttpServer,
-            error,
+        tracing::error!(
+            target: "fold_node::http_server",
             "Failed to create {} job: {}",
             job_type,
             e
@@ -209,7 +202,7 @@ pub async fn reset_database(
     tokio::spawn(
         async move {
             let uid = user_id.clone();
-            fold_db::logging::core::run_with_user(&user_id, async move {
+            fold_db::user_context::run_with_user(&user_id, async move {
                 handle
                     .update(10, "Clearing user data from storage...")
                     .await;
@@ -231,12 +224,11 @@ pub async fn reset_database(
 
                 node_manager.invalidate_all_nodes().await;
 
-                log_feature!(
-                    LogFeature::HttpServer,
-                    info,
-                    "Database reset completed for user: {}",
-                    uid
-                );
+                tracing::info!(
+                target: "fold_node::http_server",
+                        "Database reset completed for user: {}",
+                        uid
+                    );
                 handle
                     .complete(serde_json::json!({
                         "user_id": uid,
@@ -312,7 +304,7 @@ pub async fn migrate_to_cloud(
     tokio::spawn(
         async move {
             let uid = user_id.clone();
-            fold_db::logging::core::run_with_user(&user_id, async move {
+            fold_db::user_context::run_with_user(&user_id, async move {
                 handle.update(10, "Fetching local node data...").await;
 
                 let node_arc = match node_manager.get_node(&uid).await {
@@ -332,12 +324,11 @@ pub async fn migrate_to_cloud(
                     return;
                 }
 
-                log_feature!(
-                    LogFeature::HttpServer,
-                    info,
-                    "Cloud migration completed for user: {}",
-                    uid
-                );
+                tracing::info!(
+                target: "fold_node::http_server",
+                        "Cloud migration completed for user: {}",
+                        uid
+                    );
                 handle
                     .complete(serde_json::json!({
                         "user_id": uid,
@@ -386,7 +377,7 @@ mod tests {
         let state = create_test_state(&temp_dir).await;
         let progress_tracker = web::Data::new(fold_db::progress::create_tracker().await);
 
-        fold_db::logging::core::run_with_user("test_user", async move {
+        fold_db::user_context::run_with_user("test_user", async move {
             let req_body = ResetDatabaseRequest { confirm: true };
             let req = test::TestRequest::post()
                 .set_json(&req_body)

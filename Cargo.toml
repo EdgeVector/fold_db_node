@@ -15,7 +15,7 @@ face-detection = ["fold_db/face-detection"]
 
 [dependencies]
 # Core database library
-fold_db = { git = "https://github.com/EdgeVector/fold_db.git", rev = "a0434b2539c24a955649b19d8aa6b0b532c4c1cc", features = ["cli"] }
+fold_db = { git = "https://github.com/EdgeVector/fold_db.git", rev = "43bdc07fbaa95accb949225611c0a7abea38cfc5", features = ["cli"] }
 
 # Schema service registry brain. Phase 2 T2: all former
 # `fold_db::schema_service::*` types come from here now. Git dep pinned
@@ -42,7 +42,7 @@ schema_service_client = { git = "https://github.com/EdgeVector/schema_service.gi
 # Cloud cleanup C3: bumped to a315c4a0 (fold_db PR #660) which ripped out
 # the OTLP traces, OTLP metrics, and SpanMetrics layers. The Sentry ERROR
 # sink (PR #647) survives, off by default until SENTRY_DSN is set.
-observability = { git = "https://github.com/EdgeVector/fold_db.git", rev = "a315c4a06a21261f5f8fc23be76539301ae830b0" }
+observability = { git = "https://github.com/EdgeVector/fold_db.git", rev = "43bdc07fbaa95accb949225611c0a7abea38cfc5" }
 
 # HTTP Server
 actix-web = "4.3"
@@ -59,7 +59,7 @@ dialoguer = "0.11"
 console = "0.15"
 
 # File processing
-file_to_markdown = { git = "https://github.com/EdgeVector/file_to_markdown.git", branch = "master" }
+file_to_markdown = { git = "https://github.com/EdgeVector/file_to_markdown.git", branch = "main" }
 csv = "1.3"
 mime_guess = "2.0"
 kamadak-exif = "0.5"
@@ -74,7 +74,6 @@ serde = { version = "1.0", features = ["derive"] }
 serde_json = "1.0"
 ts-rs = { version = "10.1.0", optional = true, features = ["uuid-impl", "chrono-impl"] }
 tokio = { version = "1.0", features = ["macros", "rt-multi-thread", "sync", "time", "fs", "signal", "io-util"] }
-log = { version = "0.4", features = ["std"] }
 tracing = "0.1"
 # Versions match observability's Cargo.toml so cargo unifies them in the
 # dep graph (otherwise we'd link two copies of opentelemetry types and

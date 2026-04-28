@@ -223,7 +223,7 @@ pub async fn process_json(
     // Spawn background ingestion
     tokio::spawn(
         async move {
-            fold_db::logging::core::run_with_user(&user_hash_clone, async move {
+            fold_db::user_context::run_with_user(&user_hash_clone, async move {
                 let progress_service = ProgressService::new(tracker_clone);
 
                 match service
@@ -237,12 +237,11 @@ pub async fn process_json(
                 {
                     Ok(response) => {
                         if !response.success {
-                            fold_db::log_feature!(
-                                fold_db::logging::features::LogFeature::Ingestion,
-                                error,
-                                "Background ingestion failed: {:?}",
-                                response.errors
-                            );
+                            tracing::error!(
+                            target: "fold_node::ingestion",
+                                                "Background ingestion failed: {:?}",
+                                                response.errors
+                                            );
                         } else if is_org_ingestion {
                             // Trigger immediate sync so org data uploads right away
                             // instead of waiting for the next timer-based sync cycle.
@@ -250,12 +249,11 @@ pub async fn process_json(
                         }
                     }
                     Err(e) => {
-                        fold_db::log_feature!(
-                            fold_db::logging::features::LogFeature::Ingestion,
-                            error,
-                            "Background ingestion processing failed: {}",
-                            e
-                        );
+                        tracing::error!(
+                        target: "fold_node::ingestion",
+                                        "Background ingestion processing failed: {}",
+                                        e
+                                    );
                         progress_service
                             .fail_progress(&progress_id_clone, e.user_message())
                             .await;

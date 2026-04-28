@@ -8,8 +8,6 @@ use crate::ingestion::helpers::process_single_file_via_smart_folder;
 use crate::ingestion::ingestion_service::IngestionService;
 use crate::ingestion::progress::ProgressService;
 use crate::ingestion::ProgressTracker;
-use fold_db::log_feature;
-use fold_db::logging::features::LogFeature;
 use std::sync::Arc;
 use tokio::sync::Notify;
 use tracing::Instrument;
@@ -75,14 +73,13 @@ async fn record_file_result(
         match result {
             Ok(()) => ctrl.record_completed(&file.progress_id, estimated_cost),
             Err(e) => {
-                log_feature!(
-                    LogFeature::Ingestion,
-                    error,
-                    "Batch {}: file {} failed: {}",
-                    batch_id,
-                    file.path.display(),
-                    e
-                );
+                tracing::error!(
+                target: "fold_node::ingestion",
+                        "Batch {}: file {} failed: {}",
+                        batch_id,
+                        file.path.display(),
+                        e
+                    );
                 progress_service
                     .fail_progress(&file.progress_id, format!("Processing failed: {}", e))
                     .await;
@@ -134,9 +131,9 @@ pub fn spawn_batch_coordinator(
 
     let coordinator = async move {
         let user_id_inner = user_id.clone();
-        fold_db::logging::core::run_with_user(&user_id, async move {
+        fold_db::user_context::run_with_user(&user_id, async move {
             let batch_user_id =
-                fold_db::logging::core::get_current_user_id().unwrap_or(user_id_inner);
+                fold_db::user_context::get_current_user_id().unwrap_or(user_id_inner);
             let mut join_set = tokio::task::JoinSet::new();
             let mut all_popped = false;
 
@@ -153,7 +150,7 @@ pub fn spawn_batch_coordinator(
                             let task_uid = batch_user_id.clone();
                             let task_org_hash = org_hash.clone();
                             join_set.spawn(async move {
-                                fold_db::logging::core::run_with_user(&task_uid, async move {
+                                fold_db::user_context::run_with_user(&task_uid, async move {
                                     let progress_service = ProgressService::new(tracker);
                                     let result = process_single_file_via_smart_folder(
                                         &file.path,
@@ -255,9 +252,8 @@ pub fn spawn_batch_coordinator(
                             crate::discovery::interests::run_interest_detection(&node_for_interests)
                                 .await
                         {
-                            log_feature!(
-                                LogFeature::Ingestion,
-                                warn,
+                            tracing::warn!(
+            target: "fold_node::ingestion",
                                 "Interest detection after batch completion failed: {}",
                                 e
                             );

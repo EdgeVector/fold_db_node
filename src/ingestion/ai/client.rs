@@ -6,8 +6,6 @@ use crate::ingestion::config::{
 use crate::ingestion::{IngestionError, IngestionResult};
 use async_trait::async_trait;
 use fold_db::llm_registry::models;
-use fold_db::log_feature;
-use fold_db::logging::features::LogFeature;
 use reqwest::Client;
 use serde::{Deserialize, Serialize};
 use std::sync::Arc;
@@ -220,9 +218,8 @@ impl AnthropicBackend {
         let response = check_error_response("Anthropic", response).await?;
         let resp: AnthropicResponse = response.json().await?;
         if let Some(usage) = &resp.usage {
-            log_feature!(
-                LogFeature::Ingestion,
-                info,
+            tracing::info!(
+            target: "fold_node::ingestion",
                 "Anthropic usage - input: {:?}, output: {:?}",
                 usage.input_tokens,
                 usage.output_tokens

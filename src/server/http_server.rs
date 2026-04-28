@@ -19,8 +19,6 @@ use crate::utils::http_errors;
 use fold_db::error::{FoldDbError, FoldDbResult};
 
 use actix_cors::Cors;
-use fold_db::log_feature;
-use fold_db::logging::features::LogFeature;
 
 use actix_web::{web, App, HttpRequest, HttpResponse, HttpServer as ActixHttpServer};
 use std::sync::Arc;
@@ -90,16 +88,12 @@ impl FoldHttpServer {
     /// Returns a `FoldDbError` if:
     /// * There is an error starting the HTTP server
     pub async fn new(node_manager: NodeManager, bind_address: &str) -> FoldDbResult<Self> {
-        // Phase 3 / T5 callers (the daemon binary) build the
-        // observability stack themselves so they can hold the guard
-        // for the lifetime of the process and pass the handles in via
-        // `with_obs_handles`. Embedded servers and tests that don't
-        // care about live-streamed logs construct without handles —
-        // `LoggingSystem::init_with_fallback` keeps the legacy
-        // tracing → log bridge alive for code paths that still call
-        // `log_feature!` while the migration is in flight.
-        fold_db::logging::LoggingSystem::init_with_fallback(None).await;
-
+        // Daemon binaries build the observability stack themselves so they
+        // can hold the `ObsGuard` for the lifetime of the process and pass
+        // its handles in via `with_obs_handles`. Embedded servers and tests
+        // that don't care about live-streamed logs construct without
+        // handles — `tracing::*!` calls outside an active subscriber are
+        // no-ops, which is fine for those code paths.
         Ok(Self {
             node_manager: Arc::new(node_manager),
             bind_address: bind_address.to_string(),
@@ -140,9 +134,8 @@ impl FoldHttpServer {
 
         // Check for interrupted bootstrap and resume if needed
         if let Some((api_url, api_key)) = crate::server::routes::auth::check_bootstrap_pending() {
-            log_feature!(
-                LogFeature::HttpServer,
-                info,
+            tracing::info!(
+            target: "fold_node::http_server",
                 "Found interrupted bootstrap — resuming cloud data download"
             );
             let node_manager = self.node_manager.clone();
@@ -179,9 +172,8 @@ impl FoldHttpServer {
             });
         let upload_storage = fold_db::storage::UploadStorage::local(upload_path);
 
-        log_feature!(
-            LogFeature::HttpServer,
-            info,
+        tracing::info!(
+            target: "fold_node::http_server",
             "Upload storage initialized: {}",
             if upload_storage.is_local() {
                 "Local"
@@ -382,19 +374,17 @@ impl FoldHttpServer {
         if let Some(url) = schema_service_url {
             // Skip loading for mock/test schema services
             if crate::fold_node::node::FoldNode::is_test_schema_service(&url) {
-                log_feature!(
-                    LogFeature::Database,
-                    info,
-                    "Mock schema service detected ({}). Skipping automatic schema loading. Schemas must be loaded manually in tests.",
-                    url
-                );
+                tracing::info!(
+                target: "fold_node::database",
+                        "Mock schema service detected ({}). Skipping automatic schema loading. Schemas must be loaded manually in tests.",
+                        url
+                    );
             } else {
-                log_feature!(
-                    LogFeature::Database,
-                    info,
-                    "Loading schemas from schema service at {}...",
-                    url
-                );
+                tracing::info!(
+                target: "fold_node::database",
+                        "Loading schemas from schema service at {}...",
+                        url
+                    );
 
                 // For schema loading, we need a temporary node
                 // Schemas are global, so we use a system context
@@ -402,20 +392,18 @@ impl FoldHttpServer {
 
                 match client.list_schemas().await {
                     Ok(schemas) => {
-                        log_feature!(
-                            LogFeature::Database,
-                            info,
-                            "Loaded {} schemas from schema service",
-                            schemas.len()
-                        );
+                        tracing::info!(
+                        target: "fold_node::database",
+                                        "Loaded {} schemas from schema service",
+                                        schemas.len()
+                                    );
                     }
                     Err(e) => {
-                        log_feature!(
-                            LogFeature::Database,
-                            error,
-                            "Failed to load schemas from schema service: {}. Server will start but no schemas will be available.",
-                            e
-                        );
+                        tracing::error!(
+                        target: "fold_node::database",
+                                        "Failed to load schemas from schema service: {}. Server will start but no schemas will be available.",
+                                        e
+                                    );
                     }
                 }
             }
@@ -696,16 +684,10 @@ impl FoldHttpServer {
     fn configure_log_routes(cfg: &mut web::ServiceConfig) {
         cfg.route("/logs", web::get().to(log_routes::list_logs))
             .route("/logs/stream", web::get().to(log_routes::stream_logs))
-            .route("/logs/config", web::get().to(log_routes::get_config))
-            .route(
-                "/logs/config/reload",
-                web::post().to(log_routes::reload_config),
-            )
             .route(
                 "/logs/level",
                 web::put().to(log_routes::update_feature_level),
-            )
-            .route("/logs/features", web::get().to(log_routes::get_features));
+            );
     }
 
     fn configure_sync_routes(cfg: &mut web::ServiceConfig) {

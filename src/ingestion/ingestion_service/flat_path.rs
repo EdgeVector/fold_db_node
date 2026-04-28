@@ -4,8 +4,6 @@ use super::{get_schema_manager, IngestionService};
 use crate::fold_node::FoldNode;
 use crate::ingestion::progress::{IngestionPhase, PhaseTracker, SchemaWriteRecord};
 use crate::ingestion::{AISchemaResponse, IngestionRequest, IngestionResult};
-use fold_db::log_feature;
-use fold_db::logging::features::LogFeature;
 use fold_db::schema::types::Mutation;
 use serde_json::Value;
 use std::collections::HashMap;
@@ -129,9 +127,8 @@ impl IngestionService {
             )
             .await?;
 
-        log_feature!(
-            LogFeature::Ingestion,
-            info,
+        tracing::info!(
+            target: "fold_node::ingestion",
             "Generated {} mutations",
             mutations.len()
         );
@@ -259,16 +256,15 @@ impl IngestionService {
             }
             for ((schema, key_val), count) in &seen {
                 if *count > 1 {
-                    log_feature!(
-                        LogFeature::Ingestion,
-                        warn,
-                        "Key collision: {} records in schema '{}' share key {:?} — \
-                         later records will overwrite earlier ones. \
-                         Consider using a unique ID field as hash_field.",
-                        count,
-                        schema,
-                        key_val
-                    );
+                    tracing::warn!(
+                    target: "fold_node::ingestion",
+                                "Key collision: {} records in schema '{}' share key {:?} — \
+                                 later records will overwrite earlier ones. \
+                                 Consider using a unique ID field as hash_field.",
+                                count,
+                                schema,
+                                key_val
+                            );
                 }
             }
         }

@@ -1,7 +1,7 @@
-use fold_db::logging::core::run_with_user;
 use fold_db::schema::types::operations::MutationType;
 use fold_db::schema::types::KeyValue;
 use fold_db::test_helpers::TestSchemaBuilder;
+use fold_db::user_context::run_with_user;
 use fold_db_node::fold_node::node::FoldNode;
 use fold_db_node::fold_node::OperationProcessor;
 mod common;

@@ -13,8 +13,6 @@ use crate::server::http_server::AppState;
 use crate::server::routes::ingestion::{folder_error_to_response, ingestion_context_or_return};
 use crate::server::routes::{require_node, user_context_or_return};
 use actix_web::{web, HttpResponse, Responder};
-use fold_db::log_feature;
-use fold_db::logging::features::LogFeature;
 use fold_db::progress::{Job, JobStatus, JobType};
 use serde::{Deserialize, Serialize};
 use serde_json::json;
@@ -88,9 +86,8 @@ pub async fn smart_folder_scan(
     ingestion_service: web::Data<IngestionServiceState>,
     progress_tracker: web::Data<ProgressTracker>,
 ) -> impl Responder {
-    log_feature!(
-        LogFeature::Ingestion,
-        info,
+    tracing::info!(
+            target: "fold_node::ingestion",
         "Smart folder scan requested for: {}",
         request.folder_path
     );
@@ -124,10 +121,10 @@ pub async fn smart_folder_scan(
     tokio::spawn(
         async move {
             let user_id_inner = user_id.clone();
-            fold_db::logging::core::run_with_user(&user_id, async move {
+            fold_db::user_context::run_with_user(&user_id, async move {
                 let tracker_cb = tracker.clone();
                 let pid_cb = pid.clone();
-                let progress_user_id = fold_db::logging::core::get_current_user_id()
+                let progress_user_id = fold_db::user_context::get_current_user_id()
                     .unwrap_or_else(|| user_id_inner.clone());
                 let on_progress: smart_folder::ScanProgressFn = Box::new(move |pct, msg| {
                     let tracker_inner = tracker_cb.clone();
@@ -135,7 +132,7 @@ pub async fn smart_folder_scan(
                     let uid = progress_user_id.clone();
                     tokio::spawn(
                         async move {
-                            fold_db::logging::core::run_with_user(&uid, async move {
+                            fold_db::user_context::run_with_user(&uid, async move {
                                 if let Ok(Some(mut job)) = tracker_inner.load(&pid_inner).await {
                                     job.update_progress(pct, msg);
                                     let _ = tracker_inner.save(&job).await;
@@ -246,9 +243,8 @@ pub async fn smart_folder_ingest(
     batch_controller_map: web::Data<BatchControllerMap>,
     upload_storage: web::Data<fold_db::storage::UploadStorage>,
 ) -> impl Responder {
-    log_feature!(
-        LogFeature::Ingestion,
-        info,
+    tracing::info!(
+            target: "fold_node::ingestion",
         "Smart folder ingest requested for {} files (spend_limit: {:?})",
         request.files_to_ingest.len(),
         request.spend_limit
@@ -272,9 +268,8 @@ pub async fn smart_folder_ingest(
             files_to_process.push(full_path);
             costs.push(cost);
         } else {
-            log_feature!(
-                LogFeature::Ingestion,
-                warn,
+            tracing::warn!(
+            target: "fold_node::ingestion",
                 "Skipping non-existent file: {}",
                 full_path.display()
             );
@@ -371,9 +366,8 @@ pub async fn adjust_scan_results(
     request: web::Json<AdjustScanRequest>,
     ingestion_service: web::Data<IngestionServiceState>,
 ) -> impl Responder {
-    log_feature!(
-        LogFeature::Ingestion,
-        info,
+    tracing::info!(
+            target: "fold_node::ingestion",
         "Adjust scan results: instruction='{}', {} recommended, {} skipped",
         request.instruction,
         request.recommended_files.len(),

@@ -1,8 +1,6 @@
 use crate::server::http_server::AppState;
 use crate::server::routes::{handler_result_to_response, node_or_return};
 use actix_web::{web, HttpResponse, Responder};
-use fold_db::log_feature;
-use fold_db::logging::features::LogFeature;
 use serde::Serialize;
 
 /// Sync trigger response returned by POST /api/sync/trigger
@@ -28,9 +26,8 @@ pub async fn trigger_sync(state: web::Data<AppState>) -> impl Responder {
     let db = match node.get_fold_db() {
         Ok(db) => db,
         Err(e) => {
-            log_feature!(
-                LogFeature::HttpServer,
-                error,
+            tracing::error!(
+            target: "fold_node::http_server",
                 "Failed to get FoldDB for sync trigger: {}",
                 e
             );
@@ -51,9 +48,8 @@ pub async fn trigger_sync(state: web::Data<AppState>) -> impl Responder {
 
     match db.force_sync().await {
         Ok(()) => {
-            log_feature!(
-                LogFeature::HttpServer,
-                info,
+            tracing::info!(
+            target: "fold_node::http_server",
                 "Manual sync triggered successfully"
             );
             HttpResponse::Ok().json(SyncTriggerResponse {
@@ -62,9 +58,8 @@ pub async fn trigger_sync(state: web::Data<AppState>) -> impl Responder {
             })
         }
         Err(e) => {
-            log_feature!(
-                LogFeature::HttpServer,
-                error,
+            tracing::error!(
+            target: "fold_node::http_server",
                 "Manual sync trigger failed: {}",
                 e
             );
@@ -94,9 +89,8 @@ pub async fn get_org_sync_status(
             "message": "Sync is not enabled on this node"
         })),
         Err(e) => {
-            log_feature!(
-                LogFeature::HttpServer,
-                error,
+            tracing::error!(
+            target: "fold_node::http_server",
                 "Failed to get org sync status for {}: {}",
                 org_hash,
                 e
@@ -120,7 +114,7 @@ mod tests {
         let temp_dir = tempdir().unwrap();
         let state = create_test_state(&temp_dir).await;
 
-        fold_db::logging::core::run_with_user("test_user", async move {
+        fold_db::user_context::run_with_user("test_user", async move {
             let req = test::TestRequest::get().to_http_request();
             let resp = get_sync_status(state).await.respond_to(&req);
             assert_eq!(resp.status(), 200);
@@ -149,7 +143,7 @@ mod tests {
         let temp_dir = tempdir().unwrap();
         let state = create_test_state(&temp_dir).await;
 
-        fold_db::logging::core::run_with_user("test_user", async move {
+        fold_db::user_context::run_with_user("test_user", async move {
             let req = test::TestRequest::get().to_http_request();
             let path = web::Path::from("deadbeefdeadbeefdeadbeefdeadbeef".to_string());
             let resp = get_org_sync_status(path, state).await.respond_to(&req);
@@ -170,7 +164,7 @@ mod tests {
         let temp_dir = tempdir().unwrap();
         let state = create_test_state(&temp_dir).await;
 
-        fold_db::logging::core::run_with_user("test_user", async move {
+        fold_db::user_context::run_with_user("test_user", async move {
             let req = test::TestRequest::post().to_http_request();
             let resp = trigger_sync(state).await.respond_to(&req);
             // Should return 400 since sync is not enabled in local mode

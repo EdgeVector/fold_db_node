@@ -2,8 +2,6 @@
 
 use super::prompts::{PROMPT_ACTIONS, PROMPT_HEADER};
 use crate::ingestion::{IngestionError, IngestionResult, StructureAnalyzer};
-use fold_db::log_feature;
-use fold_db::logging::features::LogFeature;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use std::collections::HashMap;
@@ -41,9 +39,8 @@ where
     let mut last_error = None;
 
     for attempt in 1..=max_retries {
-        log_feature!(
-            LogFeature::Ingestion,
-            info,
+        tracing::info!(
+            target: "fold_node::ingestion",
             "{} attempt {} of {}",
             label,
             attempt,
@@ -54,27 +51,25 @@ where
         match call_fn().await {
             Ok(response) => {
                 let elapsed = start_time.elapsed();
-                log_feature!(
-                    LogFeature::Ingestion,
-                    info,
-                    "{} call successful on attempt {} (took {:.2?})",
-                    label,
-                    attempt,
-                    elapsed
-                );
+                tracing::info!(
+                target: "fold_node::ingestion",
+                        "{} call successful on attempt {} (took {:.2?})",
+                        label,
+                        attempt,
+                        elapsed
+                    );
                 return Ok(response);
             }
             Err(e) => {
                 let elapsed = start_time.elapsed();
-                log_feature!(
-                    LogFeature::Ingestion,
-                    warn,
-                    "{} attempt {} failed (took {:.2?}): {}",
-                    label,
-                    attempt,
-                    elapsed,
-                    e
-                );
+                tracing::warn!(
+                target: "fold_node::ingestion",
+                        "{} attempt {} failed (took {:.2?}): {}",
+                        label,
+                        attempt,
+                        elapsed,
+                        e
+                    );
                 last_error = Some(e);
 
                 if attempt < max_retries {
@@ -219,9 +214,8 @@ pub fn analyze_and_build_prompt(sample_json: &Value) -> IngestionResult<String> 
         }
     }
 
-    log_feature!(
-        LogFeature::Ingestion,
-        info,
+    tracing::info!(
+            target: "fold_node::ingestion",
         "Analyzing JSON: {} elements, {} unique fields, is_array={}",
         stats.total_elements,
         stats.unique_fields,
@@ -232,9 +226,8 @@ pub fn analyze_and_build_prompt(sample_json: &Value) -> IngestionResult<String> 
     let compact_json = truncate_long_strings(sample_json);
     let prompt = create_prompt(&superset_structure, is_array_input, Some(&compact_json));
 
-    log_feature!(
-        LogFeature::Ingestion,
-        debug,
+    tracing::debug!(
+            target: "fold_node::ingestion",
         "AI prompt ({} chars): {}...",
         prompt.len(),
         &prompt[..prompt.len().min(500)]
@@ -339,8 +332,8 @@ fn warn_missing_field_descriptions(schema_val: &Value) {
     for field in fields.iter().filter_map(|f| f.as_str()) {
         let has_desc = descriptions.map(|d| d.contains_key(field)).unwrap_or(false);
         if !has_desc {
-            log_feature!(
-                LogFeature::Ingestion, warn,
+            tracing::warn!(
+            target: "fold_node::ingestion",
                 "Schema '{}' field '{}' is missing a field_description entry; will attempt recovery via second AI pass",
                 schema_name, field
             );
@@ -368,9 +361,8 @@ pub fn validate_schema_has_descriptive_name(schema_val: &Value) -> IngestionResu
     }
 
     if schema_service_core::name_validator::is_generic_name(name) {
-        log_feature!(
-            LogFeature::Ingestion,
-            warn,
+        tracing::warn!(
+            target: "fold_node::ingestion",
             "Schema descriptive_name '{}' is generic — schema service will attempt correction",
             name
         );
@@ -405,11 +397,11 @@ pub fn validate_schema_has_classifications(schema_val: &Value) -> IngestionResul
         match classifications_val.as_array() {
             Some(arr) if !arr.is_empty() => {}
             _ => {
-                log_feature!(
-                    LogFeature::Ingestion, debug,
-                    "Schema '{}' field '{}' has empty or non-array classifications — defaults will be applied",
-                    schema_name, field_name
-                );
+                tracing::debug!(
+                target: "fold_node::ingestion",
+                        "Schema '{}' field '{}' has empty or non-array classifications — defaults will be applied",
+                        schema_name, field_name
+                    );
             }
         }
     }
@@ -563,9 +555,8 @@ fn sanitize_string_map_fields(mut schema_val: Value) -> Value {
         }
 
         for (key, val) in fixes {
-            log_feature!(
-                LogFeature::Ingestion,
-                warn,
+            tracing::warn!(
+            target: "fold_node::ingestion",
                 "Flattened non-string {} value for key '{}' to string",
                 field_name,
                 key
@@ -580,12 +571,11 @@ fn sanitize_string_map_fields(mut schema_val: Value) -> Value {
         if let Some(val) = schema_obj.get(*field_name) {
             if !val.is_string() && !val.is_null() {
                 if let Some(s) = flatten_value_to_string(val) {
-                    log_feature!(
-                        LogFeature::Ingestion,
-                        warn,
-                        "Flattened non-string top-level '{}' to string",
-                        field_name
-                    );
+                    tracing::warn!(
+                    target: "fold_node::ingestion",
+                                "Flattened non-string top-level '{}' to string",
+                                field_name
+                            );
                     schema_obj.insert(field_name.to_string(), Value::String(s));
                 }
             }
@@ -601,9 +591,8 @@ fn sanitize_string_map_fields(mut schema_val: Value) -> Value {
         .unwrap_or(false);
     if drop_key {
         let stripped = schema_obj.remove("key");
-        log_feature!(
-            LogFeature::Ingestion,
-            warn,
+        tracing::warn!(
+            target: "fold_node::ingestion",
             "Dropped malformed `key` field (expected object, got {}); falling back to default KeyConfig",
             stripped
                 .as_ref()
@@ -618,12 +607,11 @@ fn sanitize_string_map_fields(mut schema_val: Value) -> Value {
             if let Some(val) = key_obj.get(*key_field) {
                 if !val.is_string() && !val.is_null() {
                     if let Some(s) = flatten_value_to_string(val) {
-                        log_feature!(
-                            LogFeature::Ingestion,
-                            warn,
-                            "Flattened non-string key.{} to string",
-                            key_field
-                        );
+                        tracing::warn!(
+                        target: "fold_node::ingestion",
+                                        "Flattened non-string key.{} to string",
+                                        key_field
+                                    );
                         key_obj.insert(key_field.to_string(), Value::String(s));
                     }
                 }
@@ -704,9 +692,8 @@ fn backfill_missing_mappers(
     }
 
     if added > 0 {
-        log_feature!(
-            LogFeature::Ingestion,
-            info,
+        tracing::info!(
+            target: "fold_node::ingestion",
             "Auto-filled {} missing mutation mapper(s) for fields declared in schema '{}'",
             added,
             schema_name
@@ -720,9 +707,8 @@ fn backfill_missing_mappers(
 pub fn parse_ai_response(response_text: &str) -> IngestionResult<AISchemaResponse> {
     let json_str = extract_json_from_response(response_text)?;
 
-    log_feature!(
-        LogFeature::Ingestion,
-        debug,
+    tracing::debug!(
+            target: "fold_node::ingestion",
         "Extracted JSON from AI response ({} chars): {}",
         json_str.len(),
         &json_str[..json_str.len().min(500)]
@@ -737,9 +723,8 @@ pub fn parse_ai_response(response_text: &str) -> IngestionResult<AISchemaRespons
 
     let result = validate_and_convert_response(parsed)?;
 
-    log_feature!(
-        LogFeature::Ingestion,
-        debug,
+    tracing::debug!(
+            target: "fold_node::ingestion",
         "Parsed AI response: {} mappers, new_schema={}",
         result.mutation_mappers.len(),
         result.new_schemas.is_some()

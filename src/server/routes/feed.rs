@@ -2,8 +2,6 @@ use crate::handlers::feed as feed_handlers;
 use crate::server::http_server::AppState;
 use crate::server::routes::{handler_error_to_response, node_or_return};
 use actix_web::{web, HttpResponse, Responder};
-use fold_db::log_feature;
-use fold_db::logging::features::LogFeature;
 
 /// POST /api/feed — Get social photo feed from friends.
 #[utoipa::path(
@@ -23,9 +21,8 @@ pub async fn get_feed(
     state: web::Data<AppState>,
 ) -> impl Responder {
     let request_inner = request.into_inner();
-    log_feature!(
-        LogFeature::HttpServer,
-        info,
+    tracing::info!(
+            target: "fold_node::http_server",
         "get_feed: schema={}, friends={}",
         request_inner.schema_name.as_deref().unwrap_or("(all)"),
         request_inner.friend_hashes.len()
@@ -36,7 +33,8 @@ pub async fn get_feed(
     match feed_handlers::get_feed(request_inner, &user_hash, &node).await {
         Ok(response) => HttpResponse::Ok().json(response),
         Err(e) => {
-            log_feature!(LogFeature::HttpServer, error, "Feed query failed: {}", e);
+            tracing::error!(
+            target: "fold_node::http_server", "Feed query failed: {}", e);
             handler_error_to_response(e)
         }
     }

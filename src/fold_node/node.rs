@@ -1,6 +1,4 @@
 use base64::{engine::general_purpose::STANDARD as BASE64, Engine as _};
-use fold_db::log_feature;
-use fold_db::logging::features::LogFeature;
 use serde::{Deserialize, Serialize};
 
 use std::sync::Arc;
@@ -152,19 +150,17 @@ impl FoldNode {
     fn log_schema_service(config: &NodeConfig) {
         if let Some(schema_service_url) = &config.schema_service_url {
             if Self::is_test_schema_service(schema_service_url) {
-                log_feature!(
-                    LogFeature::Database,
-                    info,
-                    "Mock schema service configured: {}. Schemas must be loaded manually.",
-                    schema_service_url
-                );
+                tracing::info!(
+                target: "fold_node::database",
+                        "Mock schema service configured: {}. Schemas must be loaded manually.",
+                        schema_service_url
+                    );
             } else {
-                log_feature!(
-                    LogFeature::Database,
-                    info,
-                    "Schema service URL configured: {}. Schemas will be loaded asynchronously after node startup.",
-                    schema_service_url
-                );
+                tracing::info!(
+                target: "fold_node::database",
+                        "Schema service URL configured: {}. Schemas will be loaded asynchronously after node startup.",
+                        schema_service_url
+                    );
             }
         } else {
             tracing::debug!(
@@ -345,9 +341,8 @@ impl FoldNode {
         )
         .await?;
         let node = Self::assemble(config, db, identity, e2e_keys).await?;
-        log_feature!(
-            LogFeature::Database,
-            info,
+        tracing::info!(
+            target: "fold_node::database",
             "FoldNode created successfully with schema system initialized"
         );
         Ok(node)
@@ -366,9 +361,8 @@ impl FoldNode {
             .unwrap_or_else(|| Arc::new(SledPool::new(config.get_storage_path())));
         let (identity, e2e_keys) = Self::resolve_identity_and_keys(&config, pool)?;
         let node = Self::assemble(config, db, identity, e2e_keys).await?;
-        log_feature!(
-            LogFeature::Database,
-            info,
+        tracing::info!(
+            target: "fold_node::database",
             "FoldNode created successfully with pre-created database"
         );
         Ok(node)
@@ -757,9 +751,8 @@ impl FoldNode {
             .register_system_public_key(key_info)
             .await
             .map_err(|e| FoldDbError::SecurityError(e.to_string()))?;
-        log_feature!(
-            LogFeature::Permissions,
-            info,
+        tracing::info!(
+            target: "fold_node::permissions",
             "Registered node public key for signature verification"
         );
         Ok(())
@@ -946,13 +939,12 @@ pub(crate) fn build_org_sync_config_from_sled(
                 crypto_pairs.push((membership.org_hash.clone(), provider));
             }
             Err(e) => {
-                log_feature!(
-                    LogFeature::Database,
-                    error,
-                    "Failed to create crypto provider for org '{}': {}",
-                    membership.org_name,
-                    e
-                );
+                tracing::error!(
+                target: "fold_node::database",
+                        "Failed to create crypto provider for org '{}': {}",
+                        membership.org_name,
+                        e
+                    );
             }
         }
     }
@@ -1027,20 +1019,18 @@ impl FoldNode {
         let org_config = match build_org_sync_config_from_sled(&pool) {
             Ok(Some(cfg)) => cfg,
             Ok(None) => {
-                log_feature!(
-                    LogFeature::Database,
-                    debug,
-                    "No org memberships found, skipping org sync configuration"
-                );
+                tracing::debug!(
+                target: "fold_node::database",
+                        "No org memberships found, skipping org sync configuration"
+                    );
                 return;
             }
             Err(e) => {
-                log_feature!(
-                    LogFeature::Database,
-                    warn,
-                    "Failed to load org memberships for sync config: {}",
-                    e
-                );
+                tracing::warn!(
+                target: "fold_node::database",
+                        "Failed to load org memberships for sync config: {}",
+                        e
+                    );
                 return;
             }
         };
@@ -1052,9 +1042,8 @@ impl FoldNode {
             membership_count,
         } = org_config;
 
-        log_feature!(
-            LogFeature::Database,
-            info,
+        tracing::info!(
+            target: "fold_node::database",
             "Configuring org sync: {} org(s)",
             membership_count
         );

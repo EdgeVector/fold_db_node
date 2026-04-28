@@ -14,7 +14,7 @@
 //!
 //! Run with: `cargo test --test semantic_field_matching_e2e_test -- --ignored --nocapture`
 
-use fold_db::logging::core::run_with_user;
+use fold_db::user_context::run_with_user;
 use fold_db_node::fold_node::node::FoldNode;
 use fold_db_node::fold_node::OperationProcessor;
 use fold_db_node::ingestion::mutation_generator;

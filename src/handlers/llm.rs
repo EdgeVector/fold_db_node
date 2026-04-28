@@ -8,8 +8,6 @@ use crate::fold_node::node::FoldNode;
 use crate::handlers::response::{
     get_db_guard, ApiResponse, HandlerError, HandlerResult, IntoHandlerError, IntoTypedHandlerError,
 };
-use fold_db::log_feature;
-use fold_db::logging::features::LogFeature;
 use fold_db::schema::SchemaWithState;
 use serde_json::{json, Value};
 
@@ -47,9 +45,8 @@ fn get_session_with_results(
 /// the primary operation has already succeeded, so we warn rather than fail.
 fn warn_session_err(result: Result<(), String>, action: &str) {
     if let Err(e) = result {
-        log_feature!(
-            LogFeature::Query,
-            warn,
+        tracing::warn!(
+            target: "fold_node::query",
             "Session update failed ({}): {}",
             action,
             e
@@ -121,9 +118,8 @@ pub async fn chat(
     session_manager: &SessionManager,
     node: &FoldNode,
 ) -> HandlerResult<ChatHandlerResponse> {
-    log_feature!(
-        LogFeature::Query,
-        info,
+    tracing::info!(
+            target: "fold_node::query",
         "AI Query Chat: received for session: {:?}, user: {}",
         request.session_id,
         user_hash
@@ -209,9 +205,8 @@ pub async fn analyze_followup(
     session_manager: &SessionManager,
     node: &FoldNode,
 ) -> HandlerResult<AnalyzeFollowupHandlerResponse> {
-    log_feature!(
-        LogFeature::Query,
-        info,
+    tracing::info!(
+            target: "fold_node::query",
         "AI Query Analyze Followup: received for session: {:?}, user: {}",
         request.session_id,
         user_hash
@@ -262,9 +257,8 @@ pub async fn ai_native_index_query(
     session_manager: &SessionManager,
     node: &FoldNode,
 ) -> HandlerResult<AiNativeIndexHandlerResponse> {
-    log_feature!(
-        LogFeature::Query,
-        info,
+    tracing::info!(
+            target: "fold_node::query",
         "AI Native Index Query: received for session: {:?}, user: {}",
         request.session_id,
         user_hash
@@ -292,9 +286,8 @@ pub async fn ai_native_index_query(
         .await
         .handler_err("search native index")?;
 
-    log_feature!(
-        LogFeature::Query,
-        info,
+    tracing::info!(
+            target: "fold_node::query",
         "AI Native Index Query: found {} results, hydrating...",
         search_results.len()
     );
@@ -304,9 +297,8 @@ pub async fn ai_native_index_query(
     let owner_ctx = fold_db::access::AccessContext::owner(node.get_node_public_key().to_string());
     let hydrated_results = hydrate_index_results(search_results, &db_guard, &owner_ctx).await;
 
-    log_feature!(
-        LogFeature::Query,
-        info,
+    tracing::info!(
+            target: "fold_node::query",
         "AI Native Index Query: hydration complete, {} results ready for AI interpretation",
         hydrated_results.len()
     );
@@ -340,9 +332,8 @@ pub async fn ai_native_index_query(
         "add assistant message",
     );
 
-    log_feature!(
-        LogFeature::Query,
-        info,
+    tracing::info!(
+            target: "fold_node::query",
         "AI Native Index Query complete for session: {}",
         session_id
     );
@@ -391,9 +382,8 @@ pub async fn agent_query(
     node: &FoldNode,
     progress_tracker: Option<&crate::ingestion::ProgressTracker>,
 ) -> HandlerResult<AgentQueryHandlerResponse> {
-    log_feature!(
-        LogFeature::Query,
-        info,
+    tracing::info!(
+            target: "fold_node::query",
         "Agent Query: received for user: {}, query: {}",
         user_hash,
         &request.query[..request.query.len().min(100)]
@@ -409,9 +399,8 @@ pub async fn agent_query(
     // Short-circuit: nothing ingested yet. Running the tool loop on an empty store
     // wastes tokens + wall-clock (alpha papercut c600e: >30s "Thinking…" on fresh node).
     if is_empty_user_store(&schemas) {
-        log_feature!(
-            LogFeature::Query,
-            info,
+        tracing::info!(
+            target: "fold_node::query",
             "Agent Query: empty-store short-circuit for session {}",
             session_id
         );
@@ -523,9 +512,8 @@ pub async fn agent_query(
         "add assistant message",
     );
 
-    log_feature!(
-        LogFeature::Query,
-        info,
+    tracing::info!(
+            target: "fold_node::query",
         "Agent Query complete for session: {}. Made {} tool calls.",
         session_id,
         tool_calls.len()

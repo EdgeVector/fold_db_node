@@ -9,8 +9,6 @@ use std::path::PathBuf;
 use tempfile::NamedTempFile;
 
 use crate::ingestion::{IngestionError, IngestionResult};
-use fold_db::log_feature;
-use fold_db::logging::features::LogFeature;
 
 /// Convert a file to structured JSON.
 ///
@@ -23,9 +21,8 @@ use fold_db::logging::features::LogFeature;
 /// Non-image files (PDF, CSV, Office docs, text, archives) always use
 /// `file_to_markdown` — Anthropic vision is for images only.
 pub async fn convert_file_to_json(file_path: &PathBuf) -> Result<Value, IngestionError> {
-    log_feature!(
-        LogFeature::Ingestion,
-        info,
+    tracing::info!(
+            target: "fold_node::ingestion",
         "Converting file to markdown: {:?}",
         file_path
     );
@@ -64,9 +61,8 @@ pub async fn convert_file_to_json(file_path: &PathBuf) -> Result<Value, Ingestio
         .convert_path(file_path.as_path())
         .await
         .map_err(|e| {
-            log_feature!(
-                LogFeature::Ingestion,
-                error,
+            tracing::error!(
+            target: "fold_node::ingestion",
                 "Failed to convert file: {}",
                 e
             );
@@ -112,9 +108,8 @@ fn strip_null_fields(value: &mut Value) {
 pub fn flatten_root_layers(json: Value) -> Value {
     // Check if it's already an array - flatten its elements
     if json.is_array() {
-        log_feature!(
-            LogFeature::Ingestion,
-            info,
+        tracing::info!(
+            target: "fold_node::ingestion",
             "Flattening array elements with single-field wrappers"
         );
         return flatten_array_elements(json);
@@ -128,12 +123,11 @@ pub fn flatten_root_layers(json: Value) -> Value {
 
             // If that field is an array, flatten the array and its elements
             if value.is_array() {
-                log_feature!(
-                    LogFeature::Ingestion,
-                    info,
-                    "Flattening root->array pattern: removing '{}' wrapper",
-                    key
-                );
+                tracing::info!(
+                target: "fold_node::ingestion",
+                        "Flattening root->array pattern: removing '{}' wrapper",
+                        key
+                    );
                 return flatten_array_elements(value.clone());
             }
 
@@ -142,13 +136,12 @@ pub fn flatten_root_layers(json: Value) -> Value {
                 if inner_map.len() == 1 {
                     let (inner_key, inner_value) = inner_map.iter().next().unwrap();
                     if inner_value.is_array() {
-                        log_feature!(
-                            LogFeature::Ingestion,
-                            info,
-                            "Flattening root->root->array pattern: removing '{}'->'{}' wrappers",
-                            key,
-                            inner_key
-                        );
+                        tracing::info!(
+                        target: "fold_node::ingestion",
+                                        "Flattening root->root->array pattern: removing '{}'->'{}' wrappers",
+                                        key,
+                                        inner_key
+                                    );
                         return flatten_array_elements(inner_value.clone());
                     }
                 }
@@ -174,9 +167,8 @@ fn flatten_array_elements(value: Value) -> Value {
                         // If that field contains an object (not an array or primitive),
                         // flatten by returning the inner object
                         if inner_value.is_object() {
-                            log_feature!(
-                                LogFeature::Ingestion,
-                                debug,
+                            tracing::debug!(
+            target: "fold_node::ingestion",
                                 "Flattening array element: removing '{}' wrapper from object",
                                 key
                             );
@@ -280,9 +272,8 @@ pub async fn classify_and_set_visibility(
             }
         }
         Err(e) => {
-            log_feature!(
-                LogFeature::Ingestion,
-                warn,
+            tracing::warn!(
+            target: "fold_node::ingestion",
                 "Visibility classification failed, skipping: {}",
                 e
             );

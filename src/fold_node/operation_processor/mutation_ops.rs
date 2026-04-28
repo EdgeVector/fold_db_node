@@ -1,6 +1,4 @@
 use fold_db::error::{FoldDbError, FoldDbResult};
-use fold_db::log_feature;
-use fold_db::logging::features::LogFeature;
 use fold_db::schema::types::operations::{MutationType, Operation};
 use fold_db::schema::types::{KeyValue, Mutation};
 use serde_json::Value;
@@ -33,9 +31,8 @@ impl OperationProcessor {
 impl OperationProcessor {
     /// Map a mutation write error to FoldDbError with logging.
     fn mutation_write_error(e: impl std::fmt::Display) -> FoldDbError {
-        log_feature!(
-            LogFeature::Mutation,
-            error,
+        tracing::error!(
+            target: "fold_node::mutation",
             "Mutation execution failed: {}",
             e
         );
@@ -44,9 +41,8 @@ impl OperationProcessor {
 
     /// Executes a mutation operation from a Mutation struct.
     pub async fn execute_mutation_op(&self, mutation: Mutation) -> FoldDbResult<String> {
-        log_feature!(
-            LogFeature::Mutation,
-            info,
+        tracing::info!(
+            target: "fold_node::mutation",
             "Executing mutation for schema: {}",
             mutation.schema_name
         );

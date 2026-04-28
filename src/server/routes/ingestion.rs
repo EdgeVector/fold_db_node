@@ -19,8 +19,6 @@ use crate::server::routes::{
     handler_error_to_response, handler_result_to_response, require_node, user_context_or_return,
 };
 use actix_web::{web, HttpResponse, Responder};
-use fold_db::log_feature;
-use fold_db::logging::features::LogFeature;
 use serde::{Deserialize, Serialize};
 use serde_json::json;
 use std::sync::Arc;
@@ -106,9 +104,8 @@ pub async fn process_json(
     state: web::Data<AppState>,
     ingestion_service: web::Data<IngestionServiceState>,
 ) -> impl Responder {
-    log_feature!(
-        LogFeature::Ingestion,
-        info,
+    tracing::info!(
+            target: "fold_node::ingestion",
         "Received JSON ingestion request"
     );
 
@@ -139,9 +136,8 @@ pub async fn process_json(
     responses((status = 200, description = "Ingestion status", body = crate::ingestion::IngestionStatus))
 )]
 pub async fn get_status(ingestion_service: web::Data<IngestionServiceState>) -> impl Responder {
-    log_feature!(
-        LogFeature::Ingestion,
-        debug,
+    tracing::debug!(
+            target: "fold_node::ingestion",
         "Received ingestion status request"
     );
 
@@ -172,9 +168,8 @@ pub async fn validate_json(
     request: web::Json<serde_json::Value>,
     ingestion_service: web::Data<IngestionServiceState>,
 ) -> impl Responder {
-    log_feature!(
-        LogFeature::Ingestion,
-        info,
+    tracing::info!(
+            target: "fold_node::ingestion",
         "Received JSON validation request"
     );
 
@@ -204,9 +199,8 @@ pub async fn validate_json(
     responses((status = 200, description = "Ingestion config", body = IngestionConfig))
 )]
 pub async fn get_ingestion_config() -> impl Responder {
-    log_feature!(
-        LogFeature::Ingestion,
-        debug,
+    tracing::debug!(
+            target: "fold_node::ingestion",
         "Received ingestion config request"
     );
 
@@ -227,9 +221,8 @@ pub async fn save_ingestion_config(
     ingestion_service: web::Data<IngestionServiceState>,
     llm_state: web::Data<crate::fold_node::llm_query::LlmQueryState>,
 ) -> impl Responder {
-    log_feature!(
-        LogFeature::Ingestion,
-        info,
+    tracing::info!(
+            target: "fold_node::ingestion",
         "Received ingestion config save request"
     );
 
@@ -245,19 +238,17 @@ pub async fn save_ingestion_config(
                 Ok(new_service) => {
                     let mut guard = ingestion_service.write().await;
                     *guard = Some(Arc::new(new_service));
-                    log_feature!(
-                        LogFeature::Ingestion,
-                        info,
-                        "IngestionService reloaded with new configuration"
-                    );
+                    tracing::info!(
+                    target: "fold_node::ingestion",
+                                "IngestionService reloaded with new configuration"
+                            );
                 }
                 Err(e) => {
-                    log_feature!(
-                        LogFeature::Ingestion,
-                        warn,
-                        "Config saved but failed to reload IngestionService: {}. Service may be unavailable until restart.",
-                        e
-                    );
+                    tracing::warn!(
+                    target: "fold_node::ingestion",
+                                "Config saved but failed to reload IngestionService: {}. Service may be unavailable until restart.",
+                                e
+                            );
                 }
             }
             // Also reload the LLM query service so model changes take effect
@@ -485,9 +476,8 @@ pub async fn get_progress(
 ) -> impl Responder {
     let id = path.into_inner();
 
-    log_feature!(
-        LogFeature::Ingestion,
-        debug,
+    tracing::debug!(
+            target: "fold_node::ingestion",
         "Received progress request for ID: {}",
         id
     );
@@ -510,9 +500,8 @@ pub async fn get_progress(
     responses((status = 200, description = "All active progress", body = Vec<IngestionProgress>))
 )]
 pub async fn get_all_progress(progress_tracker: web::Data<ProgressTracker>) -> impl Responder {
-    log_feature!(
-        LogFeature::Ingestion,
-        debug,
+    tracing::debug!(
+            target: "fold_node::ingestion",
         "Received request for all progress"
     );
 
@@ -602,9 +591,8 @@ pub async fn batch_folder_ingest(
     ingestion_service: web::Data<IngestionServiceState>,
     upload_storage: web::Data<fold_db::storage::UploadStorage>,
 ) -> impl Responder {
-    log_feature!(
-        LogFeature::Ingestion,
-        info,
+    tracing::info!(
+            target: "fold_node::ingestion",
         "Received batch folder ingestion request for: {}",
         request.folder_path
     );

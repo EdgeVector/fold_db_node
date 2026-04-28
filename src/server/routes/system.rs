@@ -5,8 +5,6 @@ use crate::server::routes::{
     handler_error_to_response, handler_result_to_response, node_or_return,
 };
 use actix_web::{web, HttpResponse, Responder};
-use fold_db::log_feature;
-use fold_db::logging::features::LogFeature;
 use serde_json::json;
 use std::sync::OnceLock;
 use std::time::Instant;
@@ -75,7 +73,8 @@ fn key_response(
 ) -> HttpResponse {
     match result {
         Ok(response) => {
-            log_feature!(LogFeature::HttpServer, info, "{}", log_msg);
+            tracing::info!(
+            target: "fold_node::http_server", "{}", log_msg);
             HttpResponse::Ok().json(json!({
                 "success": response.data.as_ref().map(|d| d.success).unwrap_or(false),
                 key_name: response.data.as_ref().map(|d| &d.key),
@@ -147,7 +146,7 @@ mod tests {
         let state = create_test_state(&temp_dir).await;
 
         // Need to run with user context since routes now require authentication
-        fold_db::logging::core::run_with_user("test_user", async move {
+        fold_db::user_context::run_with_user("test_user", async move {
             let req = test::TestRequest::get().to_http_request();
             let resp = get_system_status(state).await.respond_to(&req);
             assert_eq!(resp.status(), 200);
@@ -160,7 +159,7 @@ mod tests {
         let temp_dir = tempdir().unwrap();
         let state = create_test_state(&temp_dir).await;
 
-        fold_db::logging::core::run_with_user("test_user", async move {
+        fold_db::user_context::run_with_user("test_user", async move {
             let req = test::TestRequest::get().to_http_request();
             let resp = get_node_public_key(state).await.respond_to(&req);
             assert_eq!(resp.status(), 200);

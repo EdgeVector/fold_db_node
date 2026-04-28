@@ -2,8 +2,6 @@
 
 use crate::ingestion::roles::Role;
 use fold_db::llm_registry::models;
-use fold_db::log_feature;
-use fold_db::logging::features::LogFeature;
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::env;
@@ -498,34 +496,31 @@ impl IngestionConfig {
         // File exists but unreadable/unparseable → fail fast.
         let has_saved = match Self::config_file_path() {
             None => {
-                log_feature!(
-                    LogFeature::Ingestion,
-                    info,
-                    "FOLD_CONFIG_DIR not set; using env vars/defaults"
-                );
+                tracing::info!(
+                target: "fold_node::ingestion",
+                        "FOLD_CONFIG_DIR not set; using env vars/defaults"
+                    );
                 false
             }
             Some(path) if !path.exists() => {
-                log_feature!(
-                    LogFeature::Ingestion,
-                    info,
-                    "No saved ingestion config at {}; using env vars/defaults",
-                    path.display()
-                );
+                tracing::info!(
+                target: "fold_node::ingestion",
+                        "No saved ingestion config at {}; using env vars/defaults",
+                        path.display()
+                    );
                 false
             }
             Some(path) => {
                 let saved = Self::load_from_file(&path)?;
-                log_feature!(
-                    LogFeature::Ingestion,
-                    info,
-                    "Loaded saved ingestion config: provider={:?}, model={}",
-                    saved.provider,
-                    match saved.provider {
-                        AIProvider::Ollama => &saved.ollama.model,
-                        AIProvider::Anthropic => &saved.anthropic.model,
-                    }
-                );
+                tracing::info!(
+                target: "fold_node::ingestion",
+                        "Loaded saved ingestion config: provider={:?}, model={}",
+                        saved.provider,
+                        match saved.provider {
+                            AIProvider::Ollama => &saved.ollama.model,
+                            AIProvider::Anthropic => &saved.anthropic.model,
+                        }
+                    );
                 config.provider = saved.provider;
                 config.ollama = saved.ollama;
                 config.anthropic = saved.anthropic;
@@ -548,11 +543,10 @@ impl IngestionConfig {
                 "anthropic" => VisionBackend::Anthropic,
                 "ollama" => VisionBackend::Ollama,
                 other => {
-                    log_feature!(
-                        LogFeature::Ingestion,
-                        warn,
-                        "Unrecognized INGESTION_VISION_BACKEND={other:?}; keeping previous value"
-                    );
+                    tracing::warn!(
+                    target: "fold_node::ingestion",
+                                "Unrecognized INGESTION_VISION_BACKEND={other:?}; keeping previous value"
+                            );
                     config.vision_backend
                 }
             };

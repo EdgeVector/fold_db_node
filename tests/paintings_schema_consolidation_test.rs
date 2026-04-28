@@ -11,7 +11,7 @@
 //!
 //! Run with: `cargo test --test paintings_schema_consolidation_test -- --ignored --nocapture`
 
-use fold_db::logging::core::run_with_user;
+use fold_db::user_context::run_with_user;
 use fold_db_node::fold_node::node::FoldNode;
 use fold_db_node::fold_node::OperationProcessor;
 use fold_db_node::ingestion::file_handling::json_processor::convert_file_to_json;

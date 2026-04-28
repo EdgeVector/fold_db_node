@@ -12,7 +12,7 @@
 //!
 //! Run with: `cargo test --test ingest_tweets_test -- --ignored --nocapture`
 
-use fold_db::logging::core::run_with_user;
+use fold_db::user_context::run_with_user;
 use fold_db_node::fold_node::node::FoldNode;
 use fold_db_node::ingestion::ingestion_service::IngestionService;
 use fold_db_node::ingestion::smart_folder::read_file_as_json;
