@@ -109,14 +109,10 @@ fn error_event_inside_otel_span_is_captured_with_trace_id_tag() {
             use opentelemetry::trace::TraceContextExt;
             use tracing_opentelemetry::OpenTelemetrySpanExt;
 
-            let span = tracing::info_span!(
-                "http.server.request",
-                trace_id = TRACE_ID_LITERAL,
-            );
+            let span = tracing::info_span!("http.server.request", trace_id = TRACE_ID_LITERAL,);
             let _enter = span.enter();
 
-            let trace_id_hex =
-                format!("{:032x}", span.context().span().span_context().trace_id());
+            let trace_id_hex = format!("{:032x}", span.context().span().span_context().trace_id());
             *observed_trace_id.lock().unwrap() = trace_id_hex;
 
             tracing::error!("test error from e2e");
