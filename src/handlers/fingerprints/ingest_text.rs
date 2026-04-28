@@ -16,6 +16,7 @@ use crate::handlers::response::{require_non_empty, ApiResponse, HandlerResult};
 use chrono::Utc;
 use serde::{Deserialize, Serialize};
 use std::sync::Arc;
+use tracing::Instrument;
 
 // ── Request / response types ─────────────────────────────────────
 
@@ -162,9 +163,12 @@ pub async fn ingest_text_signals_batch(
     // path. See src/fingerprints/auto_propose.rs for the create logic.
     if total_records_written > 0 {
         let node_bg = node.clone();
-        tokio::spawn(async move {
-            crate::fingerprints::auto_propose::run_sweep_and_create_personas(node_bg).await;
-        });
+        tokio::spawn(
+            async move {
+                crate::fingerprints::auto_propose::run_sweep_and_create_personas(node_bg).await;
+            }
+            .instrument(tracing::Span::current()),
+        );
     }
 
     Ok(ApiResponse::success(IngestTextSignalsResponse {

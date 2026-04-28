@@ -14,6 +14,7 @@ use serde::{Deserialize, Serialize};
 use std::future::Future;
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
+use tracing::Instrument;
 
 pub(crate) fn exemem_api_url() -> String {
     crate::endpoints::exemem_api_url()
@@ -275,18 +276,21 @@ pub async fn register_with_exemem(
             let api_url_for_bootstrap = api_url;
             let api_key_for_bootstrap = api_key.to_string();
             let node_manager = node_manager.clone();
-            tokio::spawn(async move {
-                if let Err(e) = bootstrap_from_cloud(
-                    &api_url_for_bootstrap,
-                    &api_key_for_bootstrap,
-                    &node_manager,
-                    sled_pool,
-                )
-                .await
-                {
-                    tracing::error!("Background bootstrap after register failed: {}", e);
+            tokio::spawn(
+                async move {
+                    if let Err(e) = bootstrap_from_cloud(
+                        &api_url_for_bootstrap,
+                        &api_key_for_bootstrap,
+                        &node_manager,
+                        sled_pool,
+                    )
+                    .await
+                    {
+                        tracing::error!("Background bootstrap after register failed: {}", e);
+                    }
                 }
-            });
+                .instrument(tracing::Span::current()),
+            );
         } else {
             tracing::warn!("Bootstrap after register skipped: no sled_pool handle");
         }
@@ -975,12 +979,16 @@ async fn finalize_restore(
         let api_key = api_key.to_string();
         let node_manager = node_manager.clone();
 
-        tokio::spawn(async move {
-            if let Err(e) = bootstrap_from_cloud(&api_url, &api_key, &node_manager, sled_pool).await
-            {
-                tracing::error!("Background bootstrap after restore failed: {}", e);
+        tokio::spawn(
+            async move {
+                if let Err(e) =
+                    bootstrap_from_cloud(&api_url, &api_key, &node_manager, sled_pool).await
+                {
+                    tracing::error!("Background bootstrap after restore failed: {}", e);
+                }
             }
-        });
+            .instrument(tracing::Span::current()),
+        );
     } else {
         tracing::warn!(
             "Bootstrap after restore skipped: missing api_key, user_hash, or sled_pool handle"

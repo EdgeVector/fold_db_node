@@ -5,6 +5,7 @@ use fold_db::log_feature;
 use fold_db::logging::features::LogFeature;
 use fold_db::progress::{Job, JobType, ProgressTracker};
 use serde::{Deserialize, Serialize};
+use tracing::Instrument;
 
 // ---- Job tracking helper ----
 
@@ -205,45 +206,48 @@ pub async fn reset_database(
     let node_manager = state.node_manager.clone();
     let handle = JobHandle::new(progress_tracker.as_ref().clone(), job_id.clone());
 
-    tokio::spawn(async move {
-        let uid = user_id.clone();
-        fold_db::logging::core::run_with_user(&user_id, async move {
-            handle
-                .update(10, "Clearing user data from storage...")
-                .await;
+    tokio::spawn(
+        async move {
+            let uid = user_id.clone();
+            fold_db::logging::core::run_with_user(&user_id, async move {
+                handle
+                    .update(10, "Clearing user data from storage...")
+                    .await;
 
-            let node_arc = match node_manager.get_node(&uid).await {
-                Ok(n) => n,
-                Err(e) => {
-                    handle.fail(format!("Failed to get node: {}", e)).await;
+                let node_arc = match node_manager.get_node(&uid).await {
+                    Ok(n) => n,
+                    Err(e) => {
+                        handle.fail(format!("Failed to get node: {}", e)).await;
+                        return;
+                    }
+                };
+
+                let processor = crate::fold_node::OperationProcessor::new(node_arc.clone());
+
+                if let Err(e) = processor.perform_database_reset(Some(&uid)).await {
+                    handle.fail(format!("Database reset failed: {}", e)).await;
                     return;
                 }
-            };
 
-            let processor = crate::fold_node::OperationProcessor::new(node_arc.clone());
+                node_manager.invalidate_all_nodes().await;
 
-            if let Err(e) = processor.perform_database_reset(Some(&uid)).await {
-                handle.fail(format!("Database reset failed: {}", e)).await;
-                return;
-            }
-
-            node_manager.invalidate_all_nodes().await;
-
-            log_feature!(
-                LogFeature::HttpServer,
-                info,
-                "Database reset completed for user: {}",
-                uid
-            );
-            handle
-                .complete(serde_json::json!({
-                    "user_id": uid,
-                    "message": "Database reset successfully. All data has been cleared."
-                }))
-                .await;
-        })
-        .await;
-    });
+                log_feature!(
+                    LogFeature::HttpServer,
+                    info,
+                    "Database reset completed for user: {}",
+                    uid
+                );
+                handle
+                    .complete(serde_json::json!({
+                        "user_id": uid,
+                        "message": "Database reset successfully. All data has been cleared."
+                    }))
+                    .await;
+            })
+            .await;
+        }
+        .instrument(tracing::Span::current()),
+    );
 
     HttpResponse::Accepted().json(AdminJobResponse::started(
         job_id,
@@ -305,43 +309,46 @@ pub async fn migrate_to_cloud(
     let api_url = req.api_url.clone();
     let api_key = req.api_key.clone();
 
-    tokio::spawn(async move {
-        let uid = user_id.clone();
-        fold_db::logging::core::run_with_user(&user_id, async move {
-            handle.update(10, "Fetching local node data...").await;
+    tokio::spawn(
+        async move {
+            let uid = user_id.clone();
+            fold_db::logging::core::run_with_user(&user_id, async move {
+                handle.update(10, "Fetching local node data...").await;
 
-            let node_arc = match node_manager.get_node(&uid).await {
-                Ok(n) => n,
-                Err(e) => {
-                    handle.fail(format!("Failed to get node: {}", e)).await;
+                let node_arc = match node_manager.get_node(&uid).await {
+                    Ok(n) => n,
+                    Err(e) => {
+                        handle.fail(format!("Failed to get node: {}", e)).await;
+                        return;
+                    }
+                };
+
+                let processor = crate::fold_node::OperationProcessor::new(node_arc.clone());
+
+                handle.update(20, "Syncing schemas and documents...").await;
+
+                if let Err(e) = processor.migrate_to_cloud(&api_url, &api_key).await {
+                    handle.fail(format!("Cloud migration failed: {}", e)).await;
                     return;
                 }
-            };
 
-            let processor = crate::fold_node::OperationProcessor::new(node_arc.clone());
-
-            handle.update(20, "Syncing schemas and documents...").await;
-
-            if let Err(e) = processor.migrate_to_cloud(&api_url, &api_key).await {
-                handle.fail(format!("Cloud migration failed: {}", e)).await;
-                return;
-            }
-
-            log_feature!(
-                LogFeature::HttpServer,
-                info,
-                "Cloud migration completed for user: {}",
-                uid
-            );
-            handle
-                .complete(serde_json::json!({
-                    "user_id": uid,
-                    "message": "Migration completed successfully"
-                }))
-                .await;
-        })
-        .await;
-    });
+                log_feature!(
+                    LogFeature::HttpServer,
+                    info,
+                    "Cloud migration completed for user: {}",
+                    uid
+                );
+                handle
+                    .complete(serde_json::json!({
+                        "user_id": uid,
+                        "message": "Migration completed successfully"
+                    }))
+                    .await;
+            })
+            .await;
+        }
+        .instrument(tracing::Span::current()),
+    );
 
     HttpResponse::Accepted().json(AdminJobResponse::started(
         job_id,

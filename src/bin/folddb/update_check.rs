@@ -14,6 +14,7 @@ const CHECK_TIMEOUT: Duration = Duration::from_secs(3);
 /// Spawns a background task that checks for updates.
 /// Fire-and-forget: prints to stderr if a newer version exists.
 pub fn spawn_update_check() {
+    // lint:spawn-bare-ok CLI startup fire-and-forget — no parent request span to propagate.
     tokio::spawn(async {
         let result = check_latest_version().await;
         if let Ok(Some(latest)) = result {

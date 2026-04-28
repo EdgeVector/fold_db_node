@@ -14,6 +14,7 @@ use fold_db::sharing::{
 };
 use serde::Deserialize;
 use std::time::{SystemTime, UNIX_EPOCH};
+use tracing::Instrument;
 
 fn now_secs() -> u64 {
     SystemTime::now()
@@ -142,9 +143,12 @@ pub async fn create_rule(
     // Reconfigure the sync engine and trigger an immediate sync cycle so the
     // new target starts uploading right away.
     let node_clone = node.clone();
-    tokio::spawn(async move {
-        reconfigure_and_force_sync(&node_clone).await;
-    });
+    tokio::spawn(
+        async move {
+            reconfigure_and_force_sync(&node_clone).await;
+        }
+        .instrument(tracing::Span::current()),
+    );
 
     Ok(ApiResponse::success_with_user(
         ShareRuleResponse { rule },
@@ -172,9 +176,12 @@ pub async fn deactivate_rule(
 
     // Rule is no longer active — refresh sync engine targets to drop it.
     let node_clone = node.clone();
-    tokio::spawn(async move {
-        reconfigure_and_force_sync(&node_clone).await;
-    });
+    tokio::spawn(
+        async move {
+            reconfigure_and_force_sync(&node_clone).await;
+        }
+        .instrument(tracing::Span::current()),
+    );
 
     Ok(ApiResponse::success_with_user(OkResponse {}, user_hash))
 }
@@ -318,9 +325,12 @@ pub async fn accept_invite(
 
     // Reconfigure sync engine so the new inbound target starts downloading.
     let node_clone = node.clone();
-    tokio::spawn(async move {
-        reconfigure_and_force_sync(&node_clone).await;
-    });
+    tokio::spawn(
+        async move {
+            reconfigure_and_force_sync(&node_clone).await;
+        }
+        .instrument(tracing::Span::current()),
+    );
 
     Ok(ApiResponse::success_with_user(
         AcceptInviteResponse { subscription: sub },

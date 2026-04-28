@@ -146,6 +146,7 @@ impl FoldHttpServer {
                 "Found interrupted bootstrap — resuming cloud data download"
             );
             let node_manager = self.node_manager.clone();
+            // lint:spawn-bare-ok boot-time bootstrap resume — runs during server start, no per-request parent span.
             tokio::spawn(async move {
                 // Get Sled pool from the node manager
                 if let Some(pool) = node_manager.get_sled_pool().await {
@@ -213,6 +214,7 @@ impl FoldHttpServer {
         // we log and continue. Timeout guards against macOS Keychain blocking.
         {
             let app_state_clone = app_state.clone();
+            // lint:spawn-bare-ok boot-time Exemem session-token refresh — runs during server start, no per-request parent span.
             tokio::spawn(async move {
                 // Load stored credentials so we can inspect the session token
                 // and decide whether a refresh is actually needed.

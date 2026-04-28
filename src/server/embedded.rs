@@ -72,6 +72,7 @@ pub async fn start_embedded_server_lazy(
     let server = FoldHttpServer::new(node_manager, &bind_address).await?;
 
     let address = bind_address.clone();
+    // lint:spawn-bare-ok boot-time embedded server runner — perpetual worker, no per-request parent span.
     let task_handle = tokio::spawn(async move { server.run().await });
 
     Ok(EmbeddedServerHandle {
@@ -137,6 +138,7 @@ pub async fn start_embedded_server(
     let server = FoldHttpServer::new(node_manager, &bind_address).await?;
 
     let address = bind_address.clone();
+    // lint:spawn-bare-ok boot-time embedded server runner — perpetual worker, no per-request parent span.
     let task_handle = tokio::spawn(async move { server.run().await });
 
     Ok(EmbeddedServerHandle {

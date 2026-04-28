@@ -12,6 +12,7 @@ use crate::ingestion::IngestionRequest;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use std::sync::Arc;
+use tracing::Instrument;
 
 // ============================================================================
 // Request/Response Types
@@ -220,48 +221,51 @@ pub async fn process_json(
     let tracker_clone = tracker.clone();
 
     // Spawn background ingestion
-    tokio::spawn(async move {
-        fold_db::logging::core::run_with_user(&user_hash_clone, async move {
-            let progress_service = ProgressService::new(tracker_clone);
+    tokio::spawn(
+        async move {
+            fold_db::logging::core::run_with_user(&user_hash_clone, async move {
+                let progress_service = ProgressService::new(tracker_clone);
 
-            match service
-                .process_json_with_node_and_progress(
-                    request,
-                    &node_clone,
-                    &progress_service,
-                    progress_id_clone.clone(),
-                )
-                .await
-            {
-                Ok(response) => {
-                    if !response.success {
+                match service
+                    .process_json_with_node_and_progress(
+                        request,
+                        &node_clone,
+                        &progress_service,
+                        progress_id_clone.clone(),
+                    )
+                    .await
+                {
+                    Ok(response) => {
+                        if !response.success {
+                            fold_db::log_feature!(
+                                fold_db::logging::features::LogFeature::Ingestion,
+                                error,
+                                "Background ingestion failed: {:?}",
+                                response.errors
+                            );
+                        } else if is_org_ingestion {
+                            // Trigger immediate sync so org data uploads right away
+                            // instead of waiting for the next timer-based sync cycle.
+                            node_clone.trigger_immediate_sync().await;
+                        }
+                    }
+                    Err(e) => {
                         fold_db::log_feature!(
                             fold_db::logging::features::LogFeature::Ingestion,
                             error,
-                            "Background ingestion failed: {:?}",
-                            response.errors
+                            "Background ingestion processing failed: {}",
+                            e
                         );
-                    } else if is_org_ingestion {
-                        // Trigger immediate sync so org data uploads right away
-                        // instead of waiting for the next timer-based sync cycle.
-                        node_clone.trigger_immediate_sync().await;
+                        progress_service
+                            .fail_progress(&progress_id_clone, e.user_message())
+                            .await;
                     }
                 }
-                Err(e) => {
-                    fold_db::log_feature!(
-                        fold_db::logging::features::LogFeature::Ingestion,
-                        error,
-                        "Background ingestion processing failed: {}",
-                        e
-                    );
-                    progress_service
-                        .fail_progress(&progress_id_clone, e.user_message())
-                        .await;
-                }
-            }
-        })
-        .await;
-    });
+            })
+            .await;
+        }
+        .instrument(tracing::Span::current()),
+    );
 
     // Return immediately with progress_id
     Ok(ApiResponse::success_with_user(
