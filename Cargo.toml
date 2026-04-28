@@ -15,7 +15,7 @@ face-detection = ["fold_db/face-detection"]
 
 [dependencies]
 # Core database library
-fold_db = { git = "https://github.com/EdgeVector/fold_db.git", rev = "88828c8eaa461b86bddb2044b42abd65a6b39b0a", features = ["cli"] }
+fold_db = { git = "https://github.com/EdgeVector/fold_db.git", rev = "9cb5c59e85f8b0a133f0edf9f5a1e817289fbd44", features = ["cli"] }
 
 # Schema service registry brain. Phase 2 T2: all former
 # `fold_db::schema_service::*` types come from here now. Git dep pinned
@@ -42,7 +42,7 @@ schema_service_client = { git = "https://github.com/EdgeVector/schema_service.gi
 # Cloud cleanup C3: bumped to a315c4a0 (fold_db PR #660) which ripped out
 # the OTLP traces, OTLP metrics, and SpanMetrics layers. The Sentry ERROR
 # sink (PR #647) survives, off by default until SENTRY_DSN is set.
-observability = { git = "https://github.com/EdgeVector/fold_db.git", rev = "88828c8eaa461b86bddb2044b42abd65a6b39b0a" }
+observability = { git = "https://github.com/EdgeVector/fold_db.git", rev = "9cb5c59e85f8b0a133f0edf9f5a1e817289fbd44" }
 
 # HTTP Server
 actix-web = "4.3"
