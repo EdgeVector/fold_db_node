@@ -322,6 +322,7 @@ async fn enable_cloud_sync_in_config(
         api_key,
         session_token: None,
         user_hash: Some(user_hash),
+        p2p_sync: None,
     };
     config.database =
         fold_db::storage::DatabaseConfig::with_cloud_sync(config.database.path.clone(), cloud_sync);

@@ -194,6 +194,7 @@ pub async fn apply_setup(
                     api_key: api_key.clone(),
                     session_token: None,
                     user_hash: None,
+                    p2p_sync: None,
                 };
                 config.database =
                     DatabaseConfig::with_cloud_sync(config.database.path.clone(), cloud_sync);

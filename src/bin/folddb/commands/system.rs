@@ -313,6 +313,7 @@ mod tests {
             api_key: "SECRET-KEY".to_string(),
             session_token: Some("SECRET-TOKEN".to_string()),
             user_hash: Some("hash".to_string()),
+            p2p_sync: None,
         });
         let out = config_show(
             &config,
@@ -343,6 +344,7 @@ mod tests {
             api_key: "API-KEY-NEVER-SHOW".to_string(),
             session_token: Some("SESSION-NEVER-SHOW".to_string()),
             user_hash: Some("hash".to_string()),
+            p2p_sync: None,
         });
         let out = config_show(
             &config,

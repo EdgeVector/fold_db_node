@@ -144,6 +144,7 @@ fn try_register_and_configure(
                         api_key: api_key.clone(),
                         session_token: None,
                         user_hash: resp.user_hash,
+                        p2p_sync: None,
                     },
                 ),
                 storage_path: Some(data_path),
