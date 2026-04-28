@@ -368,6 +368,7 @@ pub async fn run_setup_wizard() -> Result<NodeConfig, CliError> {
                 api_key,
                 session_token: None,
                 user_hash: resp.user_hash,
+                p2p_sync: None,
             },
         )
     } else {
