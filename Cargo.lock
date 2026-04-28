@@ -1972,6 +1972,7 @@ checksum = "3f9eec918d3f24069decb9af1554cad7c880e2da24a9afd88aca000531ab82c1"
 [[package]]
 name = "fold_db"
 version = "0.3.0"
+source = "git+https://github.com/EdgeVector/fold_db.git?rev=9cb5c59e85f8b0a133f0edf9f5a1e817289fbd44#9cb5c59e85f8b0a133f0edf9f5a1e817289fbd44"
 dependencies = [
  "aes-gcm",
  "async-trait",
@@ -3770,6 +3771,7 @@ dependencies = [
 [[package]]
 name = "observability"
 version = "0.1.0"
+source = "git+https://github.com/EdgeVector/fold_db.git?rev=9cb5c59e85f8b0a133f0edf9f5a1e817289fbd44#9cb5c59e85f8b0a133f0edf9f5a1e817289fbd44"
 dependencies = [
  "http 1.4.0",
  "once_cell",
@@ -5063,6 +5065,7 @@ dependencies = [
 [[package]]
 name = "schema_service_client"
 version = "0.1.0"
+source = "git+https://github.com/EdgeVector/schema_service.git?branch=main#3509c6490f986724ca6ce64b7cd7803628588102"
 dependencies = [
  "fold_db",
  "futures",
@@ -5079,13 +5082,13 @@ dependencies = [
 [[package]]
 name = "schema_service_core"
 version = "0.1.0"
+source = "git+https://github.com/EdgeVector/schema_service.git?branch=main#3509c6490f986724ca6ce64b7cd7803628588102"
 dependencies = [
  "async-trait",
  "chrono-tz",
  "croner",
  "fold_db",
  "include_dir",
- "log",
  "observability",
  "reqwest 0.11.27",
  "serde",
@@ -5102,6 +5105,7 @@ dependencies = [
 [[package]]
 name = "schema_service_server_http"
 version = "0.1.0"
+source = "git+https://github.com/EdgeVector/schema_service.git?branch=main#3509c6490f986724ca6ce64b7cd7803628588102"
 dependencies = [
  "actix-cors",
  "actix-web",
@@ -5124,11 +5128,11 @@ dependencies = [
 [[package]]
 name = "schema_service_server_shared"
 version = "0.1.0"
+source = "git+https://github.com/EdgeVector/schema_service.git?branch=main#3509c6490f986724ca6ce64b7cd7803628588102"
 dependencies = [
  "actix-web",
  "chrono",
  "fold_db",
- "log",
  "schema_service_core",
  "serde",
  "serde_json",
@@ -6814,6 +6818,7 @@ dependencies = [
 [[package]]
 name = "wasm_compiler"
 version = "0.1.0"
+source = "git+https://github.com/EdgeVector/schema_service.git?branch=main#3509c6490f986724ca6ce64b7cd7803628588102"
 dependencies = [
  "log",
  "serde",
