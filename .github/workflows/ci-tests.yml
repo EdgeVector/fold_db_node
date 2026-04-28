@@ -296,3 +296,26 @@ jobs:
           name: playwright-report
           path: src/server/static-react/test-results/
           retention-days: 7
+
+  # Org-wide convention: every EdgeVector repo exposes a check named
+  # `ci-required` so the org ruleset can require a single uniform check
+  # across all repos. Waits for every test job above and fails if any
+  # did not succeed.
+  ci-required:
+    name: ci-required
+    needs: [lint-redaction, rust-tests, cli-integration-tests, face-detection-tests, frontend-tests, e2e-tests]
+    if: always()
+    runs-on: ubuntu-latest
+    steps:
+      - name: All required jobs must succeed
+        env:
+          RESULTS: ${{ join(needs.*.result, ',') }}
+        run: |
+          echo "Required job results: $RESULTS"
+          for r in ${RESULTS//,/ }; do
+            if [ "$r" != "success" ]; then
+              echo "::error::A required job did not succeed (result: $r)"
+              exit 1
+            fi
+          done
+          echo "All required jobs passed."
