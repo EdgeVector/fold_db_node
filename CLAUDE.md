@@ -95,6 +95,17 @@ Follow the same standards as fold_db:
 - Use `TODO` format for incomplete implementations
 - Platform-specific APIs (e.g., OS keychain) must be behind feature flags
 
+## Observability conventions
+
+When you touch any `tracing::*!`, `tokio::spawn`, `reqwest::Client::new()`, or sensitive-field log site, the conventions live at `gbrain get concepts/observability-conventions`. Long-form: `exemem-workspace/docs/observability/migration-guide.md`. CI-enforced rules:
+
+- **Structured fields** — `tracing::info!(field = %value, "msg")`. Positional-arg interpolation gets a warn-only nudge.
+- **Redaction** — `password / token / api_key / secret / auth_token / email / phone / ssn` MUST go through `redact!()` or `redact_id!()`. Override per-line: `// lint:redaction-ok <reason>`.
+- **`tokio::spawn`** — chain `.instrument(Span::current())` or `.in_current_span()`. Bare spawn fails CI. Override: `// lint:spawn-bare-ok <reason>`.
+- **Outbound `reqwest`** — every `Client::new() / ::builder() / ::default()` site needs a comment within 3 preceding lines: `propagate / loopback / skip-s3 / skip-3p`. Wrap propagating requests with `observability::propagation::inject_w3c`.
+
+The cloud-stack cleanup (2026-04-28) removed OTLP / Honeycomb / SpanMetrics. Do NOT add `opentelemetry-otlp` / `opentelemetry-proto` deps or set `OBS_OTLP_ENDPOINT`. Sentry stays (off-by-default; activates if `OBS_SENTRY_DSN` is set).
+
 ## Trust boundary: loopback owner context
 
 **Intentional invariant (as of 2026-04-13)**: `src/handlers/query.rs` and `src/handlers/mutation.rs` hardcode the HTTP caller as the node's own pubkey (`caller_pub_key = node.get_node_public_key()`). This gives every local HTTP request owner context via `build_access_context`'s owner short-circuit, so trust-tier enforcement is effectively disabled for anything reaching `http://localhost:9001`.
