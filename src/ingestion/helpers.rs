@@ -8,8 +8,6 @@
 use crate::ingestion::ingestion_service::IngestionService;
 use crate::ingestion::progress::ProgressService;
 use crate::ingestion::{IngestionRequest, ProgressTracker};
-use fold_db::log_feature;
-use fold_db::logging::features::LogFeature;
 use serde::{Deserialize, Serialize};
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
@@ -132,7 +130,7 @@ pub fn spawn_file_ingestion_tasks(
 
     tokio::spawn(
         async move {
-            fold_db::logging::core::run_with_user(&user_id_clone, async move {
+            fold_db::user_context::run_with_user(&user_id_clone, async move {
                 for (file_path, progress_id) in files {
                     let progress_service = ProgressService::new(progress_tracker_clone.clone());
 
@@ -150,13 +148,12 @@ pub fn spawn_file_ingestion_tasks(
                     )
                     .await
                     {
-                        log_feature!(
-                            LogFeature::Ingestion,
-                            error,
-                            "Failed to process file {}: {}",
-                            file_path.display(),
-                            e
-                        );
+                        tracing::error!(
+                        target: "fold_node::ingestion",
+                                        "Failed to process file {}: {}",
+                                        file_path.display(),
+                                        e
+                                    );
                         progress_service
                             .fail_progress(&progress_id, format!("Processing failed: {}", e))
                             .await;
@@ -259,9 +256,8 @@ pub async fn process_single_file_via_smart_folder(
     // Check per-user file dedup — skip entire pipeline if this user already ingested this file
     if !force_reingest {
         if let Some(record) = node.is_file_ingested(&pub_key, &file_hash).await {
-            log_feature!(
-                LogFeature::Ingestion,
-                info,
+            tracing::info!(
+            target: "fold_node::ingestion",
                 "File already ingested by this user (at {}), skipping: {}",
                 record.ingested_at,
                 file_path.display()

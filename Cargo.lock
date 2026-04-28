@@ -405,7 +405,7 @@ version = "1.1.5"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "40c48f72fd53cd289104fc64099abca73db4166ad86ea0b4341abe65af83dadc"
 dependencies = [
- "windows-sys 0.60.2",
+ "windows-sys 0.61.2",
 ]
 
 [[package]]
@@ -416,7 +416,7 @@ checksum = "291e6a250ff86cd4a820112fb8898808a366d8f9f58ce16d1f538353ad55747d"
 dependencies = [
  "anstyle",
  "once_cell_polyfill",
- "windows-sys 0.60.2",
+ "windows-sys 0.61.2",
 ]
 
 [[package]]
@@ -949,7 +949,7 @@ version = "3.1.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "faf9468729b8cbcea668e36183cb69d317348c2e08e994829fb56ebfdfbaac34"
 dependencies = [
- "windows-sys 0.60.2",
+ "windows-sys 0.61.2",
 ]
 
 [[package]]
@@ -1657,7 +1657,7 @@ dependencies = [
  "libc",
  "option-ext",
  "redox_users 0.5.2",
- "windows-sys 0.60.2",
+ "windows-sys 0.61.2",
 ]
 
 [[package]]
@@ -1809,7 +1809,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "39cab71617ae0d63f51a36d69f866391735b51691dbda63cf6f96d042b63efeb"
 dependencies = [
  "libc",
- "windows-sys 0.60.2",
+ "windows-sys 0.61.2",
 ]
 
 [[package]]
@@ -1905,7 +1905,7 @@ checksum = "28dea519a9695b9977216879a3ebfddf92f1c08c05d984f8996aecd6ecdc811d"
 [[package]]
 name = "file_to_markdown"
 version = "0.1.0"
-source = "git+https://github.com/EdgeVector/file_to_markdown.git?branch=master#9a64b276237f56c608e2b59b4dea5f58c487945b"
+source = "git+https://github.com/EdgeVector/file_to_markdown.git?branch=main#f5ba5b61f9bda1b9dd534b660cc4438dea1564de"
 dependencies = [
  "base64 0.22.1",
  "chrono",
@@ -1972,7 +1972,7 @@ checksum = "3f9eec918d3f24069decb9af1554cad7c880e2da24a9afd88aca000531ab82c1"
 [[package]]
 name = "fold_db"
 version = "0.3.0"
-source = "git+https://github.com/EdgeVector/fold_db.git?rev=a0434b2539c24a955649b19d8aa6b0b532c4c1cc#a0434b2539c24a955649b19d8aa6b0b532c4c1cc"
+source = "git+https://github.com/EdgeVector/fold_db.git?rev=43bdc07fbaa95accb949225611c0a7abea38cfc5#43bdc07fbaa95accb949225611c0a7abea38cfc5"
 dependencies = [
  "aes-gcm",
  "async-trait",
@@ -1991,7 +1991,7 @@ dependencies = [
  "hkdf",
  "hmac",
  "image",
- "log",
+ "observability",
  "once_cell",
  "ort",
  "rand 0.8.5",
@@ -2008,6 +2008,7 @@ dependencies = [
  "tokio",
  "tokio-stream",
  "toml",
+ "tracing",
  "ts-rs",
  "ureq 2.12.1",
  "utoipa",
@@ -2053,9 +2054,8 @@ dependencies = [
  "kamadak-exif",
  "keyring",
  "libc",
- "log",
  "mime_guess",
- "observability 0.1.0 (git+https://github.com/EdgeVector/fold_db.git?rev=a315c4a06a21261f5f8fc23be76539301ae830b0)",
+ "observability",
  "once_cell",
  "opentelemetry",
  "opentelemetry_sdk",
@@ -3503,7 +3503,7 @@ version = "0.50.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "7957b9740744892f114936ab4a57b3f487491bbeafaf8083688b16841a4240e5"
 dependencies = [
- "windows-sys 0.60.2",
+ "windows-sys 0.61.2",
 ]
 
 [[package]]
@@ -3771,30 +3771,7 @@ dependencies = [
 [[package]]
 name = "observability"
 version = "0.1.0"
-source = "git+https://github.com/EdgeVector/fold_db.git?rev=8c6af2a0537d642516417f2666cb2c238daf09b9#8c6af2a0537d642516417f2666cb2c238daf09b9"
-dependencies = [
- "http 1.4.0",
- "once_cell",
- "opentelemetry",
- "opentelemetry-http",
- "opentelemetry_sdk",
- "reqwest 0.11.27",
- "serde",
- "serde_json",
- "thiserror 1.0.69",
- "tracing",
- "tracing-appender",
- "tracing-log",
- "tracing-opentelemetry",
- "tracing-subscriber",
- "uuid",
- "xxhash-rust",
-]
-
-[[package]]
-name = "observability"
-version = "0.1.0"
-source = "git+https://github.com/EdgeVector/fold_db.git?rev=a315c4a06a21261f5f8fc23be76539301ae830b0#a315c4a06a21261f5f8fc23be76539301ae830b0"
+source = "git+https://github.com/EdgeVector/fold_db.git?rev=43bdc07fbaa95accb949225611c0a7abea38cfc5#43bdc07fbaa95accb949225611c0a7abea38cfc5"
 dependencies = [
  "http 1.4.0",
  "once_cell",
@@ -3960,8 +3937,6 @@ dependencies = [
  "rand 0.8.5",
  "serde_json",
  "thiserror 1.0.69",
- "tokio",
- "tokio-stream",
  "tracing",
 ]
 
@@ -5009,7 +4984,7 @@ dependencies = [
  "errno",
  "libc",
  "linux-raw-sys 0.12.1",
- "windows-sys 0.60.2",
+ "windows-sys 0.61.2",
 ]
 
 [[package]]
@@ -5090,12 +5065,12 @@ dependencies = [
 [[package]]
 name = "schema_service_client"
 version = "0.1.0"
-source = "git+https://github.com/EdgeVector/schema_service.git?branch=main#3b5d5adef36d854d16354c80204e66cbca9b6c05"
+source = "git+https://github.com/EdgeVector/schema_service.git?branch=main#447f89bb48ea09e98c4a0dd596f97dbdb8f5f3d3"
 dependencies = [
  "fold_db",
  "futures",
  "log",
- "observability 0.1.0 (git+https://github.com/EdgeVector/fold_db.git?rev=8c6af2a0537d642516417f2666cb2c238daf09b9)",
+ "observability",
  "reqwest 0.11.27",
  "schema_service_core",
  "serde",
@@ -5107,15 +5082,14 @@ dependencies = [
 [[package]]
 name = "schema_service_core"
 version = "0.1.0"
-source = "git+https://github.com/EdgeVector/schema_service.git?branch=main#3b5d5adef36d854d16354c80204e66cbca9b6c05"
+source = "git+https://github.com/EdgeVector/schema_service.git?branch=main#447f89bb48ea09e98c4a0dd596f97dbdb8f5f3d3"
 dependencies = [
  "async-trait",
  "chrono-tz",
  "croner",
  "fold_db",
  "include_dir",
- "log",
- "observability 0.1.0 (git+https://github.com/EdgeVector/fold_db.git?rev=8c6af2a0537d642516417f2666cb2c238daf09b9)",
+ "observability",
  "reqwest 0.11.27",
  "serde",
  "serde_json",
@@ -5123,6 +5097,7 @@ dependencies = [
  "sled",
  "thiserror 1.0.69",
  "tokio",
+ "tracing",
  "wasm_compiler",
  "wasmtime",
 ]
@@ -5130,7 +5105,7 @@ dependencies = [
 [[package]]
 name = "schema_service_server_http"
 version = "0.1.0"
-source = "git+https://github.com/EdgeVector/schema_service.git?branch=main#3b5d5adef36d854d16354c80204e66cbca9b6c05"
+source = "git+https://github.com/EdgeVector/schema_service.git?branch=main#447f89bb48ea09e98c4a0dd596f97dbdb8f5f3d3"
 dependencies = [
  "actix-cors",
  "actix-web",
@@ -5139,7 +5114,7 @@ dependencies = [
  "futures-util",
  "http 1.4.0",
  "log",
- "observability 0.1.0 (git+https://github.com/EdgeVector/fold_db.git?rev=8c6af2a0537d642516417f2666cb2c238daf09b9)",
+ "observability",
  "opentelemetry",
  "schema_service_core",
  "schema_service_server_shared",
@@ -5153,15 +5128,15 @@ dependencies = [
 [[package]]
 name = "schema_service_server_shared"
 version = "0.1.0"
-source = "git+https://github.com/EdgeVector/schema_service.git?branch=main#3b5d5adef36d854d16354c80204e66cbca9b6c05"
+source = "git+https://github.com/EdgeVector/schema_service.git?branch=main#447f89bb48ea09e98c4a0dd596f97dbdb8f5f3d3"
 dependencies = [
  "actix-web",
  "chrono",
  "fold_db",
- "log",
  "schema_service_core",
  "serde",
  "serde_json",
+ "tracing",
 ]
 
 [[package]]
@@ -5549,7 +5524,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "3a766e1110788c36f4fa1c2b71b387a7815aa65f88ce0229841826633d93723e"
 dependencies = [
  "libc",
- "windows-sys 0.60.2",
+ "windows-sys 0.61.2",
 ]
 
 [[package]]
@@ -5932,7 +5907,7 @@ dependencies = [
  "getrandom 0.4.2",
  "once_cell",
  "rustix 1.1.4",
- "windows-sys 0.60.2",
+ "windows-sys 0.61.2",
 ]
 
 [[package]]
@@ -6843,7 +6818,7 @@ dependencies = [
 [[package]]
 name = "wasm_compiler"
 version = "0.1.0"
-source = "git+https://github.com/EdgeVector/schema_service.git?branch=main#3b5d5adef36d854d16354c80204e66cbca9b6c05"
+source = "git+https://github.com/EdgeVector/schema_service.git?branch=main#447f89bb48ea09e98c4a0dd596f97dbdb8f5f3d3"
 dependencies = [
  "log",
  "serde",
@@ -7251,7 +7226,7 @@ version = "0.1.11"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "c2a7b1c03c876122aa43f3020e6c3c3ee5c05081c9a00739faf7503aeba10d22"
 dependencies = [
- "windows-sys 0.60.2",
+ "windows-sys 0.61.2",
 ]
 
 [[package]]

@@ -1,6 +1,4 @@
 use actix_web::{web, HttpResponse, Responder};
-use fold_db::log_feature;
-use fold_db::logging::features::LogFeature;
 use serde::Deserialize;
 use serde_json::json;
 use std::path::{Path, PathBuf};
@@ -40,7 +38,8 @@ pub async fn complete_path(body: web::Json<PathCompleteRequest>) -> impl Respond
     let partial = match expand_tilde(&body.partial_path) {
         Ok(p) => p,
         Err(msg) => {
-            log_feature!(LogFeature::HttpServer, warn, "{}", msg);
+            tracing::warn!(
+            target: "fold_node::http_server", "{}", msg);
             return HttpResponse::BadRequest().json(json!({
                 "error": msg,
                 "completions": Vec::<String>::new()
@@ -102,7 +101,8 @@ pub async fn list_directory(body: web::Json<ListDirectoryRequest>) -> impl Respo
     let dir_path = match expand_tilde(&body.path) {
         Ok(p) => p,
         Err(msg) => {
-            log_feature!(LogFeature::HttpServer, warn, "{}", msg);
+            tracing::warn!(
+            target: "fold_node::http_server", "{}", msg);
             return HttpResponse::BadRequest().json(json!({
                 "error": msg,
                 "path": body.path,

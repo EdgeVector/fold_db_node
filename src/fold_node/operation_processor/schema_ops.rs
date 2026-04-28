@@ -35,23 +35,21 @@ impl OperationProcessor {
         match self.apply_classification_defaults(schema_name).await {
             Ok(applied) => {
                 if applied > 0 {
-                    fold_db::log_feature!(
-                        fold_db::logging::features::LogFeature::Schema,
-                        info,
-                        "Applied access policies to {} fields in '{}'",
-                        applied,
-                        schema_name
-                    );
+                    tracing::info!(
+                    target: "fold_node::schema",
+                                "Applied access policies to {} fields in '{}'",
+                                applied,
+                                schema_name
+                            );
                 }
             }
             Err(e) => {
-                fold_db::log_feature!(
-                    fold_db::logging::features::LogFeature::Schema,
-                    warn,
-                    "Failed to apply classification defaults to '{}': {}",
-                    schema_name,
-                    e
-                );
+                tracing::warn!(
+                target: "fold_node::schema",
+                        "Failed to apply classification defaults to '{}': {}",
+                        schema_name,
+                        e
+                    );
             }
         }
         Ok(())

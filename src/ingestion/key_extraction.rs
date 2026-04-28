@@ -5,8 +5,6 @@
 
 use crate::ingestion::IngestionResult;
 use chrono::{DateTime, FixedOffset, NaiveDate, NaiveDateTime};
-use fold_db::log_feature;
-use fold_db::logging::features::LogFeature;
 use fold_db::schema::SchemaCore;
 use serde_json::Value;
 use std::collections::HashMap;
@@ -148,22 +146,20 @@ pub(crate) async fn extract_key_values_from_data(
                             keys_and_values.insert(key_name.to_string(), val.to_string());
                         }
                         Some(val) => {
-                            log_feature!(
-                                LogFeature::Ingestion,
-                                warn,
-                                "{} '{}' in schema '{}' has unsupported type (not string or number): {:?}",
-                                key_name, field, schema_name, val
-                            );
+                            tracing::warn!(
+                            target: "fold_node::ingestion",
+                                                "{} '{}' in schema '{}' has unsupported type (not string or number): {:?}",
+                                                key_name, field, schema_name, val
+                                            );
                         }
                         None => {
-                            log_feature!(
-                                LogFeature::Ingestion,
-                                warn,
-                                "{} '{}' not found in data for schema '{}'",
-                                key_name,
-                                field,
-                                schema_name
-                            );
+                            tracing::warn!(
+                            target: "fold_node::ingestion",
+                                                "{} '{}' not found in data for schema '{}'",
+                                                key_name,
+                                                field,
+                                                schema_name
+                                            );
                         }
                     }
                 }
@@ -200,9 +196,8 @@ pub(crate) async fn extract_key_values_from_data(
         }
     }
 
-    log_feature!(
-        LogFeature::Ingestion,
-        info,
+    tracing::info!(
+            target: "fold_node::ingestion",
         "Extracted key values for schema '{}': {:?}",
         schema_name,
         keys_and_values

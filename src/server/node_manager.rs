@@ -153,7 +153,7 @@ impl NodeManager {
         let signer =
             identity::signer_from_identity(&id).map_err(NodeManagerError::SecurityError)?;
 
-        let db = fold_db::logging::core::run_with_user(user_id, async {
+        let db = fold_db::user_context::run_with_user(user_id, async {
             factory::create_fold_db_with_pool_and_auth_refresh(
                 &node_config.database,
                 &e2e_keys,
@@ -166,7 +166,7 @@ impl NodeManager {
         .await
         .map_err(|e| NodeManagerError::StorageError(e.to_string()))?;
 
-        let node = fold_db::logging::core::run_with_user(user_id, async {
+        let node = fold_db::user_context::run_with_user(user_id, async {
             FoldNode::new_with_db(node_config, db).await
         })
         .await

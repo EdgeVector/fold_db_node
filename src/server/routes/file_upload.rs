@@ -14,8 +14,6 @@ use crate::server::routes::ingestion::ingestion_unavailable;
 use crate::server::routes::node_or_return;
 use actix_multipart::Multipart;
 use actix_web::{web, HttpResponse, Responder};
-use fold_db::log_feature;
-use fold_db::logging::features::LogFeature;
 use fold_db::storage::UploadStorage;
 use futures_util::StreamExt;
 use serde_json::json;
@@ -51,9 +49,8 @@ async fn convert_file_to_json_http(file_path: &PathBuf) -> Result<serde_json::Va
     match convert_file_to_json(file_path).await {
         Ok(value) => Ok(value),
         Err(e) => {
-            log_feature!(
-                LogFeature::Ingestion,
-                error,
+            tracing::error!(
+            target: "fold_node::ingestion",
                 "File conversion failed: {}",
                 e
             );
@@ -82,12 +79,11 @@ pub async fn parse_multipart(
         let mut field = match item {
             Ok(field) => field,
             Err(e) => {
-                log_feature!(
-                    LogFeature::Ingestion,
-                    error,
-                    "Failed to read multipart field: {}",
-                    e
-                );
+                tracing::error!(
+                target: "fold_node::ingestion",
+                        "Failed to read multipart field: {}",
+                        e
+                    );
                 return Err(HttpResponse::BadRequest().json(json!({
                     "success": false,
                     "error": format!("Failed to read multipart data: {}", e)
@@ -139,7 +135,8 @@ pub async fn parse_multipart(
     let file_path = match file_path {
         Some(path) => path,
         None => {
-            log_feature!(LogFeature::Ingestion, error, "No file provided in upload");
+            tracing::error!(
+            target: "fold_node::ingestion", "No file provided in upload");
             return Err(HttpResponse::BadRequest().json(json!({
                 "success": false,
                 "error": "No file provided"
@@ -177,12 +174,11 @@ async fn save_uploaded_file(
         let data = match chunk {
             Ok(data) => data,
             Err(e) => {
-                log_feature!(
-                    LogFeature::Ingestion,
-                    error,
-                    "Failed to read file chunk: {}",
-                    e
-                );
+                tracing::error!(
+                target: "fold_node::ingestion",
+                        "Failed to read file chunk: {}",
+                        e
+                    );
                 return Err(HttpResponse::InternalServerError().json(json!({
                     "success": false,
                     "error": format!("Failed to read file: {}", e)
@@ -192,9 +188,8 @@ async fn save_uploaded_file(
 
         total_bytes = total_bytes.saturating_add(data.len());
         if total_bytes > MAX_UPLOAD_SIZE {
-            log_feature!(
-                LogFeature::Ingestion,
-                warn,
+            tracing::warn!(
+            target: "fold_node::ingestion",
                 "Rejecting upload: payload exceeds max size of {} bytes",
                 MAX_UPLOAD_SIZE
             );
@@ -217,9 +212,8 @@ async fn save_uploaded_file(
 
     let encrypted_data = fold_db::crypto::envelope::encrypt_envelope(encryption_key, &file_data)
         .map_err(|e| {
-            log_feature!(
-                LogFeature::Ingestion,
-                error,
+            tracing::error!(
+            target: "fold_node::ingestion",
                 "Failed to encrypt file: {}",
                 e
             );
@@ -235,7 +229,8 @@ async fn save_uploaded_file(
     {
         Ok((path, exists)) => (path, exists),
         Err(e) => {
-            log_feature!(LogFeature::Ingestion, error, "Failed to save file: {}", e);
+            tracing::error!(
+            target: "fold_node::ingestion", "Failed to save file: {}", e);
             return Err(HttpResponse::InternalServerError().json(json!({
                 "success": false,
                 "error": format!("Failed to save file: {}", e)
@@ -253,9 +248,8 @@ async fn save_uploaded_file(
         .unwrap_or_else(|| unique_filename.clone());
 
     if already_exists {
-        log_feature!(
-            LogFeature::Ingestion,
-            info,
+        tracing::info!(
+            target: "fold_node::ingestion",
             "File already exists (duplicate upload): {} at {}",
             unique_filename,
             upload_storage.get_display_path(&unique_filename, None)
@@ -278,9 +272,8 @@ async fn save_uploaded_file(
     )
     .await?;
 
-    log_feature!(
-        LogFeature::Ingestion,
-        info,
+    tracing::info!(
+            target: "fold_node::ingestion",
         "File encrypted and saved to storage: {}. Unencrypted copy at {:?} for processing.",
         upload_storage.get_display_path(&unique_filename, None),
         filepath
@@ -302,9 +295,8 @@ async fn write_unencrypted_for_processing(
     };
     let temp_path = std::env::temp_dir().join(temp_name);
     tokio::fs::write(&temp_path, file_data).await.map_err(|e| {
-        log_feature!(
-            LogFeature::Ingestion,
-            error,
+        tracing::error!(
+            target: "fold_node::ingestion",
             "Failed to write unencrypted file to temp for processing: {}",
             e
         );
@@ -356,7 +348,8 @@ pub async fn upload_file(
     state: web::Data<AppState>,
     ingestion_service: web::Data<IngestionServiceState>,
 ) -> impl Responder {
-    log_feature!(LogFeature::Ingestion, info, "Received file upload request");
+    tracing::info!(
+            target: "fold_node::ingestion", "Received file upload request");
 
     let (user_id, node_arc) = node_or_return!(state);
     let encryption_key = {
@@ -370,9 +363,8 @@ pub async fn upload_file(
     };
 
     if form_data.already_exists {
-        log_feature!(
-            LogFeature::Ingestion,
-            info,
+        tracing::info!(
+            target: "fold_node::ingestion",
             "File already exists (duplicate upload): {}. Proceeding with re-ingestion.",
             form_data.original_filename
         );
@@ -382,9 +374,8 @@ pub async fn upload_file(
         let node = node_arc.as_ref();
         let pub_key = node.get_node_public_key().to_string();
         if let Some(record) = node.is_file_ingested(&pub_key, &form_data.file_hash).await {
-            log_feature!(
-                LogFeature::Ingestion,
-                info,
+            tracing::info!(
+            target: "fold_node::ingestion",
                 "File already ingested by this user (at {}), skipping: {}",
                 record.ingested_at,
                 form_data.original_filename
@@ -405,18 +396,16 @@ pub async fn upload_file(
         &form_data.file_path,
     ) {
         Ok(json) => {
-            log_feature!(
-                LogFeature::Ingestion,
-                info,
+            tracing::info!(
+            target: "fold_node::ingestion",
                 "File parsed via native parser: {}",
                 form_data.original_filename
             );
             json
         }
         Err(_) => {
-            log_feature!(
-                LogFeature::Ingestion,
-                info,
+            tracing::info!(
+            target: "fold_node::ingestion",
                 "Native parser unavailable, using file_to_markdown: {}",
                 form_data.original_filename
             );
@@ -454,12 +443,11 @@ pub async fn upload_file(
                         }
                     }
                     Err(e) => {
-                        log_feature!(
-                            LogFeature::Ingestion,
-                            warn,
-                            "Visibility classification failed, skipping: {}",
-                            e
-                        );
+                        tracing::warn!(
+                        target: "fold_node::ingestion",
+                                        "Visibility classification failed, skipping: {}",
+                                        e
+                                    );
                     }
                 }
             }
@@ -473,12 +461,11 @@ pub async fn upload_file(
         match tokio::fs::read(&form_data.file_path).await {
             Ok(bytes) => Some(bytes),
             Err(e) => {
-                log_feature!(
-                    LogFeature::Ingestion,
-                    warn,
-                    "Failed to read image bytes for face detection: {}",
-                    e
-                );
+                tracing::warn!(
+                target: "fold_node::ingestion",
+                        "Failed to read image bytes for face detection: {}",
+                        e
+                    );
                 None
             }
         }
@@ -493,13 +480,12 @@ pub async fn upload_file(
             Err(e) if e.kind() == std::io::ErrorKind::NotFound => break, // already gone
             Err(e) => {
                 if attempt == 2 {
-                    log_feature!(
-                        LogFeature::Ingestion,
-                        error,
-                        "SECURITY: failed to delete temp file {:?} after 3 attempts: {} — unencrypted data may persist on disk",
-                        form_data.file_path,
-                        e
-                    );
+                    tracing::error!(
+                    target: "fold_node::ingestion",
+                                "SECURITY: failed to delete temp file {:?} after 3 attempts: {} — unencrypted data may persist on disk",
+                                form_data.file_path,
+                                e
+                            );
                 } else {
                     tokio::time::sleep(std::time::Duration::from_millis(100)).await;
                 }
@@ -507,26 +493,23 @@ pub async fn upload_file(
         }
     }
 
-    log_feature!(
-        LogFeature::Ingestion,
-        info,
+    tracing::info!(
+            target: "fold_node::ingestion",
         "File converted to JSON successfully, starting ingestion"
     );
 
     let temp_json_path = match save_json_to_temp_file(&json_value) {
         Ok(path) => {
-            log_feature!(
-                LogFeature::Ingestion,
-                info,
+            tracing::info!(
+            target: "fold_node::ingestion",
                 "Converted JSON saved to temporary file for testing: {}",
                 path
             );
             Some(path)
         }
         Err(e) => {
-            log_feature!(
-                LogFeature::Ingestion,
-                warn,
+            tracing::warn!(
+            target: "fold_node::ingestion",
                 "Failed to save JSON to temp file (non-critical): {}",
                 e
             );
@@ -534,9 +517,8 @@ pub async fn upload_file(
         }
     };
 
-    log_feature!(
-        LogFeature::Ingestion,
-        info,
+    tracing::info!(
+            target: "fold_node::ingestion",
         "Creating mutations with source_file_name: {}",
         form_data.original_filename
     );
@@ -582,9 +564,8 @@ pub async fn upload_file(
                 .map(|d| d.progress_id.clone())
                 .unwrap_or_default();
 
-            log_feature!(
-                LogFeature::Ingestion,
-                info,
+            tracing::info!(
+            target: "fold_node::ingestion",
                 "Returning progress_id to client for file upload: {}",
                 progress_id
             );
@@ -659,13 +640,12 @@ pub async fn serve_file(
         match fold_db::crypto::envelope::decrypt_envelope(&encryption_key, &encrypted_data) {
             Ok(data) => data,
             Err(e) => {
-                log_feature!(
-                    LogFeature::Ingestion,
-                    error,
-                    "Failed to decrypt file {}: {}",
-                    file_hash,
-                    e
-                );
+                tracing::error!(
+                target: "fold_node::ingestion",
+                        "Failed to decrypt file {}: {}",
+                        file_hash,
+                        e
+                    );
                 return HttpResponse::InternalServerError().json(json!({
                     "error": "Failed to decrypt file"
                 }));

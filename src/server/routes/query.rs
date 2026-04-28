@@ -4,8 +4,6 @@ use crate::server::routes::{
     handler_error_to_response, handler_result_to_response, node_or_return,
 };
 use actix_web::{web, HttpResponse, Responder};
-use fold_db::log_feature;
-use fold_db::logging::features::LogFeature;
 use fold_db::schema::types::operations::{Operation, Query};
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
@@ -29,9 +27,8 @@ pub struct MutationResponse {
 )]
 pub async fn execute_query(query: web::Json<Query>, state: web::Data<AppState>) -> impl Responder {
     let query_inner = query.into_inner();
-    log_feature!(
-        LogFeature::HttpServer,
-        info,
+    tracing::info!(
+            target: "fold_node::http_server",
         "execute_query: schema={}, fields={:?}, filter={:?}",
         query_inner.schema_name,
         query_inner.fields,
@@ -43,7 +40,8 @@ pub async fn execute_query(query: web::Json<Query>, state: web::Data<AppState>) 
     match query_handlers::execute_query(query_inner, &user_hash, &node).await {
         Ok(response) => HttpResponse::Ok().json(response),
         Err(e) => {
-            log_feature!(LogFeature::HttpServer, error, "Query failed: {}", e);
+            tracing::error!(
+            target: "fold_node::http_server", "Query failed: {}", e);
             handler_error_to_response(e)
         }
     }
@@ -74,23 +72,21 @@ pub async fn execute_mutation(
                 mutation_type,
                 source_file_name: _,
             }) => {
-                log_feature!(
-                    LogFeature::HttpServer,
-                    info,
-                    "Parsed mutation: schema={}, type={:?}, fields={}",
-                    schema,
-                    mutation_type,
-                    fields_and_values.len()
-                );
+                tracing::info!(
+                target: "fold_node::http_server",
+                        "Parsed mutation: schema={}, type={:?}, fields={}",
+                        schema,
+                        mutation_type,
+                        fields_and_values.len()
+                    );
                 (schema, fields_and_values, key_value, mutation_type)
             }
             Err(e) => {
-                log_feature!(
-                    LogFeature::HttpServer,
-                    error,
-                    "Failed to parse mutation: {}",
-                    e
-                );
+                tracing::error!(
+                target: "fold_node::http_server",
+                        "Failed to parse mutation: {}",
+                        e
+                    );
                 return HttpResponse::BadRequest()
                     .json(json!({"error": format!("Failed to parse mutation: {}", e)}));
             }
@@ -110,7 +106,8 @@ pub async fn execute_mutation(
     {
         Ok(response) => HttpResponse::Ok().json(response),
         Err(e) => {
-            log_feature!(LogFeature::HttpServer, error, "Mutation failed: {}", e);
+            tracing::error!(
+            target: "fold_node::http_server", "Mutation failed: {}", e);
             handler_error_to_response(e)
         }
     }
@@ -137,9 +134,8 @@ pub async fn native_index_search(
     let term = match query.get("term") {
         Some(t) if !t.trim().is_empty() => t.trim().to_string(),
         _ => {
-            log_feature!(
-                LogFeature::HttpServer,
-                warn,
+            tracing::warn!(
+            target: "fold_node::http_server",
                 "native_index_search: missing or empty term"
             );
             return HttpResponse::BadRequest()
@@ -149,9 +145,8 @@ pub async fn native_index_search(
 
     let (user_hash, node) = node_or_return!(state);
 
-    log_feature!(
-        LogFeature::HttpServer,
-        info,
+    tracing::info!(
+            target: "fold_node::http_server",
         "native_index_search: term='{}', user='{}'",
         term,
         user_hash
@@ -160,9 +155,8 @@ pub async fn native_index_search(
     match query_handlers::native_index_search(&term, &user_hash, &node).await {
         Ok(response) => HttpResponse::Ok().json(response),
         Err(e) => {
-            log_feature!(
-                LogFeature::HttpServer,
-                error,
+            tracing::error!(
+            target: "fold_node::http_server",
                 "native_index_search failed: {}",
                 e
             );

@@ -2,8 +2,6 @@ use crate::server::http_server::AppState;
 use crate::server::node_manager::NodeManagerConfig;
 use crate::utils::crypto::user_hash_from_pubkey;
 use actix_web::{web, HttpResponse, Responder};
-use fold_db::log_feature;
-use fold_db::logging::features::LogFeature;
 use fold_db::storage::config::DatabaseConfig;
 use serde::{Deserialize, Serialize};
 use serde_json::json;
@@ -221,9 +219,8 @@ pub async fn apply_setup(
 
     // Persist to disk
     if let Err(e) = persist_node_config(&config) {
-        log_feature!(
-            LogFeature::HttpServer,
-            error,
+        tracing::error!(
+            target: "fold_node::http_server",
             "Failed to persist setup config: {}",
             e
         );
@@ -240,7 +237,8 @@ pub async fn apply_setup(
     state.node_manager.update_config(new_manager_config).await;
 
     let message = format!("Setup applied: {}", changes.join(", "));
-    log_feature!(LogFeature::HttpServer, info, "{}", message);
+    tracing::info!(
+            target: "fold_node::http_server", "{}", message);
 
     HttpResponse::Ok().json(SetupResponse {
         success: true,
@@ -304,12 +302,11 @@ pub async fn get_database_status(state: web::Data<AppState>) -> impl Responder {
                     .get_node(&user_hash)
                     .await
                     .inspect_err(|e| {
-                        log_feature!(
-                            LogFeature::HttpServer,
-                            warn,
-                            "Auto-initialization failed for returning user: {}",
-                            e
-                        );
+                        tracing::warn!(
+                        target: "fold_node::http_server",
+                                        "Auto-initialization failed for returning user: {}",
+                                        e
+                                    );
                     })
                     .is_ok()
             }

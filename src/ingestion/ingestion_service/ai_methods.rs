@@ -2,8 +2,6 @@
 
 use super::IngestionService;
 use crate::ingestion::{AISchemaResponse, IngestionError, IngestionResult, Role};
-use fold_db::log_feature;
-use fold_db::logging::features::LogFeature;
 use serde_json::Value;
 
 impl IngestionService {
@@ -97,14 +95,13 @@ impl IngestionService {
             match parse_ai_response(&raw_response) {
                 Ok(response) => return Ok(response),
                 Err(e) => {
-                    log_feature!(
-                        LogFeature::Ingestion,
-                        warn,
-                        "AI response validation failed on attempt {}/{}: {}",
-                        attempt,
-                        max_validation_attempts,
-                        e
-                    );
+                    tracing::warn!(
+                    target: "fold_node::ingestion",
+                                "AI response validation failed on attempt {}/{}: {}",
+                                attempt,
+                                max_validation_attempts,
+                                e
+                            );
                     last_error = Some(e);
 
                     if attempt < max_validation_attempts {
@@ -166,9 +163,8 @@ impl IngestionService {
             return Ok(());
         }
 
-        log_feature!(
-            LogFeature::Ingestion,
-            info,
+        tracing::info!(
+            target: "fold_node::ingestion",
             "Schema missing field_descriptions for {:?}, calling AI for descriptions",
             missing
         );
@@ -211,30 +207,27 @@ impl IngestionService {
                                     }
                                 }
                             }
-                            log_feature!(
-                                LogFeature::Ingestion,
-                                info,
-                                "AI provided field descriptions for missing fields"
-                            );
+                            tracing::info!(
+                            target: "fold_node::ingestion",
+                                                "AI provided field descriptions for missing fields"
+                                            );
                         }
                     }
                     Err(e) => {
-                        log_feature!(
-                            LogFeature::Ingestion,
-                            warn,
-                            "Failed to parse field descriptions AI response: {}",
-                            e
-                        );
+                        tracing::warn!(
+                        target: "fold_node::ingestion",
+                                        "Failed to parse field descriptions AI response: {}",
+                                        e
+                                    );
                     }
                 }
             }
             Err(e) => {
-                log_feature!(
-                    LogFeature::Ingestion,
-                    warn,
-                    "Failed to get field descriptions from AI: {}",
-                    e
-                );
+                tracing::warn!(
+                target: "fold_node::ingestion",
+                        "Failed to get field descriptions from AI: {}",
+                        e
+                    );
             }
         }
 

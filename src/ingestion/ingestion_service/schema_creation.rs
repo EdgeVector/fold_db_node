@@ -3,8 +3,6 @@
 use super::{get_schema_manager, schema_err, IngestionService};
 use crate::fold_node::FoldNode;
 use crate::ingestion::{AISchemaResponse, IngestionError, IngestionResult};
-use fold_db::log_feature;
-use fold_db::logging::features::LogFeature;
 use serde_json::Value;
 use std::collections::HashMap;
 
@@ -95,22 +93,20 @@ impl IngestionService {
         // Deserialize Value to Schema
         let mut schema: fold_db::schema::types::Schema = serde_json::from_value(schema_def.clone())
             .map_err(|error| {
-                log_feature!(
-                    LogFeature::Ingestion,
-                    error,
-                    "Schema deserialization failed: {}. Raw AI schema JSON: {}",
-                    error,
-                    serde_json::to_string_pretty(schema_def).unwrap_or_default()
-                );
+                tracing::error!(
+                target: "fold_node::ingestion",
+                        "Schema deserialization failed: {}. Raw AI schema JSON: {}",
+                        error,
+                        serde_json::to_string_pretty(schema_def).unwrap_or_default()
+                    );
                 IngestionError::SchemaCreationError(format!(
                     "Failed to deserialize schema from AI response: {}",
                     error
                 ))
             })?;
 
-        log_feature!(
-            LogFeature::Ingestion,
-            info,
+        tracing::info!(
+            target: "fold_node::ingestion",
             "Deserialized schema with {} field classifications from AI",
             schema.field_classifications.len()
         );
@@ -125,9 +121,8 @@ impl IngestionService {
                     .field_descriptions
                     .entry(field_name.clone())
                     .or_insert_with(|| {
-                        log_feature!(
-                            LogFeature::Ingestion,
-                            warn,
+                        tracing::warn!(
+            target: "fold_node::ingestion",
                             "AI did not provide field_description for '{}', using default",
                             field_name
                         );
@@ -155,13 +150,12 @@ impl IngestionService {
                         Some(Value::Number(_)) => vec!["number".to_string()],
                         _ => vec!["word".to_string()],
                     };
-                    log_feature!(
-                        LogFeature::Ingestion,
-                        info,
-                        "Added default classification {:?} to field '{}'",
-                        default,
-                        field_name
-                    );
+                    tracing::info!(
+                    target: "fold_node::ingestion",
+                                "Added default classification {:?} to field '{}'",
+                                default,
+                                field_name
+                            );
                     schema
                         .field_classifications
                         .insert(field_name.clone(), default);
@@ -184,13 +178,12 @@ impl IngestionService {
                     if let Some(sample_value) = sample_obj.get(field_name) {
                         let inferred = fold_db::schema::types::FieldValueType::infer(sample_value);
                         if inferred != fold_db::schema::types::FieldValueType::Null {
-                            log_feature!(
-                                LogFeature::Ingestion,
-                                info,
-                                "Inferred field_type for '{}': {}",
-                                field_name,
-                                inferred
-                            );
+                            tracing::info!(
+                            target: "fold_node::ingestion",
+                                                "Inferred field_type for '{}': {}",
+                                                field_name,
+                                                inferred
+                                            );
                             schema.field_types.insert(field_name.clone(), inferred);
                         }
                     }
@@ -214,12 +207,11 @@ impl IngestionService {
                     Some(field_name.clone()),
                     None,
                 ));
-                log_feature!(
-                    LogFeature::Ingestion,
-                    info,
-                    "Added default key configuration using field '{}' for schema",
-                    field_name
-                );
+                tracing::info!(
+                target: "fold_node::ingestion",
+                        "Added default key configuration using field '{}' for schema",
+                        field_name
+                    );
             } else {
                 return Err(IngestionError::SchemaCreationError(
                     "Cannot create schema without at least one field for key configuration"
@@ -377,9 +369,8 @@ impl IngestionService {
         // creating split-brain state. We must propagate this error so the
         // caller can abort ingestion for this sample.
         if let Some(ref old_name) = add_response.replaced_schema {
-            log_feature!(
-                LogFeature::Ingestion,
-                info,
+            tracing::info!(
+            target: "fold_node::ingestion",
                 "Schema expansion: blocking old schema '{}', loaded expanded '{}'",
                 old_name,
                 schema_response.name
@@ -461,9 +452,8 @@ impl IngestionService {
             .await
             .map_err(schema_err)?;
 
-        log_feature!(
-            LogFeature::Ingestion,
-            info,
+        tracing::info!(
+            target: "fold_node::ingestion",
             "Registered org-scoped schema '{}' for org {}",
             org_schema_name,
             org_hash

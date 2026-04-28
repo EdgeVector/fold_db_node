@@ -20,8 +20,6 @@ use crate::ingestion::{
     AISchemaResponse, IngestionConfig, IngestionError, IngestionResponse, IngestionResult,
     IngestionStatus,
 };
-use fold_db::log_feature;
-use fold_db::logging::features::LogFeature;
 use fold_db::schema::types::{KeyValue, Mutation};
 use fold_db::schema::SchemaCore;
 use serde_json::Value;
@@ -187,9 +185,8 @@ impl IngestionService {
         progress_service: &ProgressService,
         progress_id: String,
     ) -> IngestionResult<IngestionResponse> {
-        log_feature!(
-            LogFeature::Ingestion,
-            info,
+        tracing::info!(
+            target: "fold_node::ingestion",
             "Starting JSON ingestion process with FoldNode (progress_id: {})",
             progress_id
         );
@@ -367,13 +364,12 @@ impl IngestionService {
                         break;
                     }
                     Err(e) => {
-                        log_feature!(
-                            LogFeature::Ingestion,
-                            warn,
-                            "Batch schema reuse check attempt {}/3 failed: {}",
-                            attempt + 1,
-                            e
-                        );
+                        tracing::warn!(
+                        target: "fold_node::ingestion",
+                                        "Batch schema reuse check attempt {}/3 failed: {}",
+                                        attempt + 1,
+                                        e
+                                    );
                         last_err = Some(e);
                         if attempt < 2 {
                             tokio::time::sleep(std::time::Duration::from_millis(
@@ -385,9 +381,8 @@ impl IngestionService {
                 }
             }
             result.unwrap_or_else(|| {
-                log_feature!(
-                    LogFeature::Ingestion,
-                    error,
+                tracing::error!(
+            target: "fold_node::ingestion",
                     "Batch schema reuse check failed after 3 attempts ({}), creating new schemas",
                     last_err.map(|e| e.to_string()).unwrap_or_default()
                 );
@@ -472,12 +467,11 @@ impl IngestionService {
             .get(&top_level_hash)
             .map(|c| c.schema_name)
             .unwrap_or_else(|| {
-                log_feature!(
-                    LogFeature::Ingestion,
-                    warn,
-                    "Schema cache miss for top-level hash '{}' — returning empty schema name",
-                    top_level_hash
-                );
+                tracing::warn!(
+                target: "fold_node::ingestion",
+                        "Schema cache miss for top-level hash '{}' — returning empty schema name",
+                        top_level_hash
+                    );
                 String::new()
             });
 
@@ -515,12 +509,11 @@ impl IngestionService {
                 progress_id: request.progress_id.clone(),
             };
             if let Err(e) = node.mark_file_ingested(&request.pub_key, fh, record).await {
-                log_feature!(
-                    LogFeature::Ingestion,
-                    warn,
-                    "Failed to record file dedup entry: {}",
-                    e
-                );
+                tracing::warn!(
+                target: "fold_node::ingestion",
+                        "Failed to record file dedup entry: {}",
+                        e
+                    );
             }
         }
     }
@@ -708,9 +701,8 @@ pub(crate) fn filter_mappers_by_schema(
         });
         let dropped = before - mutation_mappers.len();
         if dropped > 0 {
-            log_feature!(
-                LogFeature::Ingestion,
-                debug,
+            tracing::debug!(
+            target: "fold_node::ingestion",
                 "Dropped {} mutation mapper(s) for schema '{}' — target fields not in runtime_fields",
                 dropped,
                 schema_name
@@ -743,9 +735,8 @@ pub(crate) async fn generate_mutations_for_item(
     if tracing::enabled!(tracing::Level::DEBUG) {
         let nested_count = obj.values().filter(|v| v.is_object()).count();
         if nested_count > 0 {
-            log_feature!(
-                LogFeature::Ingestion,
-                debug,
+            tracing::debug!(
+            target: "fold_node::ingestion",
                 "Flattened {} nested object(s) to dot-notation for schema '{}'",
                 nested_count,
                 schema_name

@@ -5,7 +5,7 @@ use actix_web::Error;
 use futures_util::future::LocalBoxFuture;
 use std::rc::Rc;
 
-use fold_db::logging::core::run_with_user;
+use fold_db::user_context::run_with_user;
 
 // There are two steps in middleware processing.
 // 1. Middleware initialization, middleware factory gets called with

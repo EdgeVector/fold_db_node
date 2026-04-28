@@ -5,8 +5,6 @@ use crate::server::routes::{
     handler_error_to_response, handler_result_to_response, node_or_return,
 };
 use actix_web::{web, HttpResponse, Responder};
-use fold_db::log_feature;
-use fold_db::logging::features::LogFeature;
 use serde::{Deserialize, Serialize};
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -287,9 +285,8 @@ pub async fn load_schemas(state: web::Data<AppState>) -> impl Responder {
     let op = OperationProcessor::new(node.clone());
     match op.load_schemas().await {
         Ok((available_schemas_loaded, schemas_loaded_to_db, failed_schemas)) => {
-            log_feature!(
-                LogFeature::Schema,
-                info,
+            tracing::info!(
+            target: "fold_node::schema",
                 "Loaded {} of {} schemas from schema service",
                 schemas_loaded_to_db,
                 available_schemas_loaded
@@ -304,7 +301,8 @@ pub async fn load_schemas(state: web::Data<AppState>) -> impl Responder {
             ))
         }
         Err(e) => {
-            log_feature!(LogFeature::Schema, error, "Failed to load schemas: {}", e);
+            tracing::error!(
+            target: "fold_node::schema", "Failed to load schemas: {}", e);
             handler_error_to_response(HandlerError::from(e))
         }
     }

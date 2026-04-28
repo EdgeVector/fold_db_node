@@ -2,8 +2,6 @@
 
 use crate::ingestion::IngestionResult;
 use chrono::Utc;
-use fold_db::log_feature;
-use fold_db::logging::features::LogFeature;
 use fold_db::schema::types::{KeyValue, Mutation};
 use fold_db::MutationType;
 use serde_json::Value;
@@ -73,9 +71,8 @@ pub fn generate_mutations(
     source_file_name: Option<String>,
     metadata: Option<HashMap<String, String>>,
 ) -> IngestionResult<Vec<Mutation>> {
-    log_feature!(
-        LogFeature::Ingestion,
-        info,
+    tracing::info!(
+            target: "fold_node::ingestion",
         "Generating mutations for schema '{}' with {} mappers, {} input fields",
         schema_name,
         mutation_mappers.len(),
@@ -87,9 +84,8 @@ pub fn generate_mutations(
     // Apply mutation mappers to transform JSON fields to schema fields
     let mapped_fields = if mutation_mappers.is_empty() {
         // If no mappers provided, use fields as-is (backward compatibility)
-        log_feature!(
-            LogFeature::Ingestion,
-            info,
+        tracing::info!(
+            target: "fold_node::ingestion",
             "No mutation mappers provided, using all {} fields directly",
             fields_and_values.len()
         );
@@ -110,19 +106,19 @@ pub fn generate_mutations(
                     // Collision: two JSON fields map to the same schema field.
                     // Prefer the identity mapping (json_field == field_name).
                     if json_field == field_name {
-                        log_feature!(
-                            LogFeature::Ingestion, warn,
-                            "Mapper collision: '{}' and '{}' both map to '{}' — keeping identity mapping '{}'",
-                            prev_json, json_field, field_name, json_field
-                        );
+                        tracing::warn!(
+                        target: "fold_node::ingestion",
+                                        "Mapper collision: '{}' and '{}' both map to '{}' — keeping identity mapping '{}'",
+                                        prev_json, json_field, field_name, json_field
+                                    );
                         result.insert(field_name.to_string(), value.clone());
                         sources.insert(field_name.to_string(), json_field.to_string());
                     } else {
-                        log_feature!(
-                            LogFeature::Ingestion, warn,
-                            "Mapper collision: '{}' and '{}' both map to '{}' — keeping earlier mapping from '{}'",
-                            prev_json, json_field, field_name, prev_json
-                        );
+                        tracing::warn!(
+                        target: "fold_node::ingestion",
+                                        "Mapper collision: '{}' and '{}' both map to '{}' — keeping earlier mapping from '{}'",
+                                        prev_json, json_field, field_name, prev_json
+                                    );
                         // Don't overwrite — keep the first (or identity) mapping
                     }
                 } else {
@@ -130,28 +126,25 @@ pub fn generate_mutations(
                     sources.insert(field_name.to_string(), json_field.to_string());
                 }
 
-                log_feature!(
-                    LogFeature::Ingestion,
-                    debug,
-                    "Mapped field: {} -> {}",
-                    json_field,
-                    field_name
-                );
+                tracing::debug!(
+                target: "fold_node::ingestion",
+                        "Mapped field: {} -> {}",
+                        json_field,
+                        field_name
+                    );
             } else {
                 // Expected for optional fields — a schema may have fields that
                 // not every record in a batch contains (e.g., "birthday" in contacts).
-                log_feature!(
-                    LogFeature::Ingestion,
-                    debug,
-                    "Mapper references missing JSON field: {} (field may be optional)",
-                    json_field
-                );
+                tracing::debug!(
+                target: "fold_node::ingestion",
+                        "Mapper references missing JSON field: {} (field may be optional)",
+                        json_field
+                    );
             }
         }
 
-        log_feature!(
-            LogFeature::Ingestion,
-            info,
+        tracing::info!(
+            target: "fold_node::ingestion",
             "Applied mutation mappers: {} JSON fields -> {} schema fields",
             fields_and_values.len(),
             result.len()
@@ -174,9 +167,8 @@ pub fn generate_mutations(
         // deduplication works based on field values.
         let key_value = if key_value.hash.is_none() && key_value.range.is_none() {
             let content_hash = content_hash_from_fields(schema_name, &mapped_fields);
-            log_feature!(
-                LogFeature::Ingestion,
-                warn,
+            tracing::warn!(
+            target: "fold_node::ingestion",
                 "Key fields not found in data for schema '{}', using content hash '{}' as key",
                 schema_name,
                 &content_hash[..12]
@@ -198,13 +190,12 @@ pub fn generate_mutations(
         let key_value = if key_value.hash.is_some() && key_value.range.is_none() {
             let ts = Utc::now().format(RANGE_KEY_TIMESTAMP_FMT).to_string();
             if keys_and_values.contains_key("range_field") {
-                log_feature!(
-                    LogFeature::Ingestion,
-                    warn,
-                    "Range key missing for schema '{}', using timestamp '{}' as fallback",
-                    schema_name,
-                    ts
-                );
+                tracing::warn!(
+                target: "fold_node::ingestion",
+                        "Range key missing for schema '{}', using timestamp '{}' as fallback",
+                        schema_name,
+                        ts
+                    );
             }
             KeyValue::new(key_value.hash, Some(ts))
         } else {
@@ -218,9 +209,8 @@ pub fn generate_mutations(
         // mutation with "HashRange schema '...' requires both hash and range".
         let key_value = if key_value.hash.is_none() && key_value.range.is_some() {
             let content_hash = content_hash_from_fields(schema_name, &mapped_fields);
-            log_feature!(
-                LogFeature::Ingestion,
-                warn,
+            tracing::warn!(
+            target: "fold_node::ingestion",
                 "Hash key missing for schema '{}', using content hash '{}' as fallback",
                 schema_name,
                 &content_hash[..12]
@@ -247,16 +237,14 @@ pub fn generate_mutations(
         }
 
         mutations.push(mutation);
-        log_feature!(
-            LogFeature::Ingestion,
-            info,
+        tracing::info!(
+            target: "fold_node::ingestion",
             "Created mutation with {} fields",
             mutations[0].fields_and_values.len()
         );
     } else {
-        log_feature!(
-            LogFeature::Ingestion,
-            warn,
+        tracing::warn!(
+            target: "fold_node::ingestion",
             "No valid field mappings found, no mutations generated"
         );
     }

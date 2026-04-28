@@ -17,8 +17,6 @@
 use std::sync::Arc;
 use tokio::sync::RwLock;
 
-use fold_db::log_feature;
-use fold_db::logging::features::LogFeature;
 use fold_db::progress::ProgressTracker;
 
 use super::sync_config::AppleSyncConfig;
@@ -51,9 +49,8 @@ pub async fn run_sync(
     let mut errors: Vec<String> = Vec::new();
 
     if sources.notes {
-        log_feature!(
-            LogFeature::Ingestion,
-            info,
+        tracing::info!(
+            target: "fold_node::ingestion",
             "Apple auto-sync: importing notes"
         );
         if let Err(e) =
@@ -64,9 +61,8 @@ pub async fn run_sync(
     }
 
     if sources.reminders {
-        log_feature!(
-            LogFeature::Ingestion,
-            info,
+        tracing::info!(
+            target: "fold_node::ingestion",
             "Apple auto-sync: importing reminders"
         );
         if let Err(e) =
@@ -77,9 +73,8 @@ pub async fn run_sync(
     }
 
     if sources.photos {
-        log_feature!(
-            LogFeature::Ingestion,
-            info,
+        tracing::info!(
+            target: "fold_node::ingestion",
             "Apple auto-sync: importing photos (limit: {})",
             photos_limit
         );
@@ -98,9 +93,8 @@ pub async fn run_sync(
     }
 
     if sources.calendar {
-        log_feature!(
-            LogFeature::Ingestion,
-            info,
+        tracing::info!(
+            target: "fold_node::ingestion",
             "Apple auto-sync: importing calendar"
         );
         if let Err(e) =
@@ -111,9 +105,8 @@ pub async fn run_sync(
     }
 
     if sources.contacts {
-        log_feature!(
-            LogFeature::Ingestion,
-            info,
+        tracing::info!(
+            target: "fold_node::ingestion",
             "Apple auto-sync: importing contacts"
         );
         if let Err(e) =
@@ -141,18 +134,16 @@ async fn sync_notes(
     let notes = match tokio::task::spawn_blocking(|| notes::extract(None)).await {
         Ok(Ok(n)) => n,
         Ok(Err(e)) => {
-            log_feature!(
-                LogFeature::Ingestion,
-                error,
+            tracing::error!(
+            target: "fold_node::ingestion",
                 "Auto-sync notes extract failed: {}",
                 e
             );
             return Err(format!("extract failed: {e}"));
         }
         Err(e) => {
-            log_feature!(
-                LogFeature::Ingestion,
-                error,
+            tracing::error!(
+            target: "fold_node::ingestion",
                 "Auto-sync notes task panicked: {}",
                 e
             );
@@ -188,9 +179,8 @@ async fn sync_notes(
             crate::handlers::ingestion::process_json(request, &uid, &tracker, node, service.clone())
                 .await
         {
-            log_feature!(
-                LogFeature::Ingestion,
-                error,
+            tracing::error!(
+            target: "fold_node::ingestion",
                 "Auto-sync notes batch error: {}",
                 e
             );
@@ -223,18 +213,16 @@ async fn sync_reminders(
     let rems = match tokio::task::spawn_blocking(|| reminders::extract(None)).await {
         Ok(Ok(r)) => r,
         Ok(Err(e)) => {
-            log_feature!(
-                LogFeature::Ingestion,
-                error,
+            tracing::error!(
+            target: "fold_node::ingestion",
                 "Auto-sync reminders extract failed: {}",
                 e
             );
             return Err(format!("extract failed: {e}"));
         }
         Err(e) => {
-            log_feature!(
-                LogFeature::Ingestion,
-                error,
+            tracing::error!(
+            target: "fold_node::ingestion",
                 "Auto-sync reminders task panicked: {}",
                 e
             );
@@ -265,9 +253,8 @@ async fn sync_reminders(
     if let Err(e) =
         crate::handlers::ingestion::process_json(request, user_id, &tracker, node, service).await
     {
-        log_feature!(
-            LogFeature::Ingestion,
-            error,
+        tracing::error!(
+            target: "fold_node::ingestion",
             "Auto-sync reminders error: {}",
             e
         );
@@ -292,18 +279,16 @@ async fn sync_photos(
     let paths = match tokio::task::spawn_blocking(move || photos::export(None, limit)).await {
         Ok(Ok(p)) => p,
         Ok(Err(e)) => {
-            log_feature!(
-                LogFeature::Ingestion,
-                error,
+            tracing::error!(
+            target: "fold_node::ingestion",
                 "Auto-sync photos export failed: {}",
                 e
             );
             return Err(format!("export failed: {e}"));
         }
         Err(e) => {
-            log_feature!(
-                LogFeature::Ingestion,
-                error,
+            tracing::error!(
+            target: "fold_node::ingestion",
                 "Auto-sync photos task panicked: {}",
                 e
             );
@@ -363,13 +348,12 @@ async fn sync_photos(
                 let raw_bytes = match std::fs::read(&file_path) {
                     Ok(b) => b,
                     Err(e) => {
-                        log_feature!(
-                            LogFeature::Ingestion,
-                            warn,
-                            "Auto-sync photo {} read failed: {}",
-                            file_name,
-                            e
-                        );
+                        tracing::warn!(
+                        target: "fold_node::ingestion",
+                                        "Auto-sync photo {} read failed: {}",
+                                        file_name,
+                                        e
+                                    );
                         per_photo_errors.push(format!("{file_name}: read: {e}"));
                         continue;
                     }
@@ -384,13 +368,12 @@ async fn sync_photos(
                 {
                     Ok(h) => Some(h),
                     Err(e) => {
-                        log_feature!(
-                            LogFeature::Ingestion,
-                            warn,
-                            "Auto-sync photo {} store failed, continuing without preview: {}",
-                            file_name,
-                            e
-                        );
+                        tracing::warn!(
+                        target: "fold_node::ingestion",
+                                        "Auto-sync photo {} store failed, continuing without preview: {}",
+                                        file_name,
+                                        e
+                                    );
                         None
                     }
                 };
@@ -417,24 +400,22 @@ async fn sync_photos(
                 )
                 .await
                 {
-                    log_feature!(
-                        LogFeature::Ingestion,
-                        error,
-                        "Auto-sync photo {} error: {}",
-                        file_name,
-                        e
-                    );
+                    tracing::error!(
+                    target: "fold_node::ingestion",
+                                "Auto-sync photo {} error: {}",
+                                file_name,
+                                e
+                            );
                     per_photo_errors.push(format!("{file_name}: {e}"));
                 }
             }
             Err(e) => {
-                log_feature!(
-                    LogFeature::Ingestion,
-                    error,
-                    "Auto-sync photo convert error {}: {}",
-                    path.display(),
-                    e
-                );
+                tracing::error!(
+                target: "fold_node::ingestion",
+                        "Auto-sync photo convert error {}: {}",
+                        path.display(),
+                        e
+                    );
                 per_photo_errors.push(format!("{}: convert: {e}", path.display()));
             }
         }
@@ -465,18 +446,16 @@ async fn sync_calendar(
     let events = match tokio::task::spawn_blocking(|| cal::extract(None)).await {
         Ok(Ok(e)) => e,
         Ok(Err(e)) => {
-            log_feature!(
-                LogFeature::Ingestion,
-                error,
+            tracing::error!(
+            target: "fold_node::ingestion",
                 "Auto-sync calendar extract failed: {}",
                 e
             );
             return Err(format!("extract failed: {e}"));
         }
         Err(e) => {
-            log_feature!(
-                LogFeature::Ingestion,
-                error,
+            tracing::error!(
+            target: "fold_node::ingestion",
                 "Auto-sync calendar task panicked: {}",
                 e
             );
@@ -516,9 +495,8 @@ async fn sync_calendar(
         )
         .await
         {
-            log_feature!(
-                LogFeature::Ingestion,
-                error,
+            tracing::error!(
+            target: "fold_node::ingestion",
                 "Auto-sync calendar batch error: {}",
                 e
             );
@@ -551,18 +529,16 @@ async fn sync_contacts(
     let contacts_vec = match tokio::task::spawn_blocking(contacts::extract).await {
         Ok(Ok(c)) => c,
         Ok(Err(e)) => {
-            log_feature!(
-                LogFeature::Ingestion,
-                error,
+            tracing::error!(
+            target: "fold_node::ingestion",
                 "Auto-sync contacts extract failed: {}",
                 e
             );
             return Err(format!("extract failed: {e}"));
         }
         Err(e) => {
-            log_feature!(
-                LogFeature::Ingestion,
-                error,
+            tracing::error!(
+            target: "fold_node::ingestion",
                 "Auto-sync contacts task panicked: {}",
                 e
             );
@@ -602,9 +578,8 @@ async fn sync_contacts(
         )
         .await
         {
-            log_feature!(
-                LogFeature::Ingestion,
-                error,
+            tracing::error!(
+            target: "fold_node::ingestion",
                 "Auto-sync contacts batch error: {}",
                 e
             );
@@ -633,9 +608,8 @@ async fn sync_notes(
     _service: Arc<IngestionService>,
     _tracker: ProgressTracker,
 ) -> Result<(), String> {
-    log_feature!(
-        LogFeature::Ingestion,
-        warn,
+    tracing::warn!(
+            target: "fold_node::ingestion",
         "Auto-sync notes: not available on this platform"
     );
     Ok(())
@@ -648,9 +622,8 @@ async fn sync_reminders(
     _service: Arc<IngestionService>,
     _tracker: ProgressTracker,
 ) -> Result<(), String> {
-    log_feature!(
-        LogFeature::Ingestion,
-        warn,
+    tracing::warn!(
+            target: "fold_node::ingestion",
         "Auto-sync reminders: not available on this platform"
     );
     Ok(())
@@ -665,9 +638,8 @@ async fn sync_photos(
     _limit: usize,
     _upload_storage: fold_db::storage::UploadStorage,
 ) -> Result<(), String> {
-    log_feature!(
-        LogFeature::Ingestion,
-        warn,
+    tracing::warn!(
+            target: "fold_node::ingestion",
         "Auto-sync photos: not available on this platform"
     );
     Ok(())
@@ -680,9 +652,8 @@ async fn sync_calendar(
     _service: Arc<IngestionService>,
     _tracker: ProgressTracker,
 ) -> Result<(), String> {
-    log_feature!(
-        LogFeature::Ingestion,
-        warn,
+    tracing::warn!(
+            target: "fold_node::ingestion",
         "Auto-sync calendar: not available on this platform"
     );
     Ok(())
@@ -695,9 +666,8 @@ async fn sync_contacts(
     _service: Arc<IngestionService>,
     _tracker: ProgressTracker,
 ) -> Result<(), String> {
-    log_feature!(
-        LogFeature::Ingestion,
-        warn,
+    tracing::warn!(
+            target: "fold_node::ingestion",
         "Auto-sync contacts: not available on this platform"
     );
     Ok(())

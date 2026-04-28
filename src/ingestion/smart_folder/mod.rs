@@ -9,8 +9,6 @@ pub mod scanner;
 pub mod types;
 
 use crate::ingestion::IngestionResult;
-use fold_db::log_feature;
-use fold_db::logging::features::LogFeature;
 use futures::stream::{self, StreamExt};
 use std::collections::HashMap;
 use std::path::Path;
@@ -103,9 +101,8 @@ pub async fn perform_smart_folder_scan_with_progress(
     let image_dir_skipped =
         classify_image_directories(&mut llm_candidates, folder_path, service, &report).await?;
 
-    log_feature!(
-        LogFeature::Ingestion,
-        info,
+    tracing::info!(
+            target: "fold_node::ingestion",
         "File classification: {} candidates for dedup check",
         llm_candidates.len(),
     );
@@ -157,9 +154,8 @@ pub async fn perform_smart_folder_scan_with_progress(
         }
         llm_candidates = remaining;
 
-        log_feature!(
-            LogFeature::Ingestion,
-            info,
+        tracing::info!(
+            target: "fold_node::ingestion",
             "Dedup check: {} already ingested, {} remaining for LLM",
             already_ingested_recs.len(),
             llm_candidates.len(),
@@ -193,9 +189,8 @@ pub async fn perform_smart_folder_scan_with_progress(
             }
         }
 
-        log_feature!(
-            LogFeature::Ingestion,
-            info,
+        tracing::info!(
+            target: "fold_node::ingestion",
             "Heuristic pass: {} classified, {} ambiguous files need LLM",
             resolved.len(),
             ambiguous.len(),
@@ -214,22 +209,20 @@ pub async fn perform_smart_folder_scan_with_progress(
                     Ok(response) => match parse_llm_file_recommendations(&response, &ambiguous) {
                         Ok(recs) => recs,
                         Err(e) => {
-                            log_feature!(
-                                    LogFeature::Ingestion,
-                                    warn,
-                                    "LLM classification response unparseable: {}. Falling back to heuristics.",
-                                    e
-                                );
+                            tracing::warn!(
+                            target: "fold_node::ingestion",
+                                                    "LLM classification response unparseable: {}. Falling back to heuristics.",
+                                                    e
+                                                );
                             apply_heuristic_filtering(&ambiguous)
                         }
                     },
                     Err(e) => {
-                        log_feature!(
-                            LogFeature::Ingestion,
-                            warn,
-                            "LLM classification unavailable: {}. Falling back to heuristics.",
-                            e
-                        );
+                        tracing::warn!(
+                        target: "fold_node::ingestion",
+                                        "LLM classification unavailable: {}. Falling back to heuristics.",
+                                        e
+                                    );
                         apply_heuristic_filtering(&ambiguous)
                     }
                 }

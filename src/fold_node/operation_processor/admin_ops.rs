@@ -3,7 +3,6 @@ use crate::ingestion::ingestion_service::IngestionService;
 use fold_db::error::{FoldDbError, FoldDbResult};
 use fold_db::fold_db_core::orchestration::IndexingStatus;
 use fold_db::storage::SledPool;
-use std::collections::HashMap;
 use std::sync::Arc;
 
 /// Raw `(key, value)` pairs read from a Sled tree, used by the reset
@@ -26,43 +25,6 @@ const RESET_PRESERVED_TREES: &[&str] = &["node_identity", "org_memberships"];
 use super::OperationProcessor;
 
 impl OperationProcessor {
-    // --- Logging Operations ---
-
-    /// List logs with optional filtering.
-    pub async fn list_logs(
-        &self,
-        since: Option<i64>,
-        limit: Option<usize>,
-    ) -> Vec<fold_db::logging::core::LogEntry> {
-        fold_db::logging::LoggingSystem::query_logs(limit, since)
-            .await
-            .unwrap_or_default()
-    }
-
-    /// Get current logging configuration.
-    pub async fn get_log_config(&self) -> Option<fold_db::logging::config::LogConfig> {
-        fold_db::logging::LoggingSystem::get_config().await
-    }
-
-    /// Reload logging configuration from file.
-    pub async fn reload_log_config(&self, path: &str) -> FoldDbResult<()> {
-        fold_db::logging::LoggingSystem::reload_config_from_file(path)
-            .await
-            .map_err(|e| FoldDbError::Config(format!("Failed to reload log config: {}", e)))
-    }
-
-    /// Get available log features and their levels.
-    pub async fn get_log_features(&self) -> Option<HashMap<String, String>> {
-        fold_db::logging::LoggingSystem::get_features().await
-    }
-
-    /// Update log level for a specific feature.
-    pub async fn update_log_feature_level(&self, feature: &str, level: &str) -> FoldDbResult<()> {
-        fold_db::logging::LoggingSystem::update_feature_level(feature, level)
-            .await
-            .map_err(|e| FoldDbError::Config(format!("Failed to update log level: {}", e)))
-    }
-
     /// Get event statistics.
     pub async fn get_event_statistics(
         &self,

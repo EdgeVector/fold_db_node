@@ -5,8 +5,6 @@
 
 use crate::ingestion::decomposer;
 use crate::ingestion::{AISchemaResponse, IngestionError, IngestionResult};
-use fold_db::log_feature;
-use fold_db::logging::features::LogFeature;
 use fold_db::schema::types::KeyValue;
 use schema_service_core::types::BatchSchemaReuseResponse;
 use serde_json::Value;
@@ -182,9 +180,8 @@ async fn update_ref_fields(
     }
 
     if let Err(e) = schema.populate_runtime_fields() {
-        log_feature!(
-            LogFeature::Ingestion,
-            warn,
+        tracing::warn!(
+            target: "fold_node::ingestion",
             "Failed to populate runtime fields for schema '{}': {}",
             schema_name,
             e
@@ -227,9 +224,8 @@ impl IngestionService {
 
         // Depth guard: if we've recursed too deep, skip children and treat as flat
         if depth >= MAX_DECOMPOSITION_DEPTH {
-            log_feature!(
-                LogFeature::Ingestion,
-                warn,
+            tracing::warn!(
+            target: "fold_node::ingestion",
                 "Decomposition depth limit ({}) reached for structure hash '{}' — treating as flat",
                 MAX_DECOMPOSITION_DEPTH,
                 structure_hash
@@ -276,9 +272,8 @@ impl IngestionService {
 
         let merged_mappers = merge_mappers(&ai_response.mutation_mappers, service_mappers);
 
-        log_feature!(
-            LogFeature::Ingestion,
-            info,
+        tracing::info!(
+            target: "fold_node::ingestion",
             "Cached schema '{}' for structure hash {}",
             schema_name,
             structure_hash
@@ -434,13 +429,12 @@ impl IngestionService {
                 // or system schema — so we bind the inner `Schema` and
                 // proceed as before.
                 let matched_schema = &reuse_match.schema.schema;
-                log_feature!(
-                    LogFeature::Ingestion,
-                    info,
-                    "Batch reuse hit for structure hash '{}': reusing schema '{}' (superset match)",
-                    structure_hash,
-                    matched_schema.name
-                );
+                tracing::info!(
+                target: "fold_node::ingestion",
+                        "Batch reuse hit for structure hash '{}': reusing schema '{}' (superset match)",
+                        structure_hash,
+                        matched_schema.name
+                    );
                 // Reuse: load schema locally if needed, approve, build mappers
                 let schema_manager = super::get_schema_manager(node).await?;
                 let already_loaded = schema_manager
@@ -488,9 +482,8 @@ impl IngestionService {
             )
         };
 
-        log_feature!(
-            LogFeature::Ingestion,
-            info,
+        tracing::info!(
+            target: "fold_node::ingestion",
             "Resolved schema '{}' for structure hash {}",
             schema_name,
             structure_hash
@@ -558,9 +551,8 @@ impl IngestionService {
 
         // Skip children if depth limit reached
         if depth >= MAX_DECOMPOSITION_DEPTH {
-            log_feature!(
-                LogFeature::Ingestion,
-                warn,
+            tracing::warn!(
+            target: "fold_node::ingestion",
                 "Decomposition depth limit ({}) reached during ingestion for structure hash '{}' — skipping children",
                 MAX_DECOMPOSITION_DEPTH,
                 structure_hash
@@ -615,13 +607,12 @@ impl IngestionService {
                             "key": kv,
                         }));
                     } else {
-                        log_feature!(
-                        LogFeature::Ingestion,
-                        warn,
-                        "Child item in field '{}' (structure hash {}) produced no key_value — reference will be missing",
-                        child_group.field_name,
-                        child_group.structure_hash
-                    );
+                        tracing::warn!(
+                        target: "fold_node::ingestion",
+                                    "Child item in field '{}' (structure hash {}) produced no key_value — reference will be missing",
+                                    child_group.field_name,
+                                    child_group.structure_hash
+                                );
                     }
                 }
 

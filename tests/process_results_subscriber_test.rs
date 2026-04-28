@@ -7,10 +7,10 @@
 
 mod common;
 
-use fold_db::logging::core::run_with_user;
 use fold_db::schema::types::operations::MutationType;
 use fold_db::schema::types::{KeyValue, Mutation};
 use fold_db::test_helpers::TestSchemaBuilder;
+use fold_db::user_context::run_with_user;
 use fold_db_node::fold_node::node::FoldNode;
 use serde_json::json;
 use std::collections::HashMap;

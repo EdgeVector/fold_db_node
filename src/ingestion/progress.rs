@@ -178,7 +178,7 @@ impl ProgressService {
     }
 
     pub async fn get_all_progress(&self) -> Vec<IngestionProgress> {
-        let Some(user_id) = fold_db::logging::core::get_current_user_id() else {
+        let Some(user_id) = fold_db::user_context::get_current_user_id() else {
             return vec![]; // No user context = no jobs to return
         };
 

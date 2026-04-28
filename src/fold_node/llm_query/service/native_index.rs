@@ -969,7 +969,7 @@ impl LlmQueryService {
         // Create an agent progress job so the frontend can track what's happening
         let agent_job_id = format!("agent-{}", uuid::Uuid::new_v4());
         if let Some(tracker) = progress_tracker {
-            let user_id = fold_db::logging::core::get_current_user_id()
+            let user_id = fold_db::user_context::get_current_user_id()
                 .unwrap_or_else(|| "unknown".to_string());
             let mut job = fold_db::progress::Job::new(
                 agent_job_id.clone(),

@@ -36,7 +36,7 @@ mod tests {
         let temp_dir = tempdir().unwrap();
         let state = create_test_state(&temp_dir).await;
 
-        fold_db::logging::core::run_with_user("test_user", async move {
+        fold_db::user_context::run_with_user("test_user", async move {
             let req = test::TestRequest::post().to_http_request();
             let resp = backup(state).await.respond_to(&req);
             assert_eq!(resp.status(), 400);
@@ -49,7 +49,7 @@ mod tests {
         let temp_dir = tempdir().unwrap();
         let state = create_test_state(&temp_dir).await;
 
-        fold_db::logging::core::run_with_user("test_user", async move {
+        fold_db::user_context::run_with_user("test_user", async move {
             let req = test::TestRequest::post().to_http_request();
             let resp = restore(state).await.respond_to(&req);
             assert_eq!(resp.status(), 400);

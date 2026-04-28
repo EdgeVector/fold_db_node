@@ -11,7 +11,7 @@
 //!
 //! Run with: `cargo test --test smart_folder_ingestion_test -- --ignored --nocapture`
 
-use fold_db::logging::core::run_with_user;
+use fold_db::user_context::run_with_user;
 use fold_db_node::fold_node::llm_query::LlmQueryService;
 use fold_db_node::fold_node::node::FoldNode;
 use fold_db_node::fold_node::OperationProcessor;

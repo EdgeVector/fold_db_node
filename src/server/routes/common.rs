@@ -3,8 +3,6 @@
 use crate::fold_node::FoldNode;
 use crate::server::http_server::AppState;
 use actix_web::{http::StatusCode, web, HttpResponse};
-use fold_db::log_feature;
-use fold_db::logging::features::LogFeature;
 use serde_json::json;
 use std::sync::Arc;
 
@@ -42,7 +40,7 @@ pub fn handler_error_to_response(e: crate::handlers::HandlerError) -> HttpRespon
 /// This is critical for multi-tenant isolation - all data operations
 /// must have a valid user context to ensure proper data partitioning.
 pub fn require_user_context() -> Result<String, HttpResponse> {
-    fold_db::logging::core::get_current_user_id().ok_or_else(|| {
+    fold_db::user_context::get_current_user_id().ok_or_else(|| {
         HttpResponse::Unauthorized().json(json!({
             "ok": false,
             "error": "Authentication required. Please provide X-User-Hash header.",
@@ -60,9 +58,8 @@ async fn get_node_for_user(
     user_id: &str,
 ) -> Result<Arc<FoldNode>, HttpResponse> {
     state.node_manager.get_node(user_id).await.map_err(|e| {
-        log_feature!(
-            LogFeature::HttpServer,
-            error,
+        tracing::error!(
+            target: "fold_node::http_server",
             "Failed to get node for user {}: {}",
             user_id,
             e

@@ -5,10 +5,6 @@
 //! standard `ProgressTracker` / `Job` infrastructure.
 
 use actix_web::{web, HttpResponse, Responder};
-#[cfg(target_os = "macos")]
-use fold_db::log_feature;
-#[cfg(target_os = "macos")]
-use fold_db::logging::features::LogFeature;
 use fold_db::progress::{Job, JobStatus, JobType, ProgressTracker};
 use serde::{Deserialize, Serialize};
 use serde_json::json;
@@ -104,7 +100,7 @@ where
     let response_id = progress_id.clone();
     tokio::spawn(
         async move {
-            fold_db::logging::core::run_with_user(&user_id, async move {
+            fold_db::user_context::run_with_user(&user_id, async move {
                 work().await;
             })
             .await;
@@ -225,7 +221,7 @@ async fn run_apple_notes_import(
 
         match crate::handlers::ingestion::process_json(
             request,
-            &fold_db::logging::core::get_current_user_id().unwrap_or_default(),
+            &fold_db::user_context::get_current_user_id().unwrap_or_default(),
             &tracker,
             node,
             service.clone(),
@@ -234,13 +230,12 @@ async fn run_apple_notes_import(
         {
             Ok(_) => ingested += chunk.len(),
             Err(e) => {
-                log_feature!(
-                    LogFeature::Ingestion,
-                    warn,
-                    "Apple Notes batch {} failed: {}",
-                    i,
-                    e
-                );
+                tracing::warn!(
+                target: "fold_node::ingestion",
+                        "Apple Notes batch {} failed: {}",
+                        i,
+                        e
+                    );
             }
         }
 
@@ -390,7 +385,7 @@ async fn run_apple_reminders_import(
 
     let (ingested, ingest_error) = match crate::handlers::ingestion::process_json(
         request,
-        &fold_db::logging::core::get_current_user_id().unwrap_or_default(),
+        &fold_db::user_context::get_current_user_id().unwrap_or_default(),
         &tracker,
         node,
         service,
@@ -399,9 +394,8 @@ async fn run_apple_reminders_import(
     {
         Ok(_) => (total, None),
         Err(e) => {
-            log_feature!(
-                LogFeature::Ingestion,
-                warn,
+            tracing::warn!(
+            target: "fold_node::ingestion",
                 "Apple Reminders ingestion failed: {}",
                 e
             );
@@ -595,12 +589,11 @@ async fn run_apple_photos_import(
                             }
                         }
                         Err(e) => {
-                            log_feature!(
-                                LogFeature::Ingestion,
-                                warn,
-                                "Visibility classification failed, skipping: {}",
-                                e
-                            );
+                            tracing::warn!(
+                            target: "fold_node::ingestion",
+                                                "Visibility classification failed, skipping: {}",
+                                                e
+                                            );
                         }
                     }
                 }
@@ -608,13 +601,12 @@ async fn run_apple_photos_import(
                 let raw_bytes = match std::fs::read(&file_path) {
                     Ok(b) => b,
                     Err(e) => {
-                        log_feature!(
-                            LogFeature::Ingestion,
-                            warn,
-                            "Failed to read photo {} for storage: {}",
-                            file_name,
-                            e
-                        );
+                        tracing::warn!(
+                        target: "fold_node::ingestion",
+                                        "Failed to read photo {} for storage: {}",
+                                        file_name,
+                                        e
+                                    );
                         continue;
                     }
                 };
@@ -628,13 +620,12 @@ async fn run_apple_photos_import(
                 {
                     Ok(h) => Some(h),
                     Err(e) => {
-                        log_feature!(
-                            LogFeature::Ingestion,
-                            warn,
-                            "Failed to store photo {} content-addressed (preview unavailable): {}",
-                            file_name,
-                            e
-                        );
+                        tracing::warn!(
+                        target: "fold_node::ingestion",
+                                        "Failed to store photo {} content-addressed (preview unavailable): {}",
+                                        file_name,
+                                        e
+                                    );
                         None
                     }
                 };
@@ -654,7 +645,7 @@ async fn run_apple_photos_import(
 
                 match crate::handlers::ingestion::process_json(
                     request,
-                    &fold_db::logging::core::get_current_user_id().unwrap_or_default(),
+                    &fold_db::user_context::get_current_user_id().unwrap_or_default(),
                     &tracker,
                     node,
                     service.clone(),
@@ -663,24 +654,22 @@ async fn run_apple_photos_import(
                 {
                     Ok(_) => ingested += 1,
                     Err(e) => {
-                        log_feature!(
-                            LogFeature::Ingestion,
-                            warn,
-                            "Failed to ingest photo {}: {}",
-                            file_name,
-                            e
-                        );
+                        tracing::warn!(
+                        target: "fold_node::ingestion",
+                                        "Failed to ingest photo {}: {}",
+                                        file_name,
+                                        e
+                                    );
                     }
                 }
             }
             Err(e) => {
-                log_feature!(
-                    LogFeature::Ingestion,
-                    warn,
-                    "Failed to convert photo {}: {}",
-                    path.display(),
-                    e
-                );
+                tracing::warn!(
+                target: "fold_node::ingestion",
+                        "Failed to convert photo {}: {}",
+                        path.display(),
+                        e
+                    );
             }
         }
 
@@ -867,7 +856,7 @@ async fn run_apple_calendar_import(
 
         match crate::handlers::ingestion::process_json(
             request,
-            &fold_db::logging::core::get_current_user_id().unwrap_or_default(),
+            &fold_db::user_context::get_current_user_id().unwrap_or_default(),
             &tracker,
             node,
             service.clone(),
@@ -876,13 +865,12 @@ async fn run_apple_calendar_import(
         {
             Ok(_) => ingested += chunk.len(),
             Err(e) => {
-                log_feature!(
-                    LogFeature::Ingestion,
-                    warn,
-                    "Apple Calendar batch {} failed: {}",
-                    i,
-                    e
-                );
+                tracing::warn!(
+                target: "fold_node::ingestion",
+                        "Apple Calendar batch {} failed: {}",
+                        i,
+                        e
+                    );
             }
         }
 
@@ -926,23 +914,21 @@ async fn run_apple_calendar_import(
                     .as_ref()
                     .map(|r| r.total_records_written)
                     .unwrap_or(0);
-                log_feature!(
-                    LogFeature::Ingestion,
-                    info,
-                    "Apple Calendar: extracted {} email signals from {} events ({} records written)",
-                    signal_count,
-                    attendee_count,
-                    written,
-                );
+                tracing::info!(
+                target: "fold_node::ingestion",
+                        "Apple Calendar: extracted {} email signals from {} events ({} records written)",
+                        signal_count,
+                        attendee_count,
+                        written,
+                    );
             }
             Err(e) => {
-                log_feature!(
-                    LogFeature::Ingestion,
-                    warn,
-                    "Apple Calendar: attendee fingerprint extraction failed for {} events: {:?}",
-                    attendee_count,
-                    e,
-                );
+                tracing::warn!(
+                target: "fold_node::ingestion",
+                        "Apple Calendar: attendee fingerprint extraction failed for {} events: {:?}",
+                        attendee_count,
+                        e,
+                    );
             }
         }
     }
@@ -1072,7 +1058,7 @@ async fn run_apple_contacts_import(
 
         match crate::handlers::ingestion::process_json(
             request,
-            &fold_db::logging::core::get_current_user_id().unwrap_or_default(),
+            &fold_db::user_context::get_current_user_id().unwrap_or_default(),
             &tracker,
             node,
             service.clone(),
@@ -1081,13 +1067,12 @@ async fn run_apple_contacts_import(
         {
             Ok(_) => ingested += chunk.len(),
             Err(e) => {
-                log_feature!(
-                    LogFeature::Ingestion,
-                    warn,
-                    "Apple Contacts batch {} failed: {}",
-                    i,
-                    e
-                );
+                tracing::warn!(
+                target: "fold_node::ingestion",
+                        "Apple Contacts batch {} failed: {}",
+                        i,
+                        e
+                    );
             }
         }
 
@@ -1208,9 +1193,8 @@ pub fn spawn_sync_scheduler(
                 continue;
             }
 
-            fold_db::log_feature!(
-                fold_db::logging::features::LogFeature::Ingestion,
-                info,
+            tracing::info!(
+            target: "fold_node::ingestion",
                 "Apple auto-sync: starting scheduled import"
             );
 
@@ -1223,11 +1207,10 @@ pub fn spawn_sync_scheduler(
             let (user_id, node_arc) = match require_node(&app_state).await {
                 Ok(ctx) => ctx,
                 Err(_) => {
-                    fold_db::log_feature!(
-                        fold_db::logging::features::LogFeature::Ingestion,
-                        warn,
-                        "Apple auto-sync: no active node, skipping"
-                    );
+                    tracing::warn!(
+                    target: "fold_node::ingestion",
+                                "Apple auto-sync: no active node, skipping"
+                            );
                     continue;
                 }
             };
@@ -1235,11 +1218,10 @@ pub fn spawn_sync_scheduler(
             let service = match ingestion_service.read().await.clone() {
                 Some(s) => s,
                 None => {
-                    fold_db::log_feature!(
-                        fold_db::logging::features::LogFeature::Ingestion,
-                        warn,
-                        "Apple auto-sync: ingestion service not available, skipping"
-                    );
+                    tracing::warn!(
+                    target: "fold_node::ingestion",
+                                "Apple auto-sync: ingestion service not available, skipping"
+                            );
                     continue;
                 }
             };
@@ -1264,27 +1246,24 @@ pub fn spawn_sync_scheduler(
                     cfg.mark_sync_complete(now);
                 } else {
                     let aggregated = errors.join(" | ");
-                    fold_db::log_feature!(
-                        fold_db::logging::features::LogFeature::Ingestion,
-                        error,
-                        "Apple auto-sync: scheduled import finished with errors: {}",
-                        aggregated
-                    );
+                    tracing::error!(
+                    target: "fold_node::ingestion",
+                                "Apple auto-sync: scheduled import finished with errors: {}",
+                                aggregated
+                            );
                     cfg.mark_sync_error(now, aggregated);
                 }
                 if let Err(e) = cfg.save() {
-                    fold_db::log_feature!(
-                        fold_db::logging::features::LogFeature::Ingestion,
-                        error,
-                        "Apple auto-sync: failed to persist config: {}",
-                        e
-                    );
+                    tracing::error!(
+                    target: "fold_node::ingestion",
+                                "Apple auto-sync: failed to persist config: {}",
+                                e
+                            );
                 }
             }
 
-            fold_db::log_feature!(
-                fold_db::logging::features::LogFeature::Ingestion,
-                info,
+            tracing::info!(
+            target: "fold_node::ingestion",
                 "Apple auto-sync: scheduled import complete"
             );
         }
