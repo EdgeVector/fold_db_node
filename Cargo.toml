@@ -38,7 +38,7 @@ schema_service_client = { git = "https://github.com/EdgeVector/schema_service.gi
 # `/api/logs/stream` SSE endpoint can subscribe to a tracing-native broadcast.
 # Upstream `init_node` doesn't compose the WEB layer yet — the local
 # `observability_setup::init_node_with_web` helper in this crate wires it.
-observability = { git = "https://github.com/EdgeVector/fold_db.git", rev = "4574614708cbb539443c2c1918b942afd88aaaba" }
+observability = { git = "https://github.com/EdgeVector/fold_db.git", rev = "868da9ab5419de1baa69e7a4b79e59141adb34a4" }
 
 # HTTP Server
 actix-web = "4.3"
@@ -157,6 +157,14 @@ schema_service_core = { git = "https://github.com/EdgeVector/schema_service.git"
 # real schema service so the test can capture the egress traceparent
 # header without spawning a second observable in the same process.
 wiremock = "0.6"
+# Phase 4 / T10: Sentry ERROR-layer end-to-end test. The `test` feature
+# enables `sentry::test::with_captured_events` so the test can capture
+# events into an in-memory transport without touching the network.
+# Versions match observability's Cargo.toml (sentry 0.47 / sentry-tracing
+# 0.47) so Cargo unifies them. See
+# `tests/observability_sentry_error_e2e.rs`.
+sentry = { version = "0.47", default-features = false, features = ["backtrace", "contexts", "release-health", "transport", "test"] }
+sentry-tracing = "0.47"
 
 [lib]
 name = "fold_db_node"
