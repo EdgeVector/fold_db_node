@@ -1,0 +1,156 @@
+name: Nightly Integration
+
+# Tier 4 of the CI tier model (see ci-tests.yml header).
+#
+# Runs slow / external-service / API-key tests once per night against
+# main. Failures are reported via Discord (notify.yml hook). At ~15-20
+# PRs/day a nightly failure has many candidate culprits — this tier is
+# only for tests where:
+#   - they're too slow for merge-time (perf benchmarks, soak)
+#   - they need real third-party APIs (ANTHROPIC_API_KEY, etc.)
+#   - they pull large models (FastEmbed, ONNX) on first run
+#
+# Correctness regressions belong on the merge_group gate, not here.
+# nightly-ingestion.yml and nightly-qa-dogfood.yml cover orthogonal
+# end-to-end flows; this workflow is for `cargo test`-runnable tests
+# that were `#[ignore]`'d on the merge gate.
+on:
+  schedule:
+    # 09:00 UTC = 02:00 PT — after most North American work, before most
+    # European work. Picked to avoid colliding with nightly-ingestion at
+    # 03:00 UTC and nightly-qa-dogfood (whatever its time is).
+    - cron: "0 9 * * *"
+  workflow_dispatch:
+
+concurrency:
+  group: nightly-integration
+  cancel-in-progress: false
+
+jobs:
+  perf-tests:
+    name: Performance Tests
+    runs-on: ubuntu-latest-m
+    timeout-minutes: 30
+
+    env:
+      RUSTFLAGS: -C linker=clang -C link-arg=-fuse-ld=mold
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Install mold linker
+        run: sudo apt-get update && sudo apt-get install -y mold
+
+      - name: Install Rust
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Configure git for private dependencies
+        run: git config --global url."https://x-access-token:${{ secrets.PRIVATE_DEPS_TOKEN }}@github.com/".insteadOf "https://github.com/"
+
+      - name: Cache Rust artifacts
+        uses: Swatinem/rust-cache@v2
+        with:
+          key: nightly-perf
+
+      - name: Stub frontend dist for rust_embed
+        run: mkdir -p src/server/static-react/dist && echo '<html></html>' > src/server/static-react/dist/index.html
+
+      - name: Run mutation_performance_test
+        run: cargo test --test mutation_performance_test -- --nocapture
+
+      - name: Run mutation_perf_investigation
+        run: cargo test --test mutation_perf_investigation -- --nocapture
+
+  ai-call-tests:
+    name: AI-Call Tests (ANTHROPIC_API_KEY)
+    runs-on: ubuntu-latest-m
+    timeout-minutes: 45
+    # Skip if the API key isn't configured. Lets the workflow be enabled
+    # in forks without leaking — and is the right behavior on a key
+    # rotation gap.
+    if: ${{ vars.SKIP_AI_NIGHTLY != 'true' }}
+
+    env:
+      RUSTFLAGS: -C linker=clang -C link-arg=-fuse-ld=mold
+      ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
+
+    steps:
+      - name: "Guard: API key present"
+        run: |
+          if [ -z "$ANTHROPIC_API_KEY" ]; then
+            echo "::warning::ANTHROPIC_API_KEY not set — AI nightly tests will be skipped at the test layer (#[ignore] guard fires)."
+          fi
+
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Install mold linker
+        run: sudo apt-get update && sudo apt-get install -y mold
+
+      - name: Install Rust
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Configure git for private dependencies
+        run: git config --global url."https://x-access-token:${{ secrets.PRIVATE_DEPS_TOKEN }}@github.com/".insteadOf "https://github.com/"
+
+      - name: Cache Rust artifacts
+        uses: Swatinem/rust-cache@v2
+        with:
+          key: nightly-ai
+
+      - name: Stub frontend dist for rust_embed
+        run: mkdir -p src/server/static-react/dist && echo '<html></html>' > src/server/static-react/dist/index.html
+
+      # `-- --ignored` runs ONLY the #[ignore]'d tests — tests already
+      # exercised on the merge gate are skipped.
+      - name: Run AI-gated integration tests
+        run: |
+          cargo test --features test-utils \
+            --test agent_ingestion_test \
+            --test ingest_tweets_test \
+            --test paintings_schema_consolidation_test \
+            --test semantic_schema_naming_test \
+            --test smart_folder_ingestion_test \
+            --test smart_folder_tweets_test \
+            --test twitter_export_scan_test \
+            -- --ignored --nocapture
+
+  embedding-model-tests:
+    name: Embedding-Model Tests (FastEmbed)
+    runs-on: ubuntu-latest-m
+    timeout-minutes: 30
+
+    env:
+      RUSTFLAGS: -C linker=clang -C link-arg=-fuse-ld=mold
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Install mold linker
+        run: sudo apt-get update && sudo apt-get install -y mold
+
+      - name: Install Rust
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Configure git for private dependencies
+        run: git config --global url."https://x-access-token:${{ secrets.PRIVATE_DEPS_TOKEN }}@github.com/".insteadOf "https://github.com/"
+
+      - name: Cache Rust artifacts
+        uses: Swatinem/rust-cache@v2
+        with:
+          key: nightly-embedding
+
+      - name: Stub frontend dist for rust_embed
+        run: mkdir -p src/server/static-react/dist && echo '<html></html>' > src/server/static-react/dist/index.html
+
+      # The two FastEmbed-using tests live in distinct files; one runs
+      # via #[ignore] guard, the other always runs. Both download the
+      # FastEmbed model on first invocation (cached afterward).
+      - name: Run FastEmbed-backed integration tests
+        run: |
+          cargo test --features test-utils \
+            --test semantic_field_matching_e2e_test \
+            --test schema_service_semantic_match_test \
+            -- --ignored --nocapture
