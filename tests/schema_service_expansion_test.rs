@@ -7,7 +7,7 @@
 //! - Old schema name is returned in the Expanded variant for blocking
 
 use fold_db::schema::types::data_classification::DataClassification;
-use schema_service_core::embedder::MockEmbeddingModel;
+use schema_service_core::embedder::{MockEmbeddingModel, ScriptedEmbeddingModel};
 use schema_service_core::state::SchemaServiceState;
 use schema_service_core::types::SchemaAddOutcome;
 use serde_json::json;
@@ -47,6 +47,55 @@ fn create_test_state() -> SchemaServiceState {
 
     SchemaServiceState::new(db_path, Arc::new(MockEmbeddingModel))
         .expect("failed to initialize schema service state")
+}
+
+/// State backed by a [`ScriptedEmbeddingModel`] with the given
+/// vector responses. Use when the test needs to control similarity
+/// values precisely (e.g. exercising the descriptive_name semantic
+/// match path with two case-different names that should match).
+fn create_scripted_state(responses: HashMap<String, Vec<f32>>) -> SchemaServiceState {
+    let temp_dir = tempdir().expect("failed to create temp directory");
+    let db_path = temp_dir
+        .path()
+        .join("test_schema_db")
+        .to_string_lossy()
+        .to_string();
+    std::mem::forget(temp_dir);
+
+    let embedder = ScriptedEmbeddingModel::new(responses);
+    SchemaServiceState::new(db_path, Arc::new(embedder))
+        .expect("failed to initialize schema service state")
+}
+
+/// See [`crate::tests::schema_service_semantic_match_test`] for the
+/// design notes — these helpers script the description-only and the
+/// full-context embedding keys consistently.
+fn scripted_field_key(field_name: &str, descriptive_name: &str) -> String {
+    format!(
+        "the {} of the {}: {} field",
+        field_name, descriptive_name, field_name
+    )
+}
+
+fn scripted_field_description_key(field_name: &str) -> String {
+    format!("{} field", field_name)
+}
+
+fn insert_field_vector_canonicalize_orthogonal(
+    responses: &mut HashMap<String, Vec<f32>>,
+    field_name: &str,
+    descriptive_name: &str,
+    semantic_vec: Vec<f32>,
+    desc_orthogonal_dir: usize,
+) {
+    responses.insert(
+        scripted_field_description_key(field_name),
+        ScriptedEmbeddingModel::unit_vec(desc_orthogonal_dir),
+    );
+    responses.insert(
+        scripted_field_key(field_name, descriptive_name),
+        semantic_vec,
+    );
 }
 
 // ---------------------------------------------------------------------------
@@ -336,9 +385,38 @@ async fn chain_expansion_produces_correct_field_mapper_lineage() {
 // ---------------------------------------------------------------------------
 
 #[tokio::test]
-#[ignore] // TODO: production-vs-test divergence — second ingest expected Expanded but got Added (no semantic-match expansion firing). Either the matcher regressed or the expectations are stale. Surfaced by tier-split CI (PR #741).
 async fn semantic_match_expansion_has_field_mappers() {
-    let state = create_test_state();
+    // Originally written assuming MockEmbeddingModel produces high
+    // similarity for case-only differences ("Medical Records" ≈
+    // "medical records"). It does not — Mock hashes the input via
+    // DefaultHasher, so any character change yields a near-
+    // orthogonal vector. Rewritten to use ScriptedEmbeddingModel so
+    // the descriptive_name semantic-match path can be exercised
+    // deterministically, regardless of how the mock embeds.
+    let mut responses = HashMap::new();
+    responses.insert(
+        "Medical Records".to_string(),
+        ScriptedEmbeddingModel::blended_vec(0, 1, 0.0),
+    );
+    responses.insert(
+        "medical records".to_string(),
+        ScriptedEmbeddingModel::blended_vec(0, 1, 0.05),
+    );
+    for (idx, field) in ["patient_id", "diagnosis", "date", "treatment"]
+        .iter()
+        .enumerate()
+    {
+        for desc in ["Medical Records", "medical records"] {
+            insert_field_vector_canonicalize_orthogonal(
+                &mut responses,
+                field,
+                desc,
+                ScriptedEmbeddingModel::unit_vec(40 + idx * 2),
+                41 + idx * 2,
+            );
+        }
+    }
+    let state = create_scripted_state(responses);
 
     let schema_a = json_to_schema(json!({
         "name": "A",
@@ -351,7 +429,9 @@ async fn semantic_match_expansion_has_field_mappers() {
         other => panic!("expected Added, got {:?}", other),
     };
 
-    // Similar descriptive name (case change triggers semantic match via MockEmbeddingModel)
+    // Similar descriptive name — scripted to high cosine similarity
+    // with "Medical Records", which triggers the semantic match
+    // path of `find_matching_descriptive_name`.
     let schema_b = json_to_schema(json!({
         "name": "B",
         "descriptive_name": "medical records",

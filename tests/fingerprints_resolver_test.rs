@@ -16,7 +16,6 @@
 //! tests/fingerprints_registration_test.rs and
 //! tests/fingerprints_writer_test.rs to keep the pattern consistent.
 
-use fold_db_node::fingerprints::canonical_names;
 use fold_db_node::fingerprints::keys::{edge_id, edge_kind, fingerprint_id_for_face_embedding};
 use fold_db_node::fingerprints::planned_record::PlannedRecord;
 use fold_db_node::fingerprints::registration::register_phase_1_schemas;
@@ -240,10 +239,17 @@ async fn build_graph(node: Arc<FoldNode>) -> GraphFixture {
 /// Threshold 0.85 — everything above is reachable from fp_A.
 /// Expected cluster: {fp_A, fp_B, fp_C, fp_D} (not fp_E which has
 /// no edges).
+///
+/// NOTE on test setup: tests in this file do NOT call
+/// `canonical_names::reset_for_tests()` because the registry is a
+/// process-wide `OnceCell<RwLock<…>>`, and parallel tests racing on
+/// reset+repopulate caused intermittent
+/// `"no canonical name registered for 'Fingerprint'"` failures
+/// (see PR #736 / #741). Phase 1 schemas are deterministic — every
+/// test produces the same descriptive→canonical mapping — so the
+/// idempotent `install()` makes resets unnecessary.
 #[actix_web::test]
 async fn resolves_full_connected_component_above_threshold() {
-    canonical_names::reset_for_tests();
-
     let service = spawn_schema_service().await;
     let (node, _tmp) = create_node(&service.url).await;
     register_phase_1_schemas(&node).await.unwrap();
@@ -302,8 +308,6 @@ async fn resolves_full_connected_component_above_threshold() {
 /// filtered out and counted in diagnostics.below_threshold_edge_count.
 #[actix_web::test]
 async fn threshold_filters_below_weight_edges_with_diagnostics() {
-    canonical_names::reset_for_tests();
-
     let service = spawn_schema_service().await;
     let (node, _tmp) = create_node(&service.url).await;
     register_phase_1_schemas(&node).await.unwrap();
@@ -349,10 +353,7 @@ async fn threshold_filters_below_weight_edges_with_diagnostics() {
 /// a specific edge. Expect fp_D to fall off when the A-D edge is
 /// excluded, even though it otherwise qualifies.
 #[actix_web::test]
-#[ignore] // TODO: setup gap — canonical_names registry not seeded for 'Fingerprint' after reset_for_tests() + register_phase_1_schemas(). Surfaced by tier-split CI (PR #736).
 async fn excluded_edge_id_blocks_traversal_and_is_counted() {
-    canonical_names::reset_for_tests();
-
     let service = spawn_schema_service().await;
     let (node, _tmp) = create_node(&service.url).await;
     register_phase_1_schemas(&node).await.unwrap();
@@ -394,10 +395,7 @@ async fn excluded_edge_id_blocks_traversal_and_is_counted() {
 /// diagnostics.missing_seed_fingerprint_ids, but the resolve still
 /// succeeds and returns an empty cluster.
 #[actix_web::test]
-#[ignore] // TODO: setup gap — canonical_names registry not seeded for 'Fingerprint' after reset_for_tests() + register_phase_1_schemas(). Surfaced by tier-split CI (PR #736).
 async fn missing_seed_fingerprint_is_diagnostic_not_error() {
-    canonical_names::reset_for_tests();
-
     let service = spawn_schema_service().await;
     let (node, _tmp) = create_node(&service.url).await;
     register_phase_1_schemas(&node).await.unwrap();
@@ -432,8 +430,6 @@ async fn missing_seed_fingerprint_is_diagnostic_not_error() {
 /// (isolated) when the Persona's seed is fp_A.
 #[actix_web::test]
 async fn included_mention_ids_are_added_to_result() {
-    canonical_names::reset_for_tests();
-
     let service = spawn_schema_service().await;
     let (node, _tmp) = create_node(&service.url).await;
     register_phase_1_schemas(&node).await.unwrap();
@@ -470,10 +466,7 @@ async fn included_mention_ids_are_added_to_result() {
 /// excluded_mention_ids removes a specific mention from the result
 /// and increments the diagnostic counter.
 #[actix_web::test]
-#[ignore] // TODO: setup gap — canonical_names registry not seeded for 'Fingerprint' after reset_for_tests() + register_phase_1_schemas(). Surfaced by tier-split CI (PR #736).
 async fn excluded_mention_ids_are_filtered_with_diagnostics() {
-    canonical_names::reset_for_tests();
-
     let service = spawn_schema_service().await;
     let (node, _tmp) = create_node(&service.url).await;
     register_phase_1_schemas(&node).await.unwrap();

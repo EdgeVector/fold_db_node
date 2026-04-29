@@ -189,10 +189,9 @@ jobs:
       # test files gated on it (schema_service_expansion_test,
       # schema_service_semantic_match_test). Face-detection feature is
       # NOT enabled here — face-detection-tests below is the dedicated
-      # job for that. --no-fail-fast: surface every failing test in one
-      # run during early triage; revisit once the suite is healthy.
+      # job for that.
       - name: Run lib + integration tests
-        run: cargo nextest run --workspace --features test-utils --no-fail-fast
+        run: cargo nextest run --workspace --features test-utils
 
       - name: Run doc tests
         run: cargo test --workspace --doc

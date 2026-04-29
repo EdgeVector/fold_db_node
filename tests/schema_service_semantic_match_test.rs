@@ -9,7 +9,11 @@ use std::collections::HashMap;
 use std::sync::Arc;
 use tempfile::tempdir;
 
-/// Helper function to convert JSON to Schema
+/// Helper function to convert JSON to Schema. Auto-fills field
+/// descriptions and data classifications for any field that doesn't
+/// have them explicitly set in the JSON. Descriptions are filled
+/// with the literal `"{field} field"`, which determines the format
+/// of [`scripted_field_key`].
 fn json_to_schema(value: serde_json::Value) -> fold_db::schema::types::Schema {
     let mut schema: fold_db::schema::types::Schema =
         serde_json::from_value(value).expect("failed to deserialize schema from JSON");
@@ -29,6 +33,76 @@ fn json_to_schema(value: serde_json::Value) -> fold_db::schema::types::Schema {
         }
     }
     schema
+}
+
+/// Build the exact text that
+/// `SchemaServiceState::get_field_embedding` will pass to the
+/// embedder for `(field_name, descriptive_name)` when the field has
+/// the auto-filled description from [`json_to_schema`]. Scripted
+/// tests use this to register vectors under the right key.
+fn scripted_field_key(field_name: &str, descriptive_name: &str) -> String {
+    format!(
+        "the {} of the {}: {} field",
+        field_name, descriptive_name, field_name
+    )
+}
+
+/// Build the description-only embed text that
+/// `SchemaServiceState::canonicalize_fields` and
+/// `register_canonical_fields` pass to the embedder. With
+/// [`json_to_schema`]'s auto-filled descriptions, this is just
+/// `"{field_name} field"`. Scripted tests must register a vector
+/// under this key so the global canonical-field registry doesn't
+/// fall through to the byte-sum fallback (which gives spurious high
+/// similarity for any two strings sharing the `" field"` suffix).
+fn scripted_field_description_key(field_name: &str) -> String {
+    format!("{} field", field_name)
+}
+
+/// Insert both the canonicalize_fields embed key (description only)
+/// and the semantic_field_rename_map embed key (full context format)
+/// for `(field_name, descriptive_name)`, both pointing at `vec`.
+/// This lets a scripted test control similarity at both layers
+/// consistently. Use whenever a field needs to be matched (or
+/// distinguished) by the matcher.
+fn insert_field_vector(
+    responses: &mut HashMap<String, Vec<f32>>,
+    field_name: &str,
+    descriptive_name: &str,
+    vec: Vec<f32>,
+) {
+    responses.insert(scripted_field_description_key(field_name), vec.clone());
+    responses.insert(scripted_field_key(field_name, descriptive_name), vec);
+}
+
+/// Insert orthogonal description-only embedding so the global
+/// canonical-field registry's bidirectional matcher
+/// (`canonicalize_fields`, threshold 0.88) sees the field as
+/// non-matching, and only the schema-level matcher
+/// (`semantic_field_rename_map`, threshold 0.84) gets a vote on
+/// whether the field overlaps with an existing schema's field.
+///
+/// Use when the test specifically targets bidirectional/threshold
+/// behavior in `semantic_field_rename_map` and you need
+/// `canonicalize_fields` to stay out of the way. The
+/// `desc_orthogonal_dir` should be a unique per-field direction in
+/// the 384-dim space — values >=20 stay clear of the
+/// `unit_vec(0..=10)` band the rest of the tests use.
+fn insert_field_vector_canonicalize_orthogonal(
+    responses: &mut HashMap<String, Vec<f32>>,
+    field_name: &str,
+    descriptive_name: &str,
+    semantic_vec: Vec<f32>,
+    desc_orthogonal_dir: usize,
+) {
+    responses.insert(
+        scripted_field_description_key(field_name),
+        ScriptedEmbeddingModel::unit_vec(desc_orthogonal_dir),
+    );
+    responses.insert(
+        scripted_field_key(field_name, descriptive_name),
+        semantic_vec,
+    );
 }
 
 fn create_test_state() -> SchemaServiceState {
@@ -127,9 +201,67 @@ async fn exact_descriptive_name_subset_returns_already_exists() {
 }
 
 #[tokio::test]
-#[ignore] // TODO: semantic-match expansion not firing in test env (got Added/AlreadyExists, expected Expanded). Same family as schema_service_expansion_test::semantic_match_expansion_has_field_mappers. Surfaced by tier-split CI (PR #741).
 async fn semantic_match_similar_descriptive_name_triggers_expansion() {
-    let state = create_test_state();
+    // Originally written assuming MockEmbeddingModel produces high
+    // cosine similarity for case-only differences ("Twitter Posts"
+    // ≈ "twitter posts"). It does not — MockEmbeddingModel hashes
+    // the input string and any character change yields a near-
+    // orthogonal vector. Rewritten to use ScriptedEmbeddingModel so
+    // the descriptive_name semantic-match path is exercised
+    // deterministically, regardless of how the mock embeds.
+    let mut responses = HashMap::new();
+    // "Twitter Posts" and "twitter posts" embed to nearly the same
+    // vector — that's what "case difference is semantically
+    // equivalent" means in this test.
+    let posts_vec = ScriptedEmbeddingModel::blended_vec(0, 1, 0.0);
+    let posts_lower_vec = ScriptedEmbeddingModel::blended_vec(0, 1, 0.05);
+    responses.insert("Twitter Posts".to_string(), posts_vec);
+    responses.insert("twitter posts".to_string(), posts_lower_vec);
+    insert_field_vector_canonicalize_orthogonal(
+        &mut responses,
+        "tweet_id",
+        "Twitter Posts",
+        ScriptedEmbeddingModel::unit_vec(50),
+        51,
+    );
+    insert_field_vector_canonicalize_orthogonal(
+        &mut responses,
+        "content",
+        "Twitter Posts",
+        ScriptedEmbeddingModel::unit_vec(52),
+        53,
+    );
+    insert_field_vector_canonicalize_orthogonal(
+        &mut responses,
+        "author",
+        "Twitter Posts",
+        ScriptedEmbeddingModel::unit_vec(54),
+        55,
+    );
+    // The matcher also embeds context for each existing field
+    // against the *incoming* descriptive_name during expansion.
+    insert_field_vector_canonicalize_orthogonal(
+        &mut responses,
+        "tweet_id",
+        "twitter posts",
+        ScriptedEmbeddingModel::unit_vec(50),
+        51,
+    );
+    insert_field_vector_canonicalize_orthogonal(
+        &mut responses,
+        "content",
+        "twitter posts",
+        ScriptedEmbeddingModel::unit_vec(52),
+        53,
+    );
+    insert_field_vector_canonicalize_orthogonal(
+        &mut responses,
+        "author",
+        "twitter posts",
+        ScriptedEmbeddingModel::unit_vec(54),
+        55,
+    );
+    let state = create_scripted_state(responses);
 
     // Add a schema with descriptive_name "Twitter Posts"
     let schema1 = json_to_schema(json!({
@@ -143,9 +275,10 @@ async fn semantic_match_similar_descriptive_name_triggers_expansion() {
         .await
         .expect("failed to add first schema");
 
-    // Add a schema with a semantically similar descriptive_name (only case difference).
-    // The MockEmbeddingModel uses byte values, so "Twitter Posts" vs "twitter posts" will
-    // differ only in case bytes (32 difference per char), yielding high cosine similarity.
+    // Add a schema with a semantically similar descriptive_name
+    // (only case difference). The scripted similarity between
+    // "Twitter Posts" and "twitter posts" is above the 0.8
+    // descriptive-name match threshold, triggering expansion.
     let schema2 = json_to_schema(json!({
         "name": "Schema2",
         "descriptive_name": "twitter posts",
@@ -179,9 +312,30 @@ async fn semantic_match_similar_descriptive_name_triggers_expansion() {
 }
 
 #[tokio::test]
-#[ignore] // TODO: semantic-match expansion not firing in test env (got Added/AlreadyExists, expected Expanded). Same family as schema_service_expansion_test::semantic_match_expansion_has_field_mappers. Surfaced by tier-split CI (PR #741).
 async fn semantic_match_adopts_canonical_descriptive_name() {
-    let state = create_test_state();
+    // See note on `semantic_match_similar_descriptive_name_triggers_expansion`
+    // for why this uses ScriptedEmbeddingModel rather than MockEmbeddingModel.
+    let mut responses = HashMap::new();
+    responses.insert(
+        "User Profile Data".to_string(),
+        ScriptedEmbeddingModel::blended_vec(0, 1, 0.0),
+    );
+    responses.insert(
+        "user profile data".to_string(),
+        ScriptedEmbeddingModel::blended_vec(0, 1, 0.05),
+    );
+    for (idx, field) in ["user_id", "name", "email"].iter().enumerate() {
+        for desc in ["User Profile Data", "user profile data"] {
+            insert_field_vector_canonicalize_orthogonal(
+                &mut responses,
+                field,
+                desc,
+                ScriptedEmbeddingModel::unit_vec(60 + idx * 2),
+                61 + idx * 2,
+            );
+        }
+    }
+    let state = create_scripted_state(responses);
 
     // Add base schema
     let schema1 = json_to_schema(json!({
@@ -291,9 +445,33 @@ async fn no_descriptive_name_skips_semantic_matching() {
 }
 
 #[tokio::test]
-#[ignore] // TODO: semantic-match expansion not firing in test env (got Added/AlreadyExists, expected Expanded). Same family as schema_service_expansion_test::semantic_match_expansion_has_field_mappers. Surfaced by tier-split CI (PR #741).
 async fn semantic_match_with_subset_fields_returns_already_exists() {
-    let state = create_test_state();
+    // See note on `semantic_match_similar_descriptive_name_triggers_expansion`
+    // for why this uses ScriptedEmbeddingModel rather than MockEmbeddingModel.
+    let mut responses = HashMap::new();
+    responses.insert(
+        "Employee Records".to_string(),
+        ScriptedEmbeddingModel::blended_vec(0, 1, 0.0),
+    );
+    responses.insert(
+        "employee records".to_string(),
+        ScriptedEmbeddingModel::blended_vec(0, 1, 0.05),
+    );
+    for (idx, field) in ["emp_id", "name", "department", "salary"]
+        .iter()
+        .enumerate()
+    {
+        for desc in ["Employee Records", "employee records"] {
+            insert_field_vector_canonicalize_orthogonal(
+                &mut responses,
+                field,
+                desc,
+                ScriptedEmbeddingModel::unit_vec(80 + idx * 2),
+                81 + idx * 2,
+            );
+        }
+    }
+    let state = create_scripted_state(responses);
 
     let schema1 = json_to_schema(json!({
         "name": "Schema1",
@@ -542,7 +720,6 @@ fn create_scripted_state(responses: HashMap<String, Vec<f32>>) -> SchemaServiceS
 ///   medium ↔ artist  = 0.85  (false positive — below 0.88 threshold)
 ///   medium ↔ creator = 0.81  (below threshold)
 #[tokio::test]
-#[ignore] // TODO: semantic-match expansion not firing in test env (got Added/AlreadyExists, expected Expanded). Same family as schema_service_expansion_test::semantic_match_expansion_has_field_mappers. Surfaced by tier-split CI (PR #741).
 async fn scripted_creator_matches_artist_but_medium_does_not() {
     // Direction 0 = "artist" concept, direction 1 = "medium" concept
     // creator is very close to artist (high similarity), medium is its own thing
@@ -550,21 +727,28 @@ async fn scripted_creator_matches_artist_but_medium_does_not() {
     let creator_vec = ScriptedEmbeddingModel::blended_vec(0, 1, 0.05); // ~0.997 sim to artist
     let medium_vec = ScriptedEmbeddingModel::blended_vec(0, 1, 0.5); // ~0.707 sim to artist
 
-    // The schema service embeds "the {field} of the {descriptive_name}"
+    // Two layers script the same vectors so canonicalize_fields and
+    // semantic_field_rename_map agree on similarity:
+    //   1. canonicalize_fields embeds just the description.
+    //   2. semantic_field_rename_map embeds the full
+    //      "the {field} of the {desc}: {description}" string.
     let desc = "Artwork Collection";
     let mut responses = HashMap::new();
-    // Descriptive name embeddings (need to be similar for match)
+    // Descriptive-name embedding (used by find_matching_descriptive_name).
     responses.insert(desc.to_string(), ScriptedEmbeddingModel::unit_vec(10));
-    // Field embeddings in context
-    responses.insert(format!("the artist of the {}", desc), artist_vec);
-    responses.insert(format!("the creator of the {}", desc), creator_vec);
-    responses.insert(format!("the medium of the {}", desc), medium_vec);
-    responses.insert(
-        format!("the title of the {}", desc),
+    insert_field_vector(&mut responses, "artist", desc, artist_vec);
+    insert_field_vector(&mut responses, "creator", desc, creator_vec);
+    insert_field_vector(&mut responses, "medium", desc, medium_vec);
+    insert_field_vector(
+        &mut responses,
+        "title",
+        desc,
         ScriptedEmbeddingModel::unit_vec(2),
     );
-    responses.insert(
-        format!("the year of the {}", desc),
+    insert_field_vector(
+        &mut responses,
+        "year",
+        desc,
         ScriptedEmbeddingModel::unit_vec(3),
     );
 
@@ -633,21 +817,28 @@ async fn scripted_creator_matches_artist_but_medium_does_not() {
 /// X→A = 0.95, Y→A = 0.99  (both above threshold, but Y is the mutual best match)
 /// Only Y should match A; X should be treated as a new field.
 #[tokio::test]
-#[ignore] // TODO: semantic-match expansion not firing in test env (got Added/AlreadyExists, expected Expanded). Same family as schema_service_expansion_test::semantic_match_expansion_has_field_mappers. Surfaced by tier-split CI (PR #741).
 async fn bidirectional_rejects_non_mutual_best_match() {
     let desc = "Test Domain";
     let a_vec = ScriptedEmbeddingModel::unit_vec(0);
     let x_vec = ScriptedEmbeddingModel::blended_vec(0, 1, 0.1); // high sim to A but not best
     let y_vec = ScriptedEmbeddingModel::blended_vec(0, 1, 0.02); // very high sim to A, is best
 
+    // Make descriptions orthogonal in canonical-registry space so
+    // canonicalize_fields stays out of the way and the bidirectional
+    // check in semantic_field_rename_map is the actual unit under
+    // test (fields are still nearly-identical at the
+    // schema-context level via the `*_vec` semantic embeddings).
     let mut responses = HashMap::new();
     responses.insert(desc.to_string(), ScriptedEmbeddingModel::unit_vec(10));
-    responses.insert(format!("the field_a of the {}", desc), a_vec);
-    responses.insert(format!("the field_x of the {}", desc), x_vec);
-    responses.insert(format!("the field_y of the {}", desc), y_vec);
-    responses.insert(
-        format!("the shared of the {}", desc),
+    insert_field_vector_canonicalize_orthogonal(&mut responses, "field_a", desc, a_vec, 20);
+    insert_field_vector_canonicalize_orthogonal(&mut responses, "field_x", desc, x_vec, 21);
+    insert_field_vector_canonicalize_orthogonal(&mut responses, "field_y", desc, y_vec, 22);
+    insert_field_vector_canonicalize_orthogonal(
+        &mut responses,
+        "shared",
+        desc,
         ScriptedEmbeddingModel::unit_vec(5),
+        23,
     );
 
     let state = create_scripted_state(responses);
@@ -698,7 +889,6 @@ async fn bidirectional_rejects_non_mutual_best_match() {
 /// Test that fields below the similarity threshold are never matched,
 /// even if they're the best available match.
 #[tokio::test]
-#[ignore] // TODO: semantic-match expansion not firing in test env (got Added/AlreadyExists, expected Expanded). Same family as schema_service_expansion_test::semantic_match_expansion_has_field_mappers. Surfaced by tier-split CI (PR #741).
 async fn below_threshold_fields_are_not_matched() {
     let desc = "Test Domain";
     // Make field_a and field_b somewhat similar but below 0.88 threshold
@@ -708,8 +898,8 @@ async fn below_threshold_fields_are_not_matched() {
 
     let mut responses = HashMap::new();
     responses.insert(desc.to_string(), ScriptedEmbeddingModel::unit_vec(10));
-    responses.insert(format!("the field_a of the {}", desc), a_vec);
-    responses.insert(format!("the field_b of the {}", desc), b_vec);
+    insert_field_vector(&mut responses, "field_a", desc, a_vec);
+    insert_field_vector(&mut responses, "field_b", desc, b_vec);
 
     let state = create_scripted_state(responses);
 
@@ -746,7 +936,6 @@ async fn below_threshold_fields_are_not_matched() {
 /// Test that two incoming fields cannot both map to the same existing field
 /// (many-to-one prevention via claimed set).
 #[tokio::test]
-#[ignore] // TODO: semantic-match expansion not firing in test env (got Added/AlreadyExists, expected Expanded). Same family as schema_service_expansion_test::semantic_match_expansion_has_field_mappers. Surfaced by tier-split CI (PR #741).
 async fn many_to_one_mapping_prevented() {
     let desc = "Test Domain";
     let a_vec = ScriptedEmbeddingModel::unit_vec(0);
@@ -754,11 +943,16 @@ async fn many_to_one_mapping_prevented() {
     let syn1_vec = ScriptedEmbeddingModel::blended_vec(0, 1, 0.01); // ~0.9999 sim
     let syn2_vec = ScriptedEmbeddingModel::blended_vec(0, 2, 0.02); // ~0.9998 sim
 
+    // Same canonicalize-orthogonal trick as
+    // bidirectional_rejects_non_mutual_best_match: keep
+    // canonicalize_fields out of it so the schema-level matcher's
+    // many-to-one prevention (the `claimed` set in
+    // semantic_field_rename_map) is exercised directly.
     let mut responses = HashMap::new();
     responses.insert(desc.to_string(), ScriptedEmbeddingModel::unit_vec(10));
-    responses.insert(format!("the field_a of the {}", desc), a_vec);
-    responses.insert(format!("the synonym1 of the {}", desc), syn1_vec);
-    responses.insert(format!("the synonym2 of the {}", desc), syn2_vec);
+    insert_field_vector_canonicalize_orthogonal(&mut responses, "field_a", desc, a_vec, 30);
+    insert_field_vector_canonicalize_orthogonal(&mut responses, "synonym1", desc, syn1_vec, 31);
+    insert_field_vector_canonicalize_orthogonal(&mut responses, "synonym2", desc, syn2_vec, 32);
 
     let state = create_scripted_state(responses);
 
