@@ -1,4 +1,4 @@
-import React from 'react'
+import React, { useEffect, useState } from 'react'
 import { FoldDbProvider } from './components/FoldDbProvider'
 import Header from './components/Header'
 import Footer from './components/Footer'
@@ -76,6 +76,39 @@ export function AppContent() {
   // Operation result handling (shared across tabs)
   const { results, setResults, resultsRef, handleOperationResult } =
     useResultHandler(activeTab)
+
+  // Per-session dismissal of the cloud-LLM data warning banner.
+  // sessionStorage on purpose: each app launch re-warns once, so the
+  // banner can't be permanently hidden while sensitive data still
+  // flows to a remote provider. Keyed by provider so dismissing for
+  // Anthropic doesn't carry over if the user later switches to OpenAI.
+  //
+  // Sync via effect (not useState initializer) because aiProvider
+  // arrives async after fetchIngestionConfig — the initializer would
+  // capture an empty key on first render and miss the lookup.
+  const [cloudWarnDismissed, setCloudWarnDismissed] = useState(false)
+  useEffect(() => {
+    if (!aiProvider) return
+    const key = `folddb_cloud_warn_dismissed:${aiProvider}`
+    try {
+      setCloudWarnDismissed(window.sessionStorage?.getItem(key) === '1')
+    } catch {
+      setCloudWarnDismissed(false)
+    }
+  }, [aiProvider])
+  const dismissCloudWarn = () => {
+    setCloudWarnDismissed(true)
+    if (!aiProvider) return
+    try {
+      window.sessionStorage?.setItem(
+        `folddb_cloud_warn_dismissed:${aiProvider}`,
+        '1',
+      )
+    } catch {
+      // sessionStorage unavailable (private mode, etc.) — no-op,
+      // banner just won't survive a re-render. That's fine.
+    }
+  }
 
   // Only fetch schemas when authenticated
   const { error: schemasError, refetch: refetchSchemas } = useApprovedSchemas({
@@ -246,17 +279,26 @@ export function AppContent() {
         </div>
       )}
 
-      {aiConfigured && aiProvider !== 'Ollama' && (
+      {aiConfigured && aiProvider !== 'Ollama' && !cloudWarnDismissed && (
         <div className="bg-gruvbox-yellow/15 border-b-2 border-gruvbox-yellow px-4 sm:px-8 py-2 sm:py-3 flex flex-col sm:flex-row items-start sm:items-center justify-between gap-2 sm:gap-4">
           <span className="text-gruvbox-yellow text-xs sm:text-sm font-medium">
             Warning: AI is using {aiProvider} — personal data may be sent to external servers. Switch to a local LLM (Ollama) to keep data on your device.
           </span>
-          <button
-            onClick={() => navigateToSettings('ai')}
-            className="bg-gruvbox-yellow text-surface text-xs sm:text-sm px-3 sm:px-4 py-1 sm:py-1.5 border-none cursor-pointer hover:bg-gruvbox-orange transition-colors whitespace-nowrap flex-shrink-0"
-          >
-            Switch to Local LLM
-          </button>
+          <div className="flex items-center gap-2 flex-shrink-0">
+            <button
+              onClick={() => navigateToSettings('ai')}
+              className="bg-gruvbox-yellow text-surface text-xs sm:text-sm px-3 sm:px-4 py-1 sm:py-1.5 border-none cursor-pointer hover:bg-gruvbox-orange transition-colors whitespace-nowrap"
+            >
+              Switch to Local LLM
+            </button>
+            <button
+              onClick={dismissCloudWarn}
+              aria-label="Dismiss cloud-LLM warning for this session"
+              className="text-gruvbox-yellow text-lg leading-none bg-transparent border-none cursor-pointer hover:text-gruvbox-orange transition-colors px-2 py-1"
+            >
+              ×
+            </button>
+          </div>
         </div>
       )}
 
