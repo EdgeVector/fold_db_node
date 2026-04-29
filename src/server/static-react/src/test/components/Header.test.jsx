@@ -68,7 +68,9 @@ describe('Header Component', () => {
     })
 
     const link = screen.getByRole('link')
-    expect(link).toHaveClass('text-lg', 'font-medium', 'text-primary')
+    // text-base after the header tightening pass (was text-lg with the
+    // 72px logo). Header.jsx → wordmark line.
+    expect(link).toHaveClass('text-base', 'font-medium', 'text-primary')
   })
 
   it('displays settings button', () => {
