@@ -1,4 +1,4 @@
-import React from 'react'
+import React, { useEffect, useState } from 'react'
 import { FoldDbProvider } from './components/FoldDbProvider'
 import Header from './components/Header'
 import Footer from './components/Footer'
@@ -52,6 +52,8 @@ export function AppContent() {
   const {
     isAuthenticated,
     isAuthLoading,
+    authError,
+    retryAuth,
     aiConfigured,
     aiProvider,
     showSetupBanner,
@@ -74,6 +76,39 @@ export function AppContent() {
   // Operation result handling (shared across tabs)
   const { results, setResults, resultsRef, handleOperationResult } =
     useResultHandler(activeTab)
+
+  // Per-session dismissal of the cloud-LLM data warning banner.
+  // sessionStorage on purpose: each app launch re-warns once, so the
+  // banner can't be permanently hidden while sensitive data still
+  // flows to a remote provider. Keyed by provider so dismissing for
+  // Anthropic doesn't carry over if the user later switches to OpenAI.
+  //
+  // Sync via effect (not useState initializer) because aiProvider
+  // arrives async after fetchIngestionConfig — the initializer would
+  // capture an empty key on first render and miss the lookup.
+  const [cloudWarnDismissed, setCloudWarnDismissed] = useState(false)
+  useEffect(() => {
+    if (!aiProvider) return
+    const key = `folddb_cloud_warn_dismissed:${aiProvider}`
+    try {
+      setCloudWarnDismissed(window.sessionStorage?.getItem(key) === '1')
+    } catch {
+      setCloudWarnDismissed(false)
+    }
+  }, [aiProvider])
+  const dismissCloudWarn = () => {
+    setCloudWarnDismissed(true)
+    if (!aiProvider) return
+    try {
+      window.sessionStorage?.setItem(
+        `folddb_cloud_warn_dismissed:${aiProvider}`,
+        '1',
+      )
+    } catch {
+      // sessionStorage unavailable (private mode, etc.) — no-op,
+      // banner just won't survive a re-render. That's fine.
+    }
+  }
 
   // Only fetch schemas when authenticated
   const { error: schemasError, refetch: refetchSchemas } = useApprovedSchemas({
@@ -150,6 +185,43 @@ export function AppContent() {
     }
   }
 
+  // Bootstrap failed to reach the FoldDB node (e.g. backend not running).
+  // Replace the infinite spinner with an actionable error card.
+  if (!isAuthenticated && !isAuthLoading && authError) {
+    return (
+      <div className="h-screen flex items-center justify-center bg-surface-secondary px-6">
+        <div className="max-w-md w-full bg-surface border border-border p-6">
+          <h1 className="text-primary text-base font-bold mb-2">
+            Can't reach the FoldDB node
+          </h1>
+          <p className="text-secondary text-sm mb-4">
+            The web UI loaded, but the local node didn't respond. It may not be
+            running yet, or it crashed during startup.
+          </p>
+          <p className="text-secondary text-sm mb-2">Try starting it:</p>
+          <pre className="bg-surface-secondary border border-border text-primary text-xs p-3 mb-4 overflow-x-auto">
+            ./run.sh --local --local-schema
+          </pre>
+          <details className="mb-4">
+            <summary className="text-secondary text-xs cursor-pointer hover:text-primary">
+              Technical details
+            </summary>
+            <pre className="bg-surface-secondary border border-border text-secondary text-xs p-3 mt-2 overflow-x-auto whitespace-pre-wrap">
+              {authError}
+            </pre>
+          </details>
+          <button
+            type="button"
+            onClick={retryAuth}
+            className="bg-primary text-surface text-sm px-4 py-2 border-none cursor-pointer hover:opacity-90 transition-opacity"
+          >
+            Retry
+          </button>
+        </div>
+      </div>
+    );
+  }
+
   // Show loading spinner while auto-login is in progress or checking db status
   if (!isAuthenticated || isAuthLoading || dbStatusLoading) {
     return (
@@ -207,17 +279,26 @@ export function AppContent() {
         </div>
       )}
 
-      {aiConfigured && aiProvider !== 'Ollama' && (
+      {aiConfigured && aiProvider !== 'Ollama' && !cloudWarnDismissed && (
         <div className="bg-gruvbox-yellow/15 border-b-2 border-gruvbox-yellow px-4 sm:px-8 py-2 sm:py-3 flex flex-col sm:flex-row items-start sm:items-center justify-between gap-2 sm:gap-4">
           <span className="text-gruvbox-yellow text-xs sm:text-sm font-medium">
             Warning: AI is using {aiProvider} — personal data may be sent to external servers. Switch to a local LLM (Ollama) to keep data on your device.
           </span>
-          <button
-            onClick={() => navigateToSettings('ai')}
-            className="bg-gruvbox-yellow text-surface text-xs sm:text-sm px-3 sm:px-4 py-1 sm:py-1.5 border-none cursor-pointer hover:bg-gruvbox-orange transition-colors whitespace-nowrap flex-shrink-0"
-          >
-            Switch to Local LLM
-          </button>
+          <div className="flex items-center gap-2 flex-shrink-0">
+            <button
+              onClick={() => navigateToSettings('ai')}
+              className="bg-gruvbox-yellow text-surface text-xs sm:text-sm px-3 sm:px-4 py-1 sm:py-1.5 border-none cursor-pointer hover:bg-gruvbox-orange transition-colors whitespace-nowrap"
+            >
+              Switch to Local LLM
+            </button>
+            <button
+              onClick={dismissCloudWarn}
+              aria-label="Dismiss cloud-LLM warning for this session"
+              className="text-gruvbox-yellow text-lg leading-none bg-transparent border-none cursor-pointer hover:text-gruvbox-orange transition-colors px-2 py-1"
+            >
+              ×
+            </button>
+          </div>
         </div>
       )}
 
@@ -236,10 +317,18 @@ export function AppContent() {
               </div>
             )}
 
-            {/* Section Title */}
-            <div className="text-xs uppercase tracking-widest text-tertiary mb-3">
+            {/* Page Title
+             *
+             * Page titles are 18px / semibold / text-secondary so they
+             * actually outweigh body copy (14px). Previously these were
+             * text-xs (12px) tertiary divs — they read as decoration,
+             * not titles, even with uppercase + tracking. <h1> is the
+             * right tag for the page-level title; tabs render their
+             * own subheadings as <h2>/<h3>.
+             */}
+            <h1 className="text-lg font-semibold uppercase tracking-widest text-secondary mb-3">
               {activeTab.replaceAll('-', ' ')}
-            </div>
+            </h1>
 
             {/* Tab Content */}
             {renderActiveTab()}
@@ -253,9 +342,9 @@ export function AppContent() {
             )}
             {results && !isIngestionResult(results) && (
               <div className="mt-6" ref={resultsRef}>
-                <div className="text-xs uppercase tracking-widest text-tertiary mb-3">
+                <h2 className="text-lg font-semibold uppercase tracking-widest text-secondary mb-3">
                   Results
-                </div>
+                </h2>
                 <ResultsSection results={results} />
               </div>
             )}

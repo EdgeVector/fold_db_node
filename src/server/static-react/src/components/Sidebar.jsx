@@ -1,17 +1,34 @@
 import { useState } from 'react'
+import {
+  SparklesIcon,
+  CircleStackIcon,
+  FolderIcon,
+  DocumentArrowUpIcon,
+  ArrowDownOnSquareIcon,
+  UsersIcon,
+  GlobeAltIcon,
+  MagnifyingGlassIcon,
+  TableCellsIcon,
+  Cog6ToothIcon,
+} from '@heroicons/react/24/outline'
 import { version } from '../../package.json'
 
+// Sidebar items render with Heroicons outline (24-stroke) glyphs so the
+// icon weight matches the IBM Plex Mono UI and respects currentColor.
+// Previously emoji ('\u{1F916}' etc.) \u2014 those rendered at OS-default
+// saturation, which blew out the muted Gruvbox palette and looked like
+// a SaaS template. See design review notes in PR description.
 const SIDEBAR_ITEMS = [
-  { id: 'agent', label: 'Agent', icon: '\u{1F916}', group: 'MAIN' },
-  { id: 'data-browser', label: 'Browse', icon: '\u{1F4CA}', group: 'DATA' },
-  { id: 'smart-folder', label: 'Import', icon: '\u{1F4E5}', group: 'IMPORT' },
-  { id: 'file-upload', label: 'Files', icon: '\u{1F4C4}', group: 'IMPORT' },
-  { id: 'apple-import', label: 'Apple', icon: '\u{1F34E}', group: 'IMPORT' },
-  { id: 'people', label: 'People', icon: '\u{1F465}', group: 'SOCIAL' },
-  { id: 'discovery', label: 'Discover', icon: '\u{1F310}', group: 'SOCIAL' },
-  { id: 'query', label: 'Query', icon: '\u{1F50D}', group: 'ADMIN' },
-  { id: 'schemas', label: 'Schemas', icon: '\u{1F4CB}', group: 'ADMIN' },
-  { id: 'settings', label: 'Settings', icon: '\u2699\uFE0F', group: 'SYSTEM' },
+  { id: 'agent', label: 'Agent', Icon: SparklesIcon, group: 'MAIN' },
+  { id: 'data-browser', label: 'Browse', Icon: CircleStackIcon, group: 'DATA' },
+  { id: 'smart-folder', label: 'Import', Icon: FolderIcon, group: 'IMPORT' },
+  { id: 'file-upload', label: 'Files', Icon: DocumentArrowUpIcon, group: 'IMPORT' },
+  { id: 'apple-import', label: 'Apple', Icon: ArrowDownOnSquareIcon, group: 'IMPORT' },
+  { id: 'people', label: 'People', Icon: UsersIcon, group: 'SOCIAL' },
+  { id: 'discovery', label: 'Discover', Icon: GlobeAltIcon, group: 'SOCIAL' },
+  { id: 'query', label: 'Query', Icon: MagnifyingGlassIcon, group: 'ADMIN' },
+  { id: 'schemas', label: 'Schemas', Icon: TableCellsIcon, group: 'ADMIN' },
+  { id: 'settings', label: 'Settings', Icon: Cog6ToothIcon, group: 'SYSTEM' },
 ]
 
 const GROUPS = ['MAIN', 'DATA', 'IMPORT', 'SOCIAL', 'ADMIN', 'SYSTEM']
@@ -61,6 +78,7 @@ function Sidebar({ activeTab, onTabChange }) {
               </div>
               {grouped[group].map(item => {
                 const isActive = activeTab === item.id
+                const Icon = item.Icon
                 return (
                   <button
                     key={item.id}
@@ -72,7 +90,7 @@ function Sidebar({ activeTab, onTabChange }) {
                       }`}
                     aria-current={isActive ? 'page' : undefined}
                   >
-                    <span>{item.icon}</span>
+                    <Icon aria-hidden="true" className="w-4 h-4 shrink-0" />
                     <span>{item.label}</span>
                   </button>
                 )

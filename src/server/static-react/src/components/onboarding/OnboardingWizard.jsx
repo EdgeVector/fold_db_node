@@ -208,7 +208,7 @@ export default function OnboardingWizard({ onComplete }) {
           <div className="text-center mt-4">
             <button
               onClick={handleFinish}
-              className="text-xs text-tertiary hover:text-secondary bg-transparent border-none cursor-pointer transition-colors"
+              className="text-xs text-tertiary hover:text-secondary bg-transparent border-none cursor-pointer transition-colors px-4 py-3 min-h-[44px]"
             >
               Skip setup entirely
             </button>

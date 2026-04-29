@@ -8,6 +8,7 @@ import {
   acceptSuggestedPersona,
   RELATIONSHIP_OPTIONS,
 } from '../../../api/clients/fingerprintsClient'
+import { ErrorMessage } from '../../shared/ErrorMessage'
 
 // ── Pure filter + sort helpers ─────────────────────────────────────
 //
@@ -537,9 +538,12 @@ function PersonaList({ personas, loading, error, selectedId, onSelect, onRefresh
       </div>
 
       {error && (
-        <div className="text-sm text-gruvbox-red" data-testid="persona-list-error">
-          {error}
-        </div>
+        <ErrorMessage
+          error={error}
+          fallback="Couldn't load personas"
+          onRetry={onRefresh}
+          testId="persona-list-error"
+        />
       )}
 
       {!loading && !error && personas.length === 0 && (
@@ -650,9 +654,11 @@ function PersonaDetail({
     <div className="lg:w-1/2 card p-3 space-y-3 overflow-y-auto max-h-[calc(100vh-12rem)]" data-testid="persona-detail">
       {loading && <div className="text-sm text-secondary">Loading…</div>}
       {error && (
-        <div className="text-sm text-gruvbox-red" data-testid="persona-detail-error">
-          {error}
-        </div>
+        <ErrorMessage
+          error={error}
+          fallback="Couldn't load this persona"
+          testId="persona-detail-error"
+        />
       )}
       {!loading && !error && detail && (
         <PersonaDetailBody

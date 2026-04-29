@@ -19,9 +19,11 @@ import { BROWSER_CONFIG } from '../constants/config'
  */
 export function useAuthInitialization() {
   const dispatch = useAppDispatch()
-  const { isAuthenticated, isLoading: isAuthLoading } = useAppSelector(
-    (state) => state.auth
-  )
+  const {
+    isAuthenticated,
+    isLoading: isAuthLoading,
+    error: authError,
+  } = useAppSelector((state) => state.auth)
 
   // Restore session FIRST - this must run before other effects.
   // Always auto-login with node identity (public key is the sole identity source).
@@ -34,6 +36,12 @@ export function useAuthInitialization() {
     }
     dispatch(autoLogin())
   }, [dispatch])
+
+  // Manual retry for the auth-bootstrap error screen. Re-runs autoLogin (the
+  // /api/system/auto-identity probe). Cheap to call; safe to spam.
+  const retryAuth = () => {
+    dispatch(autoLogin())
+  }
 
   // Load the system public key for display in Key Management tab
   useEffect(() => {
@@ -66,6 +74,8 @@ export function useAuthInitialization() {
   return {
     isAuthenticated,
     isAuthLoading,
+    authError,
+    retryAuth,
     ingestionConfig,
     aiConfigured,
     aiProvider,
