@@ -95,11 +95,20 @@ jobs:
       - name: Run clippy
         run: cargo clippy --workspace --all-targets -- -D warnings
 
-      # Run lib tests — clippy already compiled the workspace, so this
-      # only needs to link the test binary (~20s, not a full rebuild).
-      # Integration tests are in a separate CI job to avoid OOM.
-      - name: Run unit tests
-        run: cargo test --workspace --lib
+      # Run lib unit tests + every integration test under tests/.
+      # clippy --all-targets above already compiled the test crates, so
+      # this step just links and executes them. The cli-integration-tests
+      # job below now runs cli_integration_test redundantly — it'll be
+      # removed in a follow-up. The 4GB swap (above) covers peak link
+      # pressure across multiple test binaries.
+      #
+      # Background: prior to this PR the rust-tests job ran `--lib` only,
+      # which silently excluded all 52 files in tests/ from CI execution.
+      # They compiled (clippy --all-targets) for typecheck but never ran.
+      # Expect first-time failures from rotted tests; triage by fixing,
+      # `#[ignore]`-ing, or deleting per-file.
+      - name: Run unit + integration tests
+        run: cargo test --workspace --lib --tests
 
       - name: Run doc tests
         run: cargo test --workspace --doc
