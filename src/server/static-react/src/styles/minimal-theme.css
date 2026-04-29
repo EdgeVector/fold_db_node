@@ -16,9 +16,15 @@
 }
 
 @layer components {
-  /* Buttons */
+  /* Buttons
+   *
+   * .btn enforces a 44px minimum tap target (Apple HIG / WCAG 2.5.5).
+   * .btn-sm is the explicit opt-out for dense controls (table rows,
+   * inline filter chips). Don't use .btn-sm for primary actions —
+   * it stays at the smaller size on purpose.
+   */
   .btn {
-    @apply px-4 py-2 text-sm font-medium cursor-pointer transition-colors disabled:opacity-50 disabled:cursor-not-allowed;
+    @apply inline-flex items-center justify-center px-4 py-2 text-sm font-medium cursor-pointer transition-colors disabled:opacity-50 disabled:cursor-not-allowed min-h-[44px];
   }
   .btn-primary {
     @apply btn bg-transparent text-gruvbox-orange border border-gruvbox-orange hover:bg-gruvbox-orange hover:text-surface;
@@ -30,7 +36,7 @@
     @apply btn bg-transparent text-gruvbox-red border border-gruvbox-red hover:bg-gruvbox-red hover:text-surface;
   }
   .btn-sm {
-    @apply px-3 py-1.5 text-xs;
+    @apply px-3 py-1.5 text-xs min-h-0;
   }
   .btn-lg {
     @apply px-6 py-3;
@@ -55,7 +61,7 @@
 
   /* Form elements */
   .input {
-    @apply w-full px-4 py-2 text-sm bg-surface border border-border text-primary placeholder-tertiary focus:outline-none focus:border-gruvbox-yellow focus:ring-0;
+    @apply w-full px-4 py-2 text-sm bg-surface border border-border text-primary placeholder-tertiary focus:outline-none focus:border-gruvbox-yellow focus:ring-0 min-h-[44px];
   }
   .input-lg {
     @apply py-3 text-base;
