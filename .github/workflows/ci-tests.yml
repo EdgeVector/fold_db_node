@@ -37,7 +37,12 @@ jobs:
 
   rust-tests:
     name: Rust Tests
-    runs-on: ubuntu-latest
+    # ubuntu-latest-m: 4-core / 16GB RAM larger runner. Default
+    # ubuntu-latest (2-core / 7GB) OOMs when linking the integration
+    # test binaries this PR enables — see PR #736 first run, where step
+    # 14 produced zero log output (kernel OOM-kill mid-link). Swap step
+    # below kept for now; can be removed once we confirm stability.
+    runs-on: ubuntu-latest-m
     timeout-minutes: 25
 
     env:
