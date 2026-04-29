@@ -1,4 +1,5 @@
 import { useState, useEffect, useCallback } from 'react'
+import { CameraIcon, MapPinIcon } from '@heroicons/react/24/outline'
 import { discoveryClient } from '../../api/clients/discoveryClient'
 
 function formatTimeBucket(bucket) {
@@ -33,8 +34,8 @@ function MomentCard({ moment }) {
     <div className="card rounded p-4 space-y-3">
       <div className="flex items-center justify-between">
         <div className="flex items-center gap-3">
-          <div className="w-10 h-10 rounded-full bg-gruvbox-blue/20 flex items-center justify-center text-lg">
-            📸
+          <div className="w-10 h-10 rounded-full bg-gruvbox-blue/20 flex items-center justify-center text-gruvbox-blue">
+            <CameraIcon aria-hidden="true" className="w-5 h-5" />
           </div>
           <div>
             <p className="text-sm font-medium text-primary">
@@ -50,7 +51,7 @@ function MomentCard({ moment }) {
 
       {moment.location_name && (
         <div className="flex items-center gap-2 text-sm text-secondary">
-          <span>📍</span>
+          <MapPinIcon aria-hidden="true" className="w-4 h-4 shrink-0" />
           <span>{moment.location_name}</span>
         </div>
       )}
@@ -100,7 +101,9 @@ function OptInCard({ optIn, onOptOut }) {
 function EmptyMomentsState() {
   return (
     <div className="text-center py-12 space-y-3">
-      <div className="text-4xl">📸</div>
+      <div className="flex justify-center text-secondary">
+        <CameraIcon aria-hidden="true" className="w-12 h-12" />
+      </div>
       <h3 className="text-lg font-medium text-primary">No Moments Yet</h3>
       <p className="text-sm text-secondary max-w-md mx-auto">
         When you and a connected peer both opt in to photo moment sharing, photos

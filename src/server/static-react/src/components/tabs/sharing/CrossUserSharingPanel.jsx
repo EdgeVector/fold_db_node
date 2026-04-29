@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useMemo, useState } from 'react'
+import { ClipboardIcon, LockClosedIcon } from '@heroicons/react/24/outline'
 import {
   listShareRules,
   createShareRule,
@@ -489,12 +490,13 @@ function MyRulesSection({ rules, loading, error, onRefresh, onGenerateInvite, on
                       type="button"
                       className="text-tertiary hover:text-primary"
                       title="Copy recipient pubkey"
+                      aria-label="Copy recipient pubkey"
                       onClick={() =>
                         navigator.clipboard?.writeText(rule.recipient_pubkey)
                       }
                       data-testid={`rule-copy-pubkey-${rule.rule_id}`}
                     >
-                      📋
+                      <ClipboardIcon aria-hidden="true" className="w-4 h-4" />
                     </button>
                   </div>
                 </div>
@@ -585,10 +587,11 @@ function PendingInviteRow({ invite, onAccept }) {
           <div className="flex items-center gap-2">
             <span className="font-medium">{invite.sender_display_name}</span>
             <span
-              className="text-[10px] px-2 py-0.5 rounded-full bg-gruvbox-aqua/10 text-gruvbox-aqua border border-gruvbox-aqua/30"
+              className="inline-flex items-center gap-1 text-[10px] px-2 py-0.5 rounded-full bg-gruvbox-aqua/10 text-gruvbox-aqua border border-gruvbox-aqua/30"
               title="This invite carries an encrypted share key"
             >
-              🔒 E2E
+              <LockClosedIcon aria-hidden="true" className="w-3 h-3" />
+              <span>E2E</span>
             </span>
           </div>
           <div className="text-xs text-secondary mt-1">{invite.scope_description}</div>

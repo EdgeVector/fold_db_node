@@ -11,7 +11,7 @@ import {
   TableCellsIcon,
   Cog6ToothIcon,
 } from '@heroicons/react/24/outline'
-import { version } from '../../package.json'
+// Note: app version is shown once, in the Footer. Don't duplicate it here.
 
 // Sidebar items render with Heroicons outline (24-stroke) glyphs so the
 // icon weight matches the IBM Plex Mono UI and respects currentColor.
@@ -97,12 +97,6 @@ function Sidebar({ activeTab, onTabChange }) {
               })}
             </div>
           ))}
-        </div>
-
-        <div className="border-t border-border">
-          <div className="px-4 pb-3 pt-2 text-[10px] text-tertiary">
-            v{version}
-          </div>
         </div>
       </nav>
     </>
