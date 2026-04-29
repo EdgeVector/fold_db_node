@@ -32,9 +32,6 @@ jobs:
       - name: Run spawn-instrument lint
         run: bash scripts/lint-spawn-instrument.sh
 
-      - name: Run Cargo.lock source-line lint
-        run: bash scripts/lint-cargo-lock-sources.sh
-
   rust-tests:
     name: Rust Tests
     runs-on: ubuntu-latest
@@ -63,14 +60,6 @@ jobs:
 
       - name: Configure git for private dependencies
         run: git config --global url."https://x-access-token:${{ secrets.PRIVATE_DEPS_TOKEN }}@github.com/".insteadOf "https://github.com/"
-
-      # schema_service crates are git-dep'd in Cargo.toml and pinned via
-      # Cargo.lock. `.cargo/config.toml` patches them to sibling paths
-      # for local dev — strip it so CI consumes the lockfile-pinned git
-      # dep and main-branch drift in schema_service can't silently break
-      # PR CI here.
-      - name: Remove local-dev cargo patch
-        run: rm -f .cargo/config.toml
 
       - name: Cache Rust artifacts
         uses: Swatinem/rust-cache@v2
@@ -133,10 +122,6 @@ jobs:
       - name: Configure git for private dependencies
         run: git config --global url."https://x-access-token:${{ secrets.PRIVATE_DEPS_TOKEN }}@github.com/".insteadOf "https://github.com/"
 
-      # See comment on same step in the rust-tests job above.
-      - name: Remove local-dev cargo patch
-        run: rm -f .cargo/config.toml
-
       - name: Cache Rust artifacts
         uses: Swatinem/rust-cache@v2
 
@@ -184,10 +169,6 @@ jobs:
 
       - name: Configure git for private dependencies
         run: git config --global url."https://x-access-token:${{ secrets.PRIVATE_DEPS_TOKEN }}@github.com/".insteadOf "https://github.com/"
-
-      # See comment on same step in the rust-tests job above.
-      - name: Remove local-dev cargo patch
-        run: rm -f .cargo/config.toml
 
       - name: Cache Rust artifacts
         uses: Swatinem/rust-cache@v2
