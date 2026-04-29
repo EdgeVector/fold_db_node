@@ -278,6 +278,8 @@ for i in $(seq 1 600); do
 done
 if [ -z "$SLOT_FILE" ]; then
   log "FAIL: no slot info appeared within 600s"
+  log "last 20 lines of run.log:"
+  tail -20 "$REPORT_DIR/run.log" | sed 's/^/    /' | tee -a "$REPORT_DIR/harness.log"
   exit 1
 fi
 
