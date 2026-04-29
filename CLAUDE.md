@@ -6,6 +6,12 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 **fold_db_node** is a node implementation for the FoldDB distributed database network. This repo follows the same architecture and conventions as [fold_db](https://github.com/EdgeVector/fold_db).
 
+## UI scope
+
+**The web UI in `src/server/static-react/` is desktop-only.** Mobile is going to be an entirely different experience (separate app or separate codepath, design TBD), so don't spend cycles on responsive breakpoints, touch ergonomics, or mobile layouts here. If you're tempted to add `sm:` / `md:` rules or fix something that only manifests at 375px, stop — that work belongs in the future mobile experience, not in this codebase.
+
+Existing `sm:` rules in this codebase predate this decision and can be left alone; just don't add more.
+
 ## CI Pipeline
 
 CI triggers on push to `main` and on pull requests. Three jobs run in parallel, each skipping if its code doesn't exist yet:

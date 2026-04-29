@@ -1,5 +1,9 @@
 import { useCallback, useEffect, useMemo, useState, Fragment } from 'react'
-import { InboxArrowDownIcon } from '@heroicons/react/24/outline'
+import {
+  InboxArrowDownIcon,
+  MagnifyingGlassIcon,
+  XMarkIcon,
+} from '@heroicons/react/24/outline'
 import { useAppSelector } from '../../store/hooks'
 import { selectAllSchemas } from '../../store/schemaSlice'
 import { useOrgNames } from '../../hooks/useOrgNames'
@@ -91,6 +95,22 @@ export default function DataBrowserTab() {
       )
   }, [schemas])
 
+  // Type-to-filter for the schema list. With a real ingest the list can
+  // grow into the dozens (one schema per inferred shape), and scrolling
+  // to find one is the bottleneck. Substring match against name +
+  // descriptive_name; case-insensitive; trimmed. Empty query passes
+  // everything through unchanged.
+  const [filterQuery, setFilterQuery] = useState('')
+  const visibleSchemas = useMemo(() => {
+    const q = filterQuery.trim().toLowerCase()
+    if (q === '') return schemaList
+    return schemaList.filter((s) => {
+      const name = (s.name || '').toLowerCase()
+      const descriptive = (s.descriptive_name || '').toLowerCase()
+      return name.includes(q) || descriptive.includes(q)
+    })
+  }, [schemaList, filterQuery])
+
   const fieldCount = useCallback((schema) => getFieldNames(schema).length, [])
 
   // -- Schema expansion: fetch keys --
@@ -179,9 +199,54 @@ export default function DataBrowserTab() {
     )
   }
 
+  // Filter bar header. Renders whenever there's at least one schema —
+  // even at N=1 the count is useful, and the input being there from the
+  // start means the "type to filter" interaction is discoverable
+  // without anything having to change as the list grows.
+  const renderFilterBar = () => (
+    <div className="flex items-center gap-3 mb-3">
+      <div className="relative flex-1">
+        <MagnifyingGlassIcon
+          aria-hidden="true"
+          className="w-4 h-4 absolute left-3 top-1/2 -translate-y-1/2 text-tertiary pointer-events-none"
+        />
+        <input
+          type="text"
+          value={filterQuery}
+          onChange={(e) => setFilterQuery(e.target.value)}
+          placeholder="Filter schemas — type a name"
+          className="input pl-9 pr-9"
+          aria-label="Filter schemas"
+        />
+        {filterQuery && (
+          <button
+            type="button"
+            onClick={() => setFilterQuery('')}
+            aria-label="Clear filter"
+            className="absolute right-2 top-1/2 -translate-y-1/2 text-tertiary hover:text-primary p-1"
+          >
+            <XMarkIcon aria-hidden="true" className="w-4 h-4" />
+          </button>
+        )}
+      </div>
+      <span className="text-xs text-tertiary whitespace-nowrap">
+        {filterQuery
+          ? `${visibleSchemas.length} of ${schemaList.length}`
+          : `${schemaList.length} ${schemaList.length === 1 ? 'schema' : 'schemas'}`}
+      </span>
+    </div>
+  )
+
   return (
-    <div className="space-y-1">
-      {schemaList.map((schema) => {
+    <div>
+      {renderFilterBar()}
+      {visibleSchemas.length === 0 && (
+        <div className="text-secondary text-sm py-8 text-center border border-dashed border-border rounded">
+          No schemas match <span className="text-primary font-mono">"{filterQuery}"</span>.
+        </div>
+      )}
+      <div className="space-y-1">
+      {visibleSchemas.map((schema) => {
         const name = schema.name
         const isOpen = expandedSchemas.has(name)
         const data = schemaKeys[name]
@@ -298,6 +363,7 @@ export default function DataBrowserTab() {
           </div>
         )
       })}
+      </div>
       {shareTarget && (
         <ShareRecordModal
           schemaName={shareTarget.schema}
