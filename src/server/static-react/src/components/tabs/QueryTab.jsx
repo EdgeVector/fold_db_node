@@ -106,11 +106,17 @@ function QueryTab({ onResult }) {
 
   // UI does not require authentication
 
+  // Collapse the Query Preview pane until a schema is picked. Before any
+  // selection the preview was a 350px-wide skeleton ("Schema [empty bar]
+  // / Fields (0): No fields selected") which read as broken. After
+  // selection the form has real content to mirror, so the side-by-side
+  // layout earns its keep.
+  const hasSchema = !!selectedSchemaObj
   return (
     <div>
-      <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
+      <div className={`grid grid-cols-1 ${hasSchema ? 'lg:grid-cols-3' : ''} gap-6`}>
         {/* Main Query Form */}
-        <div className="lg:col-span-2 space-y-6">
+        <div className={hasSchema ? 'lg:col-span-2 space-y-6' : 'space-y-6'}>
           <QueryForm
             queryState={queryState}
             onSchemaChange={handleSchemaChange}
@@ -140,15 +146,17 @@ function QueryTab({ onResult }) {
           />
         </div>
 
-        {/* Query Preview Sidebar */}
-        <div className="lg:col-span-1">
-          <QueryPreview
-            query={query}
-            queryState={{ schema: selectedSchemaObj ? getSchemaDisplayName(selectedSchemaObj) : '' }}
-            showJson={false} // Can be toggled for debugging
-            title="Query Preview"
-          />
-        </div>
+        {/* Query Preview Sidebar — only render once a schema is chosen */}
+        {hasSchema && (
+          <div className="lg:col-span-1">
+            <QueryPreview
+              query={query}
+              queryState={{ schema: getSchemaDisplayName(selectedSchemaObj) }}
+              showJson={false} // Can be toggled for debugging
+              title="Query Preview"
+            />
+          </div>
+        )}
       </div>
     </div>
   );

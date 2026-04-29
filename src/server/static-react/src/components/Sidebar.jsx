@@ -73,7 +73,7 @@ function Sidebar({ activeTab, onTabChange }) {
         <div className="flex-1">
           {GROUPS.map(group => (
             <div key={group}>
-              <div className="text-[10px] uppercase tracking-widest text-tertiary px-4 pt-4 pb-1">
+              <div className="text-[10px] uppercase tracking-widest text-tertiary px-4 pt-3 pb-0.5">
                 {group}
               </div>
               {grouped[group].map(item => {
@@ -83,7 +83,7 @@ function Sidebar({ activeTab, onTabChange }) {
                   <button
                     key={item.id}
                     onClick={() => handleTabChange(item.id)}
-                    className={`w-full text-left px-4 py-2 text-sm flex items-center gap-2 transition-colors border-l-2
+                    className={`w-full text-left px-4 py-1.5 text-sm flex items-center gap-2 transition-colors border-l-2
                       ${isActive
                         ? 'bg-surface-secondary border-l-gruvbox-yellow text-primary'
                         : 'text-secondary hover:text-primary hover:bg-surface-secondary border-l-transparent'

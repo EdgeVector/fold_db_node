@@ -280,16 +280,25 @@ export function AppContent() {
       )}
 
       {aiConfigured && aiProvider !== 'Ollama' && !cloudWarnDismissed && (
-        <div className="bg-gruvbox-yellow/15 border-b-2 border-gruvbox-yellow px-4 sm:px-8 py-2 sm:py-3 flex flex-col sm:flex-row items-start sm:items-center justify-between gap-2 sm:gap-4">
+        <div className="bg-gruvbox-yellow/15 border-b-2 border-gruvbox-yellow px-4 sm:px-8 py-2 sm:py-3 flex items-center justify-between gap-2 sm:gap-4">
+          {/* Two-tier copy: short on mobile (one line, no wrap), full
+            * explanation at sm+ where horizontal room exists. The
+            * top-of-page status pill ("AI: <provider>") still carries
+            * the same signal at all sizes, so the short form here is
+            * a CTA, not the full disclosure. */}
           <span className="text-gruvbox-yellow text-xs sm:text-sm font-medium">
-            Warning: AI is using {aiProvider} — personal data may be sent to external servers. Switch to a local LLM (Ollama) to keep data on your device.
+            <span className="sm:hidden">Cloud AI: {aiProvider}.</span>
+            <span className="hidden sm:inline">
+              Warning: AI is using {aiProvider} — personal data may be sent to external servers. Switch to a local LLM (Ollama) to keep data on your device.
+            </span>
           </span>
           <div className="flex items-center gap-2 flex-shrink-0">
             <button
               onClick={() => navigateToSettings('ai')}
               className="bg-gruvbox-yellow text-surface text-xs sm:text-sm px-3 sm:px-4 py-1 sm:py-1.5 border-none cursor-pointer hover:bg-gruvbox-orange transition-colors whitespace-nowrap"
             >
-              Switch to Local LLM
+              <span className="sm:hidden">Switch</span>
+              <span className="hidden sm:inline">Switch to Local LLM</span>
             </button>
             <button
               onClick={dismissCloudWarn}

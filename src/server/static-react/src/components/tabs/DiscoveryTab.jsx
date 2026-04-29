@@ -13,17 +13,31 @@ import ManageInterestsPanel from './discovery/ManageInterestsPanel'
 import DiscoverySectionNav from './discovery/DiscoverySectionNav'
 import { groupByCategory } from './discovery/discoveryUtils'
 
+// Plain three-step intro. Previous version mixed bold for tab refs and
+// italics for "People" — same word styled three different ways depending
+// on which tab it referenced, which read as visual noise. Plain prose
+// + a numbered list lets the reader scan without their eyes ping-ponging
+// between font weights.
 function DiscoveryIntro() {
   return (
-    <div className="text-sm text-secondary max-w-2xl">
-      <span className="text-primary font-medium">Discover</span> is for meeting
-      new people on the Exemem network. Pick a few topics to share in{' '}
-      <span className="text-primary">Share</span>, then browse{' '}
-      <span className="text-primary">Meet people</span> for matches. Once
-      someone accepts your request, they move into <em>People</em> where you
-      can exchange identity cards, share calendars, and tag moments together.
+    <div className="text-sm text-secondary max-w-2xl space-y-1">
+      <p>Meet new people on the Exemem network.</p>
+      <ol className="list-decimal list-inside space-y-0.5 text-secondary">
+        <li>Share a few of your interests.</li>
+        <li>Browse for matches.</li>
+        <li>Once someone accepts, they move into your People tab.</li>
+      </ol>
     </div>
   )
+}
+
+// Cloud is the gate for everything in this tab — no API endpoint here
+// works without an Exemem key. Same signal used by OnboardingWizard's
+// isCloudAlreadyActive(); see DatabaseSetupScreen / CloudBackupStep for
+// the canonical writers.
+function isCloudActive() {
+  if (typeof window === 'undefined') return false
+  return !!window.localStorage.getItem('exemem_api_key')
 }
 
 export default function DiscoveryTab({ onResult }) {
@@ -220,7 +234,12 @@ export default function DiscoveryTab({ onResult }) {
     })
   }
 
-  if (!serviceAvailable) {
+  // Short-circuit when cloud is off: don't render the section nav or any
+  // panels — they all hit cloud-only endpoints and would each render
+  // their own LocalModeNotice, which together looks like a broken page.
+  // One gate, one ask. Covers both the 503 path and the "key not yet
+  // configured" path.
+  if (!serviceAvailable || !isCloudActive()) {
     return (
       <div className="space-y-4">
         <DiscoveryIntro />
