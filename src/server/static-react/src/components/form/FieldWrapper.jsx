@@ -42,8 +42,15 @@ function FieldWrapper({
         className="label"
       >
         {label}
+        {/* Required marker.
+         *
+         * Was text-gruvbox-red — the only red glyph on most forms,
+         * which read as an error indicator rather than "required."
+         * Use text-tertiary so it sits in the same neutral palette as
+         * other label decoration. The aria-label keeps screen readers
+         * informed without depending on color. */}
         {required && (
-          <span className="ml-1 text-gruvbox-red" aria-label="required">
+          <span className="ml-1 text-tertiary" aria-label="required">
             *
           </span>
         )}
