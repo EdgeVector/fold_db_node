@@ -46,6 +46,9 @@ jobs:
       - name: Run spawn-instrument lint
         run: bash scripts/lint-spawn-instrument.sh
 
+      - name: Run rev-pin format lint (cascade-relevant git deps)
+        run: bash scripts/lint-rev-pin-format.sh
+
   rust-fast:
     name: Rust Fast (PR)
     if: github.event_name == 'pull_request'
