@@ -275,10 +275,18 @@ export function AppContent() {
               </div>
             )}
 
-            {/* Section Title */}
-            <div className="text-xs uppercase tracking-widest text-tertiary mb-3">
+            {/* Page Title
+             *
+             * Page titles are 18px / semibold / text-secondary so they
+             * actually outweigh body copy (14px). Previously these were
+             * text-xs (12px) tertiary divs — they read as decoration,
+             * not titles, even with uppercase + tracking. <h1> is the
+             * right tag for the page-level title; tabs render their
+             * own subheadings as <h2>/<h3>.
+             */}
+            <h1 className="text-lg font-semibold uppercase tracking-widest text-secondary mb-3">
               {activeTab.replaceAll('-', ' ')}
-            </div>
+            </h1>
 
             {/* Tab Content */}
             {renderActiveTab()}
@@ -292,9 +300,9 @@ export function AppContent() {
             )}
             {results && !isIngestionResult(results) && (
               <div className="mt-6" ref={resultsRef}>
-                <div className="text-xs uppercase tracking-widest text-tertiary mb-3">
+                <h2 className="text-lg font-semibold uppercase tracking-widest text-secondary mb-3">
                   Results
-                </div>
+                </h2>
                 <ResultsSection results={results} />
               </div>
             )}
