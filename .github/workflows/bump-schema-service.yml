@@ -1,0 +1,142 @@
+name: Bump schema_service (from upstream dispatch)
+
+# Receives a `schema-service-main-bump` repository_dispatch from the
+# schema_service notify-downstream workflow. Opens (or force-updates)
+# a PR bumping BOTH schema_service rev AND fold_db rev — the fold_db
+# rev is read from schema_service's tip Cargo.toml (dual-fold_db
+# defense).
+#
+# Manual trigger via `workflow_dispatch` accepts a schema_service sha
+# or defaults to its main HEAD.
+
+on:
+  repository_dispatch:
+    types: [schema-service-main-bump]
+  workflow_dispatch:
+    inputs:
+      schema_service_sha:
+        description: "schema_service SHA to pin. Empty = use main HEAD."
+        required: false
+        type: string
+
+concurrency:
+  group: bump-schema-service
+  cancel-in-progress: true
+
+permissions:
+  contents: write
+  pull-requests: write
+
+jobs:
+  bump:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - name: Resolve schema_service sha + read its fold_db rev
+        id: target
+        env:
+          GH_TOKEN: ${{ secrets.GH_PAT }}
+        run: |
+          SS_SHA="${{ github.event.client_payload.schema_service_sha }}"
+          SS_SHA="${SS_SHA:-${{ github.event.inputs.schema_service_sha }}}"
+          if [ -z "$SS_SHA" ]; then
+            SS_SHA=$(gh api /repos/EdgeVector/schema_service/commits/main --jq .sha)
+          fi
+          if ! [[ "$SS_SHA" =~ ^[0-9a-f]{40}$ ]]; then
+            echo "::error::schema_service sha invalid: $SS_SHA"
+            exit 1
+          fi
+          # Read schema_service's Cargo.toml AT THIS sha and extract its
+          # fold_db rev. Dual-fold_db defense — we pin OUR fold_db rev
+          # to whatever schema_service is pinning, so cargo never sees
+          # two versions of fold_db with different source specs.
+          TOML=$(gh api -H 'Accept: application/vnd.github.raw' \
+            "/repos/EdgeVector/schema_service/contents/Cargo.toml?ref=$SS_SHA")
+          FD_REV=$(printf '%s' "$TOML" | \
+            sed -nE 's|.*EdgeVector/fold_db\.git", *rev *= *"([0-9a-f]{40})".*|\1|p' | \
+            head -1)
+          if ! [[ "$FD_REV" =~ ^[0-9a-f]{40}$ ]]; then
+            echo "::error::Could not extract fold_db rev from schema_service@$SS_SHA Cargo.toml"
+            echo "::error::Either Cargo.toml is malformed or the dep format changed (lint-rev-pin-format.sh should have caught this)."
+            exit 1
+          fi
+          echo "ss_sha=$SS_SHA" >> "$GITHUB_OUTPUT"
+          echo "fd_rev=$FD_REV" >> "$GITHUB_OUTPUT"
+
+      - uses: actions/checkout@v4
+        with:
+          token: ${{ secrets.GH_PAT }}
+
+      - name: Configure git as bot + private-dep token
+        env:
+          PRIVATE_DEPS_TOKEN: ${{ secrets.PRIVATE_DEPS_TOKEN }}
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          # cargo update needs to fetch EdgeVector/* git deps; mirror
+          # the rewrite already used in ci-tests.yml.
+          git config --global url."https://x-access-token:${PRIVATE_DEPS_TOKEN}@github.com/".insteadOf "https://github.com/"
+
+      - name: Install Rust
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Pre-flight — refuse to clobber a non-bot branch
+        env:
+          GH_TOKEN: ${{ secrets.GH_PAT }}
+        run: |
+          BRANCH="bot/bump-schema-service"
+          if git ls-remote --exit-code --heads origin "$BRANCH" >/dev/null 2>&1; then
+            AUTHOR=$(gh api "/repos/${{ github.repository }}/commits/$BRANCH" --jq .commit.author.name 2>/dev/null || echo "")
+            if [ -n "$AUTHOR" ] && [ "$AUTHOR" != "github-actions[bot]" ]; then
+              echo "::error::Branch $BRANCH last touched by '$AUTHOR' — refusing to clobber."
+              exit 1
+            fi
+          fi
+
+      - name: Apply bumps
+        id: bump
+        run: |
+          FD="${{ steps.target.outputs.fd_rev }}"
+          SS="${{ steps.target.outputs.ss_sha }}"
+          # Update fold_db rev (lockstep with schema_service's pin).
+          # Both `fold_db` and `observability` lines pin the same rev.
+          sed -i -E 's|(EdgeVector/fold_db\.git", *rev *= *")[0-9a-f]{40}|\1'"$FD"'|g' Cargo.toml
+          # Update schema_service rev. After #742, all four
+          # schema_service_* deps in this Cargo.toml are rev-pinned
+          # (formerly branch=main). lint-rev-pin-format.sh enforces.
+          sed -i -E 's|(EdgeVector/schema_service\.git", *rev *= *")[0-9a-f]{40}|\1'"$SS"'|g' Cargo.toml
+          # Refresh Cargo.lock so source specs match the new revs.
+          # --precise pins the exact sha rather than re-resolving
+          # whatever might be at branch HEAD.
+          cargo update -p fold_db --precise "$FD"
+          cargo update -p observability --precise "$FD"
+          cargo update -p schema_service_core --precise "$SS"
+          cargo update -p schema_service_client --precise "$SS"
+          cargo update -p schema_service_server_http --precise "$SS"
+          if git diff --quiet Cargo.toml Cargo.lock; then
+            echo "no-op: already at fd=$FD ss=$SS"
+            echo "changed=false" >> "$GITHUB_OUTPUT"
+          else
+            echo "changed=true" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Commit + push + open PR
+        if: steps.bump.outputs.changed == 'true'
+        env:
+          GH_TOKEN: ${{ secrets.GH_PAT }}
+        run: |
+          BRANCH="bot/bump-schema-service"
+          FD_SHORT="${{ steps.target.outputs.fd_rev }}"; FD_SHORT="${FD_SHORT:0:8}"
+          SS_SHORT="${{ steps.target.outputs.ss_sha }}"; SS_SHORT="${SS_SHORT:0:8}"
+          git checkout -B "$BRANCH"
+          git add Cargo.toml Cargo.lock
+          git commit -m "chore: bump schema_service to ${SS_SHORT}, fold_db to ${FD_SHORT} (auto)"
+          git push -f origin "$BRANCH"
+          if ! gh pr view "$BRANCH" >/dev/null 2>&1; then
+            gh pr create --base main --head "$BRANCH" \
+              --title "chore: bump schema_service ${SS_SHORT} + fold_db ${FD_SHORT} (auto)" \
+              --body "Automated cascade bump.\n- schema_service main → ${SS_SHORT}\n- fold_db rev → ${FD_SHORT} (mirrored from schema_service's Cargo.toml; dual-fold_db defense)"
+          fi
+          # auto-merge.yml handles the actual auto-merge enable on
+          # opened/synchronize. Calling here too is defensive.
+          gh pr merge --auto "$BRANCH" || echo "auto-merge already enabled or PR already merged (no-op)"
