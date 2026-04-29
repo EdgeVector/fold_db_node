@@ -33,6 +33,7 @@ use tracing_subscriber::layer::SubscriberExt;
 use tracing_subscriber::{EnvFilter, Registry};
 
 const OBS_FILE_PATH_ENV: &str = "OBS_FILE_PATH";
+const FOLDDB_HOME_ENV: &str = "FOLDDB_HOME";
 
 /// Errors raised by [`init_node_with_web`].
 #[derive(Debug, thiserror::Error)]
@@ -149,14 +150,30 @@ fn default_env_filter() -> EnvFilter {
     EnvFilter::try_from_default_env().unwrap_or_else(|_| EnvFilter::new("info"))
 }
 
+/// Mirrors upstream `observability::init::default_node_log_path` (post-#668)
+/// so dev nodes auto-slotted under `/tmp/folddb-slot-<port>` by `run.sh`
+/// don't race the prod Tauri app's `~/.folddb/observability.jsonl`. When
+/// upstream `init_node` learns to compose WEB and this whole module
+/// collapses to a `pub use`, the duplicated resolver goes away.
+///
+/// Order of resolution:
+/// 1. `$OBS_FILE_PATH` if set — used as-is, no parent-directory creation.
+/// 2. `$FOLDDB_HOME/observability.jsonl` if `FOLDDB_HOME` is set — the
+///    directory is created if absent.
+/// 3. `~/.folddb/observability.jsonl` — `~/.folddb` is created if absent.
 fn default_node_log_path() -> Result<PathBuf, SetupError> {
     if let Ok(p) = std::env::var(OBS_FILE_PATH_ENV) {
         return Ok(PathBuf::from(p));
     }
+    if let Ok(folddb_home) = std::env::var(FOLDDB_HOME_ENV) {
+        let dir = PathBuf::from(folddb_home);
+        fs::create_dir_all(&dir)?;
+        return Ok(dir.join("observability.jsonl"));
+    }
     let home = std::env::var("HOME").map_err(|_| {
         SetupError::Io(io::Error::new(
             io::ErrorKind::NotFound,
-            "HOME not set; set OBS_FILE_PATH to choose a log path explicitly",
+            "HOME not set; set OBS_FILE_PATH or FOLDDB_HOME to choose a log path explicitly",
         ))
     })?;
     let mut dir = PathBuf::from(home);
