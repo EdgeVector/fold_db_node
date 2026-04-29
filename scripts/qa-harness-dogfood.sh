@@ -175,6 +175,14 @@ boot_stack() {
   STACK_HOMES+=("$folddb_home")
   STACK_PORTS+=("$backend_port")
   STACK_SCHEMA_PORTS+=("$schema_port")
+  # `boot_stack` is invoked from the parent via command substitution
+  # (`A_INFO="$(boot_stack node-a)"`), so these `STACK_*+=()` writes only
+  # mutate the SUBSHELL's arrays — the parent's arrays stay empty and the
+  # cleanup trap never iterates over the slots we booted. Persist the
+  # tuple to a side file the parent re-reads in cleanup() so teardown
+  # actually fires. One line per stack: `pid<TAB>backend<TAB>schema<TAB>home`.
+  printf '%s\t%s\t%s\t%s\n' "$pid" "$backend_port" "$schema_port" "$folddb_home" \
+    >> "$REPORT_DIR/stacks.tsv"
 
   log "[$label] backend=$backend_port schema=$schema_port vite=$vite_port home=$folddb_home"
 
@@ -205,18 +213,35 @@ wait_http() {
 }
 
 cleanup() {
+  # Re-read the stack tuples from the side file so we see what subshell
+  # `boot_stack` invocations recorded (the in-memory STACK_* arrays are
+  # empty in this parent shell — they were populated in command-substitution
+  # subshells that have already exited).
+  local -a STACK_PIDS_FILE=()
+  local -a STACK_PORTS_FILE=()
+  local -a STACK_SCHEMA_PORTS_FILE=()
+  local -a STACK_HOMES_FILE=()
+  if [ -f "$REPORT_DIR/stacks.tsv" ]; then
+    while IFS=$'\t' read -r p bp sp hm; do
+      STACK_PIDS_FILE+=("$p")
+      STACK_PORTS_FILE+=("$bp")
+      STACK_SCHEMA_PORTS_FILE+=("$sp")
+      STACK_HOMES_FILE+=("$hm")
+    done < "$REPORT_DIR/stacks.tsv"
+  fi
+
   if [ "$TEARDOWN" = false ]; then
     log "teardown skipped (--no-teardown). stacks still running:"
-    if [ "$(arr_len "${STACK_PIDS[@]:-}")" -gt 0 ]; then
-      for i in "${!STACK_PIDS[@]}"; do
-        log "  pid=${STACK_PIDS[$i]} home=${STACK_HOMES[$i]:-?} backend=${STACK_PORTS[$i]:-?} schema=${STACK_SCHEMA_PORTS[$i]:-?}"
+    if [ "$(arr_len "${STACK_PIDS_FILE[@]:-}")" -gt 0 ]; then
+      for i in "${!STACK_PIDS_FILE[@]}"; do
+        log "  pid=${STACK_PIDS_FILE[$i]} home=${STACK_HOMES_FILE[$i]:-?} backend=${STACK_PORTS_FILE[$i]:-?} schema=${STACK_SCHEMA_PORTS_FILE[$i]:-?}"
       done
     fi
     return
   fi
   # Pass 1 — graceful: SIGTERM run.sh + its direct children (npm/vite).
-  for pid in "${STACK_PIDS[@]:-}"; do
-    if kill -0 "$pid" 2>/dev/null; then
+  for pid in "${STACK_PIDS_FILE[@]:-}"; do
+    if [ -n "$pid" ] && kill -0 "$pid" 2>/dev/null; then
       pkill -P "$pid" 2>/dev/null || true
       kill "$pid" 2>/dev/null || true
     fi
@@ -227,37 +252,37 @@ cleanup() {
   # then reparented to init. Target by name+port — unambiguous because each
   # slot's port is unique. The `cargo run` command line has `-- --port N`
   # (with the `--` separator), so this pattern only matches the binary.
-  for port in "${STACK_PORTS[@]:-}"; do
+  for port in "${STACK_PORTS_FILE[@]:-}"; do
     [ -z "$port" ] && continue
     pkill -f "folddb_server --port $port" 2>/dev/null || true
   done
-  for port in "${STACK_SCHEMA_PORTS[@]:-}"; do
+  for port in "${STACK_SCHEMA_PORTS_FILE[@]:-}"; do
     [ -z "$port" ] && continue
     pkill -f "schema_service --port $port" 2>/dev/null || true
   done
   sleep 2
   # Pass 3 — SIGKILL anything still alive after the grace period.
-  for pid in "${STACK_PIDS[@]:-}"; do
-    if kill -0 "$pid" 2>/dev/null; then
+  for pid in "${STACK_PIDS_FILE[@]:-}"; do
+    if [ -n "$pid" ] && kill -0 "$pid" 2>/dev/null; then
       kill -9 "$pid" 2>/dev/null || true
       pkill -9 -P "$pid" 2>/dev/null || true
     fi
   done
-  for port in "${STACK_PORTS[@]:-}"; do
+  for port in "${STACK_PORTS_FILE[@]:-}"; do
     [ -z "$port" ] && continue
     pkill -9 -f "folddb_server --port $port" 2>/dev/null || true
   done
-  for port in "${STACK_SCHEMA_PORTS[@]:-}"; do
+  for port in "${STACK_SCHEMA_PORTS_FILE[@]:-}"; do
     [ -z "$port" ] && continue
     pkill -9 -f "schema_service --port $port" 2>/dev/null || true
   done
   # Slot data dirs + slot JSON: only touch our own (auto-slot dirs live under
   # /tmp/folddb-slot-*; slot JSON keys are the backend ports we tracked).
-  for home in "${STACK_HOMES[@]:-}"; do
+  for home in "${STACK_HOMES_FILE[@]:-}"; do
     [ -z "$home" ] && continue
     case "$home" in /tmp/folddb-slot-*) rm -rf "$home" 2>/dev/null || true ;; esac
   done
-  for port in "${STACK_PORTS[@]:-}"; do
+  for port in "${STACK_PORTS_FILE[@]:-}"; do
     [ -z "$port" ] && continue
     rm -f "$HOME/.folddb-slots/$port.json" 2>/dev/null || true
   done
