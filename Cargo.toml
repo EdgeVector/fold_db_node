@@ -15,7 +15,7 @@ face-detection = ["fold_db/face-detection"]
 
 [dependencies]
 # Core database library
-fold_db = { git = "https://github.com/EdgeVector/fold_db.git", rev = "05ae278b10a0afa0b9f8007360fcf2bc0f6beaf7", features = ["cli"] }
+fold_db = { git = "https://github.com/EdgeVector/fold_db.git", rev = "3ea472f30578872943156c1e27ebefc09d83c4e9", features = ["cli"] }
 
 # Schema service registry brain. Phase 2 T2: all former
 # `fold_db::schema_service::*` types come from here now. Git dep pinned
@@ -34,15 +34,11 @@ schema_service_client = { git = "https://github.com/EdgeVector/schema_service.gi
 # dep itself, so a divergent rev avoids the dual-`fold_db` trap CLAUDE.md
 # warns about. See `docs/observability/ingress-middleware-notes.md`.
 #
-# Phase 3 / T5: bumped to pull in `layers::web::WebLayer` (PR #640) so the
-# `/api/logs/stream` SSE endpoint can subscribe to a tracing-native broadcast.
-# Upstream `init_node` doesn't compose the WEB layer yet — the local
-# `observability_setup::init_node_with_web` helper in this crate wires it.
-#
-# Cloud cleanup C3: bumped to a315c4a0 (fold_db PR #660) which ripped out
-# the OTLP traces, OTLP metrics, and SpanMetrics layers. The Sentry ERROR
-# sink (PR #647) survives, off by default until SENTRY_DSN is set.
-observability = { git = "https://github.com/EdgeVector/fold_db.git", rev = "05ae278b10a0afa0b9f8007360fcf2bc0f6beaf7" }
+# Bumped to 3ea472f3 (fold_db PR #669) which hoists the WEB-layer
+# composition into upstream `observability::init_node_with_web`. The local
+# `observability_setup` module is now a thin re-export — when you need
+# additional layers, modify upstream.
+observability = { git = "https://github.com/EdgeVector/fold_db.git", rev = "3ea472f30578872943156c1e27ebefc09d83c4e9" }
 
 # HTTP Server
 actix-web = "4.3"
@@ -105,10 +101,10 @@ tokio-stream = { version = "0.1", features = ["sync"] }
 once_cell = "1"
 async-trait = "0.1"
 
-# Tracing subscriber composition. Phase 3 / T5 wires the observability
-# stack (FMT + RELOAD + RING + WEB) directly here because upstream
-# `observability::init_node` does not yet compose the WEB layer.
-# See `src/observability_setup.rs`.
+# Tracing subscriber types used directly by `src/server/middleware/otel.rs`
+# (custom egress middleware) and `src/discovery/publisher.rs`. The
+# observability subscriber itself is composed upstream via
+# `observability::init_node_with_web`; do not re-add layer composition here.
 tracing-subscriber = { version = "0.3", features = ["env-filter", "registry"] }
 tracing-log = "0.2"
 opentelemetry_sdk = "0.27"
