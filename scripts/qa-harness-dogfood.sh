@@ -160,8 +160,11 @@ boot_stack() {
     sleep 1
   done
   if [ -z "$slot_file" ]; then
+    local tail_line
+    tail_line="$(grep -v '^$' "$run_log" 2>/dev/null | tail -5 | tr '\n' ' ' | sed 's/[[:space:]]\+/ /g' | cut -c1-400)"
     log "[$label] FAIL: no slot info within 600s"
-    printf 'no slot info within 600s (backend_port=%s)\n' "${backend_port:-?}" > "$fail_reason_file"
+    tail -20 "$run_log" | sed 's/^/    /' | tee -a "$LOG_FILE"
+    printf 'no slot info within 600s (backend_port=%s); tail: %s\n' "${backend_port:-?}" "$tail_line" > "$fail_reason_file"
     return 1
   fi
 
