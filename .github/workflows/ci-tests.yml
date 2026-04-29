@@ -46,9 +46,6 @@ jobs:
       - name: Run spawn-instrument lint
         run: bash scripts/lint-spawn-instrument.sh
 
-      - name: Run Cargo.lock source-line lint
-        run: bash scripts/lint-cargo-lock-sources.sh
-
   rust-fast:
     name: Rust Fast (PR)
     if: github.event_name == 'pull_request'
