@@ -1,4 +1,12 @@
 import { useState, useEffect, useRef, useCallback } from 'react'
+import {
+  ArrowPathIcon,
+  DocumentTextIcon,
+  CameraIcon,
+  CalendarDaysIcon,
+  CheckCircleIcon,
+  UserIcon,
+} from '@heroicons/react/24/outline'
 import ingestionClient from '../../api/clients/ingestionClient'
 
 function AutoSyncSettings() {
@@ -105,7 +113,7 @@ function AutoSyncSettings() {
     <div className="bg-surface border border-border rounded-lg p-4 mb-4">
       <div className="flex items-center justify-between mb-3">
         <div className="flex items-center gap-2">
-          <span className="text-lg">{"\u{1F504}"}</span>
+          <ArrowPathIcon aria-hidden="true" className="w-4 h-4 text-secondary" />
           <h3 className="text-sm font-medium text-primary">Auto-Sync</h3>
         </div>
         <button
@@ -217,32 +225,32 @@ const SOURCES = [
   {
     key: 'notes',
     label: 'Notes',
-    icon: "\uD83D\uDCDD",
+    Icon: DocumentTextIcon,
     description: 'Import all notes from Apple Notes. Notes shorter than 20 characters are skipped.',
   },
   {
     key: 'photos',
     label: 'Photos',
-    icon: "\uD83D\uDCF7",
+    Icon: CameraIcon,
     description: 'Export and import photos from Apple Photos. HEIC files are converted to JPEG.',
     hasLimit: true,
   },
   {
     key: 'calendar',
     label: 'Calendar',
-    icon: "\uD83D\uDCC5",
+    Icon: CalendarDaysIcon,
     description: 'Import events from Apple Calendar.',
   },
   {
     key: 'reminders',
     label: 'Reminders',
-    icon: "\u2705",
+    Icon: CheckCircleIcon,
     description: 'Import all reminders from Apple Reminders, including completed items.',
   },
   {
     key: 'contacts',
     label: 'Contacts',
-    icon: "\uD83D\uDC64",
+    Icon: UserIcon,
     description: 'Import contacts from Apple Contacts. Contacts without a display name are skipped.',
   },
 ]
@@ -290,7 +298,7 @@ function SourceCard({ source, enabled, onToggle, status, progress, message, resu
     }`}>
       <div className="flex items-center justify-between mb-1">
         <div className="flex items-center gap-2">
-          <span className="text-base">{source.icon}</span>
+          <source.Icon aria-hidden="true" className="w-4 h-4 text-secondary" />
           <h3 className="text-sm font-medium text-primary">{source.label}</h3>
           {source.comingSoon && (
             <span className="text-[10px] px-1.5 py-0.5 rounded bg-surface-secondary text-secondary">

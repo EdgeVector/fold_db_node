@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useMemo, useState, Fragment } from 'react'
+import { InboxArrowDownIcon } from '@heroicons/react/24/outline'
 import { useAppSelector } from '../../store/hooks'
 import { selectAllSchemas } from '../../store/schemaSlice'
 import { useOrgNames } from '../../hooks/useOrgNames'
@@ -243,10 +244,11 @@ export default function DataBrowserTab() {
                           <VersionBadge version={maxVersion} />
                           {sharedBy && (
                             <span
-                              className="inline-flex items-center px-1.5 py-0.5 text-[10px] font-semibold rounded bg-gruvbox-green/15 text-gruvbox-green"
+                              className="inline-flex items-center gap-1 px-1.5 py-0.5 text-[10px] font-semibold rounded bg-gruvbox-green/15 text-gruvbox-green"
                               title={record?.author_pub_key || ''}
                             >
-                              {'\u{1F4E5}'} {sharedBy}
+                              <InboxArrowDownIcon aria-hidden="true" className="w-3 h-3" />
+                              <span>{sharedBy}</span>
                             </span>
                           )}
                           {kLoading && <span className="text-xs text-secondary">(loading...)</span>}

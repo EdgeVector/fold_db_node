@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useState } from 'react'
+import { InboxArrowDownIcon } from '@heroicons/react/24/outline'
 import { mutationClient } from '../../api/clients'
 import { SCHEMA_BADGE_COLORS } from '../../constants/ui'
 import {
@@ -259,8 +260,9 @@ export function RecordMetadata({ metadata, schemaName, recordKey, sharedBy }) {
   if (!hasData && !sharedBy) return null
   if (!hasData && sharedBy) {
     return (
-      <div className="mb-1 text-xs text-gruvbox-green">
-        {'\u{1F4E5}'} {sharedBy}
+      <div className="mb-1 text-xs text-gruvbox-green flex items-center gap-1">
+        <InboxArrowDownIcon aria-hidden="true" className="w-3.5 h-3.5" />
+        <span>{sharedBy}</span>
       </div>
     )
   }
@@ -268,8 +270,9 @@ export function RecordMetadata({ metadata, schemaName, recordKey, sharedBy }) {
   return (
     <div className="mb-1">
       {sharedBy && (
-        <div className="text-xs text-gruvbox-green mb-1">
-          {'\u{1F4E5}'} {sharedBy}
+        <div className="text-xs text-gruvbox-green mb-1 flex items-center gap-1">
+          <InboxArrowDownIcon aria-hidden="true" className="w-3.5 h-3.5" />
+          <span>{sharedBy}</span>
         </div>
       )}
       <button

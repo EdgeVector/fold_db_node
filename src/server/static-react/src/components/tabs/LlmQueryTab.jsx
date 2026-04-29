@@ -83,7 +83,7 @@ function LlmQueryTab({ onResult }) {
   /** Process an AI agent response — shared by follow-up and new-query paths */
   const processAgentResponse = useCallback((agentResponse) => {
     if (!agentResponse.success) {
-      addToLog('system', `❌ Error: ${agentResponse.error || 'Failed to run AI agent query'}`);
+      addToLog('system', `[error] ${agentResponse.error || 'Failed to run AI agent query'}`);
       return;
     }
 
@@ -94,7 +94,7 @@ function LlmQueryTab({ onResult }) {
     }
 
     if (result.tool_calls && result.tool_calls.length > 0) {
-      addToLog('system', `🔧 Made ${result.tool_calls.length} tool call(s)`);
+      addToLog('system', `[tools] Made ${result.tool_calls.length} tool call(s)`);
       addToLog('results', 'Tool execution trace', result.tool_calls);
     }
 
@@ -137,7 +137,7 @@ function LlmQueryTab({ onResult }) {
       if (canAskFollowup) {
         let analysisResponse;
         try {
-          addToLog('system', '🤔 Analyzing if question can be answered from existing context...');
+          addToLog('system', '[analyze] checking whether existing context answers this…');
           analysisResponse = await llmQueryClient.analyzeFollowup({
             session_id: sessionId,
             question: userInput
@@ -155,7 +155,7 @@ function LlmQueryTab({ onResult }) {
         const analysis = analysisResponse.data;
 
         if (!analysis.needs_query) {
-          addToLog('system', `✅ Answering from existing context: ${analysis.reasoning}`);
+          addToLog('system', `[ok] answering from existing context: ${analysis.reasoning}`);
 
           const chatResponse = await llmQueryClient.chat({
             session_id: sessionId,
@@ -163,13 +163,13 @@ function LlmQueryTab({ onResult }) {
           });
 
           if (!chatResponse.success) {
-            addToLog('system', `❌ Error: ${chatResponse.error || 'Failed to process question'}`);
+            addToLog('system', `[error] ${chatResponse.error || 'Failed to process question'}`);
             return;
           }
 
           addToLog('system', chatResponse.data.answer);
         } else {
-          addToLog('system', `🔍 Need new data: ${analysis.reasoning}`);
+          addToLog('system', `[search] need new data: ${analysis.reasoning}`);
           await runAgentQuery();
         }
       } else {
@@ -178,7 +178,7 @@ function LlmQueryTab({ onResult }) {
     } catch (error) {
       const msg = error instanceof Error ? error.message : String(error);
       console.error('Error processing input:', error);
-      addToLog('system', `❌ Error: ${msg}`);
+      addToLog('system', `[error] ${msg}`);
       onResult({ error: msg });
     } finally {
       dispatch(setIsProcessing(false));
