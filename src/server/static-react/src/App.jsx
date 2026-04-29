@@ -52,6 +52,8 @@ export function AppContent() {
   const {
     isAuthenticated,
     isAuthLoading,
+    authError,
+    retryAuth,
     aiConfigured,
     aiProvider,
     showSetupBanner,
@@ -148,6 +150,43 @@ export function AppContent() {
       default:
         return null
     }
+  }
+
+  // Bootstrap failed to reach the FoldDB node (e.g. backend not running).
+  // Replace the infinite spinner with an actionable error card.
+  if (!isAuthenticated && !isAuthLoading && authError) {
+    return (
+      <div className="h-screen flex items-center justify-center bg-surface-secondary px-6">
+        <div className="max-w-md w-full bg-surface border border-border p-6">
+          <h1 className="text-primary text-base font-bold mb-2">
+            Can't reach the FoldDB node
+          </h1>
+          <p className="text-secondary text-sm mb-4">
+            The web UI loaded, but the local node didn't respond. It may not be
+            running yet, or it crashed during startup.
+          </p>
+          <p className="text-secondary text-sm mb-2">Try starting it:</p>
+          <pre className="bg-surface-secondary border border-border text-primary text-xs p-3 mb-4 overflow-x-auto">
+            ./run.sh --local --local-schema
+          </pre>
+          <details className="mb-4">
+            <summary className="text-secondary text-xs cursor-pointer hover:text-primary">
+              Technical details
+            </summary>
+            <pre className="bg-surface-secondary border border-border text-secondary text-xs p-3 mt-2 overflow-x-auto whitespace-pre-wrap">
+              {authError}
+            </pre>
+          </details>
+          <button
+            type="button"
+            onClick={retryAuth}
+            className="bg-primary text-surface text-sm px-4 py-2 border-none cursor-pointer hover:opacity-90 transition-opacity"
+          >
+            Retry
+          </button>
+        </div>
+      </div>
+    );
   }
 
   // Show loading spinner while auto-login is in progress or checking db status
