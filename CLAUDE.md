@@ -35,7 +35,7 @@ npm run test:e2e
 The schema service lives in its own repo, [EdgeVector/schema_service](https://github.com/EdgeVector/schema_service), and is deployed as a Lambda at `schema.folddb.com` via [EdgeVector/schema-infra](https://github.com/EdgeVector/schema-infra). fold_db_node consumes it as a client.
 
 - **Client**: the `schema_service_client` crate (published from the `schema_service` workspace). `fold_db_node::fold_node` re-exports `SchemaServiceClient` for internal use. Integration tests can inject `test://mock` via the `schema_service_url` config.
-- **Dep pinning**: `schema_service_core`, `schema_service_client`, and (dev-dep) `schema_service_server_http` are git deps in `Cargo.toml`, pinned to a specific commit via `Cargo.lock`. CI builds from that pin. To bump: `cd ../schema_service && git pull` to learn the new HEAD, then in fold_db_node run `cargo update -p schema_service_core` (and any other schema_service crates you want to advance). `fold_db_node` and `schema_service` MUST pin the **same** `fold_db` rev — see [Local-dev gotchas](#local-dev-gotchas-read-if-cargo-check-explodes) below for why and how.
+- **Dep pinning**: `schema_service_core`, `schema_service_client`, and (dev-dep) `schema_service_server_http` are git deps in `Cargo.toml`, pinned by explicit `rev = "<40-hex>"` (Cargo.lock mirrors). The **cross-repo bump-cascade bot** keeps these in lockstep with `schema_service` — and the matching `fold_db` rev (dual-`fold_db` defense) — automatically. A fold_db merge cascades through schema_service to here within ~10–15 min via `bot/bump-schema-service` PRs that auto-merge. Workflow file: `.github/workflows/bump-schema-service.yml`. To preempt the bot for a manual bump (e.g. consuming a new fold_db feature whose Rust changes have to land alongside the rev bump), disable the `bump-schema-service` workflow in repo Actions, do the work, re-enable.
 - **Dev binary** (optional): `cargo run -p schema_service_server_http --bin schema_service -- --port 9102 --db-path schema_registry` in the sibling `schema_service/` checkout. `./run.sh --local-schema` orchestrates this automatically.
 - **No in-tree code**: `src/bin/schema_service.rs` and `src/schema_service/` were removed in Phase 0; `src/fold_node/schema_client.rs` was removed in Phase 3 T2.
 
@@ -63,13 +63,13 @@ Two mines, both already defused — but if you find yourself debugging either, t
 
 Symptoms: dozens of errors like `expected fold_db::triggers::Trigger, found schema_service_core::types::Trigger`, all from types re-exported through `schema_service_core`. Root cause: cargo compiles **two copies** of `fold_db` whenever `fold_db_node/Cargo.toml` and the sibling `schema_service/Cargo.toml` use different source specs (e.g. `branch = "mainline"` vs `rev = "..."`) — cargo treats them as different packages even when both SHAs match.
 
-**Defense (production):** both repos pin fold_db to the **same explicit `rev`**. `fold_db_node/Cargo.toml` and `schema_service/Cargo.toml` must match: bump them in lockstep. To bump:
+**Defense (production):** both repos pin fold_db to the **same explicit `rev`**, kept in sync by the bump-cascade bot. When fold_db merges, its `notify-downstream.yml` dispatches to schema_service; `bump-fold-db.yml` opens a PR pinning the new fold_db sha, auto-merges. That merge fires schema_service's own `notify-downstream.yml`, which dispatches here; `bump-schema-service.yml` opens a PR pinning the schema_service sha **and** the matching fold_db rev (read from schema_service's tip Cargo.toml — that's the dual-`fold_db` defense), auto-merges. End-to-end ~10–15 min from fold_db merge to fold_db_node land.
 
-1. Land your fold_db PR; copy the squash-commit SHA from `main`.
-2. Open a `schema_service` PR setting `fold_db = { ..., rev = "<sha>" }`. Merge.
-3. Open a `fold_db_node` PR setting the same `rev` AND running `cargo update -p schema_service_core` to pull schema_service's new pin into Cargo.lock. Merge.
+`scripts/lint-rev-pin-format.sh` (CI-enforced) keeps cascade-relevant git deps as single-line `name = { git = "...", rev = "<40-hex>", ... }` so the bot's `sed` regex can land deterministic edits. Multi-line `[dependencies.fold_db]` blocks fail CI.
 
-If only one side bumps, CI here surfaces the dual-`fold_db` errors above. (Pre-2026-04, this repo used `branch = "mainline"`; that worked **only** while mainline HEAD coincidentally matched schema_service's pin. Don't go back to branch tracking unless schema_service drops its rev pin too — but it can't, because its CDK Docker build needs deterministic pinning without a parent lockfile.)
+To preempt the bot for a manual bump (e.g. consuming a new fold_db feature alongside the rev change): disable `bump-schema-service.yml` in repo Actions, do the work, re-enable. The bot is idempotent — if its target rev already matches, it no-ops.
+
+(Pre-2026-04, this repo used `branch = "mainline"` for fold_db; that worked **only** while mainline HEAD coincidentally matched schema_service's pin. Don't go back to branch tracking — the bot's determinism depends on rev pinning.)
 
 **Local dev:** `cargo build` fetches `fold_db` and `schema_service` crates from GitHub at the revs pinned in `Cargo.toml` (one git fetch the first time after a bump, cached after). Sibling-checkout edits in `../fold_db` or `../schema_service` no longer hot-reload — bump the pinned rev or add an ad-hoc `[patch.crates-io]` table to a local-only branch if you need that loop.
 
