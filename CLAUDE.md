@@ -35,7 +35,27 @@ npm run test:e2e
 The schema service lives in its own repo, [EdgeVector/schema_service](https://github.com/EdgeVector/schema_service), and is deployed as a Lambda at `schema.folddb.com` via [EdgeVector/schema-infra](https://github.com/EdgeVector/schema-infra). fold_db_node consumes it as a client.
 
 - **Client**: the `schema_service_client` crate (published from the `schema_service` workspace). `fold_db_node::fold_node` re-exports `SchemaServiceClient` for internal use. Integration tests can inject `test://mock` via the `schema_service_url` config.
-- **Dep pinning**: `schema_service_core`, `schema_service_client`, and (dev-dep) `schema_service_server_http` are git deps in `Cargo.toml`, pinned to a specific commit via `Cargo.lock`. CI builds from that pin. `.cargo/config.toml` patches them to the sibling `../schema_service/crates/*` checkout for local dev; CI removes that file before building so the lockfile pin wins and main-branch drift can't break PR CI. Mirrors the same pattern `schema_service` uses for its own `fold_db` dep. To bump: `cd ../schema_service && git pull`, then in fold_db_node run `mv .cargo/config.toml /tmp/ && cargo update -p schema_service_core && mv /tmp/config.toml .cargo/`.
+- **Dep pinning**: `schema_service_core`, `schema_service_client`, and (dev-dep) `schema_service_server_http` are git deps in `Cargo.toml`, pinned to a specific commit via `Cargo.lock`. CI builds from that pin. `.cargo/config.toml` patches them to the sibling `../schema_service/crates/*` checkout for local dev; CI removes that file before building so the lockfile pin wins and main-branch drift can't break PR CI. Mirrors the same pattern `schema_service` uses for its own `fold_db` dep. To bump: `cd ../schema_service && git pull`, then in fold_db_node run `mv .cargo/config.toml /tmp/ && cargo update -p schema_service_core && mv /tmp/config.toml .cargo/`. **Always move the patch file aside before running `cargo update -p`** — every cargo invocation with the patch active rewrites Cargo.lock to drop `source = "git+..."` lines from the patched packages, and committing that produces the missing-source trap below. The PreToolUse `cargo-lock-guard.sh` hook blocks the *purely-noise* commit, but a commit that combines a real bump with the noise still gets through.
+- **Missing-source recovery**: if a prior commit landed with `[[package]]` entries that lost their `source = "git+..."` lines, `cargo update -p <pkg>` errors with `package ID specification "<pkg>" did not match any packages` (cargo identifies a package by `(name, version, source)`, so a sourceless entry is unreachable from the CLI). `bash scripts/lint-cargo-lock-sources.sh` (also wired into CI) flags the offenders. To repair, surgically re-inject each missing source line with the correct git URL and commit hash from the matching `Cargo.toml` git dep:
+  ```bash
+  python3 - <<'PY'
+  # Map of {package_name: source-line value}. Pull the rev/branch/hash
+  # from the matching Cargo.toml entry and use the resolved commit SHA
+  # (look at a sibling clone or git ls-remote) for the trailing `#<sha>`.
+  sources = {
+      "fold_db": 'git+https://github.com/EdgeVector/fold_db.git?rev=<sha>#<sha>',
+      # ...add an entry per offender
+  }
+  import re, pathlib
+  text = pathlib.Path("Cargo.lock").read_text()
+  for name, src in sources.items():
+      pat = re.compile(rf'(\[\[package\]\]\nname = "{re.escape(name)}"\nversion = "[^"]+"\n)(?!source = )')
+      text, n = pat.subn(rf'\1source = "{src}"\n', text, count=1)
+      assert n == 1, f"failed to patch {name}"
+  pathlib.Path("Cargo.lock").write_text(text)
+  PY
+  ```
+  Run the lint after to confirm clean, then commit only the Cargo.lock fix.
 - **Dev binary** (optional): `cargo run -p schema_service_server_http --bin schema_service -- --port 9102 --db-path schema_registry` in the sibling `schema_service/` checkout. `./run.sh --local-schema` orchestrates this automatically.
 - **No in-tree code**: `src/bin/schema_service.rs` and `src/schema_service/` were removed in Phase 0; `src/fold_node/schema_client.rs` was removed in Phase 3 T2.
 
