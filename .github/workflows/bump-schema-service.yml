@@ -131,7 +131,23 @@ jobs:
           git checkout -B "$BRANCH"
           git add Cargo.toml Cargo.lock
           git commit -m "chore: bump schema_service to ${SS_SHORT}, fold_db to ${FD_SHORT} (auto)"
-          git push -f origin "$BRANCH"
+          # Graceful handling of merge-queue branch lock: if a previous
+          # bot PR for this branch is already in the merge queue, GitHub
+          # rejects force-push with GH006 ("Branches that are queued for
+          # merging cannot be updated"). That's fine — the queued PR
+          # lands soon, and the next dispatch picks up the newer sha.
+          # Without this guard the workflow fails red and the operator
+          # has to retry manually.
+          if ! git push -f origin "$BRANCH" 2> /tmp/push.err; then
+              if grep -qE "GH006|added to a merge queue" /tmp/push.err; then
+                  echo "::warning::Branch $BRANCH is in merge queue (target sha=${SS_SHORT}/${FD_SHORT})."
+                  echo "::warning::Skipping force-push; next dispatch will retry once the queued PR lands."
+                  cat /tmp/push.err >&2
+                  exit 0
+              fi
+              cat /tmp/push.err >&2
+              exit 1
+          fi
           if ! gh pr view "$BRANCH" >/dev/null 2>&1; then
             gh pr create --base main --head "$BRANCH" \
               --title "chore: bump schema_service ${SS_SHORT} + fold_db ${FD_SHORT} (auto)" \
