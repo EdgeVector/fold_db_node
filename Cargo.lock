@@ -5065,7 +5065,7 @@ dependencies = [
 [[package]]
 name = "schema_service_client"
 version = "0.1.0"
-source = "git+https://github.com/EdgeVector/schema_service.git?branch=main#42506374fb792e1adecdaf13b59964e78727bbf1"
+source = "git+https://github.com/EdgeVector/schema_service.git?rev=42506374fb792e1adecdaf13b59964e78727bbf1#42506374fb792e1adecdaf13b59964e78727bbf1"
 dependencies = [
  "fold_db",
  "futures",
@@ -5082,7 +5082,7 @@ dependencies = [
 [[package]]
 name = "schema_service_core"
 version = "0.1.0"
-source = "git+https://github.com/EdgeVector/schema_service.git?branch=main#42506374fb792e1adecdaf13b59964e78727bbf1"
+source = "git+https://github.com/EdgeVector/schema_service.git?rev=42506374fb792e1adecdaf13b59964e78727bbf1#42506374fb792e1adecdaf13b59964e78727bbf1"
 dependencies = [
  "async-trait",
  "chrono-tz",
@@ -5105,7 +5105,7 @@ dependencies = [
 [[package]]
 name = "schema_service_server_http"
 version = "0.1.0"
-source = "git+https://github.com/EdgeVector/schema_service.git?branch=main#42506374fb792e1adecdaf13b59964e78727bbf1"
+source = "git+https://github.com/EdgeVector/schema_service.git?rev=42506374fb792e1adecdaf13b59964e78727bbf1#42506374fb792e1adecdaf13b59964e78727bbf1"
 dependencies = [
  "actix-cors",
  "actix-web",
@@ -5128,7 +5128,7 @@ dependencies = [
 [[package]]
 name = "schema_service_server_shared"
 version = "0.1.0"
-source = "git+https://github.com/EdgeVector/schema_service.git?branch=main#42506374fb792e1adecdaf13b59964e78727bbf1"
+source = "git+https://github.com/EdgeVector/schema_service.git?rev=42506374fb792e1adecdaf13b59964e78727bbf1#42506374fb792e1adecdaf13b59964e78727bbf1"
 dependencies = [
  "actix-web",
  "chrono",
@@ -6818,7 +6818,7 @@ dependencies = [
 [[package]]
 name = "wasm_compiler"
 version = "0.1.0"
-source = "git+https://github.com/EdgeVector/schema_service.git?branch=main#42506374fb792e1adecdaf13b59964e78727bbf1"
+source = "git+https://github.com/EdgeVector/schema_service.git?rev=42506374fb792e1adecdaf13b59964e78727bbf1#42506374fb792e1adecdaf13b59964e78727bbf1"
 dependencies = [
  "log",
  "serde",
