@@ -52,7 +52,7 @@ describe('MyProfileTab', () => {
     it('shows loading spinner while fetching profile', () => {
       discoveryClient.getInterests.mockReturnValue(new Promise(() => {})) // never resolves
       render()
-      expect(screen.getByText('Loading your interest fingerprint...')).toBeInTheDocument()
+      expect(screen.getByText('Loading your interest profile...')).toBeInTheDocument()
     })
   })
 
@@ -66,12 +66,12 @@ describe('MyProfileTab', () => {
       render()
 
       await waitFor(() => {
-        expect(screen.getByText('No Interest Fingerprint Yet')).toBeInTheDocument()
+        expect(screen.getByText('No Interest Profile Yet')).toBeInTheDocument()
       })
-      expect(screen.getByText('Generate Fingerprint')).toBeInTheDocument()
+      expect(screen.getByText('Generate Profile')).toBeInTheDocument()
     })
 
-    it('triggers detection and re-fetches profile when Generate Fingerprint is clicked', async () => {
+    it('triggers detection and re-fetches profile when Generate Profile is clicked', async () => {
       // First call returns empty, second call (after detect) returns full profile
       discoveryClient.getInterests
         .mockResolvedValueOnce({ success: true, data: EMPTY_PROFILE })
@@ -85,10 +85,10 @@ describe('MyProfileTab', () => {
       render(onResult)
 
       await waitFor(() => {
-        expect(screen.getByText('Generate Fingerprint')).toBeInTheDocument()
+        expect(screen.getByText('Generate Profile')).toBeInTheDocument()
       })
 
-      fireEvent.click(screen.getByText('Generate Fingerprint'))
+      fireEvent.click(screen.getByText('Generate Profile'))
 
       await waitFor(() => {
         expect(discoveryClient.detectInterests).toHaveBeenCalled()
@@ -107,7 +107,7 @@ describe('MyProfileTab', () => {
 
       // Profile should now be displayed (radar chart, stats, etc.)
       await waitFor(() => {
-        expect(screen.getByText('Interest Fingerprint')).toBeInTheDocument()
+        expect(screen.getByText('Interest Profile')).toBeInTheDocument()
         expect(screen.getByText('5')).toBeInTheDocument() // interests detected
       })
     })
@@ -135,7 +135,7 @@ describe('MyProfileTab', () => {
       render()
 
       await waitFor(() => {
-        expect(screen.getByText('Interest Fingerprint')).toBeInTheDocument()
+        expect(screen.getByText('Interest Profile')).toBeInTheDocument()
       })
 
       // SVG radar chart should be present (rendered as inline SVG)
@@ -155,12 +155,17 @@ describe('MyProfileTab', () => {
       })
     })
 
-    it('shows category count and similarity', async () => {
+    it('shows category count and relative weight', async () => {
+      // Total across MOCK_PROFILE.categories = 42 + 28 + 15 + 10 + 7 = 102.
+      // Software Engineering = 42 / 102 = 41.2% → renders as "41% of profile".
+      // Previously asserted "65.0% avg match" (avg_similarity-derived) — that
+      // metric was dropped because the backend returns 1.0 for every category,
+      // making the indicator carry no information. See CategoryList comment.
       render()
 
       await waitFor(() => {
         expect(screen.getByText(/42 items/)).toBeInTheDocument()
-        expect(screen.getByText(/65\.0% avg match/)).toBeInTheDocument()
+        expect(screen.getByText(/41% of profile/)).toBeInTheDocument()
       })
     })
 
@@ -168,7 +173,7 @@ describe('MyProfileTab', () => {
       render()
 
       await waitFor(() => {
-        expect(screen.getByText('Your fingerprint is private by default')).toBeInTheDocument()
+        expect(screen.getByText('Your interest profile is private by default')).toBeInTheDocument()
       })
     })
   })
@@ -261,7 +266,7 @@ describe('MyProfileTab', () => {
       render()
 
       await waitFor(() => {
-        expect(screen.getByText('Interest Fingerprint')).toBeInTheDocument()
+        expect(screen.getByText('Interest Profile')).toBeInTheDocument()
       })
 
       // With <3 enabled categories, no SVG radar chart - tag cloud instead
