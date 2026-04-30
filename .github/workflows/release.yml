@@ -70,7 +70,6 @@ jobs:
           cargo build --release --target ${{ matrix.target }} \
             --bin folddb \
             --bin folddb_server \
-            --bin schema_service \
             --bin folddb_mcp
 
       # Hard gate: every binary must self-report the pushed tag. Catches the
@@ -83,7 +82,7 @@ jobs:
         run: |
           set -euo pipefail
           expected="${GITHUB_REF_NAME#v}"
-          for bin in folddb folddb_server schema_service folddb_mcp; do
+          for bin in folddb folddb_server folddb_mcp; do
             actual=$(target/${{ matrix.target }}/release/$bin --version | awk '{print $NF}')
             echo "$bin --version -> $actual (expected $expected)"
             if [ "$actual" = "0.1.0" ]; then
@@ -101,7 +100,6 @@ jobs:
           mkdir -p dist
           cp target/${{ matrix.target }}/release/folddb dist/
           cp target/${{ matrix.target }}/release/folddb_server dist/
-          cp target/${{ matrix.target }}/release/schema_service dist/
           cp target/${{ matrix.target }}/release/folddb_mcp dist/
           tar -czf ${{ matrix.name }}.tar.gz -C dist .
 
@@ -247,7 +245,6 @@ jobs:
             def install
               bin.install "folddb"
               bin.install "folddb_server"
-              bin.install "schema_service"
             end
 
             def caveats

@@ -229,19 +229,26 @@ jobs:
           cp -R "${{ steps.mount.outputs.mount_point }}/FoldDB.app" "$RUNNER_TEMP/FoldDB.app"
           INFO="$RUNNER_TEMP/FoldDB.app/Contents/Info.plist"
           BUNDLE_VERSION=$(plutil -extract CFBundleShortVersionString raw "$INFO")
+          # Tauri 2.x names the executable inside Contents/MacOS/ after the
+          # Cargo crate (`fold-app`), not after `productName`. Read the
+          # canonical executable name from Info.plist's CFBundleExecutable
+          # so the smoke test stays correct if either name changes.
+          BUNDLE_EXEC=$(plutil -extract CFBundleExecutable raw "$INFO")
           EXPECTED="${{ steps.find.outputs.expected_version }}"
           echo "Info.plist CFBundleShortVersionString: $BUNDLE_VERSION"
+          echo "Info.plist CFBundleExecutable:         $BUNDLE_EXEC"
           echo "Expected:                              $EXPECTED"
           if [[ "$BUNDLE_VERSION" != "$EXPECTED" ]]; then
             echo "::error::Bundle version drift — Info.plist says $BUNDLE_VERSION but artifact is $EXPECTED"
             exit 1
           fi
+          echo "BUNDLE_EXEC=$BUNDLE_EXEC" >> "$GITHUB_ENV"
 
       - name: Launch app and probe /api/health
         env:
           EXPECTED_VERSION: ${{ steps.find.outputs.expected_version }}
         run: |
-          BIN="$RUNNER_TEMP/FoldDB.app/Contents/MacOS/FoldDB"
+          BIN="$RUNNER_TEMP/FoldDB.app/Contents/MacOS/$BUNDLE_EXEC"
           "$BIN" > "$RUNNER_TEMP/app.log" 2>&1 &
           APP_PID=$!
           echo "APP_PID=$APP_PID" >> "$GITHUB_ENV"
