@@ -36,7 +36,7 @@ jobs:
       - uses: actions/checkout@v4
 
       - name: Configure git for private dependencies
-        run: git config --global url."https://x-access-token:${{ secrets.PRIVATE_DEPS_TOKEN }}@github.com/".insteadOf "https://github.com/"
+        run: git config --global url."https://x-access-token:${{ secrets.GH_PAT }}@github.com/".insteadOf "https://github.com/"
 
       - name: Install Rust toolchain
         uses: dtolnay/rust-toolchain@stable
@@ -162,7 +162,7 @@ jobs:
 
       - name: Publish release to public fold_db repo
         env:
-          GH_TOKEN: ${{ secrets.PRIVATE_DEPS_TOKEN }}
+          GH_TOKEN: ${{ secrets.GH_PAT }}
         run: |
           TAG="${GITHUB_REF_NAME}"
           PRERELEASE_FLAG=""
@@ -193,11 +193,12 @@ jobs:
         uses: actions/checkout@v4
         with:
           repository: EdgeVector/homebrew-folddb
-          # PRIVATE_DEPS_TOKEN's identity (iceh6) has read-only collaborator role
-          # on homebrew-folddb, so `git push` from bump-tap 403s. GH_PAT is an
-          # org-scoped PAT with write access. Used only in bump-tap; the build
-          # job keeps PRIVATE_DEPS_TOKEN since that's what insteadOf rewriting
-          # needs for private dep clones. (projects/4a2c7)
+          # GH_PAT is the org-level PAT with write access. Required here
+          # because `git push` from bump-tap needs to push the auto-bump
+          # branch onto homebrew-folddb. (Previously the build/checkout
+          # steps used PRIVATE_DEPS_TOKEN for private dep clones, but that
+          # token broke 2026-04-30; GH_PAT clones private repos fine, so
+          # all auth in this workflow is now consolidated on GH_PAT.)
           token: ${{ secrets.GH_PAT }}
           path: tap
 
