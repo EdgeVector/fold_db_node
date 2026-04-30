@@ -15,18 +15,18 @@ face-detection = ["fold_db/face-detection"]
 
 [dependencies]
 # Core database library
-fold_db = { git = "https://github.com/EdgeVector/fold_db.git", rev = "6293308a648b1f316071579ee7dd029855e3c277", features = ["cli"] }
+fold_db = { git = "https://github.com/EdgeVector/fold_db.git", rev = "93eb7bb4ffcd38b6dd05e8e9f67f876be0c16d2b", features = ["cli"] }
 
 # Schema service registry brain. Phase 2 T2: all former
 # `fold_db::schema_service::*` types come from here now. Git dep pinned
 # by explicit rev; bumps are automated by the cross-repo bump-cascade
 # bot (see CLAUDE.md > Schema service > Dep pinning).
-schema_service_core = { git = "https://github.com/EdgeVector/schema_service.git", rev = "f551a886b121ef579a5b30d4d26e679ea2884f85" }
+schema_service_core = { git = "https://github.com/EdgeVector/schema_service.git", rev = "d2d22725f622ce65d89c1bee42cb099fa23411e4" }
 
 # Typed /v1/* HTTP client for the schema service. Phase 3 T2: replaces the
 # in-tree `src/fold_node/schema_client.rs`. Bumps in lockstep with
 # `schema_service_core` via the cascade bot.
-schema_service_client = { git = "https://github.com/EdgeVector/schema_service.git", rev = "f551a886b121ef579a5b30d4d26e679ea2884f85" }
+schema_service_client = { git = "https://github.com/EdgeVector/schema_service.git", rev = "d2d22725f622ce65d89c1bee42cb099fa23411e4" }
 
 # Shared telemetry substrate. Lives in fold_db's workspace (`crates/observability`)
 # but pinned independently here because the fold_db `rev` above is pre-workspace
@@ -38,7 +38,7 @@ schema_service_client = { git = "https://github.com/EdgeVector/schema_service.gi
 # composition into upstream `observability::init_node_with_web`. The local
 # `observability_setup` module is now a thin re-export — when you need
 # additional layers, modify upstream.
-observability = { git = "https://github.com/EdgeVector/fold_db.git", rev = "6293308a648b1f316071579ee7dd029855e3c277" }
+observability = { git = "https://github.com/EdgeVector/fold_db.git", rev = "93eb7bb4ffcd38b6dd05e8e9f67f876be0c16d2b" }
 
 # HTTP Server
 actix-web = "4.3"
@@ -141,7 +141,7 @@ wat = "1"
 # In-process test fixture for spinning up a real schema service.
 # Bumps with the other schema_service_* deps via the cascade bot.
 # Never pulled into non-dev builds.
-schema_service_server_http = { git = "https://github.com/EdgeVector/schema_service.git", rev = "f551a886b121ef579a5b30d4d26e679ea2884f85" }
+schema_service_server_http = { git = "https://github.com/EdgeVector/schema_service.git", rev = "d2d22725f622ce65d89c1bee42cb099fa23411e4" }
 # Dev-only: assemble a tracing subscriber + OpenTelemetry layer in the
 # otel middleware test so set_parent has somewhere to land.
 opentelemetry_sdk = "0.27"
@@ -150,7 +150,7 @@ tracing-subscriber = "0.3"
 # SchemaServiceState::new() directly. Re-declared here only to opt in
 # to the feature for test builds — Cargo unifies with the [dependencies]
 # entry, same git source.
-schema_service_core = { git = "https://github.com/EdgeVector/schema_service.git", rev = "f551a886b121ef579a5b30d4d26e679ea2884f85", features = ["test-utils"] }
+schema_service_core = { git = "https://github.com/EdgeVector/schema_service.git", rev = "d2d22725f622ce65d89c1bee42cb099fa23411e4", features = ["test-utils"] }
 # Mock HTTP server for the Phase 2 D1 headline trace-propagation test
 # (tests/observability_e2e_trace_propagation.rs). Stands in for the
 # real schema service so the test can capture the egress traceparent
