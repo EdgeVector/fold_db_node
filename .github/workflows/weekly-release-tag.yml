@@ -25,7 +25,15 @@ jobs:
       - uses: actions/checkout@v4
         with:
           fetch-depth: 0
-          token: ${{ secrets.GITHUB_TOKEN }}
+          # GH_PAT (org-level Actions secret) instead of GITHUB_TOKEN: the
+          # auto-generated GITHUB_TOKEN deliberately does NOT trigger
+          # `on: push: tags` workflows when it pushes a tag (GitHub's
+          # "no recursion" rule), so v0.3.11 was tagged but release.yml +
+          # tauri-release.yml never fired. GH_PAT is a real PAT, so its
+          # tag pushes do fire downstream workflows. This token is consumed
+          # both by the checkout (to set the remote URL) and by
+          # `git push origin <tag>` below.
+          token: ${{ secrets.GH_PAT }}
 
       - name: Configure git
         run: |
