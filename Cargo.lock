@@ -5065,7 +5065,7 @@ dependencies = [
 [[package]]
 name = "schema_service_client"
 version = "0.1.0"
-source = "git+https://github.com/EdgeVector/schema_service.git?rev=d2d22725f622ce65d89c1bee42cb099fa23411e4#d2d22725f622ce65d89c1bee42cb099fa23411e4"
+source = "git+https://github.com/EdgeVector/schema_service.git?rev=953bc972d276bd5eb7e04a59eff4d06abd96fa51#953bc972d276bd5eb7e04a59eff4d06abd96fa51"
 dependencies = [
  "fold_db",
  "futures",
@@ -5082,7 +5082,7 @@ dependencies = [
 [[package]]
 name = "schema_service_core"
 version = "0.1.0"
-source = "git+https://github.com/EdgeVector/schema_service.git?rev=d2d22725f622ce65d89c1bee42cb099fa23411e4#d2d22725f622ce65d89c1bee42cb099fa23411e4"
+source = "git+https://github.com/EdgeVector/schema_service.git?rev=953bc972d276bd5eb7e04a59eff4d06abd96fa51#953bc972d276bd5eb7e04a59eff4d06abd96fa51"
 dependencies = [
  "async-trait",
  "chrono-tz",
@@ -5106,7 +5106,7 @@ dependencies = [
 [[package]]
 name = "schema_service_server_http"
 version = "0.1.0"
-source = "git+https://github.com/EdgeVector/schema_service.git?rev=d2d22725f622ce65d89c1bee42cb099fa23411e4#d2d22725f622ce65d89c1bee42cb099fa23411e4"
+source = "git+https://github.com/EdgeVector/schema_service.git?rev=953bc972d276bd5eb7e04a59eff4d06abd96fa51#953bc972d276bd5eb7e04a59eff4d06abd96fa51"
 dependencies = [
  "actix-cors",
  "actix-web",
@@ -5129,7 +5129,7 @@ dependencies = [
 [[package]]
 name = "schema_service_server_shared"
 version = "0.1.0"
-source = "git+https://github.com/EdgeVector/schema_service.git?rev=d2d22725f622ce65d89c1bee42cb099fa23411e4#d2d22725f622ce65d89c1bee42cb099fa23411e4"
+source = "git+https://github.com/EdgeVector/schema_service.git?rev=953bc972d276bd5eb7e04a59eff4d06abd96fa51#953bc972d276bd5eb7e04a59eff4d06abd96fa51"
 dependencies = [
  "actix-web",
  "chrono",
@@ -6819,7 +6819,7 @@ dependencies = [
 [[package]]
 name = "wasm_compiler"
 version = "0.1.0"
-source = "git+https://github.com/EdgeVector/schema_service.git?rev=d2d22725f622ce65d89c1bee42cb099fa23411e4#d2d22725f622ce65d89c1bee42cb099fa23411e4"
+source = "git+https://github.com/EdgeVector/schema_service.git?rev=953bc972d276bd5eb7e04a59eff4d06abd96fa51#953bc972d276bd5eb7e04a59eff4d06abd96fa51"
 dependencies = [
  "log",
  "serde",
