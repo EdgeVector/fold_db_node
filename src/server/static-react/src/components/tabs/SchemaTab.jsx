@@ -9,7 +9,7 @@ import {
   fetchSchemas
 } from '../../store/schemaSlice'
 import SchemaName from '../shared/SchemaName'
-import { MagnifyingGlassIcon } from '@heroicons/react/24/outline'
+import { MagnifyingGlassIcon, EllipsisHorizontalIcon } from '@heroicons/react/24/outline'
 import { toErrorMessage, isSystemSchema } from '../../utils/schemaUtils'
 import { getAllFieldPolicies, setFieldPolicy as setFieldPolicyApi } from '../../api/clients/sharingClient'
 import schemaClient from '../../api/clients/schemaClient'
@@ -176,7 +176,25 @@ function SchemaTab({ onResult, onSchemaUpdated }) {
   const [fieldPolicies, setFieldPolicies] = useState({})
   // Which field's detail panel is open: "schemaName.fieldName" or null
   const [activePolicyField, setActivePolicyField] = useState(null)
+  // Which row's "⋯" action menu is open (one at a time across the page).
+  const [openMenuFor, setOpenMenuFor] = useState(null)
   const orgNames = useOrgNames()
+
+  // Close the row-action menu on outside click / Escape. Single global
+  // listener while a menu is open — avoids per-row listener churn.
+  useEffect(() => {
+    if (!openMenuFor) return
+    const onDocClick = (e) => {
+      if (!e.target.closest?.('[data-row-menu-root]')) setOpenMenuFor(null)
+    }
+    const onKey = (e) => { if (e.key === 'Escape') setOpenMenuFor(null) }
+    document.addEventListener('mousedown', onDocClick)
+    document.addEventListener('keydown', onKey)
+    return () => {
+      document.removeEventListener('mousedown', onDocClick)
+      document.removeEventListener('keydown', onKey)
+    }
+  }, [openMenuFor])
 
   useEffect(() => {
     dispatch(fetchSchemas({ forceRefresh: true }))
@@ -286,44 +304,52 @@ function SchemaTab({ onResult, onSchemaUpdated }) {
     const hashRangeSchemaInfo = getHashRangeSchemaInfo(schema)
     const schemaPolicies = fieldPolicies[schema.name] || {}
 
+    const isApproved = state.toLowerCase() === 'approved'
+    const isBlocked = state.toLowerCase() === 'blocked'
+    const menuOpen = openMenuFor === schema.name
+
     return (
-      <div key={schema.name} id={`schema-${schema.name}`} className={`card overflow-hidden transition-shadow duration-500${highlightedSchema === schema.name ? ' ring-2 ring-gruvbox-purple' : ''}`}>
+      <div
+        key={schema.name}
+        id={`schema-${schema.name}`}
+        className={`border-b border-border last:border-b-0 transition-shadow duration-500${highlightedSchema === schema.name ? ' ring-2 ring-gruvbox-purple' : ''}`}
+      >
         <div
           role="button"
           tabIndex={0}
-          className="w-full px-4 py-3 bg-surface-secondary cursor-pointer select-none text-left"
+          className="w-full px-4 py-2 hover:bg-surface-secondary cursor-pointer select-none text-left"
           onClick={() => toggleSchema(schema.name)}
           onKeyDown={(e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); toggleSchema(schema.name) } }}
           aria-expanded={isExpanded}
           aria-label={`${isExpanded ? 'Collapse' : 'Expand'} schema ${schema.descriptive_name || schema.name}`}
         >
-          <div className="flex items-center justify-between">
-            <div className="flex items-center space-x-2">
+          <div className="flex items-center justify-between gap-2">
+            <div className="flex items-center gap-2 min-w-0">
               {isExpanded ? (
-                <ChevronDownIcon className="w-4 h-4 text-tertiary transition-transform duration-200" />
+                <ChevronDownIcon className="w-4 h-4 text-primary shrink-0" />
               ) : (
-                <ChevronRightIcon className="w-4 h-4 text-tertiary transition-transform duration-200" />
+                <ChevronRightIcon className="w-4 h-4 text-primary shrink-0" />
               )}
-              <h3 className="font-medium text-primary">
+              <h3 className="font-medium text-primary truncate">
                 <SchemaName schema={schema} className="font-medium text-primary" />
               </h3>
-              <span className={`px-2 py-1 text-xs font-medium rounded-full ${getStateColor(state)}`}>
+              <span className={`px-2 py-0.5 text-xs font-medium rounded-full shrink-0 ${getStateColor(state)}`}>
                 {state}
               </span>
               {schema.org_hash && (
-                <span className="badge badge-info" title={schema.org_hash}>
+                <span className="badge badge-info shrink-0" title={schema.org_hash}>
                   {orgNames[schema.org_hash] || 'Org'}
                 </span>
               )}
               {rangeSchemaInfo && (
-                <span className="badge badge-info">Range Schema</span>
+                <span className="badge badge-info shrink-0">Range Schema</span>
               )}
               {hashRangeSchemaInfo && (
-                <span className="badge badge-info">HashRange Schema</span>
+                <span className="badge badge-info shrink-0">HashRange Schema</span>
               )}
             </div>
-            <div className="flex items-center space-x-2">
-              {state.toLowerCase() === 'approved' && (
+            <div className="flex items-center gap-1 shrink-0">
+              {isApproved && (
                 <button
                   className="btn-secondary btn-sm flex items-center gap-1"
                   onClick={(e) => {
@@ -336,21 +362,47 @@ function SchemaTab({ onResult, onSchemaUpdated }) {
                   Query
                 </button>
               )}
-              {state.toLowerCase() === 'approved' && (
-                <button
-                  className="btn-secondary btn-sm hover:border-gruvbox-red hover:text-gruvbox-red"
-                  onClick={(e) => { e.stopPropagation(); blockSchema(schema.name) }}
-                >
-                  Block
-                </button>
-              )}
-              {state.toLowerCase() === 'blocked' && (
-                <button
-                  className="btn-secondary btn-sm"
-                  onClick={(e) => { e.stopPropagation(); approveSchema(schema.name) }}
-                >
-                  Re-approve
-                </button>
+              {(isApproved || isBlocked) && (
+                <div className="relative" data-row-menu-root>
+                  <button
+                    type="button"
+                    onClick={(e) => {
+                      e.stopPropagation()
+                      setOpenMenuFor(menuOpen ? null : schema.name)
+                    }}
+                    aria-label={`More actions for ${schema.descriptive_name || schema.name}`}
+                    aria-haspopup="menu"
+                    aria-expanded={menuOpen}
+                    className="btn-secondary btn-sm px-2 flex items-center justify-center"
+                  >
+                    <EllipsisHorizontalIcon className="w-4 h-4" />
+                  </button>
+                  {menuOpen && (
+                    <div
+                      role="menu"
+                      className="absolute right-0 top-full mt-1 z-30 min-w-[140px] bg-gruvbox-elevated border border-border rounded shadow-lg py-1"
+                    >
+                      {isApproved && (
+                        <button
+                          role="menuitem"
+                          onClick={(e) => { e.stopPropagation(); setOpenMenuFor(null); blockSchema(schema.name) }}
+                          className="w-full text-left px-3 py-1.5 text-sm text-gruvbox-red hover:bg-surface-secondary bg-transparent border-none cursor-pointer"
+                        >
+                          Block schema
+                        </button>
+                      )}
+                      {isBlocked && (
+                        <button
+                          role="menuitem"
+                          onClick={(e) => { e.stopPropagation(); setOpenMenuFor(null); approveSchema(schema.name) }}
+                          className="w-full text-left px-3 py-1.5 text-sm text-primary hover:bg-surface-secondary bg-transparent border-none cursor-pointer"
+                        >
+                          Re-approve
+                        </button>
+                      )}
+                    </div>
+                  )}
+                </div>
               )}
             </div>
           </div>
@@ -578,14 +630,16 @@ function SchemaTab({ onResult, onSchemaUpdated }) {
       )}
 
       {userSchemas.length > 0 && (
-        <div className="space-y-3">
+        <div>
           {renderSectionHeader('User schemas', userSchemas.length)}
-          {userSchemas.map(renderSchema)}
+          <div className="border-t border-border">
+            {userSchemas.map(renderSchema)}
+          </div>
         </div>
       )}
 
       {systemSchemas.length > 0 && (
-        <div className="space-y-3">
+        <div>
           {renderSectionHeader(
             'System schemas',
             systemSchemas.length,
@@ -617,7 +671,7 @@ function SchemaTab({ onResult, onSchemaUpdated }) {
             Built-in infrastructure schemas seeded by the schema service.
           </p>
           {systemSectionExpanded && (
-            <div id="system-schemas-section" className="space-y-3">
+            <div id="system-schemas-section" className="border-t border-border">
               {systemSchemas.map(renderSchema)}
             </div>
           )}
