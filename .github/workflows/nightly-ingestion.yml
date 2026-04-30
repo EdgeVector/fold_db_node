@@ -39,7 +39,7 @@ jobs:
         with:
           repository: EdgeVector/schema_service
           ref: main
-          token: ${{ secrets.PRIVATE_DEPS_TOKEN }}
+          token: ${{ secrets.GH_PAT }}
           path: schema_service
 
       # Both repos ship a .cargo/config.toml that patches their git deps
@@ -60,7 +60,7 @@ jobs:
         uses: dtolnay/rust-toolchain@stable
 
       - name: Configure git for private dependencies
-        run: git config --global url."https://x-access-token:${{ secrets.PRIVATE_DEPS_TOKEN }}@github.com/".insteadOf "https://github.com/"
+        run: git config --global url."https://x-access-token:${{ secrets.GH_PAT }}@github.com/".insteadOf "https://github.com/"
 
       - name: Cache Rust artifacts
         uses: Swatinem/rust-cache@v2
