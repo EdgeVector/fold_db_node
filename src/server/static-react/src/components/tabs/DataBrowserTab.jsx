@@ -39,6 +39,13 @@ export default function DataBrowserTab() {
   const [schemaLoading, setSchemaLoading] = useState({})  // { name: bool }
   const [schemaErrors, setSchemaErrors] = useState({})    // { name: string }
 
+  // Pre-fetched record counts so each row can show "(N records)" without
+  // requiring the user to expand it first. Without this, the user has to
+  // open every row to learn which schemas have data — with 13+ schemas
+  // that's 13 expand-clicks just to find the populated one.
+  // Map: { name: number } — undefined while loading, number when known.
+  const [schemaRecordCounts, setSchemaRecordCounts] = useState({})
+
   const orgNames = useOrgNames()
 
   // Key-level expand state + cached records
@@ -94,6 +101,41 @@ export default function DataBrowserTab() {
         (a.descriptive_name || a.name || '').localeCompare(b.descriptive_name || b.name || '')
       )
   }, [schemas])
+
+  // Pre-fetch record counts for every visible schema so the row can show
+  // "(N records)" inline. Uses listSchemaKeys with a tiny page (limit=1)
+  // because the response carries total_count — no need to materialize the
+  // keys themselves. Concurrent across schemas; each call is light. Skip
+  // schemas whose count we already know.
+  useEffect(() => {
+    if (schemaList.length === 0) return
+    let cancelled = false
+    const toFetch = schemaList
+      .map((s) => s.name)
+      .filter((n) => schemaRecordCounts[n] === undefined)
+    if (toFetch.length === 0) return
+    Promise.all(
+      toFetch.map(async (name) => {
+        try {
+          const res = await schemaClient.listSchemaKeys(name, 0, 1)
+          return [name, res.success ? (res.data?.total_count ?? 0) : null]
+        } catch {
+          return [name, null]
+        }
+      })
+    ).then((pairs) => {
+      if (cancelled) return
+      setSchemaRecordCounts((prev) => {
+        const next = { ...prev }
+        for (const [name, count] of pairs) {
+          if (count !== null) next[name] = count
+        }
+        return next
+      })
+    })
+    return () => { cancelled = true }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [schemaList])
 
   // Type-to-filter for the schema list. With a real ingest the list can
   // grow into the dozens (one schema per inferred shape), and scrolling
@@ -261,7 +303,7 @@ export default function DataBrowserTab() {
               className="w-full flex items-center gap-2 px-3 py-2 text-left bg-surface hover:bg-surface-secondary transition-colors"
               onClick={() => toggleSchema(name)}
             >
-              <span className="text-xs text-secondary">{isOpen ? '▾' : '▸'}</span>
+              <span className="text-xs text-primary">{isOpen ? '▾' : '▸'}</span>
               <SchemaName schema={schema} name={name} />
               <SchemaTypeBadge schemaType={schema.schema_type} />
               {schema.org_hash && (
@@ -270,7 +312,20 @@ export default function DataBrowserTab() {
                 </span>
               )}
               <span className="text-xs text-tertiary">({fieldCount(schema)} fields)</span>
-              {data && <span className="text-xs text-tertiary">({data.total_count} {data.total_count === 1 ? 'record' : 'records'})</span>}
+              {/* Record count: prefer the freshly-fetched count from
+                * schemaKeys (set on expand), else the pre-fetched count
+                * from schemaRecordCounts (set on mount). Same render
+                * either way so the row doesn't shift when the user
+                * expands. */}
+              {(() => {
+                const count = data?.total_count ?? schemaRecordCounts[name]
+                if (count === undefined) return null
+                return (
+                  <span className="text-xs text-tertiary">
+                    ({count} {count === 1 ? 'record' : 'records'})
+                  </span>
+                )
+              })()}
               <StateBadge state={schema.state || 'approved'} />
             </button>
 
@@ -304,7 +359,7 @@ export default function DataBrowserTab() {
                           className="flex-1 flex items-center gap-2 px-2 py-1.5 text-left hover:bg-surface transition-colors"
                           onClick={() => toggleKey(name, kv, schema)}
                         >
-                          <span className="text-xs text-secondary">{isKeyOpen ? '▾' : '▸'}</span>
+                          <span className="text-xs text-primary">{isKeyOpen ? '▾' : '▸'}</span>
                           <span className="text-xs font-mono text-primary">{keyLabel(kv)}</span>
                           <VersionBadge version={maxVersion} />
                           {sharedBy && (
