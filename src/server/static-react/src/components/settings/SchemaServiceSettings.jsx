@@ -147,12 +147,9 @@ function SchemaServiceSettings() {
           </p>
         </div>
       )}
-
-      <div className="card card-info p-3">
-        <p className="text-xs text-secondary">
-          The schema service manages schema definitions and prevents duplicates across FoldDB instances.
-        </p>
-      </div>
+      {/* The intro paragraph at the top of this panel already states what
+        * the schema service does. Removing the duplicate footer card —
+        * same sentence, same page, two places. */}
     </div>
   )
 }
