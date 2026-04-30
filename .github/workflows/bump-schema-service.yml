@@ -69,13 +69,13 @@ jobs:
 
       - name: Configure git as bot + private-dep token
         env:
-          PRIVATE_DEPS_TOKEN: ${{ secrets.PRIVATE_DEPS_TOKEN }}
+          GH_PAT: ${{ secrets.GH_PAT }}
         run: |
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
           # cargo update needs to fetch EdgeVector/* git deps; mirror
           # the rewrite already used in ci-tests.yml.
-          git config --global url."https://x-access-token:${PRIVATE_DEPS_TOKEN}@github.com/".insteadOf "https://github.com/"
+          git config --global url."https://x-access-token:${GH_PAT}@github.com/".insteadOf "https://github.com/"
 
       - name: Install Rust
         uses: dtolnay/rust-toolchain@stable

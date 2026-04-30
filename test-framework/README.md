@@ -113,7 +113,7 @@ The framework runs against dev Exemem cloud via `.github/workflows/e2e-cloud.yml
 | `AWS_E2E_ACCESS_KEY_ID` | IAM credentials with access to `ExememInviteCodes-dev` DynamoDB + Lambda invoke on `ExememDiscovery-dev` + `ExememMessagingService-dev` |
 | `AWS_E2E_SECRET_ACCESS_KEY` | Paired secret |
 | `FOLDDB_TEST_ADMIN_SECRET` | Shared secret for `/admin/*` endpoints (from `ExememTestAdminSecret-dev` in Secrets Manager) |
-| `PRIVATE_DEPS_TOKEN` | Existing secret for private repo access during `cargo build` |
+| `GH_PAT` | Org-level PAT for private repo access during `cargo build` |
 
 ### IAM permissions needed
 
