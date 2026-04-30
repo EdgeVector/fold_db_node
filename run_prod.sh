@@ -39,8 +39,8 @@ mkdir -p "$CONFIG_DIR"
 # 4. Generate a default local node_config if none exists
 if [ ! -f "$CONFIG_FILE" ]; then
     echo "-> Creating default production configuration in $CONFIG_FILE"
-    # Using the production schema service
-    CONFIG_SCHEMA_URL="https://axo709qs11.execute-api.us-east-1.amazonaws.com"
+    # Using the production schema service (URL from environments.json registry).
+    CONFIG_SCHEMA_URL="$(./scripts/get-env-url.sh prod schema_service)"
     
     cat > "$CONFIG_FILE" <<EOF
 {

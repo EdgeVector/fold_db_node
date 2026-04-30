@@ -1,0 +1,17 @@
+{
+  "_comment": "Single source of truth for cross-environment URLs. Edit ONLY here. fold_db_node/build.rs reads this at compile time and emits Rust constants in OUT_DIR. Shell scripts read it via jq (see scripts/get-env-url.sh). DO NOT hardcode any gateway hostnames anywhere else; scripts/lint-no-hardcoded-urls.sh enforces this in CI. See CLAUDE.md > Endpoint registry.",
+  "environments": {
+    "dev": {
+      "region": "us-west-2",
+      "exemem_api":     "https://ygyu7ritx8.execute-api.us-west-2.amazonaws.com",
+      "schema_service": "https://y0q3m6vk75.execute-api.us-west-2.amazonaws.com",
+      "discovery":      "https://ygyu7ritx8.execute-api.us-west-2.amazonaws.com/api"
+    },
+    "prod": {
+      "region": "us-east-1",
+      "exemem_api":     "https://jdsx4ixk2i.execute-api.us-east-1.amazonaws.com",
+      "schema_service": "https://axo709qs11.execute-api.us-east-1.amazonaws.com",
+      "discovery":      "https://jdsx4ixk2i.execute-api.us-east-1.amazonaws.com/api"
+    }
+  }
+}
