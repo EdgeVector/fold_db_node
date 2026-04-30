@@ -29,8 +29,14 @@ export function SchemaTypeBadge({ schemaType }) {
   if (!schemaType) return null
   const type = typeof schemaType === 'string' ? schemaType : Object.keys(schemaType)[0]
   if (!type) return null
+  // All four schema types get a color so the badge is scannable on every
+  // row. Hash was missing — with ~95% of registry schemas being Hash type
+  // (e.g. 942 of 973 on a populated dev node), omitting it meant most
+  // rows fell back to the neutral gray and the badge stopped being a
+  // useful signal at all.
   const colors = {
     Single: 'bg-gruvbox-blue/15 text-gruvbox-blue',
+    Hash: 'bg-gruvbox-link/15 text-gruvbox-link',
     Range: 'bg-gruvbox-purple/15 text-gruvbox-purple',
     HashRange: 'bg-gruvbox-orange/15 text-gruvbox-orange',
   }
