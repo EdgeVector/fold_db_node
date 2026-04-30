@@ -559,6 +559,11 @@ impl IngestionService {
     }
 
     /// Execute mutations with progress tracking via PhaseTracker.
+    ///
+    /// On success, runs the fingerprint extraction hook over the
+    /// just-written mutations (best-effort, fire-and-forget for the
+    /// persona sweep). See [`crate::ingestion::fingerprint_hook`] for
+    /// the rationale and invariants.
     async fn execute_mutations_with_tracking(
         &self,
         mutations: Vec<Mutation>,
@@ -574,6 +579,13 @@ impl IngestionService {
             .sub_progress(0.0, format!("Submitting {} mutations...", total_mutations))
             .await;
 
+        // Cloned for the fingerprint hook below — `mutate_batch`
+        // consumes its argument. Mutation is `Clone` and the cost is
+        // proportional to the field-map size, which we already paid
+        // once during decomposition.
+        let mutations_for_hook = mutations.clone();
+        let schema_manager = get_schema_manager(node).await?;
+
         // Execute all mutations in a batch using FoldNode directly
         // mutate_batch runs the MutationPreprocessor (keyword extraction) then writes
         let result = node
@@ -587,6 +599,17 @@ impl IngestionService {
             });
 
         if let Ok(count) = &result {
+            // Run the generic-ingest fingerprint hook over the
+            // mutations we just wrote. Best-effort: this never
+            // surfaces as an ingestion error.
+            let node_arc = Arc::new(node.clone());
+            crate::ingestion::fingerprint_hook::run_after_batch(
+                node_arc,
+                schema_manager,
+                &mutations_for_hook,
+            )
+            .await;
+
             tracker
                 .sub_progress(1.0, format!("Completed {} mutations", count))
                 .await;

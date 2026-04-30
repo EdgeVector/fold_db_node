@@ -52,6 +52,7 @@ pub mod keys;
 pub mod planned_record;
 pub mod registration;
 pub mod resolver;
+pub mod schema_policy;
 pub mod schemas;
 pub mod self_identity;
 pub mod writer;

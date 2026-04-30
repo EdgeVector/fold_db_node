@@ -72,6 +72,48 @@ use crate::fingerprints::schemas::{
 /// identity signal than two faces in a group shot.
 const CO_OCCURRENCE_WEIGHT: f32 = 0.3;
 
+/// Weight assigned to StrongMatch edges between signals found in the
+/// same record when the source is *asserting* identity (a contact card,
+/// calendar attendee, email header). 0.95 puts the edge above the
+/// `MIN_EDGE_WEIGHT = 0.85` floor used by both the auto-sweep and the
+/// resolver, so a single contact record contributes a real cluster.
+const STRONG_MATCH_WEIGHT: f32 = 0.95;
+
+/// How tightly the source record claims its identity signals belong
+/// together. Selected per-call by the caller, with `CoOccurrence` as
+/// the safe default.
+///
+/// - `CoOccurrence` — "these signals appeared together." Weak edge
+///   (0.3 × strength), edge_kind = `CoOccurrence`. Right for free-text
+///   sources like notes, journals, message bodies.
+/// - `Strong` — "the source asserts these signals are the same
+///   entity." Strong edge (0.95 × strength), edge_kind = `StrongMatch`.
+///   Right for structured sources where the schema names the entity
+///   (Contacts, AddressBook, CalendarEvent, EmailHeader).
+///
+/// The shared-inbox demotion (`classify_email_strength`) still applies
+/// in both modes — a strong-binding edge that touches `info@acme.com`
+/// gets multiplied by `SHARED_INBOX_STRENGTH` (0.5), landing at 0.475
+/// which is below the 0.85 floor. That is the intended safety net:
+/// even an asserted record cannot bind a person to a shared inbox.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum SignalBinding {
+    /// Default — the source merely co-mentions these signals.
+    CoOccurrence,
+    /// The source asserts these signals belong to the same entity.
+    Strong,
+}
+
+impl SignalBinding {
+    /// Edge kind constant + base weight for this binding.
+    fn edge_params(self) -> (&'static str, f32) {
+        match self {
+            SignalBinding::CoOccurrence => (edge_kind::CO_OCCURRENCE, CO_OCCURRENCE_WEIGHT),
+            SignalBinding::Strong => (edge_kind::STRONG_MATCH, STRONG_MATCH_WEIGHT),
+        }
+    }
+}
+
 /// Strength multiplier applied to emails whose local-part is a
 /// shared-inbox pattern (see `SHARED_INBOX_LOCAL_PARTS`). 0.5 is
 /// chosen so that an edge involving one such email lands at
@@ -176,6 +218,11 @@ pub struct TextExtractionPlan {
 /// `mention_id` and `extraction_status_id` are externally generated
 /// so the caller can make them deterministic (for idempotent
 /// migration re-runs) or random (for live ingestion).
+///
+/// `binding` selects edge kind + base weight for intra-record edges
+/// (see [`SignalBinding`]). Use `Strong` only when the source schema
+/// asserts identity (contacts, calendar, email headers); free-text
+/// sources should pass `CoOccurrence`.
 pub fn plan_text_extraction(
     source_schema: &str,
     source_key: &str,
@@ -183,6 +230,7 @@ pub fn plan_text_extraction(
     mention_id: &str,
     extraction_status_id: &str,
     now_iso8601: &str,
+    binding: SignalBinding,
 ) -> TextExtractionPlan {
     let signals = extract_signals(text);
 
@@ -255,21 +303,33 @@ pub fn plan_text_extraction(
         ));
     }
 
-    // CoOccurrence edges — every unordered pair. The per-signal
-    // strength multiplier demotes edges that touch a shared-inbox
-    // email (see `classify_email_strength`): one weak endpoint →
-    // 0.15, two weak endpoints → 0.075.
+    // Intra-record edges — every unordered pair. Edge kind + base
+    // weight come from `binding`; the per-signal strength multiplier
+    // demotes edges that touch a shared-inbox email (see
+    // `classify_email_strength`). For CoOccurrence: one weak
+    // endpoint → 0.15, two weak endpoints → 0.075. For Strong: one
+    // weak endpoint → 0.475 (below the 0.85 floor), preserving the
+    // shared-inbox safety net even in asserted-identity mode.
+    let (edge_kind_name, base_weight) = binding.edge_params();
     for i in 0..unique.len() {
         for j in (i + 1)..unique.len() {
             let a = &unique[i].fingerprint_id;
             let b = &unique[j].fingerprint_id;
-            let eg_id = edge_id(a, b, edge_kind::CO_OCCURRENCE);
-            let weight = CO_OCCURRENCE_WEIGHT * unique[i].strength.min(unique[j].strength);
+            let eg_id = edge_id(a, b, edge_kind_name);
+            let weight = base_weight * unique[i].strength.min(unique[j].strength);
 
             plan.records.push(PlannedRecord::hash(
                 EDGE,
                 eg_id.clone(),
-                edge_fields(&eg_id, a, b, weight, mention_id, now_iso8601),
+                edge_fields(
+                    &eg_id,
+                    a,
+                    b,
+                    edge_kind_name,
+                    weight,
+                    mention_id,
+                    now_iso8601,
+                ),
             ));
             plan.records.push(PlannedRecord::hash_range(
                 EDGE_BY_FINGERPRINT,
@@ -474,6 +534,7 @@ fn edge_fields(
     eg_id: &str,
     a: &str,
     b: &str,
+    edge_kind_name: &str,
     weight: f32,
     mention_id: &str,
     now: &str,
@@ -482,7 +543,7 @@ fn edge_fields(
     m.insert("id".to_string(), json!(eg_id));
     m.insert("a".to_string(), json!(a));
     m.insert("b".to_string(), json!(b));
-    m.insert("kind".to_string(), json!(edge_kind::CO_OCCURRENCE));
+    m.insert("kind".to_string(), json!(edge_kind_name));
     m.insert("weight".to_string(), json!(weight));
     m.insert("evidence_mention_ids".to_string(), json!(vec![mention_id]));
     m.insert("created_at".to_string(), json!(now));
@@ -562,6 +623,7 @@ mod tests {
             "mn_test",
             "es_test",
             "2026-04-15T00:00:00Z",
+            SignalBinding::CoOccurrence,
         );
         // Only one Fingerprint record despite two occurrences.
         let fp_count = plan
@@ -582,6 +644,7 @@ mod tests {
             "mn_test",
             "es_test",
             "2026-04-15T00:00:00Z",
+            SignalBinding::CoOccurrence,
         );
         assert!(plan.ran_empty);
         assert_eq!(plan.signal_count, 0);
@@ -599,13 +662,84 @@ mod tests {
             "mn_test",
             "es_test",
             "2026-04-15T00:00:00Z",
+            SignalBinding::CoOccurrence,
         );
-        let edge_count = plan
+        let edges: Vec<_> = plan
             .records
             .iter()
             .filter(|r| r.descriptive_schema == EDGE)
-            .count();
-        assert_eq!(edge_count, 1); // one pair → one edge
+            .collect();
+        assert_eq!(edges.len(), 1); // one pair → one edge
+        let f = &edges[0].fields;
+        assert_eq!(f.get("kind").unwrap(), &json!(edge_kind::CO_OCCURRENCE));
+        let w = f.get("weight").unwrap().as_f64().unwrap();
+        assert!(
+            (w - CO_OCCURRENCE_WEIGHT as f64).abs() < 1e-6,
+            "expected CoOccurrence base weight, got {}",
+            w
+        );
+    }
+
+    #[test]
+    fn strong_binding_emits_strong_match_edge() {
+        let plan = plan_text_extraction(
+            "Contacts",
+            "contact_1",
+            "Email: margaret.johnson@example.com Phone: +1-555-0101",
+            "mn_strong",
+            "es_strong",
+            "2026-04-15T00:00:00Z",
+            SignalBinding::Strong,
+        );
+        let edges: Vec<_> = plan
+            .records
+            .iter()
+            .filter(|r| r.descriptive_schema == EDGE)
+            .collect();
+        assert_eq!(edges.len(), 1, "one pair → one edge");
+        let f = &edges[0].fields;
+        assert_eq!(f.get("kind").unwrap(), &json!(edge_kind::STRONG_MATCH));
+        let w = f.get("weight").unwrap().as_f64().unwrap();
+        assert!(
+            (w - STRONG_MATCH_WEIGHT as f64).abs() < 1e-6,
+            "expected StrongMatch base weight, got {}",
+            w
+        );
+        assert!(
+            w >= 0.85,
+            "Strong-binding edges must clear the auto-sweep floor (got {})",
+            w
+        );
+    }
+
+    #[test]
+    fn strong_binding_still_demotes_shared_inbox() {
+        // The shared-inbox safety net must hold even when the source
+        // schema asserts identity — a contact card listing
+        // `info@acme.com` cannot be allowed to bind a person to that
+        // shared address.
+        let plan = plan_text_extraction(
+            "Contacts",
+            "contact_shared",
+            "Cc info@acme.com and tom@example.com",
+            "mn_shared_strong",
+            "es_shared_strong",
+            "2026-04-15T00:00:00Z",
+            SignalBinding::Strong,
+        );
+        let edges: Vec<_> = plan
+            .records
+            .iter()
+            .filter(|r| r.descriptive_schema == EDGE)
+            .collect();
+        assert_eq!(edges.len(), 1);
+        let w = edges[0].fields.get("weight").unwrap().as_f64().unwrap();
+        // 0.95 * 0.5 = 0.475 — below the 0.85 floor by design.
+        assert!(
+            w < 0.85,
+            "shared-inbox endpoint must demote Strong edge below the sweep floor (got {})",
+            w
+        );
     }
 
     #[test]
@@ -631,6 +765,7 @@ mod tests {
             "mn_test",
             "es_test",
             "2026-04-15T00:00:00Z",
+            SignalBinding::CoOccurrence,
         );
         let mention_by_fp = plan
             .records
@@ -786,6 +921,7 @@ mod tests {
             "mn_shared",
             "es_shared",
             "2026-04-15T00:00:00Z",
+            SignalBinding::CoOccurrence,
         );
         let edge_record = plan
             .records
@@ -813,6 +949,7 @@ mod tests {
             "mn_pair",
             "es_pair",
             "2026-04-15T00:00:00Z",
+            SignalBinding::CoOccurrence,
         );
         let edge_record = plan
             .records
@@ -839,6 +976,7 @@ mod tests {
             "mn_both",
             "es_both",
             "2026-04-15T00:00:00Z",
+            SignalBinding::CoOccurrence,
         );
         let edge_record = plan
             .records

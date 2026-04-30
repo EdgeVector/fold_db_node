@@ -10,7 +10,7 @@
 
 use std::sync::Arc;
 
-use crate::fingerprints::extractors::text::plan_text_extraction;
+use crate::fingerprints::extractors::text::{plan_text_extraction, SignalBinding};
 use crate::fingerprints::ingest_photo::{deterministic_mention_id, extraction_status_id};
 use crate::fingerprints::writer::write_records;
 use crate::fold_node::FoldNode;
@@ -29,12 +29,20 @@ pub struct TextIngestionOutcome {
 
 /// Plan and persist Phase 2 fingerprint records for the text body
 /// of a single source record (note, message, etc.).
+///
+/// `binding` selects how tightly the source record claims its signals
+/// belong together — see [`SignalBinding`]. Free-text sources (notes,
+/// journals) should pass `CoOccurrence`; structured identity-asserting
+/// sources (contacts, calendar attendees, email headers) should pass
+/// `Strong` so the resulting intra-record edges cross the persona
+/// auto-sweep threshold.
 pub async fn ingest_text_signals(
     node: Arc<FoldNode>,
     source_schema: &str,
     source_key: &str,
     text: &str,
     now_iso8601: &str,
+    binding: SignalBinding,
 ) -> FoldDbResult<TextIngestionOutcome> {
     let mention_id = deterministic_mention_id(source_schema, source_key, EXTRACTOR_NAME);
     let es_id = extraction_status_id(source_schema, source_key, EXTRACTOR_NAME);
@@ -46,6 +54,7 @@ pub async fn ingest_text_signals(
         &mention_id,
         &es_id,
         now_iso8601,
+        binding,
     );
 
     let write_outcome = write_records(node, &plan.records).await?;
