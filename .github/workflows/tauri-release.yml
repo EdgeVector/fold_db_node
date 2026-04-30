@@ -337,7 +337,37 @@ jobs:
             exit 1
           fi
 
-          echo "DMG smoke passed: binary version $ACTUAL matches artifact $EXPECTED_VERSION"
+          echo "Backend health passed: binary version $ACTUAL matches artifact $EXPECTED_VERSION"
+
+          # The webview loads `GET /` from the embedded server. If the
+          # binary was built before the React `dist/` was populated,
+          # build.rs writes a stub index.html as a compile-time
+          # fallback (RustEmbed needs the directory to exist). A
+          # release that ships the stub still passes /api/health, but
+          # opens to a blank window. Catch that here: real React shell
+          # has a `<script type="module">` tag; the stub does not.
+          INDEX_HTML=$(curl -sSf "http://localhost:9001/")
+          if ! echo "$INDEX_HTML" | grep -q '<script type="module"'; then
+            echo "::error::GET / did not return the real React shell (no module script tag found). The bundle may have embedded build.rs's stub instead of a real `npm run build` output. First 400 bytes:"
+            echo "$INDEX_HTML" | head -c 400
+            echo
+            exit 1
+          fi
+          # And actually fetch the JS bundle the shell references — confirms
+          # static_assets embedding is wired through end-to-end, not just
+          # serving the index.
+          JS_REL=$(echo "$INDEX_HTML" | sed -nE 's/.*src="\.\/(assets\/[^"]+\.js)".*/\1/p' | head -1)
+          if [[ -z "$JS_REL" ]]; then
+            echo "::error::Could not extract JS asset path from index.html"
+            exit 1
+          fi
+          JS_STATUS=$(curl -sS -o /dev/null -w '%{http_code}' "http://localhost:9001/$JS_REL")
+          if [[ "$JS_STATUS" != "200" ]]; then
+            echo "::error::Webview JS bundle GET /$JS_REL returned $JS_STATUS (expected 200). Backend serves index but not assets — RustEmbed hash mismatch?"
+            exit 1
+          fi
+          echo "Webview shell + JS bundle both load: / → React HTML, /$JS_REL → 200 OK"
+          echo "DMG smoke passed end-to-end (backend health + webview-shell-loadable)."
 
       - name: Dump app log on failure
         if: failure()
