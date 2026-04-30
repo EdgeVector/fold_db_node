@@ -101,7 +101,10 @@ describe('SchemaTab Component', () => {
     })
   })
 
-  it('shows block button for approved schemas', async () => {
+  it('shows a row-action menu with Block for approved schemas', async () => {
+    // Block was an inline button per row; with 50+ schemas that's 50+ red
+    // buttons stacked. Now it lives behind a "⋯" menu (aria-label "More
+    // actions for ..."). Open the menu, assert "Block schema" is there.
     const schemaState = createTestSchemaState({
       schemas: {
         'approvedSchema': { name: 'ApprovedSchema', state: 'Approved', fields: [] }
@@ -113,11 +116,21 @@ describe('SchemaTab Component', () => {
     })
 
     await waitFor(() => {
-      expect(screen.getByText('Block')).toBeInTheDocument()
+      expect(
+        screen.getByRole('button', { name: /more actions for ApprovedSchema/i })
+      ).toBeInTheDocument()
     })
+
+    fireEvent.click(
+      screen.getByRole('button', { name: /more actions for ApprovedSchema/i })
+    )
+
+    expect(
+      screen.getByRole('menuitem', { name: /block schema/i })
+    ).toBeInTheDocument()
   })
 
-  it('handles schema blocking', async () => {
+  it('handles schema blocking via the row-action menu', async () => {
     const { blockSchema } = await import('../../../store/schemaSlice')
 
     const schemaState = createTestSchemaState({
@@ -130,11 +143,14 @@ describe('SchemaTab Component', () => {
       preloadedState: schemaState
     })
 
-    // Click block button
+    // Open the row's ⋯ menu, then click "Block schema".
     await waitFor(() => {
-      const blockButton = screen.getByText('Block')
-      fireEvent.click(blockButton)
+      fireEvent.click(
+        screen.getByRole('button', { name: /more actions for ApprovedSchema/i })
+      )
     })
+
+    fireEvent.click(screen.getByRole('menuitem', { name: /block schema/i }))
 
     await waitFor(() => {
       expect(blockSchema).toHaveBeenCalledWith({ schemaName: 'ApprovedSchema' })
