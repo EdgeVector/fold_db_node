@@ -17,7 +17,13 @@ const SUB_TABS = [
   { id: 'database', label: 'Database' },
   { id: 'org', label: 'Organizations' },
   { id: 'upgrade-cloud', label: 'Cloud Features' },
-  { id: 'profile', label: 'Profile' },
+  // The id stays 'profile' so deep links (e.g. navigateToSettings('profile'))
+  // and existing localStorage / route hashes keep working. Only the visible
+  // label changes — "Profile" undersold what this surface actually is: the
+  // outbound-facing identity for Exemem Discovery, the auto-generated
+  // interest fingerprint other users see when matching with you on the
+  // network. Pairs naturally with the Discover sidebar item.
+  { id: 'profile', label: 'Discovery Profile' },
 ]
 
 export default function SettingsTab({ onResult, initialSubTab, onRelaunchOnboarding }) {
