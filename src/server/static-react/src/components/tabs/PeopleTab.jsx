@@ -83,31 +83,46 @@ export default function PeopleTab({ onResult }) {
   }
 
   return (
-    <div>
-      <div className="border-b border-border mb-4 flex flex-wrap items-end gap-x-6 gap-y-2">
-        {SUB_TAB_GROUPS.map((group, idx) => (
-          <div
-            key={group.label}
-            className={`flex flex-col ${idx > 0 ? 'sm:border-l sm:border-border sm:pl-6' : ''}`}
-          >
-            <div className="text-[10px] uppercase tracking-widest text-tertiary px-2 pb-1">
+    <div className="flex gap-6 -mt-1">
+      {/* Left rail — same pattern as the main app sidebar (groups +
+        * items, narrow column, border-l-2 active state). 11 destinations
+        * stacked vertically reads as wayfinding rather than the previous
+        * horizontal "control panel" layout that fanned 5 group columns
+        * across the page header. Content area on the right gets full
+        * width back. */}
+      <nav
+        className="shrink-0 w-44 border-r border-border pr-2 -ml-1"
+        aria-label="People sub-sections"
+      >
+        {SUB_TAB_GROUPS.map((group) => (
+          <div key={group.label}>
+            <div className="text-[10px] uppercase tracking-widest text-tertiary px-3 pt-3 pb-0.5">
               {group.label}
             </div>
-            <div className="flex flex-wrap">
-              {group.tabs.map(tab => (
+            {group.tabs.map((tab) => {
+              const isActive = activeSubTab === tab.id
+              return (
                 <button
                   key={tab.id}
+                  type="button"
                   onClick={() => setActiveSubTab(tab.id)}
-                  className={`tab ${activeSubTab === tab.id ? 'tab-active' : ''}`}
+                  aria-current={isActive ? 'page' : undefined}
+                  className={`w-full text-left px-3 py-1.5 text-sm transition-colors border-l-2 bg-transparent cursor-pointer ${
+                    isActive
+                      ? 'bg-surface-secondary border-l-gruvbox-yellow text-primary'
+                      : 'text-secondary hover:text-primary hover:bg-surface-secondary border-l-transparent'
+                  }`}
                 >
                   {tab.label}
                 </button>
-              ))}
-            </div>
+              )
+            })}
           </div>
         ))}
+      </nav>
+      <div className="flex-1 min-w-0">
+        {renderContent()}
       </div>
-      {renderContent()}
     </div>
   )
 }
