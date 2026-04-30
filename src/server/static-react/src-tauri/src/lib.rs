@@ -240,7 +240,46 @@ pub fn run() {
                 std::process::exit(1);
             }
 
-            // Create the main window — server is already listening.
+            // Block until the embedded server is actually accepting TCP
+            // connections. `start_embedded_server_lazy` returns Ok the
+            // instant `tokio::spawn` queues the runner; `actix_web::HttpServer::bind`
+            // hasn't run yet at that point. If the webview navigates before
+            // bind(), it gets ECONNREFUSED on `GET /` and WebKit pins the
+            // error page — the window stays blank forever, even after the
+            // listener comes up. Symptom users have hit on every macOS
+            // build before v0.3.15.
+            //
+            // Poll TCP connect (not /api/health) so we don't depend on
+            // routes being wired or the node's first request being
+            // processed; we just need the kernel-level listener accepting.
+            // A successful TCP handshake is enough — by the time the
+            // webview opens its connection, actix's accept loop is also
+            // running.
+            {
+                use std::net::{SocketAddr, TcpStream};
+                use std::time::{Duration, Instant};
+                let addr: SocketAddr = format!("127.0.0.1:{server_port}")
+                    .parse()
+                    .expect("loopback addr always parses");
+                let deadline = Instant::now() + Duration::from_secs(15);
+                let mut ready = false;
+                while Instant::now() < deadline {
+                    if TcpStream::connect_timeout(&addr, Duration::from_millis(200)).is_ok() {
+                        ready = true;
+                        break;
+                    }
+                    std::thread::sleep(Duration::from_millis(50));
+                }
+                if !ready {
+                    eprintln!(
+                        "[FoldDB] Embedded server did not start accepting on {addr} within 15s; opening window anyway, expect a blank page."
+                    );
+                } else {
+                    eprintln!("[FoldDB] Embedded server accepting on {addr}; opening window.");
+                }
+            }
+
+            // Create the main window — server is now listening.
             // When the app had to fall back off 9001, surface the chosen port in
             // the window title so the user (and any docs telling them to visit
             // localhost:9001) can tell at a glance.
