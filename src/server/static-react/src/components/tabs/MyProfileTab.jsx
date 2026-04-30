@@ -3,7 +3,7 @@ import { discoveryClient } from '../../api/clients/discoveryClient'
 import { toErrorMessage } from '../../utils/schemaUtils'
 
 /**
- * SVG-based radar/spider chart for interest fingerprint visualization.
+ * SVG-based radar/spider chart for interest profile visualization.
  * Renders categories as axes radiating from center, with filled polygon
  * showing relative weights.
  */
@@ -220,13 +220,29 @@ function ProfileStats({ profile }) {
 }
 
 /**
- * Category list with toggle controls and similarity scores.
+ * Category list with toggle controls and relative-weight indicators.
+ *
+ * Each row shows "{count} items · {pct}% of profile" where pct is the
+ * category's share of all detected items. Previously rendered
+ * "{pct}% avg match" derived from cat.avg_similarity — but the
+ * backend currently returns avg_similarity = 1.0 for every category,
+ * so every row read "100.0% avg match" with no useful signal. Even
+ * when the similarity score works, "avg match" is ML jargon most
+ * users won't parse. Relative weight ("X% of profile") is always
+ * meaningful, ties the list back to the radar chart visually above,
+ * and answers the actual question: "how much of my data is in each
+ * category?"
+ *
+ * Percent is computed across ALL categories (enabled or not) so a
+ * disabled category still shows its share — useful when the user
+ * wants to see the biggest category they've toggled off.
  */
 function CategoryList({ categories, onToggle, toggling }) {
+  const total = categories.reduce((sum, c) => sum + (c.count || 0), 0)
   return (
     <div className="space-y-2">
       {categories.map(cat => {
-        const similarityPercent = (cat.avg_similarity * 100).toFixed(1)
+        const weightPct = total > 0 ? (cat.count / total) * 100 : 0
         return (
           <div
             key={cat.name}
@@ -256,7 +272,7 @@ function CategoryList({ categories, onToggle, toggling }) {
               <div>
                 <span className="text-sm font-medium text-primary">{cat.name}</span>
                 <div className="text-xs text-tertiary">
-                  {cat.count} items &middot; {similarityPercent}% avg match
+                  {cat.count} items &middot; {weightPct.toFixed(0)}% of profile
                 </div>
               </div>
             </div>
@@ -265,7 +281,7 @@ function CategoryList({ categories, onToggle, toggling }) {
               <div className="w-20 h-1.5 bg-surface-secondary rounded-full overflow-hidden">
                 <div
                   className="h-full bg-gruvbox-blue rounded-full"
-                  style={{ width: `${Math.min(cat.avg_similarity * 200, 100)}%` }}
+                  style={{ width: `${Math.min(weightPct, 100)}%` }}
                 />
               </div>
             </div>
@@ -338,7 +354,7 @@ export default function MyProfileTab({ onResult }) {
       <div className="flex items-center justify-center py-16">
         <div className="text-center">
           <div className="w-6 h-6 border-2 border-border border-t-primary rounded-full animate-spin mx-auto mb-4" />
-          <p className="text-secondary text-sm">Loading your interest fingerprint...</p>
+          <p className="text-secondary text-sm">Loading your interest profile...</p>
         </div>
       </div>
     )
@@ -354,14 +370,14 @@ export default function MyProfileTab({ onResult }) {
         <div className="card p-8 text-center space-y-4 rounded">
           <div className="text-4xl text-gruvbox-blue">&#9673;</div>
           <h3 className="text-lg text-primary font-semibold">
-            No Interest Fingerprint Yet
+            No Interest Profile Yet
           </h3>
           <p className="text-secondary text-sm max-w-md mx-auto">
-            Your interest fingerprint is auto-generated from the data you ingest.
+            Your interest profile is auto-generated from the data you ingest.
             It shows what topics you care about, weighted by how much data you have in each category.
           </p>
           <p className="text-tertiary text-xs max-w-md mx-auto">
-            Ingest some data first, then click below to generate your fingerprint.
+            Ingest some data first, then click below to generate your profile.
             It will update automatically as you add more data.
           </p>
           <div className="flex items-center gap-3 justify-center">
@@ -370,7 +386,7 @@ export default function MyProfileTab({ onResult }) {
               disabled={detecting}
               className="btn-primary"
             >
-              {detecting ? 'Scanning your data...' : 'Generate Fingerprint'}
+              {detecting ? 'Scanning your data...' : 'Generate Profile'}
             </button>
             <button
               onClick={() => { window.location.hash = 'smart-folder' }}
@@ -403,10 +419,10 @@ export default function MyProfileTab({ onResult }) {
       {/* Stats summary */}
       <ProfileStats profile={profile} />
 
-      {/* Fingerprint visualization */}
+      {/* Interest profile visualization */}
       <div className="card rounded p-6">
         <h3 className="text-sm font-semibold text-primary mb-4">
-          Interest Fingerprint
+          Interest Profile
         </h3>
         {enabledCategories.length >= 3 ? (
           <RadarChart categories={enabledCategories} />
@@ -421,7 +437,7 @@ export default function MyProfileTab({ onResult }) {
           Categories ({categories.length})
         </h3>
         <p className="text-xs text-tertiary mb-3">
-          Toggle categories to control which interests appear in your fingerprint
+          Toggle categories to control which interests appear in your profile
           and are visible on the discovery network.
         </p>
         <CategoryList
@@ -433,9 +449,9 @@ export default function MyProfileTab({ onResult }) {
 
       {/* Privacy note */}
       <div className="card-info p-3 rounded text-xs space-y-1">
-        <div className="font-semibold text-gruvbox-blue">Your fingerprint is private by default</div>
+        <div className="font-semibold text-gruvbox-blue">Your interest profile is private by default</div>
         <p className="text-secondary">
-          This fingerprint is computed locally from your data. It is only shared on the discovery
+          This profile is computed locally from your data. It is only shared on the discovery
           network if you explicitly opt in via the Discovery tab. You control which categories
           are visible.
         </p>
