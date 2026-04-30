@@ -9,6 +9,7 @@ import {
   fetchSchemas
 } from '../../store/schemaSlice'
 import SchemaName from '../shared/SchemaName'
+import { SchemaTypeBadge } from '../data-browser/shared'
 import { MagnifyingGlassIcon, EllipsisHorizontalIcon } from '@heroicons/react/24/outline'
 import { toErrorMessage, isSystemSchema } from '../../utils/schemaUtils'
 import { getAllFieldPolicies, setFieldPolicy as setFieldPolicyApi } from '../../api/clients/sharingClient'
@@ -341,12 +342,16 @@ function SchemaTab({ onResult, onSchemaUpdated }) {
                   {orgNames[schema.org_hash] || 'Org'}
                 </span>
               )}
-              {rangeSchemaInfo && (
-                <span className="badge badge-info shrink-0">Range Schema</span>
-              )}
-              {hashRangeSchemaInfo && (
-                <span className="badge badge-info shrink-0">HashRange Schema</span>
-              )}
+              {/* Schema type badge — covers all four types (Single, Hash,
+                * Range, HashRange) via the canonical SchemaTypeBadge
+                * component. Was rendering ad-hoc spans for only Range +
+                * HashRange, so the most common type (Hash, ~95% of
+                * registry) showed no type tag at all. Same component
+                * Data Browser uses, so the visual language now matches
+                * across both list pages. */}
+              <span className="shrink-0">
+                <SchemaTypeBadge schemaType={schema.schema_type} />
+              </span>
             </div>
             <div className="flex items-center gap-1 shrink-0">
               {isApproved && (

@@ -39,9 +39,20 @@ const HASH_TO_TAB = {
   settings: 'settings',
 }
 
+// Strip an optional "?params" suffix from a hash so deep links like
+// "#query?schema=Foo" resolve to the "query" tab. The full raw hash
+// is exposed separately via location.hash for tabs that want to read
+// their own params (e.g. QueryTab pre-selecting a schema).
+function parseHashTab(hashWithoutPrefix) {
+  if (!hashWithoutPrefix) return null
+  const sep = hashWithoutPrefix.indexOf('?')
+  const id = sep === -1 ? hashWithoutPrefix : hashWithoutPrefix.slice(0, sep)
+  return HASH_TO_TAB[id] || null
+}
+
 function resolveTabFromHash() {
   if (typeof window !== 'undefined' && window.location.hash) {
-    return HASH_TO_TAB[window.location.hash.slice(1)] || null
+    return parseHashTab(window.location.hash.slice(1))
   }
   return null
 }
@@ -67,7 +78,7 @@ export function useTabRouting() {
     const handleHashChange = () => {
       if (typeof window === 'undefined') return
       const raw = window.location.hash.slice(1)
-      const tab = raw ? HASH_TO_TAB[raw] || null : null
+      const tab = parseHashTab(raw)
       if (tab && tab !== activeTab) {
         setActiveTab(tab)
       } else if (raw && !tab && window.location.hash !== `#${activeTab}`) {
