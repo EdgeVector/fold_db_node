@@ -2019,7 +2019,7 @@ dependencies = [
 
 [[package]]
 name = "fold_db_node"
-version = "0.3.11"
+version = "0.3.12"
 dependencies = [
  "actix-cors",
  "actix-http",
