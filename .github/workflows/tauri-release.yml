@@ -1,3 +1,19 @@
+# How to release: see docs/RELEASING.md
+#
+# Same trigger model as release.yml:
+# - `push: tags v*` — real release. Builds, signs, notarizes, attaches DMG.
+# - `workflow_dispatch` — dry-run. Builds + signs + DMG smoke against any
+#   ref. Skips notarization (Apple notary rate limits / 5-10 min wait) and
+#   skips the release attach.
+# - `schedule: weekly Sunday 06:00 UTC` — smoke. Same as dispatch, against
+#   `main`. Catches drift in the Tauri build (e.g. when Tauri 2.x changed
+#   the bundle binary name from `FoldDB` to `fold-app`, the existing
+#   smoke at v0.3.12 silently broke between releases).
+#
+# The version stamped into Cargo's `FOLDDB_BUILD_VERSION` and into Tauri's
+# `tauri.conf.json` is derived from the tag (or "0.0.0-dev" for non-tag
+# triggers). No need to maintain `version` in source files anymore — the
+# tag is the source of truth.
 name: Tauri Release
 
 on:
@@ -5,6 +21,13 @@ on:
     tags:
       - 'v*'
   workflow_dispatch:
+    inputs:
+      ref:
+        description: 'Ref to build (commit/branch/tag). Defaults to the workflow ref.'
+        required: false
+        type: string
+  schedule:
+    - cron: '0 6 * * 0'
 
 permissions:
   contents: write
@@ -26,6 +49,27 @@ jobs:
 
     steps:
       - uses: actions/checkout@v4
+        with:
+          ref: ${{ inputs.ref || github.ref }}
+
+      # Tag-push: VERSION = tag name with `v` stripped.
+      # Anything else (dispatch / schedule): VERSION = "0.0.0-dev".
+      # FOLDDB_BUILD_VERSION_OVERRIDE pins the runtime-stamped version (see
+      # build.rs) so /api/health matches the bundle's CFBundleShortVersionString
+      # — otherwise build.rs falls back to `git describe` and dmg-smoke
+      # mismatches the artifact name.
+      - name: Resolve release version
+        id: version
+        shell: bash
+        run: |
+          if [[ "$GITHUB_EVENT_NAME" == "push" && "$GITHUB_REF" == refs/tags/v* ]]; then
+            VERSION="${GITHUB_REF_NAME#v}"
+          else
+            VERSION="0.0.0-dev"
+          fi
+          echo "version=$VERSION" >> "$GITHUB_OUTPUT"
+          echo "FOLDDB_BUILD_VERSION_OVERRIDE=$VERSION" >> "$GITHUB_ENV"
+          echo "Resolved release version: $VERSION"
 
       - name: Configure git for private dependencies
         run: git config --global url."https://x-access-token:${{ secrets.GH_PAT }}@github.com/".insteadOf "https://github.com/"
@@ -95,13 +139,22 @@ jobs:
           cp target/${{ matrix.target }}/release/folddb_mcp \
             src/server/static-react/src-tauri/binaries/folddb_mcp-${{ matrix.target }}
 
+      # --config '{"version":"X.Y.Z"}' overrides tauri.conf.json's version
+      # at build time. The DMG name (FoldDB_${VERSION}_${arch}.dmg) and
+      # Info.plist's CFBundleShortVersionString both flow from this — so
+      # the tag is the single source of truth for the bundle version.
+      # No need to keep tauri.conf.json's `version` in sync with releases.
       - name: Build Tauri app
         working-directory: src/server/static-react
         env:
           APPLE_SIGNING_IDENTITY: ${{ secrets.APPLE_SIGNING_IDENTITY }}
           TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
           TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
-        run: npx tauri build --target ${{ matrix.target }} --bundles app,dmg
+        run: |
+          npx tauri build \
+            --target ${{ matrix.target }} \
+            --config "{\"version\":\"${{ steps.version.outputs.version }}\"}" \
+            --bundles app,dmg
 
       # --- Verify signing ---
       - name: Verify code signature
@@ -119,8 +172,11 @@ jobs:
             fi
           fi
 
-      # --- Notarize ---
+      # Tag-push only — Apple notary has rate limits and adds 5-10 min.
+      # Smoke / dispatch builds skip this; signed-but-unnotarized DMG is
+      # enough for the smoke test to verify everything else.
       - name: Notarize app
+        if: github.event_name == 'push' && startsWith(github.ref, 'refs/tags/v')
         env:
           APPLE_ID: ${{ secrets.APPLE_ID }}
           APPLE_PASSWORD: ${{ secrets.APPLE_PASSWORD }}
@@ -144,8 +200,8 @@ jobs:
           echo "Stapling notarization ticket..."
           xcrun stapler staple "$DMG"
 
-      # --- Verify notarization ---
       - name: Verify notarization
+        if: github.event_name == 'push' && startsWith(github.ref, 'refs/tags/v')
         run: |
           BUNDLE_DIR="src/server/static-react/src-tauri/target/${{ matrix.target }}/release/bundle"
           DMG=$(find "$BUNDLE_DIR/dmg" -name "*.dmg" | head -1)
@@ -163,7 +219,7 @@ jobs:
         run: |
           BUNDLE_DIR="src/server/static-react/src-tauri/target/${{ matrix.target }}/release/bundle"
           DMG=$(find "$BUNDLE_DIR/dmg" -name "*.dmg" | head -1)
-          VERSION=$(jq -r '.version' src/server/static-react/src-tauri/tauri.conf.json)
+          VERSION="${{ steps.version.outputs.version }}"
           FINAL_NAME="FoldDB_${VERSION}_${{ matrix.arch }}.dmg"
           cp "$DMG" "$RUNNER_TEMP/$FINAL_NAME"
           echo "dmg_path=$RUNNER_TEMP/$FINAL_NAME" >> "$GITHUB_OUTPUT"
@@ -186,8 +242,10 @@ jobs:
             security delete-keychain "$KEYCHAIN_PATH"
           fi
 
-  # Smoke-test the signed+notarized DMG actually launches and reports the right version.
-  # Catches binary drift, bundle-version drift, and broken builds before they reach users.
+  # Smoke-test the signed DMG actually launches and reports the right version.
+  # Catches binary drift, bundle-version drift, and broken builds before they
+  # reach users. Runs on tag-push, dispatch, and schedule — so weekly smoke
+  # catches Tauri/bundle drift even when nobody's tagging.
   dmg-smoke:
     needs: build-macos
     runs-on: macos-14
@@ -297,7 +355,7 @@ jobs:
 
   # Attach DMGs to the GitHub Release (only on tag push)
   release:
-    if: startsWith(github.ref, 'refs/tags/v')
+    if: github.event_name == 'push' && startsWith(github.ref, 'refs/tags/v')
     needs: [build-macos, dmg-smoke]
     runs-on: ubuntu-latest
     steps:

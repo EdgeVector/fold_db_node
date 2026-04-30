@@ -1,0 +1,54 @@
+# Daily probe of secrets.GH_PAT against a private dep repo. If the token is
+# expired, revoked, or scope-reduced, this fires before the next PR or
+# release attempt does — pings Discord so someone rotates it.
+#
+# Background: PRIVATE_DEPS_TOKEN silently broke ~2026-04-30T03:30Z and
+# nobody noticed for ~12 hours; every PR's CI was failing the auth step
+# without any alert. Consolidating on GH_PAT removed one token but didn't
+# remove the silent-failure mode — GH_PAT can also expire or be rotated.
+# This workflow is the alerting half of the fix.
+name: GH_PAT Health Probe
+
+on:
+  schedule:
+    - cron: '0 12 * * *'  # 12:00 UTC daily
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  probe:
+    runs-on: ubuntu-latest
+    steps:
+      # Probe a real private dep that release.yml + ci-tests.yml depend on.
+      # Uses git ls-remote (fast, no clone). Failure here is the same auth
+      # failure cargo would hit during a real build.
+      - name: Probe private dep clone with GH_PAT
+        env:
+          GH_PAT: ${{ secrets.GH_PAT }}
+        run: |
+          set -euo pipefail
+          for repo in EdgeVector/file_to_markdown EdgeVector/fold_db EdgeVector/schema_service; do
+            echo "Probing $repo..."
+            if ! git ls-remote "https://x-access-token:${GH_PAT}@github.com/${repo}.git" HEAD >/dev/null 2>&1; then
+              echo "::error::GH_PAT failed to authenticate against $repo"
+              exit 1
+            fi
+            echo "  ok"
+          done
+          echo "GH_PAT is healthy."
+
+      - name: Notify Discord on failure
+        if: failure() && env.DISCORD_WEBHOOK != ''
+        env:
+          DISCORD_WEBHOOK: ${{ secrets.DISCORD_WEBHOOK_URL }}
+          REPO: ${{ github.repository }}
+          RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+        run: |
+          payload=$(jq -nc \
+            --arg title "GH_PAT auth failing in $REPO" \
+            --arg desc "Daily GH_PAT probe failed. Rotate the org-level secret or this will block CI org-wide. Recent precedent: PRIVATE_DEPS_TOKEN broke 2026-04-30 and ate ~12h before anyone noticed." \
+            --arg url "$RUN_URL" \
+            '{embeds:[{title:$title, description:$desc, url:$url, color:15158332}]}')
+          curl -fsS -H "Content-Type: application/json" -d "$payload" "$DISCORD_WEBHOOK"
