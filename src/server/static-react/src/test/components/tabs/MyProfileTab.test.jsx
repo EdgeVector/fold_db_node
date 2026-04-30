@@ -155,12 +155,17 @@ describe('MyProfileTab', () => {
       })
     })
 
-    it('shows category count and similarity', async () => {
+    it('shows category count and relative weight', async () => {
+      // Total across MOCK_PROFILE.categories = 42 + 28 + 15 + 10 + 7 = 102.
+      // Software Engineering = 42 / 102 = 41.2% → renders as "41% of fingerprint".
+      // Previously asserted "65.0% avg match" (avg_similarity-derived) — that
+      // metric was dropped because the backend returns 1.0 for every category,
+      // making the indicator carry no information. See CategoryList comment.
       render()
 
       await waitFor(() => {
         expect(screen.getByText(/42 items/)).toBeInTheDocument()
-        expect(screen.getByText(/65\.0% avg match/)).toBeInTheDocument()
+        expect(screen.getByText(/41% of fingerprint/)).toBeInTheDocument()
       })
     })
 

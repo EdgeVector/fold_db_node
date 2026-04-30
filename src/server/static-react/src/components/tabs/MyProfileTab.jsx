@@ -220,13 +220,29 @@ function ProfileStats({ profile }) {
 }
 
 /**
- * Category list with toggle controls and similarity scores.
+ * Category list with toggle controls and relative-weight indicators.
+ *
+ * Each row shows "{count} items · {pct}% of fingerprint" where pct is
+ * the category's share of all detected items. Previously rendered
+ * "{pct}% avg match" derived from cat.avg_similarity — but the
+ * backend currently returns avg_similarity = 1.0 for every category,
+ * so every row read "100.0% avg match" with no useful signal. Even
+ * when the similarity score works, "avg match" is ML jargon most
+ * users won't parse. Relative weight ("X% of fingerprint") is
+ * always meaningful, ties the list back to the radar chart visually
+ * above, and answers the actual question the user is asking: "how
+ * much of my data is in each category?"
+ *
+ * Percent is computed across ALL categories (enabled or not) so a
+ * disabled category still shows its share — useful when the user
+ * wants to see the biggest category they've toggled off.
  */
 function CategoryList({ categories, onToggle, toggling }) {
+  const total = categories.reduce((sum, c) => sum + (c.count || 0), 0)
   return (
     <div className="space-y-2">
       {categories.map(cat => {
-        const similarityPercent = (cat.avg_similarity * 100).toFixed(1)
+        const weightPct = total > 0 ? (cat.count / total) * 100 : 0
         return (
           <div
             key={cat.name}
@@ -256,7 +272,7 @@ function CategoryList({ categories, onToggle, toggling }) {
               <div>
                 <span className="text-sm font-medium text-primary">{cat.name}</span>
                 <div className="text-xs text-tertiary">
-                  {cat.count} items &middot; {similarityPercent}% avg match
+                  {cat.count} items &middot; {weightPct.toFixed(0)}% of fingerprint
                 </div>
               </div>
             </div>
@@ -265,7 +281,7 @@ function CategoryList({ categories, onToggle, toggling }) {
               <div className="w-20 h-1.5 bg-surface-secondary rounded-full overflow-hidden">
                 <div
                   className="h-full bg-gruvbox-blue rounded-full"
-                  style={{ width: `${Math.min(cat.avg_similarity * 200, 100)}%` }}
+                  style={{ width: `${Math.min(weightPct, 100)}%` }}
                 />
               </div>
             </div>
