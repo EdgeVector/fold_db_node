@@ -10,6 +10,7 @@ pub mod config;
 pub mod decomposer;
 pub mod error;
 pub mod file_handling;
+pub mod fingerprint_hook;
 pub mod helpers;
 pub mod ingestion_service;
 pub mod key_extraction;

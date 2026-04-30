@@ -10,13 +10,13 @@
 //! Follows the same partial-success pattern as the face ingest
 //! handler — a per-record error does not abort the batch.
 
+use crate::fingerprints::extractors::text::SignalBinding;
 use crate::fingerprints::ingest_text::{ingest_text_signals, TextIngestionOutcome};
 use crate::fold_node::FoldNode;
 use crate::handlers::response::{require_non_empty, ApiResponse, HandlerResult};
 use chrono::Utc;
 use serde::{Deserialize, Serialize};
 use std::sync::Arc;
-use tracing::Instrument;
 
 // ── Request / response types ─────────────────────────────────────
 
@@ -98,6 +98,11 @@ pub async fn ingest_text_signals_batch(
             &source_key,
             &rec.text,
             &now_iso8601,
+            // The HTTP endpoint preserves the historical CoOccurrence
+            // semantics. In-process callers (the generic-ingest hook
+            // in `crate::ingestion::fingerprint_hook`) use a per-schema
+            // policy and may pass `Strong`.
+            SignalBinding::CoOccurrence,
         )
         .await
         {
@@ -162,13 +167,7 @@ pub async fn ingest_text_signals_batch(
     // Fire-and-forget post-ingest sweep — mirrors the face ingest
     // path. See src/fingerprints/auto_propose.rs for the create logic.
     if total_records_written > 0 {
-        let node_bg = node.clone();
-        tokio::spawn(
-            async move {
-                crate::fingerprints::auto_propose::run_sweep_and_create_personas(node_bg).await;
-            }
-            .instrument(tracing::Span::current()),
-        );
+        crate::fingerprints::auto_propose::maybe_spawn_persona_sweep(node.clone());
     }
 
     Ok(ApiResponse::success(IngestTextSignalsResponse {

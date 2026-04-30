@@ -724,6 +724,9 @@ impl IngestionService {
             total_gen += gen_count;
 
             if auto_execute && !mutations.is_empty() {
+                // Cloned for the generic-ingest fingerprint hook
+                // below — `mutate_batch` consumes its argument.
+                let mutations_for_hook = mutations.clone();
                 let exec_count = node
                     .mutate_batch(mutations)
                     .await
@@ -734,6 +737,18 @@ impl IngestionService {
                         )
                     })?;
                 total_exec += exec_count;
+
+                // Best-effort fingerprint extraction over the
+                // just-written records. Never surfaces as an
+                // ingestion error. See `ingestion::fingerprint_hook`
+                // for invariants.
+                let node_arc = std::sync::Arc::new(node.clone());
+                crate::ingestion::fingerprint_hook::run_after_batch(
+                    node_arc,
+                    schema_manager.clone(),
+                    &mutations_for_hook,
+                )
+                .await;
             }
         }
 

@@ -185,7 +185,7 @@ pub async fn import_contacts(node: Arc<FoldNode>) -> HandlerResult<ImportContact
         }));
     }
 
-    let outcome = write_records(node, &all_records)
+    let outcome = write_records(node.clone(), &all_records)
         .await
         .map_err(|e| HandlerError::Internal(format!("contact import write failed: {}", e)))?;
 
@@ -196,6 +196,13 @@ pub async fn import_contacts(node: Arc<FoldNode>) -> HandlerResult<ImportContact
         edge_count,
         outcome.total()
     );
+
+    // Fire-and-forget post-ingest sweep — matches the text and photo
+    // ingest handlers so personas auto-form once enough fingerprints
+    // accumulate. Internally debounced.
+    if outcome.total() > 0 {
+        crate::fingerprints::auto_propose::maybe_spawn_persona_sweep(node);
+    }
 
     Ok(ApiResponse::success(ImportContactsResponse {
         contacts_processed: contacts.len(),

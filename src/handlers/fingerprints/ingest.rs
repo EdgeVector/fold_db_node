@@ -40,7 +40,6 @@ use crate::handlers::response::{require_non_empty, ApiResponse, HandlerResult};
 use chrono::Utc;
 use serde::{Deserialize, Serialize};
 use std::sync::Arc;
-use tracing::Instrument;
 
 // ── Request / response types ─────────────────────────────────────
 
@@ -265,13 +264,7 @@ pub async fn ingest_photo_faces_batch(
     // Personas for any dense cluster that emerged or grew. Debounced
     // in auto_propose so a large migration doesn't trigger N sweeps.
     if total_records_written > 0 {
-        let node_bg = node.clone();
-        tokio::spawn(
-            async move {
-                crate::fingerprints::auto_propose::run_sweep_and_create_personas(node_bg).await;
-            }
-            .instrument(tracing::Span::current()),
-        );
+        crate::fingerprints::auto_propose::maybe_spawn_persona_sweep(node.clone());
     }
 
     Ok(ApiResponse::success(IngestPhotoFacesResponse {

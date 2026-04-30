@@ -67,6 +67,26 @@ const DEFAULT_THRESHOLD: f32 = 0.85;
 /// Millisecond timestamp of the last sweep. 0 means "never swept".
 static LAST_SWEEP_MS: AtomicU64 = AtomicU64::new(0);
 
+/// Spawn the post-ingest persona sweep as a fire-and-forget background
+/// task on the current tracing span. The sweep itself is internally
+/// debounced (`DEBOUNCE_MS`), so back-to-back callers within that window
+/// share a single sweep — which makes this safe to call from every
+/// ingestion path without coordination.
+///
+/// This is the single entry point the rest of the codebase should use
+/// after writing fingerprint records. Inlining `tokio::spawn` would
+/// drift between callsites; centralizing here keeps the spawn pattern
+/// (and any future enrichment, e.g. metrics) consistent.
+pub fn maybe_spawn_persona_sweep(node: Arc<FoldNode>) {
+    use tracing::Instrument;
+    tokio::spawn(
+        async move {
+            run_sweep_and_create_personas(node).await;
+        }
+        .instrument(tracing::Span::current()),
+    );
+}
+
 /// Summary returned by `run_sweep_and_create_personas` — useful for
 /// logging and for tests. Not exposed over HTTP.
 #[derive(Debug, Clone, Default)]
