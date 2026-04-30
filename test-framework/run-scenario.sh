@@ -121,8 +121,11 @@ unset FOLDDB_HOME NODE_CONFIG GSTACK_SERVER_PORT GSTACK_PORT
 export FOLDDB_TEST_RUN_ID="$RUN_ID"
 export FOLDDB_TEST_SESSION_DIR="$SESSION_DIR"
 : > "$SESSION_DIR/state/pending-invites.txt"
-export FOLDDB_TEST_DEV_API="${FOLDDB_TEST_DEV_API:-https://ygyu7ritx8.execute-api.us-west-2.amazonaws.com}"
-export FOLDDB_TEST_DEV_SCHEMA="${FOLDDB_TEST_DEV_SCHEMA:-https://y0q3m6vk75.execute-api.us-west-2.amazonaws.com}"
+# URLs come from environments.json registry. SCRIPT_DIR is set by the
+# scenario runner; resolve relative to the repo root.
+REPO_ROOT_FOR_REGISTRY="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+export FOLDDB_TEST_DEV_API="${FOLDDB_TEST_DEV_API:-$("$REPO_ROOT_FOR_REGISTRY/scripts/get-env-url.sh" dev exemem_api)}"
+export FOLDDB_TEST_DEV_SCHEMA="${FOLDDB_TEST_DEV_SCHEMA:-$("$REPO_ROOT_FOR_REGISTRY/scripts/get-env-url.sh" dev schema_service)}"
 export AWS_REGION="${AWS_REGION:-us-west-2}"
 
 # Load test admin secret for cleanup Lambda invocations.

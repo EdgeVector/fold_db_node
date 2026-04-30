@@ -1,4 +1,5 @@
 use crate::error::CliError;
+use fold_db_node::endpoints::{schema_service_url_for, Environment};
 use std::fs;
 use std::path::PathBuf;
 use std::process::Command;
@@ -151,7 +152,7 @@ pub async fn start(port: u16, dev: bool, open: bool) -> Result<String, CliError>
 
     if dev {
         cmd.arg("--schema-service-url")
-            .arg("https://y0q3m6vk75.execute-api.us-west-2.amazonaws.com");
+            .arg(schema_service_url_for(Environment::Dev));
         cmd.env("EXEMEM_ENV", "dev");
     }
 
@@ -393,11 +394,12 @@ pub fn install() -> Result<String, CliError> {
         port = port,
     );
     if dev {
-        args.push_str(
+        args.push_str(&format!(
             r#"
         <string>--schema-service-url</string>
-        <string>https://y0q3m6vk75.execute-api.us-west-2.amazonaws.com</string>"#,
-        );
+        <string>{url}</string>"#,
+            url = schema_service_url_for(Environment::Dev),
+        ));
     }
     args.push_str("\n    </array>");
 

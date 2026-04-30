@@ -587,14 +587,15 @@ fi
 # in-memory runtime config agree. Without this, debugging is misleading: a
 # --local-schema node writes the prod URL to disk even though it talks to
 # 127.0.0.1 at runtime.
-SCHEMA_URL_PROD="https://axo709qs11.execute-api.us-east-1.amazonaws.com"
-SCHEMA_URL_DEV="https://y0q3m6vk75.execute-api.us-west-2.amazonaws.com"
+#
+# URLs come from environments.json (single source of truth) via the helper.
+SCRIPT_DIR_FOR_REGISTRY="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 if [ "$LOCAL_SCHEMA" = true ]; then
     CONFIG_SCHEMA_URL="http://127.0.0.1:${SCHEMA_PORT}"
 elif [ "$DEV_MODE" = true ]; then
-    CONFIG_SCHEMA_URL="$SCHEMA_URL_DEV"
+    CONFIG_SCHEMA_URL="$("$SCRIPT_DIR_FOR_REGISTRY/scripts/get-env-url.sh" dev schema_service)"
 else
-    CONFIG_SCHEMA_URL="$SCHEMA_URL_PROD"
+    CONFIG_SCHEMA_URL="$("$SCRIPT_DIR_FOR_REGISTRY/scripts/get-env-url.sh" prod schema_service)"
 fi
 
 # ============================================================================
@@ -683,9 +684,10 @@ elif [ "$EXEMEM_MODE" = true ]; then
         exit 1
     fi
 
-    EXEMEM_API_URL="https://jdsx4ixk2i.execute-api.us-east-1.amazonaws.com"
     if [ "$DEV_MODE" = true ]; then
-        EXEMEM_API_URL="https://ygyu7ritx8.execute-api.us-west-2.amazonaws.com"
+        EXEMEM_API_URL="$("$SCRIPT_DIR_FOR_REGISTRY/scripts/get-env-url.sh" dev exemem_api)"
+    else
+        EXEMEM_API_URL="$("$SCRIPT_DIR_FOR_REGISTRY/scripts/get-env-url.sh" prod exemem_api)"
     fi
 
     # Build optional JSON fields

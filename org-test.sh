@@ -20,7 +20,7 @@ SESSION_DIR="/tmp/folddb-org-test"
 NUM_NODES=2
 LOCAL_MODE=false
 INVITE_CODES=()
-EXEMEM_API_URL="https://ygyu7ritx8.execute-api.us-west-2.amazonaws.com"
+EXEMEM_API_URL="$("$SCRIPT_DIR/scripts/get-env-url.sh" dev exemem_api)"
 
 # ── Stop command ──────────────────────────────────────────────────────────────
 if [ "${1:-}" = "stop" ]; then

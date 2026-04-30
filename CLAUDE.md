@@ -36,6 +36,29 @@ npm test
 npm run test:e2e
 ```
 
+## Endpoint registry
+
+All cross-environment URLs (Schema service, Exemem API, Discovery service — dev and prod) live in [`environments.json`](environments.json) at the repo root. **That file is the single source of truth.** Edits anywhere else cause drift; CI rejects them.
+
+Wiring:
+
+- **Rust code** — `build.rs` parses `environments.json` at compile time and emits per-(env, key) `pub const`s in `OUT_DIR/environments_generated.rs`. `src/endpoints.rs` includes them via `include!()`. Public API: `endpoints::schema_service_url()`, `exemem_api_url()`, `discovery_service_url()` (env-aware via `EXEMEM_ENV`), and `schema_service_url_for(Environment::Dev)` for code paths that need to pin one regardless of the calling process.
+- **Shell scripts** — call `scripts/get-env-url.sh <dev|prod> <region|exemem_api|schema_service|discovery>`. Errors loudly if the registry is missing the key.
+- **CI workflows** — same helper, called after checkout (see `.github/workflows/e2e-cloud.yml` "Resolve dev URLs from environments.json" step). Do NOT set the URLs as static `env:` values.
+
+Anti-drift: [`scripts/lint-no-hardcoded-urls.sh`](scripts/lint-no-hardcoded-urls.sh) reads the gateway hostnames out of `environments.json` and fails CI (and the pre-commit hook) if any of them appear in any other tracked file. Allow-listed exceptions live in the script itself with a one-line reason.
+
+Cross-repo consumers also feed off this registry:
+
+- `schema_service/crates/client/src/lib.rs` — `SchemaServiceClient::new(url)` requires the URL from the caller; no hardcoded default. fold_db_node passes the value resolved here.
+- `exemem-workspace/.claude/skills/dogfood/teardown.sh` and `SKILL.md` — call `~/code/edgevector/fold_db_node/scripts/get-env-url.sh` (sibling repo).
+- `exemem-workspace/config/node_config.json` — sample config now omits `schema_service_url`; runtime resolution fills it in.
+- `fold_db/CLAUDE.md` — references the registry instead of literal URLs.
+
+Frozen exceptions kept on purpose: `exemem-workspace/docs/dogfood/*.md` (historical run reports — immutable records), `schema-infra/cdk/outputs.json` (CDK deploy output, the producer's record), and the `schema-infra/schema_service/...` git submodule (inherits when its pointer is bumped). The `exemem-infra` and `schema-infra` CDKs do not consume the URLs — they create them as outputs — so there's nothing to migrate on the producer side. The lint runs only inside fold_db_node; cross-repo regressions need a workspace-wide lint at `exemem-workspace/` if drift becomes a real problem again.
+
+Release-build defaults: when `EXEMEM_ENV` is unset, debug builds default to dev (us-west-2), release builds default to prod (us-east-1). The Tauri bundle therefore hits prod without needing a runtime env var. Override with `EXEMEM_ENV=dev` or any of the per-URL env vars (`FOLD_SCHEMA_SERVICE_URL`, `EXEMEM_API_URL`, `DISCOVERY_SERVICE_URL`) for ad-hoc testing.
+
 ## Schema service
 
 The schema service lives in its own repo, [EdgeVector/schema_service](https://github.com/EdgeVector/schema_service), and is deployed as a Lambda at `schema.folddb.com` via [EdgeVector/schema-infra](https://github.com/EdgeVector/schema-infra). fold_db_node consumes it as a client.

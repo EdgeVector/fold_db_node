@@ -49,6 +49,9 @@ jobs:
       - name: Run rev-pin format lint (cascade-relevant git deps)
         run: bash scripts/lint-rev-pin-format.sh
 
+      - name: Run no-hardcoded-urls lint (env registry)
+        run: bash scripts/lint-no-hardcoded-urls.sh
+
   rust-fast:
     name: Rust Fast (PR)
     if: github.event_name == 'pull_request'

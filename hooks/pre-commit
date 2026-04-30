@@ -59,6 +59,17 @@ if grep -qxF 'Cargo.lock' <<<"$STAGED"; then
     done
 fi
 
+# --- env URL registry lint -----------------------------------------------
+# Catch hardcoded gateway hostnames before they hit CI.
+if [ -x scripts/lint-no-hardcoded-urls.sh ]; then
+    if ! scripts/lint-no-hardcoded-urls.sh >/dev/null 2>&1; then
+        echo "pre-commit: lint-no-hardcoded-urls FAILED." >&2
+        echo "pre-commit: run \`scripts/lint-no-hardcoded-urls.sh\` to see offenders." >&2
+        echo "pre-commit: URLs live in environments.json — see CLAUDE.md > Endpoint registry." >&2
+        exit 1
+    fi
+fi
+
 # --- cargo fmt gate ------------------------------------------------------
 RS_FILES=$(echo "$STAGED" | grep '\.rs$' || true)
 if [ -z "$RS_FILES" ]; then

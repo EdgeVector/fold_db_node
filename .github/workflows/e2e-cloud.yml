@@ -32,8 +32,8 @@ jobs:
 
     env:
       RUSTFLAGS: -C linker=clang -C link-arg=-fuse-ld=mold
-      FOLDDB_TEST_DEV_API: https://ygyu7ritx8.execute-api.us-west-2.amazonaws.com
-      FOLDDB_TEST_DEV_SCHEMA: https://y0q3m6vk75.execute-api.us-west-2.amazonaws.com
+      # FOLDDB_TEST_DEV_API / FOLDDB_TEST_DEV_SCHEMA are exported from
+      # environments.json after checkout (see "Resolve dev URLs" step).
 
     steps:
       - name: Free disk space
@@ -44,6 +44,15 @@ jobs:
 
       - name: Checkout repository
         uses: actions/checkout@v4
+
+      # Single source of truth: environments.json. Resolved here so a URL
+      # change in environments.json propagates to CI without editing this
+      # workflow. Lint enforces no hardcoded gateway hostnames anywhere.
+      - name: Resolve dev URLs from environments.json
+        run: |
+          sudo apt-get update && sudo apt-get install -y jq
+          echo "FOLDDB_TEST_DEV_API=$(./scripts/get-env-url.sh dev exemem_api)" >> "$GITHUB_ENV"
+          echo "FOLDDB_TEST_DEV_SCHEMA=$(./scripts/get-env-url.sh dev schema_service)" >> "$GITHUB_ENV"
 
       # Strip the local-dev cargo patch that redirects schema_service
       # deps to a sibling workspace checkout — CI has no sibling, so
