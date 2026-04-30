@@ -454,6 +454,7 @@ pub struct ApplePhotosRequest {
 }
 
 /// POST /api/ingestion/apple-import/photos
+// TODO: Apple Photos ingestion does not yet run face detection — face extraction in the generic ingestion path is a separate workstream that requires ONNX inline.
 pub async fn apple_import_photos(
     request: web::Json<ApplePhotosRequest>,
     state: web::Data<AppState>,
@@ -880,57 +881,6 @@ async fn run_apple_calendar_import(
         job.progress_percentage = pct as u8;
         job.message = format!("Ingested {}/{} events...", ingested, total);
         let _ = tracker.save(&job).await;
-    }
-
-    // Fingerprint extraction for attendee emails. Each event with a
-    // non-empty attendees list becomes one text-ingestion record; the
-    // existing email regex extractor in `ingest_text_signals_batch`
-    // then writes a Fingerprint (email) + Mention (pointing back at
-    // the calendar event by content_hash) per address. Attendees are
-    // joined into one text blob per event so a single extractor pass
-    // picks up every email without caring about ordering.
-    //
-    // Failures here are logged but do NOT fail the calendar import —
-    // events have already been ingested and are queryable. A broken
-    // fingerprint pipeline is a separate bug and shouldn't poison a
-    // successful calendar sync.
-    let attendee_records = build_attendee_ingestion_records(&events);
-    if !attendee_records.is_empty() {
-        let attendee_count = attendee_records.len();
-        let request = crate::handlers::fingerprints::ingest_text::IngestTextSignalsRequest {
-            source_schema: "apple_calendar".to_string(),
-            records: attendee_records,
-        };
-        match crate::handlers::fingerprints::ingest_text::ingest_text_signals_batch(
-            node_arc.clone(),
-            request,
-        )
-        .await
-        {
-            Ok(response) => {
-                let signal_count = response.data.as_ref().map(|r| r.total_signals).unwrap_or(0);
-                let written = response
-                    .data
-                    .as_ref()
-                    .map(|r| r.total_records_written)
-                    .unwrap_or(0);
-                tracing::info!(
-                target: "fold_node::ingestion",
-                        "Apple Calendar: extracted {} email signals from {} events ({} records written)",
-                        signal_count,
-                        attendee_count,
-                        written,
-                    );
-            }
-            Err(e) => {
-                tracing::warn!(
-                target: "fold_node::ingestion",
-                        "Apple Calendar: attendee fingerprint extraction failed for {} events: {:?}",
-                        attendee_count,
-                        e,
-                    );
-            }
-        }
     }
 
     let mut job = Job::new(progress_id.clone(), JobType::Other("apple-calendar".into()));
