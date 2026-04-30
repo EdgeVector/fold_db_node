@@ -85,32 +85,58 @@ export default function SettingsTab({ onResult, initialSubTab, onRelaunchOnboard
   }
 
   return (
-    <div>
-      <div className="flex border-b border-border mb-4 overflow-x-auto">
-        {SUB_TABS.map(tab => (
-          <button
-            key={tab.id}
-            onClick={() => setActiveSubTab(tab.id)}
-            className={`tab whitespace-nowrap ${activeSubTab === tab.id ? 'tab-active' : ''}`}
-          >
-            {tab.label}
-          </button>
-        ))}
-      </div>
-      {renderContent()}
-      {onRelaunchOnboarding && (
-        <div className="mt-8 pt-4 border-t border-border">
-          <button
-            onClick={() => {
-              localStorage.removeItem('folddb_onboarding_complete')
-              onRelaunchOnboarding()
-            }}
-            className="btn-secondary"
-          >
-            Relaunch Setup Wizard
-          </button>
+    <div className="flex gap-6 -mt-1">
+      {/* Left rail — same pattern as People IA (#762) and the app's
+        * main sidebar. 7 destinations stacked vertically, active item
+        * gets a yellow border-l-2 stripe + bg + bright text. Predictable
+        * grammar across the app's "many sub-views" surfaces. */}
+      <nav
+        className="shrink-0 w-44 border-r border-border pr-2 -ml-1 flex flex-col"
+        aria-label="Settings sub-sections"
+      >
+        <div>
+          {SUB_TABS.map((tab) => {
+            const isActive = activeSubTab === tab.id
+            return (
+              <button
+                key={tab.id}
+                type="button"
+                onClick={() => setActiveSubTab(tab.id)}
+                aria-current={isActive ? 'page' : undefined}
+                className={`w-full text-left px-3 py-1.5 text-sm transition-colors border-l-2 bg-transparent cursor-pointer ${
+                  isActive
+                    ? 'bg-surface-secondary border-l-gruvbox-yellow text-primary'
+                    : 'text-secondary hover:text-primary hover:bg-surface-secondary border-l-transparent'
+                }`}
+              >
+                {tab.label}
+              </button>
+            )
+          })}
         </div>
-      )}
+        {/* "Relaunch Setup Wizard" lives at the bottom of the rail so
+          * it's always visible regardless of which sub-tab is showing.
+          * Previously rendered after the active panel — disappeared
+          * below the fold on dense panels (Profile, Cloud Features)
+          * and floated lonely on sparse ones (Key Management). */}
+        {onRelaunchOnboarding && (
+          <div className="mt-4 pt-3 border-t border-border px-3">
+            <button
+              type="button"
+              onClick={() => {
+                localStorage.removeItem('folddb_onboarding_complete')
+                onRelaunchOnboarding()
+              }}
+              className="text-xs text-tertiary hover:text-primary text-left bg-transparent border-none cursor-pointer p-0 transition-colors"
+            >
+              Relaunch setup wizard
+            </button>
+          </div>
+        )}
+      </nav>
+      <div className="flex-1 min-w-0">
+        {renderContent()}
+      </div>
     </div>
   )
 }
