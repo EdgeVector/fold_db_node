@@ -3,6 +3,11 @@
 //! All actix-web glue for ingestion lives here. The pure pipeline logic is
 //! parameterized and lives in `crate::ingestion`.
 
+// Imported so the bare `ProcessJsonResponse` token in the `#[utoipa::path]`
+// `body =` annotation below resolves; suppress the unused-import lint because
+// the macro consumes it without producing a value-level reference.
+#[allow(unused_imports)]
+use crate::handlers::ingestion::ProcessJsonResponse;
 use crate::ingestion::config::{AIProvider, OllamaGenerationParams};
 use crate::ingestion::helpers::{
     fetch_ollama_models, resolve_folder_path, spawn_file_ingestion_tasks, start_file_progress,
@@ -90,13 +95,17 @@ pub(crate) use ingestion_context_or_return;
 
 // ── Core ingestion routes ──────────────────────────────────────────
 
-/// Process JSON ingestion request
+/// Process JSON ingestion request.
+///
+/// Returns 202 Accepted immediately — the body is a job-started envelope, not the
+/// final ingestion result. Clients poll `/ingestion/progress/{progress_id}` for
+/// the actual outcome.
 #[utoipa::path(
     post,
     path = "/api/ingestion/process",
     tag = "ingestion",
     request_body = IngestionRequest,
-    responses((status = 200, description = "Ingestion response", body = IngestionResponse))
+    responses((status = 202, description = "Ingestion job started", body = ProcessJsonResponse))
 )]
 pub async fn process_json(
     request: web::Json<IngestionRequest>,
