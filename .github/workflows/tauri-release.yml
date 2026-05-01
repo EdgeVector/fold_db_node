@@ -41,9 +41,21 @@ jobs:
       fail-fast: false
       matrix:
         include:
+          # Apple Silicon — native build on macos-14 (ARM) runner.
           - target: aarch64-apple-darwin
             os: macos-14
             arch: aarch64
+          # Intel Macs — cross-compiled from the macos-14 (ARM) runner.
+          # Same approach release.yml takes for the Intel-Mac tarball.
+          # macos-13 x86 runners are queue-starved and slated for
+          # deprecation; macos-14 has both toolchains available via
+          # `rustup target add x86_64-apple-darwin` (handled by
+          # dtolnay/rust-toolchain). The dmg-smoke job only runs
+          # against aarch64 (host arch) — x86_64 ships untested by the
+          # smoke loop, but builds, signs, and notarizes the same way.
+          - target: x86_64-apple-darwin
+            os: macos-14
+            arch: x86_64
 
     runs-on: ${{ matrix.os }}
 
@@ -214,24 +226,68 @@ jobs:
           fi
 
       # --- Rename with version + arch ---
+      # `tauri build --bundles app,dmg` produces THREE artifacts per arch:
+      #   - bundle/dmg/<original>.dmg     (drag-install for end users)
+      #   - bundle/macos/FoldDB.app.tar.gz     (compressed .app — what
+      #     tauri-plugin-updater fetches for in-app upgrades)
+      #   - bundle/macos/FoldDB.app.tar.gz.sig (minisign signature of
+      #     the tarball — embedded into latest.json for integrity check)
+      #
+      # All three need to ship with arch-suffixed names so the release
+      # job can pick them up alongside their siblings from the other
+      # matrix arch and assemble a multi-platform `latest.json`.
       - name: Prepare artifact
         id: artifact
         run: |
           BUNDLE_DIR="src/server/static-react/src-tauri/target/${{ matrix.target }}/release/bundle"
           DMG=$(find "$BUNDLE_DIR/dmg" -name "*.dmg" | head -1)
+          APP_TAR=$(find "$BUNDLE_DIR/macos" -name "*.app.tar.gz" | head -1)
+          APP_SIG=$(find "$BUNDLE_DIR/macos" -name "*.app.tar.gz.sig" | head -1)
           VERSION="${{ steps.version.outputs.version }}"
-          FINAL_NAME="FoldDB_${VERSION}_${{ matrix.arch }}.dmg"
-          cp "$DMG" "$RUNNER_TEMP/$FINAL_NAME"
-          echo "dmg_path=$RUNNER_TEMP/$FINAL_NAME" >> "$GITHUB_OUTPUT"
-          echo "dmg_name=$FINAL_NAME" >> "$GITHUB_OUTPUT"
+          ARCH="${{ matrix.arch }}"
+
+          DMG_NAME="FoldDB_${VERSION}_${ARCH}.dmg"
+          TAR_NAME="FoldDB_${VERSION}_${ARCH}.app.tar.gz"
+          SIG_NAME="FoldDB_${VERSION}_${ARCH}.app.tar.gz.sig"
+
+          mkdir -p "$RUNNER_TEMP/bundle"
+          cp "$DMG" "$RUNNER_TEMP/bundle/$DMG_NAME"
+          if [[ -n "$APP_TAR" && -f "$APP_TAR" ]]; then
+            cp "$APP_TAR" "$RUNNER_TEMP/bundle/$TAR_NAME"
+          else
+            echo "::warning::No .app.tar.gz produced — updater bundle missing for $ARCH; latest.json will skip this platform."
+          fi
+          if [[ -n "$APP_SIG" && -f "$APP_SIG" ]]; then
+            cp "$APP_SIG" "$RUNNER_TEMP/bundle/$SIG_NAME"
+          else
+            echo "::warning::No .app.tar.gz.sig produced — updater signature missing for $ARCH."
+          fi
+
+          # dmg-smoke pattern is `FoldDB_*_aarch64.dmg`; keep
+          # exposing the DMG path/name as outputs for that.
+          echo "dmg_path=$RUNNER_TEMP/bundle/$DMG_NAME" >> "$GITHUB_OUTPUT"
+          echo "dmg_name=$DMG_NAME" >> "$GITHUB_OUTPUT"
+          echo "bundle_dir=$RUNNER_TEMP/bundle" >> "$GITHUB_OUTPUT"
 
       # --- Upload ---
-      - name: Upload DMG artifact
+      - name: Upload DMG artifact (for dmg-smoke + release attach)
         uses: actions/upload-artifact@v4
         with:
           name: ${{ steps.artifact.outputs.dmg_name }}
           path: ${{ steps.artifact.outputs.dmg_path }}
           if-no-files-found: error
+
+      # Updater bundle (.app.tar.gz + .sig) — needed by the `release`
+      # job to assemble latest.json. Separate artifact name keyed by arch
+      # so both matrix runs upload to distinct slots.
+      - name: Upload updater bundle (.app.tar.gz + .sig)
+        uses: actions/upload-artifact@v4
+        with:
+          name: updater-bundle-${{ matrix.arch }}
+          path: |
+            ${{ steps.artifact.outputs.bundle_dir }}/*.app.tar.gz
+            ${{ steps.artifact.outputs.bundle_dir }}/*.app.tar.gz.sig
+          if-no-files-found: warn
 
       # --- Cleanup keychain ---
       - name: Cleanup keychain
@@ -383,7 +439,10 @@ jobs:
             hdiutil detach "${{ steps.mount.outputs.mount_point }}" -force || true
           fi
 
-  # Attach DMGs to the GitHub Release (only on tag push)
+  # Attach DMGs + updater bundle (.app.tar.gz + .sig per arch) +
+  # latest.json to the GitHub Release (only on tag push). The
+  # tauri-plugin-updater inside the running app fetches latest.json from
+  # the latest release at runtime and uses it to drive in-app upgrades.
   release:
     if: github.event_name == 'push' && startsWith(github.ref, 'refs/tags/v')
     needs: [build-macos, dmg-smoke]
@@ -394,13 +453,88 @@ jobs:
         with:
           path: artifacts
 
-      - name: Collect DMGs and generate checksums
+      - name: Collect release assets and generate checksums
         run: |
+          set -euo pipefail
           mkdir -p release
-          find artifacts -type f -name '*.dmg' -exec cp {} release/ \;
+          find artifacts -type f \
+            \( -name '*.dmg' -o -name '*.app.tar.gz' -o -name '*.app.tar.gz.sig' \) \
+            -exec cp {} release/ \;
           cd release
-          shasum -a 256 *.dmg > SHA256SUMS.txt
+          ls -la
+          # Hash both the drag-install DMGs and the updater tarballs so
+          # downstream consumers (Homebrew, install.sh, integrity audits)
+          # can verify either form. Sigs aren't hashed — they're
+          # signatures of the tarballs.
+          shasum -a 256 *.dmg *.app.tar.gz > SHA256SUMS.txt
           cat SHA256SUMS.txt
+
+      # Build latest.json — the manifest tauri-plugin-updater fetches at
+      # https://github.com/EdgeVector/fold_db_node/releases/latest/download/latest.json
+      # (configured in tauri.conf.json's plugins.updater.endpoints).
+      # Format per Tauri 2 docs: top-level version + notes + pub_date,
+      # per-platform { signature, url }. Signature is the *contents* of
+      # the .app.tar.gz.sig file (a base64 minisign signature) embedded
+      # inline. URL points at the .app.tar.gz hosted on this release.
+      - name: Generate latest.json for in-app updater
+        env:
+          VERSION_TAG: ${{ github.ref_name }}
+        run: |
+          set -euo pipefail
+          VERSION="${VERSION_TAG#v}"
+          PUB_DATE="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
+          BASE_URL="https://github.com/EdgeVector/fold_db_node/releases/download/${VERSION_TAG}"
+          NOTES="See ${BASE_URL%/download/*}/tag/${VERSION_TAG}"
+
+          AARCH64_SIG_FILE="release/FoldDB_${VERSION}_aarch64.app.tar.gz.sig"
+          X86_64_SIG_FILE="release/FoldDB_${VERSION}_x86_64.app.tar.gz.sig"
+
+          # Build per-platform JSON entries only if the .sig file
+          # actually exists (i.e. that arch's matrix run produced an
+          # updater bundle). Missing arch is a warning, not a failure
+          # — better to ship a partial latest.json than to block the
+          # release on it.
+          PLATFORMS_JSON=""
+          add_platform() {
+            local key="$1"
+            local sig_file="$2"
+            local tarball_name="$3"
+            if [[ -f "$sig_file" ]]; then
+              local sig
+              sig="$(cat "$sig_file")"
+              local entry
+              entry=$(jq -nc \
+                --arg sig "$sig" \
+                --arg url "${BASE_URL}/${tarball_name}" \
+                '{signature: $sig, url: $url}')
+              if [[ -z "$PLATFORMS_JSON" ]]; then
+                PLATFORMS_JSON="\"${key}\": ${entry}"
+              else
+                PLATFORMS_JSON="${PLATFORMS_JSON}, \"${key}\": ${entry}"
+              fi
+            else
+              echo "::warning::Updater bundle for ${key} missing (no ${sig_file}); skipping in latest.json"
+            fi
+          }
+
+          add_platform "darwin-aarch64" "$AARCH64_SIG_FILE" "FoldDB_${VERSION}_aarch64.app.tar.gz"
+          add_platform "darwin-x86_64"  "$X86_64_SIG_FILE"  "FoldDB_${VERSION}_x86_64.app.tar.gz"
+
+          if [[ -z "$PLATFORMS_JSON" ]]; then
+            echo "::error::No platform-specific updater bundles found; latest.json would be empty. Failing rather than shipping a broken updater manifest."
+            exit 1
+          fi
+
+          jq -n \
+            --arg v "$VERSION" \
+            --arg notes "$NOTES" \
+            --arg pub "$PUB_DATE" \
+            --argjson platforms "{ ${PLATFORMS_JSON} }" \
+            '{version: $v, notes: $notes, pub_date: $pub, platforms: $platforms}' \
+            > release/latest.json
+
+          echo "--- latest.json ---"
+          cat release/latest.json
 
       - name: Attach to GitHub Release
         uses: softprops/action-gh-release@v2
@@ -408,4 +542,7 @@ jobs:
           generate_release_notes: true
           files: |
             release/*.dmg
+            release/*.app.tar.gz
+            release/*.app.tar.gz.sig
             release/SHA256SUMS.txt
+            release/latest.json
