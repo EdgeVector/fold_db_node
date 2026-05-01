@@ -8,6 +8,12 @@ use std::time::SystemTime;
 /// The plan for executing a query
 #[derive(Debug, Clone, Serialize, Deserialize, utoipa::ToSchema)]
 pub struct QueryPlan {
+    /// fold_db's `Query` type lacks `utoipa::ToSchema` upstream, so we
+    /// surface it as opaque JSON in the OpenAPI spec. Once Phase 3 of
+    /// gbrain projects/api-typegen-unification lands ToSchema for fold_db
+    /// types, drop the `value_type` override and let utoipa derive the
+    /// real shape.
+    #[schema(value_type = serde_json::Value)]
     pub query: Query,
     pub reasoning: String,
 }
