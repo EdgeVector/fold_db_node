@@ -602,10 +602,21 @@ export interface components {
             /** Format: date-time */
             timestamp: string;
         };
+        NodeKeyResponse: {
+            success: boolean;
+            public_key: string;
+            message: string;
+        };
         /** @description Configuration for the Ollama AI provider. */
         OllamaConfig: {
             base_url: string;
             model: string;
+        };
+        /** @description Response for process_json (immediate response). */
+        ProcessJsonResponse: {
+            message: string;
+            progress_id: string;
+            success: boolean;
         };
         /** @description Field storing a range of values. */
         RangeField: {
@@ -771,13 +782,13 @@ export interface operations {
             };
         };
         responses: {
-            /** @description Ingestion response */
-            200: {
+            /** @description Ingestion job started */
+            202: {
                 headers: {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": components["schemas"]["IngestionResponse"];
+                    "application/json": components["schemas"]["ProcessJsonResponse"];
                 };
             };
         };
@@ -1231,7 +1242,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": unknown;
+                    "application/json": components["schemas"]["NodeKeyResponse"];
                 };
             };
         };

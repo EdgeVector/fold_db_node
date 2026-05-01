@@ -1,9 +1,6 @@
 use crate::handlers::system::NodeKeyResponse;
-use crate::handlers::{ApiResponse, HandlerError};
 use crate::server::http_server::AppState;
-use crate::server::routes::{
-    handler_error_to_response, handler_result_to_response, node_or_return,
-};
+use crate::server::routes::{handler_result_to_response, node_or_return};
 use actix_web::{web, HttpResponse, Responder};
 use serde_json::json;
 use std::sync::OnceLock;
@@ -65,26 +62,6 @@ pub async fn get_system_status(state: web::Data<AppState>) -> impl Responder {
     handler_result_to_response(crate::handlers::system::get_system_status(&user_hash, &node).await)
 }
 
-/// Shared helper for key retrieval endpoints.
-fn key_response(
-    result: Result<ApiResponse<NodeKeyResponse>, HandlerError>,
-    key_name: &str,
-    log_msg: &str,
-) -> HttpResponse {
-    match result {
-        Ok(response) => {
-            tracing::info!(
-            target: "fold_node::http_server", "{}", log_msg);
-            HttpResponse::Ok().json(json!({
-                "success": response.data.as_ref().map(|d| d.success).unwrap_or(false),
-                key_name: response.data.as_ref().map(|d| &d.key),
-                "message": response.data.as_ref().map(|d| &d.message)
-            }))
-        }
-        Err(e) => handler_error_to_response(e),
-    }
-}
-
 /// Get the node's public key
 ///
 /// This endpoint returns the node's public key for verification purposes.
@@ -94,17 +71,21 @@ fn key_response(
     path = "/api/system/public-key",
     tag = "system",
     responses(
-        (status = 200, description = "Node public key", body = serde_json::Value)
+        (status = 200, description = "Node public key", body = NodeKeyResponse)
     )
 )]
 pub async fn get_node_public_key(state: web::Data<AppState>) -> impl Responder {
-    let (user_hash, node) = node_or_return!(state);
-    let result = crate::handlers::system::get_node_public_key(&user_hash, &node).await;
-    key_response(
-        result,
-        "public_key",
-        "Node public key retrieved successfully",
-    )
+    let (_user_hash, node) = node_or_return!(state);
+    let response = NodeKeyResponse {
+        success: true,
+        public_key: node.get_node_public_key().to_string(),
+        message: "Node public key retrieved successfully".to_string(),
+    };
+    tracing::info!(
+        target: "fold_node::http_server",
+        "Node public key retrieved successfully"
+    );
+    HttpResponse::Ok().json(&response)
 }
 
 #[cfg(test)]
@@ -172,6 +153,18 @@ mod tests {
             assert!(response["success"].as_bool().unwrap_or(false));
             assert!(response["public_key"].as_str().is_some());
             assert!(!response["public_key"].as_str().unwrap_or("").is_empty());
+            // Regression guard: the route used to rename `key` -> `public_key`
+            // via `serde_json::json!`, so the typed handler struct lied about
+            // the wire shape. After the typed-struct refactor the wire field
+            // is `public_key` and `key` MUST NOT appear.
+            assert!(
+                response.get("key").is_none(),
+                "wire payload must not include legacy `key` field, got: {response}"
+            );
+            assert_eq!(
+                response["message"],
+                "Node public key retrieved successfully"
+            );
         })
         .await;
     }

@@ -26,6 +26,10 @@ export interface OllamaGenerationParams {
 export interface OllamaConfig {
   model: string;
   base_url: string;
+  /** Model used for image → markdown vision when `vision_backend === "Ollama"`. */
+  vision_model?: string;
+  /** Model used for OCR (text extraction from scanned docs / PDFs). */
+  ocr_model?: string;
   generation_params?: OllamaGenerationParams;
 }
 
@@ -49,6 +53,12 @@ export interface IngestionConfig {
   ollama: OllamaConfig;
   anthropic: AnthropicConfig;
   vision_backend?: VisionBackend;
+  /**
+   * Legacy pre-overrides QueryChat override (Rust: `SavedConfig.query`). Saves
+   * dual-write this alongside `overrides[QueryChat]` until two releases after
+   * the rollout PR. Reads should prefer `overrides[QueryChat]`.
+   */
+  query?: UseCaseOverride;
   overrides?: Record<Role, UseCaseOverride>;
 }
 
@@ -141,18 +151,20 @@ export interface ProcessIngestionRequest {
 
 // ...
 
-export interface ProcessIngestionResponse {
+/**
+ * Body returned by `POST /api/ingestion/process` (HTTP 202 Accepted).
+ *
+ * The endpoint kicks off a background ingestion job and returns immediately —
+ * the actual results (schemas written, mutations executed, etc.) live on
+ * `/ingestion/progress/{progress_id}`. This shape mirrors the Rust
+ * `ProcessJsonResponse` exactly; the previously declared fields
+ * (`records_processed`, `mutations_executed`, `schema_created`,
+ * `ai_analysis`) never existed on the wire.
+ */
+export interface ProcessJsonResponse {
   success: boolean;
-  error?: string;
-  schema_created?: string;
-  records_processed?: number;
-  mutations_executed?: number;
-  ai_analysis?: {
-    schema_recommendations?: string[];
-    data_quality_notes?: string[];
-    execution_summary?: string;
-  };
-  progress_id?: string; // ID for tracking progress
+  progress_id: string;
+  message: string;
 }
 
 // Smart Folder types
@@ -412,7 +424,7 @@ export class UnifiedIngestionClient {
       pubKey?: string;
       orgHash?: string;
     } = {},
-  ): Promise<EnhancedApiResponse<ProcessIngestionResponse>> {
+  ): Promise<EnhancedApiResponse<ProcessJsonResponse>> {
     // Generate a UUID for progress tracking
     const progressId = crypto.randomUUID();
 
@@ -432,7 +444,7 @@ export class UnifiedIngestionClient {
       );
     }
 
-    return this.client.post<ProcessIngestionResponse>(
+    return this.client.post<ProcessJsonResponse>(
       API_ENDPOINTS.PROCESS_JSON,
       request,
       {

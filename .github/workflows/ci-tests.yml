@@ -107,6 +107,53 @@ jobs:
       - name: Run doc tests
         run: cargo test --workspace --doc
 
+      # OpenAPI drift check — regenerates src/types/openapi.ts from the
+      # current Rust source and fails if it differs from the committed
+      # file. Run `npm run generate:api` locally after backend route or
+      # schema changes (run.sh dev does this automatically).
+      #
+      # Best-effort while the underlying utoipa coverage is incomplete:
+      # the spec currently has unresolved $refs (missing ToSchema derives
+      # on OllamaGenerationParams, VisionBackend, UseCaseOverride, Role,
+      # and many more — tracked in gbrain projects/api-typegen-unification
+      # Phase 3). Until that lands, openapi-typescript@7.x errors out, so
+      # the drift verify step is gated on regen succeeding. Once Phase 3
+      # is in, drop the `continue-on-error` and `if:` and require it to
+      # pass.
+      - name: Setup Node.js (for OpenAPI drift check)
+        uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+          cache: "npm"
+          cache-dependency-path: src/server/static-react/package-lock.json
+
+      - name: Install frontend dependencies
+        working-directory: src/server/static-react
+        run: npm ci
+
+      - name: Dump current OpenAPI spec
+        run: cargo run --quiet --bin openapi_dump > target/openapi.json
+
+      - name: Regenerate OpenAPI TypeScript types
+        id: regen_openapi_ts
+        working-directory: src/server/static-react
+        run: npm run generate:api
+        continue-on-error: true
+
+      - name: Note regen failure (informational, until Phase 3 lands)
+        if: steps.regen_openapi_ts.outcome != 'success'
+        run: |
+          echo "::warning::npm run generate:api errored — likely unresolved \$refs in target/openapi.json. Tracked under gbrain projects/api-typegen-unification Phase 3 (utoipa coverage sweep). Drift verification skipped this run."
+
+      - name: Verify openapi.ts is up to date (when regen succeeded)
+        if: steps.regen_openapi_ts.outcome == 'success'
+        run: |
+          if ! git diff --exit-code src/server/static-react/src/types/openapi.ts; then
+            echo "::error::src/server/static-react/src/types/openapi.ts is stale."
+            echo "Run 'cargo run --bin openapi_dump > target/openapi.json && (cd src/server/static-react && npm run generate:api)' and commit the result."
+            exit 1
+          fi
+
   frontend-tests:
     name: Frontend Tests
     runs-on: ubuntu-latest
@@ -138,6 +185,11 @@ jobs:
         working-directory: src/server/static-react
         run: npm ci
 
+      - name: Typecheck (tsc --noEmit)
+        if: steps.check-frontend.outputs.exists == 'true'
+        working-directory: src/server/static-react
+        run: npm run typecheck
+
       - name: Run npm test
         if: steps.check-frontend.outputs.exists == 'true'
         working-directory: src/server/static-react
@@ -145,11 +197,27 @@ jobs:
 
   # ─── Tier 2 ──────────────────────────────────────────────────────
   # Only runs at merge time. Comprehensive. Gates the merge.
+  #
+  # Split into two jobs that fan out in parallel:
+  #   - rust-merge-checks: clippy --all-targets + doc tests (single runner;
+  #     neither shards usefully).
+  #   - rust-full: lib + integration tests, sharded 4 ways via
+  #     `cargo nextest --partition count:N/4`. Compilation is duplicated
+  #     across shards but Swatinem/rust-cache hits the same key on each
+  #     leg, and test execution wall-time was the bottleneck — not compile.
+  # Wall time is gated by the slowest leg + ci-required join.
 
-  rust-full:
-    name: Rust Full Integration
+  rust-merge-checks:
+    name: Rust Clippy + Doc Tests
     if: github.event_name == 'merge_group'
-    runs-on: ubuntu-latest-m
+    # TEMPORARY 2026-05-01: downgraded from `ubuntu-latest-m` (4-core
+    # larger runner) to `ubuntu-latest` (2-core standard). The larger
+    # runner pool wedged for 60+ min, leaving 10+ PRs stuck in the
+    # merge queue with no way to land. Standard runners process
+    # PR-level CI normally — falling back here drains the queue at
+    # the cost of slower integration tests. Revert to `ubuntu-latest-m`
+    # once the larger pool recovers (single-line edit, see #788).
+    runs-on: ubuntu-latest
     timeout-minutes: 30
 
     env:
@@ -167,6 +235,50 @@ jobs:
         with:
           components: clippy, rustfmt
 
+      - name: Configure git for private dependencies
+        run: git config --global url."https://x-access-token:${{ secrets.GH_PAT }}@github.com/".insteadOf "https://github.com/"
+
+      - name: Cache Rust artifacts
+        uses: Swatinem/rust-cache@v2
+        with:
+          key: tier2-merge-checks
+
+      - name: Stub frontend dist for rust_embed
+        run: mkdir -p src/server/static-react/dist && echo '<html></html>' > src/server/static-react/dist/index.html
+
+      # Merge-time clippy: full --all-targets sweep so test code, examples,
+      # and benches all get linted before the PR is allowed to merge.
+      - name: Run clippy (--all-targets)
+        run: cargo clippy --workspace --all-targets -- -D warnings
+
+      - name: Run doc tests
+        run: cargo test --workspace --doc
+
+  rust-full:
+    name: Rust Integration (shard ${{ matrix.shard }}/4)
+    if: github.event_name == 'merge_group'
+    # TEMPORARY 2026-05-01: same downgrade as `rust-merge-checks`
+    # above. Revert to `ubuntu-latest-m` once the larger pool recovers.
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    strategy:
+      fail-fast: false
+      matrix:
+        shard: [1, 2, 3, 4]
+
+    env:
+      RUSTFLAGS: -C linker=clang -C link-arg=-fuse-ld=mold
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Install mold linker
+        run: sudo apt-get update && sudo apt-get install -y mold
+
+      - name: Install Rust
+        uses: dtolnay/rust-toolchain@stable
+
       - name: Install cargo-nextest
         uses: taiki-e/install-action@v2
         with:
@@ -183,21 +295,15 @@ jobs:
       - name: Stub frontend dist for rust_embed
         run: mkdir -p src/server/static-react/dist && echo '<html></html>' > src/server/static-react/dist/index.html
 
-      # Merge-time clippy: full --all-targets sweep so test code, examples,
-      # and benches all get linted before the PR is allowed to merge.
-      - name: Run clippy (--all-targets)
-        run: cargo clippy --workspace --all-targets -- -D warnings
-
-      # Full integration suite. --features test-utils enables the two
-      # test files gated on it (schema_service_expansion_test,
+      # Full integration suite, partitioned across 4 shards. nextest
+      # discovers all tests, sorts them deterministically, then runs the
+      # 1/4-th slice belonging to this shard. --features test-utils
+      # enables the two test files gated on it (schema_service_expansion_test,
       # schema_service_semantic_match_test). Face-detection feature is
       # NOT enabled here — face-detection-tests below is the dedicated
       # job for that.
-      - name: Run lib + integration tests
-        run: cargo nextest run --workspace --features test-utils
-
-      - name: Run doc tests
-        run: cargo test --workspace --doc
+      - name: Run lib + integration tests (shard ${{ matrix.shard }}/4)
+        run: cargo nextest run --workspace --features test-utils --partition count:${{ matrix.shard }}/4
 
   # Path filter for face-detection-tests below. Lets us skip the slow
   # ort/ndarray/onnx + 50 MB model download when the merging PR doesn't
@@ -227,7 +333,9 @@ jobs:
     name: Face Detection Tests
     needs: face-detection-paths
     if: github.event_name == 'merge_group' && needs.face-detection-paths.outputs.changed == 'true'
-    runs-on: ubuntu-latest-m
+    # TEMPORARY 2026-05-01: same downgrade as `rust-full` above. Revert
+    # to `ubuntu-latest-m` once the larger pool recovers.
+    runs-on: ubuntu-latest
     timeout-minutes: 25
 
     env:
@@ -314,7 +422,7 @@ jobs:
   # (where Tier 2 is intentionally not running).
   ci-required:
     name: ci-required
-    needs: [lint, rust-fast, rust-full, face-detection-paths, face-detection-tests, frontend-tests, e2e-tests]
+    needs: [lint, rust-fast, rust-merge-checks, rust-full, face-detection-paths, face-detection-tests, frontend-tests, e2e-tests]
     if: always()
     runs-on: ubuntu-latest
     steps:

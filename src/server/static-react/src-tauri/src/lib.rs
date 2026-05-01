@@ -9,6 +9,68 @@ use tauri_plugin_dialog::{DialogExt, MessageDialogKind};
 use tauri_plugin_updater::UpdaterExt;
 use tokio::sync::Mutex;
 
+/// Pre-`tauri::Builder` file logger.
+///
+/// Why this exists: tauri-plugin-log only wires up its LogDir target
+/// AFTER the user `setup()` closure returns — so log calls from
+/// `pick_port`, `start_fold_server`'s spawned thread, and the
+/// in-setup() race-fix block fall into the void if we use
+/// `log::info!` alone. Lines emitted via this module write directly
+/// to the same `~/Library/Logs/com.folddb.app/FoldDB.log` file the
+/// plugin uses, so the diagnostic record is complete from process
+/// start onwards.
+///
+/// Pure std (no chrono / no extra crates), append-mode, mutex-guarded.
+/// Coexists peacefully with tauri-plugin-log because we never call
+/// `log::set_logger` — both writers just open the same file in append
+/// mode. Format is `[fold_app_lib early][LEVEL] msg`, distinct from
+/// tauri-plugin-log's `[YYYY-MM-DD][HH:MM:SS][target][LEVEL] msg` so
+/// readers can tell them apart.
+mod early_log {
+    use std::fs::OpenOptions;
+    use std::io::Write;
+    use std::path::PathBuf;
+    use std::sync::Mutex;
+
+    static LOG_FILE: Mutex<Option<PathBuf>> = Mutex::new(None);
+
+    /// Resolve and remember the log file path. Called once at the top
+    /// of `pub fn run()`. Best-effort: if the home dir or directory
+    /// creation fails, lines fall back to stderr only.
+    pub fn init() {
+        if let Some(home) = dirs::home_dir() {
+            let dir = home.join("Library/Logs/com.folddb.app");
+            if std::fs::create_dir_all(&dir).is_ok() {
+                if let Ok(mut g) = LOG_FILE.lock() {
+                    *g = Some(dir.join("FoldDB.log"));
+                }
+            }
+        }
+    }
+
+    pub fn info(msg: &str) {
+        write_line("INFO", msg);
+    }
+
+    pub fn warn(msg: &str) {
+        write_line("WARN", msg);
+    }
+
+    fn write_line(level: &str, msg: &str) {
+        // Always go to stderr — useful when launched from a terminal.
+        eprintln!("[FoldDB][{}] {}", level, msg);
+        if let Ok(g) = LOG_FILE.lock() {
+            if let Some(path) = g.as_ref() {
+                if let Ok(mut f) = OpenOptions::new().create(true).append(true).open(path) {
+                    // Trailing newline is required; OpenOptions::append
+                    // mode preserves the file.
+                    let _ = writeln!(f, "[fold_app_lib early][{}] [FoldDB] {}", level, msg);
+                }
+            }
+        }
+    }
+}
+
 /// Shared state for the Tauri application
 pub struct AppState {
     pub server_handle: Arc<Mutex<Option<EmbeddedServerHandle>>>,
@@ -99,7 +161,7 @@ async fn check_for_update(app: tauri::AppHandle) -> Result<Option<UpdateInfo>, S
         })),
         Ok(None) => Ok(None),
         Err(e) => {
-            eprintln!("[FoldDB] Update check failed: {}", e);
+            log::warn!("[FoldDB] Update check failed: {}", e);
             Err(format!("Update check failed: {}", e))
         }
     }
@@ -120,19 +182,22 @@ async fn install_update(app: tauri::AppHandle) -> Result<(), String> {
     let mut started = false;
     update
         .download_and_install(
-            |chunk_size, content_length| {
+            |_chunk_size, content_length| {
                 if !started {
-                    eprintln!(
+                    log::info!(
                         "[FoldDB] Downloading update ({} bytes)",
                         content_length.unwrap_or(0)
                     );
                     started = true;
-                } else {
-                    eprintln!("[FoldDB] Downloaded {} bytes", chunk_size);
                 }
+                // Per-chunk progress used to log every chunk; that
+                // overwhelms FoldDB.log with hundreds of lines for a
+                // single update. Drop it; the start + finish lines
+                // bracket the operation, and the user-facing progress
+                // is the React banner.
             },
             || {
-                eprintln!("[FoldDB] Download finished, installing...");
+                log::info!("[FoldDB] Download finished, installing...");
             },
         )
         .await
@@ -144,13 +209,20 @@ async fn install_update(app: tauri::AppHandle) -> Result<(), String> {
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
+    // Earliest opportunity to point the file logger at
+    // ~/Library/Logs/com.folddb.app/FoldDB.log so every subsequent
+    // line — port pick, server-thread result, race-fix poll — has a
+    // durable record. tauri-plugin-log inside setup() initializes its
+    // own LogDir target later; both writers append to the same file.
+    early_log::init();
+
     // Pick a port. Prefer 9001 (stable for external tools / docs), but fall
     // back through 9002..=9010 so launching the app doesn't fail just because
     // something else on the machine happens to hold 9001. On error we route
     // through the existing startup_error dialog below.
     let (server_port, port_error) = match pick_port(9001, 10) {
         Ok(p) => {
-            eprintln!("[FoldDB] Selected port {p}");
+            early_log::info(&format!("Selected port {p}"));
             // Publish the chosen port so external tools (curl, CLI scripts) can
             // find the running instance without hard-coding 9001.
             if let Some(home) = dirs::home_dir() {
@@ -177,13 +249,13 @@ pub fn run() {
             let result = rt.block_on(start_fold_server(server_port));
             match result {
                 Ok(handle) => {
-                    eprintln!("[FoldDB] Server started on port {server_port}");
+                    early_log::info(&format!("Server started on port {server_port}"));
                     let _ = tx.send(Ok(handle));
                     // Keep runtime alive so the server keeps running
                     rt.block_on(std::future::pending::<()>());
                 }
                 Err(e) => {
-                    eprintln!("[FoldDB] Failed to start server: {e}");
+                    early_log::warn(&format!("Failed to start server: {e}"));
                     let _ = tx.send(Err(e));
                 }
             }
@@ -287,12 +359,21 @@ pub fn run() {
                     }
                     std::thread::sleep(Duration::from_millis(50));
                 }
+                // Dual-write: early_log captures it now (the plugin's
+                // LogDir target isn't wired until after this closure
+                // returns); log::info! captures it via the plugin if
+                // it does become available before the line is dropped.
+                // Either way the line lands in FoldDB.log.
                 if !ready {
-                    log::warn!(
-                        "[FoldDB] Embedded server did not start accepting on {addr} within 15s; opening window anyway, expect a blank page."
+                    let msg = format!(
+                        "Embedded server did not start accepting on {addr} within 15s; opening window anyway, expect a blank page."
                     );
+                    early_log::warn(&msg);
+                    log::warn!("[FoldDB] {msg}");
                 } else {
-                    log::info!("[FoldDB] Embedded server accepting on {addr}; opening window.");
+                    let msg = format!("Embedded server accepting on {addr}; opening window.");
+                    early_log::info(&msg);
+                    log::info!("[FoldDB] {msg}");
                 }
             }
 
@@ -364,7 +445,7 @@ async fn start_fold_server(port: u16) -> Result<EmbeddedServerHandle, String> {
     std::fs::create_dir_all(&data_dir)
         .map_err(|e| format!("Failed to create data directory: {}", e))?;
 
-    eprintln!("[FoldDB] Using data directory: {:?}", data_dir);
+    early_log::info(&format!("Using data directory: {:?}", data_dir));
 
     // Fail fast with a clear message if the DB is locked — the port was
     // already selected by `pick_port` before we got here. Lazy DB init
@@ -386,7 +467,7 @@ async fn start_fold_server(port: u16) -> Result<EmbeddedServerHandle, String> {
         .join(".folddb")
         .join("node_config.json");
     std::env::set_var("NODE_CONFIG", &config_path);
-    eprintln!("[FoldDB] Config path: {:?}", config_path);
+    early_log::info(&format!("Config path: {:?}", config_path));
 
     // Set FOLD_UPLOAD_PATH so upload storage uses an absolute writable path.
     // Without this, UploadStorageConfig defaults to the relative "data/uploads"
@@ -396,7 +477,7 @@ async fn start_fold_server(port: u16) -> Result<EmbeddedServerHandle, String> {
         .join(".folddb")
         .join("uploads");
     std::env::set_var("FOLD_UPLOAD_PATH", &upload_path);
-    eprintln!("[FoldDB] Upload path: {:?}", upload_path);
+    early_log::info(&format!("Upload path: {:?}", upload_path));
 
     // Set FOLD_CONFIG_DIR so ingestion_config.json is saved/loaded from ~/.folddb/
     // rather than ./config/ which resolves into the read-only .app bundle.
@@ -408,7 +489,7 @@ async fn start_fold_server(port: u16) -> Result<EmbeddedServerHandle, String> {
     // Set FOLDDB_HOME so all path resolution uses ~/.folddb/ instead of
     // relative paths that resolve into the read-only .app bundle.
     std::env::set_var("FOLDDB_HOME", &config_dir);
-    eprintln!("[FoldDB] FOLDDB_HOME: {:?}", config_dir);
+    early_log::info(&format!("FOLDDB_HOME: {:?}", config_dir));
 
     // Load node configuration (no DB access — just reads config file)
     let mut config =
@@ -433,7 +514,7 @@ async fn start_fold_server(port: u16) -> Result<EmbeddedServerHandle, String> {
         base_config: config,
     };
 
-    eprintln!("[FoldDB] Starting server with lazy database initialization...");
+    early_log::info("Starting server with lazy database initialization...");
 
     let handle = start_embedded_server_lazy(node_manager_config, port)
         .await
@@ -443,11 +524,11 @@ async fn start_fold_server(port: u16) -> Result<EmbeddedServerHandle, String> {
     // With lazy init the handle returns before actix binds the port.
     for i in 0..50 {
         if std::net::TcpStream::connect(format!("127.0.0.1:{}", port)).is_ok() {
-            eprintln!(
-                "[FoldDB] Server is listening on port {} (took {}ms)",
+            early_log::info(&format!(
+                "Server is listening on port {} (took {}ms)",
                 port,
                 i * 50
-            );
+            ));
             break;
         }
         tokio::time::sleep(std::time::Duration::from_millis(50)).await;

@@ -54,6 +54,7 @@ use utoipa::OpenApi;
             crate::ingestion::config::AnthropicConfig,
             crate::ingestion::IngestionRequest,
             crate::ingestion::IngestionResponse,
+            crate::handlers::ingestion::ProcessJsonResponse,
             crate::server::routes::log::LogLevelUpdate,
             crate::server::routes::admin::ResetDatabaseRequest,
             crate::server::routes::admin::AdminJobResponse,
@@ -68,7 +69,8 @@ use utoipa::OpenApi;
             fold_db::db_operations::IndexResult,
             fold_db::fold_db_core::orchestration::IndexingStatus,
             fold_db::fold_db_core::orchestration::IndexingState,
-            crate::server::routes::query::MutationResponse
+            crate::server::routes::query::MutationResponse,
+            crate::handlers::system::NodeKeyResponse
         )
     ),
     tags(

@@ -7,6 +7,7 @@ import useDatabaseConfig from '../settings/DatabaseSettings'
 import CloudMigrationSettings from './CloudMigrationSettings'
 import BackupSettingsPanel from '../settings/BackupSettingsPanel'
 import OrgSettingsPanel from '../settings/OrgSettingsPanel'
+import type { SaveStatus } from '../settings/types'
 
 const NOOP = () => {}
 
@@ -24,11 +25,19 @@ const SUB_TABS = [
   // interest fingerprint other users see when matching with you on the
   // network. Pairs naturally with the Discover sidebar item.
   { id: 'profile', label: 'Discovery Profile' },
-]
+] as const
 
-export default function SettingsTab({ onResult, initialSubTab, onRelaunchOnboarding }) {
-  const [activeSubTab, setActiveSubTab] = useState(initialSubTab || 'ai')
-  const [configSaveStatus, setConfigSaveStatus] = useState(null)
+type SubTabId = (typeof SUB_TABS)[number]['id']
+
+interface SettingsTabProps {
+  onResult?: (result: unknown) => void
+  initialSubTab?: SubTabId
+  onRelaunchOnboarding?: () => void
+}
+
+export default function SettingsTab({ onResult, initialSubTab, onRelaunchOnboarding }: SettingsTabProps) {
+  const [activeSubTab, setActiveSubTab] = useState<SubTabId>(initialSubTab || 'ai')
+  const [configSaveStatus, setConfigSaveStatus] = useState<SaveStatus | null>(null)
 
   // Update sub-tab when initialSubTab prop changes
   useEffect(() => {
@@ -50,9 +59,6 @@ export default function SettingsTab({ onResult, initialSubTab, onRelaunchOnboard
               <button onClick={() => aiConfig.saveAiConfig()} className="btn-primary">
                 Save Configuration
               </button>
-              {configSaveStatus && (
-                <span className="text-sm text-gruvbox-green">{configSaveStatus}</span>
-              )}
             </div>
           </div>
         )
@@ -68,9 +74,6 @@ export default function SettingsTab({ onResult, initialSubTab, onRelaunchOnboard
               <button onClick={() => dbConfig.saveDatabaseConfig()} className="btn-primary">
                 Save and Restart DB
               </button>
-              {configSaveStatus && (
-                <span className="text-sm text-gruvbox-green">{configSaveStatus}</span>
-              )}
             </div>
           </div>
         )

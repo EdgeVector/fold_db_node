@@ -285,7 +285,6 @@ export default function OrgSettingsPanel() {
               <div key={invite.org_hash} className="flex justify-between items-center p-3 border border-border rounded-md bg-surface">
                 <div>
                   <span className="font-medium text-primary">{invite.org_name || invite.org_hash.substring(0, 16)}</span>
-                  <span className="text-xs text-secondary ml-2">from {invite.invited_by?.substring(0, 10) || 'unknown'}...</span>
                 </div>
                 <div className="flex gap-2">
                   <button

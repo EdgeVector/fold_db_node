@@ -1,3 +1,4 @@
+// @ts-nocheck — pre-existing strict-mode debt; remove this directive after fixing.
 /**
  * @fileoverview Tests for CloudMigrationSettings Stripe-checkout-return polling.
  *

@@ -168,6 +168,13 @@ export default [
       ],
       // Allow explicit any in API boundary types in TS for now
       '@typescript-eslint/no-explicit-any': ['warn'],
+      // Allow `// @ts-nocheck` only with an explanation. Used to mark
+      // pre-existing strict-mode-debt files during the JS->TS migration;
+      // see tsconfig.json for the full rationale.
+      '@typescript-eslint/ban-ts-comment': ['error', {
+        'ts-nocheck': 'allow-with-description',
+        minimumDescriptionLength: 10,
+      }],
       // PREVENT UI REGRESSIONS: No hardcoded API URLs
       'no-restricted-syntax': [
         'error',
