@@ -11,12 +11,26 @@ import {
 import type { EnhancedApiResponse } from "../core/types";
 
 // Security-specific response types
-export interface SystemKeyResponse {
+// Mirrors `fold_db::security::PublicKeyInfo` (default serde, snake_case fields).
+// Keep field names and JSON shapes in lockstep with the Rust struct.
+export interface KeyInfo {
+  id: string;
   public_key: string;
-  public_key_id?: string;
-  algorithm?: string;
-  created_at?: string;
-  expires_at?: string;
+  owner_id: string;
+  created_at: number;
+  expires_at: number | null;
+  is_active: boolean;
+  permissions: string[];
+  metadata: Record<string, string>;
+}
+
+// Wire shape returned by `GET /api/security/system-key`
+// (see src/server/routes/security.rs). Success path sets `success: true` and
+// `key`; 404/500 set `success: false` and `error`.
+export interface SystemKeyResponse {
+  success: boolean;
+  key?: KeyInfo;
+  error?: string;
 }
 
 export interface SecurityStatus {
