@@ -22,36 +22,23 @@ pub use schema_service_core::builtin_schemas::{
     PHASE_1_DESCRIPTIVE_NAMES, RECEIVED_SHARE,
 };
 
-/// Descriptive names of schemas owned by the fingerprints subsystem.
-/// The generic-ingest hook (`crate::ingestion::fingerprint_hook`)
-/// uses this list as a skip-set so the hook does not recurse into its
-/// own writes — a Mention insert must not trigger another extraction
-/// pass on the Mention record's fields.
-///
-/// Mirrors `PHASE_1_DESCRIPTIVE_NAMES` re-exported above; we duplicate
-/// the list locally so the hook can query without depending on
-/// `schema_service_core` directly. The unit test below pins the two
-/// lists to the same set so they cannot drift.
-pub const SYSTEM_DESCRIPTIVE_NAMES: &[&str] = &[
-    EDGE,
-    EDGE_BY_FINGERPRINT,
-    EXTRACTION_STATUS,
-    FINGERPRINT,
-    IDENTITY,
-    IDENTITY_RECEIPT,
-    INGESTION_ERROR,
-    MENTION,
-    MENTION_BY_FINGERPRINT,
-    MENTION_BY_SOURCE,
-    PERSONA,
-    RECEIVED_SHARE,
-];
-
 /// True when `descriptive_name` belongs to the fingerprints subsystem
 /// itself. Case-sensitive — descriptive names are canonical in the
 /// fingerprints schema set.
+///
+/// Authoritative source is `PHASE_1_DESCRIPTIVE_NAMES` re-exported
+/// above, which lives in `schema_service_core::builtin_schemas`.
+/// We used to maintain a local `SYSTEM_DESCRIPTIVE_NAMES` mirror of
+/// this list "to avoid depending on schema_service_core" but the
+/// crate is already a dep here (the re-export above wouldn't compile
+/// otherwise), so the mirror was pure accidental duplication. Every
+/// time fold_db added a new system schema (TriggerFiring, etc.),
+/// the bump-cascade bot would open a PR that failed CI on the
+/// "lists drifted" test until a human edited the local mirror by
+/// hand. Pointing directly at the upstream list eliminates the
+/// drift class entirely — new schemas just work.
 pub fn is_system_descriptive_schema(descriptive_name: &str) -> bool {
-    SYSTEM_DESCRIPTIVE_NAMES.contains(&descriptive_name)
+    PHASE_1_DESCRIPTIVE_NAMES.contains(&descriptive_name)
 }
 
 #[cfg(test)]
@@ -60,36 +47,9 @@ mod tests {
     use std::collections::HashSet;
 
     #[test]
-    fn phase_1_schema_set_has_twelve_entries() {
-        assert_eq!(PHASE_1_DESCRIPTIVE_NAMES.len(), 12);
-    }
-
-    #[test]
     fn all_schema_names_are_unique() {
         let unique: HashSet<_> = PHASE_1_DESCRIPTIVE_NAMES.iter().collect();
         assert_eq!(unique.len(), PHASE_1_DESCRIPTIVE_NAMES.len());
-    }
-
-    #[test]
-    fn system_descriptive_names_match_phase_1_set() {
-        let local: HashSet<_> = SYSTEM_DESCRIPTIVE_NAMES.iter().copied().collect();
-        let upstream: HashSet<_> = PHASE_1_DESCRIPTIVE_NAMES.iter().copied().collect();
-        assert_eq!(
-            local, upstream,
-            "SYSTEM_DESCRIPTIVE_NAMES drifted from PHASE_1_DESCRIPTIVE_NAMES — \
-             update both lists when a new fingerprint subsystem schema is added"
-        );
-    }
-
-    #[test]
-    fn is_system_descriptive_schema_recognizes_all_subsystem_schemas() {
-        for name in PHASE_1_DESCRIPTIVE_NAMES {
-            assert!(
-                is_system_descriptive_schema(name),
-                "{} should be classified as a system schema",
-                name
-            );
-        }
     }
 
     #[test]
