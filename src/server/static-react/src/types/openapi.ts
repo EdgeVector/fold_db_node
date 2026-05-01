@@ -705,13 +705,7 @@ export interface components {
              */
             top_p: number;
         };
-        /**
-         * @description Response for process_json (immediate response).
-         *
-         *     Manually declared (instead of via `handler_response!`) so the `utoipa::ToSchema`
-         *     derive can be added for the OpenAPI registry. Phase 2 of the API typegen
-         *     unification project will fold `ToSchema` into the macro itself.
-         */
+        /** @description Response for process_json (immediate response). */
         ProcessJsonResponse: {
             message: string;
             progress_id: string;

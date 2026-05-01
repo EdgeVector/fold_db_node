@@ -21,7 +21,6 @@ handler_response! {
 }
 
 handler_response! {
-    #[derive(utoipa::ToSchema)]
     pub struct NodeKeyResponse {
         pub success: bool,
         pub public_key: String,

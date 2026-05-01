@@ -22,21 +22,13 @@ use tracing::Instrument;
 /// with Lambda handlers in exemem-infra.
 pub type ProcessJsonRequest = IngestionRequest;
 
-/// Response for process_json (immediate response).
-///
-/// Manually declared (instead of via `handler_response!`) so the `utoipa::ToSchema`
-/// derive can be added for the OpenAPI registry. Phase 2 of the API typegen
-/// unification project will fold `ToSchema` into the macro itself.
-#[derive(Debug, Clone, Serialize, Deserialize, utoipa::ToSchema)]
-#[cfg_attr(feature = "ts-bindings", derive(ts_rs::TS))]
-#[cfg_attr(
-    feature = "ts-bindings",
-    ts(export, export_to = "src/fold_node/static-react/src/types/")
-)]
-pub struct ProcessJsonResponse {
-    pub success: bool,
-    pub progress_id: String,
-    pub message: String,
+handler_response! {
+    /// Response for process_json (immediate response).
+    pub struct ProcessJsonResponse {
+        pub success: bool,
+        pub progress_id: String,
+        pub message: String,
+    }
 }
 
 /// Response type for get_all_progress
