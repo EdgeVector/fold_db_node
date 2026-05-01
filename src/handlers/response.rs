@@ -1,18 +1,21 @@
 //! Standard API Response Types
 //!
 //! Provides a unified response envelope that both HTTP server and Lambda use.
-//! These types are exported to TypeScript via ts-rs for frontend type safety.
+//! Every struct defined via [`handler_response!`] is automatically registered
+//! with utoipa's `ToSchema` derive so it can be referenced as `body = T` in
+//! `#[utoipa::path(...)]` annotations and surfaces in `openapi.ts`.
 
 use serde::{Deserialize, Serialize};
 use std::fmt;
 
-#[cfg(feature = "ts-bindings")]
-use ts_rs::TS;
-
-/// Defines a handler response struct with standard derives and ts-bindings export.
+/// Defines a handler response struct with the canonical derive set for the
+/// HTTP API surface: `Debug`, `Clone`, serde, and `utoipa::ToSchema`. The
+/// `ToSchema` derive is what unifies the Rust↔TS shape contract — every type
+/// defined via this macro can be `body = $name` in route annotations and
+/// will appear in `openapi.ts` after `npm run generate:api`.
 ///
-/// Eliminates the repeated 3-line attribute boilerplate on every response type:
-/// `#[derive(Debug, Clone, Serialize, Deserialize)]` + two `#[cfg_attr(feature = "ts-bindings", ...)]`.
+/// Centralising the derive list here also means a future addition (e.g. a
+/// roundtrip-test marker trait) lands in one place rather than ~33 sites.
 macro_rules! handler_response {
     (
         $(#[$outer:meta])*
@@ -23,9 +26,7 @@ macro_rules! handler_response {
             ),* $(,)?
         }
     ) => {
-        #[derive(Debug, Clone, ::serde::Serialize, ::serde::Deserialize)]
-        #[cfg_attr(feature = "ts-bindings", derive(::ts_rs::TS))]
-        #[cfg_attr(feature = "ts-bindings", ts(export, export_to = "src/fold_node/static-react/src/types/"))]
+        #[derive(Debug, Clone, ::serde::Serialize, ::serde::Deserialize, ::utoipa::ToSchema)]
         $(#[$outer])*
         $vis struct $name {
             $(
