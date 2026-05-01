@@ -8,13 +8,19 @@ export interface CloudMember {
   status: string;
 }
 
+export interface OrgMemberInfo {
+  node_public_key: string;
+  display_name: string;
+  added_at: number;
+  added_by: string;
+}
+
 export interface OrgInviteBundle {
+  org_name: string;
   org_hash: string;
-  org_name?: string;
+  org_public_key: string;
   org_e2e_secret: string;
-  timestamp: string;
-  invited_by: string;
-  invited_role: string;
+  members: OrgMemberInfo[];
 }
 
 export class OrgClient {

@@ -161,7 +161,7 @@ export default function PendingInvitesModal({ isOpen, onClose, pendingInvites, s
                     </div>
 
                     <div className="text-sm text-secondary space-y-1 mb-5 bg-background p-3 rounded-lg border border-border font-mono">
-                      <div><span className="text-tertiary">Role:</span> {invite.invited_role || 'member'}</div>
+                      <div><span className="text-tertiary">Role:</span> member</div>
                       <div><span className="text-tertiary">From:</span> {invite.members?.[0]?.display_name || 'admin'}</div>
                     </div>
 
