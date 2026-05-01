@@ -149,7 +149,15 @@ jobs:
   rust-full:
     name: Rust Full Integration
     if: github.event_name == 'merge_group'
-    runs-on: ubuntu-latest-m
+    # TEMPORARY 2026-05-01: downgraded from `ubuntu-latest-m` (4-core
+    # larger runner) to `ubuntu-latest` (2-core standard). The larger
+    # runner pool wedged for 60+ min, leaving 10+ PRs stuck in the
+    # merge queue with no way to land. Standard runners are processing
+    # PR-level CI normally (verified pull_request runs from 17:16Z),
+    # so falling back here drains the queue at the cost of slower
+    # integration tests (timeout-minutes already lenient at 30).
+    # Revert to `ubuntu-latest-m` once the larger pool recovers.
+    runs-on: ubuntu-latest
     timeout-minutes: 30
 
     env:
@@ -227,7 +235,9 @@ jobs:
     name: Face Detection Tests
     needs: face-detection-paths
     if: github.event_name == 'merge_group' && needs.face-detection-paths.outputs.changed == 'true'
-    runs-on: ubuntu-latest-m
+    # TEMPORARY 2026-05-01: same downgrade as `rust-full` above. Revert
+    # to `ubuntu-latest-m` once the larger pool recovers.
+    runs-on: ubuntu-latest
     timeout-minutes: 25
 
     env:
