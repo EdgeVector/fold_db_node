@@ -158,8 +158,15 @@ jobs:
   rust-merge-checks:
     name: Rust Clippy + Doc Tests
     if: github.event_name == 'merge_group'
-    runs-on: ubuntu-latest-m
-    timeout-minutes: 25
+    # TEMPORARY 2026-05-01: downgraded from `ubuntu-latest-m` (4-core
+    # larger runner) to `ubuntu-latest` (2-core standard). The larger
+    # runner pool wedged for 60+ min, leaving 10+ PRs stuck in the
+    # merge queue with no way to land. Standard runners process
+    # PR-level CI normally — falling back here drains the queue at
+    # the cost of slower integration tests. Revert to `ubuntu-latest-m`
+    # once the larger pool recovers (single-line edit, see #788).
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
 
     env:
       RUSTFLAGS: -C linker=clang -C link-arg=-fuse-ld=mold
@@ -198,7 +205,9 @@ jobs:
   rust-full:
     name: Rust Integration (shard ${{ matrix.shard }}/4)
     if: github.event_name == 'merge_group'
-    runs-on: ubuntu-latest-m
+    # TEMPORARY 2026-05-01: same downgrade as `rust-merge-checks`
+    # above. Revert to `ubuntu-latest-m` once the larger pool recovers.
+    runs-on: ubuntu-latest
     timeout-minutes: 30
     strategy:
       fail-fast: false
@@ -272,7 +281,9 @@ jobs:
     name: Face Detection Tests
     needs: face-detection-paths
     if: github.event_name == 'merge_group' && needs.face-detection-paths.outputs.changed == 'true'
-    runs-on: ubuntu-latest-m
+    # TEMPORARY 2026-05-01: same downgrade as `rust-full` above. Revert
+    # to `ubuntu-latest-m` once the larger pool recovers.
+    runs-on: ubuntu-latest
     timeout-minutes: 25
 
     env:
