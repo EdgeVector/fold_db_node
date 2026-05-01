@@ -212,7 +212,24 @@ pub fn run() {
             install_update
         ])
         .setup(move |app| {
-            // Try to set up logging — may fail if the embedded server already initialized a logger
+            // Set up logging via tauri-plugin-log. Default targets are
+            // Stdout (only useful when launched from a terminal),
+            // LogDir (file at ~/Library/Logs/com.folddb.app/FoldDB.log
+            // on macOS — what users should `tail -f` when something
+            // misbehaves), and Webview (DevTools console). The
+            // `let _` is load-bearing: if the embedded server already
+            // initialized a global logger (which it can, via
+            // observability::init_node_with_web), we just no-op rather
+            // than crashing — better to lose Tauri-side logs to that
+            // race than to refuse to start.
+            //
+            // All `log::info!` / `log::warn!` / `log::error!` calls
+            // BELOW this line route through the plugin. eprintln!
+            // calls earlier in `pub fn run()` (port pick, server-thread
+            // result) write to stderr only — invisible when launched
+            // via `open -a FoldDB`. If you need diagnosis pre-setup,
+            // launch the binary directly:
+            //   /Applications/FoldDB.app/Contents/MacOS/fold-app
             let _ = app.handle().plugin(
                 tauri_plugin_log::Builder::default()
                     .level(log::LevelFilter::Info)
@@ -271,11 +288,11 @@ pub fn run() {
                     std::thread::sleep(Duration::from_millis(50));
                 }
                 if !ready {
-                    eprintln!(
+                    log::warn!(
                         "[FoldDB] Embedded server did not start accepting on {addr} within 15s; opening window anyway, expect a blank page."
                     );
                 } else {
-                    eprintln!("[FoldDB] Embedded server accepting on {addr}; opening window.");
+                    log::info!("[FoldDB] Embedded server accepting on {addr}; opening window.");
                 }
             }
 
@@ -311,17 +328,17 @@ pub fn run() {
                                 current_version: update.current_version.clone(),
                                 body: update.body.clone(),
                             };
-                            eprintln!(
+                            log::info!(
                                 "[FoldDB] Update available: {} -> {}",
                                 info.current_version, info.version
                             );
                             let _ = handle.emit("update-available", info);
                         }
                         Ok(None) => {
-                            eprintln!("[FoldDB] App is up to date");
+                            log::info!("[FoldDB] App is up to date");
                         }
                         Err(e) => {
-                            eprintln!("[FoldDB] Background update check failed: {}", e);
+                            log::warn!("[FoldDB] Background update check failed: {}", e);
                         }
                     }
                 }
