@@ -1,11 +1,40 @@
 import { useState, useEffect, useRef, useCallback } from 'react'
 import { ingestionClient } from '../../api/clients'
+import type { IngestionConfig, OllamaModel, VisionBackend } from '../../api/clients/ingestionClient'
 import { useAppSelector, useAppDispatch } from '../../store/hooks'
 import { selectIngestionConfig, saveIngestionConfig } from '../../store/ingestionSlice'
 import ActiveModelsTable from './ActiveModelsTable'
+import type { SettingsPanelProps, SettingsPanelHook } from './types'
+
+type AiProvider = IngestionConfig['provider']
+
+interface RecommendedModels {
+  text: string
+  vision: string
+  ocr: string
+}
+
+interface ModelOption {
+  name: string
+  label: string
+}
+
+interface OllamaParamSpec {
+  default: number
+  min: number
+  max: number
+  step: number
+}
+
+interface AiConfigHook extends SettingsPanelHook {
+  aiProvider: AiProvider
+  saveAiConfig: () => Promise<void>
+}
+
+type TimeoutHandle = ReturnType<typeof setTimeout>
 
 // Smart model recommendations based on environment
-const isLocalOllama = (url) => {
+const isLocalOllama = (url: string | undefined): boolean => {
   if (!url) return true
   try {
     const host = new URL(url).hostname
@@ -13,10 +42,10 @@ const isLocalOllama = (url) => {
   } catch { return true }
 }
 
-const getRecommendedModels = (ollamaUrl) => {
+const getRecommendedModels = (ollamaUrl: string): RecommendedModels => {
   if (isLocalOllama(ollamaUrl)) {
     // navigator.deviceMemory is capped at 8 in some browsers; assume 16 if unavailable
-    const ram = navigator.deviceMemory || 16
+    const ram = (navigator as Navigator & { deviceMemory?: number }).deviceMemory || 16
     return {
       text: ram >= 64 ? 'llama3.3' : ram >= 32 ? 'llama3.1:8b' : 'llama3.2:3b',
       vision: 'qwen3-vl:2b',
@@ -31,9 +60,9 @@ const getRecommendedModels = (ollamaUrl) => {
  * Build dropdown options with recommended model always at the top.
  * If recommended is not installed, it appears with "(not installed)" suffix.
  */
-const buildModelOptions = (installedModels, recommended) => {
+const buildModelOptions = (installedModels: OllamaModel[], recommended: string): ModelOption[] => {
   const isInstalled = installedModels.some(m => m.name === recommended)
-  const options = []
+  const options: ModelOption[] = []
   if (!isInstalled) {
     options.push({ name: recommended, label: `${recommended} — Recommended (not installed)` })
   }
@@ -55,54 +84,54 @@ const OLLAMA_PARAMS = {
   min_p:             { default: 0.0,   min: 0,    max: 1,      step: 0.01 },
   repeat_penalty:    { default: 1.0,   min: 0,    max: 2,      step: 0.01 },
   presence_penalty:  { default: 0.0,   min: 0,    max: 2,      step: 0.01 },
-}
+} as const satisfies Record<string, OllamaParamSpec>
 
 /** Parse a number input safely, returning `fallback` if the value is NaN. */
-const safeNumber = (value, fallback) => {
+const safeNumber = (value: string | number, fallback: number): number => {
   const n = Number(value)
   return Number.isNaN(n) ? fallback : n
 }
 
 /** Clamp a number input value within a param's min/max, guarding against NaN. */
-const clampParam = (value, param) => {
+const clampParam = (value: string | number, param: OllamaParamSpec): number => {
   const n = safeNumber(value, param.default)
   return Math.max(param.min, Math.min(param.max, n))
 }
 
-function useAiConfig({ configSaveStatus, setConfigSaveStatus, onClose }) {
+function useAiConfig({ configSaveStatus, setConfigSaveStatus, onClose }: SettingsPanelProps): AiConfigHook {
   const dispatch = useAppDispatch()
   const savedConfig = useAppSelector(selectIngestionConfig)
-  const [aiProvider, setAiProvider] = useState('Anthropic')
-  const [visionBackend, setVisionBackend] = useState('Ollama')
+  const [aiProvider, setAiProvider] = useState<AiProvider>('Anthropic')
+  const [visionBackend, setVisionBackend] = useState<VisionBackend>('Ollama')
   const [ollamaModel, setOllamaModel] = useState('')
   const [ollamaVisionModel, setOllamaVisionModel] = useState('qwen3-vl:2b')
   const [ollamaOcrModel, setOllamaOcrModel] = useState('glm-ocr:latest')
   const [ollamaBaseUrl, setOllamaBaseUrl] = useState('http://localhost:11434')
-  const [recommended, setRecommended] = useState(() => getRecommendedModels('http://localhost:11434'))
+  const [recommended, setRecommended] = useState<RecommendedModels>(() => getRecommendedModels('http://localhost:11434'))
   const [anthropicApiKey, setAnthropicApiKey] = useState('')
   const [hasAnthropicEnvKey, setHasAnthropicEnvKey] = useState(false)
   const [anthropicModel, setAnthropicModel] = useState('claude-haiku-4-5-20251001')
   const [anthropicBaseUrl, setAnthropicBaseUrl] = useState('https://api.anthropic.com')
-  const [ollamaModels, setOllamaModels] = useState([])
+  const [ollamaModels, setOllamaModels] = useState<OllamaModel[]>([])
   const [ollamaModelsLoading, setOllamaModelsLoading] = useState(false)
-  const [ollamaModelsError, setOllamaModelsError] = useState(null)
+  const [ollamaModelsError, setOllamaModelsError] = useState<string | null>(null)
   const [showAdvanced, setShowAdvanced] = useState(false)
   // Query override (separate provider/model for LLM search/chat)
   const [queryOverrideEnabled, setQueryOverrideEnabled] = useState(false)
-  const [queryProvider, setQueryProvider] = useState('Anthropic')
+  const [queryProvider, setQueryProvider] = useState<AiProvider>('Anthropic')
   const [queryOllamaModel, setQueryOllamaModel] = useState('')
   const [queryAnthropicModel, setQueryAnthropicModel] = useState('claude-sonnet-4-20250514')
   // Ollama generation parameters
-  const [ollamaNumCtx, setOllamaNumCtx] = useState(OLLAMA_PARAMS.num_ctx.default)
-  const [ollamaTemperature, setOllamaTemperature] = useState(OLLAMA_PARAMS.temperature.default)
-  const [ollamaTopP, setOllamaTopP] = useState(OLLAMA_PARAMS.top_p.default)
-  const [ollamaTopK, setOllamaTopK] = useState(OLLAMA_PARAMS.top_k.default)
-  const [ollamaNumPredict, setOllamaNumPredict] = useState(OLLAMA_PARAMS.num_predict.default)
-  const [ollamaRepeatPenalty, setOllamaRepeatPenalty] = useState(OLLAMA_PARAMS.repeat_penalty.default)
-  const [ollamaPresencePenalty, setOllamaPresencePenalty] = useState(OLLAMA_PARAMS.presence_penalty.default)
-  const [ollamaMinP, setOllamaMinP] = useState(OLLAMA_PARAMS.min_p.default)
-  const statusTimeoutRef = useRef(null)
-  const ollamaFetchTimeoutRef = useRef(null)
+  const [ollamaNumCtx, setOllamaNumCtx] = useState<number>(OLLAMA_PARAMS.num_ctx.default)
+  const [ollamaTemperature, setOllamaTemperature] = useState<number>(OLLAMA_PARAMS.temperature.default)
+  const [ollamaTopP, setOllamaTopP] = useState<number>(OLLAMA_PARAMS.top_p.default)
+  const [ollamaTopK, setOllamaTopK] = useState<number>(OLLAMA_PARAMS.top_k.default)
+  const [ollamaNumPredict, setOllamaNumPredict] = useState<number>(OLLAMA_PARAMS.num_predict.default)
+  const [ollamaRepeatPenalty, setOllamaRepeatPenalty] = useState<number>(OLLAMA_PARAMS.repeat_penalty.default)
+  const [ollamaPresencePenalty, setOllamaPresencePenalty] = useState<number>(OLLAMA_PARAMS.presence_penalty.default)
+  const [ollamaMinP, setOllamaMinP] = useState<number>(OLLAMA_PARAMS.min_p.default)
+  const statusTimeoutRef = useRef<TimeoutHandle | null>(null)
+  const ollamaFetchTimeoutRef = useRef<TimeoutHandle | null>(null)
 
   useEffect(() => {
     return () => {
@@ -111,14 +140,14 @@ function useAiConfig({ configSaveStatus, setConfigSaveStatus, onClose }) {
     }
   }, [])
 
-  const fetchOllamaModels = useCallback(async (url) => {
+  const fetchOllamaModels = useCallback(async (url: string) => {
     if (!url) return
     setOllamaModelsLoading(true)
     setOllamaModelsError(null)
     setOllamaModels([])
     try {
       const response = await ingestionClient.listOllamaModels(url)
-      const data = response?.data ?? response
+      const data = response?.data
       const models = data?.models ?? []
       const error = data?.error
       setOllamaModels(models)
@@ -136,7 +165,7 @@ function useAiConfig({ configSaveStatus, setConfigSaveStatus, onClose }) {
       }
     } catch (err) {
       setOllamaModels([])
-      setOllamaModelsError(`Could not connect to Ollama: ${err?.message || err}`)
+      setOllamaModelsError(`Could not connect to Ollama: ${err instanceof Error ? err.message : String(err)}`)
     } finally {
       setOllamaModelsLoading(false)
     }
@@ -201,7 +230,7 @@ function useAiConfig({ configSaveStatus, setConfigSaveStatus, onClose }) {
 
   const saveAiConfig = async () => {
     try {
-      const config = {
+      const config: IngestionConfig = {
         provider: aiProvider,
         ollama: {
           model: ollamaModel,
@@ -254,7 +283,7 @@ function useAiConfig({ configSaveStatus, setConfigSaveStatus, onClose }) {
         <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
           <div>
             <label className="label">Provider</label>
-            <select value={aiProvider} onChange={(e) => setAiProvider(e.target.value)} className="select">
+            <select value={aiProvider} onChange={(e) => setAiProvider(e.target.value as AiProvider)} className="select">
               <option value="Anthropic">Anthropic</option>
               <option value="Ollama">Ollama</option>
             </select>
@@ -298,7 +327,7 @@ function useAiConfig({ configSaveStatus, setConfigSaveStatus, onClose }) {
 
         <div>
           <label className="label">Vision Backend <span className="text-xs text-secondary">(images only)</span></label>
-          <select value={visionBackend} onChange={(e) => setVisionBackend(e.target.value)} className="select" aria-label="Vision Backend">
+          <select value={visionBackend} onChange={(e) => setVisionBackend(e.target.value as VisionBackend)} className="select" aria-label="Vision Backend">
             <option value="Ollama">Ollama (local, free, requires daemon)</option>
             <option value="Anthropic">Anthropic (cloud, uses API key)</option>
           </select>
@@ -383,7 +412,7 @@ function useAiConfig({ configSaveStatus, setConfigSaveStatus, onClose }) {
             <div className="mt-2 grid grid-cols-1 md:grid-cols-2 gap-4 pl-4 border-l-2 border-border">
               <div>
                 <label className="label">Query Provider</label>
-                <select value={queryProvider} onChange={(e) => setQueryProvider(e.target.value)} className="select">
+                <select value={queryProvider} onChange={(e) => setQueryProvider(e.target.value as AiProvider)} className="select">
                   <option value="Anthropic">Anthropic</option>
                   <option value="Ollama">Ollama</option>
                 </select>

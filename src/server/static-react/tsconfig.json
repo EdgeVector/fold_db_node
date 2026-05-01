@@ -1,0 +1,32 @@
+{
+  // tsconfig is parsed in JSONC mode — comments are allowed.
+  //
+  // `npm run typecheck` enforces this in CI. Files with pre-existing
+  // strict-mode debt opt out via `// @ts-nocheck` at the top of the file;
+  // grep for that directive to find what's left to clean up.
+  // New `.ts` / `.tsx` files MUST NOT add `@ts-nocheck` — they are checked
+  // by default.
+  "compilerOptions": {
+    "target": "ES2020",
+    "lib": ["ES2020", "DOM", "DOM.Iterable"],
+    "module": "ESNext",
+    "moduleResolution": "bundler",
+    "jsx": "react-jsx",
+    "strict": true,
+    "noEmit": true,
+    "skipLibCheck": true,
+    "esModuleInterop": true,
+    "resolveJsonModule": true,
+    "isolatedModules": true,
+    // .tsx files import many .jsx siblings during the gradual migration;
+    // allowJs lets those imports resolve without per-file `.d.ts` shims.
+    // checkJs stays off (default) — the .js/.jsx bodies are not typechecked.
+    "allowJs": true,
+    "baseUrl": ".",
+    "paths": {
+      "@generated/*": ["../../../bindings/src/fold_node/static-react/src/types/*"]
+    }
+  },
+  "include": ["src/**/*.ts", "src/**/*.tsx"],
+  "exclude": ["node_modules", "dist", "src/types/openapi.ts"]
+}
