@@ -607,6 +607,12 @@ export interface components {
             base_url: string;
             model: string;
         };
+        /** @description Response for process_json (immediate response). */
+        ProcessJsonResponse: {
+            message: string;
+            progress_id: string;
+            success: boolean;
+        };
         /** @description Field storing a range of values. */
         RangeField: {
             inner: components["schemas"]["FieldCommon"];
@@ -771,13 +777,13 @@ export interface operations {
             };
         };
         responses: {
-            /** @description Ingestion response */
-            200: {
+            /** @description Ingestion job started */
+            202: {
                 headers: {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": components["schemas"]["IngestionResponse"];
+                    "application/json": components["schemas"]["ProcessJsonResponse"];
                 };
             };
         };

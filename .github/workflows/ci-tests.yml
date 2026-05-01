@@ -107,6 +107,53 @@ jobs:
       - name: Run doc tests
         run: cargo test --workspace --doc
 
+      # OpenAPI drift check — regenerates src/types/openapi.ts from the
+      # current Rust source and fails if it differs from the committed
+      # file. Run `npm run generate:api` locally after backend route or
+      # schema changes (run.sh dev does this automatically).
+      #
+      # Best-effort while the underlying utoipa coverage is incomplete:
+      # the spec currently has unresolved $refs (missing ToSchema derives
+      # on OllamaGenerationParams, VisionBackend, UseCaseOverride, Role,
+      # and many more — tracked in gbrain projects/api-typegen-unification
+      # Phase 3). Until that lands, openapi-typescript@7.x errors out, so
+      # the drift verify step is gated on regen succeeding. Once Phase 3
+      # is in, drop the `continue-on-error` and `if:` and require it to
+      # pass.
+      - name: Setup Node.js (for OpenAPI drift check)
+        uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+          cache: "npm"
+          cache-dependency-path: src/server/static-react/package-lock.json
+
+      - name: Install frontend dependencies
+        working-directory: src/server/static-react
+        run: npm ci
+
+      - name: Dump current OpenAPI spec
+        run: cargo run --quiet --bin openapi_dump > target/openapi.json
+
+      - name: Regenerate OpenAPI TypeScript types
+        id: regen_openapi_ts
+        working-directory: src/server/static-react
+        run: npm run generate:api
+        continue-on-error: true
+
+      - name: Note regen failure (informational, until Phase 3 lands)
+        if: steps.regen_openapi_ts.outcome != 'success'
+        run: |
+          echo "::warning::npm run generate:api errored — likely unresolved \$refs in target/openapi.json. Tracked under gbrain projects/api-typegen-unification Phase 3 (utoipa coverage sweep). Drift verification skipped this run."
+
+      - name: Verify openapi.ts is up to date (when regen succeeded)
+        if: steps.regen_openapi_ts.outcome == 'success'
+        run: |
+          if ! git diff --exit-code src/server/static-react/src/types/openapi.ts; then
+            echo "::error::src/server/static-react/src/types/openapi.ts is stale."
+            echo "Run 'cargo run --bin openapi_dump > target/openapi.json && (cd src/server/static-react && npm run generate:api)' and commit the result."
+            exit 1
+          fi
+
   frontend-tests:
     name: Frontend Tests
     runs-on: ubuntu-latest
