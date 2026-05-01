@@ -269,3 +269,103 @@ async fn apple_sync(ctx: Arc<StartupCtx>) {
     )
     .await
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::fold_node::config::NodeConfig;
+    use crate::server::node_manager::{NodeManager, NodeManagerConfig};
+
+    fn test_config(path: &std::path::Path) -> NodeManagerConfig {
+        let keypair = fold_db::security::Ed25519KeyPair::generate().unwrap();
+        NodeManagerConfig {
+            base_config: NodeConfig::new(path.to_path_buf())
+                .with_schema_service_url("test://mock")
+                .with_seed_identity(crate::identity::identity_from_keypair(&keypair)),
+        }
+    }
+
+    /// Regression for the bootstrap-resume `None` pool race.
+    ///
+    /// Before phased boot, the resume task spawned at the top of
+    /// `FoldHttpServer::run()` before any callsite had initialized the
+    /// SledPool. The task then called `get_sled_pool()` (a non-initializing
+    /// read), saw `None`, and silently exited. After interrupted bootstraps
+    /// users could end up with an empty local DB and no surfaced error.
+    ///
+    /// `boot()` MUST initialize the pool before returning so background
+    /// workers can take `Arc<SledPool>` from `ctx.sled_pool` rather than
+    /// racing `get_or_init_sled_pool()` on the lazy path.
+    #[tokio::test]
+    async fn boot_initializes_sled_pool() {
+        let tmp = tempfile::TempDir::new().unwrap();
+        let manager = NodeManager::new(test_config(tmp.path()));
+        let ctx = StartupCtx::boot(manager, None).await.expect("boot");
+
+        // Pool is reachable via the manager — proves boot ran the eager
+        // `get_or_init_sled_pool()` rather than leaving it for the first
+        // request to lazily create.
+        assert!(
+            ctx.node_manager.get_sled_pool().await.is_some(),
+            "boot() must eagerly initialize SledPool"
+        );
+
+        // The ctx field carries the same pool — workers consume it directly,
+        // so the bootstrap-resume worker can't observe a `None` pool.
+        let from_ctx = Arc::clone(&ctx.sled_pool);
+        let from_manager = ctx
+            .node_manager
+            .get_sled_pool()
+            .await
+            .expect("pool must be Some");
+        assert!(
+            Arc::ptr_eq(&from_ctx, &from_manager),
+            "ctx.sled_pool and node_manager's pool must be the same Arc — \
+             a second Sled at the same path would race the OS file lock"
+        );
+    }
+
+    /// Bootstrap-resume marker capture happens AFTER `get_or_init_sled_pool`
+    /// in `boot()`. This test pins the ordering — if a future refactor
+    /// reorders these, the resume worker would again be at risk of seeing a
+    /// `None` pool. Mutates `FOLDDB_HOME` so it's serialized against other
+    /// env-touching tests via the local mutex.
+    #[tokio::test]
+    async fn boot_captures_bootstrap_marker_with_pool_ready() {
+        use std::sync::{Mutex, OnceLock};
+        static ENV_LOCK: OnceLock<Mutex<()>> = OnceLock::new();
+        let _guard = ENV_LOCK
+            .get_or_init(|| Mutex::new(()))
+            .lock()
+            .expect("env lock");
+
+        let tmp = tempfile::TempDir::new().unwrap();
+        std::env::set_var("FOLDDB_HOME", tmp.path());
+
+        // Plant a bootstrap marker — production path writes this when a
+        // restore-from-phrase flow starts a cloud download.
+        let marker_dir = tmp.path().join("data");
+        std::fs::create_dir_all(&marker_dir).unwrap();
+        std::fs::write(
+            marker_dir.join(".bootstrap_pending"),
+            r#"{"api_url":"http://example.invalid","api_key":"k"}"#,
+        )
+        .unwrap();
+
+        let manager = NodeManager::new(test_config(tmp.path()));
+        let ctx = StartupCtx::boot(manager, None).await.expect("boot");
+
+        assert_eq!(
+            ctx.bootstrap_pending,
+            Some(("http://example.invalid".to_string(), "k".to_string())),
+            "boot() must capture the bootstrap marker for the resume worker"
+        );
+        assert!(
+            ctx.node_manager.get_sled_pool().await.is_some(),
+            "pool must be initialized before marker capture so the resume \
+             worker sees a non-`None` pool"
+        );
+
+        std::env::remove_var("FOLDDB_HOME");
+    }
+}
