@@ -127,9 +127,14 @@ on_exit() {
     kill_pid_file "$FOLDDB_HOME/folddb.pid"
     kill_pid_file "$FOLDDB_HOME/schema.pid"
     kill_pid_file "$FOLDDB_HOME/vite.pid"
-    # Remove the auto-slot discovery file so stale entries don't accumulate.
+    # Remove the auto-slot discovery file — but only if it's STILL ours.
+    # Without the PID guard, a later run.sh that clobbered our slot file
+    # would lose its slot when we exit, leaving a live server unfindable.
     if [ "${AUTO_SLOT:-}" = true ] && [ -n "$HTTP_PORT" ]; then
-        rm -f "$HOME/.folddb-slots/$HTTP_PORT.json" 2>/dev/null || true
+        local slot_file="$HOME/.folddb-slots/$HTTP_PORT.json"
+        if [ -f "$slot_file" ] && grep -qE "\"pid\"[[:space:]]*:[[:space:]]*$$\\b" "$slot_file" 2>/dev/null; then
+            rm -f "$slot_file" 2>/dev/null || true
+        fi
     fi
 }
 trap on_exit EXIT
@@ -505,8 +510,18 @@ done
 # port the backend can't actually bind, crashing it with EADDRINUSE while
 # Vite (started later) would happily serve a UI talking to nothing.
 if [ -z "$HTTP_PORT" ]; then
+    # Atomic claim: we couple "is the port free" with "no other run.sh has
+    # already claimed this slot file" via O_EXCL semantics (`set -C`). Two
+    # parallel run.sh's that both lsof-pass the same candidate would
+    # otherwise both write the slot file (last-write-wins) and the loser's
+    # `on_exit` trap would delete the winner's slot.
+    mkdir -p "$HOME/.folddb-slots" 2>/dev/null || true
     for candidate in $(seq 9101 9199); do
-        if ! lsof -iTCP:"$candidate" -sTCP:LISTEN -t >/dev/null 2>&1; then
+        if lsof -iTCP:"$candidate" -sTCP:LISTEN -t >/dev/null 2>&1; then
+            continue
+        fi
+        slot_file="$HOME/.folddb-slots/$candidate.json"
+        if (set -C; : > "$slot_file") 2>/dev/null; then
             HTTP_PORT="$candidate"
             AUTO_SLOT=true
             break
@@ -566,10 +581,11 @@ if [ -z "${VITE_PORT:-}" ]; then
 fi
 export VITE_PORT
 
-# Publish the chosen slot so external tools can discover a running instance
-# without hardcoding a port. Best-effort; non-fatal if it fails.
+# Fill the slot file we atomically claimed above. The empty file already
+# exists; this just writes the JSON content. We own the file (set -C above
+# guarantees no other run.sh raced us), so the truncate-and-write is safe.
+# Best-effort; non-fatal if it fails.
 if [ "$AUTO_SLOT" = true ]; then
-    mkdir -p "$HOME/.folddb-slots" 2>/dev/null || true
     cat > "$HOME/.folddb-slots/$HTTP_PORT.json" 2>/dev/null <<EOF || true
 {"port": $HTTP_PORT, "schema_port": $SCHEMA_PORT, "vite_port": $VITE_PORT, "home": "$FOLDDB_HOME", "pid": $$}
 EOF
