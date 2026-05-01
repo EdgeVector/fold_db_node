@@ -1,11 +1,16 @@
 name: Test Suite
 
 # Three-tier model:
-#   - Tier 1 (pull_request): fast checks every push — lint, lib + doc tests,
-#     frontend. ~2-3 min. Skips integration tests, e2e, face-detection.
-#   - Tier 2 (merge_group): comprehensive gate before merge — full
-#     integration suite on ubuntu-latest-m (4-core/16GB), face-detection
-#     (path-filtered), e2e. ~7-10 min. This is what blocks merging.
+#   - Tier 1 (pull_request): fast checks every push — lint, lib + doc
+#     tests, clippy --all-targets, frontend. ~3-4 min. Skips integration
+#     tests, e2e, face-detection.
+#   - Tier 2 (merge_group + bump-cascade PRs): comprehensive gate —
+#     full integration suite, face-detection (path-filtered), e2e.
+#     ~7-10 min. Runs at merge time AND on the `bot/bump-schema-service`
+#     PR so cascade-bump regressions surface before queue admission
+#     instead of failing in the queue (where each failure tears down
+#     and rebuilds the merge group, forcing every queued PR to re-run
+#     CI). Human PRs stay on Tier 1 only.
 #   - Tier 3 (was push: main) — DROPPED. merge_group already validates
 #     the merged commit; running the same workload again on push to main
 #     is pure duplication. Branch protection on main requires the
@@ -95,11 +100,15 @@ jobs:
       - name: Check formatting
         run: cargo fmt --all -- --check
 
-      # PR clippy: lib + bins only (no --all-targets). Skipping the 54
-      # integration test crates is the bulk of the speed win on PR. Test
-      # code typecheck is still validated at merge_group via rust-full.
-      - name: Run clippy (lib + bins)
-        run: cargo clippy --workspace -- -D warnings
+      # PR clippy: --all-targets (matches Tier 2). Lints test code on
+      # every push so a clippy error in test code can't pass PR-level
+      # CI, get auto-merge-admitted to the queue, and then fail
+      # rust-merge-checks's --all-targets sweep — which would tear down
+      # the merge group and force every queued PR to re-run CI. Costs
+      # ~30s extra PR wall time; the queue-thrash alternative is much
+      # more expensive (one bad PR poisons N queued PRs).
+      - name: Run clippy (--all-targets)
+        run: cargo clippy --workspace --all-targets -- -D warnings
 
       - name: Run lib unit tests
         run: cargo nextest run --workspace --lib
@@ -192,7 +201,7 @@ jobs:
 
   rust-merge-checks:
     name: Rust Clippy + Doc Tests
-    if: github.event_name == 'merge_group'
+    if: github.event_name == 'merge_group' || github.head_ref == 'bot/bump-schema-service'
     # TEMPORARY 2026-05-01: downgraded from `ubuntu-latest-m` (4-core
     # larger runner) to `ubuntu-latest` (2-core standard). The larger
     # runner pool wedged for 60+ min, leaving 10+ PRs stuck in the
@@ -239,7 +248,7 @@ jobs:
 
   rust-full:
     name: Rust Integration (shard ${{ matrix.shard }}/4)
-    if: github.event_name == 'merge_group'
+    if: github.event_name == 'merge_group' || github.head_ref == 'bot/bump-schema-service'
     # TEMPORARY 2026-05-01: same downgrade as `rust-merge-checks`
     # above. Revert to `ubuntu-latest-m` once the larger pool recovers.
     runs-on: ubuntu-latest
@@ -293,7 +302,7 @@ jobs:
   # touch face-detection code or its feature config.
   face-detection-paths:
     name: Face Detection Paths
-    if: github.event_name == 'merge_group'
+    if: github.event_name == 'merge_group' || github.head_ref == 'bot/bump-schema-service'
     runs-on: ubuntu-latest
     outputs:
       changed: ${{ steps.filter.outputs.face }}
@@ -315,7 +324,7 @@ jobs:
   face-detection-tests:
     name: Face Detection Tests
     needs: face-detection-paths
-    if: github.event_name == 'merge_group' && needs.face-detection-paths.outputs.changed == 'true'
+    if: (github.event_name == 'merge_group' || github.head_ref == 'bot/bump-schema-service') && needs.face-detection-paths.outputs.changed == 'true'
     # TEMPORARY 2026-05-01: same downgrade as `rust-full` above. Revert
     # to `ubuntu-latest-m` once the larger pool recovers.
     runs-on: ubuntu-latest
@@ -350,7 +359,7 @@ jobs:
 
   e2e-tests:
     name: E2E UI Tests
-    if: github.event_name == 'merge_group'
+    if: github.event_name == 'merge_group' || github.head_ref == 'bot/bump-schema-service'
     runs-on: ubuntu-latest
 
     steps:
