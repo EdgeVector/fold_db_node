@@ -1,17 +1,30 @@
-name: Bump schema_service (from upstream dispatch)
+name: Bump schema_service (every 2h + on demand)
 
-# Receives a `schema-service-main-bump` repository_dispatch from the
-# schema_service notify-downstream workflow. Opens (or force-updates)
-# a PR bumping BOTH schema_service rev AND fold_db rev — the fold_db
-# rev is read from schema_service's tip Cargo.toml (dual-fold_db
-# defense).
+# Runs every 2 hours and on manual `workflow_dispatch`. Opens (or
+# force-updates) a PR bumping BOTH schema_service rev AND fold_db rev
+# — the fold_db rev is read from schema_service's tip Cargo.toml
+# (dual-fold_db defense).
 #
-# Manual trigger via `workflow_dispatch` accepts a schema_service sha
-# or defaults to its main HEAD.
+# The schedule replaces the previous `repository_dispatch` trigger
+# from schema_service's notify-downstream workflow. Per-merge dispatch
+# was polluting fold_db_node's merge queue: every fold_db merge fired
+# a dispatch, schema_service immediately bumped, that fired a dispatch
+# here, and queued bump PRs got superseded by newer bumps before they
+# could land — burning Tier 2 cycles every time. Hourly-ish batching
+# coalesces multiple upstream merges into one bump cycle while keeping
+# cascade lag bounded. Tune via the cron expression.
+#
+# The bot is idempotent: if no fold_db / schema_service rev change is
+# pending, the scheduled run no-ops.
+#
+# Manual `workflow_dispatch` accepts a schema_service sha or defaults
+# to its main HEAD. The schema_service notify-downstream dispatch
+# into this repo is now a no-op (no listener) until that upstream
+# workflow is cleaned up.
 
 on:
-  repository_dispatch:
-    types: [schema-service-main-bump]
+  schedule:
+    - cron: "0 */2 * * *"
   workflow_dispatch:
     inputs:
       schema_service_sha:
