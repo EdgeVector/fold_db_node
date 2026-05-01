@@ -101,7 +101,20 @@ pub async fn log(
         ],
     });
 
-    let raw = client.raw_query(&query_body).await?;
+    // The daemon returns a 400 with "schema not found" if `TriggerFiring`
+    // hasn't been registered yet — common on fresh nodes that haven't
+    // been through Phase 1 schema registration. From a CLI ergonomics
+    // standpoint that's identical to "no firings yet": return an empty
+    // envelope rather than surfacing an internal-schema error to the
+    // user. Any other error (network, malformed query, real server
+    // failure) propagates normally.
+    let raw = match client.raw_query(&query_body).await {
+        Ok(v) => v,
+        Err(e) if e.message.contains("not found as schema or view") => {
+            json!({ "ok": true, "results": [] })
+        }
+        Err(e) => return Err(e),
+    };
 
     if mode == OutputMode::Json {
         return Ok(CommandOutput::RawJson(raw));
