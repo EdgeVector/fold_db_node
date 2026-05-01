@@ -145,18 +145,26 @@ jobs:
 
   # ─── Tier 2 ──────────────────────────────────────────────────────
   # Only runs at merge time. Comprehensive. Gates the merge.
+  #
+  # Split into two jobs that fan out in parallel:
+  #   - rust-merge-checks: clippy --all-targets + doc tests (single runner;
+  #     neither shards usefully).
+  #   - rust-full: lib + integration tests, sharded 4 ways via
+  #     `cargo nextest --partition count:N/4`. Compilation is duplicated
+  #     across shards but Swatinem/rust-cache hits the same key on each
+  #     leg, and test execution wall-time was the bottleneck — not compile.
+  # Wall time is gated by the slowest leg + ci-required join.
 
-  rust-full:
-    name: Rust Full Integration
+  rust-merge-checks:
+    name: Rust Clippy + Doc Tests
     if: github.event_name == 'merge_group'
     # TEMPORARY 2026-05-01: downgraded from `ubuntu-latest-m` (4-core
     # larger runner) to `ubuntu-latest` (2-core standard). The larger
     # runner pool wedged for 60+ min, leaving 10+ PRs stuck in the
-    # merge queue with no way to land. Standard runners are processing
-    # PR-level CI normally (verified pull_request runs from 17:16Z),
-    # so falling back here drains the queue at the cost of slower
-    # integration tests (timeout-minutes already lenient at 30).
-    # Revert to `ubuntu-latest-m` once the larger pool recovers.
+    # merge queue with no way to land. Standard runners process
+    # PR-level CI normally — falling back here drains the queue at
+    # the cost of slower integration tests. Revert to `ubuntu-latest-m`
+    # once the larger pool recovers (single-line edit, see #788).
     runs-on: ubuntu-latest
     timeout-minutes: 30
 
@@ -175,6 +183,50 @@ jobs:
         with:
           components: clippy, rustfmt
 
+      - name: Configure git for private dependencies
+        run: git config --global url."https://x-access-token:${{ secrets.GH_PAT }}@github.com/".insteadOf "https://github.com/"
+
+      - name: Cache Rust artifacts
+        uses: Swatinem/rust-cache@v2
+        with:
+          key: tier2-merge-checks
+
+      - name: Stub frontend dist for rust_embed
+        run: mkdir -p src/server/static-react/dist && echo '<html></html>' > src/server/static-react/dist/index.html
+
+      # Merge-time clippy: full --all-targets sweep so test code, examples,
+      # and benches all get linted before the PR is allowed to merge.
+      - name: Run clippy (--all-targets)
+        run: cargo clippy --workspace --all-targets -- -D warnings
+
+      - name: Run doc tests
+        run: cargo test --workspace --doc
+
+  rust-full:
+    name: Rust Integration (shard ${{ matrix.shard }}/4)
+    if: github.event_name == 'merge_group'
+    # TEMPORARY 2026-05-01: same downgrade as `rust-merge-checks`
+    # above. Revert to `ubuntu-latest-m` once the larger pool recovers.
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    strategy:
+      fail-fast: false
+      matrix:
+        shard: [1, 2, 3, 4]
+
+    env:
+      RUSTFLAGS: -C linker=clang -C link-arg=-fuse-ld=mold
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Install mold linker
+        run: sudo apt-get update && sudo apt-get install -y mold
+
+      - name: Install Rust
+        uses: dtolnay/rust-toolchain@stable
+
       - name: Install cargo-nextest
         uses: taiki-e/install-action@v2
         with:
@@ -191,21 +243,15 @@ jobs:
       - name: Stub frontend dist for rust_embed
         run: mkdir -p src/server/static-react/dist && echo '<html></html>' > src/server/static-react/dist/index.html
 
-      # Merge-time clippy: full --all-targets sweep so test code, examples,
-      # and benches all get linted before the PR is allowed to merge.
-      - name: Run clippy (--all-targets)
-        run: cargo clippy --workspace --all-targets -- -D warnings
-
-      # Full integration suite. --features test-utils enables the two
-      # test files gated on it (schema_service_expansion_test,
+      # Full integration suite, partitioned across 4 shards. nextest
+      # discovers all tests, sorts them deterministically, then runs the
+      # 1/4-th slice belonging to this shard. --features test-utils
+      # enables the two test files gated on it (schema_service_expansion_test,
       # schema_service_semantic_match_test). Face-detection feature is
       # NOT enabled here — face-detection-tests below is the dedicated
       # job for that.
-      - name: Run lib + integration tests
-        run: cargo nextest run --workspace --features test-utils
-
-      - name: Run doc tests
-        run: cargo test --workspace --doc
+      - name: Run lib + integration tests (shard ${{ matrix.shard }}/4)
+        run: cargo nextest run --workspace --features test-utils --partition count:${{ matrix.shard }}/4
 
   # Path filter for face-detection-tests below. Lets us skip the slow
   # ort/ndarray/onnx + 50 MB model download when the merging PR doesn't
@@ -324,7 +370,7 @@ jobs:
   # (where Tier 2 is intentionally not running).
   ci-required:
     name: ci-required
-    needs: [lint, rust-fast, rust-full, face-detection-paths, face-detection-tests, frontend-tests, e2e-tests]
+    needs: [lint, rust-fast, rust-merge-checks, rust-full, face-detection-paths, face-detection-tests, frontend-tests, e2e-tests]
     if: always()
     runs-on: ubuntu-latest
     steps:
