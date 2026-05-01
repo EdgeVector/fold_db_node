@@ -29,7 +29,6 @@
 
 use fold_db_node::fingerprints::canonical_names;
 use fold_db_node::fingerprints::registration::register_phase_1_schemas;
-use fold_db_node::fingerprints::schemas;
 use fold_db_node::fold_node::config::NodeConfig;
 use fold_db_node::fold_node::FoldNode;
 use tempfile::TempDir;
@@ -65,29 +64,21 @@ async fn register_phase_1_schemas_end_to_end() {
         .await
         .expect("register_phase_1_schemas must succeed");
 
-    // Twelve schemas, all registered.
+    // The canonical Phase 1 schema list lives in schema_service_core
+    // and grows over time via the bump cascade — don't pin a hard
+    // count or duplicate the list here. Every name that
+    // `PHASE_1_DESCRIPTIVE_NAMES` exposes upstream must register, no
+    // more, no fewer.
+    use schema_service_core::builtin_schemas::PHASE_1_DESCRIPTIVE_NAMES;
     assert_eq!(
         outcome.total(),
-        12,
-        "expected all twelve Phase 1 schemas to register, got {}",
+        PHASE_1_DESCRIPTIVE_NAMES.len(),
+        "expected all {} Phase 1 schemas to register, got {}",
+        PHASE_1_DESCRIPTIVE_NAMES.len(),
         outcome.total()
     );
 
-    // Every expected descriptive_name is present.
-    let expected_descriptive = [
-        schemas::FINGERPRINT,
-        schemas::MENTION,
-        schemas::EDGE,
-        schemas::IDENTITY,
-        schemas::IDENTITY_RECEIPT,
-        schemas::PERSONA,
-        schemas::EDGE_BY_FINGERPRINT,
-        schemas::MENTION_BY_FINGERPRINT,
-        schemas::MENTION_BY_SOURCE,
-        schemas::INGESTION_ERROR,
-        schemas::EXTRACTION_STATUS,
-        schemas::RECEIVED_SHARE,
-    ];
+    let expected_descriptive: Vec<&str> = PHASE_1_DESCRIPTIVE_NAMES.to_vec();
     for expected in &expected_descriptive {
         assert!(
             outcome
@@ -174,14 +165,17 @@ async fn register_phase_1_schemas_is_idempotent() {
     let service = spawn_schema_service().await;
     let (node, _tmp) = create_node(&service.url).await;
 
+    use schema_service_core::builtin_schemas::PHASE_1_DESCRIPTIVE_NAMES;
+    let expected_total = PHASE_1_DESCRIPTIVE_NAMES.len();
+
     let first = register_phase_1_schemas(&node).await.expect("first run");
-    assert_eq!(first.total(), 12);
+    assert_eq!(first.total(), expected_total);
 
     // Second call. The canonical_names registry is already populated
     // with the same mapping, so install() should succeed without
     // returning a conflict.
     let second = register_phase_1_schemas(&node).await.expect("second run");
-    assert_eq!(second.total(), 12);
+    assert_eq!(second.total(), expected_total);
 
     // Canonical names must be identical across the two runs.
     for (a, b) in first.registered.iter().zip(second.registered.iter()) {

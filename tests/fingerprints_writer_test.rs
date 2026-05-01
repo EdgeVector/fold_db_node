@@ -66,7 +66,8 @@ async fn face_extraction_plan_writes_all_records_through_schema_service() {
     let reg = register_phase_1_schemas(&node)
         .await
         .expect("register_phase_1_schemas must succeed");
-    assert_eq!(reg.total(), 12);
+    use schema_service_core::builtin_schemas::PHASE_1_DESCRIPTIVE_NAMES;
+    assert_eq!(reg.total(), PHASE_1_DESCRIPTIVE_NAMES.len());
 
     // Seed the self-identity records. In production this happens
     // inside FoldNode::new once an IdentityCard has been saved by the
