@@ -1,5 +1,6 @@
 //! AI types, retry logic, prompt building, and response parsing for ingestion.
 
+use super::known_schemas;
 use super::prompts::{PROMPT_ACTIONS, PROMPT_HEADER};
 use crate::ingestion::{IngestionError, IngestionResult, StructureAnalyzer};
 use serde::{Deserialize, Serialize};
@@ -124,6 +125,14 @@ pub fn pretty_json(value: &Value) -> String {
 /// `original_json` is the un-skeletonized data. When the data looks like a
 /// text-file wrapper (`{content, source_file, file_type}`), we include a
 /// preview of the actual content so the AI can name the schema by topic.
+///
+/// The prompt also includes a curated list of existing schemas the AI
+/// should match against by their exact `descriptive_name` (see
+/// [`known_schemas`]). This bypasses the schema service's cosine-similarity
+/// fallback for the load-bearing case (a contact-shaped JSON ingest hitting
+/// the seeded `Contacts` schema) — empirically the cosine match is
+/// inconsistent for sibling names like `Contact Records` ↔ `Contacts`,
+/// while an exact-match instruction in the prompt is deterministic.
 pub fn create_prompt(
     sample_json: &Value,
     is_array_input: bool,
@@ -141,9 +150,16 @@ pub fn create_prompt(
         .and_then(extract_content_hint)
         .unwrap_or_default();
 
+    // Anchor the AI to canonical descriptive_names already registered
+    // with the schema service. Lives between the header (general
+    // instructions) and the sample data (per-call payload) so the AI
+    // sees the anchor list before it forms its proposal.
+    let known_schemas_block = known_schemas::render_for_prompt();
+
     format!(
-        "{header}\n\nSample JSON Data:\n{sample}{array_note}{content_hint}\n\n{actions}",
+        "{header}{known_schemas}\n\nSample JSON Data:\n{sample}{array_note}{content_hint}\n\n{actions}",
         header = PROMPT_HEADER,
+        known_schemas = known_schemas_block,
         sample = pretty_json(sample_json),
         array_note = array_note,
         content_hint = content_hint,
@@ -747,6 +763,28 @@ mod tests {
         assert!(!prompt.contains("Available Schemas:"));
         assert!(prompt.contains(PROMPT_HEADER));
         assert!(prompt.contains(PROMPT_ACTIONS));
+    }
+
+    #[test]
+    fn test_create_prompt_includes_known_schema_anchors() {
+        // Regression guard: the AI prompt must list the persona-pipeline
+        // anchor schemas so the AI can match against them by exact
+        // descriptive_name. Dropping this section regresses the dogfood
+        // case (`address_book.json` ingest → `Contacts` reuse → personas).
+        let sample = serde_json::json!([
+            {"name": "Mom", "email": "mom@example.com", "phone": "555-0101"},
+        ]);
+        let prompt = create_prompt(&sample, true, None);
+
+        for s in known_schemas::KNOWN_SCHEMAS {
+            assert!(
+                prompt.contains(s.descriptive_name),
+                "create_prompt output is missing anchor schema '{}'",
+                s.descriptive_name
+            );
+        }
+        // The exact-match instruction is the load-bearing line.
+        assert!(prompt.contains("EXACT descriptive_name"));
     }
 
     #[test]
