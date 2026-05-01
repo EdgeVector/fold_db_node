@@ -164,6 +164,12 @@ wiremock = "0.6"
 # `tests/observability_sentry_error_e2e.rs`.
 sentry = { version = "0.47", default-features = false, features = ["backtrace", "contexts", "release-health", "transport", "test"] }
 sentry-tracing = "0.47"
+# Validates serialized response bodies against the OpenAPI/JSON Schema in
+# tests/openapi_roundtrip_test.rs — catches `serde` ↔ `utoipa` divergence
+# (e.g. `#[serde(rename)]` / `#[serde(flatten)]` / custom serializers
+# that the drift-check on openapi.ts can't detect because openapi.ts is
+# regenerated from the spec, not from actual JSON).
+jsonschema = { version = "0.30", default-features = false }
 
 [lib]
 name = "fold_db_node"
