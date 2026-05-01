@@ -26,6 +26,10 @@ export interface OllamaGenerationParams {
 export interface OllamaConfig {
   model: string;
   base_url: string;
+  /** Model used for image → markdown vision when `vision_backend === "Ollama"`. */
+  vision_model?: string;
+  /** Model used for OCR (text extraction from scanned docs / PDFs). */
+  ocr_model?: string;
   generation_params?: OllamaGenerationParams;
 }
 
@@ -49,6 +53,12 @@ export interface IngestionConfig {
   ollama: OllamaConfig;
   anthropic: AnthropicConfig;
   vision_backend?: VisionBackend;
+  /**
+   * Legacy pre-overrides QueryChat override (Rust: `SavedConfig.query`). Saves
+   * dual-write this alongside `overrides[QueryChat]` until two releases after
+   * the rollout PR. Reads should prefer `overrides[QueryChat]`.
+   */
+  query?: UseCaseOverride;
   overrides?: Record<Role, UseCaseOverride>;
 }
 

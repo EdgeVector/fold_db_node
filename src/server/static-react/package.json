@@ -30,9 +30,10 @@
     "coverage:serve": "npx http-server coverage -p 8080 -o",
     "lint": "eslint . --ext ts,tsx,js,jsx",
     "lint:fix": "eslint . --ext ts,tsx,js,jsx --fix",
-    "ci:test": "npm run lint && npm run test:coverage:threshold",
+    "typecheck": "tsc --noEmit",
+    "ci:test": "npm run lint && npm run typecheck && npm run test:coverage:threshold",
     "ci:coverage-check": "node scripts/check-coverage.js",
-    "generate:api": "npx -y openapi-typescript ../../../target/openapi.json -o src/types/openapi.ts",
+    "generate:api": "openapi-typescript ../../../target/openapi.json -o src/types/openapi.ts",
     "generate:endpoints": "node scripts/generate-endpoints.js",
     "tauri:dev": "npx tauri dev",
     "tauri:build": "npx tauri build",
@@ -80,6 +81,7 @@
     "openapi-typescript": "^7.4.2",
     "postcss": "^8.4.31",
     "tailwindcss": "^3.3.5",
+    "typescript": "^5.9.3",
     "vite": "^7.3.1",
     "vitest": "^4.0.18"
   }
