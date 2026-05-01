@@ -425,9 +425,44 @@ jobs:
           echo "Webview shell + JS bundle both load: / → React HTML, /$JS_REL → 200 OK"
           echo "DMG smoke passed end-to-end (backend health + webview-shell-loadable)."
 
-      - name: Dump app log on failure
-        if: failure()
-        run: cat "$RUNNER_TEMP/app.log" || true
+      # Always surface the launched-app logs so passing runs are also
+      # debuggable. Two sources: process stdout/stderr (`app.log`) and
+      # the tauri-plugin-log file at
+      # `~/Library/Logs/com.folddb.app/FoldDB.log`, populated by the
+      # pre-Builder file logger (#777). Either one alone misses
+      # context — stdout has panics + early prints, the file logger
+      # has structured tracing once the subscriber is composed.
+      - name: Dump app logs
+        if: always()
+        run: |
+          echo "=== $RUNNER_TEMP/app.log (process stdout/stderr) ==="
+          if [[ -f "$RUNNER_TEMP/app.log" ]]; then
+            cat "$RUNNER_TEMP/app.log"
+          else
+            echo "(no app.log — process never wrote to stdout/stderr)"
+          fi
+          echo
+          echo "=== ~/Library/Logs/com.folddb.app/FoldDB.log (tauri-plugin-log file) ==="
+          FILE_LOG="$HOME/Library/Logs/com.folddb.app/FoldDB.log"
+          if [[ -f "$FILE_LOG" ]]; then
+            cat "$FILE_LOG"
+          else
+            echo "(no FoldDB.log — pre-Builder file logger never initialised, or LogDir target disabled)"
+          fi
+
+      # Upload both logs as artifacts so they survive past the run page
+      # and are downloadable for offline triage. Cheap (the files are
+      # small) and only runs on macOS smoke matrix.
+      - name: Upload app logs
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: dmg-smoke-app-logs
+          path: |
+            ${{ runner.temp }}/app.log
+            ~/Library/Logs/com.folddb.app/FoldDB.log
+          if-no-files-found: ignore
+          retention-days: 14
 
       - name: Teardown
         if: always()
