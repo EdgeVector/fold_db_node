@@ -31,29 +31,33 @@ use utoipa::OpenApi;
     ),
     components(
         schemas(
-            fold_db::schema::types::schema::Schema,
-            fold_db::schema::types::schema::DeclarativeSchemaType,
+            // fold_db schema/atom types (Schema, DeclarativeSchemaDefinition,
+            // FieldVariant, SingleField/HashField/RangeField/HashRangeField,
+            // Molecule family) removed from this list 2026-05-01: they
+            // transitively reference fold_db sub-types that lack
+            // `utoipa::ToSchema` upstream (`Provenance`, `KeyMetadata`,
+            // `AtomEntry`, `Query`, etc.), which makes openapi-typescript
+            // fail with unresolved $refs. None of the local routes use
+            // these via `body = X`, so dropping them from the spec is
+            // safe — the routes that hand out fold_db types (e.g.
+            // /api/schema/{name}) already serialise as opaque JSON.
+            // Re-register once fold_db Phase 3 lands ToSchema upstream
+            // (gbrain projects/api-typegen-unification).
             fold_db::schema::types::key_config::KeyConfig,
             fold_db::schema::types::key_value::KeyValue,
-            fold_db::schema::types::field::variant::FieldVariant,
-            fold_db::schema::types::field::single_field::SingleField,
-            fold_db::schema::types::field::range_field::RangeField,
-            fold_db::schema::types::field::hash_range_field::HashRangeField,
-            fold_db::schema::types::field::hash_field::HashField,
-            fold_db::schema::types::field::common::FieldCommon,
-            fold_db::schema::types::declarative_schemas::DeclarativeSchemaDefinition,
-            fold_db::schema::types::declarative_schemas::FieldDefinition,
-            fold_db::atom::Molecule,
-            fold_db::atom::MoleculeRange,
-            fold_db::atom::MoleculeHashRange,
-            fold_db::atom::MoleculeHash,
             crate::ingestion::config::IngestionConfig,
             crate::ingestion::config::SavedConfig,
             crate::ingestion::config::AIProvider,
             crate::ingestion::config::OllamaConfig,
+            crate::ingestion::config::OllamaGenerationParams,
             crate::ingestion::config::AnthropicConfig,
+            crate::ingestion::config::VisionBackend,
+            crate::ingestion::config::UseCaseOverride,
+            crate::ingestion::roles::Role,
             crate::ingestion::IngestionRequest,
             crate::ingestion::IngestionResponse,
+            crate::ingestion::IngestionStatus,
+            crate::ingestion::progress::SchemaWriteRecord,
             crate::handlers::ingestion::ProcessJsonResponse,
             crate::server::routes::log::LogLevelUpdate,
             crate::server::routes::admin::ResetDatabaseRequest,
@@ -61,6 +65,7 @@ use utoipa::OpenApi;
             crate::server::routes::config::DatabaseConfigRequest,
             crate::server::routes::config::DatabaseConfigResponse,
             crate::server::routes::config::DatabaseConfigDto,
+            crate::server::routes::config::CloudSyncConfigDto,
             crate::server::routes::admin::MigrateToCloudRequest,
             crate::fold_node::llm_query::types::RunQueryRequest,
             crate::fold_node::llm_query::types::QueryPlan,

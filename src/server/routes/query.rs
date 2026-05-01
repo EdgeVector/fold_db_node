@@ -122,7 +122,13 @@ pub async fn execute_mutation(
         ("term" = String, Query, description = "Search term for native word index")
     ),
     responses(
-        (status = 200, description = "Array of native index results", body = [fold_db::db_operations::IndexResult]),
+        // body = [serde_json::Value]: utoipa emits the $ref using the
+        // full Rust path (`fold_db.db_operations.IndexResult`) but
+        // components(schemas(...)) registers by simple name
+        // (`IndexResult`), so the reference can't resolve. Surface as
+        // opaque array until upstream registration is reconciled (gbrain
+        // projects/api-typegen-unification Phase 3).
+        (status = 200, description = "Array of native index results", body = [serde_json::Value]),
         (status = 400, description = "Bad request"),
         (status = 500, description = "Server error")
     )

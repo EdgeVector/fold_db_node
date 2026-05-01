@@ -4,6 +4,23 @@
  */
 
 export interface paths {
+    "/api/indexing/status": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Get indexing status */
+        get: operations["get_indexing_status"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/ingestion/config": {
         parameters: {
             query?: never;
@@ -22,23 +39,6 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
-    "/api/ingestion/health": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        /** Health check endpoint for ingestion service */
-        get: operations["health_check"];
-        put?: never;
-        post?: never;
-        delete?: never;
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
     "/api/ingestion/process": {
         parameters: {
             query?: never;
@@ -48,7 +48,12 @@ export interface paths {
         };
         get?: never;
         put?: never;
-        /** Process JSON ingestion request */
+        /**
+         * Process JSON ingestion request.
+         * @description Returns 202 Accepted immediately — the body is a job-started envelope, not the
+         *     final ingestion result. Clients poll `/ingestion/progress/{progress_id}` for
+         *     the actual outcome.
+         */
         post: operations["process_json"];
         delete?: never;
         options?: never;
@@ -90,41 +95,7 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
-    "/api/logs": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        /** List current logs (backward compatibility) */
-        get: operations["list_logs"];
-        put?: never;
-        post?: never;
-        delete?: never;
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
-    "/api/logs/config": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        /** Get current logging configuration */
-        get: operations["get_config"];
-        put?: never;
-        post?: never;
-        delete?: never;
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
-    "/api/logs/config/reload": {
+    "/api/llm-query/chat": {
         parameters: {
             query?: never;
             header?: never;
@@ -133,23 +104,28 @@ export interface paths {
         };
         get?: never;
         put?: never;
-        /** Reload logging configuration from file */
-        post: operations["reload_config"];
+        /** Ask a follow-up question about query results */
+        post: operations["chat"];
         delete?: never;
         options?: never;
         head?: never;
         patch?: never;
         trace?: never;
     };
-    "/api/logs/features": {
+    "/api/logs": {
         parameters: {
             query?: never;
             header?: never;
             path?: never;
             cookie?: never;
         };
-        /** Get available log features and their current levels */
-        get: operations["get_features"];
+        /**
+         * List logs from the in-memory RING buffer.
+         * @description Reads are cheap clones from a `RwLock<VecDeque<LogEntry>>` — no I/O,
+         *     no async work needed. We still keep the response shape (`{logs, count,
+         *     timestamp}`) the dashboard parser expects.
+         */
+        get: operations["list_logs"];
         put?: never;
         post?: never;
         delete?: never;
@@ -166,7 +142,16 @@ export interface paths {
             cookie?: never;
         };
         get?: never;
-        /** Update feature-specific log level at runtime */
+        /**
+         * Update feature-specific log level at runtime.
+         * @description Translated to the RELOAD handle's `EnvFilter` directive vocabulary:
+         *     `{feature, level}` becomes `"{feature_lower}={level_lower},info"`.
+         *     Each call replaces the full filter — per-feature levels do not stack
+         *     across calls. The dashboard already tracks its own per-feature state
+         *     and resends the merged view on each change, so single-call replacement
+         *     matches what the UI expects today. Phase 6 will switch the dashboard
+         *     to a `{directive}` body so the frontend owns the merge.
+         */
         put: operations["update_feature_level"];
         post?: never;
         delete?: never;
@@ -182,7 +167,15 @@ export interface paths {
             path?: never;
             cookie?: never;
         };
-        /** Stream logs via Server-Sent Events (backward compatibility) */
+        /**
+         * Stream logs via Server-Sent Events.
+         * @description Each tracing event is fanned out as one JSON `LogEntry` on the WEB
+         *     layer's broadcast channel. The handler subscribes per connection,
+         *     wraps the receiver in a [`BroadcastStream`], and forwards each frame
+         *     as an SSE `data:` line. `RecvError::Lagged` (slow consumer) silently
+         *     drops the stale slot — the dashboard recovers by reading future
+         *     events; back-pressuring the tracing pipeline would be worse.
+         */
         get: operations["stream_logs"];
         put?: never;
         post?: never;
@@ -203,6 +196,23 @@ export interface paths {
         put?: never;
         /** Execute a mutation. */
         post: operations["execute_mutation"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/native-index/search": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Search the native word index for a term. */
+        get: operations["native_index_search"];
+        put?: never;
+        post?: never;
         delete?: never;
         options?: never;
         head?: never;
@@ -252,10 +262,7 @@ export interface paths {
         };
         get?: never;
         put?: never;
-        /**
-         * List schemas by specific state
-         * @description Approve a schema for queries and mutations
-         */
+        /** Approve a schema for queries and mutations */
         post: operations["approve_schema"];
         delete?: never;
         options?: never;
@@ -287,7 +294,6 @@ export interface paths {
             path?: never;
             cookie?: never;
         };
-        /** List all schemas. */
         get: operations["list_schemas"];
         put?: never;
         post?: never;
@@ -330,6 +336,51 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/system/database-config": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Get current database configuration */
+        get: operations["get_database_config"];
+        put?: never;
+        /**
+         * Update database configuration
+         * @description This endpoint updates the database configuration in the node config file.
+         *     The server must be restarted for the changes to take effect.
+         */
+        post: operations["update_database_config"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/system/migrate-to-cloud": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Migrate data to Exemem Cloud (async background job)
+         * @description This endpoint initiates S3 sync setup for the local Sled database:
+         *     1. Returns immediately with a job ID for progress tracking
+         *     2. The background job snapshots local data and uploads encrypted blobs to S3
+         *     3. Progress can be monitored via /api/ingestion/progress/{job_id}
+         */
+        post: operations["migrate_to_cloud"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/system/public-key": {
         parameters: {
             query?: never;
@@ -361,14 +412,20 @@ export interface paths {
         get?: never;
         put?: never;
         /**
-         * Reset the database and restart the node
-         * @description This endpoint completely resets the database by:
-         *     1. Stopping network services
-         *     2. Closing the current database
-         *     3. Recreating a new database instance
-         *     4. Clearing all data and state
+         * Reset the database (async background job)
+         * @description This endpoint initiates a database reset as a background job:
+         *     1. Returns immediately with a job ID for progress tracking
+         *     2. The background job clears all data for the current user
+         *     3. Progress can be monitored via /api/ingestion/progress/{job_id}
          *
          *     This is a destructive operation that cannot be undone.
+         *
+         *     # Multi-Tenancy Support
+         *
+         *     This endpoint respects multi-tenancy by only clearing data for the
+         *     current user (identified via x-user-hash header). Only the current
+         *     user's Sled trees are cleared; other users on the same node are
+         *     unaffected.
          */
         post: operations["reset_database"];
         delete?: never;
@@ -394,54 +451,6 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
-    "/api/transforms": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        get: operations["list_transforms"];
-        put?: never;
-        post?: never;
-        delete?: never;
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
-    "/api/transforms/queue": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        get: operations["get_transform_queue"];
-        put?: never;
-        post?: never;
-        delete?: never;
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
-    "/api/transforms/queue/{id}": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        get?: never;
-        put?: never;
-        post: operations["add_to_transform_queue"];
-        delete?: never;
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
 }
 export type webhooks = Record<string, never>;
 export interface components {
@@ -451,68 +460,139 @@ export interface components {
          * @enum {string}
          */
         AIProvider: "Anthropic" | "Ollama";
-        /** @description Declarative schema definition used by declarative transforms. */
-        DeclarativeSchemaDefinition: {
-            fields?: string[] | null;
-            key?: components["schemas"]["KeyConfig"] | null;
-            /** @description Schema name (same as transform name) */
-            name: string;
-            schema_type: components["schemas"]["SchemaType"];
-            transform_fields?: {
-                [key: string]: string;
-            } | null;
+        /** @description Response for async admin jobs (reset, migration, etc.) */
+        AdminJobResponse: {
+            job_id?: string | null;
+            message: string;
+            success: boolean;
         };
-        FieldCommon: {
-            field_mappers: {
-                [key: string]: string;
-            };
-            molecule_uuid?: string | null;
-            transform?: components["schemas"]["Transform"] | null;
-            writable?: boolean;
+        /** @description Configuration for the Anthropic AI provider. */
+        AnthropicConfig: {
+            api_key: string;
+            base_url: string;
+            model: string;
         };
-        FieldDefinition: {
-            field_expression?: string | null;
+        /** @description Request for follow-up question */
+        ChatRequest: {
+            question: string;
+            session_id: string;
         };
-        /** @description Enumeration over all field variants. */
-        FieldVariant: {
-            Single: components["schemas"]["SingleField"];
-        } | {
-            Range: components["schemas"]["RangeField"];
-        } | {
-            HashRange: components["schemas"]["HashRangeField"];
+        /** @description Response to follow-up question */
+        ChatResponse: {
+            answer: string;
+            context_used: boolean;
         };
-        /** @description Field that combines hash and range functionality for indexing */
-        HashRangeField: {
-            inner: components["schemas"]["FieldCommon"];
-            molecule?: components["schemas"]["MoleculeHashRange"] | null;
+        CloudSyncConfigDto: {
+            api_url: string;
+        };
+        DatabaseConfigDto: {
+            cloud_sync?: components["schemas"]["CloudSyncConfigDto"] | null;
+            path: string;
+        };
+        /** @description Database configuration request/response types */
+        DatabaseConfigRequest: {
+            database: components["schemas"]["DatabaseConfigDto"];
+        };
+        DatabaseConfigResponse: {
+            message: string;
+            requires_restart: boolean;
+            success: boolean;
+        };
+        IndexResult: {
+            field: string;
+            key_value: components["schemas"]["KeyValue"];
+            metadata?: unknown;
+            molecule_versions?: number[] | null;
+            schema_display_name?: string | null;
+            schema_name: string;
+            value: unknown;
+        };
+        /** @enum {string} */
+        IndexingState: "Idle" | "Indexing";
+        IndexingStatus: {
+            /**
+             * Format: double
+             * @description Average processing time per operation (milliseconds)
+             */
+            avg_processing_time_ms: number;
+            /** @description Current batch being processed (if any) */
+            current_batch_size?: number | null;
+            /**
+             * Format: int64
+             * @description Timestamp when current batch started (Unix timestamp in seconds)
+             */
+            current_batch_start_time?: number | null;
+            /**
+             * Format: int64
+             * @description Timestamp of last indexing operation (Unix timestamp in seconds)
+             */
+            last_operation_time?: number | null;
+            /** @description Number of operations currently being processed */
+            operations_in_progress: number;
+            /**
+             * Format: double
+             * @description Current throughput in operations per second
+             */
+            operations_per_second: number;
+            /** @description Total operations queued (waiting to be processed) */
+            operations_queued: number;
+            state: components["schemas"]["IndexingState"];
+            /**
+             * Format: int64
+             * @description Total operations processed since startup
+             */
+            total_operations_processed: number;
         };
         /** @description Configuration for the ingestion module. */
         IngestionConfig: {
-            /** @description Whether to auto-execute mutations after generation. */
+            anthropic?: components["schemas"]["AnthropicConfig"];
             auto_execute_mutations: boolean;
-            /** @description Whether ingestion is enabled. */
             enabled: boolean;
-            /**
-             * Format: int32
-             * @description Maximum number of retries for API calls.
-             */
+            /** Format: int32 */
             max_retries: number;
             ollama: components["schemas"]["OllamaConfig"];
-            provider: components["schemas"]["AIProvider"];
             /**
-             * Format: int64
-             * @description Timeout for API calls in seconds.
+             * @description Per-role provider / model / sampling overrides. Keyed by [`Role`].
+             *     When a role has no entry, [`IngestionConfig::resolve`] falls through
+             *     to role defaults + global config.
              */
+            overrides?: {
+                [key: string]: components["schemas"]["UseCaseOverride"];
+            };
+            provider: components["schemas"]["AIProvider"];
+            /** Format: int64 */
             timeout_seconds: number;
+            vision_backend?: components["schemas"]["VisionBackend"];
         };
-        /** @description Request for processing JSON ingestion */
+        /**
+         * @description Request for processing JSON ingestion.
+         *
+         *     This is the canonical request type used by both the HTTP server and Lambda handlers.
+         *     Fields use serde defaults so callers can omit optional parameters.
+         */
         IngestionRequest: {
             /** @description Whether to auto-execute mutations after generation */
-            auto_execute?: boolean | null;
+            auto_execute?: boolean;
             /** @description JSON data to ingest */
             data: unknown;
-            /** @description Public key for mutations */
-            pub_key?: string | null;
+            /** @description SHA256 hash of the original source file content (hex string) */
+            file_hash?: string | null;
+            /** @description Descriptive name from image vision model (schema metadata, not record data) */
+            image_descriptive_name?: string | null;
+            /**
+             * @description Optional org hash — if set, data is ingested into this org's namespace.
+             *     The schema is loaded from the schema service as normal, then org_hash is
+             *     applied locally so mutations get org-prefixed storage keys.
+             */
+            org_hash?: string | null;
+            /** @description Progress tracking ID (optional, generated if not provided) */
+            progress_id?: string | null;
+            /** @description Public key for the operation */
+            pub_key?: string;
+            /** @description Original source filename (for file uploads) */
+            source_file_name?: string | null;
+            /** @description Source folder path (set when ingested via smart folder or batch) */
+            source_folder?: string | null;
         };
         /** @description Response from the ingestion process */
         IngestionResponse: {
@@ -524,10 +604,27 @@ export interface components {
             mutations_generated: number;
             /** @description Whether a new schema was created */
             new_schema_created: boolean;
+            /** @description Progress ID for tracking the ingestion process */
+            progress_id?: string | null;
             /** @description Name of the schema used (existing or newly created) */
             schema_used?: string | null;
+            /** @description All schemas and keys written during this ingestion */
+            schemas_written: components["schemas"]["SchemaWriteRecord"][];
             /** @description Whether the ingestion was successful */
             success: boolean;
+        };
+        /** @description Status information for the ingestion service */
+        IngestionStatus: {
+            /** @description Whether mutations are auto-executed by default */
+            auto_execute_mutations: boolean;
+            /** @description Whether ingestion is properly configured and ready */
+            configured: boolean;
+            /** @description Whether ingestion is enabled */
+            enabled: boolean;
+            /** @description Model name being used */
+            model: string;
+            /** @description AI provider being used (Anthropic or Ollama) */
+            provider: string;
         };
         KeyConfig: {
             hash_field?: string | null;
@@ -538,150 +635,173 @@ export interface components {
             hash?: string | null;
             range?: string | null;
         };
-        LogConfigResponse: {
-            current_level: string;
-            message: string;
-        };
         LogLevelUpdate: {
             feature: string;
             level: string;
         };
-        /** @description A reference to a single atom version. */
-        Molecule: {
-            atom_uuid: string;
-            molecule_uuid: string;
-            status: components["schemas"]["MoleculeStatus"];
-            update_history: components["schemas"]["MoleculeUpdate"][];
-            /** Format: date-time */
-            updated_at: string;
+        /** @description Request body for migrating to cloud */
+        MigrateToCloudRequest: {
+            api_key: string;
+            api_url: string;
         };
-        /** @description A hash-range-based collection of atom references stored in a nested HashMap<BTreeMap> structure.
-         *
-         *     This molecule type supports complex indexing where atoms are organized by:
-         *     - Hash field: Groups related atoms together
-         *     - Range field: Provides ordered access within each hash group
-         *
-         *     Structure: HashMap<hash_value, BTreeMap<range_value, atom_uuid>> */
-        MoleculeHashRange: {
-            /** @description Atom UUIDs organized by hash and range values
-             *     Structure: HashMap<hash_value, BTreeMap<range_value, atom_uuid>> */
-            atom_uuids: {
-                [key: string]: {
-                    [key: string]: string;
-                };
-            };
-            status: components["schemas"]["MoleculeStatus"];
-            /** @description History of status updates */
-            update_history: components["schemas"]["MoleculeUpdate"][];
-            /** @description Order in which atoms were added (for deterministic sampling) */
-            update_order?: components["schemas"]["KeyValue"][];
-            /**
-             * Format: date-time
-             * @description Timestamp when this molecule was last updated
-             */
-            updated_at: string;
-            /** @description Unique identifier for this molecule */
-            uuid: string;
-        };
-        /** @description A range-based collection of atom references stored in a BTreeMap. */
-        MoleculeRange: {
-            atom_uuids: {
-                [key: string]: string;
-            };
-            status: components["schemas"]["MoleculeStatus"];
-            update_history: components["schemas"]["MoleculeUpdate"][];
-            /** Format: date-time */
-            updated_at: string;
-            uuid: string;
-        };
-        /** @enum {string} */
-        MoleculeStatus: "Active" | "Deleted";
-        MoleculeUpdate: {
-            writer_pubkey: string;
-            status: components["schemas"]["MoleculeStatus"];
-            /** Format: date-time */
-            timestamp: string;
+        MutationResponse: {
+            mutation_id: string;
         };
         NodeKeyResponse: {
-            success: boolean;
-            public_key: string;
             message: string;
+            public_key: string;
+            success: boolean;
         };
         /** @description Configuration for the Ollama AI provider. */
         OllamaConfig: {
             base_url: string;
+            generation_params?: components["schemas"]["OllamaGenerationParams"];
             model: string;
+            /** @description OCR model for text extraction from scanned documents (used by file_to_markdown). */
+            ocr_model?: string;
+            /** @description Vision model for image captioning/classification (used by file_to_markdown). */
+            vision_model?: string;
         };
-        /** @description Response for process_json (immediate response). */
+        /** @description Generation parameters for Ollama models. */
+        OllamaGenerationParams: {
+            /**
+             * Format: float
+             * @description Min-p sampling threshold (0.0..=1.0).
+             */
+            min_p: number;
+            /**
+             * Format: int32
+             * @description Context window size in tokens (2048..=250000).
+             */
+            num_ctx: number;
+            /**
+             * Format: int32
+             * @description Maximum tokens to generate (2048..=32000).
+             */
+            num_predict: number;
+            /**
+             * Format: float
+             * @description Presence penalty (0.0..=2.0).
+             */
+            presence_penalty: number;
+            /**
+             * Format: float
+             * @description Repeat penalty (0.0..=2.0).
+             */
+            repeat_penalty: number;
+            /**
+             * Format: float
+             * @description Sampling temperature (0.0..=2.0).
+             */
+            temperature: number;
+            /**
+             * Format: int32
+             * @description Top-k sampling (0 = disabled).
+             */
+            top_k: number;
+            /**
+             * Format: float
+             * @description Top-p (nucleus) sampling (0.0..=1.0).
+             */
+            top_p: number;
+        };
+        /**
+         * @description Response for process_json (immediate response).
+         *
+         *     Manually declared (instead of via `handler_response!`) so the `utoipa::ToSchema`
+         *     derive can be added for the OpenAPI registry. Phase 2 of the API typegen
+         *     unification project will fold `ToSchema` into the macro itself.
+         */
         ProcessJsonResponse: {
             message: string;
             progress_id: string;
             success: boolean;
         };
-        /** @description Field storing a range of values. */
-        RangeField: {
-            inner: components["schemas"]["FieldCommon"];
-            molecule?: components["schemas"]["MoleculeRange"] | null;
+        /** @description The plan for executing a query */
+        QueryPlan: {
+            /**
+             * @description fold_db's `Query` type lacks `utoipa::ToSchema` upstream, so we
+             *     surface it as opaque JSON in the OpenAPI spec. Once Phase 3 of
+             *     gbrain projects/api-typegen-unification lands ToSchema for fold_db
+             *     types, drop the `value_type` override and let utoipa derive the
+             *     real shape.
+             */
+            query: unknown;
+            reasoning: string;
         };
         /** @description Request body for database reset */
         ResetDatabaseRequest: {
             confirm: boolean;
         };
-        /** @description Response for database reset */
-        ResetDatabaseResponse: {
-            message: string;
-            success: boolean;
+        /**
+         * @description Named AI use cases inside fold_db_node.
+         * @enum {string}
+         */
+        Role: "IngestionText" | "Vision" | "Ocr" | "SmartFolder" | "DiscoveryInterests" | "MutationAgent" | "QueryChat";
+        /** @description Request to run a query (single-step analyze and execute) */
+        RunQueryRequest: {
+            query: string;
+            session_id?: string | null;
         };
-        /** @description Structure for saving AI provider configuration. */
+        /**
+         * @description Provider/model settings persisted to disk by the UI.
+         *     Runtime fields (enabled, retries, timeout) are controlled via env vars only.
+         *
+         *     # Schema migration
+         *
+         *     Older configs have a top-level `query: UseCaseOverride` field. Newer
+         *     configs use `overrides: HashMap<Role, UseCaseOverride>`. Both fields are
+         *     read on load — [`Self::normalize`] seeds `overrides[QueryChat]` from the
+         *     legacy `query` field when present. During the rollout window, saves emit
+         *     BOTH fields (dual-write) so an older binary can still read the user's
+         *     QueryChat override if the feature flag gets rolled back. The legacy
+         *     `query` field will be dropped two releases after PR 4 ships.
+         */
         SavedConfig: {
+            anthropic?: components["schemas"]["AnthropicConfig"];
             ollama: components["schemas"]["OllamaConfig"];
+            /** @description Per-role overrides. The new canonical shape (2026-04-22+). */
+            overrides?: {
+                [key: string]: components["schemas"]["UseCaseOverride"];
+            };
             provider: components["schemas"]["AIProvider"];
+            query?: components["schemas"]["UseCaseOverride"];
+            vision_backend?: components["schemas"]["VisionBackend"];
         };
-        /** @description Defines the structure, permissions, and payment requirements for a data collection.
+        /** @description A single schema and the keys that were written to it during ingestion. */
+        SchemaWriteRecord: {
+            keys_written: components["schemas"]["KeyValue"][];
+            schema_name: string;
+        };
+        /**
+         * @description Per-role provider/model/sampling override.
          *
-         *     A Schema is the fundamental building block for data organization in the database.
-         *     It defines:
-         *     - The collection's name and identity
-         *     - Field definitions with their types and constraints
-         *     - Field-level permission policies
-         *     - Payment requirements for data access
-         *     - Field mappings for schema transformation
-         *
-         *     Schemas provide a contract for data storage and access, ensuring:
-         *     - Consistent data structure
-         *     - Proper access control
-         *     - Payment validation
-         *     - Data transformation rules */
-        Schema: {
-            /** @description Collection of fields with their definitions and configurations */
-            fields: {
-                [key: string]: components["schemas"]["FieldVariant"];
-            };
-            /** @description SHA256 hash of the schema content for integrity verification */
-            hash?: string | null;
-            key?: components["schemas"]["KeyConfig"] | null;
-            /** @description Unique name identifying this schema */
-            name: string;
-            schema_type: components["schemas"]["SchemaType"];
+         *     When a field is `None`, the role inherits from role defaults or the parent
+         *     config. When set, it wins field-by-field. Keyed by [`Role`] in
+         *     [`IngestionConfig::overrides`] and [`SavedConfig::overrides`].
+         */
+        UseCaseOverride: {
+            /**
+             * @description Anthropic model override. `None` = inherit from role default or
+             *     parent's `anthropic.model`.
+             */
+            anthropic_model?: string | null;
+            generation_params?: components["schemas"]["OllamaGenerationParams"] | null;
+            /**
+             * @description Ollama model override. `None` = inherit from role default or
+             *     parent's `ollama.model` / `vision_model` / `ocr_model`.
+             */
+            ollama_model?: string | null;
+            provider?: components["schemas"]["AIProvider"] | null;
         };
-        /** @description Represents the schema-level type information. */
-        SchemaType: "Single" | {
-            /** @description Schema that stores data in a key range */
-            Range: {
-                keyconfig: components["schemas"]["KeyConfig"];
-            };
-        } | {
-            /** @description Schema that uses hashed and ranged keys for partitioning */
-            HashRange: {
-                keyconfig: components["schemas"]["KeyConfig"];
-            };
-        };
-        /** @description Field storing a single value. */
-        SingleField: {
-            inner: components["schemas"]["FieldCommon"];
-            molecule?: components["schemas"]["Molecule"] | null;
-        };
-        Transform: components["schemas"]["DeclarativeSchemaDefinition"] & Record<string, never>;
+        /**
+         * @description Specifies the backend used to convert images → markdown (vision / OCR).
+         *     Separate from `AIProvider` (text backend): vision historically only
+         *     supported Ollama via `file_to_markdown`, with Anthropic vision added for
+         *     environments without a local Ollama daemon (CI, fresh installs).
+         * @enum {string}
+         */
+        VisionBackend: "Ollama" | "Anthropic";
     };
     responses: never;
     parameters: never;
@@ -691,6 +811,33 @@ export interface components {
 }
 export type $defs = Record<string, never>;
 export interface operations {
+    get_indexing_status: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Current indexing status */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["IndexingStatus"];
+                };
+            };
+            /** @description Server error */
+            500: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+        };
+    };
     get_ingestion_config: {
         parameters: {
             query?: never;
@@ -740,35 +887,6 @@ export interface operations {
             };
         };
     };
-    health_check: {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        requestBody?: never;
-        responses: {
-            /** @description Health OK */
-            200: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": unknown;
-                };
-            };
-            /** @description Health not OK */
-            503: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": unknown;
-                };
-            };
-        };
-    };
     process_json: {
         parameters: {
             query?: never;
@@ -808,7 +926,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": unknown;
+                    "application/json": components["schemas"]["IngestionStatus"];
                 };
             };
         };
@@ -844,9 +962,52 @@ export interface operations {
             };
         };
     };
-    list_logs: {
+    chat: {
         parameters: {
             query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["ChatRequest"];
+            };
+        };
+        responses: {
+            /** @description Answer to question */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ChatResponse"];
+                };
+            };
+            /** @description Session not found */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description Server error */
+            500: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+        };
+    };
+    list_logs: {
+        parameters: {
+            query?: {
+                /** @description Filter to entries with timestamp >= this value (ms since epoch) */
+                since?: number | null;
+                /** @description Cap result count (default 1000) */
+                limit?: number | null;
+            };
             header?: never;
             path?: never;
             cookie?: never;
@@ -854,71 +1015,6 @@ export interface operations {
         requestBody?: never;
         responses: {
             /** @description List logs */
-            200: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": unknown;
-                };
-            };
-        };
-    };
-    get_config: {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        requestBody?: never;
-        responses: {
-            /** @description Logging configuration */
-            200: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["LogConfigResponse"];
-                };
-            };
-        };
-    };
-    reload_config: {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        requestBody?: never;
-        responses: {
-            /** @description Reloaded */
-            200: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content?: never;
-            };
-            /** @description Bad request */
-            400: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content?: never;
-            };
-        };
-    };
-    get_features: {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        requestBody?: never;
-        responses: {
-            /** @description Features */
             200: {
                 headers: {
                     [name: string]: unknown;
@@ -956,8 +1052,8 @@ export interface operations {
                 };
                 content?: never;
             };
-            /** @description Server error */
-            500: {
+            /** @description Reload handle unavailable */
+            503: {
                 headers: {
                     [name: string]: unknown;
                 };
@@ -996,13 +1092,50 @@ export interface operations {
             };
         };
         responses: {
-            /** @description Mutation result */
+            /** @description Mutation accepted */
             200: {
                 headers: {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": unknown;
+                    "application/json": components["schemas"]["MutationResponse"];
+                };
+            };
+            /** @description Bad request */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description Server error */
+            500: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+        };
+    };
+    native_index_search: {
+        parameters: {
+            query: {
+                /** @description Search term for native word index */
+                term: string;
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Array of native index results */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": unknown[];
                 };
             };
             /** @description Bad request */
@@ -1034,14 +1167,12 @@ export interface operations {
             };
         };
         responses: {
-            /** @description Query result */
+            /** @description Array of query result records */
             200: {
                 headers: {
                     [name: string]: unknown;
                 };
-                content: {
-                    "application/json": unknown;
-                };
+                content?: never;
             };
             /** @description Bad request */
             400: {
@@ -1077,7 +1208,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": components["schemas"]["Schema"];
+                    "application/json": unknown;
                 };
             };
             /** @description Schema not found */
@@ -1108,7 +1239,7 @@ export interface operations {
         };
         requestBody?: never;
         responses: {
-            /** @description Approved */
+            /** @description Schema approved successfully */
             200: {
                 headers: {
                     [name: string]: unknown;
@@ -1136,7 +1267,7 @@ export interface operations {
         };
         requestBody?: never;
         responses: {
-            /** @description Blocked */
+            /** @description Success status */
             200: {
                 headers: {
                     [name: string]: unknown;
@@ -1161,7 +1292,7 @@ export interface operations {
         };
         requestBody?: never;
         responses: {
-            /** @description List of schemas */
+            /** @description Array of schemas with states */
             200: {
                 headers: {
                     [name: string]: unknown;
@@ -1186,7 +1317,7 @@ export interface operations {
         };
         requestBody?: never;
         responses: {
-            /** @description Load attempt summary */
+            /** @description Load counts for available and data schemas */
             200: {
                 headers: {
                     [name: string]: unknown;
@@ -1227,6 +1358,110 @@ export interface operations {
             };
         };
     };
+    get_database_config: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Database configuration */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["DatabaseConfigDto"];
+                };
+            };
+        };
+    };
+    update_database_config: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["DatabaseConfigRequest"];
+            };
+        };
+        responses: {
+            /** @description Configuration updated */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["DatabaseConfigResponse"];
+                };
+            };
+            /** @description Bad request */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["DatabaseConfigResponse"];
+                };
+            };
+            /** @description Server error */
+            500: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["DatabaseConfigResponse"];
+                };
+            };
+        };
+    };
+    migrate_to_cloud: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["MigrateToCloudRequest"];
+            };
+        };
+        responses: {
+            /** @description Migration job started */
+            202: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["AdminJobResponse"];
+                };
+            };
+            /** @description Bad request */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["AdminJobResponse"];
+                };
+            };
+            /** @description Server error */
+            500: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["AdminJobResponse"];
+                };
+            };
+        };
+    };
     get_node_public_key: {
         parameters: {
             query?: never;
@@ -1260,13 +1495,13 @@ export interface operations {
             };
         };
         responses: {
-            /** @description Database reset result */
-            200: {
+            /** @description Database reset job started */
+            202: {
                 headers: {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": components["schemas"]["ResetDatabaseResponse"];
+                    "application/json": components["schemas"]["AdminJobResponse"];
                 };
             };
             /** @description Bad request */
@@ -1275,7 +1510,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": components["schemas"]["ResetDatabaseResponse"];
+                    "application/json": components["schemas"]["AdminJobResponse"];
                 };
             };
             /** @description Server error */
@@ -1284,7 +1519,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": components["schemas"]["ResetDatabaseResponse"];
+                    "application/json": components["schemas"]["AdminJobResponse"];
                 };
             };
         };
@@ -1306,88 +1541,6 @@ export interface operations {
                 content: {
                     "application/json": unknown;
                 };
-            };
-        };
-    };
-    list_transforms: {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        requestBody?: never;
-        responses: {
-            /** @description Transforms list */
-            200: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": unknown;
-                };
-            };
-            /** @description Server error */
-            500: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content?: never;
-            };
-        };
-    };
-    get_transform_queue: {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        requestBody?: never;
-        responses: {
-            /** @description Queue info */
-            200: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": unknown;
-                };
-            };
-            /** @description Server error */
-            500: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content?: never;
-            };
-        };
-    };
-    add_to_transform_queue: {
-        parameters: {
-            query?: never;
-            header?: never;
-            path: {
-                /** @description Transform id */
-                id: string;
-            };
-            cookie?: never;
-        };
-        requestBody?: never;
-        responses: {
-            /** @description Queued */
-            200: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content?: never;
-            };
-            /** @description Server error */
-            500: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content?: never;
             };
         };
     };

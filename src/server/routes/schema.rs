@@ -74,7 +74,11 @@ pub async fn list_schemas(state: web::Data<AppState>) -> impl Responder {
         ("name" = String, Path, description = "Schema name")
     ),
     responses(
-        (status = 200, description = "Schema", body = Schema),
+        // body = serde_json::Value: fold_db's Schema lacks utoipa::ToSchema
+        // upstream (Phase 3 cross-repo task in
+        // gbrain projects/api-typegen-unification). Surface as opaque JSON
+        // until ToSchema lands in fold_db.
+        (status = 200, description = "Schema", body = serde_json::Value),
         (status = 404, description = "Schema not found"),
         (status = 500, description = "Server error")
     )

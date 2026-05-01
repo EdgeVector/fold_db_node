@@ -17,6 +17,8 @@ use crate::ingestion::ingestion_service::IngestionService;
 use crate::ingestion::progress::ProgressService;
 use crate::ingestion::service_state::{get_ingestion_service, IngestionServiceState};
 use crate::ingestion::IngestionRequest;
+#[allow(unused_imports)]
+use crate::ingestion::IngestionStatus;
 use crate::ingestion::ProgressTracker;
 use crate::ingestion::{AiMetricsStore, Role, RoleMetricsSnapshot};
 use crate::server::http_server::AppState;
@@ -142,7 +144,7 @@ pub async fn process_json(
     get,
     path = "/api/ingestion/status",
     tag = "ingestion",
-    responses((status = 200, description = "Ingestion status", body = crate::ingestion::IngestionStatus))
+    responses((status = 200, description = "Ingestion status", body = IngestionStatus))
 )]
 pub async fn get_status(ingestion_service: web::Data<IngestionServiceState>) -> impl Responder {
     tracing::debug!(
