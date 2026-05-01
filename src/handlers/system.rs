@@ -21,9 +21,10 @@ handler_response! {
 }
 
 handler_response! {
+    #[derive(utoipa::ToSchema)]
     pub struct NodeKeyResponse {
         pub success: bool,
-        pub key: String,
+        pub public_key: String,
         pub message: String,
     }
 }
@@ -111,18 +112,4 @@ pub async fn get_sync_status(
         },
     };
     Ok(ApiResponse::success_with_user(response, user_hash))
-}
-
-pub async fn get_node_public_key(
-    user_hash: &str,
-    node: &FoldNode,
-) -> HandlerResult<NodeKeyResponse> {
-    Ok(ApiResponse::success_with_user(
-        NodeKeyResponse {
-            success: true,
-            key: node.get_node_public_key().to_string(),
-            message: "Node public key retrieved successfully".to_string(),
-        },
-        user_hash,
-    ))
 }

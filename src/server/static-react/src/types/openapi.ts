@@ -602,6 +602,11 @@ export interface components {
             /** Format: date-time */
             timestamp: string;
         };
+        NodeKeyResponse: {
+            success: boolean;
+            public_key: string;
+            message: string;
+        };
         /** @description Configuration for the Ollama AI provider. */
         OllamaConfig: {
             base_url: string;
@@ -1237,7 +1242,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": unknown;
+                    "application/json": components["schemas"]["NodeKeyResponse"];
                 };
             };
         };
