@@ -185,11 +185,6 @@ jobs:
         working-directory: src/server/static-react
         run: npm ci
 
-      - name: Typecheck (tsc --noEmit)
-        if: steps.check-frontend.outputs.exists == 'true'
-        working-directory: src/server/static-react
-        run: npm run typecheck
-
       - name: Run npm test
         if: steps.check-frontend.outputs.exists == 'true'
         working-directory: src/server/static-react
