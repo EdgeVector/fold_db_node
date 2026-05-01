@@ -2,51 +2,20 @@ import { ApiClient, createApiClient } from "../core/client";
 import { API_ENDPOINTS, API_BASE_URLS } from "../endpoints";
 import { API_TIMEOUTS, API_RETRIES, CONTENT_TYPES } from "../../constants/api";
 import type { EnhancedApiResponse } from "../core/types";
+import type { components } from "../../types/openapi";
 
-// Ingestion-specific response types
-export interface IngestionStatus {
-  enabled: boolean;
-  configured: boolean;
-  provider: "Anthropic" | "Ollama";
-  model: string;
-  auto_execute_mutations: boolean;
-}
-
-export interface OllamaGenerationParams {
-  num_ctx: number;
-  temperature: number;
-  top_p: number;
-  top_k: number;
-  num_predict: number;
-  repeat_penalty: number;
-  presence_penalty: number;
-  min_p: number;
-}
-
-export interface OllamaConfig {
-  model: string;
-  base_url: string;
-  /** Model used for image → markdown vision when `vision_backend === "Ollama"`. */
-  vision_model?: string;
-  /** Model used for OCR (text extraction from scanned docs / PDFs). */
-  ocr_model?: string;
-  generation_params?: OllamaGenerationParams;
-}
-
-export interface AnthropicConfig {
-  api_key: string;
-  model: string;
-  base_url: string;
-}
-
-/**
- * Backend used to convert images → markdown during ingestion. Independent of
- * `provider` (which controls text generation): vision historically only ran
- * through a local Ollama daemon, with Anthropic added for machines without
- * Ollama installed. The two fields can mix — e.g. text via Anthropic, vision
- * via Ollama — so they are selected separately in the UI.
- */
-export type VisionBackend = "Ollama" | "Anthropic";
+// Migrated to openapi.ts source-of-truth (Phase 4 of
+// gbrain projects/api-typegen-unification). The interfaces below are now
+// type aliases over the auto-generated OpenAPI schema components, so the
+// drift check (CI) prevents this file from desyncing with the Rust struct
+// it claims to mirror. To migrate a remaining hand-written interface,
+// confirm the openapi.ts shape matches (run `npm run generate:api` and
+// diff) then convert it to a `type X = components["schemas"]["X"]`.
+export type IngestionStatus = components["schemas"]["IngestionStatus"];
+export type OllamaGenerationParams = components["schemas"]["OllamaGenerationParams"];
+export type OllamaConfig = components["schemas"]["OllamaConfig"];
+export type AnthropicConfig = components["schemas"]["AnthropicConfig"];
+export type VisionBackend = components["schemas"]["VisionBackend"];
 
 export interface IngestionConfig {
   provider: "Anthropic" | "Ollama";
@@ -65,15 +34,9 @@ export interface IngestionConfig {
 /**
  * The seven named AI use cases inside fold_db_node. See
  * `fold_db_node/src/ingestion/roles.rs` for canonical order + docs.
+ * Migrated to openapi.ts in Phase 4.
  */
-export type Role =
-  | "IngestionText"
-  | "Vision"
-  | "Ocr"
-  | "SmartFolder"
-  | "DiscoveryInterests"
-  | "MutationAgent"
-  | "QueryChat";
+export type Role = components["schemas"]["Role"];
 
 export interface UseCaseOverride {
   provider?: "Anthropic" | "Ollama";
