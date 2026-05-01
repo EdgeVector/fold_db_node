@@ -612,13 +612,17 @@ mod tests {
     }
 
     #[test]
-    fn all_twelve_phase_1_builtins_are_empty_store() {
+    fn all_phase_1_builtins_are_empty_store() {
         use schema_service_core::builtin_schemas::PHASE_1_DESCRIPTIVE_NAMES;
         let schemas: Vec<SchemaWithState> = PHASE_1_DESCRIPTIVE_NAMES
             .iter()
             .map(|name| SchemaWithState::new(schema_with(Some(name)), SchemaState::Approved))
             .collect();
-        assert_eq!(schemas.len(), 12);
+        // Length is whatever schema_service_core defines today; the
+        // intent is "every Phase 1 builtin is treated as an empty user
+        // store". Don't pin a hard count — that just churns when the
+        // builtin list grows via the bump cascade.
+        assert!(!schemas.is_empty(), "expected at least one Phase 1 builtin");
         assert!(is_empty_user_store(&schemas));
     }
 
