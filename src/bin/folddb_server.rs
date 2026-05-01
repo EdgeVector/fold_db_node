@@ -5,9 +5,11 @@ use fold_db_node::{
     server::{
         http_server::FoldHttpServer,
         node_manager::{NodeManager, NodeManagerConfig},
+        startup::StartupCtx,
     },
 };
 use std::path::PathBuf;
+use tokio::task::JoinSet;
 
 /// Dev CLI default HTTP port. Distinct from the bundled Tauri app's 9001
 /// so running `./run.sh` while FoldDB.app is open doesn't collide. The
@@ -196,22 +198,33 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let _obs_guard: &'static fold_db_node::observability_setup::NodeObsGuard =
         Box::leak(Box::new(obs_guard));
 
-    // Create NodeManager — nodes are created lazily per-user on first request
+    // Create NodeManager — nodes are created lazily per-user on first request.
     let node_manager_config = NodeManagerConfig {
         base_config: config,
     };
     let node_manager = NodeManager::new(node_manager_config);
 
-    // Start the HTTP server
-    let bind_address = format!("127.0.0.1:{}", http_port);
-    let http_server = FoldHttpServer::new(node_manager, &bind_address)
-        .await?
-        .with_obs_handles(obs_handles);
+    // Phase 1: deterministic, awaited resource initialization. Every
+    // subsystem a background worker could need is fully initialized before
+    // `boot` returns. See `server::startup` for the rationale.
+    let ctx = StartupCtx::boot(node_manager, Some(obs_handles)).await?;
 
+    // Phase 2: tracked spawns. Workers take `Arc<StartupCtx>` so they cannot
+    // observe uninitialized state. The JoinSet is held until `run` returns
+    // so workers stay alive for the server's lifetime.
+    let mut tasks = JoinSet::new();
+    ctx.spawn_workers(&mut tasks);
+
+    // Phase 3: bind and serve.
+    let bind_address = format!("127.0.0.1:{}", http_port);
+    let http_server = FoldHttpServer::new(ctx, &bind_address);
     http_server
         .run()
         .await
-        .map_err(|e| Box::new(e) as Box<dyn std::error::Error>)
+        .map_err(|e| Box::new(e) as Box<dyn std::error::Error>)?;
+
+    drop(tasks);
+    Ok(())
 }
 
 #[cfg(test)]

@@ -37,20 +37,10 @@ use tracing_actix_web::TracingLogger;
 /// - On first request: Node is created and cached
 /// - Subsequent requests: Cached node is reused
 pub struct FoldHttpServer {
-    /// The node manager for lazy per-user node creation
-    node_manager: Arc<NodeManager>,
-    /// The HTTP server bind address
+    /// All resources, with init guaranteed complete.
+    ctx: Arc<crate::server::startup::StartupCtx>,
+    /// The HTTP server bind address.
     bind_address: String,
-    /// RING / WEB handles surfaced from the observability setup. The
-    /// log endpoints subscribe to these instead of the legacy
-    /// `LoggingSystem` plumbing. `None` when the binary did not call
-    /// `init_node_with_web` — in that case the log endpoints fall back
-    /// to a 503 rather than panicking.
-    obs_handles: Option<crate::observability_setup::ObsHandles>,
-    /// RELOAD handle for runtime EnvFilter updates from
-    /// `PUT /api/logs/level`. `Arc` because `ReloadHandle` is not
-    /// `Clone` and needs shared access from the Actix handler.
-    obs_reload: Option<Arc<observability::layers::reload::ReloadHandle>>,
 }
 
 /// Shared application state for the HTTP server.
@@ -69,48 +59,17 @@ impl AppState {
 }
 
 impl FoldHttpServer {
-    /// Create a new HTTP server.
+    /// Create a new HTTP server bound to a fully-initialized [`StartupCtx`].
     ///
-    /// This method creates a new HTTP server that listens on the specified address.
-    /// It uses the provided NodeManager to create per-user nodes lazily.
-    ///
-    /// # Arguments
-    ///
-    /// * `node_manager` - The NodeManager instance for creating per-user nodes
-    /// * `bind_address` - The address to bind to (e.g., "127.0.0.1:9001")
-    ///
-    /// # Returns
-    ///
-    /// A `FoldDbResult` containing the new FoldHttpServer instance.
-    ///
-    /// # Errors
-    ///
-    /// Returns a `FoldDbError` if:
-    /// * There is an error starting the HTTP server
-    pub async fn new(node_manager: NodeManager, bind_address: &str) -> FoldDbResult<Self> {
-        // Daemon binaries build the observability stack themselves so they
-        // can hold the `ObsGuard` for the lifetime of the process and pass
-        // its handles in via `with_obs_handles`. Embedded servers and tests
-        // that don't care about live-streamed logs construct without
-        // handles — `tracing::*!` calls outside an active subscriber are
-        // no-ops, which is fine for those code paths.
-        Ok(Self {
-            node_manager: Arc::new(node_manager),
+    /// All side effects (pool init, schema preload, discovery resolution,
+    /// upload storage, ingestion / progress / Apple sync state) live in
+    /// [`StartupCtx::boot`]. By the time this is called, every resource the
+    /// server registers as Actix `app_data` is guaranteed initialized.
+    pub fn new(ctx: Arc<crate::server::startup::StartupCtx>, bind_address: &str) -> Self {
+        Self {
+            ctx,
             bind_address: bind_address.to_string(),
-            obs_handles: None,
-            obs_reload: None,
-        })
-    }
-
-    /// Wire RING / WEB / RELOAD handles from a `NodeObsGuard` so the
-    /// `/api/logs*` endpoints can serve from the tracing pipeline. Call
-    /// this after `init_node_with_web` in the binary's `main`. The
-    /// handles are cheap to clone — the binary keeps the guard, this
-    /// server keeps the handles.
-    pub fn with_obs_handles(mut self, handles: crate::observability_setup::ObsHandles) -> Self {
-        self.obs_reload = Some(handles.reload.clone());
-        self.obs_handles = Some(handles);
-        self
+        }
     }
 
     /// Run the HTTP server.
@@ -130,179 +89,24 @@ impl FoldHttpServer {
     /// * There is an error starting the server
     pub async fn run(&self) -> FoldDbResult<()> {
         // Record server start time for the unauthenticated /api/health probe.
+        // Done here rather than in `StartupCtx::boot` so the reported uptime
+        // approximates "ready to serve requests" rather than "started booting".
         system_routes::mark_server_start();
 
-        // Check for interrupted bootstrap and resume if needed
-        if let Some((api_url, api_key)) = crate::server::routes::auth::check_bootstrap_pending() {
-            tracing::info!(
-            target: "fold_node::http_server",
-                "Found interrupted bootstrap — resuming cloud data download"
-            );
-            let node_manager = self.node_manager.clone();
-            // lint:spawn-bare-ok boot-time bootstrap resume — runs during server start, no per-request parent span.
-            tokio::spawn(async move {
-                // Get Sled pool from the node manager
-                if let Some(pool) = node_manager.get_sled_pool().await {
-                    if let Err(e) = crate::server::routes::auth::resume_bootstrap(
-                        &api_url,
-                        &api_key,
-                        &node_manager,
-                        pool,
-                    )
-                    .await
-                    {
-                        tracing::error!("Bootstrap resume failed: {}", e);
-                    }
-                } else {
-                    tracing::warn!("Cannot resume bootstrap: no Sled pool available yet");
-                }
-            });
-        }
+        // Per-worker observability handles. `Option` so handlers return 503
+        // when the daemon was started without the tracing-native stack (embedded
+        // contexts, e2e tests).
+        let obs_ring_data = web::Data::new(self.ctx.obs.as_ref().map(|h| h.ring.clone()));
+        let obs_web_data = web::Data::new(self.ctx.obs.as_ref().map(|h| h.web.clone()));
+        let obs_reload_data = web::Data::new(self.ctx.obs.as_ref().map(|h| h.reload.clone()));
 
-        // Load schemas from schema service if configured
-        self.load_schemas_if_configured().await?;
-
-        // Initialize upload storage — use FOLDDB_UPLOAD_PATH env or default to data/uploads
-        let upload_path = std::env::var("FOLDDB_UPLOAD_PATH")
-            .map(std::path::PathBuf::from)
-            .unwrap_or_else(|_| {
-                crate::utils::paths::folddb_home()
-                    .map(|h| h.join("data").join("uploads"))
-                    .unwrap_or_else(|_| std::path::PathBuf::from("data/uploads"))
-            });
-        let upload_storage = fold_db::storage::UploadStorage::local(upload_path);
-
-        tracing::info!(
-            target: "fold_node::http_server",
-            "Upload storage initialized: {}",
-            if upload_storage.is_local() {
-                "Local"
-            } else {
-                "S3"
-            }
-        );
-
-        // Discovery configuration is resolved on-demand via
-        // `AppState::discovery_config()` — no process-wide env mutation.
-        // Log whether it is currently available so operators can debug.
-        match super::discovery_config::DiscoveryConfig::resolve(&self.node_manager).await {
-            Some(cfg) => tracing::info!("Discovery configuration resolved: url={}", cfg.url),
-            None => {
-                tracing::info!("Discovery configuration not yet available (no identity registered)")
-            }
-        }
-
-        // Create shared application state
-        let app_state = web::Data::new(AppState {
-            node_manager: self.node_manager.clone(),
-        });
-
-        // Auto-refresh Exemem session token on startup — but ONLY if the stored
-        // token is actually near expiry. Unconditionally re-registering on every
-        // boot rotates the API key (Exemem deactivates the old one), which leaves
-        // the in-memory `SyncEngine` holding a stale key and breaks cloud sync.
-        //
-        // Non-fatal: if load/parse/refresh fails (no network, no credentials),
-        // we log and continue. Timeout guards against macOS Keychain blocking.
-        {
-            let app_state_clone = app_state.clone();
-            // lint:spawn-bare-ok boot-time Exemem session-token refresh — runs during server start, no per-request parent span.
-            tokio::spawn(async move {
-                // Load stored credentials so we can inspect the session token
-                // and decide whether a refresh is actually needed.
-                let creds = match crate::keychain::load_credentials() {
-                    Ok(Some(c)) => c,
-                    Ok(None) => {
-                        tracing::info!("No Exemem credentials stored; skipping startup refresh");
-                        return;
-                    }
-                    Err(e) => {
-                        tracing::warn!("Failed to load Exemem credentials (non-fatal): {}", e);
-                        return;
-                    }
-                };
-
-                // Only refresh when the token is near expiry. Threshold of 12h
-                // of remaining lifetime means each boot can refresh at most once
-                // per half-day instead of on every launch.
-                const MIN_REMAINING_SECS: i64 = 12 * 60 * 60;
-                let now = chrono::Utc::now().timestamp();
-                match session_token_needs_refresh(&creds.session_token, now, MIN_REMAINING_SECS) {
-                    Ok(false) => {
-                        tracing::info!(
-                            "Exemem session token still valid (>12h remaining); skipping startup refresh"
-                        );
-                        return;
-                    }
-                    Ok(true) => {
-                        tracing::info!("Exemem session token near expiry; refreshing...");
-                    }
-                    Err(e) => {
-                        // Malformed token — treat as "needs refresh" rather than
-                        // a silent skip, so we recover from a corrupted token.
-                        tracing::warn!("Unable to parse stored session token ({}); refreshing", e);
-                    }
-                }
-
-                match tokio::time::timeout(
-                    std::time::Duration::from_secs(10),
-                    crate::server::routes::auth::refresh_session_token(&app_state_clone),
-                )
-                .await
-                {
-                    Ok(Ok(_)) => tracing::info!("Exemem session token refreshed successfully"),
-                    Ok(Err(e)) => {
-                        tracing::warn!("Exemem session token refresh failed (non-fatal): {}", e)
-                    }
-                    Err(_) => {
-                        tracing::warn!(
-                            "Exemem session token refresh timed out after 10s (non-fatal)"
-                        )
-                    }
-                }
-            });
-        }
-
-        // Create upload storage data
-        let upload_storage_data = web::Data::new(upload_storage.clone());
-
-        // Create LLM query state (gracefully handles missing configuration)
-        let llm_query_state = web::Data::new(llm_query::LlmQueryState::new());
-
-        // Create IngestionService wrapped in RwLock so config saves can reload it
-        let ingestion_service: Option<Arc<crate::ingestion::ingestion_service::IngestionService>> =
-            crate::ingestion::ingestion_service::IngestionService::from_env()
-                .ok()
-                .map(Arc::new);
-        let ingestion_service_data = web::Data::new(tokio::sync::RwLock::new(ingestion_service));
-
-        // Create BatchControllerMap for spend-limit batch tracking
-        let batch_controller_map_data =
-            web::Data::new(crate::ingestion::batch_controller::create_batch_controller_map());
-
-        // Load Apple auto-sync config
-        let sync_config_state =
-            crate::ingestion::apple_import::sync_scheduler::create_sync_config_state();
-        let sync_config_data = web::Data::new(sync_config_state);
-
-        let progress_tracker = fold_db::progress::create_tracker().await;
-        let progress_tracker_data = web::Data::new(progress_tracker);
-
-        // Observability handles for `/api/logs*`. Wrapped in `Option`
-        // so handlers return 503 when the daemon was started without
-        // the tracing-native stack (embedded contexts, e2e tests).
-        let obs_ring_data = web::Data::new(self.obs_handles.as_ref().map(|h| h.ring.clone()));
-        let obs_web_data = web::Data::new(self.obs_handles.as_ref().map(|h| h.web.clone()));
-        let obs_reload_data = web::Data::new(self.obs_reload.clone());
-
-        // Spawn Apple auto-sync background scheduler
-        crate::server::routes::apple_import::spawn_sync_scheduler(
-            sync_config_data.get_ref().clone(),
-            app_state.clone(),
-            ingestion_service_data.clone(),
-            progress_tracker_data.clone(),
-            upload_storage_data.clone(),
-        );
+        let app_state = self.ctx.app_state.clone();
+        let llm_query_state = self.ctx.llm_query.clone();
+        let upload_storage_data = self.ctx.upload_storage.clone();
+        let progress_tracker_data = self.ctx.progress_tracker.clone();
+        let ingestion_service_data = self.ctx.ingestion.clone();
+        let batch_controller_map_data = self.ctx.batch_controllers.clone();
+        let sync_config_data = self.ctx.apple_sync_config.clone();
 
         // Start the HTTP server
         let server = ActixHttpServer::new(move || {
@@ -363,51 +167,6 @@ impl FoldHttpServer {
             .await
             .map_err(|e| FoldDbError::Config(format!("HTTP server error: {}", e)))?;
 
-        Ok(())
-    }
-
-    async fn load_schemas_if_configured(&self) -> FoldDbResult<()> {
-        // Load schemas from schema service if configured
-        let base_config = self.node_manager.get_base_config().await;
-        let schema_service_url = base_config.schema_service_url.clone();
-
-        if let Some(url) = schema_service_url {
-            // Skip loading for mock/test schema services
-            if crate::fold_node::node::FoldNode::is_test_schema_service(&url) {
-                tracing::info!(
-                target: "fold_node::database",
-                        "Mock schema service detected ({}). Skipping automatic schema loading. Schemas must be loaded manually in tests.",
-                        url
-                    );
-            } else {
-                tracing::info!(
-                target: "fold_node::database",
-                        "Loading schemas from schema service at {}...",
-                        url
-                    );
-
-                // For schema loading, we need a temporary node
-                // Schemas are global, so we use a system context
-                let client = crate::fold_node::SchemaServiceClient::new(&url);
-
-                match client.list_schemas().await {
-                    Ok(schemas) => {
-                        tracing::info!(
-                        target: "fold_node::database",
-                                        "Loaded {} schemas from schema service",
-                                        schemas.len()
-                                    );
-                    }
-                    Err(e) => {
-                        tracing::error!(
-                        target: "fold_node::database",
-                                        "Failed to load schemas from schema service: {}. Server will start but no schemas will be available.",
-                                        e
-                                    );
-                    }
-                }
-            }
-        }
         Ok(())
     }
 

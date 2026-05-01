@@ -6,9 +6,9 @@
 
 use super::http_server::FoldHttpServer;
 use super::node_manager::{NodeManager, NodeManagerConfig};
-use crate::fold_node::FoldNode;
+use super::startup::StartupCtx;
 use fold_db::error::FoldDbResult;
-use tokio::task::JoinHandle;
+use tokio::task::{JoinHandle, JoinSet};
 
 /// Handle to a running embedded server.
 ///
@@ -65,121 +65,29 @@ pub async fn start_embedded_server_lazy(
 ) -> FoldDbResult<EmbeddedServerHandle> {
     let bind_address = format!("127.0.0.1:{}", port);
 
-    // Create a NodeManager without pre-populating it.
-    // The node gets created lazily by NodeManager::get_node() on first API request.
+    // Create a NodeManager without pre-populating it. The FoldNode is created
+    // lazily on first API request, but the rest of `StartupCtx::boot` runs
+    // eagerly so background workers see fully-initialized state.
     let node_manager = NodeManager::new(config);
+    let ctx = StartupCtx::boot(node_manager, None).await?;
 
-    let server = FoldHttpServer::new(node_manager, &bind_address).await?;
+    // Background workers are tracked on a JoinSet that lives as long as the
+    // server task. Aborting the server task (via `EmbeddedServerHandle::abort`)
+    // drops the set and cancels them.
+    let mut tasks = JoinSet::new();
+    ctx.spawn_workers(&mut tasks);
+
+    let server = FoldHttpServer::new(ctx, &bind_address);
 
     let address = bind_address.clone();
     // lint:spawn-bare-ok boot-time embedded server runner — perpetual worker, no per-request parent span.
-    let task_handle = tokio::spawn(async move { server.run().await });
+    let task_handle = tokio::spawn(async move {
+        let _tasks = tasks; // Keep workers alive for the server's lifetime.
+        server.run().await
+    });
 
     Ok(EmbeddedServerHandle {
         task_handle,
         bind_address: address,
     })
-}
-
-/// Start an embedded FoldDB HTTP server in a background task.
-///
-/// This function creates and starts a FoldDB HTTP server without blocking the
-/// current thread. It's designed for use in desktop applications where the server
-/// needs to run alongside a UI.
-///
-/// # Arguments
-///
-/// * `node` - The FoldNode instance to use
-/// * `port` - The port to bind to (e.g., 9001)
-///
-/// # Returns
-///
-/// Returns an `EmbeddedServerHandle` that can be used to manage the server.
-///
-/// # Example
-///
-/// ```no_run
-/// use std::path::PathBuf;
-/// use fold_db_node::fold_node::{FoldNode, start_embedded_server};
-/// use fold_db_node::fold_node::config::NodeConfig;
-///
-/// #[tokio::main]
-/// async fn main() -> Result<(), Box<dyn std::error::Error>> {
-///     // Build a NodeConfig and create the node with the current API:
-///     let config = NodeConfig::new(PathBuf::from("./data"));
-///     let node = FoldNode::new(config).await?;
-///     let handle = start_embedded_server(node, 9001).await?;
-///
-///     println!("Server running on {}", handle.bind_address());
-///
-///     // Do other work...
-///
-///     // When done:
-///     handle.abort();
-///     Ok(())
-/// }
-/// ```
-pub async fn start_embedded_server(
-    node: FoldNode,
-    port: u16,
-) -> FoldDbResult<EmbeddedServerHandle> {
-    let bind_address = format!("127.0.0.1:{}", port);
-
-    // Wrap the node in a NodeManager for compatibility with the HTTP server
-    // For embedded single-user scenarios, we use a default user ID
-    let node_manager_config = NodeManagerConfig {
-        base_config: node.config.clone(),
-    };
-    let node_manager = NodeManager::new(node_manager_config);
-
-    // Pre-populate the NodeManager with the provided node using a default embedded user
-    node_manager.set_node("embedded_user", node).await;
-
-    let server = FoldHttpServer::new(node_manager, &bind_address).await?;
-
-    let address = bind_address.clone();
-    // lint:spawn-bare-ok boot-time embedded server runner — perpetual worker, no per-request parent span.
-    let task_handle = tokio::spawn(async move { server.run().await });
-
-    Ok(EmbeddedServerHandle {
-        task_handle,
-        bind_address: address,
-    })
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-    use tempfile::tempdir;
-
-    #[tokio::test]
-    async fn test_embedded_server_starts() {
-        // Create a temporary directory for the test database
-        let temp_dir = tempdir().unwrap();
-
-        // Create a config with a mock schema service URL
-        let mut config = crate::fold_node::config::NodeConfig::new(temp_dir.path().to_path_buf());
-        config.schema_service_url = Some("mock://test".to_string());
-
-        let keypair = fold_db::security::Ed25519KeyPair::generate().unwrap();
-        config.seed_identity = Some(crate::identity::identity_from_keypair(&keypair));
-
-        // Create the node
-        let node = FoldNode::new(config).await.unwrap();
-
-        // Use a random high port to avoid conflicts
-        use rand::Rng;
-        let port = rand::thread_rng().gen_range(50000..60000);
-
-        let handle = start_embedded_server(node, port).await.unwrap();
-
-        // Verify the server is running
-        assert!(handle.is_running());
-
-        // Verify the bind address
-        assert_eq!(handle.bind_address(), format!("127.0.0.1:{}", port));
-
-        // Clean up
-        handle.abort();
-    }
 }
