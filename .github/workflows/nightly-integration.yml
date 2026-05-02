@@ -1,19 +1,30 @@
 name: Nightly Integration
 
-# Tier 4 of the CI tier model (see ci-tests.yml header).
+# Tier 3 of the CI tier model (see ci-tests.yml header).
 #
-# Runs slow / external-service / API-key tests once per night against
-# main. Failures are reported via Discord (notify.yml hook). At ~15-20
-# PRs/day a nightly failure has many candidate culprits — this tier is
-# only for tests where:
-#   - they're too slow for merge-time (perf benchmarks, soak)
-#   - they need real third-party APIs (ANTHROPIC_API_KEY, etc.)
-#   - they pull large models (FastEmbed, ONNX) on first run
+# Runs against main once per night. Failures are reported via Discord
+# (notify.yml hook). nightly-ingestion.yml and nightly-qa-dogfood.yml
+# cover orthogonal end-to-end flows.
 #
-# Correctness regressions belong on the merge_group gate, not here.
-# nightly-ingestion.yml and nightly-qa-dogfood.yml cover orthogonal
-# end-to-end flows; this workflow is for `cargo test`-runnable tests
-# that were `#[ignore]`'d on the merge gate.
+# Two classes of jobs live here:
+#
+# 1. Tests that have always belonged on a schedule:
+#    - perf-tests: benchmark/soak runs
+#    - ai-call-tests: ANTHROPIC_API_KEY-gated, runs `--ignored` tests
+#    - embedding-model-tests: FastEmbed model download
+#
+# 2. Tests moved off the merge queue on 2026-05-01 to make merges
+#    instant. The merge queue is now a rubber stamp; PR-level CI is
+#    the only correctness gate. These jobs catch regressions that
+#    slip past PR review (e.g. semantic conflicts between PRs that
+#    each pass independently but interact on main):
+#    - rust-clippy-doc: clippy --all-targets + doc tests on main
+#    - rust-integration: lib + integration tests, 4 shards
+#    - face-detection-tests: ONNX face-detection integration
+#    - e2e-tests: Playwright UI smoke tests
+#
+# At ~15-20 PRs/day a nightly failure has many candidate culprits —
+# git-bisect over the last day's commits to identify the regression.
 on:
   schedule:
     # 09:00 UTC = 02:00 PT — after most North American work, before most
@@ -21,6 +32,12 @@ on:
     # 03:00 UTC and nightly-qa-dogfood (whatever its time is).
     - cron: "0 9 * * *"
   workflow_dispatch:
+
+# Minimum needed for actions/checkout. Every job in this file is read-only;
+# none push branches, write issues, or hit cross-repo APIs. Explicit so
+# CodeQL doesn't flag each job individually.
+permissions:
+  contents: read
 
 concurrency:
   group: nightly-integration
@@ -154,3 +171,178 @@ jobs:
             --test semantic_field_matching_e2e_test \
             --test schema_service_semantic_match_test \
             -- --ignored --nocapture
+
+  # ─── Moved from merge_group on 2026-05-01 ────────────────────────
+  # The four jobs below previously gated every merge. They were moved
+  # here so the merge queue can rubber-stamp admitted PRs in seconds.
+  # PR-level CI in ci-tests.yml is the gate that prevents bad code
+  # from reaching the queue; these nightly runs catch what slips past.
+
+  rust-clippy-doc:
+    name: Rust Clippy + Doc Tests
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+
+    env:
+      RUSTFLAGS: -C linker=clang -C link-arg=-fuse-ld=mold
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Install mold linker
+        run: sudo apt-get update && sudo apt-get install -y mold
+
+      - name: Install Rust
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          components: clippy, rustfmt
+
+      - name: Configure git for private dependencies
+        run: git config --global url."https://x-access-token:${{ secrets.GH_PAT }}@github.com/".insteadOf "https://github.com/"
+
+      - name: Cache Rust artifacts
+        uses: Swatinem/rust-cache@v2
+        with:
+          key: nightly-clippy-doc
+
+      - name: Stub frontend dist for rust_embed
+        run: mkdir -p src/server/static-react/dist && echo '<html></html>' > src/server/static-react/dist/index.html
+
+      - name: Run clippy (--all-targets)
+        run: cargo clippy --workspace --all-targets -- -D warnings
+
+      - name: Run doc tests
+        run: cargo test --workspace --doc
+
+  rust-integration:
+    name: Rust Integration (shard ${{ matrix.shard }}/4)
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    strategy:
+      fail-fast: false
+      matrix:
+        shard: [1, 2, 3, 4]
+
+    env:
+      RUSTFLAGS: -C linker=clang -C link-arg=-fuse-ld=mold
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Install mold linker
+        run: sudo apt-get update && sudo apt-get install -y mold
+
+      - name: Install Rust
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Install cargo-nextest
+        uses: taiki-e/install-action@v2
+        with:
+          tool: nextest
+
+      - name: Configure git for private dependencies
+        run: git config --global url."https://x-access-token:${{ secrets.GH_PAT }}@github.com/".insteadOf "https://github.com/"
+
+      - name: Cache Rust artifacts
+        uses: Swatinem/rust-cache@v2
+        with:
+          key: nightly-integration-shards
+
+      - name: Stub frontend dist for rust_embed
+        run: mkdir -p src/server/static-react/dist && echo '<html></html>' > src/server/static-react/dist/index.html
+
+      # Full integration suite, partitioned across 4 shards. nextest
+      # discovers all tests, sorts them deterministically, then runs
+      # the 1/4-th slice belonging to this shard. --features test-utils
+      # enables schema_service_expansion_test and
+      # schema_service_semantic_match_test. Face-detection feature is
+      # NOT enabled here — face-detection-tests is the dedicated job.
+      - name: Run lib + integration tests (shard ${{ matrix.shard }}/4)
+        run: cargo nextest run --workspace --features test-utils --partition count:${{ matrix.shard }}/4
+
+  face-detection-tests:
+    name: Face Detection Tests
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+
+    env:
+      RUSTFLAGS: -C linker=clang -C link-arg=-fuse-ld=mold
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Install mold linker
+        run: sudo apt-get update && sudo apt-get install -y mold
+
+      - name: Install Rust
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Configure git for private dependencies
+        run: git config --global url."https://x-access-token:${{ secrets.GH_PAT }}@github.com/".insteadOf "https://github.com/"
+
+      - name: Cache Rust artifacts
+        uses: Swatinem/rust-cache@v2
+        with:
+          key: nightly-face-detection
+
+      - name: Stub frontend dist for rust_embed
+        run: mkdir -p src/server/static-react/dist && echo '<html></html>' > src/server/static-react/dist/index.html
+
+      # Pulls a 50 MB ONNX model on first run (cached afterward).
+      # Path-filtering is gone now that this is nightly — it runs
+      # every night regardless of which files changed.
+      - name: Run face-detection integration tests
+        run: cargo test --features face-detection --test detect_faces_handler_test -- --nocapture
+
+  e2e-tests:
+    name: E2E UI Tests
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Check if E2E tests exist
+        id: check-e2e
+        run: |
+          if [ -d src/server/static-react/e2e ]; then
+            echo "exists=true" >> $GITHUB_OUTPUT
+          else
+            echo "exists=false" >> $GITHUB_OUTPUT
+            echo "⏭️ **E2E UI Tests** — skipped (no e2e/ directory)" >> $GITHUB_STEP_SUMMARY
+          fi
+
+      - name: Setup Node.js
+        if: steps.check-e2e.outputs.exists == 'true'
+        uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+          cache: "npm"
+          cache-dependency-path: src/server/static-react/package-lock.json
+
+      - name: Install dependencies
+        if: steps.check-e2e.outputs.exists == 'true'
+        working-directory: src/server/static-react
+        run: npm ci
+
+      - name: Install Playwright browsers
+        if: steps.check-e2e.outputs.exists == 'true'
+        working-directory: src/server/static-react
+        run: npx playwright install chromium --with-deps
+
+      - name: Run E2E smoke tests
+        if: steps.check-e2e.outputs.exists == 'true'
+        working-directory: src/server/static-react
+        run: npx playwright test
+
+      - name: Upload test artifacts
+        if: failure() && steps.check-e2e.outputs.exists == 'true'
+        uses: actions/upload-artifact@v4
+        with:
+          name: playwright-report
+          path: src/server/static-react/test-results/
+          retention-days: 7
