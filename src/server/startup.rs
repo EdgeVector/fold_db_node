@@ -218,14 +218,39 @@ async fn bootstrap_resume(ctx: Arc<StartupCtx>, api_url: String, api_key: String
 }
 
 async fn token_refresh(ctx: Arc<StartupCtx>) {
-    let creds = match crate::keychain::load_credentials() {
-        Ok(Some(c)) => c,
-        Ok(None) => {
+    // `load_credentials` may block on the OS keychain (release builds with
+    // `os-keychain`): if the user's macOS keychain is locked, the call sits
+    // until they dismiss a prompt — and on a headless box, until forever.
+    // Move it onto the blocking pool and bound it with a timeout so a stuck
+    // keychain can't pin a tokio worker thread for the lifetime of the
+    // process. `refresh_session_token` below has its own 10s timeout for
+    // the network leg.
+    let load_result = tokio::time::timeout(
+        std::time::Duration::from_secs(5),
+        tokio::task::spawn_blocking(crate::keychain::load_credentials),
+    )
+    .await;
+    let creds = match load_result {
+        Ok(Ok(Ok(Some(c)))) => c,
+        Ok(Ok(Ok(None))) => {
             tracing::info!("No Exemem credentials stored; skipping startup refresh");
             return;
         }
-        Err(e) => {
+        Ok(Ok(Err(e))) => {
             tracing::warn!("Failed to load Exemem credentials (non-fatal): {}", e);
+            return;
+        }
+        Ok(Err(e)) => {
+            tracing::warn!(
+                "Keychain load task panicked (non-fatal); skipping startup refresh: {}",
+                e
+            );
+            return;
+        }
+        Err(_) => {
+            tracing::warn!(
+                "Keychain load timed out after 5s (non-fatal); skipping startup refresh"
+            );
             return;
         }
     };
