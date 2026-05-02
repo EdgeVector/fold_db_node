@@ -2,7 +2,7 @@ import { useEffect, useState } from 'react'
 import { DEFAULT_TAB } from '../constants'
 
 // Single lookup for URL hash → tab ID (prevents duplication)
-const HASH_TO_TAB = {
+const HASH_TO_TAB: Record<string, string> = {
   agent: 'agent',
   schemas: 'schemas',
   schema: 'schemas',
@@ -43,18 +43,25 @@ const HASH_TO_TAB = {
 // "#query?schema=Foo" resolve to the "query" tab. The full raw hash
 // is exposed separately via location.hash for tabs that want to read
 // their own params (e.g. QueryTab pre-selecting a schema).
-function parseHashTab(hashWithoutPrefix) {
+function parseHashTab(hashWithoutPrefix: string): string | null {
   if (!hashWithoutPrefix) return null
   const sep = hashWithoutPrefix.indexOf('?')
   const id = sep === -1 ? hashWithoutPrefix : hashWithoutPrefix.slice(0, sep)
   return HASH_TO_TAB[id] || null
 }
 
-function resolveTabFromHash() {
+function resolveTabFromHash(): string | null {
   if (typeof window !== 'undefined' && window.location.hash) {
     return parseHashTab(window.location.hash.slice(1))
   }
   return null
+}
+
+interface TabRoutingResult {
+  activeTab: string
+  settingsSubTab: string | null
+  handleTabChange: (tab: string) => void
+  navigateToSettings: (subTab?: string | null) => void
 }
 
 /**
@@ -64,11 +71,11 @@ function resolveTabFromHash() {
  *   - Exposes handleTabChange (also clears settingsSubTab when leaving settings)
  *   - Exposes navigateToSettings(subTab) convenience
  */
-export function useTabRouting() {
-  const [activeTab, setActiveTab] = useState(
+export function useTabRouting(): TabRoutingResult {
+  const [activeTab, setActiveTab] = useState<string>(
     () => resolveTabFromHash() || DEFAULT_TAB
   )
-  const [settingsSubTab, setSettingsSubTab] = useState(null)
+  const [settingsSubTab, setSettingsSubTab] = useState<string | null>(null)
 
   // Sync activeTab with URL hash changes. Unknown hashes get rewritten to
   // match the current activeTab so the address bar can't linger out of sync
@@ -92,7 +99,7 @@ export function useTabRouting() {
     return () => window.removeEventListener('hashchange', handleHashChange)
   }, [activeTab])
 
-  const handleTabChange = (tab) => {
+  const handleTabChange = (tab: string): void => {
     setActiveTab(tab)
     // Clear settings sub-tab when navigating away from settings
     if (tab !== 'settings') setSettingsSubTab(null)
@@ -102,7 +109,7 @@ export function useTabRouting() {
     }
   }
 
-  const navigateToSettings = (subTab) => {
+  const navigateToSettings = (subTab?: string | null): void => {
     setSettingsSubTab(subTab || null)
     handleTabChange('settings')
   }
