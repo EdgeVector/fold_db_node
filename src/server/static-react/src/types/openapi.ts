@@ -472,6 +472,22 @@ export interface components {
             base_url: string;
             model: string;
         };
+        /** @description An atom reference with per-key write timestamp for merge resolution. */
+        AtomEntry: {
+            atom_uuid: string;
+            provenance?: Omit<components["schemas"]["Provenance"], "kind"> | null;
+            /** @description Base64-encoded Ed25519 signature over canonical bytes. */
+            signature?: string;
+            /**
+             * Format: int32
+             * @description Signature scheme version (1 = hand-rolled canonical concat).
+             */
+            signature_version?: number;
+            /** @description Base64-encoded public key of the writer who signed this entry. */
+            writer_pubkey?: string;
+            /** Format: int64 */
+            written_at?: number;
+        };
         /** @description Request for follow-up question */
         ChatRequest: {
             question: string;
@@ -630,6 +646,17 @@ export interface components {
             hash_field?: string | null;
             range_field?: string | null;
         };
+        /**
+         * @description Write-time metadata stored per-key on the molecule.
+         *     Survives atom deduplication because it lives on the key-to-atom
+         *     association, not on the content-addressed atom itself.
+         */
+        KeyMetadata: {
+            metadata?: {
+                [key: string]: string;
+            } | null;
+            source_file_name?: string | null;
+        };
         /** @description Represents resolved key values for hash and range components. */
         KeyValue: {
             hash?: string | null;
@@ -643,6 +670,126 @@ export interface components {
         MigrateToCloudRequest: {
             api_key: string;
             api_url: string;
+        };
+        /** @description A reference to a single atom version. */
+        Molecule: {
+            /**
+             * @description The current atom entry with write timestamp.
+             *     Kept as a flattened pair for backward-compat: old data without
+             *     `written_at` will deserialize with `written_at: 0` via serde default.
+             */
+            atom_uuid: string;
+            key_metadata?: components["schemas"]["KeyMetadata"] | null;
+            molecule_uuid: string;
+            provenance?: Omit<components["schemas"]["Provenance"], "kind"> | null;
+            /** @description Base64-encoded Ed25519 signature over canonical bytes. */
+            signature?: string;
+            /**
+             * Format: int32
+             * @description Signature scheme version (1 = hand-rolled canonical concat).
+             */
+            signature_version?: number;
+            /** Format: date-time */
+            updated_at: string;
+            /** Format: int64 */
+            version?: number;
+            /** @description Base64-encoded public key of the writer who last signed this molecule. */
+            writer_pubkey?: string;
+            /** Format: int64 */
+            written_at?: number;
+        };
+        /**
+         * @description A hash-based collection of atom references stored in a HashMap.
+         *     Used for collections keyed by a single hash key (no ordering needed).
+         */
+        MoleculeHash: {
+            atom_uuids: {
+                [key: string]: components["schemas"]["AtomEntry"];
+            };
+            key_metadata?: {
+                [key: string]: components["schemas"]["KeyMetadata"];
+            };
+            /** Format: date-time */
+            updated_at: string;
+            uuid: string;
+            /** Format: int64 */
+            version?: number;
+        };
+        /**
+         * @description A hash-range-based collection of atom references stored in a nested HashMap<BTreeMap> structure.
+         *
+         *     This molecule type supports complex indexing where atoms are organized by:
+         *     - Hash field: Groups related atoms together
+         *     - Range field: Provides ordered access within each hash group
+         *
+         *     Structure: HashMap<hash_value, BTreeMap<range_value, AtomEntry>>
+         */
+        MoleculeHashRange: {
+            /**
+             * @description Atom entries organized by hash and range values
+             *     Structure: HashMap<hash_value, BTreeMap<range_value, AtomEntry>>
+             */
+            atom_uuids: {
+                [key: string]: {
+                    [key: string]: components["schemas"]["AtomEntry"];
+                };
+            };
+            /**
+             * @description Per-key metadata organized by hash and range values
+             *     Structure: HashMap<hash_value, BTreeMap<range_value, KeyMetadata>>
+             */
+            key_metadata?: {
+                [key: string]: {
+                    [key: string]: components["schemas"]["KeyMetadata"];
+                };
+            };
+            /** @description Order in which atoms were added (for deterministic sampling) */
+            update_order?: components["schemas"]["KeyValue"][];
+            /**
+             * Format: date-time
+             * @description Timestamp when this molecule was last updated
+             */
+            updated_at: string;
+            /** @description Unique identifier for this molecule */
+            uuid: string;
+            /**
+             * Format: int64
+             * @description Monotonic version counter, bumped on each actual change
+             */
+            version?: number;
+        };
+        /** @description A range-based collection of atom references stored in a BTreeMap. */
+        MoleculeRange: {
+            atom_uuids: {
+                [key: string]: components["schemas"]["AtomEntry"];
+            };
+            key_metadata?: {
+                [key: string]: components["schemas"]["KeyMetadata"];
+            };
+            /** Format: date-time */
+            updated_at: string;
+            uuid: string;
+            /** Format: int64 */
+            version?: number;
+        };
+        /**
+         * @description Canonical reference to a single atom version on a single molecule.
+         *
+         *     Used as a Merkle leaf for `Provenance::Derived::sources_merkle_root` and
+         *     as the payload for the forward/reverse lineage indexes (PR 6). The
+         *     `written_at` pins recomputation to the exact source version even if the
+         *     molecule has moved on.
+         */
+        MoleculeRef: {
+            atom_uuid: string;
+            /** @description `None` for single-keyed molecules, `Some(k)` for range-keyed molecules. */
+            key?: string | null;
+            molecule_uuid: string;
+            /**
+             * Format: int64
+             * @description Nanoseconds since the Unix epoch at which this atom was written.
+             */
+            written_at: number;
         };
         MutationResponse: {
             mutation_id: string;
@@ -710,6 +857,52 @@ export interface components {
             message: string;
             progress_id: string;
             success: boolean;
+        };
+        /**
+         * @description Writer identity and verifiability information for a molecule.
+         *
+         *     `User` — signed by an end-user's keypair; authority is by signature.
+         *     `Derived` — produced by a deterministic WASM transform; unsigned.
+         *     Authority is by recomputation: given `wasm_hash` + `input_snapshot_hash`,
+         *     any node can re-run the transform and check the output matches.
+         */
+        Provenance: {
+            /** @enum {string} */
+            kind: "user";
+            /** @description Base64-encoded Ed25519 public key of the signer. */
+            pubkey: string;
+            /** @description Base64-encoded Ed25519 signature over canonical bytes. */
+            signature: string;
+            /**
+             * Format: int32
+             * @description Signature scheme version (1 = hand-rolled canonical concat,
+             *     matching `Molecule::build_canonical_bytes`).
+             */
+            signature_version: number;
+        } | {
+            /**
+             * Format: int32
+             * @description Canonicalization version for `input_snapshot_hash` and the Merkle
+             *     leaves. Starts at 1. Bump if and only if the canonical byte layout
+             *     changes — a change here changes the content address, so treat as
+             *     forever.
+             */
+            encoding_version: number;
+            /**
+             * @description SHA-256 hex of the canonical input snapshot fed to WASM. This is
+             *     the content address of the transform inputs.
+             */
+            input_snapshot_hash: string;
+            /** @enum {string} */
+            kind: "derived";
+            /**
+             * @description SHA-256 hex of the Merkle root over the source `MoleculeRef`s.
+             *     The full source set lives in local rebuildable indexes (PR 6),
+             *     not on the molecule.
+             */
+            sources_merkle_root: string;
+            /** @description SHA-256 hex of the WASM module bytes that produced this molecule. */
+            wasm_hash: string;
         };
         /** @description The plan for executing a query */
         QueryPlan: {
