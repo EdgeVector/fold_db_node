@@ -1116,108 +1116,113 @@ pub async fn get_next_sync(sync_config: web::Data<SyncConfigState>) -> impl Resp
 
 // ── Background auto-sync scheduler ─────────────────────────────────
 
-/// Spawn the background sync scheduler loop.
+/// Run the Apple auto-sync scheduler loop. Awaitable so the caller can track
+/// it on a `JoinSet` (via `StartupCtx::spawn_workers`) for graceful shutdown.
 ///
-/// The task wakes every 60 seconds, checks if `next_sync` has passed, and if
+/// The loop wakes every 60 seconds, checks if `next_sync` has passed, and if
 /// so calls `sync_scheduler::run_sync` with the current user's node. After
 /// completion it updates `last_sync` / `next_sync` and persists the config.
-pub fn spawn_sync_scheduler(
+///
+/// First tick is delayed by one period instead of firing immediately —
+/// `tokio::time::interval`'s default would race a still-running boot-time
+/// bootstrap-resume against `require_node()`'s eager FoldNode creation,
+/// caching a node built from a half-restored Sled.
+pub async fn run_sync_scheduler(
     sync_config: SyncConfigState,
     app_state: actix_web::web::Data<AppState>,
     ingestion_service: actix_web::web::Data<IngestionServiceState>,
     progress_tracker: actix_web::web::Data<ProgressTracker>,
     upload_storage: actix_web::web::Data<fold_db::storage::UploadStorage>,
 ) {
-    // lint:spawn-bare-ok boot-time Apple auto-sync scheduler — perpetual worker, no per-request parent span.
-    tokio::spawn(async move {
-        let mut interval = tokio::time::interval(std::time::Duration::from_secs(60));
-        loop {
-            interval.tick().await;
+    let period = std::time::Duration::from_secs(60);
+    let mut interval = tokio::time::interval_at(tokio::time::Instant::now() + period, period);
+    interval.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
+    loop {
+        interval.tick().await;
 
-            let should_sync = {
-                let cfg = sync_config.read().await;
-                cfg.enabled && cfg.next_sync.is_some_and(|next| chrono::Utc::now() >= next)
-            };
+        let should_sync = {
+            let cfg = sync_config.read().await;
+            cfg.enabled && cfg.next_sync.is_some_and(|next| chrono::Utc::now() >= next)
+        };
 
-            if !should_sync {
+        if !should_sync {
+            continue;
+        }
+
+        tracing::info!(
+        target: "fold_node::ingestion",
+            "Apple auto-sync: starting scheduled import"
+        );
+
+        let (sources, photos_limit) = {
+            let cfg = sync_config.read().await;
+            (cfg.sources.clone(), cfg.photos_limit)
+        };
+
+        // Resolve current user's node through the same path as HTTP routes.
+        let (user_id, node_arc) = match require_node(&app_state).await {
+            Ok(ctx) => ctx,
+            Err(_) => {
+                tracing::warn!(
+                target: "fold_node::ingestion",
+                            "Apple auto-sync: no active node, skipping"
+                        );
                 continue;
             }
+        };
 
-            tracing::info!(
-            target: "fold_node::ingestion",
-                "Apple auto-sync: starting scheduled import"
-            );
-
-            let (sources, photos_limit) = {
-                let cfg = sync_config.read().await;
-                (cfg.sources.clone(), cfg.photos_limit)
-            };
-
-            // Resolve current user's node through the same path as HTTP routes.
-            let (user_id, node_arc) = match require_node(&app_state).await {
-                Ok(ctx) => ctx,
-                Err(_) => {
-                    tracing::warn!(
-                    target: "fold_node::ingestion",
-                                "Apple auto-sync: no active node, skipping"
-                            );
-                    continue;
-                }
-            };
-
-            let service = match ingestion_service.read().await.clone() {
-                Some(s) => s,
-                None => {
-                    tracing::warn!(
-                    target: "fold_node::ingestion",
-                                "Apple auto-sync: ingestion service not available, skipping"
-                            );
-                    continue;
-                }
-            };
-
-            let tracker = progress_tracker.get_ref().clone();
-
-            let errors = apple_import::sync_scheduler::run_sync(
-                &sources,
-                photos_limit,
-                &user_id,
-                node_arc,
-                service,
-                tracker,
-                upload_storage.get_ref().clone(),
-            )
-            .await;
-
-            {
-                let mut cfg = sync_config.write().await;
-                let now = chrono::Utc::now();
-                if errors.is_empty() {
-                    cfg.mark_sync_complete(now);
-                } else {
-                    let aggregated = errors.join(" | ");
-                    tracing::error!(
-                    target: "fold_node::ingestion",
-                                "Apple auto-sync: scheduled import finished with errors: {}",
-                                aggregated
-                            );
-                    cfg.mark_sync_error(now, aggregated);
-                }
-                if let Err(e) = cfg.save() {
-                    tracing::error!(
-                    target: "fold_node::ingestion",
-                                "Apple auto-sync: failed to persist config: {}",
-                                e
-                            );
-                }
+        let service = match ingestion_service.read().await.clone() {
+            Some(s) => s,
+            None => {
+                tracing::warn!(
+                target: "fold_node::ingestion",
+                            "Apple auto-sync: ingestion service not available, skipping"
+                        );
+                continue;
             }
+        };
 
-            tracing::info!(
-            target: "fold_node::ingestion",
-                "Apple auto-sync: scheduled import complete"
-            );
+        let tracker = progress_tracker.get_ref().clone();
+
+        let errors = apple_import::sync_scheduler::run_sync(
+            &sources,
+            photos_limit,
+            &user_id,
+            node_arc,
+            service,
+            tracker,
+            upload_storage.get_ref().clone(),
+        )
+        .await;
+
+        {
+            let mut cfg = sync_config.write().await;
+            let now = chrono::Utc::now();
+            if errors.is_empty() {
+                cfg.mark_sync_complete(now);
+            } else {
+                let aggregated = errors.join(" | ");
+                tracing::error!(
+                target: "fold_node::ingestion",
+                            "Apple auto-sync: scheduled import finished with errors: {}",
+                            aggregated
+                        );
+                cfg.mark_sync_error(now, aggregated);
+            }
+            if let Err(e) = cfg.save() {
+                tracing::error!(
+                target: "fold_node::ingestion",
+                            "Apple auto-sync: failed to persist config: {}",
+                            e
+                        );
+            }
         }
-    });
+
+        tracing::info!(
+        target: "fold_node::ingestion",
+            "Apple auto-sync: scheduled import complete"
+        );
+    }
 }
 
 #[cfg(all(test, target_os = "macos"))]

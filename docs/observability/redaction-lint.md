@@ -32,8 +32,8 @@ fold_db's docs for the long-form reasoning:
   - `src/bin/folddb/update_check.rs` — CLI startup fire-and-forget.
   - `src/server/http_server.rs` × 2 — bootstrap resume and Exemem
     session-token refresh, both run during server start.
-  - `src/server/embedded.rs` × 2 — embedded server runner task in
-    `start_embedded_server_lazy` and `start_embedded_server`.
+  - `src/server/embedded.rs` — embedded server runner task in
+    `start_embedded_server_lazy`.
   - `src/server/routes/apple_import.rs` — the Apple auto-sync scheduler
     loop (`spawn_sync_scheduler`, perpetual 60-second tick).
   - `src/ingestion/smart_folder/batch.rs` — the deferred 5-minute batch
