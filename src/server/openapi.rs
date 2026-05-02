@@ -31,20 +31,29 @@ use utoipa::OpenApi;
     ),
     components(
         schemas(
-            // fold_db schema/atom types (Schema, DeclarativeSchemaDefinition,
+            // fold_db Schema/Field family (Schema, DeclarativeSchemaDefinition,
             // FieldVariant, SingleField/HashField/RangeField/HashRangeField,
-            // Molecule family) removed from this list 2026-05-01: they
-            // transitively reference fold_db sub-types that lack
-            // `utoipa::ToSchema` upstream (`Provenance`, `KeyMetadata`,
-            // `AtomEntry`, `Query`, etc.), which makes openapi-typescript
-            // fail with unresolved $refs. None of the local routes use
-            // these via `body = X`, so dropping them from the spec is
-            // safe — the routes that hand out fold_db types (e.g.
-            // /api/schema/{name}) already serialise as opaque JSON.
-            // Re-register once fold_db Phase 3 lands ToSchema upstream
-            // (gbrain projects/api-typegen-unification).
+            // FieldCommon) still excluded — they transitively reference
+            // fold_db types (Transform, AccessPolicy, FieldMapper,
+            // schema_type enum, source, FieldBase via allOf) that don't
+            // have ToSchema upstream yet. Adding them now would cascade
+            // unresolvable $refs again. Track under
+            // gbrain projects/api-typegen-unification Phase 3 slice 3.
+            //
+            // The atom-module family IS registered now (2026-05-02): fold_db
+            // Phase 3 slice 1 (#678) added ToSchema to AtomEntry/KeyMetadata/
+            // Provenance/MoleculeRef, and slice 2 (#679) fixed utoipa's
+            // path-prefix `$ref` quirk on `super::KeyMetadata` field types.
             fold_db::schema::types::key_config::KeyConfig,
             fold_db::schema::types::key_value::KeyValue,
+            fold_db::atom::AtomEntry,
+            fold_db::atom::KeyMetadata,
+            fold_db::atom::Provenance,
+            fold_db::atom::MoleculeRef,
+            fold_db::atom::Molecule,
+            fold_db::atom::MoleculeHash,
+            fold_db::atom::MoleculeRange,
+            fold_db::atom::MoleculeHashRange,
             crate::ingestion::config::IngestionConfig,
             crate::ingestion::config::SavedConfig,
             crate::ingestion::config::AIProvider,
