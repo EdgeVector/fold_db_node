@@ -332,12 +332,13 @@ mod tests {
     /// env-touching tests via the local mutex.
     #[tokio::test]
     async fn boot_captures_bootstrap_marker_with_pool_ready() {
-        use std::sync::{Mutex, OnceLock};
+        use std::sync::OnceLock;
+        use tokio::sync::Mutex;
+        // Async-aware mutex so the guard can be held across the `boot().await`
+        // below without tripping clippy::await_holding_lock — a sync
+        // `std::sync::Mutex` here is a real deadlock risk under tokio.
         static ENV_LOCK: OnceLock<Mutex<()>> = OnceLock::new();
-        let _guard = ENV_LOCK
-            .get_or_init(|| Mutex::new(()))
-            .lock()
-            .expect("env lock");
+        let _guard = ENV_LOCK.get_or_init(|| Mutex::new(())).lock().await;
 
         let tmp = tempfile::TempDir::new().unwrap();
         std::env::set_var("FOLDDB_HOME", tmp.path());
