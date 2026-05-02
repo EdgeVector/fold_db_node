@@ -2077,7 +2077,7 @@ checksum = "3f9eec918d3f24069decb9af1554cad7c880e2da24a9afd88aca000531ab82c1"
 [[package]]
 name = "fold_db"
 version = "0.3.0"
-source = "git+https://github.com/EdgeVector/fold_db.git?rev=69d027d5fb15f80d06ef800461053d428e43d25b#69d027d5fb15f80d06ef800461053d428e43d25b"
+source = "git+https://github.com/EdgeVector/fold_db.git?rev=33af67476b0d029376738bd9a540f5426aef62e0#33af67476b0d029376738bd9a540f5426aef62e0"
 dependencies = [
  "aes-gcm",
  "async-trait",
@@ -3999,7 +3999,7 @@ dependencies = [
 [[package]]
 name = "observability"
 version = "0.1.0"
-source = "git+https://github.com/EdgeVector/fold_db.git?rev=69d027d5fb15f80d06ef800461053d428e43d25b#69d027d5fb15f80d06ef800461053d428e43d25b"
+source = "git+https://github.com/EdgeVector/fold_db.git?rev=33af67476b0d029376738bd9a540f5426aef62e0#33af67476b0d029376738bd9a540f5426aef62e0"
 dependencies = [
  "http 1.4.0",
  "once_cell",
@@ -5379,7 +5379,7 @@ dependencies = [
 [[package]]
 name = "schema_service_client"
 version = "0.1.0"
-source = "git+https://github.com/EdgeVector/schema_service.git?rev=bad00d06d24c43f6b802d12bfa40c1cc4fb40a68#bad00d06d24c43f6b802d12bfa40c1cc4fb40a68"
+source = "git+https://github.com/EdgeVector/schema_service.git?rev=7459188ab074e56aa0099c1f2b32aadecfecbe42#7459188ab074e56aa0099c1f2b32aadecfecbe42"
 dependencies = [
  "fold_db",
  "futures",
@@ -5396,7 +5396,7 @@ dependencies = [
 [[package]]
 name = "schema_service_core"
 version = "0.1.0"
-source = "git+https://github.com/EdgeVector/schema_service.git?rev=bad00d06d24c43f6b802d12bfa40c1cc4fb40a68#bad00d06d24c43f6b802d12bfa40c1cc4fb40a68"
+source = "git+https://github.com/EdgeVector/schema_service.git?rev=7459188ab074e56aa0099c1f2b32aadecfecbe42#7459188ab074e56aa0099c1f2b32aadecfecbe42"
 dependencies = [
  "async-trait",
  "chrono",
@@ -5421,7 +5421,7 @@ dependencies = [
 [[package]]
 name = "schema_service_server_http"
 version = "0.1.0"
-source = "git+https://github.com/EdgeVector/schema_service.git?rev=bad00d06d24c43f6b802d12bfa40c1cc4fb40a68#bad00d06d24c43f6b802d12bfa40c1cc4fb40a68"
+source = "git+https://github.com/EdgeVector/schema_service.git?rev=7459188ab074e56aa0099c1f2b32aadecfecbe42#7459188ab074e56aa0099c1f2b32aadecfecbe42"
 dependencies = [
  "actix-cors",
  "actix-web",
@@ -5445,7 +5445,7 @@ dependencies = [
 [[package]]
 name = "schema_service_server_shared"
 version = "0.1.0"
-source = "git+https://github.com/EdgeVector/schema_service.git?rev=bad00d06d24c43f6b802d12bfa40c1cc4fb40a68#bad00d06d24c43f6b802d12bfa40c1cc4fb40a68"
+source = "git+https://github.com/EdgeVector/schema_service.git?rev=7459188ab074e56aa0099c1f2b32aadecfecbe42#7459188ab074e56aa0099c1f2b32aadecfecbe42"
 dependencies = [
  "actix-web",
  "chrono",
@@ -7171,7 +7171,7 @@ dependencies = [
 [[package]]
 name = "wasm_compiler"
 version = "0.1.0"
-source = "git+https://github.com/EdgeVector/schema_service.git?rev=bad00d06d24c43f6b802d12bfa40c1cc4fb40a68#bad00d06d24c43f6b802d12bfa40c1cc4fb40a68"
+source = "git+https://github.com/EdgeVector/schema_service.git?rev=7459188ab074e56aa0099c1f2b32aadecfecbe42#7459188ab074e56aa0099c1f2b32aadecfecbe42"
 dependencies = [
  "log",
  "serde",
