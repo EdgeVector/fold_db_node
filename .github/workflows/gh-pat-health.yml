@@ -2,11 +2,12 @@
 # expired, revoked, or scope-reduced, this fires before the next PR or
 # release attempt does — pings Discord so someone rotates it.
 #
-# Background: PRIVATE_DEPS_TOKEN silently broke ~2026-04-30T03:30Z and
-# nobody noticed for ~12 hours; every PR's CI was failing the auth step
-# without any alert. Consolidating on GH_PAT removed one token but didn't
-# remove the silent-failure mode — GH_PAT can also expire or be rotated.
-# This workflow is the alerting half of the fix.
+# Background: a previous org-level deps token silently broke and nobody
+# noticed for ~12 hours; every PR's CI was failing the auth step without
+# any alert. Consolidating on GH_PAT removed one token but didn't remove
+# the silent-failure mode — GH_PAT can also expire or be rotated. This
+# workflow is the alerting half of the fix. Full incident context lives
+# in agent memory at `feedback_never_use_private_deps_token`.
 name: GH_PAT Health Probe
 
 on:
@@ -48,7 +49,7 @@ jobs:
         run: |
           payload=$(jq -nc \
             --arg title "GH_PAT auth failing in $REPO" \
-            --arg desc "Daily GH_PAT probe failed. Rotate the org-level secret or this will block CI org-wide. Recent precedent: PRIVATE_DEPS_TOKEN broke 2026-04-30 and ate ~12h before anyone noticed." \
+            --arg desc "Daily GH_PAT probe failed. Rotate the org-level secret or this will block CI org-wide. The previous org-deps token silently broke once and ate ~12h before anyone noticed — fix this before merging anything." \
             --arg url "$RUN_URL" \
             '{embeds:[{title:$title, description:$desc, url:$url, color:15158332}]}')
           curl -fsS -H "Content-Type: application/json" -d "$payload" "$DISCORD_WEBHOOK"

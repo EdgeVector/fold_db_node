@@ -111,9 +111,10 @@ If a release ships and you need to retract it:
 ## Auth setup
 
 All workflow auth uses `secrets.GH_PAT` (org-level Actions secret). The
-older `PRIVATE_DEPS_TOKEN` was retired 2026-04-30 after a silent expiration
-broke every PR's CI; do not reintroduce it. See
-`feedback_never_use_private_deps_token` in agent memory.
+predecessor org-deps token was retired 2026-04-30 after a silent
+expiration broke every PR's CI; do not reintroduce it under that or any
+new name. See `feedback_never_use_private_deps_token` in agent memory
+for the incident details.
 
 The daily probe at `gh-pat-health.yml` pings Discord on failure. If GH_PAT
 expires, you'll see the alert before CI breaks at the wrong time.
