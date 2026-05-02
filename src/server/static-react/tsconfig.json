@@ -27,6 +27,6 @@
       "@generated/*": ["../../../bindings/src/fold_node/static-react/src/types/*"]
     }
   },
-  "include": ["src/**/*.ts", "src/**/*.tsx"],
+  "include": ["src/**/*.ts", "src/**/*.tsx", "scripts/**/*.ts"],
   "exclude": ["node_modules", "dist", "src/types/openapi.ts"]
 }
