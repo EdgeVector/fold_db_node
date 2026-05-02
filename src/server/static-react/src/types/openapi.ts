@@ -460,6 +460,31 @@ export interface components {
          * @enum {string}
          */
         AIProvider: "Anthropic" | "Ollama";
+        /**
+         * @description Access tier — unified scale matching data sensitivity levels.
+         *
+         *     ```text
+         *     ┌───────┬───────────┬──────────────────┬─────────────────────────────────┐
+         *     │ Value │ Tier      │ Sensitivity      │ Example roles                   │
+         *     ├───────┼───────────┼──────────────────┼─────────────────────────────────┤
+         *     │   0   │ Public    │ Public           │ Anyone                          │
+         *     │   1   │ Outer     │ Internal         │ Acquaintance                    │
+         *     │   2   │ Trusted   │ Confidential     │ Friend, Trainer                 │
+         *     │   3   │ Inner     │ Restricted       │ Close friend, Family, Doctor    │
+         *     │   4   │ Owner     │ Highly Restricted│ Self (data owner)               │
+         *     └───────┴───────────┴──────────────────┴─────────────────────────────────┘
+         *     ```
+         *
+         *     Access check: `caller_tier >= field_min_tier`.
+         *     Higher tier = more access.
+         *
+         *     Name choice: "access" over "trust" because this type is an access-control
+         *     integer. The word "trust" is reserved for the informal concept (and for
+         *     trust-invite + org membership mechanisms, which are distinct from this).
+         *     See `docs/designs/platform_manifesto.md` for the full naming rationale.
+         * @enum {string}
+         */
+        AccessTier: "Public" | "Outer" | "Trusted" | "Inner" | "Owner";
         /** @description Response for async admin jobs (reset, migration, etc.) */
         AdminJobResponse: {
             job_id?: string | null;
@@ -488,6 +513,25 @@ export interface components {
             /** Format: int64 */
             written_at?: number;
         };
+        /**
+         * @description A cryptographic capability constraint on a field.
+         *     Binds a public key to a quota-limited access grant.
+         */
+        CapabilityConstraint: {
+            kind: components["schemas"]["CapabilityKind"];
+            /** @description Base64-encoded public key of the capability holder */
+            public_key: string;
+            /**
+             * Format: int64
+             * @description Remaining uses before the capability is exhausted (0 = exhausted)
+             */
+            remaining_quota: number;
+        };
+        /**
+         * @description The kind of access a capability token grants.
+         * @enum {string}
+         */
+        CapabilityKind: "Read" | "Write";
         /** @description Request for follow-up question */
         ChatRequest: {
             question: string;
@@ -501,6 +545,44 @@ export interface components {
         CloudSyncConfigDto: {
             api_url: string;
         };
+        /**
+         * @description Two-dimensional data classification label for a field.
+         *
+         *     Every field carries a classification with two independent dimensions:
+         *     - **sensitivity_level**: How sensitive the data is (0=Public … 4=Highly Restricted)
+         *     - **data_domain**: What kind of data it is (e.g. "financial", "medical", "identity")
+         *
+         *     Labels are partially ordered by sensitivity within the same domain.
+         *     Labels with different domains are incomparable — cross-domain information
+         *     flow requires explicit authorization.
+         *
+         *     Validated on construction AND deserialization — sensitivity_level > 4
+         *     or empty data_domain will produce an error in both paths.
+         *
+         *     ```text
+         *     ┌───────┬───────────────────┬──────────────────────────────────────────────┐
+         *     │ Level │ Name              │ Description                                  │
+         *     ├───────┼───────────────────┼──────────────────────────────────────────────┤
+         *     │   0   │ Public            │ Freely distributable. No access restrictions. │
+         *     │   1   │ Internal          │ Not sensitive but not for public release.     │
+         *     │   2   │ Confidential      │ Business-sensitive. Competitive value.        │
+         *     │   3   │ Restricted        │ Personally identifiable or attributable.      │
+         *     │   4   │ Highly Restricted │ Regulated data (HIPAA, financial, biometric). │
+         *     └───────┴───────────────────┴──────────────────────────────────────────────┘
+         *     ```
+         */
+        DataClassification: {
+            /**
+             * @description Data domain tag identifying the type of data (e.g. "financial", "medical",
+             *     "identity", "behavioral", "location", "general").
+             */
+            data_domain: string;
+            /**
+             * Format: int32
+             * @description Sensitivity level: 0 (Public) through 4 (Highly Restricted).
+             */
+            sensitivity_level: number;
+        };
         DatabaseConfigDto: {
             cloud_sync?: components["schemas"]["CloudSyncConfigDto"] | null;
             path: string;
@@ -513,6 +595,197 @@ export interface components {
             message: string;
             requires_restart: boolean;
             success: boolean;
+        };
+        /**
+         * @description Declarative schema definition - the primary schema representation.
+         *     This is the unified schema type that replaces the old Schema/DeclarativeSchemaDefinition split.
+         */
+        DeclarativeSchemaDefinition: {
+            /** @description Human-readable descriptive name for the schema (used in AI-generated proposals) */
+            descriptive_name?: string | null;
+            /**
+             * @description Persisted per-field access policies. Survives serialization (unlike runtime_fields).
+             *     When set, these are copied onto runtime fields during populate_runtime_fields().
+             */
+            field_access_policies?: {
+                [key: string]: components["schemas"]["FieldAccessPolicy"];
+            };
+            /**
+             * @description Classification tags for each field (e.g. "word", "name:person", "date", "number")
+             *     Maps field_name -> list of classification strings
+             */
+            field_classifications?: {
+                [key: string]: string[];
+            };
+            /**
+             * @description Data classification labels for each field: (sensitivity_level, data_domain).
+             *     Maps field_name -> DataClassification. Required for new fields at schema creation.
+             */
+            field_data_classifications?: {
+                [key: string]: components["schemas"]["DataClassification"];
+            };
+            /**
+             * @description Natural language descriptions for each field (e.g. "the person who created the artwork")
+             *     Maps field_name -> description string. Used for semantic field matching in the canonical registry.
+             */
+            field_descriptions?: {
+                [key: string]: string;
+            };
+            /**
+             * @description Interest categories for each field (e.g. "Photography", "Cooking", "Running").
+             *     Assigned by the schema service from the canonical field registry.
+             *     Maps field_name -> interest category string.
+             */
+            field_interest_categories?: {
+                [key: string]: string;
+            };
+            field_mappers?: {
+                [key: string]: components["schemas"]["FieldMapper"];
+            } | null;
+            /**
+             * @description Molecule UUIDs for each field (persisted for data continuity after mutations)
+             *     Maps field_name -> molecule_uuid. Synced from runtime_fields before persistence.
+             */
+            field_molecule_uuids?: {
+                [key: string]: string;
+            } | null;
+            /**
+             * @description Strongly typed field value types from the canonical field registry.
+             *     Maps field_name -> FieldValueType. Fields not in this map default to Any.
+             */
+            field_types?: {
+                [key: string]: components["schemas"]["FieldValueType"];
+            };
+            /** @description Field names - plain data fields without transformations */
+            fields?: string[] | null;
+            /** @description SHA256 hash of the schema content for integrity verification */
+            hash?: string | null;
+            /** @description SHA256 hash of sorted field names — unique fingerprint of schema structure */
+            identity_hash?: string | null;
+            key?: components["schemas"]["KeyConfig"] | null;
+            /** @description Schema name */
+            name: string;
+            /**
+             * @description If set, this schema belongs to an organization and its molecules sync to all org members.
+             *     Value is the hex-encoded SHA256 hash of the org's Ed25519 public key.
+             */
+            org_hash?: string | null;
+            /**
+             * @description Reference fields that point to child schemas
+             *     Maps field_name -> child_schema_name
+             */
+            ref_fields?: {
+                [key: string]: string;
+            };
+            schema_type: components["schemas"]["DeclarativeSchemaType"];
+            source?: components["schemas"]["SchemaSource"];
+            /**
+             * @description If set, this schema has been superseded by the named schema.
+             *     Superseded schemas are excluded from active indexes and matching.
+             */
+            superseded_by?: string | null;
+            /** @description Transform fields - computed fields with expressions (optional, only for transform schemas) */
+            transform_fields?: {
+                [key: string]: string;
+            } | null;
+            /**
+             * @description Default trust domain for all fields in this schema.
+             *     If set, fields without an explicit `trust_domain` in their access policy
+             *     inherit this value. For org schemas, auto-set to `org:{org_hash}`.
+             *     Default: "personal".
+             */
+            trust_domain?: string | null;
+        };
+        /**
+         * @description Represents the schema-level type information.
+         * @enum {string}
+         */
+        DeclarativeSchemaType: "Single" | "Hash" | "Range" | "HashRange";
+        /**
+         * @description Per-field access policy combining trust tier and capability checks.
+         *     Attached to `FieldCommon`. If `None`, field uses default (owner-only).
+         */
+        FieldAccessPolicy: {
+            /** @description Capability tokens required for access */
+            capabilities: components["schemas"]["CapabilityConstraint"][];
+            min_read_tier?: components["schemas"]["AccessTier"];
+            min_write_tier?: components["schemas"]["AccessTier"];
+            /**
+             * @description Which trust domain governs this field's access.
+             *     Default: "personal".
+             */
+            trust_domain?: string;
+        };
+        FieldCommon: {
+            access_policy?: components["schemas"]["FieldAccessPolicy"] | null;
+            field_mappers: {
+                [key: string]: components["schemas"]["FieldMapper"];
+            };
+            molecule_uuid?: string | null;
+            /**
+             * @description Org hash inherited from the parent schema.
+             *     When set, all Sled keys for this field's data are prefixed with `{org_hash}:`.
+             */
+            org_hash?: string | null;
+            transform?: components["schemas"]["Transform"] | null;
+            writable?: boolean;
+        };
+        FieldDefinition: {
+            field_expression?: string | null;
+        };
+        FieldMapper: string;
+        /** @enum {string} */
+        FieldType: "Single" | "Range" | "HashRange";
+        /**
+         * @description Strongly typed value types for schema fields.
+         *
+         *     Types are declared on canonical fields in the schema service and
+         *     enforced at mutation time. Every field in every schema has a concrete
+         *     type — `Any` is reserved for backward compatibility only.
+         */
+        FieldValueType: "String" | "Integer" | "Float" | "Number" | "Boolean" | "Null" | {
+            Array: components["schemas"]["FieldValueType"];
+        } | {
+            Map: components["schemas"]["FieldValueType"];
+        } | {
+            /**
+             * @description Typed struct with named fields:
+             *     `Object({"name": String, "age": Integer})`
+             */
+            Object: {
+                [key: string]: components["schemas"]["FieldValueType"];
+            };
+        } | {
+            /**
+             * @description Reference to another schema. The string is the schema name.
+             *     Enforced: the field value must be a reference object or array
+             *     of reference objects pointing to this specific schema.
+             */
+            SchemaRef: string;
+        } | {
+            /**
+             * @description Union type: matches if the value satisfies any variant.
+             *     Common use: `OneOf([String, Null])` for nullable strings.
+             */
+            OneOf: components["schemas"]["FieldValueType"][];
+        } | "Any";
+        /** @description Enumeration over all field variants. */
+        FieldVariant: {
+            Single: components["schemas"]["SingleField"];
+        } | {
+            Hash: components["schemas"]["HashField"];
+        } | {
+            Range: components["schemas"]["RangeField"];
+        } | {
+            HashRange: components["schemas"]["HashRangeField"];
+        };
+        /** @description Field keyed by a single hash key (unordered collection). */
+        HashField: components["schemas"]["FieldCommon"] & {
+            molecule?: components["schemas"]["MoleculeHash"] | null;
+        };
+        /** @description Field that combines hash and range functionality for indexing */
+        HashRangeField: components["schemas"]["FieldCommon"] & {
+            molecule?: components["schemas"]["MoleculeHashRange"] | null;
         };
         IndexResult: {
             field: string;
@@ -916,6 +1189,10 @@ export interface components {
             query: unknown;
             reasoning: string;
         };
+        /** @description Field storing a range of values. */
+        RangeField: components["schemas"]["FieldCommon"] & {
+            molecule?: components["schemas"]["MoleculeRange"] | null;
+        };
         /** @description Request body for database reset */
         ResetDatabaseRequest: {
             confirm: boolean;
@@ -955,9 +1232,49 @@ export interface components {
             query?: components["schemas"]["UseCaseOverride"];
             vision_backend?: components["schemas"]["VisionBackend"];
         };
+        SchemaResponse: {
+            schema: components["schemas"]["SchemaWithState"];
+        };
+        /**
+         * @description Origin of a schema in the service.
+         *
+         *     Everything the schema service pre-loads at startup is a **seed**. Seeds differ
+         *     by ownership: `SystemSeed` schemas are service primitives that the code
+         *     references by name (fingerprint subsystem, etc.) and must not be deleted;
+         *     `StarterSeed` schemas are pre-classified starter buckets (e.g. Schema.org
+         *     types) that users can adopt, fork, or ignore. `User` schemas are created by
+         *     node operators via `/v1/schemas/propose` and are not seeds.
+         *
+         *     This field is `#[serde(default)]` so existing stored schemas without a
+         *     `source` marker deserialize as `User`, which is the safe default (no
+         *     service-side dependency implied).
+         * @enum {string}
+         */
+        SchemaSource: "system_seed" | "starter_seed" | "user";
+        /**
+         * @description State of a schema within the system
+         * @enum {string}
+         */
+        SchemaState: "Available" | "Approved" | "Blocked";
+        /** @description Schema definition bundled with its current state for UI/API responses */
+        SchemaWithState: components["schemas"]["DeclarativeSchemaDefinition"] & {
+            state: components["schemas"]["SchemaState"];
+        };
         /** @description A single schema and the keys that were written to it during ingestion. */
         SchemaWriteRecord: {
             keys_written: components["schemas"]["KeyValue"][];
+            schema_name: string;
+        };
+        /** @description Field storing a single value. */
+        SingleField: components["schemas"]["FieldCommon"] & {
+            molecule?: components["schemas"]["Molecule"] | null;
+        };
+        /**
+         * @description Transform stores a schema_name reference.
+         *     The full schema is stored in schemas_tree and looked up when needed.
+         */
+        Transform: {
+            /** @description The name of the schema (stored in schemas_tree) */
             schema_name: string;
         };
         /**
@@ -1395,7 +1712,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": unknown;
+                    "application/json": components["schemas"]["SchemaResponse"];
                 };
             };
             /** @description Schema not found */

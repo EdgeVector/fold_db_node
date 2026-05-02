@@ -31,16 +31,15 @@ use utoipa::OpenApi;
     ),
     components(
         schemas(
-            // fold_db Schema/Field family (Schema, DeclarativeSchemaDefinition,
-            // FieldVariant, SingleField/HashField/RangeField/HashRangeField,
-            // FieldCommon) still excluded — they transitively reference
-            // fold_db types (Transform, AccessPolicy, FieldMapper,
-            // schema_type enum, source, FieldBase via allOf) that don't
-            // have ToSchema upstream yet. Adding them now would cascade
-            // unresolvable $refs again. Track under
-            // gbrain projects/api-typegen-unification Phase 3 slice 3.
+            // Schema/Field family registered as of Phase 4d' (2026-05-02): fold_db
+            // Phase 3 slice 3 (#681) added ToSchema to FieldType/FieldAccessPolicy/
+            // DataClassification/FieldValueType/AccessTier/CapabilityKind/
+            // CapabilityConstraint and aliased FieldBase<M> for the four molecule
+            // variants. Slice 3-follow-on (#682) added ToSchema to SchemaState/
+            // SchemaWithState. Slice 3 also resolved the DeclarativeSchemaType
+            // alias quirk (same class as slice 2's super::KeyMetadata fix in #679).
             //
-            // The atom-module family IS registered now (2026-05-02): fold_db
+            // The atom-module family was registered earlier (2026-05-02): fold_db
             // Phase 3 slice 1 (#678) added ToSchema to AtomEntry/KeyMetadata/
             // Provenance/MoleculeRef, and slice 2 (#679) fixed utoipa's
             // path-prefix `$ref` quirk on `super::KeyMetadata` field types.
@@ -54,6 +53,28 @@ use utoipa::OpenApi;
             fold_db::atom::MoleculeHash,
             fold_db::atom::MoleculeRange,
             fold_db::atom::MoleculeHashRange,
+            fold_db::schema::types::schema::DeclarativeSchemaType,
+            fold_db::schema::types::declarative_schemas::DeclarativeSchemaDefinition,
+            fold_db::schema::types::declarative_schemas::FieldDefinition,
+            fold_db::schema::types::declarative_schemas::FieldMapper,
+            fold_db::schema::types::declarative_schemas::SchemaSource,
+            fold_db::schema::types::data_classification::DataClassification,
+            fold_db::schema::types::field_value_type::FieldValueType,
+            fold_db::schema::types::field::variant::FieldVariant,
+            fold_db::schema::types::field::single_field::SingleField,
+            fold_db::schema::types::field::range_field::RangeField,
+            fold_db::schema::types::field::hash_field::HashField,
+            fold_db::schema::types::field::hash_range_field::HashRangeField,
+            fold_db::schema::types::field::common::FieldCommon,
+            fold_db::schema::types::field::common::FieldType,
+            fold_db::schema::types::transform::Transform,
+            fold_db::schema::schema_types::SchemaState,
+            fold_db::schema::schema_types::SchemaWithState,
+            fold_db::access::types::FieldAccessPolicy,
+            fold_db::access::types::AccessTier,
+            fold_db::access::capability::CapabilityKind,
+            fold_db::access::capability::CapabilityConstraint,
+            crate::server::routes::schema::SchemaResponse,
             crate::ingestion::config::IngestionConfig,
             crate::ingestion::config::SavedConfig,
             crate::ingestion::config::AIProvider,
