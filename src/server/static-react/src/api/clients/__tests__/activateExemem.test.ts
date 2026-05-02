@@ -1,4 +1,3 @@
-// @ts-nocheck — pre-existing strict-mode debt; remove this directive after fixing.
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 
 import { activateExemem } from '../activateExemem';
@@ -19,14 +18,17 @@ describe('activateExemem', () => {
 
   function mockFetchOnce(body: unknown, init: { ok?: boolean; status?: number; text?: string } = {}) {
     const { ok = true, status = 200, text } = init;
-    const fetchMock = vi.fn(async () => ({
-      ok,
-      status,
-      json: async () => body,
-      text: async () => text ?? '',
-    }));
-    // @ts-expect-error — jsdom fetch override
-    global.fetch = fetchMock;
+    // Typed args explicitly so `fetchMock.mock.calls[0]` is `[string, RequestInit?]`
+    // instead of the empty tuple inferred from a zero-arg implementation.
+    const fetchMock = vi.fn<(_input: RequestInfo | URL, _init?: RequestInit) => Promise<unknown>>(
+      async () => ({
+        ok,
+        status,
+        json: async () => body,
+        text: async () => text ?? '',
+      }),
+    );
+    globalThis.fetch = fetchMock as unknown as typeof globalThis.fetch;
     return fetchMock;
   }
 
@@ -64,8 +66,7 @@ describe('activateExemem', () => {
 
   it('throws immediately on empty invite code without fetching', async () => {
     const fetchMock = vi.fn();
-    // @ts-expect-error — jsdom fetch override
-    global.fetch = fetchMock;
+    globalThis.fetch = fetchMock as unknown as typeof globalThis.fetch;
 
     await expect(activateExemem('   ')).rejects.toThrow(/invite code/i);
     expect(fetchMock).not.toHaveBeenCalled();

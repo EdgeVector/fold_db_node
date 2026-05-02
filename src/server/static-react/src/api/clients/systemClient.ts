@@ -1,4 +1,3 @@
-// @ts-nocheck — pre-existing strict-mode debt; remove this directive after fixing.
 // System API Client — handles logs, database reset, and status
 
 import { ApiClient, createApiClient } from "../core/client";
@@ -59,12 +58,18 @@ export interface NodeKeyResponse {
   message: string;
 }
 
+// Pre-migration there were two `SyncStatusResponse` declarations in this file
+// — one with a narrow `state` union, one with `string | null` and an
+// `encryption_active` field. They were silently merged under @ts-nocheck.
+// This is the merged shape: every field optional so no consumer needs to
+// guard for the narrowest interpretation.
 export interface SyncStatusResponse {
   enabled: boolean;
-  state?: "idle" | "dirty" | "syncing" | "offline";
+  state?: string;
   pending_count?: number;
   last_sync_at?: number;
   last_error?: string;
+  encryption_active?: boolean;
 }
 
 export interface DatabaseConfigDto {
@@ -113,13 +118,6 @@ export interface DatabaseStatusResponse {
   initialized: boolean;
   has_saved_config: boolean;
   onboarding_complete: boolean;
-}
-
-export interface SyncStatusResponse {
-  enabled: boolean;
-  state: string | null;
-  pending_count: number | null;
-  encryption_active: boolean;
 }
 
 export interface SyncTriggerResponse {

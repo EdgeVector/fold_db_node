@@ -1,4 +1,3 @@
-// @ts-nocheck — pre-existing strict-mode debt; remove this directive after fixing.
 /**
  * LLM Query API Client
  * Provides natural language query capabilities with LLM analysis
@@ -8,10 +7,12 @@ import { createApiClient } from '../core/client';
 import { API_ENDPOINTS } from '../endpoints';
 import { API_TIMEOUTS, API_RETRIES } from '../../constants/api';
 
-// LLM client needs custom timeout for AI processing
+// LLM client needs custom timeout for AI processing.
+// Note: ApiClientConfig calls this `retryAttempts`, not `retries` — the
+// previous name was silently ignored (caught when @ts-nocheck was removed).
 const client = createApiClient({
   timeout: API_TIMEOUTS.AI_PROCESSING,
-  retries: API_RETRIES.LIMITED
+  retryAttempts: API_RETRIES.LIMITED
 });
 
 export interface ChatRequest {
