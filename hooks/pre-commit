@@ -70,6 +70,17 @@ if [ -x scripts/lint-no-hardcoded-urls.sh ]; then
     fi
 fi
 
+# --- frontend TS migration guardrail -------------------------------------
+# Catch new .js/.jsx files (or stale allowlist entries) before they hit CI.
+if [ -x scripts/lint-no-new-jsx.sh ]; then
+    if ! scripts/lint-no-new-jsx.sh >/dev/null 2>&1; then
+        echo "pre-commit: lint-no-new-jsx FAILED." >&2
+        echo "pre-commit: run \`scripts/lint-no-new-jsx.sh\` to see offenders." >&2
+        echo "pre-commit: new frontend code must be .ts/.tsx — see CLAUDE.md > UI scope." >&2
+        exit 1
+    fi
+fi
+
 # --- cargo fmt gate ------------------------------------------------------
 RS_FILES=$(echo "$STAGED" | grep '\.rs$' || true)
 if [ -z "$RS_FILES" ]; then
