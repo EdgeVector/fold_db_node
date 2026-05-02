@@ -1,4 +1,3 @@
-// @ts-nocheck — pre-existing strict-mode debt; remove this directive after fixing.
 /**
  * Core API Types for Unified Client
  * Standardized interfaces for all API operations
@@ -6,6 +5,7 @@
 
 import type { ApiResponse } from '../../types/api';
 import type { SystemKeyResponse } from '../clients/securityClient';
+import type { ApiError } from './errors';
 
 // Re-export existing ApiResponse for backward compatibility
 export type { ApiResponse };
@@ -58,12 +58,20 @@ export type RequestInterceptor = (config: RequestConfig) => RequestConfig | Prom
 // Response Interceptor Function
 export type ResponseInterceptor<T = unknown> = (response: EnhancedApiResponse<T>) => EnhancedApiResponse<T> | Promise<EnhancedApiResponse<T>>;
 
+// Error Interceptor Function — uses the concrete ApiError class so handlers
+// can branch on the error subtypes exported from ./errors.
+export type ErrorInterceptor = (error: ApiError) => ApiError | Promise<ApiError>;
+
 // Internal Request Configuration
+//
+// `body` is `unknown` because `ApiClient.serializeBody` accepts whatever the
+// caller passes (object → JSON.stringify, FormData → passthrough, anything
+// else → String()). Narrowing it here would force every call site to cast.
 export interface RequestConfig {
   url: string;
   method: HttpMethod;
   headers: Record<string, string>;
-  body?: string | ArrayBuffer | Blob | FormData | URLSearchParams | ReadableStream<Uint8Array> | null;
+  body?: unknown;
   timeout: number;
   retries: number;
   validateSchema: boolean;
@@ -140,14 +148,6 @@ export interface ApiClientInstance {
 }
 
 // Domain-specific client interfaces for type safety
-export interface SchemaApiClient {
-  getSchemas(): Promise<EnhancedApiResponse<SchemaData[]>>;
-  getSchema(name: string): Promise<EnhancedApiResponse<SchemaData>>;
-  // Removed: getSchemasByState, getAllSchemasWithState, getSchemaStatus – compute client-side
-  approveSchema(name: string): Promise<EnhancedApiResponse<void>>;
-  blockSchema(name: string): Promise<EnhancedApiResponse<void>>;
-}
-
 export interface MutationApiClient {
   executeMutation(mutation: Record<string, unknown>): Promise<EnhancedApiResponse<Record<string, unknown>>>;
   executeQuery(query: Record<string, unknown>): Promise<EnhancedApiResponse<Record<string, unknown>>>;

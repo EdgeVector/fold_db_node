@@ -1,4 +1,3 @@
-// @ts-nocheck — pre-existing strict-mode debt; remove this directive after fixing.
 /**
  * Unified API Client
  * Standardized HTTP client with authentication, caching, retry logic, and error handling
@@ -18,8 +17,6 @@ import { BROWSER_CONFIG } from "../../constants/config";
 
 import {
   ApiError,
-  NetworkError,
-  TimeoutError,
   ErrorFactory,
   isRetryableError,
 } from "./errors";
@@ -32,15 +29,13 @@ import type {
   HttpMethod,
   RequestInterceptor,
   ResponseInterceptor,
+  ErrorInterceptor,
   CacheEntry,
   RequestMetrics,
   BatchRequest,
   BatchResponse,
   ApiClientInstance,
 } from "./types";
-
-// Define ErrorInterceptor locally to use concrete ApiError class
-type ErrorInterceptor = (error: ApiError) => ApiError | Promise<ApiError>;
 
 /**
  * In-memory cache implementation
@@ -81,7 +76,9 @@ class ApiCache {
     // Implement LRU eviction if cache is full
     if (this.cache.size >= this.maxSize) {
       const firstKey = this.cache.keys().next().value;
-      this.cache.delete(firstKey);
+      if (firstKey !== undefined) {
+        this.cache.delete(firstKey);
+      }
     }
 
     this.cache.set(key, {
@@ -113,11 +110,18 @@ class RequestQueue {
   private queue = new Map<string, Promise<unknown>>();
 
   /**
-   * Get or create a request promise to prevent duplicate requests
+   * Get or create a request promise to prevent duplicate requests.
+   *
+   * The map stores promises as `Promise<unknown>` since each entry can resolve
+   * to a different shape; the cast on retrieval trusts the caller's `T`. Two
+   * concurrent callers with mismatched `T`s for the same `key` would observe
+   * a runtime type mismatch — but that's a logic bug the caller must avoid,
+   * not something the type system can express through a string-keyed map.
    */
   getOrCreate<T>(key: string, requestFn: () => Promise<T>): Promise<T> {
-    if (this.queue.has(key)) {
-      return this.queue.get(key)!;
+    const existing = this.queue.get(key);
+    if (existing) {
+      return existing as Promise<T>;
     }
 
     const promise = requestFn().finally(() => {
