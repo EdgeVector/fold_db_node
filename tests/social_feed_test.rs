@@ -128,7 +128,7 @@ async fn set_authors(node: &FoldNode, schema_name: &str, entries: &[(&str, &Ed25
         let FieldVariant::Range(rf) = field else {
             panic!("set_authors only supports Range fields");
         };
-        let mut molecule: MoleculeRange = rf.base.molecule.clone().expect("molecule not loaded");
+        let mut molecule: MoleculeRange = rf.molecule.clone().expect("molecule not loaded");
 
         for (range_key, author_kp) in entries {
             let existing_atom_uuid = molecule
