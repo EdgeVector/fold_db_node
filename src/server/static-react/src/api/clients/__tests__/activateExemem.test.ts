@@ -28,8 +28,7 @@ describe('activateExemem', () => {
         text: async () => text ?? '',
       }),
     );
-    // @ts-expect-error — jsdom fetch override
-    global.fetch = fetchMock;
+    globalThis.fetch = fetchMock as unknown as typeof globalThis.fetch;
     return fetchMock;
   }
 
@@ -67,8 +66,7 @@ describe('activateExemem', () => {
 
   it('throws immediately on empty invite code without fetching', async () => {
     const fetchMock = vi.fn();
-    // @ts-expect-error — jsdom fetch override
-    global.fetch = fetchMock;
+    globalThis.fetch = fetchMock as unknown as typeof globalThis.fetch;
 
     await expect(activateExemem('   ')).rejects.toThrow(/invite code/i);
     expect(fetchMock).not.toHaveBeenCalled();
