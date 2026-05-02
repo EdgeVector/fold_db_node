@@ -7,16 +7,16 @@ import { useEffect, useRef, useState } from 'react'
  *   - handleOperationResult: sets results and scrolls into view
  *   - Auto-clears results whenever activeTab changes (covers all switch paths)
  */
-export function useResultHandler(activeTab) {
-  const [results, setResults] = useState(null)
-  const resultsRef = useRef(null)
+export function useResultHandler<TResult = unknown>(activeTab: string | null) {
+  const [results, setResults] = useState<TResult | null>(null)
+  const resultsRef = useRef<HTMLElement | null>(null)
 
   // Clear results whenever the active tab changes (covers all switch paths)
   useEffect(() => {
     setResults(null)
   }, [activeTab])
 
-  const handleOperationResult = (result) => {
+  const handleOperationResult = (result: TResult) => {
     setResults(result)
     // Scroll results into view after rendering
     setTimeout(() => {

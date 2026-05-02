@@ -132,14 +132,8 @@ src/server/static-react/src/hooks/useAuthInitialization.js
 src/server/static-react/src/hooks/useBatchMonitor.js
 src/server/static-react/src/hooks/useDatabaseInit.js
 src/server/static-react/src/hooks/useFolderAutocomplete.js
-src/server/static-react/src/hooks/useOrgNames.js
-src/server/static-react/src/hooks/usePolling.js
 src/server/static-react/src/hooks/useQueryState.js
-src/server/static-react/src/hooks/useRangeMode.js
-src/server/static-react/src/hooks/useResultHandler.js
-src/server/static-react/src/hooks/useScanPolling.js
 src/server/static-react/src/hooks/useSearchableSelect.js
-src/server/static-react/src/hooks/useTabRouting.js
 src/server/static-react/src/index.js
 src/server/static-react/src/main.jsx
 src/server/static-react/src/store/__tests__/schemaSlice.test.js

@@ -1,4 +1,3 @@
-// @ts-nocheck — pre-existing strict-mode debt; remove this directive after fixing.
 /**
  * Redux Schema Slice - TASK-003: State Management Consolidation
  *
@@ -147,8 +146,11 @@ export const fetchSchemas = createAsyncThunk<
               }
             }
 
-            // Normalize state to lowercase string if it exists
-            let normalizedState = SCHEMA_STATES.AVAILABLE;
+            // Normalize state to lowercase string if it exists.
+            // Typed as `string` (not the SCHEMA_STATES literal union) because
+            // the toLowerCase() / String() branches produce arbitrary strings;
+            // the surrounding `as Schema[]` cast accepts the wider type.
+            let normalizedState: string = SCHEMA_STATES.AVAILABLE;
 
             if (schema.state) {
               if (typeof schema.state === "string") {

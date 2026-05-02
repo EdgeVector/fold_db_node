@@ -7,6 +7,8 @@
 
 use serde::{Deserialize, Serialize};
 use std::fmt;
+#[cfg(feature = "ts-bindings")]
+use ts_rs::TS;
 
 /// Defines a handler response struct with the canonical derive set for the
 /// HTTP API surface: `Debug`, `Clone`, serde, and `utoipa::ToSchema`. The

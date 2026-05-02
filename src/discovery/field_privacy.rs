@@ -32,6 +32,11 @@
 use serde::{Deserialize, Serialize};
 
 /// Per-field consent decision for discovery publishing.
+#[cfg_attr(feature = "ts-bindings", derive(ts_rs::TS))]
+#[cfg_attr(
+    feature = "ts-bindings",
+    ts(export, export_to = "src/fold_node/static-react/src/types/")
+)]
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 pub enum FieldPrivacyClass {
     /// Fragments from this field are never published. User-level opt-out.

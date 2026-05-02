@@ -1,4 +1,3 @@
-// @ts-nocheck — pre-existing strict-mode debt; remove this directive after fixing.
 import { describe, it, expect, vi, beforeEach } from "vitest";
 import { configureStore } from "@reduxjs/toolkit";
 import ingestionReducer, {
@@ -31,19 +30,27 @@ function stateWith(config: IngestionConfig | null): Pick<RootState, "ingestion">
 
 const anthropicConfig: IngestionConfig = {
   provider: "Anthropic",
-  anthropic: { api_key: "sk-ant-test", model: "claude-sonnet-4-20250514" },
+  anthropic: {
+    api_key: "sk-ant-test",
+    base_url: "https://api.anthropic.com",
+    model: "claude-sonnet-4-20250514",
+  },
   ollama: { model: "", base_url: "http://localhost:11434" },
 };
 
 const ollamaConfig: IngestionConfig = {
   provider: "Ollama",
-  anthropic: { api_key: "", model: "" },
+  anthropic: { api_key: "", base_url: "https://api.anthropic.com", model: "" },
   ollama: { model: "llama3.3", base_url: "http://localhost:11434" },
 };
 
 const envKeyConfig: IngestionConfig = {
   provider: "Anthropic",
-  anthropic: { api_key: "***configured***", model: "claude-sonnet-4-20250514" },
+  anthropic: {
+    api_key: "***configured***",
+    base_url: "https://api.anthropic.com",
+    model: "claude-sonnet-4-20250514",
+  },
   ollama: { model: "", base_url: "http://localhost:11434" },
 };
 

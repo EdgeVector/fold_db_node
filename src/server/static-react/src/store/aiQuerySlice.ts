@@ -1,4 +1,3 @@
-// @ts-nocheck — pre-existing strict-mode debt; remove this directive after fixing.
 /**
  * Redux AI Query Slice
  * 
@@ -104,12 +103,21 @@ const aiQuerySlice = createSlice({
       state.viewMode = action.payload;
     },
 
-    loadConversation: (state, action: PayloadAction<{ sessionId: string; messages: Omit<ConversationMessage, 'id'>[] }>) => {
+    // `id` is optional on incoming messages: persisted conversations from the
+    // backend already have one, but freshly-replayed history from a local
+    // session may not. We synthesize one when missing.
+    loadConversation: (
+      state,
+      action: PayloadAction<{
+        sessionId: string;
+        messages: (ConversationMessage | Omit<ConversationMessage, 'id'>)[];
+      }>,
+    ) => {
       state.sessionId = action.payload.sessionId;
-      state.conversationLog = action.payload.messages.map(m => ({
+      state.conversationLog = action.payload.messages.map((m) => ({
         ...m,
-        id: m.id || `msg-${++_msgCounter}`,
-      })) as ConversationMessage[];
+        id: 'id' in m && m.id ? m.id : `msg-${++_msgCounter}`,
+      }));
       state.viewMode = 'chat';
       state.inputText = '';
       state.isProcessing = false;
