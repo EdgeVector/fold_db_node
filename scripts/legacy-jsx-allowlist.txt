@@ -9,7 +9,6 @@
 #
 # When this file is empty, delete it and scripts/lint-no-new-jsx.sh.
 #
-src/server/static-react/debug_userscores.js
 src/server/static-react/src/App.jsx
 src/server/static-react/src/components/AnimatedLogo.jsx
 src/server/static-react/src/components/DatabaseSetupScreen.jsx
