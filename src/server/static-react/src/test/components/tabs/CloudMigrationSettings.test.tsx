@@ -1,4 +1,3 @@
-// @ts-nocheck — pre-existing strict-mode debt; remove this directive after fixing.
 /**
  * @fileoverview Tests for CloudMigrationSettings Stripe-checkout-return polling.
  *
@@ -8,14 +7,15 @@
  * plan flip. See PR #411's restore-status polling for the pattern template.
  */
 
-import React from 'react'
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest'
 import { render, screen, act, waitFor } from '@testing-library/react'
 import CloudMigrationSettings from '../../../components/tabs/CloudMigrationSettings'
 
 vi.mock('../../../api/clients/subscriptionClient', () => {
   class CloudApiError extends Error {
-    constructor(status, body = '') {
+    public readonly status: number
+    public readonly body: string
+    constructor(status: number, body: string = '') {
       super(`Cloud API error (${status}): ${body}`)
       this.name = 'CloudApiError'
       this.status = status
@@ -26,8 +26,9 @@ vi.mock('../../../api/clients/subscriptionClient', () => {
     getSubscriptionStatus: vi.fn(),
     createCheckoutSession: vi.fn(),
     createPortalSession: vi.fn(),
-    formatBytes: (n) => `${n} B`,
-    usagePercent: (used, quota) => (quota <= 0 ? 0 : (used / quota) * 100),
+    formatBytes: (n: number) => `${n} B`,
+    usagePercent: (used: number, quota: number) =>
+      quota <= 0 ? 0 : (used / quota) * 100,
     CloudApiError,
   }
 })
@@ -38,7 +39,12 @@ vi.mock('../../../api/clients/activateExemem', () => ({
 
 import { getSubscriptionStatus, CloudApiError } from '../../../api/clients/subscriptionClient'
 
-function setUrlParam(param) {
+// `vi.mock` replaces the real impl with a vi.fn(). The import keeps the
+// production type (`() => Promise<SubscriptionStatus>`), so use the `mocked`
+// alias to access mock APIs (mockResolvedValue, mockRejectedValue, .mock).
+const mockedGetSubscriptionStatus = vi.mocked(getSubscriptionStatus)
+
+function setUrlParam(param: string | null) {
   const search = param ? `?subscription=${param}` : ''
   window.history.replaceState({}, '', `/${search}`)
 }
@@ -64,12 +70,15 @@ function paidStatus() {
 beforeEach(() => {
   localStorage.clear()
   // Not in cloud mode by default so the "idle" path renders the simple form.
-  global.fetch = vi.fn(async (url) => {
+  // Returned plain objects only need the fields the production code reads
+  // (ok, status, json). The cast tells tsc to trust the partial Response shape;
+  // a real Response stub would be ~15 properties of test noise.
+  globalThis.fetch = vi.fn(async (url: RequestInfo | URL) => {
     if (String(url).includes('/api/auth/credentials')) {
       return { ok: true, json: async () => ({ ok: true, has_credentials: false }) }
     }
     return { ok: false, status: 404, json: async () => ({}) }
-  })
+  }) as unknown as typeof globalThis.fetch
 })
 
 afterEach(() => {
@@ -81,7 +90,7 @@ afterEach(() => {
 describe('CloudMigrationSettings Stripe checkout return', () => {
   it('idle: renders normally with no banner when no URL param', async () => {
     setUrlParam(null)
-    getSubscriptionStatus.mockResolvedValue(freeStatus())
+    mockedGetSubscriptionStatus.mockResolvedValue(freeStatus())
 
     render(<CloudMigrationSettings />)
 
@@ -101,7 +110,7 @@ describe('CloudMigrationSettings Stripe checkout return', () => {
     vi.useFakeTimers()
     setUrlParam('success')
 
-    getSubscriptionStatus
+    mockedGetSubscriptionStatus
       .mockResolvedValueOnce(freeStatus())
       .mockResolvedValueOnce(freeStatus())
       .mockResolvedValue(paidStatus())
@@ -128,15 +137,15 @@ describe('CloudMigrationSettings Stripe checkout return', () => {
     await waitFor(() =>
       expect(screen.getByTestId('upgrade-banner-complete')).toBeInTheDocument()
     )
-    expect(getSubscriptionStatus).toHaveBeenCalled()
-    expect(getSubscriptionStatus.mock.calls.length).toBeGreaterThanOrEqual(3)
+    expect(mockedGetSubscriptionStatus).toHaveBeenCalled()
+    expect(mockedGetSubscriptionStatus.mock.calls.length).toBeGreaterThanOrEqual(3)
   })
 
   it('timeout: shows timeout banner after 20s when plan never flips', async () => {
     vi.useFakeTimers()
     setUrlParam('success')
 
-    getSubscriptionStatus.mockResolvedValue(freeStatus())
+    mockedGetSubscriptionStatus.mockResolvedValue(freeStatus())
 
     render(<CloudMigrationSettings />)
 
@@ -175,9 +184,9 @@ describe('CloudMigrationSettings partial-creds reset', () => {
     localStorage.setItem('exemem_api_url', 'https://stale.example')
     localStorage.setItem('exemem_api_key', 'stale-key')
 
-    getSubscriptionStatus.mockRejectedValue(new CloudApiError(401, 'AUTH_FAILED'))
+    mockedGetSubscriptionStatus.mockRejectedValue(new CloudApiError(401, 'AUTH_FAILED'))
 
-    const fetchMock = vi.fn(async (url, init) => {
+    const fetchMock = vi.fn(async (url: RequestInfo | URL, init?: RequestInit) => {
       if (String(url).includes('/api/auth/credentials')) {
         if (init && init.method === 'DELETE') {
           return { ok: true, json: async () => ({ ok: true }) }
@@ -186,7 +195,7 @@ describe('CloudMigrationSettings partial-creds reset', () => {
       }
       return { ok: false, status: 404, json: async () => ({}) }
     })
-    global.fetch = fetchMock
+    globalThis.fetch = fetchMock as unknown as typeof globalThis.fetch
 
     render(<CloudMigrationSettings />)
 
@@ -207,14 +216,14 @@ describe('CloudMigrationSettings partial-creds reset', () => {
     localStorage.setItem('exemem_api_url', 'https://api.example')
     localStorage.setItem('exemem_api_key', 'good-key')
 
-    getSubscriptionStatus.mockRejectedValue(new Error('network down'))
+    mockedGetSubscriptionStatus.mockRejectedValue(new Error('network down'))
 
-    global.fetch = vi.fn(async (url) => {
+    globalThis.fetch = vi.fn(async (url: RequestInfo | URL) => {
       if (String(url).includes('/api/auth/credentials')) {
         return { ok: true, json: async () => ({ ok: true, has_credentials: true }) }
       }
       return { ok: false, status: 404, json: async () => ({}) }
-    })
+    }) as unknown as typeof globalThis.fetch
 
     render(<CloudMigrationSettings />)
 
@@ -240,14 +249,14 @@ describe('CloudMigrationSettings partial-creds reset', () => {
     localStorage.setItem('exemem_api_url', 'https://api.example')
     localStorage.setItem('exemem_api_key', 'good-key')
 
-    getSubscriptionStatus.mockRejectedValue(new CloudApiError(503, 'service unavailable'))
+    mockedGetSubscriptionStatus.mockRejectedValue(new CloudApiError(503, 'service unavailable'))
 
-    global.fetch = vi.fn(async (url) => {
+    globalThis.fetch = vi.fn(async (url: RequestInfo | URL) => {
       if (String(url).includes('/api/auth/credentials')) {
         return { ok: true, json: async () => ({ ok: true, has_credentials: true }) }
       }
       return { ok: false, status: 404, json: async () => ({}) }
-    })
+    }) as unknown as typeof globalThis.fetch
 
     render(<CloudMigrationSettings />)
 
