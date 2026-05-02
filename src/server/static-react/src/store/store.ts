@@ -1,4 +1,3 @@
-// @ts-nocheck — pre-existing strict-mode debt; remove this directive after fixing.
 import { configureStore } from "@reduxjs/toolkit";
 import authReducer from "./authSlice";
 import schemaReducer from "./schemaSlice";
