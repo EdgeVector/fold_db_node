@@ -209,9 +209,7 @@ pub async fn get_feed(
 fn find_writer_pubkey(schema: &Schema, key: &KeyValue) -> Option<String> {
     for field in schema.runtime_fields.values() {
         let pk = match field {
-            FieldVariant::Single(f) => f.molecule
-                .as_ref()
-                .map(|m| m.writer_pubkey().to_string()),
+            FieldVariant::Single(f) => f.molecule.as_ref().map(|m| m.writer_pubkey().to_string()),
             FieldVariant::Hash(f) => key.hash.as_ref().and_then(|h| {
                 f.molecule
                     .as_ref()
