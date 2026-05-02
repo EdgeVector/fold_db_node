@@ -1,7 +1,6 @@
-// @ts-nocheck — pre-existing strict-mode debt; remove this directive after fixing.
 /**
  * Indexing Status Client
- * 
+ *
  * Provides methods for querying the background indexing system status.
  */
 
@@ -28,5 +27,8 @@ export async function getIndexingStatus(): Promise<IndexingStatus> {
     API_ENDPOINTS.GET_INDEXING_STATUS,
     { cacheable: false } // Don't cache - we need real-time status updates
   );
+  if (!response.data) {
+    throw new Error('Indexing status response missing data');
+  }
   return response.data;
 }
