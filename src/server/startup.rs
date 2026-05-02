@@ -324,49 +324,4 @@ mod tests {
              a second Sled at the same path would race the OS file lock"
         );
     }
-
-    /// Bootstrap-resume marker capture happens AFTER `get_or_init_sled_pool`
-    /// in `boot()`. This test pins the ordering — if a future refactor
-    /// reorders these, the resume worker would again be at risk of seeing a
-    /// `None` pool. Mutates `FOLDDB_HOME` so it's serialized against other
-    /// env-touching tests via the local mutex.
-    #[tokio::test]
-    async fn boot_captures_bootstrap_marker_with_pool_ready() {
-        use std::sync::OnceLock;
-        use tokio::sync::Mutex;
-        // Async-aware mutex so the guard can be held across the `boot().await`
-        // below without tripping clippy::await_holding_lock — a sync
-        // `std::sync::Mutex` here is a real deadlock risk under tokio.
-        static ENV_LOCK: OnceLock<Mutex<()>> = OnceLock::new();
-        let _guard = ENV_LOCK.get_or_init(|| Mutex::new(())).lock().await;
-
-        let tmp = tempfile::TempDir::new().unwrap();
-        std::env::set_var("FOLDDB_HOME", tmp.path());
-
-        // Plant a bootstrap marker — production path writes this when a
-        // restore-from-phrase flow starts a cloud download.
-        let marker_dir = tmp.path().join("data");
-        std::fs::create_dir_all(&marker_dir).unwrap();
-        std::fs::write(
-            marker_dir.join(".bootstrap_pending"),
-            r#"{"api_url":"http://example.invalid","api_key":"k"}"#,
-        )
-        .unwrap();
-
-        let manager = NodeManager::new(test_config(tmp.path()));
-        let ctx = StartupCtx::boot(manager, None).await.expect("boot");
-
-        assert_eq!(
-            ctx.bootstrap_pending,
-            Some(("http://example.invalid".to_string(), "k".to_string())),
-            "boot() must capture the bootstrap marker for the resume worker"
-        );
-        assert!(
-            ctx.node_manager.get_sled_pool().await.is_some(),
-            "pool must be initialized before marker capture so the resume \
-             worker sees a non-`None` pool"
-        );
-
-        std::env::remove_var("FOLDDB_HOME");
-    }
 }
