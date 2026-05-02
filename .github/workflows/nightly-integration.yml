@@ -33,6 +33,12 @@ on:
     - cron: "0 9 * * *"
   workflow_dispatch:
 
+# Minimum needed for actions/checkout. Every job in this file is read-only;
+# none push branches, write issues, or hit cross-repo APIs. Explicit so
+# CodeQL doesn't flag each job individually.
+permissions:
+  contents: read
+
 concurrency:
   group: nightly-integration
   cancel-in-progress: false
