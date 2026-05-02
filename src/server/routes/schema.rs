@@ -5,6 +5,7 @@ use crate::server::routes::{
     handler_error_to_response, handler_result_to_response, node_or_return,
 };
 use actix_web::{web, HttpResponse, Responder};
+use fold_db::schema::SchemaWithState;
 use serde::{Deserialize, Serialize};
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -13,9 +14,9 @@ pub struct SchemaListResponse {
     pub count: usize,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, utoipa::ToSchema)]
 pub struct SchemaResponse {
-    pub schema: serde_json::Value,
+    pub schema: SchemaWithState,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -74,11 +75,7 @@ pub async fn list_schemas(state: web::Data<AppState>) -> impl Responder {
         ("name" = String, Path, description = "Schema name")
     ),
     responses(
-        // body = serde_json::Value: fold_db's Schema lacks utoipa::ToSchema
-        // upstream (Phase 3 cross-repo task in
-        // gbrain projects/api-typegen-unification). Surface as opaque JSON
-        // until ToSchema lands in fold_db.
-        (status = 200, description = "Schema", body = serde_json::Value),
+        (status = 200, description = "Schema", body = SchemaResponse),
         (status = 404, description = "Schema not found"),
         (status = 500, description = "Server error")
     )
@@ -94,11 +91,9 @@ pub async fn get_schema(path: web::Path<String>, state: web::Data<AppState>) -> 
                 .await
                 .typed_handler_err()?
                 .ok_or_else(|| HandlerError::NotFound(format!("Schema not found: {}", name)))?;
-            let schema_json =
-                serde_json::to_value(&schema_with_state).handler_err("serialize schema")?;
             Ok(ApiResponse::success_with_user(
                 SchemaResponse {
-                    schema: schema_json,
+                    schema: schema_with_state,
                 },
                 user_hash,
             ))
