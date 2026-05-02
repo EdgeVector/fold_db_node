@@ -1,23 +1,27 @@
 name: Test Suite
 
-# Three-tier model:
-#   - Tier 1 (pull_request): fast checks every push — lint, lib + doc
-#     tests, clippy --all-targets, frontend. ~3-4 min. Skips integration
-#     tests, e2e, face-detection.
-#   - Tier 2 (merge_group + bump-cascade PRs): comprehensive gate —
-#     full integration suite, face-detection (path-filtered), e2e.
-#     ~7-10 min. Runs at merge time AND on the `bot/bump-schema-service`
-#     PR so cascade-bump regressions surface before queue admission
-#     instead of failing in the queue (where each failure tears down
-#     and rebuilds the merge group, forcing every queued PR to re-run
-#     CI). Human PRs stay on Tier 1 only.
-#   - Tier 3 (was push: main) — DROPPED. merge_group already validates
-#     the merged commit; running the same workload again on push to main
-#     is pure duplication. Branch protection on main requires the
-#     `ci-required` check, which fires from merge_group.
+# Two-tier model (revised 2026-05-01 — was three-tier):
+#   - Tier 1 (pull_request): every check that gates a merge — lint,
+#     clippy --all-targets, lib + doc tests, frontend. ~3-4 min.
+#     This is THE correctness gate.
+#   - Tier 2 (merge_group): rubber-stamp admission. Only the path-filter
+#     and the ci-required aggregator fire; every real workload (lint,
+#     rust-fast, frontend-tests) is gated to `pull_request` and skips
+#     on merge_group. Wall time ~30-60s. Branch protection still
+#     requires the `ci-required` check on merge_group; it passes
+#     because `if: always()` + skipped-counts-as-success makes it
+#     green when all needed jobs skip.
 #
-# Slow / external / API-key tests run on schedule via
-# nightly-integration.yml (Tier 4) — see that file.
+# All slow workloads (clippy from clean state, doc tests, integration
+# shards, face-detection, Playwright e2e, perf, AI-gated tests, FastEmbed)
+# run nightly on main via nightly-integration.yml (Tier 3). Trade-off:
+# regressions land on main and surface the next morning instead of being
+# caught at merge time. With ~15-20 PRs/day, a nightly failure has many
+# candidate culprits — git-bisect over the last day's commits to find it.
+# This was a deliberate choice to keep the merge queue dragging at sub-
+# minute wall time; the previous merge-queue-runs-everything model
+# blocked merges for 10+ min per attempt, and a single shard failure
+# tore down the whole queue and forced every queued PR to re-run CI.
 on:
   pull_request:
   merge_group:
@@ -41,16 +45,18 @@ jobs:
   # ci-required treats `skipped` as success so docs-only PRs still
   # produce a green required check without doing real work.
   changes:
+    if: github.event_name == 'pull_request'
     uses: EdgeVector/.github/.github/workflows/check-paths.yml@main
     secrets: inherit
 
   # ─── Tier 1 ──────────────────────────────────────────────────────
-  # Always runs. Cheap. Caps PR-push wall time.
+  # PR-only. Every job below gates on `github.event_name == 'pull_request'`
+  # so merge_group is a pure rubber stamp (only ci-required fires there).
 
   lint:
     name: Lint
     needs: changes
-    if: needs.changes.outputs.rust == 'true' || needs.changes.outputs.frontend == 'true'
+    if: github.event_name == 'pull_request' && (needs.changes.outputs.rust == 'true' || needs.changes.outputs.frontend == 'true')
     runs-on: ubuntu-latest
 
     steps:
@@ -123,13 +129,9 @@ jobs:
       - name: Check formatting
         run: cargo fmt --all -- --check
 
-      # PR clippy: --all-targets (matches Tier 2). Lints test code on
-      # every push so a clippy error in test code can't pass PR-level
-      # CI, get auto-merge-admitted to the queue, and then fail
-      # rust-merge-checks's --all-targets sweep — which would tear down
-      # the merge group and force every queued PR to re-run CI. Costs
-      # ~30s extra PR wall time; the queue-thrash alternative is much
-      # more expensive (one bad PR poisons N queued PRs).
+      # PR clippy: --all-targets. Lints test code, examples, benches —
+      # this is the ONLY merge-gating clippy run (merge_group does not
+      # re-run clippy as of 2026-05-01).
       - name: Run clippy (--all-targets)
         run: cargo clippy --workspace --all-targets -- -D warnings
 
@@ -172,7 +174,7 @@ jobs:
   frontend-tests:
     name: Frontend Tests
     needs: changes
-    if: needs.changes.outputs.frontend == 'true'
+    if: github.event_name == 'pull_request' && needs.changes.outputs.frontend == 'true'
     runs-on: ubuntu-latest
 
     steps:
@@ -212,234 +214,14 @@ jobs:
         working-directory: src/server/static-react
         run: npm test
 
-  # ─── Tier 2 ──────────────────────────────────────────────────────
-  # Only runs at merge time. Comprehensive. Gates the merge.
-  #
-  # Split into two jobs that fan out in parallel:
-  #   - rust-merge-checks: clippy --all-targets + doc tests (single runner;
-  #     neither shards usefully).
-  #   - rust-full: lib + integration tests, sharded 4 ways via
-  #     `cargo nextest --partition count:N/4`. Compilation is duplicated
-  #     across shards but Swatinem/rust-cache hits the same key on each
-  #     leg, and test execution wall-time was the bottleneck — not compile.
-  # Wall time is gated by the slowest leg + ci-required join.
-
-  rust-merge-checks:
-    name: Rust Clippy + Doc Tests
-    if: github.event_name == 'merge_group' || github.head_ref == 'bot/bump-schema-service'
-    # TEMPORARY 2026-05-01: downgraded from `ubuntu-latest-m` (4-core
-    # larger runner) to `ubuntu-latest` (2-core standard). The larger
-    # runner pool wedged for 60+ min, leaving 10+ PRs stuck in the
-    # merge queue with no way to land. Standard runners process
-    # PR-level CI normally — falling back here drains the queue at
-    # the cost of slower integration tests. Revert to `ubuntu-latest-m`
-    # once the larger pool recovers (single-line edit, see #788).
-    runs-on: ubuntu-latest
-    timeout-minutes: 30
-
-    env:
-      RUSTFLAGS: -C linker=clang -C link-arg=-fuse-ld=mold
-
-    steps:
-      - name: Checkout repository
-        uses: actions/checkout@v4
-
-      - name: Install mold linker
-        run: sudo apt-get update && sudo apt-get install -y mold
-
-      - name: Install Rust
-        uses: dtolnay/rust-toolchain@stable
-        with:
-          components: clippy, rustfmt
-
-      - name: Configure git for private dependencies
-        run: git config --global url."https://x-access-token:${{ secrets.GH_PAT }}@github.com/".insteadOf "https://github.com/"
-
-      - name: Cache Rust artifacts
-        uses: Swatinem/rust-cache@v2
-        with:
-          key: tier2-merge-checks
-
-      - name: Stub frontend dist for rust_embed
-        run: mkdir -p src/server/static-react/dist && echo '<html></html>' > src/server/static-react/dist/index.html
-
-      # Merge-time clippy: full --all-targets sweep so test code, examples,
-      # and benches all get linted before the PR is allowed to merge.
-      - name: Run clippy (--all-targets)
-        run: cargo clippy --workspace --all-targets -- -D warnings
-
-      - name: Run doc tests
-        run: cargo test --workspace --doc
-
-  rust-full:
-    name: Rust Integration (shard ${{ matrix.shard }}/4)
-    if: github.event_name == 'merge_group' || github.head_ref == 'bot/bump-schema-service'
-    # TEMPORARY 2026-05-01: same downgrade as `rust-merge-checks`
-    # above. Revert to `ubuntu-latest-m` once the larger pool recovers.
-    runs-on: ubuntu-latest
-    timeout-minutes: 30
-    strategy:
-      fail-fast: false
-      matrix:
-        shard: [1, 2, 3, 4]
-
-    env:
-      RUSTFLAGS: -C linker=clang -C link-arg=-fuse-ld=mold
-
-    steps:
-      - name: Checkout repository
-        uses: actions/checkout@v4
-
-      - name: Install mold linker
-        run: sudo apt-get update && sudo apt-get install -y mold
-
-      - name: Install Rust
-        uses: dtolnay/rust-toolchain@stable
-
-      - name: Install cargo-nextest
-        uses: taiki-e/install-action@v2
-        with:
-          tool: nextest
-
-      - name: Configure git for private dependencies
-        run: git config --global url."https://x-access-token:${{ secrets.GH_PAT }}@github.com/".insteadOf "https://github.com/"
-
-      - name: Cache Rust artifacts
-        uses: Swatinem/rust-cache@v2
-        with:
-          key: tier2-full
-
-      - name: Stub frontend dist for rust_embed
-        run: mkdir -p src/server/static-react/dist && echo '<html></html>' > src/server/static-react/dist/index.html
-
-      # Full integration suite, partitioned across 4 shards. nextest
-      # discovers all tests, sorts them deterministically, then runs the
-      # 1/4-th slice belonging to this shard. --features test-utils
-      # enables the two test files gated on it (schema_service_expansion_test,
-      # schema_service_semantic_match_test). Face-detection feature is
-      # NOT enabled here — face-detection-tests below is the dedicated
-      # job for that.
-      - name: Run lib + integration tests (shard ${{ matrix.shard }}/4)
-        run: cargo nextest run --workspace --features test-utils --partition count:${{ matrix.shard }}/4
-
-  # Path filter for face-detection-tests below. Lets us skip the slow
-  # ort/ndarray/onnx + 50 MB model download when the merging PR doesn't
-  # touch face-detection code or its feature config.
-  face-detection-paths:
-    name: Face Detection Paths
-    if: github.event_name == 'merge_group' || github.head_ref == 'bot/bump-schema-service'
-    runs-on: ubuntu-latest
-    outputs:
-      changed: ${{ steps.filter.outputs.face }}
-    steps:
-      - name: Checkout repository
-        uses: actions/checkout@v4
-      - name: Detect face-detection-relevant changes
-        id: filter
-        uses: dorny/paths-filter@v3
-        with:
-          filters: |
-            face:
-              - 'Cargo.toml'
-              - 'src/handlers/detect_faces*.rs'
-              - 'src/handlers/fingerprints/detect_faces*.rs'
-              - 'tests/detect_faces_handler_test.rs'
-              - '.github/workflows/ci-tests.yml'
-
-  face-detection-tests:
-    name: Face Detection Tests
-    needs: face-detection-paths
-    if: (github.event_name == 'merge_group' || github.head_ref == 'bot/bump-schema-service') && needs.face-detection-paths.outputs.changed == 'true'
-    # TEMPORARY 2026-05-01: same downgrade as `rust-full` above. Revert
-    # to `ubuntu-latest-m` once the larger pool recovers.
-    runs-on: ubuntu-latest
-    timeout-minutes: 25
-
-    env:
-      RUSTFLAGS: -C linker=clang -C link-arg=-fuse-ld=mold
-
-    steps:
-      - name: Checkout repository
-        uses: actions/checkout@v4
-
-      - name: Install mold linker
-        run: sudo apt-get update && sudo apt-get install -y mold
-
-      - name: Install Rust
-        uses: dtolnay/rust-toolchain@stable
-
-      - name: Configure git for private dependencies
-        run: git config --global url."https://x-access-token:${{ secrets.GH_PAT }}@github.com/".insteadOf "https://github.com/"
-
-      - name: Cache Rust artifacts
-        uses: Swatinem/rust-cache@v2
-        with:
-          key: tier2-face-detection
-
-      - name: Stub frontend dist for rust_embed
-        run: mkdir -p src/server/static-react/dist && echo '<html></html>' > src/server/static-react/dist/index.html
-
-      - name: Run face-detection integration tests
-        run: cargo test --features face-detection --test detect_faces_handler_test -- --nocapture
-
-  e2e-tests:
-    name: E2E UI Tests
-    if: github.event_name == 'merge_group' || github.head_ref == 'bot/bump-schema-service'
-    runs-on: ubuntu-latest
-
-    steps:
-      - name: Checkout repository
-        uses: actions/checkout@v4
-
-      - name: Check if E2E tests exist
-        id: check-e2e
-        run: |
-          if [ -d src/server/static-react/e2e ]; then
-            echo "exists=true" >> $GITHUB_OUTPUT
-          else
-            echo "exists=false" >> $GITHUB_OUTPUT
-            echo "⏭️ **E2E UI Tests** — skipped (no e2e/ directory)" >> $GITHUB_STEP_SUMMARY
-          fi
-
-      - name: Setup Node.js
-        if: steps.check-e2e.outputs.exists == 'true'
-        uses: actions/setup-node@v4
-        with:
-          node-version: "20"
-          cache: "npm"
-          cache-dependency-path: src/server/static-react/package-lock.json
-
-      - name: Install dependencies
-        if: steps.check-e2e.outputs.exists == 'true'
-        working-directory: src/server/static-react
-        run: npm ci
-
-      - name: Install Playwright browsers
-        if: steps.check-e2e.outputs.exists == 'true'
-        working-directory: src/server/static-react
-        run: npx playwright install chromium --with-deps
-
-      - name: Run E2E smoke tests
-        if: steps.check-e2e.outputs.exists == 'true'
-        working-directory: src/server/static-react
-        run: npx playwright test
-
-      - name: Upload test artifacts
-        if: failure() && steps.check-e2e.outputs.exists == 'true'
-        uses: actions/upload-artifact@v4
-        with:
-          name: playwright-report
-          path: src/server/static-react/test-results/
-          retention-days: 7
-
   # ─── Required check ──────────────────────────────────────────────
   # Org-wide convention: every EdgeVector repo exposes `ci-required`
   # so a single uniform check name can be wired into branch protection.
-  # Treats `skipped` as success so Tier-2-only jobs don't block PR runs
-  # (where Tier 2 is intentionally not running).
+  # Treats `skipped` as success — at merge_group every other job skips,
+  # so this passes immediately and lets the queue land the PR.
   ci-required:
     name: ci-required
-    needs: [changes, lint, rust-fast, rust-merge-checks, rust-full, face-detection-paths, face-detection-tests, frontend-tests, e2e-tests]
+    needs: [changes, lint, rust-fast, frontend-tests]
     if: always()
     runs-on: ubuntu-latest
     steps:
