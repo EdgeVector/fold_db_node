@@ -25,7 +25,15 @@ jobs:
   e2e:
     name: E2E Test Framework (dev cloud)
     runs-on: ubuntu-latest
-    timeout-minutes: 30
+    # Bumped 30 → 90 on 2026-05-03: scheduled nightly runs were being silently
+    # cancelled at exactly 30m18s for 8 consecutive days because org-sync-2node's
+    # first sync_trigger after a fresh org join takes ~18 min in fold_db's
+    # SyncEngine::sync (engine.rs:599). The 30-min wall fired before the test
+    # could fail cleanly with logs, so we couldn't even tell which I/O call was
+    # slow. 90 min lets the test complete (or fail with logs) so we can localize
+    # the hang. Track the underlying perf regression separately.
+    # See gbrain projects/e2e-cloud-nightly-cancellation-2026-04-26.
+    timeout-minutes: 90
 
     # Only run on the main repo (not forks) to protect secrets
     if: github.repository == 'EdgeVector/fold_db_node'
@@ -159,8 +167,12 @@ jobs:
           done
           exit $FAIL
 
-      - name: Upload session logs on failure
-        if: failure()
+      - name: Upload session logs
+        # `if: always()` (was `if: failure()`) so the artifact uploads on
+        # cancellation too. The 30-min cancellation pattern (2026-04-26 →
+        # 2026-05-03) produced zero artifacts because cancel skips `failure()`.
+        # We need the logs from cancelled runs to localize the sync hang.
+        if: always()
         uses: actions/upload-artifact@v4
         with:
           name: e2e-session-logs
