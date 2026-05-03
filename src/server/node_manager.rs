@@ -120,14 +120,6 @@ impl NodeManager {
             node_config.config_dir = Some(manager_config_dir);
         }
 
-        // Hand-off to the upstream `fold_db_core::factory`, which reads
-        // `FOLD_STORAGE_PATH` to locate the Sled database. Internal callers
-        // MUST NOT read this env var — use `node_config.get_storage_path()`
-        // instead. This is the single localized set; `setup_config_environment`
-        // and `admin_ops::cloud_sync_upload` no longer touch the env. Removing
-        // this contract requires a `fold_db` rev bump (out of scope here).
-        std::env::set_var("FOLD_STORAGE_PATH", node_config.get_storage_path());
-
         // Inject per-device credentials from credentials.json into the
         // DatabaseConfig. credentials.json is the single source of truth for
         // api_key and session_token. Sled must not store per-device secrets.

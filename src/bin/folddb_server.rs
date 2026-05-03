@@ -91,12 +91,11 @@ struct StartupInfo {
 /// and config-file paths so they share dir-creation logic — the asymmetry
 /// between the two arms was the spot most likely to grow a bug.
 ///
-/// Both `config_dir` and the storage path used to be propagated as
-/// process-wide env vars (`FOLD_CONFIG_DIR`, `FOLD_STORAGE_PATH`); after
-/// the StartupCtx-paths migration they are returned via `StartupInfo` and
-/// later threaded into `NodeManagerConfig`. The single env-var set that
-/// survives lives in `NodeManager::create_node` as a hand-off to the
-/// upstream `fold_db_core::factory`.
+/// `config_dir` and the storage path used to be propagated as process-wide
+/// env vars (`FOLD_CONFIG_DIR`, `FOLD_STORAGE_PATH`); after the
+/// StartupCtx-paths migration they are returned via `StartupInfo` and
+/// later threaded into `NodeManagerConfig`. No env mutation survives in
+/// the boot path.
 fn setup_config_environment(
     config: &mut NodeConfig,
     data_dir: Option<PathBuf>,
