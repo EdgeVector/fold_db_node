@@ -1,8 +1,16 @@
-export default function NodeDetail({ node, links, nodes }) {
+import type { GraphNode, GraphLink } from '../../../utils/graphUtils'
+
+interface NodeDetailProps {
+  node: GraphNode | null
+  links: GraphLink[]
+  nodes: GraphNode[]
+}
+
+export default function NodeDetail({ node, links, nodes }: NodeDetailProps) {
   if (!node) return null
   const connected = links.filter(l => {
-    const src = typeof l.source === 'object' ? l.source?.id : l.source
-    const tgt = typeof l.target === 'object' ? l.target?.id : l.target
+    const src = typeof l.source === 'object' ? (l.source as GraphNode | null)?.id : l.source
+    const tgt = typeof l.target === 'object' ? (l.target as GraphNode | null)?.id : l.target
     return src === node.id || tgt === node.id
   })
   return (
@@ -20,8 +28,8 @@ export default function NodeDetail({ node, links, nodes }) {
           </div>
           <div className="space-y-1 max-h-56 overflow-y-auto pr-1">
             {connected.map((l, i) => {
-              const src = typeof l.source === 'object' ? l.source?.id : l.source
-              const tgt = typeof l.target === 'object' ? l.target?.id : l.target
+              const src = typeof l.source === 'object' ? (l.source as GraphNode | null)?.id : l.source
+              const tgt = typeof l.target === 'object' ? (l.target as GraphNode | null)?.id : l.target
               const other = src === node.id ? tgt : src
               const otherNode = nodes.find(n => n.id === other)
               const otherLabel = otherNode?.label ?? String(other ?? '').replace(/^(schema:|word:)/, '')

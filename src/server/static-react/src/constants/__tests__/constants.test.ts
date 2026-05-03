@@ -2,6 +2,7 @@
  * Constants Integration Tests
  */
 
+import { describe, test, expect } from 'vitest'
 import {
   BROWSER_CONFIG,
   SCHEMA_STATES,

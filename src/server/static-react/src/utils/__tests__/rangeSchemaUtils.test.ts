@@ -2,7 +2,8 @@ import { describe, it, expect } from 'vitest'
 import {
   isRangeSchema,
   getRangeKey,
-  getRangeSchemaInfo
+  getRangeSchemaInfo,
+  type Schema,
 } from '../rangeSchemaHelpers'
 
 describe('rangeSchemaUtils', () => {
@@ -107,7 +108,7 @@ describe('rangeSchemaUtils', () => {
       const schema = {
         name: 'TestSchema',
         schema_type: { Single: {} }
-      }
+      } as unknown as Schema
       expect(getRangeKey(schema)).toBe(null)
     })
   })
@@ -167,7 +168,7 @@ describe('rangeSchemaUtils', () => {
         fields: {
           field1: { field_type: 'Range' }
         }
-      }
+      } as unknown as Schema
 
       expect(isRangeSchema(schema)).toBe(false)
       expect(getRangeKey(schema)).toBe(null)

@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useState } from 'react'
-import { listIdentities } from '../../../api/clients/fingerprintsClient'
+import { listIdentities, type IdentityAuditRow } from '../../../api/clients/fingerprintsClient'
 
 /**
  * "Identities" audit panel — surfaces every Identity record on this
@@ -14,9 +14,9 @@ import { listIdentities } from '../../../api/clients/fingerprintsClient'
  * is a follow-up.
  */
 export default function ImportedIdentitiesPanel() {
-  const [identities, setIdentities] = useState([])
+  const [identities, setIdentities] = useState<IdentityAuditRow[]>([])
   const [loading, setLoading] = useState(true)
-  const [error, setError] = useState(null)
+  const [error, setError] = useState<string | null>(null)
 
   const fetchRows = useCallback(async () => {
     setLoading(true)
@@ -29,7 +29,7 @@ export default function ImportedIdentitiesPanel() {
         setError(res.error ?? 'Failed to load identities')
       }
     } catch (e) {
-      setError(e?.message ?? 'Network error')
+      setError((e as Error)?.message ?? 'Network error')
     } finally {
       setLoading(false)
     }

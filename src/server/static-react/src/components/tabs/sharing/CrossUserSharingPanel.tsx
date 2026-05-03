@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useState } from 'react'
+import { useCallback, useEffect, useMemo, useState, type FormEvent, type ChangeEvent } from 'react'
 import { ClipboardIcon, LockClosedIcon } from '@heroicons/react/24/outline'
 import {
   listShareRules,
@@ -7,9 +7,14 @@ import {
   generateShareInvite,
   acceptShareInvite,
   listPendingShareInvites,
+  type ShareRule,
+  type ShareInvite,
+  type ShareScope,
 } from '../../../api/clients/sharingClient'
-import { listContacts } from '../../../api/clients/trustClient'
+import { listContacts, type Contact } from '../../../api/clients/trustClient'
 import { getAllSchemasWithState } from '../../../api/clients/schemaClient'
+
+type ScopeKind = 'AllSchemas' | 'Schema' | 'SchemaField'
 
 /**
  * Cross-User Sharing panel.
@@ -24,39 +29,41 @@ import { getAllSchemasWithState } from '../../../api/clients/schemaClient'
  * src/handlers/sharing.rs and src/server/routes/sharing.rs.
  */
 
-function truncate(hex, head = 8, tail = 4) {
+function truncate(hex: string | null | undefined, head = 8, tail = 4): string {
   if (!hex) return ''
   if (hex.length <= head + tail + 1) return hex
   return `${hex.slice(0, head)}…${hex.slice(-tail)}`
 }
 
-function describeScope(scope) {
-  if (scope === 'AllSchemas' || scope?.AllSchemas !== undefined) {
+function describeScope(scope: ShareScope): string {
+  if (scope === 'AllSchemas') {
     return 'All my data'
   }
-  if (scope?.Schema !== undefined) {
-    return `Schema: ${scope.Schema}`
-  }
-  if (scope?.SchemaField !== undefined) {
-    const [schema, field] = scope.SchemaField
-    return `Field: ${schema}.${field}`
+  if (typeof scope === 'object' && scope !== null) {
+    if ('Schema' in scope) {
+      return `Schema: ${scope.Schema}`
+    }
+    if ('SchemaField' in scope) {
+      const [schema, field] = scope.SchemaField
+      return `Field: ${schema}.${field}`
+    }
   }
   return JSON.stringify(scope)
 }
 
 export default function CrossUserSharingPanel() {
-  const [rules, setRules] = useState([])
+  const [rules, setRules] = useState<ShareRule[]>([])
   const [rulesLoading, setRulesLoading] = useState(true)
-  const [rulesError, setRulesError] = useState(null)
+  const [rulesError, setRulesError] = useState<string | null>(null)
 
-  const [contacts, setContacts] = useState([])
-  const [schemas, setSchemas] = useState([])
+  const [contacts, setContacts] = useState<Contact[]>([])
+  const [schemas, setSchemas] = useState<string[]>([])
 
-  const [pending, setPending] = useState([])
+  const [pending, setPending] = useState<ShareInvite[]>([])
   const [pendingLoading, setPendingLoading] = useState(true)
-  const [pendingError, setPendingError] = useState(null)
+  const [pendingError, setPendingError] = useState<string | null>(null)
 
-  const [toast, setToast] = useState(null)
+  const [toast, setToast] = useState<string | null>(null)
   useEffect(() => {
     if (!toast) return
     const t = setTimeout(() => setToast(null), 4000)
@@ -74,7 +81,7 @@ export default function CrossUserSharingPanel() {
         setRulesError(res.error ?? 'Failed to load share rules')
       }
     } catch (e) {
-      setRulesError(e?.message ?? 'Network error')
+      setRulesError((e as Error)?.message ?? 'Network error')
     } finally {
       setRulesLoading(false)
     }
@@ -91,7 +98,7 @@ export default function CrossUserSharingPanel() {
         setPendingError(res.error ?? 'Failed to load pending invites')
       }
     } catch (e) {
-      setPendingError(e?.message ?? 'Network error')
+      setPendingError((e as Error)?.message ?? 'Network error')
     } finally {
       setPendingLoading(false)
     }
@@ -140,7 +147,7 @@ export default function CrossUserSharingPanel() {
       <CreateRuleForm
         contacts={contacts}
         schemas={schemas}
-        onCreated={rule => {
+        onCreated={(rule: ShareRule) => {
           setToast(`Share rule created for ${rule.recipient_display_name}`)
           loadRules()
         }}
@@ -151,7 +158,7 @@ export default function CrossUserSharingPanel() {
         loading={rulesLoading}
         error={rulesError}
         onRefresh={loadRules}
-        onGenerateInvite={async rule => {
+        onGenerateInvite={async (rule: ShareRule) => {
           try {
             const res = await generateShareInvite({
               rule_id: rule.rule_id,
@@ -174,10 +181,10 @@ export default function CrossUserSharingPanel() {
               setToast(res.error ?? 'Failed to generate invite')
             }
           } catch (e) {
-            setToast(e?.message ?? 'Network error')
+            setToast((e as Error)?.message ?? 'Network error')
           }
         }}
-        onDeactivate={async rule => {
+        onDeactivate={async (rule: ShareRule) => {
           if (!window.confirm(`Deactivate share rule for ${rule.recipient_display_name}?`)) {
             return
           }
@@ -190,7 +197,7 @@ export default function CrossUserSharingPanel() {
               setToast(res.error ?? 'Failed to deactivate')
             }
           } catch (e) {
-            setToast(e?.message ?? 'Network error')
+            setToast((e as Error)?.message ?? 'Network error')
           }
         }}
       />
@@ -200,7 +207,7 @@ export default function CrossUserSharingPanel() {
         loading={pendingLoading}
         error={pendingError}
         onRefresh={loadPending}
-        onAccept={async invite => {
+        onAccept={async (invite: ShareInvite) => {
           try {
             const res = await acceptShareInvite(invite)
             if (res.success) {
@@ -212,7 +219,7 @@ export default function CrossUserSharingPanel() {
               setToast(res.error ?? 'Failed to accept invite')
             }
           } catch (e) {
-            setToast(e?.message ?? 'Network error')
+            setToast((e as Error)?.message ?? 'Network error')
           }
         }}
       />
@@ -220,22 +227,28 @@ export default function CrossUserSharingPanel() {
   )
 }
 
-function CreateRuleForm({ contacts, schemas, onCreated }) {
+interface CreateRuleFormProps {
+  contacts: Contact[]
+  schemas: string[]
+  onCreated: (rule: ShareRule) => void
+}
+
+function CreateRuleForm({ contacts, schemas, onCreated }: CreateRuleFormProps) {
   const [recipientPubkey, setRecipientPubkey] = useState('')
   const [recipientName, setRecipientName] = useState('')
-  const [scopeKind, setScopeKind] = useState('AllSchemas')
+  const [scopeKind, setScopeKind] = useState<ScopeKind>('AllSchemas')
   const [schemaName, setSchemaName] = useState('')
   const [fieldName, setFieldName] = useState('')
   const [submitting, setSubmitting] = useState(false)
-  const [error, setError] = useState(null)
+  const [error, setError] = useState<string | null>(null)
 
   // When the user picks a contact from the dropdown, auto-fill
   // pubkey + display_name so they don't have to type either.
   const onPickContact = useCallback(
-    e => {
+    (e: ChangeEvent<HTMLSelectElement>) => {
       const pk = e.target.value
       setRecipientPubkey(pk)
-      const c = contacts.find(x => x.public_key === pk)
+      const c = contacts.find((x: Contact) => x.public_key === pk)
       if (c) setRecipientName(c.display_name || '')
     },
     [contacts],
@@ -248,12 +261,12 @@ function CreateRuleForm({ contacts, schemas, onCreated }) {
     return !submitting
   }, [recipientPubkey, recipientName, scopeKind, schemaName, fieldName, submitting])
 
-  const submit = async e => {
+  const submit = async (e: FormEvent<HTMLFormElement>) => {
     e.preventDefault()
     if (!canSubmit) return
     setSubmitting(true)
     setError(null)
-    let scope
+    let scope: ShareScope
     if (scopeKind === 'AllSchemas') scope = 'AllSchemas'
     else if (scopeKind === 'Schema') scope = { Schema: schemaName }
     else scope = { SchemaField: [schemaName, fieldName] }
@@ -276,7 +289,7 @@ function CreateRuleForm({ contacts, schemas, onCreated }) {
         setError(res.error ?? 'Failed to create share rule')
       }
     } catch (err) {
-      setError(err?.message ?? 'Network error')
+      setError((err as Error)?.message ?? 'Network error')
     } finally {
       setSubmitting(false)
     }
@@ -297,7 +310,7 @@ function CreateRuleForm({ contacts, schemas, onCreated }) {
             data-testid="create-rule-contact"
           >
             <option value="">— pick a contact —</option>
-            {contacts.map(c => (
+            {contacts.map((c: Contact) => (
               <option key={c.public_key} value={c.public_key}>
                 {c.display_name || '(unnamed)'} · {truncate(c.public_key)}
               </option>
@@ -379,7 +392,7 @@ function CreateRuleForm({ contacts, schemas, onCreated }) {
                   data-testid="create-rule-schema"
                 >
                   <option value="">— pick a schema —</option>
-                  {schemas.map(s => (
+                  {schemas.map((s: string) => (
                     <option key={s} value={s}>
                       {s}
                     </option>
@@ -424,7 +437,16 @@ function CreateRuleForm({ contacts, schemas, onCreated }) {
   )
 }
 
-function MyRulesSection({ rules, loading, error, onRefresh, onGenerateInvite, onDeactivate }) {
+interface MyRulesSectionProps {
+  rules: ShareRule[]
+  loading: boolean
+  error: string | null
+  onRefresh: () => void
+  onGenerateInvite: (rule: ShareRule) => void
+  onDeactivate: (rule: ShareRule) => void
+}
+
+function MyRulesSection({ rules, loading, error, onRefresh, onGenerateInvite, onDeactivate }: MyRulesSectionProps) {
   return (
     <section className="card p-4" data-testid="my-rules-section">
       <div className="flex items-center justify-between mb-3">
@@ -454,7 +476,7 @@ function MyRulesSection({ rules, loading, error, onRefresh, onGenerateInvite, on
 
       {rules.length > 0 && (
         <ul className="space-y-2">
-          {rules.map(rule => (
+          {rules.map((rule: ShareRule) => (
             <li
               key={rule.rule_id}
               className="border border-border rounded p-3 bg-surface"
@@ -531,7 +553,15 @@ function MyRulesSection({ rules, loading, error, onRefresh, onGenerateInvite, on
   )
 }
 
-function PendingInvitesSection({ pending, loading, error, onRefresh, onAccept }) {
+interface PendingInvitesSectionProps {
+  pending: ShareInvite[]
+  loading: boolean
+  error: string | null
+  onRefresh: () => void
+  onAccept: (invite: ShareInvite) => void
+}
+
+function PendingInvitesSection({ pending, loading, error, onRefresh, onAccept }: PendingInvitesSectionProps) {
   return (
     <section className="card p-4" data-testid="pending-invites-section">
       <div className="flex items-center justify-between mb-3">
@@ -562,7 +592,7 @@ function PendingInvitesSection({ pending, loading, error, onRefresh, onAccept })
 
       {pending.length > 0 && (
         <ul className="space-y-2">
-          {pending.map((invite, i) => (
+          {pending.map((invite: ShareInvite, i: number) => (
             <PendingInviteRow
               key={`${invite.share_prefix}-${i}`}
               invite={invite}
@@ -575,7 +605,12 @@ function PendingInvitesSection({ pending, loading, error, onRefresh, onAccept })
   )
 }
 
-function PendingInviteRow({ invite, onAccept }) {
+interface PendingInviteRowProps {
+  invite: ShareInvite
+  onAccept: () => void
+}
+
+function PendingInviteRow({ invite, onAccept }: PendingInviteRowProps) {
   const [expanded, setExpanded] = useState(false)
   return (
     <li

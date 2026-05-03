@@ -1,8 +1,61 @@
+import type { FormEvent, MouseEvent } from 'react'
 import { QRCodeSVG } from 'qrcode.react'
-import { declineTrustInvite } from '../../../api/clients/trustClient'
+import {
+  declineTrustInvite,
+  type IdentityCard,
+  type InvitePreview,
+  type SharingRole,
+} from '../../../api/clients/trustClient'
+
+interface InvitePanelProps {
+  inviteRole: string
+  setInviteRole: (v: string) => void
+  availableRoles: Record<string, SharingRole>
+  creatingInvite: boolean
+  identityCard: IdentityCard | null | undefined
+  handleCreateInvite: (e: FormEvent<HTMLFormElement>) => void
+  inviteToken: string | null
+  handleCopyToken: () => void
+  copied: boolean
+  handleShareViaLink: () => void
+  sharing: boolean
+  showQr: boolean
+  setShowQr: (v: boolean) => void
+  sharedInviteId: string | null
+  recipientEmail: string
+  setRecipientEmail: (v: string) => void
+  handleSendViaEmail: () => void
+  sendingEmail: boolean
+  emailSentId: string | null
+  reciprocalToken: string | null
+  setReciprocalToken: (v: string | null) => void
+  verifyId: string
+  setVerifyId: (v: string) => void
+  verifyCode: string
+  setVerifyCode: (v: string) => void
+  handleVerifyCode: () => void
+  verifying: boolean
+  fetchId: string
+  setFetchId: (v: string) => void
+  handleFetchById: () => void
+  fetching: boolean
+  acceptToken: string
+  setAcceptToken: (v: string) => void
+  preview: InvitePreview | null
+  setPreview: (v: InvitePreview | null) => void
+  handlePreviewInvite: () => void
+  previewing: boolean
+  acceptRole: string
+  setAcceptRole: (v: string) => void
+  trustBack: boolean
+  setTrustBack: (v: boolean) => void
+  handleAcceptInvite: () => void
+  accepting: boolean
+  setError: (v: string | null) => void
+  onResult?: (payload: { success: boolean; data?: { message?: string } }) => void
+}
 
 export default function InvitePanel({
-  // Invite creation
   inviteRole,
   setInviteRole,
   availableRoles,
@@ -17,16 +70,13 @@ export default function InvitePanel({
   showQr,
   setShowQr,
   sharedInviteId,
-  // Email
   recipientEmail,
   setRecipientEmail,
   handleSendViaEmail,
   sendingEmail,
   emailSentId,
-  // Reciprocal
   reciprocalToken,
   setReciprocalToken,
-  // Accept
   verifyId,
   setVerifyId,
   verifyCode,
@@ -51,7 +101,7 @@ export default function InvitePanel({
   accepting,
   setError,
   onResult,
-}) {
+}: InvitePanelProps) {
   return (
     <>
       {/* Create invite */}
@@ -69,7 +119,7 @@ export default function InvitePanel({
               onChange={(e) => setInviteRole(e.target.value)}
             >
               {Object.values(availableRoles).length > 0
-                ? Object.values(availableRoles).map((role) => (
+                ? Object.values(availableRoles).map((role: SharingRole) => (
                     <option key={role.name} value={role.name}>{role.name.replace(/_/g, ' ')}</option>
                   ))
                 : ['friend', 'family', 'doctor', 'trainer', 'accountant', 'collaborator'].map(r => (
@@ -96,7 +146,7 @@ export default function InvitePanel({
                 type="text"
                 value={inviteToken}
                 readOnly
-                onClick={(e) => e.target.select()}
+                onClick={(e: MouseEvent<HTMLInputElement>) => e.currentTarget.select()}
               />
               <button className="btn btn-sm" onClick={handleCopyToken}>
                 {copied ? 'Copied!' : 'Copy'}
@@ -195,7 +245,7 @@ export default function InvitePanel({
               type="text"
               value={reciprocalToken}
               readOnly
-              onClick={(e) => e.target.select()}
+              onClick={(e: MouseEvent<HTMLInputElement>) => e.currentTarget.select()}
             />
             <button className="btn btn-sm" onClick={() => {
               navigator.clipboard.writeText(reciprocalToken)
@@ -319,7 +369,7 @@ export default function InvitePanel({
                   >
                     <option value="">Use proposed role</option>
                     {Object.values(availableRoles).length > 0
-                      ? Object.values(availableRoles).map((role) => (
+                      ? Object.values(availableRoles).map((role: SharingRole) => (
                           <option key={role.name} value={role.name}>{role.name.replace(/_/g, ' ')}</option>
                         ))
                       : ['friend', 'family', 'doctor', 'trainer', 'accountant', 'collaborator'].map(r => (
@@ -355,7 +405,7 @@ export default function InvitePanel({
                         if (onResult) onResult({ success: true, data: { message: `Declined invite from ${resp.data?.sender || 'unknown'}` } })
                       }
                     } catch (err) {
-                      setError(err?.message || 'Failed to decline invite')
+                      setError((err as Error)?.message || 'Failed to decline invite')
                     }
                   }}
                 >

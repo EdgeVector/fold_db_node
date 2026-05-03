@@ -3,6 +3,7 @@ import {
   listSuggestedPersonas,
   acceptSuggestedPersona,
   RELATIONSHIP_OPTIONS,
+  type SuggestedPersonaView,
 } from '../../../api/clients/fingerprintsClient'
 
 /**
@@ -19,15 +20,15 @@ const DISMISSED_STORAGE_KEY = 'folddb.dismissed_suggested_personas.v1'
  *
  * Exported so the vitest suite can poke at it directly.
  */
-export function loadDismissedFromStorage() {
+export function loadDismissedFromStorage(): Set<string> {
   try {
     const raw = window.localStorage.getItem(DISMISSED_STORAGE_KEY)
-    if (!raw) return new Set()
+    if (!raw) return new Set<string>()
     const parsed = JSON.parse(raw)
-    if (!Array.isArray(parsed)) return new Set()
-    return new Set(parsed.filter(x => typeof x === 'string'))
+    if (!Array.isArray(parsed)) return new Set<string>()
+    return new Set<string>(parsed.filter((x: unknown) => typeof x === 'string') as string[])
   } catch {
-    return new Set()
+    return new Set<string>()
   }
 }
 
@@ -36,7 +37,7 @@ export function loadDismissedFromStorage() {
  * write failure (quota exceeded, storage unavailable) — dismissals
  * are a UX nicety, not a correctness requirement.
  */
-export function saveDismissedToStorage(set) {
+export function saveDismissedToStorage(set: Set<string>) {
   try {
     window.localStorage.setItem(
       DISMISSED_STORAGE_KEY,
@@ -59,18 +60,12 @@ export function saveDismissedToStorage(set) {
  * freshly-resolved PersonaDetailResponse.
  */
 export default function SuggestedPersonasPanel() {
-  const [suggestions, setSuggestions] = useState([])
+  const [suggestions, setSuggestions] = useState<SuggestedPersonaView[]>([])
   const [loading, setLoading] = useState(true)
-  const [error, setError] = useState(null)
-  // suggested_id set. Dismissals persist in localStorage so they
-  // survive page reloads — friction point F7 from the Phase 1
-  // walkthrough findings. The key is versioned so a future format
-  // change can invalidate the old set cleanly.
-  const [dismissed, setDismissed] = useState(() => loadDismissedFromStorage())
-  // suggested_id currently showing the name input.
-  const [namingId, setNamingId] = useState(null)
-  // suggested_id currently being promoted (debounces the button).
-  const [busyId, setBusyId] = useState(null)
+  const [error, setError] = useState<string | null>(null)
+  const [dismissed, setDismissed] = useState<Set<string>>(() => loadDismissedFromStorage())
+  const [namingId, setNamingId] = useState<string | null>(null)
+  const [busyId, setBusyId] = useState<string | null>(null)
 
   const fetchList = useCallback(async () => {
     setLoading(true)
@@ -83,7 +78,7 @@ export default function SuggestedPersonasPanel() {
         setError(res.error ?? 'Failed to load suggestions')
       }
     } catch (e) {
-      setError(e?.message ?? 'Network error')
+      setError((e as Error)?.message ?? 'Network error')
     } finally {
       setLoading(false)
     }
@@ -94,7 +89,7 @@ export default function SuggestedPersonasPanel() {
   }, [fetchList])
 
   const handleDismiss = useCallback(
-    id => {
+    (id: string) => {
       setDismissed(prev => {
         const next = new Set(prev)
         next.add(id)
@@ -106,16 +101,13 @@ export default function SuggestedPersonasPanel() {
     [namingId],
   )
 
-  /// Clear every persisted dismissal so suggestions the user hid
-  /// earlier become visible again. Useful when the user wants to
-  /// re-review a cluster they dismissed by mistake.
   const handleClearDismissals = useCallback(() => {
-    setDismissed(new Set())
-    saveDismissedToStorage(new Set())
+    setDismissed(new Set<string>())
+    saveDismissedToStorage(new Set<string>())
   }, [])
 
   const handleAccept = useCallback(
-    async (suggestion, name, relationship) => {
+    async (suggestion: SuggestedPersonaView, name: string, relationship: string) => {
       const trimmed = name.trim()
       if (!trimmed) return
       setBusyId(suggestion.suggested_id)
@@ -137,7 +129,7 @@ export default function SuggestedPersonasPanel() {
           setError(res.error ?? 'Failed to accept suggestion')
         }
       } catch (e) {
-        setError(e?.message ?? 'Network error while accepting')
+        setError((e as Error)?.message ?? 'Network error while accepting')
       } finally {
         setBusyId(null)
       }
@@ -222,6 +214,16 @@ export default function SuggestedPersonasPanel() {
   )
 }
 
+interface SuggestedRowProps {
+  suggestion: SuggestedPersonaView
+  naming: boolean
+  busy: boolean
+  onBeginNaming: () => void
+  onCancelNaming: () => void
+  onDismiss: () => void
+  onAccept: (name: string, relationship: string) => void
+}
+
 function SuggestedRow({
   suggestion,
   naming,
@@ -230,7 +232,7 @@ function SuggestedRow({
   onCancelNaming,
   onDismiss,
   onAccept,
-}) {
+}: SuggestedRowProps) {
   const [nameDraft, setNameDraft] = useState(suggestion.suggested_name)
   const [relationshipDraft, setRelationshipDraft] = useState('unknown')
 

@@ -3,7 +3,10 @@ import {
   acceptReceivedCard,
   dismissReceivedCard,
   listReceivedCards,
+  type ReceivedCardView,
 } from '../../../api/clients/fingerprintsClient'
+
+type ActionFlag = 'accept' | 'dismiss' | null
 
 /**
  * Inbound Identity Cards panel — the only UX for importing a peer's
@@ -24,13 +27,11 @@ import {
  *   pending → dismissed    (user clicks Reject)
  */
 export default function ReceivedCardsPanel() {
-  const [rows, setRows] = useState([])
+  const [rows, setRows] = useState<ReceivedCardView[]>([])
   const [loading, setLoading] = useState(true)
-  const [error, setError] = useState(null)
-  // Per-row action state keyed by message_id; lets two rows toggle
-  // disabled/in-flight independently.
-  const [pendingAction, setPendingAction] = useState({})
-  const [lastRefreshedAt, setLastRefreshedAt] = useState(null)
+  const [error, setError] = useState<string | null>(null)
+  const [pendingAction, setPendingAction] = useState<Record<string, ActionFlag>>({})
+  const [lastRefreshedAt, setLastRefreshedAt] = useState<number | null>(null)
   // Mirror pendingAction into a ref so the 30s poll can read the
   // latest value without re-binding the interval every time a row's
   // accept/dismiss flips its in-flight flag.
@@ -51,7 +52,7 @@ export default function ReceivedCardsPanel() {
         setError(res.error ?? 'Failed to load received cards')
       }
     } catch (e) {
-      setError(e?.message ?? 'Network error')
+      setError((e as Error)?.message ?? 'Network error')
     } finally {
       setLoading(false)
     }
@@ -75,24 +76,21 @@ export default function ReceivedCardsPanel() {
     return () => clearInterval(id)
   }, [fetchRows])
 
-  const setRowPending = (id, flag) =>
+  const setRowPending = (id: string, flag: ActionFlag) =>
     setPendingAction(prev => ({ ...prev, [id]: flag }))
 
-  const handleAccept = useCallback(async row => {
+  const handleAccept = useCallback(async (row: ReceivedCardView) => {
     setRowPending(row.message_id, 'accept')
     try {
       const res = await acceptReceivedCard(row.message_id)
-      if (res.success) {
-        // Replace the row in place so the user sees the accepted
-        // state without a full refetch.
+      if (res.success && res.data) {
+        const updated = res.data.received_card
         setRows(prev =>
           prev.map(r =>
-            r.message_id === row.message_id ? res.data.received_card : r,
+            r.message_id === row.message_id ? updated : r,
           ),
         )
       } else {
-        // Refetch so we pick up the server-side error stamp on the
-        // row (handler writes that before returning 4xx/5xx).
         await fetchRows()
       }
     } catch {
@@ -102,13 +100,14 @@ export default function ReceivedCardsPanel() {
     }
   }, [fetchRows])
 
-  const handleDismiss = useCallback(async row => {
+  const handleDismiss = useCallback(async (row: ReceivedCardView) => {
     setRowPending(row.message_id, 'dismiss')
     try {
       const res = await dismissReceivedCard(row.message_id)
-      if (res.success) {
+      if (res.success && res.data) {
+        const updated = res.data
         setRows(prev =>
-          prev.map(r => (r.message_id === row.message_id ? res.data : r)),
+          prev.map(r => (r.message_id === row.message_id ? updated : r)),
         )
       } else {
         await fetchRows()
@@ -242,14 +241,14 @@ export default function ReceivedCardsPanel() {
   )
 }
 
-function formatClock(ms) {
+function formatClock(ms: number): string {
   const d = new Date(ms)
-  const pad = n => String(n).padStart(2, '0')
+  const pad = (n: number) => String(n).padStart(2, '0')
   return `${pad(d.getHours())}:${pad(d.getMinutes())}:${pad(d.getSeconds())}`
 }
 
-function StatusBadge({ status }) {
-  const styles = {
+function StatusBadge({ status }: { status: string }) {
+  const styles: Record<string, string> = {
     pending:
       'bg-gruvbox-yellow/10 text-gruvbox-yellow border-gruvbox-yellow/30',
     accepted:

@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useState } from 'react'
+import React, { useCallback, useEffect, useMemo, useState } from 'react'
 import {
   listPersonas,
   getPersona,
@@ -7,8 +7,33 @@ import {
   mergePersonas,
   acceptSuggestedPersona,
   RELATIONSHIP_OPTIONS,
+  type PersonaSummary,
+  type PersonaDetailResponse,
+  type PersonaPatch,
+  type FingerprintView,
+  type EdgeView,
+  type MentionView,
+  type ResolveDiagnostics,
 } from '../../../api/clients/fingerprintsClient'
 import { ErrorMessage } from '../../shared/ErrorMessage'
+
+type SortMode = 'recent' | 'name_asc' | 'mentions_desc' | 'trust_tier_desc'
+
+type ExcludeUndoSnack =
+  | { type: 'mention'; id: string }
+  | { type: 'edge'; id: string }
+
+interface DeleteSnapshot {
+  name: string
+  relationship: string
+  seed_fingerprint_ids: string[]
+}
+
+interface DeleteUndoSnack {
+  type: 'delete'
+  snapshot: DeleteSnapshot
+  error: string | null
+}
 
 // ── Pure filter + sort helpers ─────────────────────────────────────
 //
@@ -35,14 +60,14 @@ const PERSONA_SORT_VALUES = new Set(PERSONA_SORT_OPTIONS.map(o => o.value))
  * input; an empty string returns the list unchanged. Stable: order
  * of the input is preserved when entries match.
  */
-export function filterPersonas(personas, rawQuery) {
+export function filterPersonas(personas: PersonaSummary[], rawQuery: string): PersonaSummary[] {
   const q = (rawQuery ?? '').trim().toLowerCase()
   if (q === '') return personas
   return personas.filter(p => {
     const name = (p.name ?? '').toLowerCase()
     if (name.includes(q)) return true
     const aliases = Array.isArray(p.aliases) ? p.aliases : []
-    return aliases.some(a => (a ?? '').toLowerCase().includes(q))
+    return aliases.some((a: string) => (a ?? '').toLowerCase().includes(q))
   })
 }
 
@@ -58,26 +83,26 @@ export function filterPersonas(personas, rawQuery) {
  * - `mentions_desc`: by `mention_count` desc, tie-break on name.
  * - `trust_tier_desc`: by `trust_tier` desc, tie-break on name.
  */
-export function sortPersonas(personas, mode) {
+export function sortPersonas(personas: PersonaSummary[], mode: string): PersonaSummary[] {
   if (!PERSONA_SORT_VALUES.has(mode)) {
     throw new Error(`sortPersonas: unknown mode "${mode}"`)
   }
   const out = personas.slice()
   if (mode === 'recent') {
-    out.sort((a, b) => {
+    out.sort((a: PersonaSummary, b: PersonaSummary) => {
       const aHas = typeof a.created_at === 'string' && a.created_at !== ''
       const bHas = typeof b.created_at === 'string' && b.created_at !== ''
       if (aHas && !bHas) return -1
       if (!aHas && bHas) return 1
       if (aHas && bHas && a.created_at !== b.created_at) {
-        return a.created_at < b.created_at ? 1 : -1
+        return (a.created_at ?? '') < (b.created_at ?? '') ? 1 : -1
       }
       return (a.id ?? '').localeCompare(b.id ?? '')
     })
     return out
   }
   if (mode === 'name_asc') {
-    out.sort((a, b) =>
+    out.sort((a: PersonaSummary, b: PersonaSummary) =>
       (a.name ?? '').localeCompare(b.name ?? '', undefined, {
         sensitivity: 'base',
       }),
@@ -85,15 +110,14 @@ export function sortPersonas(personas, mode) {
     return out
   }
   if (mode === 'mentions_desc') {
-    out.sort((a, b) => {
+    out.sort((a: PersonaSummary, b: PersonaSummary) => {
       const diff = (b.mention_count ?? 0) - (a.mention_count ?? 0)
       if (diff !== 0) return diff
       return (a.name ?? '').localeCompare(b.name ?? '')
     })
     return out
   }
-  // trust_tier_desc
-  out.sort((a, b) => {
+  out.sort((a: PersonaSummary, b: PersonaSummary) => {
     const diff = (b.trust_tier ?? 0) - (a.trust_tier ?? 0)
     if (diff !== 0) return diff
     return (a.name ?? '').localeCompare(b.name ?? '')
@@ -117,13 +141,13 @@ export function sortPersonas(personas, mode) {
  * counts match.
  */
 export default function PersonasPanel() {
-  const [personas, setPersonas] = useState([])
+  const [personas, setPersonas] = useState<PersonaSummary[]>([])
   const [loading, setLoading] = useState(true)
-  const [error, setError] = useState(null)
-  const [selectedId, setSelectedId] = useState(null)
-  const [detail, setDetail] = useState(null)
+  const [error, setError] = useState<string | null>(null)
+  const [selectedId, setSelectedId] = useState<string | null>(null)
+  const [detail, setDetail] = useState<PersonaDetailResponse | null>(null)
   const [detailLoading, setDetailLoading] = useState(false)
-  const [detailError, setDetailError] = useState(null)
+  const [detailError, setDetailError] = useState<string | null>(null)
 
   const fetchList = useCallback(async () => {
     setLoading(true)
@@ -136,7 +160,7 @@ export default function PersonasPanel() {
         setError(res.error ?? 'Failed to load personas')
       }
     } catch (e) {
-      setError(e?.message ?? 'Network error')
+      setError((e as Error)?.message ?? 'Network error')
     } finally {
       setLoading(false)
     }
@@ -164,9 +188,9 @@ export default function PersonasPanel() {
           setDetail(null)
         }
       })
-      .catch(e => {
+      .catch((e: unknown) => {
         if (!cancelled) {
-          setDetailError(e?.message ?? 'Network error')
+          setDetailError((e as Error)?.message ?? 'Network error')
           setDetail(null)
         }
       })
@@ -179,7 +203,7 @@ export default function PersonasPanel() {
   }, [selectedId])
 
   const applyPatch = useCallback(
-    async (patch, errorLabel) => {
+    async (patch: PersonaPatch, errorLabel: string) => {
       if (!selectedId) return
       try {
         const res = await updatePersona(selectedId, patch)
@@ -194,22 +218,19 @@ export default function PersonasPanel() {
           setDetailError(res.error ?? errorLabel)
         }
       } catch (e) {
-        setDetailError(e?.message ?? `Network error while ${errorLabel.toLowerCase()}`)
+        setDetailError((e as Error)?.message ?? `Network error while ${errorLabel.toLowerCase()}`)
       }
     },
     [selectedId, fetchList],
   )
 
   const handleThresholdCommit = useCallback(
-    nextThreshold =>
+    (nextThreshold: number) =>
       applyPatch({ threshold: nextThreshold }, 'Failed to update threshold'),
     [applyPatch],
   )
 
-  // Undo snackbar state for ✂ exclude actions. Shows "Excluded —
-  // Undo" for 5 seconds after each exclude, giving the user a fast
-  // recovery path without scrolling to the exclusions panel.
-  const [undoSnack, setUndoSnack] = useState(null)
+  const [undoSnack, setUndoSnack] = useState<ExcludeUndoSnack | null>(null)
   useEffect(() => {
     if (!undoSnack) return
     const timer = setTimeout(() => setUndoSnack(null), 5000)
@@ -217,7 +238,7 @@ export default function PersonasPanel() {
   }, [undoSnack])
 
   const handleExcludeMention = useCallback(
-    id => {
+    (id: string) => {
       applyPatch({ add_excluded_mention_id: id }, 'Failed to exclude mention')
       setUndoSnack({ type: 'mention', id })
     },
@@ -225,7 +246,7 @@ export default function PersonasPanel() {
   )
 
   const handleUnexcludeMention = useCallback(
-    id => {
+    (id: string) => {
       applyPatch({ remove_excluded_mention_id: id }, 'Failed to un-exclude mention')
       setUndoSnack(null)
     },
@@ -233,7 +254,7 @@ export default function PersonasPanel() {
   )
 
   const handleExcludeEdge = useCallback(
-    id => {
+    (id: string) => {
       applyPatch({ add_excluded_edge_id: id }, 'Failed to exclude edge')
       setUndoSnack({ type: 'edge', id })
     },
@@ -241,7 +262,7 @@ export default function PersonasPanel() {
   )
 
   const handleUnexcludeEdge = useCallback(
-    id => {
+    (id: string) => {
       applyPatch({ remove_excluded_edge_id: id }, 'Failed to un-exclude edge')
       setUndoSnack(null)
     },
@@ -249,12 +270,12 @@ export default function PersonasPanel() {
   )
 
   const handleRenamePersona = useCallback(
-    name => applyPatch({ name }, 'Failed to rename persona'),
+    (name: string) => applyPatch({ name }, 'Failed to rename persona'),
     [applyPatch],
   )
 
   const handleRelationshipChange = useCallback(
-    relationship =>
+    (relationship: string) =>
       applyPatch({ relationship }, 'Failed to update relationship'),
     [applyPatch],
   )
@@ -276,7 +297,7 @@ export default function PersonasPanel() {
   }, [applyPatch])
 
   const handleMerge = useCallback(
-    async absorbedId => {
+    async (absorbedId: string) => {
       if (!selectedId || !absorbedId || absorbedId === selectedId) return
       const absorbed = personas.find(p => p.id === absorbedId)
       const survivor = personas.find(p => p.id === selectedId)
@@ -299,7 +320,7 @@ export default function PersonasPanel() {
           setDetailError(res.error ?? 'Failed to merge personas')
         }
       } catch (e) {
-        setDetailError(e?.message ?? 'Network error while merging personas')
+        setDetailError((e as Error)?.message ?? 'Network error while merging personas')
       }
     },
     [selectedId, personas, fetchList],
@@ -310,7 +331,7 @@ export default function PersonasPanel() {
   // clobbering the other. Auto-dismissed after 5s, same as the
   // exclude snack. Rendered in the same floating container, but
   // discriminated by a `type` field on each snack.
-  const [deleteUndoSnack, setDeleteUndoSnack] = useState(null)
+  const [deleteUndoSnack, setDeleteUndoSnack] = useState<DeleteUndoSnack | null>(null)
   useEffect(() => {
     if (!deleteUndoSnack) return
     // If a restore attempt failed, leave the error visible — the
@@ -337,7 +358,7 @@ export default function PersonasPanel() {
     // the restored persona gets a new id (uuid-generated server-side)
     // and identity_id is NOT re-linked — the user can re-link it
     // manually if needed.
-    const snapshot = detail
+    const snapshot: DeleteSnapshot | null = detail
       ? {
           name: detail.name,
           relationship: detail.relationship,
@@ -358,7 +379,7 @@ export default function PersonasPanel() {
         setDetailError(res.error ?? 'Failed to delete persona')
       }
     } catch (e) {
-      setDetailError(e?.message ?? 'Network error while deleting persona')
+      setDetailError((e as Error)?.message ?? 'Network error while deleting persona')
     }
   }, [selectedId, detail])
 
@@ -392,7 +413,7 @@ export default function PersonasPanel() {
         s
           ? {
               ...s,
-              error: e?.message ?? 'Network error while restoring persona',
+              error: (e as Error)?.message ?? 'Network error while restoring persona',
             }
           : s,
       )
@@ -486,11 +507,18 @@ export default function PersonasPanel() {
   )
 }
 
-function PersonaList({ personas, loading, error, selectedId, onSelect, onRefresh }) {
-  // Filter + sort live entirely in the list pane — no parent state,
-  // no persistence. Reset on reload by design (alpha scope).
+interface PersonaListProps {
+  personas: PersonaSummary[]
+  loading: boolean
+  error: string | null
+  selectedId: string | null
+  onSelect: (id: string) => void
+  onRefresh: () => void
+}
+
+function PersonaList({ personas, loading, error, selectedId, onSelect, onRefresh }: PersonaListProps) {
   const [filterText, setFilterText] = useState('')
-  const [sortMode, setSortMode] = useState('recent')
+  const [sortMode, setSortMode] = useState<SortMode>('recent')
 
   const visible = useMemo(() => {
     const filtered = filterPersonas(personas, filterText)
@@ -524,7 +552,7 @@ function PersonaList({ personas, loading, error, selectedId, onSelect, onRefresh
         />
         <select
           value={sortMode}
-          onChange={e => setSortMode(e.target.value)}
+          onChange={e => setSortMode(e.target.value as SortMode)}
           className="input text-xs py-1"
           data-testid="persona-list-sort"
           aria-label="Sort personas"
@@ -621,6 +649,25 @@ function PersonaList({ personas, loading, error, selectedId, onSelect, onRefresh
   )
 }
 
+interface PersonaDetailProps {
+  selectedId: string | null
+  detail: PersonaDetailResponse | null
+  loading: boolean
+  error: string | null
+  onThresholdCommit: (n: number) => void
+  onExcludeMention: (id: string) => void
+  onUnexcludeMention: (id: string) => void
+  onExcludeEdge: (id: string) => void
+  onUnexcludeEdge: (id: string) => void
+  onRenamePersona: (name: string) => void
+  onRelationshipChange: (relationship: string) => void
+  onConfirm: () => void
+  onDelete: () => void
+  onUnlinkIdentity: () => void
+  onMerge: (id: string) => void
+  mergeCandidates: PersonaSummary[]
+}
+
 function PersonaDetail({
   selectedId,
   detail,
@@ -638,7 +685,7 @@ function PersonaDetail({
   onUnlinkIdentity,
   onMerge,
   mergeCandidates,
-}) {
+}: PersonaDetailProps) {
   if (!selectedId) {
     return (
       <div
@@ -681,6 +728,22 @@ function PersonaDetail({
   )
 }
 
+interface PersonaDetailBodyProps {
+  detail: PersonaDetailResponse
+  onThresholdCommit: (n: number) => void
+  onExcludeMention: (id: string) => void
+  onUnexcludeMention: (id: string) => void
+  onExcludeEdge: (id: string) => void
+  onUnexcludeEdge: (id: string) => void
+  onRenamePersona: (name: string) => void
+  onRelationshipChange: (relationship: string) => void
+  onConfirm: () => void
+  onDelete: () => void
+  onUnlinkIdentity: () => void
+  onMerge: (id: string) => void
+  mergeCandidates: PersonaSummary[]
+}
+
 function PersonaDetailBody({
   detail,
   onThresholdCommit,
@@ -695,7 +758,7 @@ function PersonaDetailBody({
   onUnlinkIdentity,
   onMerge,
   mergeCandidates,
-}) {
+}: PersonaDetailBodyProps) {
   // Local mirror of the slider value so the knob moves smoothly
   // while the user drags. We only call the parent (and fire the
   // PATCH) when the user releases the slider, which keeps us from
@@ -746,7 +809,7 @@ function PersonaDetailBody({
   // can render readable labels for each endpoint instead of raw
   // fp_abc123 hashes. Cheap — fingerprints array is small and this
   // runs once per detail render.
-  const fpIndex = (detail.fingerprints || []).reduce((acc, fp) => {
+  const fpIndex = (detail.fingerprints || []).reduce<Record<string, string>>((acc, fp) => {
     const label = fp.kind === 'face_embedding'
       ? fp.sample_source
         ? `face · ${fp.sample_source}`
@@ -891,7 +954,7 @@ function PersonaDetailBody({
           max="1"
           step="0.01"
           value={sliderValue}
-          onChange={e => setSliderValue(e.target.value)}
+          onChange={e => setSliderValue(Number(e.target.value))}
           onMouseUp={commit}
           onTouchEnd={commit}
           onKeyUp={commit}
@@ -947,7 +1010,13 @@ function PersonaDetailBody({
 // Inline dropdown used in the persona detail header. Shown only on
 // non-built-in personas; excludes the current persona and any
 // built-in personas from the "merge into" options.
-function MergeIntoControl({ detail, mergeCandidates = [], onMerge }) {
+interface MergeIntoControlProps {
+  detail: PersonaDetailResponse
+  mergeCandidates?: PersonaSummary[]
+  onMerge: (id: string) => void
+}
+
+function MergeIntoControl({ detail, mergeCandidates = [], onMerge }: MergeIntoControlProps) {
   const [value, setValue] = useState('')
   const candidates = mergeCandidates.filter(
     p => p.id !== detail.id && !p.built_in,
@@ -990,7 +1059,14 @@ function MergeIntoControl({ detail, mergeCandidates = [], onMerge }) {
   )
 }
 
-function SectionShell({ label, count, testId, children }) {
+interface SectionShellProps {
+  label: string
+  count: number
+  testId: string
+  children: React.ReactNode
+}
+
+function SectionShell({ label, count, testId, children }: SectionShellProps) {
   return (
     <div data-testid={testId}>
       <div className="text-xs text-secondary mb-1">
@@ -1005,7 +1081,12 @@ function SectionShell({ label, count, testId, children }) {
   )
 }
 
-function FingerprintRows({ fingerprints, fallbackIds }) {
+interface FingerprintRowsProps {
+  fingerprints: FingerprintView[]
+  fallbackIds: string[]
+}
+
+function FingerprintRows({ fingerprints, fallbackIds }: FingerprintRowsProps) {
   // Fall back to opaque ids if the backend hasn't returned enriched
   // content yet (older release, or dangling fingerprints). This keeps
   // the panel from silently showing nothing when enrichment is
@@ -1071,7 +1152,14 @@ function FingerprintRows({ fingerprints, fallbackIds }) {
   )
 }
 
-function EdgeRows({ edges, fallbackIds, onExclude, fingerprintIndex = {} }) {
+interface EdgeRowsProps {
+  edges: EdgeView[]
+  fallbackIds: string[]
+  onExclude: (id: string) => void
+  fingerprintIndex?: Record<string, string>
+}
+
+function EdgeRows({ edges, fallbackIds, onExclude, fingerprintIndex = {} }: EdgeRowsProps) {
   if (edges.length === 0) {
     return (
       <SectionShell label="Edges" count={fallbackIds.length} testId="persona-edges">
@@ -1124,7 +1212,13 @@ function EdgeRows({ edges, fallbackIds, onExclude, fingerprintIndex = {} }) {
   )
 }
 
-function MentionRows({ mentions, fallbackIds, onExclude }) {
+interface MentionRowsProps {
+  mentions: MentionView[]
+  fallbackIds: string[]
+  onExclude: (id: string) => void
+}
+
+function MentionRows({ mentions, fallbackIds, onExclude }: MentionRowsProps) {
   if (mentions.length === 0) {
     return (
       <SectionShell label="Mentions" count={fallbackIds.length} testId="persona-mentions">
@@ -1185,7 +1279,13 @@ function MentionRows({ mentions, fallbackIds, onExclude }) {
   )
 }
 
-function ExclusionsPanel({ detail, onUnexcludeMention, onUnexcludeEdge }) {
+interface ExclusionsPanelProps {
+  detail: PersonaDetailResponse
+  onUnexcludeMention: (id: string) => void
+  onUnexcludeEdge: (id: string) => void
+}
+
+function ExclusionsPanel({ detail, onUnexcludeMention, onUnexcludeEdge }: ExclusionsPanelProps) {
   const excludedMentions = detail.excluded_mention_ids || []
   const excludedEdges = detail.excluded_edge_ids || []
   const [open, setOpen] = useState(false)
@@ -1268,12 +1368,12 @@ function ExclusionsPanel({ detail, onUnexcludeMention, onUnexcludeEdge }) {
   )
 }
 
-function pl(n, singular, plural) {
+function pl(n: number, singular: string, plural: string): string {
   return n === 1 ? `${n} ${singular}` : `${n} ${plural}`
 }
 
-function Diagnostics({ diagnostics }) {
-  const entries = []
+function Diagnostics({ diagnostics }: { diagnostics: ResolveDiagnostics }) {
+  const entries: string[] = []
   if (diagnostics.missing_seed_fingerprint_ids.length > 0) {
     const n = diagnostics.missing_seed_fingerprint_ids.length
     entries.push(

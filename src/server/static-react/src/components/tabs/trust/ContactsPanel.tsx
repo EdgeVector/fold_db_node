@@ -1,4 +1,31 @@
 import { truncateKey, formatTimestamp, directionBadge } from './trustUtils'
+import type {
+  Contact,
+  IdentityCard,
+  SharingRole,
+  SharingAuditResult,
+  AccessibleSchema,
+} from '../../../api/clients/trustClient'
+
+interface ContactsPanelProps {
+  identityLoading: boolean
+  identityCard: IdentityCard | null | undefined
+  setActiveSection: (section: string) => void
+  contactsLoading: boolean
+  contacts: Contact[]
+  selectedContact: string | null
+  setSelectedContact: (key: string | null) => void
+  setAuditResult: (result: SharingAuditResult | null) => void
+  handleAudit: (key: string) => void
+  handleRevoke: (key: string) => void
+  revoking: string | null
+  availableRoles: Record<string, SharingRole>
+  assigningRole: boolean
+  handleAssignRole: (key: string, role: string) => void
+  handleRemoveRole: (key: string, domain: string) => void
+  auditLoading: boolean
+  auditResult: SharingAuditResult | null
+}
 
 export default function ContactsPanel({
   identityLoading,
@@ -18,7 +45,7 @@ export default function ContactsPanel({
   handleRemoveRole,
   auditLoading,
   auditResult,
-}) {
+}: ContactsPanelProps) {
   return (
     <>
       {/* Identity card warning */}
@@ -52,7 +79,7 @@ export default function ContactsPanel({
 
       {!contactsLoading && contacts.length > 0 && (
         <div className="space-y-2">
-          {contacts.map((contact) => (
+          {contacts.map((contact: Contact) => (
             <div
               key={contact.public_key}
               className="border border-border rounded-lg p-4 bg-surface"
@@ -113,7 +140,7 @@ export default function ContactsPanel({
                   {/* Role assignment */}
                   <h4 className="text-xs font-medium text-secondary mb-2">Assign Roles</h4>
                   <div className="flex flex-wrap gap-2 mb-3">
-                    {Object.values(availableRoles).map((role) => {
+                    {Object.values(availableRoles).map((role: SharingRole) => {
                       const isActive = contact.roles?.[role.domain] === role.name
                       return (
                         <button
@@ -158,7 +185,7 @@ export default function ContactsPanel({
                             {auditResult.total_readable} readable field{auditResult.total_readable !== 1 ? 's' : ''} across {auditResult.accessible_schemas.length} schema{auditResult.accessible_schemas.length !== 1 ? 's' : ''}
                           </p>
                           <div className="space-y-1 max-h-48 overflow-y-auto">
-                            {auditResult.accessible_schemas.map((schema) => (
+                            {auditResult.accessible_schemas.map((schema: AccessibleSchema) => (
                               <div key={schema.schema_name} className="text-xs p-2 bg-surface-secondary rounded">
                                 <div className="flex items-center gap-2">
                                   <span className="font-medium text-primary">{schema.schema_name}</span>

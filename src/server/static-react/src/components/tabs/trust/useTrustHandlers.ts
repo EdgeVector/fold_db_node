@@ -1,4 +1,4 @@
-import { useState } from 'react'
+import { useState, type FormEvent } from 'react'
 import {
   createTrustInvite,
   previewTrustInvite,
@@ -7,7 +7,20 @@ import {
   fetchSharedInvite,
   sendVerifiedInvite,
   verifyInviteCode,
+  type InvitePreview,
+  type IdentityCard,
 } from '../../../api/clients/trustClient'
+
+interface UseTrustHandlersOptions {
+  identityCard: IdentityCard | null | undefined
+  onResult?: (payload: { success: boolean; data?: { message?: string } }) => void
+  setError: (msg: string | null) => void
+  fetchContacts: () => Promise<void> | void
+  fetchAuditLog: () => Promise<void> | void
+  setActiveSection: (section: string) => void
+  setSelectedContact: (key: string) => void
+  handleAudit: (key: string) => void
+}
 
 /**
  * Custom hook encapsulating trust invite state and handlers:
@@ -25,36 +38,33 @@ export function useTrustHandlers({
   setActiveSection,
   setSelectedContact,
   handleAudit,
-}) {
-  // Invite creation
+}: UseTrustHandlersOptions) {
   const [inviteRole, setInviteRole] = useState('friend')
   const [creatingInvite, setCreatingInvite] = useState(false)
-  const [inviteToken, setInviteToken] = useState(null)
+  const [inviteToken, setInviteToken] = useState<string | null>(null)
   const [copied, setCopied] = useState(false)
   const [showQr, setShowQr] = useState(false)
   const [sharing, setSharing] = useState(false)
-  const [sharedInviteId, setSharedInviteId] = useState(null)
+  const [sharedInviteId, setSharedInviteId] = useState<string | null>(null)
   const [fetchId, setFetchId] = useState('')
   const [fetching, setFetching] = useState(false)
 
-  // Email verification
   const [recipientEmail, setRecipientEmail] = useState('')
   const [sendingEmail, setSendingEmail] = useState(false)
-  const [emailSentId, setEmailSentId] = useState(null)
+  const [emailSentId, setEmailSentId] = useState<string | null>(null)
   const [verifyId, setVerifyId] = useState('')
   const [verifyCode, setVerifyCode] = useState('')
   const [verifying, setVerifying] = useState(false)
 
-  // Invite acceptance
   const [acceptToken, setAcceptToken] = useState('')
-  const [preview, setPreview] = useState(null)
+  const [preview, setPreview] = useState<InvitePreview | null>(null)
   const [previewing, setPreviewing] = useState(false)
   const [accepting, setAccepting] = useState(false)
-  const [reciprocalToken, setReciprocalToken] = useState(null)
+  const [reciprocalToken, setReciprocalToken] = useState<string | null>(null)
   const [acceptRole, setAcceptRole] = useState('')
   const [trustBack, setTrustBack] = useState(true)
 
-  const handleCreateInvite = async (e) => {
+  const handleCreateInvite = async (e: FormEvent<HTMLFormElement>) => {
     e.preventDefault()
     if (!inviteRole.trim()) {
       setError('Please select a role')
@@ -75,7 +85,7 @@ export function useTrustHandlers({
         setError(response.error || 'Failed to create invite')
       }
     } catch (err) {
-      setError(err.message || 'Failed to create invite')
+      setError((err as Error).message || 'Failed to create invite')
     } finally {
       setCreatingInvite(false)
     }
@@ -101,7 +111,7 @@ export function useTrustHandlers({
         setError(response.error || 'Failed to share invite via Exemem')
       }
     } catch (err) {
-      setError(err.message || 'Failed to share invite (is cloud backup enabled?)')
+      setError((err as Error).message || 'Failed to share invite (is cloud backup enabled?)')
     } finally {
       setSharing(false)
     }
@@ -126,7 +136,7 @@ export function useTrustHandlers({
         setError(response.error || 'Invite not found or already claimed')
       }
     } catch (err) {
-      setError(err.message || 'Failed to fetch invite')
+      setError((err as Error).message || 'Failed to fetch invite')
     } finally {
       setFetching(false)
     }
@@ -150,7 +160,7 @@ export function useTrustHandlers({
         setError(response.error || 'Failed to send verification email')
       }
     } catch (err) {
-      setError(err.message || 'Failed to send email (is cloud backup enabled?)')
+      setError((err as Error).message || 'Failed to send email (is cloud backup enabled?)')
     } finally {
       setSendingEmail(false)
     }
@@ -177,7 +187,7 @@ export function useTrustHandlers({
         setError(response.error || 'Invalid verification code')
       }
     } catch (err) {
-      setError(err.message || 'Verification failed')
+      setError((err as Error).message || 'Verification failed')
     } finally {
       setVerifying(false)
     }
@@ -197,7 +207,7 @@ export function useTrustHandlers({
         setError(response.error || 'Invalid invite token')
       }
     } catch (err) {
-      setError(err.message || 'Failed to preview invite')
+      setError((err as Error).message || 'Failed to preview invite')
     } finally {
       setPreviewing(false)
     }
@@ -219,7 +229,6 @@ export function useTrustHandlers({
         setPreview(null)
         await fetchContacts()
         await fetchAuditLog()
-        // Switch to contacts and open the new contact for role assignment
         if (senderKey) {
           setActiveSection('contacts')
           setSelectedContact(senderKey)
@@ -233,7 +242,7 @@ export function useTrustHandlers({
         setError(response.error || 'Failed to accept invite')
       }
     } catch (err) {
-      setError(err.message || 'Failed to accept invite')
+      setError((err as Error).message || 'Failed to accept invite')
     } finally {
       setAccepting(false)
     }

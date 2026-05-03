@@ -1,8 +1,19 @@
-function ResultViewer({ result }) {
+interface MutationResultLike {
+  success?: boolean
+  data?: unknown
+  error?: string
+}
+
+interface ResultViewerProps {
+  result: MutationResultLike | string | null | undefined
+}
+
+function ResultViewer({ result }: ResultViewerProps) {
   if (!result) return null
 
-  const isError = result.success === false || result.error
-  const isSuccess = result.success === true
+  const isError =
+    typeof result === 'object' && (result.success === false || Boolean(result.error))
+  const isSuccess = typeof result === 'object' && result.success === true
 
   return (
     <div className={`p-4 mt-4 rounded ${

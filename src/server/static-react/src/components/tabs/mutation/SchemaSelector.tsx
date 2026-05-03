@@ -5,7 +5,14 @@ import { useAppSelector } from '../../../store/hooks'
 import { selectApprovedSchemas } from '../../../store/schemaSlice'
 import { buildSchemaOptions } from '../../../utils/schemaUtils'
 
-function SchemaSelector({ selectedSchema, mutationType, onSchemaChange, onTypeChange }) {
+interface SchemaSelectorProps {
+  selectedSchema: string
+  mutationType: string
+  onSchemaChange: (value: string) => void
+  onTypeChange: (value: string) => void
+}
+
+function SchemaSelector({ selectedSchema, mutationType, onSchemaChange, onTypeChange }: SchemaSelectorProps) {
   // Redux state
   const approvedSchemas = useAppSelector(selectApprovedSchemas)
 
@@ -17,8 +24,6 @@ function SchemaSelector({ selectedSchema, mutationType, onSchemaChange, onTypeCh
         value={selectedSchema}
         onChange={onSchemaChange}
         options={buildSchemaOptions(approvedSchemas)}
-        placeholder="Select a schema..."
-        emptyMessage="No approved schemas available for mutations"
         helpText={FORM_LABELS.schemaHelp}
       />
 
@@ -27,7 +32,7 @@ function SchemaSelector({ selectedSchema, mutationType, onSchemaChange, onTypeCh
         label={FORM_LABELS.operationType}
         value={mutationType}
         onChange={onTypeChange}
-        options={MUTATION_TYPES}
+        options={[...MUTATION_TYPES]}
         helpText={FORM_LABELS.operationHelp}
       />
     </div>

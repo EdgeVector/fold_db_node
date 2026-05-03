@@ -1,20 +1,30 @@
-import { useState, useRef, useEffect, useCallback } from 'react'
+import { useState, useRef, useEffect, useCallback, type FormEvent } from 'react'
 import { ingestionClient } from '../../../api/clients'
 import { toErrorMessage } from '../../../utils/schemaUtils'
+import type {
+  SmartFolderScanResponse,
+  FileRecommendation,
+} from '../../../api/clients/ingestionClient'
 
-/**
- * AI chat panel for adjusting scan results via natural language.
- *
- * @param {Object} props
- * @param {Object} props.scanResult - Current scan result with recommended_files and skipped_files
- * @param {Function} props.onScanResultUpdate - Called with the updated scanResult when the AI adjusts files
- */
-export default function ScanAdjustChat({ scanResult, onScanResultUpdate }) {
-  const [messages, setMessages] = useState([])
+interface ChatMessage {
+  role: 'user' | 'assistant'
+  content: string
+}
+
+type FileRecommendationWithFlag = FileRecommendation & { already_ingested?: boolean }
+
+interface ScanAdjustChatProps {
+  scanResult: SmartFolderScanResponse | null
+  onScanResultUpdate: (next: SmartFolderScanResponse) => void
+}
+
+/** AI chat panel for adjusting scan results via natural language. */
+export default function ScanAdjustChat({ scanResult, onScanResultUpdate }: ScanAdjustChatProps) {
+  const [messages, setMessages] = useState<ChatMessage[]>([])
   const [input, setInput] = useState('')
   const [isLoading, setIsLoading] = useState(false)
-  const messagesEndRef = useRef(null)
-  const inputRef = useRef(null)
+  const messagesEndRef = useRef<HTMLDivElement | null>(null)
+  const inputRef = useRef<HTMLInputElement | null>(null)
   const hasGeneratedSummary = useRef(false)
 
   // Auto-scroll to bottom on new messages
@@ -27,12 +37,12 @@ export default function ScanAdjustChat({ scanResult, onScanResultUpdate }) {
     if (!scanResult || hasGeneratedSummary.current) return
     hasGeneratedSummary.current = true
 
-    const rec = scanResult.recommended_files
-    const skip = scanResult.skipped_files.filter(f => !f.already_ingested)
-    const already = scanResult.skipped_files.filter(f => f.already_ingested)
+    const rec: FileRecommendationWithFlag[] = scanResult.recommended_files
+    const skipped = scanResult.skipped_files as FileRecommendationWithFlag[]
+    const skip = skipped.filter(f => !f.already_ingested)
+    const already = skipped.filter(f => f.already_ingested)
 
-    // Build category breakdown
-    const categories = {}
+    const categories: Record<string, number> = {}
     for (const f of rec) {
       categories[f.category] = (categories[f.category] || 0) + 1
     }
@@ -51,9 +61,8 @@ export default function ScanAdjustChat({ scanResult, onScanResultUpdate }) {
       }
     }
 
-    // Note skipped categories
     if (skip.length > 0) {
-      const skipCats = {}
+      const skipCats: Record<string, number> = {}
       for (const f of skip) {
         skipCats[f.category] = (skipCats[f.category] || 0) + 1
       }
@@ -68,7 +77,7 @@ export default function ScanAdjustChat({ scanResult, onScanResultUpdate }) {
     setMessages([{ role: 'assistant', content: summary }])
   }, [scanResult])
 
-  const handleSubmit = useCallback(async (e) => {
+  const handleSubmit = useCallback(async (e: FormEvent<HTMLFormElement>) => {
     e.preventDefault()
     const instruction = input.trim()
     if (!instruction || isLoading || !scanResult) return
@@ -87,7 +96,6 @@ export default function ScanAdjustChat({ scanResult, onScanResultUpdate }) {
       if (response.success && response.data?.success) {
         const { recommended_files, skipped_files, summary, total_estimated_cost, message } = response.data
 
-        // Build a change description
         const oldRec = scanResult.recommended_files.length
         const newRec = recommended_files.length
         const diff = newRec - oldRec
@@ -100,12 +108,11 @@ export default function ScanAdjustChat({ scanResult, onScanResultUpdate }) {
 
         setMessages(prev => [...prev, { role: 'assistant', content: changeMsg }])
 
-        // Update the parent's scan result
         onScanResultUpdate({
           ...scanResult,
           recommended_files,
           skipped_files,
-          summary,
+          summary: summary as unknown as Record<string, number>,
           total_estimated_cost,
         })
       } else {
@@ -125,7 +132,7 @@ export default function ScanAdjustChat({ scanResult, onScanResultUpdate }) {
     <div className="flex flex-col h-full border border-border rounded-lg overflow-hidden">
       {/* Messages area */}
       <div className="flex-1 overflow-y-auto p-3 space-y-3 min-h-0">
-        {messages.map((msg, i) => (
+        {messages.map((msg: ChatMessage, i: number) => (
           <div key={i} className={`text-sm ${msg.role === 'user' ? 'text-right' : ''}`}>
             <div
               className={`inline-block max-w-full text-left rounded-lg px-3 py-2 ${
@@ -172,12 +179,11 @@ export default function ScanAdjustChat({ scanResult, onScanResultUpdate }) {
 }
 
 /** Render markdown-lite content (bold, italic, line breaks) */
-function MessageContent({ content }) {
-  // Split into lines and render with basic formatting
+function MessageContent({ content }: { content: string }) {
   const lines = content.split('\n')
   return (
     <div className="whitespace-pre-wrap">
-      {lines.map((line, i) => (
+      {lines.map((line: string, i: number) => (
         <span key={i}>
           {i > 0 && <br />}
           {renderInlineFormatting(line)}
@@ -187,10 +193,9 @@ function MessageContent({ content }) {
   )
 }
 
-function renderInlineFormatting(text) {
-  // Bold: **text**
+function renderInlineFormatting(text: string) {
   const parts = text.split(/(\*\*[^*]+\*\*|\*[^*]+\*)/g)
-  return parts.map((part, i) => {
+  return parts.map((part: string, i: number) => {
     if (part.startsWith('**') && part.endsWith('**')) {
       return <strong key={i}>{part.slice(2, -2)}</strong>
     }
