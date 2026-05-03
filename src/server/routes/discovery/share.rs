@@ -11,6 +11,7 @@ pub async fn share_data(
     req: HttpRequest,
     body: web::Json<discovery_handlers::DataShareRequest>,
     state: web::Data<AppState>,
+    upload_storage: web::Data<fold_db::storage::UploadStorage>,
 ) -> impl Responder {
     let (_user_hash, node) = node_or_return!(state);
 
@@ -18,12 +19,28 @@ pub async fn share_data(
 
     let auth_token = auth_token_or_return!(req);
 
-    match discovery_handlers::send_data_share(&body, &node, &url, &auth_token, &key).await {
+    match discovery_handlers::send_data_share(
+        &body,
+        &node,
+        &url,
+        &auth_token,
+        &key,
+        upload_storage.get_ref(),
+    )
+    .await
+    {
         Ok(response) => HttpResponse::Ok().json(response),
         Err(e) if is_auth_error(&e) => {
             if let Some(new_token) = try_refresh_token(&state).await {
-                match discovery_handlers::send_data_share(&body, &node, &url, &new_token, &key)
-                    .await
+                match discovery_handlers::send_data_share(
+                    &body,
+                    &node,
+                    &url,
+                    &new_token,
+                    &key,
+                    upload_storage.get_ref(),
+                )
+                .await
                 {
                     Ok(response) => return HttpResponse::Ok().json(response),
                     Err(e) => return handler_error_to_response(e),

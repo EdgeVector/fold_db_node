@@ -42,6 +42,7 @@ pub async fn poll_and_decrypt_requests(
     discovery_url: &str,
     auth_token: &str,
     master_key: &[u8],
+    upload_storage: &fold_db::storage::UploadStorage,
 ) -> HandlerResult<ConnectionRequestsResponse> {
     let publisher = DiscoveryPublisher::new(
         master_key.to_vec(),
@@ -145,8 +146,16 @@ pub async fn poll_and_decrypt_requests(
         // Dispatch. The helper returns Handled/Skipped to indicate the message
         // should be marked processed, or Err to indicate a transient failure
         // that must be retried on the next poll.
-        let outcome =
-            dispatch_decrypted_message(node, &*store, master_key, &publisher, msg, raw).await;
+        let outcome = dispatch_decrypted_message(
+            node,
+            &*store,
+            master_key,
+            &publisher,
+            msg,
+            raw,
+            upload_storage,
+        )
+        .await;
 
         match outcome {
             Ok(DispatchOutcome::Handled) | Ok(DispatchOutcome::Skipped { .. }) => {
@@ -254,6 +263,7 @@ async fn dispatch_decrypted_message(
     publisher: &DiscoveryPublisher,
     msg: &crate::discovery::types::EncryptedMessage,
     raw: serde_json::Value,
+    upload_storage: &fold_db::storage::UploadStorage,
 ) -> Result<DispatchOutcome, HandlerError> {
     let message_type = raw
         .get("message_type")
@@ -484,7 +494,7 @@ async fn dispatch_decrypted_message(
                 }
             }
 
-            process_data_share(node, &payload).await?;
+            process_data_share(node, &payload, upload_storage).await?;
             tracing::info!(
                 "Received {} records from {}",
                 payload.records.len(),
@@ -1273,6 +1283,7 @@ fn validate_data_share_schemas(
 async fn process_data_share(
     node: &FoldNode,
     payload: &DataSharePayload,
+    upload_storage: &fold_db::storage::UploadStorage,
 ) -> Result<(), HandlerError> {
     let db = node.get_fold_db().handler_err("get db")?;
 
@@ -1321,11 +1332,8 @@ async fn process_data_share(
                 .or_else(|| record.fields.get("file_hash").and_then(|v| v.as_str()))
                 .unwrap_or("shared_file");
 
-            let upload_path = std::env::var("FOLDDB_UPLOAD_PATH")
-                .map(std::path::PathBuf::from)
-                .unwrap_or_else(|_| std::path::PathBuf::from("data/uploads"));
-            let upload_storage = fold_db::storage::UploadStorage::local(upload_path);
-
+            // Use the boot-time `UploadStorage` threaded down from the
+            // route handler (formerly built per-call from `FOLDDB_UPLOAD_PATH`).
             upload_storage
                 .save_file(file_name, &file_bytes, None)
                 .await
@@ -1449,6 +1457,14 @@ mod dispatch_tests {
         }
     }
 
+    /// Local-disk `UploadStorage` rooted in a fresh tempdir. Returned tuple's
+    /// `TempDir` is held by the caller for the test's lifetime.
+    fn make_upload_storage() -> (fold_db::storage::UploadStorage, tempfile::TempDir) {
+        let dir = tempdir().unwrap();
+        let storage = fold_db::storage::UploadStorage::local(dir.path().to_path_buf());
+        (storage, dir)
+    }
+
     /// A KvStore wrapper that fails `put` for keys starting with a configured
     /// prefix. Used to simulate transient storage failures for specific
     /// sub-operations without breaking the dedup marker write.
@@ -1505,13 +1521,15 @@ mod dispatch_tests {
     async fn unknown_message_type_is_skipped_not_errored() {
         let (node, _dir) = make_test_node().await;
         let publisher = make_publisher();
+        let (upload, _upload_dir) = make_upload_storage();
         let store: Arc<dyn KvStore> = Arc::new(InMemoryKvStore::new());
         let raw = serde_json::json!({"message_type": "totally_made_up"});
         let msg = make_msg("m-unknown");
 
-        let outcome = dispatch_decrypted_message(&node, &*store, &[0u8; 32], &publisher, &msg, raw)
-            .await
-            .expect("unknown type must not return Err (it's a permanent skip)");
+        let outcome =
+            dispatch_decrypted_message(&node, &*store, &[0u8; 32], &publisher, &msg, raw, &upload)
+                .await
+                .expect("unknown type must not return Err (it's a permanent skip)");
 
         match outcome {
             DispatchOutcome::Skipped { reason } => {
@@ -1529,14 +1547,16 @@ mod dispatch_tests {
     async fn malformed_request_payload_is_skipped() {
         let (node, _dir) = make_test_node().await;
         let publisher = make_publisher();
+        let (upload, _upload_dir) = make_upload_storage();
         let store: Arc<dyn KvStore> = Arc::new(InMemoryKvStore::new());
         // "request" expects ConnectionPayload fields; give it only message_type.
         let raw = serde_json::json!({"message_type": "request"});
         let msg = make_msg("m-bad-request");
 
-        let outcome = dispatch_decrypted_message(&node, &*store, &[0u8; 32], &publisher, &msg, raw)
-            .await
-            .expect("parse failure must not return Err");
+        let outcome =
+            dispatch_decrypted_message(&node, &*store, &[0u8; 32], &publisher, &msg, raw, &upload)
+                .await
+                .expect("parse failure must not return Err");
 
         assert!(matches!(outcome, DispatchOutcome::Skipped { .. }));
     }
@@ -1549,6 +1569,7 @@ mod dispatch_tests {
     async fn valid_request_is_handled_and_persisted() {
         let (node, _dir) = make_test_node().await;
         let publisher = make_publisher();
+        let (upload, _upload_dir) = make_upload_storage();
         let store: Arc<dyn KvStore> = Arc::new(InMemoryKvStore::new());
 
         let raw = serde_json::json!({
@@ -1560,9 +1581,10 @@ mod dispatch_tests {
         });
         let msg = make_msg("m-good");
 
-        let outcome = dispatch_decrypted_message(&node, &*store, &[0u8; 32], &publisher, &msg, raw)
-            .await
-            .expect("valid request should succeed");
+        let outcome =
+            dispatch_decrypted_message(&node, &*store, &[0u8; 32], &publisher, &msg, raw, &upload)
+                .await
+                .expect("valid request should succeed");
 
         assert!(matches!(outcome, DispatchOutcome::Handled));
 
@@ -1582,6 +1604,7 @@ mod dispatch_tests {
     async fn transient_save_failure_returns_err_and_does_not_persist() {
         let (node, _dir) = make_test_node().await;
         let publisher = make_publisher();
+        let (upload, _upload_dir) = make_upload_storage();
         let inner = Arc::new(InMemoryKvStore::new());
         let store: Arc<dyn KvStore> = Arc::new(FailingPutStore {
             inner: inner.clone(),
@@ -1598,7 +1621,8 @@ mod dispatch_tests {
         let msg = make_msg("m-transient");
 
         let outcome =
-            dispatch_decrypted_message(&node, &*store, &[0u8; 32], &publisher, &msg, raw).await;
+            dispatch_decrypted_message(&node, &*store, &[0u8; 32], &publisher, &msg, raw, &upload)
+                .await;
 
         match outcome {
             Err(HandlerError::Internal(msg)) => {
@@ -1625,6 +1649,7 @@ mod dispatch_tests {
     async fn err_leaves_dedup_absent_handled_sets_it() {
         let (node, _dir) = make_test_node().await;
         let publisher = make_publisher();
+        let (upload, _upload_dir) = make_upload_storage();
         let inner = Arc::new(InMemoryKvStore::new());
 
         // First attempt: store fails on save → Err, no dedup set.
@@ -1642,8 +1667,10 @@ mod dispatch_tests {
         let msg = make_msg("m-retry");
         let dedup_key = format!("msg_processed:{}", msg.message_id);
 
-        let outcome1 =
-            dispatch_decrypted_message(&node, &*failing, &[0u8; 32], &publisher, &msg, raw1).await;
+        let outcome1 = dispatch_decrypted_message(
+            &node, &*failing, &[0u8; 32], &publisher, &msg, raw1, &upload,
+        )
+        .await;
         assert!(outcome1.is_err());
         // Outer loop would NOT have written the dedup key on Err.
         let dedup_present = inner.get(dedup_key.as_bytes()).await.unwrap();
@@ -1661,10 +1688,11 @@ mod dispatch_tests {
             "sender_pseudonym": "ps1",
             "reply_public_key": "rpk1",
         });
-        let outcome2 =
-            dispatch_decrypted_message(&node, &*healthy, &[0u8; 32], &publisher, &msg, raw2)
-                .await
-                .expect("second attempt should succeed");
+        let outcome2 = dispatch_decrypted_message(
+            &node, &*healthy, &[0u8; 32], &publisher, &msg, raw2, &upload,
+        )
+        .await
+        .expect("second attempt should succeed");
         assert!(matches!(outcome2, DispatchOutcome::Handled));
 
         // Simulate the outer loop writing the dedup marker after Handled.

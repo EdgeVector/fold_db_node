@@ -272,6 +272,8 @@ mod tests {
                     config_dir: Some(tmp.path().join("config")),
                     seed_identity: None,
                 },
+                config_dir: tmp.path().join("config"),
+                upload_path: tmp.path().join("uploads"),
             },
         ));
 
@@ -325,6 +327,8 @@ mod tests {
                     config_dir: Some(tmp.path().join("config")),
                     seed_identity: None,
                 },
+                config_dir: tmp.path().join("config"),
+                upload_path: tmp.path().join("uploads"),
             },
         ));
         web::Data::new(AppState { node_manager })

@@ -1186,6 +1186,7 @@ pub async fn send_data_share(
     discovery_url: &str,
     auth_token: &str,
     master_key: &[u8],
+    upload_storage: &fold_db::storage::UploadStorage,
 ) -> HandlerResult<DataShareResponse> {
     // 1. Look up recipient in contact book
     let op = OperationProcessor::from_ref(node);
@@ -1323,11 +1324,10 @@ pub async fn send_data_share(
             .map(|s| s.to_string());
 
         let file_data_base64 = if let Some(ref hash) = file_hash {
-            // Try to read the file from upload storage
-            let upload_path = std::env::var("FOLDDB_UPLOAD_PATH")
-                .map(std::path::PathBuf::from)
-                .unwrap_or_else(|_| std::path::PathBuf::from("data/uploads"));
-            let upload_storage = fold_db::storage::UploadStorage::local(upload_path);
+            // Read the file from boot-time upload storage. The previous
+            // path constructed a fresh `UploadStorage::local(env_path)` per
+            // call from `FOLDDB_UPLOAD_PATH`; that's now plumbed in from
+            // `StartupCtx::upload_storage` via the route handler.
             match upload_storage.read_file(hash, None).await {
                 Ok(bytes) => Some(B64.encode(&bytes)),
                 Err(e) => {

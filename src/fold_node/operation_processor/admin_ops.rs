@@ -249,9 +249,25 @@ impl OperationProcessor {
         use crate::ingestion::smart_folder;
         use crate::ingestion::IngestionRequest;
 
+        // Resolve `config_dir` from the per-node config (populated at boot
+        // by `NodeManager::create_node`). Required by `IngestionConfig::load`
+        // — there is no env-var fallback after the `FOLD_CONFIG_DIR`
+        // migration.
+        let config_dir = self
+            .node
+            .config
+            .config_dir
+            .clone()
+            .ok_or_else(|| FoldDbError::Config("NodeConfig.config_dir not set".to_string()))?;
+
+        // Load IngestionService once; reuse its `IngestionConfig` for
+        // `convert_file_to_json` so we don't re-read disk here.
+        let service = IngestionService::from_config_dir(&config_dir)
+            .map_err(|e| FoldDbError::Other(e.to_string()))?;
+
         let data = match smart_folder::read_file_as_json(file_path) {
             Ok(json) => json,
-            Err(_) => convert_file_to_json(&file_path.to_path_buf())
+            Err(_) => convert_file_to_json(&file_path.to_path_buf(), service.config())
                 .await
                 .map_err(|e| FoldDbError::Other(e.to_string()))?,
         };
@@ -274,9 +290,6 @@ impl OperationProcessor {
             org_hash,
             image_bytes: None,
         };
-
-        let service =
-            IngestionService::from_env().map_err(|e| FoldDbError::Other(e.to_string()))?;
 
         let progress_tracker = match external_tracker {
             Some(t) => t,
@@ -315,7 +328,13 @@ impl OperationProcessor {
         use crate::fold_node::llm_query::service::LlmQueryService;
         use crate::ingestion::config::IngestionConfig;
 
-        let config = IngestionConfig::load_or_default();
+        let config_dir = self
+            .node
+            .config
+            .config_dir
+            .clone()
+            .ok_or_else(|| FoldDbError::Config("NodeConfig.config_dir not set".to_string()))?;
+        let config = IngestionConfig::load_or_default(&config_dir);
         let service = LlmQueryService::new(config).map_err(FoldDbError::Other)?;
 
         let schemas = self.list_schemas().await?;
@@ -359,8 +378,15 @@ impl OperationProcessor {
                 .map_err(|e| FoldDbError::Config(format!("Failed to derive E2E keys: {e}")))?
         };
 
-        let data_dir = std::env::var("FOLD_STORAGE_PATH").unwrap_or_else(|_| "data".to_string());
-        let sync_setup = fold_db::sync::SyncSetup::from_exemem(api_url, api_key, &data_dir);
+        // Read the storage path from the per-node config. The legacy
+        // env-var fallback (`FOLD_STORAGE_PATH`) is gone — `NodeManager` is
+        // now the single source of truth for this path.
+        let data_dir = self.node.config.get_storage_path();
+        let sync_setup = fold_db::sync::SyncSetup::from_exemem(
+            api_url,
+            api_key,
+            data_dir.to_string_lossy().as_ref(),
+        );
         let sync_crypto: std::sync::Arc<dyn fold_db::crypto::CryptoProvider> = std::sync::Arc::new(
             fold_db::crypto::LocalCryptoProvider::from_key(e2e_keys.encryption_key()),
         );

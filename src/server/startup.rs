@@ -13,6 +13,7 @@
 //! Phase 3 — the binary calls `FoldHttpServer::new(ctx).run()` which
 //! binds Actix and starts serving requests.
 
+use std::path::PathBuf;
 use std::sync::Arc;
 
 use actix_web::web;
@@ -32,6 +33,18 @@ use crate::observability_setup::ObsHandles;
 use crate::server::discovery_config::DiscoveryConfig;
 use crate::server::http_server::{session_token_needs_refresh, AppState};
 use crate::server::node_manager::NodeManager;
+
+/// Newtype wrapper around the per-server config directory so Actix `web::Data`
+/// extractors are unambiguous (a bare `web::Data<PathBuf>` would collide with
+/// any other `PathBuf`-shaped state). Replaces the former `FOLD_CONFIG_DIR`
+/// env var.
+pub struct ConfigDir(pub PathBuf);
+
+impl ConfigDir {
+    pub fn as_path(&self) -> &std::path::Path {
+        &self.0
+    }
+}
 
 /// All resources required to run the server, with init guaranteed complete.
 ///
@@ -63,6 +76,10 @@ pub struct StartupCtx {
     pub apple_sync_config: web::Data<SyncConfigState>,
     pub batch_controllers: web::Data<BatchControllerMap>,
     pub llm_query: web::Data<LlmQueryState>,
+    /// Per-server config directory (formerly `FOLD_CONFIG_DIR`). Threaded
+    /// to ingestion routes via `web::Data` so two nodes in one test process
+    /// don't share a process-wide env slot.
+    pub config_dir: web::Data<ConfigDir>,
 }
 
 impl StartupCtx {
@@ -76,6 +93,14 @@ impl StartupCtx {
         node_manager: NodeManager,
         obs: Option<ObsHandles>,
     ) -> FoldDbResult<Arc<Self>> {
+        // Snapshot the path inputs the boot pipeline needs before wrapping
+        // node_manager in Arc — `config_dir` and `upload_path` flow into the
+        // upload-storage and ingestion-service builders below.
+        let (config_dir_path, upload_path) = {
+            let cfg = node_manager.get_full_config().await;
+            (cfg.config_dir.clone(), cfg.upload_path.clone())
+        };
+
         let node_manager = Arc::new(node_manager);
 
         // Eager pool init — fixes the bootstrap-resume `None` pool race.
@@ -96,7 +121,7 @@ impl StartupCtx {
             }
         }
 
-        let upload_storage = build_upload_storage();
+        let upload_storage = build_upload_storage(upload_path.clone());
         tracing::info!(
             target: "fold_node::http_server",
             "Upload storage initialized: {}",
@@ -108,11 +133,15 @@ impl StartupCtx {
         });
         let upload_storage = web::Data::new(upload_storage);
         let progress_tracker = web::Data::new(fold_db::progress::create_tracker().await);
-        let ingestion =
-            web::Data::new(RwLock::new(IngestionService::from_env().ok().map(Arc::new)));
+        let ingestion = web::Data::new(RwLock::new(
+            IngestionService::from_config_dir(&config_dir_path)
+                .ok()
+                .map(Arc::new),
+        ));
         let apple_sync_config = web::Data::new(create_sync_config_state());
         let batch_controllers = web::Data::new(create_batch_controller_map());
-        let llm_query = web::Data::new(LlmQueryState::new());
+        let llm_query = web::Data::new(LlmQueryState::new(config_dir_path.clone()));
+        let config_dir = web::Data::new(ConfigDir(config_dir_path));
 
         Ok(Arc::new(Self {
             node_manager,
@@ -126,6 +155,7 @@ impl StartupCtx {
             apple_sync_config,
             batch_controllers,
             llm_query,
+            config_dir,
         }))
     }
 
@@ -221,14 +251,7 @@ async fn load_schemas_if_configured(node_manager: &Arc<NodeManager>) {
     }
 }
 
-fn build_upload_storage() -> UploadStorage {
-    let upload_path = std::env::var("FOLDDB_UPLOAD_PATH")
-        .map(std::path::PathBuf::from)
-        .unwrap_or_else(|_| {
-            crate::utils::paths::folddb_home()
-                .map(|h| h.join("data").join("uploads"))
-                .unwrap_or_else(|_| std::path::PathBuf::from("data/uploads"))
-        });
+fn build_upload_storage(upload_path: PathBuf) -> UploadStorage {
     UploadStorage::local(upload_path)
 }
 
@@ -333,6 +356,8 @@ mod tests {
             base_config: NodeConfig::new(path.to_path_buf())
                 .with_schema_service_url("test://mock")
                 .with_seed_identity(crate::identity::identity_from_keypair(&keypair)),
+            config_dir: path.join("config"),
+            upload_path: path.join("uploads"),
         }
     }
 
@@ -502,6 +527,8 @@ mod tests {
             base_config: NodeConfig::new(tmp.path().to_path_buf())
                 .with_schema_service_url(&slow_url)
                 .with_seed_identity(crate::identity::identity_from_keypair(&keypair)),
+            config_dir: tmp.path().join("config"),
+            upload_path: tmp.path().join("uploads"),
         };
         let manager = Arc::new(NodeManager::new(cfg));
 

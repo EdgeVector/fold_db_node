@@ -13,6 +13,7 @@ use crate::server::http_server::AppState;
 use crate::server::routes::{handler_error_to_response, require_node};
 use actix_web::{web, HttpResponse, Responder};
 use serde_json::json;
+use std::path::PathBuf;
 use std::sync::Arc;
 use tokio::sync::RwLock;
 
@@ -20,11 +21,15 @@ use tokio::sync::RwLock;
 pub struct LlmQueryState {
     pub service: RwLock<Option<Arc<LlmQueryService>>>,
     pub session_manager: Arc<SessionManager>,
+    /// Per-server config directory (formerly `FOLD_CONFIG_DIR`). Stashed so
+    /// `reload()` can re-read `ingestion_config.json` from the same place
+    /// boot did, without consulting a process-wide env var.
+    config_dir: PathBuf,
 }
 
 impl LlmQueryState {
-    pub fn new() -> Self {
-        let config = IngestionConfig::load_or_default();
+    pub fn new(config_dir: PathBuf) -> Self {
+        let config = IngestionConfig::load_or_default(&config_dir);
         let service = match LlmQueryService::new(config) {
             Ok(svc) => Some(Arc::new(svc)),
             Err(e) => {
@@ -36,12 +41,13 @@ impl LlmQueryState {
         Self {
             service: RwLock::new(service),
             session_manager,
+            config_dir,
         }
     }
 
     /// Reload the LLM query service with fresh config
     pub async fn reload(&self) {
-        let config = IngestionConfig::load_or_default();
+        let config = IngestionConfig::load_or_default(&self.config_dir);
         match LlmQueryService::new(config) {
             Ok(svc) => {
                 let mut guard = self.service.write().await;
@@ -52,12 +58,6 @@ impl LlmQueryState {
                 tracing::warn!("Failed to reload LlmQueryService: {}", e);
             }
         }
-    }
-}
-
-impl Default for LlmQueryState {
-    fn default() -> Self {
-        Self::new()
     }
 }
 

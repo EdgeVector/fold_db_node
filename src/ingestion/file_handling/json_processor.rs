@@ -20,14 +20,15 @@ use crate::ingestion::{IngestionError, IngestionResult};
 ///
 /// Non-image files (PDF, CSV, Office docs, text, archives) always use
 /// `file_to_markdown` — Anthropic vision is for images only.
-pub async fn convert_file_to_json(file_path: &PathBuf) -> Result<Value, IngestionError> {
+pub async fn convert_file_to_json(
+    file_path: &PathBuf,
+    ingestion_config: &crate::ingestion::IngestionConfig,
+) -> Result<Value, IngestionError> {
     tracing::info!(
             target: "fold_node::ingestion",
         "Converting file to markdown: {:?}",
         file_path
     );
-
-    let ingestion_config = crate::ingestion::IngestionConfig::load()?;
 
     // Route supported images through Anthropic when configured. Unsupported
     // images (bmp, tiff, svg, …) and all non-image formats keep the local
@@ -40,7 +41,7 @@ pub async fn convert_file_to_json(file_path: &PathBuf) -> Result<Value, Ingestio
         if crate::ingestion::file_handling::anthropic_vision::supports_extension(ext) {
             return crate::ingestion::file_handling::anthropic_vision::convert_image_to_json(
                 file_path,
-                &ingestion_config,
+                ingestion_config,
             )
             .await;
         }

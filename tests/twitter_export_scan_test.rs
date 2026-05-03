@@ -270,7 +270,8 @@ async fn test_twitter_export_llm_scan() {
     // ── Scan ─────────────────────────────────────────────────────────────────
 
     let ingestion_service =
-        IngestionService::from_env().expect("Failed to create IngestionService");
+        IngestionService::from_config_dir(std::path::Path::new("/nonexistent/folddb-test-config"))
+            .expect("Failed to create IngestionService");
 
     let scan = perform_smart_folder_scan(
         scan_path,

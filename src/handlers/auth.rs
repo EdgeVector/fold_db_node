@@ -329,11 +329,7 @@ async fn enable_cloud_sync_in_config(
 
     crate::fold_node::config::save_node_config(&config)?;
 
-    node_manager
-        .update_config(crate::server::node_manager::NodeManagerConfig {
-            base_config: config,
-        })
-        .await;
+    node_manager.update_config(config).await;
 
     Ok(())
 }
@@ -901,11 +897,7 @@ pub async fn restore_from_phrase(
             } else {
                 let _ = crate::identity::open(pool).and_then(|s| s.clear());
             }
-            node_manager
-                .update_config(crate::server::node_manager::NodeManagerConfig {
-                    base_config: pre_restore_config,
-                })
-                .await;
+            node_manager.update_config(pre_restore_config).await;
             Err(HandlerError::Internal(e))
         }
     }
@@ -940,11 +932,7 @@ async fn finalize_restore(
     // Invalidate caches so the next create_node picks up the restored identity
     // from Sled. NodeConfig carries no identity fields anymore, so the base
     // config we pass through is otherwise untouched.
-    node_manager
-        .update_config(crate::server::node_manager::NodeManagerConfig {
-            base_config: pre_restore_config,
-        })
-        .await;
+    node_manager.update_config(pre_restore_config).await;
 
     // Register with Exemem (idempotent — returns fresh token for existing users).
     // Failure here triggers rollback in the caller.
@@ -1537,6 +1525,8 @@ mod tests {
                     config_dir: Some(tmp.path().join("config")),
                     seed_identity: None,
                 },
+                config_dir: tmp.path().join("config"),
+                upload_path: tmp.path().join("uploads"),
             },
         ));
 

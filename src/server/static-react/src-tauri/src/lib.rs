@@ -469,22 +469,19 @@ async fn start_fold_server(port: u16) -> Result<EmbeddedServerHandle, String> {
     std::env::set_var("NODE_CONFIG", &config_path);
     early_log::info(&format!("Config path: {:?}", config_path));
 
-    // Set FOLD_UPLOAD_PATH so upload storage uses an absolute writable path.
-    // Without this, UploadStorageConfig defaults to the relative "data/uploads"
-    // which resolves inside the read-only .app bundle on macOS.
+    // Resolve the absolute upload + config dirs so they don't resolve
+    // inside the read-only .app bundle. These flow through
+    // `NodeManagerConfig` below — no env-var hand-off (formerly
+    // `FOLD_UPLOAD_PATH` / `FOLD_CONFIG_DIR`).
     let upload_path = dirs::home_dir()
         .ok_or_else(|| "Could not determine home directory".to_string())?
         .join(".folddb")
         .join("uploads");
-    std::env::set_var("FOLD_UPLOAD_PATH", &upload_path);
     early_log::info(&format!("Upload path: {:?}", upload_path));
 
-    // Set FOLD_CONFIG_DIR so ingestion_config.json is saved/loaded from ~/.folddb/
-    // rather than ./config/ which resolves into the read-only .app bundle.
     let config_dir = dirs::home_dir()
         .ok_or_else(|| "Could not determine home directory".to_string())?
         .join(".folddb");
-    std::env::set_var("FOLD_CONFIG_DIR", &config_dir);
 
     // Set FOLDDB_HOME so all path resolution uses ~/.folddb/ instead of
     // relative paths that resolve into the read-only .app bundle.
@@ -508,10 +505,15 @@ async fn start_fold_server(port: u16) -> Result<EmbeddedServerHandle, String> {
     };
 
     config.schema_service_url = Some(fold_db_node::endpoints::schema_service_url());
+    // Mirror the Tauri-resolved config_dir onto NodeConfig so handlers
+    // reached via `&FoldNode` (admin_ops, trust modules) can read it.
+    config.config_dir = Some(config_dir.clone());
 
     // Build NodeManagerConfig — no FoldNode created yet
     let node_manager_config = NodeManagerConfig {
         base_config: config,
+        config_dir: config_dir.clone(),
+        upload_path,
     };
 
     early_log::info("Starting server with lazy database initialization...");

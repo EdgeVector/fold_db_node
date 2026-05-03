@@ -67,7 +67,8 @@ async fn test_smart_folder_ingest_and_query() {
 
     // Create IngestionService + ProgressService
     let ingestion_service =
-        IngestionService::from_env().expect("Failed to create ingestion service");
+        IngestionService::from_config_dir(std::path::Path::new("/nonexistent/folddb-test-config"))
+            .expect("Failed to create ingestion service");
     let progress_tracker = create_progress_tracker().await;
     let progress_service = ProgressService::new(progress_tracker);
 
@@ -306,7 +307,9 @@ async fn test_smart_folder_ingest_and_query() {
 
     // ── Phase 5: AI Agent Queries ───────────────────────────────────────
 
-    let ingestion_config = IngestionConfig::from_env().expect("IngestionConfig::from_env failed");
+    let ingestion_config =
+        IngestionConfig::from_env(std::path::Path::new("/nonexistent/folddb-test-config"))
+            .expect("IngestionConfig::from_env failed");
     let query_service =
         LlmQueryService::new(ingestion_config).expect("Failed to create LlmQueryService");
 

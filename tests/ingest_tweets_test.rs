@@ -71,7 +71,8 @@ async fn test_ingest_tweets_js() {
 
     // 4. Create IngestionService from environment
     let ingestion_service =
-        IngestionService::from_env().expect("Failed to create ingestion service");
+        IngestionService::from_config_dir(std::path::Path::new("/nonexistent/folddb-test-config"))
+            .expect("Failed to create ingestion service");
 
     // 5. Create progress tracking
     let progress_tracker = create_progress_tracker().await;

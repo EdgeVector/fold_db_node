@@ -45,8 +45,11 @@ pub struct UploadFormData {
 }
 
 /// Convert a file to JSON using file_to_markdown, returning an HTTP 500 on error.
-async fn convert_file_to_json_http(file_path: &PathBuf) -> Result<serde_json::Value, HttpResponse> {
-    match convert_file_to_json(file_path).await {
+async fn convert_file_to_json_http(
+    file_path: &PathBuf,
+    ingestion_config: &crate::ingestion::IngestionConfig,
+) -> Result<serde_json::Value, HttpResponse> {
+    match convert_file_to_json(file_path, ingestion_config).await {
         Ok(value) => Ok(value),
         Err(e) => {
             tracing::error!(
@@ -409,7 +412,16 @@ pub async fn upload_file(
                 "Native parser unavailable, using file_to_markdown: {}",
                 form_data.original_filename
             );
-            match convert_file_to_json_http(&form_data.file_path).await {
+            // Borrow the boot-time IngestionService so the converter sees
+            // the user's resolved vision_backend / Ollama settings without
+            // a second disk read.
+            let ingestion_guard = ingestion_service.read().await;
+            let ingestion_cfg = match ingestion_guard.as_ref() {
+                Some(svc) => svc.config().clone(),
+                None => crate::ingestion::IngestionConfig::default(),
+            };
+            drop(ingestion_guard);
+            match convert_file_to_json_http(&form_data.file_path, &ingestion_cfg).await {
                 Ok(json) => json,
                 Err(response) => return response,
             }
