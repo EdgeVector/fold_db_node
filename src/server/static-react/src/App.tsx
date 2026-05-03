@@ -1,4 +1,4 @@
-import React, { useEffect, useState } from 'react'
+import React, { useEffect, useState, type ComponentProps } from 'react'
 import { FoldDbProvider } from './components/FoldDbProvider'
 import Header from './components/Header'
 import Footer from './components/Footer'
@@ -35,16 +35,22 @@ import OnboardingWizard from './components/onboarding/OnboardingWizard'
 import LogSidebar from './components/LogSidebar'
 import ErrorBoundary from './components/ErrorBoundary'
 import DatabaseSetupScreen from './components/DatabaseSetupScreen'
-import { useApprovedSchemas } from './hooks/useApprovedSchemas.js'
-import { useAuthInitialization } from './hooks/useAuthInitialization.js'
-import { useTabRouting } from './hooks/useTabRouting.js'
-import { useDatabaseInit } from './hooks/useDatabaseInit.js'
-import { useResultHandler } from './hooks/useResultHandler.js'
+import { useApprovedSchemas } from './hooks/useApprovedSchemas'
+import { useAuthInitialization } from './hooks/useAuthInitialization'
+import { useTabRouting } from './hooks/useTabRouting'
+import { useDatabaseInit } from './hooks/useDatabaseInit'
+import { useResultHandler } from './hooks/useResultHandler'
 
-function isIngestionResult(results) {
-  if (!results?.success) return false
-  const d = results?.data ?? results
-  return typeof d === 'object' && Array.isArray(d?.schemas_written) && d.schemas_written.length > 0
+function isIngestionResult(results: unknown): boolean {
+  const r = results as { success?: boolean; data?: unknown } | null | undefined
+  if (!r?.success) return false
+  const d = (r.data ?? r) as { schemas_written?: unknown[] } | null | undefined
+  return (
+    !!d &&
+    typeof d === 'object' &&
+    Array.isArray(d.schemas_written) &&
+    d.schemas_written.length > 0
+  )
 }
 
 export function AppContent() {
@@ -119,7 +125,7 @@ export function AppContent() {
     refetchSchemas()
   }
 
-  const renderActiveTab = () => {
+  const renderActiveTab = (): React.ReactNode => {
     switch (activeTab) {
       case 'agent':
         return <AgentTab />
@@ -176,7 +182,10 @@ export function AppContent() {
         return (
           <SettingsTab
             onResult={handleOperationResult}
-            initialSubTab={settingsSubTab}
+            initialSubTab={
+              (settingsSubTab as ComponentProps<typeof SettingsTab>['initialSubTab']) ??
+              undefined
+            }
             onRelaunchOnboarding={() => { setShowOnboarding(true) }}
           />
         )
@@ -336,27 +345,27 @@ export function AppContent() {
              * own subheadings as <h2>/<h3>.
              */}
             <h1 className="text-lg font-semibold uppercase tracking-widest text-secondary mb-3">
-              {activeTab.replaceAll('-', ' ')}
+              {activeTab.replace(/-/g, ' ')}
             </h1>
 
             {/* Tab Content */}
             {renderActiveTab()}
 
             {/* Results */}
-            {results && isIngestionResult(results) && (
+            {results != null && isIngestionResult(results) ? (
               <IngestionReport
                 ingestionResult={results}
                 onDismiss={() => setResults(null)}
               />
-            )}
-            {results && !isIngestionResult(results) && (
-              <div className="mt-6" ref={resultsRef}>
+            ) : null}
+            {results != null && !isIngestionResult(results) ? (
+              <div className="mt-6" ref={resultsRef as React.RefObject<HTMLDivElement>}>
                 <h2 className="text-lg font-semibold uppercase tracking-widest text-secondary mb-3">
                   Results
                 </h2>
                 <ResultsSection results={results} />
               </div>
-            )}
+            ) : null}
           </div>
         </main>
 

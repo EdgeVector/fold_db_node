@@ -73,7 +73,9 @@ const TAG_SETS = [
   ["architecture", "scalability", "design"],
 ];
 
-const TITLE_TEMPLATES = [
+type Templater = (topic: string) => string;
+
+const TITLE_TEMPLATES: Templater[] = [
   (topic) => `Getting Started with ${topic}: A Complete Guide`,
   (topic) => `Advanced ${topic} Techniques You Need to Know`,
   (topic) => `Why ${topic} is Changing the Industry`,
@@ -86,7 +88,7 @@ const TITLE_TEMPLATES = [
   (topic) => `${topic} Tools and Frameworks Comparison`,
 ];
 
-const CONTENT_TEMPLATES = [
+const CONTENT_TEMPLATES: Templater[] = [
   (
     topic,
   ) => `In this comprehensive guide, we'll explore the fundamentals of ${topic} and how it's revolutionizing the way we approach modern development. Whether you're a seasoned developer or just starting out, this article will provide valuable insights into best practices and real-world applications.
@@ -254,12 +256,20 @@ Mastering ${topic} development is an ongoing journey that requires continuous le
 The key to success lies in understanding not just the technical aspects, but also the business context and user needs. Keep experimenting, stay updated with the latest developments, and always prioritize code quality and user experience.`,
 ];
 
-function pick(arr) {
-  return arr[Math.floor(Math.random() * arr.length)];
+export interface BlogPost {
+  title: string;
+  content: string;
+  author: string;
+  publish_date: string;
+  tags: string[];
 }
 
-export function generateBlogPosts(count = 100) {
-  const posts = [];
+function pick<T>(arr: readonly T[]): T {
+  return arr[Math.floor(Math.random() * arr.length)] as T;
+}
+
+export function generateBlogPosts(count = 100): BlogPost[] {
+  const posts: BlogPost[] = [];
   const now = new Date();
   const sixMonthsAgo = new Date(now.getTime() - 6 * 30 * 24 * 60 * 60 * 1000);
 
@@ -274,7 +284,7 @@ export function generateBlogPosts(count = 100) {
       content: pick(CONTENT_TEMPLATES)(topic),
       author: pick(AUTHORS),
       publish_date: new Date(randomTime).toISOString().split("T")[0],
-      tags: pick(TAG_SETS),
+      tags: [...pick(TAG_SETS)],
     });
   }
   return posts;

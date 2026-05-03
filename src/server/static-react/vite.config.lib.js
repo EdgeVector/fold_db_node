@@ -18,7 +18,7 @@ export default defineConfig({
   build: {
     outDir: "dist-lib",
     lib: {
-      entry: path.resolve(__dirname, "src/index.js"),
+      entry: path.resolve(__dirname, "src/index.ts"),
       name: "FoldNodeUI",
       fileName: (format) => `fold-node-ui.${format}.js`,
     },

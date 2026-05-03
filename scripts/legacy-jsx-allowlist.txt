@@ -9,12 +9,10 @@
 #
 # When this file is empty, delete it and scripts/lint-no-new-jsx.sh.
 #
-src/server/static-react/src/App.jsx
 src/server/static-react/src/components/AnimatedLogo.jsx
 src/server/static-react/src/components/DatabaseSetupScreen.jsx
 src/server/static-react/src/components/ErrorBoundary.jsx
 src/server/static-react/src/components/FaceOverlay.jsx
-src/server/static-react/src/components/FoldDbProvider.jsx
 src/server/static-react/src/components/Footer.jsx
 src/server/static-react/src/components/Header.jsx
 src/server/static-react/src/components/HeaderProgress.jsx
@@ -121,21 +119,9 @@ src/server/static-react/src/components/tabs/trust/trustUtils.jsx
 src/server/static-react/src/components/tabs/trust/useTrustHandlers.js
 src/server/static-react/src/components/tabs/upload/UploadInfoPanel.jsx
 src/server/static-react/src/constants/__tests__/constants.test.js
-src/server/static-react/src/data/sampleBlogPosts.js
-src/server/static-react/src/data/sampleSocialPosts.js
 src/server/static-react/src/hooks/__tests__/useFolderAutocomplete.test.js
 src/server/static-react/src/hooks/__tests__/useQueryBuilder.test.jsx
 src/server/static-react/src/hooks/__tests__/useQueryState.test.jsx
-src/server/static-react/src/hooks/index.js
-src/server/static-react/src/hooks/useApprovedSchemas.js
-src/server/static-react/src/hooks/useAuthInitialization.js
-src/server/static-react/src/hooks/useBatchMonitor.js
-src/server/static-react/src/hooks/useDatabaseInit.js
-src/server/static-react/src/hooks/useFolderAutocomplete.js
-src/server/static-react/src/hooks/useQueryState.js
-src/server/static-react/src/hooks/useSearchableSelect.js
-src/server/static-react/src/index.js
-src/server/static-react/src/main.jsx
 src/server/static-react/src/store/__tests__/schemaSlice.test.js
 src/server/static-react/src/test/components/App.test.jsx
 src/server/static-react/src/test/components/DatabaseSetupScreen.test.jsx
