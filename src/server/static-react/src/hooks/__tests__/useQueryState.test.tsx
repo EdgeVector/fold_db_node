@@ -1,16 +1,17 @@
-// @ts-nocheck Migration debt: converted from .jsx in the JS->TS finalization batch; strict-mode cleanup of vi.mock typings tracked as follow-up.
 /**
  * useQueryState Hook Tests
  * Tests for UCR-1-2: Extract custom hooks for query state management with Redux integration
  * Part of UTC-1 Test Coverage Enhancement - Hook Testing
  */
 
-import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
+import React from 'react';
+import { describe, it, expect, beforeEach, afterEach, vi, type Mock } from 'vitest';
 import { renderHook, act } from '@testing-library/react';
 import { Provider } from 'react-redux';
 import { useQueryState } from '../useQueryState';
 import { createTestStore } from '../../test/utils/testUtilities';
 import { selectFetchLoading, selectAllSchemas, selectApprovedSchemas } from '../../store/schemaSlice';
+import { useAppSelector } from '../../store/hooks';
 
 // Mock the Redux store hooks
 vi.mock('../../store/hooks', () => ({
@@ -19,8 +20,8 @@ vi.mock('../../store/hooks', () => ({
 }));
 
 describe('useQueryState Hook', () => {
-  let mockStore;
-  let mockUseAppSelector;
+  let mockStore: ReturnType<typeof createTestStore>;
+  let mockUseAppSelector: Mock;
 
   const mockSchemas = [
     {
@@ -44,12 +45,9 @@ describe('useQueryState Hook', () => {
     }
   ];
 
-  beforeEach(async () => {
-    mockStore = await createTestStore();
-    
-    // Import the mocked hook
-    const { useAppSelector } = await import('../../store/hooks');
-    mockUseAppSelector = useAppSelector;
+  beforeEach(() => {
+    mockStore = createTestStore();
+    mockUseAppSelector = vi.mocked(useAppSelector);
 
     // Set up default mock implementation
     mockUseAppSelector.mockImplementation((selector) => {
@@ -75,7 +73,7 @@ describe('useQueryState Hook', () => {
 
   const renderUseQueryState = () => {
     return renderHook(() => useQueryState(), {
-      wrapper: ({ children }) => (
+      wrapper: ({ children }: { children?: React.ReactNode }) => (
         <Provider store={mockStore}>
           {children}
         </Provider>
@@ -256,14 +254,14 @@ describe('useQueryState Hook', () => {
       act(() => {
         result.current.handleRangeFilterChange('range_field', 'start', 'value1');
         result.current.handleRangeFilterChange('range_field', 'end', 'value2');
-        result.current.handleRangeFilterChange('range_field', 'key', 'exact_key');
+        result.current.handleRangeFilterChange('range_field', 'prefix', 'exact_key');
       });
 
       expect(result.current.state.rangeFilters).toEqual({
         range_field: {
           start: 'value1',
           end: 'value2',
-          key: 'exact_key'
+          prefix: 'exact_key'
         }
       });
     });
@@ -273,12 +271,12 @@ describe('useQueryState Hook', () => {
 
       act(() => {
         result.current.handleRangeFilterChange('field1', 'start', 'a');
-        result.current.handleRangeFilterChange('field2', 'key', 'exact');
+        result.current.handleRangeFilterChange('field2', 'prefix', 'exact');
       });
 
       expect(result.current.state.rangeFilters).toEqual({
         field1: { start: 'a' },
-        field2: { key: 'exact' }
+        field2: { prefix: 'exact' }
       });
     });
 
@@ -287,7 +285,7 @@ describe('useQueryState Hook', () => {
 
       const newFilters = {
         field1: { start: 'a', end: 'z' },
-        field2: { key: 'exact' }
+        field2: { prefix: 'exact' }
       };
 
       act(() => {

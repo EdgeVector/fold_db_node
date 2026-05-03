@@ -1,4 +1,3 @@
-// @ts-nocheck Migration debt: converted from .jsx in the JS->TS finalization batch; strict-mode cleanup of vi.mock typings tracked as follow-up.
 // Test Configuration Constants
 // TASK-010: Required test constants for PBI-REACT-SIMPLIFY-001
 

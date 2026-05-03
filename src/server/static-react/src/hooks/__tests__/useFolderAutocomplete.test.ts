@@ -1,6 +1,6 @@
-// @ts-nocheck Migration debt: converted from .jsx in the JS->TS finalization batch; strict-mode cleanup of vi.mock typings tracked as follow-up.
+import type { KeyboardEvent } from 'react'
 import { renderHook, act } from '@testing-library/react'
-import { describe, it, expect, beforeEach, vi } from 'vitest'
+import { afterEach, describe, it, expect, beforeEach, vi, type Mock } from 'vitest'
 
 // Mock the ingestionClient before importing the hook
 vi.mock('../../api/clients', () => ({
@@ -12,9 +12,17 @@ vi.mock('../../api/clients', () => ({
 import { useFolderAutocomplete } from '../useFolderAutocomplete'
 import { ingestionClient } from '../../api/clients'
 
+const mockedCompletePath = vi.mocked(ingestionClient.completePath)
+
+const buildKeyEvent = (init: { key: string; preventDefault?: Mock }) =>
+  ({
+    key: init.key,
+    preventDefault: init.preventDefault ?? vi.fn(),
+  }) as unknown as KeyboardEvent<HTMLInputElement>
+
 describe('useFolderAutocomplete', () => {
-  let onFolderPathChange
-  let onSubmit
+  let onFolderPathChange: Mock
+  let onSubmit: Mock
 
   beforeEach(() => {
     vi.clearAllMocks()
@@ -37,7 +45,7 @@ describe('useFolderAutocomplete', () => {
 
   describe('debounced completions', () => {
     it('fetches completions after debounce when path includes /', async () => {
-      ingestionClient.completePath.mockResolvedValue({
+      mockedCompletePath.mockResolvedValue({ status: 200,
         success: true,
         data: { completions: ['/usr', '/Users'] },
       })
@@ -68,28 +76,28 @@ describe('useFolderAutocomplete', () => {
 
   describe('Tab key handling', () => {
     it('calls preventDefault on Tab when path has a slash', async () => {
-      ingestionClient.completePath.mockResolvedValue({
+      mockedCompletePath.mockResolvedValue({ status: 200,
         success: true,
         data: { completions: ['/usr'] },
       })
 
       const { result } = renderAutocomplete('/u')
 
-      const event = { key: 'Tab', preventDefault: vi.fn() }
+      const event = buildKeyEvent({ key: 'Tab' })
       await act(async () => { result.current.handleInputKeyDown(event) })
 
       expect(event.preventDefault).toHaveBeenCalled()
     })
 
     it('auto-completes to single match on Tab', async () => {
-      ingestionClient.completePath.mockResolvedValue({
+      mockedCompletePath.mockResolvedValue({ status: 200,
         success: true,
         data: { completions: ['/usr'] },
       })
 
       const { result } = renderAutocomplete('/u')
 
-      const event = { key: 'Tab', preventDefault: vi.fn() }
+      const event = buildKeyEvent({ key: 'Tab' })
       await act(async () => { result.current.handleInputKeyDown(event) })
 
       // Single match → acceptSuggestion → onFolderPathChange with trailing /
@@ -97,14 +105,14 @@ describe('useFolderAutocomplete', () => {
     })
 
     it('completes to longest common prefix with multiple matches', async () => {
-      ingestionClient.completePath.mockResolvedValue({
+      mockedCompletePath.mockResolvedValue({ status: 200,
         success: true,
         data: { completions: ['/usr/local', '/usr/lib'] },
       })
 
       const { result } = renderAutocomplete('/us')
 
-      const event = { key: 'Tab', preventDefault: vi.fn() }
+      const event = buildKeyEvent({ key: 'Tab' })
       await act(async () => { result.current.handleInputKeyDown(event) })
 
       // LCP of /usr/local and /usr/lib is /usr/l — longer than /us so path updates
@@ -115,14 +123,14 @@ describe('useFolderAutocomplete', () => {
     })
 
     it('shows suggestions without changing path when LCP equals input', async () => {
-      ingestionClient.completePath.mockResolvedValue({
+      mockedCompletePath.mockResolvedValue({ status: 200,
         success: true,
         data: { completions: ['/Applications', '/Library'] },
       })
 
       const { result } = renderAutocomplete('/')
 
-      const event = { key: 'Tab', preventDefault: vi.fn() }
+      const event = buildKeyEvent({ key: 'Tab' })
       await act(async () => { result.current.handleInputKeyDown(event) })
 
       // LCP is / which equals current path, so path is NOT changed
@@ -135,7 +143,7 @@ describe('useFolderAutocomplete', () => {
     it('does not intercept Tab when path has no slash', async () => {
       const { result } = renderAutocomplete('Documents')
 
-      const event = { key: 'Tab', preventDefault: vi.fn() }
+      const event = buildKeyEvent({ key: 'Tab' })
       await act(async () => { result.current.handleInputKeyDown(event) })
 
       expect(event.preventDefault).not.toHaveBeenCalled()
@@ -147,14 +155,14 @@ describe('useFolderAutocomplete', () => {
     it('calls onSubmit on Enter with no suggestions', async () => {
       const { result } = renderAutocomplete('/tmp')
 
-      const event = { key: 'Enter', preventDefault: vi.fn() }
+      const event = buildKeyEvent({ key: 'Enter' })
       await act(async () => { result.current.handleInputKeyDown(event) })
 
       expect(onSubmit).toHaveBeenCalled()
     })
 
     it('dismisses suggestions on Escape', async () => {
-      ingestionClient.completePath.mockResolvedValue({
+      mockedCompletePath.mockResolvedValue({ status: 200,
         success: true,
         data: { completions: ['/usr', '/Users'] },
       })
@@ -165,7 +173,7 @@ describe('useFolderAutocomplete', () => {
 
       expect(result.current.showSuggestions).toBe(true)
 
-      const event = { key: 'Escape', preventDefault: vi.fn() }
+      const event = buildKeyEvent({ key: 'Escape' })
       await act(async () => { result.current.handleInputKeyDown(event) })
 
       expect(result.current.showSuggestions).toBe(false)

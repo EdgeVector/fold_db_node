@@ -1,39 +1,44 @@
-// @ts-nocheck Migration debt: converted from .jsx in the JS->TS finalization batch; strict-mode cleanup of vi.mock typings tracked as follow-up.
 /**
  * @fileoverview API Mocking Utilities for Testing
- * 
+ *
  * Provides comprehensive API mocking utilities using MSW (Mock Service Worker)
  * for testing the unified API client system. Includes handlers for all major
  * API endpoints with realistic response patterns and error scenarios.
- * 
+ *
  * TASK-006: Testing Enhancement - Created API mocking utilities
- * 
+ *
  * @module apiMocks
  * @since 2.0.0
  */
 
-import { http, HttpResponse } from 'msw';
-import { setupServer } from 'msw/node';
-import { beforeAll, afterEach, afterAll } from 'vitest';
+import { http, HttpResponse, type DefaultBodyType, type PathParams, type RequestHandler } from 'msw';
+import { setupServer, type SetupServerApi } from 'msw/node';
+import { afterAll, afterEach, beforeAll, vi } from 'vitest';
 import {
-  createMockSchema,
   createMockRangeSchema,
+  createMockSchema,
   mockDelay,
-  SCHEMA_STATES
+  SCHEMA_STATES,
 } from '../utils/testUtilities';
-import {
-  MOCK_API_DELAY_MS,
-  TEST_TIMEOUT_DEFAULT_MS
-} from '../config/constants';
+import { MOCK_API_DELAY_MS, TEST_TIMEOUT_DEFAULT_MS } from '../config/constants';
 
 // ============================================================================
 // MOCK DATA
 // ============================================================================
 
+type MockSchema = {
+  name: string;
+  state: string;
+  fields: string[] | Record<string, unknown>;
+  schema_type?: unknown;
+  [key: string]: unknown;
+};
+type MockSchemaMap = Record<string, MockSchema>;
+
 /**
  * Mock schemas for testing
  */
-export const mockSchemas = {
+export const mockSchemas: MockSchemaMap = {
   user_profiles: createMockSchema({
     name: 'user_profiles',
     descriptive_name: 'User Profiles',
@@ -42,13 +47,13 @@ export const mockSchemas = {
       id: { field_type: 'String' },
       name: { field_type: 'String' },
       email: { field_type: 'String' },
-      age: { field_type: 'Number' }
-    }
+      age: { field_type: 'Number' },
+    },
   }),
   time_series: createMockRangeSchema({
     name: 'time_series',
     descriptive_name: 'Time Series',
-    state: SCHEMA_STATES.APPROVED
+    state: SCHEMA_STATES.APPROVED,
   }),
   events: createMockSchema({
     name: 'events',
@@ -57,8 +62,8 @@ export const mockSchemas = {
     fields: {
       event_id: { field_type: 'String' },
       event_type: { field_type: 'String' },
-      timestamp: { field_type: 'String' }
-    }
+      timestamp: { field_type: 'String' },
+    },
   }),
   blocked_schema: createMockSchema({
     name: 'blocked_schema',
@@ -66,25 +71,25 @@ export const mockSchemas = {
     state: SCHEMA_STATES.BLOCKED,
     fields: {
       id: { field_type: 'String' },
-      data: { field_type: 'String' }
-    }
-  })
+      data: { field_type: 'String' },
+    },
+  }),
 };
 
 /**
  * Mock persisted schema states
  */
-export const mockPersistedStates = {
+export const mockPersistedStates: Record<string, string> = {
   user_profiles: SCHEMA_STATES.APPROVED,
   time_series: SCHEMA_STATES.APPROVED,
   events: SCHEMA_STATES.AVAILABLE,
-  blocked_schema: SCHEMA_STATES.BLOCKED
+  blocked_schema: SCHEMA_STATES.BLOCKED,
 };
 
 /**
  * Mock available schema names
  */
-export const mockAvailableSchemas = Object.keys(mockSchemas);
+export const mockAvailableSchemas: string[] = Object.keys(mockSchemas);
 
 /**
  * Mock authentication data
@@ -92,25 +97,25 @@ export const mockAvailableSchemas = Object.keys(mockSchemas);
 export const mockAuthData = {
   systemPublicKey: 'mock_system_public_key_123',
   isValid: true,
-  keyId: 'system_key_001'
+  keyId: 'system_key_001',
 };
 
 /**
- * Mock mutation results
+ * Mock mutation results keyed by mutation type
  */
-export const mockMutationResults = {
+export const mockMutationResults: Record<string, { success: boolean; data: Record<string, unknown> }> = {
   create: {
     success: true,
-    data: { id: 'created_item_123', status: 'created' }
+    data: { id: 'created_item_123', status: 'created' },
   },
   update: {
     success: true,
-    data: { id: 'updated_item_456', status: 'updated' }
+    data: { id: 'updated_item_456', status: 'updated' },
   },
   delete: {
     success: true,
-    data: { id: 'deleted_item_789', status: 'deleted' }
-  }
+    data: { id: 'deleted_item_789', status: 'deleted' },
+  },
 };
 
 /**
@@ -121,367 +126,257 @@ export const mockQueryResults = {
     success: true,
     data: [
       { id: '1', name: 'John Doe', email: 'john@example.com' },
-      { id: '2', name: 'Jane Smith', email: 'jane@example.com' }
-    ]
+      { id: '2', name: 'Jane Smith', email: 'jane@example.com' },
+    ],
   },
   range: {
     success: true,
     data: [
       { timestamp: '2025-01-01T00:00:00Z', value: 100 },
-      { timestamp: '2025-01-01T01:00:00Z', value: 105 }
-    ]
+      { timestamp: '2025-01-01T01:00:00Z', value: 105 },
+    ],
   },
   empty: {
     success: true,
-    data: []
-  }
+    data: [],
+  },
 };
 
 // ============================================================================
 // MSW HANDLERS
 // ============================================================================
 
+const notFoundResponse = (schemaName: string) =>
+  HttpResponse.json(
+    { success: false, error: { message: `Schema ${schemaName} not found` } },
+    { status: 404 }
+  );
+
 /**
  * Default MSW request handlers for API endpoints
  */
-export const defaultHandlers = [
-  // Security endpoints - missing handlers causing unhandled request errors
-  http.post('/api/security/verify', async (req, res, ctx) => {
+export const defaultHandlers: RequestHandler[] = [
+  http.post('/api/security/verify', async () => {
     await mockDelay(MOCK_API_DELAY_MS);
-    return res(
-      ctx.status(200),
-      ctx.json({
-        success: true,
-        data: { verified: true, message: 'Verification successful' }
-      })
-    );
+    return HttpResponse.json({
+      success: true,
+      data: { verified: true, message: 'Verification successful' },
+    });
   }),
 
-  http.get('/api/security/system-public-key', async (req, res, ctx) => {
+  http.get('/api/security/system-public-key', async () => {
     await mockDelay(MOCK_API_DELAY_MS);
-    return res(
-      ctx.status(200),
-      ctx.json({
-        success: true,
-        data: {
-          publicKey: 'mock-system-public-key-base64',
-          keyId: 'system-key-1',
-          algorithm: 'Ed25519'
-        }
-      })
-    );
+    return HttpResponse.json({
+      success: true,
+      data: {
+        publicKey: 'mock-system-public-key-base64',
+        keyId: 'system-key-1',
+        algorithm: 'Ed25519',
+      },
+    });
   }),
 
-  http.post('/api/validate', async (req, res, ctx) => {
+  http.post('/api/validate', async () => {
     await mockDelay(MOCK_API_DELAY_MS);
-    return res(
-      ctx.status(200),
-      ctx.json({
-        success: true,
-        data: { valid: true, errors: [] }
-      })
-    );
+    return HttpResponse.json({
+      success: true,
+      data: { valid: true, errors: [] },
+    });
   }),
 
-  // Schema endpoints - with /api/ prefix for legacy compatibility
-  http.get('/api/schemas/available', async (req, res, ctx) => {
+  http.get('/api/schemas/available', async () => {
     await mockDelay(MOCK_API_DELAY_MS);
-    return res(
-      ctx.status(200),
-      ctx.json({
-        success: true,
-        data: mockAvailableSchemas
-      })
-    );
+    return HttpResponse.json({
+      success: true,
+      data: mockAvailableSchemas,
+    });
   }),
 
-  http.get('/api/schemas', async (req, res, ctx) => {
+  http.get('/api/schemas', async () => {
     await mockDelay(MOCK_API_DELAY_MS);
-    return res(
-      ctx.status(200),
-      ctx.json({
-        success: true,
-        data: mockPersistedStates
-      })
-    );
+    return HttpResponse.json({
+      success: true,
+      data: Object.values(mockSchemas),
+    });
   }),
 
-  // Schema endpoints - without /api/ prefix for schemaClient
-  http.get('/schemas', async (req, res, ctx) => {
+  http.get('/schemas', async () => {
     await mockDelay(MOCK_API_DELAY_MS);
-    return res(
-      ctx.status(200),
-      ctx.json({
-        success: true,
-        data: Object.values(mockSchemas) // Return array of schemas as schemaClient expects
-      })
-    );
+    return HttpResponse.json({
+      success: true,
+      data: Object.values(mockSchemas),
+    });
   }),
 
-  // Test compatibility: Add /api/schemas endpoint that tests expect
-  http.get('/api/schemas', async (req, res, ctx) => {
+  http.get<{ schemaName: string }>('/schema/:schemaName', async ({ params }) => {
+    const { schemaName } = params;
     await mockDelay(MOCK_API_DELAY_MS);
-    return res(
-      ctx.status(200),
-      ctx.json({
-        success: true,
-        data: Object.values(mockSchemas) // Return array of schemas as tests expect
-      })
-    );
-  }),
 
-  http.get('/schema/:schemaName', async (req, res, ctx) => {
-    const { schemaName } = req.params;
-    await mockDelay(MOCK_API_DELAY_MS);
-    
     const schema = mockSchemas[schemaName];
     if (!schema) {
-      return res(
-        ctx.status(404),
-        ctx.json({
-          success: false,
-          error: { message: `Schema ${schemaName} not found` }
-        })
-      );
+      return notFoundResponse(schemaName);
     }
-    
-    return res(
-      ctx.status(200),
-      ctx.json({
-        success: true,
-        data: schema
-      })
-    );
+
+    return HttpResponse.json({ success: true, data: schema });
   }),
 
-  http.get('/api/schema/:schemaName', async (req, res, ctx) => {
-    const { schemaName } = req.params;
+  http.get<{ schemaName: string }>('/api/schema/:schemaName', async ({ params }) => {
+    const { schemaName } = params;
     await mockDelay(MOCK_API_DELAY_MS);
-    
+
     const schema = mockSchemas[schemaName];
     if (!schema) {
-      return res(
-        ctx.status(404),
-        ctx.json({
-          success: false,
-          error: { message: `Schema ${schemaName} not found` }
-        })
-      );
+      return notFoundResponse(schemaName);
     }
-    
-    return res(
-      ctx.status(200),
-      ctx.json({
-        success: true,
-        data: schema,
-        ...schema
-      })
-    );
+
+    return HttpResponse.json({ success: true, data: schema, ...schema });
   }),
 
-  // Schema operations
-  http.post('/api/schema/:schemaName/approve', async (req, res, ctx) => {
-    const { schemaName } = req.params;
+  http.post<{ schemaName: string }>('/api/schema/:schemaName/approve', async ({ params }) => {
+    const { schemaName } = params;
     await mockDelay(MOCK_API_DELAY_MS);
-    
+
     const schema = mockSchemas[schemaName];
     if (!schema) {
-      return res(
-        ctx.status(404),
-        ctx.json({
-          success: false,
-          error: { message: `Schema ${schemaName} not found` }
-        })
-      );
+      return notFoundResponse(schemaName);
     }
 
     if (schema.state !== SCHEMA_STATES.AVAILABLE) {
-      return res(
-        ctx.status(400),
-        ctx.json({
+      return HttpResponse.json(
+        {
           success: false,
-          error: { message: `Schema ${schemaName} cannot be approved from state ${schema.state}` }
-        })
+          error: { message: `Schema ${schemaName} cannot be approved from state ${schema.state}` },
+        },
+        { status: 400 }
       );
     }
-    
-    return res(
-      ctx.status(200),
-      ctx.json({
-        success: true,
-        data: {
-          schema: { ...schema, state: SCHEMA_STATES.APPROVED }
-        }
-      })
-    );
+
+    return HttpResponse.json({
+      success: true,
+      data: { schema: { ...schema, state: SCHEMA_STATES.APPROVED } },
+    });
   }),
 
-  http.post('/api/schema/:schemaName/block', async (req, res, ctx) => {
-    const { schemaName } = req.params;
+  http.post<{ schemaName: string }>('/api/schema/:schemaName/block', async ({ params }) => {
+    const { schemaName } = params;
     await mockDelay(MOCK_API_DELAY_MS);
-    
+
     const schema = mockSchemas[schemaName];
     if (!schema) {
-      return res(
-        ctx.status(404),
-        ctx.json({
-          success: false,
-          error: { message: `Schema ${schemaName} not found` }
-        })
-      );
+      return notFoundResponse(schemaName);
     }
-    
-    return res(
-      ctx.status(200),
-      ctx.json({
-        success: true,
-        data: {
-          schema: { ...schema, state: SCHEMA_STATES.BLOCKED }
-        }
-      })
-    );
+
+    return HttpResponse.json({
+      success: true,
+      data: { schema: { ...schema, state: SCHEMA_STATES.BLOCKED } },
+    });
   }),
 
-  http.post('/api/schema/:schemaName/load', async (req, res, ctx) => {
-    const { schemaName } = req.params;
+  http.post<{ schemaName: string }>('/api/schema/:schemaName/load', async ({ params }) => {
+    const { schemaName } = params;
     await mockDelay(MOCK_API_DELAY_MS);
-    
+
     const schema = mockSchemas[schemaName];
     if (!schema) {
-      return res(
-        ctx.status(404),
-        ctx.json({
-          success: false,
-          error: { message: `Schema ${schemaName} not found` }
-        })
-      );
+      return notFoundResponse(schemaName);
     }
-    
-    return res(
-      ctx.status(200),
-      ctx.json({
-        success: true,
-        data: {
-          schema: { ...schema, state: SCHEMA_STATES.APPROVED }
-        }
-      })
-    );
+
+    return HttpResponse.json({
+      success: true,
+      data: { schema: { ...schema, state: SCHEMA_STATES.APPROVED } },
+    });
   }),
 
-  http.post('/api/schema/:schemaName/unload', async (req, res, ctx) => {
-    const { schemaName } = req.params;
+  http.post<{ schemaName: string }>('/api/schema/:schemaName/unload', async ({ params }) => {
+    const { schemaName } = params;
     await mockDelay(MOCK_API_DELAY_MS);
-    
+
     const schema = mockSchemas[schemaName];
     if (!schema) {
-      return res(
-        ctx.status(404),
-        ctx.json({
-          success: false,
-          error: { message: `Schema ${schemaName} not found` }
-        })
-      );
+      return notFoundResponse(schemaName);
     }
 
     if (schema.state === SCHEMA_STATES.APPROVED) {
-      return res(
-        ctx.status(400),
-        ctx.json({
+      return HttpResponse.json(
+        {
           success: false,
-          error: { message: `Cannot unload approved schema ${schemaName}` }
-        })
+          error: { message: `Cannot unload approved schema ${schemaName}` },
+        },
+        { status: 400 }
       );
     }
-    
-    return res(
-      ctx.status(200),
-      ctx.json({
-        success: true,
-        data: {
-          schema: { ...schema, state: SCHEMA_STATES.AVAILABLE }
-        }
-      })
-    );
+
+    return HttpResponse.json({
+      success: true,
+      data: { schema: { ...schema, state: SCHEMA_STATES.AVAILABLE } },
+    });
   }),
 
-  // Mutation endpoints
-  http.post('/api/mutation', async (req, res, ctx) => {
-    const body = await req.json();
+  http.post('/api/mutation', async ({ request }) => {
+    const body = (await request.json()) as {
+      schema?: string;
+      mutation_type?: string;
+      data?: unknown;
+    };
     await mockDelay(MOCK_API_DELAY_MS);
-    
-    // Validate mutation structure
+
     if (!body.schema || !body.mutation_type || !body.data) {
-      return res(
-        ctx.status(400),
-        ctx.json({
-          success: false,
-          error: { message: 'Invalid mutation structure' }
-        })
+      return HttpResponse.json(
+        { success: false, error: { message: 'Invalid mutation structure' } },
+        { status: 400 }
       );
     }
 
-    // Check if schema is approved
     const schema = mockSchemas[body.schema];
     if (!schema || schema.state !== SCHEMA_STATES.APPROVED) {
-      return res(
-        ctx.status(403),
-        ctx.json({
+      return HttpResponse.json(
+        {
           success: false,
-          error: { message: 'Only approved schemas can be used for mutations' }
-        })
+          error: { message: 'Only approved schemas can be used for mutations' },
+        },
+        { status: 403 }
       );
     }
 
     const mutationType = body.mutation_type.toLowerCase();
-    const result = mockMutationResults[mutationType] || mockMutationResults.create;
-    
-    return res(
-      ctx.status(200),
-      ctx.json(result)
-    );
+    const result = mockMutationResults[mutationType] ?? mockMutationResults.create;
+
+    return HttpResponse.json(result);
   }),
 
-  // Query endpoints
-  http.post('/api/query', async (req, res, ctx) => {
-    const body = await req.json();
+  http.post('/api/query', async ({ request }) => {
+    const body = (await request.json()) as { schema?: string; fields?: unknown };
     await mockDelay(MOCK_API_DELAY_MS);
-    
-    // Validate query structure
+
     if (!body.schema || !body.fields) {
-      return res(
-        ctx.status(400),
-        ctx.json({
-          success: false,
-          error: { message: 'Invalid query structure' }
-        })
+      return HttpResponse.json(
+        { success: false, error: { message: 'Invalid query structure' } },
+        { status: 400 }
       );
     }
 
-    // Check if schema is approved
     const schema = mockSchemas[body.schema];
     if (!schema || schema.state !== SCHEMA_STATES.APPROVED) {
-      return res(
-        ctx.status(403),
-        ctx.json({
+      return HttpResponse.json(
+        {
           success: false,
-          error: { message: 'Only approved schemas can be used for queries' }
-        })
+          error: { message: 'Only approved schemas can be used for queries' },
+        },
+        { status: 403 }
       );
     }
 
-    // Return different results based on schema type
-    const isRangeSchema = schema.schema_type?.Range;
-    const result = isRangeSchema ? mockQueryResults.range : mockQueryResults.basic;
-    
-    return res(
-      ctx.status(200),
-      ctx.json(result)
+    const isRangeSchema = Boolean(
+      (schema.schema_type as { Range?: unknown } | undefined)?.Range
     );
+    const result = isRangeSchema ? mockQueryResults.range : mockQueryResults.basic;
+
+    return HttpResponse.json(result);
   }),
 
-  // Native index search endpoint
-  http.get('/api/native-index/search', async (req, res, ctx) => {
-    const term = req.url.searchParams.get('term') || '';
+  http.get('/api/native-index/search', async ({ request }) => {
+    const url = new URL(request.url);
+    const term = url.searchParams.get('term') ?? '';
     await mockDelay(MOCK_API_DELAY_MS);
     const sample = [
       {
@@ -489,287 +384,143 @@ export const defaultHandlers = [
         field: 'name',
         key_value: { hash: null, range: 'user-1' },
         value: 'John Doe',
-        metadata: { word: term.toLowerCase() }
+        metadata: { word: term.toLowerCase() },
       },
       {
         schema_name: 'time_series',
         field: 'value',
         key_value: { hash: 'metrics', range: '2025-01-01T00:00:00Z' },
         value: 100,
-        metadata: { word: term.toLowerCase() }
-      }
+        metadata: { word: term.toLowerCase() },
+      },
     ];
-    return res(ctx.status(200), ctx.json(sample));
+    return HttpResponse.json(sample);
   }),
 
-  // Security endpoints
-  http.get('/api/security/system-public-key', async (req, res, ctx) => {
+  http.post('/api/security/register-key', async ({ request }) => {
+    const body = (await request.json()) as { publicKey?: string; signature?: string };
     await mockDelay(MOCK_API_DELAY_MS);
-    return res(
-      ctx.status(200),
-      ctx.json({
-        success: true,
-        data: mockAuthData
-      })
-    );
-  }),
 
-  http.post('/api/security/register-key', async (req, res, ctx) => {
-    const body = await req.json();
-    await mockDelay(MOCK_API_DELAY_MS);
-    
     if (!body.publicKey || !body.signature) {
-      return res(
-        ctx.status(400),
-        ctx.json({
-          success: false,
-          error: { message: 'Missing required fields' }
-        })
+      return HttpResponse.json(
+        { success: false, error: { message: 'Missing required fields' } },
+        { status: 400 }
       );
     }
-    
-    return res(
-      ctx.status(200),
-      ctx.json({
-        success: true,
-        data: {
-          keyId: `user_key_${Date.now()}`,
-          status: 'registered'
-        }
-      })
-    );
+
+    return HttpResponse.json({
+      success: true,
+      data: { keyId: `user_key_${Date.now()}`, status: 'registered' },
+    });
   }),
 
-  http.post('/api/security/verify', async (req, res, ctx) => {
-    const body = await req.json();
+  http.post('/api/keys', async ({ request }) => {
+    const body = (await request.json()) as Record<string, unknown>;
     await mockDelay(MOCK_API_DELAY_MS);
-    
-    if (!body.message || !body.signature) {
-      return res(
-        ctx.status(400),
-        ctx.json({
-          success: false,
-          error: { message: 'Missing message or signature' }
-        })
-      );
-    }
-    
-    return res(
-      ctx.status(200),
-      ctx.json({
-        success: true,
-        data: { valid: true }
-      })
-    );
-  }),
 
-  // Key Lifecycle Management endpoints
-  http.post('/api/keys', async (req, res, ctx) => {
-    const body = await req.json();
-    await mockDelay(MOCK_API_DELAY_MS);
-    
     if (!body.publicKey) {
-      return res(
-        ctx.status(400),
-        ctx.json({
-          success: false,
-          error: { message: 'Missing required field: publicKey' }
-        })
+      return HttpResponse.json(
+        { success: false, error: { message: 'Missing required field: publicKey' } },
+        { status: 400 }
       );
     }
-    
-    return res(
-      ctx.status(200),
-      ctx.json({
-        success: true,
-        data: {
-          id: `key_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`,
-          ...body,
+
+    return HttpResponse.json({
+      success: true,
+      data: {
+        id: `key_${Date.now()}_${Math.random().toString(36).slice(2, 11)}`,
+        ...body,
+        status: 'active',
+        createdAt: new Date().toISOString(),
+      },
+    });
+  }),
+
+  http.get('/api/keys', async () => {
+    await mockDelay(MOCK_API_DELAY_MS);
+    return HttpResponse.json({
+      success: true,
+      data: [
+        {
+          id: 'key_1',
+          publicKey: 'mock_public_key_1',
           status: 'active',
-          createdAt: new Date().toISOString()
-        }
-      })
-    );
+          algorithm: 'Ed25519',
+          createdAt: new Date().toISOString(),
+        },
+      ],
+    });
   }),
 
-  http.get('/api/keys', async (req, res, ctx) => {
+  http.patch<{ keyId: string }>('/api/keys/:keyId', async ({ request, params }) => {
+    const body = (await request.json()) as Record<string, unknown>;
     await mockDelay(MOCK_API_DELAY_MS);
-    return res(
-      ctx.status(200),
-      ctx.json({
-        success: true,
-        data: [
-          {
-            id: 'key_1',
-            publicKey: 'mock_public_key_1',
-            status: 'active',
-            algorithm: 'Ed25519',
-            createdAt: new Date().toISOString()
-          }
-        ]
-      })
-    );
-  }),
 
-  http.patch('/api/keys/:keyId', async (req, res, ctx) => {
-    const body = await req.json();
-    await mockDelay(MOCK_API_DELAY_MS);
-    
-    return res(
-      ctx.status(200),
-      ctx.json({
-        success: true,
-        data: {
-          id: req.params.keyId,
-          ...body,
-          updatedAt: new Date().toISOString()
-        }
-      })
-    );
+    return HttpResponse.json({
+      success: true,
+      data: {
+        id: params.keyId,
+        ...body,
+        updatedAt: new Date().toISOString(),
+      },
+    });
   }),
-
-  // Dynamic route for key operations (PATCH /api/keys/:keyId)
-  http.patch('/api/keys/:keyId', async (req, res, ctx) => {
-    const { keyId } = req.params;
-    const body = await req.json();
-    
-    return res(
-      ctx.json({
-        success: true,
-        data: {
-          id: keyId,
-          ...body,
-          updatedAt: new Date().toISOString()
-        }
-      })
-    );
-  })
 ];
 
 // ============================================================================
 // ERROR SCENARIOS
 // ============================================================================
 
+const serverError = (message: string) =>
+  HttpResponse.json({ success: false, error: { message } }, { status: 500 });
+
 /**
- * Handlers for testing error scenarios
+ * Handlers for testing error scenarios.
  */
-export const errorHandlers = {
+export const errorHandlers: Record<string, RequestHandler[]> = {
   networkError: [
-    http.get('/api/schemas/available', (req, res, _ctx) => {
-      return res.networkError('Failed to connect');
-    }),
-    http.get('/schemas', (req, res, _ctx) => {
-      return res.networkError('Failed to connect');
-    }),
-    http.get('/schema/:schemaName', (req, res, _ctx) => {
-      return res.networkError('Failed to connect');
-    }),
-    http.get('/schemas/state/:state', (req, res, _ctx) => {
-      return res.networkError('Failed to connect');
-    }),
-    http.get('/api/keys', (req, res, _ctx) => {
-      return res.networkError('Failed to connect');
-    }),
-    http.patch('/api/keys/:keyId', (req, res, _ctx) => {
-      return res.networkError('Failed to connect');
-    })
+    http.get('/api/schemas/available', () => HttpResponse.error()),
+    http.get('/schemas', () => HttpResponse.error()),
+    http.get('/schema/:schemaName', () => HttpResponse.error()),
+    http.get('/schemas/state/:state', () => HttpResponse.error()),
+    http.get('/api/keys', () => HttpResponse.error()),
+    http.patch('/api/keys/:keyId', () => HttpResponse.error()),
   ],
 
   serverError: [
-    http.get('/api/schemas/available', (req, res, ctx) => {
-      return res(
-        ctx.status(500),
-        ctx.json({
-          success: false,
-          error: { message: 'Internal server error' }
-        })
-      );
-    }),
-    http.get('/schemas', (req, res, ctx) => {
-      return res(
-        ctx.status(500),
-        ctx.json({
-          success: false,
-          error: { message: 'Internal server error' }
-        })
-      );
-    }),
-    http.get('/schema/:schemaName', (req, res, ctx) => {
-      return res(
-        ctx.status(500),
-        ctx.json({
-          success: false,
-          error: { message: 'Failed to fetch schema' }
-        })
-      );
-    }),
-    http.get('/schemas/state/:state', (req, res, ctx) => {
-      return res(
-        ctx.status(500),
-        ctx.json({
-          success: false,
-          error: { message: 'Failed to fetch schemas by state' }
-        })
-      );
-    }),
-    http.get('/api/keys', (req, res, ctx) => {
-      return res(
-        ctx.status(500),
-        ctx.json({
-          success: false,
-          error: { message: 'Internal server error' }
-        })
-      );
-    }),
-    http.post('/api/keys', (req, res, ctx) => {
-      return res(
-        ctx.status(500),
-        ctx.json({
-          success: false,
-          error: { message: 'Failed to store key' }
-        })
-      );
-    }),
-    http.patch('/api/keys/:keyId', (req, res, ctx) => {
-      return res(
-        ctx.status(500),
-        ctx.json({
-          success: false,
-          error: { message: 'Failed to update key' }
-        })
-      );
-    })
+    http.get('/api/schemas/available', () => serverError('Internal server error')),
+    http.get('/schemas', () => serverError('Internal server error')),
+    http.get('/schema/:schemaName', () => serverError('Failed to fetch schema')),
+    http.get('/schemas/state/:state', () => serverError('Failed to fetch schemas by state')),
+    http.get('/api/keys', () => serverError('Internal server error')),
+    http.post('/api/keys', () => serverError('Failed to store key')),
+    http.patch('/api/keys/:keyId', () => serverError('Failed to update key')),
   ],
 
   timeout: [
-    http.get('/api/schemas/available', (req, res, ctx) => {
-      return res(ctx.delay(TEST_TIMEOUT_MS + 1000));
-    })
+    http.get('/api/schemas/available', async () => {
+      await mockDelay(TEST_TIMEOUT_DEFAULT_MS + 1000);
+      return HttpResponse.json({ success: false });
+    }),
   ],
 
   unauthorized: [
-    http.post('/api/mutation', (req, res, ctx) => {
-      return res(
-        ctx.status(401),
-        ctx.json({
-          success: false,
-          error: { message: 'Unauthorized' }
-        })
-      );
-    })
+    http.post('/api/mutation', () =>
+      HttpResponse.json(
+        { success: false, error: { message: 'Unauthorized' } },
+        { status: 401 }
+      )
+    ),
   ],
 
   schemaNotApproved: [
-    http.post('/api/mutation', (req, res, ctx) => {
-      return res(
-        ctx.status(403),
-        ctx.json({
-          success: false,
-          error: { message: 'Schema not approved for mutations' }
-        })
-      );
-    })
-  ]
+    http.post('/api/mutation', () =>
+      HttpResponse.json(
+        { success: false, error: { message: 'Schema not approved for mutations' } },
+        { status: 403 }
+      )
+    ),
+  ],
 };
 
 // ============================================================================
@@ -778,11 +529,8 @@ export const errorHandlers = {
 
 /**
  * Creates a configured MSW server for testing
- * 
- * @param {Array} customHandlers - Additional or override handlers
- * @returns {Object} MSW server instance
  */
-export const createMockServer = (customHandlers = []) => {
+export const createMockServer = (customHandlers: RequestHandler[] = []): SetupServerApi => {
   const handlers = [...defaultHandlers, ...customHandlers];
   return setupServer(...handlers);
 };
@@ -790,7 +538,7 @@ export const createMockServer = (customHandlers = []) => {
 /**
  * Default mock server instance
  */
-export const mockServer = createMockServer();
+export const mockServer: SetupServerApi = createMockServer();
 
 // ============================================================================
 // MOCK API CLIENT
@@ -798,85 +546,74 @@ export const mockServer = createMockServer();
 
 /**
  * Creates a mock API client for testing without network calls
- * 
- * @param {Object} overrides - Override specific methods
- * @returns {Object} Mock API client
  */
-export const createMockApiClient = (overrides = {}) => {
-  const defaultClient = {
-    get: vi.fn().mockResolvedValue({ success: true, data: {} }),
-    post: vi.fn().mockResolvedValue({ success: true, data: {} }),
-    put: vi.fn().mockResolvedValue({ success: true, data: {} }),
-    delete: vi.fn().mockResolvedValue({ success: true, data: {} }),
-    patch: vi.fn().mockResolvedValue({ success: true, data: {} }),
-    batch: vi.fn().mockResolvedValue([]),
-    getMetrics: vi.fn().mockReturnValue({
-      averageResponseTime: 100,
-      cacheHitRate: 0.8,
-      totalRequests: 50
-    }),
-    getCacheStats: vi.fn().mockReturnValue({
-      size: 10,
-      hitRate: 0.8
-    }),
-    clearCache: vi.fn(),
-    ...overrides
-  };
-
-  return defaultClient;
-};
+export const createMockApiClient = (overrides: Record<string, unknown> = {}) => ({
+  get: vi.fn().mockResolvedValue({ success: true, data: {} }),
+  post: vi.fn().mockResolvedValue({ success: true, data: {} }),
+  put: vi.fn().mockResolvedValue({ success: true, data: {} }),
+  delete: vi.fn().mockResolvedValue({ success: true, data: {} }),
+  patch: vi.fn().mockResolvedValue({ success: true, data: {} }),
+  batch: vi.fn().mockResolvedValue([]),
+  getMetrics: vi.fn().mockReturnValue({
+    averageResponseTime: 100,
+    cacheHitRate: 0.8,
+    totalRequests: 50,
+  }),
+  getCacheStats: vi.fn().mockReturnValue({
+    size: 10,
+    hitRate: 0.8,
+  }),
+  clearCache: vi.fn(),
+  ...overrides,
+});
 
 /**
  * Creates mock specialized API clients
- * 
- * @param {Object} baseClient - Base API client to use
- * @returns {Object} Mock specialized clients
  */
-export const createMockSpecializedClients = (_baseClient) => {
-  return {
-    schema: {
-      getSchemas: vi.fn().mockResolvedValue(Object.values(mockSchemas)),
-      getApprovedSchemas: vi.fn().mockResolvedValue(
-        Object.values(mockSchemas).filter(s => s.state === SCHEMA_STATES.APPROVED)
+export const createMockSpecializedClients = () => ({
+  schema: {
+    getSchemas: vi.fn().mockResolvedValue(Object.values(mockSchemas)),
+    getApprovedSchemas: vi
+      .fn()
+      .mockResolvedValue(
+        Object.values(mockSchemas).filter((s) => s.state === SCHEMA_STATES.APPROVED)
       ),
-      getSchema: vi.fn().mockImplementation((name) => 
-        Promise.resolve(mockSchemas[name] || null)
-      ),
-      approveSchema: vi.fn().mockResolvedValue({
-        success: true,
-        data: { schema: { state: SCHEMA_STATES.APPROVED } }
-      }),
-      blockSchema: vi.fn().mockResolvedValue({
-        success: true,
-        data: { schema: { state: SCHEMA_STATES.BLOCKED } }
-      })
-    },
+    getSchema: vi.fn().mockImplementation((name: string) =>
+      Promise.resolve(mockSchemas[name] ?? null)
+    ),
+    approveSchema: vi.fn().mockResolvedValue({
+      success: true,
+      data: { schema: { state: SCHEMA_STATES.APPROVED } },
+    }),
+    blockSchema: vi.fn().mockResolvedValue({
+      success: true,
+      data: { schema: { state: SCHEMA_STATES.BLOCKED } },
+    }),
+  },
 
-    mutation: {
-      executeMutation: vi.fn().mockResolvedValue(mockMutationResults.create),
-      validateMutation: vi.fn().mockReturnValue(null),
-      validateSchemaForMutation: vi.fn().mockReturnValue(true)
-    },
+  mutation: {
+    executeMutation: vi.fn().mockResolvedValue(mockMutationResults.create),
+    validateMutation: vi.fn().mockReturnValue(null),
+    validateSchemaForMutation: vi.fn().mockReturnValue(true),
+  },
 
-    query: {
-      executeQuery: vi.fn().mockResolvedValue(mockQueryResults.basic)
-    },
+  query: {
+    executeQuery: vi.fn().mockResolvedValue(mockQueryResults.basic),
+  },
 
-    security: {
-      getSystemPublicKey: vi.fn().mockResolvedValue(mockAuthData)
-    }
-  };
-};
+  security: {
+    getSystemPublicKey: vi.fn().mockResolvedValue(mockAuthData),
+  },
+});
 
 // ============================================================================
 // UTILITY FUNCTIONS
 // ============================================================================
 
 /**
- * Sets up MSW server for tests
- * Call this in test setup
+ * Sets up MSW server for tests. Call this in test setup.
  */
-export const setupMockServer = () => {
+export const setupMockServer = (): void => {
   beforeAll(() => mockServer.listen({ onUnhandledRequest: 'error' }));
   afterEach(() => mockServer.resetHandlers());
   afterAll(() => mockServer.close());
@@ -884,11 +621,11 @@ export const setupMockServer = () => {
 
 /**
  * Temporarily override handlers for specific tests
- * 
- * @param {Array} handlers - Temporary handlers
- * @param {Function} testFn - Test function to run with handlers
  */
-export const withMockHandlers = async (handlers, testFn) => {
+export const withMockHandlers = async (
+  handlers: RequestHandler[],
+  testFn: () => Promise<void> | void
+): Promise<void> => {
   mockServer.use(...handlers);
   try {
     await testFn();
@@ -897,20 +634,10 @@ export const withMockHandlers = async (handlers, testFn) => {
   }
 };
 
-/**
- * Simulate slow network conditions
- * 
- * @param {number} delay - Delay in milliseconds
- * @returns {Array} Handlers with delay
- */
-export const createSlowHandlers = (delay = 2000) => {
-  return defaultHandlers.map(handler => {
-    return http[handler.info.method.toLowerCase()](handler.info.path, async (req, res, ctx) => {
-      await mockDelay(delay);
-      return handler.resolver(req, res, ctx);
-    });
-  });
-};
+// `PathParams` and `DefaultBodyType` re-exports keep prior consumers compiling;
+// the wide MSW v2 generic surface is intentionally left available for callers
+// that compose handlers outside this module.
+export type { DefaultBodyType, PathParams };
 
 // Export everything
 export default {
@@ -928,5 +655,4 @@ export default {
   createMockSpecializedClients,
   setupMockServer,
   withMockHandlers,
-  createSlowHandlers
 };

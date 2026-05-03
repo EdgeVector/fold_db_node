@@ -1,12 +1,11 @@
-// @ts-nocheck Migration debt: converted from .jsx in the JS->TS finalization batch; strict-mode cleanup of vi.mock typings tracked as follow-up.
 import '@testing-library/jest-dom'
-import { vi, beforeEach } from 'vitest'
+import { vi, beforeEach, type Mock } from 'vitest'
 import { setupTestEnvironment, cleanupTestEnvironment } from './utils/testUtilities'
 import { setupMockServer } from './mocks/apiMocks'
 import { TEST_TIMEOUT_DEFAULT_MS } from './config/constants'
 
 // Make vi available globally as jest for compatibility
-global.jest = vi
+;(globalThis as Record<string, unknown>).jest = vi
 
 // Mock the production store to prevent Redux warnings during imports
 vi.mock('../store/store', () => ({
@@ -42,7 +41,7 @@ Object.defineProperty(globalThis, 'crypto', {
 
 // Mock Response for MSW tests
 global.Response = Response
-global.TEST_TIMEOUT_MS = TEST_TIMEOUT_DEFAULT_MS
+;(globalThis as Record<string, unknown>).TEST_TIMEOUT_MS = TEST_TIMEOUT_DEFAULT_MS
 
 // Setup test environment with mocks and matchers
 setupTestEnvironment()
@@ -57,7 +56,7 @@ global.EventSource = vi.fn(() => ({
   close: vi.fn(),
   addEventListener: vi.fn(),
   removeEventListener: vi.fn(),
-}))
+})) as unknown as typeof EventSource
 
 // Mock scrollIntoView for DOM elements
 Element.prototype.scrollIntoView = vi.fn()
@@ -79,14 +78,17 @@ vi.setConfig({ testTimeout: TEST_TIMEOUT_DEFAULT_MS })
 beforeEach(() => {
   vi.clearAllMocks()
   cleanupTestEnvironment()
-  
-  if (fetch && typeof fetch.mockClear === 'function') {
-    fetch.mockClear()
+
+  const fetchMock = fetch as unknown as Mock | undefined
+  if (fetchMock && typeof fetchMock.mockClear === 'function') {
+    fetchMock.mockClear()
   }
-  if (global.EventSource && typeof global.EventSource.mockClear === 'function') {
-    global.EventSource.mockClear()
+  const eventSourceMock = global.EventSource as unknown as Mock | undefined
+  if (eventSourceMock && typeof eventSourceMock.mockClear === 'function') {
+    eventSourceMock.mockClear()
   }
-  if (Element.prototype.scrollIntoView && typeof Element.prototype.scrollIntoView.mockClear === 'function') {
-    Element.prototype.scrollIntoView.mockClear()
+  const scrollIntoViewMock = Element.prototype.scrollIntoView as unknown as Mock | undefined
+  if (scrollIntoViewMock && typeof scrollIntoViewMock.mockClear === 'function') {
+    scrollIntoViewMock.mockClear()
   }
 })

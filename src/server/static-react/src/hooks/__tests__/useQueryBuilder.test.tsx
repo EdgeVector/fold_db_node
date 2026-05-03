@@ -1,24 +1,25 @@
-// @ts-nocheck Migration debt: converted from .jsx in the JS->TS finalization batch; strict-mode cleanup of vi.mock typings tracked as follow-up.
 /**
  * useQueryBuilder Hook Tests
  * Tests for UCR-1-5: Create QueryBuilder hook for complex query construction
  * Part of UTC-1 Test Coverage Enhancement - Hook Testing
  */
 
-import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
+import React from 'react';
+import { describe, it, expect, beforeEach, afterEach, vi, type Mock } from 'vitest';
 import { renderHook } from '@testing-library/react';
 import { Provider } from 'react-redux';
 import { useQueryBuilder } from '../useQueryBuilder';
 import { createTestStore } from '../../test/utils/testUtilities';
+import { useAppSelector } from '../../store/hooks';
 
 // Mock the Redux store hooks
-vi.mock('../../store/hooks.ts', () => ({
+vi.mock('../../store/hooks', () => ({
   useAppSelector: vi.fn()
 }));
 
 describe('useQueryBuilder Hook', () => {
-  let mockStore;
-  let mockUseAppSelector;
+  let mockStore: ReturnType<typeof createTestStore>;
+  let mockUseAppSelector: Mock;
 
   const mockSchemas = {
     UserSchema: {
@@ -46,12 +47,9 @@ describe('useQueryBuilder Hook', () => {
     mockSchemas.RangeSchema
   ];
 
-  beforeEach(async () => {
-    mockStore = await createTestStore();
-    
-    // Import the mocked hook
-    const { useAppSelector } = await import('../../store/hooks.ts');
-    mockUseAppSelector = useAppSelector;
+  beforeEach(() => {
+    mockStore = createTestStore();
+    mockUseAppSelector = vi.mocked(useAppSelector);
 
     // Set up default mock implementation
     mockUseAppSelector.mockImplementation((selector) => {
@@ -66,7 +64,9 @@ describe('useQueryBuilder Hook', () => {
     vi.clearAllMocks();
   });
 
-  const renderUseQueryBuilder = (options = {}) => {
+  type BuilderOptions = Parameters<typeof useQueryBuilder>[0];
+
+  const renderUseQueryBuilder = (options: Partial<BuilderOptions> = {}) => {
     const defaultOptions = {
       schema: '',
       queryState: {
@@ -74,14 +74,13 @@ describe('useQueryBuilder Hook', () => {
         fieldValues: {},
         rangeFilters: {},
         filters: [],
-        orderBy: null
       },
-      schemas: mockSchemas,
+      schemas: mockSchemas as unknown as BuilderOptions['schemas'],
       ...options
-    };
+    } as BuilderOptions;
 
     return renderHook(() => useQueryBuilder(defaultOptions), {
-      wrapper: ({ children }) => (
+      wrapper: ({ children }: { children?: React.ReactNode }) => (
         <Provider store={mockStore}>
           {children}
         </Provider>
@@ -101,8 +100,8 @@ describe('useQueryBuilder Hook', () => {
     it('should not provide build and validate functions (removed)', () => {
       const { result } = renderUseQueryBuilder();
 
-      expect(result.current.buildQuery).toBeUndefined();
-      expect(result.current.validateQuery).toBeUndefined();
+      expect((result.current as unknown as Record<string, unknown>).buildQuery).toBeUndefined();
+      expect((result.current as unknown as Record<string, unknown>).validateQuery).toBeUndefined();
     });
   });
 
@@ -337,12 +336,12 @@ describe('useQueryBuilder Hook', () => {
       });
 
       // Backend Query struct doesn't have filters field
-      expect(result.current.query.filters).toBeUndefined();
+      expect((result.current.query as Record<string, unknown>).filters).toBeUndefined();
     });
 
     it('should not include orderBy (not in backend Query struct)', () => {
       const orderBy = { field: 'name', direction: 'asc' };
-      
+
       const { result } = renderUseQueryBuilder({
         schema: 'UserSchema',
         queryState: {
@@ -353,7 +352,7 @@ describe('useQueryBuilder Hook', () => {
       });
 
       // Backend Query struct doesn't have orderBy field
-      expect(result.current.query.orderBy).toBeUndefined();
+      expect((result.current.query as Record<string, unknown>).orderBy).toBeUndefined();
     });
 
     it('should build query with range key for range schemas', () => {
@@ -379,13 +378,13 @@ describe('useQueryBuilder Hook', () => {
         }
       });
 
-      expect(result.current.query.rangeKey).toBeUndefined();
+      expect((result.current.query as Record<string, unknown>).rangeKey).toBeUndefined();
     });
 
     it('should handle empty query state', () => {
       const { result } = renderUseQueryBuilder({
         schema: 'UserSchema',
-        queryState: null
+        queryState: undefined
       });
 
       expect(result.current.query).toEqual({});
@@ -468,7 +467,7 @@ describe('useQueryBuilder Hook', () => {
         }
       });
 
-      expect(result.current.buildQuery).toBeUndefined();
+      expect((result.current as unknown as Record<string, unknown>).buildQuery).toBeUndefined();
       expect(result.current.query).toBeDefined(); // Query is available directly
     });
 
@@ -481,7 +480,7 @@ describe('useQueryBuilder Hook', () => {
         }
       });
 
-      expect(result.current.validateQuery).toBeUndefined();
+      expect((result.current as unknown as Record<string, unknown>).validateQuery).toBeUndefined();
       expect(result.current.isValid).toBe(true); // Always true - no frontend validation
       expect(result.current.validationErrors).toEqual([]);
     });
@@ -537,13 +536,13 @@ describe('useQueryBuilder Hook', () => {
         queryState: {
           queryFields: ['id'],
           fieldValues: { id: 'test' },
-          filters: null,
-          orderBy: null
+          filters: null as unknown as Record<string, unknown>[],
+          orderBy: null as unknown as Record<string, unknown>
         }
       });
 
-      expect(result.current.query.filters).toBeUndefined();
-      expect(result.current.query.orderBy).toBeUndefined();
+      expect((result.current.query as Record<string, unknown>).filters).toBeUndefined();
+      expect((result.current.query as Record<string, unknown>).orderBy).toBeUndefined();
     });
   });
 

@@ -1,4 +1,3 @@
-// @ts-nocheck Migration debt: converted from .jsx in the JS->TS finalization batch; strict-mode cleanup of vi.mock typings tracked as follow-up.
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest'
 import { renderHook, act } from '@testing-library/react'
 import { useFolderAutocomplete } from '../../hooks/useFolderAutocomplete'
@@ -20,7 +19,8 @@ describe('useFolderAutocomplete', () => {
   })
 
   it('calls completePath and shows suggestions when path contains /', async () => {
-    ingestionClient.completePath.mockResolvedValue({
+    vi.mocked(ingestionClient.completePath).mockResolvedValue({
+      status: 200,
       success: true,
       data: { completions: ['/home/user/docs', '/home/user/downloads'] }
     })
@@ -59,7 +59,8 @@ describe('useFolderAutocomplete', () => {
   })
 
   it('shows no suggestions when API returns empty completions array', async () => {
-    ingestionClient.completePath.mockResolvedValue({
+    vi.mocked(ingestionClient.completePath).mockResolvedValue({
+      status: 200,
       success: true,
       data: { completions: [] }
     })
