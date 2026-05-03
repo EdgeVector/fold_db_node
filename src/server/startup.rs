@@ -146,9 +146,36 @@ impl StartupCtx {
     }
 }
 
+/// Default upper bound on `load_schemas_if_configured`. Independent of the
+/// inner `schema_service_client` per-request budget (120s + up to 3 retries) —
+/// boot must not pay that worst case.
+const DEFAULT_SCHEMA_PRELOAD_TIMEOUT_SECS: u64 = 10;
+
+/// Resolve the schema-preload timeout. Operators override via
+/// `FOLDDB_SCHEMA_PRELOAD_TIMEOUT_SECS`; an unparseable value falls back to
+/// the default with a warn so the typo is visible in logs.
+fn schema_preload_timeout() -> std::time::Duration {
+    let secs = match std::env::var("FOLDDB_SCHEMA_PRELOAD_TIMEOUT_SECS") {
+        Ok(raw) => match raw.parse::<u64>() {
+            Ok(s) => s,
+            Err(_) => {
+                tracing::warn!(
+                    target: "fold_node::database",
+                    raw = %raw,
+                    default_secs = DEFAULT_SCHEMA_PRELOAD_TIMEOUT_SECS,
+                    "FOLDDB_SCHEMA_PRELOAD_TIMEOUT_SECS unparseable; using default"
+                );
+                DEFAULT_SCHEMA_PRELOAD_TIMEOUT_SECS
+            }
+        },
+        Err(_) => DEFAULT_SCHEMA_PRELOAD_TIMEOUT_SECS,
+    };
+    std::time::Duration::from_secs(secs)
+}
+
 /// Best-effort schema preload from the configured schema service. Failures
-/// are logged but not propagated — the server still starts, schemas just
-/// aren't cached.
+/// (including the outer timeout) are logged but not propagated — the server
+/// still starts; schemas just aren't cached.
 async fn load_schemas_if_configured(node_manager: &Arc<NodeManager>) {
     let base_config = node_manager.get_base_config().await;
     let Some(url) = base_config.schema_service_url.clone() else {
@@ -164,23 +191,32 @@ async fn load_schemas_if_configured(node_manager: &Arc<NodeManager>) {
         return;
     }
 
+    let timeout = schema_preload_timeout();
     tracing::info!(
         target: "fold_node::database",
-        "Loading schemas from schema service at {}...",
-        url
+        url = %url,
+        timeout_secs = timeout.as_secs(),
+        "Loading schemas from schema service..."
     );
 
     let client = crate::fold_node::SchemaServiceClient::new(&url);
-    match client.list_schemas().await {
-        Ok(schemas) => tracing::info!(
+    match tokio::time::timeout(timeout, client.list_schemas()).await {
+        Ok(Ok(schemas)) => tracing::info!(
             target: "fold_node::database",
-            "Loaded {} schemas from schema service",
-            schemas.len()
+            count = schemas.len(),
+            "Loaded schemas from schema service"
         ),
-        Err(e) => tracing::error!(
+        Ok(Err(e)) => tracing::error!(
             target: "fold_node::database",
-            "Failed to load schemas from schema service: {}. Server will start but no schemas will be available.",
-            e
+            url = %url,
+            error = %e,
+            "Failed to load schemas from schema service. Server will start but no schemas will be available."
+        ),
+        Err(_) => tracing::warn!(
+            target: "fold_node::database",
+            url = %url,
+            timeout_secs = timeout.as_secs(),
+            "Schema preload timed out (non-fatal); continuing boot without preloaded schemas"
         ),
     }
 }
@@ -418,6 +454,69 @@ mod tests {
             !err.starts_with("load timed out") && !err.starts_with("load task panicked"),
             "corrupt-file Err must come from load_credentials, not the timeout/join wrappers; got: {}",
             err
+        );
+    }
+
+    // Dedicated mutex for `FOLDDB_SCHEMA_PRELOAD_TIMEOUT_SECS`. Kept separate
+    // from `folddb_home_lock` because the schema-preload test does not touch
+    // FOLDDB_HOME — sharing a lock would couple this test to the credentials
+    // tests' panic-poisoning blast radius for no isolation gain.
+    fn schema_preload_env_lock() -> std::sync::MutexGuard<'static, ()> {
+        use std::sync::{Mutex, OnceLock};
+        static LOCK: OnceLock<Mutex<()>> = OnceLock::new();
+        LOCK.get_or_init(|| Mutex::new(()))
+            .lock()
+            .expect("schema-preload env lock poisoned")
+    }
+
+    /// Regression for the boot-blocking schema preload. A slow schema service
+    /// must NOT pin Phase 1 — the outer `tokio::time::timeout` has to fire
+    /// well before the wiremock stub's response would land, so HTTP bind
+    /// happens on schedule.
+    #[tokio::test(flavor = "multi_thread")]
+    #[allow(clippy::await_holding_lock)]
+    async fn load_schemas_timeout_unblocks_boot_when_schema_service_is_slow() {
+        use wiremock::matchers::method;
+        use wiremock::{Mock, MockServer, ResponseTemplate};
+
+        let _guard = schema_preload_env_lock();
+        std::env::set_var("FOLDDB_SCHEMA_PRELOAD_TIMEOUT_SECS", "1");
+
+        // Wiremock stub that delays 5s — far past the 1s outer timeout.
+        // If the timeout doesn't fire, the test will hang for 5s and fail
+        // the elapsed-time assertion, not just print a slow result.
+        let mock = MockServer::start().await;
+        Mock::given(method("GET"))
+            .respond_with(
+                ResponseTemplate::new(200)
+                    .set_body_json(serde_json::json!({ "schemas": [] }))
+                    .set_delay(std::time::Duration::from_secs(5)),
+            )
+            .mount(&mock)
+            .await;
+        let slow_url = mock.uri();
+
+        let tmp = tempfile::TempDir::new().expect("tempdir");
+        let keypair = fold_db::security::Ed25519KeyPair::generate().unwrap();
+        let cfg = NodeManagerConfig {
+            base_config: NodeConfig::new(tmp.path().to_path_buf())
+                .with_schema_service_url(&slow_url)
+                .with_seed_identity(crate::identity::identity_from_keypair(&keypair)),
+        };
+        let manager = Arc::new(NodeManager::new(cfg));
+
+        let started = std::time::Instant::now();
+        load_schemas_if_configured(&manager).await;
+        let elapsed = started.elapsed();
+
+        std::env::remove_var("FOLDDB_SCHEMA_PRELOAD_TIMEOUT_SECS");
+
+        // 1s timeout + slack. Anything close to 5s means the outer timeout
+        // never fired and we're back to blocking on the stub.
+        assert!(
+            elapsed < std::time::Duration::from_secs(3),
+            "load_schemas_if_configured must abort via timeout; took {:?}",
+            elapsed
         );
     }
 }
