@@ -1,4 +1,3 @@
-// @ts-nocheck Migration debt: converted from .jsx in the JS->TS finalization batch; strict-mode cleanup of vi.mock typings tracked as follow-up.
 import React from 'react'
 import { act, render, screen, fireEvent, waitFor } from '@testing-library/react'
 import { describe, it, expect, beforeEach, vi } from 'vitest'
@@ -33,8 +32,12 @@ function row(overrides = {}) {
   }
 }
 
-function ok(data) {
-  return { success: true, data }
+function ok<T>(data: T): Awaited<ReturnType<typeof listReceivedCards>> {
+  return { success: true, data, status: 200 } as unknown as Awaited<ReturnType<typeof listReceivedCards>>
+}
+
+function ok2<T>(data: T): Awaited<ReturnType<typeof acceptReceivedCard>> {
+  return { success: true, data, status: 200 } as unknown as Awaited<ReturnType<typeof acceptReceivedCard>>
 }
 
 describe('ReceivedCardsPanel', () => {
@@ -43,7 +46,7 @@ describe('ReceivedCardsPanel', () => {
   })
 
   it('shows the empty-state message when inbox is empty', async () => {
-    listReceivedCards.mockResolvedValue(ok({ received_cards: [] }))
+    vi.mocked(listReceivedCards).mockResolvedValue(ok({ received_cards: [] }))
     render(<ReceivedCardsPanel />)
     await waitFor(() => {
       expect(screen.getByTestId('received-cards-empty')).toBeInTheDocument()
@@ -51,7 +54,7 @@ describe('ReceivedCardsPanel', () => {
   })
 
   it('renders one row per received card with accept + reject for pending', async () => {
-    listReceivedCards.mockResolvedValue(
+    vi.mocked(listReceivedCards).mockResolvedValue(
       ok({
         received_cards: [row({ message_id: 'msg_a' }), row({ message_id: 'msg_b' })],
       }),
@@ -66,7 +69,7 @@ describe('ReceivedCardsPanel', () => {
   })
 
   it('hides accept + reject buttons on already-resolved rows', async () => {
-    listReceivedCards.mockResolvedValue(
+    vi.mocked(listReceivedCards).mockResolvedValue(
       ok({
         received_cards: [
           row({
@@ -88,11 +91,11 @@ describe('ReceivedCardsPanel', () => {
   })
 
   it('calls acceptReceivedCard and swaps the row in place on success', async () => {
-    listReceivedCards.mockResolvedValue(
+    vi.mocked(listReceivedCards).mockResolvedValue(
       ok({ received_cards: [row({ message_id: 'msg_1' })] }),
     )
-    acceptReceivedCard.mockResolvedValue(
-      ok({
+    vi.mocked(acceptReceivedCard).mockResolvedValue(
+      ok2({
         received_card: row({
           message_id: 'msg_1',
           status: 'accepted',
@@ -120,7 +123,7 @@ describe('ReceivedCardsPanel', () => {
   })
 
   it('refetches the list when accept fails so the server-side error stamp appears', async () => {
-    listReceivedCards
+    vi.mocked(listReceivedCards)
       .mockResolvedValueOnce(ok({ received_cards: [row({ message_id: 'msg_x' })] }))
       .mockResolvedValueOnce(
         ok({
@@ -134,10 +137,11 @@ describe('ReceivedCardsPanel', () => {
           ],
         }),
       )
-    acceptReceivedCard.mockResolvedValue({
+    vi.mocked(acceptReceivedCard).mockResolvedValue({
       success: false,
       error: 'card_signature does not verify',
-    })
+      status: 400,
+    } as unknown as Awaited<ReturnType<typeof acceptReceivedCard>>)
     render(<ReceivedCardsPanel />)
     await waitFor(() => {
       expect(screen.getByTestId('received-card-accept-msg_x')).toBeInTheDocument()
@@ -154,7 +158,7 @@ describe('ReceivedCardsPanel', () => {
   it('auto-refetches every 30s while mounted', async () => {
     vi.useFakeTimers({ shouldAdvanceTime: true })
     try {
-      listReceivedCards.mockResolvedValue(ok({ received_cards: [] }))
+      vi.mocked(listReceivedCards).mockResolvedValue(ok({ received_cards: [] }))
       render(<ReceivedCardsPanel />)
       await waitFor(() => {
         expect(listReceivedCards).toHaveBeenCalledTimes(1)
@@ -178,7 +182,7 @@ describe('ReceivedCardsPanel', () => {
   it('clears the auto-poll interval on unmount', async () => {
     vi.useFakeTimers({ shouldAdvanceTime: true })
     try {
-      listReceivedCards.mockResolvedValue(ok({ received_cards: [] }))
+      vi.mocked(listReceivedCards).mockResolvedValue(ok({ received_cards: [] }))
       const { unmount } = render(<ReceivedCardsPanel />)
       await waitFor(() => {
         expect(listReceivedCards).toHaveBeenCalledTimes(1)
@@ -197,12 +201,12 @@ describe('ReceivedCardsPanel', () => {
   it('suppresses the auto-poll while a row is mid-action', async () => {
     vi.useFakeTimers({ shouldAdvanceTime: true })
     try {
-      listReceivedCards.mockResolvedValue(
+      vi.mocked(listReceivedCards).mockResolvedValue(
         ok({ received_cards: [row({ message_id: 'msg_p' })] }),
       )
       // Accept never resolves during the test → pendingAction stays set.
-      let releaseAccept
-      acceptReceivedCard.mockImplementation(
+      let releaseAccept: (value: Awaited<ReturnType<typeof acceptReceivedCard>>) => void = () => {}
+      vi.mocked(acceptReceivedCard).mockImplementation(
         () => new Promise(resolve => {
           releaseAccept = resolve
         }),
@@ -227,7 +231,7 @@ describe('ReceivedCardsPanel', () => {
 
       // Release the accept; now the row is no longer mid-action.
       await act(async () => {
-        releaseAccept(ok({ received_card: row({ message_id: 'msg_p', status: 'accepted' }), identity_id: 'id_p' }))
+        releaseAccept(ok2({ received_card: row({ message_id: 'msg_p', status: 'accepted' }), identity_id: 'id_p' }))
       })
 
       await act(async () => {
@@ -240,7 +244,7 @@ describe('ReceivedCardsPanel', () => {
   })
 
   it('renders a "last refreshed at" line that updates after fetch', async () => {
-    listReceivedCards.mockResolvedValue(ok({ received_cards: [] }))
+    vi.mocked(listReceivedCards).mockResolvedValue(ok({ received_cards: [] }))
     render(<ReceivedCardsPanel />)
     await waitFor(() => {
       expect(
@@ -250,11 +254,11 @@ describe('ReceivedCardsPanel', () => {
   })
 
   it('calls dismissReceivedCard and flips the status on success', async () => {
-    listReceivedCards.mockResolvedValue(
+    vi.mocked(listReceivedCards).mockResolvedValue(
       ok({ received_cards: [row({ message_id: 'msg_z' })] }),
     )
-    dismissReceivedCard.mockResolvedValue(
-      ok(row({ message_id: 'msg_z', status: 'dismissed' })),
+    vi.mocked(dismissReceivedCard).mockResolvedValue(
+      { success: true, status: 200, data: row({ message_id: 'msg_z', status: 'dismissed' }) } as unknown as Awaited<ReturnType<typeof dismissReceivedCard>>,
     )
     render(<ReceivedCardsPanel />)
     await waitFor(() => {

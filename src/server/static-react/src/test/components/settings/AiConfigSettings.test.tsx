@@ -1,4 +1,3 @@
-// @ts-nocheck Migration debt: converted from .jsx in the JS->TS finalization batch; strict-mode cleanup of vi.mock typings tracked as follow-up.
 /**
  * @fileoverview Tests for the Vision Backend picker in AiConfigSettings.
  *
@@ -18,9 +17,11 @@ import React from 'react'
 import { describe, it, expect, vi, beforeEach } from 'vitest'
 import { screen, fireEvent, waitFor } from '@testing-library/react'
 
-import { renderWithRedux } from '../../utils/testUtilities'
+import { renderWithRedux, apiOk } from '../../utils/testUtilities'
 import ingestionReducer from '../../../store/ingestionSlice'
 import useAiConfig from '../../../components/settings/AiConfigSettings'
+import type { SaveStatus } from '../../../components/settings/types'
+import type { IngestionConfig } from '../../../api/clients/ingestionClient'
 import { ingestionClient } from '../../../api/clients'
 
 // Spy on the singleton so the same object the slice uses is intercepted.
@@ -33,7 +34,7 @@ const listModelsSpy = vi.spyOn(ingestionClient, 'listOllamaModels')
  * does, and exposes a Save button the test can click.
  */
 function Harness() {
-  const [status, setStatus] = React.useState(null)
+  const [status, setStatus] = React.useState<SaveStatus | null>(null)
   const { content, saveAiConfig } = useAiConfig({
     configSaveStatus: status,
     setConfigSaveStatus: setStatus,
@@ -48,7 +49,7 @@ function Harness() {
   )
 }
 
-const baseConfig = {
+const baseConfig: IngestionConfig = {
   provider: 'Anthropic',
   anthropic: {
     api_key: '***configured***',
@@ -64,7 +65,7 @@ const baseConfig = {
   vision_backend: 'Ollama',
 }
 
-function renderHarness(overrides = {}) {
+function renderHarness(overrides: Partial<IngestionConfig> = {}) {
   const config = { ...baseConfig, ...overrides }
   return renderWithRedux(<Harness />, {
     preloadedState: {
@@ -83,10 +84,10 @@ function renderHarness(overrides = {}) {
 beforeEach(() => {
   vi.clearAllMocks()
   // Save succeeds with a no-op re-fetch result so the thunk resolves fully.
-  saveConfigSpy.mockResolvedValue({ success: true, data: { success: true, message: 'ok' } })
-  getConfigSpy.mockResolvedValue({ success: true, data: baseConfig })
+  saveConfigSpy.mockResolvedValue(apiOk({ success: true, message: 'ok' }))
+  getConfigSpy.mockResolvedValue(apiOk(baseConfig))
   // Stub the Ollama model list so the debounced effect doesn't complain.
-  listModelsSpy.mockResolvedValue({ success: true, data: { models: [] } })
+  listModelsSpy.mockResolvedValue(apiOk({ models: [] }))
 })
 
 describe('AiConfigSettings — Vision Backend picker', () => {
@@ -94,7 +95,7 @@ describe('AiConfigSettings — Vision Backend picker', () => {
     renderHarness({ vision_backend: 'Anthropic' })
 
     const select = await screen.findByLabelText(/Vision Backend/i)
-    expect(select.value).toBe('Anthropic')
+    expect((select as HTMLSelectElement).value).toBe('Anthropic')
   })
 
   it('defaults to Ollama when savedConfig omits vision_backend', async () => {
@@ -113,7 +114,7 @@ describe('AiConfigSettings — Vision Backend picker', () => {
     })
 
     const select = await screen.findByLabelText(/Vision Backend/i)
-    expect(select.value).toBe('Ollama')
+    expect((select as HTMLSelectElement).value).toBe('Ollama')
   })
 
   it('writes the new value into the saveConfig payload when flipped', async () => {
@@ -126,9 +127,9 @@ describe('AiConfigSettings — Vision Backend picker', () => {
 
     await waitFor(() => expect(saveConfigSpy).toHaveBeenCalledTimes(1))
     const payload = saveConfigSpy.mock.calls[0][0]
-    expect(payload.vision_backend).toBe('Anthropic')
+    expect((payload as IngestionConfig).vision_backend).toBe('Anthropic')
     // Picker is independent of provider — text provider unchanged.
-    expect(payload.provider).toBe('Anthropic')
+    expect((payload as IngestionConfig).provider).toBe('Anthropic')
   })
 
   it('keeps vision_backend independent of provider (Anthropic text + Ollama vision)', async () => {
@@ -141,7 +142,7 @@ describe('AiConfigSettings — Vision Backend picker', () => {
 
     await waitFor(() => expect(saveConfigSpy).toHaveBeenCalledTimes(1))
     const payload = saveConfigSpy.mock.calls[0][0]
-    expect(payload.provider).toBe('Anthropic')
-    expect(payload.vision_backend).toBe('Ollama')
+    expect((payload as IngestionConfig).provider).toBe('Anthropic')
+    expect((payload as IngestionConfig).vision_backend).toBe('Ollama')
   })
 })

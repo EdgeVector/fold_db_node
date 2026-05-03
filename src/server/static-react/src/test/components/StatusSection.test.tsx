@@ -1,4 +1,3 @@
-// @ts-nocheck Migration debt: converted from .jsx in the JS->TS finalization batch; strict-mode cleanup of vi.mock typings tracked as follow-up.
 import { render, screen, fireEvent, waitFor } from '@testing-library/react'
 import { describe, it, expect, beforeEach, vi } from 'vitest'
 import StatusSection from '../../components/StatusSection'
@@ -19,21 +18,21 @@ vi.mock('../../api/clients', () => ({
 
 import { systemClient } from '../../api/clients/systemClient'
 import { ingestionClient } from '../../api/clients'
+import { apiOk, apiErr } from '../utils/testUtilities'
 
 describe('StatusSection Component', () => {
   beforeEach(() => {
     vi.clearAllMocks()
     // Default mock implementation
-    ingestionClient.getAllProgress.mockResolvedValue({
-      success: true,
-      data: [{
-        id: '123',
-        started_at: new Date().toISOString(),
-        is_complete: false,
-        status_message: 'Processing...',
-        progress_percentage: 50
-      }]
-    })
+    vi.mocked(ingestionClient.getAllProgress).mockResolvedValue(apiOk([{
+      id: '123',
+      started_at: new Date().toISOString(),
+      is_complete: false,
+      is_failed: false,
+      current_step: 'processing',
+      status_message: 'Processing...',
+      progress_percentage: 50,
+    }]))
   })
 
   it('renders system status heading', () => {
@@ -55,7 +54,7 @@ describe('StatusSection Component', () => {
     
     // The CheckCircleIcon should be rendered as an SVG next to System Status
     const heading = screen.getByText('System Status')
-    const icon = heading.parentElement.querySelector('svg')
+    const icon = heading.parentElement!.querySelector('svg')
     expect(icon).toBeInTheDocument()
     expect(icon).toHaveClass('w-5', 'h-5', 'text-gruvbox-green')
   })
@@ -78,18 +77,23 @@ describe('StatusSection Component', () => {
   })
 
   it('renders indexing job card when indexing job is returned', async () => {
-    // Mock an indexing job response
-    ingestionClient.getAllProgress.mockResolvedValue({
+    // Mock an indexing job response. job_type is read by StatusSection via
+    // its local ProgressJob extension; cast to bypass the narrower
+    // IngestionProgress shape on the client return type.
+    vi.mocked(ingestionClient.getAllProgress).mockResolvedValue({
       success: true,
+      status: 200,
       data: [{
         id: 'idx-123',
         started_at: new Date().toISOString(),
         is_complete: false,
+        is_failed: false,
+        current_step: 'indexing',
         status_message: 'Indexing documents...',
         progress_percentage: 75,
-        job_type: 'indexing'
-      }]
-    })
+        job_type: 'indexing',
+      }],
+    } as unknown as Awaited<ReturnType<typeof ingestionClient.getAllProgress>>)
     
     render(<StatusSection />)
     
@@ -112,15 +116,12 @@ describe('StatusSection Component', () => {
     
     // Check for icon
     const heading = screen.getByText('System Status')
-    const icon = heading.parentElement.querySelector('svg')
+    const icon = heading.parentElement!.querySelector('svg')
     expect(icon).toBeInTheDocument()
   })
 
   it('shows "No active jobs" placeholder when no jobs are returned', async () => {
-    ingestionClient.getAllProgress.mockResolvedValue({
-      success: true,
-      data: []
-    })
+    vi.mocked(ingestionClient.getAllProgress).mockResolvedValue(apiOk([]))
     
     render(<StatusSection />)
     
@@ -172,10 +173,7 @@ describe('StatusSection Component', () => {
     })
 
     it('calls systemClient when reset is confirmed', async () => {
-      systemClient.resetDatabase.mockResolvedValueOnce({
-        success: true,
-        data: { success: true, message: 'Database reset successfully' }
-      })
+      vi.mocked(systemClient.resetDatabase).mockResolvedValueOnce(apiOk({ success: true, message: 'Database reset successfully' }))
 
       render(<StatusSection />)
       
@@ -191,10 +189,7 @@ describe('StatusSection Component', () => {
     })
 
     it('shows success message when reset succeeds', async () => {
-      systemClient.resetDatabase.mockResolvedValueOnce({
-        success: true,
-        data: { success: true, message: 'Database reset successfully' }
-      })
+      vi.mocked(systemClient.resetDatabase).mockResolvedValueOnce(apiOk({ success: true, message: 'Database reset successfully' }))
 
       render(<StatusSection />)
       
@@ -210,10 +205,7 @@ describe('StatusSection Component', () => {
     })
 
     it('shows error message when reset fails', async () => {
-      systemClient.resetDatabase.mockResolvedValueOnce({
-        success: false,
-        error: 'Reset failed'
-      })
+      vi.mocked(systemClient.resetDatabase).mockResolvedValueOnce(apiErr('Reset failed'))
 
       render(<StatusSection />)
       
@@ -229,7 +221,7 @@ describe('StatusSection Component', () => {
     })
 
     it('handles network errors gracefully', async () => {
-      systemClient.resetDatabase.mockRejectedValueOnce(new Error('Network error'))
+      vi.mocked(systemClient.resetDatabase).mockRejectedValueOnce(new Error('Network error'))
 
       render(<StatusSection />)
       
@@ -245,7 +237,7 @@ describe('StatusSection Component', () => {
     })
 
     it('disables reset button while resetting', async () => {
-      systemClient.resetDatabase.mockImplementationOnce(() => new Promise(resolve => setTimeout(resolve, 1000)))
+      vi.mocked(systemClient.resetDatabase).mockImplementationOnce(() => new Promise(resolve => setTimeout(resolve, 1000)))
 
       render(<StatusSection />)
       

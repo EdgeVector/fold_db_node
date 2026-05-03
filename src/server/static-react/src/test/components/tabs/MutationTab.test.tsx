@@ -1,4 +1,3 @@
-// @ts-nocheck Migration debt: converted from .jsx in the JS->TS finalization batch; strict-mode cleanup of vi.mock typings tracked as follow-up.
 import React from 'react'
 import { screen, fireEvent } from '@testing-library/react'
 import { describe, it, expect, beforeEach, vi } from 'vitest'
@@ -31,7 +30,7 @@ vi.mock('../../../api', () => ({
 // Mock Redux hooks
 const mockDispatch = vi.fn()
 vi.mock('react-redux', async (importOriginal) => {
-  const actual = await importOriginal()
+  const actual = await importOriginal<typeof import('react-redux')>()
   return {
     ...actual,
     useDispatch: () => mockDispatch
@@ -204,9 +203,9 @@ describe('MutationTab Component', () => {
       preloadedState: schemaState
     })
 
-    const operationSelect = screen.getByLabelText('Operation Type')
+    const operationSelect = screen.getByLabelText('Operation Type') as HTMLSelectElement
     expect(operationSelect).toBeInTheDocument()
-    
+
     // Test changing operation type
     fireEvent.change(operationSelect, { target: { value: 'Insert' } })
     expect(operationSelect.value).toBe('Insert')

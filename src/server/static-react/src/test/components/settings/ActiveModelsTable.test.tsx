@@ -1,4 +1,3 @@
-// @ts-nocheck Migration debt: converted from .jsx in the JS->TS finalization batch; strict-mode cleanup of vi.mock typings tracked as follow-up.
 /**
  * @fileoverview Tests for ActiveModelsTable — the Active Models summary at
  * the top of the AI Config panel.
@@ -19,12 +18,14 @@ import { screen, fireEvent, waitFor, render, within } from '@testing-library/rea
 
 import ActiveModelsTable from '../../../components/settings/ActiveModelsTable'
 import { ingestionClient } from '../../../api/clients'
+import type { RoleInfo, RoleMetricsSnapshot } from '../../../api/clients/ingestionClient'
+import { apiOk } from '../../utils/testUtilities'
 
 const getRolesSpy = vi.spyOn(ingestionClient, 'getRoles')
 const getStatsSpy = vi.spyOn(ingestionClient, 'getAiStats')
 const testRoleSpy = vi.spyOn(ingestionClient, 'testRole')
 
-const sampleRoles = [
+const sampleRoles: RoleInfo[] = [
   {
     role: 'IngestionText',
     display_name: 'Ingestion Text',
@@ -136,7 +137,7 @@ function sampleGenParams() {
   }
 }
 
-const emptyStats = {
+const emptyStats: { stats: RoleMetricsSnapshot[]; window: string } = {
   stats: sampleRoles.map(r => ({
     role: r.role,
     call_count: 0,
@@ -149,8 +150,8 @@ const emptyStats = {
 
 beforeEach(() => {
   vi.clearAllMocks()
-  getRolesSpy.mockResolvedValue({ success: true, data: { roles: sampleRoles } })
-  getStatsSpy.mockResolvedValue({ success: true, data: emptyStats })
+  getRolesSpy.mockResolvedValue(apiOk({ roles: sampleRoles }))
+  getStatsSpy.mockResolvedValue(apiOk(emptyStats))
 })
 
 afterEach(() => {
@@ -185,22 +186,19 @@ describe('ActiveModelsTable', () => {
   })
 
   it('renders stats after the store has calls recorded', async () => {
-    getStatsSpy.mockResolvedValue({
-      success: true,
-      data: {
-        window: 'since_process_start',
-        stats: [
-          {
-            role: 'IngestionText',
-            call_count: 42,
-            avg_latency_ms: 320.1,
-            error_count: 0,
-            last_called_elapsed_s: 3.2,
-          },
-          ...emptyStats.stats.filter(s => s.role !== 'IngestionText'),
-        ],
-      },
-    })
+    getStatsSpy.mockResolvedValue(apiOk({
+      window: 'since_process_start',
+      stats: [
+        {
+          role: 'IngestionText',
+          call_count: 42,
+          avg_latency_ms: 320.1,
+          error_count: 0,
+          last_called_elapsed_s: 3.2,
+        } as RoleMetricsSnapshot,
+        ...emptyStats.stats.filter(s => s.role !== 'IngestionText'),
+      ],
+    }))
     render(<ActiveModelsTable />)
     await waitFor(() => {
       expect(screen.getByText(/42 calls.*320ms.*0 errs/)).toBeTruthy()
@@ -211,10 +209,7 @@ describe('ActiveModelsTable', () => {
     const rolesWithOverride = sampleRoles.map(r =>
       r.role === 'QueryChat' ? { ...r, override_active: true } : r,
     )
-    getRolesSpy.mockResolvedValue({
-      success: true,
-      data: { roles: rolesWithOverride },
-    })
+    getRolesSpy.mockResolvedValue(apiOk({ roles: rolesWithOverride }))
     render(<ActiveModelsTable />)
     const badge = await screen.findByLabelText(/user override active/i)
     expect(badge.textContent).toContain('*')
@@ -226,27 +221,24 @@ describe('ActiveModelsTable', () => {
     // Vision and Ocr have a plain "Test" span (not a button) with a tooltip.
     const visionRow = screen.getByText('Vision').closest('div')
     // The Test indicator is a span, not a button — no click handler.
-    const testIndicator = within(visionRow.parentElement).getByText('Test', {
+    const testIndicator = within(visionRow!.parentElement!).getByText('Test', {
       selector: 'span',
     })
     expect(testIndicator).toBeTruthy()
   })
 
   it('fires testRole with the user prompt and shows the response inline', async () => {
-    testRoleSpy.mockResolvedValue({
-      success: true,
-      data: {
-        role: 'IngestionText',
-        provider: 'Anthropic',
-        model: 'claude-haiku-4-5-20251001',
-        latency_ms: 250,
-        response: 'hello from the model',
-      },
-    })
+    testRoleSpy.mockResolvedValue(apiOk({
+      role: 'IngestionText',
+      provider: 'Anthropic',
+      model: 'claude-haiku-4-5-20251001',
+      latency_ms: 250,
+      response: 'hello from the model',
+    }))
     render(<ActiveModelsTable />)
     const ingestionRow = (
       await screen.findByText('Ingestion Text')
-    ).closest('div').parentElement
+    ).closest('div')!.parentElement!
     const testButton = within(ingestionRow).getByText('Test', {
       selector: 'button',
     })
@@ -266,10 +258,7 @@ describe('ActiveModelsTable', () => {
     const rolesWithMissingKey = sampleRoles.map(r =>
       r.role === 'IngestionText' ? { ...r, status: 'missing_api_key' } : r,
     )
-    getRolesSpy.mockResolvedValue({
-      success: true,
-      data: { roles: rolesWithMissingKey },
-    })
+    getRolesSpy.mockResolvedValue(apiOk({ roles: rolesWithMissingKey }))
     render(<ActiveModelsTable />)
     await waitFor(() => {
       expect(screen.getByText(/API key required/i)).toBeTruthy()

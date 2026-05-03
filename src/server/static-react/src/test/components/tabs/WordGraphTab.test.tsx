@@ -1,17 +1,24 @@
-// @ts-nocheck Migration debt: converted from .jsx in the JS->TS finalization batch; strict-mode cleanup of vi.mock typings tracked as follow-up.
 import React from 'react'
 import { screen, fireEvent, waitFor } from '@testing-library/react'
 import { describe, it, expect, beforeEach, vi } from 'vitest'
 import WordGraphTab from '../../../components/tabs/WordGraphTab'
 import { renderWithRedux, createTestSchemaState } from '../../utils/testUtilities'
 
+type GraphNode = { id: string; label: string }
+type GraphData = { nodes?: GraphNode[]; links?: unknown[] }
+type ForceGraphProps = {
+  graphData?: GraphData
+  onNodeClick?: (n: GraphNode) => void
+  onNodeHover?: (n: GraphNode | null) => void
+}
+
 // react-force-graph-2d uses canvas/WebGL — replace with a testable stub
 vi.mock('react-force-graph-2d', () => ({
-  default: vi.fn(({ graphData, onNodeClick, onNodeHover }) => (
+  default: vi.fn(({ graphData, onNodeClick, onNodeHover }: ForceGraphProps) => (
     <div data-testid="force-graph">
       <span data-testid="graph-node-count">{graphData?.nodes?.length ?? 0}</span>
       <span data-testid="graph-link-count">{graphData?.links?.length ?? 0}</span>
-      {graphData?.nodes?.map(n => (
+      {graphData?.nodes?.map((n: GraphNode) => (
         <button
           key={n.id}
           data-testid={`node-${n.id}`}
@@ -61,7 +68,7 @@ const APPROVED_SCHEMA_STATE = createTestSchemaState({
   }
 })
 
-function makeSearchResult(word, schema, hash = 'abc123') {
+function makeSearchResult(word: string, schema: string, hash = 'abc123') {
   return { schema_name: schema, field: 'name', key_value: { hash, range: null }, value: word }
 }
 
@@ -82,9 +89,9 @@ describe('WordGraphTab', () => {
   beforeEach(() => {
     vi.clearAllMocks()
     // Default: no-op responses so prepopulate finishes immediately
-    nativeIndexClient.search.mockResolvedValue({ success: true, data: { results: [] } })
-    mutationClient.executeQuery.mockResolvedValue({ success: true, data: { results: [] } })
-    schemaClient.listSchemaKeys.mockResolvedValue({ success: true, data: { keys: [], total_count: 0 } })
+    vi.mocked(nativeIndexClient.search).mockResolvedValue({ success: true, data: { results: [] } } as unknown as Awaited<ReturnType<typeof nativeIndexClient.search>>)
+    vi.mocked(mutationClient.executeQuery).mockResolvedValue({ success: true, data: { results: [] } } as unknown as Awaited<ReturnType<typeof mutationClient.executeQuery>>)
+    vi.mocked(schemaClient.listSchemaKeys).mockResolvedValue({ success: true, data: { keys: [], total_count: 0 } } as unknown as Awaited<ReturnType<typeof schemaClient.listSchemaKeys>>)
   })
 
   describe('initial render', () => {
@@ -147,10 +154,10 @@ describe('WordGraphTab', () => {
     })
 
     it('adds word node and link from search result', async () => {
-      nativeIndexClient.search.mockResolvedValue({
+      vi.mocked(nativeIndexClient.search).mockResolvedValue({
         success: true,
         data: { results: [makeSearchResult('alice', 'UserProfile', 'h1')] }
-      })
+      } as unknown as Awaited<ReturnType<typeof nativeIndexClient.search>>)
 
       await renderTab()
       await waitForReady()
@@ -177,7 +184,7 @@ describe('WordGraphTab', () => {
     })
 
     it('shows error message on search API failure', async () => {
-      nativeIndexClient.search.mockResolvedValue({ success: false, error: 'Server error' })
+      vi.mocked(nativeIndexClient.search).mockResolvedValue({ success: false, error: 'Server error' } as unknown as Awaited<ReturnType<typeof nativeIndexClient.search>>)
 
       await renderTab()
       await waitForReady()
@@ -200,10 +207,10 @@ describe('WordGraphTab', () => {
 
   describe('auto-populate on mount', () => {
     it('queries records for each approved schema on mount', async () => {
-      mutationClient.executeQuery.mockResolvedValue({
+      vi.mocked(mutationClient.executeQuery).mockResolvedValue({
         success: true,
         data: { results: [{ fields: { name: 'Alice Smith' } }] }
-      })
+      } as unknown as Awaited<ReturnType<typeof mutationClient.executeQuery>>)
 
       await renderTab()
 
@@ -215,10 +222,10 @@ describe('WordGraphTab', () => {
     })
 
     it('searches words extracted from record field values', async () => {
-      mutationClient.executeQuery.mockResolvedValue({
+      vi.mocked(mutationClient.executeQuery).mockResolvedValue({
         success: true,
         data: { results: [{ fields: { name: 'uniquewordxyz' } }] }
-      })
+      } as unknown as Awaited<ReturnType<typeof mutationClient.executeQuery>>)
 
       await renderTab()
 
@@ -228,10 +235,10 @@ describe('WordGraphTab', () => {
     })
 
     it('filters out stopwords and short words', async () => {
-      mutationClient.executeQuery.mockResolvedValue({
+      vi.mocked(mutationClient.executeQuery).mockResolvedValue({
         success: true,
         data: { results: [{ fields: { bio: 'the and for realword' } }] }
-      })
+      } as unknown as Awaited<ReturnType<typeof mutationClient.executeQuery>>)
 
       await renderTab()
 
@@ -245,15 +252,15 @@ describe('WordGraphTab', () => {
     })
 
     it('adds word nodes from auto-populate results', async () => {
-      mutationClient.executeQuery.mockResolvedValue({
+      vi.mocked(mutationClient.executeQuery).mockResolvedValue({
         success: true,
         data: { results: [{ fields: { name: 'graphword' } }] }
-      })
-      nativeIndexClient.search.mockImplementation(async (term) => {
+      } as unknown as Awaited<ReturnType<typeof mutationClient.executeQuery>>)
+      vi.mocked(nativeIndexClient.search).mockImplementation(async (term: string) => {
         if (term === 'graphword') {
-          return { success: true, data: { results: [makeSearchResult('graphword', 'UserProfile', 'h1')] } }
+          return { success: true, data: { results: [makeSearchResult('graphword', 'UserProfile', 'h1')] } } as unknown as Awaited<ReturnType<typeof nativeIndexClient.search>>
         }
-        return { success: true, data: { results: [] } }
+        return { success: true, data: { results: [] } } as unknown as Awaited<ReturnType<typeof nativeIndexClient.search>>
       })
 
       await renderTab()
@@ -266,10 +273,10 @@ describe('WordGraphTab', () => {
 
   describe('graph deduplication', () => {
     it('does not add duplicate word nodes on repeated searches', async () => {
-      nativeIndexClient.search.mockResolvedValue({
+      vi.mocked(nativeIndexClient.search).mockResolvedValue({
         success: true,
         data: { results: [makeSearchResult('alice', 'UserProfile', 'h1')] }
-      })
+      } as unknown as Awaited<ReturnType<typeof nativeIndexClient.search>>)
 
       await renderTab()
       await waitForReady()
@@ -287,10 +294,10 @@ describe('WordGraphTab', () => {
 
   describe('node selection', () => {
     it('shows selected node detail panel when a word node is clicked', async () => {
-      nativeIndexClient.search.mockResolvedValue({
+      vi.mocked(nativeIndexClient.search).mockResolvedValue({
         success: true,
         data: { results: [makeSearchResult('alice', 'UserProfile', 'h1')] }
-      })
+      } as unknown as Awaited<ReturnType<typeof nativeIndexClient.search>>)
 
       await renderTab()
       await waitForReady()
@@ -308,10 +315,10 @@ describe('WordGraphTab', () => {
     })
 
     it('deselects node when clicked again', async () => {
-      nativeIndexClient.search.mockResolvedValue({
+      vi.mocked(nativeIndexClient.search).mockResolvedValue({
         success: true,
         data: { results: [makeSearchResult('alice', 'UserProfile', 'h1')] }
-      })
+      } as unknown as Awaited<ReturnType<typeof nativeIndexClient.search>>)
 
       await renderTab()
       await waitForReady()
@@ -330,10 +337,10 @@ describe('WordGraphTab', () => {
 
   describe('clear & reload', () => {
     it('removes word nodes and links, keeps schema nodes', async () => {
-      nativeIndexClient.search.mockResolvedValue({
+      vi.mocked(nativeIndexClient.search).mockResolvedValue({
         success: true,
         data: { results: [makeSearchResult('alice', 'UserProfile', 'h1')] }
-      })
+      } as unknown as Awaited<ReturnType<typeof nativeIndexClient.search>>)
 
       await renderTab()
       await waitForReady()
@@ -353,7 +360,7 @@ describe('WordGraphTab', () => {
 
   describe('stats panel', () => {
     it('shows correct link count when one word connects to two schemas', async () => {
-      nativeIndexClient.search.mockResolvedValue({
+      vi.mocked(nativeIndexClient.search).mockResolvedValue({
         success: true,
         data: {
           results: [
@@ -361,7 +368,7 @@ describe('WordGraphTab', () => {
             makeSearchResult('alice', 'TweetData',   'h2'),
           ]
         }
-      })
+      } as unknown as Awaited<ReturnType<typeof nativeIndexClient.search>>)
 
       await renderTab()
       await waitForReady()

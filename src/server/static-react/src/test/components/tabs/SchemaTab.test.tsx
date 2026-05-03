@@ -1,4 +1,3 @@
-// @ts-nocheck Migration debt: converted from .jsx in the JS->TS finalization batch; strict-mode cleanup of vi.mock typings tracked as follow-up.
 import React from 'react'
 import { screen, fireEvent, waitFor } from '@testing-library/react'
 import { describe, it, expect, beforeEach, vi } from 'vitest'
@@ -23,7 +22,7 @@ vi.mock('../../../api/clients/schemaClient', () => ({
 vi.mock('../../../store/schemaSlice', async () => {
   const actual = await vi.importActual('../../../store/schemaSlice')
 
-  const createMockAction = (actionType) => vi.fn(() => {
+  const createMockAction = (actionType: string) => vi.fn(() => {
     // Return a thunk function that returns a Promise
     const thunk = () => {
       const action = {

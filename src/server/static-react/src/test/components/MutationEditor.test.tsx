@@ -1,4 +1,3 @@
-// @ts-nocheck Migration debt: converted from .jsx in the JS->TS finalization batch; strict-mode cleanup of vi.mock typings tracked as follow-up.
 import { render, screen, fireEvent } from '@testing-library/react'
 import { describe, it, expect, vi } from 'vitest'
 import MutationEditor from '../../components/tabs/mutation/MutationEditor'
@@ -25,6 +24,7 @@ describe('MutationEditor', () => {
         mutationType="Create"
         mutationData={{}}
         onFieldChange={mockOnFieldChange}
+        isRangeSchema={false}
       />
     )
 
@@ -44,6 +44,7 @@ describe('MutationEditor', () => {
         mutationType="Create"
         mutationData={{}}
         onFieldChange={mockOnFieldChange}
+        isRangeSchema={false}
       />
     )
 
@@ -72,6 +73,7 @@ describe('MutationEditor', () => {
         mutationType="Create"
         mutationData={mutationDataWithRange}
         onFieldChange={mockOnFieldChange}
+        isRangeSchema={false}
       />
     )
 
@@ -95,6 +97,7 @@ describe('MutationEditor', () => {
         mutationType="Create"
         mutationData={mutationDataWithRange}
         onFieldChange={mockOnFieldChange}
+        isRangeSchema={false}
       />
     )
 

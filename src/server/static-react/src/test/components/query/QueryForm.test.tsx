@@ -1,19 +1,34 @@
-// @ts-nocheck Migration debt: converted from .jsx in the JS->TS finalization batch; strict-mode cleanup of vi.mock typings tracked as follow-up.
 /**
  * QueryForm Component Tests
  * Tests for UCR-1-4: QueryForm component for input validation
  * Part of UTC-1 Test Coverage Enhancement - UCR-1 Component Testing
  */
 
-import { describe, it, expect, beforeEach, vi } from 'vitest';
+import React from 'react';
+import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 import { screen, fireEvent } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
-import QueryForm from '../../../components/query/QueryForm';
+import QueryFormImpl from '../../../components/query/QueryForm';
 import { renderWithRedux, createAuthenticatedState } from '../../utils/testUtilities';
 
+const QueryForm = QueryFormImpl as unknown as React.FC<Record<string, unknown>>;
+
+interface QueryFormMockProps {
+  queryState: Record<string, unknown>;
+  onSchemaChange: ReturnType<typeof vi.fn>;
+  onFieldToggle: ReturnType<typeof vi.fn>;
+  onRangeFilterChange: ReturnType<typeof vi.fn>;
+  onRangeSchemaFilterChange: ReturnType<typeof vi.fn>;
+  approvedSchemas: Array<Record<string, unknown>>;
+  schemasLoading: boolean;
+  isRangeSchema: boolean;
+  rangeKey: string | null;
+  className?: string;
+}
+
 describe('QueryForm Component', () => {
-  let mockProps;
-  let user;
+  let mockProps: QueryFormMockProps;
+  let user: ReturnType<typeof userEvent.setup>;
 
   const mockApprovedSchemas = [
     {
@@ -57,7 +72,7 @@ describe('QueryForm Component', () => {
 
   describe('rendering', () => {
     it('should render schema selection field', () => {
-      renderWithRedux(<QueryForm {...mockProps} />, { initialState: createAuthenticatedState() });
+      renderWithRedux(<QueryForm {...mockProps} />, { preloadedState: createAuthenticatedState() });
 
       expect(screen.getByText('Schema')).toBeInTheDocument();
       expect(screen.getByRole('combobox')).toBeInTheDocument();
@@ -65,7 +80,7 @@ describe('QueryForm Component', () => {
     });
 
     it('should render schema options correctly', () => {
-      renderWithRedux(<QueryForm {...mockProps} />, { initialState: createAuthenticatedState() });
+      renderWithRedux(<QueryForm {...mockProps} />, { preloadedState: createAuthenticatedState() });
 
       const select = screen.getByRole('combobox');
       expect(select).toBeInTheDocument();
@@ -76,7 +91,7 @@ describe('QueryForm Component', () => {
 
     it('should show loading state for schemas', () => {
       mockProps.schemasLoading = true;
-      renderWithRedux(<QueryForm {...mockProps} />, { initialState: createAuthenticatedState() });
+      renderWithRedux(<QueryForm {...mockProps} />, { preloadedState: createAuthenticatedState() });
 
       // The SelectField component should handle loading state
       expect(screen.getByRole('combobox')).toBeInTheDocument();
@@ -84,7 +99,7 @@ describe('QueryForm Component', () => {
 
     it('should apply custom className', () => {
       mockProps.className = 'custom-form-class';
-      const { container } = renderWithRedux(<QueryForm {...mockProps} />, { initialState: createAuthenticatedState() });
+      const { container } = renderWithRedux(<QueryForm {...mockProps} />, { preloadedState: createAuthenticatedState() });
 
       expect(container.firstChild).toHaveClass('custom-form-class');
     });
@@ -92,7 +107,7 @@ describe('QueryForm Component', () => {
 
   describe('schema selection', () => {
     it('should call onSchemaChange when schema is selected', async () => {
-      renderWithRedux(<QueryForm {...mockProps} />, { initialState: createAuthenticatedState() });
+      renderWithRedux(<QueryForm {...mockProps} />, { preloadedState: createAuthenticatedState() });
 
       const select = screen.getByRole('combobox');
       await user.selectOptions(select, 'UserSchema');
@@ -102,7 +117,7 @@ describe('QueryForm Component', () => {
 
     it('should clear schema validation error when schema is selected', async () => {
       // Start with validation error by trying to validate empty form
-      renderWithRedux(<QueryForm {...mockProps} />, { initialState: createAuthenticatedState() });
+      renderWithRedux(<QueryForm {...mockProps} />, { preloadedState: createAuthenticatedState() });
 
       const select = screen.getByRole('combobox');
       await user.selectOptions(select, 'UserSchema');
@@ -117,7 +132,7 @@ describe('QueryForm Component', () => {
     });
 
     it('should render field selection when schema is selected', () => {
-      renderWithRedux(<QueryForm {...mockProps} />, { initialState: createAuthenticatedState() });
+      renderWithRedux(<QueryForm {...mockProps} />, { preloadedState: createAuthenticatedState() });
 
       expect(screen.getByText('Field Selection')).toBeInTheDocument();
       expect(screen.getByText('Select fields to include in your query')).toBeInTheDocument();
@@ -132,7 +147,7 @@ describe('QueryForm Component', () => {
     });
 
     it('should call onFieldToggle when field checkbox is clicked', async () => {
-      renderWithRedux(<QueryForm {...mockProps} />, { initialState: createAuthenticatedState() });
+      renderWithRedux(<QueryForm {...mockProps} />, { preloadedState: createAuthenticatedState() });
 
       const idCheckbox = screen.getByRole('checkbox', { name: /id/i });
       await user.click(idCheckbox);
@@ -142,7 +157,7 @@ describe('QueryForm Component', () => {
 
     it('should show checked state for selected fields', () => {
       mockProps.queryState.queryFields = ['id', 'name'];
-      renderWithRedux(<QueryForm {...mockProps} />, { initialState: createAuthenticatedState() });
+      renderWithRedux(<QueryForm {...mockProps} />, { preloadedState: createAuthenticatedState() });
 
       const idCheckbox = screen.getByRole('checkbox', { name: /id/i });
       const nameCheckbox = screen.getByRole('checkbox', { name: /name/i });
@@ -155,7 +170,7 @@ describe('QueryForm Component', () => {
 
     it('should not render field selection when no schema is selected', () => {
       mockProps.queryState.selectedSchema = '';
-      renderWithRedux(<QueryForm {...mockProps} />, { initialState: createAuthenticatedState() });
+      renderWithRedux(<QueryForm {...mockProps} />, { preloadedState: createAuthenticatedState() });
 
       expect(screen.queryByText('Select Fields')).not.toBeInTheDocument();
     });
@@ -169,7 +184,7 @@ describe('QueryForm Component', () => {
     });
 
     it('should render range filter for range schemas', () => {
-      renderWithRedux(<QueryForm {...mockProps} />, { initialState: createAuthenticatedState() });
+      renderWithRedux(<QueryForm {...mockProps} />, { preloadedState: createAuthenticatedState() });
 
       expect(screen.getByText('Range Filter')).toBeInTheDocument();
       expect(screen.getByText('Filter data by range key values')).toBeInTheDocument();
@@ -177,20 +192,20 @@ describe('QueryForm Component', () => {
 
     it('should not render range filter for non-range schemas', () => {
       mockProps.isRangeSchema = false;
-      renderWithRedux(<QueryForm {...mockProps} />, { initialState: createAuthenticatedState() });
+      renderWithRedux(<QueryForm {...mockProps} />, { preloadedState: createAuthenticatedState() });
 
       expect(screen.queryByText('Range Filter')).not.toBeInTheDocument();
     });
 
     it('should not render range filter when rangeKey is null', () => {
       mockProps.rangeKey = null;
-      renderWithRedux(<QueryForm {...mockProps} />, { initialState: createAuthenticatedState() });
+      renderWithRedux(<QueryForm {...mockProps} />, { preloadedState: createAuthenticatedState() });
 
       expect(screen.queryByText('Range Filter')).not.toBeInTheDocument();
     });
 
     it('should call onRangeSchemaFilterChange when range filter changes', async () => {
-      renderWithRedux(<QueryForm {...mockProps} />, { initialState: createAuthenticatedState() });
+      renderWithRedux(<QueryForm {...mockProps} />, { preloadedState: createAuthenticatedState() });
 
       // The RangeField component should trigger this callback
       // We'll simulate this by checking that the component receives the right props
@@ -207,7 +222,7 @@ describe('QueryForm Component', () => {
     });
 
     it('should render range field filters for non-range schemas with range fields', () => {
-      renderWithRedux(<QueryForm {...mockProps} />, { initialState: createAuthenticatedState() });
+      renderWithRedux(<QueryForm {...mockProps} />, { preloadedState: createAuthenticatedState() });
 
       expect(screen.getByText('Range Field Filters')).toBeInTheDocument();
       expect(screen.getByText('Configure filters for range fields')).toBeInTheDocument();
@@ -215,7 +230,7 @@ describe('QueryForm Component', () => {
     });
 
     it('should render range filter inputs', () => {
-      renderWithRedux(<QueryForm {...mockProps} />, { initialState: createAuthenticatedState() });
+      renderWithRedux(<QueryForm {...mockProps} />, { preloadedState: createAuthenticatedState() });
 
       expect(screen.getByText('Key Range')).toBeInTheDocument();
       expect(screen.getByText('Exact Key')).toBeInTheDocument();
@@ -229,7 +244,7 @@ describe('QueryForm Component', () => {
 
     it('should call onRangeFilterChange when range inputs change', async () => {
       mockProps.queryState.rangeFilters = { range_field: {} };
-      renderWithRedux(<QueryForm {...mockProps} />, { initialState: createAuthenticatedState() });
+      renderWithRedux(<QueryForm {...mockProps} />, { preloadedState: createAuthenticatedState() });
 
       const startKeyInput = screen.getByPlaceholderText('Start key');
       await user.clear(startKeyInput);
@@ -249,7 +264,7 @@ describe('QueryForm Component', () => {
           keyPrefix: 'prefix_val'
         }
       };
-      renderWithRedux(<QueryForm {...mockProps} />, { initialState: createAuthenticatedState() });
+      renderWithRedux(<QueryForm {...mockProps} />, { preloadedState: createAuthenticatedState() });
 
       expect(screen.getByDisplayValue('start_val')).toBeInTheDocument();
       expect(screen.getByDisplayValue('end_val')).toBeInTheDocument();
@@ -259,14 +274,14 @@ describe('QueryForm Component', () => {
 
     it('should not render range field filters for range schemas', () => {
       mockProps.isRangeSchema = true;
-      renderWithRedux(<QueryForm {...mockProps} />, { initialState: createAuthenticatedState() });
+      renderWithRedux(<QueryForm {...mockProps} />, { preloadedState: createAuthenticatedState() });
 
       expect(screen.queryByText('Range Field Filters')).not.toBeInTheDocument();
     });
 
     it('should not render range field filters when no range fields are selected', () => {
       mockProps.queryState.queryFields = ['id', 'name']; // No range fields
-      renderWithRedux(<QueryForm {...mockProps} />, { initialState: createAuthenticatedState() });
+      renderWithRedux(<QueryForm {...mockProps} />, { preloadedState: createAuthenticatedState() });
 
       expect(screen.queryByText('Range Field Filters')).not.toBeInTheDocument();
     });
@@ -276,7 +291,7 @@ describe('QueryForm Component', () => {
     it('should show validation error when no schema is selected', () => {
       // This would be tested in integration with the validation logic
       // The component uses internal state for validation errors
-      renderWithRedux(<QueryForm {...mockProps} />, { initialState: createAuthenticatedState() });
+      renderWithRedux(<QueryForm {...mockProps} />, { preloadedState: createAuthenticatedState() });
 
       // Component should show required indicator for schema field
       expect(screen.getByText('Schema')).toBeInTheDocument();
@@ -286,7 +301,7 @@ describe('QueryForm Component', () => {
     it('should show validation error when no fields are selected', () => {
       mockProps.queryState.selectedSchema = 'UserSchema';
       mockProps.queryState.queryFields = [];
-      renderWithRedux(<QueryForm {...mockProps} />, { initialState: createAuthenticatedState() });
+      renderWithRedux(<QueryForm {...mockProps} />, { preloadedState: createAuthenticatedState() });
 
       expect(screen.getByText('Field Selection')).toBeInTheDocument();
     });
@@ -300,7 +315,7 @@ describe('QueryForm Component', () => {
         end: 'a' // Invalid: start > end
       };
       
-      renderWithRedux(<QueryForm {...mockProps} />, { initialState: createAuthenticatedState() });
+      renderWithRedux(<QueryForm {...mockProps} />, { preloadedState: createAuthenticatedState() });
 
       // The validation would be handled internally by the component
       expect(screen.getByText('Range Filter')).toBeInTheDocument();
@@ -325,7 +340,7 @@ describe('QueryForm Component', () => {
       mockProps.queryState.rangeSchemaFilter = {}; // Empty range filter
       mockProps.queryState.queryFields = ['value']; // Selected fields but no range key
 
-      renderWithRedux(<QueryForm {...mockProps} />, { initialState: createAuthenticatedState() });
+      renderWithRedux(<QueryForm {...mockProps} />, { preloadedState: createAuthenticatedState() });
 
       // Verify range schema is detected
       expect(screen.getByText('Range Filter')).toBeInTheDocument();
@@ -333,18 +348,18 @@ describe('QueryForm Component', () => {
       // Verify that no validation error is shown for missing range key
       // Since we removed front-end validation, the form should not prevent submission
       // due to missing range key input
-      const rangeFilterSection = screen.getByText('Range Filter').closest('div');
+      const rangeFilterSection = screen.getByText('Range Filter').closest('div')!;
       expect(rangeFilterSection).toBeInTheDocument();
-      
+
       // The range filter fields should be present but not required
-      const startField = rangeFilterSection.querySelector('input[placeholder*="start" i]');
-      const endField = rangeFilterSection.querySelector('input[placeholder*="end" i]');
-      
+      const startField = rangeFilterSection.querySelector('input[placeholder*="start" i]') as HTMLInputElement | null;
+      const endField = rangeFilterSection.querySelector('input[placeholder*="end" i]') as HTMLInputElement | null;
+
       if (startField) {
         expect(startField).not.toHaveAttribute('required');
         expect(startField.value).toBe('');
       }
-      
+
       if (endField) {
         expect(endField).not.toHaveAttribute('required');
         expect(endField.value).toBe('');
@@ -369,14 +384,14 @@ describe('QueryForm Component', () => {
       };
       mockProps.queryState.queryFields = ['reading_value'];
 
-      renderWithRedux(<QueryForm {...mockProps} />, { initialState: createAuthenticatedState() });
+      renderWithRedux(<QueryForm {...mockProps} />, { preloadedState: createAuthenticatedState() });
 
       // Verify the form renders without validation errors
       expect(screen.getByText('Range Filter')).toBeInTheDocument();
       expect(screen.getByText('Field Selection')).toBeInTheDocument();
       
       // The form should accept partial range input without validation errors
-      const rangeFilterSection = screen.getByText('Range Filter').closest('div');
+      const rangeFilterSection = screen.getByText('Range Filter').closest('div')!;
       const startField = rangeFilterSection.querySelector('input[value="sensor_001"]');
       expect(startField).toBeInTheDocument();
     });
@@ -400,7 +415,7 @@ describe('QueryForm Component', () => {
       };
       mockProps.queryState.queryFields = ['activity_type'];
 
-      renderWithRedux(<QueryForm {...mockProps} />, { initialState: createAuthenticatedState() });
+      renderWithRedux(<QueryForm {...mockProps} />, { preloadedState: createAuthenticatedState() });
 
       // Verify the form renders without validation errors for invalid range key format
       expect(screen.getByText('Range Filter')).toBeInTheDocument();
@@ -430,7 +445,7 @@ describe('QueryForm Component', () => {
       mockProps.queryState.rangeSchemaFilter = {}; // Completely empty
       mockProps.queryState.queryFields = ['timestamp'];
 
-      renderWithRedux(<QueryForm {...mockProps} />, { initialState: createAuthenticatedState() });
+      renderWithRedux(<QueryForm {...mockProps} />, { preloadedState: createAuthenticatedState() });
 
       // Verify the form renders successfully with empty range filter
       expect(screen.getByText('Range Filter')).toBeInTheDocument();
@@ -451,7 +466,7 @@ describe('QueryForm Component', () => {
       mockProps.approvedSchemas = schemasWithoutFields;
       mockProps.queryState.selectedSchema = 'EmptySchema';
 
-      renderWithRedux(<QueryForm {...mockProps} />, { initialState: createAuthenticatedState() });
+      renderWithRedux(<QueryForm {...mockProps} />, { preloadedState: createAuthenticatedState() });
 
       // Should not crash and should still show the form
       expect(screen.getByText('Schema')).toBeInTheDocument();
@@ -460,7 +475,7 @@ describe('QueryForm Component', () => {
 
     it('should handle empty approved schemas array', () => {
       mockProps.approvedSchemas = [];
-      renderWithRedux(<QueryForm {...mockProps} />, { initialState: createAuthenticatedState() });
+      renderWithRedux(<QueryForm {...mockProps} />, { preloadedState: createAuthenticatedState() });
 
       expect(screen.getByText('Schema')).toBeInTheDocument();
       expect(screen.getByText('No options available')).toBeInTheDocument();
@@ -471,7 +486,7 @@ describe('QueryForm Component', () => {
       const consoleSpy = vi.spyOn(console, 'error').mockImplementation(() => {});
       
       try {
-        renderWithRedux(<QueryForm {...mockProps} queryState={null} />, { initialState: createAuthenticatedState() });
+        renderWithRedux(<QueryForm {...mockProps} queryState={null} />, { preloadedState: createAuthenticatedState() });
         // Should not crash
       } catch (error) {
         // If it does crash, that's also a valid test result

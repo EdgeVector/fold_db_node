@@ -1,4 +1,3 @@
-// @ts-nocheck — pre-existing strict-mode debt; remove this directive after fixing.
 /**
  * useQueryBuilder Hook
  * Handles query building logic with validation
@@ -8,16 +7,19 @@
 import { useMemo } from 'react';
 import { useAppSelector } from '../store/hooks';
 import { selectApprovedSchemas } from '../store/schemaSlice';
-import { isHashRangeSchema, isRangeSchema as detectRangeSchema } from '../utils/rangeSchemaHelpers.js';
+import {
+  isHashRangeSchema,
+  isRangeSchema as detectRangeSchema,
+  type Schema,
+} from '../utils/rangeSchemaHelpers';
 import {
   createHashKeyFilter,
   createRangeKeyFilter,
   createRangePrefixFilter,
   createRangeRangeFilter,
   type HashRangeFilter,
-  type RangeFilterInput
+  type RangeFilterInput,
 } from '../utils/filterUtils';
-import type { Schema } from '@generated/generated';
 
 interface QueryState {
   queryFields?: string[];
@@ -99,7 +101,12 @@ export function useQueryBuilder({
     }
 
     if (selectedSchemaObj.fields && typeof selectedSchemaObj.fields === 'object') {
-      return Object.values(selectedSchemaObj.fields).some(field => field?.field_type === 'Range');
+      return Object.values(selectedSchemaObj.fields as Record<string, unknown>).some(
+        field =>
+          !!field &&
+          typeof field === 'object' &&
+          (field as { field_type?: unknown }).field_type === 'Range',
+      );
     }
 
     return false;
@@ -122,11 +129,8 @@ export function useQueryBuilder({
 
     const {
       queryFields = [],
-      _fieldValues = {},
       rangeFilters = {},
       rangeSchemaFilter = {},
-      _filters = [],
-      _orderBy
     } = queryState;
     
     // Build query object that matches backend Query struct exactly

@@ -1,4 +1,3 @@
-// @ts-nocheck Migration debt: converted from .jsx in the JS->TS finalization batch; strict-mode cleanup of vi.mock typings tracked as follow-up.
 import React from 'react';
 import { screen, fireEvent, waitFor } from '@testing-library/react';
 import { vi, describe, it, expect, beforeEach } from 'vitest';
@@ -17,7 +16,7 @@ vi.mock('../../store/authSlice', async () => {
   const actual = await vi.importActual('../../store/authSlice');
   
   // Create mock thunk that returns a no-op action
-  const createMockThunk = (name) => {
+  const createMockThunk = (name: string) => {
     const thunk = () => () => Promise.resolve({ type: `auth/${name}/noop` });
     thunk.fulfilled = { match: () => false };
     thunk.pending = { match: () => false };
@@ -26,16 +25,19 @@ vi.mock('../../store/authSlice', async () => {
   };
 
   return {
-    ...actual,
+    ...(actual as object),
     // Mock async thunks to be no-ops that don't trigger reducers
     autoLogin: createMockThunk('autoLogin'),
-    restoreSession: (payload) => ({ type: 'auth/restoreSession/noop', payload }),
+    restoreSession: (payload: unknown) => ({ type: 'auth/restoreSession/noop', payload }),
   };
 });
 
+type WithOnResult = { onResult: (r: unknown) => void };
+type WithOnTabChange = { activeTab?: string; onTabChange: (tab: string) => void };
+
 // Mock child components to focus on App.jsx logic
 vi.mock('../../components/Header', () => ({
-  default: ({ onSettingsClick }) => (
+  default: ({ onSettingsClick }: { onSettingsClick: () => void }) => (
     <div data-testid="header">
       Header Component
       <button data-testid="settings-button" onClick={onSettingsClick}>Settings</button>
@@ -44,7 +46,7 @@ vi.mock('../../components/Header', () => ({
 }));
 
 vi.mock('../../components/tabs/SettingsTab', () => ({
-  default: ({ onResult, initialSubTab }) => (
+  default: ({ initialSubTab }: { onResult?: unknown; initialSubTab?: string }) => (
     <div data-testid="settings-tab">
       Settings Tab {initialSubTab && `(${initialSubTab})`}
     </div>
@@ -60,7 +62,7 @@ vi.mock('../../components/StatusSection', () => ({
 }));
 
 vi.mock('../../components/ResultsSection', () => ({
-  default: ({ results }) => (
+  default: ({ results }: { results: unknown }) => (
     <div data-testid="results-section">
       {results ? (
         <div data-testid="results-content">Results: {JSON.stringify(results)}</div>
@@ -72,7 +74,7 @@ vi.mock('../../components/ResultsSection', () => ({
 }));
 
 vi.mock('../../components/Sidebar', () => ({
-  default: ({ activeTab, onTabChange }) => (
+  default: ({ activeTab, onTabChange }: WithOnTabChange) => (
     <div data-testid="tab-navigation">
       <button
         data-testid="tab-agent"
@@ -140,7 +142,7 @@ vi.mock('../../components/LogSidebar', () => ({
 
 // Mock tab components
 vi.mock('../../components/tabs/SchemaTab', () => ({
-  default: ({ onResult, onSchemaUpdated }) => (
+  default: ({ onResult, onSchemaUpdated }: { onResult: (r: unknown) => void; onSchemaUpdated: () => void }) => (
     <div data-testid="schema-tab">
       <button 
         data-testid="schema-action" 
@@ -159,7 +161,7 @@ vi.mock('../../components/tabs/SchemaTab', () => ({
 }));
 
 vi.mock('../../components/tabs/QueryTab', () => ({
-  default: ({ onResult }) => (
+  default: ({ onResult }: WithOnResult) => (
     <div data-testid="query-tab">
       <button 
         data-testid="query-action" 
@@ -172,7 +174,7 @@ vi.mock('../../components/tabs/QueryTab', () => ({
 }));
 
 vi.mock('../../components/tabs/MutationTab', () => ({
-  default: ({ onResult }) => (
+  default: ({ onResult }: WithOnResult) => (
     <div data-testid="mutation-tab">
       <button 
         data-testid="mutation-action" 
@@ -185,7 +187,7 @@ vi.mock('../../components/tabs/MutationTab', () => ({
 }));
 
 vi.mock('../../components/tabs/IngestionTab', () => ({
-  default: ({ onResult }) => (
+  default: ({ onResult }: WithOnResult) => (
     <div data-testid="ingestion-tab">
       <button 
         data-testid="ingestion-action" 
@@ -198,7 +200,7 @@ vi.mock('../../components/tabs/IngestionTab', () => ({
 }));
 
 vi.mock('../../components/tabs/LlmQueryTab', () => ({
-  default: ({ onResult }) => (
+  default: ({ onResult }: WithOnResult) => (
     <div data-testid="llm-query-tab">
       <button
         data-testid="llm-query-action"
@@ -211,7 +213,7 @@ vi.mock('../../components/tabs/LlmQueryTab', () => ({
 }));
 
 vi.mock('../../components/tabs/SmartFolderTab', () => ({
-  default: ({ onResult }) => (
+  default: ({ onResult }: WithOnResult) => (
     <div data-testid="smart-folder-tab">
       <button
         data-testid="smart-folder-action"
@@ -224,7 +226,7 @@ vi.mock('../../components/tabs/SmartFolderTab', () => ({
 }));
 
 vi.mock('../../components/tabs/AgentTab', () => ({
-  default: ({ onTabChange }) => (
+  default: (_props: WithOnTabChange) => (
     <div data-testid="agent-tab">
       Agent Tab
     </div>
@@ -232,7 +234,7 @@ vi.mock('../../components/tabs/AgentTab', () => ({
 }));
 
 vi.mock('../../components/tabs/PeopleTab', () => ({
-  default: ({ onResult }) => (
+  default: (_props: WithOnResult) => (
     <div data-testid="people-tab">
       People Tab
     </div>
@@ -240,7 +242,13 @@ vi.mock('../../components/tabs/PeopleTab', () => ({
 }));
 
 // Create stable mock functions
-const mockApprovedSchemas = {
+const mockApprovedSchemas: {
+  approvedSchemas: unknown[];
+  allSchemas: unknown[];
+  isLoading: boolean;
+  error: string | null;
+  refetch: ReturnType<typeof vi.fn>;
+} = {
   approvedSchemas: [],
   allSchemas: [],
   isLoading: false,
@@ -256,11 +264,11 @@ vi.mock('../../api/clients/systemClient', () => ({
 }));
 
 vi.mock('../../components/DatabaseSetupScreen', () => ({
-  default: ({ onComplete }) => <div data-testid="database-setup-screen"><button onClick={onComplete}>Setup</button></div>
+  default: ({ onComplete }: { onComplete: () => void }) => <div data-testid="database-setup-screen"><button onClick={onComplete}>Setup</button></div>
 }));
 
 vi.mock('../../components/onboarding/OnboardingWizard', () => {
-  const comp = ({ onComplete }) => <div data-testid="onboarding-wizard"><button onClick={onComplete}>Finish</button></div>
+  const comp = ({ onComplete }: { onComplete: () => void }) => <div data-testid="onboarding-wizard"><button onClick={onComplete}>Finish</button></div>
   return {
     default: comp,
     ONBOARDING_STORAGE_KEY: 'folddb_onboarding_complete',

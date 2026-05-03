@@ -102,7 +102,7 @@ describe('schemaSlice', () => {
       // First add a schema
       const testSchema = {
         name: 'test-schema',
-        state: 'available'
+        state: 'available' as const
       };
       
       store.dispatch(fetchSchemas.fulfilled({
@@ -193,7 +193,7 @@ describe('schemaSlice', () => {
         // First, populate cache
         const timestamp = Date.now();
         store.dispatch(fetchSchemas.fulfilled({
-          schemas: [{ name: 'cached-schema', state: 'available' }],
+          schemas: [{ name: 'cached-schema', state: 'available' as const }],
           timestamp
         }, '', undefined));
 
@@ -211,7 +211,7 @@ describe('schemaSlice', () => {
         // Add a test schema
         const testSchema = {
           name: 'test-schema',
-          state: 'available'
+          state: 'available' as const
         };
         
         store.dispatch(fetchSchemas.fulfilled({
@@ -243,13 +243,13 @@ describe('schemaSlice', () => {
   describe('selectors', () => {
     beforeEach(() => {
       const testSchemas = [
-        { name: 'available-schema', state: 'available' },
-        { name: 'approved-schema-1', state: 'approved' },
-        { name: 'approved-schema-2', state: 'approved' },
-        { name: 'blocked-schema', state: 'blocked' },
+        { name: 'available-schema', state: 'available' as const },
+        { name: 'approved-schema-1', state: 'approved' as const },
+        { name: 'approved-schema-2', state: 'approved' as const },
+        { name: 'blocked-schema', state: 'blocked' as const },
         { 
           name: 'range-schema', 
-          state: 'approved',
+          state: 'approved' as const,
           rangeInfo: { isRangeSchema: true, rangeField: { name: 'range_key', type: 'Range' } }
         }
       ];
@@ -290,9 +290,9 @@ describe('schemaSlice', () => {
   describe('SCHEMA-002 compliance', () => {
     it('should enforce that only approved schemas are used for mutations', () => {
       const testSchemas = [
-        { name: 'available-schema', state: 'available' },
-        { name: 'approved-schema', state: 'approved' },
-        { name: 'blocked-schema', state: 'blocked' }
+        { name: 'available-schema', state: 'available' as const },
+        { name: 'approved-schema', state: 'approved' as const },
+        { name: 'blocked-schema', state: 'blocked' as const }
       ];
 
       store.dispatch(fetchSchemas.fulfilled({
@@ -317,7 +317,7 @@ describe('schemaSlice', () => {
       const store = createTestStore({
         schemas: {
           schemas: {
-            'test-schema': { name: 'test-schema', state: 'available' }
+            'test-schema': { name: 'test-schema', state: 'available' as const }
           },
           lastFetched: Date.now(),
           cache: { lastUpdated: Date.now() },

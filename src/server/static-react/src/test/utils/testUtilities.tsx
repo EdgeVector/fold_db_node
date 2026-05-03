@@ -26,7 +26,8 @@ import schemaReducer from '../../store/schemaSlice';
 import { SCHEMA_STATES } from '../../constants/schemas';
 
 type TestStore = EnhancedStore;
-type ExtraReducers = ReducersMapObject<Record<string, unknown>>;
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
+type ExtraReducers = ReducersMapObject<Record<string, any>>;
 
 export { SCHEMA_STATES };
 
@@ -178,33 +179,39 @@ export function renderHookWithRedux<TResult, TProps>(
  * @param {Object} overrides - State overrides
  * @returns {Object} Initial schemas state
  */
-export function createTestSchemaState(overrides: { schemas?: Record<string, unknown> } = {}) {
-  const defaultState = {
+export function createTestSchemaState(
+  overrides: {
+    schemas?: Record<string, unknown>;
+    /**
+     * Convenience for tests that think in terms of "the schemas the user has
+     * approved." Each entry is folded into the schemas map keyed by name and
+     * tagged with `state: 'approved'` so `selectApprovedSchemas` picks it up.
+     */
+    approvedSchemas?: Array<{ name: string; [key: string]: unknown }>;
+  } = {}
+) {
+  const defaultState: { schemas: Record<string, unknown> } = {
     schemas: {
-      schemas: {},  // Match actual store structure
-      loading: {
-        fetch: false,
-        operations: {}
-      },
-      errors: {
-        fetch: null,
-        operations: {}
-      },
+      schemas: {},
+      loading: { fetch: false, operations: {} },
+      errors: { fetch: null, operations: {} },
       lastFetched: null,
-      cache: {
-        ttl: 300000,
-        version: '2.1.0',
-        lastUpdated: null
-      },
-      activeSchema: null
-    }
+      cache: { ttl: 300000, version: '2.1.0', lastUpdated: null },
+      activeSchema: null,
+    },
   };
-  
-  // Deep merge the overrides
-  if (overrides.schemas) {
-    defaultState.schemas.schemas = { ...defaultState.schemas.schemas, ...overrides.schemas };
+
+  const schemasMap: Record<string, unknown> = {};
+  if (overrides.approvedSchemas) {
+    for (const s of overrides.approvedSchemas) {
+      schemasMap[s.name] = { state: 'approved', ...s };
+    }
   }
-  
+  if (overrides.schemas) {
+    Object.assign(schemasMap, overrides.schemas);
+  }
+  (defaultState.schemas as { schemas: Record<string, unknown> }).schemas = schemasMap;
+
   return defaultState;
 }
 
@@ -639,6 +646,19 @@ export const createUnauthenticatedState = (
   },
 });
 
+/**
+ * Build a fully-typed EnhancedApiResponse-shaped object for mocked client
+ * methods without forcing tests to import the production type or hand-fill
+ * `status` / `meta`. Always cast at the call site via `vi.mocked(fn)`.
+ */
+export function apiOk<T>(data: T): { success: true; data: T; status: number } {
+  return { success: true, data, status: 200 };
+}
+
+export function apiErr(error: string, status = 500): { success: false; error: string; status: number } {
+  return { success: false, error, status };
+}
+
 // Export all utilities as default
 export default {
   createTestStore,
@@ -662,5 +682,7 @@ export default {
   setupTestEnvironment,
   cleanupTestEnvironment,
   mockApiResponses,
+  apiOk,
+  apiErr,
   SCHEMA_STATES
 };

@@ -1,16 +1,30 @@
-// @ts-nocheck Migration debt: converted from .jsx in the JS->TS finalization batch; strict-mode cleanup of vi.mock typings tracked as follow-up.
 /**
  * QueryPreview Component Tests
  * Tests for UCR-1-5: QueryPreview component for query visualization
  * Part of UTC-1 Test Coverage Enhancement - UCR-1 Component Testing
  */
 
+import React from 'react';
 import { describe, it, expect, beforeEach } from 'vitest';
 import { render, screen } from '@testing-library/react';
-import QueryPreview, { formatQueryDisplay } from '../../../components/query/QueryPreview';
+import QueryPreviewImpl, { formatQueryDisplay as formatQueryDisplayImpl } from '../../../components/query/QueryPreview';
+
+const QueryPreview = QueryPreviewImpl as unknown as React.FC<Record<string, unknown>>;
+const formatQueryDisplay = formatQueryDisplayImpl as unknown as (...args: unknown[]) => unknown;
+
+interface PreviewMockProps {
+  query: Record<string, unknown> & { fields?: unknown };
+  showJson?: boolean;
+  collapsible?: boolean;
+  className?: string;
+  title?: string;
+  validationErrors?: string[];
+  isExecuting?: boolean;
+  queryState?: Record<string, unknown>;
+}
 
 describe('QueryPreview Component', () => {
-  let mockProps;
+  let mockProps: PreviewMockProps;
 
   beforeEach(() => {
     mockProps = {
@@ -63,7 +77,7 @@ describe('QueryPreview Component', () => {
 
   describe('rendering with null/empty query', () => {
     it('should render empty state when query is null', () => {
-      mockProps.query = null;
+      mockProps.query = null as unknown as Record<string, unknown>;
       render(<QueryPreview {...mockProps} />);
 
       expect(screen.getByText('Query Preview')).toBeInTheDocument();
@@ -72,14 +86,14 @@ describe('QueryPreview Component', () => {
     });
 
     it('should render empty state when query is undefined', () => {
-      mockProps.query = undefined;
+      mockProps.query = undefined as unknown as Record<string, unknown>;
       render(<QueryPreview {...mockProps} />);
 
       expect(screen.getByText('No query to preview')).toBeInTheDocument();
     });
 
     it('should apply custom title in empty state', () => {
-      mockProps.query = null;
+      mockProps.query = null as unknown as Record<string, unknown>;
       mockProps.title = 'Custom Empty Title';
       render(<QueryPreview {...mockProps} />);
 
@@ -198,7 +212,7 @@ describe('QueryPreview Component', () => {
 
       expect(screen.getByText('Raw JSON')).toBeInTheDocument();
       const preElement = screen.getByText('Raw JSON').nextElementSibling;
-      expect(preElement.tagName).toBe('PRE');
+      expect(preElement!.tagName).toBe('PRE');
     });
   });
 
@@ -316,7 +330,7 @@ describe('formatQueryDisplay utility function', () => {
 
     const result = formatQueryDisplay(query);
     
-    expect(result.filters).toEqual({
+    expect((result as { filters: unknown }).filters).toEqual({
       user_id: { keyRange: 'a → z' },
       exact_field: { exactKey: 'exact_value' },
       prefix_field: { keyPrefix: 'prefix:' }
@@ -337,7 +351,7 @@ describe('formatQueryDisplay utility function', () => {
 
     const result = formatQueryDisplay(query);
     
-    expect(result.filters).toEqual({
+    expect((result as { filters: unknown }).filters).toEqual({
       age: { exactKey: 'exact_value' }
     });
   });
@@ -356,7 +370,7 @@ describe('formatQueryDisplay utility function', () => {
 
     const result = formatQueryDisplay(query);
     
-    expect(result.filters).toEqual({
+    expect((result as { filters: unknown }).filters).toEqual({
       range_field: { keyRange: '1 → 10' }
     });
   });
@@ -375,7 +389,7 @@ describe('formatQueryDisplay utility function', () => {
 
     const result = formatQueryDisplay(query);
     
-    expect(result.filters).toEqual({
+    expect((result as { filters: unknown }).filters).toEqual({
       category: { keyPrefix: 'electronics:' }
     });
   });
@@ -389,6 +403,6 @@ describe('formatQueryDisplay utility function', () => {
 
     const result = formatQueryDisplay(query);
     
-    expect(result.filters).toEqual({});
+    expect((result as { filters: unknown }).filters).toEqual({});
   });
 });

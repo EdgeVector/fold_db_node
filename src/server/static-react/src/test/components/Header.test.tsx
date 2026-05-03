@@ -1,4 +1,3 @@
-// @ts-nocheck Migration debt: converted from .jsx in the JS->TS finalization batch; strict-mode cleanup of vi.mock typings tracked as follow-up.
 import { screen, fireEvent } from '@testing-library/react'
 import { describe, it, expect, vi } from 'vitest'
 import Header from '../../components/Header'
@@ -24,7 +23,7 @@ describe('Header Component', () => {
   }
 
   it('renders header with correct title', () => {
-    renderWithRedux(<Header onSettingsClick={vi.fn()} />, {
+    renderWithRedux(<Header onSettingsClick={vi.fn()} onAiSettingsClick={vi.fn()} onCloudSettingsClick={vi.fn()} />, {
       preloadedState: defaultPreloadedState, extraReducers
     })
 
@@ -33,7 +32,7 @@ describe('Header Component', () => {
   })
 
   it('has header styling', () => {
-    renderWithRedux(<Header onSettingsClick={vi.fn()} />, {
+    renderWithRedux(<Header onSettingsClick={vi.fn()} onAiSettingsClick={vi.fn()} onCloudSettingsClick={vi.fn()} />, {
       preloadedState: defaultPreloadedState, extraReducers
     })
 
@@ -42,7 +41,7 @@ describe('Header Component', () => {
   })
 
   it('has proper semantic structure', () => {
-    renderWithRedux(<Header onSettingsClick={vi.fn()} />, {
+    renderWithRedux(<Header onSettingsClick={vi.fn()} onAiSettingsClick={vi.fn()} onCloudSettingsClick={vi.fn()} />, {
       preloadedState: defaultPreloadedState, extraReducers
     })
 
@@ -55,7 +54,7 @@ describe('Header Component', () => {
   })
 
   it('has proper layout classes', () => {
-    renderWithRedux(<Header onSettingsClick={vi.fn()} />, {
+    renderWithRedux(<Header onSettingsClick={vi.fn()} onAiSettingsClick={vi.fn()} onCloudSettingsClick={vi.fn()} />, {
       preloadedState: defaultPreloadedState, extraReducers
     })
 
@@ -64,7 +63,7 @@ describe('Header Component', () => {
   })
 
   it('title link has logo styling', () => {
-    renderWithRedux(<Header onSettingsClick={vi.fn()} />, {
+    renderWithRedux(<Header onSettingsClick={vi.fn()} onAiSettingsClick={vi.fn()} onCloudSettingsClick={vi.fn()} />, {
       preloadedState: defaultPreloadedState, extraReducers
     })
 
@@ -75,7 +74,7 @@ describe('Header Component', () => {
   })
 
   it('displays settings button', () => {
-    renderWithRedux(<Header onSettingsClick={vi.fn()} />, {
+    renderWithRedux(<Header onSettingsClick={vi.fn()} onAiSettingsClick={vi.fn()} onCloudSettingsClick={vi.fn()} />, {
       preloadedState: defaultPreloadedState, extraReducers
     })
 
@@ -84,7 +83,7 @@ describe('Header Component', () => {
   })
 
   it('displays status indicators', () => {
-    renderWithRedux(<Header onSettingsClick={vi.fn()} />, {
+    renderWithRedux(<Header onSettingsClick={vi.fn()} onAiSettingsClick={vi.fn()} onCloudSettingsClick={vi.fn()} />, {
       preloadedState: defaultPreloadedState, extraReducers
     })
 
@@ -94,7 +93,7 @@ describe('Header Component', () => {
 
   it('calls onSettingsClick when settings button is clicked', () => {
     const mockSettingsClick = vi.fn()
-    renderWithRedux(<Header onSettingsClick={mockSettingsClick} />, {
+    renderWithRedux(<Header onSettingsClick={mockSettingsClick} onAiSettingsClick={vi.fn()} onCloudSettingsClick={vi.fn()} />, {
       preloadedState: defaultPreloadedState, extraReducers
     })
 
@@ -108,7 +107,7 @@ describe('Header Component', () => {
     const authenticatedState = {
       auth: createAuthState({ isAuthenticated: true, user: { id: 'testuser123456' } })
     }
-    renderWithRedux(<Header onSettingsClick={vi.fn()} />, {
+    renderWithRedux(<Header onSettingsClick={vi.fn()} onAiSettingsClick={vi.fn()} onCloudSettingsClick={vi.fn()} />, {
       preloadedState: authenticatedState, extraReducers
     })
 

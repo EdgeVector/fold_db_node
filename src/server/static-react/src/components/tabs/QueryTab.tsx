@@ -63,7 +63,9 @@ function QueryTab({ onResult }: QueryTabProps) {
   const { query, isValid } = useQueryBuilder({
     schema: queryState.selectedSchema,
     queryState,
-    schemas: { [queryState.selectedSchema]: selectedSchemaObj }
+    schemas: selectedSchemaObj
+      ? { [queryState.selectedSchema]: selectedSchemaObj }
+      : {},
   });
 
   /**

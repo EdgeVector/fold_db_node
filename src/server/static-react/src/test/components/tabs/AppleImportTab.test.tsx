@@ -1,4 +1,3 @@
-// @ts-nocheck Migration debt: converted from .jsx in the JS->TS finalization batch; strict-mode cleanup of vi.mock typings tracked as follow-up.
 import React from 'react'
 import { render, screen, fireEvent, waitFor, act } from '@testing-library/react'
 import { describe, it, expect, beforeEach, vi } from 'vitest'
@@ -15,14 +14,14 @@ const mockGetAppleSyncConfig = vi.fn()
 
 vi.mock('../../../api/clients/ingestionClient', () => ({
   default: {
-    getAppleImportStatus: (...args) => mockGetAppleImportStatus(...args),
-    appleImportNotes: (...args) => mockAppleImportNotes(...args),
-    appleImportReminders: (...args) => mockAppleImportReminders(...args),
-    appleImportPhotos: (...args) => mockAppleImportPhotos(...args),
-    appleImportCalendar: (...args) => mockAppleImportCalendar(...args),
-    appleImportContacts: (...args) => mockAppleImportContacts(...args),
-    getJobProgress: (...args) => mockGetJobProgress(...args),
-    getAppleSyncConfig: (...args) => mockGetAppleSyncConfig(...args),
+    getAppleImportStatus: (...args: unknown[]) => mockGetAppleImportStatus(...args),
+    appleImportNotes: (...args: unknown[]) => mockAppleImportNotes(...args),
+    appleImportReminders: (...args: unknown[]) => mockAppleImportReminders(...args),
+    appleImportPhotos: (...args: unknown[]) => mockAppleImportPhotos(...args),
+    appleImportCalendar: (...args: unknown[]) => mockAppleImportCalendar(...args),
+    appleImportContacts: (...args: unknown[]) => mockAppleImportContacts(...args),
+    getJobProgress: (...args: unknown[]) => mockGetJobProgress(...args),
+    getAppleSyncConfig: (...args: unknown[]) => mockGetAppleSyncConfig(...args),
   },
 }))
 

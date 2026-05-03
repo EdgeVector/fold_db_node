@@ -1,22 +1,25 @@
-// @ts-nocheck Migration debt: converted from .jsx in the JS->TS finalization batch; strict-mode cleanup of vi.mock typings tracked as follow-up.
 /**
  * QueryBuilder Component Tests
  * Tests for UCR-1-3: QueryBuilder component with Redux schema integration
  * Part of UTC-1 Test Coverage Enhancement - UCR-1 Component Testing
  */
 
-import { describe, it, expect, beforeEach, vi } from 'vitest';
+import React from 'react';
+import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 import { render, screen } from '@testing-library/react';
-import QueryBuilder, { useQueryBuilder } from '../../../components/query/QueryBuilder';
+import QueryBuilderImpl, { useQueryBuilder as useQueryBuilderImpl } from '../../../components/query/QueryBuilder';
 
 // Mock the useQueryBuilder hook for component tests
 vi.mock('../../../hooks/useQueryBuilder', () => ({
   useQueryBuilder: vi.fn()
 }));
 
+const QueryBuilder = QueryBuilderImpl as unknown as React.FC<Record<string, unknown>>;
+const useQueryBuilder = useQueryBuilderImpl as unknown as ReturnType<typeof vi.fn>;
+
 describe('QueryBuilder Component', () => {
-  let mockQueryBuilderResult;
-  let mockProps;
+  let mockQueryBuilderResult: Record<string, unknown>;
+  let mockProps: Record<string, unknown>;
 
   beforeEach(() => {
     mockQueryBuilderResult = {
@@ -118,7 +121,7 @@ describe('QueryBuilder Component', () => {
         </QueryBuilder>
       );
 
-      const callArgs = mockRenderFunction.mock.calls[0][0];
+      const callArgs = (mockRenderFunction.mock.calls as unknown as unknown[][])[0][0] as Record<string, unknown>;
       expect(callArgs).toEqual(mockQueryBuilderResult);
       expect(callArgs.query).toBeDefined();
       expect(callArgs.validationErrors).toBeDefined();
@@ -154,7 +157,7 @@ describe('QueryBuilder Component', () => {
       expect(mockRenderFunction).toHaveBeenCalledTimes(2);
       
       // Latest call should have new result
-      const latestCallArgs = mockRenderFunction.mock.calls[1][0];
+      const latestCallArgs = (mockRenderFunction.mock.calls as unknown as unknown[][])[1][0] as { isValid: boolean; validationErrors: string[] };
       expect(latestCallArgs.isValid).toBe(false);
       expect(latestCallArgs.validationErrors).toEqual(['Schema is required']);
     });
@@ -162,7 +165,8 @@ describe('QueryBuilder Component', () => {
 
   describe('practical usage patterns', () => {
     it('should work with typical query building render function', () => {
-      const TestComponent = ({ queryBuilder }) => (
+      type QB = { isValid: boolean; validationErrors: string[]; buildQuery?: () => void; validateQuery?: () => void };
+      const TestComponent = ({ queryBuilder }: { queryBuilder: QB }) => (
         <div data-testid="test-component">
           <div data-testid="query-valid">{queryBuilder.isValid ? 'Valid' : 'Invalid'}</div>
           <div data-testid="error-count">{queryBuilder.validationErrors.length}</div>
@@ -173,7 +177,7 @@ describe('QueryBuilder Component', () => {
 
       render(
         <QueryBuilder {...mockProps}>
-          {(queryBuilder) => <TestComponent queryBuilder={queryBuilder} />}
+          {((queryBuilder: QB) => <TestComponent queryBuilder={queryBuilder} />) as unknown as React.ReactNode}
         </QueryBuilder>
       );
 
@@ -189,7 +193,8 @@ describe('QueryBuilder Component', () => {
       mockQueryBuilderResult.validationErrors = ['Field is required', 'Invalid range'];
       useQueryBuilder.mockReturnValue(mockQueryBuilderResult);
 
-      const TestComponent = ({ queryBuilder }) => (
+      type QB = { isValid: boolean; validationErrors: string[]; buildQuery?: () => void; validateQuery?: () => void };
+      const TestComponent = ({ queryBuilder }: { queryBuilder: QB }) => (
         <div data-testid="test-component">
           <div data-testid="query-valid">{queryBuilder.isValid ? 'Valid' : 'Invalid'}</div>
           <div data-testid="errors">
@@ -202,7 +207,7 @@ describe('QueryBuilder Component', () => {
 
       render(
         <QueryBuilder {...mockProps}>
-          {(queryBuilder) => <TestComponent queryBuilder={queryBuilder} />}
+          {((queryBuilder: QB) => <TestComponent queryBuilder={queryBuilder} />) as unknown as React.ReactNode}
         </QueryBuilder>
       );
 
@@ -236,7 +241,7 @@ describe('QueryBuilder Component', () => {
       expect(screen.getByTestId('error-content')).toBeInTheDocument();
 
       // Should pass error state to render function
-      const callArgs = mockRenderFunction.mock.calls[0][0];
+      const callArgs = (mockRenderFunction.mock.calls as unknown as unknown[][])[0][0] as { isValid: boolean; validationErrors: string[]; error: Error };
       expect(callArgs.isValid).toBe(false);
       expect(callArgs.validationErrors).toContain('Hook error');
       expect(callArgs.error).toBeInstanceOf(Error);

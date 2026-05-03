@@ -1,19 +1,26 @@
-// @ts-nocheck Migration debt: converted from .jsx in the JS->TS finalization batch; strict-mode cleanup of vi.mock typings tracked as follow-up.
 /**
  * QueryTab Workflow Integration Tests
  * Tests for UCR-1 component integration in QueryTab workflow
  * Part of UTC-1 Test Coverage Enhancement - Integration Testing
  */
 
+import React from 'react';
 import { screen } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
-import { Provider } from 'react-redux';
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
-import QueryActions from '../../components/query/QueryActions';
-import QueryForm from '../../components/query/QueryForm';
-import QueryBuilder from '../../components/query/QueryBuilder';
-import QueryPreview from '../../components/query/QueryPreview';
+import QueryActionsImpl from '../../components/query/QueryActions';
+import QueryFormImpl from '../../components/query/QueryForm';
+import QueryBuilderImpl from '../../components/query/QueryBuilder';
+import QueryPreviewImpl from '../../components/query/QueryPreview';
 import { renderWithRedux, createTestStore, createAuthenticatedState } from '../utils/testUtilities';
+
+// These integration tests pass a legacy / superset prop bag to several Query
+// components. Cast each component to a permissive prop signature so the tests
+// can keep exercising the workflow without re-typing every fixture.
+const QueryActions = QueryActionsImpl as unknown as React.FC<Record<string, unknown>>;
+const QueryForm = QueryFormImpl as unknown as React.FC<Record<string, unknown>>;
+const QueryBuilder = QueryBuilderImpl as unknown as React.FC<Record<string, unknown>>;
+const QueryPreview = QueryPreviewImpl as unknown as React.FC<Record<string, unknown>>;
 
 // Mock the query hooks
 vi.mock('../../hooks/useQueryState', () => ({
@@ -25,11 +32,12 @@ vi.mock('../../hooks/useQueryBuilder', () => ({
 }));
 
 describe('QueryTab Workflow Integration Tests', () => {
-  let mockStore;
-  let mockUseQueryState;
-  let mockUseQueryBuilder;
-  let mockExecuteQuery;
-  let mockSaveQuery;
+  type AnyMock = ReturnType<typeof vi.fn>;
+  let mockStore: Awaited<ReturnType<typeof createTestStore>>;
+  let mockUseQueryState: AnyMock;
+  let mockUseQueryBuilder: AnyMock;
+  let mockExecuteQuery: AnyMock;
+  let mockSaveQuery: AnyMock;
 
   const mockSchemas = {
     UserSchema: {
@@ -69,10 +77,10 @@ describe('QueryTab Workflow Integration Tests', () => {
 
   beforeEach(async () => {
     // Import the mocked hooks
-    const { useQueryState } = await import('../../hooks/useQueryState.js');
+    const { useQueryState } = await import('../../hooks/useQueryState');
     const { useQueryBuilder } = await import('../../hooks/useQueryBuilder');
-    mockUseQueryState = useQueryState;
-    mockUseQueryBuilder = useQueryBuilder;
+    mockUseQueryState = useQueryState as unknown as AnyMock;
+    mockUseQueryBuilder = useQueryBuilder as unknown as AnyMock;
 
     mockStore = await createTestStore();
     mockExecuteQuery = vi.fn();
@@ -99,8 +107,8 @@ describe('QueryTab Workflow Integration Tests', () => {
     vi.clearAllMocks();
   });
 
-  const renderQueryWorkflow = (props = {}) => {
-    const defaultProps = {
+  const renderQueryWorkflow = (props: Record<string, unknown> = {}) => {
+    const defaultProps: Record<string, unknown> = {
       queryState: defaultQueryState,
       approvedSchemas: Object.values(mockSchemas),
       schemasLoading: false,
@@ -116,8 +124,8 @@ describe('QueryTab Workflow Integration Tests', () => {
     };
 
     // Get the current mocked return values from both hooks
-    const mockBuilderValue = mockUseQueryBuilder();
-    const mockStateValue = mockUseQueryState();
+    const mockBuilderValue = (mockUseQueryBuilder as unknown as () => Record<string, unknown>)();
+    const mockStateValue = (mockUseQueryState as unknown as () => Record<string, unknown>)();
 
     return renderWithRedux(
       <div data-testid="query-workflow">
@@ -161,7 +169,7 @@ describe('QueryTab Workflow Integration Tests', () => {
           className=""
         />
       </div>,
-      { initialState: createAuthenticatedState() }
+      { preloadedState: createAuthenticatedState() }
     );
   };
 
@@ -471,7 +479,7 @@ describe('QueryTab Workflow Integration Tests', () => {
             canSave={false}
           />
         </div>,
-        { initialState: { auth: { isAuthenticated: false } } }
+        { preloadedState: { auth: { isAuthenticated: false } } }
       );
 
       // Query actions should be disabled when not authenticated

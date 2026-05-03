@@ -1,9 +1,8 @@
-// @ts-nocheck Migration debt: converted from .jsx in the JS->TS finalization batch; strict-mode cleanup of vi.mock typings tracked as follow-up.
 import React from 'react'
 import { screen, fireEvent, waitFor } from '@testing-library/react'
 import { describe, it, expect, beforeEach, vi } from 'vitest'
 import MyProfileTab from '../../../components/tabs/MyProfileTab'
-import { renderWithRedux } from '../../utils/testUtilities'
+import { renderWithRedux, apiOk } from '../../utils/testUtilities'
 
 vi.mock('../../../api/clients/discoveryClient', () => {
   const getInterests = vi.fn()
@@ -51,7 +50,7 @@ describe('MyProfileTab', () => {
 
   describe('loading state', () => {
     it('shows loading spinner while fetching profile', () => {
-      discoveryClient.getInterests.mockReturnValue(new Promise(() => {})) // never resolves
+      vi.mocked(discoveryClient.getInterests).mockReturnValue(new Promise(() => {})) // never resolves
       render()
       expect(screen.getByText('Loading your interest profile...')).toBeInTheDocument()
     })
@@ -59,10 +58,7 @@ describe('MyProfileTab', () => {
 
   describe('empty state', () => {
     it('shows empty state when no profile exists', async () => {
-      discoveryClient.getInterests.mockResolvedValue({
-        success: true,
-        data: EMPTY_PROFILE,
-      })
+      vi.mocked(discoveryClient.getInterests).mockResolvedValue(apiOk(EMPTY_PROFILE))
 
       render()
 
@@ -74,13 +70,10 @@ describe('MyProfileTab', () => {
 
     it('triggers detection and re-fetches profile when Generate Profile is clicked', async () => {
       // First call returns empty, second call (after detect) returns full profile
-      discoveryClient.getInterests
-        .mockResolvedValueOnce({ success: true, data: EMPTY_PROFILE })
-        .mockResolvedValueOnce({ success: true, data: MOCK_PROFILE })
-      discoveryClient.detectInterests.mockResolvedValue({
-        success: true,
-        data: MOCK_PROFILE,
-      })
+      vi.mocked(discoveryClient.getInterests)
+        .mockResolvedValueOnce(apiOk(EMPTY_PROFILE))
+        .mockResolvedValueOnce(apiOk(MOCK_PROFILE))
+      vi.mocked(discoveryClient.detectInterests).mockResolvedValue(apiOk(MOCK_PROFILE))
 
       const onResult = vi.fn()
       render(onResult)
@@ -116,10 +109,7 @@ describe('MyProfileTab', () => {
 
   describe('profile display', () => {
     beforeEach(() => {
-      discoveryClient.getInterests.mockResolvedValue({
-        success: true,
-        data: MOCK_PROFILE,
-      })
+      vi.mocked(discoveryClient.getInterests).mockResolvedValue(apiOk(MOCK_PROFILE))
     })
 
     it('shows stats cards with correct values', async () => {
@@ -181,10 +171,7 @@ describe('MyProfileTab', () => {
 
   describe('category toggle', () => {
     it('calls toggleInterest when a category switch is clicked', async () => {
-      discoveryClient.getInterests.mockResolvedValue({
-        success: true,
-        data: MOCK_PROFILE,
-      })
+      vi.mocked(discoveryClient.getInterests).mockResolvedValue(apiOk(MOCK_PROFILE))
 
       const updatedProfile = {
         ...MOCK_PROFILE,
@@ -192,10 +179,7 @@ describe('MyProfileTab', () => {
           c.name === 'Software Engineering' ? { ...c, enabled: false } : c
         ),
       }
-      discoveryClient.toggleInterest.mockResolvedValue({
-        success: true,
-        data: updatedProfile,
-      })
+      vi.mocked(discoveryClient.toggleInterest).mockResolvedValue(apiOk(updatedProfile))
 
       render()
 
@@ -219,14 +203,8 @@ describe('MyProfileTab', () => {
 
   describe('re-scan', () => {
     it('re-detects interests when Re-scan button is clicked', async () => {
-      discoveryClient.getInterests.mockResolvedValue({
-        success: true,
-        data: MOCK_PROFILE,
-      })
-      discoveryClient.detectInterests.mockResolvedValue({
-        success: true,
-        data: MOCK_PROFILE,
-      })
+      vi.mocked(discoveryClient.getInterests).mockResolvedValue(apiOk(MOCK_PROFILE))
+      vi.mocked(discoveryClient.detectInterests).mockResolvedValue(apiOk(MOCK_PROFILE))
 
       const onResult = vi.fn()
       render(onResult)
@@ -259,10 +237,7 @@ describe('MyProfileTab', () => {
         ],
       }
 
-      discoveryClient.getInterests.mockResolvedValue({
-        success: true,
-        data: twoEnabledProfile,
-      })
+      vi.mocked(discoveryClient.getInterests).mockResolvedValue(apiOk(twoEnabledProfile))
 
       render()
 
