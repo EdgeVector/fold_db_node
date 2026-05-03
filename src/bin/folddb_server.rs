@@ -1,6 +1,6 @@
 use clap::Parser;
 use fold_db_node::{
-    fold_node::config::load_node_config,
+    fold_node::config::{load_node_config, NodeConfig},
     observability_setup::init_node_with_web,
     server::{
         http_server::FoldHttpServer,
@@ -76,6 +76,84 @@ fn config_file_exists() -> bool {
     std::path::Path::new(&path).exists()
 }
 
+/// Resolved startup info for the user-facing banner.
+struct StartupInfo {
+    label: &'static str,
+    data_path: PathBuf,
+    config_path: PathBuf,
+    schema_service_url: Option<String>,
+    had_config_file: bool,
+}
+
+/// Apply CLI/default overrides to the loaded config and set the env vars
+/// downstream code relies on. Runs in both the no-config-file and
+/// config-file paths so they share dir-creation, `FOLD_CONFIG_DIR`, and
+/// `FOLD_STORAGE_PATH` handling — the asymmetry between the two arms was
+/// the spot most likely to grow a bug.
+///
+/// `FOLD_STORAGE_PATH` is set in both arms intentionally:
+/// `fold_node::operation_processor::admin_ops` reads it directly with a
+/// fallback to the relative `"data"` string, which collides between
+/// multi-node setups. The lazy `NodeManager` path also sets it on first
+/// per-user node creation, but it must be live before any operation that
+/// bypasses NodeManager runs.
+fn setup_config_environment(
+    config: &mut NodeConfig,
+    data_dir: Option<PathBuf>,
+    schema_service_url_override: Option<String>,
+    demo: bool,
+    has_config_file: bool,
+) -> std::io::Result<StartupInfo> {
+    let config_path = default_config_dir(demo);
+
+    if !has_config_file {
+        // Zero-config: derive both the local Sled path and schema URL from
+        // CLI flags or the FoldDB defaults. Anything on the freshly-loaded
+        // NodeConfig is uninteresting because no file backed it.
+        let data_path = data_dir.unwrap_or_else(|| default_data_dir(demo));
+        std::fs::create_dir_all(&data_path)?;
+        config.database = fold_db::storage::config::DatabaseConfig::local(data_path.clone());
+        config.storage_path = Some(data_path);
+        config.schema_service_url = Some(
+            schema_service_url_override.unwrap_or_else(fold_db_node::endpoints::schema_service_url),
+        );
+    } else {
+        // Config file exists — honour explicit CLI overrides only.
+        //
+        // `--data-dir` overrides only the local Sled path. If the config
+        // file declares cloud sync, that configuration is preserved — we're
+        // pointing the local backing store somewhere else, not turning
+        // cloud sync off. Both `database.path` and `storage_path` are
+        // updated so `get_storage_path()` and the FOLD_STORAGE_PATH env
+        // propagation below see the same value.
+        if let Some(dir) = data_dir {
+            config.database.path = dir.clone();
+            config.storage_path = Some(dir);
+        }
+        if let Some(url) = schema_service_url_override {
+            config.schema_service_url = Some(url);
+        }
+    }
+
+    std::fs::create_dir_all(&config_path)?;
+    std::env::set_var("FOLD_CONFIG_DIR", &config_path);
+    std::env::set_var("FOLD_STORAGE_PATH", config.get_storage_path());
+
+    let label = match (has_config_file, demo) {
+        (true, _) => "FoldDB Server (config file detected)",
+        (false, true) => "FoldDB Server [DEMO]",
+        (false, false) => "FoldDB Server",
+    };
+
+    Ok(StartupInfo {
+        label,
+        data_path: config.get_storage_path(),
+        config_path,
+        schema_service_url: config.schema_service_url.clone(),
+        had_config_file: has_config_file,
+    })
+}
+
 /// Main entry point for the FoldDB HTTP server.
 ///
 /// This is a STATELESS HTTP server - user identity comes from the X-User-Hash
@@ -110,65 +188,24 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let mut config = load_node_config(None, None)?;
     let has_config_file = config_file_exists();
 
-    // When no config file exists, apply zero-config defaults so the binary
-    // works out of the box after a fresh install.
-    if !has_config_file {
-        let data_path = data_dir.unwrap_or_else(|| default_data_dir(demo));
-        let config_path = default_config_dir(demo);
+    let info = setup_config_environment(
+        &mut config,
+        data_dir,
+        schema_service_url,
+        demo,
+        has_config_file,
+    )?;
 
-        std::fs::create_dir_all(&data_path)?;
-        std::fs::create_dir_all(&config_path)?;
-
-        config.database = fold_db::storage::config::DatabaseConfig::local(data_path.clone());
-        config.schema_service_url =
-            Some(schema_service_url.unwrap_or_else(fold_db_node::endpoints::schema_service_url));
-
-        // Let ingestion config saves go to ~/.folddb/config
-        std::env::set_var("FOLD_CONFIG_DIR", &config_path);
-
-        let label = if demo {
-            "FoldDB Server [DEMO]"
-        } else {
-            "FoldDB Server"
-        };
-        println!("{}", label);
-        println!("  Data:   {}", data_path.display());
-        println!("  Config: {}", config_path.display());
-        println!("  UI:     http://localhost:{}", http_port);
-        println!();
-    } else {
-        // Config file exists — honour explicit CLI overrides only.
-        //
-        // `--data-dir` overrides only the local Sled path. If the config file
-        // declares cloud sync, that configuration is preserved — we're
-        // pointing the local backing store somewhere else, not turning cloud
-        // sync off. Both `database.path` and `storage_path` are updated so
-        // `get_storage_path()` and the FOLD_STORAGE_PATH env propagation
-        // below see the same value.
-        if let Some(dir) = data_dir {
-            config.database.path = dir.clone();
-            config.storage_path = Some(dir);
-        }
-        if let Some(url) = schema_service_url {
-            config.schema_service_url = Some(url);
-        }
-
-        // Ensure FOLD_CONFIG_DIR is set so ingestion config can be saved
-        let config_path = default_config_dir(demo);
-        std::fs::create_dir_all(&config_path)?;
-        std::env::set_var("FOLD_CONFIG_DIR", &config_path);
-
-        // Propagate storage path so the Exemem factory finds the right Sled directory
-        std::env::set_var("FOLD_STORAGE_PATH", config.get_storage_path());
-
-        println!("FoldDB Server (config file detected)");
-        println!("  Data:   {}", config.get_storage_path().display());
-        if let Some(ref url) = config.schema_service_url {
-            println!("  Schema: {}", url);
-        }
-        println!("  UI:     http://localhost:{}", http_port);
-        println!();
+    println!("{}", info.label);
+    println!("  Data:   {}", info.data_path.display());
+    if !info.had_config_file {
+        println!("  Config: {}", info.config_path.display());
     }
+    if let Some(ref url) = info.schema_service_url {
+        println!("  Schema: {}", url);
+    }
+    println!("  UI:     http://localhost:{}", http_port);
+    println!();
 
     if fold_db_node::handlers::admin::test_admin_enabled() {
         println!("⚠️  TEST-ADMIN MODE ENABLED (FOLDDB_ENABLE_TEST_ADMIN=1)");
@@ -287,5 +324,104 @@ mod tests {
         let demo = super::default_config_dir(true);
         assert!(normal.ends_with("config"));
         assert!(demo.ends_with("demo-config"));
+    }
+
+    /// Both arms of `setup_config_environment` must leave `FOLD_CONFIG_DIR`
+    /// and `FOLD_STORAGE_PATH` set to paths that match the resolved config
+    /// — that's the asymmetry the refactor was meant to eliminate. We run
+    /// both scenarios in one test and serialize against the other env-var
+    /// tests via a process-wide mutex (env mutation is global).
+    #[test]
+    fn setup_config_environment_keeps_env_vars_consistent() {
+        use fold_db_node::fold_node::config::NodeConfig;
+        use std::sync::Mutex;
+
+        static ENV_LOCK: Mutex<()> = Mutex::new(());
+        let _guard = ENV_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+
+        let tmp = tempfile::tempdir().expect("tempdir");
+        let prev_folddb_home = std::env::var("FOLDDB_HOME").ok();
+        let prev_config_dir = std::env::var("FOLD_CONFIG_DIR").ok();
+        let prev_storage_path = std::env::var("FOLD_STORAGE_PATH").ok();
+        std::env::set_var("FOLDDB_HOME", tmp.path());
+
+        // Arm 1: no config file. Helper picks default_data_dir + default_config_dir,
+        // creates them, and propagates the storage path.
+        let mut config = NodeConfig::default();
+        let info = super::setup_config_environment(
+            &mut config,
+            /* data_dir */ None,
+            /* schema_url */ None,
+            /* demo */ false,
+            /* has_config_file */ false,
+        )
+        .expect("zero-config setup");
+
+        let expected_data = tmp.path().join("data");
+        let expected_config = tmp.path().join("config");
+        assert_eq!(info.data_path, expected_data);
+        assert_eq!(info.config_path, expected_config);
+        assert!(expected_data.is_dir(), "data dir must be created");
+        assert!(expected_config.is_dir(), "config dir must be created");
+        assert_eq!(
+            std::path::PathBuf::from(std::env::var("FOLD_CONFIG_DIR").unwrap()),
+            expected_config,
+        );
+        assert_eq!(
+            std::path::PathBuf::from(std::env::var("FOLD_STORAGE_PATH").unwrap()),
+            expected_data,
+        );
+        assert_eq!(config.get_storage_path(), expected_data);
+        assert!(
+            config.schema_service_url.is_some(),
+            "zero-config must default the schema service URL",
+        );
+
+        // Arm 2: config file already exists. CLI passes a fresh data dir;
+        // helper must keep `database.path`/`storage_path` and the env vars
+        // in lockstep, and FOLD_STORAGE_PATH must reflect the override.
+        let cli_data = tmp.path().join("override-data");
+        let mut config = NodeConfig::default();
+        config.schema_service_url = Some("https://from-config-file.example".to_string());
+        let info = super::setup_config_environment(
+            &mut config,
+            Some(cli_data.clone()),
+            /* schema_url */ None,
+            /* demo */ false,
+            /* has_config_file */ true,
+        )
+        .expect("config-file setup");
+
+        assert_eq!(info.data_path, cli_data);
+        assert_eq!(info.config_path, expected_config);
+        assert_eq!(config.database.path, cli_data);
+        assert_eq!(config.storage_path.as_deref(), Some(cli_data.as_path()));
+        assert_eq!(
+            std::path::PathBuf::from(std::env::var("FOLD_CONFIG_DIR").unwrap()),
+            expected_config,
+        );
+        assert_eq!(
+            std::path::PathBuf::from(std::env::var("FOLD_STORAGE_PATH").unwrap()),
+            cli_data,
+        );
+        // CLI didn't pass --schema-service-url, so the file's URL is preserved.
+        assert_eq!(
+            config.schema_service_url.as_deref(),
+            Some("https://from-config-file.example"),
+        );
+
+        // Restore env vars to keep the rest of the test process clean.
+        match prev_folddb_home {
+            Some(v) => std::env::set_var("FOLDDB_HOME", v),
+            None => std::env::remove_var("FOLDDB_HOME"),
+        }
+        match prev_config_dir {
+            Some(v) => std::env::set_var("FOLD_CONFIG_DIR", v),
+            None => std::env::remove_var("FOLD_CONFIG_DIR"),
+        }
+        match prev_storage_path {
+            Some(v) => std::env::set_var("FOLD_STORAGE_PATH", v),
+            None => std::env::remove_var("FOLD_STORAGE_PATH"),
+        }
     }
 }
