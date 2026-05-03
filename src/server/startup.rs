@@ -171,16 +171,31 @@ async fn load_schemas_if_configured(node_manager: &Arc<NodeManager>) {
     );
 
     let client = crate::fold_node::SchemaServiceClient::new(&url);
-    match client.list_schemas().await {
-        Ok(schemas) => tracing::info!(
+
+    // Bound the call: `SchemaServiceClient::list_schemas` retries up to 3x on
+    // transient errors with per-request budget 120s, so a flaky schema service
+    // could pin boot for several minutes. Schema preload is best-effort — the
+    // server starts either way, schemas just aren't pre-cached. 10s matches
+    // the `refresh_session_token` budget below.
+    match tokio::time::timeout(
+        std::time::Duration::from_secs(10),
+        client.list_schemas(),
+    )
+    .await
+    {
+        Ok(Ok(schemas)) => tracing::info!(
             target: "fold_node::database",
             "Loaded {} schemas from schema service",
             schemas.len()
         ),
-        Err(e) => tracing::error!(
+        Ok(Err(e)) => tracing::error!(
             target: "fold_node::database",
             "Failed to load schemas from schema service: {}. Server will start but no schemas will be available.",
             e
+        ),
+        Err(_) => tracing::warn!(
+            target: "fold_node::database",
+            "Schema service list_schemas timed out after 10s; server will start but no schemas will be pre-cached"
         ),
     }
 }
