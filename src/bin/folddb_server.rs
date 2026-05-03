@@ -381,8 +381,10 @@ mod tests {
         // helper must keep `database.path`/`storage_path` and the env vars
         // in lockstep, and FOLD_STORAGE_PATH must reflect the override.
         let cli_data = tmp.path().join("override-data");
-        let mut config = NodeConfig::default();
-        config.schema_service_url = Some("https://from-config-file.example".to_string());
+        let mut config = NodeConfig {
+            schema_service_url: Some("https://from-config-file.example".to_string()),
+            ..NodeConfig::default()
+        };
         let info = super::setup_config_environment(
             &mut config,
             Some(cli_data.clone()),
