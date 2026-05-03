@@ -177,12 +177,7 @@ async fn load_schemas_if_configured(node_manager: &Arc<NodeManager>) {
     // could pin boot for several minutes. Schema preload is best-effort — the
     // server starts either way, schemas just aren't pre-cached. 10s matches
     // the `refresh_session_token` budget below.
-    match tokio::time::timeout(
-        std::time::Duration::from_secs(10),
-        client.list_schemas(),
-    )
-    .await
-    {
+    match tokio::time::timeout(std::time::Duration::from_secs(10), client.list_schemas()).await {
         Ok(Ok(schemas)) => tracing::info!(
             target: "fold_node::database",
             "Loaded {} schemas from schema service",
