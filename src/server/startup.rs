@@ -217,40 +217,30 @@ async fn bootstrap_resume(ctx: Arc<StartupCtx>, api_url: String, api_key: String
     ctx.node_manager.invalidate_all_nodes().await;
 }
 
-async fn token_refresh(ctx: Arc<StartupCtx>) {
-    // `load_credentials` may block on the OS keychain (release builds with
-    // `os-keychain`): if the user's macOS keychain is locked, the call sits
-    // until they dismiss a prompt — and on a headless box, until forever.
-    // Move it onto the blocking pool and bound it with a timeout so a stuck
-    // keychain can't pin a tokio worker thread for the lifetime of the
-    // process. `refresh_session_token` below has its own 10s timeout for
-    // the network leg.
-    let load_result = tokio::time::timeout(
+/// Load Exemem credentials with the keychain bounded by a 5s timeout and
+/// a `spawn_blocking` hop, so a locked OS keychain can never pin a tokio
+/// worker thread. The error class is encoded in the `Err` string so the
+/// caller can preserve a single warn line while operators still grep the
+/// distinct messages: timeout, blocking-task panic, or load failure.
+async fn load_credentials_bounded() -> Result<Option<crate::keychain::ExememCredentials>, String> {
+    tokio::time::timeout(
         std::time::Duration::from_secs(5),
         tokio::task::spawn_blocking(crate::keychain::load_credentials),
     )
-    .await;
-    let creds = match load_result {
-        Ok(Ok(Ok(Some(c)))) => c,
-        Ok(Ok(Ok(None))) => {
+    .await
+    .map_err(|_| "load timed out after 5s".to_string())?
+    .map_err(|e| format!("load task panicked: {}", e))?
+}
+
+async fn token_refresh(ctx: Arc<StartupCtx>) {
+    let creds = match load_credentials_bounded().await {
+        Ok(Some(c)) => c,
+        Ok(None) => {
             tracing::info!("No Exemem credentials stored; skipping startup refresh");
             return;
         }
-        Ok(Ok(Err(e))) => {
-            tracing::warn!("Failed to load Exemem credentials (non-fatal): {}", e);
-            return;
-        }
-        Ok(Err(e)) => {
-            tracing::warn!(
-                "Keychain load task panicked (non-fatal); skipping startup refresh: {}",
-                e
-            );
-            return;
-        }
-        Err(_) => {
-            tracing::warn!(
-                "Keychain load timed out after 5s (non-fatal); skipping startup refresh"
-            );
+        Err(e) => {
+            tracing::warn!("Keychain {} (non-fatal); skipping startup refresh", e);
             return;
         }
     };
@@ -347,6 +337,87 @@ mod tests {
             Arc::ptr_eq(&from_ctx, &from_manager),
             "ctx.sled_pool and node_manager's pool must be the same Arc — \
              a second Sled at the same path would race the OS file lock"
+        );
+    }
+
+    // FOLDDB_HOME is a process-global env var; tests that read it must
+    // serialize on this mutex to avoid racing each other.
+    fn folddb_home_lock() -> std::sync::MutexGuard<'static, ()> {
+        use std::sync::{Mutex, OnceLock};
+        static LOCK: OnceLock<Mutex<()>> = OnceLock::new();
+        LOCK.get_or_init(|| Mutex::new(()))
+            .lock()
+            .expect("env lock poisoned")
+    }
+
+    /// Happy path: a valid plaintext credentials file at
+    /// `$FOLDDB_HOME/credentials.json` is loaded and returned as `Ok(Some(_))`.
+    /// Plaintext path only — `os-keychain` flips the on-disk format to
+    /// encrypted and is exercised by integration tests on the release build.
+    #[cfg(not(feature = "os-keychain"))]
+    #[tokio::test]
+    #[allow(clippy::await_holding_lock)]
+    async fn load_credentials_bounded_returns_loaded_creds_when_present() {
+        let _guard = folddb_home_lock();
+        let tmp = tempfile::TempDir::new().expect("tempdir");
+        std::env::set_var("FOLDDB_HOME", tmp.path());
+
+        let creds = crate::keychain::ExememCredentials {
+            user_hash: "user-hash".into(),
+            session_token: "session-token".into(),
+            api_key: "api-key".into(),
+        };
+        let json = serde_json::to_string(&creds).expect("serialize");
+        std::fs::write(tmp.path().join("credentials.json"), json).expect("write creds");
+
+        let loaded = load_credentials_bounded()
+            .await
+            .expect("load should succeed");
+        let loaded = loaded.expect("creds file present, expected Some");
+        assert_eq!(loaded.user_hash, "user-hash");
+        assert_eq!(loaded.session_token, "session-token");
+        assert_eq!(loaded.api_key, "api-key");
+    }
+
+    /// No credentials file present: returns `Ok(None)` so the caller emits
+    /// the "no creds stored" info log and exits cleanly. This is the dominant
+    /// path on a fresh install.
+    #[tokio::test]
+    #[allow(clippy::await_holding_lock)]
+    async fn load_credentials_bounded_returns_none_when_no_file() {
+        let _guard = folddb_home_lock();
+        let tmp = tempfile::TempDir::new().expect("tempdir");
+        std::env::set_var("FOLDDB_HOME", tmp.path());
+
+        let result = load_credentials_bounded().await;
+        assert!(
+            matches!(result, Ok(None)),
+            "expected Ok(None), got {:?}",
+            result
+        );
+    }
+
+    /// Keychain-fail leg: a corrupt credentials file makes `load_credentials`
+    /// return `Err`, which the helper propagates so the caller can warn
+    /// non-fatally. The error string flows through unprefixed (no
+    /// "load timed out" / "load task panicked" tag), preserving the
+    /// per-class operator visibility the original `match` exposed.
+    #[cfg(not(feature = "os-keychain"))]
+    #[tokio::test]
+    #[allow(clippy::await_holding_lock)]
+    async fn load_credentials_bounded_returns_err_for_corrupt_file() {
+        let _guard = folddb_home_lock();
+        let tmp = tempfile::TempDir::new().expect("tempdir");
+        std::env::set_var("FOLDDB_HOME", tmp.path());
+        std::fs::write(tmp.path().join("credentials.json"), "not-json{").expect("write garbage");
+
+        let err = load_credentials_bounded()
+            .await
+            .expect_err("corrupt file must produce Err");
+        assert!(
+            !err.starts_with("load timed out") && !err.starts_with("load task panicked"),
+            "corrupt-file Err must come from load_credentials, not the timeout/join wrappers; got: {}",
+            err
         );
     }
 }
