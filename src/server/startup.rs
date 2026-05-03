@@ -59,6 +59,11 @@ pub struct StartupCtx {
     /// Eagerly initialized in `boot()` so the bootstrap-resume worker can
     /// rely on it being `Some` instead of racing the lazy creation path.
     pub sled_pool: Arc<SledPool>,
+    /// Resolved Sled storage directory. Captured once at boot from
+    /// `NodeConfig::get_storage_path()` so server-side callers don't
+    /// async-acquire the manager's RwLock just to learn the path.
+    /// Replaces the former `FOLD_STORAGE_PATH` process-wide env var.
+    pub storage_path: PathBuf,
     /// `Some((api_url, api_key))` if a previous run wrote a bootstrap
     /// marker before crashing mid-download. Captured at boot so workers
     /// don't reread the marker file.
@@ -94,10 +99,15 @@ impl StartupCtx {
     ) -> FoldDbResult<Arc<Self>> {
         // Snapshot the path inputs the boot pipeline needs before wrapping
         // node_manager in Arc — `config_dir` and `upload_path` flow into the
-        // upload-storage and ingestion-service builders below.
-        let (config_dir_path, upload_path) = {
+        // upload-storage and ingestion-service builders below; `storage_path`
+        // is the resolved Sled directory exposed on `StartupCtx`.
+        let (config_dir_path, upload_path, storage_path) = {
             let cfg = node_manager.get_full_config().await;
-            (cfg.config_dir.clone(), cfg.upload_path.clone())
+            (
+                cfg.config_dir.clone(),
+                cfg.upload_path.clone(),
+                cfg.base_config.get_storage_path(),
+            )
         };
 
         let node_manager = Arc::new(node_manager);
@@ -145,6 +155,7 @@ impl StartupCtx {
         Ok(Arc::new(Self {
             node_manager,
             sled_pool,
+            storage_path,
             bootstrap_pending,
             obs,
             app_state,

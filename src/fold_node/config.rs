@@ -80,11 +80,12 @@ impl NodeConfig {
 
     /// Get the effective storage path.
     ///
-    /// For Local mode the path is embedded in the database config.
-    /// For Exemem/Cloud modes we use the explicit `storage_path` field
-    /// (written by `run.sh` from `$FOLDDB_HOME/data`) so that each node
-    /// instance gets its own Sled directory. Falls back to `"data"` for
-    /// backwards compatibility when `storage_path` is absent.
+    /// Prefers the explicit `storage_path` field (written by `run.sh` from
+    /// `$FOLDDB_HOME/data` so each node instance gets its own Sled
+    /// directory) and falls back to `database.path`. The earlier
+    /// `"data"`-string fallback was retired with the env-var hand-off —
+    /// `database.path` is always populated by the loader (it defaults to
+    /// `PathBuf::from("data")` itself if no config supplies one).
     pub fn get_storage_path(&self) -> PathBuf {
         self.storage_path
             .clone()
