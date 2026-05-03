@@ -5,13 +5,13 @@ import {
   getMyIdentityCard,
   reissueMyIdentityCard,
   sendIdentityCard,
+  type MyIdentityCardResponse,
 } from '../../../api/clients/fingerprintsClient'
-import { listContacts } from '../../../api/clients/trustClient'
+import { listContacts, type Contact } from '../../../api/clients/trustClient'
 
-// Trigger a browser file-save for an in-memory blob. Factored out so
-// the two download handlers (SVG + PNG) share the same anchor-click
-// plumbing and URL lifecycle.
-function triggerDownload(blob, filename) {
+type AttachStage = 'idle' | 'camera' | 'detecting' | 'saving'
+
+function triggerDownload(blob: Blob, filename: string) {
   const url = URL.createObjectURL(blob)
   const a = document.createElement('a')
   a.href = url
@@ -37,51 +37,33 @@ function triggerDownload(blob, filename) {
  * and is verifiable standalone.
  */
 export default function MyIdentityCardPanel() {
-  const [card, setCard] = useState(null)
+  const [card, setCard] = useState<MyIdentityCardResponse | null>(null)
   const [loading, setLoading] = useState(true)
-  const [error, setError] = useState(null)
+  const [error, setError] = useState<string | null>(null)
   const [copied, setCopied] = useState(false)
 
-  // Inline edit form state. `editing` toggles the display <dl> into
-  // the form; draftName mirrors the current card so a Cancel
-  // restores the stored value without a refetch. Birthday is NOT
-  // surfaced in the edit form on purpose — a real person's birthday
-  // doesn't change, and exposing it as a normal editable field
-  // implies otherwise. The backend still accepts birthday patches
-  // (for a future first-time-set wizard), just not from this panel.
   const [editing, setEditing] = useState(false)
   const [draftName, setDraftName] = useState('')
   const [saving, setSaving] = useState(false)
-  const [saveError, setSaveError] = useState(null)
+  const [saveError, setSaveError] = useState<string | null>(null)
 
-  // QR code is off by default — takes up 200+px of vertical space
-  // and most of the time the user just wants to copy JSON.
   const [showQr, setShowQr] = useState(false)
-  // Ref to the rendered <svg> so the download handlers can serialize
-  // it without re-rendering the QR with a different library.
-  const qrRef = useRef(null)
+  const qrRef = useRef<SVGSVGElement | null>(null)
 
-  // Send-to-contact state. Contacts are fetched lazily on first
-  // open of the picker so we don't pay the trust-client cost for
-  // users who never send their card through messaging.
   const [sendPickerOpen, setSendPickerOpen] = useState(false)
-  const [contacts, setContacts] = useState([])
+  const [contacts, setContacts] = useState<Contact[]>([])
   const [contactsLoading, setContactsLoading] = useState(false)
-  const [contactsError, setContactsError] = useState(null)
-  const [sendingTo, setSendingTo] = useState(null) // contact pub_key currently in-flight
-  const [sendResult, setSendResult] = useState(null) // { display_name } on success
-  const [sendError, setSendError] = useState(null)
+  const [contactsError, setContactsError] = useState<string | null>(null)
+  const [sendingTo, setSendingTo] = useState<string | null>(null)
+  const [sendResult, setSendResult] = useState<{ display_name: string } | null>(null)
+  const [sendError, setSendError] = useState<string | null>(null)
 
-  // Attach-face flow state. `stage` walks through
-  // idle → camera (getUserMedia running) → detecting (POST to
-  // /detect-faces) → saving (POST to /reissue). Errors surface
-  // inline; the modal stays open until the user cancels or succeeds.
   const [attachOpen, setAttachOpen] = useState(false)
-  const [attachStage, setAttachStage] = useState('idle')
-  const [attachError, setAttachError] = useState(null)
+  const [attachStage, setAttachStage] = useState<AttachStage>('idle')
+  const [attachError, setAttachError] = useState<string | null>(null)
   const [removingFace, setRemovingFace] = useState(false)
-  const videoRef = useRef(null)
-  const streamRef = useRef(null)
+  const videoRef = useRef<HTMLVideoElement | null>(null)
+  const streamRef = useRef<MediaStream | null>(null)
 
   const stopCamera = useCallback(() => {
     const stream = streamRef.current
@@ -111,7 +93,7 @@ export default function MyIdentityCardPanel() {
         setError(res.error ?? 'Failed to load identity card')
       }
     } catch (e) {
-      setError(e?.message ?? 'Network error')
+      setError((e as Error)?.message ?? 'Network error')
     } finally {
       setLoading(false)
     }
@@ -152,7 +134,7 @@ export default function MyIdentityCardPanel() {
         setSaveError(res.error ?? 'Failed to reissue identity card')
       }
     } catch (e) {
-      setSaveError(e?.message ?? 'Network error')
+      setSaveError((e as Error)?.message ?? 'Network error')
     } finally {
       setSaving(false)
     }
@@ -173,13 +155,13 @@ export default function MyIdentityCardPanel() {
         setContactsError(res.error ?? 'Failed to load contacts')
       }
     } catch (e) {
-      setContactsError(e?.message ?? 'Network error while loading contacts')
+      setContactsError((e as Error)?.message ?? 'Network error while loading contacts')
     } finally {
       setContactsLoading(false)
     }
   }, [contacts.length, contactsLoading])
 
-  const handleSendTo = useCallback(async contact => {
+  const handleSendTo = useCallback(async (contact: Contact) => {
     if (!contact?.public_key) return
     setSendingTo(contact.public_key)
     setSendError(null)
@@ -187,9 +169,6 @@ export default function MyIdentityCardPanel() {
     try {
       const res = await sendIdentityCard(contact.public_key)
       if (res.success) {
-        // Close the picker on success so the confirmation message
-        // is visually decoupled from the list of contacts. Keep the
-        // recipient's display name around for the success toast.
         setSendResult({
           display_name:
             res.data?.recipient_display_name ?? contact.display_name,
@@ -199,7 +178,7 @@ export default function MyIdentityCardPanel() {
         setSendError(res.error ?? 'Failed to send identity card')
       }
     } catch (e) {
-      setSendError(e?.message ?? 'Network error while sending')
+      setSendError((e as Error)?.message ?? 'Network error while sending')
     } finally {
       setSendingTo(null)
     }
@@ -210,7 +189,7 @@ export default function MyIdentityCardPanel() {
   // empty or reduces to an empty slug after stripping punctuation
   // (e.g. a name that's entirely emoji).
   const identityFilename = useCallback(
-    ext => {
+    (ext: string) => {
       const slug = (card?.display_name ?? '')
         .toLowerCase()
         .replace(/[^a-z0-9]+/g, '-')
@@ -315,7 +294,7 @@ export default function MyIdentityCardPanel() {
       }
     } catch (e) {
       setAttachError(
-        e?.message ??
+        (e as Error)?.message ??
           'Could not open the camera. Grant camera permission and try again.',
       )
       setAttachStage('idle')
@@ -338,6 +317,11 @@ export default function MyIdentityCardPanel() {
       canvas.width = video.videoWidth || 640
       canvas.height = video.videoHeight || 480
       const ctx = canvas.getContext('2d')
+      if (!ctx) {
+        setAttachError('Could not access canvas context.')
+        setAttachStage('camera')
+        return
+      }
       ctx.drawImage(video, 0, 0, canvas.width, canvas.height)
       const dataUrl = canvas.toDataURL('image/png')
       const commaIdx = dataUrl.indexOf(',')
@@ -375,7 +359,7 @@ export default function MyIdentityCardPanel() {
       setCard(saveRes.data ?? null)
       closeAttach()
     } catch (e) {
-      setAttachError(e?.message ?? 'Network error while attaching face.')
+      setAttachError((e as Error)?.message ?? 'Network error while attaching face.')
       setAttachStage('camera')
     }
   }, [closeAttach])
@@ -392,7 +376,7 @@ export default function MyIdentityCardPanel() {
         setAttachError(res.error ?? 'Failed to remove face.')
       }
     } catch (e) {
-      setAttachError(e?.message ?? 'Network error while removing face.')
+      setAttachError((e as Error)?.message ?? 'Network error while removing face.')
     } finally {
       setRemovingFace(false)
     }

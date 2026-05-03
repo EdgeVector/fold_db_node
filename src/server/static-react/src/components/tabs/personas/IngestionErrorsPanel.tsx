@@ -2,6 +2,7 @@ import { useCallback, useEffect, useState } from 'react'
 import {
   listIngestionErrors,
   resolveIngestionError,
+  type IngestionErrorView,
 } from '../../../api/clients/fingerprintsClient'
 
 /**
@@ -14,12 +15,12 @@ import {
  * fingerprintsClient.ts and src/handlers/fingerprints/ingestion_errors.rs.
  */
 export default function IngestionErrorsPanel() {
-  const [errors, setErrors] = useState([])
+  const [errors, setErrors] = useState<IngestionErrorView[]>([])
   const [loading, setLoading] = useState(true)
-  const [error, setError] = useState(null)
+  const [error, setError] = useState<string | null>(null)
   const [includeResolved, setIncludeResolved] = useState(false)
-  const [expandedId, setExpandedId] = useState(null)
-  const [busyId, setBusyId] = useState(null)
+  const [expandedId, setExpandedId] = useState<string | null>(null)
+  const [busyId, setBusyId] = useState<string | null>(null)
 
   const fetchList = useCallback(async () => {
     setLoading(true)
@@ -32,7 +33,7 @@ export default function IngestionErrorsPanel() {
         setError(res.error ?? 'Failed to load ingestion errors')
       }
     } catch (e) {
-      setError(e?.message ?? 'Network error')
+      setError((e as Error)?.message ?? 'Network error')
     } finally {
       setLoading(false)
     }
@@ -43,7 +44,7 @@ export default function IngestionErrorsPanel() {
   }, [fetchList])
 
   const handleSetResolved = useCallback(
-    async (id, resolved) => {
+    async (id: string, resolved: boolean) => {
       setBusyId(id)
       try {
         const res = await resolveIngestionError(id, resolved)
@@ -54,8 +55,6 @@ export default function IngestionErrorsPanel() {
                 e.id === id ? { ...e, resolved } : e,
               )
             }
-            // When hiding resolved rows, drop dismissed; for restore
-            // the row stays because it's now unresolved.
             return resolved
               ? prev.filter(e => e.id !== id)
               : prev.map(e => (e.id === id ? { ...e, resolved: false } : e))
@@ -64,7 +63,7 @@ export default function IngestionErrorsPanel() {
           setError(res.error ?? `Failed to ${resolved ? 'dismiss' : 'restore'}`)
         }
       } catch (e) {
-        setError(e?.message ?? 'Network error')
+        setError((e as Error)?.message ?? 'Network error')
       } finally {
         setBusyId(null)
       }
@@ -135,7 +134,16 @@ export default function IngestionErrorsPanel() {
   )
 }
 
-function IngestionErrorRow({ row, expanded, onToggle, onResolve, onRestore, busy }) {
+interface IngestionErrorRowProps {
+  row: IngestionErrorView
+  expanded: boolean
+  onToggle: () => void
+  onResolve: () => void
+  onRestore: () => void
+  busy: boolean
+}
+
+function IngestionErrorRow({ row, expanded, onToggle, onResolve, onRestore, busy }: IngestionErrorRowProps) {
   const created = row.created_at ? row.created_at.slice(0, 10) : ''
   return (
     <li

@@ -1,3 +1,17 @@
+import type { FormEvent } from 'react'
+import type { IdentityCard } from '../../../api/clients/trustClient'
+
+interface IdentityCardPanelProps {
+  identityLoading: boolean
+  identityCard: IdentityCard | null | undefined
+  editName: string
+  setEditName: (v: string) => void
+  editHint: string
+  setEditHint: (v: string) => void
+  handleSaveIdentity: (e: FormEvent<HTMLFormElement>) => void
+  savingIdentity: boolean
+}
+
 export default function IdentityCardPanel({
   identityLoading,
   identityCard,
@@ -7,7 +21,7 @@ export default function IdentityCardPanel({
   setEditHint,
   handleSaveIdentity,
   savingIdentity,
-}) {
+}: IdentityCardPanelProps) {
   return (
     <div className="border border-border rounded-lg p-4 bg-surface">
       <h3 className="text-sm font-medium text-primary mb-1">Identity Card</h3>

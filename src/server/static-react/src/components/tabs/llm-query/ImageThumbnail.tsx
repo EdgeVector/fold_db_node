@@ -1,14 +1,19 @@
 import { useEffect, useState } from 'react'
 
+interface ImageThumbnailProps {
+  fileHash: string
+  sourceFile?: string | null
+}
+
 /** Fetches and displays an image from the file API */
-export default function ImageThumbnail({ fileHash, sourceFile }) {
-  const [blobUrl, setBlobUrl] = useState(null)
+export default function ImageThumbnail({ fileHash, sourceFile }: ImageThumbnailProps) {
+  const [blobUrl, setBlobUrl] = useState<string | null>(null)
 
   useEffect(() => {
     const url = `/api/file/${fileHash}?name=${encodeURIComponent(sourceFile || '')}`
     let revoked = false
     const userHash = localStorage.getItem('fold_user_hash')
-    const headers = {}
+    const headers: Record<string, string> = {}
     if (userHash) {
       headers['x-user-hash'] = userHash
       headers['x-user-id'] = userHash
@@ -27,7 +32,7 @@ export default function ImageThumbnail({ fileHash, sourceFile }) {
   return (
     <img
       src={blobUrl}
-      alt={sourceFile}
+      alt={sourceFile ?? ''}
       className="max-w-xs max-h-64 rounded border border-border object-contain bg-surface-secondary"
     />
   )

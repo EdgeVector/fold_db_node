@@ -1,20 +1,32 @@
+interface MutationField {
+  field_type?: 'Collection' | 'Range' | string
+  writable?: boolean
+}
 
-function MutationEditor({ fields, mutationType: _mutationType, mutationData, onFieldChange, isRangeSchema }) {
-  const renderField = (fieldName, field) => {
-    // Fields are writable by default unless explicitly marked as non-writable
+interface MutationEditorProps {
+  fields: Record<string, MutationField>
+  mutationType?: string
+  mutationData: Record<string, unknown>
+  onFieldChange: (fieldName: string, value: unknown) => void
+  isRangeSchema: boolean
+}
+
+function MutationEditor({ fields, mutationType: _mutationType, mutationData, onFieldChange, isRangeSchema }: MutationEditorProps) {
+  const renderField = (fieldName: string, field: MutationField) => {
     const isWritable = field.writable !== false
     if (!isWritable) return null
-    const value = mutationData[fieldName] || ''
+    const value = (mutationData[fieldName] ?? '') as unknown
 
     switch (field.field_type) {
       case 'Collection': {
-        let arrayValue = []
+        let arrayValue: unknown[] = []
         if (value) {
           try {
             const parsed = typeof value === 'string' ? JSON.parse(value) : value
             arrayValue = Array.isArray(parsed) ? parsed : [parsed]
           } catch {
-            arrayValue = value.trim() ? [value] : []
+            const str = typeof value === 'string' ? value : ''
+            arrayValue = str.trim() ? [str] : []
           }
         }
 
@@ -62,7 +74,7 @@ function MutationEditor({ fields, mutationType: _mutationType, mutationData, onF
               <input
                 type="text"
                 className="input mt-1 block w-full sm:text-sm"
-                value={value}
+                value={String(value ?? '')}
                 onChange={(e) => onFieldChange(fieldName, e.target.value)}
                 placeholder={`Enter ${fieldName} value`}
               />
@@ -73,37 +85,34 @@ function MutationEditor({ fields, mutationType: _mutationType, mutationData, onF
           )
         }
 
-        // For non-range schemas, use the existing complex Range field UI
-        let rangeValue = {}
+        let rangeValue: Record<string, string> = {}
         if (value) {
           try {
-            rangeValue = typeof value === 'string' ? JSON.parse(value) : value
-            if (typeof rangeValue !== 'object' || Array.isArray(rangeValue)) {
-              rangeValue = {}
+            const parsed = typeof value === 'string' ? JSON.parse(value) : value
+            if (parsed && typeof parsed === 'object' && !Array.isArray(parsed)) {
+              rangeValue = parsed as Record<string, string>
             }
           } catch {
             rangeValue = {}
           }
         }
 
-        const rangeEntries = Object.entries(rangeValue)
+        const rangeEntries: [string, string][] = Object.entries(rangeValue)
 
         const addKeyValuePair = () => {
-          const newEntries = [...rangeEntries, ['', '']]
-          // Don't filter out empty keys immediately - let user type
+          const newEntries: [string, string][] = [...rangeEntries, ['', '']]
           const newRangeValue = Object.fromEntries(newEntries)
           onFieldChange(fieldName, newRangeValue)
         }
 
-        const updateKeyValuePair = (index, key, val) => {
-          const newEntries = [...rangeEntries]
+        const updateKeyValuePair = (index: number, key: string, val: string) => {
+          const newEntries: [string, string][] = [...rangeEntries]
           newEntries[index] = [key, val]
-          // Keep all entries during editing, including empty ones
           const newRangeValue = Object.fromEntries(newEntries)
           onFieldChange(fieldName, newRangeValue)
         }
 
-        const removeKeyValuePair = (index) => {
+        const removeKeyValuePair = (index: number) => {
           const newEntries = rangeEntries.filter((_, i) => i !== index)
           const newRangeValue = Object.fromEntries(newEntries)
           onFieldChange(fieldName, newRangeValue)
@@ -178,7 +187,7 @@ function MutationEditor({ fields, mutationType: _mutationType, mutationData, onF
             <input
               type="text"
               className="input mt-1 block w-full sm:text-sm"
-              value={value}
+              value={String(value ?? '')}
               onChange={(e) => onFieldChange(fieldName, e.target.value)}
               placeholder={`Enter ${fieldName}`}
             />
@@ -198,7 +207,7 @@ function MutationEditor({ fields, mutationType: _mutationType, mutationData, onF
         )}
       </h3>
       <div className="space-y-6">
-        {Object.entries(fields).map(([name, field]) => renderField(name, field))}
+        {Object.entries(fields).map(([name, field]) => renderField(name, field as MutationField))}
       </div>
       {isRangeSchema && Object.keys(fields).length === 0 && (
         <p className="text-sm text-secondary italic">

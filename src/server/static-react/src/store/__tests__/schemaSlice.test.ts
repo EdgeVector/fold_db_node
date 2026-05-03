@@ -54,8 +54,11 @@ global.console = {
 };
 
 describe('schemaSlice', () => {
-  let store;
-  let mockSchemaClient;
+  // The Redux store returned by createTestStore (a .jsx helper) is an
+  // untyped redux Store; rather than re-derive its full schema state
+  // shape here, treat it as `any` for the duration of the test file.
+  let store: any
+  let mockSchemaClient: any
 
   beforeEach(async () => {
     store = await createTestStore();
@@ -66,7 +69,7 @@ describe('schemaSlice', () => {
     mockSchemaClient = schemaClient;
     
     // Reset all mocks to ensure clean state
-    Object.values(mockSchemaClient).forEach(mockFn => {
+    Object.values(mockSchemaClient).forEach((mockFn: any) => {
       if (typeof mockFn === 'function' && mockFn.mockReset) {
         mockFn.mockReset();
       }
@@ -226,7 +229,7 @@ describe('schemaSlice', () => {
       it('should handle operation on non-existent schema', async () => {
         // Mock the API to reject with schema not found error
         const { schemaClient } = await import('../../api/clients/schemaClient');
-        schemaClient.approveSchema.mockRejectedValueOnce(new Error('Schema not found'));
+        (schemaClient.approveSchema as any).mockRejectedValueOnce(new Error('Schema not found'));
 
         await store.dispatch(approveSchema({ schemaName: 'non-existent' }));
 
@@ -265,7 +268,7 @@ describe('schemaSlice', () => {
     it('should select only approved schemas (SCHEMA-002 compliance)', () => {
       const approvedSchemas = selectApprovedSchemas(store.getState());
       expect(approvedSchemas).toHaveLength(3);
-      expect(approvedSchemas.every(schema => schema.state === 'approved')).toBe(true);
+      expect(approvedSchemas.every((schema: any) => schema.state === 'approved')).toBe(true);
     });
 
     it('should select fetch loading state', () => {

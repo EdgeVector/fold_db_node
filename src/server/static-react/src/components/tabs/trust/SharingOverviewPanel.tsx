@@ -1,6 +1,13 @@
-import { getSharingPosture } from '../../../api/clients/trustClient'
+import { getSharingPosture, type SharingPosture } from '../../../api/clients/trustClient'
 
-export default function SharingOverviewPanel({ posture, setPosture, setError, onResult }) {
+interface SharingOverviewPanelProps {
+  posture: SharingPosture | null
+  setPosture: (p: SharingPosture | null) => void
+  setError: (msg: string | null) => void
+  onResult?: (payload: { success: boolean; data?: { message?: string } }) => void
+}
+
+export default function SharingOverviewPanel({ posture, setPosture, setError, onResult }: SharingOverviewPanelProps) {
   if (!posture) {
     return (
       <div className="text-center py-8">
@@ -45,7 +52,7 @@ export default function SharingOverviewPanel({ posture, setPosture, setError, on
                     setError(data.error || 'Failed to apply default policies')
                   }
                 } catch (err) {
-                  setError(err?.message || 'Failed to apply default policies')
+                  setError((err as Error)?.message || 'Failed to apply default policies')
                 }
               }}
             >
@@ -57,7 +64,7 @@ export default function SharingOverviewPanel({ posture, setPosture, setError, on
           <div className="border border-border rounded-lg p-4 bg-surface">
             <h3 className="text-sm font-medium text-primary mb-3">Trust Domains</h3>
             <div className="space-y-2">
-              {posture.domains.map((domain) => (
+              {posture.domains.map((domain: string) => (
                 <div key={domain} className="flex items-center justify-between text-sm">
                   <span className="text-primary">{domain}</span>
                   <div className="flex gap-3 text-xs text-secondary">

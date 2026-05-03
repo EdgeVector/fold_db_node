@@ -1,9 +1,25 @@
 import { useState, useEffect } from 'react'
 import IngestionReport from '../../IngestionReport'
 import { fmtCost } from '../../../utils/formatCost'
+import type { BatchStatusResponse } from '../../../api/clients/ingestionClient'
+
+interface FailedFile {
+  name: string
+  error: string
+}
+
+interface BatchStatusLike extends BatchStatusResponse {
+  failed_files?: FailedFile[]
+  is_local_provider?: boolean
+}
+
+interface FailedFilesBadgeProps {
+  count: number
+  files?: FailedFile[]
+}
 
 /** Clickable "(N failed)" badge that expands to show failed file details */
-function FailedFilesBadge({ count, files }) {
+function FailedFilesBadge({ count, files }: FailedFilesBadgeProps) {
   const [expanded, setExpanded] = useState(false)
   if (count === 0) return null
   return (
@@ -14,9 +30,9 @@ function FailedFilesBadge({ count, files }) {
       >
         ({count} failed)
       </button>
-      {expanded && files?.length > 0 && (
+      {expanded && files && files.length > 0 && (
         <div className="mt-2 bg-surface-secondary border border-gruvbox-red/30 rounded p-2 text-xs space-y-1 max-h-40 overflow-y-auto">
-          {files.map((f, i) => (
+          {files.map((f: FailedFile, i: number) => (
             <div key={i} className="flex flex-col">
               <span className="font-mono text-primary">{f.name}</span>
               <span className="text-gruvbox-red ml-2">{f.error}</span>
@@ -28,17 +44,18 @@ function FailedFilesBadge({ count, files }) {
   )
 }
 
+interface BatchProgressViewProps {
+  batchStatus: BatchStatusLike | null | undefined
+  batchReport: unknown
+  onResume: (limit: number) => void
+  onCancel: () => void
+  onBack: () => void
+  onDismissReport: () => void
+  isIngesting: boolean
+}
+
 /**
  * Displays batch ingestion progress: running, paused, completed, cancelled, failed states.
- *
- * @param {Object} props
- * @param {Object|null} props.batchStatus
- * @param {Object|null} props.batchReport
- * @param {Function} props.onResume - Called with new spend limit (number)
- * @param {Function} props.onCancel
- * @param {Function} props.onBack
- * @param {Function} props.onDismissReport
- * @param {boolean} props.isIngesting - True while waiting for first batch poll
  */
 export default function BatchProgressView({
   batchStatus,
@@ -48,7 +65,7 @@ export default function BatchProgressView({
   onBack,
   onDismissReport,
   isIngesting,
-}) {
+}: BatchProgressViewProps) {
   const [newLimit, setNewLimit] = useState('')
 
   // Pre-fill new limit when paused
@@ -88,7 +105,7 @@ export default function BatchProgressView({
           {batchStatus.is_local_provider ? (
             <span>Free (local)</span>
           ) : (
-            <span>{fmtCost(batchStatus.accumulated_cost)} spent{batchStatus.spend_limit != null ? ` / ${fmtCost(batchStatus.spend_limit)} limit` : ''}</span>
+            <span>{fmtCost(batchStatus.accumulated_cost)} spent{batchStatus.spend_limit != null ? ` / ${fmtCost(batchStatus.spend_limit ?? 0)} limit` : ''}</span>
           )}
         </div>
         {/* Current file sub-progress */}
@@ -130,7 +147,7 @@ export default function BatchProgressView({
         </div>
         <div className="flex items-center justify-between text-sm text-secondary">
           <span>{batchStatus.files_completed}/{batchStatus.files_total} files</span>
-          <span>{fmtCost(batchStatus.accumulated_cost)} spent / {fmtCost(batchStatus.spend_limit)} limit</span>
+          <span>{fmtCost(batchStatus.accumulated_cost)} spent / {fmtCost(batchStatus.spend_limit ?? 0)} limit</span>
         </div>
         <p className="text-sm text-secondary">
           {batchStatus.files_remaining} files remaining (~{fmtCost(batchStatus.estimated_remaining_cost)} to finish)
@@ -168,9 +185,9 @@ export default function BatchProgressView({
             {batchStatus.is_local_provider ? ' · Free (local)' : ` · ${fmtCost(batchStatus.accumulated_cost)} spent`}
           </span>
         </div>
-        {batchReport && (
+        {batchReport != null && (
           <IngestionReport
-            ingestionResult={batchReport}
+            ingestionResult={batchReport as Parameters<typeof IngestionReport>[0]['ingestionResult']}
             onDismiss={onDismissReport}
           />
         )}

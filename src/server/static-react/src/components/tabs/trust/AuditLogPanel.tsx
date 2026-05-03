@@ -1,6 +1,11 @@
-import { formatTimestamp, formatAuditAction } from './trustUtils'
+import { formatTimestamp, formatAuditAction, type AuditActionPayload } from './trustUtils'
+import type { AuditEvent } from '../../../api/clients/trustClient'
 
-export default function AuditLogPanel({ auditEvents }) {
+interface AuditLogPanelProps {
+  auditEvents: AuditEvent[]
+}
+
+export default function AuditLogPanel({ auditEvents }: AuditLogPanelProps) {
   return (
     <div>
       {auditEvents.length === 0 && (
@@ -14,7 +19,7 @@ export default function AuditLogPanel({ auditEvents }) {
 
       {auditEvents.length > 0 && (
         <div className="space-y-2">
-          {auditEvents.map((event, idx) => (
+          {auditEvents.map((event: AuditEvent, idx: number) => (
             <div
               key={event.id || idx}
               className="border border-border rounded-lg p-3 bg-surface"
@@ -22,7 +27,7 @@ export default function AuditLogPanel({ auditEvents }) {
               <div className="flex items-start justify-between gap-3">
                 <div className="flex-1 min-w-0">
                   <p className="text-sm text-primary">
-                    {formatAuditAction(event.action)}
+                    {formatAuditAction(event.action as AuditActionPayload)}
                   </p>
                   <span className="text-xs text-tertiary">
                     {formatTimestamp(event.timestamp)}

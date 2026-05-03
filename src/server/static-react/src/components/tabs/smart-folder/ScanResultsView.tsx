@@ -1,24 +1,29 @@
 import { useRef } from 'react'
-import FolderTreeView from '../FolderTreeView'
+import FolderTreeView, { type FolderTreeViewHandle } from '../FolderTreeView'
 import ScanAdjustChat from './ScanAdjustChat'
 import { fmtCost } from '../../../utils/formatCost'
+import type {
+  SmartFolderScanResponse,
+  FileRecommendation,
+} from '../../../api/clients/ingestionClient'
 
-/**
- * Displays scan results: file counts, cost estimate, folder tree, AI chat panel, and action buttons.
- *
- * @param {Object} props
- * @param {Object} props.scanResult
- * @param {Function} props.onScanResultUpdate - Called when AI chat adjusts the scan result
- * @param {string} props.spendLimit
- * @param {Function} props.onSpendLimitChange
- * @param {boolean} props.includeAlreadyIngested
- * @param {Function} props.onIncludeChange
- * @param {Function} props.onIngest
- * @param {Function} props.onLoadMore
- * @param {Function} props.onBack
- * @param {boolean} props.isIngesting
- * @param {boolean} props.isLoadingMore
- */
+type FileRecommendationWithFlag = FileRecommendation & { already_ingested?: boolean }
+
+interface ScanResultsViewProps {
+  scanResult: SmartFolderScanResponse
+  onScanResultUpdate: (next: SmartFolderScanResponse) => void
+  spendLimit: string
+  onSpendLimitChange: (next: string) => void
+  includeAlreadyIngested: boolean
+  onIncludeChange: (val: boolean) => void
+  onIngest: () => void
+  onLoadMore: () => void
+  onBack: () => void
+  isIngesting: boolean
+  isLoadingMore: boolean
+}
+
+/** Displays scan results: file counts, cost estimate, folder tree, AI chat panel, and action buttons. */
 export default function ScanResultsView({
   scanResult,
   onScanResultUpdate,
@@ -31,19 +36,20 @@ export default function ScanResultsView({
   onBack,
   isIngesting,
   isLoadingMore,
-}) {
-  const treeRef = useRef(null)
+}: ScanResultsViewProps) {
+  const treeRef = useRef<FolderTreeViewHandle | null>(null)
   const estimatedCost = scanResult?.total_estimated_cost
 
+  const skipped = scanResult.skipped_files as FileRecommendationWithFlag[]
   const totalFiles = scanResult.recommended_files.length +
-    (includeAlreadyIngested ? scanResult.skipped_files.filter(f => f.already_ingested).length : 0)
+    (includeAlreadyIngested ? skipped.filter(f => f.already_ingested).length : 0)
 
   return (
     <>
       <div className="flex items-center justify-between">
         <div className="flex items-center gap-6 text-sm">
           <span className="text-primary font-medium">{scanResult.recommended_files.length} files to ingest</span>
-          {scanResult.skipped_files.filter(f => f.already_ingested).length > 0 && (
+          {skipped.filter(f => f.already_ingested).length > 0 && (
             <label className="flex items-center gap-1.5 cursor-pointer">
               <input
                 type="checkbox"
@@ -52,11 +58,11 @@ export default function ScanResultsView({
                 className="accent-gruvbox-blue"
               />
               <span className={includeAlreadyIngested ? 'text-primary font-medium' : 'text-gruvbox-blue'}>
-                {scanResult.skipped_files.filter(f => f.already_ingested).length} already ingested
+                {skipped.filter(f => f.already_ingested).length} already ingested
               </span>
             </label>
           )}
-          <span className="text-secondary">{scanResult.skipped_files.filter(f => !f.already_ingested).length} skipped</span>
+          <span className="text-secondary">{skipped.filter(f => !f.already_ingested).length} skipped</span>
           <span className="text-secondary">{scanResult.total_files} total</span>
         </div>
         {Object.keys(scanResult.summary).length > 0 && (

@@ -1,24 +1,38 @@
+import * as React from 'react'
 import { useState } from 'react'
 import DirectoryBrowserModal from './DirectoryBrowserModal'
+import type { useFolderAutocomplete } from '../../../hooks/useFolderAutocomplete'
 
 /**
  * Tauri capabilities required in src-tauri/capabilities/default.json:
  *   - dialog:allow-open   (Browse button: open({ directory: true }))
  */
 
-const isTauri = typeof window !== 'undefined' && window.__TAURI_INTERNALS__
+declare global {
+  interface Window {
+    __TAURI_INTERNALS__?: unknown
+  }
+}
+
+const isTauri = typeof window !== 'undefined' && Boolean(window.__TAURI_INTERNALS__)
+
+interface ScanProgress {
+  progress_percentage?: number
+  status_message?: string
+}
+
+interface FolderInputProps {
+  folderPath: string
+  onFolderPathChange: (path: string) => void
+  onScan: () => void
+  onCancelScan: () => void
+  isScanning: boolean
+  scanProgress: ScanProgress | null
+  autocomplete: ReturnType<typeof useFolderAutocomplete>
+}
 
 /**
  * Folder path input with autocomplete, scan/cancel button, and progress display.
- *
- * @param {Object} props
- * @param {string} props.folderPath
- * @param {Function} props.onFolderPathChange
- * @param {Function} props.onScan - Called with no args to start a scan
- * @param {Function} props.onCancelScan
- * @param {boolean} props.isScanning
- * @param {Object|null} props.scanProgress
- * @param {Object} props.autocomplete - Return value from useFolderAutocomplete
  */
 export default function FolderInput({
   folderPath,
@@ -28,7 +42,7 @@ export default function FolderInput({
   isScanning,
   scanProgress,
   autocomplete,
-}) {
+}: FolderInputProps) {
   const {
     suggestions,
     selectedIndex,
@@ -41,7 +55,7 @@ export default function FolderInput({
     suggestionsRef,
   } = autocomplete
 
-  const [, setPickerError] = useState(null)
+  const [, setPickerError] = useState<unknown>(null)
   const [showBrowser, setShowBrowser] = useState(false)
 
   const openFolderPicker = async () => {
@@ -49,7 +63,7 @@ export default function FolderInput({
       try {
         const { open } = await import('@tauri-apps/plugin-dialog')
         const selected = await open({ directory: true, multiple: false, title: 'Select folder to scan' })
-        if (selected) onFolderPathChange(selected)
+        if (selected && typeof selected === 'string') onFolderPathChange(selected)
       } catch (error) {
         setPickerError(error)
         console.error('Failed to open folder picker:', error)
@@ -59,7 +73,7 @@ export default function FolderInput({
     }
   }
 
-  const handleBrowserSelect = (path) => {
+  const handleBrowserSelect = (path: string) => {
     onFolderPathChange(path)
     setShowBrowser(false)
   }
@@ -82,10 +96,10 @@ export default function FolderInput({
           />
           {showSuggestions && suggestions.length > 0 && (
             <ul
-              ref={suggestionsRef}
+              ref={suggestionsRef as unknown as React.RefObject<HTMLUListElement>}
               className="absolute z-50 left-0 right-0 top-full mt-1 border border-border rounded-lg bg-surface shadow-lg max-h-48 overflow-y-auto"
             >
-              {suggestions.map((path, i) => (
+              {suggestions.map((path: string, i: number) => (
                 <li
                   key={path}
                   className={`px-3 py-1.5 cursor-pointer text-sm font-mono truncate ${

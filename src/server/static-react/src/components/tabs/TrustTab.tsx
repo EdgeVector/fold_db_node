@@ -19,6 +19,7 @@ import type {
   SharingRole,
   SharingPosture,
   AuditEvent,
+  SharingAuditResult,
 } from '../../api/clients/trustClient'
 import ContactsPanel from './trust/ContactsPanel'
 import InvitePanel from './trust/InvitePanel'
@@ -50,7 +51,7 @@ function TrustTab({ onResult }: TrustTabProps) {
   // Roles & audit
   const [availableRoles, setAvailableRoles] = useState<Record<string, SharingRole>>({})
   const [selectedContact, setSelectedContact] = useState<string | null>(null)
-  const [auditResult, setAuditResult] = useState<unknown>(null)
+  const [auditResult, setAuditResult] = useState<SharingAuditResult | null>(null)
   const [auditLoading, setAuditLoading] = useState(false)
   const [assigningRole, setAssigningRole] = useState(false)
 

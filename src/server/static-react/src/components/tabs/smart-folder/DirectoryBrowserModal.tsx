@@ -1,22 +1,23 @@
-import { useState, useEffect, useRef, useCallback } from 'react'
+import { useState, useEffect, useRef, useCallback, type KeyboardEvent } from 'react'
 import { ingestionClient } from '../../../api/clients'
+
+interface DirectoryBrowserModalProps {
+  initialPath: string
+  onSelect: (path: string) => void
+  onClose: () => void
+}
 
 /**
  * Modal for browsing and selecting a directory via the web UI.
- *
- * @param {Object} props
- * @param {string} props.initialPath - Starting directory path
- * @param {Function} props.onSelect - Called with chosen directory path
- * @param {Function} props.onClose - Called to dismiss the modal
  */
-export default function DirectoryBrowserModal({ initialPath, onSelect, onClose }) {
-  const [currentPath, setCurrentPath] = useState(initialPath || '/')
-  const [directories, setDirectories] = useState([])
+export default function DirectoryBrowserModal({ initialPath, onSelect, onClose }: DirectoryBrowserModalProps) {
+  const [currentPath, setCurrentPath] = useState<string>(initialPath || '/')
+  const [directories, setDirectories] = useState<string[]>([])
   const [loading, setLoading] = useState(false)
-  const [error, setError] = useState(null)
-  const modalRef = useRef(null)
+  const [error, setError] = useState<string | null>(null)
+  const modalRef = useRef<HTMLDivElement | null>(null)
 
-  const fetchDirectories = useCallback(async (path) => {
+  const fetchDirectories = useCallback(async (path: string) => {
     setLoading(true)
     setError(null)
     try {
@@ -48,14 +49,14 @@ export default function DirectoryBrowserModal({ initialPath, onSelect, onClose }
     fetchDirectories(parent)
   }
 
-  const navigateInto = (dirName) => {
+  const navigateInto = (dirName: string) => {
     const next = currentPath.endsWith('/')
       ? currentPath + dirName
       : currentPath + '/' + dirName
     fetchDirectories(next)
   }
 
-  const handleKeyDown = (e) => {
+  const handleKeyDown = (e: KeyboardEvent<HTMLDivElement>) => {
     if (e.key === 'Escape') onClose()
   }
 
@@ -104,7 +105,7 @@ export default function DirectoryBrowserModal({ initialPath, onSelect, onClose }
           )}
           {!loading && directories.length > 0 && (
             <ul className="space-y-0.5">
-              {directories.map((dir) => (
+              {directories.map((dir: string) => (
                 <li key={dir}>
                   <button
                     className="w-full text-left px-3 py-1.5 text-sm font-mono rounded hover:bg-gruvbox-hover truncate"

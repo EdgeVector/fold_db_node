@@ -2,7 +2,11 @@
  * Info panel for FileUploadTab
  * Shows how-it-works instructions per upload mode
  */
-function UploadInfoPanel({ uploadMode }) {
+interface UploadInfoPanelProps {
+  uploadMode: 'batch-folder' | 's3-path' | string
+}
+
+function UploadInfoPanel({ uploadMode }: UploadInfoPanelProps) {
   return (
     <div className="card card-info p-4">
       <div className="flex items-start gap-3">
