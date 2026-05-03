@@ -1,4 +1,5 @@
 import { useState } from 'react'
+import type { OperationResultPayload } from '../../types/api'
 import TrustTab from './TrustTab'
 import SharingTab from './SharingTab'
 import FeedTab from './FeedTab'
@@ -11,7 +12,12 @@ import CrossUserSharingPanel from './sharing/CrossUserSharingPanel'
 import ImportedIdentitiesPanel from './personas/ImportedIdentitiesPanel'
 import ReceivedCardsPanel from './personas/ReceivedCardsPanel'
 
-const SUB_TAB_GROUPS = [
+interface SubTabGroup {
+  label: string
+  tabs: Array<{ id: string; label: string }>
+}
+
+const SUB_TAB_GROUPS: SubTabGroup[] = [
   {
     label: 'Contacts',
     tabs: [
@@ -50,7 +56,11 @@ const SUB_TAB_GROUPS = [
   },
 ]
 
-export default function PeopleTab({ onResult }) {
+interface PeopleTabProps {
+  onResult: (result: OperationResultPayload) => void
+}
+
+export default function PeopleTab({ onResult }: PeopleTabProps) {
   const [activeSubTab, setActiveSubTab] = useState('personas')
 
   const renderContent = () => {

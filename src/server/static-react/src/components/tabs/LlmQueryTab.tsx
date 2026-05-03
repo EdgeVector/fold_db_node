@@ -7,6 +7,8 @@
  */
 
 import { useCallback, useRef, useEffect, useState } from 'react';
+import type { FormEvent } from 'react';
+import type { OperationResultPayload } from '../../types/api';
 import { llmQueryClient } from '../../api/clients/llmQueryClient';
 import { mutationClient } from '../../api/clients/mutationClient';
 import { createHashKeyFilter } from '../../utils/filterUtils';
@@ -32,9 +34,30 @@ import {
   selectCanAskFollowup,
   selectViewMode,
 } from '../../store/aiQuerySlice';
+import type { ConversationMessage } from '../../store/aiQuerySlice';
 import { unwrapFieldValue as unwrap } from '../../utils/fieldUtils';
 
-function LlmQueryTab({ onResult }) {
+interface LlmQueryTabProps {
+  onResult: (result: OperationResultPayload | null) => void
+}
+
+interface ImageItem {
+  fileHash: string
+  sourceFile?: string
+}
+
+interface ToolCallResult {
+  tool?: string
+  result?: unknown
+}
+
+interface AgentResultData {
+  session_id?: string
+  answer?: string
+  tool_calls?: ToolCallResult[]
+}
+
+function LlmQueryTab({ onResult }: LlmQueryTabProps) {
   // Redux state and dispatch
   const dispatch = useAppDispatch();
   const inputText = useAppSelector(selectInputText);
@@ -47,9 +70,9 @@ function LlmQueryTab({ onResult }) {
   const viewMode = useAppSelector(selectViewMode);
   const [isLoadingConversation, setIsLoadingConversation] = useState(false);
   const [thinkingSeconds, setThinkingSeconds] = useState(0);
-  const thinkingTimerRef = useRef(null);
+  const thinkingTimerRef = useRef<ReturnType<typeof setInterval> | null>(null);
 
-  const conversationEndRef = useRef(null);
+  const conversationEndRef = useRef<HTMLDivElement | null>(null);
 
   // Auto-scroll to bottom when conversation updates
   useEffect(() => {
@@ -76,18 +99,19 @@ function LlmQueryTab({ onResult }) {
     };
   }, [isProcessing]);
 
-  const addToLog = useCallback((type, content, data = null) => {
-    dispatch(addMessage({ type, content, data }));
+  const addToLog = useCallback((type: string, content: string, data: unknown = null) => {
+    dispatch(addMessage({ type: type as ConversationMessage['type'], content, data }));
   }, [dispatch]);
 
   /** Process an AI agent response — shared by follow-up and new-query paths */
-  const processAgentResponse = useCallback((agentResponse) => {
+  const processAgentResponse = useCallback((agentResponse: { success: boolean; error?: string; data?: AgentResultData }) => {
     if (!agentResponse.success) {
       addToLog('system', `[error] ${agentResponse.error || 'Failed to run AI agent query'}`);
       return;
     }
 
     const result = agentResponse.data;
+    if (!result) return;
 
     if (result.session_id) {
       dispatch(setSessionId(result.session_id));
@@ -98,7 +122,7 @@ function LlmQueryTab({ onResult }) {
       addToLog('results', 'Tool execution trace', result.tool_calls);
     }
 
-    addToLog('system', result.answer);
+    addToLog('system', result.answer ?? '');
 
     if (result.tool_calls) {
       const images = extractImagesFromToolCalls(result.tool_calls);
@@ -113,7 +137,7 @@ function LlmQueryTab({ onResult }) {
   }, [addToLog, dispatch, showResults, onResult]);
 
   /** Submit a query — core logic shared by form submit and suggestion clicks */
-  const submitQuery = useCallback(async (text) => {
+  const submitQuery = useCallback(async (text: string) => {
     const userInput = text.trim();
     if (!userInput || isProcessing) {
       return;
@@ -127,10 +151,10 @@ function LlmQueryTab({ onResult }) {
     const runAgentQuery = async () => {
       const agentResponse = await llmQueryClient.agentQuery({
         query: userInput,
-        session_id: sessionId,
+        session_id: sessionId ?? undefined,
         max_iterations: 10
       });
-      processAgentResponse(agentResponse);
+      processAgentResponse(agentResponse as unknown as { success: boolean; error?: string; data?: AgentResultData });
     };
 
     try {
@@ -139,7 +163,7 @@ function LlmQueryTab({ onResult }) {
         try {
           addToLog('system', '[analyze] checking whether existing context answers this…');
           analysisResponse = await llmQueryClient.analyzeFollowup({
-            session_id: sessionId,
+            session_id: sessionId ?? '',
             question: userInput
           });
         } catch {
@@ -152,13 +176,13 @@ function LlmQueryTab({ onResult }) {
           return;
         }
 
-        const analysis = analysisResponse.data;
+        const analysis = analysisResponse.data as { needs_query?: boolean; reasoning?: string } | undefined;
 
-        if (!analysis.needs_query) {
-          addToLog('system', `[ok] answering from existing context: ${analysis.reasoning}`);
+        if (analysis && !analysis.needs_query) {
+          addToLog('system', `[ok] answering from existing context: ${analysis.reasoning ?? ''}`);
 
           const chatResponse = await llmQueryClient.chat({
-            session_id: sessionId,
+            session_id: sessionId ?? '',
             question: userInput
           });
 
@@ -167,9 +191,10 @@ function LlmQueryTab({ onResult }) {
             return;
           }
 
-          addToLog('system', chatResponse.data.answer);
+          const chatData = chatResponse.data as { answer?: string } | undefined;
+          addToLog('system', chatData?.answer ?? '');
         } else {
-          addToLog('system', `[search] need new data: ${analysis.reasoning}`);
+          addToLog('system', `[search] need new data: ${analysis?.reasoning ?? ''}`);
           await runAgentQuery();
         }
       } else {
@@ -185,13 +210,13 @@ function LlmQueryTab({ onResult }) {
     }
   }, [sessionId, canAskFollowup, isProcessing, processAgentResponse, addToLog, onResult, dispatch]);
 
-  const handleSubmit = useCallback(async (e) => {
+  const handleSubmit = useCallback(async (e?: FormEvent<HTMLFormElement>) => {
     e?.preventDefault();
     await submitQuery(inputText);
   }, [inputText, submitQuery]);
 
   /** Load a past conversation by session ID */
-  const handleSelectConversation = useCallback(async (selectedSessionId) => {
+  const handleSelectConversation = useCallback(async (selectedSessionId: string) => {
     setIsLoadingConversation(true);
     try {
       const response = await mutationClient.executeQuery({
@@ -206,25 +231,27 @@ function LlmQueryTab({ onResult }) {
         return;
       }
 
-      const records = response.data?.results || response.data?.data || [];
+      const respData = response.data as { results?: unknown[]; data?: unknown[] } | undefined;
+      const records = respData?.results || respData?.data || [];
       if (!Array.isArray(records) || records.length === 0) {
         dispatch(startNewConversation());
         return;
       }
 
-      const sorted = [...records].sort((a, b) => {
-        const fa = a.fields || a;
-        const fb = b.fields || b;
+      type RecordLike = { fields?: Record<string, unknown> } & Record<string, unknown>;
+      const sorted = [...(records as RecordLike[])].sort((a, b) => {
+        const fa = (a.fields ?? a) as Record<string, unknown>;
+        const fb = (b.fields ?? b) as Record<string, unknown>;
         return String(unwrap(fa.timestamp) || '').localeCompare(String(unwrap(fb.timestamp) || ''));
       });
 
-      const messages = [];
+      const messages: Array<Omit<ConversationMessage, 'id' | 'type'> & { type: string }> = [];
       for (const record of sorted) {
-        const raw = record.fields || record;
-        const timestamp = unwrap(raw.timestamp) || new Date().toISOString();
-        const query = unwrap(raw.query);
-        const answer = unwrap(raw.answer);
-        const toolCallsJson = unwrap(raw.tool_calls_json);
+        const raw = (record.fields ?? record) as Record<string, unknown>;
+        const timestamp = (unwrap(raw.timestamp) as string | undefined) || new Date().toISOString();
+        const query = unwrap(raw.query) as string | undefined;
+        const answer = unwrap(raw.answer) as string | undefined;
+        const toolCallsJson = unwrap(raw.tool_calls_json) as string | undefined;
 
         if (query) {
           messages.push({ type: 'user', content: query, timestamp });
@@ -232,7 +259,7 @@ function LlmQueryTab({ onResult }) {
 
         if (toolCallsJson) {
           try {
-            const toolCalls = JSON.parse(toolCallsJson);
+            const toolCalls = JSON.parse(toolCallsJson) as unknown[];
             if (Array.isArray(toolCalls) && toolCalls.length > 0) {
               messages.push({
                 type: 'system',
@@ -257,16 +284,16 @@ function LlmQueryTab({ onResult }) {
 
         if (toolCallsJson) {
           try {
-            const toolCalls = JSON.parse(toolCallsJson);
+            const toolCalls = JSON.parse(toolCallsJson) as ToolCallResult[];
             const images = extractImagesFromToolCalls(toolCalls);
             if (images.length > 0) {
-              messages.push({ type: 'images', content: `${images.length} image(s)`, data: images, timestamp });
+              messages.push({ type: 'system', content: `${images.length} image(s)`, data: images, timestamp });
             }
           } catch { /* already handled above */ }
         }
       }
 
-      dispatch(loadConversation({ sessionId: selectedSessionId, messages }));
+      dispatch(loadConversation({ sessionId: selectedSessionId, messages: messages as ConversationMessage[] }));
     } catch (err) {
       console.error('Error loading conversation:', err);
       dispatch(setViewMode('chat'));
@@ -350,12 +377,12 @@ function LlmQueryTab({ onResult }) {
                 </div>
               )}
 
-              {entry.type === 'images' && Array.isArray(entry.data) && entry.data.length > 0 && (
+              {(entry.type as string) === 'images' && Array.isArray(entry.data) && entry.data.length > 0 && (
                 <div className="flex justify-start">
                   <div className="max-w-[80%] px-4 py-3 bg-surface-secondary border border-border rounded-lg">
                     <p className="text-xs text-tertiary mb-2">{entry.data.length} image{entry.data.length !== 1 ? 's' : ''}</p>
                     <div className="flex flex-wrap gap-2">
-                      {entry.data.map((img) => (
+                      {(entry.data as ImageItem[]).map((img) => (
                         <ImageThumbnail key={img.fileHash} fileHash={img.fileHash} sourceFile={img.sourceFile} />
                       ))}
                     </div>
@@ -363,11 +390,11 @@ function LlmQueryTab({ onResult }) {
                 </div>
               )}
 
-              {entry.type === 'results' && entry.data && (
+              {entry.type === 'results' && entry.data != null && (
                 <div className="border border-border bg-surface p-4 rounded-lg">
                   <div className="flex justify-between items-center mb-2">
                     <p className="text-sm font-medium text-primary">
-                      Results ({entry.data.length})
+                      Results ({Array.isArray(entry.data) ? entry.data.length : 0})
                     </p>
                     <button
                       onClick={() => {
@@ -394,7 +421,7 @@ function LlmQueryTab({ onResult }) {
                       </div>
                       <details className="mt-2">
                         <summary className="cursor-pointer text-sm text-secondary">
-                          View raw data ({entry.data.length} records)
+                          View raw data ({Array.isArray(entry.data) ? entry.data.length : 0} records)
                         </summary>
                         <div className="mt-2 max-h-64 overflow-y-auto">
                           <pre className="text-xs font-mono bg-surface-secondary p-3 border border-border overflow-x-auto">

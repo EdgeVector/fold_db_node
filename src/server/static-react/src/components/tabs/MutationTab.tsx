@@ -1,4 +1,6 @@
 import { useState } from 'react'
+import type { FormEvent } from 'react'
+import type { OperationResultPayload } from '../../types/api'
 import SchemaSelector from './mutation/SchemaSelector'
 import MutationEditor from './mutation/MutationEditor'
 import ResultViewer from './mutation/ResultViewer'
@@ -15,17 +17,27 @@ import {
 import { useAppSelector } from '../../store/hooks'
 import { selectApprovedSchemas } from '../../store/schemaSlice'
 
-function MutationTab({ onResult }) {
+interface MutationTabProps {
+  onResult: (result: OperationResultPayload) => void
+}
+
+interface MutationResult {
+  success: boolean
+  data?: unknown
+  error?: string
+}
+
+function MutationTab({ onResult }: MutationTabProps) {
   // Redux state
   const schemas = useAppSelector(selectApprovedSchemas)
   const [selectedSchema, setSelectedSchema] = useState('')
-  const [mutationData, setMutationData] = useState({})
+  const [mutationData, setMutationData] = useState<Record<string, unknown>>({})
   const [mutationType, setMutationType] = useState('Insert')
-  const [result, setResult] = useState(null)
+  const [result, setResult] = useState<MutationResult | null>(null)
   const [rangeKeyValue, setRangeKeyValue] = useState('')
   const [hashKeyValue, setHashKeyValue] = useState('')
 
-  const handleSchemaChange = (schemaName) => {
+  const handleSchemaChange = (schemaName: string) => {
     setSelectedSchema(schemaName)
     setMutationData({})
     setMutationType('Insert')
@@ -34,21 +46,21 @@ function MutationTab({ onResult }) {
     setResult(null)
   }
 
-  const handleFieldChange = (fieldName, value) => {
+  const handleFieldChange = (fieldName: string, value: unknown) => {
     setMutationData(prev => ({ ...prev, [fieldName]: value }))
   }
 
-  const handleSubmit = async (e) => {
+  const handleSubmit = async (e: FormEvent<HTMLFormElement>) => {
     e.preventDefault()
     if (!selectedSchema) return
 
     const selectedSchemaObj = schemas.find(s => s.name === selectedSchema)
     const normalizedMutationType = mutationType
-      ? (MUTATION_TYPE_API_MAP[mutationType] || mutationType.toLowerCase())
+      ? ((MUTATION_TYPE_API_MAP as Record<string, string>)[mutationType] || mutationType.toLowerCase())
       : ''
     if (!normalizedMutationType) return
 
-    let mutation
+    let mutation: Record<string, unknown>
 
     if (isHashRangeSchema(selectedSchemaObj)) {
       // HashRange: plain values with hash + range key
@@ -63,7 +75,7 @@ function MutationTab({ onResult }) {
         }
       }
     } else if (isRangeSchema(selectedSchemaObj)) {
-      mutation = formatRangeMutation(selectedSchemaObj, mutationType, rangeKeyValue, mutationData)
+      mutation = formatRangeMutation(selectedSchemaObj, mutationType, rangeKeyValue, mutationData) as unknown as Record<string, unknown>
     } else {
       // Single schema — hash key only
       mutation = {
@@ -104,13 +116,13 @@ function MutationTab({ onResult }) {
 
   // Convert declarative schema fields array to object format for MutationEditor
   // Filter out key fields (they're shown separately in Key Configuration)
-  const getFieldsForMutation = () => {
+  const getFieldsForMutation = (): Record<string, Record<string, unknown>> => {
     if (!selectedSchemaObj || !Array.isArray(selectedSchemaObj.fields)) return {}
 
-    const keyFields = [hashKey, rangeKey].filter(Boolean)
-    const fieldsToShow = selectedSchemaObj.fields.filter(field => !keyFields.includes(field))
+    const keyFields = [hashKey, rangeKey].filter((k): k is string => Boolean(k))
+    const fieldsToShow = (selectedSchemaObj.fields as string[]).filter(field => !keyFields.includes(field))
 
-    return fieldsToShow.reduce((acc, fieldName) => {
+    return fieldsToShow.reduce<Record<string, Record<string, unknown>>>((acc, fieldName) => {
       acc[fieldName] = {}
       return acc
     }, {})

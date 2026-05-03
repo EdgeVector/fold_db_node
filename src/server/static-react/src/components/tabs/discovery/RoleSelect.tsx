@@ -1,5 +1,10 @@
+interface RoleSelectProps {
+  value: string
+  onChange: (value: string) => void
+}
+
 /** Inline role selector for the connect flow. */
-export default function RoleSelect({ value, onChange }) {
+export default function RoleSelect({ value, onChange }: RoleSelectProps) {
   return (
     <select
       value={value}

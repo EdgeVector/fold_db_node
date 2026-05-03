@@ -1,6 +1,28 @@
+import type { Schema } from '../../../types/schema'
+import type { DiscoveryOptIn, PublishResult } from '../../../api/clients/discoveryClient'
 import CategoryCard from './CategoryCard'
 import PrivacyGuarantees from './PrivacyGuarantees'
 import EmptyState from './EmptyState'
+
+interface ManageInterestsPanelProps {
+  hasSchemas: boolean
+  configs: DiscoveryOptIn[]
+  approvedSchemas: Schema[]
+  categoryGroups: Record<string, Schema[]>
+  categoryNames: string[]
+  optedInNames: Set<string>
+  publishedCategories: Set<string>
+  expandedCategories: Set<string>
+  publishFacesCategories: Set<string>
+  toggling: boolean
+  publishing: boolean
+  lastPublishResult: PublishResult | null
+  onToggleCategory: (category: string, schemas: Schema[], val: boolean) => void
+  onBulkAction: (action: 'publish-all' | 'unpublish-all') => void
+  onPublish: () => void
+  onExpandToggle: (category: string) => void
+  onPublishFacesToggle: (category: string, value: boolean) => void
+}
 
 export default function ManageInterestsPanel({
   hasSchemas,
@@ -20,7 +42,7 @@ export default function ManageInterestsPanel({
   onPublish,
   onExpandToggle,
   onPublishFacesToggle,
-}) {
+}: ManageInterestsPanelProps) {
   if (!hasSchemas) return <EmptyState />
 
   const totalSchemas = approvedSchemas.length

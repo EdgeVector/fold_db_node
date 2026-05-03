@@ -1,6 +1,12 @@
 import { useCallback, useEffect, useState } from 'react'
+import type { OperationResultPayload } from '../../types/api'
+import type { Schema } from '../../types/schema'
 import { useApprovedSchemas } from '../../hooks/useApprovedSchemas.js'
-import { discoveryClient } from '../../api/clients/discoveryClient'
+import {
+  discoveryClient,
+  type DiscoveryOptIn,
+  type PublishResult,
+} from '../../api/clients/discoveryClient'
 import { toErrorMessage } from '../../utils/schemaUtils'
 import SearchPanel from './discovery/SearchPanel'
 import FaceSearchPanel from './discovery/FaceSearchPanel'
@@ -40,17 +46,23 @@ function isCloudActive() {
   return !!window.localStorage.getItem('exemem_api_key')
 }
 
-export default function DiscoveryTab({ onResult }) {
-  const { approvedSchemas } = useApprovedSchemas()
-  const [configs, setConfigs] = useState([])
+interface DiscoveryTabProps {
+  onResult: (result: OperationResultPayload & { message?: string }) => void
+}
+
+type LastPublishResult = PublishResult | { existing: true } | null
+
+export default function DiscoveryTab({ onResult }: DiscoveryTabProps) {
+  const { approvedSchemas } = useApprovedSchemas() as { approvedSchemas: Schema[] }
+  const [configs, setConfigs] = useState<DiscoveryOptIn[]>([])
   const [publishing, setPublishing] = useState(false)
   const [activeSection, setActiveSection] = useState('people')
-  const [error, setError] = useState(null)
+  const [error, setError] = useState<string | null>(null)
   const [serviceAvailable, setServiceAvailable] = useState(true)
-  const [expandedCategories, setExpandedCategories] = useState(new Set())
+  const [expandedCategories, setExpandedCategories] = useState<Set<string>>(new Set())
   const [toggling, setToggling] = useState(false)
-  const [lastPublishResult, setLastPublishResult] = useState(null)
-  const [publishFacesCategories, setPublishFacesCategories] = useState(new Set())
+  const [lastPublishResult, setLastPublishResult] = useState<LastPublishResult>(null)
+  const [publishFacesCategories, setPublishFacesCategories] = useState<Set<string>>(new Set())
 
   const optedInNames = new Set(configs.map(c => c.schema_name))
 
@@ -86,7 +98,7 @@ export default function DiscoveryTab({ onResult }) {
 
   useEffect(() => { loadConfigs() }, [loadConfigs])
 
-  const handlePublishFacesToggle = async (category, enabled) => {
+  const handlePublishFacesToggle = async (category: string, enabled: boolean) => {
     setPublishFacesCategories(prev => {
       const next = new Set(prev)
       if (enabled) next.add(category)
@@ -112,7 +124,7 @@ export default function DiscoveryTab({ onResult }) {
         if (res.success) {
           setConfigs(res.data?.configs || [])
         } else {
-          setError(res.error)
+          setError(res.error ?? null)
           break
         }
       }
@@ -123,7 +135,7 @@ export default function DiscoveryTab({ onResult }) {
     }
   }
 
-  const handleToggleCategory = async (category, schemas, enable) => {
+  const handleToggleCategory = async (category: string, schemas: Schema[], enable: boolean) => {
     setToggling(true)
     setError(null)
     try {
@@ -140,7 +152,7 @@ export default function DiscoveryTab({ onResult }) {
             if (res.success) {
               setConfigs(res.data?.configs || [])
             } else {
-              setError(res.error)
+              setError(res.error ?? null)
               break
             }
           }
@@ -153,7 +165,7 @@ export default function DiscoveryTab({ onResult }) {
             if (res.success) {
               setConfigs(res.data?.configs || [])
             } else {
-              setError(res.error)
+              setError(res.error ?? null)
               break
             }
           }
@@ -166,7 +178,7 @@ export default function DiscoveryTab({ onResult }) {
     }
   }
 
-  const handleBulkAction = async (action) => {
+  const handleBulkAction = async (action: 'publish-all' | 'unpublish-all') => {
     setToggling(true)
     setError(null)
     try {
@@ -204,7 +216,7 @@ export default function DiscoveryTab({ onResult }) {
     try {
       const res = await discoveryClient.publish()
       if (res.success) {
-        setLastPublishResult(res.data)
+        setLastPublishResult(res.data ?? null)
         onResult({
           success: true,
           data: {
@@ -213,8 +225,8 @@ export default function DiscoveryTab({ onResult }) {
           },
         })
       } else {
-        setError(res.error)
-        onResult({ error: res.error })
+        setError(res.error ?? null)
+        onResult({ error: res.error ?? "Unknown error" })
       }
     } catch (e) {
       const msg = toErrorMessage(e)
@@ -225,7 +237,7 @@ export default function DiscoveryTab({ onResult }) {
     }
   }
 
-  const toggleExpand = (cat) => {
+  const toggleExpand = (cat: string) => {
     setExpandedCategories(prev => {
       const next = new Set(prev)
       if (next.has(cat)) next.delete(cat)
@@ -290,7 +302,7 @@ export default function DiscoveryTab({ onResult }) {
           publishFacesCategories={publishFacesCategories}
           toggling={toggling}
           publishing={publishing}
-          lastPublishResult={lastPublishResult}
+          lastPublishResult={lastPublishResult && 'accepted' in lastPublishResult ? lastPublishResult : null}
           onToggleCategory={handleToggleCategory}
           onBulkAction={handleBulkAction}
           onPublish={handlePublish}

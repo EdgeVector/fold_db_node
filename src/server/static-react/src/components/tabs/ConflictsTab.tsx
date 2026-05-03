@@ -1,11 +1,11 @@
 import { useState, useEffect, useCallback } from 'react'
-import { getConflicts, resolveConflict } from '../../api/clients/conflictClient'
+import { getConflicts, resolveConflict, type ConflictSummary } from '../../api/clients/conflictClient'
 
 function ConflictsTab() {
-  const [conflicts, setConflicts] = useState([])
+  const [conflicts, setConflicts] = useState<ConflictSummary[]>([])
   const [loading, setLoading] = useState(true)
-  const [error, setError] = useState(null)
-  const [resolving, setResolving] = useState(null)
+  const [error, setError] = useState<string | null>(null)
+  const [resolving, setResolving] = useState<string | null>(null)
   const [filterMolecule, setFilterMolecule] = useState('')
 
   const fetchConflicts = useCallback(async () => {
@@ -15,7 +15,7 @@ function ConflictsTab() {
       const response = await getConflicts(filterMolecule || undefined)
       setConflicts(response.data?.conflicts || [])
     } catch (err) {
-      setError(err.message || 'Failed to load conflicts')
+      setError((err instanceof Error ? err.message : null) || 'Failed to load conflicts')
     } finally {
       setLoading(false)
     }
@@ -25,13 +25,13 @@ function ConflictsTab() {
     fetchConflicts()
   }, [fetchConflicts])
 
-  const handleResolve = async (conflictId) => {
+  const handleResolve = async (conflictId: string) => {
     setResolving(conflictId)
     try {
       await resolveConflict(conflictId)
       setConflicts(prev => prev.filter(c => c.id !== conflictId))
     } catch (err) {
-      setError(err.message || 'Failed to resolve conflict')
+      setError((err instanceof Error ? err.message : null) || 'Failed to resolve conflict')
     } finally {
       setResolving(null)
     }
@@ -43,7 +43,7 @@ function ConflictsTab() {
     }
   }
 
-  const formatTimestamp = (isoString) => {
+  const formatTimestamp = (isoString: string) => {
     try {
       const date = new Date(isoString)
       return date.toLocaleString()
@@ -52,7 +52,7 @@ function ConflictsTab() {
     }
   }
 
-  const truncateUuid = (uuid) => {
+  const truncateUuid = (uuid: string | null | undefined) => {
     if (!uuid) return ''
     if (uuid.length <= 16) return uuid
     return `${uuid.slice(0, 8)}...${uuid.slice(-8)}`
@@ -123,7 +123,7 @@ function ConflictsTab() {
             <button
               className="btn btn-sm"
               onClick={handleResolveAll}
-              disabled={resolving}
+              disabled={Boolean(resolving)}
             >
               Acknowledge All
             </button>

@@ -1,10 +1,31 @@
 import { useState, forwardRef, useImperativeHandle, useMemo } from 'react'
 
-const fmtCostShort = (v) => `$${Number(v).toFixed(3)}`
+interface FileItem {
+  path: string
+  category: string
+  reason: string
+  already_ingested?: boolean
+  should_ingest?: boolean
+  estimated_cost: number
+}
+
+interface TreeNodeData {
+  name: string
+  children: Record<string, TreeNodeData>
+  files: FileItem[]
+}
+
+interface TreeStats {
+  recommended: number
+  skipped: number
+  alreadyIngested: number
+}
+
+const fmtCostShort = (v: number) => `$${Number(v).toFixed(3)}`
 
 /** Build a nested tree structure from flat file paths */
-function buildTree(files) {
-  const root = { name: '', children: {}, files: [] }
+function buildTree(files: FileItem[]): TreeNodeData {
+  const root: TreeNodeData = { name: '', children: {}, files: [] }
   for (const file of files) {
     const parts = file.path.split('/')
     let node = root
@@ -21,7 +42,7 @@ function buildTree(files) {
 }
 
 /** Recursively compute recommended/skipped/alreadyIngested counts for a folder */
-function computeStats(node) {
+function computeStats(node: TreeNodeData): TreeStats {
   let recommended = 0
   let skipped = 0
   let alreadyIngested = 0
@@ -40,8 +61,8 @@ function computeStats(node) {
 }
 
 /** Collect all folder paths in the tree */
-function collectPaths(node, prefix = '') {
-  const paths = []
+function collectPaths(node: TreeNodeData, prefix = ''): string[] {
+  const paths: string[] = []
   for (const [name, child] of Object.entries(node.children)) {
     const path = prefix ? `${prefix}/${name}` : name
     paths.push(path)
@@ -50,7 +71,7 @@ function collectPaths(node, prefix = '') {
   return paths
 }
 
-function FileNode({ file }) {
+function FileNode({ file }: { file: FileItem }) {
   const isIngested = file.already_ingested
   const iconClass = isIngested
     ? 'text-gruvbox-blue text-xs'
@@ -82,7 +103,16 @@ function FileNode({ file }) {
   )
 }
 
-function TreeNode({ node, name, depth, expanded, onToggle, pathPrefix }) {
+interface TreeNodeProps {
+  node: TreeNodeData
+  name: string
+  depth: number
+  expanded: Set<string>
+  onToggle: (path: string) => void
+  pathPrefix: string
+}
+
+function TreeNode({ node, name, depth, expanded, onToggle, pathPrefix }: TreeNodeProps) {
   const path = pathPrefix ? `${pathPrefix}/${name}` : name
   const stats = useMemo(() => computeStats(node), [node])
   const isExpanded = expanded.has(path)
@@ -135,21 +165,31 @@ function TreeNode({ node, name, depth, expanded, onToggle, pathPrefix }) {
   )
 }
 
-const FolderTreeView = forwardRef(function FolderTreeView({ recommendedFiles, skippedFiles }, ref) {
+interface FolderTreeViewProps {
+  recommendedFiles: FileItem[]
+  skippedFiles: FileItem[]
+}
+
+export interface FolderTreeViewHandle {
+  expandAll: () => void
+  collapseAll: () => void
+}
+
+const FolderTreeView = forwardRef<FolderTreeViewHandle, FolderTreeViewProps>(function FolderTreeView({ recommendedFiles, skippedFiles }, ref) {
   const allFiles = useMemo(() => [...recommendedFiles, ...skippedFiles], [recommendedFiles, skippedFiles])
   const tree = useMemo(() => buildTree(allFiles), [allFiles])
   const allPaths = useMemo(() => collectPaths(tree), [tree])
 
   // Auto-expand root-level directories
-  const [expanded, setExpanded] = useState(() => {
-    const initial = new Set()
+  const [expanded, setExpanded] = useState<Set<string>>(() => {
+    const initial = new Set<string>()
     for (const name of Object.keys(tree.children)) {
       initial.add(name)
     }
     return initial
   })
 
-  const toggle = (path) => {
+  const toggle = (path: string) => {
     setExpanded((prev) => {
       const next = new Set(prev)
       if (next.has(path)) next.delete(path)

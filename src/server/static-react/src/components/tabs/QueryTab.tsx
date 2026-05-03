@@ -4,6 +4,7 @@
  */
 
 import { useCallback, useState, useEffect } from 'react';
+import type { OperationResultPayload } from '../../types/api';
 import { mutationClient } from '../../api/clients/mutationClient';
 import { useQueryState } from '../../hooks/useQueryState';
 import { useQueryBuilder } from '../../hooks/useQueryBuilder';
@@ -13,7 +14,11 @@ import QueryPreview from '../query/QueryPreview';
 import { getSchemaDisplayName } from '../../utils/schemaUtils';
 import { useOrgNames } from '../../hooks/useOrgNames';
 
-function QueryTab({ onResult }) {
+interface QueryTabProps {
+  onResult: (result: OperationResultPayload & { details?: unknown }) => void;
+}
+
+function QueryTab({ onResult }: QueryTabProps) {
   const orgNames = useOrgNames()
   // Query state management
   const {
@@ -64,7 +69,7 @@ function QueryTab({ onResult }) {
   /**
    * Handle query execution - follows original QueryTab pattern
    */
-  const handleExecuteQuery = useCallback(async (queryData) => {
+  const handleExecuteQuery = useCallback(async (queryData: Record<string, unknown> | null) => {
     // Backend handles all validation
     if (!queryData) {
       onResult({
@@ -88,9 +93,10 @@ function QueryTab({ onResult }) {
       
       // Pass the actual query data from response.data
       // API returns { ok: true, results: [...] } in data, extract results array
+      const data = response.data as { results?: unknown } | undefined
       onResult({
         success: true,
-        data: response.data?.results || response.data
+        data: data?.results ?? response.data
       });
     } catch (error) {
       console.error('Failed to execute query:', error);
@@ -121,9 +127,9 @@ function QueryTab({ onResult }) {
             queryState={queryState}
             onSchemaChange={handleSchemaChange}
             onFieldToggle={handleFieldToggle}
-            onFieldValueChange={handleFieldValueChange}
-            onRangeFilterChange={handleRangeFilterChange}
-            onRangeSchemaFilterChange={setRangeSchemaFilter}
+            onFieldValueChange={handleFieldValueChange as (field: string, value: unknown) => void}
+            onRangeFilterChange={handleRangeFilterChange as unknown as (filter: unknown) => void}
+            onRangeSchemaFilterChange={setRangeSchemaFilter as unknown as (filter: unknown) => void}
             onHashKeyChange={setHashKeyValue}
             approvedSchemas={approvedSchemas}
             orgNames={orgNames}

@@ -1,14 +1,19 @@
 import { useCallback, useEffect, useState } from 'react'
-import { discoveryClient } from '../../../api/clients/discoveryClient'
-import { listSharingRoles } from '../../../api/clients/trustClient'
+import type { OperationResultPayload } from "../../../types/api"
+import { discoveryClient, type LocalConnectionRequest } from '../../../api/clients/discoveryClient'
+import { listSharingRoles, type SharingRole } from '../../../api/clients/trustClient'
 import { toErrorMessage } from '../../../utils/schemaUtils'
 
-export default function ConnectionRequestsPanel({ onResult }) {
-  const [requests, setRequests] = useState([])
+interface ConnectionRequestsPanelProps {
+  onResult: (result: OperationResultPayload) => void
+}
+
+export default function ConnectionRequestsPanel({ onResult }: ConnectionRequestsPanelProps) {
+  const [requests, setRequests] = useState<LocalConnectionRequest[]>([])
   const [loading, setLoading] = useState(true)
-  const [responding, setResponding] = useState(null)
-  const [availableRoles, setAvailableRoles] = useState({})
-  const [selectedRoles, setSelectedRoles] = useState({})
+  const [responding, setResponding] = useState<string | null>(null)
+  const [availableRoles, setAvailableRoles] = useState<Record<string, SharingRole>>({})
+  const [selectedRoles, setSelectedRoles] = useState<Record<string, string>>({})
 
   const fetchRequests = useCallback(async () => {
     try {
@@ -47,14 +52,15 @@ export default function ConnectionRequestsPanel({ onResult }) {
     return () => clearInterval(id)
   }, [fetchRequests])
 
-  const handleRespond = async (requestId, action) => {
+  const handleRespond = async (requestId: string, action: 'accept' | 'decline') => {
     setResponding(requestId)
     try {
       const role = action === 'accept' ? (selectedRoles[requestId] || 'acquaintance') : undefined
       const res = await discoveryClient.respondToRequest(requestId, action, undefined, role)
-      if (res.success) {
+      if (res.success && res.data) {
+        const updated = res.data.request
         setRequests(prev =>
-          prev.map(r => r.request_id === requestId ? res.data.request : r)
+          prev.map(r => r.request_id === requestId ? updated : r)
         )
         onResult({ success: true, data: { message: `Connection ${action}ed` } })
       } else {

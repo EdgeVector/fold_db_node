@@ -1,18 +1,23 @@
 import { useCallback, useEffect, useState } from 'react'
-import { discoveryClient } from '../../../api/clients/discoveryClient'
+import type { OperationResultPayload } from "../../../types/api"
+import { discoveryClient, type SearchResult } from '../../../api/clients/discoveryClient'
 import { listContacts } from '../../../api/clients/trustClient'
 import { toErrorMessage } from '../../../utils/schemaUtils'
 import RoleSelect from './RoleSelect'
 
-export default function SearchPanel({ onResult }) {
+interface SearchPanelProps {
+  onResult: (result: OperationResultPayload) => void
+}
+
+export default function SearchPanel({ onResult }: SearchPanelProps) {
   const [query, setQuery] = useState('')
-  const [results, setResults] = useState([])
+  const [results, setResults] = useState<SearchResult[]>([])
   const [searching, setSearching] = useState(false)
-  const [error, setError] = useState(null)
-  const [connectingTo, setConnectingTo] = useState(null)
+  const [error, setError] = useState<string | null>(null)
+  const [connectingTo, setConnectingTo] = useState<string | null>(null)
   const [connectMessage, setConnectMessage] = useState('')
   const [connectRole, setConnectRole] = useState('acquaintance')
-  const [knownPseudonyms, setKnownPseudonyms] = useState(() => new Set())
+  const [knownPseudonyms, setKnownPseudonyms] = useState<Set<string>>(() => new Set())
 
   useEffect(() => {
     let cancelled = false
@@ -21,10 +26,11 @@ export default function SearchPanel({ onResult }) {
         const resp = await listContacts()
         if (cancelled || !resp.success) return
         const contacts = resp.data?.contacts || []
-        const set = new Set()
+        const set = new Set<string>()
         for (const c of contacts) {
           if (c.pseudonym) set.add(c.pseudonym)
-          if (c.messaging_pseudonym) set.add(c.messaging_pseudonym)
+          const messagingPseudonym = (c as { messaging_pseudonym?: string }).messaging_pseudonym
+          if (messagingPseudonym) set.add(messagingPseudonym)
         }
         setKnownPseudonyms(set)
       } catch {
@@ -57,7 +63,7 @@ export default function SearchPanel({ onResult }) {
     }
   }, [query, onResult])
 
-  const handleConnect = async (pseudonym) => {
+  const handleConnect = async (pseudonym: string) => {
     if (!connectMessage.trim()) return
     try {
       const res = await discoveryClient.connect(pseudonym, connectMessage, connectRole !== 'acquaintance' ? connectRole : undefined)

@@ -7,7 +7,12 @@
 //   With connections  - features that only work with accepted connections
 //
 // Every existing section id is preserved so deep links keep working.
-const SECTION_GROUPS = [
+interface SectionGroup {
+  label: string
+  sections: Array<{ id: string; label: string }>
+}
+
+const SECTION_GROUPS: SectionGroup[] = [
   {
     label: 'Meet people',
     sections: [
@@ -38,7 +43,12 @@ const SECTION_GROUPS = [
   },
 ]
 
-export default function DiscoverySectionNav({ activeSection, onChange }) {
+interface DiscoverySectionNavProps {
+  activeSection: string
+  onChange: (id: string) => void
+}
+
+export default function DiscoverySectionNav({ activeSection, onChange }: DiscoverySectionNavProps) {
   return (
     <div className="border-b border-border mb-4 flex flex-wrap items-end gap-x-6 gap-y-2">
       {SECTION_GROUPS.map((group, idx) => (

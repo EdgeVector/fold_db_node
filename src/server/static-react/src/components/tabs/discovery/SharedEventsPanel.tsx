@@ -1,21 +1,30 @@
 import { useCallback, useEffect, useState } from 'react'
-import { discoveryClient } from '../../../api/clients/discoveryClient'
+import type { OperationResultPayload } from "../../../types/api"
+import {
+  discoveryClient,
+  type CalendarSharingStatus,
+  type SharedEvent,
+} from '../../../api/clients/discoveryClient'
 import { toErrorMessage } from '../../../utils/schemaUtils'
 import LocalModeNotice from './LocalModeNotice'
 import { isLocalModeError } from './discoveryUtils'
 
-export default function SharedEventsPanel({ onResult }) {
-  const [status, setStatus] = useState(null)
-  const [sharedEvents, setSharedEvents] = useState([])
+interface SharedEventsPanelProps {
+  onResult: (result: OperationResultPayload) => void
+}
+
+export default function SharedEventsPanel({ onResult }: SharedEventsPanelProps) {
+  const [status, setStatus] = useState<CalendarSharingStatus | null>(null)
+  const [sharedEvents, setSharedEvents] = useState<SharedEvent[]>([])
   const [loading, setLoading] = useState(true)
   const [toggling, setToggling] = useState(false)
-  const [error, setError] = useState(null)
+  const [error, setError] = useState<string | null>(null)
 
   const loadData = useCallback(async () => {
     try {
       const statusRes = await discoveryClient.getCalendarSharingStatus()
       if (statusRes.success) {
-        setStatus(statusRes.data)
+        setStatus(statusRes.data ?? null)
         setError(null)
         if (statusRes.data?.opted_in) {
           const eventsRes = await discoveryClient.getSharedEvents()
@@ -35,14 +44,14 @@ export default function SharedEventsPanel({ onResult }) {
 
   useEffect(() => { loadData() }, [loadData])
 
-  const handleToggle = async (enable) => {
+  const handleToggle = async (enable: boolean) => {
     setToggling(true)
     try {
       const res = enable
         ? await discoveryClient.calendarSharingOptIn()
         : await discoveryClient.calendarSharingOptOut()
       if (res.success) {
-        setStatus(res.data)
+        setStatus(res.data ?? null)
         if (!enable) setSharedEvents([])
         onResult({
           success: true,

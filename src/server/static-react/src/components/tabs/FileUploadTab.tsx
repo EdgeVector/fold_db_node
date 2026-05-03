@@ -1,31 +1,37 @@
 import { useState, useCallback } from 'react'
+import type { DragEvent, ChangeEvent } from 'react'
+import type { OperationResultPayload } from '../../types/api'
 import { ingestionClient } from '../../api/clients/ingestionClient'
 
-function FileUploadTab({ onResult }) {
+interface FileUploadTabProps {
+  onResult: (result: OperationResultPayload | null) => void
+}
+
+function FileUploadTab({ onResult }: FileUploadTabProps) {
   const [isDragging, setIsDragging] = useState(false)
-  const [selectedFile, setSelectedFile] = useState(null)
+  const [selectedFile, setSelectedFile] = useState<File | null>(null)
   const [autoExecute, setAutoExecute] = useState(true)
   const [pubKey] = useState('default')
   const [isUploading, setIsUploading] = useState(false)
 
-  const handleDragEnter = useCallback((e) => {
+  const handleDragEnter = useCallback((e: DragEvent<HTMLDivElement>) => {
     e.preventDefault()
     e.stopPropagation()
     setIsDragging(true)
   }, [])
 
-  const handleDragLeave = useCallback((e) => {
+  const handleDragLeave = useCallback((e: DragEvent<HTMLDivElement>) => {
     e.preventDefault()
     e.stopPropagation()
     setIsDragging(false)
   }, [])
 
-  const handleDragOver = useCallback((e) => {
+  const handleDragOver = useCallback((e: DragEvent<HTMLDivElement>) => {
     e.preventDefault()
     e.stopPropagation()
   }, [])
 
-  const handleDrop = useCallback((e) => {
+  const handleDrop = useCallback((e: DragEvent<HTMLDivElement>) => {
     e.preventDefault()
     e.stopPropagation()
     setIsDragging(false)
@@ -36,7 +42,7 @@ function FileUploadTab({ onResult }) {
     }
   }, [])
 
-  const handleFileSelect = useCallback((e) => {
+  const handleFileSelect = useCallback((e: ChangeEvent<HTMLInputElement>) => {
     const files = e.target.files
     if (files && files.length > 0) {
       setSelectedFile(files[0])
@@ -61,7 +67,15 @@ function FileUploadTab({ onResult }) {
         pubKey,
       })
 
-      const result = response.data
+      const result = response.data as {
+        success?: boolean
+        schema_name?: string
+        schema_used?: string
+        new_schema_created?: boolean
+        mutations_generated?: number
+        mutations_executed?: number
+        error?: string
+      } | undefined
 
       if (result?.success) {
         onResult({
@@ -89,7 +103,7 @@ function FileUploadTab({ onResult }) {
     }
   }
 
-  const formatFileSize = (bytes) => {
+  const formatFileSize = (bytes: number) => {
     if (bytes === 0) return '0 Bytes'
     const k = 1024
     const sizes = ['Bytes', 'KB', 'MB', 'GB']

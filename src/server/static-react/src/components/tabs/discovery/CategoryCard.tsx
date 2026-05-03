@@ -1,6 +1,13 @@
+import type { Schema } from '../../../types/schema'
 import { buildPreviewItems, fieldCount } from './discoveryUtils'
 
-function ToggleSwitch({ enabled, onChange, disabled }) {
+interface ToggleSwitchProps {
+  enabled: boolean
+  onChange: (enabled: boolean) => void
+  disabled?: boolean
+}
+
+function ToggleSwitch({ enabled, onChange, disabled }: ToggleSwitchProps) {
   return (
     <button
       type="button"
@@ -21,6 +28,19 @@ function ToggleSwitch({ enabled, onChange, disabled }) {
   )
 }
 
+interface CategoryCardProps {
+  category: string
+  schemas: Schema[]
+  optedInNames: Set<string>
+  publishedCategories: Set<string>
+  onToggle: (category: string, schemas: Schema[], val: boolean) => void
+  toggling: boolean
+  expanded: boolean
+  onExpandToggle: () => void
+  publishFaces: boolean
+  onPublishFacesToggle: (category: string, value: boolean) => void
+}
+
 export default function CategoryCard({
   category,
   schemas,
@@ -32,7 +52,7 @@ export default function CategoryCard({
   onExpandToggle,
   publishFaces,
   onPublishFacesToggle,
-}) {
+}: CategoryCardProps) {
   const allOptedIn = schemas.every(s => optedInNames.has(s.name))
   const someOptedIn = schemas.some(s => optedInNames.has(s.name))
   const isPublished = publishedCategories.has(category)

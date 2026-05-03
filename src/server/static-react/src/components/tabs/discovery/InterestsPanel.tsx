@@ -1,20 +1,25 @@
 import { useCallback, useEffect, useState } from 'react'
-import { discoveryClient } from '../../../api/clients/discoveryClient'
+import type { OperationResultPayload } from "../../../types/api"
+import { discoveryClient, type InterestProfile } from '../../../api/clients/discoveryClient'
 import { toErrorMessage } from '../../../utils/schemaUtils'
 import LocalModeNotice from './LocalModeNotice'
 import { isLocalModeError } from './discoveryUtils'
 
-export default function InterestsPanel({ onResult }) {
-  const [profile, setProfile] = useState(null)
+interface InterestsPanelProps {
+  onResult: (result: OperationResultPayload) => void
+}
+
+export default function InterestsPanel({ onResult }: InterestsPanelProps) {
+  const [profile, setProfile] = useState<InterestProfile | null>(null)
   const [loading, setLoading] = useState(true)
   const [detecting, setDetecting] = useState(false)
-  const [loadError, setLoadError] = useState(null)
+  const [loadError, setLoadError] = useState<string | null>(null)
 
   const loadInterests = useCallback(async () => {
     try {
       const res = await discoveryClient.getInterests()
       if (res.success) {
-        setProfile(res.data)
+        setProfile(res.data ?? null)
         setLoadError(null)
       } else {
         setLoadError(res.error || 'Failed to load interests')
@@ -28,11 +33,11 @@ export default function InterestsPanel({ onResult }) {
 
   useEffect(() => { loadInterests() }, [loadInterests])
 
-  const handleToggle = async (categoryName, enabled) => {
+  const handleToggle = async (categoryName: string, enabled: boolean) => {
     try {
       const res = await discoveryClient.toggleInterest(categoryName, enabled)
       if (res.success) {
-        setProfile(res.data)
+        setProfile(res.data ?? null)
       } else {
         onResult({ error: res.error || 'Toggle failed' })
       }
@@ -46,7 +51,7 @@ export default function InterestsPanel({ onResult }) {
     try {
       const res = await discoveryClient.detectInterests()
       if (res.success) {
-        setProfile(res.data)
+        setProfile(res.data ?? null)
         onResult({ success: true, data: { message: `Detected ${res.data?.categories?.length || 0} interest categories` } })
       } else {
         onResult({ error: res.error || 'Detection failed' })

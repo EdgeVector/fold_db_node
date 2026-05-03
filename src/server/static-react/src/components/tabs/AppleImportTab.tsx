@@ -1,4 +1,5 @@
 import { useState, useEffect, useRef, useCallback } from 'react'
+import type { ChangeEvent, ComponentType, SVGProps } from 'react'
 import {
   ArrowPathIcon,
   DocumentTextIcon,
@@ -7,10 +8,12 @@ import {
   CheckCircleIcon,
   UserIcon,
 } from '@heroicons/react/24/outline'
+import type { OperationResultPayload } from '../../types/api'
 import ingestionClient from '../../api/clients/ingestionClient'
+import type { AppleSyncConfig, EnabledSources } from '../../api/clients/ingestionClient'
 
 function AutoSyncSettings() {
-  const [config, setConfig] = useState(null)
+  const [config, setConfig] = useState<AppleSyncConfig | null>(null)
   const [loading, setLoading] = useState(true)
   const [saving, setSaving] = useState(false)
   const [customHours, setCustomHours] = useState(12)
@@ -24,7 +27,7 @@ function AutoSyncSettings() {
         }
       }
       setLoading(false)
-    }).catch(() => setLoading(false))
+    }).catch(() => { setLoading(false) })
   }, [])
 
   useEffect(() => {
@@ -32,14 +35,15 @@ function AutoSyncSettings() {
     const timer = setInterval(async () => {
       const resp = await ingestionClient.getAppleNextSync()
       if (resp.success && resp.data) {
+        const data = resp.data
         setConfig((prev) =>
           prev
             ? {
                 ...prev,
-                next_sync: resp.data.next_sync,
-                last_sync: resp.data.last_sync,
-                last_error: resp.data.last_error,
-                last_error_at: resp.data.last_error_at,
+                next_sync: data.next_sync,
+                last_sync: data.last_sync,
+                last_error: data.last_error,
+                last_error_at: data.last_error_at,
               }
             : prev,
         )
@@ -48,7 +52,7 @@ function AutoSyncSettings() {
     return () => clearInterval(timer)
   }, [config?.enabled])
 
-  const updateConfig = async (update) => {
+  const updateConfig = async (update: Partial<AppleSyncConfig>) => {
     setSaving(true)
     const resp = await ingestionClient.updateAppleSyncConfig(update)
     if (resp.success && resp.data) {
@@ -59,29 +63,29 @@ function AutoSyncSettings() {
 
   const handleToggle = () => updateConfig({ enabled: !config?.enabled })
 
-  const handleScheduleChange = (e) => {
+  const handleScheduleChange = (e: ChangeEvent<HTMLSelectElement>) => {
     const val = e.target.value
     if (val === 'custom') {
       updateConfig({ schedule: { custom: { hours: customHours } } })
     } else {
-      updateConfig({ schedule: val })
+      updateConfig({ schedule: val as 'daily' | 'weekly' })
     }
   }
 
-  const handleCustomHoursChange = (e) => {
+  const handleCustomHoursChange = (e: ChangeEvent<HTMLInputElement>) => {
     const hours = parseInt(e.target.value) || 1
     setCustomHours(hours)
     updateConfig({ schedule: { custom: { hours } } })
   }
 
-  const handleSourceToggle = (source) => {
+  const handleSourceToggle = (source: keyof EnabledSources) => {
     if (!config) return
     updateConfig({
       sources: { ...config.sources, [source]: !config.sources[source] },
     })
   }
 
-  const handlePhotosLimitChange = (e) => {
+  const handlePhotosLimitChange = (e: ChangeEvent<HTMLInputElement>) => {
     const limit = parseInt(e.target.value) || 50
     updateConfig({ photos_limit: limit })
   }
@@ -93,7 +97,7 @@ function AutoSyncSettings() {
     return 'daily'
   }
 
-  const formatTime = (isoStr) => {
+  const formatTime = (isoStr: string | null) => {
     if (!isoStr) return 'Never'
     const d = new Date(isoStr)
     return d.toLocaleString()
@@ -162,7 +166,7 @@ function AutoSyncSettings() {
 
           <div className="flex items-center gap-4">
             <label className="text-xs text-secondary w-16">Sources:</label>
-            {['notes', 'reminders', 'photos', 'calendar', 'contacts'].map((source) => (
+            {(['notes', 'reminders', 'photos', 'calendar', 'contacts'] as const).map((source) => (
               <label key={source} className="flex items-center gap-1 text-xs text-primary cursor-pointer">
                 <input
                   type="checkbox"
@@ -221,7 +225,16 @@ function AutoSyncSettings() {
   )
 }
 
-const SOURCES = [
+interface SourceDef {
+  key: keyof EnabledSources
+  label: string
+  Icon: ComponentType<SVGProps<SVGSVGElement> & { 'aria-hidden'?: boolean | string }>
+  description: string
+  hasLimit?: boolean
+  comingSoon?: boolean
+}
+
+const SOURCES: SourceDef[] = [
   {
     key: 'notes',
     label: 'Notes',
@@ -255,7 +268,13 @@ const SOURCES = [
   },
 ]
 
-function SourceToggle({ checked, onChange, disabled }) {
+interface SourceToggleProps {
+  checked: boolean
+  onChange: (val: boolean) => void
+  disabled?: boolean
+}
+
+function SourceToggle({ checked, onChange, disabled }: SourceToggleProps) {
   return (
     <button
       type="button"
@@ -276,7 +295,7 @@ function SourceToggle({ checked, onChange, disabled }) {
   )
 }
 
-function ProgressBar({ progress }) {
+function ProgressBar({ progress }: { progress: number }) {
   return (
     <div className="w-full bg-surface-secondary rounded-full h-1.5 mt-2">
       <div
@@ -287,7 +306,26 @@ function ProgressBar({ progress }) {
   )
 }
 
-function SourceCard({ source, enabled, onToggle, status, progress, message, result, photosLimit, onPhotosLimitChange }) {
+interface ImportResult {
+  total?: number
+  ingested?: number
+}
+
+type ImportStatus = 'idle' | 'running' | 'done' | 'error'
+
+interface SourceCardProps {
+  source: SourceDef
+  enabled: boolean
+  onToggle: (val: boolean) => void
+  status: ImportStatus
+  progress: number
+  message: string
+  result: ImportResult | null
+  photosLimit: number
+  onPhotosLimitChange: (limit: number) => void
+}
+
+function SourceCard({ source, enabled, onToggle, status, progress, message, result, photosLimit, onPhotosLimitChange }: SourceCardProps) {
   const isRunning = status === 'running'
   const isDone = status === 'done'
   const isError = status === 'error'
@@ -359,13 +397,19 @@ function SourceCard({ source, enabled, onToggle, status, progress, message, resu
   )
 }
 
-function useSourceImport(sourceKey, importFn) {
-  const [progressId, setProgressId] = useState(null)
-  const [status, setStatus] = useState('idle') // idle | running | done | error
+interface ImportFnResp {
+  success: boolean
+  data?: { progress_id?: string }
+  error?: { message?: string } | string
+}
+
+function useSourceImport(sourceKey: string, importFn: () => Promise<ImportFnResp>) {
+  const [progressId, setProgressId] = useState<string | null>(null)
+  const [status, setStatus] = useState<ImportStatus>('idle')
   const [progress, setProgress] = useState(0)
   const [message, setMessage] = useState('')
-  const [result, setResult] = useState(null)
-  const pollRef = useRef(null)
+  const [result, setResult] = useState<ImportResult | null>(null)
+  const pollRef = useRef<ReturnType<typeof setInterval> | null>(null)
 
   useEffect(() => {
     if (!progressId || status !== 'running') return
@@ -374,18 +418,27 @@ function useSourceImport(sourceKey, importFn) {
       try {
         const resp = await ingestionClient.getJobProgress(progressId)
         if (resp.success && resp.data) {
-          const job = resp.data
+          const job = resp.data as {
+            progress_percentage?: number
+            status_message?: string
+            message?: string
+            is_complete?: boolean
+            is_failed?: boolean
+            error_message?: string
+            results?: ImportResult
+            result?: ImportResult
+          }
           setProgress(job.progress_percentage || 0)
           setMessage(job.status_message || job.message || '')
 
           if (job.is_complete) {
             setStatus('done')
             setResult(job.results || job.result || null)
-            clearInterval(pollRef.current)
+            if (pollRef.current) clearInterval(pollRef.current)
           } else if (job.is_failed) {
             setStatus('error')
             setMessage(job.error_message || job.message || 'Import failed')
-            clearInterval(pollRef.current)
+            if (pollRef.current) clearInterval(pollRef.current)
           }
         }
       } catch {
@@ -395,7 +448,7 @@ function useSourceImport(sourceKey, importFn) {
 
     pollRef.current = setInterval(poll, 2000)
     poll()
-    return () => clearInterval(pollRef.current)
+    return () => { if (pollRef.current) clearInterval(pollRef.current) }
   }, [progressId, status])
 
   const start = useCallback(async () => {
@@ -408,11 +461,12 @@ function useSourceImport(sourceKey, importFn) {
       if (resp.success && resp.data?.progress_id) {
         setProgressId(resp.data.progress_id)
       } else {
-        throw new Error(resp.error?.message || `Failed to start ${sourceKey} import`)
+        const errMsg = typeof resp.error === 'string' ? resp.error : resp.error?.message
+        throw new Error(errMsg || `Failed to start ${sourceKey} import`)
       }
     } catch (e) {
       setStatus('error')
-      setMessage(e.message || `Failed to start ${sourceKey} import`)
+      setMessage((e instanceof Error ? e.message : null) || `Failed to start ${sourceKey} import`)
     }
   }, [importFn, sourceKey])
 
@@ -427,38 +481,42 @@ function useSourceImport(sourceKey, importFn) {
   return { status, progress, message, result, start, reset }
 }
 
-export default function AppleImportTab({ onResult: _onResult }) {
-  const [available, setAvailable] = useState(null) // null = loading, true/false
-  const [enabled, setEnabled] = useState({ notes: true, photos: true, calendar: true, reminders: true, contacts: true })
+interface AppleImportTabProps {
+  onResult?: (result: OperationResultPayload) => void
+}
+
+export default function AppleImportTab({ onResult: _onResult }: AppleImportTabProps) {
+  const [available, setAvailable] = useState<boolean | null>(null) // null = loading, true/false
+  const [enabled, setEnabled] = useState<EnabledSources>({ notes: true, photos: true, calendar: true, reminders: true, contacts: true })
   const [photosLimit, setPhotosLimit] = useState(50)
 
   useEffect(() => {
     ingestionClient.getAppleImportStatus().then((resp) => {
-      setAvailable(resp.success && resp.data?.available)
+      setAvailable(Boolean(resp.success && resp.data?.available))
     }).catch(() => {
       setAvailable(false)
     })
   }, [])
 
   const notes = useSourceImport('notes', useCallback(
-    () => ingestionClient.appleImportNotes(), []
+    () => ingestionClient.appleImportNotes() as unknown as Promise<ImportFnResp>, []
   ))
   const photos = useSourceImport('photos', useCallback(
-    () => ingestionClient.appleImportPhotos(null, photosLimit), [photosLimit]
+    () => ingestionClient.appleImportPhotos(null as unknown as string | undefined, photosLimit) as unknown as Promise<ImportFnResp>, [photosLimit]
   ))
   const calendar = useSourceImport('calendar', useCallback(
-    () => ingestionClient.appleImportCalendar(), []
+    () => ingestionClient.appleImportCalendar() as unknown as Promise<ImportFnResp>, []
   ))
   const reminders = useSourceImport('reminders', useCallback(
-    () => ingestionClient.appleImportReminders(), []
+    () => ingestionClient.appleImportReminders() as unknown as Promise<ImportFnResp>, []
   ))
   const contacts = useSourceImport('contacts', useCallback(
-    () => ingestionClient.appleImportContacts(), []
+    () => ingestionClient.appleImportContacts() as unknown as Promise<ImportFnResp>, []
   ))
 
-  const imports = { notes, photos, calendar, reminders, contacts }
+  const imports: Record<keyof EnabledSources, ReturnType<typeof useSourceImport>> = { notes, photos, calendar, reminders, contacts }
 
-  const toggleSource = (key) => (val) => {
+  const toggleSource = (key: keyof EnabledSources) => (val: boolean) => {
     setEnabled((prev) => ({ ...prev, [key]: val }))
   }
 

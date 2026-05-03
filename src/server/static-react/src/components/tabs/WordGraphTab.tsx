@@ -1,10 +1,20 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
 import ForceGraph2D from 'react-force-graph-2d'
+import type { Schema } from '../../types/schema'
 import { useApprovedSchemas } from '../../hooks/useApprovedSchemas.js'
 import { nativeIndexClient, mutationClient, schemaClient } from '../../api/clients'
 import { getFieldNames, getSchemaDisplayName, toErrorMessage } from '../../utils/schemaUtils'
 import { makeSchemaId, mergeGraphData, extractWordsFromRecord, buildFromResults, searchBatch } from '../../utils/graphUtils'
+import type { GraphData, GraphNode, GraphLink, SearchResult, RecordLike } from '../../utils/graphUtils'
 import NodeDetail from './graph/NodeDetail'
+
+interface LoadStatus {
+  phase: string
+  progress: number
+  total: number
+}
+
+type RenderNode = GraphNode & { x?: number; y?: number }
 
 // Gruvbox-inspired palette
 const COLORS = {
@@ -21,17 +31,17 @@ const MAX_WORDS     = 300  // cap on unique words to search
 const MAX_RECORDS   = 20   // records to query per schema
 
 export default function WordGraphTab() {
-  const { approvedSchemas } = useApprovedSchemas()
-  const [graphData, setGraphData] = useState({ nodes: [], links: [] })
+  const { approvedSchemas } = useApprovedSchemas() as { approvedSchemas: Schema[] }
+  const [graphData, setGraphData] = useState<GraphData>({ nodes: [], links: [] })
   const [searchTerm, setSearchTerm] = useState('')
   const [isSearching, setIsSearching] = useState(false)
-  const [loadStatus, setLoadStatus] = useState(null) // { phase, progress, total } | null
-  const [error, setError] = useState(null)
-  const [selectedNode, setSelectedNode] = useState(null)
-  const [highlightNodes, setHighlightNodes] = useState(new Set())
-  const [highlightLinks, setHighlightLinks] = useState(new Set())
-  const graphRef = useRef(null)
-  const containerRef = useRef(null)
+  const [loadStatus, setLoadStatus] = useState<LoadStatus | null>(null)
+  const [error, setError] = useState<string | null>(null)
+  const [selectedNode, setSelectedNode] = useState<GraphNode | null>(null)
+  const [highlightNodes, setHighlightNodes] = useState<Set<string>>(new Set())
+  const [highlightLinks, setHighlightLinks] = useState<Set<string>>(new Set())
+  const graphRef = useRef<unknown>(null)
+  const containerRef = useRef<HTMLDivElement | null>(null)
   const [dimensions, setDimensions] = useState({ width: 800, height: 550 })
   const prepopulatedRef = useRef(false)
 
@@ -49,22 +59,22 @@ export default function WordGraphTab() {
   // Seed schema nodes whenever approved schemas change
   useEffect(() => {
     if (!approvedSchemas?.length) return
-    const schemaNodes = approvedSchemas.map(s => ({ id: makeSchemaId(s.name), label: getSchemaDisplayName(s), type: 'schema' }))
+    const schemaNodes: GraphNode[] = approvedSchemas.map((s: Schema) => ({ id: makeSchemaId(s.name), label: getSchemaDisplayName(s), type: 'schema' as const }))
     setGraphData(prev => mergeGraphData(prev, schemaNodes, []))
   }, [approvedSchemas])
 
-  const addResults = useCallback((results) => {
+  const addResults = useCallback((results: SearchResult[]) => {
     const { nodes, links } = buildFromResults(results)
     setGraphData(prev => mergeGraphData(prev, nodes, links))
   }, [])
 
   // Auto-populate on first schema load
-  const prepopulate = useCallback(async (schemas) => {
+  const prepopulate = useCallback(async (schemas: Schema[]) => {
     if (prepopulatedRef.current || !schemas?.length) return
     prepopulatedRef.current = true
 
     setError(null)
-    const allWords = new Set()
+    const allWords = new Set<string>()
 
     try {
       // Phase 1: query records from each schema to extract real words
@@ -75,7 +85,8 @@ export default function WordGraphTab() {
         try {
           const fields = getFieldNames(schema)
           const res = await mutationClient.executeQuery({ schema_name: schema.name, fields })
-          const records = Array.isArray(res.data?.results) ? res.data.results : []
+          const data = res.data as { results?: RecordLike[] } | undefined
+          const records = Array.isArray(data?.results) ? data!.results! : []
           for (const record of records.slice(0, MAX_RECORDS)) {
             for (const w of extractWordsFromRecord(record)) {
               if (allWords.size < MAX_WORDS) allWords.add(w)
@@ -92,7 +103,8 @@ export default function WordGraphTab() {
           if (allWords.size >= MAX_WORDS) break
           try {
             const res = await schemaClient.listSchemaKeys(schema.name, 0, 50)
-            for (const kv of (res.data?.keys ?? [])) {
+            const keys = (res.data as { keys?: Array<{ hash?: string; range?: string }> } | undefined)?.keys ?? []
+            for (const kv of keys) {
               if (kv.hash && allWords.size < MAX_WORDS) allWords.add(kv.hash)
               if (kv.range && allWords.size < MAX_WORDS) allWords.add(kv.range)
             }
@@ -108,7 +120,7 @@ export default function WordGraphTab() {
       setLoadStatus({ phase: 'Indexing words…', progress: 0, total: wordList.length })
       await searchBatch(
         wordList,
-        nativeIndexClient,
+        nativeIndexClient as unknown as Parameters<typeof searchBatch>[1],
         (results) => { addResults(results) },
         () => {
           done += 1
@@ -134,7 +146,8 @@ export default function WordGraphTab() {
     try {
       const res = await nativeIndexClient.search(q)
       if (res.success) {
-        const results = res.data?.results ?? []
+        const data = res.data as SearchResult[] | { results?: SearchResult[] } | undefined
+        const results = (Array.isArray(data) ? data : data?.results) ?? []
         addResults(results)
         if (results.length === 0) setError(`No index entries for "${q}"`)
       } else {
@@ -147,13 +160,15 @@ export default function WordGraphTab() {
     }
   }, [searchTerm, addResults])
 
-  const handleNodeHover = useCallback((node) => {
+  const handleNodeHover = useCallback((node: GraphNode | null) => {
     if (!node) { setHighlightNodes(new Set()); setHighlightLinks(new Set()); return }
-    const hl = new Set([node.id])
-    const hlLinks = new Set()
+    const hl = new Set<string>([node.id])
+    const hlLinks = new Set<string>()
     for (const l of graphData.links) {
-      const src = typeof l.source === 'object' ? l.source?.id : l.source
-      const tgt = typeof l.target === 'object' ? l.target?.id : l.target
+      const linkSrc = l.source as unknown as GraphNode | string
+      const linkTgt = l.target as unknown as GraphNode | string
+      const src = typeof linkSrc === 'object' && linkSrc ? linkSrc.id : linkSrc
+      const tgt = typeof linkTgt === 'object' && linkTgt ? linkTgt.id : linkTgt
       if (src === node.id || tgt === node.id) {
         hlLinks.add(l.id); hl.add(src); hl.add(tgt)
       }
@@ -162,22 +177,24 @@ export default function WordGraphTab() {
     setHighlightLinks(hlLinks)
   }, [graphData.links])
 
-  const handleNodeClick = useCallback((node) => {
+  const handleNodeClick = useCallback((node: GraphNode) => {
     setSelectedNode(prev => prev?.id === node.id ? null : node)
   }, [])
 
-  const nodeCanvasObject = useCallback((node, ctx, globalScale) => {
+  const nodeCanvasObject = useCallback((node: RenderNode, ctx: CanvasRenderingContext2D, globalScale: number) => {
     const isHighlighted = highlightNodes.has(node.id)
     const isSelected = selectedNode?.id === node.id
     const isSchema = node.type === 'schema'
     const baseColor = isSchema ? COLORS.schema : COLORS.word
     const r = isSchema ? 8 : 5
 
+    const x = node.x ?? 0
+    const y = node.y ?? 0
     ctx.beginPath()
     if (isSchema) {
-      ctx.rect(node.x - r, node.y - r, r * 2, r * 2)
+      ctx.rect(x - r, y - r, r * 2, r * 2)
     } else {
-      ctx.arc(node.x, node.y, r, 0, 2 * Math.PI)
+      ctx.arc(x, y, r, 0, 2 * Math.PI)
     }
     ctx.fillStyle = isHighlighted || isSelected ? baseColor : `${baseColor}99`
     ctx.fill()
@@ -188,34 +205,35 @@ export default function WordGraphTab() {
     ctx.textAlign = 'center'
     ctx.textBaseline = 'middle'
     ctx.fillStyle = isHighlighted || isSelected ? COLORS.text : `${COLORS.text}99`
-    const lbl = node.label.length > 20 ? node.label.slice(0, 18) + '…' : node.label
-    ctx.fillText(lbl, node.x, node.y + r + fontSize)
+    const lbl = node.label && node.label.length > 20 ? node.label.slice(0, 18) + '…' : (node.label ?? '')
+    ctx.fillText(lbl, x, y + r + fontSize)
   }, [highlightNodes, selectedNode])
 
-  const linkCanvasObject = useCallback((link, ctx) => {
-    const src = link.source
-    const tgt = link.target
-    if (!src?.x || !tgt?.x) return
+  const linkCanvasObject = useCallback((link: GraphLink, ctx: CanvasRenderingContext2D) => {
+    const src = link.source as unknown as RenderNode
+    const tgt = link.target as unknown as RenderNode
+    if (src?.x === undefined || src?.y === undefined || tgt?.x === undefined || tgt?.y === undefined) return
+    const sx = src.x, sy = src.y, tx = tgt.x, ty = tgt.y
     const isHighlighted = highlightLinks.has(link.id)
     ctx.beginPath()
-    ctx.moveTo(src.x, src.y)
-    ctx.lineTo(tgt.x, tgt.y)
+    ctx.moveTo(sx, sy)
+    ctx.lineTo(tx, ty)
     ctx.strokeStyle = isHighlighted ? COLORS.linkHover : COLORS.link
     ctx.lineWidth = isHighlighted ? 1.5 : 0.8
     ctx.stroke()
     if (isHighlighted) {
-      const mx = (src.x + tgt.x) / 2
-      const my = (src.y + tgt.y) / 2
+      const mx = (sx + tx) / 2
+      const my = (sy + ty) / 2
       ctx.font = '8px monospace'
       ctx.textAlign = 'center'
       ctx.textBaseline = 'middle'
       ctx.fillStyle = COLORS.key
-      ctx.fillText(link.keyLabel, mx, my - 5)
+      ctx.fillText(link.keyLabel ?? '', mx, my - 5)
     }
   }, [highlightLinks])
 
   const handleClear = () => {
-    const schemaNodes = (approvedSchemas ?? []).map(s => ({ id: makeSchemaId(s.name), label: getSchemaDisplayName(s), type: 'schema' }))
+    const schemaNodes: GraphNode[] = (approvedSchemas ?? []).map((s: Schema) => ({ id: makeSchemaId(s.name), label: getSchemaDisplayName(s), type: 'schema' as const }))
     setGraphData({ nodes: schemaNodes, links: [] })
     setSelectedNode(null)
     setHighlightNodes(new Set())
@@ -325,7 +343,7 @@ export default function WordGraphTab() {
           </div>
         )}
         <ForceGraph2D
-          ref={graphRef}
+          ref={graphRef as never}
           width={dimensions.width}
           height={dimensions.height}
           graphData={graphData}
@@ -336,13 +354,15 @@ export default function WordGraphTab() {
           onNodeHover={handleNodeHover}
           onNodeClick={handleNodeClick}
           cooldownTicks={100}
-          nodePointerAreaPaint={(node, color, ctx) => {
+          nodePointerAreaPaint={(node: RenderNode, color: string, ctx: CanvasRenderingContext2D) => {
             const r = node.type === 'schema' ? 10 : 7
             ctx.fillStyle = color
+            const x = node.x ?? 0
+            const y = node.y ?? 0
             if (node.type === 'schema') {
-              ctx.fillRect(node.x - r, node.y - r, r * 2, r * 2)
+              ctx.fillRect(x - r, y - r, r * 2, r * 2)
             } else {
-              ctx.beginPath(); ctx.arc(node.x, node.y, r, 0, 2 * Math.PI); ctx.fill()
+              ctx.beginPath(); ctx.arc(x, y, r, 0, 2 * Math.PI); ctx.fill()
             }
           }}
           d3AlphaDecay={0.02}

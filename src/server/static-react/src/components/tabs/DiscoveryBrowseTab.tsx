@@ -1,10 +1,15 @@
 import { useCallback, useEffect, useState } from 'react'
-import { discoveryClient } from '../../api/clients/discoveryClient'
+import type { OperationResultPayload } from '../../types/api'
+import {
+  discoveryClient,
+  type SearchResult,
+  type BrowseCategory,
+} from '../../api/clients/discoveryClient'
 import { toErrorMessage } from '../../utils/schemaUtils'
 
 const PAGE_SIZE = 20
 
-function MatchQualityBadge({ similarity }) {
+function MatchQualityBadge({ similarity }: { similarity: number }) {
   const pct = Math.round(similarity * 100)
   let color = 'text-gruvbox-red'
   if (pct >= 90) color = 'text-gruvbox-green'
@@ -19,7 +24,12 @@ function MatchQualityBadge({ similarity }) {
   )
 }
 
-function ProfileCard({ result, onConnect }) {
+interface ProfileCardProps {
+  result: SearchResult
+  onConnect: (result: { success?: boolean; error?: string }) => void
+}
+
+function ProfileCard({ result, onConnect }: ProfileCardProps) {
   const [showConnect, setShowConnect] = useState(false)
   const [message, setMessage] = useState('')
   const [sending, setSending] = useState(false)
@@ -93,7 +103,13 @@ function ProfileCard({ result, onConnect }) {
   )
 }
 
-function CategoryCard({ category, isSelected, onClick }) {
+interface CategoryCardProps {
+  category: BrowseCategory
+  isSelected: boolean
+  onClick: () => void
+}
+
+function CategoryCard({ category, isSelected, onClick }: CategoryCardProps) {
   return (
     <button
       onClick={onClick}
@@ -124,7 +140,7 @@ function EmptySearchState() {
   )
 }
 
-function NoResultsState({ query }) {
+function NoResultsState({ query }: { query: string }) {
   return (
     <div className="card p-8 text-center space-y-4 rounded">
       <div className="text-3xl text-gruvbox-yellow">&#128528;</div>
@@ -149,18 +165,22 @@ function NetworkUnavailableState() {
   )
 }
 
-export default function DiscoveryBrowseTab({ onResult }) {
+interface DiscoveryBrowseTabProps {
+  onResult: (result: OperationResultPayload) => void
+}
+
+export default function DiscoveryBrowseTab({ onResult }: DiscoveryBrowseTabProps) {
   // Categories
-  const [categories, setCategories] = useState([])
+  const [categories, setCategories] = useState<BrowseCategory[]>([])
   const [categoriesLoading, setCategoriesLoading] = useState(true)
-  const [selectedCategory, setSelectedCategory] = useState(null)
+  const [selectedCategory, setSelectedCategory] = useState<string | null>(null)
   const [serviceAvailable, setServiceAvailable] = useState(true)
 
   // Search
   const [query, setQuery] = useState('')
-  const [results, setResults] = useState([])
+  const [results, setResults] = useState<SearchResult[]>([])
   const [searching, setSearching] = useState(false)
-  const [searchError, setSearchError] = useState(null)
+  const [searchError, setSearchError] = useState<string | null>(null)
   const [hasSearched, setHasSearched] = useState(false)
 
   // Pagination
@@ -191,7 +211,7 @@ export default function DiscoveryBrowseTab({ onResult }) {
   useEffect(() => { loadCategories() }, [loadCategories])
 
   // Execute search
-  const executeSearch = useCallback(async (searchQuery, categoryFilter, pageOffset) => {
+  const executeSearch = useCallback(async (searchQuery: string, categoryFilter: string | null, pageOffset: number) => {
     if (!searchQuery.trim()) return
     setSearching(true)
     setSearchError(null)
@@ -233,7 +253,7 @@ export default function DiscoveryBrowseTab({ onResult }) {
     executeSearch(query, selectedCategory, nextPage)
   }
 
-  const handleCategoryClick = (cat) => {
+  const handleCategoryClick = (cat: BrowseCategory) => {
     const newCat = selectedCategory === cat.category ? null : cat.category
     setSelectedCategory(newCat)
     // If we have a query, re-search with new filter
@@ -243,7 +263,7 @@ export default function DiscoveryBrowseTab({ onResult }) {
     }
   }
 
-  const handleConnect = (result) => {
+  const handleConnect = (result: { success?: boolean; error?: string }) => {
     if (result.success) {
       onResult({ success: true, data: { message: 'Connection request sent' } })
     } else {

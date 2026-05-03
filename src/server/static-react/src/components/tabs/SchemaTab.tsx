@@ -1,5 +1,8 @@
 import { useState, useEffect, useRef, useCallback } from 'react'
+import type { ReactNode } from 'react'
 import { ChevronDownIcon, ChevronRightIcon } from '@heroicons/react/24/solid'
+import type { OperationResultPayload } from '../../types/api'
+import type { Schema } from '../../types/schema'
 import { getRangeSchemaInfo, getHashRangeSchemaInfo } from '../../utils/rangeSchemaHelpers'
 import { useAppSelector, useAppDispatch } from '../../store/hooks'
 import {
@@ -13,14 +16,15 @@ import { SchemaTypeBadge } from '../data-browser/shared'
 import { MagnifyingGlassIcon, EllipsisHorizontalIcon } from '@heroicons/react/24/outline'
 import { toErrorMessage, isSystemSchema } from '../../utils/schemaUtils'
 import { getAllFieldPolicies, setFieldPolicy as setFieldPolicyApi } from '../../api/clients/sharingClient'
+import type { FieldAccessPolicy, TrustTier } from '../../api/clients/sharingClient'
 import schemaClient from '../../api/clients/schemaClient'
 import { useOrgNames } from '../../hooks/useOrgNames'
 
-const TRUST_TIERS = ['Public', 'Outer', 'Trusted', 'Inner', 'Owner']
+const TRUST_TIERS: TrustTier[] = ['Public', 'Outer', 'Trusted', 'Inner', 'Owner']
 
 // ===== Access Policy Badge =====
 
-function AccessBadge({ policy }) {
+function AccessBadge({ policy }: { policy: FieldAccessPolicy | null | undefined }) {
   if (!policy) {
     return <span className="px-1.5 py-0.5 text-xs bg-surface-secondary text-secondary rounded font-mono">no policy</span>
   }
@@ -28,7 +32,7 @@ function AccessBadge({ policy }) {
   const readTier = policy.min_read_tier
   const writeTier = policy.min_write_tier
 
-  const tierColor = (tier) => {
+  const tierColor = (tier: TrustTier) => {
     if (tier === 'Owner') return 'text-gruvbox-red'
     if (tier === 'Public') return 'text-gruvbox-green'
     return 'text-gruvbox-yellow'
@@ -48,14 +52,22 @@ function AccessBadge({ policy }) {
 
 // ===== Field Policy Detail Panel =====
 
-function FieldPolicyPanel({ schemaName, fieldName, policy, onClose, onUpdate }) {
-  const [readTier, setReadTier] = useState(policy?.min_read_tier ?? 'Owner')
-  const [writeTier, setWriteTier] = useState(policy?.min_write_tier ?? 'Owner')
+interface FieldPolicyPanelProps {
+  schemaName: string
+  fieldName: string
+  policy: FieldAccessPolicy | null | undefined
+  onClose: () => void
+  onUpdate: () => void
+}
+
+function FieldPolicyPanel({ schemaName, fieldName, policy, onClose, onUpdate }: FieldPolicyPanelProps) {
+  const [readTier, setReadTier] = useState<TrustTier>(policy?.min_read_tier ?? 'Owner')
+  const [writeTier, setWriteTier] = useState<TrustTier>(policy?.min_write_tier ?? 'Owner')
   const [saving, setSaving] = useState(false)
-  const [saveError, setSaveError] = useState(null)
+  const [saveError, setSaveError] = useState<string | null>(null)
   const [preset, setPreset] = useState('')
 
-  const applyPreset = (name) => {
+  const applyPreset = (name: string) => {
     setPreset(name)
     switch (name) {
       case 'owner-only':
@@ -123,7 +135,7 @@ function FieldPolicyPanel({ schemaName, fieldName, policy, onClose, onUpdate }) 
           <label className="text-xs text-secondary block mb-1">Min Read Tier</label>
           <select
             value={readTier}
-            onChange={(e) => setReadTier(e.target.value)}
+            onChange={(e) => setReadTier(e.target.value as TrustTier)}
             className="w-full bg-gruvbox-elevated border border-border rounded px-2 py-1 text-sm text-primary"
           >
             {TRUST_TIERS.map(t => <option key={t} value={t}>{t}</option>)}
@@ -134,7 +146,7 @@ function FieldPolicyPanel({ schemaName, fieldName, policy, onClose, onUpdate }) 
           <label className="text-xs text-secondary block mb-1">Min Write Tier</label>
           <select
             value={writeTier}
-            onChange={(e) => setWriteTier(e.target.value)}
+            onChange={(e) => setWriteTier(e.target.value as TrustTier)}
             className="w-full bg-gruvbox-elevated border border-border rounded px-2 py-1 text-sm text-primary"
           >
             {TRUST_TIERS.map(t => <option key={t} value={t}>{t}</option>)}
@@ -144,7 +156,7 @@ function FieldPolicyPanel({ schemaName, fieldName, policy, onClose, onUpdate }) 
       </div>
 
       {/* Capability info */}
-      {policy?.capabilities?.length > 0 && (
+      {policy?.capabilities && policy.capabilities.length > 0 && (
         <p className="text-xs text-secondary">
           {policy.capabilities.length} capability token(s) attached
         </p>
@@ -167,28 +179,33 @@ function FieldPolicyPanel({ schemaName, fieldName, policy, onClose, onUpdate }) 
 
 // ===== Main SchemaTab =====
 
-function SchemaTab({ onResult, onSchemaUpdated }) {
-  const highlightTimerRef = useRef(null)
+interface SchemaTabProps {
+  onResult?: (result: OperationResultPayload & { message?: string; backfillHash?: string }) => void
+  onSchemaUpdated?: () => void
+}
+
+function SchemaTab({ onResult, onSchemaUpdated }: SchemaTabProps) {
+  const highlightTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
   const dispatch = useAppDispatch()
-  const schemas = useAppSelector(selectAllSchemas)
-  const [expandedSchemas, setExpandedSchemas] = useState({})
-  const [highlightedSchema, setHighlightedSchema] = useState(null)
+  const schemas = useAppSelector(selectAllSchemas) as Schema[]
+  const [expandedSchemas, setExpandedSchemas] = useState<Record<string, boolean>>({})
+  const [highlightedSchema, setHighlightedSchema] = useState<string | null>(null)
   // Per-schema field policies: { schemaName: { fieldName: policy | null } }
-  const [fieldPolicies, setFieldPolicies] = useState({})
+  const [fieldPolicies, setFieldPolicies] = useState<Record<string, Record<string, FieldAccessPolicy | null>>>({})
   // Which field's detail panel is open: "schemaName.fieldName" or null
-  const [activePolicyField, setActivePolicyField] = useState(null)
+  const [activePolicyField, setActivePolicyField] = useState<string | null>(null)
   // Which row's "⋯" action menu is open (one at a time across the page).
-  const [openMenuFor, setOpenMenuFor] = useState(null)
+  const [openMenuFor, setOpenMenuFor] = useState<string | null>(null)
   const orgNames = useOrgNames()
 
   // Close the row-action menu on outside click / Escape. Single global
   // listener while a menu is open — avoids per-row listener churn.
   useEffect(() => {
     if (!openMenuFor) return
-    const onDocClick = (e) => {
-      if (!e.target.closest?.('[data-row-menu-root]')) setOpenMenuFor(null)
+    const onDocClick = (e: MouseEvent) => {
+      if (!(e.target as HTMLElement | null)?.closest?.('[data-row-menu-root]')) setOpenMenuFor(null)
     }
-    const onKey = (e) => { if (e.key === 'Escape') setOpenMenuFor(null) }
+    const onKey = (e: KeyboardEvent) => { if (e.key === 'Escape') setOpenMenuFor(null) }
     document.addEventListener('mousedown', onDocClick)
     document.addEventListener('keydown', onKey)
     return () => {
@@ -202,7 +219,7 @@ function SchemaTab({ onResult, onSchemaUpdated }) {
     return () => { if (highlightTimerRef.current) clearTimeout(highlightTimerRef.current) }
   }, [dispatch])
 
-  const loadPolicies = useCallback(async (schemaName) => {
+  const loadPolicies = useCallback(async (schemaName: string) => {
     try {
       const policies = await getAllFieldPolicies(schemaName)
       setFieldPolicies(prev => ({ ...prev, [schemaName]: policies }))
@@ -211,7 +228,7 @@ function SchemaTab({ onResult, onSchemaUpdated }) {
     }
   }, [])
 
-  const toggleSchema = async (schemaName) => {
+  const toggleSchema = async (schemaName: string) => {
     const isCurrentlyExpanded = expandedSchemas[schemaName]
 
     setExpandedSchemas(prev => ({
@@ -230,21 +247,21 @@ function SchemaTab({ onResult, onSchemaUpdated }) {
     }
   }
 
-  const getStateColor = (state) => {
+  const getStateColor = (state: string | null | undefined) => {
     const key = state?.toLowerCase()
-    const colors = {
+    const colors: Record<string, string> = {
       approved: 'badge badge-success',
       pending: 'badge badge-warning',
       blocked: 'badge badge-error'
     }
-    return colors[key] || 'bg-surface-secondary text-secondary border border-border'
+    return (key && colors[key]) || 'bg-surface-secondary text-secondary border border-border'
   }
 
-  const approveSchema = async (schemaName) => {
+  const approveSchema = async (schemaName: string) => {
     try {
       const result = await dispatch(approveSchemaAction({ schemaName }))
       if (approveSchemaAction.fulfilled.match(result)) {
-        const backfillHash = result.payload?.backfillHash
+        const backfillHash = (result.payload as { backfillHash?: string } | undefined)?.backfillHash
         await dispatch(fetchSchemas({ forceRefresh: true }))
         if (onResult) {
           const message = backfillHash
@@ -256,7 +273,7 @@ function SchemaTab({ onResult, onSchemaUpdated }) {
       } else {
         const errorMessage = typeof result.payload === 'string'
           ? result.payload
-          : result.payload?.error || `Failed to approve schema: ${schemaName}`
+          : (result.payload as { error?: string } | undefined)?.error || `Failed to approve schema: ${schemaName}`
         throw new Error(errorMessage)
       }
     } catch (err) {
@@ -265,7 +282,7 @@ function SchemaTab({ onResult, onSchemaUpdated }) {
     }
   }
 
-  const blockSchema = async (schemaName) => {
+  const blockSchema = async (schemaName: string) => {
     try {
       const result = await dispatch(blockSchemaAction({ schemaName }))
       if (blockSchemaAction.fulfilled.match(result)) {
@@ -275,7 +292,7 @@ function SchemaTab({ onResult, onSchemaUpdated }) {
       } else {
         const errorMessage = typeof result.payload === 'string'
           ? result.payload
-          : result.payload?.error || `Failed to block schema: ${schemaName}`
+          : (result.payload as { error?: string } | undefined)?.error || `Failed to block schema: ${schemaName}`
         throw new Error(errorMessage)
       }
     } catch (err) {
@@ -284,7 +301,7 @@ function SchemaTab({ onResult, onSchemaUpdated }) {
     }
   }
 
-  const scrollToSchema = (schemaName) => {
+  const scrollToSchema = (schemaName: string) => {
     setExpandedSchemas(prev => ({ ...prev, [schemaName]: true }))
     setHighlightedSchema(schemaName)
     window.requestAnimationFrame(() => {
@@ -298,7 +315,7 @@ function SchemaTab({ onResult, onSchemaUpdated }) {
     }, 2000)
   }
 
-  const renderSchema = (schema) => {
+  const renderSchema = (schema: Schema) => {
     const isExpanded = expandedSchemas[schema.name]
     const state = schema.state || 'Unknown'
     const rangeSchemaInfo = schema.fields ? getRangeSchemaInfo(schema) : null
@@ -443,9 +460,9 @@ function SchemaTab({ onResult, onSchemaUpdated }) {
 
             <div className="space-y-3">
               {Array.isArray(schema.fields) ? (
-                schema.fields.map(fieldName => {
-                  const classifications = schema.field_classifications?.[fieldName]
-                  const refSchema = schema.ref_fields?.[fieldName]
+                (schema.fields as string[]).map((fieldName: string) => {
+                  const classifications = (schema.field_classifications as Record<string, string[]> | undefined)?.[fieldName]
+                  const refSchema = (schema as { ref_fields?: Record<string, string> }).ref_fields?.[fieldName]
                   const policy = schemaPolicies[fieldName]
                   const policyKey = `${schema.name}.${fieldName}`
                   const isPolicyOpen = activePolicyField === policyKey
@@ -521,12 +538,12 @@ function SchemaTab({ onResult, onSchemaUpdated }) {
     )
   }
 
-  const [schemaFilter, setSchemaFilter] = useState('all') // 'all' | 'personal' | 'org'
-  const [stateFilter, setStateFilter] = useState('all') // 'all' | 'approved' | 'blocked'
+  const [schemaFilter, setSchemaFilter] = useState<'all' | 'personal' | 'org'>('all')
+  const [stateFilter, setStateFilter] = useState<'all' | 'approved' | 'blocked'>('all')
   // null = use default (expanded if any system schema holds data); boolean = user override.
-  const [systemSectionOverride, setSystemSectionOverride] = useState(null)
+  const [systemSectionOverride, setSystemSectionOverride] = useState<boolean | null>(null)
   // Per-system-schema key counts, used to guarantee we never hide a data-bearing schema.
-  const [systemKeyCounts, setSystemKeyCounts] = useState({})
+  const [systemKeyCounts, setSystemKeyCounts] = useState<Record<string, number>>({})
 
   // Only show local schemas (approved or blocked) — never show "available" (global catalog)
   const localSchemas = schemas.filter(s => {
@@ -548,8 +565,8 @@ function SchemaTab({ onResult, onSchemaUpdated }) {
 
   // Partition into user vs system schemas. Backend `system: bool` wins when
   // present; otherwise isSystemSchema falls back to a known-name allow-list.
-  const userSchemas = []
-  const systemSchemas = []
+  const userSchemas: Schema[] = []
+  const systemSchemas: Schema[] = []
   for (const s of filteredSchemas) (isSystemSchema(s) ? systemSchemas : userSchemas).push(s)
 
   // Stable key for the useEffect dependency so it doesn't re-run every render.
@@ -579,13 +596,13 @@ function SchemaTab({ onResult, onSchemaUpdated }) {
   const systemSectionExpanded = systemSectionOverride ?? anySystemHasData
 
   // Count schemas by state for the filter badges
-  const stateCounts = localSchemas.reduce((acc, s) => {
+  const stateCounts = localSchemas.reduce<Record<string, number>>((acc, s) => {
     const state = (s.state || '').toLowerCase()
     acc[state] = (acc[state] || 0) + 1
     return acc
   }, {})
 
-  const renderSectionHeader = (label, count, extra = null) => (
+  const renderSectionHeader = (label: string, count: number, extra: ReactNode = null) => (
     <div className="flex items-center gap-2 pt-2">
       <h3 className="text-sm font-semibold text-secondary uppercase tracking-wide">{label}</h3>
       <span className="text-xs text-tertiary">({count})</span>
@@ -597,7 +614,7 @@ function SchemaTab({ onResult, onSchemaUpdated }) {
     <div className="space-y-4">
       <div className="flex flex-wrap items-center gap-2">
         {/* Owner filter */}
-        {['all', 'personal', 'org'].map(f => (
+        {(['all', 'personal', 'org'] as const).map(f => (
           <button
             key={f}
             onClick={() => setSchemaFilter(f)}
@@ -612,7 +629,7 @@ function SchemaTab({ onResult, onSchemaUpdated }) {
         ))}
         <span className="text-border mx-1">|</span>
         {/* State filter */}
-        {['all', 'approved', 'blocked'].map(f => {
+        {(['all', 'approved', 'blocked'] as const).map(f => {
           const count = f === 'all' ? localSchemas.length : (stateCounts[f] || 0)
           return (
             <button

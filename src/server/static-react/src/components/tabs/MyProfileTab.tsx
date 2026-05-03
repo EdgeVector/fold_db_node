@@ -1,5 +1,10 @@
 import { useState, useCallback, useEffect } from 'react'
-import { discoveryClient } from '../../api/clients/discoveryClient'
+import type { OperationResultPayload } from '../../types/api'
+import {
+  discoveryClient,
+  type InterestCategory,
+  type InterestProfile,
+} from '../../api/clients/discoveryClient'
 import { toErrorMessage } from '../../utils/schemaUtils'
 
 /**
@@ -7,7 +12,7 @@ import { toErrorMessage } from '../../utils/schemaUtils'
  * Renders categories as axes radiating from center, with filled polygon
  * showing relative weights.
  */
-function RadarChart({ categories, size = 360 }) {
+function RadarChart({ categories, size = 360 }: { categories: InterestCategory[]; size?: number }) {
   const maxCount = Math.max(...categories.map(c => c.count), 1)
   const cx = size / 2
   const cy = size / 2
@@ -65,7 +70,7 @@ function RadarChart({ categories, size = 360 }) {
   })
 
   // Text anchor based on position
-  function textAnchor(angle) {
+  function textAnchor(angle: number): 'middle' | 'start' | 'end' {
     const deg = (angle * 180) / Math.PI
     if (deg > -100 && deg < -80) return 'middle'
     if (deg > 80 && deg < 100) return 'middle'
@@ -73,7 +78,7 @@ function RadarChart({ categories, size = 360 }) {
     return 'end'
   }
 
-  function dy(angle) {
+  function dy(angle: number): string {
     const deg = (angle * 180) / Math.PI
     if (deg > -100 && deg < -80) return '-0.3em'
     if (deg > 80 && deg < 100) return '1em'
@@ -158,7 +163,7 @@ function RadarChart({ categories, size = 360 }) {
  * Tag cloud visualization as a fallback for fewer than 3 categories.
  * Tags are sized proportionally to their count.
  */
-function TagCloud({ categories }) {
+function TagCloud({ categories }: { categories: InterestCategory[] }) {
   const maxCount = Math.max(...categories.map(c => c.count), 1)
 
   return (
@@ -189,7 +194,7 @@ function TagCloud({ categories }) {
 /**
  * Stats summary bar showing key profile metrics.
  */
-function ProfileStats({ profile }) {
+function ProfileStats({ profile }: { profile: InterestProfile }) {
   const totalCategorized = profile.categories.reduce((sum, c) => sum + c.count, 0)
   const coveragePercent = profile.total_embeddings_scanned > 0
     ? Math.round((totalCategorized / profile.total_embeddings_scanned) * 100)
@@ -237,7 +242,13 @@ function ProfileStats({ profile }) {
  * disabled category still shows its share — useful when the user
  * wants to see the biggest category they've toggled off.
  */
-function CategoryList({ categories, onToggle, toggling }) {
+interface CategoryListProps {
+  categories: InterestCategory[]
+  onToggle: (categoryName: string, enabled: boolean) => void
+  toggling: boolean
+}
+
+function CategoryList({ categories, onToggle, toggling }: CategoryListProps) {
   const total = categories.reduce((sum, c) => sum + (c.count || 0), 0)
   return (
     <div className="space-y-2">
@@ -292,8 +303,12 @@ function CategoryList({ categories, onToggle, toggling }) {
   )
 }
 
-export default function MyProfileTab({ onResult }) {
-  const [profile, setProfile] = useState(null)
+interface MyProfileTabProps {
+  onResult?: (result: OperationResultPayload) => void
+}
+
+export default function MyProfileTab({ onResult }: MyProfileTabProps) {
+  const [profile, setProfile] = useState<InterestProfile | null>(null)
   const [loading, setLoading] = useState(true)
   const [detecting, setDetecting] = useState(false)
   const [toggling, setToggling] = useState(false)
@@ -302,7 +317,7 @@ export default function MyProfileTab({ onResult }) {
     try {
       const res = await discoveryClient.getInterests()
       if (res.success) {
-        setProfile(res.data)
+        setProfile(res.data ?? null)
       }
     } catch (e) {
       onResult?.({ error: toErrorMessage(e) || 'Failed to load profile' })
@@ -333,12 +348,12 @@ export default function MyProfileTab({ onResult }) {
     }
   }
 
-  const handleToggle = async (categoryName, enabled) => {
+  const handleToggle = async (categoryName: string, enabled: boolean) => {
     setToggling(true)
     try {
       const res = await discoveryClient.toggleInterest(categoryName, enabled)
       if (res.success) {
-        setProfile(res.data)
+        setProfile(res.data ?? null)
       } else {
         onResult?.({ error: res.error || 'Toggle failed' })
       }

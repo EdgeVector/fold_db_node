@@ -1,4 +1,5 @@
 import { useState, useEffect } from 'react'
+import type { OperationResultPayload } from '../../types/api'
 import { ingestionClient } from '../../api/clients'
 import { defaultApiClient } from '../../api/core/client'
 import { generateBlogPosts } from '../../data/sampleBlogPosts'
@@ -6,11 +7,22 @@ import { twitterSamples, instagramSamples, linkedinSamples, tiktokSamples } from
 
 const SAMPLES_ENABLED = import.meta.env.VITE_ENABLE_SAMPLES === 'true'
 
-function IngestionTab({ onResult }) {
+interface Org {
+  org_hash: string
+  org_name: string
+}
+
+interface IngestionTabProps {
+  onResult: (result: OperationResultPayload | null) => void
+}
+
+type SampleType = 'blogposts' | 'twitter' | 'instagram' | 'linkedin' | 'tiktok'
+
+function IngestionTab({ onResult }: IngestionTabProps) {
   const [jsonData, setJsonData] = useState('')
   const [autoExecute, setAutoExecute] = useState(true)
   const [isLoading, setIsLoading] = useState(false)
-  const [orgs, setOrgs] = useState([])
+  const [orgs, setOrgs] = useState<Org[]>([])
   const [selectedOrg, setSelectedOrg] = useState('')
 
   useEffect(() => {
@@ -27,7 +39,7 @@ function IngestionTab({ onResult }) {
       }
       defaultApiClient.get('/org', { cacheable: false }).then(res => {
         if (cancelled) return
-        const data = res.data || res
+        const data = ((res as { data?: unknown }).data ?? res) as { orgs?: Org[] }
         setOrgs(data.orgs || [])
       }).catch(() => {})
     }
@@ -39,7 +51,7 @@ function IngestionTab({ onResult }) {
     setIsLoading(true)
     onResult(null)
     try {
-      const parsedData = JSON.parse(jsonData)
+      const parsedData = JSON.parse(jsonData) as Record<string, unknown>
       const options = {
         autoExecute,
         pubKey: 'default',
@@ -59,7 +71,7 @@ function IngestionTab({ onResult }) {
     }
   }
 
-  const loadSampleData = (type) => {
+  const loadSampleData = (type: SampleType) => {
     const samples = { blogposts: generateBlogPosts(), twitter: twitterSamples, instagram: instagramSamples, linkedin: linkedinSamples, tiktok: tiktokSamples }
     setJsonData(JSON.stringify(samples[type], null, 2))
   }
@@ -71,7 +83,7 @@ function IngestionTab({ onResult }) {
       <div className="flex items-center justify-between">
         {SAMPLES_ENABLED && (
           <div className="flex gap-2">
-            {['blogposts', 'twitter', 'instagram', 'linkedin', 'tiktok'].map(t => (
+            {(['blogposts', 'twitter', 'instagram', 'linkedin', 'tiktok'] as const).map(t => (
               <button key={t} onClick={() => loadSampleData(t)} className="btn-secondary btn-sm">
                 {t === 'blogposts' ? 'Blog Posts (100)' : t.charAt(0).toUpperCase() + t.slice(1)}
               </button>

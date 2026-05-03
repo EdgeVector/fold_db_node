@@ -1,22 +1,27 @@
 // Key Management Tab wrapper component
 
 import { useState, useEffect, useRef } from 'react';
+import type { OperationResultPayload } from '../../types/api';
 import { useAppSelector } from '../../store/hooks';
 import { ShieldCheckIcon, ClipboardIcon, CheckIcon } from '@heroicons/react/24/outline';
 
-function KeyManagementTab({ onResult: _onResult }) {
+interface KeyManagementTabProps {
+  onResult?: (result: OperationResultPayload) => void;
+}
+
+function KeyManagementTab({ onResult: _onResult }: KeyManagementTabProps) {
     // Redux state
     const authState = useAppSelector(state => state.auth);
     const { isAuthenticated, systemPublicKey, systemKeyId, isLoading } = authState;
 
-    const [copiedField, setCopiedField] = useState(null);
-    const copiedTimeoutRef = useRef(null);
+    const [copiedField, setCopiedField] = useState<string | null>(null);
+    const copiedTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
     useEffect(() => {
       return () => { if (copiedTimeoutRef.current) clearTimeout(copiedTimeoutRef.current) };
     }, []);
 
-    const copyToClipboard = async (text, field) => {
+    const copyToClipboard = async (text: string, field: string) => {
         try {
             await navigator.clipboard.writeText(text);
             setCopiedField(field);

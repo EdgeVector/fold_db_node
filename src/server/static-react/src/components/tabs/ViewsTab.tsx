@@ -1,12 +1,18 @@
 import { useState, useEffect, useCallback, useRef } from 'react'
+import type { FormEvent } from 'react'
 import { ChevronDownIcon, ChevronRightIcon } from '@heroicons/react/24/solid'
-import { listViews, approveView, blockView, deleteView } from '../../api/clients/viewsClient'
+import type { OperationResultPayload } from '../../types/api'
+import { listViews, approveView, blockView, deleteView, type ViewWithState } from '../../api/clients/viewsClient'
 import { llmQueryClient } from '../../api/clients/llmQueryClient'
 
-function ViewsTab({ onResult }) {
-  const [views, setViews] = useState([])
+interface ViewsTabProps {
+  onResult?: (result: OperationResultPayload & { message?: string }) => void
+}
+
+function ViewsTab({ onResult }: ViewsTabProps) {
+  const [views, setViews] = useState<ViewWithState[]>([])
   const [loading, setLoading] = useState(true)
-  const [expandedViews, setExpandedViews] = useState({})
+  const [expandedViews, setExpandedViews] = useState<Record<string, boolean>>({})
   const [showChat, setShowChat] = useState(false)
 
   const fetchViews = useCallback(async () => {
@@ -15,7 +21,7 @@ function ViewsTab({ onResult }) {
       const data = await listViews()
       setViews(data)
     } catch (err) {
-      if (onResult) onResult({ error: `Failed to load views: ${err.message}` })
+      if (onResult) onResult({ error: `Failed to load views: ${err instanceof Error ? err.message : String(err)}` })
     } finally {
       setLoading(false)
     }
@@ -25,52 +31,54 @@ function ViewsTab({ onResult }) {
     fetchViews()
   }, [fetchViews])
 
-  const toggleView = (name) => {
+  const toggleView = (name: string) => {
     setExpandedViews(prev => ({ ...prev, [name]: !prev[name] }))
   }
 
-  const handleApprove = async (name) => {
+  const errMsg = (err: unknown) => err instanceof Error ? err.message : String(err)
+
+  const handleApprove = async (name: string) => {
     try {
       await approveView(name)
       if (onResult) onResult({ success: true, message: `View '${name}' approved` })
       await fetchViews()
     } catch (err) {
-      if (onResult) onResult({ error: `Failed to approve view: ${err.message}` })
+      if (onResult) onResult({ error: `Failed to approve view: ${errMsg(err)}` })
     }
   }
 
-  const handleBlock = async (name) => {
+  const handleBlock = async (name: string) => {
     try {
       await blockView(name)
       if (onResult) onResult({ success: true, message: `View '${name}' blocked` })
       await fetchViews()
     } catch (err) {
-      if (onResult) onResult({ error: `Failed to block view: ${err.message}` })
+      if (onResult) onResult({ error: `Failed to block view: ${errMsg(err)}` })
     }
   }
 
-  const handleDelete = async (name) => {
+  const handleDelete = async (name: string) => {
     try {
       await deleteView(name)
       if (onResult) onResult({ success: true, message: `View '${name}' deleted` })
       setExpandedViews(prev => { const next = { ...prev }; delete next[name]; return next })
       await fetchViews()
     } catch (err) {
-      if (onResult) onResult({ error: `Failed to delete view: ${err.message}` })
+      if (onResult) onResult({ error: `Failed to delete view: ${errMsg(err)}` })
     }
   }
 
-  const getStateColor = (state) => {
+  const getStateColor = (state: string | null | undefined) => {
     const key = state?.toLowerCase()
-    const colors = {
+    const colors: Record<string, string> = {
       approved: 'badge badge-success',
       available: 'badge badge-info',
       blocked: 'badge badge-error',
     }
-    return colors[key] || 'badge'
+    return (key && colors[key]) || 'badge'
   }
 
-  const renderView = ([view, state]) => {
+  const renderView = ([view, state]: ViewWithState) => {
     const isExpanded = expandedViews[view.name]
     const isIdentity = !view.wasm_transform || view.wasm_transform.length === 0
     const sourceSchemas = [...new Set(view.input_queries.map(q => q.schema_name))]
@@ -208,8 +216,20 @@ function ViewsTab({ onResult }) {
   )
 }
 
-function ViewCreatorChat({ onViewCreated, onResult }) {
-  const [messages, setMessages] = useState([
+interface ChatMessage {
+  id: string
+  role: 'user' | 'assistant' | 'view_created'
+  content: string
+  data?: unknown
+}
+
+interface ViewCreatorChatProps {
+  onViewCreated: () => void
+  onResult?: (result: OperationResultPayload & { message?: string }) => void
+}
+
+function ViewCreatorChat({ onViewCreated, onResult }: ViewCreatorChatProps) {
+  const [messages, setMessages] = useState<ChatMessage[]>([
     {
       id: 'welcome',
       role: 'assistant',
@@ -222,10 +242,10 @@ function ViewCreatorChat({ onViewCreated, onResult }) {
   ])
   const [inputText, setInputText] = useState('')
   const [isProcessing, setIsProcessing] = useState(false)
-  const [sessionId, setSessionId] = useState(null)
+  const [sessionId, setSessionId] = useState<string | null>(null)
   const [thinkingSeconds, setThinkingSeconds] = useState(0)
-  const thinkingTimerRef = useRef(null)
-  const messagesEndRef = useRef(null)
+  const thinkingTimerRef = useRef<ReturnType<typeof setInterval> | null>(null)
+  const messagesEndRef = useRef<HTMLDivElement | null>(null)
 
   useEffect(() => {
     messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' })
@@ -246,7 +266,7 @@ function ViewCreatorChat({ onViewCreated, onResult }) {
     }
   }, [isProcessing])
 
-  const handleSubmit = useCallback(async (e) => {
+  const handleSubmit = useCallback(async (e?: FormEvent<HTMLFormElement>) => {
     e?.preventDefault()
     const text = inputText.trim()
     if (!text || isProcessing) return
@@ -263,7 +283,7 @@ function ViewCreatorChat({ onViewCreated, onResult }) {
 
       const response = await llmQueryClient.agentQuery({
         query: `[View Creator Context: ${contextHint}]\n\nUser request: ${text}`,
-        session_id: sessionId,
+        session_id: sessionId ?? undefined,
         max_iterations: 15,
       })
 
@@ -276,19 +296,26 @@ function ViewCreatorChat({ onViewCreated, onResult }) {
         return
       }
 
-      const result = response.data
-      if (result.session_id) setSessionId(result.session_id)
+      const result = response.data as {
+        session_id?: string
+        answer?: string
+        tool_calls?: Array<{
+          tool?: string
+          result?: { success?: boolean; view_name?: string }
+        }>
+      } | undefined
+      if (result?.session_id) setSessionId(result.session_id)
 
       // Check if a view was created via tool calls
       let viewCreated = false
-      if (result.tool_calls?.length > 0) {
-        for (const tc of result.tool_calls) {
+      if ((result?.tool_calls?.length ?? 0) > 0) {
+        for (const tc of result!.tool_calls!) {
           if (tc.tool === 'create_view' && tc.result?.success) {
             viewCreated = true
             setMessages(prev => [...prev, {
               id: `view-${Date.now()}`,
               role: 'view_created',
-              content: tc.result.view_name || 'View created',
+              content: tc.result?.view_name || 'View created',
               data: tc.result,
             }])
           }
@@ -298,7 +325,7 @@ function ViewCreatorChat({ onViewCreated, onResult }) {
       setMessages(prev => [...prev, {
         id: `assistant-${Date.now()}`,
         role: 'assistant',
-        content: result.answer,
+        content: result?.answer ?? '',
       }])
 
       if (viewCreated) {

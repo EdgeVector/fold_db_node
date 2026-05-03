@@ -1,6 +1,8 @@
 import { useState, useEffect, useRef, useCallback } from 'react'
+import type { OperationResultPayload } from '../../types/api'
 import { toErrorMessage } from '../../utils/schemaUtils'
 import { ingestionClient } from '../../api/clients'
+import type { SmartFolderScanResponse } from '../../api/clients/ingestionClient'
 import { defaultApiClient } from '../../api/core/client'
 import { useFolderAutocomplete } from '../../hooks/useFolderAutocomplete'
 import { useScanPolling } from '../../hooks/useScanPolling'
@@ -11,14 +13,31 @@ import BatchProgressView from './smart-folder/BatchProgressView'
 
 const STORAGE_KEY = 'smartFolderTabState'
 
+interface PersistedState {
+  folderPath?: string
+  scanProgressId?: string | null
+  scanResult?: SmartFolderScanResponse | null
+  batchId?: string | null
+  spendLimit?: string
+  fileProgressIds?: Array<{ file_name: string; progress_id: string }>
+  includeAlreadyIngested?: boolean
+}
+
+interface Org {
+  org_hash: string
+  org_name: string
+}
+
+type OnResult = (result: OperationResultPayload | null) => void
+
 /** Load persisted SmartFolderTab state from localStorage.
  *  Only restores state when there's an active batch or scan to reconnect to.
  *  Completed/stale sessions start fresh. */
-function loadPersistedState() {
+function loadPersistedState(): PersistedState | null {
   try {
     const raw = localStorage.getItem(STORAGE_KEY)
     if (!raw) return null
-    const state = JSON.parse(raw)
+    const state = JSON.parse(raw) as PersistedState
     const hasActiveBatch = state.batchId && localStorage.getItem('activeBatchId')
     const hasActiveScan = !!state.scanProgressId
     if (!hasActiveBatch && !hasActiveScan) {
@@ -29,7 +48,7 @@ function loadPersistedState() {
   } catch { return null }
 }
 
-function persistState(state) {
+function persistState(state: PersistedState) {
   try { localStorage.setItem(STORAGE_KEY, JSON.stringify(state)) } catch { /* best-effort */ }
 }
 
@@ -37,28 +56,32 @@ function clearPersistedState() {
   localStorage.removeItem(STORAGE_KEY)
 }
 
-function SmartFolderTab({ onResult: onResultProp }) {
+interface SmartFolderTabProps {
+  onResult: OnResult
+}
+
+function SmartFolderTab({ onResult: onResultProp }: SmartFolderTabProps) {
   // Stabilize the onResult callback so polling effects don't restart on every parent render
-  const onResultRef = useRef(onResultProp)
+  const onResultRef = useRef<OnResult>(onResultProp)
   useEffect(() => { onResultRef.current = onResultProp })
-  const onResult = useCallback((...args) => onResultRef.current(...args), [])
+  const onResult = useCallback<OnResult>((...args) => onResultRef.current(...args), [])
 
   // Restore persisted state on mount
   const [restored] = useState(() => loadPersistedState())
 
-  const [folderPath, setFolderPath] = useState(() => restored?.folderPath || '~/Documents')
+  const [folderPath, setFolderPath] = useState<string>(() => restored?.folderPath || '~/Documents')
   const [isScanning, setIsScanning] = useState(() => !!restored?.scanProgressId)
   const [isLoadingMore, setIsLoadingMore] = useState(false)
   const [isIngesting, setIsIngesting] = useState(false)
-  const [scanResult, setScanResult] = useState(() => restored?.scanResult || null)
-  const [batchId, setBatchId] = useState(() => restored?.batchId || null)
-  const [spendLimit, setSpendLimit] = useState(() => restored?.spendLimit || '')
-  const [fileProgressIds, setFileProgressIds] = useState(() => restored?.fileProgressIds || [])
-  const [scanProgressId, setScanProgressId] = useState(() => restored?.scanProgressId || null)
+  const [scanResult, setScanResult] = useState<SmartFolderScanResponse | null>(() => restored?.scanResult || null)
+  const [batchId, setBatchId] = useState<string | null>(() => restored?.batchId || null)
+  const [spendLimit, setSpendLimit] = useState<string>(() => restored?.spendLimit || '')
+  const [fileProgressIds, setFileProgressIds] = useState<Array<{ file_name: string; progress_id: string }>>(() => restored?.fileProgressIds || [])
+  const [scanProgressId, setScanProgressId] = useState<string | null>(() => restored?.scanProgressId || null)
   const [includeAlreadyIngested, setIncludeAlreadyIngested] = useState(() => !!restored?.includeAlreadyIngested)
 
   // Org selector state
-  const [orgs, setOrgs] = useState([])
+  const [orgs, setOrgs] = useState<Org[]>([])
   const [selectedOrg, setSelectedOrg] = useState('')
   useEffect(() => {
     let cancelled = false
@@ -74,7 +97,7 @@ function SmartFolderTab({ onResult: onResultProp }) {
       }
       defaultApiClient.get('/org').then(res => {
         if (cancelled) return
-        const data = res.data || res
+        const data = ((res as { data?: unknown }).data ?? res) as { orgs?: Org[] }
         setOrgs(data.orgs || [])
       }).catch(() => {})
     }
@@ -83,7 +106,7 @@ function SmartFolderTab({ onResult: onResultProp }) {
   }, [])
 
   // Ref for batchStatus so handleBack can read it without a stale closure
-  const batchStatusRef = useRef(null)
+  const batchStatusRef = useRef<{ status?: string } | null>(null)
 
   // Persist key state whenever it changes
   useEffect(() => {
@@ -96,15 +119,16 @@ function SmartFolderTab({ onResult: onResultProp }) {
 
   // --- Handlers ---
 
-  const startScan = useCallback(async (maxFiles) => {
+  const startScan = useCallback(async (maxFiles?: number) => {
     if (!folderPath.trim()) return
     setIsScanning(true)
     setScanResult(null)
     onResult(null)
     try {
       const response = await ingestionClient.smartFolderScan(folderPath.trim(), 10, maxFiles)
-      if (response.success && response.data?.progress_id) {
-        setScanProgressId(response.data.progress_id)
+      const respData = response.data as { progress_id?: string } | undefined
+      if (response.success && respData?.progress_id) {
+        setScanProgressId(respData.progress_id)
       } else {
         onResult({ success: false, error: 'Failed to start scan' })
         setIsScanning(false)
@@ -115,13 +139,13 @@ function SmartFolderTab({ onResult: onResultProp }) {
     }
   }, [folderPath, onResult])
 
-  const handleScan = useCallback(async (maxFiles) => {
+  const handleScan = useCallback(async (maxFiles?: number) => {
     setBatchId(null)
     setIncludeAlreadyIngested(false)
     await startScan(maxFiles)
   }, [startScan])
 
-  const handleScanComplete = useCallback((result) => {
+  const handleScanComplete = useCallback((result: SmartFolderScanResponse) => {
     setScanResult(result)
     // Default the spend limit to 5× the estimated cost (with a $1 floor) so
     // small-batch ingests don't immediately trip on rounding/variance. The
@@ -136,7 +160,7 @@ function SmartFolderTab({ onResult: onResultProp }) {
     setIsScanning(false)
   }, [])
 
-  const handleScanFail = useCallback((msg) => {
+  const handleScanFail = useCallback((msg: string) => {
     onResult({ success: false, error: msg })
     setScanProgressId(null)
     setIsScanning(false)
@@ -168,7 +192,7 @@ function SmartFolderTab({ onResult: onResultProp }) {
   const handleIngest = useCallback(async () => {
     if (!scanResult) return
     const files = includeAlreadyIngested
-      ? [...scanResult.recommended_files, ...scanResult.skipped_files.filter(f => f.already_ingested)]
+      ? [...scanResult.recommended_files, ...scanResult.skipped_files.filter(f => (f as { already_ingested?: boolean }).already_ingested)]
       : scanResult.recommended_files
     const filePaths = files.map(f => f.path)
     const fileCosts = files.map(f => f.estimated_cost)
@@ -180,10 +204,11 @@ function SmartFolderTab({ onResult: onResultProp }) {
       const response = await ingestionClient.smartFolderIngest(
         folderPath.trim(), filePaths, true, limit, fileCosts, includeAlreadyIngested, selectedOrg || undefined
       )
-      if (response.success) {
-        setBatchId(response.data.batch_id)
-        setFileProgressIds(response.data.file_progress_ids || [])
-        onResult({ success: true, data: { message: response.data.message, batch_id: response.data.batch_id, files_found: response.data.files_found } })
+      if (response.success && response.data) {
+        const ingestData = response.data
+        setBatchId(ingestData.batch_id)
+        setFileProgressIds(ingestData.file_progress_ids || [])
+        onResult({ success: true, data: { message: ingestData.message, batch_id: ingestData.batch_id, files_found: ingestData.files_found } })
       } else {
         onResult({ success: false, error: 'Failed to start ingestion' })
       }
@@ -194,8 +219,8 @@ function SmartFolderTab({ onResult: onResultProp }) {
     }
   }, [scanResult, includeAlreadyIngested, spendLimit, folderPath, selectedOrg, onResult])
 
-  const handleResume = useCallback(async (limit) => {
-    if (!batchId) return
+  const handleResume = useCallback(async (limit?: number) => {
+    if (!batchId || limit === undefined) return
     try {
       await ingestionClient.resumeBatch(batchId, limit)
     } catch (error) {
@@ -251,7 +276,7 @@ function SmartFolderTab({ onResult: onResultProp }) {
     onBatchLost: handleBatchLost,
     onTerminal: handleBatchTerminal,
   })
-  batchStatusRef.current = batchStatus
+  batchStatusRef.current = batchStatus as { status?: string } | null
 
   const selectedOrgName = orgs.find(o => o.org_hash === selectedOrg)?.org_name
 
@@ -298,7 +323,7 @@ function SmartFolderTab({ onResult: onResultProp }) {
       {scanResult && !batchId && (
         <ScanResultsView
           scanResult={scanResult}
-          onScanResultUpdate={(updated) => {
+          onScanResultUpdate={(updated: SmartFolderScanResponse) => {
             setScanResult(updated)
             setSpendLimit(updated.total_estimated_cost?.toFixed(2) || '')
           }}

@@ -1,4 +1,6 @@
 import { useState, useEffect, useCallback } from 'react'
+import type { FormEvent } from 'react'
+import type { OperationResultPayload } from '../../types/api'
 import {
   getIdentityCard,
   setIdentityCard,
@@ -11,6 +13,13 @@ import {
   getSharingPosture,
   getAuditLog,
 } from '../../api/clients/trustClient'
+import type {
+  Contact,
+  IdentityCard,
+  SharingRole,
+  SharingPosture,
+  AuditEvent,
+} from '../../api/clients/trustClient'
 import ContactsPanel from './trust/ContactsPanel'
 import InvitePanel from './trust/InvitePanel'
 import SharingOverviewPanel from './trust/SharingOverviewPanel'
@@ -18,34 +27,38 @@ import IdentityCardPanel from './trust/IdentityCardPanel'
 import AuditLogPanel from './trust/AuditLogPanel'
 import { useTrustHandlers } from './trust/useTrustHandlers'
 
-function TrustTab({ onResult }) {
+interface TrustTabProps {
+  onResult?: (result: OperationResultPayload) => void
+}
+
+function TrustTab({ onResult }: TrustTabProps) {
   const [activeSection, setActiveSection] = useState('contacts')
-  const [error, setError] = useState(null)
+  const [error, setError] = useState<string | null>(null)
 
   // Identity card
-  const [identityCard, setIdentityCardState] = useState(null)
+  const [identityCard, setIdentityCardState] = useState<IdentityCard | null>(null)
   const [identityLoading, setIdentityLoading] = useState(true)
   const [editName, setEditName] = useState('')
   const [editHint, setEditHint] = useState('')
   const [savingIdentity, setSavingIdentity] = useState(false)
 
   // Contacts
-  const [contacts, setContacts] = useState([])
+  const [contacts, setContacts] = useState<Contact[]>([])
   const [contactsLoading, setContactsLoading] = useState(true)
-  const [revoking, setRevoking] = useState(null)
+  const [revoking, setRevoking] = useState<string | null>(null)
 
   // Roles & audit
-  const [availableRoles, setAvailableRoles] = useState({})
-  const [selectedContact, setSelectedContact] = useState(null)
-  const [auditResult, setAuditResult] = useState(null)
+  const [availableRoles, setAvailableRoles] = useState<Record<string, SharingRole>>({})
+  const [selectedContact, setSelectedContact] = useState<string | null>(null)
+  const [auditResult, setAuditResult] = useState<unknown>(null)
   const [auditLoading, setAuditLoading] = useState(false)
   const [assigningRole, setAssigningRole] = useState(false)
 
   // Posture
-  const [posture, setPosture] = useState(null)
+  const [posture, setPosture] = useState<SharingPosture | null>(null)
 
   // Audit log
-  const [auditEvents, setAuditEvents] = useState([])
+  const [auditEvents, setAuditEvents] = useState<AuditEvent[]>([])
 
   // ===== Fetch data =====
 
@@ -86,7 +99,7 @@ function TrustTab({ onResult }) {
     try {
       const response = await getAuditLog(50)
       if (response.success && response.data) {
-        setAuditEvents(response.data.events || [])
+        setAuditEvents(response.data.events ?? [])
       }
     } catch (err) {
       console.error('Failed to load audit log:', err)
@@ -114,7 +127,7 @@ function TrustTab({ onResult }) {
 
   // ===== Role & audit handlers =====
 
-  const handleAudit = async (publicKey) => {
+  const handleAudit = async (publicKey: string) => {
     setSelectedContact(publicKey)
     setAuditLoading(true)
     setAuditResult(null)
@@ -124,13 +137,13 @@ function TrustTab({ onResult }) {
         setAuditResult(response.data)
       }
     } catch (err) {
-      setError(err?.message || 'Failed to audit contact access')
+      setError((err instanceof Error ? err.message : null) || 'Failed to audit contact access')
     } finally {
       setAuditLoading(false)
     }
   }
 
-  const handleAssignRole = async (publicKey, roleName) => {
+  const handleAssignRole = async (publicKey: string, roleName: string) => {
     setAssigningRole(true)
     setError(null)
     try {
@@ -143,13 +156,13 @@ function TrustTab({ onResult }) {
         setError(response.error || 'Failed to assign role')
       }
     } catch (err) {
-      setError(err.message || 'Failed to assign role')
+      setError((err instanceof Error ? err.message : null) || 'Failed to assign role')
     } finally {
       setAssigningRole(false)
     }
   }
 
-  const handleRemoveRole = async (publicKey, domain) => {
+  const handleRemoveRole = async (publicKey: string, domain: string) => {
     setError(null)
     try {
       const response = await removeRoleFromContact(publicKey, domain)
@@ -160,13 +173,13 @@ function TrustTab({ onResult }) {
         setError(response.error || 'Failed to remove role')
       }
     } catch (err) {
-      setError(err.message || 'Failed to remove role')
+      setError((err instanceof Error ? err.message : null) || 'Failed to remove role')
     }
   }
 
   // ===== Identity card handlers =====
 
-  const handleSaveIdentity = async (e) => {
+  const handleSaveIdentity = async (e: FormEvent<HTMLFormElement>) => {
     e.preventDefault()
     if (!editName.trim()) return
     setSavingIdentity(true)
@@ -180,7 +193,7 @@ function TrustTab({ onResult }) {
         setError(response.error || 'Failed to save identity card')
       }
     } catch (err) {
-      setError(err.message || 'Failed to save identity card')
+      setError((err instanceof Error ? err.message : null) || 'Failed to save identity card')
     } finally {
       setSavingIdentity(false)
     }
@@ -188,7 +201,7 @@ function TrustTab({ onResult }) {
 
   // ===== Contact handlers =====
 
-  const handleRevoke = async (publicKey) => {
+  const handleRevoke = async (publicKey: string) => {
     setRevoking(publicKey)
     setError(null)
     try {
@@ -201,7 +214,7 @@ function TrustTab({ onResult }) {
         setError(response.error || 'Failed to revoke contact')
       }
     } catch (err) {
-      setError(err.message || 'Failed to revoke contact')
+      setError((err instanceof Error ? err.message : null) || 'Failed to revoke contact')
     } finally {
       setRevoking(null)
     }

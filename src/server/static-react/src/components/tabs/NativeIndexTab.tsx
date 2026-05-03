@@ -1,6 +1,9 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
+import type { OperationResultPayload } from '../../types/api'
+import type { Schema } from '../../types/schema'
 import { useApprovedSchemas } from '../../hooks/useApprovedSchemas.js'
 import { nativeIndexClient, mutationClient } from '../../api/clients'
+import type { NativeIndexResult } from '../../api/clients/nativeIndexClient'
 import { FieldsTable } from '../StructuredResults'
 import {
   createHashRangeKeyFilter,
@@ -9,15 +12,21 @@ import {
 } from '../../utils/filterUtils'
 import { getSchemaDisplayName, getFieldNames, toErrorMessage } from '../../utils/schemaUtils'
 
-function formatValue(v) {
+function formatValue(v: unknown): string {
   if (v == null) return ''
   if (typeof v === 'string') return v
   try { return JSON.stringify(v) } catch { return String(v) }
 }
 
-function RecordRow({ result, schemaByName, fetchRecordFor }) {
+interface RecordRowProps {
+  result: NativeIndexResult
+  schemaByName: Map<string, Schema>
+  fetchRecordFor: (schema: string, kv: NativeIndexResult['key_value']) => Promise<Record<string, unknown>>
+}
+
+function RecordRow({ result, schemaByName, fetchRecordFor }: RecordRowProps) {
   const [expanded, setExpanded] = useState(false)
-  const [details, setDetails] = useState(null)
+  const [details, setDetails] = useState<Record<string, unknown> | null>(null)
   const [loading, setLoading] = useState(false)
 
   const schema = schemaByName?.get(result.schema_name)
@@ -69,7 +78,17 @@ function RecordRow({ result, schemaByName, fetchRecordFor }) {
   )
 }
 
-function WordGroup({ value, records, schemaByName, fetchRecordFor, buildKeyId, isOpen, onToggle }) {
+interface WordGroupProps {
+  value: unknown
+  records: NativeIndexResult[]
+  schemaByName: Map<string, Schema>
+  fetchRecordFor: (schema: string, kv: NativeIndexResult['key_value']) => Promise<Record<string, unknown>>
+  buildKeyId: (schema: string, kv: NativeIndexResult['key_value']) => string
+  isOpen: boolean
+  onToggle: () => void
+}
+
+function WordGroup({ value, records, schemaByName, fetchRecordFor, buildKeyId, isOpen, onToggle }: WordGroupProps) {
   return (
     <div className="border border-border rounded mb-2">
       <button
@@ -100,15 +119,19 @@ function WordGroup({ value, records, schemaByName, fetchRecordFor, buildKeyId, i
   )
 }
 
-export default function NativeIndexTab({ onResult }) {
+interface NativeIndexTabProps {
+  onResult: (result: OperationResultPayload & { status?: number }) => void
+}
+
+export default function NativeIndexTab({ onResult }: NativeIndexTabProps) {
   const { approvedSchemas, refetch: refetchSchemas } = useApprovedSchemas()
   const [term, setTerm] = useState('')
   const [isSearching, setIsSearching] = useState(false)
-  const [results, setResults] = useState([])
-  const [error, setError] = useState(null)
-  const [expandedWords, setExpandedWords] = useState(() => new Set())
+  const [results, setResults] = useState<NativeIndexResult[]>([])
+  const [error, setError] = useState<string | null>(null)
+  const [expandedWords, setExpandedWords] = useState<Set<string>>(() => new Set())
   const [visibleCount, setVisibleCount] = useState(10)
-  const sentinelRef = useRef(null)
+  const sentinelRef = useRef<HTMLDivElement | null>(null)
 
   useEffect(() => { refetchSchemas() }, [refetchSchemas])
 
@@ -118,7 +141,10 @@ export default function NativeIndexTab({ onResult }) {
     try {
       const res = await nativeIndexClient.search(term)
       if (res.success) {
-        const resultsArray = res.data?.results || []
+        const data = res.data as NativeIndexResult[] | { results?: NativeIndexResult[] } | undefined
+        const resultsArray: NativeIndexResult[] = Array.isArray(data)
+          ? data
+          : (data?.results ?? [])
         setResults(resultsArray)
         setExpandedWords(new Set())
         setVisibleCount(10)
@@ -137,18 +163,18 @@ export default function NativeIndexTab({ onResult }) {
   }, [term, onResult])
 
   const schemaByName = useMemo(() => {
-    const map = new Map()
-    ;(approvedSchemas || []).forEach(s => map.set(s.name, s))
+    const map = new Map<string, Schema>()
+    ;(approvedSchemas || []).forEach((s: Schema) => map.set(s.name, s))
     return map
   }, [approvedSchemas])
 
-  const buildKeyId = useCallback((schema, kv) => {
+  const buildKeyId = useCallback((schema: string, kv: NativeIndexResult['key_value']) => {
     const h = kv?.hash ?? ''
     const r = kv?.range ?? ''
     return `${schema}|${h}|${r}`
   }, [])
 
-  const buildFilterForKey = useCallback((kv) => {
+  const buildFilterForKey = useCallback((kv: NativeIndexResult['key_value']) => {
     const h = kv?.hash
     const r = kv?.range
     if (h && r) return createHashRangeKeyFilter(h, r)
@@ -157,32 +183,36 @@ export default function NativeIndexTab({ onResult }) {
     return undefined
   }, [])
 
-  const fetchRecordFor = useCallback(async (schema, kv) => {
+  const fetchRecordFor = useCallback(async (schema: string, kv: NativeIndexResult['key_value']) => {
     const schemaObj = schemaByName.get(schema)
     const fields = getFieldNames(schemaObj)
     const filter = buildFilterForKey(kv)
-    const query = { schema_name: schema, fields }
+    const query: Record<string, unknown> = { schema_name: schema, fields }
     if (filter) query.filter = filter
     const res = await mutationClient.executeQuery(query)
     if (!res.success) {
       throw new Error(res.error || 'Query failed')
     }
-    const arr = Array.isArray(res.data?.results) ? res.data.results : []
+    const data = res.data as { results?: Array<{ key?: { hash?: string; range?: string }; fields?: Record<string, unknown> }> } | undefined
+    const arr = Array.isArray(data?.results) ? data!.results! : []
     const match = arr.find(x => {
       return String(x?.key?.hash || '') === String(kv?.hash || '') &&
              String(x?.key?.range || '') === String(kv?.range || '')
     }) || arr[0]
-    return match?.fields || (match && typeof match === 'object' ? match : {})
+    return (match?.fields || (match && typeof match === 'object' ? match : {})) as Record<string, unknown>
   }, [schemaByName, buildFilterForKey])
 
   const groupedResults = useMemo(() => {
-    const map = new Map()
+    interface Group { value: unknown; records: NativeIndexResult[] }
+    const map = new Map<string, Group>()
     for (const r of results) {
       const key = formatValue(r.value)
-      if (!map.has(key)) {
-        map.set(key, { value: r.value, records: [] })
+      let group = map.get(key)
+      if (!group) {
+        group = { value: r.value, records: [] }
+        map.set(key, group)
       }
-      map.get(key).records.push(r)
+      group.records.push(r)
     }
     return Array.from(map.values())
   }, [results])
@@ -209,7 +239,7 @@ export default function NativeIndexTab({ onResult }) {
     return () => observer.disconnect()
   }, [groupedResults.length])
 
-  const toggleWord = useCallback((value) => {
+  const toggleWord = useCallback((value: string) => {
     setExpandedWords(prev => {
       const next = new Set(prev)
       if (next.has(value)) {

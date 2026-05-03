@@ -1,26 +1,36 @@
 import { useCallback, useEffect, useState } from 'react'
-import { discoveryClient } from '../../../api/clients/discoveryClient'
+import type { OperationResultPayload } from "../../../types/api"
+import {
+  discoveryClient,
+  type DiscoveryOptIn,
+  type FaceEntry,
+  type FaceSearchResult,
+} from '../../../api/clients/discoveryClient'
 import { listContacts } from '../../../api/clients/trustClient'
 import { toErrorMessage } from '../../../utils/schemaUtils'
 import RoleSelect from './RoleSelect'
 
-export default function FaceSearchPanel({ onResult }) {
+interface FaceSearchPanelProps {
+  onResult: (result: OperationResultPayload) => void
+}
+
+export default function FaceSearchPanel({ onResult }: FaceSearchPanelProps) {
   const [sourceSchema, setSourceSchema] = useState('')
   const [sourceKey, setSourceKey] = useState('')
   const [faceIndex, setFaceIndex] = useState(0)
-  const [results, setResults] = useState([])
+  const [results, setResults] = useState<FaceSearchResult[]>([])
   const [searching, setSearching] = useState(false)
-  const [error, setError] = useState(null)
-  const [connectingTo, setConnectingTo] = useState(null)
+  const [error, setError] = useState<string | null>(null)
+  const [connectingTo, setConnectingTo] = useState<string | null>(null)
   const [connectMessage, setConnectMessage] = useState('')
   const [connectRole, setConnectRole] = useState('acquaintance')
-  const [faceSchemas, setFaceSchemas] = useState([])
-  const [knownPseudonyms, setKnownPseudonyms] = useState(() => new Set())
+  const [faceSchemas, setFaceSchemas] = useState<DiscoveryOptIn[]>([])
+  const [knownPseudonyms, setKnownPseudonyms] = useState<Set<string>>(() => new Set())
   // Detected faces in the user's selected (schema, key). Populated lazily
   // when both fields are filled in, so the user can pick a face_index by
   // bbox + confidence instead of brute-forcing every index.
-  const [detectedFaces, setDetectedFaces] = useState([])
-  const [detectedFacesError, setDetectedFacesError] = useState(null)
+  const [detectedFaces, setDetectedFaces] = useState<FaceEntry[]>([])
+  const [detectedFacesError, setDetectedFacesError] = useState<string | null>(null)
   const [loadingFaces, setLoadingFaces] = useState(false)
 
   useEffect(() => {
@@ -30,10 +40,11 @@ export default function FaceSearchPanel({ onResult }) {
         const resp = await listContacts()
         if (cancelled || !resp.success) return
         const contacts = resp.data?.contacts || []
-        const set = new Set()
+        const set = new Set<string>()
         for (const c of contacts) {
           if (c.pseudonym) set.add(c.pseudonym)
-          if (c.messaging_pseudonym) set.add(c.messaging_pseudonym)
+          const messagingPseudonym = (c as { messaging_pseudonym?: string }).messaging_pseudonym
+          if (messagingPseudonym) set.add(messagingPseudonym)
         }
         setKnownPseudonyms(set)
       } catch {
@@ -49,7 +60,7 @@ export default function FaceSearchPanel({ onResult }) {
       try {
         const resp = await discoveryClient.listOptIns()
         if (resp.success && resp.data?.configs) {
-          setFaceSchemas(resp.data.configs.filter(c => c.publish_faces))
+          setFaceSchemas(resp.data.configs.filter(c => (c as { publish_faces?: boolean }).publish_faces))
         }
       } catch { /* ignore */ }
     }
@@ -114,7 +125,7 @@ export default function FaceSearchPanel({ onResult }) {
     }
   }, [sourceSchema, sourceKey, faceIndex, onResult])
 
-  const handleConnect = async (pseudonym) => {
+  const handleConnect = async (pseudonym: string) => {
     if (!connectMessage.trim()) return
     try {
       const res = await discoveryClient.connect(pseudonym, connectMessage, connectRole !== 'acquaintance' ? connectRole : undefined)
@@ -196,7 +207,7 @@ export default function FaceSearchPanel({ onResult }) {
             <div className="flex flex-wrap gap-1.5">
               {detectedFaces.map(f => {
                 const selected = f.face_index === faceIndex
-                const hasBbox = Array.isArray(f.bbox) && f.bbox.length === 4
+                const bbox = Array.isArray(f.bbox) && f.bbox.length === 4 ? f.bbox : null
                 const conf = typeof f.confidence === 'number' ? f.confidence : null
                 return (
                   <button
@@ -209,8 +220,8 @@ export default function FaceSearchPanel({ onResult }) {
                         : 'bg-surface border-border text-secondary hover:border-gruvbox-blue/50'
                     }`}
                     title={
-                      hasBbox
-                        ? `bbox [${f.bbox.map(v => v.toFixed(3)).join(', ')}]${conf !== null ? ` · conf ${conf.toFixed(2)}` : ''}`
+                      bbox
+                        ? `bbox [${bbox.map(v => v.toFixed(3)).join(', ')}]${conf !== null ? ` · conf ${conf.toFixed(2)}` : ''}`
                         : 'legacy entry — no bbox metadata'
                     }
                   >
@@ -224,7 +235,7 @@ export default function FaceSearchPanel({ onResult }) {
                       which is enough to disambiguate "Tom" vs "background
                       person" without needing actual pixel thumbnails.
                     */}
-                    {hasBbox && (
+                    {bbox && (
                       <svg
                         width="24"
                         height="18"
@@ -244,10 +255,10 @@ export default function FaceSearchPanel({ onResult }) {
                           opacity="0.4"
                         />
                         <rect
-                          x={f.bbox[0]}
-                          y={f.bbox[1] * 0.75}
-                          width={Math.max(f.bbox[2] - f.bbox[0], 0.04)}
-                          height={Math.max((f.bbox[3] - f.bbox[1]) * 0.75, 0.03)}
+                          x={bbox[0]}
+                          y={bbox[1] * 0.75}
+                          width={Math.max(bbox[2] - bbox[0], 0.04)}
+                          height={Math.max((bbox[3] - bbox[1]) * 0.75, 0.03)}
                           fill={selected ? 'rgb(131, 165, 152)' : 'rgb(168, 153, 132)'}
                           fillOpacity="0.8"
                           stroke="none"
@@ -255,9 +266,9 @@ export default function FaceSearchPanel({ onResult }) {
                       </svg>
                     )}
                     #{f.face_index}
-                    {hasBbox && (
+                    {bbox && (
                       <span className="text-tertiary">
-                        ({(f.bbox[2] - f.bbox[0]).toFixed(2)}×{(f.bbox[3] - f.bbox[1]).toFixed(2)})
+                        ({(bbox[2] - bbox[0]).toFixed(2)}×{(bbox[3] - bbox[1]).toFixed(2)})
                       </span>
                     )}
                     {conf !== null && (

@@ -10,6 +10,7 @@
  */
 
 import { useState, useCallback, useRef, useEffect } from 'react';
+import type { FormEvent } from 'react';
 import { useAppSelector, useAppDispatch } from '../../store/hooks';
 import {
   selectIsAiConfigured,
@@ -19,6 +20,7 @@ import {
   selectIngestionConfig,
 } from '../../store/ingestionSlice';
 import { selectApprovedSchemas, fetchSchemas } from '../../store/schemaSlice';
+import type { Schema } from '../../types/schema';
 import { llmQueryClient } from '../../api/clients/llmQueryClient';
 import { ingestionClient } from '../../api/clients/ingestionClient';
 import { extractImagesFromToolCalls } from '../../utils/imageUtils';
@@ -27,16 +29,59 @@ import useAiConfig from '../settings/AiConfigSettings';
 
 import { friendlyModelName } from '../../utils/modelNames';
 
+interface ImageItem {
+  fileHash: string
+  sourceFile?: string
+}
+
+interface ToolCall {
+  tool?: string
+  params?: Record<string, unknown> & { schema_name?: string }
+  result?: unknown
+}
+
+interface AgentResultData {
+  session_id?: string
+  answer?: string
+  tool_calls?: ToolCall[]
+}
+
+interface ProgressJob {
+  current_step?: string
+  status_message?: string
+  progress_percentage?: number
+  is_complete?: boolean
+  is_failed?: boolean
+  job_type?: string
+}
+
+interface Message {
+  id: string
+  type: 'user' | 'system' | 'scan_result' | 'ingest_result' | 'query_result' | 'images'
+  content: string
+  data: unknown
+  timestamp: string
+}
+
+type Phase = 'loading' | 'needs_ai' | 'empty' | 'has_data'
+
 // State machine: determines UX based on system state
 // loading → needs_ai → empty → has_data
-function derivePhase(configLoaded, aiConfigured, schemas) {
+function derivePhase(configLoaded: boolean, aiConfigured: boolean, schemas: Schema[] | null | undefined): Phase {
   if (!configLoaded) return 'loading';
   if (!aiConfigured) return 'needs_ai';
   if (!schemas || schemas.length === 0) return 'empty';
   return 'has_data';
 }
 
-const PHASE_CONFIG = {
+interface PhaseConfig {
+  welcome: string | null
+  placeholder: string
+  heading: string
+  suggestions: Array<{ label: string; text: string }>
+}
+
+const PHASE_CONFIG: Record<'empty' | 'has_data', PhaseConfig> = {
   empty: {
     welcome: "Welcome to FoldDB! I'm your AI assistant.\n\nI don't see any data yet. Let's fix that — tell me where your files are and I'll scan, classify, and ingest them for you.",
     placeholder: 'Tell me where your files are (e.g. "scan ~/Documents", "scan sample_data")...',
@@ -70,18 +115,18 @@ function AgentTab() {
   const schemas = useAppSelector(selectApprovedSchemas);
 
   // Chat state
-  const [messages, setMessages] = useState([]);
+  const [messages, setMessages] = useState<Message[]>([]);
   const [inputText, setInputText] = useState('');
   const [isProcessing, setIsProcessing] = useState(false);
-  const [sessionId, setSessionId] = useState(null);
+  const [sessionId, setSessionId] = useState<string | null>(null);
   const [thinkingSeconds, setThinkingSeconds] = useState(0);
-  const thinkingTimerRef = useRef(null);
-  const conversationEndRef = useRef(null);
-  const messagesContainerRef = useRef(null);
-  const lastToolContextRef = useRef(null); // last scan/query result for attaching to next request
+  const thinkingTimerRef = useRef<ReturnType<typeof setInterval> | null>(null);
+  const conversationEndRef = useRef<HTMLDivElement | null>(null);
+  const messagesContainerRef = useRef<HTMLDivElement | null>(null);
+  const lastToolContextRef = useRef<unknown>(null); // last scan/query result for attaching to next request
 
   // AI config inline form state
-  const [configSaveStatus, setConfigSaveStatus] = useState(null);
+  const [configSaveStatus, setConfigSaveStatus] = useState<{ success: boolean; message: string } | null>(null);
   const aiConfig = useAiConfig({
     configSaveStatus,
     setConfigSaveStatus,
@@ -89,8 +134,8 @@ function AgentTab() {
   });
 
   // Progress polling state — tracks active ingestion during agent processing
-  const [activeProgress, setActiveProgress] = useState(null);
-  const progressPollRef = useRef(null);
+  const [activeProgress, setActiveProgress] = useState<ProgressJob | null>(null);
+  const progressPollRef = useRef<ReturnType<typeof setInterval> | null>(null);
 
   // Poll ingestion progress while the agent is processing
   useEffect(() => {
@@ -106,9 +151,10 @@ function AgentTab() {
     const poll = async () => {
       try {
         const resp = await ingestionClient.getAllProgress();
-        if (resp.success && Array.isArray(resp.data) && resp.data.length > 0) {
+        const data = resp.data as ProgressJob[] | undefined;
+        if (resp.success && Array.isArray(data) && data.length > 0) {
           // Prefer active agent-type jobs (shows tool execution status), then any active job
-          const activeJobs = resp.data.filter(j => !j.is_complete && !j.is_failed);
+          const activeJobs = data.filter(j => !j.is_complete && !j.is_failed);
           const agentJob = activeJobs.find(j => j.job_type === 'agent');
           const active = agentJob || activeJobs[0] || null;
           setActiveProgress(active);
@@ -157,18 +203,21 @@ function AgentTab() {
 
   const configLoaded = ingestionConfig !== null;
   const phase = derivePhase(configLoaded, aiConfigured, schemas);
-  const phaseConf = PHASE_CONFIG[phase] || PHASE_CONFIG.has_data;
+  const phaseConf: PhaseConfig = (phase === 'empty' || phase === 'has_data')
+    ? PHASE_CONFIG[phase]
+    : PHASE_CONFIG.has_data;
 
   // Seed welcome message when entering a phase for the first time
-  const seededPhaseRef = useRef(null);
+  const seededPhaseRef = useRef<Phase | null>(null);
   useEffect(() => {
     if (phase === 'loading' || phase === 'needs_ai') return;
     if (seededPhaseRef.current === phase) return;
     seededPhaseRef.current = phase;
     if (phaseConf.welcome) {
+      const welcomeText = phaseConf.welcome
       setMessages(prev => {
-        if (prev.some(m => m.type === 'system' && m.content === phaseConf.welcome)) return prev;
-        return [...prev, makeMsg('system', phaseConf.welcome)];
+        if (prev.some(m => m.type === 'system' && m.content === welcomeText)) return prev;
+        return [...prev, makeMsg('system', welcomeText)];
       });
     }
   }, [phase, phaseConf.welcome]);
@@ -182,7 +231,7 @@ function AgentTab() {
     }
   }, [messages]);
 
-  function makeMsg(type, content, data = null) {
+  function makeMsg(type: Message['type'], content: string, data: unknown = null): Message {
     return {
       id: `msg-${Date.now()}-${Math.random().toString(36).slice(2)}`,
       type, content, data,
@@ -190,26 +239,28 @@ function AgentTab() {
     };
   }
 
-  const addMessage = useCallback((type, content, data = null) => {
+  const addMessage = useCallback((type: Message['type'], content: string, data: unknown = null) => {
     setMessages(prev => [...prev, makeMsg(type, content, data)]);
   }, []);
 
-  const processAgentResponse = useCallback((agentResponse) => {
+  const processAgentResponse = useCallback((agentResponse: { success: boolean; error?: string; data?: AgentResultData }) => {
     if (!agentResponse.success) {
       addMessage('system', `Error: ${agentResponse.error || 'Agent query failed'}`);
       return;
     }
     const result = agentResponse.data;
+    if (!result) return;
     if (result.session_id) setSessionId(result.session_id);
 
     // Render rich tool results inline and capture context for next turn
-    if (result.tool_calls?.length > 0) {
+    if (result.tool_calls && result.tool_calls.length > 0) {
       for (const tc of result.tool_calls) {
-        if (tc.tool === 'scan_folder' && tc.result?.recommended_files) {
+        const tcResult = tc.result as { recommended_files?: unknown; results?: unknown } | undefined
+        if (tc.tool === 'scan_folder' && tcResult?.recommended_files) {
           addMessage('scan_result', 'Folder scan results', tc.result);
           // Save scan result so next request can attach it as context
           lastToolContextRef.current = { scan_result: tc.result, scan_params: tc.params };
-        } else if (tc.tool === 'ingest_files' && tc.result?.results) {
+        } else if (tc.tool === 'ingest_files' && tcResult?.results) {
           addMessage('ingest_result', 'Ingestion results', tc.result);
           lastToolContextRef.current = null; // clear after ingestion completes
         } else if (tc.tool === 'query' && Array.isArray(tc.result) && tc.result.length > 0) {
@@ -218,20 +269,20 @@ function AgentTab() {
       }
     }
 
-    addMessage('system', result.answer);
+    addMessage('system', result.answer ?? '');
 
     if (result.tool_calls) {
       const images = extractImagesFromToolCalls(result.tool_calls);
       if (images.length > 0) {
         addMessage('images', `${images.length} image(s)`, images);
       }
-      if (result.tool_calls.some(tc => ['ingest_files', 'ingest_json'].includes(tc.tool))) {
+      if (result.tool_calls.some(tc => tc.tool ? ['ingest_files', 'ingest_json'].includes(tc.tool) : false)) {
         dispatch(fetchSchemas());
       }
     }
   }, [addMessage, dispatch]);
 
-  const handleSubmit = useCallback(async (text) => {
+  const handleSubmit = useCallback(async (text?: string) => {
     const userInput = (text || inputText).trim();
     if (!userInput || isProcessing) return;
     setInputText('');
@@ -239,17 +290,17 @@ function AgentTab() {
     addMessage('user', userInput);
 
     try {
-      const requestPayload = {
+      const requestPayload: { query: string; session_id?: string; max_iterations?: number; context?: unknown } = {
         query: userInput,
-        session_id: sessionId,
+        session_id: sessionId ?? undefined,
         max_iterations: 15,
       };
       // Attach last tool context (e.g. scan results) so the LLM can reference exact data
       if (lastToolContextRef.current) {
         requestPayload.context = lastToolContextRef.current;
       }
-      const agentResponse = await llmQueryClient.agentQuery(requestPayload);
-      processAgentResponse(agentResponse);
+      const agentResponse = await llmQueryClient.agentQuery(requestPayload as Parameters<typeof llmQueryClient.agentQuery>[0]);
+      processAgentResponse(agentResponse as unknown as { success: boolean; error?: string; data?: AgentResultData });
     } catch (error) {
       const msg = error instanceof Error ? error.message : String(error);
       addMessage('system', `Error: ${msg}`);
@@ -258,7 +309,7 @@ function AgentTab() {
     }
   }, [inputText, isProcessing, sessionId, addMessage, processAgentResponse]);
 
-  const onFormSubmit = useCallback((e) => {
+  const onFormSubmit = useCallback((e: FormEvent<HTMLFormElement>) => {
     e?.preventDefault();
     handleSubmit();
   }, [handleSubmit]);
@@ -359,15 +410,15 @@ function AgentTab() {
                 </div>
               )}
 
-              {entry.type === 'scan_result' && entry.data && (
+              {entry.type === 'scan_result' && entry.data != null && (
                 <ScanResultCard data={entry.data} />
               )}
 
-              {entry.type === 'ingest_result' && entry.data && (
+              {entry.type === 'ingest_result' && entry.data != null && (
                 <IngestResultCard data={entry.data} />
               )}
 
-              {entry.type === 'query_result' && entry.data && (
+              {entry.type === 'query_result' && entry.data != null && (
                 <QueryResultCard data={entry.data} />
               )}
 
@@ -376,7 +427,7 @@ function AgentTab() {
                   <div className="max-w-[80%] px-4 py-3 bg-surface-secondary border border-border rounded-lg">
                     <p className="text-xs text-tertiary mb-2">{entry.data.length} image{entry.data.length !== 1 ? 's' : ''}</p>
                     <div className="flex flex-wrap gap-2">
-                      {entry.data.map((img) => (
+                      {(entry.data as ImageItem[]).map((img) => (
                         <ImageThumbnail key={img.fileHash} fileHash={img.fileHash} sourceFile={img.sourceFile} />
                       ))}
                     </div>
@@ -434,12 +485,20 @@ function AgentTab() {
   );
 }
 
+interface ScanResultData {
+  recommended_files?: Array<{ path: string; category: string; file_size_bytes?: number }>
+  skipped_files?: unknown[]
+  summary?: Record<string, number>
+  total_estimated_cost?: number
+}
+
 /** Render scan_folder results as a file browser */
-function ScanResultCard({ data }) {
+function ScanResultCard({ data }: { data: unknown }) {
   const [expanded, setExpanded] = useState(false);
-  const recommended = data.recommended_files || [];
-  const skipped = data.skipped_files || [];
-  const summary = data.summary || {};
+  const d = data as ScanResultData
+  const recommended = d.recommended_files || [];
+  const skipped = d.skipped_files || [];
+  const summary = d.summary || {};
 
   return (
     <div className="flex justify-start">
@@ -449,8 +508,8 @@ function ScanResultCard({ data }) {
           <div className="flex items-center gap-4 text-sm">
             <span className="text-gruvbox-green font-medium">{recommended.length} to ingest</span>
             <span className="text-tertiary">{skipped.length} skipped</span>
-            {data.total_estimated_cost > 0 && (
-              <span className="text-tertiary">~${data.total_estimated_cost.toFixed(4)}</span>
+            {d.total_estimated_cost && d.total_estimated_cost > 0 && (
+              <span className="text-tertiary">~${d.total_estimated_cost.toFixed(4)}</span>
             )}
           </div>
           {Object.keys(summary).length > 0 && (
@@ -468,7 +527,7 @@ function ScanResultCard({ data }) {
             <div key={i} className="flex items-center justify-between py-1 text-xs border-b border-border last:border-0">
               <span className="text-primary font-mono truncate flex-1 mr-2">{f.path}</span>
               <span className="text-gruvbox-green whitespace-nowrap mr-2">{f.category}</span>
-              {f.file_size_bytes > 0 && (
+              {f.file_size_bytes !== undefined && f.file_size_bytes > 0 && (
                 <span className="text-tertiary whitespace-nowrap">{formatBytes(f.file_size_bytes)}</span>
               )}
             </div>
@@ -489,10 +548,18 @@ function ScanResultCard({ data }) {
   );
 }
 
+interface IngestResultData {
+  results?: Array<{ file: string; success?: boolean; schema_used?: string }>
+  succeeded?: number
+  failed?: number
+  total?: number
+}
+
 /** Render ingest_files results */
-function IngestResultCard({ data }) {
+function IngestResultCard({ data }: { data: unknown }) {
   const [showDetails, setShowDetails] = useState(false);
-  const results = data.results || [];
+  const d = data as IngestResultData
+  const results = d.results || [];
 
   return (
     <div className="flex justify-start">
@@ -500,9 +567,9 @@ function IngestResultCard({ data }) {
         <div className="px-4 py-3 border-b border-border">
           <p className="text-xs text-tertiary mb-1">Ingestion Results</p>
           <div className="flex items-center gap-4 text-sm">
-            <span className="text-gruvbox-green font-medium">{data.succeeded} succeeded</span>
-            {data.failed > 0 && <span className="text-gruvbox-red">{data.failed} failed</span>}
-            <span className="text-tertiary">{data.total} total</span>
+            <span className="text-gruvbox-green font-medium">{d.succeeded} succeeded</span>
+            {d.failed !== undefined && d.failed > 0 && <span className="text-gruvbox-red">{d.failed} failed</span>}
+            <span className="text-tertiary">{d.total} total</span>
           </div>
         </div>
         {showDetails && (
@@ -533,10 +600,12 @@ function IngestResultCard({ data }) {
 }
 
 /** Render query results as a table */
-function QueryResultCard({ data }) {
+function QueryResultCard({ data }: { data: unknown }) {
   const [showRaw, setShowRaw] = useState(false);
-  const results = Array.isArray(data.result) ? data.result : [];
-  const schemaName = data.params?.schema_name || 'Results';
+  const d = data as { result?: unknown; params?: { schema_name?: string } }
+  const results: Array<{ fields?: Record<string, unknown> } & Record<string, unknown>> =
+    Array.isArray(d.result) ? d.result : [];
+  const schemaName = d.params?.schema_name || 'Results';
 
   // Extract field names from first result
   const fields = results.length > 0
@@ -574,7 +643,7 @@ function QueryResultCard({ data }) {
               </thead>
               <tbody>
                 {results.slice(0, 20).map((row, i) => {
-                  const r = row.fields || row;
+                  const r = (row.fields || row) as Record<string, unknown>;
                   return (
                     <tr key={i} className="border-b border-border last:border-0">
                       {fields.slice(0, 6).map(f => (
@@ -596,7 +665,7 @@ function QueryResultCard({ data }) {
   );
 }
 
-function formatBytes(bytes) {
+function formatBytes(bytes: number) {
   if (bytes < 1024) return `${bytes} B`;
   if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(1)} KB`;
   return `${(bytes / (1024 * 1024)).toFixed(1)} MB`;

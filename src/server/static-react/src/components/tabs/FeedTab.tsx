@@ -5,7 +5,18 @@ import { API_ENDPOINTS } from '../../api/endpoints'
 
 const apiClient = createApiClient()
 
-function relativeTime(timestamp) {
+interface FeedItem {
+  key?: { range?: string }
+  fields?: {
+    photo_url?: string
+    caption?: string
+    author_name?: string
+  }
+  author?: string
+  timestamp: string | number
+}
+
+function relativeTime(timestamp: string | number) {
   const now = Date.now()
   const then = new Date(timestamp).getTime()
   const seconds = Math.floor((now - then) / 1000)
@@ -23,10 +34,10 @@ function relativeTime(timestamp) {
 
 export default function FeedTab() {
   const { user } = useAppSelector(state => state.auth)
-  const [items, setItems] = useState([])
+  const [items, setItems] = useState<FeedItem[]>([])
   const [total, setTotal] = useState(0)
   const [loading, setLoading] = useState(false)
-  const [error, setError] = useState(null)
+  const [error, setError] = useState<string | null>(null)
   const [fetched, setFetched] = useState(false)
   const [friendInput, setFriendInput] = useState('')
   const [keyCopied, setKeyCopied] = useState(false)
@@ -62,11 +73,12 @@ export default function FeedTab() {
         throw new Error(response.error || 'Failed to fetch feed')
       }
 
-      setItems(response.data?.items || [])
-      setTotal(response.data?.total || 0)
+      const data = response.data as { items?: FeedItem[]; total?: number } | undefined
+      setItems(data?.items || [])
+      setTotal(data?.total || 0)
       setFetched(true)
     } catch (err) {
-      setError(err.message || 'Network error')
+      setError((err instanceof Error ? err.message : null) || 'Network error')
     } finally {
       setLoading(false)
     }

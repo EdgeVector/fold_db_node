@@ -1,8 +1,8 @@
 import { useCallback, useEffect, useState } from 'react'
-import { discoveryClient } from '../../../api/clients/discoveryClient'
+import { discoveryClient, type LocalSentRequest } from '../../../api/clients/discoveryClient'
 
 export default function SentRequestsPanel() {
-  const [requests, setRequests] = useState([])
+  const [requests, setRequests] = useState<LocalSentRequest[]>([])
   const [loading, setLoading] = useState(true)
 
   const fetchRequests = useCallback(async () => {

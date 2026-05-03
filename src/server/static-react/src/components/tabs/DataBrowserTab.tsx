@@ -4,6 +4,7 @@ import {
   MagnifyingGlassIcon,
   XMarkIcon,
 } from '@heroicons/react/24/outline'
+import type { Schema } from '../../types/schema'
 import { useAppSelector } from '../../store/hooks'
 import { selectAllSchemas } from '../../store/schemaSlice'
 import { useOrgNames } from '../../hooks/useOrgNames'
@@ -27,37 +28,49 @@ import {
   RecordMetadata,
   buildFilter,
 } from '../data-browser/shared'
+import type { KeyValue, RecordMetadataMap } from '../data-browser/shared'
 
 const PAGE_SIZE = 50
+
+interface SchemaKeysCache {
+  keys: KeyValue[]
+  total_count: number
+}
+
+interface KeyRecord {
+  fields: Record<string, unknown>
+  metadata: RecordMetadataMap
+  author_pub_key: string | null
+}
 
 export default function DataBrowserTab() {
   const schemas = useAppSelector(selectAllSchemas)
 
   // Schema-level expand state + cached keys
-  const [expandedSchemas, setExpandedSchemas] = useState(() => new Set())
-  const [schemaKeys, setSchemaKeys] = useState({})       // { name: { keys, total_count } }
-  const [schemaLoading, setSchemaLoading] = useState({})  // { name: bool }
-  const [schemaErrors, setSchemaErrors] = useState({})    // { name: string }
+  const [expandedSchemas, setExpandedSchemas] = useState<Set<string>>(() => new Set())
+  const [schemaKeys, setSchemaKeys] = useState<Record<string, SchemaKeysCache>>({})
+  const [schemaLoading, setSchemaLoading] = useState<Record<string, boolean>>({})
+  const [schemaErrors, setSchemaErrors] = useState<Record<string, string | null>>({})
 
   // Pre-fetched record counts so each row can show "(N records)" without
   // requiring the user to expand it first. Without this, the user has to
   // open every row to learn which schemas have data — with 13+ schemas
   // that's 13 expand-clicks just to find the populated one.
   // Map: { name: number } — undefined while loading, number when known.
-  const [schemaRecordCounts, setSchemaRecordCounts] = useState({})
+  const [schemaRecordCounts, setSchemaRecordCounts] = useState<Record<string, number>>({})
 
   const orgNames = useOrgNames()
 
   // Key-level expand state + cached records
-  const [expandedKeys, setExpandedKeys] = useState(() => new Set())
-  const [keyRecords, setKeyRecords] = useState({})        // { compositeId: { fields, metadata } }
-  const [keyLoading, setKeyLoading] = useState({})        // { compositeId: bool }
-  const [shareTarget, setShareTarget] = useState(null)
+  const [expandedKeys, setExpandedKeys] = useState<Set<string>>(() => new Set())
+  const [keyRecords, setKeyRecords] = useState<Record<string, KeyRecord>>({})
+  const [keyLoading, setKeyLoading] = useState<Record<string, boolean>>({})
+  const [shareTarget, setShareTarget] = useState<{ schema: string; key: KeyValue } | null>(null)
 
   // Contact book (pub_key -> display_name) + own node public key, used to render
   // the "Shared by X" badge on records whose author differs from this node.
-  const [contactsByKey, setContactsByKey] = useState(() => new Map())
-  const [ownPublicKey, setOwnPublicKey] = useState(null)
+  const [contactsByKey, setContactsByKey] = useState<Map<string, string>>(() => new Map())
+  const [ownPublicKey, setOwnPublicKey] = useState<string | null>(null)
 
   useEffect(() => {
     let cancelled = false
@@ -65,7 +78,7 @@ export default function DataBrowserTab() {
       try {
         const res = await trustClient.listContacts()
         if (!cancelled && res?.success && res.data?.contacts) {
-          const map = new Map()
+          const map = new Map<string, string>()
           for (const c of res.data.contacts) {
             if (c?.public_key) map.set(c.public_key, c.display_name || 'Unknown')
           }
@@ -75,7 +88,8 @@ export default function DataBrowserTab() {
       try {
         const res = await systemClient.getAutoIdentity()
         if (!cancelled && res?.success) {
-          const pk = res.data?.public_key || res.data?.data?.public_key || null
+          const data = res.data as { public_key?: string; data?: { public_key?: string } } | undefined
+          const pk = data?.public_key || data?.data?.public_key || null
           setOwnPublicKey(pk)
         }
       } catch { /* ignore */ }
@@ -86,16 +100,16 @@ export default function DataBrowserTab() {
 
   // Resolve author_pub_key -> badge label. Returns null when the record is owned
   // by this node (no badge) or when author is unknown (omitted by the caller).
-  const resolveSharedBy = useCallback((authorPubKey) => {
+  const resolveSharedBy = useCallback((authorPubKey: string | null | undefined) => {
     if (!authorPubKey) return null
     if (ownPublicKey && authorPubKey === ownPublicKey) return null
     const name = contactsByKey.get(authorPubKey)
     return name ? `Shared by ${name}` : 'Shared by External'
   }, [contactsByKey, ownPublicKey])
 
-  const schemaList = useMemo(() => {
+  const schemaList = useMemo<Schema[]>(() => {
     if (!Array.isArray(schemas)) return []
-    return [...schemas]
+    return [...(schemas as Schema[])]
       .filter((s) => s.state !== 'blocked' && s.state !== 'available')
       .sort((a, b) =>
         (a.descriptive_name || a.name || '').localeCompare(b.descriptive_name || b.name || '')
@@ -115,7 +129,7 @@ export default function DataBrowserTab() {
       .filter((n) => schemaRecordCounts[n] === undefined)
     if (toFetch.length === 0) return
     Promise.all(
-      toFetch.map(async (name) => {
+      toFetch.map(async (name): Promise<[string, number | null]> => {
         try {
           const res = await schemaClient.listSchemaKeys(name, 0, 1)
           return [name, res.success ? (res.data?.total_count ?? 0) : null]
@@ -153,10 +167,10 @@ export default function DataBrowserTab() {
     })
   }, [schemaList, filterQuery])
 
-  const fieldCount = useCallback((schema) => getFieldNames(schema).length, [])
+  const fieldCount = useCallback((schema: Schema) => getFieldNames(schema).length, [])
 
   // -- Schema expansion: fetch keys --
-  const toggleSchema = useCallback(async (name) => {
+  const toggleSchema = useCallback(async (name: string) => {
     setExpandedSchemas((prev) => toggleSetItem(prev, name))
 
     // Fetch keys on first expand (or if not already loaded)
@@ -166,7 +180,8 @@ export default function DataBrowserTab() {
       try {
         const res = await schemaClient.listSchemaKeys(name, 0, PAGE_SIZE)
         if (res.success && res.data) {
-          setSchemaKeys((p) => ({ ...p, [name]: { keys: res.data.keys || [], total_count: res.data.total_count || 0 } }))
+          const d = res.data
+          setSchemaKeys((p) => ({ ...p, [name]: { keys: d.keys || [], total_count: d.total_count || 0 } }))
         } else {
           setSchemaErrors((p) => ({ ...p, [name]: res.error || 'Failed to fetch keys' }))
         }
@@ -179,7 +194,7 @@ export default function DataBrowserTab() {
   }, [schemaKeys, schemaLoading])
 
   // -- Load more keys --
-  const loadMoreKeys = useCallback(async (name) => {
+  const loadMoreKeys = useCallback(async (name: string) => {
     const current = schemaKeys[name]
     if (!current) return
     const offset = current.keys.length
@@ -187,11 +202,12 @@ export default function DataBrowserTab() {
     try {
       const res = await schemaClient.listSchemaKeys(name, offset, PAGE_SIZE)
       if (res.success && res.data) {
+        const d = res.data
         setSchemaKeys((p) => ({
           ...p,
           [name]: {
-            keys: [...(p[name]?.keys || []), ...(res.data.keys || [])],
-            total_count: res.data.total_count || p[name]?.total_count || 0,
+            keys: [...(p[name]?.keys || []), ...(d.keys || [])],
+            total_count: d.total_count || p[name]?.total_count || 0,
           },
         }))
       }
@@ -203,7 +219,7 @@ export default function DataBrowserTab() {
   }, [schemaKeys])
 
   // -- Key expansion: fetch field values --
-  const toggleKey = useCallback(async (schemaName, kv, schema) => {
+  const toggleKey = useCallback(async (schemaName: string, kv: KeyValue, schema: Schema) => {
     const id = keyId(schemaName, kv)
     setExpandedKeys((prev) => toggleSetItem(prev, id))
 
@@ -212,11 +228,12 @@ export default function DataBrowserTab() {
       try {
         const fields = getFieldNames(schema)
         const filter = buildFilter(kv)
-        const query = { schema_name: schemaName, fields }
+        const query: Record<string, unknown> = { schema_name: schemaName, fields }
         if (filter) query.filter = filter
         const res = await mutationClient.executeQuery(query)
         if (res.success) {
-          const arr = Array.isArray(res.data?.results) ? res.data.results : []
+          const data = res.data as { results?: Array<{ key?: KeyValue; fields?: Record<string, unknown>; metadata?: RecordMetadataMap; author_pub_key?: string }> } | undefined
+          const arr = Array.isArray(data?.results) ? data!.results! : []
           const match = arr.find((x) => {
             return String(x?.key?.hash || '') === String(kv?.hash || '') &&
                    String(x?.key?.range || '') === String(kv?.range || '')
@@ -387,7 +404,7 @@ export default function DataBrowserTab() {
                         <div className="pl-6 pb-2">
                           {record ? (
                             <Fragment>
-                              <RecordMetadata metadata={record.metadata} schemaName={name} recordKey={keyLabel(kv)} sharedBy={sharedBy} />
+                              <RecordMetadata metadata={record.metadata} schemaName={name} recordKey={keyLabel(kv)} sharedBy={sharedBy ?? undefined} />
                               {maxVersion > 1 && <VersionHistory moleculeUuid={molUuid} />}
                               <FieldsTable fields={record.fields} />
                             </Fragment>
@@ -422,7 +439,10 @@ export default function DataBrowserTab() {
       {shareTarget && (
         <ShareRecordModal
           schemaName={shareTarget.schema}
-          recordKey={shareTarget.key}
+          recordKey={{
+            hash: shareTarget.key.hash ?? undefined,
+            range: shareTarget.key.range ?? undefined,
+          }}
           isOpen={!!shareTarget}
           onClose={() => setShareTarget(null)}
         />

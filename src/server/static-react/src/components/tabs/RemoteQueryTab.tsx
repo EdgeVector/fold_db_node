@@ -1,14 +1,30 @@
 import { useState, useCallback } from 'react'
+import type { OperationResultPayload } from '../../types/api'
 import { browseRemoteNode, proxyQueryRemote } from '../../api/clients/trustClient'
 
-function RemoteQueryTab({ onResult: _onResult }) {
+interface SchemaInfo {
+  name: string
+  descriptive_name?: string | null
+}
+
+interface RemoteNodeInfo {
+  public_key?: string
+  schemas?: SchemaInfo[]
+  shared_schemas?: string[]
+}
+
+interface RemoteQueryTabProps {
+  onResult?: (result: OperationResultPayload) => void
+}
+
+function RemoteQueryTab({ onResult: _onResult }: RemoteQueryTabProps) {
   const [remoteUrl, setRemoteUrl] = useState('')
-  const [nodeInfo, setNodeInfo] = useState(null)
+  const [nodeInfo, setNodeInfo] = useState<RemoteNodeInfo | null>(null)
   const [browsing, setBrowsing] = useState(false)
   const [selectedSchema, setSelectedSchema] = useState('')
-  const [results, setResults] = useState(null)
+  const [results, setResults] = useState<Array<Record<string, unknown>> | null>(null)
   const [querying, setQuerying] = useState(false)
-  const [error, setError] = useState(null)
+  const [error, setError] = useState<string | null>(null)
 
   const handleBrowse = useCallback(async () => {
     if (!remoteUrl.trim()) return
@@ -20,12 +36,12 @@ function RemoteQueryTab({ onResult: _onResult }) {
     try {
       const resp = await browseRemoteNode(remoteUrl.trim())
       if (resp.success && resp.data) {
-        setNodeInfo(resp.data)
+        setNodeInfo(resp.data as RemoteNodeInfo)
       } else {
         setError(resp.error || 'Failed to connect to remote node')
       }
     } catch (err) {
-      setError(err.message || 'Failed to connect')
+      setError((err instanceof Error ? err.message : null) || 'Failed to connect')
     } finally {
       setBrowsing(false)
     }
@@ -40,20 +56,21 @@ function RemoteQueryTab({ onResult: _onResult }) {
       const resp = await proxyQueryRemote(remoteUrl.trim(), selectedSchema, [])
       if (resp.success && resp.data) {
         // The response might be nested
-        const data = resp.data.data || resp.data
-        const queryResults = data.results || data
-        setResults(Array.isArray(queryResults) ? queryResults : [])
+        const respData = resp.data as { data?: unknown; results?: unknown }
+        const data = (respData.data ?? respData) as { results?: unknown }
+        const queryResults = (data?.results ?? data) as unknown
+        setResults(Array.isArray(queryResults) ? (queryResults as Array<Record<string, unknown>>) : [])
       } else {
         setError(resp.error || 'Query failed')
       }
     } catch (err) {
-      setError(err.message || 'Query failed')
+      setError((err instanceof Error ? err.message : null) || 'Query failed')
     } finally {
       setQuerying(false)
     }
   }, [remoteUrl, selectedSchema])
 
-  const truncateKey = (key) => {
+  const truncateKey = (key: string | null | undefined) => {
     if (!key) return ''
     if (key.length <= 20) return key
     return `${key.slice(0, 10)}...${key.slice(-10)}`
@@ -117,12 +134,12 @@ function RemoteQueryTab({ onResult: _onResult }) {
             <p className="text-xs text-tertiary">No schemas available on this node.</p>
           )}
 
-          {(nodeInfo.schemas?.length || nodeInfo.shared_schemas?.length) > 0 && (
+          {((nodeInfo.schemas?.length ?? 0) > 0 || (nodeInfo.shared_schemas?.length ?? 0) > 0) && (
             <>
               <div className="space-y-1 max-h-48 overflow-y-auto mb-3">
-                {(nodeInfo.schemas || (nodeInfo.shared_schemas ?? []).map(s => ({name: s}))).map((schema) => {
-                  const name = typeof schema === 'string' ? schema : schema.name
-                  const desc = typeof schema === 'object' ? schema.descriptive_name : null
+                {(nodeInfo.schemas || (nodeInfo.shared_schemas ?? []).map(s => ({ name: s, descriptive_name: null }))).map((schema) => {
+                  const name = schema.name
+                  const desc = schema.descriptive_name ?? null
                   const display = desc || (name.length > 40 ? name.slice(0, 40) + '...' : name)
                   return (
                     <button
@@ -170,11 +187,11 @@ function RemoteQueryTab({ onResult: _onResult }) {
           {results.length > 0 && (
             <div className="space-y-2 max-h-96 overflow-y-auto">
               {results.map((record, idx) => {
-                const fields = record.fields || record
+                const fields = (record.fields ?? record) as Record<string, unknown>
                 const key = record.key
                 return (
                   <div key={idx} className="p-3 bg-surface-secondary rounded text-xs">
-                    {key && (
+                    {key !== undefined && key !== null && (
                       <div className="text-tertiary mb-1">
                         Key: {JSON.stringify(key)}
                       </div>

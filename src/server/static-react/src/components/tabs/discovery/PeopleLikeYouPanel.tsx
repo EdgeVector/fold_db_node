@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
-import { discoveryClient } from '../../../api/clients/discoveryClient'
+import type { OperationResultPayload } from "../../../types/api"
+import { discoveryClient, type SimilarProfile } from '../../../api/clients/discoveryClient'
 import { toErrorMessage } from '../../../utils/schemaUtils'
 import RoleSelect from './RoleSelect'
 import LocalModeNotice from './LocalModeNotice'
@@ -7,15 +8,19 @@ import { isLocalModeError } from './discoveryUtils'
 
 const REFRESH_INTERVAL_MS = 60_000
 
-export default function PeopleLikeYouPanel({ onResult }) {
-  const [profiles, setProfiles] = useState([])
+interface PeopleLikeYouPanelProps {
+  onResult: (result: OperationResultPayload) => void
+}
+
+export default function PeopleLikeYouPanel({ onResult }: PeopleLikeYouPanelProps) {
+  const [profiles, setProfiles] = useState<SimilarProfile[]>([])
   const [categoriesUsed, setCategoriesUsed] = useState(0)
   const [loading, setLoading] = useState(true)
-  const [error, setError] = useState(null)
-  const [connectingTo, setConnectingTo] = useState(null)
+  const [error, setError] = useState<string | null>(null)
+  const [connectingTo, setConnectingTo] = useState<string | null>(null)
   const [connectMessage, setConnectMessage] = useState('')
   const [connectRole, setConnectRole] = useState('acquaintance')
-  const intervalRef = useRef(null)
+  const intervalRef = useRef<ReturnType<typeof setInterval> | null>(null)
   // Track whether we've hit a local-mode error to stop polling
   const localModeRef = useRef(false)
 
@@ -31,7 +36,7 @@ export default function PeopleLikeYouPanel({ onResult }) {
         setError(msg)
         if (isLocalModeError(msg)) {
           localModeRef.current = true
-          clearInterval(intervalRef.current)
+          if (intervalRef.current) clearInterval(intervalRef.current)
         }
       }
     } catch (e) {
@@ -39,7 +44,7 @@ export default function PeopleLikeYouPanel({ onResult }) {
       setError(msg)
       if (isLocalModeError(msg)) {
         localModeRef.current = true
-        clearInterval(intervalRef.current)
+        if (intervalRef.current) clearInterval(intervalRef.current)
       }
     } finally {
       setLoading(false)
@@ -53,10 +58,10 @@ export default function PeopleLikeYouPanel({ onResult }) {
         intervalRef.current = setInterval(fetchProfiles, REFRESH_INTERVAL_MS)
       }
     })
-    return () => clearInterval(intervalRef.current)
+    return () => { if (intervalRef.current) clearInterval(intervalRef.current) }
   }, [fetchProfiles])
 
-  const handleConnect = async (pseudonym) => {
+  const handleConnect = async (pseudonym: string) => {
     if (!connectMessage.trim()) return
     try {
       const res = await discoveryClient.connect(pseudonym, connectMessage, connectRole !== 'acquaintance' ? connectRole : undefined)

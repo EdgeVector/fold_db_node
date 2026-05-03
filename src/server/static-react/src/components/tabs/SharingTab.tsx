@@ -1,4 +1,6 @@
 import { useState, useEffect, useCallback } from 'react'
+import type { FormEvent } from 'react'
+import type { OperationResultPayload } from '../../types/api'
 import {
   listTrustGrants,
   grantTrust,
@@ -6,11 +8,20 @@ import {
   getAuditLog,
   getNodeInfo,
 } from '../../api/clients/sharingClient'
+import type {
+  TrustGrantEntry,
+  AuditEvent,
+  NodeInfoResponse,
+} from '../../api/clients/sharingClient'
 
-const SECTIONS = ['trust', 'audit', 'node-info']
+const SECTIONS = ['trust', 'audit', 'node-info'] as const
 
-export default function SharingTab({ onResult }) {
-  const [activeSection, setActiveSection] = useState('trust')
+interface SharingTabProps {
+  onResult?: (result: OperationResultPayload) => void
+}
+
+export default function SharingTab({ onResult }: SharingTabProps) {
+  const [activeSection, setActiveSection] = useState<typeof SECTIONS[number]>('trust')
 
   return (
     <div className="space-y-4">
@@ -42,8 +53,8 @@ export default function SharingTab({ onResult }) {
 
 // ===== Trust Grants Section =====
 
-function TrustSection({ onResult }) {
-  const [grants, setGrants] = useState([])
+function TrustSection({ onResult }: { onResult?: (result: OperationResultPayload) => void }) {
+  const [grants, setGrants] = useState<TrustGrantEntry[]>([])
   const [loading, setLoading] = useState(true)
   const [newKey, setNewKey] = useState('')
   const [newRole, setNewRole] = useState('friend')
@@ -54,7 +65,7 @@ function TrustSection({ onResult }) {
       const result = await listTrustGrants()
       setGrants(result)
     } catch (err) {
-      onResult?.({ error: err.message })
+      onResult?.({ error: (err instanceof Error ? err.message : null) ?? undefined })
     } finally {
       setLoading(false)
     }
@@ -64,7 +75,7 @@ function TrustSection({ onResult }) {
     fetchGrants()
   }, [fetchGrants])
 
-  const handleGrant = async (e) => {
+  const handleGrant = async (e: FormEvent<HTMLFormElement>) => {
     e.preventDefault()
     if (!newKey.trim()) return
     try {
@@ -74,17 +85,17 @@ function TrustSection({ onResult }) {
       onResult?.({ success: true, data: { message: 'Trust granted' } })
       fetchGrants()
     } catch (err) {
-      onResult?.({ error: err.message })
+      onResult?.({ error: (err instanceof Error ? err.message : null) ?? undefined })
     }
   }
 
-  const handleRevoke = async (publicKey) => {
+  const handleRevoke = async (publicKey: string) => {
     try {
       await revokeTrust(publicKey)
       onResult?.({ success: true, data: { message: 'Trust revoked' } })
       fetchGrants()
     } catch (err) {
-      onResult?.({ error: err.message })
+      onResult?.({ error: (err instanceof Error ? err.message : null) ?? undefined })
     }
   }
 
@@ -173,9 +184,9 @@ function TrustSection({ onResult }) {
 // ===== Audit Log Section =====
 
 function AuditSection() {
-  const [events, setEvents] = useState([])
+  const [events, setEvents] = useState<AuditEvent[]>([])
   const [loading, setLoading] = useState(true)
-  const [error, setError] = useState(null)
+  const [error, setError] = useState<string | null>(null)
 
   useEffect(() => {
     async function fetchData() {
@@ -183,7 +194,7 @@ function AuditSection() {
         const result = await getAuditLog(50)
         setEvents(result)
       } catch (err) {
-        setError(err.message || 'Failed to load audit log')
+        setError((err instanceof Error ? err.message : null) || 'Failed to load audit log')
       } finally {
         setLoading(false)
       }
@@ -191,12 +202,19 @@ function AuditSection() {
     fetchData()
   }, [])
 
-  const formatAction = (action) => {
-    if (action.Read) return `Read ${action.Read.schema_name} (${action.Read.fields?.length || 0} fields)`
-    if (action.Write) return `Write ${action.Write.schema_name}`
-    if (action.AccessDenied) return `Denied: ${action.AccessDenied.schema_name}`
-    if (action.TrustGrant) return `Granted trust to ${action.TrustGrant.user_id?.slice(0, 16)}...`
-    if (action.TrustRevoke) return `Revoked trust for ${action.TrustRevoke.user_id?.slice(0, 16)}...`
+  const formatAction = (action: AuditEvent['action']) => {
+    const a = action as {
+      Read?: { schema_name?: string; fields?: unknown[] }
+      Write?: { schema_name?: string }
+      AccessDenied?: { schema_name?: string }
+      TrustGrant?: { user_id?: string }
+      TrustRevoke?: { user_id?: string }
+    }
+    if (a.Read) return `Read ${a.Read.schema_name} (${a.Read.fields?.length || 0} fields)`
+    if (a.Write) return `Write ${a.Write.schema_name}`
+    if (a.AccessDenied) return `Denied: ${a.AccessDenied.schema_name}`
+    if (a.TrustGrant) return `Granted trust to ${a.TrustGrant.user_id?.slice(0, 16)}...`
+    if (a.TrustRevoke) return `Revoked trust for ${a.TrustRevoke.user_id?.slice(0, 16)}...`
     return JSON.stringify(action)
   }
 
@@ -243,9 +261,9 @@ function AuditSection() {
 // ===== Node Info Section =====
 
 function NodeInfoSection() {
-  const [info, setInfo] = useState(null)
+  const [info, setInfo] = useState<NodeInfoResponse | null>(null)
   const [loading, setLoading] = useState(true)
-  const [copied, setCopied] = useState(null)
+  const [copied, setCopied] = useState<string | null>(null)
 
   useEffect(() => {
     async function fetch() {
@@ -261,7 +279,7 @@ function NodeInfoSection() {
     fetch()
   }, [])
 
-  const copyToClipboard = (text, label) => {
+  const copyToClipboard = (text: string, label: string) => {
     navigator.clipboard.writeText(text)
     setCopied(label)
     setTimeout(() => setCopied(null), 2000)
@@ -315,7 +333,7 @@ function NodeInfoSection() {
             </p>
           ) : (
             <div className="flex flex-wrap gap-1">
-              {info.shared_schemas.map((name) => (
+              {info.shared_schemas.map((name: string) => (
                 <span
                   key={name}
                   className="px-2 py-0.5 text-xs bg-accent/20 text-accent rounded"

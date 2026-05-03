@@ -9,10 +9,22 @@ import { useState, useEffect, useCallback } from 'react';
 import { mutationClient } from '../../api/clients/mutationClient';
 import { unwrapFieldValue as unwrap } from '../../utils/fieldUtils';
 
-function ConversationList({ onSelectConversation, onNewConversation }) {
-  const [sessions, setSessions] = useState([]);
+interface SessionSummary {
+  sessionId: string;
+  firstQuery: string;
+  lastTimestamp: string;
+  turnCount: number;
+}
+
+interface ConversationListProps {
+  onSelectConversation: (sessionId: string) => void;
+  onNewConversation: () => void;
+}
+
+function ConversationList({ onSelectConversation, onNewConversation }: ConversationListProps) {
+  const [sessions, setSessions] = useState<SessionSummary[]>([]);
   const [isLoading, setIsLoading] = useState(true);
-  const [error, setError] = useState(null);
+  const [error, setError] = useState<string | null>(null);
 
   const fetchConversations = useCallback(async () => {
     setIsLoading(true);
@@ -30,19 +42,22 @@ function ConversationList({ onSelectConversation, onNewConversation }) {
         return;
       }
 
-      const records = response.data?.results || response.data?.data || [];
+      const responseData = response.data as { results?: unknown[]; data?: unknown[] } | undefined;
+      const records = responseData?.results || responseData?.data || [];
       if (!Array.isArray(records) || records.length === 0) {
         setSessions([]);
         return;
       }
 
       // Group by session_id
-      const grouped = {};
+      interface Turn { timestamp: string; query: string }
+      const grouped: Record<string, Turn[]> = {};
       for (const record of records) {
-        const fields = record.fields || record;
-        const sessionId = unwrap(fields.session_id);
-        const timestamp = unwrap(fields.timestamp);
-        const query = unwrap(fields.query);
+        const recordObj = record as { fields?: Record<string, unknown> } & Record<string, unknown>;
+        const fields = (recordObj.fields ?? recordObj) as Record<string, unknown>;
+        const sessionId = unwrap(fields.session_id) as string | undefined;
+        const timestamp = (unwrap(fields.timestamp) as string | undefined) ?? '';
+        const query = (unwrap(fields.query) as string | undefined) ?? '';
 
         if (!sessionId) continue;
 
@@ -53,7 +68,7 @@ function ConversationList({ onSelectConversation, onNewConversation }) {
       }
 
       // Build session summaries
-      const summaries = Object.entries(grouped).map(([sessionId, turns]) => {
+      const summaries: SessionSummary[] = Object.entries(grouped).map(([sessionId, turns]) => {
         // Sort turns by timestamp ascending
         turns.sort((a, b) => (a.timestamp || '').localeCompare(b.timestamp || ''));
 
@@ -70,8 +85,9 @@ function ConversationList({ onSelectConversation, onNewConversation }) {
       setSessions(summaries);
     } catch (err) {
       // Schema not found (404) or network error — show empty state for schema errors
-      const status = err?.status;
-      const message = err?.message || String(err);
+      const e = err as { status?: number; message?: string } | null;
+      const status = e?.status;
+      const message = e?.message || String(err);
       if (status === 404 || message.includes('not found') || message.includes('schema')) {
         setSessions([]);
       } else {

@@ -1,8 +1,13 @@
 import { useState, useEffect, useCallback } from 'react'
 import { CameraIcon, MapPinIcon } from '@heroicons/react/24/outline'
-import { discoveryClient } from '../../api/clients/discoveryClient'
+import type { OperationResultPayload } from '../../types/api'
+import {
+  discoveryClient,
+  type SharedMoment,
+  type MomentOptIn,
+} from '../../api/clients/discoveryClient'
 
-function formatTimeBucket(bucket) {
+function formatTimeBucket(bucket: string) {
   // "2026-03-15T14" → "March 15, 2026 at 2:00 PM"
   const [datePart, hourStr] = bucket.split('T')
   const hour = parseInt(hourStr, 10)
@@ -14,7 +19,7 @@ function formatTimeBucket(bucket) {
   return `${monthNames[date.getMonth()]} ${date.getDate()}, ${date.getFullYear()} around ${displayHour}:00 ${ampm}`
 }
 
-function relativeTime(dateStr) {
+function relativeTime(dateStr: string) {
   const now = Date.now()
   const then = new Date(dateStr).getTime()
   const seconds = Math.floor((now - then) / 1000)
@@ -27,7 +32,7 @@ function relativeTime(dateStr) {
   return `${days}d ago`
 }
 
-function MomentCard({ moment }) {
+function MomentCard({ moment }: { moment: SharedMoment }) {
   const peerName = moment.peer_display_name || moment.peer_pseudonym.slice(0, 8) + '...'
 
   return (
@@ -66,7 +71,12 @@ function MomentCard({ moment }) {
   )
 }
 
-function OptInCard({ optIn, onOptOut }) {
+interface OptInCardProps {
+  optIn: MomentOptIn
+  onOptOut: (peerPseudonym: string) => Promise<void>
+}
+
+function OptInCard({ optIn, onOptOut }: OptInCardProps) {
   const [removing, setRemoving] = useState(false)
   const peerName = optIn.peer_display_name || optIn.peer_pseudonym.slice(0, 8) + '...'
 
@@ -113,9 +123,13 @@ function EmptyMomentsState() {
   )
 }
 
-export default function SharedMomentsTab({ onResult }) {
-  const [moments, setMoments] = useState([])
-  const [optIns, setOptIns] = useState([])
+interface SharedMomentsTabProps {
+  onResult?: (result: OperationResultPayload & { message?: string }) => void
+}
+
+export default function SharedMomentsTab({ onResult }: SharedMomentsTabProps) {
+  const [moments, setMoments] = useState<SharedMoment[]>([])
+  const [optIns, setOptIns] = useState<MomentOptIn[]>([])
   const [loading, setLoading] = useState(true)
   const [detecting, setDetecting] = useState(false)
   const [showAddPeer, setShowAddPeer] = useState(false)
@@ -138,7 +152,7 @@ export default function SharedMomentsTab({ onResult }) {
         setOptIns(optInsRes.data.opt_ins || [])
       }
     } catch (err) {
-      onResult?.({ error: err.message || 'Failed to load shared moments' })
+      onResult?.({ error: (err instanceof Error ? err.message : null) || 'Failed to load shared moments' })
     } finally {
       setLoading(false)
     }
@@ -164,13 +178,13 @@ export default function SharedMomentsTab({ onResult }) {
         onResult?.({ error: res.error || 'Failed to opt in' })
       }
     } catch (err) {
-      onResult?.({ error: err.message || 'Failed to opt in' })
+      onResult?.({ error: (err instanceof Error ? err.message : null) || 'Failed to opt in' })
     } finally {
       setAddingPeer(false)
     }
   }
 
-  const handleOptOut = async (peerPseudonym) => {
+  const handleOptOut = async (peerPseudonym: string) => {
     try {
       const res = await discoveryClient.momentOptOut(peerPseudonym)
       if (res.success && res.data) {
@@ -180,7 +194,7 @@ export default function SharedMomentsTab({ onResult }) {
         onResult?.({ error: res.error || 'Failed to opt out' })
       }
     } catch (err) {
-      onResult?.({ error: err.message || 'Failed to opt out' })
+      onResult?.({ error: (err instanceof Error ? err.message : null) || 'Failed to opt out' })
     }
   }
 
@@ -199,7 +213,7 @@ export default function SharedMomentsTab({ onResult }) {
         onResult?.({ error: res.error || 'Detection failed' })
       }
     } catch (err) {
-      onResult?.({ error: err.message || 'Detection failed' })
+      onResult?.({ error: (err instanceof Error ? err.message : null) || 'Detection failed' })
     } finally {
       setDetecting(false)
     }
