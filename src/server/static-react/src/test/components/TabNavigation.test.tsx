@@ -1,4 +1,3 @@
-// @ts-nocheck Migration debt: converted from .jsx in the JS->TS finalization batch; strict-mode cleanup of vi.mock typings tracked as follow-up.
 /**
  * Test file for TabNavigation component
  */
@@ -129,7 +128,7 @@ describe('TabNavigation', () => {
 
   it('calls onTabChange with correct tab id', () => {
     const customTabs = [
-      { id: 'custom', label: 'Custom', group: 'main' }
+      { id: 'custom', label: 'Custom', icon: '', group: 'main' as const }
     ]
 
     render(<TabNavigation {...defaultProps} tabs={customTabs} />)
@@ -142,8 +141,8 @@ describe('TabNavigation', () => {
 
   it('renders custom tabs when provided', () => {
     const customTabs = [
-      { id: 'custom1', label: 'Custom Tab 1', group: 'main' },
-      { id: 'custom2', label: 'Custom Tab 2', group: 'main' }
+      { id: 'custom1', label: 'Custom Tab 1', icon: '', group: 'main' as const },
+      { id: 'custom2', label: 'Custom Tab 2', icon: '', group: 'main' as const }
     ]
 
     render(<TabNavigation {...defaultProps} tabs={customTabs} />)
@@ -154,8 +153,8 @@ describe('TabNavigation', () => {
 
   it('handles disabled tabs correctly', () => {
     const tabsWithDisabled = [
-      { id: 'enabled', label: 'Enabled Tab', disabled: false, group: 'main' },
-      { id: 'disabled', label: 'Disabled Tab', disabled: true, group: 'main' }
+      { id: 'enabled', label: 'Enabled Tab', icon: '', disabled: false, group: 'main' as const },
+      { id: 'disabled', label: 'Disabled Tab', icon: '', disabled: true, group: 'main' as const }
     ]
 
     render(<TabNavigation {...defaultProps} tabs={tabsWithDisabled} />)
@@ -194,8 +193,8 @@ describe('TabNavigation', () => {
 
   it('does not show More button when no advanced tabs exist', () => {
     const mainOnly = [
-      { id: 'a', label: 'Tab A', group: 'main' },
-      { id: 'b', label: 'Tab B', group: 'main' }
+      { id: 'a', label: 'Tab A', icon: '', group: 'main' as const },
+      { id: 'b', label: 'Tab B', icon: '', group: 'main' as const }
     ]
 
     render(<TabNavigation {...defaultProps} tabs={mainOnly} />)

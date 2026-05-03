@@ -1,4 +1,3 @@
-// @ts-nocheck Migration debt: converted from .jsx in the JS->TS finalization batch; strict-mode cleanup of vi.mock typings tracked as follow-up.
 import React from 'react'
 import { render, screen, fireEvent, waitFor } from '@testing-library/react'
 import { describe, it, expect, beforeEach, vi } from 'vitest'
@@ -30,8 +29,8 @@ function makeError(overrides = {}) {
   }
 }
 
-function ok(data) {
-  return { success: true, data }
+function ok<T>(data: T): Awaited<ReturnType<typeof listIngestionErrors>> {
+  return { success: true, data, status: 200 } as unknown as Awaited<ReturnType<typeof listIngestionErrors>>
 }
 
 describe('IngestionErrorsPanel', () => {
@@ -40,7 +39,7 @@ describe('IngestionErrorsPanel', () => {
   })
 
   it('shows an empty-state message when there are no failures', async () => {
-    listIngestionErrors.mockResolvedValue(ok({ errors: [] }))
+    vi.mocked(listIngestionErrors).mockResolvedValue(ok({ errors: [] }))
     render(<IngestionErrorsPanel />)
     await waitFor(() => {
       expect(screen.getByTestId('ingestion-errors-empty')).toBeInTheDocument()
@@ -48,7 +47,7 @@ describe('IngestionErrorsPanel', () => {
   })
 
   it('renders one row per failure with source, extractor, error class', async () => {
-    listIngestionErrors.mockResolvedValue(
+    vi.mocked(listIngestionErrors).mockResolvedValue(
       ok({
         errors: [
           makeError({
@@ -85,7 +84,7 @@ describe('IngestionErrorsPanel', () => {
   })
 
   it('expands and collapses the error_msg on click', async () => {
-    listIngestionErrors.mockResolvedValue(
+    vi.mocked(listIngestionErrors).mockResolvedValue(
       ok({ errors: [makeError({ id: 'ie_x' })] }),
     )
     render(<IngestionErrorsPanel />)
@@ -102,11 +101,11 @@ describe('IngestionErrorsPanel', () => {
   })
 
   it('removes a row from the list after Dismiss succeeds', async () => {
-    listIngestionErrors.mockResolvedValue(
+    vi.mocked(listIngestionErrors).mockResolvedValue(
       ok({ errors: [makeError({ id: 'ie_dismiss' })] }),
     )
-    resolveIngestionError.mockResolvedValue(
-      ok(makeError({ id: 'ie_dismiss', resolved: true })),
+    vi.mocked(resolveIngestionError).mockResolvedValue(
+      { success: true, data: makeError({ id: 'ie_dismiss', resolved: true }), status: 200 } as unknown as Awaited<ReturnType<typeof resolveIngestionError>>,
     )
     render(<IngestionErrorsPanel />)
     await waitFor(() => {
@@ -122,7 +121,7 @@ describe('IngestionErrorsPanel', () => {
   })
 
   it('toggles the include_resolved filter and refetches', async () => {
-    listIngestionErrors.mockResolvedValue(ok({ errors: [] }))
+    vi.mocked(listIngestionErrors).mockResolvedValue(ok({ errors: [] }))
     render(<IngestionErrorsPanel />)
     await waitFor(() => {
       expect(listIngestionErrors).toHaveBeenCalledWith(false)
@@ -134,7 +133,7 @@ describe('IngestionErrorsPanel', () => {
   })
 
   it('surfaces a backend error message', async () => {
-    listIngestionErrors.mockResolvedValue({ success: false, error: 'boom' })
+    vi.mocked(listIngestionErrors).mockResolvedValue({ success: false, error: 'boom', status: 500 } as unknown as Awaited<ReturnType<typeof listIngestionErrors>>)
     render(<IngestionErrorsPanel />)
     await waitFor(() => {
       expect(screen.getByTestId('ingestion-errors-error')).toHaveTextContent(

@@ -1,13 +1,15 @@
-// @ts-nocheck Migration debt: converted from .jsx in the JS->TS finalization batch; strict-mode cleanup of vi.mock typings tracked as follow-up.
 import React from 'react';
 import { screen, fireEvent } from '@testing-library/react';
 import { vi, describe, it, expect, beforeEach, afterEach } from 'vitest';
 import OnboardingWizard, { ONBOARDING_STORAGE_KEY } from '../../../components/onboarding/OnboardingWizard';
 import { renderWithRedux } from '../../utils/testUtilities';
 
+type StepMockProps = { onNext: () => void; onSkip: () => void };
+type AllSetMockProps = { onFinish: () => void; completedSteps?: { size?: number } };
+
 // Mock child step components to isolate wizard logic
 vi.mock('../../../components/onboarding/IdentityStep', () => ({
-  default: ({ onNext, onSkip }) => (
+  default: ({ onNext, onSkip }: StepMockProps) => (
     <div data-testid="identity-step">
       Identity Step
       <button data-testid="identity-next" onClick={onNext}>Next</button>
@@ -17,7 +19,7 @@ vi.mock('../../../components/onboarding/IdentityStep', () => ({
 }));
 
 vi.mock('../../../components/onboarding/ConfigureAiStep', () => ({
-  default: ({ onNext, onSkip }) => (
+  default: ({ onNext, onSkip }: StepMockProps) => (
     <div data-testid="ai-step">
       AI Setup Step
       <button data-testid="ai-next" onClick={onNext}>Next</button>
@@ -27,7 +29,7 @@ vi.mock('../../../components/onboarding/ConfigureAiStep', () => ({
 }));
 
 vi.mock('../../../components/onboarding/AppleDataStep', () => ({
-  default: ({ onNext, onSkip }) => (
+  default: ({ onNext, onSkip }: StepMockProps) => (
     <div data-testid="apple-step">
       Apple Data Step
       <button data-testid="apple-next" onClick={onNext}>Next</button>
@@ -37,7 +39,7 @@ vi.mock('../../../components/onboarding/AppleDataStep', () => ({
 }));
 
 vi.mock('../../../components/onboarding/CloudBackupStep', () => ({
-  default: ({ onNext, onSkip }) => (
+  default: ({ onNext, onSkip }: StepMockProps) => (
     <div data-testid="cloud-step">
       Cloud Backup Step
       <button data-testid="cloud-next" onClick={onNext}>Next</button>
@@ -47,7 +49,7 @@ vi.mock('../../../components/onboarding/CloudBackupStep', () => ({
 }));
 
 vi.mock('../../../components/onboarding/DiscoveryStep', () => ({
-  default: ({ onNext, onSkip }) => (
+  default: ({ onNext, onSkip }: StepMockProps) => (
     <div data-testid="discovery-step">
       Discovery Step
       <button data-testid="discovery-next" onClick={onNext}>Next</button>
@@ -57,7 +59,7 @@ vi.mock('../../../components/onboarding/DiscoveryStep', () => ({
 }));
 
 vi.mock('../../../components/onboarding/AllSetStep', () => ({
-  default: ({ onFinish, completedSteps }) => (
+  default: ({ onFinish, completedSteps }: AllSetMockProps) => (
     <div data-testid="allset-step">
       All Set Step
       <span data-testid="completed-count">{completedSteps?.size || 0}</span>
@@ -67,7 +69,7 @@ vi.mock('../../../components/onboarding/AllSetStep', () => ({
 }));
 
 describe('OnboardingWizard', () => {
-  let onComplete;
+  let onComplete: () => void;
 
   beforeEach(() => {
     onComplete = vi.fn();

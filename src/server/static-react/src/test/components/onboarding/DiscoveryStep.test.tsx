@@ -1,4 +1,3 @@
-// @ts-nocheck Migration debt: converted from .jsx in the JS->TS finalization batch; strict-mode cleanup of vi.mock typings tracked as follow-up.
 import React from 'react';
 import { screen, fireEvent, waitFor } from '@testing-library/react';
 import { vi, describe, it, expect, beforeEach } from 'vitest';
@@ -17,8 +16,8 @@ vi.mock('../../../api/clients/discoveryClient', () => ({
 }));
 
 describe('DiscoveryStep — alpha gap 4ae28 (Community CTA always visible)', () => {
-  let onNext;
-  let onSkip;
+  let onNext: () => void;
+  let onSkip: () => void;
 
   beforeEach(() => {
     onNext = vi.fn();
@@ -28,9 +27,12 @@ describe('DiscoveryStep — alpha gap 4ae28 (Community CTA always visible)', () 
   const renderStep = () =>
     renderWithRedux(<DiscoveryStep onNext={onNext} onSkip={onSkip} />);
 
+  const findCta = async () =>
+    (await screen.findByRole('button', { name: /Join & Continue/i })) as HTMLButtonElement;
+
   it('renders the primary "Join & Continue" CTA before any interest is selected', async () => {
     renderStep();
-    const cta = await screen.findByRole('button', { name: /Join & Continue/i });
+    const cta = await findCta();
     expect(cta).toBeTruthy();
     expect(cta.disabled).toBe(true);
     expect(cta.getAttribute('aria-disabled')).toBe('true');
@@ -39,13 +41,13 @@ describe('DiscoveryStep — alpha gap 4ae28 (Community CTA always visible)', () 
 
   it('still shows a Skip button alongside the disabled CTA', async () => {
     renderStep();
-    await screen.findByRole('button', { name: /Join & Continue/i });
+    await findCta();
     expect(screen.getByRole('button', { name: /^Skip$/ })).toBeTruthy();
   });
 
   it('enables the CTA once an interest is toggled on', async () => {
     renderStep();
-    const cta = await screen.findByRole('button', { name: /Join & Continue/i });
+    const cta = await findCta();
     expect(cta.disabled).toBe(true);
 
     fireEvent.click(screen.getByRole('button', { name: /Personal Notes/i }));
@@ -59,7 +61,7 @@ describe('DiscoveryStep — alpha gap 4ae28 (Community CTA always visible)', () 
 
   it('re-disables the CTA if the last selected interest is toggled off', async () => {
     renderStep();
-    const cta = await screen.findByRole('button', { name: /Join & Continue/i });
+    const cta = await findCta();
     const tag = screen.getByRole('button', { name: /Personal Notes/i });
 
     fireEvent.click(tag);

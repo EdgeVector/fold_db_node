@@ -1,17 +1,15 @@
-// @ts-nocheck Migration debt: converted from .jsx in the JS->TS finalization batch; strict-mode cleanup of vi.mock typings tracked as follow-up.
 /**
  * Integration tests for TASK-002 component extraction
  * Tests how new components work together in realistic scenarios
  * Part of TASK-002: Component Extraction and Modularization
  */
 
+import { describe, it, expect, vi } from 'vitest'
 import { render, screen, waitFor } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
-import { Provider } from 'react-redux'
 import TabNavigation from '../../components/TabNavigation'
 import SelectField from '../../components/form/SelectField'
 import TextField from '../../components/form/TextField'
-import SchemaStatusBadge from '../../components/schema/SchemaStatusBadge'
 
 import { renderWithRedux, createAuthenticatedState, createUnauthenticatedState } from '../utils/testUtilities'
 
@@ -23,7 +21,7 @@ describe('Component Integration Tests', () => {
         <TabNavigation
           activeTab="ingestion"
           onTabChange={onTabChange}
-        />, { initialState: createUnauthenticatedState() }
+        />, { preloadedState: createUnauthenticatedState() }
       )
 
       // Main tabs should be directly enabled
@@ -40,7 +38,7 @@ describe('Component Integration Tests', () => {
         <TabNavigation
           activeTab="feed"
           onTabChange={onTabChange}
-        />, { initialState: createAuthenticatedState() }
+        />, { preloadedState: createAuthenticatedState() }
       )
 
       // Main tabs remain enabled
@@ -67,8 +65,8 @@ describe('Component Integration Tests', () => {
           value=""
           onChange={onSchemaChange}
           options={mockSchemas}
-          placeholder="Choose a schema..."
           helpText="Only approved schemas are shown"
+          config={{ placeholder: "Choose a schema..." }}
         />
       )
 
@@ -80,7 +78,7 @@ describe('Component Integration Tests', () => {
 
     it('handles text input with validation', async () => {
       const user = userEvent.setup()
-      const onChange = jest.fn()
+      const onChange = vi.fn()
 
       render(
         <TextField
@@ -113,8 +111,8 @@ describe('Component Integration Tests', () => {
   describe('Complete Workflow Integration', () => {
     it('simulates a complete schema selection and form workflow', async () => {
       const user = userEvent.setup()
-      const onTabChange = jest.fn()
-      const onSchemaChange = jest.fn()
+      const onTabChange = vi.fn()
+      const onSchemaChange = vi.fn()
       const onRangeKeyChange = vi.fn()
 
       const mockSchemas = [
@@ -147,7 +145,7 @@ describe('Component Integration Tests', () => {
             required={true}
           />
         </div>,
-        { initialState: createAuthenticatedState() }
+        { preloadedState: createAuthenticatedState() }
       )
 
       // Navigate to Feed tab
@@ -184,7 +182,7 @@ describe('Component Integration Tests', () => {
             name="field2"
             label="Schema Selection"
             value=""
-            onChange={jest.fn()}
+            onChange={vi.fn()}
             options={[]}
             config={{ emptyMessage: "No schemas available" }}
           />

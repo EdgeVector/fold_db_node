@@ -1,4 +1,3 @@
-// @ts-nocheck Migration debt: converted from .jsx in the JS->TS finalization batch; strict-mode cleanup of vi.mock typings tracked as follow-up.
 import React from 'react'
 import { render, screen, fireEvent, waitFor } from '@testing-library/react'
 import { describe, it, expect, beforeEach, vi } from 'vitest'
@@ -22,7 +21,7 @@ import {
   acceptSuggestedPersona,
 } from '../../../../api/clients/fingerprintsClient'
 
-function makeSample(kind, value, idSuffix) {
+function makeSample(kind: string, value: string, idSuffix: string) {
   return {
     id: `fp_${idSuffix}`,
     kind,
@@ -32,7 +31,7 @@ function makeSample(kind, value, idSuffix) {
   }
 }
 
-function makeSuggestion(overrides = {}) {
+function makeSuggestion(overrides: Record<string, unknown> = {}) {
   return {
     suggested_id: 'sg_default',
     suggested_name: 'Unnamed cluster',
@@ -48,8 +47,8 @@ function makeSuggestion(overrides = {}) {
   }
 }
 
-function ok(data) {
-  return { success: true, data }
+function ok<T>(data: T): Awaited<ReturnType<typeof listSuggestedPersonas>> {
+  return { success: true, data, status: 200 } as unknown as Awaited<ReturnType<typeof listSuggestedPersonas>>
 }
 
 const DISMISSED_STORAGE_KEY = 'folddb.dismissed_suggested_personas.v1'
@@ -61,7 +60,7 @@ describe('SuggestedPersonasPanel', () => {
   })
 
   it('shows an empty-state message when there are no suggestions', async () => {
-    listSuggestedPersonas.mockResolvedValue(ok({ suggestions: [] }))
+    vi.mocked(listSuggestedPersonas).mockResolvedValue(ok({ suggestions: [] }))
     render(<SuggestedPersonasPanel />)
     await waitFor(() => {
       expect(screen.getByTestId('suggested-personas-empty')).toBeInTheDocument()
@@ -69,7 +68,7 @@ describe('SuggestedPersonasPanel', () => {
   })
 
   it('renders one row per suggestion with name, counts, and samples', async () => {
-    listSuggestedPersonas.mockResolvedValue(
+    vi.mocked(listSuggestedPersonas).mockResolvedValue(
       ok({
         suggestions: [
           makeSuggestion({
@@ -94,7 +93,7 @@ describe('SuggestedPersonasPanel', () => {
   })
 
   it('dismisses a suggestion locally without calling the backend', async () => {
-    listSuggestedPersonas.mockResolvedValue(
+    vi.mocked(listSuggestedPersonas).mockResolvedValue(
       ok({ suggestions: [makeSuggestion({ suggested_id: 'sg_d' })] }),
     )
     render(<SuggestedPersonasPanel />)
@@ -109,7 +108,7 @@ describe('SuggestedPersonasPanel', () => {
   })
 
   it('accepts a suggestion with a chosen name and submits the right payload', async () => {
-    listSuggestedPersonas.mockResolvedValue(
+    vi.mocked(listSuggestedPersonas).mockResolvedValue(
       ok({
         suggestions: [
           makeSuggestion({
@@ -120,11 +119,8 @@ describe('SuggestedPersonasPanel', () => {
         ],
       }),
     )
-    acceptSuggestedPersona.mockResolvedValue(
-      ok({
-        id: 'ps_new',
-        name: 'Tom (colleague)',
-      }),
+    vi.mocked(acceptSuggestedPersona).mockResolvedValue(
+      { success: true, status: 200, data: { id: 'ps_new', name: 'Tom (colleague)' } } as unknown as Awaited<ReturnType<typeof acceptSuggestedPersona>>,
     )
 
     render(<SuggestedPersonasPanel />)
@@ -155,7 +151,7 @@ describe('SuggestedPersonasPanel', () => {
   })
 
   it('surfaces a backend error message', async () => {
-    listSuggestedPersonas.mockResolvedValue({ success: false, error: 'boom' })
+    vi.mocked(listSuggestedPersonas).mockResolvedValue({ success: false, error: 'boom', status: 500 } as unknown as Awaited<ReturnType<typeof listSuggestedPersonas>>)
     render(<SuggestedPersonasPanel />)
     await waitFor(() => {
       expect(screen.getByTestId('suggested-personas-error')).toHaveTextContent('boom')
@@ -163,7 +159,7 @@ describe('SuggestedPersonasPanel', () => {
   })
 
   it('persists dismissals to localStorage so they survive a reload', async () => {
-    listSuggestedPersonas.mockResolvedValue(
+    vi.mocked(listSuggestedPersonas).mockResolvedValue(
       ok({ suggestions: [makeSuggestion({ suggested_id: 'sg_persist' })] }),
     )
     const { unmount } = render(<SuggestedPersonasPanel />)
@@ -183,7 +179,7 @@ describe('SuggestedPersonasPanel', () => {
 
     // Remount (simulates a reload) and the row should still be hidden.
     unmount()
-    listSuggestedPersonas.mockResolvedValue(
+    vi.mocked(listSuggestedPersonas).mockResolvedValue(
       ok({ suggestions: [makeSuggestion({ suggested_id: 'sg_persist' })] }),
     )
     render(<SuggestedPersonasPanel />)
@@ -198,7 +194,7 @@ describe('SuggestedPersonasPanel', () => {
       DISMISSED_STORAGE_KEY,
       JSON.stringify(['sg_a', 'sg_b']),
     )
-    listSuggestedPersonas.mockResolvedValue(
+    vi.mocked(listSuggestedPersonas).mockResolvedValue(
       ok({
         suggestions: [
           makeSuggestion({ suggested_id: 'sg_a' }),

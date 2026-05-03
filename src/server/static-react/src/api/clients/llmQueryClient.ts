@@ -9,7 +9,7 @@ import { API_TIMEOUTS, API_RETRIES } from '../../constants/api';
 
 // LLM client needs custom timeout for AI processing.
 // Note: ApiClientConfig calls this `retryAttempts`, not `retries` — the
-// previous name was silently ignored (caught when @ts-nocheck was removed).
+// previous name was silently ignored (caught when strict-mode was restored).
 const client = createApiClient({
   timeout: API_TIMEOUTS.AI_PROCESSING,
   retryAttempts: API_RETRIES.LIMITED

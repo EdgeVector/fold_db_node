@@ -1,4 +1,3 @@
-// @ts-nocheck Migration debt: converted from .jsx in the JS->TS finalization batch; strict-mode cleanup of vi.mock typings tracked as follow-up.
 /**
  * @fileoverview Tests for ResultsSection component
  * 
@@ -18,7 +17,7 @@ describe('ResultsSection Component', () => {
   });
 
   it('returns null when results is undefined', () => {
-    const { container } = render(<ResultsSection />);
+    const { container } = render(<ResultsSection results={undefined} />);
     expect(container.firstChild).toBeNull();
   });
 

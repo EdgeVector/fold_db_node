@@ -1,4 +1,3 @@
-// @ts-nocheck Migration debt: converted from .jsx in the JS->TS finalization batch; strict-mode cleanup of vi.mock typings tracked as follow-up.
 import React from 'react'
 import { render, screen, fireEvent, waitFor } from '@testing-library/react'
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest'
@@ -22,7 +21,7 @@ import {
 } from '../../../../api/clients/fingerprintsClient'
 import { listContacts } from '../../../../api/clients/trustClient'
 
-function card(overrides = {}) {
+function card(overrides: Record<string, unknown> = {}) {
   return {
     pub_key: 'pk_abc',
     display_name: 'Tom Tang',
@@ -36,8 +35,12 @@ function card(overrides = {}) {
   }
 }
 
-function ok(data) {
-  return { success: true, data }
+function ok<R = unknown>(data: unknown): R {
+  return { success: true, data, status: 200 } as unknown as R
+}
+
+function err<R = unknown>(error: string, status = 500): R {
+  return { success: false, error, status } as unknown as R
 }
 
 describe('MyIdentityCardPanel', () => {
@@ -46,7 +49,7 @@ describe('MyIdentityCardPanel', () => {
   })
 
   it('renders the card fields when present', async () => {
-    getMyIdentityCard.mockResolvedValue(ok(card()))
+    vi.mocked(getMyIdentityCard).mockResolvedValue(ok(card()))
     render(<MyIdentityCardPanel />)
     await waitFor(() => {
       expect(screen.getByTestId('my-identity-card-fields')).toBeInTheDocument()
@@ -59,7 +62,7 @@ describe('MyIdentityCardPanel', () => {
   })
 
   it('shows "not set" when birthday is null', async () => {
-    getMyIdentityCard.mockResolvedValue(ok(card({ birthday: null })))
+    vi.mocked(getMyIdentityCard).mockResolvedValue(ok(card({ birthday: null })))
     render(<MyIdentityCardPanel />)
     await waitFor(() => {
       expect(screen.getByTestId('my-identity-card-fields')).toBeInTheDocument()
@@ -70,10 +73,7 @@ describe('MyIdentityCardPanel', () => {
   })
 
   it('surfaces the backend error (e.g. 404 when no card yet)', async () => {
-    getMyIdentityCard.mockResolvedValue({
-      success: false,
-      error: 'self-Identity not yet issued — complete the setup wizard first',
-    })
+    vi.mocked(getMyIdentityCard).mockResolvedValue(err('self-Identity not yet issued — complete the setup wizard first'))
     render(<MyIdentityCardPanel />)
     await waitFor(() => {
       expect(screen.getByTestId('my-identity-card-error')).toHaveTextContent(
@@ -83,7 +83,7 @@ describe('MyIdentityCardPanel', () => {
   })
 
   it('copies the card JSON to the clipboard on Copy click', async () => {
-    getMyIdentityCard.mockResolvedValue(ok(card()))
+    vi.mocked(getMyIdentityCard).mockResolvedValue(ok(card()))
     const writeText = vi.fn().mockResolvedValue(undefined)
     Object.defineProperty(navigator, 'clipboard', {
       value: { writeText },
@@ -107,7 +107,7 @@ describe('MyIdentityCardPanel', () => {
   })
 
   it('renders the pretty-printed JSON below the fields', async () => {
-    getMyIdentityCard.mockResolvedValue(ok(card()))
+    vi.mocked(getMyIdentityCard).mockResolvedValue(ok(card()))
     render(<MyIdentityCardPanel />)
     await waitFor(() => {
       expect(screen.getByTestId('my-identity-card-json')).toBeInTheDocument()
@@ -119,7 +119,7 @@ describe('MyIdentityCardPanel', () => {
 
   describe('edit + reissue flow', () => {
     it('shows the edit form after clicking Edit card', async () => {
-      getMyIdentityCard.mockResolvedValue(ok(card()))
+      vi.mocked(getMyIdentityCard).mockResolvedValue(ok(card()))
       render(<MyIdentityCardPanel />)
       await waitFor(() => {
         expect(screen.getByTestId('my-identity-card-edit')).toBeInTheDocument()
@@ -137,8 +137,8 @@ describe('MyIdentityCardPanel', () => {
     })
 
     it('calls reissueMyIdentityCard with only the changed display_name', async () => {
-      getMyIdentityCard.mockResolvedValue(ok(card()))
-      reissueMyIdentityCard.mockResolvedValue(
+      vi.mocked(getMyIdentityCard).mockResolvedValue(ok(card()))
+      vi.mocked(reissueMyIdentityCard).mockResolvedValue(
         ok(card({ display_name: 'Thomas', issued_at: '2026-04-18T00:00:00Z' })),
       )
       render(<MyIdentityCardPanel />)
@@ -165,7 +165,7 @@ describe('MyIdentityCardPanel', () => {
     })
 
     it('does not call reissue when nothing changed', async () => {
-      getMyIdentityCard.mockResolvedValue(ok(card()))
+      vi.mocked(getMyIdentityCard).mockResolvedValue(ok(card()))
       render(<MyIdentityCardPanel />)
       await waitFor(() => {
         expect(screen.getByTestId('my-identity-card-edit')).toBeInTheDocument()
@@ -178,11 +178,8 @@ describe('MyIdentityCardPanel', () => {
     })
 
     it('surfaces backend error messages in the save-error slot', async () => {
-      getMyIdentityCard.mockResolvedValue(ok(card()))
-      reissueMyIdentityCard.mockResolvedValue({
-        success: false,
-        error: 'display_name must not be empty',
-      })
+      vi.mocked(getMyIdentityCard).mockResolvedValue(ok(card()))
+      vi.mocked(reissueMyIdentityCard).mockResolvedValue(err('display_name must not be empty'))
       render(<MyIdentityCardPanel />)
       await waitFor(() => {
         expect(screen.getByTestId('my-identity-card-edit')).toBeInTheDocument()
@@ -202,7 +199,7 @@ describe('MyIdentityCardPanel', () => {
     })
 
     it('Cancel restores the display view without reissuing', async () => {
-      getMyIdentityCard.mockResolvedValue(ok(card()))
+      vi.mocked(getMyIdentityCard).mockResolvedValue(ok(card()))
       render(<MyIdentityCardPanel />)
       await waitFor(() => {
         expect(screen.getByTestId('my-identity-card-edit')).toBeInTheDocument()
@@ -219,7 +216,7 @@ describe('MyIdentityCardPanel', () => {
 
   describe('QR render', () => {
     it('hides the QR block by default', async () => {
-      getMyIdentityCard.mockResolvedValue(ok(card()))
+      vi.mocked(getMyIdentityCard).mockResolvedValue(ok(card()))
       render(<MyIdentityCardPanel />)
       await waitFor(() => {
         expect(screen.getByTestId('my-identity-card-qr-toggle')).toBeInTheDocument()
@@ -228,7 +225,7 @@ describe('MyIdentityCardPanel', () => {
     })
 
     it('renders the QR SVG when Show QR is clicked', async () => {
-      getMyIdentityCard.mockResolvedValue(ok(card()))
+      vi.mocked(getMyIdentityCard).mockResolvedValue(ok(card()))
       render(<MyIdentityCardPanel />)
       await waitFor(() => {
         expect(screen.getByTestId('my-identity-card-qr-toggle')).toBeInTheDocument()
@@ -242,7 +239,7 @@ describe('MyIdentityCardPanel', () => {
     })
 
     it('toggles back off on a second click', async () => {
-      getMyIdentityCard.mockResolvedValue(ok(card()))
+      vi.mocked(getMyIdentityCard).mockResolvedValue(ok(card()))
       render(<MyIdentityCardPanel />)
       await waitFor(() => {
         expect(screen.getByTestId('my-identity-card-qr-toggle')).toBeInTheDocument()
@@ -257,10 +254,10 @@ describe('MyIdentityCardPanel', () => {
     // Capture every blob passed to URL.createObjectURL so the
     // download assertions can inspect what the handler tried to
     // save. Cleared per-test via beforeEach's vi.clearAllMocks.
-    let createdBlobs
-    let anchorClicks
-    let origCreateObjectURL
-    let origRevokeObjectURL
+    let createdBlobs: Blob[]
+    let anchorClicks: Array<{ href: string; download: string }>
+    let origCreateObjectURL: typeof URL.createObjectURL
+    let origRevokeObjectURL: typeof URL.revokeObjectURL
 
     beforeEach(() => {
       createdBlobs = []
@@ -272,7 +269,7 @@ describe('MyIdentityCardPanel', () => {
       // assignments on URL).
       origCreateObjectURL = globalThis.URL.createObjectURL
       origRevokeObjectURL = globalThis.URL.revokeObjectURL
-      globalThis.URL.createObjectURL = vi.fn(blob => {
+      globalThis.URL.createObjectURL = vi.fn((blob: Blob) => {
         createdBlobs.push(blob)
         return `blob:mock:${createdBlobs.length}`
       })
@@ -281,7 +278,7 @@ describe('MyIdentityCardPanel', () => {
       // download filename without touching document.createElement
       // (spying on that recursed infinitely across test files).
       vi.spyOn(HTMLAnchorElement.prototype, 'click').mockImplementation(
-        function clickSpy() {
+        function clickSpy(this: HTMLAnchorElement) {
           anchorClicks.push({ href: this.href, download: this.download })
         },
       )
@@ -294,7 +291,7 @@ describe('MyIdentityCardPanel', () => {
     })
 
     it('exposes Download PNG and Download SVG buttons once QR is open', async () => {
-      getMyIdentityCard.mockResolvedValue(ok(card()))
+      vi.mocked(getMyIdentityCard).mockResolvedValue(ok(card()))
       render(<MyIdentityCardPanel />)
       await waitFor(() => {
         expect(screen.getByTestId('my-identity-card-qr-toggle')).toBeInTheDocument()
@@ -318,7 +315,7 @@ describe('MyIdentityCardPanel', () => {
     })
 
     it('downloads an SVG file named after the card owner', async () => {
-      getMyIdentityCard.mockResolvedValue(ok(card({ display_name: 'Tom Tang' })))
+      vi.mocked(getMyIdentityCard).mockResolvedValue(ok(card({ display_name: 'Tom Tang' })))
       render(<MyIdentityCardPanel />)
       await waitFor(() => {
         expect(screen.getByTestId('my-identity-card-qr-toggle')).toBeInTheDocument()
@@ -333,7 +330,7 @@ describe('MyIdentityCardPanel', () => {
     })
 
     it('falls back to a generic filename when display_name is empty', async () => {
-      getMyIdentityCard.mockResolvedValue(ok(card({ display_name: '' })))
+      vi.mocked(getMyIdentityCard).mockResolvedValue(ok(card({ display_name: '' })))
       render(<MyIdentityCardPanel />)
       await waitFor(() => {
         expect(screen.getByTestId('my-identity-card-qr-toggle')).toBeInTheDocument()
@@ -345,7 +342,7 @@ describe('MyIdentityCardPanel', () => {
     })
 
     it('sanitizes punctuation and case in the display name', async () => {
-      getMyIdentityCard.mockResolvedValue(
+      vi.mocked(getMyIdentityCard).mockResolvedValue(
         ok(card({ display_name: 'O\u2019Brien & Co.' })),
       )
       render(<MyIdentityCardPanel />)
@@ -363,7 +360,7 @@ describe('MyIdentityCardPanel', () => {
       // observe the final PNG blob — but we can verify that clicking
       // Download PNG immediately produced an SVG blob URL and set it
       // as the Image src, which is the handler's first side effect.
-      getMyIdentityCard.mockResolvedValue(ok(card()))
+      vi.mocked(getMyIdentityCard).mockResolvedValue(ok(card()))
       render(<MyIdentityCardPanel />)
       await waitFor(() => {
         expect(screen.getByTestId('my-identity-card-qr-toggle')).toBeInTheDocument()
@@ -403,7 +400,7 @@ describe('MyIdentityCardPanel', () => {
     }
 
     it('does not open the picker by default and does not fetch contacts', async () => {
-      getMyIdentityCard.mockResolvedValue(ok(card()))
+      vi.mocked(getMyIdentityCard).mockResolvedValue(ok(card()))
       render(<MyIdentityCardPanel />)
       await waitFor(() => {
         expect(screen.getByTestId('my-identity-card-send')).toBeInTheDocument()
@@ -413,8 +410,8 @@ describe('MyIdentityCardPanel', () => {
     })
 
     it('opens the picker and loads contacts on first click', async () => {
-      getMyIdentityCard.mockResolvedValue(ok(card()))
-      listContacts.mockResolvedValue(
+      vi.mocked(getMyIdentityCard).mockResolvedValue(ok(card()))
+      vi.mocked(listContacts).mockResolvedValue(
         ok({ contacts: [aliceContact, bobContact] }),
       )
       render(<MyIdentityCardPanel />)
@@ -437,8 +434,8 @@ describe('MyIdentityCardPanel', () => {
     })
 
     it('filters revoked contacts out of the send list', async () => {
-      getMyIdentityCard.mockResolvedValue(ok(card()))
-      listContacts.mockResolvedValue(
+      vi.mocked(getMyIdentityCard).mockResolvedValue(ok(card()))
+      vi.mocked(listContacts).mockResolvedValue(
         ok({ contacts: [aliceContact, revokedContact] }),
       )
       render(<MyIdentityCardPanel />)
@@ -457,8 +454,8 @@ describe('MyIdentityCardPanel', () => {
     })
 
     it('shows the empty-state message when the user has no contacts', async () => {
-      getMyIdentityCard.mockResolvedValue(ok(card()))
-      listContacts.mockResolvedValue(ok({ contacts: [] }))
+      vi.mocked(getMyIdentityCard).mockResolvedValue(ok(card()))
+      vi.mocked(listContacts).mockResolvedValue(ok({ contacts: [] }))
       render(<MyIdentityCardPanel />)
       await waitFor(() => {
         expect(screen.getByTestId('my-identity-card-send')).toBeInTheDocument()
@@ -472,9 +469,9 @@ describe('MyIdentityCardPanel', () => {
     })
 
     it('calls sendIdentityCard(pub_key) when a contact row is clicked', async () => {
-      getMyIdentityCard.mockResolvedValue(ok(card()))
-      listContacts.mockResolvedValue(ok({ contacts: [aliceContact] }))
-      sendIdentityCard.mockResolvedValue(
+      vi.mocked(getMyIdentityCard).mockResolvedValue(ok(card()))
+      vi.mocked(listContacts).mockResolvedValue(ok({ contacts: [aliceContact] }))
+      vi.mocked(sendIdentityCard).mockResolvedValue(
         ok({
           message_id: 'msg_abc',
           recipient_display_name: 'Alice',
@@ -506,12 +503,9 @@ describe('MyIdentityCardPanel', () => {
     })
 
     it('surfaces backend errors in the picker without closing it', async () => {
-      getMyIdentityCard.mockResolvedValue(ok(card()))
-      listContacts.mockResolvedValue(ok({ contacts: [aliceContact] }))
-      sendIdentityCard.mockResolvedValue({
-        success: false,
-        error: 'Contact does not have messaging enabled. Connect via discovery first.',
-      })
+      vi.mocked(getMyIdentityCard).mockResolvedValue(ok(card()))
+      vi.mocked(listContacts).mockResolvedValue(ok({ contacts: [aliceContact] }))
+      vi.mocked(sendIdentityCard).mockResolvedValue(err('Contact does not have messaging enabled. Connect via discovery first.'))
       render(<MyIdentityCardPanel />)
       await waitFor(() => {
         expect(screen.getByTestId('my-identity-card-send')).toBeInTheDocument()
@@ -559,7 +553,7 @@ describe('MyIdentityCardPanel', () => {
 
     it('hides the Attach button until the card is loaded', async () => {
       // Resolve later so the panel stays in the loading branch.
-      getMyIdentityCard.mockReturnValue(new Promise(() => {}))
+      vi.mocked(getMyIdentityCard).mockReturnValue(new Promise(() => {}))
       render(<MyIdentityCardPanel />)
       expect(
         screen.queryByTestId('my-identity-card-attach-face'),
@@ -567,10 +561,10 @@ describe('MyIdentityCardPanel', () => {
     })
 
     it('detects a single face and calls reissue with the embedding', async () => {
-      getMyIdentityCard.mockResolvedValue(ok(card({ face_embedding: null })))
+      vi.mocked(getMyIdentityCard).mockResolvedValue(ok(card({ face_embedding: null })))
       const getUserMedia = stubGetUserMedia()
       stubToDataURL()
-      detectFaces.mockResolvedValue(
+      vi.mocked(detectFaces).mockResolvedValue(
         ok({
           faces: [
             {
@@ -581,7 +575,7 @@ describe('MyIdentityCardPanel', () => {
           ],
         }),
       )
-      reissueMyIdentityCard.mockResolvedValue(
+      vi.mocked(reissueMyIdentityCard).mockResolvedValue(
         ok(card({ face_embedding: [0.1, 0.2, 0.3] })),
       )
       render(<MyIdentityCardPanel />)
@@ -614,10 +608,10 @@ describe('MyIdentityCardPanel', () => {
     })
 
     it('shows a "no face detected" error when detect returns 0 faces', async () => {
-      getMyIdentityCard.mockResolvedValue(ok(card({ face_embedding: null })))
+      vi.mocked(getMyIdentityCard).mockResolvedValue(ok(card({ face_embedding: null })))
       stubGetUserMedia()
       stubToDataURL()
-      detectFaces.mockResolvedValue(ok({ faces: [] }))
+      vi.mocked(detectFaces).mockResolvedValue(ok({ faces: [] }))
       render(<MyIdentityCardPanel />)
       await waitFor(() => {
         expect(
@@ -643,10 +637,10 @@ describe('MyIdentityCardPanel', () => {
     })
 
     it('shows a "multiple faces" error when detect returns 2+ faces', async () => {
-      getMyIdentityCard.mockResolvedValue(ok(card({ face_embedding: null })))
+      vi.mocked(getMyIdentityCard).mockResolvedValue(ok(card({ face_embedding: null })))
       stubGetUserMedia()
       stubToDataURL()
-      detectFaces.mockResolvedValue(
+      vi.mocked(detectFaces).mockResolvedValue(
         ok({
           faces: [
             { embedding: [0.1], bbox: [0, 0, 1, 1], confidence: 0.9 },
@@ -676,10 +670,10 @@ describe('MyIdentityCardPanel', () => {
     })
 
     it('Remove face calls reissue with face_embedding: null', async () => {
-      getMyIdentityCard.mockResolvedValue(
+      vi.mocked(getMyIdentityCard).mockResolvedValue(
         ok(card({ face_embedding: [0.1, 0.2, 0.3] })),
       )
-      reissueMyIdentityCard.mockResolvedValue(
+      vi.mocked(reissueMyIdentityCard).mockResolvedValue(
         ok(card({ face_embedding: null })),
       )
       render(<MyIdentityCardPanel />)

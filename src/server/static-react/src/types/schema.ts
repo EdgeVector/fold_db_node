@@ -1,22 +1,32 @@
-// @ts-nocheck — pre-existing strict-mode debt; remove this directive after fixing.
 /**
  * TypeScript Type Definitions for Schema State Management
  * TASK-003: State Management Consolidation with Redux
- * 
+ *
  * This file contains all TypeScript interfaces and types for the schema Redux slice.
  * Ensures type safety and proper intellisense support for schema state management.
- * 
+ *
  * Note: We compose UI state types with Rust-generated domain types from ts-rs.
  */
 
-// Import auto-generated types from Rust backend via ts-rs
-// Using @generated alias that points to bindings/ directory where ts-rs writes them
-import type { 
-  DeclarativeSchemaDefinition,
-} from '@generated/generated';
-
-// Re-export backend type as BackendSchema for backward compatibility
-export type BackendSchema = DeclarativeSchemaDefinition;
+// Structural placeholder for the backend's DeclarativeSchemaDefinition.
+// The corresponding `@generated/generated` ts-rs binding was never produced, so
+// the UI keeps a hand-maintained shape that lists the fields the React layer
+// actually reads. Anything else stays accessible via the index signature.
+export interface BackendSchema {
+  name: string;
+  descriptive_name?: string;
+  schema_type?: string;
+  fields?: Record<string, unknown>;
+  range_key?: string;
+  key?: { hash_field?: string; range_field?: string };
+  org_hash?: string;
+  schema_name?: string;
+  trust_domain?: string;
+  field_classifications?: Record<string, unknown>;
+  readable_fields?: string[];
+  writable_fields?: string[];
+  [extra: string]: unknown;
+}
 
 // ============================================================================
 // CORE SCHEMA TYPES

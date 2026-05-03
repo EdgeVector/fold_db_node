@@ -1,4 +1,3 @@
-// @ts-nocheck Migration debt: converted from .jsx in the JS->TS finalization batch; strict-mode cleanup of vi.mock typings tracked as follow-up.
 import React from 'react'
 import { screen, fireEvent, waitFor } from '@testing-library/react'
 import { describe, it, expect, beforeEach, vi } from 'vitest'
@@ -7,7 +6,7 @@ import { renderWithRedux, createTestSchemaState, createMockAuthState } from '../
 
 // Mock the API client
 vi.mock('../../../api/clients/mutationClient', () => {
-  const post = vi.fn(() => Promise.resolve({
+  const post = vi.fn((..._args: unknown[]) => Promise.resolve({
     success: true,
     data: { results: ['test result'] }
   }));
@@ -15,7 +14,7 @@ vi.mock('../../../api/clients/mutationClient', () => {
   return {
     mutationClient: {
       client: { post },
-      executeQuery: (...args) => post(...args),
+      executeQuery: (...args: unknown[]) => post(...args),
     }
   };
 })
@@ -53,9 +52,13 @@ vi.mock('../../../hooks/useQueryBuilder', () => ({
   }))
 }))
 
+type QueryFormMockProps = { queryState: { selectedSchema: string }; onSchemaChange: (s: string) => void }
+type QueryActionsMockProps = { onExecute: () => void; onClear: () => void; disabled: boolean }
+type QueryPreviewMockProps = { query: unknown }
+
 // Mock the child components
 vi.mock('../../../components/query/QueryForm', () => ({
-  default: ({ queryState, onSchemaChange }) => (
+  default: ({ queryState, onSchemaChange }: QueryFormMockProps) => (
     <div data-testid="query-form">
       <button onClick={() => onSchemaChange('test_schema')}>
         Query Form - Schema: {queryState.selectedSchema}
@@ -65,10 +68,10 @@ vi.mock('../../../components/query/QueryForm', () => ({
 }))
 
 vi.mock('../../../components/query/QueryActions', () => ({
-  default: ({ onExecute, onClear, disabled }) => (
+  default: ({ onExecute, onClear, disabled }: QueryActionsMockProps) => (
     <div data-testid="query-actions">
-      <button 
-        onClick={onExecute} 
+      <button
+        onClick={onExecute}
         disabled={disabled}
         data-testid="execute-query"
       >
@@ -82,7 +85,7 @@ vi.mock('../../../components/query/QueryActions', () => ({
 }))
 
 vi.mock('../../../components/query/QueryPreview', () => ({
-  default: ({ query }) => (
+  default: ({ query }: QueryPreviewMockProps) => (
     <div data-testid="query-preview">
       Query Preview: {JSON.stringify(query)}
     </div>
@@ -160,7 +163,7 @@ describe('QueryTab Component', () => {
   it('handles query execution failure', async () => {
     // Mock API failure
     const { mutationClient } = await import('../../../api/clients/mutationClient')
-    mutationClient.client.post.mockResolvedValueOnce({
+    vi.mocked((mutationClient as unknown as { client: { post: ReturnType<typeof vi.fn> } }).client.post).mockResolvedValueOnce({
       success: false,
       error: 'Query failed'
     })
@@ -246,18 +249,19 @@ describe('QueryTab Component', () => {
 
     // Import and setup the query builder mock
     const queryBuilderModule = await import('../../../hooks/useQueryBuilder')
-    queryBuilderModule.useQueryBuilder.mockReturnValueOnce({
+    vi.mocked(queryBuilderModule.useQueryBuilder).mockReturnValueOnce({
       query: {
         schema_name: 'BlogPost',
         fields: ['title', 'author', 'publish_date'],
         filter: { RangeKey: '2024-01-15' }  // Range filter for exact key
       },
-      isValid: true
+      isValid: true,
+      validationErrors: [],
     })
 
     // Import and setup the query state mock
     const queryStateModule = await import('../../../hooks/useQueryState')
-    queryStateModule.useQueryState.mockReturnValueOnce({
+    vi.mocked(queryStateModule.useQueryState).mockReturnValueOnce({
       state: {
         selectedSchema: 'BlogPost',
         queryFields: ['title', 'author', 'publish_date'],
@@ -294,7 +298,7 @@ describe('QueryTab Component', () => {
       },
       isRangeSchema: true,
       rangeKey: 'publish_date'
-    })
+    } as unknown as ReturnType<typeof queryStateModule.useQueryState>)
 
     const authState = createMockAuthState({ isAuthenticated: true })
     const initialState = {

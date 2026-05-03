@@ -1,4 +1,3 @@
-// @ts-nocheck — pre-existing strict-mode debt; remove this directive after fixing.
 // Mutation API Client — SCHEMA-002 compliant, uses generated TS types from Rust backend
 
 import { ApiClient, createApiClient } from "../core/client";
@@ -6,25 +5,6 @@ import { API_ENDPOINTS } from "../endpoints";
 import { SCHEMA_STATES } from "../../constants/api";
 import type { EnhancedApiResponse, MutationApiClient } from "../core/types";
 
-// Import generated types from Rust backend for API consistency
-import type {
-  QueryResponse as BackendQueryResponse,
-  IndexSearchResponse as BackendIndexSearchResponse,
-  MutationResponse as BackendMutationResponse,
-  SingleMutationResponse as BackendSingleMutationResponse,
-} from "@generated/generated";
-
-// Re-export backend types for consumers
-export type {
-  BackendQueryResponse,
-  BackendIndexSearchResponse,
-  BackendMutationResponse,
-  BackendSingleMutationResponse,
-};
-
-// Backward-compatible local types for client methods
-// These will be migrated to use BackendMutationResponse/BackendQueryResponse
-// once the client layer is refactored to handle the new response structures
 export interface MutationResponse {
   success: boolean;
   result?: unknown;
@@ -59,7 +39,7 @@ export class UnifiedMutationClient implements MutationApiClient {
   async executeMutation(
     _mutation: Record<string, unknown>,
   ): Promise<EnhancedApiResponse<Record<string, unknown>>> {
-    return this.client.post<MutationResponse>(
+    return this.client.post<Record<string, unknown>>(
       API_ENDPOINTS.EXECUTE_MUTATION,
       _mutation,
       {
@@ -74,7 +54,7 @@ export class UnifiedMutationClient implements MutationApiClient {
   async executeQuery(
     query: Record<string, unknown>,
   ): Promise<EnhancedApiResponse<Record<string, unknown>>> {
-    return this.client.post<QueryResponse>(API_ENDPOINTS.EXECUTE_QUERY, query, {
+    return this.client.post<Record<string, unknown>>(API_ENDPOINTS.EXECUTE_QUERY, query, {
       timeout: 10000, // Standard timeout for queries
       retries: 2, // Limited retries for read operations
       cacheable: true, // Query results can be cached
@@ -89,9 +69,9 @@ export class UnifiedMutationClient implements MutationApiClient {
     sort?: { field: string; direction: "asc" | "desc" }[];
     pagination?: { offset: number; limit: number };
     fields?: string[];
-  }): Promise<EnhancedApiResponse<QueryResponse>> {
+  }): Promise<EnhancedApiResponse<Record<string, unknown>>> {
     // Repoint to /query (server supports only POST /query)
-    return this.client.post<QueryResponse>(
+    return this.client.post<Record<string, unknown>>(
       API_ENDPOINTS.EXECUTE_QUERY,
       queryParams,
       {

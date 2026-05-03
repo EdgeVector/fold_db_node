@@ -1,9 +1,9 @@
-// @ts-nocheck Migration debt: converted from .jsx in the JS->TS finalization batch; strict-mode cleanup of vi.mock typings tracked as follow-up.
 /**
  * Test file for TextField component
  * Part of TASK-002: Component Extraction and Modularization
  */
 
+import { describe, it, expect, beforeEach, vi } from 'vitest'
 import { render, screen, waitFor } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import TextField from '../../../components/form/TextField'
@@ -13,11 +13,11 @@ describe('TextField', () => {
     name: 'testField',
     label: 'Test Field',
     value: '',
-    onChange: jest.fn()
+    onChange: vi.fn()
   }
 
   beforeEach(() => {
-    jest.clearAllMocks()
+    vi.clearAllMocks()
   })
 
   it('renders with basic props', () => {

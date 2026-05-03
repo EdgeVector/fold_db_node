@@ -1,4 +1,3 @@
-// @ts-nocheck Migration debt: converted from .jsx in the JS->TS finalization batch; strict-mode cleanup of vi.mock typings tracked as follow-up.
 import React from 'react'
 import { screen, fireEvent } from '@testing-library/react'
 import { describe, it, expect, beforeEach, vi } from 'vitest'
@@ -43,7 +42,7 @@ vi.mock('../../../config/anthropic', () => ({
 // Mock Redux hooks
 const mockDispatch = vi.fn()
 vi.mock('react-redux', async (importOriginal) => {
-  const actual = await importOriginal()
+  const actual = await importOriginal<typeof import('react-redux')>()
   return {
     ...actual,
     useDispatch: () => mockDispatch
@@ -101,7 +100,7 @@ describe('IngestionTab Component', () => {
       preloadedState: initialState
     })
 
-    const jsonInput = screen.getByPlaceholderText('Enter JSON data or load a sample...')
+    const jsonInput = screen.getByPlaceholderText('Enter JSON data or load a sample...') as HTMLTextAreaElement
     
     // Test input interaction
     fireEvent.change(jsonInput, { target: { value: '{"name": "John", "age": 30}' } })
@@ -119,7 +118,7 @@ describe('IngestionTab Component', () => {
       preloadedState: initialState
     })
 
-    const jsonInput = screen.getByPlaceholderText('Enter JSON data or load a sample...')
+    const jsonInput = screen.getByPlaceholderText('Enter JSON data or load a sample...') as HTMLTextAreaElement
     fireEvent.change(jsonInput, { target: { value: '{"name": "John", "age": 30}' } })
 
     const processButton = screen.getByRole('button', { name: /process data/i })
@@ -141,7 +140,7 @@ describe('IngestionTab Component', () => {
     const twitterButton = screen.getByRole('button', { name: 'Twitter' })
     fireEvent.click(twitterButton)
 
-    const jsonInput = screen.getByPlaceholderText('Enter JSON data or load a sample...')
+    const jsonInput = screen.getByPlaceholderText('Enter JSON data or load a sample...') as HTMLTextAreaElement
     expect(jsonInput.value).toContain('"post_id":') // Should contain sample data (formatted JSON)
   })
 
@@ -156,7 +155,7 @@ describe('IngestionTab Component', () => {
       preloadedState: initialState
     })
 
-    const jsonInput = screen.getByPlaceholderText('Enter JSON data or load a sample...')
+    const jsonInput = screen.getByPlaceholderText('Enter JSON data or load a sample...') as HTMLTextAreaElement
 
     // Test Twitter sample
     const twitterButton = screen.getByRole('button', { name: 'Twitter' })

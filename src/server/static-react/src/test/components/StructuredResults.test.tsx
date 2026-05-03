@@ -1,4 +1,3 @@
-// @ts-nocheck Migration debt: converted from .jsx in the JS->TS finalization batch; strict-mode cleanup of vi.mock typings tracked as follow-up.
 import { describe, it, expect } from 'vitest'
 import { render, screen, fireEvent } from '@testing-library/react'
 import StructuredResults from '../../components/StructuredResults'
@@ -32,7 +31,7 @@ describe('StructuredResults', () => {
   })
 
   it('supports lazy show more for hashes', () => {
-    const big = { data: {} }
+    const big: { data: Record<string, unknown> } = { data: {} }
     for (let i = 0; i < 120; i++) {
       big.data['H' + i] = { R1: { f: i } }
     }

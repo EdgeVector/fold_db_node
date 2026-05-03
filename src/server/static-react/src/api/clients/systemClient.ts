@@ -60,9 +60,9 @@ export interface NodeKeyResponse {
 
 // Pre-migration there were two `SyncStatusResponse` declarations in this file
 // — one with a narrow `state` union, one with `string | null` and an
-// `encryption_active` field. They were silently merged under @ts-nocheck.
-// This is the merged shape: every field optional so no consumer needs to
-// guard for the narrowest interpretation.
+// `encryption_active` field. They were silently merged while strict-mode was
+// disabled. This is the merged shape: every field optional so no consumer
+// needs to guard for the narrowest interpretation.
 export interface SyncStatusResponse {
   enabled: boolean;
   state?: string;

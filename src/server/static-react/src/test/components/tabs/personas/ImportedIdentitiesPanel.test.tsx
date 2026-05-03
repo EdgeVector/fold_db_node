@@ -1,4 +1,3 @@
-// @ts-nocheck Migration debt: converted from .jsx in the JS->TS finalization batch; strict-mode cleanup of vi.mock typings tracked as follow-up.
 import React from 'react'
 import { render, screen, fireEvent, waitFor } from '@testing-library/react'
 import { describe, it, expect, beforeEach, vi } from 'vitest'
@@ -24,8 +23,8 @@ function row(overrides = {}) {
   }
 }
 
-function ok(data) {
-  return { success: true, data }
+function ok<T>(data: T) {
+  return { success: true, data, status: 200 } as unknown as Awaited<ReturnType<typeof listIdentities>>
 }
 
 describe('ImportedIdentitiesPanel', () => {
@@ -34,7 +33,7 @@ describe('ImportedIdentitiesPanel', () => {
   })
 
   it('shows the empty-state message when the node has no identities', async () => {
-    listIdentities.mockResolvedValue(ok({ identities: [] }))
+    vi.mocked(listIdentities).mockResolvedValue(ok({ identities: [] }))
     render(<ImportedIdentitiesPanel />)
     await waitFor(() => {
       expect(screen.getByTestId('imported-identities-empty')).toBeInTheDocument()
@@ -42,7 +41,7 @@ describe('ImportedIdentitiesPanel', () => {
   })
 
   it('renders one row per identity with display_name, trust_level, and receipt info', async () => {
-    listIdentities.mockResolvedValue(
+    vi.mocked(listIdentities).mockResolvedValue(
       ok({
         identities: [
           row({
@@ -67,7 +66,7 @@ describe('ImportedIdentitiesPanel', () => {
   })
 
   it("marks the node's own self-Identity with a 'you' badge", async () => {
-    listIdentities.mockResolvedValue(
+    vi.mocked(listIdentities).mockResolvedValue(
       ok({
         identities: [
           row({
@@ -96,7 +95,7 @@ describe('ImportedIdentitiesPanel', () => {
   })
 
   it('handles identities with no receipt gracefully', async () => {
-    listIdentities.mockResolvedValue(
+    vi.mocked(listIdentities).mockResolvedValue(
       ok({
         identities: [
           row({
@@ -118,7 +117,7 @@ describe('ImportedIdentitiesPanel', () => {
   })
 
   it('surfaces a list-level error when the API fails', async () => {
-    listIdentities.mockResolvedValue({ success: false, error: 'boom' })
+    vi.mocked(listIdentities).mockResolvedValue({ success: false, error: 'boom', status: 500 } as unknown as Awaited<ReturnType<typeof listIdentities>>)
     render(<ImportedIdentitiesPanel />)
     await waitFor(() => {
       expect(screen.getByTestId('imported-identities-error')).toHaveTextContent('boom')
@@ -126,7 +125,7 @@ describe('ImportedIdentitiesPanel', () => {
   })
 
   it('refetches the list when the refresh button is clicked', async () => {
-    listIdentities.mockResolvedValue(ok({ identities: [] }))
+    vi.mocked(listIdentities).mockResolvedValue(ok({ identities: [] }))
     render(<ImportedIdentitiesPanel />)
     await waitFor(() => {
       expect(screen.getByTestId('imported-identities-empty')).toBeInTheDocument()

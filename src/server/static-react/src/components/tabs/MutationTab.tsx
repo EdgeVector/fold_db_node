@@ -74,7 +74,7 @@ function MutationTab({ onResult }: MutationTabProps) {
           range: rangeKeyValue.trim() || null
         }
       }
-    } else if (isRangeSchema(selectedSchemaObj)) {
+    } else if (selectedSchemaObj && isRangeSchema(selectedSchemaObj)) {
       mutation = formatRangeMutation(selectedSchemaObj, mutationType, rangeKeyValue, mutationData) as unknown as Record<string, unknown>
     } else {
       // Single schema — hash key only

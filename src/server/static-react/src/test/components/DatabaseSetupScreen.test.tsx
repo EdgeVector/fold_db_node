@@ -1,4 +1,3 @@
-// @ts-nocheck Migration debt: converted from .jsx in the JS->TS finalization batch; strict-mode cleanup of vi.mock typings tracked as follow-up.
 /**
  * @fileoverview Tests for DatabaseSetupScreen restore-flow polling.
  *
@@ -18,16 +17,19 @@ vi.mock('../../api/clients/systemClient', () => ({
 
 const VALID_PHRASE = Array(24).fill('abandon').join(' ');
 
+type MockResponse = { ok?: boolean; status?: number; body: unknown };
+type FetchMock = typeof fetch & { mock: { calls: unknown[][] } };
+
 // Build a fetch mock that returns a queue of responses per URL substring.
-function makeFetchMock(queues) {
-  return vi.fn(async (url) => {
+function makeFetchMock(queues: Record<string, MockResponse[]>): FetchMock {
+  return vi.fn(async (url: string) => {
     for (const key of Object.keys(queues)) {
       if (url.includes(key)) {
         const q = queues[key];
         if (q.length === 0) {
           throw new Error(`No more mock responses for ${url}`);
         }
-        const next = q.shift();
+        const next = q.shift()!;
         return {
           ok: next.ok !== false,
           status: next.status || 200,
@@ -36,7 +38,7 @@ function makeFetchMock(queues) {
       }
     }
     throw new Error(`Unexpected fetch: ${url}`);
-  });
+  }) as unknown as FetchMock;
 }
 
 beforeEach(() => {
@@ -104,7 +106,7 @@ describe('DatabaseSetupScreen restore flow', () => {
     await waitFor(() => expect(onComplete).toHaveBeenCalled(), { timeout: 5000 });
 
     // Verify we actually polled the status endpoint, not just the restore POST.
-    const statusCalls = global.fetch.mock.calls.filter((c) =>
+    const statusCalls = (global.fetch as unknown as FetchMock).mock.calls.filter((c: unknown[]) =>
       String(c[0]).includes('/api/auth/restore/status')
     );
     expect(statusCalls.length).toBeGreaterThanOrEqual(1);
@@ -156,7 +158,7 @@ describe('DatabaseSetupScreen restore flow', () => {
     await waitFor(() =>
       expect(screen.getByText(/bad recovery phrase/i)).toBeInTheDocument()
     );
-    const statusCalls = global.fetch.mock.calls.filter((c) =>
+    const statusCalls = (global.fetch as unknown as FetchMock).mock.calls.filter((c: unknown[]) =>
       String(c[0]).includes('/api/auth/restore/status')
     );
     expect(statusCalls.length).toBe(0);

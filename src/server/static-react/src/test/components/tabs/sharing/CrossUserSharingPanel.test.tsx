@@ -1,4 +1,3 @@
-// @ts-nocheck Migration debt: converted from .jsx in the JS->TS finalization batch; strict-mode cleanup of vi.mock typings tracked as follow-up.
 import React from 'react'
 import { render, screen, fireEvent, waitFor } from '@testing-library/react'
 import { describe, it, expect, beforeEach, vi } from 'vitest'
@@ -32,8 +31,11 @@ import {
 import { listContacts } from '../../../../api/clients/trustClient'
 import { getAllSchemasWithState } from '../../../../api/clients/schemaClient'
 
-function ok(data) {
-  return { success: true, data }
+// Generic typed response helper that unsafe-casts to whatever the call site
+// expects. Required because each mocked client returns a different
+// EnhancedApiResponse<T> generic.
+function ok<R = unknown>(data: unknown): R {
+  return { success: true, data, status: 200 } as unknown as R
 }
 
 function makeRule(overrides = {}) {
@@ -65,8 +67,8 @@ function makeInvite(overrides = {}) {
 
 beforeEach(() => {
   vi.clearAllMocks()
-  listContacts.mockResolvedValue(ok({ contacts: [] }))
-  getAllSchemasWithState.mockResolvedValue(ok({ Notes: 'Approved' }))
+  vi.mocked(listContacts).mockResolvedValue(ok({ contacts: [] }))
+  vi.mocked(getAllSchemasWithState).mockResolvedValue(ok({ Notes: 'Approved' }))
   // Polyfill the clipboard API for JSDOM
   if (!navigator.clipboard) {
     Object.defineProperty(navigator, 'clipboard', {
@@ -78,8 +80,8 @@ beforeEach(() => {
 
 describe('CrossUserSharingPanel', () => {
   it('renders empty state when there are no rules or invites', async () => {
-    listShareRules.mockResolvedValue(ok({ ok: true, rules: [] }))
-    listPendingShareInvites.mockResolvedValue(ok({ ok: true, invites: [] }))
+    vi.mocked(listShareRules).mockResolvedValue(ok({ ok: true, rules: [] }))
+    vi.mocked(listPendingShareInvites).mockResolvedValue(ok({ ok: true, invites: [] }))
 
     render(<CrossUserSharingPanel />)
 
@@ -90,7 +92,7 @@ describe('CrossUserSharingPanel', () => {
   })
 
   it('renders a list of rules with signed badge and scope', async () => {
-    listShareRules.mockResolvedValue(
+    vi.mocked(listShareRules).mockResolvedValue(
       ok({
         ok: true,
         rules: [
@@ -103,7 +105,7 @@ describe('CrossUserSharingPanel', () => {
         ],
       }),
     )
-    listPendingShareInvites.mockResolvedValue(ok({ ok: true, invites: [] }))
+    vi.mocked(listPendingShareInvites).mockResolvedValue(ok({ ok: true, invites: [] }))
 
     render(<CrossUserSharingPanel />)
 
@@ -119,9 +121,9 @@ describe('CrossUserSharingPanel', () => {
   })
 
   it('submits the correct payload when creating a rule', async () => {
-    listShareRules.mockResolvedValue(ok({ ok: true, rules: [] }))
-    listPendingShareInvites.mockResolvedValue(ok({ ok: true, invites: [] }))
-    createShareRule.mockResolvedValue(
+    vi.mocked(listShareRules).mockResolvedValue(ok({ ok: true, rules: [] }))
+    vi.mocked(listPendingShareInvites).mockResolvedValue(ok({ ok: true, invites: [] }))
+    vi.mocked(createShareRule).mockResolvedValue(
       ok({ ok: true, rule: makeRule({ rule_id: 'r_new' }) }),
     )
 
@@ -153,11 +155,11 @@ describe('CrossUserSharingPanel', () => {
     // jsdom provides window.confirm — force it true so the flow proceeds
     vi.spyOn(window, 'confirm').mockReturnValue(true)
 
-    listShareRules.mockResolvedValue(
+    vi.mocked(listShareRules).mockResolvedValue(
       ok({ ok: true, rules: [makeRule({ rule_id: 'r_del' })] }),
     )
-    listPendingShareInvites.mockResolvedValue(ok({ ok: true, invites: [] }))
-    deactivateShareRule.mockResolvedValue(ok({ ok: true }))
+    vi.mocked(listPendingShareInvites).mockResolvedValue(ok({ ok: true, invites: [] }))
+    vi.mocked(deactivateShareRule).mockResolvedValue(ok({ ok: true }))
 
     render(<CrossUserSharingPanel />)
 
@@ -172,14 +174,14 @@ describe('CrossUserSharingPanel', () => {
   })
 
   it('calls generateShareInvite with the rule id and a scope description', async () => {
-    listShareRules.mockResolvedValue(
+    vi.mocked(listShareRules).mockResolvedValue(
       ok({
         ok: true,
         rules: [makeRule({ rule_id: 'r_inv', scope: { Schema: 'Notes' } })],
       }),
     )
-    listPendingShareInvites.mockResolvedValue(ok({ ok: true, invites: [] }))
-    generateShareInvite.mockResolvedValue(
+    vi.mocked(listPendingShareInvites).mockResolvedValue(ok({ ok: true, invites: [] }))
+    vi.mocked(generateShareInvite).mockResolvedValue(
       ok({ ok: true, invite: makeInvite() }),
     )
 
@@ -199,8 +201,8 @@ describe('CrossUserSharingPanel', () => {
   })
 
   it('displays pending invites with sender and scope', async () => {
-    listShareRules.mockResolvedValue(ok({ ok: true, rules: [] }))
-    listPendingShareInvites.mockResolvedValue(
+    vi.mocked(listShareRules).mockResolvedValue(ok({ ok: true, rules: [] }))
+    vi.mocked(listPendingShareInvites).mockResolvedValue(
       ok({
         ok: true,
         invites: [
@@ -229,14 +231,14 @@ describe('CrossUserSharingPanel', () => {
   })
 
   it('removes an invite from the list after Accept succeeds', async () => {
-    listShareRules.mockResolvedValue(ok({ ok: true, rules: [] }))
-    listPendingShareInvites.mockResolvedValue(
+    vi.mocked(listShareRules).mockResolvedValue(ok({ ok: true, rules: [] }))
+    vi.mocked(listPendingShareInvites).mockResolvedValue(
       ok({
         ok: true,
         invites: [makeInvite({ share_prefix: 'share:xyz:www' })],
       }),
     )
-    acceptShareInvite.mockResolvedValue(
+    vi.mocked(acceptShareInvite).mockResolvedValue(
       ok({
         ok: true,
         subscription: {

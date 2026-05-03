@@ -1,13 +1,28 @@
-// @ts-nocheck — pre-existing strict-mode debt; remove this directive after fixing.
 /**
  * Filter Utilities - Type-Safe HashRangeFilter Creation
- * 
+ *
  * This module provides type-safe utilities for creating HashRangeFilter objects
  * that match exactly what the Rust backend expects. All filter creation goes
  * through these utilities to ensure no ambiguity or interpretation issues.
  */
 
-import type { HashRangeFilter } from '@generated/generated';
+// Mirrors the Rust HashRangeFilter enum (serialized as externally-tagged JSON).
+// The corresponding `@generated/generated` type was never produced; this local
+// union is the source of truth for the UI side.
+export type HashRangeFilter =
+  | { HashKey: string }
+  | { RangeKey: string }
+  | { RangePrefix: string }
+  | { RangeRange: { start: string; end: string } }
+  | { HashRangeKey: { hash: string; range: string } }
+  | { HashRangePrefix: { hash: string; prefix: string } }
+  | { HashRangeRange: { hash: string; start: string; end: string } }
+  | { SampleN: number }
+  | { HashRangeKeys: Array<[string, string]> }
+  | { HashRangePattern: { hash: string; pattern: string } }
+  | { RangePattern: string }
+  | { HashPattern: string }
+  | { HashRange: { start: string; end: string } };
 
 /**
  * Creates a HashKey filter for hash key matches (returns all range keys for that hash)

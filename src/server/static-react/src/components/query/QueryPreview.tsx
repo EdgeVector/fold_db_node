@@ -28,6 +28,7 @@ interface QueryLike {
   filter?: {
     field?: string;
     range_filter?: Record<string, unknown> | { Key?: string; KeyRange?: { start: string; end: string }; KeyPrefix?: string };
+    [variantKey: string]: unknown;
   };
 }
 

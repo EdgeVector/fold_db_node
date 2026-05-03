@@ -1,12 +1,15 @@
-// @ts-nocheck Migration debt: converted from .jsx in the JS->TS finalization batch; strict-mode cleanup of vi.mock typings tracked as follow-up.
 import React from 'react'
 import { render, screen, fireEvent, waitFor } from '@testing-library/react'
 import { describe, it, expect, beforeEach, vi } from 'vitest'
 import PersonasPanel, {
-  filterPersonas,
-  sortPersonas,
+  filterPersonas as filterPersonasImpl,
+  sortPersonas as sortPersonasImpl,
   PERSONA_SORT_OPTIONS,
 } from '../../../../components/tabs/personas/PersonasPanel'
+
+type LoosePersona = ReturnType<typeof makeSummary>
+const filterPersonas = filterPersonasImpl as unknown as (data: LoosePersona[], query: string) => LoosePersona[]
+const sortPersonas = sortPersonasImpl as unknown as (data: LoosePersona[], mode: string) => LoosePersona[]
 
 // Mock the fingerprints client — tests exercise the component logic
 // without hitting the real backend. Each test sets up its own
@@ -39,7 +42,7 @@ import {
 
 // ── Test data builders ─────────────────────────────────────────────
 
-function makeSummary(overrides = {}) {
+function makeSummary(overrides: Record<string, unknown> = {}) {
   return {
     id: 'ps_default',
     name: 'Default',
@@ -56,7 +59,7 @@ function makeSummary(overrides = {}) {
   }
 }
 
-function makeDetail(overrides = {}) {
+function makeDetail(overrides: Record<string, unknown> = {}) {
   return {
     id: 'ps_default',
     name: 'Default',
@@ -76,12 +79,12 @@ function makeDetail(overrides = {}) {
   }
 }
 
-function okList(personas) {
-  return { success: true, data: { personas } }
+function okList<R = unknown>(personas: unknown): R {
+  return { success: true, data: { personas }, status: 200 } as unknown as R
 }
 
-function okDetail(detail) {
-  return { success: true, data: detail }
+function okDetail<R = unknown>(detail: unknown): R {
+  return { success: true, data: detail, status: 200 } as unknown as R
 }
 
 // ── Tests ──────────────────────────────────────────────────────────
@@ -93,7 +96,7 @@ describe('PersonasPanel', () => {
 
   describe('list view', () => {
     it('shows an empty-state message when the node has no personas', async () => {
-      listPersonas.mockResolvedValue(okList([]))
+      vi.mocked(listPersonas).mockResolvedValue(okList([]))
       render(<PersonasPanel />)
       await waitFor(() => {
         expect(screen.getByTestId('persona-list-empty')).toBeInTheDocument()
@@ -101,7 +104,7 @@ describe('PersonasPanel', () => {
     })
 
     it('renders each persona with built-in and verified badges when applicable', async () => {
-      listPersonas.mockResolvedValue(
+      vi.mocked(listPersonas).mockResolvedValue(
         okList([
           makeSummary({
             id: 'ps_me',
@@ -145,7 +148,7 @@ describe('PersonasPanel', () => {
     })
 
     it('surfaces a list-level error message when the API fails', async () => {
-      listPersonas.mockResolvedValue({ success: false, error: 'boom' })
+      vi.mocked(listPersonas).mockResolvedValue({ success: false, error: "boom", status: 500 } as unknown as Awaited<ReturnType<typeof listPersonas>>)
       render(<PersonasPanel />)
       await waitFor(() => {
         expect(screen.getByTestId('persona-list-error')).toHaveTextContent('boom')
@@ -153,7 +156,7 @@ describe('PersonasPanel', () => {
     })
 
     it('refresh button refetches the list', async () => {
-      listPersonas.mockResolvedValue(okList([]))
+      vi.mocked(listPersonas).mockResolvedValue(okList([]))
       render(<PersonasPanel />)
       await waitFor(() => {
         expect(screen.getByTestId('persona-list-empty')).toBeInTheDocument()
@@ -167,7 +170,7 @@ describe('PersonasPanel', () => {
 
   describe('detail view', () => {
     it('shows a placeholder until a persona is selected', async () => {
-      listPersonas.mockResolvedValue(okList([makeSummary({ id: 'ps_a', name: 'A' })]))
+      vi.mocked(listPersonas).mockResolvedValue(okList([makeSummary({ id: 'ps_a', name: 'A' })]))
       render(<PersonasPanel />)
       await waitFor(() => {
         expect(screen.getByTestId('persona-detail-placeholder')).toBeInTheDocument()
@@ -175,10 +178,10 @@ describe('PersonasPanel', () => {
     })
 
     it('fetches detail when a persona is clicked and renders counts', async () => {
-      listPersonas.mockResolvedValue(
+      vi.mocked(listPersonas).mockResolvedValue(
         okList([makeSummary({ id: 'ps_me', name: 'Me', built_in: true })]),
       )
-      getPersona.mockResolvedValue(
+      vi.mocked(getPersona).mockResolvedValue(
         okDetail(
           makeDetail({
             id: 'ps_me',
@@ -221,10 +224,10 @@ describe('PersonasPanel', () => {
     })
 
     it('commits threshold via PATCH when the slider is released', async () => {
-      listPersonas.mockResolvedValue(
+      vi.mocked(listPersonas).mockResolvedValue(
         okList([makeSummary({ id: 'ps_me', name: 'Me', built_in: true })]),
       )
-      getPersona.mockResolvedValue(
+      vi.mocked(getPersona).mockResolvedValue(
         okDetail(
           makeDetail({
             id: 'ps_me',
@@ -235,7 +238,7 @@ describe('PersonasPanel', () => {
           }),
         ),
       )
-      updatePersona.mockResolvedValue(
+      vi.mocked(updatePersona).mockResolvedValue(
         okDetail(
           makeDetail({
             id: 'ps_me',
@@ -284,8 +287,8 @@ describe('PersonasPanel', () => {
     })
 
     it('does not fire PATCH if the new threshold matches the current one', async () => {
-      listPersonas.mockResolvedValue(okList([makeSummary({ id: 'ps_a', name: 'A' })]))
-      getPersona.mockResolvedValue(
+      vi.mocked(listPersonas).mockResolvedValue(okList([makeSummary({ id: 'ps_a', name: 'A' })]))
+      vi.mocked(getPersona).mockResolvedValue(
         okDetail(makeDetail({ id: 'ps_a', name: 'A', threshold: 0.85 })),
       )
 
@@ -306,8 +309,8 @@ describe('PersonasPanel', () => {
     })
 
     it('renders diagnostics block when the resolver surfaced any filter hits', async () => {
-      listPersonas.mockResolvedValue(okList([makeSummary({ id: 'ps_a', name: 'A' })]))
-      getPersona.mockResolvedValue(
+      vi.mocked(listPersonas).mockResolvedValue(okList([makeSummary({ id: 'ps_a', name: 'A' })]))
+      vi.mocked(getPersona).mockResolvedValue(
         okDetail(
           makeDetail({
             id: 'ps_a',
@@ -339,8 +342,8 @@ describe('PersonasPanel', () => {
     })
 
     it('does NOT render diagnostics block when resolver was clean', async () => {
-      listPersonas.mockResolvedValue(okList([makeSummary({ id: 'ps_a', name: 'A' })]))
-      getPersona.mockResolvedValue(
+      vi.mocked(listPersonas).mockResolvedValue(okList([makeSummary({ id: 'ps_a', name: 'A' })]))
+      vi.mocked(getPersona).mockResolvedValue(
         okDetail(makeDetail({ id: 'ps_a', name: 'A', diagnostics: null })),
       )
       render(<PersonasPanel />)
@@ -356,8 +359,8 @@ describe('PersonasPanel', () => {
     })
 
     it('shows detail-level error when the get call fails', async () => {
-      listPersonas.mockResolvedValue(okList([makeSummary({ id: 'ps_a', name: 'A' })]))
-      getPersona.mockResolvedValue({ success: false, error: 'nope' })
+      vi.mocked(listPersonas).mockResolvedValue(okList([makeSummary({ id: 'ps_a', name: 'A' })]))
+      vi.mocked(getPersona).mockResolvedValue({ success: false, error: "nope", status: 500 } as unknown as Awaited<ReturnType<typeof getPersona>>)
       render(<PersonasPanel />)
       await waitFor(() => {
         expect(screen.getByTestId('persona-row-ps_a')).toBeInTheDocument()
@@ -372,8 +375,8 @@ describe('PersonasPanel', () => {
 
   describe('exclusions', () => {
     it('sends add_excluded_mention_id when the ✂ mention button is clicked', async () => {
-      listPersonas.mockResolvedValue(okList([makeSummary({ id: 'ps_a', name: 'A' })]))
-      getPersona.mockResolvedValue(
+      vi.mocked(listPersonas).mockResolvedValue(okList([makeSummary({ id: 'ps_a', name: 'A' })]))
+      vi.mocked(getPersona).mockResolvedValue(
         okDetail(
           makeDetail({
             id: 'ps_a',
@@ -395,7 +398,7 @@ describe('PersonasPanel', () => {
           }),
         ),
       )
-      updatePersona.mockResolvedValue(
+      vi.mocked(updatePersona).mockResolvedValue(
         okDetail(
           makeDetail({
             id: 'ps_a',
@@ -437,8 +440,8 @@ describe('PersonasPanel', () => {
     })
 
     it('sends add_excluded_edge_id when the ✂ edge button is clicked', async () => {
-      listPersonas.mockResolvedValue(okList([makeSummary({ id: 'ps_b', name: 'B' })]))
-      getPersona.mockResolvedValue(
+      vi.mocked(listPersonas).mockResolvedValue(okList([makeSummary({ id: 'ps_b', name: 'B' })]))
+      vi.mocked(getPersona).mockResolvedValue(
         okDetail(
           makeDetail({
             id: 'ps_b',
@@ -459,7 +462,7 @@ describe('PersonasPanel', () => {
           }),
         ),
       )
-      updatePersona.mockResolvedValue(
+      vi.mocked(updatePersona).mockResolvedValue(
         okDetail(
           makeDetail({
             id: 'ps_b',
@@ -490,13 +493,13 @@ describe('PersonasPanel', () => {
     })
 
     it('sends a PATCH with { name } when the user renames a non-built-in persona', async () => {
-      listPersonas.mockResolvedValue(
+      vi.mocked(listPersonas).mockResolvedValue(
         okList([makeSummary({ id: 'ps_rename', name: 'Old' })]),
       )
-      getPersona.mockResolvedValue(
+      vi.mocked(getPersona).mockResolvedValue(
         okDetail(makeDetail({ id: 'ps_rename', name: 'Old', built_in: false })),
       )
-      updatePersona.mockResolvedValue(
+      vi.mocked(updatePersona).mockResolvedValue(
         okDetail(makeDetail({ id: 'ps_rename', name: 'New Name', built_in: false })),
       )
 
@@ -522,10 +525,10 @@ describe('PersonasPanel', () => {
     })
 
     it('hides the name edit affordance for built-in personas', async () => {
-      listPersonas.mockResolvedValue(
+      vi.mocked(listPersonas).mockResolvedValue(
         okList([makeSummary({ id: 'ps_me', name: 'Me', built_in: true })]),
       )
-      getPersona.mockResolvedValue(
+      vi.mocked(getPersona).mockResolvedValue(
         okDetail(makeDetail({ id: 'ps_me', name: 'Me', built_in: true })),
       )
 
@@ -545,10 +548,10 @@ describe('PersonasPanel', () => {
     })
 
     it('sends a PATCH with { relationship } when the dropdown changes', async () => {
-      listPersonas.mockResolvedValue(
+      vi.mocked(listPersonas).mockResolvedValue(
         okList([makeSummary({ id: 'ps_rel', name: 'Rel' })]),
       )
-      getPersona.mockResolvedValue(
+      vi.mocked(getPersona).mockResolvedValue(
         okDetail(
           makeDetail({
             id: 'ps_rel',
@@ -557,7 +560,7 @@ describe('PersonasPanel', () => {
           }),
         ),
       )
-      updatePersona.mockResolvedValue(
+      vi.mocked(updatePersona).mockResolvedValue(
         okDetail(
           makeDetail({
             id: 'ps_rel',
@@ -586,8 +589,8 @@ describe('PersonasPanel', () => {
     })
 
     it('un-excludes a mention through the exclusions panel Undo button', async () => {
-      listPersonas.mockResolvedValue(okList([makeSummary({ id: 'ps_c', name: 'C' })]))
-      getPersona.mockResolvedValue(
+      vi.mocked(listPersonas).mockResolvedValue(okList([makeSummary({ id: 'ps_c', name: 'C' })]))
+      vi.mocked(getPersona).mockResolvedValue(
         okDetail(
           makeDetail({
             id: 'ps_c',
@@ -599,7 +602,7 @@ describe('PersonasPanel', () => {
           }),
         ),
       )
-      updatePersona.mockResolvedValue(
+      vi.mocked(updatePersona).mockResolvedValue(
         okDetail(
           makeDetail({
             id: 'ps_c',
@@ -633,7 +636,7 @@ describe('PersonasPanel', () => {
 
   describe('tentative personas + confirm flow', () => {
     it('renders a tentative badge on unconfirmed, non-built-in personas', async () => {
-      listPersonas.mockResolvedValue(
+      vi.mocked(listPersonas).mockResolvedValue(
         okList([
           makeSummary({
             id: 'ps_auto_t1',
@@ -651,7 +654,7 @@ describe('PersonasPanel', () => {
     })
 
     it('does NOT render a tentative badge on confirmed personas', async () => {
-      listPersonas.mockResolvedValue(
+      vi.mocked(listPersonas).mockResolvedValue(
         okList([
           makeSummary({
             id: 'ps_a',
@@ -669,7 +672,7 @@ describe('PersonasPanel', () => {
     })
 
     it('shows a Confirm banner + button on tentative persona detail', async () => {
-      listPersonas.mockResolvedValue(
+      vi.mocked(listPersonas).mockResolvedValue(
         okList([
           makeSummary({
             id: 'ps_auto_t2',
@@ -679,7 +682,7 @@ describe('PersonasPanel', () => {
           }),
         ]),
       )
-      getPersona.mockResolvedValue(
+      vi.mocked(getPersona).mockResolvedValue(
         okDetail(
           makeDetail({
             id: 'ps_auto_t2',
@@ -701,7 +704,7 @@ describe('PersonasPanel', () => {
     })
 
     it('fires updatePersona({ user_confirmed: true }) on Confirm click', async () => {
-      listPersonas.mockResolvedValue(
+      vi.mocked(listPersonas).mockResolvedValue(
         okList([
           makeSummary({
             id: 'ps_auto_t3',
@@ -711,7 +714,7 @@ describe('PersonasPanel', () => {
           }),
         ]),
       )
-      getPersona.mockResolvedValue(
+      vi.mocked(getPersona).mockResolvedValue(
         okDetail(
           makeDetail({
             id: 'ps_auto_t3',
@@ -721,7 +724,7 @@ describe('PersonasPanel', () => {
           }),
         ),
       )
-      updatePersona.mockResolvedValue(
+      vi.mocked(updatePersona).mockResolvedValue(
         okDetail(
           makeDetail({
             id: 'ps_auto_t3',
@@ -753,7 +756,7 @@ describe('PersonasPanel', () => {
     })
 
     it('does NOT show the Confirm banner on built-in (Me) persona', async () => {
-      listPersonas.mockResolvedValue(
+      vi.mocked(listPersonas).mockResolvedValue(
         okList([
           makeSummary({
             id: 'ps_me',
@@ -763,7 +766,7 @@ describe('PersonasPanel', () => {
           }),
         ]),
       )
-      getPersona.mockResolvedValue(
+      vi.mocked(getPersona).mockResolvedValue(
         okDetail(
           makeDetail({
             id: 'ps_me',
@@ -788,10 +791,10 @@ describe('PersonasPanel', () => {
 
   describe('delete flow', () => {
     it('renders the Delete persona button on non-built-in personas', async () => {
-      listPersonas.mockResolvedValue(
+      vi.mocked(listPersonas).mockResolvedValue(
         okList([makeSummary({ id: 'ps_d', name: 'Delete Me', built_in: false })]),
       )
-      getPersona.mockResolvedValue(
+      vi.mocked(getPersona).mockResolvedValue(
         okDetail(makeDetail({ id: 'ps_d', name: 'Delete Me', built_in: false })),
       )
       render(<PersonasPanel />)
@@ -805,10 +808,10 @@ describe('PersonasPanel', () => {
     })
 
     it('hides the Delete persona button on built-in (Me) persona', async () => {
-      listPersonas.mockResolvedValue(
+      vi.mocked(listPersonas).mockResolvedValue(
         okList([makeSummary({ id: 'ps_me', name: 'Me', built_in: true })]),
       )
-      getPersona.mockResolvedValue(
+      vi.mocked(getPersona).mockResolvedValue(
         okDetail(makeDetail({ id: 'ps_me', name: 'Me', built_in: true })),
       )
       render(<PersonasPanel />)
@@ -823,19 +826,16 @@ describe('PersonasPanel', () => {
     })
 
     it('confirms then calls deletePersona, removes row from list', async () => {
-      listPersonas.mockResolvedValue(
+      vi.mocked(listPersonas).mockResolvedValue(
         okList([
           makeSummary({ id: 'ps_keep', name: 'Keep', built_in: false }),
           makeSummary({ id: 'ps_del', name: 'Del', built_in: false }),
         ]),
       )
-      getPersona.mockResolvedValue(
+      vi.mocked(getPersona).mockResolvedValue(
         okDetail(makeDetail({ id: 'ps_del', name: 'Del', built_in: false })),
       )
-      deletePersona.mockResolvedValue({
-        success: true,
-        data: { deleted_persona_id: 'ps_del' },
-      })
+      vi.mocked(deletePersona).mockResolvedValue({ success: true, data: { deleted_persona_id: "ps_del" }, status: 200 } as unknown as Awaited<ReturnType<typeof deletePersona>>)
       // Stub window.confirm to accept.
       const origConfirm = window.confirm
       window.confirm = () => true
@@ -864,10 +864,10 @@ describe('PersonasPanel', () => {
     })
 
     it('skips the delete when the user cancels the confirm dialog', async () => {
-      listPersonas.mockResolvedValue(
+      vi.mocked(listPersonas).mockResolvedValue(
         okList([makeSummary({ id: 'ps_c', name: 'Keep', built_in: false })]),
       )
-      getPersona.mockResolvedValue(
+      vi.mocked(getPersona).mockResolvedValue(
         okDetail(makeDetail({ id: 'ps_c', name: 'Keep', built_in: false })),
       )
       const origConfirm = window.confirm
@@ -901,10 +901,10 @@ describe('PersonasPanel', () => {
       seeds = ['fp_a', 'fp_b', 'fp_c'],
       relationship = 'friend',
     } = {}) {
-      listPersonas.mockResolvedValue(
+      vi.mocked(listPersonas).mockResolvedValue(
         okList([makeSummary({ id: personaId, name, built_in: false, relationship })]),
       )
-      getPersona.mockResolvedValue(
+      vi.mocked(getPersona).mockResolvedValue(
         okDetail(
           makeDetail({
             id: personaId,
@@ -915,10 +915,7 @@ describe('PersonasPanel', () => {
           }),
         ),
       )
-      deletePersona.mockResolvedValue({
-        success: true,
-        data: { deleted_persona_id: personaId },
-      })
+      vi.mocked(deletePersona).mockResolvedValue({ success: true, data: { deleted_persona_id: personaId }, status: 200 } as unknown as Awaited<ReturnType<typeof deletePersona>>)
       const origConfirm = window.confirm
       window.confirm = () => true
       render(<PersonasPanel />)
@@ -994,13 +991,10 @@ describe('PersonasPanel', () => {
           relationship,
           seed_fingerprint_ids: seeds,
         })
-        acceptSuggestedPersona.mockResolvedValue({
-          success: true,
-          data: restored,
-        })
+        vi.mocked(acceptSuggestedPersona).mockResolvedValue(okDetail(restored))
         // The fetchList that runs after restore needs a non-rejecting
         // mock so the post-undo refresh doesn't blow up.
-        listPersonas.mockResolvedValue(
+        vi.mocked(listPersonas).mockResolvedValue(
           okList([
             makeSummary({
               id: 'ps_undo_restored',
@@ -1038,10 +1032,7 @@ describe('PersonasPanel', () => {
             screen.getByTestId('persona-delete-undo-button'),
           ).toBeInTheDocument()
         })
-        acceptSuggestedPersona.mockResolvedValue({
-          success: false,
-          error: 'Backend rejected restore',
-        })
+        vi.mocked(acceptSuggestedPersona).mockResolvedValue({ success: false, error: 'Backend rejected restore', status: 500 } as unknown as Awaited<ReturnType<typeof acceptSuggestedPersona>>)
         fireEvent.click(screen.getByTestId('persona-delete-undo-button'))
         await waitFor(() => {
           expect(
@@ -1060,10 +1051,10 @@ describe('PersonasPanel', () => {
 
   describe('unlink identity flow', () => {
     it('shows the Unlink identity button on verified non-built-in personas', async () => {
-      listPersonas.mockResolvedValue(
+      vi.mocked(listPersonas).mockResolvedValue(
         okList([makeSummary({ id: 'ps_v', name: 'Verified', built_in: false })]),
       )
-      getPersona.mockResolvedValue(
+      vi.mocked(getPersona).mockResolvedValue(
         okDetail(
           makeDetail({
             id: 'ps_v',
@@ -1084,10 +1075,10 @@ describe('PersonasPanel', () => {
     })
 
     it('hides the Unlink button when identity_id is null', async () => {
-      listPersonas.mockResolvedValue(
+      vi.mocked(listPersonas).mockResolvedValue(
         okList([makeSummary({ id: 'ps_u', name: 'Unverified' })]),
       )
-      getPersona.mockResolvedValue(
+      vi.mocked(getPersona).mockResolvedValue(
         okDetail(
           makeDetail({ id: 'ps_u', name: 'Unverified', identity_id: null }),
         ),
@@ -1104,10 +1095,10 @@ describe('PersonasPanel', () => {
     })
 
     it('hides the Unlink button on built-in (Me) persona even when linked', async () => {
-      listPersonas.mockResolvedValue(
+      vi.mocked(listPersonas).mockResolvedValue(
         okList([makeSummary({ id: 'ps_me', name: 'Me', built_in: true })]),
       )
-      getPersona.mockResolvedValue(
+      vi.mocked(getPersona).mockResolvedValue(
         okDetail(
           makeDetail({
             id: 'ps_me',
@@ -1129,10 +1120,10 @@ describe('PersonasPanel', () => {
     })
 
     it('confirms then calls updatePersona with clear_identity_id=true', async () => {
-      listPersonas.mockResolvedValue(
+      vi.mocked(listPersonas).mockResolvedValue(
         okList([makeSummary({ id: 'ps_v', name: 'Verified', built_in: false })]),
       )
-      getPersona.mockResolvedValue(
+      vi.mocked(getPersona).mockResolvedValue(
         okDetail(
           makeDetail({
             id: 'ps_v',
@@ -1142,7 +1133,7 @@ describe('PersonasPanel', () => {
           }),
         ),
       )
-      updatePersona.mockResolvedValue(
+      vi.mocked(updatePersona).mockResolvedValue(
         okDetail(
           makeDetail({
             id: 'ps_v',
@@ -1175,10 +1166,10 @@ describe('PersonasPanel', () => {
     })
 
     it('does nothing when the user cancels the Unlink confirm dialog', async () => {
-      listPersonas.mockResolvedValue(
+      vi.mocked(listPersonas).mockResolvedValue(
         okList([makeSummary({ id: 'ps_v', name: 'Verified', built_in: false })]),
       )
-      getPersona.mockResolvedValue(
+      vi.mocked(getPersona).mockResolvedValue(
         okDetail(
           makeDetail({
             id: 'ps_v',
@@ -1209,14 +1200,14 @@ describe('PersonasPanel', () => {
 
   describe('merge flow', () => {
     it('shows the merge dropdown with other non-built-in personas as options', async () => {
-      listPersonas.mockResolvedValue(
+      vi.mocked(listPersonas).mockResolvedValue(
         okList([
           makeSummary({ id: 'ps_a', name: 'Alice', built_in: false }),
           makeSummary({ id: 'ps_b', name: 'Alice Smith', built_in: false }),
           makeSummary({ id: 'ps_me', name: 'Me', built_in: true }),
         ]),
       )
-      getPersona.mockResolvedValue(
+      vi.mocked(getPersona).mockResolvedValue(
         okDetail(makeDetail({ id: 'ps_a', name: 'Alice', built_in: false })),
       )
       render(<PersonasPanel />)
@@ -1234,13 +1225,13 @@ describe('PersonasPanel', () => {
     })
 
     it('hides the merge control on built-in personas', async () => {
-      listPersonas.mockResolvedValue(
+      vi.mocked(listPersonas).mockResolvedValue(
         okList([
           makeSummary({ id: 'ps_me', name: 'Me', built_in: true }),
           makeSummary({ id: 'ps_a', name: 'Alice', built_in: false }),
         ]),
       )
-      getPersona.mockResolvedValue(
+      vi.mocked(getPersona).mockResolvedValue(
         okDetail(makeDetail({ id: 'ps_me', name: 'Me', built_in: true })),
       )
       render(<PersonasPanel />)
@@ -1255,13 +1246,13 @@ describe('PersonasPanel', () => {
     })
 
     it('hides the merge control when no other non-built-in personas exist', async () => {
-      listPersonas.mockResolvedValue(
+      vi.mocked(listPersonas).mockResolvedValue(
         okList([
           makeSummary({ id: 'ps_me', name: 'Me', built_in: true }),
           makeSummary({ id: 'ps_lonely', name: 'Lonely', built_in: false }),
         ]),
       )
-      getPersona.mockResolvedValue(
+      vi.mocked(getPersona).mockResolvedValue(
         okDetail(makeDetail({ id: 'ps_lonely', name: 'Lonely', built_in: false })),
       )
       render(<PersonasPanel />)
@@ -1276,16 +1267,16 @@ describe('PersonasPanel', () => {
     })
 
     it('confirms then calls mergePersonas(survivor, absorbed), drops the absorbed row', async () => {
-      listPersonas.mockResolvedValue(
+      vi.mocked(listPersonas).mockResolvedValue(
         okList([
           makeSummary({ id: 'ps_survivor', name: 'Alice' }),
           makeSummary({ id: 'ps_absorbed', name: 'Alice Smith' }),
         ]),
       )
-      getPersona.mockResolvedValue(
+      vi.mocked(getPersona).mockResolvedValue(
         okDetail(makeDetail({ id: 'ps_survivor', name: 'Alice' })),
       )
-      mergePersonas.mockResolvedValue(
+      vi.mocked(mergePersonas).mockResolvedValue(
         okDetail(
           makeDetail({
             id: 'ps_survivor',
@@ -1322,13 +1313,13 @@ describe('PersonasPanel', () => {
     })
 
     it('skips the merge when the user cancels the confirm dialog', async () => {
-      listPersonas.mockResolvedValue(
+      vi.mocked(listPersonas).mockResolvedValue(
         okList([
           makeSummary({ id: 'ps_a', name: 'Alice' }),
           makeSummary({ id: 'ps_b', name: 'Alice Smith' }),
         ]),
       )
-      getPersona.mockResolvedValue(
+      vi.mocked(getPersona).mockResolvedValue(
         okDetail(makeDetail({ id: 'ps_a', name: 'Alice' })),
       )
       const origConfirm = window.confirm
@@ -1353,20 +1344,16 @@ describe('PersonasPanel', () => {
     })
 
     it('surfaces backend error messages verbatim on merge failure', async () => {
-      listPersonas.mockResolvedValue(
+      vi.mocked(listPersonas).mockResolvedValue(
         okList([
           makeSummary({ id: 'ps_a', name: 'Alice' }),
           makeSummary({ id: 'ps_b', name: 'Bob' }),
         ]),
       )
-      getPersona.mockResolvedValue(
+      vi.mocked(getPersona).mockResolvedValue(
         okDetail(makeDetail({ id: 'ps_a', name: 'Alice' })),
       )
-      mergePersonas.mockResolvedValue({
-        success: false,
-        error:
-          'both personas are linked to different verified identities (id_x vs id_y); unlink one before merging',
-      })
+      vi.mocked(mergePersonas).mockResolvedValue({ success: false, error: 'both personas are linked to different verified identities (id_x vs id_y); unlink one before merging', status: 500 } as unknown as Awaited<ReturnType<typeof mergePersonas>>)
       const origConfirm = window.confirm
       window.confirm = () => true
       try {
@@ -1435,7 +1422,7 @@ describe('PersonasPanel', () => {
 
     it('treats a missing aliases array as no alias matches', () => {
       const data = [makeSummary({ id: 'ps_x', name: 'X' })]
-      delete data[0].aliases
+      delete (data[0] as { aliases?: unknown }).aliases
       expect(filterPersonas(data, 'x')).toHaveLength(1)
       expect(filterPersonas(data, 'noop')).toHaveLength(0)
     })
@@ -1522,7 +1509,7 @@ describe('PersonasPanel', () => {
   })
 
   describe('list view: filter + sort controls', () => {
-    function buildList() {
+    function buildList(): Awaited<ReturnType<typeof listPersonas>> {
       return okList([
         makeSummary({
           id: 'ps_alice',
@@ -1552,7 +1539,7 @@ describe('PersonasPanel', () => {
     }
 
     it('renders the filter input and sort selector above the list', async () => {
-      listPersonas.mockResolvedValue(buildList())
+      vi.mocked(listPersonas).mockResolvedValue(buildList())
       render(<PersonasPanel />)
       await waitFor(() => {
         expect(screen.getByTestId('persona-list-filter')).toBeInTheDocument()
@@ -1561,7 +1548,7 @@ describe('PersonasPanel', () => {
     })
 
     it('filters the visible rows by name substring (case-insensitive)', async () => {
-      listPersonas.mockResolvedValue(buildList())
+      vi.mocked(listPersonas).mockResolvedValue(buildList())
       render(<PersonasPanel />)
       await waitFor(() => {
         expect(screen.getByTestId('persona-row-ps_alice')).toBeInTheDocument()
@@ -1575,7 +1562,7 @@ describe('PersonasPanel', () => {
     })
 
     it('filters by alias substring', async () => {
-      listPersonas.mockResolvedValue(buildList())
+      vi.mocked(listPersonas).mockResolvedValue(buildList())
       render(<PersonasPanel />)
       await waitFor(() => {
         expect(screen.getByTestId('persona-row-ps_carol')).toBeInTheDocument()
@@ -1589,7 +1576,7 @@ describe('PersonasPanel', () => {
     })
 
     it('shows the filtered-empty state (distinct from the empty-list state) when nothing matches', async () => {
-      listPersonas.mockResolvedValue(buildList())
+      vi.mocked(listPersonas).mockResolvedValue(buildList())
       render(<PersonasPanel />)
       await waitFor(() => {
         expect(screen.getByTestId('persona-row-ps_alice')).toBeInTheDocument()
@@ -1604,7 +1591,7 @@ describe('PersonasPanel', () => {
     })
 
     it('reorders the visible rows when the sort mode changes (mentions_desc)', async () => {
-      listPersonas.mockResolvedValue(buildList())
+      vi.mocked(listPersonas).mockResolvedValue(buildList())
       render(<PersonasPanel />)
       await waitFor(() => {
         expect(screen.getByTestId('persona-row-ps_alice')).toBeInTheDocument()
@@ -1623,7 +1610,7 @@ describe('PersonasPanel', () => {
     })
 
     it('reorders the visible rows by trust_tier_desc', async () => {
-      listPersonas.mockResolvedValue(buildList())
+      vi.mocked(listPersonas).mockResolvedValue(buildList())
       render(<PersonasPanel />)
       await waitFor(() => {
         expect(screen.getByTestId('persona-row-ps_alice')).toBeInTheDocument()
