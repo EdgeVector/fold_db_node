@@ -1,4 +1,3 @@
-// @ts-nocheck Migration debt: converted from .jsx in the JS->TS finalization batch; strict-mode cleanup of vi.mock typings tracked as follow-up.
 /**
  * @fileoverview Schema Test Fixtures
  * 
@@ -13,6 +12,17 @@
  */
 
 import { SCHEMA_STATES } from '../../constants/schemas';
+
+type SchemaFixture = {
+  name: string;
+  state: string;
+  fields: string[];
+  schema_type: unknown;
+  key?: { range_field: string };
+  created_at: string;
+  updated_at: string;
+  [key: string]: unknown;
+};
 
 // ============================================================================
 // BASIC SCHEMA FIXTURES
@@ -201,9 +211,9 @@ export const rangeSchemas = [
 /**
  * Collection of all standard (non-range) schemas
  */
-export const standardSchemas = allSchemas.filter(
-  schema => !rangeSchemas.includes(schema)
-);
+export const standardSchemas: SchemaFixture[] = allSchemas.filter(
+  schema => !(rangeSchemas as SchemaFixture[]).includes(schema as SchemaFixture)
+) as SchemaFixture[];
 
 // ============================================================================
 // SCHEMA STATE MAPPINGS
@@ -212,7 +222,7 @@ export const standardSchemas = allSchemas.filter(
 /**
  * Mapping of schema names to their states
  */
-export const schemaStateMap = allSchemas.reduce((map, schema) => {
+export const schemaStateMap = allSchemas.reduce<Record<string, string>>((map, schema) => {
   map[schema.name] = schema.state;
   return map;
 }, {});
@@ -220,7 +230,7 @@ export const schemaStateMap = allSchemas.reduce((map, schema) => {
 /**
  * Mapping of schema names to their full objects
  */
-export const schemaObjectMap = allSchemas.reduce((map, schema) => {
+export const schemaObjectMap = allSchemas.reduce<Record<string, (typeof allSchemas)[number]>>((map, schema) => {
   map[schema.name] = schema;
   return map;
 }, {});
@@ -270,7 +280,7 @@ export const createCustomSchema = (overrides = {}, baseType = 'standard') => {
  * @param {Object} overrides - Additional properties to override
  * @returns {Object} Schema fixture with specified state
  */
-export const createSchemaWithState = (state, overrides = {}) => {
+export const createSchemaWithState = (state: string, overrides: Record<string, unknown> = {}) => {
   return createCustomSchema({
     state,
     ...overrides
@@ -284,7 +294,7 @@ export const createSchemaWithState = (state, overrides = {}) => {
  * @param {Object} overrides - Additional properties to override
  * @returns {Object} Range schema fixture
  */
-export const createRangeSchemaWithKey = (rangeKey, overrides = {}) => {
+export const createRangeSchemaWithKey = (rangeKey: string, overrides: Record<string, unknown> = {}) => {
   return createCustomSchema({
     fields: [rangeKey, 'value'],
     key: { range_field: rangeKey },
@@ -327,15 +337,15 @@ export const createMixedSchemaList = (count = 6, states = Object.values(SCHEMA_S
  * @param {Object} schema - Schema to validate
  * @returns {boolean} True if schema is valid
  */
-export const isValidSchemaFixture = (schema) => {
+export const isValidSchemaFixture = (schema: Record<string, unknown>): boolean => {
   const requiredFields = ['name', 'state', 'fields', 'schema_type'];
-  const validStates = Object.values(SCHEMA_STATES);
-  
+  const validStates = Object.values(SCHEMA_STATES) as string[];
+
   return (
     requiredFields.every(field => field in schema) &&
-    validStates.includes(schema.state) &&
+    validStates.includes(schema.state as string) &&
     Array.isArray(schema.fields) &&
-    schema.fields.length > 0
+    (schema.fields as unknown[]).length > 0
   );
 };
 
@@ -345,12 +355,13 @@ export const isValidSchemaFixture = (schema) => {
  * @param {Object} schema - Schema to validate
  * @returns {boolean} True if schema is a valid range schema
  */
-export const isValidRangeSchemaFixture = (schema) => {
+export const isValidRangeSchemaFixture = (schema: Record<string, unknown>): boolean => {
   if (!isValidSchemaFixture(schema)) return false;
-  
+
   const hasRangeType = schema.schema_type === 'Range';
-  const hasKeyConfig = schema.key?.range_field;
-  
+  const key = schema.key as { range_field?: string } | undefined;
+  const hasKeyConfig = Boolean(key?.range_field);
+
   return hasRangeType && hasKeyConfig;
 };
 

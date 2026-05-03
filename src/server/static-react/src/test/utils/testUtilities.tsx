@@ -1,4 +1,3 @@
-// @ts-nocheck Migration debt: converted from .jsx in the JS->TS finalization batch; strict-mode cleanup of vi.mock typings tracked as follow-up.
 /**
  * @fileoverview Consolidated Testing Utilities
  * TASK-010: Test Suite Fixes and Validation for PBI-REACT-SIMPLIFY-001
@@ -11,20 +10,23 @@
  * @since 2.1.0
  */
 
-import React from 'react';
-import { render, renderHook } from '@testing-library/react';
+import React, { type ReactElement, type ReactNode } from 'react';
+import { render, renderHook, type RenderOptions } from '@testing-library/react';
 import { Provider } from 'react-redux';
-import { configureStore } from '@reduxjs/toolkit';
+import { combineReducers, configureStore, type EnhancedStore, type Reducer, type ReducersMapObject } from '@reduxjs/toolkit';
+import { vi, expect } from 'vitest';
 import {
   TEST_TIMEOUT_DEFAULT_MS,
   MOCK_API_DELAY_MS,
   COVERAGE_THRESHOLD_PERCENT,
   TEST_VALIDATION_BATCH_SIZE,
-  INTEGRATION_TEST_RETRY_COUNT
 } from '../config/constants';
 import authReducer from '../../store/authSlice';
 import schemaReducer from '../../store/schemaSlice';
 import { SCHEMA_STATES } from '../../constants/schemas';
+
+type TestStore = EnhancedStore;
+type ExtraReducers = ReducersMapObject<Record<string, unknown>>;
 
 export { SCHEMA_STATES };
 
@@ -40,7 +42,10 @@ export { SCHEMA_STATES };
  * components using other slices (e.g. ingestion) should pass extra
  * reducers via the second argument.
  */
-export function createTestStore(preloadedState = {}, { extraReducers = {} } = {}) {
+export function createTestStore(
+  preloadedState: Record<string, unknown> = {},
+  { extraReducers = {} as ExtraReducers }: { extraReducers?: ExtraReducers } = {}
+) {
   const defaultState = {
     auth: {
       isAuthenticated: false,
@@ -70,15 +75,15 @@ export function createTestStore(preloadedState = {}, { extraReducers = {} } = {}
   };
 
   return configureStore({
-    reducer: {
-      auth: authReducer,
-      schemas: schemaReducer,
+    reducer: combineReducers({
+      auth: authReducer as Reducer,
+      schemas: schemaReducer as Reducer,
       ...extraReducers,
-    },
+    }),
     preloadedState: {
       ...defaultState,
       ...preloadedState
-    },
+    } as never,
     middleware: (getDefaultMiddleware) =>
       getDefaultMiddleware({
         serializableCheck: {
@@ -110,23 +115,28 @@ export function createTestStore(preloadedState = {}, { extraReducers = {} } = {}
  * @param {Object} renderOptions - Additional render options
  * @returns {Object} Render result with store
  */
-export function renderWithRedux(ui, {
-  preloadedState = {},
-  store = null,
-  extraReducers = {},
-  ...renderOptions
-} = {}) {
-  if (!store) {
-    store = createTestStore(preloadedState, { extraReducers });
-  }
-  
-  function Wrapper({ children }) {
-    return <Provider store={store}>{children}</Provider>;
+export function renderWithRedux(
+  ui: ReactElement,
+  {
+    preloadedState = {} as Record<string, unknown>,
+    store,
+    extraReducers = {} as ExtraReducers,
+    ...renderOptions
+  }: {
+    preloadedState?: Record<string, unknown>;
+    store?: TestStore;
+    extraReducers?: ExtraReducers;
+  } & Omit<RenderOptions, 'wrapper'> = {}
+) {
+  const resolvedStore: TestStore = store ?? createTestStore(preloadedState, { extraReducers });
+
+  function Wrapper({ children }: { children?: ReactNode }) {
+    return <Provider store={resolvedStore}>{children}</Provider>;
   }
 
   return {
     ...render(ui, { wrapper: Wrapper, ...renderOptions }),
-    store
+    store: resolvedStore
   };
 }
 
@@ -139,22 +149,27 @@ export function renderWithRedux(ui, {
  * @param {Object} renderOptions - Additional render options
  * @returns {Object} Render result with store
  */
-export function renderHookWithRedux(hook, {
-  preloadedState = {},
-  store = null,
-  ...renderOptions
-} = {}) {
-  if (!store) {
-    store = createTestStore(preloadedState);
-  }
-  
-  function Wrapper({ children }) {
-    return <Provider store={store}>{children}</Provider>;
+export function renderHookWithRedux<TResult, TProps>(
+  hook: (props: TProps) => TResult,
+  {
+    preloadedState = {} as Record<string, unknown>,
+    store,
+    ...renderOptions
+  }: {
+    preloadedState?: Record<string, unknown>;
+    store?: TestStore;
+    initialProps?: TProps;
+  } = {}
+) {
+  const resolvedStore: TestStore = store ?? createTestStore(preloadedState);
+
+  function Wrapper({ children }: { children?: ReactNode }) {
+    return <Provider store={resolvedStore}>{children}</Provider>;
   }
 
   return {
     ...renderHook(hook, { wrapper: Wrapper, ...renderOptions }),
-    store
+    store: resolvedStore
   };
 }
 
@@ -163,7 +178,7 @@ export function renderHookWithRedux(hook, {
  * @param {Object} overrides - State overrides
  * @returns {Object} Initial schemas state
  */
-export function createTestSchemaState(overrides = {}) {
+export function createTestSchemaState(overrides: { schemas?: Record<string, unknown> } = {}) {
   const defaultState = {
     schemas: {
       schemas: {},  // Match actual store structure
@@ -199,7 +214,7 @@ export function createTestSchemaState(overrides = {}) {
  * @param {Object} overrides - Properties to override in mock schema
  * @returns {Object} Mock schema object
  */
-export const createMockSchema = (overrides = {}) => {
+export const createMockSchema = (overrides: Record<string, unknown> = {}) => {
   const defaults = {
     name: 'test_schema',
     state: SCHEMA_STATES.APPROVED,
@@ -224,7 +239,7 @@ export const createMockSchema = (overrides = {}) => {
  * @param {Object} overrides - Properties to override in mock range schema
  * @returns {Object} Mock range schema object
  */
-export const createMockRangeSchema = (overrides = {}) => {
+export const createMockRangeSchema = (overrides: Record<string, unknown> = {}) => {
   const defaults = {
     name: 'test_range_schema',
     state: SCHEMA_STATES.APPROVED,
@@ -251,7 +266,7 @@ export const createMockRangeSchema = (overrides = {}) => {
  * @param {Object} baseProps - Base properties for all schemas
  * @returns {Array} Array of mock schema objects
  */
-export const createMockSchemaList = (count = 3, baseProps = {}) => {
+export const createMockSchemaList = (count = 3, baseProps: Record<string, unknown> = {}) => {
   const states = [SCHEMA_STATES.APPROVED, SCHEMA_STATES.AVAILABLE, SCHEMA_STATES.BLOCKED];
   
   return Array.from({ length: count }, (_, index) => {
@@ -277,7 +292,7 @@ export const createMockSchemaList = (count = 3, baseProps = {}) => {
  * @param {Object} overrides - Properties to override in auth state
  * @returns {Object} Mock auth state object
  */
-export const createMockAuthState = (overrides = {}) => ({
+export const createMockAuthState = (overrides: Record<string, unknown> = {}) => ({
   isAuthenticated: true,
   systemKeyId: 'mock_system_key_id',
   publicKey: 'mock_public_key',
@@ -294,7 +309,7 @@ export const createMockAuthState = (overrides = {}) => ({
  * @returns {Promise} Resolves when condition is met or rejects on timeout
  */
 export const waitForCondition = async (
-  condition,
+  condition: () => boolean | Promise<boolean>,
   timeout = TEST_TIMEOUT_DEFAULT_MS,
   interval = MOCK_API_DELAY_MS
 ) => {
@@ -326,8 +341,16 @@ export const mockDelay = (ms = MOCK_API_DELAY_MS) => {
  * @param {Object} details - Additional error details
  * @returns {Error} Mock error object
  */
-export const createMockError = (message = 'Test error', status = 500, details = {}) => {
-  const error = new Error(message);
+export const createMockError = (
+  message = 'Test error',
+  status = 500,
+  details: Record<string, unknown> = {}
+) => {
+  const error = new Error(message) as Error & {
+    status: number;
+    details: Record<string, unknown>;
+    toUserMessage: () => string;
+  };
   error.status = status;
   error.details = details;
   error.toUserMessage = () => `User-friendly: ${message}`;
@@ -339,11 +362,11 @@ export const createMockError = (message = 'Test error', status = 500, details = 
  * @param {Object} coverage - Coverage report object
  * @returns {boolean} True if coverage meets threshold
  */
-export const validateCoverage = (coverage) => {
+export const validateCoverage = (coverage: Record<string, { pct?: number } | undefined>) => {
   const metrics = ['lines', 'functions', 'branches', 'statements'];
-  
+
   return metrics.every(metric => {
-    const percentage = coverage[metric]?.pct || 0;
+    const percentage = coverage[metric]?.pct ?? 0;
     return percentage >= COVERAGE_THRESHOLD_PERCENT;
   });
 };
@@ -354,7 +377,7 @@ export const validateCoverage = (coverage) => {
  * @param {number} batchSize - Size of each batch
  * @returns {Array} Array of batched operations
  */
-export const createTestBatch = (operations, batchSize = TEST_VALIDATION_BATCH_SIZE) => {
+export const createTestBatch = <T,>(operations: T[], batchSize = TEST_VALIDATION_BATCH_SIZE): T[][] => {
   const batches = [];
   
   for (let i = 0; i < operations.length; i += batchSize) {
@@ -368,15 +391,15 @@ export const createTestBatch = (operations, batchSize = TEST_VALIDATION_BATCH_SI
  * Mock localStorage for testing
  */
 export const mockLocalStorage = (() => {
-  let store = {};
-  
+  let store: Record<string, string> = {};
+
   return {
-    getItem: (key) => store[key] || null,
-    setItem: (key, value) => { store[key] = value.toString(); },
-    removeItem: (key) => { delete store[key]; },
+    getItem: (key: string) => store[key] || null,
+    setItem: (key: string, value: unknown) => { store[key] = String(value); },
+    removeItem: (key: string) => { delete store[key]; },
     clear: () => { store = {}; },
     get length() { return Object.keys(store).length; },
-    key: (index) => Object.keys(store)[index] || null
+    key: (index: number) => Object.keys(store)[index] || null
   };
 })();
 
@@ -384,15 +407,15 @@ export const mockLocalStorage = (() => {
  * Mock sessionStorage for testing
  */
 export const mockSessionStorage = (() => {
-  let store = {};
-  
+  let store: Record<string, string> = {};
+
   return {
-    getItem: (key) => store[key] || null,
-    setItem: (key, value) => { store[key] = value.toString(); },
-    removeItem: (key) => { delete store[key]; },
+    getItem: (key: string) => store[key] || null,
+    setItem: (key: string, value: unknown) => { store[key] = String(value); },
+    removeItem: (key: string) => { delete store[key]; },
     clear: () => { store = {}; },
     get length() { return Object.keys(store).length; },
-    key: (index) => Object.keys(store)[index] || null
+    key: (index: number) => Object.keys(store)[index] || null
   };
 })();
 
@@ -402,10 +425,13 @@ export const mockSessionStorage = (() => {
  * @param {Object} expected - Expected schema properties
  * @returns {Object} Matcher result
  */
-export const toBeValidSchema = (received, expected = {}) => {
+export const toBeValidSchema = (
+  received: Record<string, unknown>,
+  expected: Record<string, unknown> = {}
+) => {
   const requiredFields = ['name', 'state', 'fields'];
-  const validStates = Object.values(SCHEMA_STATES);
-  
+  const validStates = Object.values(SCHEMA_STATES) as string[];
+
   const missingFields = requiredFields.filter(field => !(field in received));
   
   if (missingFields.length > 0) {
@@ -415,7 +441,7 @@ export const toBeValidSchema = (received, expected = {}) => {
     };
   }
   
-  if (!validStates.includes(received.state)) {
+  if (!validStates.includes(received.state as string)) {
     return {
       message: () => `Expected schema state to be one of: ${validStates.join(', ')}, got: ${received.state}`,
       pass: false
@@ -463,12 +489,16 @@ export const setupTestEnvironment = () => {
   
   // Mock IntersectionObserver
   global.IntersectionObserver = class IntersectionObserver {
+    root = null;
+    rootMargin = '';
+    thresholds: ReadonlyArray<number> = [];
     constructor() {}
     disconnect() {}
     observe() {}
     unobserve() {}
-  };
-  
+    takeRecords(): IntersectionObserverEntry[] { return []; }
+  } as unknown as typeof IntersectionObserver;
+
   // Mock ResizeObserver
   global.ResizeObserver = class ResizeObserver {
     constructor() {}
@@ -476,11 +506,11 @@ export const setupTestEnvironment = () => {
     observe() {}
     unobserve() {}
   };
-  
+
   // Mock matchMedia
   Object.defineProperty(window, 'matchMedia', {
     writable: true,
-    value: (query) => ({
+    value: (query: string) => ({
       matches: false,
       media: query,
       onchange: null,
@@ -510,8 +540,11 @@ export const cleanupTestEnvironment = () => {
   if (typeof vi !== 'undefined' && vi.clearAllTimers) {
     vi.clearAllTimers();
   }
-  if (typeof jest !== 'undefined' && jest.clearAllTimers) {
-    jest.clearAllTimers();
+  const jestGlobal = (globalThis as Record<string, unknown>).jest as
+    | { clearAllTimers?: () => void }
+    | undefined;
+  if (jestGlobal && typeof jestGlobal.clearAllTimers === 'function') {
+    jestGlobal.clearAllTimers();
   }
 };
 
@@ -542,7 +575,9 @@ export const mockApiResponses = {
  * @param {Object} overrides - Properties to override
  * @returns {Object} Authenticated Redux state
  */
-export const createAuthenticatedState = (overrides = {}) => ({
+export const createAuthenticatedState = (
+  overrides: { auth?: Record<string, unknown>; schemas?: Record<string, unknown> } = {}
+) => ({
   auth: {
     isAuthenticated: true,
     user: {
@@ -586,7 +621,9 @@ export const createAuthenticatedState = (overrides = {}) => ({
  * @param {Object} overrides - Properties to override
  * @returns {Object} Unauthenticated Redux state
  */
-export const createUnauthenticatedState = (overrides = {}) => ({
+export const createUnauthenticatedState = (
+  overrides: { auth?: Record<string, unknown>; schemas?: Record<string, unknown> } = {}
+) => ({
   auth: {
     isAuthenticated: false,
     user: null,
