@@ -85,10 +85,9 @@ pub struct StartupCtx {
 impl StartupCtx {
     /// Phase 1. Run all I/O that must complete before the HTTP server binds.
     ///
-    /// Order matters for log readability but not correctness — every step is
-    /// independent except for `get_or_init_sled_pool`, which must run before
-    /// `bootstrap_pending` is captured so the resume worker has a guaranteed
-    /// pool to use.
+    /// `get_or_init_sled_pool` MUST run before `bootstrap_pending` is captured
+    /// so the resume worker has a guaranteed pool to use. Remaining steps are
+    /// independent and ordered only for log readability.
     pub async fn boot(
         node_manager: NodeManager,
         obs: Option<ObsHandles>,
