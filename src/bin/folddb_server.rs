@@ -45,33 +45,34 @@ struct Cli {
     demo: bool,
 }
 
+/// `$FOLDDB_HOME` or a `.folddb` fallback when no home directory can be
+/// resolved. The fallback only triggers if both `FOLDDB_HOME` is unset and
+/// `dirs::home_dir()` returns `None` — practically unreachable on normal
+/// systems.
+fn folddb_home_or_fallback() -> PathBuf {
+    fold_db_node::utils::paths::folddb_home().unwrap_or_else(|_| PathBuf::from(".folddb"))
+}
+
 /// Resolve the default data directory: $FOLDDB_HOME/data (or $FOLDDB_HOME/demo-data in demo mode)
 fn default_data_dir(demo: bool) -> PathBuf {
     let subdir = if demo { "demo-data" } else { "data" };
-    fold_db_node::utils::paths::folddb_home()
-        .unwrap_or_else(|_| PathBuf::from(".folddb"))
-        .join(subdir)
+    folddb_home_or_fallback().join(subdir)
 }
 
 /// Resolve the default config directory: $FOLDDB_HOME/config (or $FOLDDB_HOME/demo-config in demo mode)
 fn default_config_dir(demo: bool) -> PathBuf {
     let subdir = if demo { "demo-config" } else { "config" };
-    fold_db_node::utils::paths::folddb_home()
-        .unwrap_or_else(|_| PathBuf::from(".folddb"))
-        .join(subdir)
+    folddb_home_or_fallback().join(subdir)
 }
 
 /// Check if a user-provided or env-var config file exists.
 fn config_file_exists() -> bool {
     let path = std::env::var("NODE_CONFIG").unwrap_or_else(|_| {
-        fold_db_node::utils::paths::folddb_home()
-            .map(|h| {
-                h.join("config")
-                    .join("node_config.json")
-                    .to_string_lossy()
-                    .to_string()
-            })
-            .unwrap_or_else(|_| "config/node_config.json".to_string())
+        folddb_home_or_fallback()
+            .join("config")
+            .join("node_config.json")
+            .to_string_lossy()
+            .to_string()
     });
     std::path::Path::new(&path).exists()
 }
