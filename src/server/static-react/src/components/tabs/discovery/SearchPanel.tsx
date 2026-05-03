@@ -1,0 +1,166 @@
+import { useCallback, useEffect, useState } from 'react'
+import type { OperationResultPayload } from "../../../types/api"
+import { discoveryClient, type SearchResult } from '../../../api/clients/discoveryClient'
+import { listContacts } from '../../../api/clients/trustClient'
+import { toErrorMessage } from '../../../utils/schemaUtils'
+import RoleSelect from './RoleSelect'
+
+interface SearchPanelProps {
+  onResult: (result: OperationResultPayload) => void
+}
+
+export default function SearchPanel({ onResult }: SearchPanelProps) {
+  const [query, setQuery] = useState('')
+  const [results, setResults] = useState<SearchResult[]>([])
+  const [searching, setSearching] = useState(false)
+  const [error, setError] = useState<string | null>(null)
+  const [connectingTo, setConnectingTo] = useState<string | null>(null)
+  const [connectMessage, setConnectMessage] = useState('')
+  const [connectRole, setConnectRole] = useState('acquaintance')
+  const [knownPseudonyms, setKnownPseudonyms] = useState<Set<string>>(() => new Set())
+
+  useEffect(() => {
+    let cancelled = false
+    async function loadContacts() {
+      try {
+        const resp = await listContacts()
+        if (cancelled || !resp.success) return
+        const contacts = resp.data?.contacts || []
+        const set = new Set<string>()
+        for (const c of contacts) {
+          if (c.pseudonym) set.add(c.pseudonym)
+          const messagingPseudonym = (c as { messaging_pseudonym?: string }).messaging_pseudonym
+          if (messagingPseudonym) set.add(messagingPseudonym)
+        }
+        setKnownPseudonyms(set)
+      } catch {
+        // best-effort
+      }
+    }
+    loadContacts()
+    return () => { cancelled = true }
+  }, [])
+
+  const handleSearch = useCallback(async () => {
+    if (!query.trim()) return
+    setSearching(true)
+    setError(null)
+    try {
+      const res = await discoveryClient.search(query)
+      if (res.success) {
+        setResults(res.data?.results || [])
+        onResult({ success: true, data: res.data })
+      } else {
+        setError(res.error || 'Search failed')
+        onResult({ error: res.error || 'Search failed' })
+      }
+    } catch (e) {
+      const msg = toErrorMessage(e)
+      setError(msg || 'Network error')
+      onResult({ error: msg || 'Network error' })
+    } finally {
+      setSearching(false)
+    }
+  }, [query, onResult])
+
+  const handleConnect = async (pseudonym: string) => {
+    if (!connectMessage.trim()) return
+    try {
+      const res = await discoveryClient.connect(pseudonym, connectMessage, connectRole !== 'acquaintance' ? connectRole : undefined)
+      if (res.success) {
+        setConnectingTo(null)
+        setConnectMessage('')
+        setConnectRole('acquaintance')
+        onResult({ success: true, data: { message: 'Connection request sent' } })
+      } else {
+        onResult({ error: res.error || 'Connect failed' })
+      }
+    } catch (e) {
+      onResult({ error: toErrorMessage(e) || 'Network error' })
+    }
+  }
+
+  return (
+    <div className="space-y-3">
+      <div className="flex gap-2">
+        <input
+          type="text"
+          value={query}
+          onChange={(e) => setQuery(e.target.value)}
+          onKeyDown={(e) => e.key === 'Enter' && handleSearch()}
+          placeholder="Search the discovery network..."
+          className="input flex-1"
+        />
+        <button onClick={handleSearch} disabled={searching || !query.trim()} className="btn-primary">
+          {searching ? 'Searching...' : 'Search Network'}
+        </button>
+      </div>
+
+      {error && <div className="text-sm text-gruvbox-red">{error}</div>}
+
+      {results.length > 0 && (
+        <div className="space-y-2">
+          <div className="text-xs text-secondary">{results.length} results</div>
+          {results.map((r, i) => (
+            <div key={i} className="border border-border rounded p-3">
+              <div className="flex items-center justify-between">
+                <div className="flex items-center gap-2">
+                  <span className="badge badge-info">{r.category}</span>
+                  <span className="text-xs text-secondary">
+                    similarity: {(r.similarity * 100).toFixed(1)}%
+                  </span>
+                </div>
+                {connectingTo === r.pseudonym ? (
+                  <div className="flex gap-1 items-center">
+                    <RoleSelect value={connectRole} onChange={setConnectRole} />
+                    <input
+                      type="text"
+                      value={connectMessage}
+                      onChange={(e) => setConnectMessage(e.target.value)}
+                      placeholder="Message..."
+                      className="input text-xs w-48"
+                    />
+                    <button
+                      onClick={() => handleConnect(r.pseudonym)}
+                      disabled={!connectMessage.trim()}
+                      className="btn-primary btn-sm"
+                    >
+                      Send
+                    </button>
+                    <button
+                      onClick={() => { setConnectingTo(null); setConnectMessage(''); setConnectRole('acquaintance') }}
+                      className="btn-secondary btn-sm"
+                    >
+                      Cancel
+                    </button>
+                  </div>
+                ) : knownPseudonyms.has(r.pseudonym) ? (
+                  <span className="text-[10px] px-2 py-0.5 rounded-full bg-gruvbox-green/10 text-gruvbox-green border border-gruvbox-green/30">
+                    ✓ Already connected
+                  </span>
+                ) : (
+                  <button
+                    onClick={() => setConnectingTo(r.pseudonym)}
+                    className="btn-secondary btn-sm"
+                  >
+                    Connect
+                  </button>
+                )}
+              </div>
+              {r.content_preview && (
+                <p className="text-xs text-secondary mt-1">{r.content_preview}</p>
+              )}
+              <div className="text-xs text-tertiary mt-1 font-mono truncate">
+                {r.pseudonym}
+              </div>
+            </div>
+          ))}
+        </div>
+      )}
+
+      {results.length === 0 && !searching && !error && query && (
+        <div className="text-sm text-secondary text-center py-4">No results found</div>
+      )}
+    </div>
+  )
+}

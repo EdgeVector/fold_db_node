@@ -1,0 +1,335 @@
+import { useCallback, useEffect, useState } from 'react'
+import type { OperationResultPayload } from '../../types/api'
+import type { Schema } from '../../types/schema'
+import { useApprovedSchemas } from '../../hooks/useApprovedSchemas.js'
+import {
+  discoveryClient,
+  type DiscoveryOptIn,
+  type PublishResult,
+} from '../../api/clients/discoveryClient'
+import { toErrorMessage } from '../../utils/schemaUtils'
+import SearchPanel from './discovery/SearchPanel'
+import FaceSearchPanel from './discovery/FaceSearchPanel'
+import ConnectionRequestsPanel from './discovery/ConnectionRequestsPanel'
+import SentRequestsPanel from './discovery/SentRequestsPanel'
+import PeopleLikeYouPanel from './discovery/PeopleLikeYouPanel'
+import InterestsPanel from './discovery/InterestsPanel'
+import SharedEventsPanel from './discovery/SharedEventsPanel'
+import ManageInterestsPanel from './discovery/ManageInterestsPanel'
+import DiscoverySectionNav from './discovery/DiscoverySectionNav'
+import { groupByCategory } from './discovery/discoveryUtils'
+
+// Plain three-step intro. Previous version mixed bold for tab refs and
+// italics for "People" — same word styled three different ways depending
+// on which tab it referenced, which read as visual noise. Plain prose
+// + a numbered list lets the reader scan without their eyes ping-ponging
+// between font weights.
+function DiscoveryIntro() {
+  return (
+    <div className="text-sm text-secondary max-w-2xl space-y-1">
+      <p>Meet new people on the Exemem network.</p>
+      <ol className="list-decimal list-inside space-y-0.5 text-secondary">
+        <li>Share a few of your interests.</li>
+        <li>Browse for matches.</li>
+        <li>Once someone accepts, they move into your People tab.</li>
+      </ol>
+    </div>
+  )
+}
+
+// Cloud is the gate for everything in this tab — no API endpoint here
+// works without an Exemem key. Same signal used by OnboardingWizard's
+// isCloudAlreadyActive(); see DatabaseSetupScreen / CloudBackupStep for
+// the canonical writers.
+function isCloudActive() {
+  if (typeof window === 'undefined') return false
+  return !!window.localStorage.getItem('exemem_api_key')
+}
+
+interface DiscoveryTabProps {
+  onResult: (result: OperationResultPayload & { message?: string }) => void
+}
+
+type LastPublishResult = PublishResult | { existing: true } | null
+
+export default function DiscoveryTab({ onResult }: DiscoveryTabProps) {
+  const { approvedSchemas } = useApprovedSchemas() as { approvedSchemas: Schema[] }
+  const [configs, setConfigs] = useState<DiscoveryOptIn[]>([])
+  const [publishing, setPublishing] = useState(false)
+  const [activeSection, setActiveSection] = useState('people')
+  const [error, setError] = useState<string | null>(null)
+  const [serviceAvailable, setServiceAvailable] = useState(true)
+  const [expandedCategories, setExpandedCategories] = useState<Set<string>>(new Set())
+  const [toggling, setToggling] = useState(false)
+  const [lastPublishResult, setLastPublishResult] = useState<LastPublishResult>(null)
+  const [publishFacesCategories, setPublishFacesCategories] = useState<Set<string>>(new Set())
+
+  const optedInNames = new Set(configs.map(c => c.schema_name))
+
+  // Categories that have been published (have at least one opted-in schema)
+  // We track this via lastPublishResult — if publish was called, those categories are live
+  const publishedCategories = new Set(
+    lastPublishResult
+      ? configs.filter(c => optedInNames.has(c.schema_name)).map(c => c.category)
+      : []
+  )
+
+  const categoryGroups = groupByCategory(approvedSchemas || [])
+  const categoryNames = Object.keys(categoryGroups).sort()
+  const hasSchemas = (approvedSchemas || []).length > 0
+
+  const loadConfigs = useCallback(async () => {
+    try {
+      const res = await discoveryClient.listOptIns()
+      if (res.success) {
+        setConfigs(res.data?.configs || [])
+        setServiceAvailable(true)
+        // If there are existing opt-ins, they may have been published before
+        if ((res.data?.configs || []).length > 0) {
+          setLastPublishResult({ existing: true })
+        }
+      } else if (res.status === 503) {
+        setServiceAvailable(false)
+      }
+    } catch {
+      setServiceAvailable(false)
+    }
+  }, [])
+
+  useEffect(() => { loadConfigs() }, [loadConfigs])
+
+  const handlePublishFacesToggle = async (category: string, enabled: boolean) => {
+    setPublishFacesCategories(prev => {
+      const next = new Set(prev)
+      if (enabled) next.add(category)
+      else next.delete(category)
+      return next
+    })
+    // If any schemas in this category are already opted in, re-opt them in with the new
+    // publish_faces value. Otherwise the checkbox only affects future opt-ins (was a bug
+    // where existing opt-ins silently ignored the checkbox change).
+    const schemas = categoryGroups[category] || []
+    const alreadyOptedIn = schemas.filter(s => optedInNames.has(s.name))
+    if (alreadyOptedIn.length === 0) return
+    setToggling(true)
+    setError(null)
+    try {
+      for (const s of alreadyOptedIn) {
+        const res = await discoveryClient.optIn({
+          schema_name: s.name,
+          category,
+          include_preview: false,
+          publish_faces: enabled,
+        })
+        if (res.success) {
+          setConfigs(res.data?.configs || [])
+        } else {
+          setError(res.error ?? null)
+          break
+        }
+      }
+    } catch (e) {
+      setError(toErrorMessage(e))
+    } finally {
+      setToggling(false)
+    }
+  }
+
+  const handleToggleCategory = async (category: string, schemas: Schema[], enable: boolean) => {
+    setToggling(true)
+    setError(null)
+    try {
+      if (enable) {
+        // Opt in all schemas in this category
+        for (const s of schemas) {
+          if (!optedInNames.has(s.name)) {
+            const res = await discoveryClient.optIn({
+              schema_name: s.name,
+              category,
+              include_preview: false,
+              publish_faces: publishFacesCategories.has(category),
+            })
+            if (res.success) {
+              setConfigs(res.data?.configs || [])
+            } else {
+              setError(res.error ?? null)
+              break
+            }
+          }
+        }
+      } else {
+        // Opt out all schemas in this category
+        for (const s of schemas) {
+          if (optedInNames.has(s.name)) {
+            const res = await discoveryClient.optOut(s.name)
+            if (res.success) {
+              setConfigs(res.data?.configs || [])
+            } else {
+              setError(res.error ?? null)
+              break
+            }
+          }
+        }
+      }
+    } catch (e) {
+      setError(toErrorMessage(e))
+    } finally {
+      setToggling(false)
+    }
+  }
+
+  const handleBulkAction = async (action: 'publish-all' | 'unpublish-all') => {
+    setToggling(true)
+    setError(null)
+    try {
+      if (action === 'publish-all') {
+        for (const [cat, schemas] of Object.entries(categoryGroups)) {
+          for (const s of schemas) {
+            if (!optedInNames.has(s.name)) {
+              const res = await discoveryClient.optIn({
+                schema_name: s.name,
+                category: cat,
+                include_preview: false,
+                publish_faces: publishFacesCategories.has(cat),
+              })
+              if (res.success) setConfigs(res.data?.configs || [])
+            }
+          }
+        }
+      } else if (action === 'unpublish-all') {
+        for (const c of configs) {
+          const res = await discoveryClient.optOut(c.schema_name)
+          if (res.success) setConfigs(res.data?.configs || [])
+        }
+        setLastPublishResult(null)
+      }
+    } catch (e) {
+      setError(toErrorMessage(e))
+    } finally {
+      setToggling(false)
+    }
+  }
+
+  const handlePublish = async () => {
+    setPublishing(true)
+    setError(null)
+    try {
+      const res = await discoveryClient.publish()
+      if (res.success) {
+        setLastPublishResult(res.data ?? null)
+        onResult({
+          success: true,
+          data: {
+            message: `Published: ${res.data?.accepted} accepted, ${res.data?.quarantined} quarantined, ${res.data?.skipped} skipped`,
+            ...res.data,
+          },
+        })
+      } else {
+        setError(res.error ?? null)
+        onResult({ error: res.error ?? "Unknown error" })
+      }
+    } catch (e) {
+      const msg = toErrorMessage(e)
+      setError(msg)
+      onResult({ error: msg })
+    } finally {
+      setPublishing(false)
+    }
+  }
+
+  const toggleExpand = (cat: string) => {
+    setExpandedCategories(prev => {
+      const next = new Set(prev)
+      if (next.has(cat)) next.delete(cat)
+      else next.add(cat)
+      return next
+    })
+  }
+
+  // Short-circuit when cloud is off: don't render the section nav or any
+  // panels — they all hit cloud-only endpoints and would each render
+  // their own LocalModeNotice, which together looks like a broken page.
+  // One gate, one ask. Covers both the 503 path and the "key not yet
+  // configured" path.
+  if (!serviceAvailable || !isCloudActive()) {
+    return (
+      <div className="space-y-4">
+        <DiscoveryIntro />
+        <div className="card p-6 text-center rounded">
+          <h3 className="text-lg text-primary mb-2">Discover needs Exemem Cloud</h3>
+          <p className="text-secondary text-sm">
+            Finding other people happens through the Exemem network. Enable cloud
+            backup in Settings to join — then come back here.
+          </p>
+        </div>
+      </div>
+    )
+  }
+
+  return (
+    <div className="space-y-4">
+      <DiscoveryIntro />
+      <DiscoverySectionNav activeSection={activeSection} onChange={setActiveSection} />
+
+      {error && <div className="text-sm text-gruvbox-red">{error}</div>}
+
+      {/* People Like You Section */}
+      {activeSection === 'people' && (
+        <PeopleLikeYouPanel onResult={onResult} />
+      )}
+
+      {/* Shared Events Section */}
+      {activeSection === 'shared-events' && (
+        <SharedEventsPanel onResult={onResult} />
+      )}
+
+      {/* Interests Section */}
+      {activeSection === 'interests' && (
+        <InterestsPanel onResult={onResult} />
+      )}
+
+      {/* Manage Section — Category Cards */}
+      {activeSection === 'manage' && (
+        <ManageInterestsPanel
+          hasSchemas={hasSchemas}
+          configs={configs}
+          approvedSchemas={approvedSchemas || []}
+          categoryGroups={categoryGroups}
+          categoryNames={categoryNames}
+          optedInNames={optedInNames}
+          publishedCategories={publishedCategories}
+          expandedCategories={expandedCategories}
+          publishFacesCategories={publishFacesCategories}
+          toggling={toggling}
+          publishing={publishing}
+          lastPublishResult={lastPublishResult && 'accepted' in lastPublishResult ? lastPublishResult : null}
+          onToggleCategory={handleToggleCategory}
+          onBulkAction={handleBulkAction}
+          onPublish={handlePublish}
+          onExpandToggle={toggleExpand}
+          onPublishFacesToggle={handlePublishFacesToggle}
+        />
+      )}
+
+      {/* Search Section */}
+      {activeSection === 'search' && (
+        <SearchPanel onResult={onResult} />
+      )}
+
+      {/* Face Search Section */}
+      {activeSection === 'face-search' && (
+        <FaceSearchPanel onResult={onResult} />
+      )}
+
+      {/* Received Connection Requests */}
+      {activeSection === 'requests' && (
+        <ConnectionRequestsPanel onResult={onResult} />
+      )}
+
+      {/* Sent Connection Requests */}
+      {activeSection === 'sent' && (
+        <SentRequestsPanel />
+      )}
+    </div>
+  )
+}

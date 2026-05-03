@@ -1,0 +1,136 @@
+import { useState, useEffect } from 'react'
+import type { OperationResultPayload } from '../../types/api'
+import { ingestionClient } from '../../api/clients'
+import { defaultApiClient } from '../../api/core/client'
+import { generateBlogPosts } from '../../data/sampleBlogPosts'
+import { twitterSamples, instagramSamples, linkedinSamples, tiktokSamples } from '../../data/sampleSocialPosts'
+
+const SAMPLES_ENABLED = import.meta.env.VITE_ENABLE_SAMPLES === 'true'
+
+interface Org {
+  org_hash: string
+  org_name: string
+}
+
+interface IngestionTabProps {
+  onResult: (result: OperationResultPayload | null) => void
+}
+
+type SampleType = 'blogposts' | 'twitter' | 'instagram' | 'linkedin' | 'tiktok'
+
+function IngestionTab({ onResult }: IngestionTabProps) {
+  const [jsonData, setJsonData] = useState('')
+  const [autoExecute, setAutoExecute] = useState(true)
+  const [isLoading, setIsLoading] = useState(false)
+  const [orgs, setOrgs] = useState<Org[]>([])
+  const [selectedOrg, setSelectedOrg] = useState('')
+
+  useEffect(() => {
+    let cancelled = false
+    let retries = 0
+    const maxRetries = 5
+    const fetchOrgs = () => {
+      if (cancelled) return
+      const hash = localStorage.getItem('fold_user_hash')
+      if (!hash) {
+        retries++
+        if (retries < maxRetries) setTimeout(fetchOrgs, 1000)
+        return
+      }
+      defaultApiClient.get('/org', { cacheable: false }).then(res => {
+        if (cancelled) return
+        const data = ((res as { data?: unknown }).data ?? res) as { orgs?: Org[] }
+        setOrgs(data.orgs || [])
+      }).catch(() => {})
+    }
+    fetchOrgs()
+    return () => { cancelled = true }
+  }, [])
+
+  const processIngestion = async () => {
+    setIsLoading(true)
+    onResult(null)
+    try {
+      const parsedData = JSON.parse(jsonData) as Record<string, unknown>
+      const options = {
+        autoExecute,
+        pubKey: 'default',
+        ...(selectedOrg ? { orgHash: selectedOrg } : {}),
+      }
+      const response = await ingestionClient.processIngestion(parsedData, options)
+      if (response.success) {
+        onResult({ success: true, data: response.data })
+        setJsonData('')
+      } else {
+        onResult({ success: false, error: 'Failed to process ingestion' })
+      }
+    } catch (error) {
+      onResult({ success: false, error: (error instanceof Error ? error.message : String(error)) || 'Failed to process ingestion' })
+    } finally {
+      setIsLoading(false)
+    }
+  }
+
+  const loadSampleData = (type: SampleType) => {
+    const samples = { blogposts: generateBlogPosts(), twitter: twitterSamples, instagram: instagramSamples, linkedin: linkedinSamples, tiktok: tiktokSamples }
+    setJsonData(JSON.stringify(samples[type], null, 2))
+  }
+
+  const selectedOrgName = orgs.find(o => o.org_hash === selectedOrg)?.org_name
+
+  return (
+    <div className="space-y-4">
+      <div className="flex items-center justify-between">
+        {SAMPLES_ENABLED && (
+          <div className="flex gap-2">
+            {(['blogposts', 'twitter', 'instagram', 'linkedin', 'tiktok'] as const).map(t => (
+              <button key={t} onClick={() => loadSampleData(t)} className="btn-secondary btn-sm">
+                {t === 'blogposts' ? 'Blog Posts (100)' : t.charAt(0).toUpperCase() + t.slice(1)}
+              </button>
+            ))}
+          </div>
+        )}
+        <div className="flex items-center gap-4">
+          {orgs.length > 0 && (
+            <select
+              value={selectedOrg}
+              onChange={(e) => setSelectedOrg(e.target.value)}
+              className="input text-sm py-1 px-2"
+            >
+              <option value="">Personal</option>
+              {orgs.map(org => (
+                <option key={org.org_hash} value={org.org_hash}>
+                  {org.org_name}
+                </option>
+              ))}
+            </select>
+          )}
+          <label className="flex items-center gap-2 text-sm cursor-pointer">
+            <input type="checkbox" checked={autoExecute} onChange={(e) => setAutoExecute(e.target.checked)} className="checkbox" />
+            <span className="text-secondary" title="Automatically save ingested data to your database after processing">Auto-save</span>
+          </label>
+        </div>
+      </div>
+
+      <textarea
+        value={jsonData}
+        onChange={(e) => setJsonData(e.target.value)}
+        placeholder="Enter JSON data or load a sample..."
+        className="textarea h-72 font-mono"
+      />
+
+      <div className="flex justify-end items-center gap-3">
+        {selectedOrg && (
+          <span className="text-xs text-secondary bg-primary/10 text-primary px-2 py-1 rounded">
+            Ingesting into: {selectedOrgName}
+          </span>
+        )}
+        <button onClick={processIngestion} disabled={isLoading || !jsonData.trim()} className="btn-primary btn-lg flex items-center gap-2">
+          {isLoading ? <><span className="spinner" />Processing...</> : <>→ Process Data</>}
+        </button>
+      </div>
+    </div>
+  )
+}
+
+export default IngestionTab
