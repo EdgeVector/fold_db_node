@@ -140,6 +140,8 @@ pub mod test_helpers {
 
         let node_manager_config = NodeManagerConfig {
             base_config: config,
+            config_dir: temp_dir.path().join("config"),
+            upload_path: temp_dir.path().join("uploads"),
         };
         let node_manager = NodeManager::new(node_manager_config);
         node_manager.set_node("test_user", node).await;

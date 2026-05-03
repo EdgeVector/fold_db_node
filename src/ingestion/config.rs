@@ -472,9 +472,14 @@ impl IngestionConfig {
     }
 
     /// Load and fully validate config. Returns an error if any provider field
-    /// is invalid (missing API key, empty model, etc.).
-    pub fn from_env() -> Result<Self, crate::ingestion::IngestionError> {
-        let config = Self::load()?;
+    /// is invalid (missing API key, empty model, etc.). The name `from_env`
+    /// is preserved because the loader still consults env vars for
+    /// `ANTHROPIC_API_KEY`, `OLLAMA_*`, etc. — but `config_dir` is now an
+    /// explicit input rather than read from `FOLD_CONFIG_DIR`.
+    pub fn from_env(
+        config_dir: &std::path::Path,
+    ) -> Result<Self, crate::ingestion::IngestionError> {
+        let config = Self::load(config_dir)?;
         config.validate()?;
         Ok(config)
     }
@@ -483,51 +488,42 @@ impl IngestionConfig {
     ///
     /// Precedence (highest to lowest):
     /// - `ANTHROPIC_API_KEY` env var (secrets never live in files)
-    /// - Saved config file (UI choices)
+    /// - Saved config file at `config_dir/ingestion_config.json` (UI choices)
     /// - Other env vars (only when no saved config)
     /// - Compiled-in defaults
     ///
     /// Returns an error if the config file exists but cannot be read or parsed.
-    pub fn load() -> Result<Self, crate::ingestion::IngestionError> {
+    pub fn load(config_dir: &std::path::Path) -> Result<Self, crate::ingestion::IngestionError> {
         let mut config = IngestionConfig::default();
 
         // Apply saved config (UI choices override defaults).
-        // No FOLD_CONFIG_DIR or file not found → silent fallback to defaults.
+        // File missing → silent fallback to defaults.
         // File exists but unreadable/unparseable → fail fast.
-        let has_saved = match Self::config_file_path() {
-            None => {
-                tracing::info!(
+        let path = Self::config_file_path(config_dir);
+        let has_saved = if !path.exists() {
+            tracing::info!(
                 target: "fold_node::ingestion",
-                        "FOLD_CONFIG_DIR not set; using env vars/defaults"
-                    );
-                false
-            }
-            Some(path) if !path.exists() => {
-                tracing::info!(
+                "No saved ingestion config at {}; using env vars/defaults",
+                path.display()
+            );
+            false
+        } else {
+            let saved = Self::load_from_file(&path)?;
+            tracing::info!(
                 target: "fold_node::ingestion",
-                        "No saved ingestion config at {}; using env vars/defaults",
-                        path.display()
-                    );
-                false
-            }
-            Some(path) => {
-                let saved = Self::load_from_file(&path)?;
-                tracing::info!(
-                target: "fold_node::ingestion",
-                        "Loaded saved ingestion config: provider={:?}, model={}",
-                        saved.provider,
-                        match saved.provider {
-                            AIProvider::Ollama => &saved.ollama.model,
-                            AIProvider::Anthropic => &saved.anthropic.model,
-                        }
-                    );
-                config.provider = saved.provider;
-                config.ollama = saved.ollama;
-                config.anthropic = saved.anthropic;
-                config.vision_backend = saved.vision_backend;
-                config.overrides = saved.overrides;
-                true
-            }
+                "Loaded saved ingestion config: provider={:?}, model={}",
+                saved.provider,
+                match saved.provider {
+                    AIProvider::Ollama => &saved.ollama.model,
+                    AIProvider::Anthropic => &saved.anthropic.model,
+                }
+            );
+            config.provider = saved.provider;
+            config.ollama = saved.ollama;
+            config.anthropic = saved.anthropic;
+            config.vision_backend = saved.vision_backend;
+            config.overrides = saved.overrides;
+            true
         };
 
         // API keys: env vars always win — secrets shouldn't live in config files
@@ -610,9 +606,11 @@ impl IngestionConfig {
     /// If the incoming api_key is empty or redacted, the existing saved key is
     /// preserved. If the file exists but cannot be read, returns an error rather
     /// than silently clearing the key.
-    pub fn save_to_file(config: &SavedConfig) -> Result<(), Box<dyn std::error::Error>> {
-        let config_path = Self::config_file_path()
-            .ok_or("FOLD_CONFIG_DIR is not set; cannot save ingestion config")?;
+    pub fn save_to_file(
+        config_dir: &std::path::Path,
+        config: &SavedConfig,
+    ) -> Result<(), Box<dyn std::error::Error>> {
+        let config_path = Self::config_file_path(config_dir);
 
         let mut to_save = config.clone();
         // Preserve API keys if not explicitly set (redacted or empty)
@@ -647,15 +645,8 @@ impl IngestionConfig {
     // Not synced to Sled because a laptop might run Ollama locally
     // while a phone uses Anthropic's API.
 
-    fn config_file_path() -> Option<std::path::PathBuf> {
-        env::var("FOLD_CONFIG_DIR")
-            .ok()
-            .map(|dir| std::path::Path::new(&dir).join("ingestion_config.json"))
-            .or_else(|| {
-                crate::utils::paths::folddb_home()
-                    .ok()
-                    .map(|h| h.join("config").join("ingestion_config.json"))
-            })
+    fn config_file_path(config_dir: &std::path::Path) -> std::path::PathBuf {
+        config_dir.join("ingestion_config.json")
     }
 
     fn load_from_file(
@@ -685,8 +676,8 @@ impl IngestionConfig {
     /// Load config best-effort: returns a valid config or falls back to defaults.
     /// Errors are logged but never propagated — use `load()` directly if you need
     /// to handle failures.
-    pub fn load_or_default() -> Self {
-        Self::load().unwrap_or_else(|e| {
+    pub fn load_or_default(config_dir: &std::path::Path) -> Self {
+        Self::load(config_dir).unwrap_or_else(|e| {
             tracing::warn!("Failed to load ingestion config: {e}. Using defaults.");
             IngestionConfig::default()
         })

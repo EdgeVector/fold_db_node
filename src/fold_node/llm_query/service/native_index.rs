@@ -826,7 +826,15 @@ impl LlmQueryService {
                     image_bytes: None,
                 };
 
-                let service = crate::ingestion::ingestion_service::IngestionService::from_env()
+                let config_dir = node
+                    .config
+                    .config_dir
+                    .clone()
+                    .ok_or_else(|| "NodeConfig.config_dir not set".to_string())?;
+                let service =
+                    crate::ingestion::ingestion_service::IngestionService::from_config_dir(
+                        &config_dir,
+                    )
                     .map_err(|e| format!("Failed to create ingestion service: {}", e))?;
 
                 let tracker = match progress_tracker {

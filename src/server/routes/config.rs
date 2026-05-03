@@ -1,5 +1,4 @@
 use crate::server::http_server::AppState;
-use crate::server::node_manager::NodeManagerConfig;
 use crate::utils::crypto::user_hash_from_pubkey;
 use actix_web::{web, HttpResponse, Responder};
 use fold_db::storage::config::DatabaseConfig;
@@ -231,11 +230,10 @@ pub async fn apply_setup(
         });
     }
 
-    // Update NodeManager config and invalidate all cached nodes
-    let new_manager_config = NodeManagerConfig {
-        base_config: config,
-    };
-    state.node_manager.update_config(new_manager_config).await;
+    // Update NodeManager config and invalidate all cached nodes.
+    // `update_config` takes the new `NodeConfig` directly — the manager
+    // preserves the boot-time `config_dir` / `upload_path` across updates.
+    state.node_manager.update_config(config).await;
 
     let message = format!("Setup applied: {}", changes.join(", "));
     tracing::info!(

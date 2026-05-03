@@ -306,8 +306,11 @@ async fn sync_photos(
 
     for path in &paths {
         let file_path = path.to_path_buf();
-        match crate::ingestion::file_handling::json_processor::convert_file_to_json(&file_path)
-            .await
+        match crate::ingestion::file_handling::json_processor::convert_file_to_json(
+            &file_path,
+            service.config(),
+        )
+        .await
         {
             Ok(mut json_value) => {
                 let file_name = path

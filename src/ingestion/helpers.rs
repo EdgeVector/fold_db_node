@@ -221,6 +221,7 @@ pub async fn process_single_file_via_smart_folder(
                 let mut data =
                     crate::ingestion::file_handling::json_processor::convert_file_to_json(
                         &file_path.to_path_buf(),
+                        service.config(),
                     )
                     .await
                     .map_err(|e| e.to_string())?;

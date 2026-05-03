@@ -209,13 +209,15 @@ pub async fn validate_json(
     tag = "ingestion",
     responses((status = 200, description = "Ingestion config", body = IngestionConfig))
 )]
-pub async fn get_ingestion_config() -> impl Responder {
+pub async fn get_ingestion_config(
+    config_dir: web::Data<crate::server::startup::ConfigDir>,
+) -> impl Responder {
     tracing::debug!(
             target: "fold_node::ingestion",
         "Received ingestion config request"
     );
 
-    let config = crate::ingestion::config::IngestionConfig::load_or_default();
+    let config = crate::ingestion::config::IngestionConfig::load_or_default(config_dir.as_path());
     HttpResponse::Ok().json(config.redacted())
 }
 
@@ -231,6 +233,7 @@ pub async fn save_ingestion_config(
     request: web::Json<crate::ingestion::config::SavedConfig>,
     ingestion_service: web::Data<IngestionServiceState>,
     llm_state: web::Data<crate::fold_node::llm_query::LlmQueryState>,
+    config_dir: web::Data<crate::server::startup::ConfigDir>,
 ) -> impl Responder {
     tracing::info!(
             target: "fold_node::ingestion",
@@ -238,14 +241,16 @@ pub async fn save_ingestion_config(
     );
 
     let saved_config = request.into_inner();
+    let cfg_dir = config_dir.as_path().to_path_buf();
 
     // AI config is per-device (saved to ingestion_config.json only, not Sled).
     // A laptop might run Ollama locally while a phone uses Anthropic's API.
-    match crate::ingestion::config::IngestionConfig::save_to_file(&saved_config) {
+    match crate::ingestion::config::IngestionConfig::save_to_file(&cfg_dir, &saved_config) {
         Ok(()) => {
             // Reload the IngestionService so the new config takes effect immediately.
-            let reload_config = crate::ingestion::config::IngestionConfig::load_or_default();
-            match IngestionService::new(reload_config) {
+            let reload_config =
+                crate::ingestion::config::IngestionConfig::load_or_default(&cfg_dir);
+            match IngestionService::new(cfg_dir.clone(), reload_config) {
                 Ok(new_service) => {
                     let mut guard = ingestion_service.write().await;
                     *guard = Some(Arc::new(new_service));
@@ -375,8 +380,8 @@ fn role_info_from_config(config: &crate::ingestion::IngestionConfig, role: Role)
     tag = "ingestion",
     responses((status = 200, description = "Active models per role", body = RolesResponse))
 )]
-pub async fn get_roles() -> impl Responder {
-    let config = crate::ingestion::config::IngestionConfig::load_or_default();
+pub async fn get_roles(config_dir: web::Data<crate::server::startup::ConfigDir>) -> impl Responder {
+    let config = crate::ingestion::config::IngestionConfig::load_or_default(config_dir.as_path());
     let roles: Vec<RoleInfo> = Role::ALL
         .iter()
         .map(|r| role_info_from_config(&config, *r))
@@ -399,7 +404,10 @@ pub async fn get_roles() -> impl Responder {
         (status = 500, description = "Backend init or call failed"),
     )
 )]
-pub async fn test_role(request: web::Json<TestRoleRequest>) -> impl Responder {
+pub async fn test_role(
+    request: web::Json<TestRoleRequest>,
+    config_dir: web::Data<crate::server::startup::ConfigDir>,
+) -> impl Responder {
     let req = request.into_inner();
     if req.prompt.trim().is_empty() {
         return HttpResponse::BadRequest().json(json!({
@@ -416,7 +424,7 @@ pub async fn test_role(request: web::Json<TestRoleRequest>) -> impl Responder {
             ),
         }));
     }
-    let config = crate::ingestion::config::IngestionConfig::load_or_default();
+    let config = crate::ingestion::config::IngestionConfig::load_or_default(config_dir.as_path());
     let resolved = config.resolve(req.role);
     let (backend, err) = config.build_backend(req.role);
     let backend = match backend {
@@ -805,9 +813,15 @@ mod tests {
 
     #[actix_web::test]
     async fn test_get_ingestion_config() {
-        let app =
-            test::init_service(App::new().route("/config", web::get().to(get_ingestion_config)))
-                .await;
+        let tmp = tempfile::tempdir().expect("tempdir");
+        let config_dir =
+            web::Data::new(crate::server::startup::ConfigDir(tmp.path().to_path_buf()));
+        let app = test::init_service(
+            App::new()
+                .app_data(config_dir.clone())
+                .route("/config", web::get().to(get_ingestion_config)),
+        )
+        .await;
 
         let req = test::TestRequest::get().uri("/config").to_request();
         let resp = test::call_service(&app, req).await;

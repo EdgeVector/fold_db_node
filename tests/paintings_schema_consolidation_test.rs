@@ -81,8 +81,10 @@ async fn test_paintings_use_single_schema() {
     let node = FoldNode::new(config).await.unwrap();
 
     // 3. Create a SHARED ingestion service (so the schema_creation_lock works)
-    let ingestion_service =
-        Arc::new(IngestionService::from_env().expect("Failed to create ingestion service"));
+    let ingestion_service = Arc::new(
+        IngestionService::from_config_dir(std::path::Path::new("/nonexistent/folddb-test-config"))
+            .expect("Failed to create ingestion service"),
+    );
     let progress_tracker = create_progress_tracker().await;
     let progress_service = ProgressService::new(progress_tracker);
 
@@ -103,14 +105,19 @@ async fn test_paintings_use_single_schema() {
             file_name
         );
 
-        // Convert image to JSON using file_to_json (same as the real server)
-        let data = match convert_file_to_json(&painting_path.to_path_buf()).await {
-            Ok(json) => json,
-            Err(e) => {
-                eprintln!("  Failed to convert file: {}", e);
-                continue;
-            }
-        };
+        // Convert image to JSON using file_to_json (same as the real server).
+        // Reuse the IngestionService's resolved config so vision_backend
+        // matches the runtime configuration.
+        let data =
+            match convert_file_to_json(&painting_path.to_path_buf(), ingestion_service.config())
+                .await
+            {
+                Ok(json) => json,
+                Err(e) => {
+                    eprintln!("  Failed to convert file: {}", e);
+                    continue;
+                }
+            };
 
         let progress_id = format!("painting-{}", i);
         let request = IngestionRequest {

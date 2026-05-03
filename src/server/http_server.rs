@@ -107,6 +107,7 @@ impl FoldHttpServer {
         let ingestion_service_data = self.ctx.ingestion.clone();
         let batch_controller_map_data = self.ctx.batch_controllers.clone();
         let sync_config_data = self.ctx.apple_sync_config.clone();
+        let config_dir_data = self.ctx.config_dir.clone();
 
         // Start the HTTP server
         let server = ActixHttpServer::new(move || {
@@ -149,6 +150,7 @@ impl FoldHttpServer {
                 .app_data(ingestion_service_data.clone())
                 .app_data(batch_controller_map_data.clone())
                 .app_data(sync_config_data.clone())
+                .app_data(config_dir_data.clone())
                 .app_data(obs_ring_data.clone())
                 .app_data(obs_web_data.clone())
                 .app_data(obs_reload_data.clone())

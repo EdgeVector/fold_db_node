@@ -36,7 +36,11 @@ pub async fn connect(
 }
 
 /// GET /api/discovery/connection-requests — Poll, decrypt, and list received connection requests.
-pub async fn connection_requests(req: HttpRequest, state: web::Data<AppState>) -> impl Responder {
+pub async fn connection_requests(
+    req: HttpRequest,
+    state: web::Data<AppState>,
+    upload_storage: web::Data<fold_db::storage::UploadStorage>,
+) -> impl Responder {
     let (_user_hash, node) = node_or_return!(state);
 
     let (url, key) = discovery_config_or_return!(state);
@@ -44,7 +48,14 @@ pub async fn connection_requests(req: HttpRequest, state: web::Data<AppState>) -
     let auth_token = auth_token_or_return!(req);
 
     handler_result_to_response(
-        discovery_handlers::poll_and_decrypt_requests(&node, &url, &auth_token, &key).await,
+        discovery_handlers::poll_and_decrypt_requests(
+            &node,
+            &url,
+            &auth_token,
+            &key,
+            upload_storage.get_ref(),
+        )
+        .await,
     )
 }
 

@@ -85,18 +85,17 @@ struct StartupInfo {
     had_config_file: bool,
 }
 
-/// Apply CLI/default overrides to the loaded config and set the env vars
-/// downstream code relies on. Runs in both the no-config-file and
-/// config-file paths so they share dir-creation, `FOLD_CONFIG_DIR`, and
-/// `FOLD_STORAGE_PATH` handling — the asymmetry between the two arms was
-/// the spot most likely to grow a bug.
+/// Apply CLI/default overrides to the loaded config and resolve the
+/// per-server `config_dir` / `data_path`. Runs in both the no-config-file
+/// and config-file paths so they share dir-creation logic — the asymmetry
+/// between the two arms was the spot most likely to grow a bug.
 ///
-/// `FOLD_STORAGE_PATH` is set in both arms intentionally:
-/// `fold_node::operation_processor::admin_ops` reads it directly with a
-/// fallback to the relative `"data"` string, which collides between
-/// multi-node setups. The lazy `NodeManager` path also sets it on first
-/// per-user node creation, but it must be live before any operation that
-/// bypasses NodeManager runs.
+/// Both `config_dir` and the storage path used to be propagated as
+/// process-wide env vars (`FOLD_CONFIG_DIR`, `FOLD_STORAGE_PATH`); after
+/// the StartupCtx-paths migration they are returned via `StartupInfo` and
+/// later threaded into `NodeManagerConfig`. The single env-var set that
+/// survives lives in `NodeManager::create_node` as a hand-off to the
+/// upstream `fold_db_core::factory`.
 fn setup_config_environment(
     config: &mut NodeConfig,
     data_dir: Option<PathBuf>,
@@ -124,8 +123,8 @@ fn setup_config_environment(
         // file declares cloud sync, that configuration is preserved — we're
         // pointing the local backing store somewhere else, not turning
         // cloud sync off. Both `database.path` and `storage_path` are
-        // updated so `get_storage_path()` and the FOLD_STORAGE_PATH env
-        // propagation below see the same value.
+        // updated so `get_storage_path()` matches the override path that
+        // flows into `NodeManagerConfig` below.
         if let Some(dir) = data_dir {
             config.database.path = dir.clone();
             config.storage_path = Some(dir);
@@ -136,8 +135,10 @@ fn setup_config_environment(
     }
 
     std::fs::create_dir_all(&config_path)?;
-    std::env::set_var("FOLD_CONFIG_DIR", &config_path);
-    std::env::set_var("FOLD_STORAGE_PATH", config.get_storage_path());
+    // Mirror the resolved config_dir onto NodeConfig so handlers reached
+    // via `&FoldNode` (admin_ops, trust modules) can read it without a
+    // global env var.
+    config.config_dir = Some(config_path.clone());
 
     let label = match (has_config_file, demo) {
         (true, _) => "FoldDB Server (config file detected)",
@@ -236,8 +237,16 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         Box::leak(Box::new(obs_guard));
 
     // Create NodeManager — nodes are created lazily per-user on first request.
+    // `upload_path` formerly came from the `FOLDDB_UPLOAD_PATH` env var and
+    // its hard-coded default; now it's resolved here and threaded through
+    // `StartupCtx::boot` instead.
+    let upload_path = fold_db_node::utils::paths::folddb_home()
+        .map(|h| h.join("data").join("uploads"))
+        .unwrap_or_else(|_| PathBuf::from("data/uploads"));
     let node_manager_config = NodeManagerConfig {
         base_config: config,
+        config_dir: info.config_path.clone(),
+        upload_path,
     };
     let node_manager = NodeManager::new(node_manager_config);
 
@@ -326,13 +335,15 @@ mod tests {
         assert!(demo.ends_with("demo-config"));
     }
 
-    /// Both arms of `setup_config_environment` must leave `FOLD_CONFIG_DIR`
-    /// and `FOLD_STORAGE_PATH` set to paths that match the resolved config
-    /// — that's the asymmetry the refactor was meant to eliminate. We run
-    /// both scenarios in one test and serialize against the other env-var
-    /// tests via a process-wide mutex (env mutation is global).
+    /// Both arms of `setup_config_environment` must agree on the resolved
+    /// `config_dir` / `data_path` and propagate them onto `NodeConfig` so
+    /// downstream `NodeManagerConfig` and `StartupCtx::boot` consume them
+    /// without consulting any env var. The asymmetry between the two arms
+    /// was the spot most likely to grow a bug — assert lockstep here.
+    /// Process-wide `FOLDDB_HOME` is still env-driven (out of scope), so
+    /// guard with a mutex.
     #[test]
-    fn setup_config_environment_keeps_env_vars_consistent() {
+    fn setup_config_environment_resolves_consistent_paths() {
         use fold_db_node::fold_node::config::NodeConfig;
         use std::sync::Mutex;
 
@@ -341,12 +352,11 @@ mod tests {
 
         let tmp = tempfile::tempdir().expect("tempdir");
         let prev_folddb_home = std::env::var("FOLDDB_HOME").ok();
-        let prev_config_dir = std::env::var("FOLD_CONFIG_DIR").ok();
-        let prev_storage_path = std::env::var("FOLD_STORAGE_PATH").ok();
         std::env::set_var("FOLDDB_HOME", tmp.path());
 
-        // Arm 1: no config file. Helper picks default_data_dir + default_config_dir,
-        // creates them, and propagates the storage path.
+        // Arm 1: no config file. Helper picks default_data_dir +
+        // default_config_dir, creates them, and propagates the resolved
+        // paths onto the returned StartupInfo and the mutated NodeConfig.
         let mut config = NodeConfig::default();
         let info = super::setup_config_environment(
             &mut config,
@@ -363,23 +373,20 @@ mod tests {
         assert_eq!(info.config_path, expected_config);
         assert!(expected_data.is_dir(), "data dir must be created");
         assert!(expected_config.is_dir(), "config dir must be created");
-        assert_eq!(
-            std::path::PathBuf::from(std::env::var("FOLD_CONFIG_DIR").unwrap()),
-            expected_config,
-        );
-        assert_eq!(
-            std::path::PathBuf::from(std::env::var("FOLD_STORAGE_PATH").unwrap()),
-            expected_data,
-        );
         assert_eq!(config.get_storage_path(), expected_data);
+        assert_eq!(
+            config.config_dir.as_deref(),
+            Some(expected_config.as_path()),
+            "NodeConfig.config_dir must mirror the resolved StartupInfo.config_path",
+        );
         assert!(
             config.schema_service_url.is_some(),
             "zero-config must default the schema service URL",
         );
 
         // Arm 2: config file already exists. CLI passes a fresh data dir;
-        // helper must keep `database.path`/`storage_path` and the env vars
-        // in lockstep, and FOLD_STORAGE_PATH must reflect the override.
+        // helper must keep `database.path`/`storage_path` in lockstep with
+        // the override, and surface the same path on StartupInfo.
         let cli_data = tmp.path().join("override-data");
         let mut config = NodeConfig {
             schema_service_url: Some("https://from-config-file.example".to_string()),
@@ -399,12 +406,8 @@ mod tests {
         assert_eq!(config.database.path, cli_data);
         assert_eq!(config.storage_path.as_deref(), Some(cli_data.as_path()));
         assert_eq!(
-            std::path::PathBuf::from(std::env::var("FOLD_CONFIG_DIR").unwrap()),
-            expected_config,
-        );
-        assert_eq!(
-            std::path::PathBuf::from(std::env::var("FOLD_STORAGE_PATH").unwrap()),
-            cli_data,
+            config.config_dir.as_deref(),
+            Some(expected_config.as_path()),
         );
         // CLI didn't pass --schema-service-url, so the file's URL is preserved.
         assert_eq!(
@@ -412,18 +415,9 @@ mod tests {
             Some("https://from-config-file.example"),
         );
 
-        // Restore env vars to keep the rest of the test process clean.
         match prev_folddb_home {
             Some(v) => std::env::set_var("FOLDDB_HOME", v),
             None => std::env::remove_var("FOLDDB_HOME"),
-        }
-        match prev_config_dir {
-            Some(v) => std::env::set_var("FOLD_CONFIG_DIR", v),
-            None => std::env::remove_var("FOLD_CONFIG_DIR"),
-        }
-        match prev_storage_path {
-            Some(v) => std::env::set_var("FOLD_STORAGE_PATH", v),
-            None => std::env::remove_var("FOLD_STORAGE_PATH"),
         }
     }
 }

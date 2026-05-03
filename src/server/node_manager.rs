@@ -35,6 +35,13 @@ pub enum NodeManagerError {
 pub struct NodeManagerConfig {
     /// Base node configuration (user_id will be set per-tenant)
     pub base_config: NodeConfig,
+    /// Directory holding `ingestion_config.json` and any other per-server
+    /// JSON state. Replaces the former `FOLD_CONFIG_DIR` env var so two
+    /// nodes in the same test process can have independent config dirs.
+    pub config_dir: PathBuf,
+    /// Directory used by `UploadStorage::local`. Replaces the former
+    /// `FOLDDB_UPLOAD_PATH` env var. Threaded onto `StartupCtx` at boot.
+    pub upload_path: PathBuf,
 }
 
 /// Manages the FoldDB node instance
@@ -99,12 +106,26 @@ impl NodeManager {
     /// tree using the same pool we hand to the FoldDB factory. No
     /// separate identity files, no pre-load here.
     async fn create_node(&self, user_id: &str) -> Result<Arc<FoldNode>, NodeManagerError> {
-        let mut node_config = self.config.read().await.base_config.clone();
+        let (mut node_config, manager_config_dir) = {
+            let cfg = self.config.read().await;
+            (cfg.base_config.clone(), cfg.config_dir.clone())
+        };
 
-        // Ensure the Exemem factory can find the correct storage path.
-        // The factory reads FOLD_STORAGE_PATH to locate the Sled database;
-        // without this, it falls back to a relative "data" path which causes
-        // lock conflicts in multi-node setups.
+        // Mirror the manager's `config_dir` onto the per-node `NodeConfig`
+        // so handlers reached via `&FoldNode` (admin_ops, trust modules)
+        // can resolve it without touching `FOLD_CONFIG_DIR`. If the
+        // base_config already carried an override (test path setting it
+        // via `with_config_dir`), respect that.
+        if node_config.config_dir.is_none() {
+            node_config.config_dir = Some(manager_config_dir);
+        }
+
+        // Hand-off to the upstream `fold_db_core::factory`, which reads
+        // `FOLD_STORAGE_PATH` to locate the Sled database. Internal callers
+        // MUST NOT read this env var — use `node_config.get_storage_path()`
+        // instead. This is the single localized set; `setup_config_environment`
+        // and `admin_ops::cloud_sync_upload` no longer touch the env. Removing
+        // this contract requires a `fold_db` rev bump (out of scope here).
         std::env::set_var("FOLD_STORAGE_PATH", node_config.get_storage_path());
 
         // Inject per-device credentials from credentials.json into the
@@ -197,16 +218,20 @@ impl NodeManager {
     /// invalidation so no concurrent `get_node` fast-path can observe the new
     /// config while still returning a node that was built from the old config.
     /// Any reader blocks until both updates are visible together.
-    pub async fn update_config(&self, new_config: NodeManagerConfig) {
-        let new_path = new_config.base_config.database.path.clone();
+    pub async fn update_config(&self, new_base_config: NodeConfig) {
+        let new_path = new_base_config.database.path.clone();
 
         // Acquire the node slot first so fast-path readers block until config
         // AND the cached node are updated atomically together.
         let mut shared = self.shared_node.write().await;
 
         {
+            // `config_dir` and `upload_path` are server-startup state — they
+            // don't change at runtime. Preserve them across config updates;
+            // callers only ever swap `base_config` (cloud-sync activation,
+            // setup flow, etc.).
             let mut config = self.config.write().await;
-            *config = new_config;
+            config.base_config = new_base_config;
         }
 
         {
@@ -256,6 +281,12 @@ impl NodeManager {
     /// Get the base configuration (returns a clone since config is behind RwLock)
     pub async fn get_base_config(&self) -> NodeConfig {
         self.config.read().await.base_config.clone()
+    }
+
+    /// Get the full manager configuration (clones; cheap by design — every
+    /// field is `PathBuf`/`String`-shaped).
+    pub async fn get_full_config(&self) -> NodeManagerConfig {
+        self.config.read().await.clone()
     }
 
     /// Ensure a default identity exists and return its public key.
@@ -329,7 +360,11 @@ mod tests {
         let base_config = NodeConfig::new(path.to_path_buf())
             .with_schema_service_url("test://mock")
             .with_seed_identity(crate::identity::identity_from_keypair(&keypair));
-        NodeManagerConfig { base_config }
+        NodeManagerConfig {
+            base_config,
+            config_dir: path.join("config"),
+            upload_path: path.join("uploads"),
+        }
     }
 
     /// Regression test for the register -> sync-status Sled lock race.
@@ -475,7 +510,7 @@ mod tests {
 
         // Update config to a different path.
         manager
-            .update_config(test_config(&tmp.path().join("b")))
+            .update_config(test_config(&tmp.path().join("b")).base_config)
             .await;
 
         let _ = manager.get_node(user_hash).await.unwrap();

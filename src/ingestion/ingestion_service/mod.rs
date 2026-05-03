@@ -25,6 +25,7 @@ use fold_db::schema::SchemaCore;
 use serde_json::Value;
 use sha2::{Digest, Sha256};
 use std::collections::HashMap;
+use std::path::PathBuf;
 use std::sync::Arc;
 
 use decomposition::{AiProposal, CachedSchema, SchemaCache};
@@ -121,6 +122,10 @@ pub(crate) async fn get_schema_manager(node: &FoldNode) -> IngestionResult<Arc<S
 /// AI-powered ingestion service that works with FoldNode
 pub struct IngestionService {
     pub(super) config: IngestionConfig,
+    /// Per-server config directory (formerly `FOLD_CONFIG_DIR`). Re-resolved
+    /// on demand by call sites that reload `IngestionConfig::load(..)` from
+    /// disk (e.g. `json_processor`).
+    pub(super) config_dir: PathBuf,
     /// Default AI backend (tagged as `Role::IngestionText`). Built once at
     /// construction. Other roles (`MutationAgent`, `SmartFolder`, etc.) build
     /// their own backends on demand via `config.build_backend(role, metrics)`.
@@ -141,10 +146,13 @@ pub struct IngestionService {
 }
 
 impl IngestionService {
-    /// Create an ingestion service from environment configuration
-    pub fn from_env() -> IngestionResult<Self> {
-        let config = IngestionConfig::from_env()?;
-        Self::new(config)
+    /// Create an ingestion service from disk + environment configuration.
+    /// The `from_env` name is preserved because the loader still consults env
+    /// vars (`ANTHROPIC_API_KEY`, `OLLAMA_*`, etc.) — but `config_dir` is now
+    /// an explicit input rather than read from `FOLD_CONFIG_DIR`.
+    pub fn from_config_dir(config_dir: &std::path::Path) -> IngestionResult<Self> {
+        let config = IngestionConfig::from_env(config_dir)?;
+        Self::new(config_dir.to_path_buf(), config)
     }
 
     /// Create a new ingestion service.
@@ -152,17 +160,32 @@ impl IngestionService {
     /// (e.g. missing API key) the service is still created so that
     /// `get_status()` can report the correct provider/model — actual
     /// ingestion calls will fail at runtime with a clear error.
-    pub fn new(config: IngestionConfig) -> IngestionResult<Self> {
+    pub fn new(config_dir: PathBuf, config: IngestionConfig) -> IngestionResult<Self> {
         let metrics = crate::ingestion::metrics::AiMetricsStore::global();
         let (backend, init_error) = config.build_backend(crate::ingestion::Role::IngestionText);
         Ok(Self {
             config,
+            config_dir,
             backend,
             metrics,
             init_error,
             schema_creation_lock: tokio::sync::Mutex::new(()),
             shared_schema_cache: Arc::new(std::sync::RwLock::new(HashMap::new())),
         })
+    }
+
+    /// Access the per-server config directory. Used by call sites that
+    /// reload `IngestionConfig` from disk (e.g. JSON processor) to avoid
+    /// reaching back to a global env var.
+    pub fn config_dir(&self) -> &std::path::Path {
+        &self.config_dir
+    }
+
+    /// Borrow the active `IngestionConfig`. External callers (e.g.
+    /// `convert_file_to_json`) need this to read the resolved
+    /// `vision_backend` / Ollama settings without re-loading from disk.
+    pub fn config(&self) -> &IngestionConfig {
+        &self.config
     }
 
     /// Access the shared AI metrics store (read-only). Used by the
