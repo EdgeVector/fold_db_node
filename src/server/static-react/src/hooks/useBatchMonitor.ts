@@ -1,18 +1,59 @@
 import { useState, useEffect, useRef, useCallback } from 'react'
 import { ingestionClient } from '../api/clients'
 import { usePolling } from './usePolling'
+import type {
+  BatchStatusResponse,
+  SchemaWriteRecord,
+} from '../api/clients/ingestionClient'
+
+interface FileProgressId {
+  progress_id: string
+}
+
+interface BatchReportData {
+  schemas_written: SchemaWriteRecord[]
+  mutations_generated: number
+  mutations_executed: number
+  new_schema_created: boolean
+}
+
+interface BatchReport {
+  success: true
+  data: BatchReportData
+}
+
+interface UseBatchMonitorOpts {
+  batchId: string | null
+  fileProgressIds: FileProgressId[]
+  onBatchLost: () => void
+  onTerminal: () => void
+}
+
+interface UseBatchMonitorResult {
+  batchStatus: BatchStatusResponse | null
+  batchReport: BatchReport | null
+  setBatchReport: React.Dispatch<React.SetStateAction<BatchReport | null>>
+}
 
 /**
  * Polls batch status and aggregates process results when a batch reaches
  * a terminal state (Completed / Cancelled / Failed).
  */
-export function useBatchMonitor({ batchId, fileProgressIds, onBatchLost, onTerminal }) {
-  const [batchStatus, setBatchStatus] = useState(null)
-  const [batchReport, setBatchReport] = useState(null)
+export function useBatchMonitor({
+  batchId,
+  fileProgressIds,
+  onBatchLost,
+  onTerminal,
+}: UseBatchMonitorOpts): UseBatchMonitorResult {
+  const [batchStatus, setBatchStatus] = useState<BatchStatusResponse | null>(null)
+  const [batchReport, setBatchReport] = useState<BatchReport | null>(null)
   const onTerminalRef = useRef(onTerminal)
-  useEffect(() => { onTerminalRef.current = onTerminal })
+  useEffect(() => {
+    onTerminalRef.current = onTerminal
+  })
 
   const pollFn = useCallback(async () => {
+    if (!batchId) throw new Error('no batchId')
     const resp = await ingestionClient.getBatchStatus(batchId)
     if (!resp.success || !resp.data) throw new Error('poll failed')
     setBatchStatus(resp.data)
@@ -25,17 +66,19 @@ export function useBatchMonitor({ batchId, fileProgressIds, onBatchLost, onTermi
       onTerminalRef.current()
       return { stop: true }
     }
+    return undefined
   }, [batchId])
 
   const onMaxFailures = useCallback(() => {
     setBatchStatus(null)
     localStorage.removeItem('activeBatchId')
     localStorage.removeItem('activeBatchStatus')
-    // onBatchLost is stable via usePolling's ref pattern
   }, [])
 
   const onBatchLostRef = useRef(onBatchLost)
-  useEffect(() => { onBatchLostRef.current = onBatchLost })
+  useEffect(() => {
+    onBatchLostRef.current = onBatchLost
+  })
 
   const handleMaxFailures = useCallback(() => {
     onMaxFailures()
@@ -52,7 +95,10 @@ export function useBatchMonitor({ batchId, fileProgressIds, onBatchLost, onTermi
 
   // Reset when batchId is cleared
   useEffect(() => {
-    if (!batchId) { setBatchStatus(null); setBatchReport(null) }
+    if (!batchId) {
+      setBatchStatus(null)
+      setBatchReport(null)
+    }
   }, [batchId])
 
   // Aggregate process results when batch completes
@@ -67,24 +113,32 @@ export function useBatchMonitor({ batchId, fileProgressIds, onBatchLost, onTermi
     const MAX_RETRIES = 5
     const RETRY_DELAY_MS = 2000
 
-    const attempt = async () => {
+    const attempt = async (): Promise<void> => {
       if (cancelled) return
       try {
-        const merged = {}
+        const merged: Record<string, { hash?: string; range?: string }[]> = {}
         let totalGen = 0
         let totalExec = 0
         let anyNew = false
 
         const progressResp = await ingestionClient.getAllProgress()
-        const progressList = Array.isArray(progressResp.data?.progress) ? progressResp.data.progress
-          : Array.isArray(progressResp.data) ? progressResp.data : []
-        const idSet = new Set(fileProgressIds.map(f => f.progress_id))
+        const data = progressResp.data as
+          | { progress?: unknown }
+          | unknown[]
+          | undefined
+        const progressList = Array.isArray((data as { progress?: unknown })?.progress)
+          ? ((data as { progress: unknown[] }).progress)
+          : Array.isArray(data)
+            ? data
+            : []
+        const idSet = new Set(fileProgressIds.map((f) => f.progress_id))
         for (const job of progressList) {
-          if (!idSet.has(job.id)) continue
-          const r = job.results
+          const j = job as { id?: string; results?: { mutations_generated?: number; mutations_executed?: number; new_schema_created?: boolean } }
+          if (!j.id || !idSet.has(j.id)) continue
+          const r = j.results
           if (!r) continue
-          totalGen += r.mutations_generated || 0
-          totalExec += r.mutations_executed || 0
+          totalGen += r.mutations_generated ?? 0
+          totalExec += r.mutations_executed ?? 0
           if (r.new_schema_created) anyNew = true
         }
 
@@ -93,18 +147,22 @@ export function useBatchMonitor({ batchId, fileProgressIds, onBatchLost, onTermi
           try {
             const resp = await ingestionClient.getProcessResults(file.progress_id)
             if (!resp.success) continue
-            const results = resp.data?.results || []
+            const results = resp.data?.results ?? []
             for (const r of results) {
               if (!merged[r.schema_name]) merged[r.schema_name] = []
               merged[r.schema_name].push(r.key_value)
             }
-          } catch { /* skip failed fetches */ }
+          } catch {
+            /* skip failed fetches */
+          }
         }
 
-        const schemasWritten = Object.entries(merged).map(([name, keys]) => ({
-          schema_name: name,
-          keys_written: keys,
-        }))
+        const schemasWritten: SchemaWriteRecord[] = Object.entries(merged).map(
+          ([name, keys]) => ({
+            schema_name: name,
+            keys_written: keys,
+          }),
+        )
         if (cancelled) return
         if (schemasWritten.length > 0) {
           setBatchReport({
@@ -129,7 +187,10 @@ export function useBatchMonitor({ batchId, fileProgressIds, onBatchLost, onTermi
     }
 
     const timer = setTimeout(attempt, 1000)
-    return () => { cancelled = true; clearTimeout(timer) }
+    return () => {
+      cancelled = true
+      clearTimeout(timer)
+    }
   }, [batchId, batchStatus, batchReport, fileProgressIds])
 
   return { batchStatus, batchReport, setBatchReport }

@@ -1,6 +1,17 @@
 import { useCallback, useEffect, useState } from 'react'
-import { getDatabaseStatus } from '../api/clients/systemClient'
+import {
+  getDatabaseStatus,
+  type DatabaseStatusResponse,
+} from '../api/clients/systemClient'
 import { getIdentityCard } from '../api/clients/trustClient'
+
+interface UseDatabaseInitResult {
+  dbStatus: DatabaseStatusResponse | null
+  dbStatusLoading: boolean
+  showOnboarding: boolean
+  setShowOnboarding: React.Dispatch<React.SetStateAction<boolean>>
+  recheckDbStatus: () => void
+}
 
 /**
  * Orchestrates database initialization check and onboarding wizard decision.
@@ -15,12 +26,12 @@ import { getIdentityCard } from '../api/clients/trustClient'
  * Returns `recheckDbStatus` so callers (e.g. DatabaseSetupScreen.onComplete)
  * can re-run the status check after first-time setup.
  */
-export function useDatabaseInit(isAuthenticated) {
-  const [dbStatus, setDbStatus] = useState(null) // { initialized, has_saved_config }
+export function useDatabaseInit(isAuthenticated: boolean): UseDatabaseInitResult {
+  const [dbStatus, setDbStatus] = useState<DatabaseStatusResponse | null>(null)
   const [dbStatusLoading, setDbStatusLoading] = useState(true)
   const [showOnboarding, setShowOnboarding] = useState(false)
 
-  const runStatusCheck = useCallback((evaluateOnboarding) => {
+  const runStatusCheck = useCallback((evaluateOnboarding: boolean) => {
     setDbStatusLoading(true)
     getDatabaseStatus()
       .then((response) => {
@@ -54,7 +65,6 @@ export function useDatabaseInit(isAuthenticated) {
             }
           }
         } else {
-          // If endpoint is unavailable (older backend), assume initialized
           setDbStatus({
             initialized: true,
             has_saved_config: true,
@@ -63,7 +73,6 @@ export function useDatabaseInit(isAuthenticated) {
         }
       })
       .catch(() => {
-        // If endpoint doesn't exist, assume initialized (backwards compat)
         setDbStatus({
           initialized: true,
           has_saved_config: true,
@@ -73,7 +82,6 @@ export function useDatabaseInit(isAuthenticated) {
       .finally(() => setDbStatusLoading(false))
   }, [])
 
-  // Check database status after authenticated
   useEffect(() => {
     if (!isAuthenticated) return
     runStatusCheck(true)
@@ -90,8 +98,11 @@ export function useDatabaseInit(isAuthenticated) {
         }
       })
       .catch(() => {
-        // Assume initialized after successful setup call
-        setDbStatus({ initialized: true, has_saved_config: true })
+        setDbStatus({
+          initialized: true,
+          has_saved_config: true,
+          onboarding_complete: true,
+        })
       })
       .finally(() => setDbStatusLoading(false))
   }, [])
