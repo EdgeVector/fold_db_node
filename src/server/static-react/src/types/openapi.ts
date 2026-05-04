@@ -796,6 +796,11 @@ export interface components {
             schema_name: string;
             value: unknown;
         };
+        /** @description Response for native index search */
+        IndexSearchResponse: {
+            /** @description Search results */
+            results: unknown;
+        };
         /** @enum {string} */
         IndexingState: "Idle" | "Indexing";
         IndexingStatus: {
@@ -1189,6 +1194,11 @@ export interface components {
             query: unknown;
             reasoning: string;
         };
+        /** @description Response for query execution */
+        QueryResponse: {
+            /** @description Query results */
+            results: unknown;
+        };
         /** @description Field storing a range of values. */
         RangeField: components["schemas"]["FieldCommon"] & {
             molecule?: components["schemas"]["MoleculeRange"] | null;
@@ -1268,6 +1278,13 @@ export interface components {
         /** @description Field storing a single value. */
         SingleField: components["schemas"]["FieldCommon"] & {
             molecule?: components["schemas"]["Molecule"] | null;
+        };
+        /** @description Single mutation response (for backward compatibility with existing API) */
+        SingleMutationResponse: {
+            /** @description The mutation ID */
+            mutation_id: string;
+            /** @description Success flag */
+            success: boolean;
         };
         /**
          * @description Transform stores a schema_name reference.

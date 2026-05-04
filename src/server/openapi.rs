@@ -105,6 +105,9 @@ use utoipa::OpenApi;
             fold_db::fold_db_core::orchestration::IndexingStatus,
             fold_db::fold_db_core::orchestration::IndexingState,
             crate::server::routes::query::MutationResponse,
+            crate::handlers::query::QueryResponse,
+            crate::handlers::query::IndexSearchResponse,
+            crate::handlers::mutation::SingleMutationResponse,
             crate::handlers::system::NodeKeyResponse
         )
     ),
