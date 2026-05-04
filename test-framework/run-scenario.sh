@@ -71,6 +71,12 @@ fi
 SESSION_DIR="$FRAMEWORK_DIR/logs/$RUN_ID"
 mkdir -p "$SESSION_DIR/state" "$SESSION_DIR/nodes"
 
+# Mirror stdout + stderr into the session directory so the CI summary step
+# (and humans, post-mortem) can grep [PASS]/[FAIL] for one specific run
+# without re-parsing the entire workflow job log. Live console output is
+# unaffected; stderr stays distinct so red text in the GHA UI still works.
+exec > >(tee -a "$SESSION_DIR/run.log") 2> >(tee -a "$SESSION_DIR/run.log" >&2)
+
 # Validate the scenario against scenarios/schema.json. This is MANDATORY —
 # skipping it lets typos in action names (e.g. "polll_requests") pass as
 # implicit no-ops, which then surface as cryptic "step passed with no

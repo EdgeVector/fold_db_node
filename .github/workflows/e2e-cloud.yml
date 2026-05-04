@@ -180,19 +180,17 @@ jobs:
           retention-days: 7
 
       - name: Summary
+        # Per-scenario, per-assertion summary table + ::error:: annotations
+        # for any failed assertion / failed step / incomplete run. Replaces
+        # the old `find -name "*.failed"` summary, which never matched
+        # anything (run-scenario.sh doesn't emit those marker files), so
+        # every run was silently labelled ✅ PASS regardless of outcome.
+        # Stdout → step summary, stderr → job log (where GHA parses
+        # ::error:: lines into top-of-page annotations).
         if: always()
         run: |
-          echo "## E2E Cloud Test Results" >> $GITHUB_STEP_SUMMARY
-          echo "" >> $GITHUB_STEP_SUMMARY
-          echo "| Scenario | Result |" >> $GITHUB_STEP_SUMMARY
-          echo "|---|---|" >> $GITHUB_STEP_SUMMARY
-          cd test-framework
-          for run_dir in logs/run-*; do
-            [[ -d "$run_dir" ]] || continue
-            name=$(basename "$run_dir")
-            if find "$run_dir/state" -name "*.failed" 2>/dev/null | grep -q .; then
-              echo "| $name | ❌ FAIL |" >> $GITHUB_STEP_SUMMARY
-            else
-              echo "| $name | ✅ PASS |" >> $GITHUB_STEP_SUMMARY
-            fi
-          done
+          {
+            echo "## E2E Cloud Test Results"
+            echo ""
+            bash test-framework/scripts/render-ci-summary.sh test-framework/logs
+          } >> "$GITHUB_STEP_SUMMARY"
