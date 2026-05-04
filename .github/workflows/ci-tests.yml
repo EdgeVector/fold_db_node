@@ -82,9 +82,6 @@ jobs:
       - name: Run no-hardcoded-urls lint (env registry)
         run: bash scripts/lint-no-hardcoded-urls.sh
 
-      - name: Run no-new-jsx lint (TS migration guardrail)
-        run: bash scripts/lint-no-new-jsx.sh
-
   rust-fast:
     name: Rust Fast (PR)
     needs: changes

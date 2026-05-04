@@ -6,15 +6,6 @@ import path from "path";
 export default defineConfig({
   base: "./",
   plugins: [react()],
-  resolve: {
-    alias: {
-      // Import TypeScript bindings directly from where ts-rs generates them
-      "@generated": path.resolve(
-        __dirname,
-        "../../../bindings/src/fold_node/static-react/src/types",
-      ),
-    },
-  },
   build: {
     outDir: "dist-lib",
     lib: {

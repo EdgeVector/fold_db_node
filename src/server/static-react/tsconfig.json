@@ -22,10 +22,7 @@
     // allowJs lets those imports resolve without per-file `.d.ts` shims.
     // checkJs stays off (default) — the .js/.jsx bodies are not typechecked.
     "allowJs": true,
-    "baseUrl": ".",
-    "paths": {
-      "@generated/*": ["../../../bindings/src/fold_node/static-react/src/types/*"]
-    }
+    "baseUrl": "."
   },
   "include": ["src/**/*.ts", "src/**/*.tsx", "scripts/**/*.ts"],
   "exclude": ["node_modules", "dist", "src/types/openapi.ts"]
