@@ -79,6 +79,19 @@ fn scan_directory_recursive(
         return Ok(());
     }
 
+    // A directory containing one of CODING_PROJECT_MANIFESTS at its top level
+    // is treated as a coding project and skipped entirely (the directory and
+    // ALL descendants), before any LLM classification. The manifest files are
+    // not added to `skipped` — they're not "skipped because of extension",
+    // they're invisible because the whole subtree is.
+    if is_coding_project_root(current) {
+        tracing::info!(
+            path = %current.display(),
+            "smart_folder: skipping coding project directory"
+        );
+        return Ok(());
+    }
+
     let entries = std::fs::read_dir(current).map_err(|e| {
         IngestionError::InvalidInput(format!(
             "Failed to read directory {}: {}",
@@ -217,6 +230,30 @@ pub const CONFIG_EXTS: &[&str] = &["yaml", "yml", "toml", "xml"];
 pub const IMAGE_EXTS: &[&str] = &[
     "jpg", "jpeg", "png", "gif", "bmp", "webp", "tiff", "tif", "svg", "heic", "heif", "avif",
 ];
+
+/// Manifest filenames that mark a directory as a coding project.
+/// The scanner skips any directory whose immediate children contain one of these
+/// (and all its descendants) before LLM classification — see
+/// `scan_directory_recursive`.
+pub const CODING_PROJECT_MANIFESTS: &[&str] = &["package.json", "Cargo.toml", "pyproject.toml"];
+
+/// Returns true if `dir`'s immediate children include any of
+/// `CODING_PROJECT_MANIFESTS`. Errors reading the directory are treated as
+/// "not a coding project" — the caller will surface the same error itself
+/// when it tries to walk the directory.
+pub fn is_coding_project_root(dir: &Path) -> bool {
+    let Ok(entries) = std::fs::read_dir(dir) else {
+        return false;
+    };
+    for entry in entries.flatten() {
+        let name = entry.file_name();
+        let Some(name) = name.to_str() else { continue };
+        if CODING_PROJECT_MANIFESTS.contains(&name) {
+            return true;
+        }
+    }
+    false
+}
 
 /// Returns true if the file has an extension we can ingest.
 pub fn is_ingestible_file(path: &str) -> bool {

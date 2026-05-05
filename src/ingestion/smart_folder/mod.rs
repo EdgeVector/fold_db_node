@@ -486,17 +486,18 @@ mod tests {
     }
 
     #[test]
-    fn test_scan_includes_coding_project_files() {
+    fn test_scan_skips_coding_project_directories() {
         let tmp = tempfile::tempdir().unwrap();
         let root = tmp.path();
 
-        // Node.js project (package.json)
+        // Node.js project (package.json) — whole subtree should be skipped
         let node_dir = root.join("my_website");
         std::fs::create_dir_all(&node_dir).unwrap();
         std::fs::write(node_dir.join("package.json"), r#"{"name":"test"}"#).unwrap();
         std::fs::write(node_dir.join("index.js"), "console.log('hi')").unwrap();
+        std::fs::write(node_dir.join("README.md"), "# Site").unwrap();
 
-        // Rust project (Cargo.toml)
+        // Rust project (Cargo.toml) — nested src/main.rs must also be excluded
         let rust_dir = root.join("rust_cli");
         std::fs::create_dir_all(rust_dir.join("src")).unwrap();
         std::fs::write(rust_dir.join("Cargo.toml"), "[package]\nname = \"test\"").unwrap();
@@ -507,20 +508,58 @@ mod tests {
         std::fs::create_dir_all(&py_dir).unwrap();
         std::fs::write(py_dir.join("pyproject.toml"), "[project]\nname = \"test\"").unwrap();
         std::fs::write(py_dir.join("analysis.py"), "import pandas").unwrap();
+        std::fs::write(py_dir.join("requirements.txt"), "pandas==2.0").unwrap();
 
-        // Normal personal file
+        // Sibling personal file — must still be picked up
         std::fs::write(root.join("notes.txt"), "my notes").unwrap();
 
         let files = scan_directory_tree(root, 10, 50000).unwrap();
 
-        // Should find personal files AND coding project files with ingestible extensions
-        assert!(files.contains(&"notes.txt".to_string()));
-        assert!(files.contains(&"my_website/index.js".to_string()));
-        assert!(files.contains(&"rust_cli/src/main.rs".to_string()));
-        assert!(files.contains(&"data_analysis/analysis.py".to_string()));
-        assert!(files.contains(&"my_website/package.json".to_string()));
-        assert!(files.contains(&"rust_cli/Cargo.toml".to_string()));
-        assert!(files.contains(&"data_analysis/pyproject.toml".to_string()));
+        // Sibling personal file IS in the result
+        assert!(
+            files.contains(&"notes.txt".to_string()),
+            "expected sibling notes.txt to be scanned, got: {:?}",
+            files
+        );
+
+        // No file from any coding-project subtree should appear
+        for f in &files {
+            assert!(
+                !f.starts_with("my_website/"),
+                "my_website/* should be skipped, found: {}",
+                f
+            );
+            assert!(
+                !f.starts_with("rust_cli/"),
+                "rust_cli/* should be skipped, found: {}",
+                f
+            );
+            assert!(
+                !f.starts_with("data_analysis/"),
+                "data_analysis/* should be skipped, found: {}",
+                f
+            );
+        }
+    }
+
+    #[test]
+    fn test_scan_skips_coding_project_at_root() {
+        // If the user points the scanner directly at a coding project's root,
+        // the entire scan returns zero candidates.
+        let tmp = tempfile::tempdir().unwrap();
+        let root = tmp.path();
+
+        std::fs::write(root.join("Cargo.toml"), "[package]\nname = \"test\"").unwrap();
+        std::fs::create_dir_all(root.join("src")).unwrap();
+        std::fs::write(root.join("src/main.rs"), "fn main() {}").unwrap();
+        std::fs::write(root.join("README.md"), "# Project").unwrap();
+
+        let files = scan_directory_tree(root, 10, 50000).unwrap();
+        assert!(
+            files.is_empty(),
+            "scanning a coding project root should yield zero files, got: {:?}",
+            files
+        );
     }
 
     #[test]

@@ -113,7 +113,7 @@ sample_data/
 │   │   └── sfo_to_tokyo_2025.json  # Flight booking
 │   └── hotels/
 │       └── tokyo_hotel.json     # Hotel reservation
-├── coding_projects/                 # Coding projects (currently classified as code; manifest-based auto-skip pending — see task 1e2c7)
+├── coding_projects/                 # Coding projects (should be auto-skipped)
 │   ├── my_website/              # Node.js project (has package.json)
 │   │   ├── package.json
 │   │   ├── index.js
@@ -142,9 +142,9 @@ The LLM classifier should:
 - **Skip** dotfiles (e.g. `.bashrc` — filtered by the scanner because it starts with `.`), binaries (`.exe`, `.dll`), font files (`.woff2`)
 - **Skip** saved webpage scaffolding (CSS, GIFs inside `bank_of_america/`) while possibly recommending the HTML content
 - **Recommend** photos and PDFs as media/personal data (these are valid files and will be processed via the vision model)
+- **Auto-skip** coding projects (`coding_projects/`) — directories whose immediate children contain `package.json`, `Cargo.toml`, or `pyproject.toml` are skipped entirely (the directory and all descendants) before LLM classification. See `src/ingestion/smart_folder/scanner.rs::is_coding_project_root`.
 
 Aspirational behavior — not yet implemented:
-- **Auto-skip** coding projects (`coding_projects/`) — directories containing manifest files like `package.json`, `Cargo.toml`, or `pyproject.toml` should be skipped entirely before LLM classification. **TODO** (kanban task `1e2c7`): currently the scanner walks into these directories and the heuristic classifies their `.json`/`.toml`/`.py`/`.rs`/`.js` files as personal data or code, so they appear in the recommended list. See `src/ingestion/smart_folder/scanner.rs`.
 - **Skip** by-name config files like `settings.json` — currently NOT skipped (the heuristic treats `.json` as text/data). Only dotfiles and non-ingestible extensions are dropped today; LLM judgment may still override.
 
 ## Dependencies
