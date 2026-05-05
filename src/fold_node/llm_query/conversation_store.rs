@@ -15,7 +15,7 @@ use fold_db::schema::SchemaState;
 use serde_json::json;
 use std::collections::HashMap;
 
-const AI_CONVERSATIONS_SCHEMA: &str = "ai_conversations";
+pub(crate) const AI_CONVERSATIONS_SCHEMA: &str = "ai_conversations";
 
 fn build_schema() -> DeclarativeSchemaDefinition {
     let fields = vec![

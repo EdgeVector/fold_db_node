@@ -337,6 +337,12 @@ impl OperationProcessor {
 
         let schemas = self.list_schemas().await?;
 
+        // No session is persisted from this entry point (the CLI/admin
+        // path does not save conversation turns), so synthesize a unique
+        // id so the in-loop filter has a well-defined session scope and
+        // can't collide with any persisted ai_conversations record.
+        let synthetic_session_id = format!("admin-{}", uuid::Uuid::new_v4());
+
         service
             .run_agent_query(
                 user_query,
@@ -346,6 +352,7 @@ impl OperationProcessor {
                 max_iterations,
                 &[],
                 None,
+                &synthetic_session_id,
             )
             .await
             .map_err(FoldDbError::Other)

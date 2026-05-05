@@ -216,6 +216,7 @@ async fn test_smart_folder_tweets_ingest_and_query() {
             10,
             &[],
             None,
+            "test-session",
         )
         .await
         .expect("AI query should succeed");
