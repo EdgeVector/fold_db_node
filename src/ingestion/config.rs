@@ -553,6 +553,20 @@ impl IngestionConfig {
         match store_key {
             Some(key) => {
                 config.anthropic.api_key = key;
+                // Crash-recovery: a previous boot wrote the sensitive store
+                // but died before rewriting `ingestion_config.json`, so the
+                // plaintext copy is stranded on disk. Clean it now —
+                // otherwise the JSON file carries a forgotten secret forever.
+                if let Some(saved) = legacy_saved_for_migration.as_mut() {
+                    if !saved.anthropic.api_key.is_empty() {
+                        Self::strip_legacy_api_key_from_disk(&path, saved)?;
+                        tracing::info!(
+                            target: "fold_node::ingestion",
+                            "Cleared stranded plaintext anthropic.api_key from {} (sensitive store already populated)",
+                            path.display()
+                        );
+                    }
+                }
             }
             None => {
                 // Store empty; honor the legacy plaintext field if present
@@ -562,15 +576,7 @@ impl IngestionConfig {
                     crate::ingestion::anthropic_key_store::save(config_dir, &legacy_key)
                         .map_err(crate::ingestion::IngestionError::configuration_error)?;
                     if let Some(saved) = legacy_saved_for_migration.as_mut() {
-                        saved.anthropic.api_key = String::new();
-                        // Rewrite the JSON file without the api_key field;
-                        // skip_serializing_if keeps it out of the output.
-                        Self::write_saved_to_disk(&path, saved).map_err(|e| {
-                            crate::ingestion::IngestionError::configuration_error(format!(
-                                "Failed to migrate legacy api_key out of {}: {e}",
-                                path.display()
-                            ))
-                        })?;
+                        Self::strip_legacy_api_key_from_disk(&path, saved)?;
                     }
                     tracing::info!(
                         target: "fold_node::ingestion",
@@ -737,6 +743,25 @@ impl IngestionConfig {
         let content = serde_json::to_string_pretty(saved)?;
         std::fs::write(path, content)?;
         Ok(())
+    }
+
+    /// Clear `saved.anthropic.api_key` and rewrite `ingestion_config.json`
+    /// without it. Shared by both branches of the legacy-plaintext migration
+    /// (fresh migrate + crash-recovery cleanup) so the on-disk side-effect
+    /// can't drift between them.
+    fn strip_legacy_api_key_from_disk(
+        path: &std::path::Path,
+        saved: &mut SavedConfig,
+    ) -> Result<(), crate::ingestion::IngestionError> {
+        saved.anthropic.api_key = String::new();
+        // skip_serializing_if = "String::is_empty" on the field keeps the now-
+        // empty api_key out of the serialized JSON entirely.
+        Self::write_saved_to_disk(path, saved).map_err(|e| {
+            crate::ingestion::IngestionError::configuration_error(format!(
+                "Failed to strip legacy api_key from {}: {e}",
+                path.display()
+            ))
+        })
     }
 
     // AI config is per-device — saved to ingestion_config.json only.
@@ -1765,6 +1790,49 @@ mod tests {
         // Second load is idempotent — store is the source.
         let loaded_again = IngestionConfig::load(tmp.path()).expect("second load");
         assert_eq!(loaded_again.anthropic.api_key, "sk-ant-legacy");
+    }
+
+    #[test]
+    fn load_strips_stranded_plaintext_when_store_already_populated() {
+        // Crash-recovery: a previous boot wrote the sensitive store but the
+        // daemon died before rewriting `ingestion_config.json`. Next load()
+        // must keep the store's key (it's authoritative) and clean the
+        // stranded plaintext from disk so it doesn't live there forever.
+        let _guard = anthropic_api_key_env_lock();
+        let tmp = tempfile::tempdir().expect("tempdir");
+        env::remove_var("ANTHROPIC_API_KEY");
+
+        crate::ingestion::anthropic_key_store::save(tmp.path(), "sk-ant-canonical")
+            .expect("seed sensitive store");
+
+        let path = tmp.path().join("ingestion_config.json");
+        let stranded = serde_json::json!({
+            "provider": "Anthropic",
+            "anthropic": {
+                "api_key": "sk-ant-stranded",
+                "model": "claude-haiku-4-5-20251001",
+                "base_url": "https://api.anthropic.com",
+            }
+        });
+        std::fs::write(&path, serde_json::to_string_pretty(&stranded).unwrap()).unwrap();
+
+        let loaded = IngestionConfig::load(tmp.path()).expect("load");
+        assert_eq!(
+            loaded.anthropic.api_key, "sk-ant-canonical",
+            "store key wins over stranded plaintext"
+        );
+
+        let raw = read_raw_saved_json(tmp.path());
+        assert!(
+            raw["anthropic"].get("api_key").is_none(),
+            "expected stranded api_key to be stripped from JSON, got: {raw}"
+        );
+
+        // Idempotent: a second load is a no-op (no plaintext left to strip).
+        let loaded_again = IngestionConfig::load(tmp.path()).expect("second load");
+        assert_eq!(loaded_again.anthropic.api_key, "sk-ant-canonical");
+        let raw_again = read_raw_saved_json(tmp.path());
+        assert!(raw_again["anthropic"].get("api_key").is_none());
     }
 
     #[test]
