@@ -2127,7 +2127,6 @@ name = "fold_db_node"
 version = "0.3.13"
 dependencies = [
  "actix-cors",
- "actix-http",
  "actix-multipart",
  "actix-web",
  "aes-gcm",
@@ -2138,7 +2137,6 @@ dependencies = [
  "chrono",
  "clap",
  "clap_complete",
- "colored",
  "comfy-table",
  "console",
  "csv",
@@ -2184,10 +2182,8 @@ dependencies = [
  "thiserror 1.0.69",
  "tokio",
  "tokio-stream",
- "toml",
  "tracing",
  "tracing-actix-web",
- "tracing-log",
  "tracing-opentelemetry",
  "tracing-subscriber",
  "ts-rs",
