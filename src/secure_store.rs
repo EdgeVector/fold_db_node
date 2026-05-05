@@ -76,30 +76,7 @@ pub fn encrypt_and_write(path: &std::path::Path, plaintext: &[u8]) -> Result<(),
             .map_err(|e| format!("Failed to create directory: {}", e))?;
     }
 
-    #[cfg(unix)]
-    {
-        use std::io::Write;
-        use std::os::unix::fs::OpenOptionsExt;
-        let file = std::fs::OpenOptions::new()
-            .write(true)
-            .create(true)
-            .truncate(true)
-            .mode(0o600)
-            .open(path)
-            .map_err(|e| format!("Failed to open file for writing: {}", e))?;
-        let mut writer = std::io::BufWriter::new(file);
-        writer
-            .write_all(&envelope)
-            .map_err(|e| format!("Failed to write encrypted file: {}", e))?;
-    }
-
-    #[cfg(not(unix))]
-    {
-        std::fs::write(path, &envelope)
-            .map_err(|e| format!("Failed to write encrypted file: {}", e))?;
-    }
-
-    Ok(())
+    crate::sensitive_io::write_atomic_0600(path, &envelope)
 }
 
 /// Read an encrypted file from disk and decrypt with the master key.

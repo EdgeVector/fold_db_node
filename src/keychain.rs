@@ -71,30 +71,7 @@ pub fn store_credentials(creds: &ExememCredentials) -> Result<(), String> {
     let json = serde_json::to_string_pretty(creds)
         .map_err(|e| format!("Failed to serialize credentials: {}", e))?;
 
-    // Set restrictive permissions on Unix before writing
-    #[cfg(unix)]
-    {
-        use std::os::unix::fs::OpenOptionsExt;
-        let file = std::fs::OpenOptions::new()
-            .write(true)
-            .create(true)
-            .truncate(true)
-            .mode(0o600)
-            .open(&path)
-            .map_err(|e| format!("Failed to open credentials file: {}", e))?;
-        use std::io::Write;
-        let mut writer = std::io::BufWriter::new(file);
-        writer
-            .write_all(json.as_bytes())
-            .map_err(|e| format!("Failed to write credentials: {}", e))?;
-    }
-
-    #[cfg(not(unix))]
-    {
-        std::fs::write(&path, &json).map_err(|e| format!("Failed to write credentials: {}", e))?;
-    }
-
-    Ok(())
+    crate::sensitive_io::write_atomic_0600(&path, json.as_bytes())
 }
 
 #[cfg(not(feature = "os-keychain"))]
