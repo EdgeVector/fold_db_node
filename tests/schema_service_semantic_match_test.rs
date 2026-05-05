@@ -590,11 +590,31 @@ async fn semantic_field_rename_real_embeddings() {
     let state = SchemaServiceState::new(db_path, Arc::new(FastEmbedAdapter(FastEmbedModel::new())))
         .expect("failed to init state");
 
+    // Realistic field descriptions modelled on what an LLM would emit during
+    // schema proposal. The auto-fill in [`json_to_schema`] (`"{field} field"`)
+    // is too thin for the hybrid embedding format `"the {field} of the
+    // {context}: {description}"` — with synthetic descriptions every pair
+    // collapses toward the shared descriptive-name scaffold, putting
+    // creator↔artist just under SEMANTIC_RENAME_THRESHOLD (0.84) and
+    // medium↔artist just over. Realistic descriptions restore the calibrated
+    // discrimination (creator↔artist ≈0.95, medium↔artist ≈0.68).
+    let artist_desc = "The person or group who created the artwork";
+    let creator_desc = "The person or group who created the work";
+    let title_desc = "The name or title of the artwork";
+    let year_desc = "The calendar year in which the artwork was created";
+    let medium_desc =
+        "The materials and technique used to make the artwork (oil on canvas, watercolor, sculpture)";
+
     // Schema A: artwork with "artist"
     let schema_a = json_to_schema(json!({
         "name": "SchemaA",
         "descriptive_name": "Artwork Collection",
-        "fields": ["artist", "title", "year"]
+        "fields": ["artist", "title", "year"],
+        "field_descriptions": {
+            "artist": artist_desc,
+            "title": title_desc,
+            "year": year_desc,
+        },
     }));
 
     state
@@ -606,7 +626,13 @@ async fn semantic_field_rename_real_embeddings() {
     let schema_b = json_to_schema(json!({
         "name": "SchemaB",
         "descriptive_name": "Artwork Collection",
-        "fields": ["creator", "title", "year", "medium"]
+        "fields": ["creator", "title", "year", "medium"],
+        "field_descriptions": {
+            "creator": creator_desc,
+            "title": title_desc,
+            "year": year_desc,
+            "medium": medium_desc,
+        },
     }));
 
     let outcome = state
