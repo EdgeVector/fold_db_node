@@ -42,7 +42,6 @@ observability = { git = "https://github.com/EdgeVector/fold_db.git", rev = "2560
 
 # HTTP Server
 actix-web = "4.3"
-actix-http = "3"
 actix-cors = "0.6"
 actix-multipart = "0.6"
 tracing-actix-web = "0.7"
@@ -81,7 +80,6 @@ opentelemetry = "0.27"
 # types but its own HeaderMap is a different container, so we have to
 # rebuild an http::HeaderMap on ingress.
 http = "1"
-toml = "0.8"
 tempfile = "3.8"
 uuid = { version = "1.0", features = ["v4", "serde"] }
 chrono = { version = "0.4", features = ["serde"] }
@@ -106,7 +104,6 @@ async-trait = "0.1"
 # observability subscriber itself is composed upstream via
 # `observability::init_node_with_web`; do not re-add layer composition here.
 tracing-subscriber = { version = "0.3", features = ["env-filter", "registry"] }
-tracing-log = "0.2"
 opentelemetry_sdk = "0.27"
 
 # Approximate nearest neighbor index for the face fingerprint cache.
@@ -116,7 +113,6 @@ instant-distance = "0.6"
 
 thiserror = "1.0"
 keyring = { version = "3", optional = true }
-colored = "3.1.1"
 
 # Concurrent hash map for AiMetricsStore (per-role atomic counters).
 dashmap = "6"
