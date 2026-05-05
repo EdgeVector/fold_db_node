@@ -1236,13 +1236,7 @@ impl LlmQueryService {
 
                     // Execute the tool, capturing errors as results so the agent can retry
                     let result = match self
-                        .execute_tool(
-                            &tool,
-                            &params,
-                            node,
-                            progress_tracker,
-                            current_session_id,
-                        )
+                        .execute_tool(&tool, &params, node, progress_tracker, current_session_id)
                         .await
                     {
                         Ok(val) => val,
@@ -1360,7 +1354,11 @@ mod tests {
         // we shouldn't drop it on a session_id == "" match.
         let mut results = vec![make_result(AI_CONVERSATIONS_SCHEMA, None)];
         drop_current_session_hits(&mut results, "");
-        assert_eq!(results.len(), 1, "None hash must not match empty session id");
+        assert_eq!(
+            results.len(),
+            1,
+            "None hash must not match empty session id"
+        );
     }
 
     #[test]
