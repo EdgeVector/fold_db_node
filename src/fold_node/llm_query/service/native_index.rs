@@ -87,6 +87,21 @@ impl LlmQueryService {
     ///
     /// This is the first step of the AI-native index query workflow.
     /// Call `interpret_native_index_results` separately to get AI interpretation.
+    ///
+    /// Plumbing schemas (`Mention`, `MentionBySource`, `ExtractionStatus`,
+    /// `IngestionError`, `TriggerFiring`, `ExtractionRule`) are filtered
+    /// out via
+    /// [`crate::fold_node::operation_processor::is_internal_index_schema`]
+    /// — the LLM-facing query path should never surface
+    /// fingerprint-cross-reference rows.
+    ///
+    /// `ai_conversations` is *not* filtered here: per-term
+    /// [`drop_current_session_hits`] already strips current-session turns,
+    /// and prior-session conversations should remain searchable so the
+    /// agent can recall earlier turns ("didn't I ask you about Tokyo last
+    /// week?"). The agent's `search` tool (in [`Self::execute_tool`]) does
+    /// drop all `ai_conversations` because it surfaces results as a
+    /// "data type" inventory, where self-references are pure noise.
     pub async fn search_native_index(
         &self,
         user_query: &str,
@@ -98,6 +113,19 @@ impl LlmQueryService {
         let search_terms = self
             .generate_native_index_search_terms(user_query, schemas)
             .await?;
+
+        // Build a canonical→descriptive name map so the internal-schema
+        // filter can match either form (fingerprint schemas have hashed
+        // canonical names but stable descriptive names).
+        let display_names: std::collections::HashMap<&str, &str> = schemas
+            .iter()
+            .filter_map(|s| {
+                s.schema
+                    .descriptive_name
+                    .as_deref()
+                    .map(|dn| (s.schema.name.as_str(), dn))
+            })
+            .collect();
 
         // Step 2: Execute native index searches for each term. See
         // `drop_current_session_hits` for why current-session turns are
@@ -124,8 +152,23 @@ impl LlmQueryService {
             }
         }
 
+        let pre_filter = all_results.len();
+        all_results.retain(|r| {
+            // Keep ai_conversations — drop_current_session_hits already
+            // handled the noise case.
+            if r.schema_name == AI_CONVERSATIONS_SCHEMA {
+                return true;
+            }
+            let descriptive = display_names.get(r.schema_name.as_str()).copied();
+            !crate::fold_node::operation_processor::is_internal_index_schema(
+                &r.schema_name,
+                descriptive,
+            )
+        });
+
         tracing::info!(
-            "LLM Query: Found {} results from native index",
+            "LLM Query: Found {} results from native index ({} after filtering internal schemas)",
+            pre_filter,
             all_results.len()
         );
 
@@ -338,11 +381,21 @@ impl LlmQueryService {
                     .and_then(|t| t.as_str())
                     .ok_or("search tool requires 'terms' parameter")?;
 
+                // include_internal=false strips Mention / MentionBySource /
+                // ExtractionStatus / IngestionError / TriggerFiring /
+                // ai_conversations / ExtractionRule. The agent's `search`
+                // tool surfaces results as a "what data do I have?"
+                // inventory, where bookkeeping schemas (and the agent's own
+                // past turns) are pure noise.
                 let mut results = processor
-                    .native_index_search(terms)
+                    .native_index_search(terms, false)
                     .await
                     .map_err(|e| format!("Search failed: {}", e))?;
 
+                // Defensive: ai_conversations is already in the
+                // include_internal filter list, so this is a no-op today —
+                // kept so the intent survives if the filter list ever
+                // changes.
                 drop_current_session_hits(&mut results, current_session_id);
 
                 serde_json::to_value(&results)

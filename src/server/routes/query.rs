@@ -119,7 +119,8 @@ pub async fn execute_mutation(
     path = "/api/native-index/search",
     tag = "query",
     params(
-        ("term" = String, Query, description = "Search term for native word index")
+        ("term" = String, Query, description = "Search term for native word index"),
+        ("include_internal" = Option<bool>, Query, description = "Include internal/bookkeeping schemas (Mention, MentionBySource, ExtractionStatus, IngestionError, TriggerFiring, ai_conversations, ExtractionRule). Defaults to false."),
     ),
     responses(
         // body = [serde_json::Value]: utoipa emits the $ref using the
@@ -149,16 +150,22 @@ pub async fn native_index_search(
         }
     };
 
+    let include_internal = query
+        .get("include_internal")
+        .map(|v| matches!(v.trim().to_ascii_lowercase().as_str(), "1" | "true" | "yes"))
+        .unwrap_or(false);
+
     let (user_hash, node) = node_or_return!(state);
 
     tracing::info!(
             target: "fold_node::http_server",
-        "native_index_search: term='{}', user='{}'",
+        "native_index_search: term='{}', user='{}', include_internal={}",
         term,
-        user_hash
+        user_hash,
+        include_internal
     );
 
-    match query_handlers::native_index_search(&term, &user_hash, &node).await {
+    match query_handlers::native_index_search(&term, include_internal, &user_hash, &node).await {
         Ok(response) => HttpResponse::Ok().json(response),
         Err(e) => {
             tracing::error!(

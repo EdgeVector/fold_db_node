@@ -82,7 +82,7 @@ async fn test_indexed_records_appear_in_search() {
     .await;
 
     let results = processor
-        .native_index_search("systems programming language")
+        .native_index_search("systems programming language", false)
         .await
         .expect("Search failed");
 
@@ -130,7 +130,7 @@ async fn test_semantic_ranking_returns_most_relevant_first() {
     .await;
 
     let results = processor
-        .native_index_search("neural network machine learning")
+        .native_index_search("neural network machine learning", false)
         .await
         .expect("Search failed");
 
@@ -171,7 +171,7 @@ async fn test_update_replaces_existing_index_entry() {
     .await;
 
     let results = processor
-        .native_index_search("databases storage")
+        .native_index_search("databases storage", false)
         .await
         .expect("Search failed");
 
@@ -209,7 +209,7 @@ async fn test_results_include_score_metadata() {
     .await;
 
     let results = processor
-        .native_index_search("memory safety")
+        .native_index_search("memory safety", false)
         .await
         .expect("Search failed");
 
@@ -231,7 +231,7 @@ async fn test_empty_query_returns_error() {
     load_schema(&node, "BlogPost.json").await;
     let processor = OperationProcessor::new(std::sync::Arc::new(node));
 
-    let result = processor.native_index_search("   ").await;
+    let result = processor.native_index_search("   ", false).await;
     assert!(result.is_err(), "Blank query should return an error");
 }
 
@@ -281,7 +281,7 @@ async fn test_search_spans_multiple_schemas() {
         .unwrap();
 
     let results = processor
-        .native_index_search("quantum computing")
+        .native_index_search("quantum computing", false)
         .await
         .expect("Search failed");
 
