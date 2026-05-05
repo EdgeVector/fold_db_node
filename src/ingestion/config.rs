@@ -720,7 +720,8 @@ impl IngestionConfig {
             std::fs::create_dir_all(parent)?;
         }
         let content = serde_json::to_string_pretty(&to_save)?;
-        std::fs::write(&config_path, content)?;
+        crate::utils::fs_atomic::write_atomic(&config_path, content.as_bytes(), None)
+            .map_err(|e| -> Box<dyn std::error::Error> { e.into() })?;
 
         if let Some(key) = key_to_persist {
             crate::ingestion::anthropic_key_store::save(config_dir, &key)?;
@@ -741,7 +742,8 @@ impl IngestionConfig {
             std::fs::create_dir_all(parent)?;
         }
         let content = serde_json::to_string_pretty(saved)?;
-        std::fs::write(path, content)?;
+        crate::utils::fs_atomic::write_atomic(path, content.as_bytes(), None)
+            .map_err(|e| -> Box<dyn std::error::Error> { e.into() })?;
         Ok(())
     }
 
