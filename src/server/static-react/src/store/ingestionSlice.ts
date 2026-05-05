@@ -1,10 +1,19 @@
 import { createSlice, createAsyncThunk } from "@reduxjs/toolkit";
 import { ingestionClient } from "../api/clients";
-import type { IngestionConfig } from "../api/clients/ingestionClient";
+import type {
+  IngestionConfig,
+  IngestionStatus,
+} from "../api/clients/ingestionClient";
 import type { RootState } from "./store";
 
 interface IngestionState {
   config: IngestionConfig | null;
+  // Authoritative readiness from `/api/ingestion/status`. The setup banner
+  // and the AI pill key off `status.configured` so the UI agrees with the
+  // backend's `IngestionConfig::is_ready()` instead of guessing from the
+  // redacted GET /config payload (where `api_key` is masked to
+  // "***configured***").
+  status: IngestionStatus | null;
   loading: boolean;
   error: string | null;
   saving: boolean;
@@ -13,6 +22,7 @@ interface IngestionState {
 
 const initialState: IngestionState = {
   config: null,
+  status: null,
   loading: false,
   error: null,
   saving: false,
@@ -36,14 +46,35 @@ export const fetchIngestionConfig = createAsyncThunk(
   },
 );
 
+export const fetchIngestionStatus = createAsyncThunk(
+  "ingestion/fetchStatus",
+  async (_, { rejectWithValue }) => {
+    try {
+      const response = await ingestionClient.getStatus();
+      if (response.success && response.data) {
+        return response.data;
+      }
+      return rejectWithValue("Failed to fetch ingestion status");
+    } catch (error) {
+      return rejectWithValue(
+        error instanceof Error ? error.message : String(error),
+      );
+    }
+  },
+);
+
 export const saveIngestionConfig = createAsyncThunk(
   "ingestion/saveConfig",
   async (config: IngestionConfig, { dispatch, rejectWithValue }) => {
     try {
       const response = await ingestionClient.saveConfig(config);
       if (response.success) {
-        // Re-fetch to get the canonical config from the server
-        await dispatch(fetchIngestionConfig()).unwrap();
+        // Re-fetch both the config (for fields the UI renders) and the
+        // status (for `configured` — drives the setup banner and pill).
+        await Promise.all([
+          dispatch(fetchIngestionConfig()).unwrap(),
+          dispatch(fetchIngestionStatus()).unwrap(),
+        ]);
         return true;
       }
       return rejectWithValue("Failed to save ingestion config");
@@ -74,6 +105,9 @@ const ingestionSlice = createSlice({
         state.loading = false;
         state.error = (action.payload as string) ?? "Unknown error";
       })
+      .addCase(fetchIngestionStatus.fulfilled, (state, action) => {
+        state.status = action.payload;
+      })
       .addCase(saveIngestionConfig.pending, (state) => {
         state.saving = true;
         state.saveError = null;
@@ -92,6 +126,18 @@ const ingestionSlice = createSlice({
 // Selectors
 export const selectIngestionConfig = (state: RootState) =>
   state.ingestion.config;
+
+export const selectIngestionStatus = (state: RootState) =>
+  state.ingestion.status;
+
+/**
+ * Backend-authoritative readiness from `/api/ingestion/status`. Returns
+ * `null` until the first successful fetch — callers that need to gate
+ * banner visibility (avoid flashing "configure AI" before the status
+ * lands) should null-check this rather than collapsing to `false`.
+ */
+export const selectAiConfiguredFromStatus = (state: RootState) =>
+  state.ingestion.status?.configured ?? null;
 
 export const selectAiProvider = (state: RootState) =>
   state.ingestion.config?.provider ?? null;
