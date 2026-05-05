@@ -286,8 +286,23 @@ impl LlmQueryService {
                     .await
                     .map_err(|e| format!("Failed to list schemas: {}", e))?;
 
-                serde_json::to_value(&schemas)
-                    .map_err(|e| format!("Failed to serialize schemas: {}", e))
+                // Annotate each schema with `record_count` so the agent can
+                // answer "how much data is in my database?" in a single call
+                // instead of issuing an unfiltered query per schema.
+                let mut entries: Vec<Value> = Vec::with_capacity(schemas.len());
+                for schema in &schemas {
+                    let mut entry = serde_json::to_value(schema)
+                        .map_err(|e| format!("Failed to serialize schema: {}", e))?;
+                    let count = processor
+                        .count_schema_records(&schema.schema.name)
+                        .await
+                        .unwrap_or(0);
+                    if let Some(obj) = entry.as_object_mut() {
+                        obj.insert("record_count".to_string(), serde_json::json!(count));
+                    }
+                    entries.push(entry);
+                }
+                Ok(Value::Array(entries))
             }
 
             "list_orgs" => {
