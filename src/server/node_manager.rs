@@ -36,11 +36,11 @@ pub struct NodeManagerConfig {
     /// Base node configuration (user_id will be set per-tenant)
     pub base_config: NodeConfig,
     /// Directory holding `ingestion_config.json` and any other per-server
-    /// JSON state. Replaces the former `FOLD_CONFIG_DIR` env var so two
-    /// nodes in the same test process can have independent config dirs.
+    /// JSON state. Per-node so two nodes in the same test process can have
+    /// independent config dirs.
     pub config_dir: PathBuf,
-    /// Directory used by `UploadStorage::local`. Replaces the former
-    /// `FOLDDB_UPLOAD_PATH` env var. Threaded onto `StartupCtx` at boot.
+    /// Directory used by `UploadStorage::local`. Threaded onto `StartupCtx`
+    /// at boot.
     pub upload_path: PathBuf,
 }
 
@@ -113,9 +113,8 @@ impl NodeManager {
 
         // Mirror the manager's `config_dir` onto the per-node `NodeConfig`
         // so handlers reached via `&FoldNode` (admin_ops, trust modules)
-        // can resolve it without touching `FOLD_CONFIG_DIR`. If the
-        // base_config already carried an override (test path setting it
-        // via `with_config_dir`), respect that.
+        // can resolve it. If the base_config already carried an override
+        // (test path setting it via `with_config_dir`), respect that.
         if node_config.config_dir.is_none() {
             node_config.config_dir = Some(manager_config_dir);
         }

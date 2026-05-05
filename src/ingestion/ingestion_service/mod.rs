@@ -122,9 +122,8 @@ pub(crate) async fn get_schema_manager(node: &FoldNode) -> IngestionResult<Arc<S
 /// AI-powered ingestion service that works with FoldNode
 pub struct IngestionService {
     pub(super) config: IngestionConfig,
-    /// Per-server config directory (formerly `FOLD_CONFIG_DIR`). Re-resolved
-    /// on demand by call sites that reload `IngestionConfig::load(..)` from
-    /// disk (e.g. `json_processor`).
+    /// Per-server config directory. Re-resolved on demand by call sites that
+    /// reload `IngestionConfig::load(..)` from disk (e.g. `json_processor`).
     pub(super) config_dir: PathBuf,
     /// Default AI backend (tagged as `Role::IngestionText`). Built once at
     /// construction. Other roles (`MutationAgent`, `SmartFolder`, etc.) build
@@ -147,9 +146,8 @@ pub struct IngestionService {
 
 impl IngestionService {
     /// Create an ingestion service from disk + environment configuration.
-    /// The `from_env` name is preserved because the loader still consults env
-    /// vars (`ANTHROPIC_API_KEY`, `OLLAMA_*`, etc.) — but `config_dir` is now
-    /// an explicit input rather than read from `FOLD_CONFIG_DIR`.
+    /// `config_dir` is an explicit input; the loader still consults env vars
+    /// (`ANTHROPIC_API_KEY`, `OLLAMA_*`, etc.) for provider credentials.
     pub fn from_config_dir(config_dir: &std::path::Path) -> IngestionResult<Self> {
         let config = IngestionConfig::from_env(config_dir)?;
         Self::new(config_dir.to_path_buf(), config)

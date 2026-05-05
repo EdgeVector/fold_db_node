@@ -471,8 +471,7 @@ async fn start_fold_server(port: u16) -> Result<EmbeddedServerHandle, String> {
 
     // Resolve the absolute upload + config dirs so they don't resolve
     // inside the read-only .app bundle. These flow through
-    // `NodeManagerConfig` below — no env-var hand-off (formerly
-    // `FOLD_UPLOAD_PATH` / `FOLD_CONFIG_DIR`).
+    // `NodeManagerConfig` below.
     let upload_path = dirs::home_dir()
         .ok_or_else(|| "Could not determine home directory".to_string())?
         .join(".folddb")

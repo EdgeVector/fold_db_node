@@ -21,9 +21,8 @@ use tokio::sync::RwLock;
 pub struct LlmQueryState {
     pub service: RwLock<Option<Arc<LlmQueryService>>>,
     pub session_manager: Arc<SessionManager>,
-    /// Per-server config directory (formerly `FOLD_CONFIG_DIR`). Stashed so
-    /// `reload()` can re-read `ingestion_config.json` from the same place
-    /// boot did, without consulting a process-wide env var.
+    /// Per-server config directory. Stashed so `reload()` can re-read
+    /// `ingestion_config.json` from the same place boot did.
     config_dir: PathBuf,
 }
 
