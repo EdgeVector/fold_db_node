@@ -421,14 +421,13 @@ pub async fn run_setup_wizard() -> Result<NodeConfig, CliError> {
     }
 
     // Mark onboarding complete — must match the path the server checks:
-    // FOLDDB_HOME/data/.onboarding_complete (lives in data dir so --empty-db resets it)
+    // FOLDDB_HOME/data/.onboarding_complete (lives in data dir so --empty-db resets it).
+    // Routed through sensitive_io: the marker's presence reveals that a
+    // credentialed setup ran (PR #885 reasoning).
     let marker_path = fold_db_node::utils::paths::folddb_home()
         .map(|h| h.join("data").join(".onboarding_complete"))
         .unwrap_or_else(|_| PathBuf::from(".onboarding_complete"));
-    if let Some(parent) = marker_path.parent() {
-        let _ = fs::create_dir_all(parent);
-    }
-    let _ = fs::write(&marker_path, "1");
+    let _ = fold_db_node::sensitive_io::write_sensitive(&marker_path, b"1");
 
     eprintln!(
         "Config saved to {}",

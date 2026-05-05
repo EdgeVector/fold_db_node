@@ -1073,6 +1073,11 @@ pub(crate) fn bootstrap_status_path() -> Option<std::path::PathBuf> {
 /// Write the bootstrap status to disk. Errors are logged loudly (no silent
 /// failures) but not returned — callers are inside tokio::spawn and have no
 /// way to propagate an error to the original HTTP client.
+///
+/// Routed through [`crate::sensitive_io::write_sensitive`]: the status file
+/// sits next to the encrypted `.bootstrap_pending` marker (PR #885) and its
+/// presence reveals that a credentialed cloud-bootstrap flow is or was in
+/// flight, so it gets the same encrypt-or-0o600 treatment.
 pub(crate) fn write_bootstrap_status(status: &BootstrapStatus) {
     let path = match bootstrap_status_path() {
         Some(p) => p,
@@ -1081,16 +1086,6 @@ pub(crate) fn write_bootstrap_status(status: &BootstrapStatus) {
             return;
         }
     };
-    if let Some(parent) = path.parent() {
-        if let Err(e) = std::fs::create_dir_all(parent) {
-            tracing::error!(
-                "write_bootstrap_status: failed to create {:?}: {}",
-                parent,
-                e
-            );
-            return;
-        }
-    }
     let json = match serde_json::to_string_pretty(status) {
         Ok(s) => s,
         Err(e) => {
@@ -1098,16 +1093,25 @@ pub(crate) fn write_bootstrap_status(status: &BootstrapStatus) {
             return;
         }
     };
-    if let Err(e) = std::fs::write(&path, json) {
+    if let Err(e) = crate::sensitive_io::write_sensitive(&path, json.as_bytes()) {
         tracing::error!("write_bootstrap_status: write {:?} failed: {}", path, e);
     }
 }
 
 /// Read the bootstrap status from disk, if the file exists.
+///
+/// Tries [`crate::sensitive_io::read_sensitive`] first; falls back to a raw
+/// read so legacy plaintext status files written before the sensitive_io
+/// migration still parse on first boot after the upgrade.
 pub(crate) fn read_bootstrap_status() -> Option<BootstrapStatus> {
     let path = bootstrap_status_path()?;
-    let contents = std::fs::read_to_string(&path).ok()?;
-    serde_json::from_str(&contents).ok()
+    if !path.exists() {
+        return None;
+    }
+    let bytes = crate::sensitive_io::read_sensitive(&path)
+        .ok()
+        .or_else(|| std::fs::read(&path).ok())?;
+    serde_json::from_slice(&bytes).ok()
 }
 
 /// Remove the bootstrap status file. Used by tests to reset state between
@@ -1971,6 +1975,34 @@ mod tests {
         assert!(got.phase.is_none());
         assert!(got.targets_done.is_none());
         assert!(got.targets_total.is_none());
+
+        clear_bootstrap_status();
+        std::env::remove_var("FOLDDB_HOME");
+    }
+
+    /// Dev-mode regression for the sensitive_io routing — without
+    /// `os-keychain`, the status file's permission bits are the only
+    /// barrier between any process on the user's machine and the
+    /// existence of an in-flight credentialed bootstrap. `write_sensitive`
+    /// must land it at 0o600.
+    #[cfg(all(unix, not(feature = "os-keychain")))]
+    #[test]
+    fn bootstrap_status_dev_mode_writes_with_0o600_permissions() {
+        use std::os::unix::fs::PermissionsExt;
+        let _guard = env_lock();
+        let _tmp = setup_empty_home();
+
+        write_bootstrap_status(&BootstrapStatus::in_progress());
+        let path = bootstrap_status_path().expect("status path");
+        let mode = std::fs::metadata(&path)
+            .expect("status file should exist")
+            .permissions()
+            .mode()
+            & 0o777;
+        assert_eq!(
+            mode, 0o600,
+            "expected 0o600 on .bootstrap_status.json, got {mode:o}"
+        );
 
         clear_bootstrap_status();
         std::env::remove_var("FOLDDB_HOME");
