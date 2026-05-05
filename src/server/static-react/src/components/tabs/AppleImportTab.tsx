@@ -1,4 +1,4 @@
-import { useState, useEffect, useRef, useCallback } from 'react'
+import { useState, useEffect, useCallback } from 'react'
 import type { ChangeEvent, ComponentType, SVGProps } from 'react'
 import {
   ArrowPathIcon,
@@ -11,6 +11,15 @@ import {
 import type { OperationResultPayload } from '../../types/api'
 import ingestionClient from '../../api/clients/ingestionClient'
 import type { AppleSyncConfig, EnabledSources } from '../../api/clients/ingestionClient'
+import { useAppDispatch, useAppSelector } from '../../store/hooks'
+import {
+  appleJobFailed,
+  appleJobReset,
+  appleJobStarted,
+  selectAppleJob,
+  type AppleSourceKey,
+  type ImportResult,
+} from '../../store/ingestionSlice'
 
 function AutoSyncSettings() {
   const [config, setConfig] = useState<AppleSyncConfig | null>(null)
@@ -306,11 +315,6 @@ function ProgressBar({ progress }: { progress: number }) {
   )
 }
 
-interface ImportResult {
-  total?: number
-  ingested?: number
-}
-
 type ImportStatus = 'idle' | 'running' | 'done' | 'error'
 
 interface SourceCardProps {
@@ -403,82 +407,42 @@ interface ImportFnResp {
   error?: { message?: string } | string
 }
 
-function useSourceImport(sourceKey: string, importFn: () => Promise<ImportFnResp>) {
-  const [progressId, setProgressId] = useState<string | null>(null)
-  const [status, setStatus] = useState<ImportStatus>('idle')
-  const [progress, setProgress] = useState(0)
-  const [message, setMessage] = useState('')
-  const [result, setResult] = useState<ImportResult | null>(null)
-  const pollRef = useRef<ReturnType<typeof setInterval> | null>(null)
-
-  useEffect(() => {
-    if (!progressId || status !== 'running') return
-
-    const poll = async () => {
-      try {
-        const resp = await ingestionClient.getJobProgress(progressId)
-        if (resp.success && resp.data) {
-          const job = resp.data as {
-            progress_percentage?: number
-            status_message?: string
-            message?: string
-            is_complete?: boolean
-            is_failed?: boolean
-            error_message?: string
-            results?: ImportResult
-            result?: ImportResult
-          }
-          setProgress(job.progress_percentage || 0)
-          setMessage(job.status_message || job.message || '')
-
-          if (job.is_complete) {
-            setStatus('done')
-            setResult(job.results || job.result || null)
-            if (pollRef.current) clearInterval(pollRef.current)
-          } else if (job.is_failed) {
-            setStatus('error')
-            setMessage(job.error_message || job.message || 'Import failed')
-            if (pollRef.current) clearInterval(pollRef.current)
-          }
-        }
-      } catch {
-        // Ignore poll errors, keep polling
-      }
-    }
-
-    pollRef.current = setInterval(poll, 2000)
-    poll()
-    return () => { if (pollRef.current) clearInterval(pollRef.current) }
-  }, [progressId, status])
+function useSourceImport(sourceKey: AppleSourceKey, importFn: () => Promise<ImportFnResp>) {
+  const dispatch = useAppDispatch()
+  const job = useAppSelector(selectAppleJob(sourceKey))
 
   const start = useCallback(async () => {
-    setStatus('running')
-    setProgress(5)
-    setMessage('Starting...')
-    setResult(null)
     try {
       const resp = await importFn()
       if (resp.success && resp.data?.progress_id) {
-        setProgressId(resp.data.progress_id)
-      } else {
-        const errMsg = typeof resp.error === 'string' ? resp.error : resp.error?.message
-        throw new Error(errMsg || `Failed to start ${sourceKey} import`)
+        dispatch(appleJobStarted({ key: sourceKey, progressId: resp.data.progress_id }))
+        return
       }
+      const errMsg = typeof resp.error === 'string' ? resp.error : resp.error?.message
+      dispatch(appleJobFailed({
+        key: sourceKey,
+        message: errMsg || `Failed to start ${sourceKey} import`,
+      }))
     } catch (e) {
-      setStatus('error')
-      setMessage((e instanceof Error ? e.message : null) || `Failed to start ${sourceKey} import`)
+      dispatch(appleJobFailed({
+        key: sourceKey,
+        message: (e instanceof Error ? e.message : null) || `Failed to start ${sourceKey} import`,
+      }))
     }
-  }, [importFn, sourceKey])
+  }, [dispatch, importFn, sourceKey])
 
   const reset = useCallback(() => {
-    setStatus('idle')
-    setProgress(0)
-    setMessage('')
-    setResult(null)
-    setProgressId(null)
-  }, [])
+    dispatch(appleJobReset({ key: sourceKey }))
+  }, [dispatch, sourceKey])
 
-  return { status, progress, message, result, start, reset }
+  return {
+    status: job.status,
+    progress: job.progress,
+    message: job.message,
+    result: job.result,
+    start,
+    reset,
+  }
 }
 
 interface AppleImportTabProps {

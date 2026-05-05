@@ -1,7 +1,14 @@
 import React from 'react'
 import { render, screen, fireEvent, waitFor, act } from '@testing-library/react'
-import { describe, it, expect, beforeEach, vi } from 'vitest'
+import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest'
+import { Provider } from 'react-redux'
+import { combineReducers, configureStore } from '@reduxjs/toolkit'
 import AppleImportTab from '../../../components/tabs/AppleImportTab'
+import ingestionReducer, {
+  appleJobProgressed,
+  appleJobStarted,
+} from '../../../store/ingestionSlice'
+import { appleJobsListener } from '../../../store/appleJobsMiddleware'
 
 const mockGetAppleImportStatus = vi.fn()
 const mockAppleImportNotes = vi.fn()
@@ -25,6 +32,32 @@ vi.mock('../../../api/clients/ingestionClient', () => ({
   },
 }))
 
+// The middleware imports from `../../api/clients`, so mock that path too —
+// otherwise it would fall back to the real network client during tests.
+vi.mock('../../../api/clients', () => ({
+  ingestionClient: {
+    getJobProgress: (...args: unknown[]) => mockGetJobProgress(...args),
+  },
+}))
+
+function buildStore() {
+  return configureStore({
+    reducer: combineReducers({ ingestion: ingestionReducer }),
+    middleware: (getDefault) =>
+      getDefault({ serializableCheck: false }).prepend(
+        appleJobsListener.middleware,
+      ),
+  })
+}
+
+function renderWithStore(ui: React.ReactElement) {
+  const store = buildStore()
+  return {
+    store,
+    ...render(<Provider store={store}>{ui}</Provider>),
+  }
+}
+
 describe('AppleImportTab', () => {
   beforeEach(() => {
     vi.clearAllMocks()
@@ -39,13 +72,13 @@ describe('AppleImportTab', () => {
 
   it('shows loading state initially', () => {
     mockGetAppleImportStatus.mockReturnValue(new Promise(() => {})) // never resolves
-    render(<AppleImportTab onResult={vi.fn()} />)
+    renderWithStore(<AppleImportTab onResult={vi.fn()} />)
     expect(screen.getByText('Checking Apple import availability...')).toBeTruthy()
   })
 
   it('shows unavailable message when not on macOS', async () => {
     mockGetAppleImportStatus.mockResolvedValue({ success: true, data: { available: false } })
-    render(<AppleImportTab onResult={vi.fn()} />)
+    renderWithStore(<AppleImportTab onResult={vi.fn()} />)
     await waitFor(() => {
       expect(screen.getByText('Apple Import is only available on macOS.')).toBeTruthy()
     })
@@ -53,7 +86,7 @@ describe('AppleImportTab', () => {
 
   it('renders all five source cards when available', async () => {
     mockGetAppleImportStatus.mockResolvedValue({ success: true, data: { available: true } })
-    render(<AppleImportTab onResult={vi.fn()} />)
+    renderWithStore(<AppleImportTab onResult={vi.fn()} />)
     await waitFor(() => {
       expect(screen.getByText('Notes')).toBeTruthy()
       expect(screen.getByText('Photos')).toBeTruthy()
@@ -65,7 +98,7 @@ describe('AppleImportTab', () => {
 
   it('shows Import All button with count of enabled sources', async () => {
     mockGetAppleImportStatus.mockResolvedValue({ success: true, data: { available: true } })
-    render(<AppleImportTab onResult={vi.fn()} />)
+    renderWithStore(<AppleImportTab onResult={vi.fn()} />)
     await waitFor(() => {
       // All five sources enabled by default
       expect(screen.getByText('Import All (5)')).toBeTruthy()
@@ -74,7 +107,7 @@ describe('AppleImportTab', () => {
 
   it('updates Import All count when toggling a source off', async () => {
     mockGetAppleImportStatus.mockResolvedValue({ success: true, data: { available: true } })
-    render(<AppleImportTab onResult={vi.fn()} />)
+    renderWithStore(<AppleImportTab onResult={vi.fn()} />)
 
     await waitFor(() => {
       expect(screen.getByText('Import All (5)')).toBeTruthy()
@@ -98,7 +131,7 @@ describe('AppleImportTab', () => {
     mockAppleImportContacts.mockResolvedValue({ success: true, data: { progress_id: 'con-1' } })
     mockGetJobProgress.mockResolvedValue({ success: true, data: { progress_percentage: 50, status_message: 'Processing...' } })
 
-    render(<AppleImportTab onResult={vi.fn()} />)
+    renderWithStore(<AppleImportTab onResult={vi.fn()} />)
 
     await waitFor(() => {
       expect(screen.getByText('Import All (5)')).toBeTruthy()
@@ -128,7 +161,7 @@ describe('AppleImportTab', () => {
     mockAppleImportContacts.mockResolvedValue({ success: true, data: { progress_id: 'con-1' } })
     mockGetJobProgress.mockResolvedValue({ success: true, data: { progress_percentage: 50, status_message: 'Working...' } })
 
-    render(<AppleImportTab onResult={vi.fn()} />)
+    renderWithStore(<AppleImportTab onResult={vi.fn()} />)
 
     await waitFor(() => {
       expect(screen.getByText('Import All (5)')).toBeTruthy()
@@ -146,7 +179,7 @@ describe('AppleImportTab', () => {
 
   it('shows photos limit input only for photos source', async () => {
     mockGetAppleImportStatus.mockResolvedValue({ success: true, data: { available: true } })
-    render(<AppleImportTab onResult={vi.fn()} />)
+    renderWithStore(<AppleImportTab onResult={vi.fn()} />)
 
     await waitFor(() => {
       expect(screen.getByText('Limit:')).toBeTruthy()
@@ -164,7 +197,7 @@ describe('AppleImportTab', () => {
     mockAppleImportContacts.mockResolvedValue({ success: true, data: { progress_id: 'con-1' } })
     mockGetJobProgress.mockResolvedValue({ success: true, data: { progress_percentage: 10, status_message: 'Working...' } })
 
-    render(<AppleImportTab onResult={vi.fn()} />)
+    renderWithStore(<AppleImportTab onResult={vi.fn()} />)
 
     await waitFor(() => {
       expect(screen.getByDisplayValue('50')).toBeTruthy()
@@ -180,6 +213,54 @@ describe('AppleImportTab', () => {
 
     await waitFor(() => {
       expect(mockAppleImportPhotos).toHaveBeenCalledWith(null, 100)
+    })
+  })
+
+  it('reflects external store updates and survives unmount/remount with state intact', async () => {
+    mockGetAppleImportStatus.mockResolvedValue({ success: true, data: { available: true } })
+    // Stub progress polling so the middleware never updates state from the network.
+    mockGetJobProgress.mockReturnValue(new Promise(() => {}))
+
+    const store = buildStore()
+    const first = render(
+      <Provider store={store}>
+        <AppleImportTab onResult={vi.fn()} />
+      </Provider>,
+    )
+
+    await waitFor(() => {
+      expect(screen.getByText('Import All (5)')).toBeTruthy()
+    })
+
+    // Simulate a job that started in another session of the same store.
+    act(() => {
+      store.dispatch(appleJobStarted({ key: 'notes', progressId: 'job-9' }))
+      store.dispatch(
+        appleJobProgressed({ key: 'notes', progress: 47, message: 'Halfway through Notes' }),
+      )
+    })
+
+    await waitFor(() => {
+      expect(screen.getByText('Halfway through Notes')).toBeTruthy()
+    })
+
+    // Unmount (e.g. user navigated to another tab) — Redux state must persist.
+    first.unmount()
+
+    // Remount (user navigates back) into a fresh container. Live progress
+    // should still be visible because state lives in the store, not the tree.
+    expect(store.getState().ingestion.appleJobs.notes.message).toBe(
+      'Halfway through Notes',
+    )
+
+    render(
+      <Provider store={store}>
+        <AppleImportTab onResult={vi.fn()} />
+      </Provider>,
+    )
+
+    await waitFor(() => {
+      expect(screen.getByText('Halfway through Notes')).toBeTruthy()
     })
   })
 })
