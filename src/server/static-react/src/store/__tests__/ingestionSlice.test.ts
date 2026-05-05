@@ -1,5 +1,25 @@
-import { describe, it, expect } from "vitest";
-import { combineReducers, configureStore } from "@reduxjs/toolkit";
+import {
+  afterEach,
+  beforeEach,
+  describe,
+  expect,
+  it,
+  vi,
+} from "vitest";
+import {
+  combineReducers,
+  configureStore,
+  type Action,
+  type Middleware,
+} from "@reduxjs/toolkit";
+
+vi.mock("../../api/clients", () => ({
+  ingestionClient: {
+    getJobProgress: vi.fn(),
+  },
+}));
+
+import { ingestionClient } from "../../api/clients";
 import ingestionReducer, {
   appleJobStarted,
   appleJobProgressed,
@@ -7,9 +27,34 @@ import ingestionReducer, {
   appleJobFailed,
   appleJobReset,
   makeIdleAppleJob,
+  reconcileAppleJobs,
   selectAppleJob,
   type AppleSourceKey,
 } from "../ingestionSlice";
+
+const mockedGetJobProgress = vi.mocked(ingestionClient.getJobProgress);
+
+type ProgressShape = {
+  progress_percentage?: number;
+  status_message?: string;
+  message?: string;
+  is_complete?: boolean;
+  is_failed?: boolean;
+  error_message?: string;
+  results?: { total?: number; ingested?: number };
+  result?: { total?: number; ingested?: number };
+};
+
+type GetJobProgressResponse = Awaited<
+  ReturnType<typeof ingestionClient.getJobProgress>
+>;
+
+const ok = (data: ProgressShape): GetJobProgressResponse =>
+  ({
+    status: 200,
+    success: true,
+    data,
+  }) as unknown as GetJobProgressResponse;
 
 const APPLE_KEYS: AppleSourceKey[] = [
   "notes",
@@ -290,5 +335,145 @@ describe("ingestionSlice — appleJobs", () => {
       expect(after.status).toBe("running");
       expect(after.progressId).toBe("n1");
     });
+  });
+});
+
+describe("reconcileAppleJobs", () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+  });
+  afterEach(() => {
+    vi.restoreAllMocks();
+  });
+
+  // Action recorder middleware so we can assert on the exact action stream
+  // dispatched during reconciliation (notably appleJobStarted re-dispatch
+  // for still-running jobs — the listener middleware keys off that).
+  function buildStoreWithRecorder() {
+    const recorded: Action[] = [];
+    const recorder: Middleware = () => (next) => (action) => {
+      recorded.push(action as Action);
+      return next(action);
+    };
+    const store = configureStore({
+      reducer: combineReducers({ ingestion: ingestionReducer }),
+      middleware: (getDefault) => getDefault().concat(recorder),
+    });
+    return { store, recorded };
+  }
+
+  it("transitions completed and failed jobs and leaves idle jobs untouched", async () => {
+    const { store } = buildStoreWithRecorder();
+
+    store.dispatch(appleJobStarted({ key: "notes", progressId: "notes-1" }));
+    store.dispatch(appleJobStarted({ key: "photos", progressId: "photos-1" }));
+    // calendar stays idle.
+
+    mockedGetJobProgress.mockImplementation(async (id: string) => {
+      if (id === "notes-1") {
+        return ok({
+          progress_percentage: 100,
+          is_complete: true,
+          status_message: "Imported",
+          results: { total: 12, ingested: 12 },
+        });
+      }
+      if (id === "photos-1") {
+        return ok({
+          is_failed: true,
+          error_message: "permission denied",
+        });
+      }
+      throw new Error(`unexpected progress id: ${id}`);
+    });
+
+    await store.dispatch(reconcileAppleJobs());
+
+    const { appleJobs } = store.getState().ingestion;
+    expect(appleJobs.notes.status).toBe("done");
+    expect(appleJobs.notes.result).toEqual({ total: 12, ingested: 12 });
+    expect(appleJobs.notes.message).toBe("Imported");
+
+    expect(appleJobs.photos.status).toBe("error");
+    expect(appleJobs.photos.message).toBe("permission denied");
+
+    expect(appleJobs.calendar).toEqual(makeIdleAppleJob());
+
+    expect(mockedGetJobProgress).toHaveBeenCalledTimes(2);
+    const calledIds = mockedGetJobProgress.mock.calls.map((c) => c[0]);
+    expect(calledIds.sort()).toEqual(["notes-1", "photos-1"]);
+  });
+
+  it("re-dispatches appleJobStarted for a still-running job to re-arm the listener", async () => {
+    const { store, recorded } = buildStoreWithRecorder();
+
+    store.dispatch(
+      appleJobStarted({ key: "reminders", progressId: "rem-1" }),
+    );
+    // Drop the seed action from the recorded log so we only assert on
+    // actions emitted by the reconcile thunk itself.
+    recorded.length = 0;
+
+    mockedGetJobProgress.mockResolvedValueOnce(
+      ok({
+        progress_percentage: 42,
+        status_message: "Halfway",
+        is_complete: false,
+        is_failed: false,
+      }),
+    );
+
+    await store.dispatch(reconcileAppleJobs());
+
+    const types = recorded.map((a) => a.type);
+    expect(types).toContain(appleJobStarted.type);
+    expect(types).toContain(appleJobProgressed.type);
+
+    const startedActions = recorded.filter(
+      (a): a is ReturnType<typeof appleJobStarted> =>
+        a.type === appleJobStarted.type,
+    );
+    expect(startedActions).toHaveLength(1);
+    expect(startedActions[0].payload).toEqual({
+      key: "reminders",
+      progressId: "rem-1",
+    });
+
+    const job = store.getState().ingestion.appleJobs.reminders;
+    expect(job.status).toBe("running");
+    expect(job.progress).toBe(42);
+    expect(job.message).toBe("Halfway");
+    expect(job.progressId).toBe("rem-1");
+  });
+
+  it("does nothing and makes no API call when no jobs are running", async () => {
+    const { store } = buildStoreWithRecorder();
+
+    await store.dispatch(reconcileAppleJobs());
+
+    expect(mockedGetJobProgress).not.toHaveBeenCalled();
+  });
+
+  it("swallows network errors without marking the job failed", async () => {
+    const { store } = buildStoreWithRecorder();
+
+    store.dispatch(appleJobStarted({ key: "contacts", progressId: "c1" }));
+    store.dispatch(appleJobStarted({ key: "notes", progressId: "n1" }));
+
+    mockedGetJobProgress.mockImplementation(async (id: string) => {
+      if (id === "c1") throw new Error("network blew up");
+      if (id === "n1") {
+        return ok({ is_complete: true, status_message: "Done" });
+      }
+      throw new Error(`unexpected: ${id}`);
+    });
+
+    await store.dispatch(reconcileAppleJobs());
+
+    // Network error MUST NOT be conflated with backend-reported failure —
+    // contacts stays running, only the explicit is_complete completes.
+    const { appleJobs } = store.getState().ingestion;
+    expect(appleJobs.contacts.status).toBe("running");
+    expect(appleJobs.notes.status).toBe("done");
   });
 });

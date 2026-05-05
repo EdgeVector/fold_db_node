@@ -40,6 +40,8 @@ import { useAuthInitialization } from './hooks/useAuthInitialization'
 import { useTabRouting } from './hooks/useTabRouting'
 import { useDatabaseInit } from './hooks/useDatabaseInit'
 import { useResultHandler } from './hooks/useResultHandler'
+import { useAppDispatch } from './store/hooks'
+import { reconcileAppleJobs } from './store/ingestionSlice'
 
 function isIngestionResult(results: unknown): boolean {
   const r = results as { success?: boolean; data?: unknown } | null | undefined
@@ -81,6 +83,15 @@ export function AppContent() {
   // Operation result handling (shared across tabs)
   const { results, setResults, resultsRef, handleOperationResult } =
     useResultHandler(activeTab)
+
+  // Reconcile in-flight Apple ingestion jobs against the backend on mount.
+  // Without this, a job that finished while the user was on another tab can
+  // stay stuck at "running 87%" because the listener middleware only re-arms
+  // on a fresh appleJobStarted — see store/ingestionSlice.ts.
+  const dispatch = useAppDispatch()
+  useEffect(() => {
+    dispatch(reconcileAppleJobs())
+  }, [dispatch])
 
   // Per-session dismissal of the cloud-LLM data warning banner.
   // sessionStorage on purpose: each app launch re-warns once, so the
