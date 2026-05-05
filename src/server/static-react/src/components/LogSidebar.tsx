@@ -87,24 +87,33 @@ function LogSidebar() {
       () => {}
     )
 
-    const pollInterval = setInterval(() => {
+    // Fallback poll — only runs when the SSE stream is not OPEN. EventSource
+    // auto-reconnects, so this fills the gap during reconnect windows. Skip
+    // when the tab is hidden so a hidden Logs sidebar doesn't keep the main
+    // thread busy during ingestion.
+    const pollFallback = async () => {
       if (cancelled) return
-      setLogs(cur => {
-        const last = cur[cur.length - 1]
-        const since = (last && typeof last !== 'string') ? last.timestamp : undefined
-        systemClient.getLogs(since).then(r => {
-          if (!cancelled && r.success && r.data?.logs?.length) {
-            setLogs(c => {
-              const seen = new Set<string>()
-              for (const e of c) if (typeof e !== 'string') seen.add(dedupKey(e))
-              const newLogs = (r.data!.logs as LogEntryWithId[]).filter(l => !seen.has(dedupKey(l)))
-              return [...c, ...newLogs]
-            })
-          }
-        }).catch(() => { /* polling failure - next interval will retry */ })
-        return cur
+      if (eventSource.readyState === EventSource.OPEN) return
+      if (typeof document !== 'undefined' && document.hidden) return
+      const cur = await new Promise<LogItem[]>(resolve => {
+        setLogs(c => { resolve(c); return c })
       })
-    }, 2000)
+      const last = cur[cur.length - 1]
+      const since = (last && typeof last !== 'string') ? last.timestamp : undefined
+      try {
+        const r = await systemClient.getLogs(since)
+        if (cancelled || !r.success || !r.data?.logs?.length) return
+        setLogs(c => {
+          const seen = new Set<string>()
+          for (const e of c) if (typeof e !== 'string') seen.add(dedupKey(e))
+          const newLogs = (r.data!.logs as LogEntryWithId[]).filter(l => !seen.has(dedupKey(l)))
+          return [...c, ...newLogs]
+        })
+      } catch {
+        /* next interval will retry */
+      }
+    }
+    const pollInterval = setInterval(() => { void pollFallback() }, 5000)
 
     return () => { cancelled = true; eventSource.close(); clearInterval(pollInterval) }
   }, [])

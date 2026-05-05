@@ -1,8 +1,9 @@
-import { useState, useEffect } from 'react'
+import { useState, useCallback } from 'react'
 import { CheckCircleIcon, TrashIcon, ArrowPathIcon, ClockIcon, XCircleIcon } from '@heroicons/react/24/solid'
 import { systemClient } from '../api/clients/systemClient'
 import { ingestionClient } from '../api/clients'
 import type { IngestionProgress } from '../api/clients/ingestionClient'
+import { usePolling } from '../hooks/usePolling'
 
 type ProgressJob = IngestionProgress & { job_type?: string }
 
@@ -18,33 +19,34 @@ function StatusSection() {
   const [jobs, setJobs] = useState<ProgressJob[]>([])
   const [isLoadingJobs, setIsLoadingJobs] = useState(true)
 
-  useEffect(() => {
-    let cancelled = false
-
-    const fetchProgress = async () => {
-      try {
-        const response = await ingestionClient.getAllProgress()
-        if (cancelled) return
-        const data = response.data as ProgressJob[] | { progress?: ProgressJob[] } | undefined
-        const progressData =
-          (data && typeof data === 'object' && !Array.isArray(data) ? data.progress : undefined) ??
-          (Array.isArray(data) ? data : undefined) ??
-          []
-        setJobs(Array.isArray(progressData) ? progressData : [])
-      } catch (error) {
-        if (cancelled) return
-        console.error('Failed to fetch progress:', error)
-        setJobs([])
-      } finally {
-        if (!cancelled) setIsLoadingJobs(false)
-      }
+  const fetchProgress = useCallback(async () => {
+    let nextJobs: ProgressJob[] = []
+    try {
+      const response = await ingestionClient.getAllProgress()
+      const data = response.data as ProgressJob[] | { progress?: ProgressJob[] } | undefined
+      const progressData =
+        (data && typeof data === 'object' && !Array.isArray(data) ? data.progress : undefined) ??
+        (Array.isArray(data) ? data : undefined) ??
+        []
+      if (Array.isArray(progressData)) nextJobs = progressData
+      setJobs(nextJobs)
+    } catch (error) {
+      console.error('Failed to fetch progress:', error)
+      setJobs([])
+    } finally {
+      setIsLoadingJobs(false)
     }
-
-    fetchProgress()
-    const intervalId = setInterval(fetchProgress, 2000)
-
-    return () => { cancelled = true; clearInterval(intervalId) }
+    const hasActive = nextJobs.some(j => !j.is_complete && !j.is_failed)
+    return hasActive ? undefined : { idle: true }
   }, [])
+
+  usePolling({
+    key: 'status-section',
+    pollFn: fetchProgress,
+    intervalMs: 2000,
+    idleIntervalMs: 10000,
+    maxFailures: Number.POSITIVE_INFINITY,
+  })
 
   const handleResetDatabase = async () => {
     setIsResetting(true)
