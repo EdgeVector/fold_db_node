@@ -1,7 +1,7 @@
 use crate::commands::CommandOutput;
 use crate::error::CliError;
 use crate::output::OutputMode;
-use fold_db_node::fold_node::config::NodeConfig;
+use fold_db_node::fold_node::config::{load_node_config, save_node_config, NodeConfig};
 
 /// Runtime view of the daemon — what port it's configured for, whether a
 /// healthy daemon is actually answering on that port, and the list of orgs
@@ -199,17 +199,17 @@ pub async fn config_set(
                 }
             }
 
-            // Read existing config, update env field, write back
+            // Round-trip through the typed (de)serializer so the next save
+            // strips any legacy plaintext `cloud_sync.api_key` /
+            // `session_token` / `user_hash` that pre-#887 binaries wrote into
+            // the file. Those fields are `#[serde(skip_serializing)]` on
+            // CloudSyncConfig, so they survive the read but never make it
+            // back out.
             let path = resolve_config_path(config_path)?;
-            let contents = std::fs::read_to_string(&path)
+            let mut config = load_node_config(Some(&path), None)
                 .map_err(|e| CliError::new(format!("Failed to read config: {}", e)))?;
-            let mut config: serde_json::Value = serde_json::from_str(&contents)
-                .map_err(|e| CliError::new(format!("Failed to parse config: {}", e)))?;
-            config["env"] = serde_json::Value::String(value.to_string());
-            let updated = serde_json::to_string_pretty(&config)
-                .map_err(|e| CliError::new(format!("Failed to serialize config: {}", e)))?;
-            std::fs::write(&path, updated)
-                .map_err(|e| CliError::new(format!("Failed to write config: {}", e)))?;
+            config.env = Some(value.to_string());
+            save_node_config(&config).map_err(CliError::new)?;
 
             let msg = format!("Set env = {}", value);
             // Warn if daemon is running
@@ -454,5 +454,89 @@ mod tests {
             panic!("expected Message");
         };
         assert!(msg.contains("Orgs:               none"));
+    }
+
+    /// Pre-#887 binaries wrote `cloud_sync.api_key` (and friends) as plaintext
+    /// into `node_config.json`. The earlier raw-JSON `config set env`
+    /// implementation preserved those fields, leaving the secret on disk
+    /// indefinitely. The fix round-trips through the typed
+    /// `load_node_config` -> `save_node_config` path so the
+    /// `#[serde(skip_serializing)]` on `CloudSyncConfig.api_key`,
+    /// `session_token`, and `user_hash` strips any legacy values on the very
+    /// next `config set env`.
+    #[tokio::test]
+    async fn config_set_env_strips_legacy_cloud_sync_secrets() {
+        let dir = tempfile::tempdir().expect("config tempdir");
+        let path = dir.path().join("node_config.json");
+
+        // Hand-write a legacy file containing plaintext secrets — the format
+        // a pre-#887 binary would have left behind.
+        let legacy = serde_json::json!({
+            "database": {
+                "path": "/tmp/fdb-data",
+                "cloud_sync": {
+                    "api_url": "https://example.test",
+                    "api_key": "LEGACY-API-KEY-MUST-NOT-PERSIST",
+                    "session_token": "LEGACY-SESSION-TOKEN-MUST-NOT-PERSIST",
+                    "user_hash": "LEGACY-USER-HASH-MUST-NOT-PERSIST"
+                }
+            },
+            "storage_path": "/tmp/fdb-data",
+            "network_listen_address": "/ip4/0.0.0.0/tcp/0"
+        });
+        std::fs::write(&path, serde_json::to_string_pretty(&legacy).unwrap())
+            .expect("seed legacy config");
+
+        let path_str = path.to_str().expect("utf8 path").to_string();
+        let out = config_set("env", "dev", Some(&path_str))
+            .await
+            .expect("config_set env=dev");
+        let CommandOutput::Message(msg) = out else {
+            panic!("expected Message");
+        };
+        assert!(
+            msg.contains("Set env = dev"),
+            "unexpected setter output: {msg}"
+        );
+
+        let written = std::fs::read_to_string(&path).expect("read back config");
+
+        // The whole point of this fix: legacy plaintext secrets must be
+        // gone from disk after the first `config set env`. Asserting on
+        // the literal bytes catches both the field name and the value.
+        assert!(
+            !written.contains("api_key"),
+            "api_key field must be stripped: {written}"
+        );
+        assert!(
+            !written.contains("LEGACY-API-KEY-MUST-NOT-PERSIST"),
+            "legacy api_key value must be stripped: {written}"
+        );
+        assert!(
+            !written.contains("session_token"),
+            "session_token field must be stripped: {written}"
+        );
+        assert!(
+            !written.contains("LEGACY-SESSION-TOKEN-MUST-NOT-PERSIST"),
+            "legacy session_token value must be stripped: {written}"
+        );
+        assert!(
+            !written.contains("user_hash"),
+            "user_hash field must be stripped: {written}"
+        );
+        assert!(
+            !written.contains("LEGACY-USER-HASH-MUST-NOT-PERSIST"),
+            "legacy user_hash value must be stripped: {written}"
+        );
+
+        // And the env field we asked for must actually have landed.
+        let parsed: serde_json::Value =
+            serde_json::from_str(&written).expect("post-write JSON parses");
+        assert_eq!(parsed["env"], "dev");
+        // api_url is the only cloud_sync field that should still be persisted.
+        assert_eq!(
+            parsed["database"]["cloud_sync"]["api_url"],
+            "https://example.test"
+        );
     }
 }

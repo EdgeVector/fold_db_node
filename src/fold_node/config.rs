@@ -30,6 +30,15 @@ pub struct NodeConfig {
     /// URL of the schema service (optional, if not provided will load from local directories)
     #[serde(default)]
     pub schema_service_url: Option<String>,
+
+    /// Environment override persisted via `folddb config set env <dev|prod>`.
+    /// Read by `daemon::is_dev_in_config` (raw JSON) to flip dev-mode wiring on
+    /// startup. Lives on the typed config so `save_node_config` round-trips it
+    /// through the typed serializer — that's what drops legacy plaintext
+    /// `cloud_sync.api_key` / `session_token` / `user_hash` from
+    /// `node_config.json` on the next save.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub env: Option<String>,
     /// Explicit config directory override.
     /// When set, trust modules (contact book, sharing roles, etc.) use this
     /// instead of resolving `$FOLDDB_HOME`. This eliminates env-var races in
@@ -66,6 +75,7 @@ impl Default for NodeConfig {
             storage_path: None,
             network_listen_address: default_network_listen_address(),
             schema_service_url: None,
+            env: None,
             config_dir: None,
             seed_identity: None,
             source_path: None,
@@ -81,6 +91,7 @@ impl NodeConfig {
             storage_path: Some(storage_path),
             network_listen_address: default_network_listen_address(),
             schema_service_url: None,
+            env: None,
             config_dir: None,
             seed_identity: None,
             source_path: None,
