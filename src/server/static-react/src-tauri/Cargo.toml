@@ -35,7 +35,6 @@ tauri-plugin-updater = "2"
 tokio = { version = "1.0", features = ["macros", "rt-multi-thread", "sync", "time"] }
 
 # Serialization
-serde_json = "1.0"
 serde = { version = "1.0", features = ["derive"] }
 
 # Logging
@@ -44,3 +43,8 @@ log = "0.4"
 # System utilities
 dirs = "5.0"
 fs2 = "0.4"
+
+[package.metadata.cargo-machete]
+# tauri-build is invoked from build.rs (`tauri_build::build()`); cargo-machete
+# doesn't trace build-script usage, so suppress the false positive.
+ignored = ["tauri-build"]

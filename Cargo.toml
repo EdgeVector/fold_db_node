@@ -155,11 +155,9 @@ wiremock = "0.6"
 # Phase 4 / T10: Sentry ERROR-layer end-to-end test. The `test` feature
 # enables `sentry::test::with_captured_events` so the test can capture
 # events into an in-memory transport without touching the network.
-# Versions match observability's Cargo.toml (sentry 0.47 / sentry-tracing
-# 0.47) so Cargo unifies them. See
-# `tests/observability_sentry_error_e2e.rs`.
+# Version matches observability's Cargo.toml (sentry 0.47) so Cargo
+# unifies them. See `tests/observability_sentry_error_e2e.rs`.
 sentry = { version = "0.47", default-features = false, features = ["backtrace", "contexts", "release-health", "transport", "test"] }
-sentry-tracing = "0.47"
 # Validates serialized response bodies against the OpenAPI/JSON Schema in
 # tests/openapi_roundtrip_test.rs — catches `serde` ↔ `utoipa` divergence
 # (e.g. `#[serde(rename)]` / `#[serde(flatten)]` / custom serializers
