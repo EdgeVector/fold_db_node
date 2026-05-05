@@ -250,7 +250,7 @@ async fn dispatch_http(
     mode: OutputMode,
 ) -> Result<commands::CommandOutput, CliError> {
     match command {
-        Command::Schema { action } => dispatch_schema(action, client).await,
+        Command::Schema { action } => dispatch_schema(action, client, mode).await,
         Command::Query {
             schema,
             fields,
@@ -457,11 +457,11 @@ async fn dispatch_http(
 async fn dispatch_schema(
     action: &cli::SchemaCommand,
     client: &FoldDbClient,
+    mode: OutputMode,
 ) -> Result<commands::CommandOutput, CliError> {
     match action {
-        cli::SchemaCommand::List => {
-            let json = client.schema_list().await?;
-            Ok(commands::CommandOutput::RawJson(json))
+        cli::SchemaCommand::List { show_hash } => {
+            commands::schema::list(client, *show_hash, mode).await
         }
         cli::SchemaCommand::Get { name } => {
             let json = client.schema_get(name).await?;

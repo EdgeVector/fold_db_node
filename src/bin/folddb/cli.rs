@@ -166,7 +166,14 @@ pub enum Command {
 #[derive(Subcommand, Debug)]
 pub enum SchemaCommand {
     /// List all schemas with their states
-    List,
+    List {
+        /// Also display the underlying schema hash (the API identifier used by
+        /// `schema get`, `query`, `mutate`). Default human output renders the
+        /// human-readable `descriptive_name` so 15 schemas don't look like 15
+        /// indistinguishable hex strings.
+        #[arg(long)]
+        show_hash: bool,
+    },
     /// Get a specific schema by name
     Get {
         /// Schema name
@@ -405,8 +412,19 @@ mod tests {
         let cli = Cli::parse_from(["folddb", "schema", "list"]);
         match cli.command {
             Command::Schema {
-                action: SchemaCommand::List,
-            } => {}
+                action: SchemaCommand::List { show_hash },
+            } => assert!(!show_hash),
+            _ => panic!("Expected Schema List"),
+        }
+    }
+
+    #[test]
+    fn parse_schema_list_show_hash() {
+        let cli = Cli::parse_from(["folddb", "schema", "list", "--show-hash"]);
+        match cli.command {
+            Command::Schema {
+                action: SchemaCommand::List { show_hash },
+            } => assert!(show_hash),
             _ => panic!("Expected Schema List"),
         }
     }
