@@ -39,9 +39,11 @@ async fn main() {
     match &cli.command {
         Command::Daemon { action } => {
             let result = match action {
-                DaemonCommand::Start { port, open } => commands::daemon::start(*port, dev, *open)
-                    .await
-                    .map(commands::CommandOutput::Message),
+                DaemonCommand::Start { port, no_open } => {
+                    commands::daemon::start(*port, dev, *no_open)
+                        .await
+                        .map(commands::CommandOutput::Message)
+                }
                 DaemonCommand::Stop => {
                     commands::daemon::stop().map(commands::CommandOutput::Message)
                 }
@@ -98,20 +100,35 @@ async fn main() {
     // check, any CLI call with --config or NODE_CONFIG re-enters the
     // interactive wizard, which explodes in non-TTY contexts (CI, cron).
     let data_path = config.get_storage_path();
-    let identity_public_key = read_identity_pubkey(&data_path)
-        .or(fetch_pubkey_from_daemon(commands::daemon::default_port()).await);
+    let port = commands::daemon::default_port();
+    let identity_public_key =
+        read_identity_pubkey(&data_path).or(fetch_pubkey_from_daemon(port).await);
 
     // If identity is still missing, run the setup wizard (interactive only).
     let needs_setup = identity_public_key.is_none();
     if needs_setup {
         use std::io::IsTerminal;
         if json_mode || !std::io::stdin().is_terminal() {
-            CliError::new("Node not configured and stdin is not a terminal")
-                .with_hint(
-                    "Start the daemon first (`folddb daemon start`) so the CLI can read \
-                     its identity, or run `folddb` interactively from a terminal to \
-                     complete setup.",
+            // Distinguish "daemon down" from "daemon up but identity not configured
+            // yet". The latter happens to every brew user between `daemon start` and
+            // completing the web setup wizard — pointing them back at `daemon start`
+            // would be a dead-end loop.
+            let daemon_up = commands::daemon::check_daemon_health(port).await;
+            let hint = if daemon_up {
+                format!(
+                    "The daemon is running on port {port} but no node identity is \
+                     configured yet. Open http://localhost:{port} in a browser to \
+                     finish setup, or run `folddb setup` from an interactive terminal."
                 )
+            } else {
+                format!(
+                    "Start the daemon (`folddb daemon start`), then open \
+                     http://localhost:{port} in a browser to finish setup, or run \
+                     `folddb setup` from an interactive terminal."
+                )
+            };
+            CliError::new("Node not configured")
+                .with_hint(hint)
                 .exit(json_mode);
         }
         config = match commands::setup::run_setup_wizard().await {

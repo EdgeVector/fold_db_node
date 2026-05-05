@@ -98,12 +98,24 @@ fn is_port_in_use(port: u16) -> bool {
     std::net::TcpListener::bind(("127.0.0.1", port)).is_err()
 }
 
-/// Start the daemon
-pub async fn start(port: u16, dev: bool, open: bool) -> Result<String, CliError> {
+/// Start the daemon.
+///
+/// Browser-open behavior: by default we open http://localhost:<port> in the
+/// user's default browser once the daemon is healthy. This is required, not
+/// just convenient — first-time setup (identity registration, optional cloud
+/// backup) only runs in the web UI, so a brew install + `daemon start` would
+/// otherwise leave the user with a daemon that's running but has no identity
+/// and no obvious next step. We suppress the open in two cases:
+///   - `--no-open` was passed explicitly
+///   - stdin is not a TTY (launchd, systemd, CI, SSH-without-display, etc.)
+pub async fn start(port: u16, dev: bool, no_open: bool) -> Result<String, CliError> {
+    use std::io::IsTerminal;
+    let should_open = !no_open && std::io::stdin().is_terminal();
+
     if let Some(pid) = read_running_pid() {
         if check_daemon_health(port).await {
             let url = format!("http://localhost:{}", port);
-            if open {
+            if should_open {
                 let _ = open_in_browser(&url);
             }
             return Ok(format!(
@@ -197,7 +209,7 @@ pub async fn start(port: u16, dev: bool, open: bool) -> Result<String, CliError>
             }
             let env_suffix = if dev { " (dev)" } else { "" };
             let url = format!("http://localhost:{}", port);
-            if open {
+            if should_open {
                 let _ = open_in_browser(&url);
             }
             return Ok(format!(

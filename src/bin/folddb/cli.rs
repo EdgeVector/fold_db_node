@@ -340,9 +340,13 @@ pub enum DaemonCommand {
         /// Port to listen on (default: 9001)
         #[arg(long, default_value = "9001")]
         port: u16,
-        /// Open the dashboard in your default browser once the daemon is ready
-        #[arg(long, short = 'o')]
-        open: bool,
+        /// Do not open the dashboard in a browser when the daemon is ready.
+        /// By default, `daemon start` opens http://localhost:<port> in your
+        /// default browser when run from an interactive terminal so that
+        /// first-time setup (which has to happen in the web UI) can complete
+        /// without an extra step. Pass --no-open to suppress this.
+        #[arg(long)]
+        no_open: bool,
     },
     /// Stop the running daemon
     Stop,
