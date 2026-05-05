@@ -719,7 +719,9 @@ impl IngestionConfig {
 /// `query` field will be dropped two releases after PR 4 ships.
 #[derive(Debug, Clone, Serialize, Deserialize, Default, utoipa::ToSchema)]
 pub struct SavedConfig {
+    #[serde(default)]
     pub provider: AIProvider,
+    #[serde(default)]
     pub ollama: OllamaConfig,
     #[serde(default)]
     pub anthropic: AnthropicConfig,
@@ -857,6 +859,39 @@ mod tests {
         }"#;
         let saved: SavedConfig = serde_json::from_str(json).expect("should parse legacy config");
         assert_eq!(saved.vision_backend, VisionBackend::Ollama);
+    }
+
+    #[test]
+    fn saved_config_anthropic_only_payload_deserializes() {
+        // Regression: a client (curl, custom integration, the UI) configuring
+        // only Anthropic must not be required to ship a stub `ollama` block.
+        // Mirrors the POST body in the original 400 repro.
+        let json = r#"{
+            "provider": "Anthropic",
+            "anthropic": {
+                "api_key": "sk-ant-test",
+                "model": "claude-haiku-4-5-20251001",
+                "base_url": "https://api.anthropic.com"
+            },
+            "enabled": true
+        }"#;
+        let saved: SavedConfig =
+            serde_json::from_str(json).expect("anthropic-only payload should parse");
+        assert_eq!(saved.provider, AIProvider::Anthropic);
+        assert_eq!(saved.anthropic.api_key, "sk-ant-test");
+        // Missing ollama block falls back to OllamaConfig::default().
+        assert_eq!(saved.ollama.base_url, models::OLLAMA_DEFAULT_URL);
+    }
+
+    #[test]
+    fn saved_config_empty_object_falls_back_to_defaults() {
+        // Every top-level field on SavedConfig is `#[serde(default)]`, so an
+        // empty body must round-trip cleanly to the default config rather than
+        // erroring on the first missing field.
+        let saved: SavedConfig =
+            serde_json::from_str("{}").expect("empty body should parse to defaults");
+        assert_eq!(saved.provider, AIProvider::default());
+        assert_eq!(saved.ollama.base_url, models::OLLAMA_DEFAULT_URL);
     }
 
     #[test]
