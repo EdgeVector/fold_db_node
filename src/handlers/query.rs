@@ -54,16 +54,22 @@ pub async fn execute_query(
     ))
 }
 
-/// Execute a native index search
+/// Execute a native index search.
+///
+/// `include_internal` toggles inclusion of internal/bookkeeping schemas
+/// (`Mention`, `MentionBySource`, `ExtractionStatus`, `IngestionError`,
+/// `TriggerFiring`, `ai_conversations`, `ExtractionRule`). The HTTP route
+/// defaults this to `false`; pass `true` only for admin/debug callers.
 pub async fn native_index_search(
     query_string: &str,
+    include_internal: bool,
     user_hash: &str,
     node: &FoldNode,
 ) -> HandlerResult<IndexSearchResponse> {
     let processor = OperationProcessor::from_ref(node);
 
     let results = processor
-        .native_index_search(query_string)
+        .native_index_search(query_string, include_internal)
         .await
         .typed_handler_err()?;
     let results_json = serde_json::to_value(&results).handler_err("serialize search results")?;

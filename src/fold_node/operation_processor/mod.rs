@@ -13,6 +13,8 @@ mod schema_ops;
 mod trust_ops;
 pub mod view_ops;
 
+pub use query_ops::is_internal_index_schema;
+
 /// Centralized operation processor that handles all operation types consistently.
 ///
 /// This eliminates code duplication across HTTP routes, TCP server, CLI, and direct API usage.
@@ -553,5 +555,46 @@ mod tests {
                 range
             );
         }
+    }
+
+    #[test]
+    fn test_is_internal_index_schema_matches_canonical() {
+        // ai_conversations is keyed off the canonical name (its descriptive
+        // name is the human-friendly "AI Conversations").
+        assert!(super::is_internal_index_schema(
+            "ai_conversations",
+            Some("AI Conversations")
+        ));
+    }
+
+    #[test]
+    fn test_is_internal_index_schema_matches_descriptive() {
+        // Fingerprint schemas have hashed canonical names (sh_…) and stable
+        // descriptive names like "Mention". Filter must match the latter.
+        assert!(super::is_internal_index_schema(
+            "sh_def0123456789",
+            Some("Mention")
+        ));
+        assert!(super::is_internal_index_schema(
+            "sh_abc",
+            Some("MentionBySource")
+        ));
+        assert!(super::is_internal_index_schema(
+            "sh_abc",
+            Some("ExtractionStatus")
+        ));
+    }
+
+    #[test]
+    fn test_is_internal_index_schema_rejects_user_schemas() {
+        assert!(!super::is_internal_index_schema(
+            "sh_xyz",
+            Some("Journal Entries")
+        ));
+        assert!(!super::is_internal_index_schema("BlogPost", None));
+        assert!(!super::is_internal_index_schema(
+            "sh_xyz",
+            Some("User Profile Information")
+        ));
     }
 }

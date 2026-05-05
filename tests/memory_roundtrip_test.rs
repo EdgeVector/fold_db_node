@@ -143,7 +143,7 @@ async fn memory_register_then_ingest_and_search_roundtrip() {
 
     // 3. Semantic search for content related to the first memory.
     let results = processor
-        .native_index_search("rebase before pushing to avoid CI failure")
+        .native_index_search("rebase before pushing to avoid CI failure", false)
         .await
         .expect("native_index_search must succeed");
 
@@ -157,7 +157,7 @@ async fn memory_register_then_ingest_and_search_roundtrip() {
 
     // 4. Semantic search for a different topic surfaces the right memory.
     let hiking_results = processor
-        .native_index_search("hiking trail weekend crowds")
+        .native_index_search("hiking trail weekend crowds", false)
         .await
         .expect("native_index_search for hiking must succeed");
     let hiking_hits = filter_memory_hits(&hiking_results, &canonical);

@@ -56,6 +56,11 @@ impl LlmQueryService {
     ///
     /// This is the first step of the AI-native index query workflow.
     /// Call `interpret_native_index_results` separately to get AI interpretation.
+    ///
+    /// Internal/bookkeeping schemas (matched by
+    /// [`crate::fold_node::operation_processor::is_internal_index_schema`])
+    /// are filtered out — the LLM-facing query path should never surface
+    /// `Mention` / `MentionBySource` / `ExtractionStatus` plumbing rows.
     pub async fn search_native_index(
         &self,
         user_query: &str,
@@ -66,6 +71,19 @@ impl LlmQueryService {
         let search_terms = self
             .generate_native_index_search_terms(user_query, schemas)
             .await?;
+
+        // Build a canonical→descriptive name map so the internal-schema
+        // filter can match either form (fingerprint schemas have hashed
+        // canonical names but stable descriptive names).
+        let display_names: std::collections::HashMap<&str, &str> = schemas
+            .iter()
+            .filter_map(|s| {
+                s.schema
+                    .descriptive_name
+                    .as_deref()
+                    .map(|dn| (s.schema.name.as_str(), dn))
+            })
+            .collect();
 
         // Step 2: Execute native index searches for each term
         let mut all_results = Vec::new();
@@ -87,8 +105,18 @@ impl LlmQueryService {
             }
         }
 
+        let pre_filter = all_results.len();
+        all_results.retain(|r| {
+            let descriptive = display_names.get(r.schema_name.as_str()).copied();
+            !crate::fold_node::operation_processor::is_internal_index_schema(
+                &r.schema_name,
+                descriptive,
+            )
+        });
+
         tracing::info!(
-            "LLM Query: Found {} results from native index",
+            "LLM Query: Found {} results from native index ({} after filtering internal schemas)",
+            pre_filter,
             all_results.len()
         );
 
@@ -281,8 +309,11 @@ impl LlmQueryService {
                     .and_then(|t| t.as_str())
                     .ok_or("search tool requires 'terms' parameter")?;
 
+                // Filter out internal/bookkeeping schemas — the agent should
+                // never surface Mention/MentionBySource/ExtractionStatus etc.
+                // as user-facing "data types" when answering inventory questions.
                 let results = processor
-                    .native_index_search(terms)
+                    .native_index_search(terms, false)
                     .await
                     .map_err(|e| format!("Search failed: {}", e))?;
 

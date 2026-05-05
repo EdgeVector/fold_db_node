@@ -604,7 +604,18 @@ impl OperationProcessor {
     }
 
     /// Search the native word index for a term.
-    pub async fn native_index_search(&self, term: &str) -> FoldDbResult<Vec<IndexResult>> {
+    ///
+    /// `include_internal` controls whether internal/bookkeeping schemas
+    /// (see [`is_internal_index_schema`]) appear in the result set. The
+    /// HTTP `/api/native-index/search` endpoint and the LLM agent's
+    /// `search` tool default to `false` so anonymized fingerprint
+    /// cross-references don't crowd out actual user content at the top of
+    /// search results.
+    pub async fn native_index_search(
+        &self,
+        term: &str,
+        include_internal: bool,
+    ) -> FoldDbResult<Vec<IndexResult>> {
         let term = term.trim();
         if term.is_empty() {
             return Err(FoldDbError::Config("Term cannot be empty".to_string()));
@@ -631,6 +642,44 @@ impl OperationProcessor {
             }
         }
 
+        if !include_internal {
+            results.retain(|r| {
+                !is_internal_index_schema(&r.schema_name, r.schema_display_name.as_deref())
+            });
+        }
+
         Ok(results)
+    }
+}
+
+/// Internal/bookkeeping schemas excluded from generic native-index search
+/// results by default. These exist to record cross-references between
+/// extracted entities, source records, ingestion errors, trigger firings,
+/// and agent conversations — they're plumbing, not user data.
+///
+/// Contains a mix of canonical names (`ai_conversations`) and descriptive
+/// names (`Mention`, `MentionBySource`, `ExtractionStatus`, `IngestionError`,
+/// `ExtractionRule`) because the fingerprint system uses content-hashed
+/// canonical names (`sh_…`) while keeping a human-readable
+/// `descriptive_name`. [`is_internal_index_schema`] checks both.
+const INTERNAL_INDEX_SCHEMAS: &[&str] = &[
+    "Mention",
+    "MentionBySource",
+    "ExtractionStatus",
+    "IngestionError",
+    "TriggerFiring",
+    "ai_conversations",
+    "ExtractionRule",
+];
+
+/// Returns true if the given schema (identified by canonical name and
+/// optional descriptive name) is in the [`INTERNAL_INDEX_SCHEMAS`] allow-list.
+pub fn is_internal_index_schema(canonical_name: &str, descriptive_name: Option<&str>) -> bool {
+    if INTERNAL_INDEX_SCHEMAS.contains(&canonical_name) {
+        return true;
+    }
+    match descriptive_name {
+        Some(d) => INTERNAL_INDEX_SCHEMAS.contains(&d),
+        None => false,
     }
 }
