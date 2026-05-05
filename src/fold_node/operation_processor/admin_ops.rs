@@ -333,7 +333,7 @@ impl OperationProcessor {
             .clone()
             .ok_or_else(|| FoldDbError::Config("NodeConfig.config_dir not set".to_string()))?;
         let config = IngestionConfig::load_or_default(&config_dir);
-        let service = LlmQueryService::new(config).map_err(FoldDbError::Other)?;
+        let service = LlmQueryService::new(config, config_dir).map_err(FoldDbError::Other)?;
 
         let schemas = self.list_schemas().await?;
 

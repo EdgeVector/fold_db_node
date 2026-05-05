@@ -3,6 +3,7 @@
 mod native_index;
 mod parsers;
 mod prompts;
+pub mod web_search_key_store;
 pub mod web_tools;
 
 use super::types::{FollowupAnalysis, Message, QueryPlan};
@@ -10,11 +11,18 @@ use crate::ingestion::{ai::client::AiBackend, config::IngestionConfig, Role};
 use fold_db::llm_registry::prompts::query as qp;
 use fold_db::schema::SchemaWithState;
 use serde_json::Value;
+use std::path::PathBuf;
 use std::sync::Arc;
 
 /// Service for LLM-based query analysis and summarization
 pub struct LlmQueryService {
     backend: Arc<dyn AiBackend>,
+    /// Per-server config directory. Used to resolve auxiliary on-disk state
+    /// such as the persisted Brave Search API key (see
+    /// [`web_search_key_store`]). Stored as a [`PathBuf`] so the agent
+    /// `execute_tool` path doesn't need to thread the value through every
+    /// call site.
+    config_dir: PathBuf,
 }
 
 impl LlmQueryService {
@@ -22,12 +30,20 @@ impl LlmQueryService {
     /// Defaults to Anthropic Sonnet; overrides applied per
     /// `IngestionConfig::overrides[Role::QueryChat]`. Metrics record against
     /// the process-wide singleton store.
-    pub fn new(config: IngestionConfig) -> Result<Self, String> {
+    pub fn new(config: IngestionConfig, config_dir: PathBuf) -> Result<Self, String> {
         let (backend, init_error) = config.build_backend(Role::QueryChat);
         let backend = backend.ok_or_else(|| {
             init_error.unwrap_or_else(|| "AI backend initialization failed".to_string())
         })?;
-        Ok(Self { backend })
+        Ok(Self {
+            backend,
+            config_dir,
+        })
+    }
+
+    /// Per-server config directory (e.g. `~/.folddb/config`).
+    pub(crate) fn config_dir(&self) -> &std::path::Path {
+        &self.config_dir
     }
 
     /// Analyze a natural language query and create an execution plan
@@ -480,7 +496,8 @@ mod tests {
         let mut config = crate::ingestion::config::IngestionConfig::default();
         config.provider = crate::ingestion::config::AIProvider::Ollama;
 
-        let service = LlmQueryService::new(config).expect("Failed to create service");
+        let service = LlmQueryService::new(config, std::path::PathBuf::new())
+            .expect("Failed to create service");
         let schemas = vec![create_test_hash_range_schema()];
 
         let prompt = service.build_analysis_prompt("Find posts by Jennifer Liu", &schemas);
@@ -515,7 +532,8 @@ mod tests {
         let mut config = crate::ingestion::config::IngestionConfig::default();
         config.provider = crate::ingestion::config::AIProvider::Ollama;
 
-        let service = LlmQueryService::new(config).expect("Failed to create service");
+        let service = LlmQueryService::new(config, std::path::PathBuf::new())
+            .expect("Failed to create service");
         let schemas = vec![create_test_hash_range_schema()];
 
         let prompt = service.build_analysis_prompt("Test query", &schemas);

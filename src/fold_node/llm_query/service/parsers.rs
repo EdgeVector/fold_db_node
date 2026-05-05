@@ -264,7 +264,8 @@ mod tests {
     fn make_service() -> LlmQueryService {
         let mut config = crate::ingestion::config::IngestionConfig::default();
         config.provider = crate::ingestion::config::AIProvider::Ollama;
-        LlmQueryService::new(config).expect("Failed to create test service")
+        LlmQueryService::new(config, std::path::PathBuf::new())
+            .expect("Failed to create test service")
     }
 
     #[test]

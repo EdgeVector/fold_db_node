@@ -22,12 +22,14 @@ import ingestionReducer from '../../../store/ingestionSlice'
 import useAiConfig from '../../../components/settings/AiConfigSettings'
 import type { SaveStatus } from '../../../components/settings/types'
 import type { IngestionConfig } from '../../../api/clients/ingestionClient'
-import { ingestionClient } from '../../../api/clients'
+import { ingestionClient, webSearchClient } from '../../../api/clients'
 
 // Spy on the singleton so the same object the slice uses is intercepted.
 const saveConfigSpy = vi.spyOn(ingestionClient, 'saveConfig')
 const getConfigSpy = vi.spyOn(ingestionClient, 'getConfig')
 const listModelsSpy = vi.spyOn(ingestionClient, 'listOllamaModels')
+const getWebSearchKeyStatusSpy = vi.spyOn(webSearchClient, 'getKeyStatus')
+const saveWebSearchKeySpy = vi.spyOn(webSearchClient, 'saveKey')
 
 /**
  * Tiny harness that wires the `useAiConfig` hook the same way SettingsTab
@@ -88,6 +90,9 @@ beforeEach(() => {
   getConfigSpy.mockResolvedValue(apiOk(baseConfig))
   // Stub the Ollama model list so the debounced effect doesn't complain.
   listModelsSpy.mockResolvedValue(apiOk({ models: [] }))
+  // Default: no web-search key configured. Individual tests override.
+  getWebSearchKeyStatusSpy.mockResolvedValue(apiOk({ has_key: false }))
+  saveWebSearchKeySpy.mockResolvedValue(apiOk({ has_key: true }))
 })
 
 describe('AiConfigSettings — Vision Backend picker', () => {
@@ -144,5 +149,56 @@ describe('AiConfigSettings — Vision Backend picker', () => {
     const payload = saveConfigSpy.mock.calls[0][0]
     expect((payload as IngestionConfig).provider).toBe('Anthropic')
     expect((payload as IngestionConfig).vision_backend).toBe('Ollama')
+  })
+})
+
+describe('AiConfigSettings — Web Search key', () => {
+  it('fetches key presence on mount and shows the unset state', async () => {
+    renderHarness()
+
+    await waitFor(() => expect(getWebSearchKeyStatusSpy).toHaveBeenCalledTimes(1))
+    expect(await screen.findByTestId('web-search-key-status-unset')).toBeInTheDocument()
+    expect(screen.queryByTestId('web-search-key-status-set')).not.toBeInTheDocument()
+  })
+
+  it('shows the configured state when the server reports has_key=true', async () => {
+    getWebSearchKeyStatusSpy.mockResolvedValue(apiOk({ has_key: true }))
+    renderHarness()
+
+    expect(await screen.findByTestId('web-search-key-status-set')).toBeInTheDocument()
+  })
+
+  it('saves a new key, clears the input, and re-fetches presence', async () => {
+    renderHarness()
+    await waitFor(() => expect(getWebSearchKeyStatusSpy).toHaveBeenCalledTimes(1))
+
+    const input = (await screen.findByTestId('web-search-key-input')) as HTMLInputElement
+    fireEvent.change(input, { target: { value: 'BRAVE_TEST_KEY' } })
+
+    // Server flips has_key true after the save.
+    getWebSearchKeyStatusSpy.mockResolvedValueOnce(apiOk({ has_key: true }))
+
+    fireEvent.click(screen.getByTestId('web-search-key-save'))
+
+    await waitFor(() => expect(saveWebSearchKeySpy).toHaveBeenCalledWith('BRAVE_TEST_KEY'))
+    await waitFor(() => expect(input.value).toBe(''))
+    await waitFor(() =>
+      expect(screen.getByTestId('web-search-key-status-set')).toBeInTheDocument(),
+    )
+    // Two calls: initial mount + post-save refresh.
+    expect(getWebSearchKeyStatusSpy).toHaveBeenCalledTimes(2)
+  })
+
+  it('surfaces an error message when saving fails', async () => {
+    saveWebSearchKeySpy.mockRejectedValueOnce(new Error('boom'))
+    renderHarness()
+    await waitFor(() => expect(getWebSearchKeyStatusSpy).toHaveBeenCalledTimes(1))
+
+    const input = await screen.findByTestId('web-search-key-input')
+    fireEvent.change(input, { target: { value: 'BRAVE_TEST_KEY' } })
+    fireEvent.click(screen.getByTestId('web-search-key-save'))
+
+    const error = await screen.findByTestId('web-search-key-error')
+    expect(error.textContent).toContain('boom')
   })
 })

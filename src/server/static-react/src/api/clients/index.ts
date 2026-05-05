@@ -48,6 +48,9 @@ export {
 
 // LLM Query Client
 export { llmQueryClient } from "./llmQueryClient";
+// Web Search Key Client
+export { webSearchClient, UnifiedWebSearchClient } from "./webSearchClient";
+export type { WebSearchKeyStatus } from "./webSearchClient";
 // Native Index Client
 export { nativeIndexClient, NativeIndexClient } from "./nativeIndexClient";
 // Indexing Status Client

@@ -1,5 +1,5 @@
 import { useState, useEffect, useRef, useCallback } from 'react'
-import { ingestionClient } from '../../api/clients'
+import { ingestionClient, webSearchClient } from '../../api/clients'
 import type { IngestionConfig, OllamaModel, VisionBackend } from '../../api/clients/ingestionClient'
 import { useAppSelector, useAppDispatch } from '../../store/hooks'
 import { selectIngestionConfig, saveIngestionConfig } from '../../store/ingestionSlice'
@@ -116,6 +116,13 @@ function useAiConfig({ configSaveStatus, setConfigSaveStatus, onClose }: Setting
   const [ollamaModelsLoading, setOllamaModelsLoading] = useState(false)
   const [ollamaModelsError, setOllamaModelsError] = useState<string | null>(null)
   const [showAdvanced, setShowAdvanced] = useState(false)
+  // Web search (Brave Search) API key — separate persistence model from the
+  // AI config above (encrypted on disk via /api/web_search/key, never read
+  // back to the client). UI only knows whether a key is set, never the key.
+  const [webSearchHasKey, setWebSearchHasKey] = useState(false)
+  const [webSearchInput, setWebSearchInput] = useState('')
+  const [webSearchSaving, setWebSearchSaving] = useState(false)
+  const [webSearchError, setWebSearchError] = useState<string | null>(null)
   // Query override (separate provider/model for LLM search/chat)
   const [queryOverrideEnabled, setQueryOverrideEnabled] = useState(false)
   const [queryProvider, setQueryProvider] = useState<AiProvider>('Anthropic')
@@ -173,6 +180,33 @@ function useAiConfig({ configSaveStatus, setConfigSaveStatus, onClose }: Setting
 
   // Update recommendations when URL changes (local vs remote)
   useEffect(() => { setRecommended(getRecommendedModels(ollamaBaseUrl)) }, [ollamaBaseUrl])
+
+  // Web search key presence — fetched once on mount and re-fetched after each save.
+  const refreshWebSearchKeyStatus = useCallback(async () => {
+    try {
+      const response = await webSearchClient.getKeyStatus()
+      setWebSearchHasKey(Boolean(response?.data?.has_key))
+      setWebSearchError(null)
+    } catch (err) {
+      setWebSearchError(err instanceof Error ? err.message : String(err))
+    }
+  }, [])
+
+  useEffect(() => { refreshWebSearchKeyStatus() }, [refreshWebSearchKeyStatus])
+
+  const saveWebSearchKey = useCallback(async () => {
+    setWebSearchSaving(true)
+    setWebSearchError(null)
+    try {
+      await webSearchClient.saveKey(webSearchInput)
+      setWebSearchInput('')
+      await refreshWebSearchKeyStatus()
+    } catch (err) {
+      setWebSearchError(err instanceof Error ? err.message : String(err))
+    } finally {
+      setWebSearchSaving(false)
+    }
+  }, [webSearchInput, refreshWebSearchKeyStatus])
 
   // Fetch Ollama models when provider is Ollama and URL changes (debounced)
   useEffect(() => {
@@ -503,6 +537,65 @@ function useAiConfig({ configSaveStatus, setConfigSaveStatus, onClose }: Setting
                 </>
               )}
             </div>
+          )}
+        </div>
+
+        <div className="border-t border-border pt-3" data-testid="web-search-section">
+          <div className="flex items-center gap-2">
+            <label className="label mb-0">Web Search</label>
+            {webSearchHasKey ? (
+              <span
+                className="text-xs text-gruvbox-green inline-flex items-center gap-1"
+                data-testid="web-search-key-status-set"
+              >
+                <span aria-hidden="true">●</span> Configured
+              </span>
+            ) : (
+              <span
+                className="text-xs text-secondary"
+                data-testid="web-search-key-status-unset"
+              >
+                Not configured
+              </span>
+            )}
+          </div>
+          <p className="text-xs text-secondary mt-1">
+            Lets the agent search the web (Brave Search). Stored locally and
+            encrypted at rest.{' '}
+            {!webSearchHasKey && (
+              <a
+                href="https://brave.com/search/api/"
+                target="_blank"
+                rel="noopener noreferrer"
+                className="text-gruvbox-blue hover:underline"
+              >
+                Get a free key
+              </a>
+            )}
+          </p>
+          <div className="mt-2 flex gap-2">
+            <input
+              type="password"
+              value={webSearchInput}
+              onChange={(e) => setWebSearchInput(e.target.value)}
+              placeholder={webSearchHasKey ? 'Enter new key to replace…' : 'Brave Search API key'}
+              className="input flex-1"
+              aria-label="Brave Search API Key"
+              data-testid="web-search-key-input"
+            />
+            <button
+              onClick={saveWebSearchKey}
+              disabled={webSearchSaving || !webSearchInput.trim()}
+              className="btn"
+              data-testid="web-search-key-save"
+            >
+              {webSearchSaving ? 'Saving…' : 'Save'}
+            </button>
+          </div>
+          {webSearchError && (
+            <p className="text-xs text-gruvbox-red mt-1" data-testid="web-search-key-error">
+              {webSearchError}
+            </p>
           )}
         </div>
 
