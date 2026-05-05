@@ -1324,10 +1324,7 @@ pub async fn send_data_share(
             .map(|s| s.to_string());
 
         let file_data_base64 = if let Some(ref hash) = file_hash {
-            // Read the file from boot-time upload storage. The previous
-            // path constructed a fresh `UploadStorage::local(env_path)` per
-            // call from `FOLDDB_UPLOAD_PATH`; that's now plumbed in from
-            // `StartupCtx::upload_storage` via the route handler.
+            // Read the file from boot-time upload storage threaded down via the route handler.
             match upload_storage.read_file(hash, None).await {
                 Ok(bytes) => Some(B64.encode(&bytes)),
                 Err(e) => {
