@@ -487,9 +487,11 @@ impl IngestionConfig {
     /// Load config from the saved file and environment variables.
     ///
     /// Precedence (highest to lowest):
-    /// - `ANTHROPIC_API_KEY` env var (secrets never live in files)
-    /// - Saved config file at `config_dir/ingestion_config.json` (UI choices)
-    /// - Other env vars (only when no saved config)
+    /// - Saved config file at `config_dir/ingestion_config.json` (UI choices,
+    ///   including `anthropic.api_key`)
+    /// - Env vars — used as bootstrap fill-ins when the saved file is missing
+    ///   the value (`ANTHROPIC_API_KEY` fills in only when the saved key is
+    ///   empty; other env vars only apply when there's no saved config at all)
     /// - Compiled-in defaults
     ///
     /// Returns an error if the config file exists but cannot be read or parsed.
@@ -526,9 +528,21 @@ impl IngestionConfig {
             true
         };
 
-        // API keys: env vars always win — secrets shouldn't live in config files
-        if let Ok(key) = env::var("ANTHROPIC_API_KEY") {
-            config.anthropic.api_key = key;
+        // ANTHROPIC_API_KEY: the saved file is canonical (UI is the source of
+        // truth for the key), so env only fills in when the saved key is
+        // empty. This preserves CI / docker bootstrap, where the file starts
+        // empty and the env var seeds the first run, while preventing a stale
+        // `ANTHROPIC_API_KEY` exported by the launcher / shell rc from
+        // silently reverting a key the user just typed in the UI on every
+        // daemon restart. Empty strings still don't count as "set" so a
+        // parent shell exporting `ANTHROPIC_API_KEY=` can't clobber even an
+        // empty saved value with the same empty value.
+        if config.anthropic.api_key.is_empty() {
+            if let Ok(key) = env::var("ANTHROPIC_API_KEY") {
+                if !key.is_empty() {
+                    config.anthropic.api_key = key;
+                }
+            }
         }
 
         // Vision backend: env var always wins even over saved config. This lets
@@ -549,31 +563,47 @@ impl IngestionConfig {
         }
 
         // Provider selection and non-secret model settings only apply when
-        // there's no saved config (saved config already has these)
+        // there's no saved config (saved config already has these). Empty
+        // strings are treated as "not set" so a set-but-empty env var can't
+        // wipe a compiled-in default to "".
         if !has_saved {
             if let Ok(p) = env::var("AI_PROVIDER") {
-                config.provider = match p.to_lowercase().as_str() {
-                    "ollama" => AIProvider::Ollama,
-                    _ => AIProvider::Anthropic,
-                };
+                if !p.is_empty() {
+                    config.provider = match p.to_lowercase().as_str() {
+                        "ollama" => AIProvider::Ollama,
+                        _ => AIProvider::Anthropic,
+                    };
+                }
             }
             if let Ok(v) = env::var("OLLAMA_MODEL") {
-                config.ollama.model = v;
+                if !v.is_empty() {
+                    config.ollama.model = v;
+                }
             }
             if let Ok(v) = env::var("OLLAMA_BASE_URL") {
-                config.ollama.base_url = v;
+                if !v.is_empty() {
+                    config.ollama.base_url = v;
+                }
             }
             if let Ok(v) = env::var("OLLAMA_VISION_MODEL") {
-                config.ollama.vision_model = v;
+                if !v.is_empty() {
+                    config.ollama.vision_model = v;
+                }
             }
             if let Ok(v) = env::var("OLLAMA_OCR_MODEL") {
-                config.ollama.ocr_model = v;
+                if !v.is_empty() {
+                    config.ollama.ocr_model = v;
+                }
             }
             if let Ok(v) = env::var("ANTHROPIC_MODEL") {
-                config.anthropic.model = v;
+                if !v.is_empty() {
+                    config.anthropic.model = v;
+                }
             }
             if let Ok(v) = env::var("ANTHROPIC_BASE_URL") {
-                config.anthropic.base_url = v;
+                if !v.is_empty() {
+                    config.anthropic.base_url = v;
+                }
             }
         }
 
@@ -698,7 +728,9 @@ impl IngestionConfig {
 /// `query` field will be dropped two releases after PR 4 ships.
 #[derive(Debug, Clone, Serialize, Deserialize, Default, utoipa::ToSchema)]
 pub struct SavedConfig {
+    #[serde(default)]
     pub provider: AIProvider,
+    #[serde(default)]
     pub ollama: OllamaConfig,
     #[serde(default)]
     pub anthropic: AnthropicConfig,
@@ -836,6 +868,39 @@ mod tests {
         }"#;
         let saved: SavedConfig = serde_json::from_str(json).expect("should parse legacy config");
         assert_eq!(saved.vision_backend, VisionBackend::Ollama);
+    }
+
+    #[test]
+    fn saved_config_anthropic_only_payload_deserializes() {
+        // Regression: a client (curl, custom integration, the UI) configuring
+        // only Anthropic must not be required to ship a stub `ollama` block.
+        // Mirrors the POST body in the original 400 repro.
+        let json = r#"{
+            "provider": "Anthropic",
+            "anthropic": {
+                "api_key": "sk-ant-test",
+                "model": "claude-haiku-4-5-20251001",
+                "base_url": "https://api.anthropic.com"
+            },
+            "enabled": true
+        }"#;
+        let saved: SavedConfig =
+            serde_json::from_str(json).expect("anthropic-only payload should parse");
+        assert_eq!(saved.provider, AIProvider::Anthropic);
+        assert_eq!(saved.anthropic.api_key, "sk-ant-test");
+        // Missing ollama block falls back to OllamaConfig::default().
+        assert_eq!(saved.ollama.base_url, models::OLLAMA_DEFAULT_URL);
+    }
+
+    #[test]
+    fn saved_config_empty_object_falls_back_to_defaults() {
+        // Every top-level field on SavedConfig is `#[serde(default)]`, so an
+        // empty body must round-trip cleanly to the default config rather than
+        // erroring on the first missing field.
+        let saved: SavedConfig =
+            serde_json::from_str("{}").expect("empty body should parse to defaults");
+        assert_eq!(saved.provider, AIProvider::default());
+        assert_eq!(saved.ollama.base_url, models::OLLAMA_DEFAULT_URL);
     }
 
     #[test]
@@ -1279,5 +1344,165 @@ mod tests {
         let back: SavedConfig = serde_json::from_str(&json).unwrap();
         assert!(back.overrides.is_empty());
         assert!(!back.query.is_set());
+    }
+
+    // Env-var override tests mutate process-global state; serialize them so
+    // they don't race with each other or with tests in sibling modules that
+    // touch the same vars.
+    fn env_lock() -> std::sync::MutexGuard<'static, ()> {
+        use std::sync::{Mutex, OnceLock};
+        static LOCK: OnceLock<Mutex<()>> = OnceLock::new();
+        LOCK.get_or_init(|| Mutex::new(()))
+            .lock()
+            .expect("env lock poisoned")
+    }
+
+    #[test]
+    fn nonempty_anthropic_api_key_env_does_not_override_saved_key() {
+        // Headline: the saved file is canonical, so a stale `ANTHROPIC_API_KEY`
+        // exported by the launcher / shell rc must not silently revert a key
+        // the user just typed in the UI on the next daemon restart.
+        let _guard = env_lock();
+        let tmp = tempfile::tempdir().expect("tempdir");
+
+        let saved = SavedConfig {
+            provider: AIProvider::Anthropic,
+            anthropic: AnthropicConfig {
+                api_key: "sk-ant-real-saved-key".to_string(),
+                ..AnthropicConfig::default()
+            },
+            ..SavedConfig::default()
+        };
+        IngestionConfig::save_to_file(tmp.path(), &saved).expect("save");
+
+        std::env::set_var("ANTHROPIC_API_KEY", "sk-ant-stale-env-value");
+        let loaded = IngestionConfig::load(tmp.path()).expect("load");
+        std::env::remove_var("ANTHROPIC_API_KEY");
+
+        assert_eq!(
+            loaded.anthropic.api_key, "sk-ant-real-saved-key",
+            "saved file must win over a non-empty ANTHROPIC_API_KEY env var"
+        );
+    }
+
+    #[test]
+    fn empty_anthropic_api_key_env_does_not_clobber_saved_key() {
+        // Companion: a parent shell exporting `ANTHROPIC_API_KEY=` (set but
+        // empty) likewise can't wipe the user's saved key.
+        let _guard = env_lock();
+        let tmp = tempfile::tempdir().expect("tempdir");
+
+        let saved = SavedConfig {
+            provider: AIProvider::Anthropic,
+            anthropic: AnthropicConfig {
+                api_key: "sk-ant-real-saved-key".to_string(),
+                ..AnthropicConfig::default()
+            },
+            ..SavedConfig::default()
+        };
+        IngestionConfig::save_to_file(tmp.path(), &saved).expect("save");
+
+        std::env::set_var("ANTHROPIC_API_KEY", "");
+        let loaded = IngestionConfig::load(tmp.path()).expect("load");
+        std::env::remove_var("ANTHROPIC_API_KEY");
+
+        assert_eq!(
+            loaded.anthropic.api_key, "sk-ant-real-saved-key",
+            "empty ANTHROPIC_API_KEY env must not overwrite saved key"
+        );
+    }
+
+    #[test]
+    fn anthropic_api_key_env_fills_in_when_saved_key_empty() {
+        // Bootstrap path: CI / docker / fresh-install runs where the saved
+        // file is absent (or has an empty key) still let `ANTHROPIC_API_KEY`
+        // seed the first run.
+        let _guard = env_lock();
+        let tmp = tempfile::tempdir().expect("tempdir");
+
+        let saved = SavedConfig {
+            provider: AIProvider::Anthropic,
+            anthropic: AnthropicConfig {
+                api_key: String::new(),
+                ..AnthropicConfig::default()
+            },
+            ..SavedConfig::default()
+        };
+        IngestionConfig::save_to_file(tmp.path(), &saved).expect("save");
+
+        std::env::set_var("ANTHROPIC_API_KEY", "sk-ant-bootstrap");
+        let loaded = IngestionConfig::load(tmp.path()).expect("load");
+        std::env::remove_var("ANTHROPIC_API_KEY");
+
+        assert_eq!(loaded.anthropic.api_key, "sk-ant-bootstrap");
+    }
+
+    #[test]
+    fn anthropic_api_key_unset_env_with_empty_saved_yields_empty() {
+        // No saved key, no env → result is empty; downstream validation
+        // catches the missing-key case.
+        let _guard = env_lock();
+        let tmp = tempfile::tempdir().expect("tempdir");
+
+        let saved = SavedConfig {
+            provider: AIProvider::Anthropic,
+            anthropic: AnthropicConfig {
+                api_key: String::new(),
+                ..AnthropicConfig::default()
+            },
+            ..SavedConfig::default()
+        };
+        IngestionConfig::save_to_file(tmp.path(), &saved).expect("save");
+
+        std::env::remove_var("ANTHROPIC_API_KEY");
+        let loaded = IngestionConfig::load(tmp.path()).expect("load");
+
+        assert_eq!(loaded.anthropic.api_key, "");
+    }
+
+    #[test]
+    fn anthropic_api_key_empty_env_with_empty_saved_yields_empty() {
+        // Set-but-empty env behaves like unset (the empty-string filter still
+        // applies, so we don't store "" as a "real" value).
+        let _guard = env_lock();
+        let tmp = tempfile::tempdir().expect("tempdir");
+
+        let saved = SavedConfig {
+            provider: AIProvider::Anthropic,
+            anthropic: AnthropicConfig {
+                api_key: String::new(),
+                ..AnthropicConfig::default()
+            },
+            ..SavedConfig::default()
+        };
+        IngestionConfig::save_to_file(tmp.path(), &saved).expect("save");
+
+        std::env::set_var("ANTHROPIC_API_KEY", "");
+        let loaded = IngestionConfig::load(tmp.path()).expect("load");
+        std::env::remove_var("ANTHROPIC_API_KEY");
+
+        assert_eq!(loaded.anthropic.api_key, "");
+    }
+
+    #[test]
+    fn empty_ollama_env_vars_do_not_clobber_defaults() {
+        // No saved config on disk → the OLLAMA_* / ANTHROPIC_MODEL env-var
+        // overrides are eligible to fire. Empty strings must be ignored so
+        // they can't replace a compiled-in default with "".
+        let _guard = env_lock();
+        let tmp = tempfile::tempdir().expect("tempdir");
+
+        std::env::set_var("OLLAMA_MODEL", "");
+        std::env::set_var("OLLAMA_BASE_URL", "");
+        std::env::set_var("ANTHROPIC_MODEL", "");
+        let loaded = IngestionConfig::load(tmp.path()).expect("load");
+        std::env::remove_var("OLLAMA_MODEL");
+        std::env::remove_var("OLLAMA_BASE_URL");
+        std::env::remove_var("ANTHROPIC_MODEL");
+
+        let defaults = IngestionConfig::default();
+        assert_eq!(loaded.ollama.model, defaults.ollama.model);
+        assert_eq!(loaded.ollama.base_url, defaults.ollama.base_url);
+        assert_eq!(loaded.anthropic.model, defaults.anthropic.model);
     }
 }

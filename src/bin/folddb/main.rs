@@ -250,7 +250,7 @@ async fn dispatch_http(
     mode: OutputMode,
 ) -> Result<commands::CommandOutput, CliError> {
     match command {
-        Command::Schema { action } => dispatch_schema(action, client).await,
+        Command::Schema { action } => dispatch_schema(action, client, mode).await,
         Command::Query {
             schema,
             fields,
@@ -457,11 +457,11 @@ async fn dispatch_http(
 async fn dispatch_schema(
     action: &cli::SchemaCommand,
     client: &FoldDbClient,
+    mode: OutputMode,
 ) -> Result<commands::CommandOutput, CliError> {
     match action {
-        cli::SchemaCommand::List => {
-            let json = client.schema_list().await?;
-            Ok(commands::CommandOutput::RawJson(json))
+        cli::SchemaCommand::List { show_hash } => {
+            commands::schema::list(client, *show_hash, mode).await
         }
         cli::SchemaCommand::Get { name } => {
             let json = client.schema_get(name).await?;
@@ -639,6 +639,35 @@ async fn dispatch_mutate(
     }
 }
 
+/// Start a smart-folder scan and poll until it completes, returning the full
+/// `SmartFolderScanResponse` JSON. The scan endpoint is async — POST returns a
+/// `progress_id` and the result is fetched separately.
+async fn run_smart_scan(
+    client: &FoldDbClient,
+    folder_path: &str,
+    max_depth: usize,
+    max_files: usize,
+) -> Result<serde_json::Value, CliError> {
+    let start = client.smart_scan(folder_path, max_depth, max_files).await?;
+    let progress_id = start
+        .get("progress_id")
+        .and_then(|v| v.as_str())
+        .ok_or_else(|| CliError::new("Scan start response missing 'progress_id'"))?
+        .to_string();
+
+    // 10-minute cap matches the per-request timeout in `FoldDbClient::new`.
+    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(600);
+    while std::time::Instant::now() < deadline {
+        if let Some(result) = client.smart_scan_result(&progress_id).await? {
+            return Ok(result);
+        }
+        tokio::time::sleep(std::time::Duration::from_millis(500)).await;
+    }
+    Err(CliError::new(
+        "Smart-folder scan timed out after 10 minutes",
+    ))
+}
+
 async fn dispatch_ingest(
     action: &cli::IngestCommand,
     client: &FoldDbClient,
@@ -667,10 +696,9 @@ async fn dispatch_ingest(
             max_depth,
             max_files,
         } => {
-            let json = client
-                .smart_scan(path.to_string_lossy().as_ref(), *max_depth, *max_files)
-                .await?;
-            Ok(commands::CommandOutput::RawJson(json))
+            let folder = path.to_string_lossy();
+            let scan = run_smart_scan(client, &folder, *max_depth, *max_files).await?;
+            Ok(commands::CommandOutput::RawJson(scan))
         }
         cli::IngestCommand::Smart {
             path,
@@ -678,24 +706,33 @@ async fn dispatch_ingest(
             files,
             no_execute,
         } => {
-            if *all {
-                let json = client
-                    .smart_ingest(path.to_string_lossy().as_ref(), !no_execute)
-                    .await?;
-                Ok(commands::CommandOutput::RawJson(json))
+            let folder = path.to_string_lossy();
+            let auto_execute = !*no_execute;
+            let files_to_ingest: Vec<String> = if *all {
+                let scan = run_smart_scan(client, &folder, 5, 500).await?;
+                let recs = scan
+                    .get("recommended_files")
+                    .and_then(|v| v.as_array())
+                    .ok_or_else(|| {
+                        CliError::new("Scan response missing 'recommended_files' array")
+                    })?;
+                recs.iter()
+                    .filter_map(|r| r.get("path").and_then(|v| v.as_str()).map(String::from))
+                    .collect()
             } else if let Some(file_list) = files {
-                let mut results = Vec::new();
-                for file in file_list {
-                    let full_path = path.join(file);
-                    let json = client
-                        .smart_ingest(full_path.to_string_lossy().as_ref(), !no_execute)
-                        .await?;
-                    results.push(json);
-                }
-                Ok(commands::CommandOutput::RawJson(serde_json::json!(results)))
+                file_list.clone()
             } else {
-                Err(CliError::new("Specify --all or --files"))
+                return Err(CliError::new("Specify --all or --files"));
+            };
+            if files_to_ingest.is_empty() {
+                return Err(CliError::new(
+                    "No files to ingest (scan returned no recommendations)",
+                ));
             }
+            let json = client
+                .smart_ingest(&folder, &files_to_ingest, auto_execute)
+                .await?;
+            Ok(commands::CommandOutput::RawJson(json))
         }
         #[cfg(target_os = "macos")]
         cli::IngestCommand::AppleNotes { folder, batch_size } => {

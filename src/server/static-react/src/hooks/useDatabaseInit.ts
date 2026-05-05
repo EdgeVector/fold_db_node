@@ -87,25 +87,12 @@ export function useDatabaseInit(isAuthenticated: boolean): UseDatabaseInitResult
     runStatusCheck(true)
   }, [isAuthenticated, runStatusCheck])
 
-  // Re-check after DatabaseSetupScreen completes (no onboarding evaluation —
-  // preserves the exact behavior of the inline handler which only set dbStatus).
+  // Re-check after DatabaseSetupScreen completes. Evaluate onboarding so the
+  // wizard fires for fresh installs — otherwise Local Storage users land on
+  // the dashboard with no IdentityCard saved (CLI wizard parity).
   const recheckDbStatus = useCallback(() => {
-    setDbStatusLoading(true)
-    getDatabaseStatus()
-      .then((response) => {
-        if (response.success && response.data) {
-          setDbStatus(response.data)
-        }
-      })
-      .catch(() => {
-        setDbStatus({
-          initialized: true,
-          has_saved_config: true,
-          onboarding_complete: true,
-        })
-      })
-      .finally(() => setDbStatusLoading(false))
-  }, [])
+    runStatusCheck(true)
+  }, [runStatusCheck])
 
   return {
     dbStatus,

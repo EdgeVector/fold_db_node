@@ -2,30 +2,36 @@ import { describe, it, expect, vi, beforeEach } from "vitest";
 import { configureStore } from "@reduxjs/toolkit";
 import ingestionReducer, {
   fetchIngestionConfig,
+  fetchIngestionStatus,
   saveIngestionConfig,
   selectIngestionConfig,
+  selectAiConfiguredFromStatus,
   selectAiProvider,
   selectActiveModel,
   selectIsAiConfigured,
 } from "../../store/ingestionSlice";
 import type { RootState } from "../../store/store";
-import type { IngestionConfig } from "../../api/clients/ingestionClient";
+import type {
+  IngestionConfig,
+  IngestionStatus,
+} from "../../api/clients/ingestionClient";
 import { ingestionClient } from "../../api/clients";
 
 // Spy on the singleton instance methods so the same object the slice uses is mocked
 const mockGetConfig = vi.spyOn(ingestionClient, "getConfig");
 const mockSaveConfig = vi.spyOn(ingestionClient, "saveConfig");
+const mockGetStatus = vi.spyOn(ingestionClient, "getStatus");
 
 function createStore(preloadedIngestion = {}) {
   return configureStore({
     reducer: { ingestion: ingestionReducer },
-    preloadedState: { ingestion: { config: null, loading: false, error: null, saving: false, saveError: null, ...preloadedIngestion } },
+    preloadedState: { ingestion: { config: null, status: null, loading: false, error: null, saving: false, saveError: null, ...preloadedIngestion } },
   });
 }
 
 // Helper to build a RootState-shaped object for selector tests
 function stateWith(config: IngestionConfig | null): Pick<RootState, "ingestion"> {
-  return { ingestion: { config, loading: false, error: null, saving: false, saveError: null } } as Pick<RootState, "ingestion">;
+  return { ingestion: { config, status: null, loading: false, error: null, saving: false, saveError: null } } as Pick<RootState, "ingestion">;
 }
 
 const anthropicConfig: IngestionConfig = {
@@ -108,10 +114,43 @@ describe("ingestionSlice", () => {
     });
   });
 
+  describe("fetchIngestionStatus", () => {
+    it("stores status on success", async () => {
+      const status: IngestionStatus = {
+        configured: true,
+        enabled: true,
+        provider: "Anthropic",
+        model: "claude-sonnet-4-20250514",
+        auto_execute_mutations: false,
+      };
+      mockGetStatus.mockResolvedValue({ success: true, data: status } as any);
+      const store = createStore();
+
+      await store.dispatch(fetchIngestionStatus());
+      expect(store.getState().ingestion.status).toEqual(status);
+    });
+
+    it("leaves status null when API returns failure", async () => {
+      mockGetStatus.mockResolvedValue({ success: false, data: null } as any);
+      const store = createStore();
+
+      await store.dispatch(fetchIngestionStatus());
+      expect(store.getState().ingestion.status).toBeNull();
+    });
+  });
+
   describe("saveIngestionConfig", () => {
-    it("saves then re-fetches config on success", async () => {
+    it("saves then re-fetches config + status on success", async () => {
+      const ollamaStatus: IngestionStatus = {
+        configured: true,
+        enabled: true,
+        provider: "Ollama",
+        model: "llama3.3",
+        auto_execute_mutations: false,
+      };
       mockSaveConfig.mockResolvedValue({ success: true, data: { success: true, message: "ok" } } as any);
       mockGetConfig.mockResolvedValue({ success: true, data: ollamaConfig } as any);
+      mockGetStatus.mockResolvedValue({ success: true, data: ollamaStatus } as any);
       const store = createStore();
 
       const promise = store.dispatch(saveIngestionConfig(ollamaConfig));
@@ -121,10 +160,12 @@ describe("ingestionSlice", () => {
       const state = store.getState().ingestion;
       expect(state.saving).toBe(false);
       expect(state.saveError).toBeNull();
-      // Config should be populated from the re-fetch
+      // Config + status should both be populated from the re-fetch
       expect(state.config).toEqual(ollamaConfig);
+      expect(state.status).toEqual(ollamaStatus);
       expect(mockSaveConfig).toHaveBeenCalledWith(ollamaConfig);
       expect(mockGetConfig).toHaveBeenCalledTimes(1);
+      expect(mockGetStatus).toHaveBeenCalledTimes(1);
     });
 
     it("sets saveError when API returns failure", async () => {
@@ -218,6 +259,46 @@ describe("ingestionSlice", () => {
           ollama: { ...ollamaConfig.ollama, model: "" },
         };
         expect(selectIsAiConfigured(stateWith(noModel) as RootState)).toBe(false);
+      });
+    });
+
+    describe("selectAiConfiguredFromStatus", () => {
+      const stateWithStatus = (status: IngestionStatus | null): Pick<RootState, "ingestion"> =>
+        ({
+          ingestion: {
+            config: null,
+            status,
+            loading: false,
+            error: null,
+            saving: false,
+            saveError: null,
+          },
+        }) as Pick<RootState, "ingestion">;
+
+      it("returns null before the first status fetch lands", () => {
+        expect(selectAiConfiguredFromStatus(stateWithStatus(null) as RootState)).toBeNull();
+      });
+
+      it("returns true when backend reports configured", () => {
+        const status: IngestionStatus = {
+          configured: true,
+          enabled: true,
+          provider: "Anthropic",
+          model: "claude-sonnet-4-20250514",
+          auto_execute_mutations: false,
+        };
+        expect(selectAiConfiguredFromStatus(stateWithStatus(status) as RootState)).toBe(true);
+      });
+
+      it("returns false when backend reports not configured", () => {
+        const status: IngestionStatus = {
+          configured: false,
+          enabled: true,
+          provider: "Anthropic",
+          model: "",
+          auto_execute_mutations: false,
+        };
+        expect(selectAiConfiguredFromStatus(stateWithStatus(status) as RootState)).toBe(false);
       });
     });
 

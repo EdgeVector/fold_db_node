@@ -351,7 +351,16 @@ async fn test_smart_folder_ingest_and_query() {
         eprintln!("\nAI Query: \"{}\"", query_text);
 
         let result = query_service
-            .run_agent_query(query_text, &schemas, &node, &user_id, 10, &[], None)
+            .run_agent_query(
+                query_text,
+                &schemas,
+                &node,
+                &user_id,
+                10,
+                &[],
+                None,
+                "test-session",
+            )
             .await;
 
         match result {

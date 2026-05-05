@@ -1,10 +1,11 @@
-import { useEffect, useState } from 'react'
+import { useEffect } from 'react'
 import { useAppDispatch, useAppSelector } from '../store/hooks'
 import { restoreSession, autoLogin, loadSystemPublicKey } from '../store/authSlice'
 import {
   fetchIngestionConfig,
+  fetchIngestionStatus,
   selectIngestionConfig,
-  selectIsAiConfigured,
+  selectAiConfiguredFromStatus,
   selectAiProvider,
 } from '../store/ingestionSlice'
 import { BROWSER_CONFIG } from '../constants/config'
@@ -13,9 +14,10 @@ import { BROWSER_CONFIG } from '../constants/config'
  * Orchestrates authentication bootstrap:
  *   1. Restore session from localStorage, or auto-login with node identity
  *   2. Load system public key for display
- *   3. Fetch AI/ingestion config once authenticated
+ *   3. Fetch AI/ingestion config + status once authenticated
  *
- * Also exposes the setup-banner state (AI-not-configured + not-yet-dismissed).
+ * Also exposes the setup-banner state, which mirrors `/api/ingestion/status`
+ * directly — no localStorage dismissal flag.
  */
 export function useAuthInitialization() {
   const dispatch = useAppDispatch()
@@ -48,28 +50,27 @@ export function useAuthInitialization() {
     dispatch(loadSystemPublicKey())
   }, [dispatch])
 
-  // Fetch AI configuration on mount (after auth)
+  // Fetch AI configuration + status on mount (after auth). Status is the
+  // banner's source of truth; config drives the settings UI.
   useEffect(() => {
     if (isAuthenticated) {
       dispatch(fetchIngestionConfig())
+      dispatch(fetchIngestionStatus())
     }
   }, [dispatch, isAuthenticated])
 
   const ingestionConfig = useAppSelector(selectIngestionConfig)
-  const aiConfigured = useAppSelector(selectIsAiConfigured)
+  const aiConfiguredFromStatus = useAppSelector(selectAiConfiguredFromStatus)
   const aiProvider = useAppSelector(selectAiProvider)
 
-  // Setup banner state (persisted dismissal)
-  const [setupDismissed, setSetupDismissed] = useState(
-    () => localStorage.getItem('folddb_setup_dismissed') === '1'
-  )
-  const dismissSetup = () => {
-    setSetupDismissed(true)
-    localStorage.setItem('folddb_setup_dismissed', '1')
-  }
-
+  // Banner reflects backend readiness directly. Hidden until the first
+  // status response lands (null) so we don't flash "configure AI" while
+  // /api/ingestion/status is still in flight; reappears automatically if
+  // the user later un-configures (clears the API key, switches to an
+  // un-installed Ollama, etc.) — no manual dismissal layer.
+  const aiConfigured = aiConfiguredFromStatus === true
   const showSetupBanner =
-    isAuthenticated && ingestionConfig !== null && !aiConfigured && !setupDismissed
+    isAuthenticated && aiConfiguredFromStatus === false
 
   return {
     isAuthenticated,
@@ -80,6 +81,5 @@ export function useAuthInitialization() {
     aiConfigured,
     aiProvider,
     showSetupBanner,
-    dismissSetup,
   }
 }

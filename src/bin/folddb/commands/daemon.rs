@@ -1,5 +1,6 @@
 use crate::error::CliError;
 use fold_db_node::endpoints::{schema_service_url_for, Environment};
+use fold_db_node::utils::paths::observability_log_path;
 use std::fs;
 use std::path::PathBuf;
 use std::process::Command;
@@ -106,8 +107,10 @@ pub async fn start(port: u16, dev: bool, open: bool) -> Result<String, CliError>
                 let _ = open_in_browser(&url);
             }
             return Ok(format!(
-                "FoldDB is already running at {}\n(PID {} — stop with `folddb daemon stop`)",
-                url, pid,
+                "FoldDB is already running at {}\n(PID {} — stop with `folddb daemon stop`)\nLogs: {}",
+                url,
+                pid,
+                observability_log_path().display(),
             ));
         }
         stop_process(pid);
@@ -198,8 +201,11 @@ pub async fn start(port: u16, dev: bool, open: bool) -> Result<String, CliError>
                 let _ = open_in_browser(&url);
             }
             return Ok(format!(
-                "FoldDB is running at {}{}\n(PID {} — stop with `folddb daemon stop`)",
-                url, env_suffix, pid,
+                "FoldDB is running at {}{}\n(PID {} — stop with `folddb daemon stop`)\nLogs: {}",
+                url,
+                env_suffix,
+                pid,
+                observability_log_path().display(),
             ));
         }
 

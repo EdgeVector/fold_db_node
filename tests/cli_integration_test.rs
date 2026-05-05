@@ -825,3 +825,87 @@ fn ingest_file_targets_ingestion_process_endpoint() {
         combined
     );
 }
+
+// ---------------------------------------------------------------------------
+// Regression: `folddb ingest smart-scan` and `folddb ingest smart` must send
+// the field name the server expects (`folder_path`, not `path`) and, for
+// smart-ingest, must include `files_to_ingest`. Pre-fix both subcommands
+// returned 400 "Invalid JSON format" on every invocation, breaking smart-folder
+// ingestion entirely.
+//
+// The test daemon has no AI provider configured, so we don't expect ingestion
+// to succeed end-to-end. We only assert: the request shape was accepted (no
+// 400 / "Invalid JSON format" / "missing field" leaking through).
+// ---------------------------------------------------------------------------
+
+fn smart_folder_fixture() -> PathBuf {
+    let daemon = get_daemon();
+    let folder = daemon._tmpdir.path().join("smart_fixture");
+    fs::create_dir_all(&folder).expect("create smart fixture dir");
+    fs::write(folder.join("a.json"), "{\"name\":\"alice\"}").expect("write fixture file");
+    folder
+}
+
+fn assert_request_shape_accepted(combined: &str, label: &str) {
+    let lower = combined.to_lowercase();
+    assert!(
+        !lower.contains("invalid json format"),
+        "{} regressed: server rejected request shape: {}",
+        label,
+        combined
+    );
+    assert!(
+        !lower.contains("missing field"),
+        "{} regressed: server reported missing field: {}",
+        label,
+        combined
+    );
+}
+
+#[test]
+fn ingest_smart_scan_sends_folder_path_field() {
+    let daemon = get_daemon();
+    let folder = smart_folder_fixture();
+
+    let output = cli_with_daemon(daemon)
+        .arg("ingest")
+        .arg("smart-scan")
+        .arg(&folder)
+        .arg("--max-files")
+        .arg("5")
+        // Tight ceiling so the polling loop returns quickly even when the
+        // background scan task fails (no AI configured in test daemon).
+        .timeout(std::time::Duration::from_secs(60))
+        .output()
+        .expect("run ingest smart-scan");
+
+    let combined = format!(
+        "{}{}",
+        String::from_utf8_lossy(&output.stdout),
+        String::from_utf8_lossy(&output.stderr)
+    );
+    assert_request_shape_accepted(&combined, "smart-scan");
+}
+
+#[test]
+fn ingest_smart_with_files_sends_files_to_ingest() {
+    let daemon = get_daemon();
+    let folder = smart_folder_fixture();
+
+    let output = cli_with_daemon(daemon)
+        .arg("ingest")
+        .arg("smart")
+        .arg(&folder)
+        .arg("--files")
+        .arg("a.json")
+        .timeout(std::time::Duration::from_secs(60))
+        .output()
+        .expect("run ingest smart --files");
+
+    let combined = format!(
+        "{}{}",
+        String::from_utf8_lossy(&output.stdout),
+        String::from_utf8_lossy(&output.stderr)
+    );
+    assert_request_shape_accepted(&combined, "smart --files");
+}

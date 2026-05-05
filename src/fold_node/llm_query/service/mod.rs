@@ -150,7 +150,8 @@ impl LlmQueryService {
         prompt.push_str("Example: {\"tool\": \"query\", \"params\": {\"schema_name\": \"Flight\", \"fields\": [\"airline\", \"price\", \"departure\"], \"filter\": null, \"value_filters\": [{\"LessThan\": {\"field\": \"price\", \"value\": 600}}], \"sort_order\": \"asc\"}}\n\n");
 
         prompt.push_str("### list_schemas\n");
-        prompt.push_str("List all available schemas.\n");
+        prompt.push_str("List all available schemas. Each entry includes a `record_count` field with the exact number of records stored in that schema.\n");
+        prompt.push_str("**Use this for inventory questions** (\"how much data do I have\", \"what's in my database\", \"summarize what's been ingested\") — one call returns counts for every schema, so you do not need to issue per-schema queries to answer.\n");
         prompt.push_str("Parameters: none\n");
         prompt.push_str("Example: {\"tool\": \"list_schemas\", \"params\": {}}\n\n");
 
@@ -418,11 +419,12 @@ impl LlmQueryService {
         prompt.push_str("3. **For questions requiring external/real-world information** (vacation planning, restaurant recommendations, travel logistics, current events, prices), use the **web_search** tool. Follow up with **fetch_url** on the most relevant results for detailed information.\n");
         prompt.push_str("4. **For tasks that create structured data** (planning, organizing, comparing, building lists), use **web_search** to research first, then use **ingest_json** to store the results in the database. The data will be schema-validated and queryable in the dashboard.\n");
         prompt.push_str("5. **For tasks that modify existing data** (change a budget, update a date, swap a hotel, fix a value), first **query** the schema to find the record's key, then use **update_record** to change specific fields. Do NOT re-ingest the entire record — just update the fields that changed.\n");
-        prompt.push_str("6. Use other tools to gather additional information as needed\n");
+        prompt.push_str("6. **For inventory questions** (\"how much data do I have\", \"summarize what's been ingested\", \"how many records in each schema\"), call **list_schemas** once and report each schema's `record_count` directly. Do NOT issue an unfiltered `query` per schema and do NOT report \"Unknown\" — `record_count` is the authoritative number for every active schema.\n");
+        prompt.push_str("7. Use other tools to gather additional information as needed\n");
         prompt.push_str(
-            "7. When you have enough information to answer, provide your final response\n",
+            "8. When you have enough information to answer, provide your final response\n",
         );
-        prompt.push_str("8. Use the current date/time above to determine temporal context. Events with dates before today are in the PAST. Events with dates after today are in the FUTURE. Label them accordingly (e.g. \"upcoming\" vs \"past\").\n\n");
+        prompt.push_str("9. Use the current date/time above to determine temporal context. Events with dates before today are in the PAST. Events with dates after today are in the FUTURE. Label them accordingly (e.g. \"upcoming\" vs \"past\").\n\n");
         prompt.push_str("## Reference Fields\n\n");
         prompt.push_str("Some fields are References to records in other schemas. Query results automatically resolve references one level deep.\n");
         prompt.push_str("If a field value is an array of objects with \"schema\" and \"key\" properties, those are references to child records.\n");

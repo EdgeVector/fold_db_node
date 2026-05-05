@@ -52,6 +52,15 @@ export interface SystemStatusResponse {
   schema_service_url?: string;
 }
 
+// Wire shape of GET /api/health. Mirrors the Rust handler at
+// src/server/routes/system.rs::health_check; `version` is
+// FOLDDB_BUILD_VERSION, the same string `folddb --version` reports.
+export interface HealthResponse {
+  ok: boolean;
+  version: string;
+  uptime_s: number;
+}
+
 export interface NodeKeyResponse {
   success: boolean;
   public_key?: string;
@@ -172,6 +181,20 @@ export class UnifiedSystemClient {
         cacheable: false, // Never cache destructive operations
       },
     );
+  }
+
+  // Liveness probe (`/api/health`) — unauthenticated, returns the running
+  // binary's build version. Use this for the footer/version display so it
+  // tracks the actual daemon, not the bundled UI's package.json.
+  async getHealth(): Promise<EnhancedApiResponse<HealthResponse>> {
+    return this.client.get<HealthResponse>(API_ENDPOINTS.GET_HEALTH, {
+      requiresAuth: false,
+      timeout: API_TIMEOUTS.QUICK,
+      retries: API_RETRIES.STANDARD,
+      cacheable: true,
+      cacheTtl: API_CACHE_TTL.SYSTEM_STATUS,
+      cacheKey: "health",
+    });
   }
 
   // Get system status and health information (no auth required)
@@ -395,6 +418,7 @@ export function createSystemClient(client?: ApiClient): UnifiedSystemClient {
 export const getLogs = systemClient.getLogs.bind(systemClient);
 export const resetDatabase = systemClient.resetDatabase.bind(systemClient);
 export const getAutoIdentity = systemClient.getAutoIdentity.bind(systemClient);
+export const getHealth = systemClient.getHealth.bind(systemClient);
 export const getSystemStatus = systemClient.getSystemStatus.bind(systemClient);
 export const getNodePublicKey =
   systemClient.getNodePublicKey.bind(systemClient);
