@@ -4,6 +4,7 @@ import { getIndexingStatus } from '../api/clients/indexingClient'
 import type { IndexingStatus } from '../api/clients/indexingClient'
 import type { BatchStatusResponse, IngestionProgress } from '../api/clients/ingestionClient'
 import { fmtCost } from '../utils/formatCost'
+import { usePolling } from '../hooks/usePolling'
 
 type ProgressJob = IngestionProgress & { job_type?: string }
 
@@ -19,6 +20,9 @@ function HeaderProgress() {
   }, [])
 
   const fetchProgress = useCallback(async () => {
+    let nextJobs: ProgressJob[] = []
+    let nextIndexing: IndexingStatus | null = null
+    let nextBatch: BatchStatusResponse | null = null
     try {
       const promises: Array<Promise<unknown>> = [
         ingestionClient.getAllProgress(),
@@ -40,25 +44,20 @@ function HeaderProgress() {
           (Array.isArray(data) ? data : undefined) ??
           response.progress ??
           []
-        if (Array.isArray(progressData)) {
-          setJobs(progressData)
-        } else {
-          setJobs([])
-        }
-      } else {
-        setJobs([])
+        if (Array.isArray(progressData)) nextJobs = progressData
       }
+      setJobs(nextJobs)
 
       if (results[1].status === 'fulfilled') {
-        setIndexingStatus(results[1].value as IndexingStatus)
-      } else {
-        setIndexingStatus(null)
+        nextIndexing = results[1].value as IndexingStatus
       }
+      setIndexingStatus(nextIndexing)
 
       if (results.length > 2 && results[2].status === 'fulfilled') {
         const batchResp = results[2].value as { success?: boolean; data?: BatchStatusResponse }
         if (batchResp.success && batchResp.data) {
-          setBatchInfo(batchResp.data)
+          nextBatch = batchResp.data
+          setBatchInfo(nextBatch)
           const s = batchResp.data.status
           if (s === 'Completed' || s === 'Cancelled' || s === 'Failed') {
             if (dismissTimeoutRef.current) clearTimeout(dismissTimeoutRef.current)
@@ -77,13 +76,21 @@ function HeaderProgress() {
     } finally {
       setIsLoading(false)
     }
+
+    const hasActiveJobs = nextJobs.some(j => !j.is_complete && !j.is_failed)
+    const isIndexingActive = nextIndexing?.state === 'Indexing'
+    const hasActiveBatch = !!nextBatch && (nextBatch.status === 'Running' || nextBatch.status === 'Paused')
+    const idle = !hasActiveJobs && !isIndexingActive && !hasActiveBatch
+    return idle ? { idle: true } : undefined
   }, [])
 
-  useEffect(() => {
-    fetchProgress()
-    const intervalId = setInterval(fetchProgress, 2000)
-    return () => clearInterval(intervalId)
-  }, [fetchProgress])
+  usePolling({
+    key: 'header-progress',
+    pollFn: fetchProgress,
+    intervalMs: 2000,
+    idleIntervalMs: 10000,
+    maxFailures: Number.POSITIVE_INFINITY,
+  })
 
   const activeJobs = jobs.filter(j => !j.is_complete && !j.is_failed)
   const isIndexingActive = indexingStatus?.state === 'Indexing'
