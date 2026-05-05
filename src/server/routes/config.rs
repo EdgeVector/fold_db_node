@@ -376,17 +376,10 @@ pub async fn mark_onboarding_complete() -> impl Responder {
         }
     };
 
-    // Ensure the data directory exists
-    if let Some(parent) = marker_path.parent() {
-        if let Err(e) = std::fs::create_dir_all(parent) {
-            return HttpResponse::InternalServerError().json(json!({
-                "ok": false,
-                "error": format!("Failed to create data directory: {e}")
-            }));
-        }
-    }
-
-    if let Err(e) = std::fs::write(&marker_path, "1") {
+    // Routed through sensitive_io: the marker's mere presence reveals that a
+    // credentialed setup flow ran (PR #885 reasoning). write_sensitive
+    // creates the parent directory itself.
+    if let Err(e) = crate::sensitive_io::write_sensitive(&marker_path, b"1") {
         return HttpResponse::InternalServerError().json(json!({
             "ok": false,
             "error": format!("Failed to write onboarding marker: {e}")

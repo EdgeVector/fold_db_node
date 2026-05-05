@@ -890,13 +890,12 @@ async fn cloud_enable(
         );
     }
 
-    // Mark onboarding complete (consistent with UI and setup wizard)
+    // Mark onboarding complete (consistent with UI and setup wizard). Routed
+    // through sensitive_io: the marker's presence reveals a credentialed flow
+    // ran (PR #885 reasoning).
     if let Ok(home) = fold_db_node::utils::paths::folddb_home() {
         let marker = home.join("data").join(".onboarding_complete");
-        if let Some(parent) = marker.parent() {
-            let _ = std::fs::create_dir_all(parent);
-        }
-        let _ = std::fs::write(&marker, "1");
+        let _ = fold_db_node::sensitive_io::write_sensitive(&marker, b"1");
     }
 
     // If daemon is running, apply config live via HTTP (same mechanism the UI uses)
