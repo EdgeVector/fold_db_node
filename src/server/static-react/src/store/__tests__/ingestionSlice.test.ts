@@ -464,6 +464,34 @@ describe("reconcileAppleJobs", () => {
     expect(calledIds.sort()).toEqual(["notes-1", "photos-1"]);
   });
 
+  it("treats a dual-flag job (is_complete + is_failed) as failed", async () => {
+    // Backend stamps both flags on a terminal failure. reconcile must
+    // route through appleJobFailed — otherwise a job that errored while
+    // the user was on another tab gets reconciled into `done` on app
+    // mount and shows a green ✓.
+    const { store } = buildStoreWithRecorder();
+
+    store.dispatch(
+      appleJobStarted({ key: "contacts", progressId: "ct-1" }),
+    );
+
+    mockedGetJobProgress.mockResolvedValueOnce(
+      ok({
+        is_complete: true,
+        is_failed: true,
+        status_message:
+          "Failed to extract contacts: osascript timed out after 300 seconds",
+        error_message: "osascript timeout",
+      }),
+    );
+
+    await store.dispatch(reconcileAppleJobs());
+
+    const job = store.getState().ingestion.appleJobs.contacts;
+    expect(job.status).toBe("error");
+    expect(job.message).toBe("osascript timeout");
+  });
+
   it("re-dispatches appleJobStarted for a still-running job to re-arm the listener", async () => {
     const { store, recorded } = buildStoreWithRecorder();
 

@@ -157,22 +157,25 @@ export const reconcileAppleJobs = createAsyncThunk(
           const progress = data.progress_percentage ?? 0;
           const message = data.status_message ?? data.message ?? "";
 
-          if (data.is_complete) {
-            dispatch(
-              appleJobCompleted({
-                key,
-                result: data.results ?? data.result ?? null,
-                message,
-              }),
-            );
-            return;
-          }
+          // Check is_failed BEFORE is_complete: when a job terminates in
+          // failure the backend stamps both flags. Reading is_complete
+          // first would reconcile a failed job into the `done` state.
           if (data.is_failed) {
             dispatch(
               appleJobFailed({
                 key,
                 message:
                   data.error_message ?? data.message ?? "Import failed",
+              }),
+            );
+            return;
+          }
+          if (data.is_complete) {
+            dispatch(
+              appleJobCompleted({
+                key,
+                result: data.results ?? data.result ?? null,
+                message,
               }),
             );
             return;

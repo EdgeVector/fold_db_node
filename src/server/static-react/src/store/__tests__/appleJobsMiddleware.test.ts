@@ -168,6 +168,39 @@ describe("appleJobsMiddleware", () => {
     expect(mockedGetJobProgress.mock.calls.length).toBe(callsAfterFail);
   });
 
+  it("dispatches appleJobFailed (not Completed) when both is_failed and is_complete are true", async () => {
+    // Backend stamps is_complete = "no longer running" and is_failed =
+    // "ended in error" when a job fails terminally (e.g. osascript
+    // timeout for contacts permission). Failure must win — otherwise
+    // the SourceCard renders a green ✓ for a job that errored out.
+    mockedGetJobProgress.mockResolvedValueOnce(
+      ok({
+        is_complete: true,
+        is_failed: true,
+        status_message:
+          "Failed to extract contacts: osascript timed out after 300 seconds",
+        error_message: "osascript timeout",
+      }),
+    );
+    mockedGetJobProgress.mockResolvedValue(
+      ok({ is_complete: true, is_failed: true, error_message: "osascript timeout" }),
+    );
+
+    const store = buildStore();
+    store.dispatch(appleJobStarted({ key: "contacts", progressId: "ct-1" }));
+
+    await ADVANCE(2000);
+
+    const job = getJob(store, "contacts");
+    expect(job.status).toBe("error");
+    expect(job.message).toBe("osascript timeout");
+
+    // Polling stops on terminal state — same contract as the success path.
+    const callsAfterFail = mockedGetJobProgress.mock.calls.length;
+    await ADVANCE(4000);
+    expect(mockedGetJobProgress.mock.calls.length).toBe(callsAfterFail);
+  });
+
   it("stops polling when appleJobReset is dispatched mid-flight", async () => {
     mockedGetJobProgress.mockResolvedValue(
       ok({
