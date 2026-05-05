@@ -104,9 +104,6 @@ mod tests {
             None => std::env::remove_var("OBS_FILE_PATH"),
         }
 
-        assert_eq!(
-            resolved,
-            PathBuf::from("/tmp/folddb-test-explicit.jsonl")
-        );
+        assert_eq!(resolved, PathBuf::from("/tmp/folddb-test-explicit.jsonl"));
     }
 }
