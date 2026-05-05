@@ -46,7 +46,16 @@ concurrency:
 jobs:
   perf-tests:
     name: Performance Tests
-    runs-on: ubuntu-latest-m
+    # TEMPORARY 2026-05-05: same `ubuntu-latest-m` → `ubuntu-latest`
+    # downgrade as PR #788 (which fixed ci-tests.yml's merge_group jobs
+    # on 2026-05-01). The larger-runner pool has been unavailable on
+    # this org since then; these three nightly jobs were missed in
+    # #788's scope and have been stuck `queued` for 5+ hours every
+    # night (May 2-5), getting cancelled by the next nightly. Standard
+    # `ubuntu-latest` runs these tests fine — 30 min timeout has
+    # headroom. Revert to `ubuntu-latest-m` once the larger pool
+    # recovers (re-enable for ci-tests.yml at the same time).
+    runs-on: ubuntu-latest
     timeout-minutes: 30
 
     env:
@@ -81,7 +90,9 @@ jobs:
 
   ai-call-tests:
     name: AI-Call Tests (ANTHROPIC_API_KEY)
-    runs-on: ubuntu-latest-m
+    # TEMPORARY 2026-05-05: same downgrade as `perf-tests` above.
+    # Revert to `ubuntu-latest-m` once the larger pool recovers.
+    runs-on: ubuntu-latest
     timeout-minutes: 45
     # Skip if the API key isn't configured. Lets the workflow be enabled
     # in forks without leaking — and is the right behavior on a key
@@ -135,7 +146,9 @@ jobs:
 
   embedding-model-tests:
     name: Embedding-Model Tests (FastEmbed)
-    runs-on: ubuntu-latest-m
+    # TEMPORARY 2026-05-05: same downgrade as `perf-tests` above.
+    # Revert to `ubuntu-latest-m` once the larger pool recovers.
+    runs-on: ubuntu-latest
     timeout-minutes: 30
 
     env:
