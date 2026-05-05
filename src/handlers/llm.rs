@@ -170,11 +170,12 @@ pub async fn chat(
     );
 
     // Persist chat turn to FoldDB
-    conversation_store::save_chat_turn(
+    conversation_store::save_conversation_turn(
         node,
         session_id.clone(),
         question.clone(),
         assistant_message.clone(),
+        Vec::new(),
     )
     .await;
 
@@ -339,11 +340,12 @@ pub async fn ai_native_index_query(
     );
 
     // Persist native-index turn to FoldDB
-    conversation_store::save_chat_turn(
+    conversation_store::save_conversation_turn(
         node,
         session_id.clone(),
         request.query.clone(),
         ai_interpretation.clone(),
+        Vec::new(),
     )
     .await;
 
