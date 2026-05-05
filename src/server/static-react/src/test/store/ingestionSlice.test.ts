@@ -9,6 +9,9 @@ import ingestionReducer, {
   selectAiProvider,
   selectActiveModel,
   selectIsAiConfigured,
+  makeIdleAppleJob,
+  type AppleJob,
+  type AppleSourceKey,
 } from "../../store/ingestionSlice";
 import type { RootState } from "../../store/store";
 import type {
@@ -22,16 +25,33 @@ const mockGetConfig = vi.spyOn(ingestionClient, "getConfig");
 const mockSaveConfig = vi.spyOn(ingestionClient, "saveConfig");
 const mockGetStatus = vi.spyOn(ingestionClient, "getStatus");
 
+const APPLE_KEYS: AppleSourceKey[] = [
+  "notes",
+  "photos",
+  "calendar",
+  "reminders",
+  "contacts",
+];
+
+const idleAppleJobs = (): Record<AppleSourceKey, AppleJob> =>
+  APPLE_KEYS.reduce(
+    (acc, k) => {
+      acc[k] = makeIdleAppleJob();
+      return acc;
+    },
+    {} as Record<AppleSourceKey, AppleJob>,
+  );
+
 function createStore(preloadedIngestion = {}) {
   return configureStore({
     reducer: { ingestion: ingestionReducer },
-    preloadedState: { ingestion: { config: null, status: null, loading: false, error: null, saving: false, saveError: null, ...preloadedIngestion } },
+    preloadedState: { ingestion: { config: null, status: null, loading: false, error: null, saving: false, saveError: null, appleJobs: idleAppleJobs(), ...preloadedIngestion } },
   });
 }
 
 // Helper to build a RootState-shaped object for selector tests
 function stateWith(config: IngestionConfig | null): Pick<RootState, "ingestion"> {
-  return { ingestion: { config, status: null, loading: false, error: null, saving: false, saveError: null } } as Pick<RootState, "ingestion">;
+  return { ingestion: { config, status: null, loading: false, error: null, saving: false, saveError: null, appleJobs: idleAppleJobs() } } as Pick<RootState, "ingestion">;
 }
 
 const anthropicConfig: IngestionConfig = {
@@ -272,6 +292,7 @@ describe("ingestionSlice", () => {
             error: null,
             saving: false,
             saveError: null,
+            appleJobs: idleAppleJobs(),
           },
         }) as Pick<RootState, "ingestion">;
 

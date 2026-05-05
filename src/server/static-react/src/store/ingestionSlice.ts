@@ -1,10 +1,57 @@
-import { createSlice, createAsyncThunk } from "@reduxjs/toolkit";
+import { createSlice, createAsyncThunk, type PayloadAction } from "@reduxjs/toolkit";
 import { ingestionClient } from "../api/clients";
 import type {
   IngestionConfig,
   IngestionStatus,
 } from "../api/clients/ingestionClient";
 import type { RootState } from "./store";
+
+export type AppleSourceKey =
+  | "notes"
+  | "photos"
+  | "calendar"
+  | "reminders"
+  | "contacts";
+
+export interface ImportResult {
+  total?: number;
+  ingested?: number;
+}
+
+export type AppleJobStatus = "idle" | "running" | "done" | "error";
+
+export interface AppleJob {
+  progressId: string | null;
+  status: AppleJobStatus;
+  progress: number;
+  message: string;
+  result: ImportResult | null;
+}
+
+const APPLE_SOURCE_KEYS: readonly AppleSourceKey[] = [
+  "notes",
+  "photos",
+  "calendar",
+  "reminders",
+  "contacts",
+];
+
+export const makeIdleAppleJob = (): AppleJob => ({
+  progressId: null,
+  status: "idle",
+  progress: 0,
+  message: "",
+  result: null,
+});
+
+const makeInitialAppleJobs = (): Record<AppleSourceKey, AppleJob> =>
+  APPLE_SOURCE_KEYS.reduce(
+    (acc, key) => {
+      acc[key] = makeIdleAppleJob();
+      return acc;
+    },
+    {} as Record<AppleSourceKey, AppleJob>,
+  );
 
 interface IngestionState {
   config: IngestionConfig | null;
@@ -18,6 +65,7 @@ interface IngestionState {
   error: string | null;
   saving: boolean;
   saveError: string | null;
+  appleJobs: Record<AppleSourceKey, AppleJob>;
 }
 
 const initialState: IngestionState = {
@@ -27,6 +75,7 @@ const initialState: IngestionState = {
   error: null,
   saving: false,
   saveError: null,
+  appleJobs: makeInitialAppleJobs(),
 };
 
 export const fetchIngestionConfig = createAsyncThunk(
@@ -89,7 +138,61 @@ export const saveIngestionConfig = createAsyncThunk(
 const ingestionSlice = createSlice({
   name: "ingestion",
   initialState,
-  reducers: {},
+  reducers: {
+    appleJobStarted(
+      state,
+      action: PayloadAction<{ key: AppleSourceKey; progressId: string }>,
+    ) {
+      const { key, progressId } = action.payload;
+      state.appleJobs[key] = {
+        progressId,
+        status: "running",
+        progress: 5,
+        message: "Starting...",
+        result: null,
+      };
+    },
+    appleJobProgressed(
+      state,
+      action: PayloadAction<{
+        key: AppleSourceKey;
+        progress: number;
+        message: string;
+      }>,
+    ) {
+      const { key, progress, message } = action.payload;
+      const job = state.appleJobs[key];
+      if (job.status !== "running") return;
+      job.progress = progress;
+      job.message = message;
+    },
+    appleJobCompleted(
+      state,
+      action: PayloadAction<{
+        key: AppleSourceKey;
+        result: ImportResult | null;
+        message: string;
+      }>,
+    ) {
+      const { key, result, message } = action.payload;
+      const job = state.appleJobs[key];
+      job.status = "done";
+      job.result = result;
+      job.message = message;
+    },
+    appleJobFailed(
+      state,
+      action: PayloadAction<{ key: AppleSourceKey; message: string }>,
+    ) {
+      const { key, message } = action.payload;
+      const job = state.appleJobs[key];
+      job.status = "error";
+      job.message = message;
+    },
+    appleJobReset(state, action: PayloadAction<{ key: AppleSourceKey }>) {
+      state.appleJobs[action.payload.key] = makeIdleAppleJob();
+    },
+  },
   extraReducers: (builder) => {
     builder
       .addCase(fetchIngestionConfig.pending, (state) => {
@@ -161,5 +264,18 @@ export const selectIsAiConfigured = (state: RootState) => {
   if ("api_key" in providerConfig) return !!providerConfig.api_key;
   return !!providerConfig.model;
 };
+
+export const selectAppleJob =
+  (key: AppleSourceKey) =>
+  (state: RootState): AppleJob =>
+    state.ingestion.appleJobs[key];
+
+export const {
+  appleJobStarted,
+  appleJobProgressed,
+  appleJobCompleted,
+  appleJobFailed,
+  appleJobReset,
+} = ingestionSlice.actions;
 
 export default ingestionSlice.reducer;
