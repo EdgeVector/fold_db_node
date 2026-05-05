@@ -112,6 +112,87 @@ export const fetchIngestionStatus = createAsyncThunk(
   },
 );
 
+interface JobProgressShape {
+  progress_percentage?: number;
+  status_message?: string;
+  message?: string;
+  is_complete?: boolean;
+  is_failed?: boolean;
+  error_message?: string;
+  results?: ImportResult;
+  result?: ImportResult;
+}
+
+/**
+ * On app mount, walk every Apple job currently `running` in the store and
+ * ask the backend for its current state. Without this, a job that finished
+ * while the user was on another tab can stay stuck at "running 87%" forever
+ * because the listener middleware only re-arms on a fresh `appleJobStarted`.
+ *
+ * For still-running jobs we re-dispatch `appleJobStarted` so the listener
+ * forks a fresh poll loop (the middleware cancels any prior fork for the
+ * same key — see appleJobsMiddleware.ts).
+ */
+export const reconcileAppleJobs = createAsyncThunk(
+  "ingestion/reconcileAppleJobs",
+  async (_, { dispatch, getState }) => {
+    // getState() is typed `unknown` here on purpose — the thunk doesn't
+    // bind a RootState generic so it stays dispatchable from test stores
+    // that use a slice-only reducer. Accessing only the ingestion slice
+    // is the entire surface, so the local cast is narrow and safe.
+    const { appleJobs } = (getState() as RootState).ingestion;
+    const running = (
+      Object.entries(appleJobs) as [AppleSourceKey, AppleJob][]
+    ).filter(
+      ([, job]) => job.status === "running" && job.progressId !== null,
+    );
+
+    await Promise.all(
+      running.map(async ([key, job]) => {
+        const progressId = job.progressId as string;
+        try {
+          const resp = await ingestionClient.getJobProgress(progressId);
+          if (!resp.success || !resp.data) return;
+          const data = resp.data as JobProgressShape;
+          const progress = data.progress_percentage ?? 0;
+          const message = data.status_message ?? data.message ?? "";
+
+          if (data.is_complete) {
+            dispatch(
+              appleJobCompleted({
+                key,
+                result: data.results ?? data.result ?? null,
+                message,
+              }),
+            );
+            return;
+          }
+          if (data.is_failed) {
+            dispatch(
+              appleJobFailed({
+                key,
+                message:
+                  data.error_message ?? data.message ?? "Import failed",
+              }),
+            );
+            return;
+          }
+          // Re-arm the listener's poll loop. appleJobStarted first (it
+          // clobbers progress/message back to "Starting..."), then
+          // appleJobProgressed to immediately reflect the latest backend
+          // state — avoids a visible snap to 5% before the next poll tick.
+          dispatch(appleJobStarted({ key, progressId }));
+          dispatch(appleJobProgressed({ key, progress, message }));
+        } catch {
+          // Swallow individual fetch errors — one failed reconcile
+          // shouldn't kill the others. Don't surface as appleJobFailed;
+          // we only mark a job failed when the backend explicitly says so.
+        }
+      }),
+    );
+  },
+);
+
 export const saveIngestionConfig = createAsyncThunk(
   "ingestion/saveConfig",
   async (config: IngestionConfig, { dispatch, rejectWithValue }) => {
