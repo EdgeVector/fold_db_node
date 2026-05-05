@@ -143,8 +143,11 @@ describe('Header Component', () => {
       preloadedState: authenticatedState, extraReducers
     })
 
-    // No truncated chip text of any kind on first paint
+    // No truncated chip text of any kind on first paint. Match the
+    // identity chip specifically by its "Pub Key: ..." title — bare
+    // queryByText(/\.\.\.$/) would false-match the storage chip's
+    // loading placeholder ("...").
     expect(screen.queryByText(/^test_use\.\.\./)).not.toBeInTheDocument()
-    expect(screen.queryByText(/\.\.\.$/)).not.toBeInTheDocument()
+    expect(screen.queryByTitle(/^Pub Key:/)).not.toBeInTheDocument()
   })
 })
