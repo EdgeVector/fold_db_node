@@ -91,6 +91,12 @@ jobs:
     env:
       RUSTFLAGS: -C linker=clang -C link-arg=-fuse-ld=mold
       ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
+      # Route image → markdown through Anthropic vision. The runner
+      # doesn't have Ollama installed, so the default (Ollama) path
+      # would fail at ConnectionRefused @ localhost:11434 inside
+      # paintings_schema_consolidation_test's convert_file_to_json.
+      # Same pattern as e2e-cloud.yml.
+      INGESTION_VISION_BACKEND: anthropic
 
     steps:
       - name: "Guard: API key present"
