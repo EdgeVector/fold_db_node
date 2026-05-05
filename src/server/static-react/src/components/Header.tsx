@@ -49,7 +49,7 @@ function formatStorageSize(bytes: number | null): string | null {
 
 function Header({ onSettingsClick, onAiSettingsClick, onCloudSettingsClick }: HeaderProps) {
   const dispatch = useAppDispatch()
-  const { isAuthenticated, user } = useAppSelector(state => state.auth)
+  const { isAuthenticated } = useAppSelector(state => state.auth)
   const ingestionConfig = useAppSelector(selectIngestionConfig)
   const aiProvider = useAppSelector(selectAiProvider)
   const activeModel = useAppSelector(selectActiveModel)
@@ -174,14 +174,16 @@ function Header({ onSettingsClick, onAiSettingsClick, onCloudSettingsClick }: He
   const formattedQuota = storageQuota ? formatBytes(storageQuota) : null
   const quotaWarning = storageQuota && storageSize ? (storageSize / storageQuota) > 0.8 : false
 
-  const displayKey = nodePublicKey || user?.id
-  const truncatedDisplay = displayKey ? `${displayKey.slice(0, 8)}...` : null
+  // Chip text comes from /api/system/public-key — never from Redux user.id,
+  // which can hold a stale "test_user" placeholder restored from localStorage
+  // by useAuthInitialization. See PR fix for the dogfood "test_use... →
+  // LD/WctGK... → 6b65a887..." chip flicker.
+  const truncatedDisplay = nodePublicKey ? `${nodePublicKey.slice(0, 8)}...` : null
   const [idCopied, setIdCopied] = useState(false)
 
   const handleCopyId = async () => {
-    const valueToCopy = nodePublicKey || user?.id
-    if (valueToCopy) {
-      await navigator.clipboard.writeText(valueToCopy)
+    if (nodePublicKey) {
+      await navigator.clipboard.writeText(nodePublicKey)
       setIdCopied(true)
       setTimeout(() => setIdCopied(false), 2000)
     }
@@ -225,7 +227,7 @@ function Header({ onSettingsClick, onAiSettingsClick, onCloudSettingsClick }: He
             <button
               onClick={handleCopyId}
               className="hidden sm:inline-flex items-center gap-1 px-2 py-0.5 rounded text-xs font-mono text-tertiary bg-transparent border border-border cursor-pointer hover:text-secondary hover:border-secondary transition-colors"
-              title={`Public Key: ${displayKey}\nClick to copy`}
+              title={`Pub Key: ${nodePublicKey}\nClick to copy`}
             >
               {idCopied ? 'Copied!' : truncatedDisplay}
             </button>
