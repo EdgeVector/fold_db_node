@@ -125,6 +125,13 @@ describe("ingestionSlice — appleJobs", () => {
       const store = buildStore();
       store.dispatch(appleJobStarted({ key: "notes", progressId: "n1" }));
       store.dispatch(
+        appleJobProgressed({
+          key: "notes",
+          progress: 80,
+          message: "Almost",
+        }),
+      );
+      store.dispatch(
         appleJobCompleted({
           key: "notes",
           result: { total: 1, ingested: 1 },
@@ -141,7 +148,10 @@ describe("ingestionSlice — appleJobs", () => {
 
       const job = store.getState().ingestion.appleJobs.notes;
       expect(job.status).toBe("done");
-      expect(job.progress).toBe(0);
+      // Progress is the last value seen *before* completion — appleJobProgressed
+      // is a no-op once the job is done, so the late-arriving 99% poll can't
+      // overwrite the visible-to-user terminal state.
+      expect(job.progress).toBe(80);
       expect(job.message).toBe("Done");
     });
 
