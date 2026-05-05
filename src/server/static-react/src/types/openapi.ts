@@ -1643,6 +1643,8 @@ export interface operations {
             query: {
                 /** @description Search term for native word index */
                 term: string;
+                /** @description Include internal/bookkeeping schemas (Mention, MentionBySource, ExtractionStatus, IngestionError, TriggerFiring, ai_conversations, ExtractionRule). Defaults to false. */
+                include_internal?: boolean | null;
             };
             header?: never;
             path?: never;
