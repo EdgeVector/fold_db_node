@@ -1233,12 +1233,12 @@ export interface components {
          */
         SavedConfig: {
             anthropic?: components["schemas"]["AnthropicConfig"];
-            ollama: components["schemas"]["OllamaConfig"];
+            ollama?: components["schemas"]["OllamaConfig"];
             /** @description Per-role overrides. The new canonical shape (2026-04-22+). */
             overrides?: {
                 [key: string]: components["schemas"]["UseCaseOverride"];
             };
-            provider: components["schemas"]["AIProvider"];
+            provider?: components["schemas"]["AIProvider"];
             query?: components["schemas"]["UseCaseOverride"];
             vision_backend?: components["schemas"]["VisionBackend"];
         };
