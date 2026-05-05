@@ -220,6 +220,36 @@ const ingestionSlice = createSlice({
   name: "ingestion",
   initialState,
   reducers: {
+    /**
+     * Optimistic transition into `running` BEFORE the start POST
+     * resolves, so the UI never shows the click-after-done window as
+     * `idle`. The listener middleware doesn't fire on this action — no
+     * `progressId` to poll yet — that's intentional. `appleJobStarted`
+     * follows once the POST resolves with a real `progressId`, and that
+     * is what arms the polling fork.
+     *
+     * Bug it closes: under heavy backend load (HEIC conversion + 100+
+     * notes ingest + contacts permission timeout), POSTs to
+     * `/apple-import/<source>` can stay in flight for tens of seconds.
+     * The previous flow dispatched `appleJobReset` first and then
+     * scheduled `start()` on a 0ms timeout, which left every job
+     * visibly `idle` for the duration of the in-flight POSTs. Anyone
+     * inspecting the Redux store during that window — or any flow that
+     * never gets a POST response — saw five idle entries even though
+     * the user just kicked off five imports.
+     */
+    appleJobStarting(
+      state,
+      action: PayloadAction<{ key: AppleSourceKey }>,
+    ) {
+      state.appleJobs[action.payload.key] = {
+        progressId: null,
+        status: "running",
+        progress: 5,
+        message: "Starting...",
+        result: null,
+      };
+    },
     appleJobStarted(
       state,
       action: PayloadAction<{ key: AppleSourceKey; progressId: string }>,
@@ -352,6 +382,7 @@ export const selectAppleJob =
     state.ingestion.appleJobs[key];
 
 export const {
+  appleJobStarting,
   appleJobStarted,
   appleJobProgressed,
   appleJobCompleted,

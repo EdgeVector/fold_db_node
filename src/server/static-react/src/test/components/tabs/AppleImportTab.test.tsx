@@ -5,10 +5,20 @@ import { Provider } from 'react-redux'
 import { combineReducers, configureStore } from '@reduxjs/toolkit'
 import AppleImportTab from '../../../components/tabs/AppleImportTab'
 import ingestionReducer, {
+  appleJobCompleted,
   appleJobProgressed,
   appleJobStarted,
+  type AppleSourceKey,
 } from '../../../store/ingestionSlice'
 import { appleJobsListener } from '../../../store/appleJobsMiddleware'
+
+const ALL_KEYS: readonly AppleSourceKey[] = [
+  'notes',
+  'photos',
+  'calendar',
+  'reminders',
+  'contacts',
+]
 
 const mockGetAppleImportStatus = vi.fn()
 const mockAppleImportNotes = vi.fn()
@@ -262,5 +272,73 @@ describe('AppleImportTab', () => {
     await waitFor(() => {
       expect(screen.getByText('Halfway through Notes')).toBeTruthy()
     })
+  })
+
+  // Repro for the dogfood-2026-05-05 idle-reset bug:
+  // After "Import All" is clicked while the previous run is `done`, the
+  // POSTs to /apple-import/<source> can stay in flight for a long time
+  // under backend load (HEIC conversion, 100+ notes ingest, contacts
+  // permission timeout). The old `reset() → setTimeout(() → start())`
+  // pattern moved every job to `idle` synchronously and only flipped to
+  // `running` once the POST resolved. If the user observed the store
+  // during that window — or if the POST never resolved — state stayed
+  // visibly idle even though the user just kicked off five imports.
+  //
+  // Contract: between the click and the POST resolving, every job the
+  // user just asked for must already be in `running`/`Starting...`.
+  // Never idle, never with a stale "Done" left over.
+  it('"Import All" never leaves jobs in idle while the start POSTs are in flight', async () => {
+    mockGetAppleImportStatus.mockResolvedValue({
+      success: true,
+      data: { available: true },
+    })
+    // POSTs hang forever — simulates the under-load case where the
+    // backend doesn't respond promptly. State must NOT regress to idle.
+    mockAppleImportNotes.mockReturnValue(new Promise(() => {}))
+    mockAppleImportReminders.mockReturnValue(new Promise(() => {}))
+    mockAppleImportPhotos.mockReturnValue(new Promise(() => {}))
+    mockAppleImportCalendar.mockReturnValue(new Promise(() => {}))
+    mockAppleImportContacts.mockReturnValue(new Promise(() => {}))
+    mockGetJobProgress.mockReturnValue(new Promise(() => {}))
+
+    const store = buildStore()
+    // Pre-load: every source already finished a prior run (so the
+    // for-loop in handleImportAll matches `imp.status === 'done'`).
+    for (const key of ALL_KEYS) {
+      store.dispatch(appleJobStarted({ key, progressId: `${key}-prev` }))
+      store.dispatch(
+        appleJobCompleted({
+          key,
+          result: { total: 1, ingested: 1 },
+          message: 'Done',
+        }),
+      )
+    }
+
+    render(
+      <Provider store={store}>
+        <AppleImportTab onResult={vi.fn()} />
+      </Provider>,
+    )
+
+    await waitFor(() => {
+      expect(screen.getByText('Import All (5)')).toBeTruthy()
+    })
+
+    await act(async () => {
+      fireEvent.click(screen.getByText('Import All (5)'))
+      // Drain any setTimeout(0) callbacks the click might have scheduled.
+      vi.advanceTimersByTime(0)
+      await Promise.resolve()
+      vi.advanceTimersByTime(0)
+    })
+
+    const { appleJobs } = store.getState().ingestion
+    for (const key of ALL_KEYS) {
+      expect(appleJobs[key].status).toBe('running')
+      expect(appleJobs[key].message).toBe('Starting...')
+      expect(appleJobs[key].progress).toBe(5)
+      expect(appleJobs[key].result).toBeNull()
+    }
   })
 })

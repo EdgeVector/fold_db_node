@@ -21,6 +21,7 @@ vi.mock("../../api/clients", () => ({
 
 import { ingestionClient } from "../../api/clients";
 import ingestionReducer, {
+  appleJobStarting,
   appleJobStarted,
   appleJobProgressed,
   appleJobCompleted,
@@ -79,6 +80,65 @@ describe("ingestionSlice — appleJobs", () => {
       expect(Object.keys(appleJobs).sort()).toEqual([...APPLE_KEYS].sort());
       for (const key of APPLE_KEYS) {
         expect(appleJobs[key]).toEqual(makeIdleAppleJob());
+      }
+    });
+  });
+
+  describe("appleJobStarting", () => {
+    it("flips an idle job to running with no progressId yet", () => {
+      const store = buildStore();
+      store.dispatch(appleJobStarting({ key: "notes" }));
+
+      const job = store.getState().ingestion.appleJobs.notes;
+      expect(job).toEqual({
+        progressId: null,
+        status: "running",
+        progress: 5,
+        message: "Starting...",
+        result: null,
+      });
+    });
+
+    it("clobbers a prior `done` run so a re-import never shows stale message/result", () => {
+      const store = buildStore();
+      store.dispatch(appleJobStarted({ key: "photos", progressId: "p1" }));
+      store.dispatch(
+        appleJobCompleted({
+          key: "photos",
+          result: { total: 50, ingested: 50 },
+          message: "Imported 50 photos",
+        }),
+      );
+      store.dispatch(appleJobStarting({ key: "photos" }));
+
+      const job = store.getState().ingestion.appleJobs.photos;
+      expect(job.status).toBe("running");
+      expect(job.progressId).toBeNull();
+      expect(job.message).toBe("Starting...");
+      expect(job.progress).toBe(5);
+      expect(job.result).toBeNull();
+    });
+
+    it("clobbers a prior `error` run", () => {
+      const store = buildStore();
+      store.dispatch(appleJobStarted({ key: "contacts", progressId: "c1" }));
+      store.dispatch(appleJobFailed({ key: "contacts", message: "boom" }));
+      store.dispatch(appleJobStarting({ key: "contacts" }));
+
+      const job = store.getState().ingestion.appleJobs.contacts;
+      expect(job.status).toBe("running");
+      expect(job.progressId).toBeNull();
+      expect(job.message).toBe("Starting...");
+    });
+
+    it("only mutates the targeted source", () => {
+      const store = buildStore();
+      store.dispatch(appleJobStarting({ key: "calendar" }));
+
+      const { appleJobs } = store.getState().ingestion;
+      expect(appleJobs.calendar.status).toBe("running");
+      for (const other of APPLE_KEYS.filter((k) => k !== "calendar")) {
+        expect(appleJobs[other]).toEqual(makeIdleAppleJob());
       }
     });
   });
