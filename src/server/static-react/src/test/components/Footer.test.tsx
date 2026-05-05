@@ -1,16 +1,26 @@
 /**
  * @fileoverview Tests for Footer component
  *
- * Tests the Footer component rendering and content display.
+ * Tests the Footer component rendering and content display. Version drift
+ * guard: the footer must render whatever /api/health returns, never a
+ * compile-time literal — see daemon.rs/system.rs for why
+ * FOLDDB_BUILD_VERSION is the source of truth.
  */
 
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { render, screen, waitFor } from '@testing-library/react';
 import Footer from '../../components/Footer';
 
+const { HEALTH_VERSION } = vi.hoisted(() => ({
+  HEALTH_VERSION: '9.9.9-from-health',
+}));
+
 vi.mock('../../api/clients/systemClient', () => ({
   systemClient: {
     getDatabaseConfig: vi.fn().mockResolvedValue({ data: { type: 'local' } }),
+    getHealth: vi.fn().mockResolvedValue({
+      data: { ok: true, version: HEALTH_VERSION, uptime_s: 42 },
+    }),
   },
 }));
 
@@ -33,10 +43,12 @@ describe('Footer Component', () => {
     expect(screen.getByText(/FoldDB/i)).toBeInTheDocument();
   });
 
-  it('displays version number', () => {
+  it('displays the version returned by /api/health', async () => {
     render(<Footer />);
 
-    expect(screen.getByText(/v\d+\.\d+\.\d+/i)).toBeInTheDocument();
+    await waitFor(() => {
+      expect(screen.getByText(`FoldDB v${HEALTH_VERSION}`)).toBeInTheDocument();
+    });
   });
 
   it('displays Local Mode indicator by default', () => {
