@@ -97,11 +97,24 @@ jobs:
         with:
           key: release-${{ matrix.target }}
 
+      # Brew / standalone CLI binaries are intentionally built WITHOUT the
+      # `os-keychain` feature. The keychain master key is only reachable
+      # from a signed/notarized Tauri bundle (per-app keychain ACL); a
+      # headless folddb_server spawned by `folddb daemon start` cannot
+      # present the macOS authorization dialog, so on a sandboxed launchd
+      # restart `keyring::Entry::get_secret()` could return `NoEntry` and
+      # `get_or_create_master_key()` would silently mint a NEW master key
+      # — orphaning every previously-ingested record under the old
+      # user_hash. `--no-default-features` is belt-and-suspenders against
+      # any future `default = ["os-keychain", ...]` drift in Cargo.toml.
+      # The Tauri DMG is built separately by tauri-release.yml and DOES
+      # opt into `os-keychain` via src-tauri/Cargo.toml.
       - name: Build release binaries
         env:
           RUSTFLAGS: ${{ runner.os == 'Linux' && '-C linker=clang -C link-arg=-fuse-ld=mold' || '' }}
         run: |
           cargo build --release --target ${{ matrix.target }} \
+            --no-default-features \
             --bin folddb \
             --bin folddb_server \
             --bin folddb_mcp
