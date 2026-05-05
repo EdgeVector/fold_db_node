@@ -3,17 +3,16 @@
 //! - `os-keychain` enabled: encrypts via OS keychain master key (AES-256-GCM)
 //! - `os-keychain` disabled: writes plaintext with 0o600 Unix permissions
 //!
-//! All writes go through [`write_atomic_0600`], which stages bytes into
-//! `<path>.tmp`, fsyncs, then renames onto the target. Power loss between
-//! steps therefore leaves either the previous good file or the staged
-//! tmpfile — never a half-written final path. AES-GCM auth-tag failures
-//! from a torn write would force the user to re-enter the credential, so
-//! the rename atomicity is what protects them.
+//! All writes go through [`write_atomic_0600`], which delegates to
+//! [`crate::utils::fs_atomic::write_atomic`] (tmpfile + fsync + rename, plus
+//! a best-effort parent-dir fsync). Power loss between steps therefore leaves
+//! either the previous good file or the staged tmpfile — never a half-written
+//! final path. AES-GCM auth-tag failures from a torn write would force the
+//! user to re-enter the credential, so the rename atomicity is what protects
+//! them.
 
-use std::ffi::OsString;
 use std::fs;
-use std::io::Write;
-use std::path::{Path, PathBuf};
+use std::path::Path;
 
 /// Write sensitive data to disk, encrypted if `os-keychain` is enabled.
 pub fn write_sensitive(path: &Path, data: &[u8]) -> Result<(), String> {
@@ -44,63 +43,11 @@ pub fn read_sensitive(path: &Path) -> Result<Vec<u8>, String> {
 
 /// Atomically write `data` to `path`, with mode 0o600 on Unix.
 ///
-/// Stages the bytes in `<path>.tmp`, fsyncs the file, renames onto `path`,
-/// then best-effort fsyncs the parent directory. On any error, the tmp
-/// file is removed so a retry starts clean. Callers are responsible for
+/// Thin wrapper over [`crate::utils::fs_atomic::write_atomic`] that pins the
+/// Unix mode at 0o600 for sensitive files. Callers are responsible for
 /// ensuring the parent directory exists.
 pub(crate) fn write_atomic_0600(path: &Path, data: &[u8]) -> Result<(), String> {
-    let tmp_path = {
-        let mut s: OsString = path.as_os_str().into();
-        s.push(".tmp");
-        PathBuf::from(s)
-    };
-
-    let result: Result<(), String> = (|| {
-        #[cfg(unix)]
-        let mut file = {
-            use std::fs::OpenOptions;
-            use std::os::unix::fs::OpenOptionsExt;
-            OpenOptions::new()
-                .write(true)
-                .create(true)
-                .truncate(true)
-                .mode(0o600)
-                .open(&tmp_path)
-                .map_err(|e| format!("Failed to open temp file {}: {}", tmp_path.display(), e))?
-        };
-        #[cfg(not(unix))]
-        let mut file = fs::File::create(&tmp_path)
-            .map_err(|e| format!("Failed to create temp file {}: {}", tmp_path.display(), e))?;
-
-        file.write_all(data)
-            .map_err(|e| format!("Failed to write temp file {}: {}", tmp_path.display(), e))?;
-        file.sync_all()
-            .map_err(|e| format!("Failed to fsync temp file {}: {}", tmp_path.display(), e))?;
-        drop(file);
-
-        fs::rename(&tmp_path, path).map_err(|e| {
-            format!(
-                "Failed to rename {} -> {}: {}",
-                tmp_path.display(),
-                path.display(),
-                e
-            )
-        })?;
-
-        #[cfg(unix)]
-        if let Some(parent) = path.parent() {
-            // Best-effort: parent-dir fsync hardens the rename against power
-            // loss. A failure here does not unwind the successful rename.
-            let _ = fs::File::open(parent).and_then(|d| d.sync_all());
-        }
-
-        Ok(())
-    })();
-
-    if result.is_err() {
-        let _ = fs::remove_file(&tmp_path);
-    }
-    result
+    crate::utils::fs_atomic::write_atomic(path, data, Some(0o600))
 }
 
 #[cfg(test)]

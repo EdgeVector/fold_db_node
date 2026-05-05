@@ -240,8 +240,12 @@ pub fn save_node_config(config: &NodeConfig) -> Result<(), String> {
     let config_json = serde_json::to_string_pretty(config)
         .map_err(|e| format!("Failed to serialize config: {}", e))?;
 
-    fs::write(&config_path, config_json)
-        .map_err(|e| format!("Failed to write config file: {}", e))?;
+    crate::utils::fs_atomic::write_atomic(
+        std::path::Path::new(&config_path),
+        config_json.as_bytes(),
+        None,
+    )
+    .map_err(|e| format!("Failed to write config file: {}", e))?;
 
     Ok(())
 }
