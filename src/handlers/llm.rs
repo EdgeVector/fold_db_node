@@ -282,7 +282,7 @@ pub async fn ai_native_index_query(
 
     // Step 1: Search the native index
     let search_results = service
-        .search_native_index(&request.query, &schemas, &db_ops)
+        .search_native_index(&request.query, &schemas, &db_ops, &session_id)
         .await
         .handler_err("search native index")?;
 
@@ -468,6 +468,7 @@ pub async fn agent_query(
             max_iterations,
             &prior_history,
             progress_tracker,
+            &session_id,
         )
         .await
         .handler_err("run agent query")?;

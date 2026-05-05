@@ -1,5 +1,6 @@
 //! Native index search, interpretation, and alternative query suggestion.
 
+use super::super::conversation_store::AI_CONVERSATIONS_SCHEMA;
 use super::super::types::{QueryPlan, ToolCallRecord};
 use fold_db::schema::types::field_value_type::FieldValueType;
 use fold_db::schema::types::key_config::KeyConfig;
@@ -23,6 +24,36 @@ fn expand_home_path(path: &str) -> std::path::PathBuf {
     } else {
         std::path::PathBuf::from(path)
     }
+}
+
+/// Strip native-index hits that mirror turns from the *current* agent
+/// session. Each agent_query turn is persisted to `ai_conversations`
+/// keyed by `(session_id, timestamp)` and auto-embedded by fold_db's
+/// `NativeIndexManager`, so without this filter the agent's just-asked
+/// queries dominate later searches in the same session — but the LLM
+/// already has those turns in its conversation context, so re-surfacing
+/// them is pure noise that crowds out real user data (recursive pollution
+/// → "you have no data").
+///
+/// We only drop hits whose hash key matches `current_session_id`. Hits
+/// from earlier sessions remain visible: they are *not* in the LLM's
+/// context window, so the agent still needs the index to recall them
+/// (e.g. "didn't I ask you about Tokyo last week?"). Hits from any other
+/// schema are always preserved.
+fn drop_current_session_hits(
+    results: &mut Vec<fold_db::db_operations::IndexResult>,
+    current_session_id: &str,
+) {
+    results.retain(|r| {
+        if r.schema_name != AI_CONVERSATIONS_SCHEMA {
+            return true;
+        }
+        // Drop only hits keyed to *this* session. ai_conversations is
+        // HashRange(session_id, timestamp), so every fragment hit on
+        // any field of the record carries the session_id in
+        // `key_value.hash`.
+        r.key_value.hash.as_deref() != Some(current_session_id)
+    });
 }
 
 /// Update agent progress if a tracker is available. Best-effort — errors are silently ignored.
@@ -61,21 +92,27 @@ impl LlmQueryService {
         user_query: &str,
         schemas: &[fold_db::schema::SchemaWithState],
         db_ops: &fold_db::db_operations::DbOperations,
+        current_session_id: &str,
     ) -> Result<Vec<fold_db::db_operations::IndexResult>, String> {
         // Step 1: Generate native index search terms using AI
         let search_terms = self
             .generate_native_index_search_terms(user_query, schemas)
             .await?;
 
-        // Step 2: Execute native index searches for each term
+        // Step 2: Execute native index searches for each term. See
+        // `drop_current_session_hits` for why current-session turns are
+        // stripped while prior sessions stay visible.
         let mut all_results = Vec::new();
         if let Some(native_index_mgr) = db_ops.native_index_manager() {
             for term in &search_terms {
                 match native_index_mgr.search_all_classifications(term).await {
                     Ok(mut results) => {
+                        let raw_count = results.len();
+                        drop_current_session_hits(&mut results, current_session_id);
                         tracing::debug!(
-                            "LLM Query: Term '{}' returned {} results",
+                            "LLM Query: Term '{}' returned {} results ({} after dropping current-session ai_conversations)",
                             term,
+                            raw_count,
                             results.len()
                         );
                         all_results.append(&mut results);
@@ -151,13 +188,18 @@ impl LlmQueryService {
         self.parse_alternative_query(&response)
     }
 
-    /// Execute a tool call and return the result
+    /// Execute a tool call and return the result.
+    ///
+    /// `current_session_id` is the agent loop's session id; it scopes
+    /// the `search` tool's filter so the agent never re-surfaces its
+    /// own current-session turns (which the LLM already has in context).
     pub(super) async fn execute_tool(
         &self,
         tool: &str,
         params: &Value,
         node: &crate::fold_node::node::FoldNode,
         progress_tracker: Option<&crate::ingestion::ProgressTracker>,
+        current_session_id: &str,
     ) -> Result<Value, String> {
         let processor = crate::fold_node::OperationProcessor::from_ref(node);
 
@@ -281,10 +323,12 @@ impl LlmQueryService {
                     .and_then(|t| t.as_str())
                     .ok_or("search tool requires 'terms' parameter")?;
 
-                let results = processor
+                let mut results = processor
                     .native_index_search(terms)
                     .await
                     .map_err(|e| format!("Search failed: {}", e))?;
+
+                drop_current_session_hits(&mut results, current_session_id);
 
                 serde_json::to_value(&results)
                     .map_err(|e| format!("Failed to serialize search results: {}", e))
@@ -973,6 +1017,7 @@ impl LlmQueryService {
         max_iterations: usize,
         prior_history: &[super::super::types::Message],
         progress_tracker: Option<&crate::ingestion::ProgressTracker>,
+        current_session_id: &str,
     ) -> Result<(String, Vec<ToolCallRecord>), String> {
         // Create an agent progress job so the frontend can track what's happening
         let agent_job_id = format!("agent-{}", uuid::Uuid::new_v4());
@@ -998,6 +1043,7 @@ impl LlmQueryService {
                 prior_history,
                 progress_tracker,
                 &agent_job_id,
+                current_session_id,
             ),
         )
         .await
@@ -1032,6 +1078,7 @@ impl LlmQueryService {
         prior_history: &[super::super::types::Message],
         progress_tracker: Option<&crate::ingestion::ProgressTracker>,
         agent_job_id: &str,
+        current_session_id: &str,
     ) -> Result<(String, Vec<ToolCallRecord>), String> {
         let mut tool_calls: Vec<ToolCallRecord> = Vec::new();
 
@@ -1189,7 +1236,13 @@ impl LlmQueryService {
 
                     // Execute the tool, capturing errors as results so the agent can retry
                     let result = match self
-                        .execute_tool(&tool, &params, node, progress_tracker)
+                        .execute_tool(
+                            &tool,
+                            &params,
+                            node,
+                            progress_tracker,
+                            current_session_id,
+                        )
                         .await
                     {
                         Ok(val) => val,
@@ -1249,5 +1302,81 @@ impl LlmQueryService {
             "Agent reached maximum iterations ({}) without providing a final answer",
             max_iterations
         ))
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use fold_db::db_operations::IndexResult;
+    use fold_db::schema::types::key_value::KeyValue;
+
+    fn make_result(schema: &str, hash_key: Option<&str>) -> IndexResult {
+        IndexResult {
+            schema_name: schema.to_string(),
+            schema_display_name: None,
+            field: "body".to_string(),
+            key_value: KeyValue::new(hash_key.map(String::from), None),
+            value: serde_json::Value::Null,
+            metadata: None,
+            molecule_versions: None,
+        }
+    }
+
+    #[test]
+    fn drops_only_current_session_ai_conversations() {
+        let mut results = vec![
+            make_result("journal", Some("anything")),
+            make_result(AI_CONVERSATIONS_SCHEMA, Some("session-current")),
+            make_result(AI_CONVERSATIONS_SCHEMA, Some("session-old")),
+            make_result("notes", Some("anything")),
+            make_result(AI_CONVERSATIONS_SCHEMA, Some("session-current")),
+        ];
+
+        drop_current_session_hits(&mut results, "session-current");
+
+        let kept: Vec<(&str, Option<&str>)> = results
+            .iter()
+            .map(|r| (r.schema_name.as_str(), r.key_value.hash.as_deref()))
+            .collect();
+        assert_eq!(
+            kept,
+            vec![
+                ("journal", Some("anything")),
+                // session-old ai_conversations row stays — it's not in
+                // the LLM's context window, so the agent legitimately
+                // needs the index to recall it.
+                (AI_CONVERSATIONS_SCHEMA, Some("session-old")),
+                ("notes", Some("anything")),
+            ],
+            "only current-session ai_conversations rows should be removed; \
+             prior sessions and other schemas preserved in order"
+        );
+    }
+
+    #[test]
+    fn keeps_ai_conversations_with_no_session_id() {
+        // A defensive case: if a row somehow lands without a hash key,
+        // we shouldn't drop it on a session_id == "" match.
+        let mut results = vec![make_result(AI_CONVERSATIONS_SCHEMA, None)];
+        drop_current_session_hits(&mut results, "");
+        assert_eq!(results.len(), 1, "None hash must not match empty session id");
+    }
+
+    #[test]
+    fn empty_input_stays_empty() {
+        let mut results: Vec<IndexResult> = Vec::new();
+        drop_current_session_hits(&mut results, "session-current");
+        assert!(results.is_empty());
+    }
+
+    #[test]
+    fn keeps_all_when_no_match() {
+        let mut results = vec![
+            make_result("journal", Some("a")),
+            make_result("notes", Some("b")),
+        ];
+        drop_current_session_hits(&mut results, "session-current");
+        assert_eq!(results.len(), 2);
     }
 }
