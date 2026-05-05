@@ -451,6 +451,28 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/web_search/key": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Whether a Brave Search API key is currently stored on disk. */
+        get: operations["get_web_search_key_status"];
+        put?: never;
+        /**
+         * Persist (or clear) the Brave Search API key. The key is stored encrypted
+         * @description when the `os-keychain` feature is on, and as a `0o600` plaintext file
+         *     otherwise.
+         */
+        post: operations["save_web_search_key"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
 }
 export type webhooks = Record<string, never>;
 export interface components {
@@ -1218,6 +1240,14 @@ export interface components {
             session_id?: string | null;
         };
         /**
+         * @description Request body for `POST /api/web_search/key`. An empty `api_key` deletes the
+         *     saved key — no separate DELETE route needed. `Serialize` is derived only so
+         *     the test harness can `set_json(...)` without an extra wrapper struct.
+         */
+        SaveWebSearchKeyRequest: {
+            api_key: string;
+        };
+        /**
          * @description Provider/model settings persisted to disk by the UI.
          *     Runtime fields (enabled, retries, timeout) are controlled via env vars only.
          *
@@ -1323,6 +1353,15 @@ export interface components {
          * @enum {string}
          */
         VisionBackend: "Ollama" | "Anthropic";
+        /**
+         * @description Response body for `GET /api/web_search/key`. We expose only a presence flag
+         *     so the saved key never leaves the server — even back to the user who set
+         *     it.
+         */
+        WebSearchKeyStatus: {
+            /** @description `true` when a non-empty key is persisted on disk. */
+            has_key: boolean;
+        };
     };
     responses: never;
     parameters: never;
@@ -2064,6 +2103,57 @@ export interface operations {
                 content: {
                     "application/json": unknown;
                 };
+            };
+        };
+    };
+    get_web_search_key_status: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Web search key status */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["WebSearchKeyStatus"];
+                };
+            };
+        };
+    };
+    save_web_search_key: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["SaveWebSearchKeyRequest"];
+            };
+        };
+        responses: {
+            /** @description Saved (or cleared) */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["WebSearchKeyStatus"];
+                };
+            };
+            /** @description Failed to persist the key */
+            500: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
             };
         };
     };

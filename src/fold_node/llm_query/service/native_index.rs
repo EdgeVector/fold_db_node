@@ -868,7 +868,7 @@ impl LlmQueryService {
                 let count = params.get("count").and_then(|c| c.as_u64()).unwrap_or(5) as usize;
 
                 tracing::info!("Agent web_search: query='{}', count={}", query, count);
-                let results = super::web_tools::web_search(query, count).await?;
+                let results = super::web_tools::web_search(self.config_dir(), query, count).await?;
 
                 Ok(serde_json::json!({
                     "results": results,

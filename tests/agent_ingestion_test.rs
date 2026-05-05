@@ -193,11 +193,11 @@ async fn test_agent_scan_ingest_and_query() {
 
     eprintln!("\n=== Phase 5: Running agent queries ===");
 
+    let cfg_dir = std::path::PathBuf::from("/nonexistent/folddb-test-config");
     let ingestion_config =
-        IngestionConfig::from_env(std::path::Path::new("/nonexistent/folddb-test-config"))
-            .expect("IngestionConfig::from_env failed");
+        IngestionConfig::from_env(&cfg_dir).expect("IngestionConfig::from_env failed");
     let query_service =
-        LlmQueryService::new(ingestion_config).expect("Failed to create LlmQueryService");
+        LlmQueryService::new(ingestion_config, cfg_dir).expect("Failed to create LlmQueryService");
 
     // Query 1: Medications (from health/medications.json)
     // Query 2: Contacts (from contacts/address_book.json)

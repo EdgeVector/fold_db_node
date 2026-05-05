@@ -15,6 +15,7 @@ use crate::server::routes::file_upload as file_upload_routes;
 use crate::server::routes::ingestion as ingestion_routes;
 use crate::server::routes::memory as memory_routes;
 use crate::server::routes::smart_folder as smart_folder_routes;
+use crate::server::routes::web_search as web_search_routes;
 use crate::utils::http_errors;
 use fold_db::error::{FoldDbError, FoldDbResult};
 
@@ -198,7 +199,19 @@ impl FoldHttpServer {
                 .configure(Self::configure_sync_routes)
                 .configure(Self::configure_snapshot_routes)
                 .configure(Self::configure_org_routes)
+                .configure(Self::configure_web_search_routes)
                 .configure(Self::configure_test_admin_routes),
+        );
+    }
+
+    fn configure_web_search_routes(cfg: &mut web::ServiceConfig) {
+        cfg.route(
+            "/web_search/key",
+            web::get().to(web_search_routes::get_web_search_key_status),
+        )
+        .route(
+            "/web_search/key",
+            web::post().to(web_search_routes::save_web_search_key),
         );
     }
 

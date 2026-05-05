@@ -307,11 +307,11 @@ async fn test_smart_folder_ingest_and_query() {
 
     // ── Phase 5: AI Agent Queries ───────────────────────────────────────
 
+    let cfg_dir = std::path::PathBuf::from("/nonexistent/folddb-test-config");
     let ingestion_config =
-        IngestionConfig::from_env(std::path::Path::new("/nonexistent/folddb-test-config"))
-            .expect("IngestionConfig::from_env failed");
+        IngestionConfig::from_env(&cfg_dir).expect("IngestionConfig::from_env failed");
     let query_service =
-        LlmQueryService::new(ingestion_config).expect("Failed to create LlmQueryService");
+        LlmQueryService::new(ingestion_config, cfg_dir).expect("Failed to create LlmQueryService");
 
     let processor = OperationProcessor::new(std::sync::Arc::new(node.clone()));
     let schemas = processor

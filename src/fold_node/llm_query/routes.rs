@@ -30,7 +30,7 @@ pub struct LlmQueryState {
 impl LlmQueryState {
     pub fn new(config_dir: PathBuf) -> Self {
         let config = IngestionConfig::load_or_default(&config_dir);
-        let service = match LlmQueryService::new(config) {
+        let service = match LlmQueryService::new(config, config_dir.clone()) {
             Ok(svc) => Some(Arc::new(svc)),
             Err(e) => {
                 tracing::warn!("LLM Query service not available: {}. LLM query endpoints will return errors until configured.", e);
@@ -48,7 +48,7 @@ impl LlmQueryState {
     /// Reload the LLM query service with fresh config
     pub async fn reload(&self) {
         let config = IngestionConfig::load_or_default(&self.config_dir);
-        match LlmQueryService::new(config) {
+        match LlmQueryService::new(config, self.config_dir.clone()) {
             Ok(svc) => {
                 let mut guard = self.service.write().await;
                 *guard = Some(Arc::new(svc));

@@ -24,6 +24,7 @@ pub mod system;
 pub mod test_admin;
 pub mod trust;
 pub mod views;
+pub mod web_search;
 
 // Re-export common utilities for convenience
 pub use common::{

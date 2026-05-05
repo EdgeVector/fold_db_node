@@ -27,6 +27,8 @@ use utoipa::OpenApi;
         crate::server::routes::ingestion::validate_json,
         crate::server::routes::ingestion::get_ingestion_config,
         crate::server::routes::ingestion::save_ingestion_config,
+        crate::server::routes::web_search::get_web_search_key_status,
+        crate::server::routes::web_search::save_web_search_key,
         crate::fold_node::llm_query::routes::chat
     ),
     components(
@@ -108,7 +110,9 @@ use utoipa::OpenApi;
             crate::handlers::query::QueryResponse,
             crate::handlers::query::IndexSearchResponse,
             crate::handlers::mutation::SingleMutationResponse,
-            crate::handlers::system::NodeKeyResponse
+            crate::handlers::system::NodeKeyResponse,
+            crate::server::routes::web_search::WebSearchKeyStatus,
+            crate::server::routes::web_search::SaveWebSearchKeyRequest
         )
     ),
     tags(
@@ -118,7 +122,8 @@ use utoipa::OpenApi;
         (name = "system", description = "System management endpoints"),
         (name = "logs", description = "Logging endpoints"),
         (name = "ingestion", description = "Ingestion endpoints"),
-        (name = "llm-query", description = "LLM-powered natural language query endpoints")
+        (name = "llm-query", description = "LLM-powered natural language query endpoints"),
+        (name = "web_search", description = "Web search API key management")
     )
 )]
 struct ApiDoc;

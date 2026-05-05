@@ -5,9 +5,22 @@
 
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
+use std::path::Path;
+
+use super::web_search_key_store;
 
 /// Environment variable for the web search API key (Brave Search).
 pub const WEB_SEARCH_API_KEY_ENV: &str = "WEB_SEARCH_API_KEY";
+
+/// Mutex serializing tests that mutate `WEB_SEARCH_API_KEY`. Test-visible only.
+#[cfg(test)]
+pub(crate) fn web_search_env_lock() -> std::sync::MutexGuard<'static, ()> {
+    use std::sync::{Mutex, OnceLock};
+    static LOCK: OnceLock<Mutex<()>> = OnceLock::new();
+    LOCK.get_or_init(|| Mutex::new(()))
+        .lock()
+        .unwrap_or_else(|p| p.into_inner())
+}
 
 /// Brave Search API endpoint.
 const BRAVE_SEARCH_URL: &str = "https://api.search.brave.com/res/v1/web/search";
@@ -27,9 +40,18 @@ pub struct WebSearchResult {
 }
 
 /// Perform a web search using the Brave Search API.
-pub async fn web_search(query: &str, count: usize) -> Result<Vec<WebSearchResult>, String> {
-    let api_key = std::env::var(WEB_SEARCH_API_KEY_ENV)
-        .map_err(|_| format!("Web search unavailable: {} environment variable not set. Get a free API key at https://brave.com/search/api/", WEB_SEARCH_API_KEY_ENV))?;
+///
+/// Resolves the API key in this order:
+/// 1. Saved key from `<config_dir>/web_search.key.{json,enc}` (set via the
+///    Settings → AI Config UI).
+/// 2. The `WEB_SEARCH_API_KEY` env var (kept as a power-user / CI fallback).
+/// 3. Otherwise: returns an error pointing the user at the UI.
+pub async fn web_search(
+    config_dir: &Path,
+    query: &str,
+    count: usize,
+) -> Result<Vec<WebSearchResult>, String> {
+    let api_key = resolve_api_key(config_dir)?;
 
     let count = count.min(MAX_RESULTS);
 
@@ -59,6 +81,25 @@ pub async fn web_search(query: &str, count: usize) -> Result<Vec<WebSearchResult
         .map_err(|e| format!("Failed to parse web search response: {}", e))?;
 
     parse_brave_response(&body)
+}
+
+/// Resolve the Brave Search API key: saved store first, env var as fallback.
+fn resolve_api_key(config_dir: &Path) -> Result<String, String> {
+    if let Some(saved) = web_search_key_store::load(config_dir)? {
+        return Ok(saved);
+    }
+    if let Ok(env_key) = std::env::var(WEB_SEARCH_API_KEY_ENV) {
+        let trimmed = env_key.trim();
+        if !trimmed.is_empty() {
+            return Ok(trimmed.to_string());
+        }
+    }
+    Err(format!(
+        "Web search unavailable: no API key configured. Set it in Settings \
+         → AI Config → Web Search, or via {} env var. Get a free key at \
+         https://brave.com/search/api/.",
+        WEB_SEARCH_API_KEY_ENV
+    ))
 }
 
 /// Parse the Brave Search API response into our result type.
@@ -410,12 +451,63 @@ mod tests {
     }
 
     #[tokio::test]
+    #[allow(clippy::await_holding_lock)]
     async fn test_web_search_missing_api_key() {
-        // Ensure the env var is not set
+        let _guard = web_search_env_lock();
+        let dir = tempfile::tempdir().expect("tempdir");
         std::env::remove_var(WEB_SEARCH_API_KEY_ENV);
-        let result = web_search("test query", 3).await;
+        let result = web_search(dir.path(), "test query", 3).await;
         assert!(result.is_err());
-        assert!(result.unwrap_err().contains("not set"));
+        let msg = result.unwrap_err();
+        assert!(
+            msg.contains("Settings") && msg.contains("Web Search"),
+            "error should point users at the UI: {msg}"
+        );
+        assert!(
+            msg.contains(WEB_SEARCH_API_KEY_ENV),
+            "error should still mention the env-var fallback: {msg}"
+        );
+    }
+
+    #[tokio::test]
+    #[allow(clippy::await_holding_lock)]
+    async fn test_web_search_resolve_prefers_saved_key_over_env() {
+        let _guard = web_search_env_lock();
+        let dir = tempfile::tempdir().expect("tempdir");
+        super::web_search_key_store::save(dir.path(), "stored-key").unwrap();
+        std::env::set_var(WEB_SEARCH_API_KEY_ENV, "env-key");
+
+        let resolved = resolve_api_key(dir.path()).expect("resolved");
+        assert_eq!(resolved, "stored-key");
+
+        std::env::remove_var(WEB_SEARCH_API_KEY_ENV);
+    }
+
+    #[tokio::test]
+    #[allow(clippy::await_holding_lock)]
+    async fn test_web_search_resolve_falls_back_to_env() {
+        let _guard = web_search_env_lock();
+        let dir = tempfile::tempdir().expect("tempdir");
+        std::env::set_var(WEB_SEARCH_API_KEY_ENV, "env-key");
+
+        let resolved = resolve_api_key(dir.path()).expect("resolved");
+        assert_eq!(resolved, "env-key");
+
+        std::env::remove_var(WEB_SEARCH_API_KEY_ENV);
+    }
+
+    #[tokio::test]
+    #[allow(clippy::await_holding_lock)]
+    async fn test_web_search_resolve_treats_empty_env_as_unset() {
+        let _guard = web_search_env_lock();
+        let dir = tempfile::tempdir().expect("tempdir");
+        std::env::set_var(WEB_SEARCH_API_KEY_ENV, "   ");
+        let result = resolve_api_key(dir.path());
+        std::env::remove_var(WEB_SEARCH_API_KEY_ENV);
+        assert!(
+            result.is_err(),
+            "whitespace-only env var should not satisfy resolution"
+        );
     }
 
     #[tokio::test]
