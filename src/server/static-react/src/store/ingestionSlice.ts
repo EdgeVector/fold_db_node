@@ -1,10 +1,57 @@
-import { createSlice, createAsyncThunk } from "@reduxjs/toolkit";
+import { createSlice, createAsyncThunk, type PayloadAction } from "@reduxjs/toolkit";
 import { ingestionClient } from "../api/clients";
 import type {
   IngestionConfig,
   IngestionStatus,
 } from "../api/clients/ingestionClient";
 import type { RootState } from "./store";
+
+export type AppleSourceKey =
+  | "notes"
+  | "photos"
+  | "calendar"
+  | "reminders"
+  | "contacts";
+
+export interface ImportResult {
+  total?: number;
+  ingested?: number;
+}
+
+export type AppleJobStatus = "idle" | "running" | "done" | "error";
+
+export interface AppleJob {
+  progressId: string | null;
+  status: AppleJobStatus;
+  progress: number;
+  message: string;
+  result: ImportResult | null;
+}
+
+const APPLE_SOURCE_KEYS: readonly AppleSourceKey[] = [
+  "notes",
+  "photos",
+  "calendar",
+  "reminders",
+  "contacts",
+];
+
+export const makeIdleAppleJob = (): AppleJob => ({
+  progressId: null,
+  status: "idle",
+  progress: 0,
+  message: "",
+  result: null,
+});
+
+const makeInitialAppleJobs = (): Record<AppleSourceKey, AppleJob> =>
+  APPLE_SOURCE_KEYS.reduce(
+    (acc, key) => {
+      acc[key] = makeIdleAppleJob();
+      return acc;
+    },
+    {} as Record<AppleSourceKey, AppleJob>,
+  );
 
 interface IngestionState {
   config: IngestionConfig | null;
@@ -18,6 +65,7 @@ interface IngestionState {
   error: string | null;
   saving: boolean;
   saveError: string | null;
+  appleJobs: Record<AppleSourceKey, AppleJob>;
 }
 
 const initialState: IngestionState = {
@@ -27,6 +75,7 @@ const initialState: IngestionState = {
   error: null,
   saving: false,
   saveError: null,
+  appleJobs: makeInitialAppleJobs(),
 };
 
 export const fetchIngestionConfig = createAsyncThunk(
@@ -63,6 +112,87 @@ export const fetchIngestionStatus = createAsyncThunk(
   },
 );
 
+interface JobProgressShape {
+  progress_percentage?: number;
+  status_message?: string;
+  message?: string;
+  is_complete?: boolean;
+  is_failed?: boolean;
+  error_message?: string;
+  results?: ImportResult;
+  result?: ImportResult;
+}
+
+/**
+ * On app mount, walk every Apple job currently `running` in the store and
+ * ask the backend for its current state. Without this, a job that finished
+ * while the user was on another tab can stay stuck at "running 87%" forever
+ * because the listener middleware only re-arms on a fresh `appleJobStarted`.
+ *
+ * For still-running jobs we re-dispatch `appleJobStarted` so the listener
+ * forks a fresh poll loop (the middleware cancels any prior fork for the
+ * same key — see appleJobsMiddleware.ts).
+ */
+export const reconcileAppleJobs = createAsyncThunk(
+  "ingestion/reconcileAppleJobs",
+  async (_, { dispatch, getState }) => {
+    // getState() is typed `unknown` here on purpose — the thunk doesn't
+    // bind a RootState generic so it stays dispatchable from test stores
+    // that use a slice-only reducer. Accessing only the ingestion slice
+    // is the entire surface, so the local cast is narrow and safe.
+    const { appleJobs } = (getState() as RootState).ingestion;
+    const running = (
+      Object.entries(appleJobs) as [AppleSourceKey, AppleJob][]
+    ).filter(
+      ([, job]) => job.status === "running" && job.progressId !== null,
+    );
+
+    await Promise.all(
+      running.map(async ([key, job]) => {
+        const progressId = job.progressId as string;
+        try {
+          const resp = await ingestionClient.getJobProgress(progressId);
+          if (!resp.success || !resp.data) return;
+          const data = resp.data as JobProgressShape;
+          const progress = data.progress_percentage ?? 0;
+          const message = data.status_message ?? data.message ?? "";
+
+          if (data.is_complete) {
+            dispatch(
+              appleJobCompleted({
+                key,
+                result: data.results ?? data.result ?? null,
+                message,
+              }),
+            );
+            return;
+          }
+          if (data.is_failed) {
+            dispatch(
+              appleJobFailed({
+                key,
+                message:
+                  data.error_message ?? data.message ?? "Import failed",
+              }),
+            );
+            return;
+          }
+          // Re-arm the listener's poll loop. appleJobStarted first (it
+          // clobbers progress/message back to "Starting..."), then
+          // appleJobProgressed to immediately reflect the latest backend
+          // state — avoids a visible snap to 5% before the next poll tick.
+          dispatch(appleJobStarted({ key, progressId }));
+          dispatch(appleJobProgressed({ key, progress, message }));
+        } catch {
+          // Swallow individual fetch errors — one failed reconcile
+          // shouldn't kill the others. Don't surface as appleJobFailed;
+          // we only mark a job failed when the backend explicitly says so.
+        }
+      }),
+    );
+  },
+);
+
 export const saveIngestionConfig = createAsyncThunk(
   "ingestion/saveConfig",
   async (config: IngestionConfig, { dispatch, rejectWithValue }) => {
@@ -89,7 +219,61 @@ export const saveIngestionConfig = createAsyncThunk(
 const ingestionSlice = createSlice({
   name: "ingestion",
   initialState,
-  reducers: {},
+  reducers: {
+    appleJobStarted(
+      state,
+      action: PayloadAction<{ key: AppleSourceKey; progressId: string }>,
+    ) {
+      const { key, progressId } = action.payload;
+      state.appleJobs[key] = {
+        progressId,
+        status: "running",
+        progress: 5,
+        message: "Starting...",
+        result: null,
+      };
+    },
+    appleJobProgressed(
+      state,
+      action: PayloadAction<{
+        key: AppleSourceKey;
+        progress: number;
+        message: string;
+      }>,
+    ) {
+      const { key, progress, message } = action.payload;
+      const job = state.appleJobs[key];
+      if (job.status !== "running") return;
+      job.progress = progress;
+      job.message = message;
+    },
+    appleJobCompleted(
+      state,
+      action: PayloadAction<{
+        key: AppleSourceKey;
+        result: ImportResult | null;
+        message: string;
+      }>,
+    ) {
+      const { key, result, message } = action.payload;
+      const job = state.appleJobs[key];
+      job.status = "done";
+      job.result = result;
+      job.message = message;
+    },
+    appleJobFailed(
+      state,
+      action: PayloadAction<{ key: AppleSourceKey; message: string }>,
+    ) {
+      const { key, message } = action.payload;
+      const job = state.appleJobs[key];
+      job.status = "error";
+      job.message = message;
+    },
+    appleJobReset(state, action: PayloadAction<{ key: AppleSourceKey }>) {
+      state.appleJobs[action.payload.key] = makeIdleAppleJob();
+    },
+  },
   extraReducers: (builder) => {
     builder
       .addCase(fetchIngestionConfig.pending, (state) => {
@@ -161,5 +345,18 @@ export const selectIsAiConfigured = (state: RootState) => {
   if ("api_key" in providerConfig) return !!providerConfig.api_key;
   return !!providerConfig.model;
 };
+
+export const selectAppleJob =
+  (key: AppleSourceKey) =>
+  (state: RootState): AppleJob =>
+    state.ingestion.appleJobs[key];
+
+export const {
+  appleJobStarted,
+  appleJobProgressed,
+  appleJobCompleted,
+  appleJobFailed,
+  appleJobReset,
+} = ingestionSlice.actions;
 
 export default ingestionSlice.reducer;

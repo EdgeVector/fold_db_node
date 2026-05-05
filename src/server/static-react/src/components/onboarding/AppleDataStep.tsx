@@ -118,6 +118,7 @@ export default function AppleDataStep({ onNext, onSkip }: AppleDataStepProps) {
   const [enabled, setEnabled] = useState<SourceEnabledMap>({ notes: true, reminders: true, photos: true, calendar: true, contacts: true })
   const [importing, setImporting] = useState(false)
   const [progressIds, setProgressIds] = useState<Record<string, string>>({})
+  const [failedSources, setFailedSources] = useState<Record<string, string>>({})
   const [allDone, setAllDone] = useState(false)
   const [photosLimit] = useState(50)
 
@@ -133,7 +134,9 @@ export default function AppleDataStep({ onNext, onSkip }: AppleDataStepProps) {
 
   const handleImportAll = async () => {
     setImporting(true)
+    setFailedSources({})
     const ids: Record<string, string> = {}
+    const failures: Record<string, string> = {}
     const selected = Object.entries(enabled).filter(([, v]) => v).map(([k]) => k)
 
     for (const source of selected) {
@@ -147,17 +150,31 @@ export default function AppleDataStep({ onNext, onSkip }: AppleDataStepProps) {
 
         if (resp?.success && resp.data?.progress_id) {
           ids[source] = resp.data.progress_id
+        } else {
+          failures[source] = resp?.error || resp?.message || 'Import failed to start'
         }
-      } catch {
-        // Skip failed starts
+      } catch (err) {
+        failures[source] = err instanceof Error && err.message ? err.message : 'Import failed to start'
       }
     }
 
     setProgressIds(ids)
+    setFailedSources(failures)
 
-    if (Object.keys(ids).length === 0) {
+    // Only auto-advance when there's truly nothing to do (no started imports
+    // AND no failures — e.g. user deselected everything and somehow got here).
+    // If everything failed, leave allDone=false so the wizard surfaces the
+    // failure list and offers Retry. "No silent failures."
+    if (Object.keys(ids).length === 0 && Object.keys(failures).length === 0) {
       setAllDone(true)
     }
+  }
+
+  const handleRetry = () => {
+    setFailedSources({})
+    setProgressIds({})
+    setAllDone(false)
+    handleImportAll()
   }
 
   useEffect(() => {
@@ -248,13 +265,52 @@ export default function AppleDataStep({ onNext, onSkip }: AppleDataStepProps) {
         </>
       ) : (
         <>
-          <div className="card p-4 space-y-1">
-            {Object.entries(progressIds).map(([sourceId, pid]) => (
-              <ImportProgress key={sourceId} sourceId={sourceId} progressId={pid} />
-            ))}
-          </div>
+          {Object.keys(progressIds).length > 0 && (
+            <div className="card p-4 space-y-1">
+              {Object.entries(progressIds).map(([sourceId, pid]) => (
+                <ImportProgress key={sourceId} sourceId={sourceId} progressId={pid} />
+              ))}
+            </div>
+          )}
 
-          {allDone ? (
+          {Object.keys(failedSources).length > 0 && (
+            <div
+              role="alert"
+              data-testid="apple-import-failures"
+              className="card p-4 mt-3 border border-gruvbox-red"
+            >
+              <div className="text-sm text-gruvbox-red font-medium mb-2">
+                {Object.keys(progressIds).length === 0
+                  ? 'Import failed to start.'
+                  : 'Some imports failed to start.'}
+              </div>
+              <ul className="space-y-1">
+                {Object.entries(failedSources).map(([sourceId, message]) => {
+                  const source = SOURCES.find(s => s.id === sourceId)
+                  return (
+                    <li key={sourceId} className="text-xs text-primary flex items-start gap-2">
+                      <span>{source?.icon}</span>
+                      <span className="flex-1">
+                        <span className="font-medium">{source?.label || sourceId}</span>
+                        <span className="text-secondary"> — {message}</span>
+                      </span>
+                    </li>
+                  )
+                })}
+              </ul>
+            </div>
+          )}
+
+          {Object.keys(progressIds).length === 0 && Object.keys(failedSources).length > 0 ? (
+            <div className="flex gap-2 mt-4">
+              <button onClick={handleRetry} className="btn-primary flex-1 text-center">
+                Retry
+              </button>
+              <button onClick={onSkip} className="btn-secondary flex-1 text-center">
+                Skip
+              </button>
+            </div>
+          ) : allDone ? (
             <div className="flex gap-2 mt-4">
               <button onClick={onNext} className="btn-primary flex-1 text-center">
                 Continue

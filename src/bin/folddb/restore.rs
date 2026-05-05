@@ -207,12 +207,12 @@ fn try_register_and_configure(
 }
 
 /// Write the onboarding_complete marker so the UI doesn't re-prompt for setup.
+///
+/// Routed through sensitive_io because the marker's presence reveals that a
+/// credentialed restore flow ran (PR #885 reasoning).
 fn mark_onboarding_complete() {
     if let Ok(home) = fold_db_node::utils::paths::folddb_home() {
         let marker = home.join("data").join(".onboarding_complete");
-        if let Some(parent) = marker.parent() {
-            let _ = std::fs::create_dir_all(parent);
-        }
-        let _ = std::fs::write(&marker, "1");
+        let _ = fold_db_node::sensitive_io::write_sensitive(&marker, b"1");
     }
 }

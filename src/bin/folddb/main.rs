@@ -865,29 +865,14 @@ async fn cloud_enable(
         None => return Some(Err(CliError::new("Registration response missing api_key"))),
     };
 
-    // Update config file
+    // Persist the cloud-sync config and the api_key separately so the api_key
+    // never lands in `node_config.json`. See `persist_cloud_enable_state`.
     let path = match commands::system::resolve_config_path(config_path) {
         Ok(p) => p,
         Err(e) => return Some(Err(e)),
     };
-    let contents = match std::fs::read_to_string(&path) {
-        Ok(c) => c,
-        Err(e) => return Some(Err(CliError::new(format!("Failed to read config: {}", e)))),
-    };
-    let mut cfg: serde_json::Value = match serde_json::from_str(&contents) {
-        Ok(v) => v,
-        Err(e) => return Some(Err(CliError::new(format!("Failed to parse config: {}", e)))),
-    };
-
-    cfg["database"]["cloud_sync"] = serde_json::json!({
-        "api_url": api_url,
-        "api_key": api_key,
-        "user_hash": resp.user_hash,
-    });
-
-    let updated = serde_json::to_string_pretty(&cfg).unwrap();
-    if let Err(e) = std::fs::write(&path, updated) {
-        return Some(Err(CliError::new(format!("Failed to write config: {}", e))));
+    if let Err(e) = persist_cloud_enable_state(&path, &api_url, &api_key, resp.user_hash.clone()) {
+        return Some(Err(e));
     }
 
     // Show recovery phrase (identity already loaded above for registration)
@@ -905,13 +890,12 @@ async fn cloud_enable(
         );
     }
 
-    // Mark onboarding complete (consistent with UI and setup wizard)
+    // Mark onboarding complete (consistent with UI and setup wizard). Routed
+    // through sensitive_io: the marker's presence reveals a credentialed flow
+    // ran (PR #885 reasoning).
     if let Ok(home) = fold_db_node::utils::paths::folddb_home() {
         let marker = home.join("data").join(".onboarding_complete");
-        if let Some(parent) = marker.parent() {
-            let _ = std::fs::create_dir_all(parent);
-        }
-        let _ = std::fs::write(&marker, "1");
+        let _ = fold_db_node::sensitive_io::write_sensitive(&marker, b"1");
     }
 
     // If daemon is running, apply config live via HTTP (same mechanism the UI uses)
@@ -940,6 +924,59 @@ async fn cloud_enable(
     }
 
     Some(Ok(commands::CommandOutput::Message(msg)))
+}
+
+/// Persist the cloud-enable result.
+///
+/// Splits the registration response across two stores so the api_key never
+/// lands in plaintext on disk:
+/// 1. **`node_config.json`** — typed [`NodeConfig`] save. `CloudSyncConfig`'s
+///    `api_key` / `session_token` / `user_hash` are `#[serde(skip_serializing)]`,
+///    so the typed serializer drops them automatically. `api_url` is the only
+///    cloud-sync field that ends up on disk here.
+/// 2. **`credentials.json` / `credentials.enc`** — [`fold_db_node::keychain::store_credentials`].
+///    The api_key lives here only: encrypted under `os-keychain`, 0o600
+///    plaintext otherwise. `FoldNode::new` rehydrates `cloud_sync.api_key`
+///    from this store on every daemon boot. `session_token` is left empty
+///    because the CLI register endpoint doesn't return one — the daemon's
+///    auth-refresh path mints a fresh one on first sync.
+///
+/// Mirrors the persistence model `restore.rs::try_register_and_configure`
+/// established and that PR #885 hardened in `write_bootstrap_marker`.
+fn persist_cloud_enable_state(
+    config_path: &str,
+    api_url: &str,
+    api_key: &str,
+    user_hash: Option<String>,
+) -> Result<(), CliError> {
+    use fold_db::storage::{CloudSyncConfig, DatabaseConfig};
+
+    let mut config = fold_db_node::fold_node::config::load_node_config(Some(config_path), None)
+        .map_err(|e| CliError::new(format!("Failed to read config: {}", e)))?;
+
+    config.database = DatabaseConfig::with_cloud_sync(
+        config.database.path.clone(),
+        CloudSyncConfig {
+            api_url: api_url.to_string(),
+            api_key: api_key.to_string(),
+            session_token: None,
+            user_hash: user_hash.clone(),
+            p2p_sync: None,
+        },
+    );
+
+    fold_db_node::fold_node::config::save_node_config(&config)
+        .map_err(|e| CliError::new(format!("Failed to write config: {}", e)))?;
+
+    let creds = fold_db_node::keychain::ExememCredentials {
+        user_hash: user_hash.unwrap_or_default(),
+        session_token: String::new(),
+        api_key: api_key.to_string(),
+    };
+    fold_db_node::keychain::store_credentials(&creds)
+        .map_err(|e| CliError::new(format!("Failed to persist credentials: {}", e)))?;
+
+    Ok(())
 }
 
 /// Disable cloud backup — remove cloud_sync from config.
@@ -1301,5 +1338,101 @@ mod tests {
             super::read_identity_pubkey(dir.path()).unwrap().as_deref(),
             Some("pk-from-sled")
         );
+    }
+
+    /// FOLDDB_HOME is a process-global env var. Tests that mutate it must
+    /// serialize on this mutex. Binary tests run in their own process
+    /// (independent of the lib crate's test binary), so a process-local
+    /// `OnceLock<Mutex>` is sufficient — no need to share with the lib's
+    /// `secure_store::test_master_key::ENV_LOCK`.
+    fn folddb_home_lock() -> std::sync::MutexGuard<'static, ()> {
+        use std::sync::{Mutex, OnceLock};
+        static LOCK: OnceLock<Mutex<()>> = OnceLock::new();
+        LOCK.get_or_init(|| Mutex::new(()))
+            .lock()
+            .unwrap_or_else(|p| p.into_inner())
+    }
+
+    /// `persist_cloud_enable_state` must split the registration result so
+    /// that `node_config.json` ends up with NO `api_key`, while the api_key
+    /// is reachable via [`fold_db_node::keychain::load_credentials`]. This
+    /// is the regression guard against the raw-`serde_json::Value` shortcut
+    /// that previously persisted the api_key in plaintext on disk.
+    ///
+    /// Plaintext credentials path only — `os-keychain` writes ciphertext via
+    /// the OS keychain, which CI doesn't have. The split is identical in
+    /// both modes; only the on-disk bytes of `credentials.{json,enc}` differ.
+    #[cfg(not(feature = "os-keychain"))]
+    #[test]
+    fn persist_cloud_enable_state_strips_api_key_from_node_config_and_stores_it_separately() {
+        let _guard = folddb_home_lock();
+        let tmp = tempfile::tempdir().expect("tempdir");
+        std::env::set_var("FOLDDB_HOME", tmp.path());
+
+        // Pre-seed a local-only config so `persist_cloud_enable_state` has
+        // something to load and update — mirrors the real CLI flow where
+        // `cloud enable` runs after `setup` has already written the file.
+        let config_dir = tmp.path().join("config");
+        std::fs::create_dir_all(&config_dir).expect("create config dir");
+        let config_path = config_dir.join("node_config.json");
+        let initial = serde_json::json!({
+            "database": { "path": tmp.path().join("data").to_string_lossy() },
+            "network_listen_address": "/ip4/0.0.0.0/tcp/0"
+        });
+        std::fs::write(
+            &config_path,
+            serde_json::to_string_pretty(&initial).unwrap(),
+        )
+        .expect("seed node_config.json");
+
+        super::persist_cloud_enable_state(
+            config_path.to_str().unwrap(),
+            "https://api.example.test",
+            "secret-cloud-api-key",
+            Some("user-hash-abc".to_string()),
+        )
+        .expect("persist_cloud_enable_state");
+
+        // (a) On-disk node_config.json must omit api_key (and session_token,
+        // user_hash) thanks to `CloudSyncConfig`'s `skip_serializing` markers.
+        // api_url is the only cloud_sync field we expect to round-trip.
+        let on_disk: serde_json::Value =
+            serde_json::from_slice(&std::fs::read(&config_path).expect("read config"))
+                .expect("parse rewritten config as JSON");
+        let cloud = on_disk
+            .get("database")
+            .and_then(|d| d.get("cloud_sync"))
+            .expect("cloud_sync present after enable");
+        assert!(
+            cloud.get("api_key").is_none(),
+            "api_key MUST be absent from on-disk node_config.json; got: {cloud}"
+        );
+        assert!(
+            cloud.get("session_token").is_none(),
+            "session_token MUST be absent from on-disk node_config.json; got: {cloud}"
+        );
+        assert!(
+            cloud.get("user_hash").is_none(),
+            "user_hash MUST be absent from on-disk node_config.json; got: {cloud}"
+        );
+        assert_eq!(
+            cloud.get("api_url").and_then(|v| v.as_str()),
+            Some("https://api.example.test"),
+            "api_url should round-trip through node_config.json"
+        );
+
+        // (b) The api_key must be retrievable via the encrypted credential
+        // store — this is what `FoldNode::new` reads on every daemon boot.
+        let creds = fold_db_node::keychain::load_credentials()
+            .expect("load_credentials")
+            .expect("credentials should exist after persist_cloud_enable_state");
+        assert_eq!(creds.api_key, "secret-cloud-api-key");
+        assert_eq!(creds.user_hash, "user-hash-abc");
+        assert_eq!(
+            creds.session_token, "",
+            "CLI register doesn't return a session_token; daemon refreshes lazily"
+        );
+
+        std::env::remove_var("FOLDDB_HOME");
     }
 }

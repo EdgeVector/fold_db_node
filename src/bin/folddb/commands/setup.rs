@@ -260,16 +260,20 @@ pub async fn run_setup_wizard() -> Result<NodeConfig, CliError> {
         .interact()
         .map_err(|e| CliError::new(format!("Input cancelled: {}", e)))?;
 
+    // Captured separately so the API key never lands in `ingestion_config.json`.
+    // It's persisted via `anthropic_key_store::save` (encrypted under
+    // `os-keychain`, 0o600 plaintext otherwise) below.
+    let mut anthropic_api_key: Option<String> = None;
     let ai_config = match ai_idx {
         0 => {
             let api_key: String = Input::new()
                 .with_prompt("Anthropic API key")
                 .interact_text()
                 .map_err(|e| CliError::new(format!("Input cancelled: {}", e)))?;
+            anthropic_api_key = Some(api_key);
             Some(serde_json::json!({
                 "provider": "Anthropic",
                 "anthropic": {
-                    "api_key": api_key,
                     // Ingestion default — see fold_db_node/src/ingestion/config.rs
                     "model": "claude-haiku-4-5-20251001",
                     "base_url": "https://api.anthropic.com"
@@ -406,25 +410,25 @@ pub async fn run_setup_wizard() -> Result<NodeConfig, CliError> {
     fs::write(config_dir.join("node_config.json"), &config_json)
         .map_err(|e| CliError::new(format!("Failed to write node_config.json: {}", e)))?;
 
-    // Save AI config if provided
-    if let Some(ai) = &ai_config {
-        let ai_config_path = config_dir.join("ingestion_config.json");
-        let ai_json = serde_json::to_string_pretty(ai)
-            .map_err(|e| CliError::new(format!("Failed to serialize AI config: {}", e)))?;
-        fs::write(&ai_config_path, ai_json)
-            .map_err(|e| CliError::new(format!("Failed to write AI config: {}", e)))?;
-        eprintln!("AI config saved.");
+    if ai_config.is_some() || anthropic_api_key.is_some() {
+        persist_ai_config(
+            &config_dir,
+            ai_config.as_ref(),
+            anthropic_api_key.as_deref(),
+        )?;
+        if ai_config.is_some() {
+            eprintln!("AI config saved.");
+        }
     }
 
     // Mark onboarding complete — must match the path the server checks:
-    // FOLDDB_HOME/data/.onboarding_complete (lives in data dir so --empty-db resets it)
+    // FOLDDB_HOME/data/.onboarding_complete (lives in data dir so --empty-db resets it).
+    // Routed through sensitive_io: the marker's presence reveals that a
+    // credentialed setup ran (PR #885 reasoning).
     let marker_path = fold_db_node::utils::paths::folddb_home()
         .map(|h| h.join("data").join(".onboarding_complete"))
         .unwrap_or_else(|_| PathBuf::from(".onboarding_complete"));
-    if let Some(parent) = marker_path.parent() {
-        let _ = fs::create_dir_all(parent);
-    }
-    let _ = fs::write(&marker_path, "1");
+    let _ = fold_db_node::sensitive_io::write_sensitive(&marker_path, b"1");
 
     eprintln!(
         "Config saved to {}",
@@ -433,6 +437,32 @@ pub async fn run_setup_wizard() -> Result<NodeConfig, CliError> {
     eprintln!();
 
     Ok(config)
+}
+
+/// Persist the ingestion-config JSON and the Anthropic API key separately.
+///
+/// The JSON file (`ingestion_config.json`) holds non-sensitive provider
+/// settings only. The Anthropic API key — if provided — is routed through
+/// [`fold_db_node::ingestion::anthropic_key_store::save`], which encrypts
+/// under `os-keychain` and writes 0o600 plaintext otherwise. Never write
+/// the key into `ingestion_config.json`.
+fn persist_ai_config(
+    config_dir: &std::path::Path,
+    ai_config: Option<&serde_json::Value>,
+    anthropic_api_key: Option<&str>,
+) -> Result<(), CliError> {
+    if let Some(ai) = ai_config {
+        let ai_config_path = config_dir.join("ingestion_config.json");
+        let ai_json = serde_json::to_string_pretty(ai)
+            .map_err(|e| CliError::new(format!("Failed to serialize AI config: {}", e)))?;
+        fs::write(&ai_config_path, ai_json)
+            .map_err(|e| CliError::new(format!("Failed to write AI config: {}", e)))?;
+    }
+    if let Some(key) = anthropic_api_key {
+        fold_db_node::ingestion::anthropic_key_store::save(config_dir, key)
+            .map_err(|e| CliError::new(format!("Failed to persist Anthropic API key: {}", e)))?;
+    }
+    Ok(())
 }
 
 #[cfg(test)]
@@ -478,5 +508,58 @@ mod tests {
     fn sign_cli_register_payload_rejects_invalid_private_key() {
         let err = sign_cli_register_payload("not-valid-base64!!!", "deadbeef", 123);
         assert!(err.is_err());
+    }
+
+    /// The Anthropic API key must land in the encrypted/0o600 sensitive
+    /// store, never in `ingestion_config.json`. After persistence:
+    ///   - `ingestion_config.json` must exist and parse, with NO `api_key` field.
+    ///   - `anthropic_key_store::load` must return the key we passed in.
+    #[test]
+    fn persist_ai_config_writes_key_to_sensitive_store_not_json() {
+        let tmp = tempfile::tempdir().expect("tempdir");
+        let ai_json = serde_json::json!({
+            "provider": "Anthropic",
+            "anthropic": {
+                "model": "claude-haiku-4-5-20251001",
+                "base_url": "https://api.anthropic.com"
+            }
+        });
+        persist_ai_config(tmp.path(), Some(&ai_json), Some("sk-ant-from-setup"))
+            .expect("persist_ai_config");
+
+        let on_disk: serde_json::Value = serde_json::from_slice(
+            &fs::read(tmp.path().join("ingestion_config.json"))
+                .expect("ingestion_config.json must exist"),
+        )
+        .expect("ingestion_config.json must parse as JSON");
+        assert!(
+            on_disk
+                .get("anthropic")
+                .and_then(|a| a.get("api_key"))
+                .is_none(),
+            "api_key must NOT appear in ingestion_config.json on disk; got: {on_disk}"
+        );
+
+        let loaded = fold_db_node::ingestion::anthropic_key_store::load(tmp.path())
+            .expect("anthropic_key_store::load");
+        assert_eq!(loaded.as_deref(), Some("sk-ant-from-setup"));
+    }
+
+    /// Ollama / Skip paths don't supply an API key — persistence should
+    /// write only the JSON and leave the sensitive store untouched.
+    #[test]
+    fn persist_ai_config_without_anthropic_key_skips_store() {
+        let tmp = tempfile::tempdir().expect("tempdir");
+        let ai_json = serde_json::json!({
+            "provider": "Ollama",
+            "ollama": { "model": "llama3.2", "base_url": "http://localhost:11434" }
+        });
+        persist_ai_config(tmp.path(), Some(&ai_json), None).expect("persist_ai_config");
+
+        assert!(tmp.path().join("ingestion_config.json").exists());
+        assert!(
+            !fold_db_node::ingestion::anthropic_key_store::has_key(tmp.path()),
+            "Ollama path must not touch the Anthropic key store"
+        );
     }
 }

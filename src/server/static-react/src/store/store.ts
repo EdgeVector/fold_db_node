@@ -3,6 +3,7 @@ import authReducer from "./authSlice";
 import schemaReducer from "./schemaSlice";
 import aiQueryReducer from "./aiQuerySlice";
 import ingestionReducer from "./ingestionSlice";
+import { appleJobsListener } from "./appleJobsMiddleware";
 
 export const store = configureStore({
   reducer: {
@@ -30,7 +31,7 @@ export const store = configureStore({
         // Ignore these paths in the state
         ignoredPaths: ["schemas.schemas.*.definition"],
       },
-    }),
+    }).concat(appleJobsListener.middleware),
   devTools: import.meta.env.DEV,
 });
 

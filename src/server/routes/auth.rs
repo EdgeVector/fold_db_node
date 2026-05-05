@@ -177,14 +177,13 @@ mod tests {
     //! tests live in `handlers::auth`.
     use super::*;
     use crate::handlers::auth::{bootstrap_status_path, write_bootstrap_status};
-    use std::sync::Mutex;
 
+    /// Aliased to [`crate::secure_store::test_master_key::lock`] so route
+    /// tests serialize with the matching `handlers::auth` tests (same
+    /// `FOLDDB_HOME` env var) and with every other env-mutating test in
+    /// the crate. Single global mutex keeps ordering trivial.
     fn env_lock() -> std::sync::MutexGuard<'static, ()> {
-        use std::sync::OnceLock;
-        static LOCK: OnceLock<Mutex<()>> = OnceLock::new();
-        LOCK.get_or_init(|| Mutex::new(()))
-            .lock()
-            .expect("env lock poisoned")
+        crate::secure_store::test_master_key::lock()
     }
 
     fn setup_empty_home() -> tempfile::TempDir {

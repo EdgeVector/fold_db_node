@@ -1073,6 +1073,11 @@ pub(crate) fn bootstrap_status_path() -> Option<std::path::PathBuf> {
 /// Write the bootstrap status to disk. Errors are logged loudly (no silent
 /// failures) but not returned — callers are inside tokio::spawn and have no
 /// way to propagate an error to the original HTTP client.
+///
+/// Routed through [`crate::sensitive_io::write_sensitive`]: the status file
+/// sits next to the encrypted `.bootstrap_pending` marker (PR #885) and its
+/// presence reveals that a credentialed cloud-bootstrap flow is or was in
+/// flight, so it gets the same encrypt-or-0o600 treatment.
 pub(crate) fn write_bootstrap_status(status: &BootstrapStatus) {
     let path = match bootstrap_status_path() {
         Some(p) => p,
@@ -1081,16 +1086,6 @@ pub(crate) fn write_bootstrap_status(status: &BootstrapStatus) {
             return;
         }
     };
-    if let Some(parent) = path.parent() {
-        if let Err(e) = std::fs::create_dir_all(parent) {
-            tracing::error!(
-                "write_bootstrap_status: failed to create {:?}: {}",
-                parent,
-                e
-            );
-            return;
-        }
-    }
     let json = match serde_json::to_string_pretty(status) {
         Ok(s) => s,
         Err(e) => {
@@ -1098,16 +1093,25 @@ pub(crate) fn write_bootstrap_status(status: &BootstrapStatus) {
             return;
         }
     };
-    if let Err(e) = std::fs::write(&path, json) {
+    if let Err(e) = crate::sensitive_io::write_sensitive(&path, json.as_bytes()) {
         tracing::error!("write_bootstrap_status: write {:?} failed: {}", path, e);
     }
 }
 
 /// Read the bootstrap status from disk, if the file exists.
+///
+/// Tries [`crate::sensitive_io::read_sensitive`] first; falls back to a raw
+/// read so legacy plaintext status files written before the sensitive_io
+/// migration still parse on first boot after the upgrade.
 pub(crate) fn read_bootstrap_status() -> Option<BootstrapStatus> {
     let path = bootstrap_status_path()?;
-    let contents = std::fs::read_to_string(&path).ok()?;
-    serde_json::from_str(&contents).ok()
+    if !path.exists() {
+        return None;
+    }
+    let bytes = crate::sensitive_io::read_sensitive(&path)
+        .ok()
+        .or_else(|| std::fs::read(&path).ok())?;
+    serde_json::from_slice(&bytes).ok()
 }
 
 /// Remove the bootstrap status file. Used by tests to reset state between
@@ -1150,6 +1154,10 @@ fn bootstrap_marker_path() -> Option<std::path::PathBuf> {
 /// Returns an error if the marker file cannot be created — this must NOT
 /// fail silently, because a missing marker means the daemon will start with
 /// an empty local database and never download the user's data.
+///
+/// The marker contains the cloud API key, so it is written via
+/// [`crate::sensitive_io::write_sensitive`]: encrypted under `os-keychain`,
+/// 0o600 plaintext otherwise. Never use `std::fs::write` here.
 pub fn write_bootstrap_marker(api_url: &str, api_key: &str) -> Result<(), String> {
     let path = bootstrap_marker_path()
         .ok_or_else(|| "write_bootstrap_marker: unable to resolve folddb home".to_string())?;
@@ -1167,7 +1175,7 @@ pub fn write_bootstrap_marker(api_url: &str, api_key: &str) -> Result<(), String
     });
     let serialized = serde_json::to_string_pretty(&marker)
         .map_err(|e| format!("write_bootstrap_marker: serialize failed: {}", e))?;
-    std::fs::write(&path, serialized)
+    crate::sensitive_io::write_sensitive(&path, serialized.as_bytes())
         .map_err(|e| format!("write_bootstrap_marker: write {:?} failed: {}", path, e))?;
     tracing::info!("Wrote bootstrap marker at {:?}", path);
     Ok(())
@@ -1183,10 +1191,45 @@ fn clear_bootstrap_marker() {
 
 /// Check if a bootstrap was interrupted and needs resuming.
 /// Returns (api_url, api_key) if a marker exists.
+///
+/// Reads via [`crate::sensitive_io::read_sensitive`]. If the on-disk file
+/// predates the encrypted-marker rollout, transparently migrates it: we
+/// fall back to a plaintext JSON read, and on success re-write through the
+/// sensitive path so subsequent boots see the encrypted form.
 pub fn check_bootstrap_pending() -> Option<(String, String)> {
     let path = bootstrap_marker_path()?;
-    let contents = std::fs::read_to_string(&path).ok()?;
-    let marker: serde_json::Value = serde_json::from_str(&contents).ok()?;
+    if !path.exists() {
+        return None;
+    }
+    match crate::sensitive_io::read_sensitive(&path) {
+        Ok(bytes) => parse_bootstrap_marker(&bytes),
+        Err(sensitive_err) => {
+            // Pre-migration markers were written by `std::fs::write` as raw
+            // JSON. Under `os-keychain`, the AES-GCM decrypt above will fail
+            // on those — retry as plaintext, and if it parses, re-write
+            // through the sensitive path so the next boot uses ciphertext.
+            let plaintext = std::fs::read(&path).ok()?;
+            let parsed = parse_bootstrap_marker(&plaintext)?;
+            tracing::info!(
+                path = ?path,
+                "Migrating legacy plaintext bootstrap marker to sensitive_io \
+                 (sensitive read error: {})",
+                sensitive_err
+            );
+            if let Err(e) = crate::sensitive_io::write_sensitive(&path, &plaintext) {
+                tracing::warn!(
+                    path = ?path,
+                    "Legacy bootstrap marker read OK but re-write failed: {}",
+                    e
+                );
+            }
+            Some(parsed)
+        }
+    }
+}
+
+fn parse_bootstrap_marker(bytes: &[u8]) -> Option<(String, String)> {
+    let marker: serde_json::Value = serde_json::from_slice(bytes).ok()?;
     let api_url = marker["api_url"].as_str()?.to_string();
     let api_key = marker["api_key"].as_str()?.to_string();
     Some((api_url, api_key))
@@ -1354,14 +1397,15 @@ async fn bootstrap_from_cloud_inner(
 mod tests {
     use super::*;
 
-    /// Serializes tests that mutate `FOLDDB_HOME` (a process-global env var) so
-    /// they don't race each other.
+    /// Serializes tests that mutate `FOLDDB_HOME` *or* `FOLDDB_MASTER_KEY`
+    /// (both process-global env vars) so they don't race each other.
+    /// Shared with every other test in the crate via
+    /// [`crate::secure_store::test_master_key::lock`] — auth tests now
+    /// hit `keychain::store_credentials -> secure_store::encrypt_and_write`
+    /// which consults `FOLDDB_MASTER_KEY`, so the serialization domain
+    /// must include identity / anthropic-key / web-search-key / etc.
     fn env_lock() -> std::sync::MutexGuard<'static, ()> {
-        use std::sync::OnceLock;
-        static LOCK: OnceLock<Mutex<()>> = OnceLock::new();
-        LOCK.get_or_init(|| Mutex::new(()))
-            .lock()
-            .expect("env lock poisoned")
+        crate::secure_store::test_master_key::lock()
     }
 
     /// Dummy identity for tests that exercise the credential-cache fast
@@ -1379,9 +1423,20 @@ mod tests {
 
     /// Set FOLDDB_HOME to a temp dir, write credentials.json containing
     /// `api_key`, and return the temp dir guard.
+    ///
+    /// Caller must hold [`env_lock`] for the duration of the test — this
+    /// helper sets process-wide `FOLDDB_HOME` (and, under os-keychain,
+    /// `FOLDDB_MASTER_KEY`) so the encrypted credentials store has a key
+    /// to seal with. `secure_store::encrypt_and_write` no longer mints on
+    /// demand, so without the env var the call would error.
     fn setup_creds_in_temp_home(api_key: &str) -> tempfile::TempDir {
         let tmp = tempfile::tempdir().expect("tempdir");
         std::env::set_var("FOLDDB_HOME", tmp.path());
+        #[cfg(feature = "os-keychain")]
+        std::env::set_var(
+            "FOLDDB_MASTER_KEY",
+            crate::secure_store::test_master_key::TEST_KEY_HEX,
+        );
 
         let creds = crate::keychain::ExememCredentials {
             user_hash: "test-user".to_string(),
@@ -1926,6 +1981,34 @@ mod tests {
         std::env::remove_var("FOLDDB_HOME");
     }
 
+    /// Dev-mode regression for the sensitive_io routing — without
+    /// `os-keychain`, the status file's permission bits are the only
+    /// barrier between any process on the user's machine and the
+    /// existence of an in-flight credentialed bootstrap. `write_sensitive`
+    /// must land it at 0o600.
+    #[cfg(all(unix, not(feature = "os-keychain")))]
+    #[test]
+    fn bootstrap_status_dev_mode_writes_with_0o600_permissions() {
+        use std::os::unix::fs::PermissionsExt;
+        let _guard = env_lock();
+        let _tmp = setup_empty_home();
+
+        write_bootstrap_status(&BootstrapStatus::in_progress());
+        let path = bootstrap_status_path().expect("status path");
+        let mode = std::fs::metadata(&path)
+            .expect("status file should exist")
+            .permissions()
+            .mode()
+            & 0o777;
+        assert_eq!(
+            mode, 0o600,
+            "expected 0o600 on .bootstrap_status.json, got {mode:o}"
+        );
+
+        clear_bootstrap_status();
+        std::env::remove_var("FOLDDB_HOME");
+    }
+
     #[test]
     fn bootstrap_status_old_shape_backward_compatible() {
         let _guard = env_lock();
@@ -2029,6 +2112,79 @@ mod tests {
             "marker file missing at {:?}",
             marker_path
         );
+
+        std::env::remove_var("FOLDDB_HOME");
+    }
+
+    /// Markers written by older binaries are raw plaintext JSON. After
+    /// upgrading, `check_bootstrap_pending` must still surface them — and
+    /// transparently re-write the file via `sensitive_io` so the next read
+    /// goes through the encrypted/0o600 path.
+    #[test]
+    fn bootstrap_marker_legacy_plaintext_is_migrated_on_read() {
+        let _guard = env_lock();
+        let tmp = tempfile::tempdir().expect("tempdir");
+        std::env::set_var("FOLDDB_HOME", tmp.path());
+
+        let marker_path = tmp.path().join("data").join(".bootstrap_pending");
+        std::fs::create_dir_all(marker_path.parent().unwrap()).unwrap();
+        let legacy = serde_json::json!({
+            "api_url": "https://legacy.example.test",
+            "api_key": "legacy-api-key",
+        });
+        std::fs::write(&marker_path, serde_json::to_string_pretty(&legacy).unwrap())
+            .expect("write legacy plaintext marker");
+
+        let pending = check_bootstrap_pending().expect("legacy marker should be readable");
+        assert_eq!(pending.0, "https://legacy.example.test");
+        assert_eq!(pending.1, "legacy-api-key");
+
+        // After read, the file must still hold the same payload as far as a
+        // fresh `check_bootstrap_pending` call is concerned. Under
+        // `os-keychain`, the on-disk bytes are now ciphertext (no longer
+        // parseable as JSON); without it, `read_sensitive` is just `fs::read`
+        // and the file stays plaintext — both are correct, both round-trip.
+        let pending2 = check_bootstrap_pending().expect("post-migration read");
+        assert_eq!(pending2, pending);
+
+        #[cfg(feature = "os-keychain")]
+        {
+            // CI lacks an OS keychain; the migration re-write would error out
+            // on `encrypt_and_write`. Skip the on-disk-shape assertion there.
+            if std::env::var("CI").is_err() {
+                let raw = std::fs::read(&marker_path).expect("read post-migration bytes");
+                assert!(
+                    serde_json::from_slice::<serde_json::Value>(&raw).is_err(),
+                    "post-migration marker must not be parseable plaintext JSON \
+                     (sensitive_io should have encrypted it on rewrite)"
+                );
+            }
+        }
+
+        std::env::remove_var("FOLDDB_HOME");
+    }
+
+    /// In dev mode (no `os-keychain`), the marker file holds the API key
+    /// in plaintext, so the only barrier between `ls -la` and the secret
+    /// is the Unix permission mode. Must be 0o600 — never the default 0o644.
+    #[cfg(all(unix, not(feature = "os-keychain")))]
+    #[test]
+    fn bootstrap_marker_dev_mode_uses_0o600() {
+        use std::os::unix::fs::PermissionsExt;
+        let _guard = env_lock();
+        let tmp = tempfile::tempdir().expect("tempdir");
+        std::env::set_var("FOLDDB_HOME", tmp.path());
+
+        write_bootstrap_marker("https://example.test", "perm-check-key")
+            .expect("write_bootstrap_marker");
+
+        let marker_path = tmp.path().join("data").join(".bootstrap_pending");
+        let mode = std::fs::metadata(&marker_path)
+            .expect("marker metadata")
+            .permissions()
+            .mode()
+            & 0o777;
+        assert_eq!(mode, 0o600, "expected 0o600, got {:o}", mode);
 
         std::env::remove_var("FOLDDB_HOME");
     }

@@ -53,10 +53,10 @@ sample_data/
 ├── contacts/
 │   └── address_book.json        # Personal contacts
 ├── config/
-│   ├── .bashrc                  # Shell config (should skip)
-│   ├── settings.json            # Editor settings (should skip)
-│   ├── old_backup.exe           # Binary (should skip)
-│   └── helper_tool.dll          # Binary (should skip)
+│   ├── .bashrc                  # Shell config (skipped — dotfile)
+│   ├── settings.json            # Editor settings (currently NOT skipped — see "What to expect")
+│   ├── old_backup.exe           # Binary (skipped — non-ingestible extension)
+│   └── helper_tool.dll          # Binary (skipped — non-ingestible extension)
 ├── finance/
 │   ├── bank_statement_jan2025.csv  # Bank transactions
 │   ├── investments.json            # Portfolio holdings
@@ -139,10 +139,13 @@ sample_data/
 
 The LLM classifier should:
 - **Recommend** personal data: finance, health, contacts, journal, travel bookings, taxes, insurance, recipes
-- **Skip** config files (.bashrc, settings.json), binaries (.exe, .dll), font files (.woff2)
+- **Skip** dotfiles (e.g. `.bashrc` — filtered by the scanner because it starts with `.`), binaries (`.exe`, `.dll`), font files (`.woff2`)
 - **Skip** saved webpage scaffolding (CSS, GIFs inside `bank_of_america/`) while possibly recommending the HTML content
 - **Recommend** photos and PDFs as media/personal data (these are valid files and will be processed via the vision model)
-- **Auto-skip** coding projects (`coding_projects/`) — directories containing manifest files like `package.json`, `Cargo.toml`, or `pyproject.toml` are skipped entirely before LLM classification
+- **Auto-skip** coding projects (`coding_projects/`) — directories whose immediate children contain `package.json`, `Cargo.toml`, or `pyproject.toml` are skipped entirely (the directory and all descendants) before LLM classification. See `src/ingestion/smart_folder/scanner.rs::is_coding_project_root`.
+
+Aspirational behavior — not yet implemented:
+- **Skip** by-name config files like `settings.json` — currently NOT skipped (the heuristic treats `.json` as text/data). Only dotfiles and non-ingestible extensions are dropped today; LLM judgment may still override.
 
 ## Dependencies
 

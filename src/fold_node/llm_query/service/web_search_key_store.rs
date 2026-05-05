@@ -48,12 +48,27 @@ pub fn save(config_dir: &Path, key: &str) -> Result<(), String> {
 }
 
 /// Remove the saved key. No-op when the file does not exist.
+///
+/// Cleans both `web_search.key.json` and `web_search.key.enc` so a user who
+/// toggles the `os-keychain` feature between writes can't end up with the
+/// inactive variant orphaned next to the active one — mirrors
+/// [`crate::ingestion::anthropic_key_store::delete`] and
+/// [`crate::keychain::delete_credentials`].
 pub fn delete(config_dir: &Path) -> Result<(), String> {
     let path = key_file_path(config_dir);
-    if !path.exists() {
-        return Ok(());
+    if path.exists() {
+        std::fs::remove_file(&path)
+            .map_err(|e| format!("Failed to delete web search key file: {}", e))?;
     }
-    std::fs::remove_file(&path).map_err(|e| format!("Failed to delete web search key file: {}", e))
+    let alt_path = config_dir.join(if cfg!(feature = "os-keychain") {
+        "web_search.key.json"
+    } else {
+        "web_search.key.enc"
+    });
+    if alt_path.exists() {
+        let _ = std::fs::remove_file(&alt_path);
+    }
+    Ok(())
 }
 
 /// Cheap presence check used by the GET /api/web_search/key endpoint.
@@ -66,8 +81,16 @@ mod tests {
     use super::*;
     use tempfile::TempDir;
 
+    /// Tests that exercise the encrypted read/write path must hold the
+    /// global env-var lock and provide a `FOLDDB_MASTER_KEY` — see
+    /// [`crate::secure_store::test_master_key`] for the rationale.
+    fn with_master_key() -> crate::secure_store::test_master_key::WithMasterKey {
+        crate::secure_store::test_master_key::with_set()
+    }
+
     #[test]
     fn save_load_roundtrip() {
+        let _g = with_master_key();
         let dir = TempDir::new().expect("tempdir");
         assert!(!has_key(dir.path()));
         assert_eq!(load(dir.path()).unwrap(), None);
@@ -82,6 +105,7 @@ mod tests {
 
     #[test]
     fn save_overwrites_previous() {
+        let _g = with_master_key();
         let dir = TempDir::new().expect("tempdir");
         save(dir.path(), "first").unwrap();
         save(dir.path(), "second").unwrap();
@@ -90,6 +114,7 @@ mod tests {
 
     #[test]
     fn save_empty_deletes() {
+        let _g = with_master_key();
         let dir = TempDir::new().expect("tempdir");
         save(dir.path(), "abc").unwrap();
         assert!(has_key(dir.path()));
@@ -99,6 +124,7 @@ mod tests {
 
     #[test]
     fn save_trims_whitespace() {
+        let _g = with_master_key();
         let dir = TempDir::new().expect("tempdir");
         save(dir.path(), "  padded  ").unwrap();
         assert_eq!(load(dir.path()).unwrap().as_deref(), Some("padded"));
@@ -110,6 +136,31 @@ mod tests {
         delete(dir.path()).expect("delete on missing file should be a no-op");
     }
 
+    /// Toggling the `os-keychain` feature between two writes can leave the
+    /// inactive variant sitting next to the active one. `delete` must clean
+    /// both so the next `load` can't read a stale value.
+    #[cfg(not(feature = "os-keychain"))]
+    #[test]
+    fn delete_cleans_alt_extension_after_feature_toggle() {
+        let dir = TempDir::new().expect("tempdir");
+        save(dir.path(), "k").unwrap();
+        let alt = dir.path().join("web_search.key.enc");
+        std::fs::write(&alt, b"stale-encrypted-bytes").unwrap();
+
+        delete(dir.path()).unwrap();
+
+        assert!(
+            !key_file_path(dir.path()).exists(),
+            "active-feature key file should be removed"
+        );
+        assert!(!alt.exists(), "alt-extension key file should be removed");
+    }
+
+    /// "Empty file means no key" only makes sense for the dev-mode
+    /// plaintext encoding. Under `os-keychain`, the on-disk format is an
+    /// AES-GCM envelope and an empty file is invalid ciphertext (rightly
+    /// surfaced as a decrypt error by `secure_store::read_and_decrypt`).
+    #[cfg(not(feature = "os-keychain"))]
     #[test]
     fn load_treats_empty_file_as_no_key() {
         let dir = TempDir::new().expect("tempdir");
