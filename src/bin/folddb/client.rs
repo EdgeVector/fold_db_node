@@ -245,14 +245,14 @@ impl FoldDbClient {
 
     pub async fn smart_scan(
         &self,
-        path: &str,
+        folder_path: &str,
         max_depth: usize,
         max_files: usize,
     ) -> Result<Value, CliError> {
         self.post(
             "/api/ingestion/smart-folder/scan",
             &serde_json::json!({
-                "path": path,
+                "folder_path": folder_path,
                 "max_depth": max_depth,
                 "max_files": max_files,
             }),
@@ -260,11 +260,41 @@ impl FoldDbClient {
         .await
     }
 
-    pub async fn smart_ingest(&self, path: &str, auto_execute: bool) -> Result<Value, CliError> {
+    /// Fetch the result of a previously-started smart-folder scan. Returns
+    /// `Ok(Some(_))` once the job is complete, `Ok(None)` while it's still
+    /// running, and `Err` on terminal failure.
+    pub async fn smart_scan_result(&self, progress_id: &str) -> Result<Option<Value>, CliError> {
+        let path = format!("/api/ingestion/smart-folder/scan/{}", progress_id);
+        let request = observability::propagation::inject_w3c(
+            self.client
+                .get(self.url(&path))
+                .header("X-User-Hash", &self.user_hash),
+        );
+        let resp = request.send().await.map_err(|e| {
+            if e.is_connect() {
+                CliError::new("Daemon not responding").with_hint("Run `folddb daemon start` first")
+            } else {
+                CliError::new(format!("HTTP request failed: {}", e))
+            }
+        })?;
+        // 404 = scan not yet complete; everything else flows through parse_response.
+        if resp.status() == reqwest::StatusCode::NOT_FOUND {
+            return Ok(None);
+        }
+        Ok(Some(self.parse_response(resp).await?))
+    }
+
+    pub async fn smart_ingest(
+        &self,
+        folder_path: &str,
+        files_to_ingest: &[String],
+        auto_execute: bool,
+    ) -> Result<Value, CliError> {
         self.post(
             "/api/ingestion/smart-folder/ingest",
             &serde_json::json!({
-                "path": path,
+                "folder_path": folder_path,
+                "files_to_ingest": files_to_ingest,
                 "auto_execute": auto_execute,
             }),
         )

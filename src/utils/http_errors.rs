@@ -19,15 +19,26 @@ pub fn json_error_handler(err: JsonPayloadError, req: &HttpRequest) -> actix_web
     );
 
     let response = match &err {
-        JsonPayloadError::Deserialize(serde_err) => HttpResponse::BadRequest().json(json!({
-            "success": false,
-            "error": "Invalid JSON format",
-            "detail": serde_err.to_string()
-        })),
+        JsonPayloadError::Deserialize(serde_err) => {
+            // Distinguish "JSON didn't parse" (syntax) from "JSON parsed but
+            // didn't match the expected shape" (data). The latter is the most
+            // common failure mode — wrong/missing field names — and a generic
+            // "Invalid JSON format" hides that from the caller.
+            let detail = serde_err.to_string();
+            let error = match serde_err.classify() {
+                serde_json::error::Category::Data => "Invalid request payload",
+                _ => "Invalid JSON format",
+            };
+            HttpResponse::BadRequest().json(json!({
+                "success": false,
+                "error": format!("{}: {}", error, detail),
+                "detail": detail,
+            }))
+        }
         _ => HttpResponse::BadRequest().json(json!({
             "success": false,
-            "error": "Invalid request payload",
-            "detail": detail
+            "error": format!("Invalid request payload: {}", detail),
+            "detail": detail,
         })),
     };
 
