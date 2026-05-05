@@ -175,7 +175,8 @@ load_api_keys() {
 check_schema_service() {
     local url="$1"
     echo "Checking schema service connectivity..."
-    if curl -s --connect-timeout 10 "$url/api/health" > /dev/null 2>&1; then
+    # Submodule binary serves routes under /v1/ (old /api/ prefix dropped in Phase 0).
+    if curl -s --connect-timeout 10 "$url/v1/health" > /dev/null 2>&1; then
         echo "Schema service is reachable."
         return 0
     else
