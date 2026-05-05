@@ -10,9 +10,7 @@ pub fn create_test_node_config() -> NodeConfig {
     let path = dir.path().to_path_buf();
 
     // Isolate the config directory so tests don't read the host machine's
-    // saved UI state. Threaded onto NodeConfig.config_dir explicitly — the
-    // former `FOLD_CONFIG_DIR` env-var fallback was removed when path
-    // resolution moved into StartupCtx.
+    // saved UI state. Threaded onto NodeConfig.config_dir explicitly.
     NodeConfig::new(path.clone()).with_config_dir(path.join("config"))
 }
 

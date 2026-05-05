@@ -640,11 +640,6 @@ CONFIG_FILE="$FOLDDB_HOME/config/node_config.json"
 # Set NODE_CONFIG so Rust code finds the config file
 export NODE_CONFIG="$CONFIG_FILE"
 
-# (FOLD_CONFIG_DIR was previously exported here for the ingestion config
-# loader. The path is now resolved by the Rust binary itself via
-# `setup_config_environment` and threaded through `StartupCtx` — the
-# env-var hand-off is gone.)
-
 # Backup existing config
 if [ -f "$CONFIG_FILE" ]; then
     cp "$CONFIG_FILE" "${CONFIG_FILE}.backup"
