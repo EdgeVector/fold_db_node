@@ -69,6 +69,10 @@ const API_ENDPOINTS_SYNC = {
 
 // Endpoints not yet in OpenAPI spec but used by the backend
 const API_ENDPOINTS_MANUAL = {
+  // Unauthenticated daemon liveness probe — returns { ok, version, uptime_s }
+  // where `version` is FOLDDB_BUILD_VERSION (matches `folddb --version`).
+  // Distinct from HEALTH_CHECK (/ingestion/health), which is a subsystem probe.
+  GET_HEALTH: "/health",
   ANALYZE_FOLLOWUP: "/llm-query/analyze-followup",
   AGENT_QUERY: "/llm-query/agent",
   GET_SYNC_STATUS: "/system/sync-status",
