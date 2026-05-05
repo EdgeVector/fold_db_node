@@ -20,7 +20,9 @@ type StashedEntries = Vec<(Vec<u8>, Vec<u8>)>;
 /// them disconnects the user from every org without a server-side
 /// "leave org" call; the user would have to re-accept invites to regain
 /// access, even though they're still members on the cloud.
-const RESET_PRESERVED_TREES: &[&str] = &["node_identity", "org_memberships"];
+const NODE_IDENTITY_TREE: &str = "node_identity";
+const ORG_MEMBERSHIPS_TREE: &str = "org_memberships";
+const RESET_PRESERVED_TREES: &[&str] = &[NODE_IDENTITY_TREE, ORG_MEMBERSHIPS_TREE];
 
 use super::OperationProcessor;
 
@@ -198,7 +200,7 @@ impl OperationProcessor {
             "reset: complete — identity preserved, {} org memberships preserved, cloud log purged",
             stashed
                 .iter()
-                .find(|(n, _)| *n == "org_memberships")
+                .find(|(n, _)| *n == ORG_MEMBERSHIPS_TREE)
                 .map(|(_, e)| e.len())
                 .unwrap_or(0)
         );
@@ -564,7 +566,7 @@ mod reset_helpers_tests {
         // Seed the source tree with two entries.
         {
             let guard = pool.acquire_arc().unwrap();
-            let tree = guard.db().open_tree("node_identity").unwrap();
+            let tree = guard.db().open_tree(NODE_IDENTITY_TREE).unwrap();
             tree.insert(b"private_key", b"priv-bytes".as_ref()).unwrap();
             tree.insert(b"public_key", b"pub-bytes".as_ref()).unwrap();
             tree.flush().unwrap();
@@ -573,13 +575,13 @@ mod reset_helpers_tests {
         // Stash, then restore into a fresh pool against a different
         // path — this models the wipe-and-recreate flow that
         // `perform_database_reset` performs.
-        let stashed = read_tree_raw(&pool, "node_identity").unwrap();
+        let stashed = read_tree_raw(&pool, NODE_IDENTITY_TREE).unwrap();
         assert_eq!(stashed.len(), 2);
 
         let (dest_pool, _dest_tmp) = temp_pool();
-        write_tree_raw(&dest_pool, "node_identity", &stashed).unwrap();
+        write_tree_raw(&dest_pool, NODE_IDENTITY_TREE, &stashed).unwrap();
 
-        let restored = read_tree_raw(&dest_pool, "node_identity").unwrap();
+        let restored = read_tree_raw(&dest_pool, NODE_IDENTITY_TREE).unwrap();
         assert_eq!(stashed, restored, "raw bytes must round-trip exactly");
     }
 
@@ -589,15 +591,15 @@ mod reset_helpers_tests {
         // Tree never created — should return empty, not error. This
         // matches the fresh-install case where `node_identity` doesn't
         // exist yet at the moment of reset.
-        let entries = read_tree_raw(&pool, "node_identity").unwrap();
+        let entries = read_tree_raw(&pool, NODE_IDENTITY_TREE).unwrap();
         assert!(entries.is_empty());
     }
 
     #[test]
     fn write_empty_entries_is_a_noop() {
         let (pool, _tmp) = temp_pool();
-        write_tree_raw(&pool, "org_memberships", &Vec::new()).unwrap();
-        let entries = read_tree_raw(&pool, "org_memberships").unwrap();
+        write_tree_raw(&pool, ORG_MEMBERSHIPS_TREE, &Vec::new()).unwrap();
+        let entries = read_tree_raw(&pool, ORG_MEMBERSHIPS_TREE).unwrap();
         assert!(entries.is_empty());
     }
 
@@ -608,11 +610,11 @@ mod reset_helpers_tests {
         // drops one, the symptom is silent identity loss on next
         // reset — a lot worse than a failing test.
         assert!(
-            RESET_PRESERVED_TREES.contains(&"node_identity"),
+            RESET_PRESERVED_TREES.contains(&NODE_IDENTITY_TREE),
             "node_identity must survive reset (E2E key derives from it)"
         );
         assert!(
-            RESET_PRESERVED_TREES.contains(&"org_memberships"),
+            RESET_PRESERVED_TREES.contains(&ORG_MEMBERSHIPS_TREE),
             "org_memberships must survive reset (org E2E secrets are not recoverable)"
         );
     }
