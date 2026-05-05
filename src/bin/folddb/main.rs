@@ -735,19 +735,33 @@ async fn dispatch_ingest(
             Ok(commands::CommandOutput::RawJson(json))
         }
         #[cfg(target_os = "macos")]
-        cli::IngestCommand::AppleNotes { folder, batch_size } => {
-            apple::ingest_notes(client, folder.as_deref(), *batch_size).await
-        }
+        cli::IngestCommand::AppleNotes {
+            folder,
+            batch_size,
+            timeout_seconds,
+        } => apple::ingest_notes(client, folder.as_deref(), *batch_size, *timeout_seconds).await,
         #[cfg(target_os = "macos")]
         cli::IngestCommand::ApplePhotos {
             album,
             limit,
             batch_size,
-        } => apple::ingest_photos(client, album.as_deref(), *limit, *batch_size).await,
-        #[cfg(target_os = "macos")]
-        cli::IngestCommand::AppleReminders { list } => {
-            apple::ingest_reminders(client, list.as_deref()).await
+            timeout_seconds,
+        } => {
+            apple::ingest_photos(
+                client,
+                album.as_deref(),
+                *limit,
+                *batch_size,
+                *timeout_seconds,
+            )
+            .await
         }
+        #[cfg(target_os = "macos")]
+        cli::IngestCommand::AppleReminders {
+            list,
+            batch_size,
+            timeout_seconds,
+        } => apple::ingest_reminders(client, list.as_deref(), *batch_size, *timeout_seconds).await,
     }
 }
 

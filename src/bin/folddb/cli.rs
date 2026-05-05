@@ -278,6 +278,10 @@ pub enum IngestCommand {
         /// Batch size for ingestion (default: 10)
         #[arg(long, default_value = "10")]
         batch_size: usize,
+        /// Wallclock seconds to allow the AppleScript export before failing
+        /// fast with a TCC hint (default: 60).
+        #[arg(long, default_value = "60")]
+        timeout_seconds: u64,
     },
 
     /// Ingest photos from Apple Photos (macOS only)
@@ -292,6 +296,10 @@ pub enum IngestCommand {
         /// Batch size (default: 5)
         #[arg(long, default_value = "5")]
         batch_size: usize,
+        /// Wallclock seconds to allow the AppleScript export before failing
+        /// fast with a TCC hint (default: 60).
+        #[arg(long, default_value = "60")]
+        timeout_seconds: u64,
     },
 
     /// Ingest reminders from Apple Reminders (macOS only)
@@ -300,6 +308,13 @@ pub enum IngestCommand {
         /// Ingest only reminders from this list (default: all lists)
         #[arg(long)]
         list: Option<String>,
+        /// Batch size for ingestion (default: 10)
+        #[arg(long, default_value = "10")]
+        batch_size: usize,
+        /// Wallclock seconds to allow the AppleScript export before failing
+        /// fast with a TCC hint (default: 60).
+        #[arg(long, default_value = "60")]
+        timeout_seconds: u64,
     },
 }
 
@@ -888,10 +903,16 @@ mod tests {
         let cli = Cli::parse_from(["folddb", "ingest", "apple-notes"]);
         match cli.command {
             Command::Ingest {
-                action: IngestCommand::AppleNotes { folder, batch_size },
+                action:
+                    IngestCommand::AppleNotes {
+                        folder,
+                        batch_size,
+                        timeout_seconds,
+                    },
             } => {
                 assert!(folder.is_none());
                 assert_eq!(batch_size, 10);
+                assert_eq!(timeout_seconds, 60);
             }
             _ => panic!("Expected Ingest AppleNotes"),
         }
@@ -908,13 +929,21 @@ mod tests {
             "Work",
             "--batch-size",
             "25",
+            "--timeout-seconds",
+            "120",
         ]);
         match cli.command {
             Command::Ingest {
-                action: IngestCommand::AppleNotes { folder, batch_size },
+                action:
+                    IngestCommand::AppleNotes {
+                        folder,
+                        batch_size,
+                        timeout_seconds,
+                    },
             } => {
                 assert_eq!(folder, Some("Work".to_string()));
                 assert_eq!(batch_size, 25);
+                assert_eq!(timeout_seconds, 120);
             }
             _ => panic!("Expected Ingest AppleNotes"),
         }
@@ -931,11 +960,13 @@ mod tests {
                         album,
                         limit,
                         batch_size,
+                        timeout_seconds,
                     },
             } => {
                 assert!(album.is_none());
                 assert_eq!(limit, 50);
                 assert_eq!(batch_size, 5);
+                assert_eq!(timeout_seconds, 60);
             }
             _ => panic!("Expected Ingest ApplePhotos"),
         }
@@ -954,6 +985,8 @@ mod tests {
             "20",
             "--batch-size",
             "3",
+            "--timeout-seconds",
+            "180",
         ]);
         match cli.command {
             Command::Ingest {
@@ -962,11 +995,13 @@ mod tests {
                         album,
                         limit,
                         batch_size,
+                        timeout_seconds,
                     },
             } => {
                 assert_eq!(album, Some("Vacation".to_string()));
                 assert_eq!(limit, 20);
                 assert_eq!(batch_size, 3);
+                assert_eq!(timeout_seconds, 180);
             }
             _ => panic!("Expected Ingest ApplePhotos"),
         }
@@ -978,9 +1013,16 @@ mod tests {
         let cli = Cli::parse_from(["folddb", "ingest", "apple-reminders"]);
         match cli.command {
             Command::Ingest {
-                action: IngestCommand::AppleReminders { list },
+                action:
+                    IngestCommand::AppleReminders {
+                        list,
+                        batch_size,
+                        timeout_seconds,
+                    },
             } => {
                 assert!(list.is_none());
+                assert_eq!(batch_size, 10);
+                assert_eq!(timeout_seconds, 60);
             }
             _ => panic!("Expected Ingest AppleReminders"),
         }
@@ -988,13 +1030,30 @@ mod tests {
 
     #[cfg(target_os = "macos")]
     #[test]
-    fn parse_ingest_apple_reminders_with_list() {
-        let cli = Cli::parse_from(["folddb", "ingest", "apple-reminders", "--list", "Shopping"]);
+    fn parse_ingest_apple_reminders_with_options() {
+        let cli = Cli::parse_from([
+            "folddb",
+            "ingest",
+            "apple-reminders",
+            "--list",
+            "Shopping",
+            "--batch-size",
+            "20",
+            "--timeout-seconds",
+            "30",
+        ]);
         match cli.command {
             Command::Ingest {
-                action: IngestCommand::AppleReminders { list },
+                action:
+                    IngestCommand::AppleReminders {
+                        list,
+                        batch_size,
+                        timeout_seconds,
+                    },
             } => {
                 assert_eq!(list, Some("Shopping".to_string()));
+                assert_eq!(batch_size, 20);
+                assert_eq!(timeout_seconds, 30);
             }
             _ => panic!("Expected Ingest AppleReminders"),
         }
