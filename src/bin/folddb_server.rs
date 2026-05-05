@@ -200,6 +200,10 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         println!("  Schema: {}", url);
     }
     println!("  UI:     http://localhost:{}", http_port);
+    println!(
+        "  Logs:   {}",
+        fold_db_node::utils::paths::observability_log_path().display()
+    );
     println!();
 
     if fold_db_node::handlers::admin::test_admin_enabled() {
