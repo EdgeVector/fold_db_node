@@ -530,6 +530,26 @@ impl OperationProcessor {
         Some(KeyValue::new(hash, range))
     }
 
+    /// Count records in a schema without materializing a key page.
+    ///
+    /// Returns 0 for schemas that exist but have no data yet (e.g. an
+    /// `Available`-state schema with no `runtime_fields`); the LLM agent's
+    /// `list_schemas` tool relies on this being non-fatal so a single
+    /// uninitialized schema doesn't blank out the whole inventory response.
+    pub async fn count_schema_records(&self, schema_name: &str) -> FoldDbResult<usize> {
+        match self.list_schema_keys(schema_name, 0, 0).await {
+            Ok((_, total)) => Ok(total),
+            Err(e) => {
+                tracing::debug!(
+                    schema = %schema_name,
+                    error = %e,
+                    "count_schema_records: returning 0 for schema with no countable fields",
+                );
+                Ok(0)
+            }
+        }
+    }
+
     /// List keys for a schema with pagination.
     /// Returns (paginated_keys, total_count).
     pub async fn list_schema_keys(
