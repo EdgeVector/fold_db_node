@@ -4,6 +4,13 @@ import { systemClient, type LogEntry } from '../api/clients/systemClient'
 type LogEntryWithId = LogEntry & { id?: string }
 type LogItem = LogEntryWithId | string
 
+// Content-based dedup key. The RING and WEB observability layers each
+// generate their own UUIDs for the same tracing event, so `id` differs
+// across the SSE stream (WEB) and the poll fallback (RING). Hash the
+// fields that DO survive both paths instead.
+const dedupKey = (e: LogEntryWithId): string =>
+  `${e.timestamp}|${e.level}|${e.event_type}|${e.message}`
+
 function LogSidebar() {
   const [logs, setLogs] = useState<LogItem[]>([])
   const [isCollapsed, setIsCollapsed] = useState(true)
@@ -42,9 +49,19 @@ function LogSidebar() {
   useEffect(() => {
     let cancelled = false
 
+    // Initial buffer fetch. Merge rather than replace — the SSE
+    // subscription below opens synchronously, and any event that lands
+    // before this fetch resolves would be clobbered by a naive `setLogs`.
     systemClient.getLogs().then(r => {
-      if (!cancelled && r.success && r.data) setLogs(Array.isArray(r.data.logs) ? r.data.logs : [])
-    }).catch(() => { if (!cancelled) setLogs([]) })
+      if (cancelled || !r.success || !r.data) return
+      const fetched = Array.isArray(r.data.logs) ? (r.data.logs as LogEntryWithId[]) : []
+      setLogs(prev => {
+        const seen = new Set<string>()
+        for (const e of prev) if (typeof e !== 'string') seen.add(dedupKey(e))
+        const dedupedFetch = fetched.filter(l => !seen.has(dedupKey(l)))
+        return [...dedupedFetch, ...prev]
+      })
+    }).catch(() => { /* leave logs empty; SSE/poll will populate */ })
 
     const eventSource = systemClient.createLogStream(
       (message) => {
@@ -62,7 +79,8 @@ function LogSidebar() {
               message,
             }
           }
-          if (entry.id && prev.some(e => typeof e !== 'string' && e.id === entry.id)) return prev
+          const key = dedupKey(entry)
+          if (prev.some(e => typeof e !== 'string' && dedupKey(e) === key)) return prev
           return [...prev, entry]
         })
       },
@@ -77,7 +95,9 @@ function LogSidebar() {
         systemClient.getLogs(since).then(r => {
           if (!cancelled && r.success && r.data?.logs?.length) {
             setLogs(c => {
-              const newLogs = (r.data!.logs as LogEntryWithId[]).filter(l => !c.some(e => typeof e !== 'string' && e.id === l.id))
+              const seen = new Set<string>()
+              for (const e of c) if (typeof e !== 'string') seen.add(dedupKey(e))
+              const newLogs = (r.data!.logs as LogEntryWithId[]).filter(l => !seen.has(dedupKey(l)))
               return [...c, ...newLogs]
             })
           }
