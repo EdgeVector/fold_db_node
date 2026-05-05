@@ -1522,6 +1522,7 @@ mod tests {
                     storage_path: Some(tmp.path().join("data")),
                     network_listen_address: "/ip4/0.0.0.0/tcp/0".to_string(),
                     schema_service_url: Some("test://mock".to_string()),
+                    env: None,
                     config_dir: Some(tmp.path().join("config")),
                     seed_identity: None,
                     source_path: None,
