@@ -89,6 +89,20 @@ async fn init_apple_import_job(
     })
 }
 
+/// Stamp a freshly-built terminal `Job` with `completed_at` and `updated_at`.
+///
+/// Apple import handlers build the terminal job via `Job::new(...)` + direct
+/// status assignment, bypassing `Job::complete` / `Job::fail` — so without
+/// this call the API surfaces `is_complete: true, completed_at: null`.
+fn mark_terminal(job: &mut Job) {
+    let now = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .unwrap_or_default()
+        .as_secs();
+    job.updated_at = now;
+    job.completed_at = Some(now);
+}
+
 /// Spawn `work` on the runtime under the caller's user context and return the
 /// standard `202 Accepted { success, progress_id }` response that every Apple
 /// import handler emits.
@@ -170,6 +184,7 @@ async fn run_apple_notes_import(
             let mut job = Job::new(progress_id.clone(), JobType::Other("apple-notes".into()));
             job.status = JobStatus::Failed;
             job.message = format!("Failed to extract notes: {}", e);
+            mark_terminal(&mut job);
             let _ = tracker.save(&job).await;
             return;
         }
@@ -177,6 +192,7 @@ async fn run_apple_notes_import(
             let mut job = Job::new(progress_id.clone(), JobType::Other("apple-notes".into()));
             job.status = JobStatus::Failed;
             job.message = format!("Extraction task panicked: {}", e);
+            mark_terminal(&mut job);
             let _ = tracker.save(&job).await;
             return;
         }
@@ -188,6 +204,7 @@ async fn run_apple_notes_import(
         job.progress_percentage = 100;
         job.message = "No notes found".into();
         job.result = Some(json!({ "total": 0, "ingested": 0 }));
+        mark_terminal(&mut job);
         let _ = tracker.save(&job).await;
         return;
     }
@@ -252,6 +269,7 @@ async fn run_apple_notes_import(
     job.progress_percentage = 100;
     job.message = format!("Imported {} notes", ingested);
     job.result = Some(json!({ "total": total, "ingested": ingested }));
+    mark_terminal(&mut job);
     let _ = tracker.save(&job).await;
 }
 
@@ -266,6 +284,7 @@ async fn run_apple_notes_import(
     let mut job = Job::new(progress_id, JobType::Other("apple-notes".into()));
     job.status = JobStatus::Failed;
     job.message = "Apple import is only available on macOS".into();
+    mark_terminal(&mut job);
     let _ = tracker.save(&job).await;
 }
 
@@ -329,6 +348,7 @@ async fn run_apple_reminders_import(
             );
             job.status = JobStatus::Failed;
             job.message = format!("Failed to extract reminders: {}", e);
+            mark_terminal(&mut job);
             let _ = tracker.save(&job).await;
             return;
         }
@@ -339,6 +359,7 @@ async fn run_apple_reminders_import(
             );
             job.status = JobStatus::Failed;
             job.message = format!("Extraction task panicked: {}", e);
+            mark_terminal(&mut job);
             let _ = tracker.save(&job).await;
             return;
         }
@@ -353,6 +374,7 @@ async fn run_apple_reminders_import(
         job.progress_percentage = 100;
         job.message = "No reminders found".into();
         job.result = Some(json!({ "total": 0, "ingested": 0 }));
+        mark_terminal(&mut job);
         let _ = tracker.save(&job).await;
         return;
     }
@@ -403,7 +425,8 @@ async fn run_apple_reminders_import(
         }
     };
 
-    let job = build_reminders_final_job(progress_id.clone(), total, ingested, ingest_error);
+    let mut job = build_reminders_final_job(progress_id.clone(), total, ingested, ingest_error);
+    mark_terminal(&mut job);
     let _ = tracker.save(&job).await;
 }
 
@@ -444,6 +467,7 @@ async fn run_apple_reminders_import(
     let mut job = Job::new(progress_id, JobType::Other("apple-reminders".into()));
     job.status = JobStatus::Failed;
     job.message = "Apple import is only available on macOS".into();
+    mark_terminal(&mut job);
     let _ = tracker.save(&job).await;
 }
 
@@ -521,6 +545,7 @@ async fn run_apple_photos_import(
             let mut job = Job::new(progress_id.clone(), JobType::Other("apple-photos".into()));
             job.status = JobStatus::Failed;
             job.message = format!("Failed to export photos: {}", e);
+            mark_terminal(&mut job);
             let _ = tracker.save(&job).await;
             return;
         }
@@ -528,6 +553,7 @@ async fn run_apple_photos_import(
             let mut job = Job::new(progress_id.clone(), JobType::Other("apple-photos".into()));
             job.status = JobStatus::Failed;
             job.message = format!("Export task panicked: {}", e);
+            mark_terminal(&mut job);
             let _ = tracker.save(&job).await;
             return;
         }
@@ -539,6 +565,7 @@ async fn run_apple_photos_import(
         job.progress_percentage = 100;
         job.message = "No photos found".into();
         job.result = Some(json!({ "total": 0, "ingested": 0 }));
+        mark_terminal(&mut job);
         let _ = tracker.save(&job).await;
         return;
     }
@@ -690,6 +717,7 @@ async fn run_apple_photos_import(
     job.progress_percentage = 100;
     job.message = format!("Imported {} photos", ingested);
     job.result = Some(json!({ "total": total, "ingested": ingested }));
+    mark_terminal(&mut job);
     let _ = tracker.save(&job).await;
 }
 
@@ -706,6 +734,7 @@ async fn run_apple_photos_import(
     let mut job = Job::new(progress_id, JobType::Other("apple-photos".into()));
     job.status = JobStatus::Failed;
     job.message = "Apple import is only available on macOS".into();
+    mark_terminal(&mut job);
     let _ = tracker.save(&job).await;
 }
 
@@ -809,6 +838,7 @@ async fn run_apple_calendar_import(
             let mut job = Job::new(progress_id.clone(), JobType::Other("apple-calendar".into()));
             job.status = JobStatus::Failed;
             job.message = format!("Failed to extract calendar events: {}", e);
+            mark_terminal(&mut job);
             let _ = tracker.save(&job).await;
             return;
         }
@@ -816,6 +846,7 @@ async fn run_apple_calendar_import(
             let mut job = Job::new(progress_id.clone(), JobType::Other("apple-calendar".into()));
             job.status = JobStatus::Failed;
             job.message = format!("Extraction task panicked: {}", e);
+            mark_terminal(&mut job);
             let _ = tracker.save(&job).await;
             return;
         }
@@ -827,6 +858,7 @@ async fn run_apple_calendar_import(
         job.progress_percentage = 100;
         job.message = "No calendar events found".into();
         job.result = Some(json!({ "total": 0, "ingested": 0 }));
+        mark_terminal(&mut job);
         let _ = tracker.save(&job).await;
         return;
     }
@@ -891,6 +923,7 @@ async fn run_apple_calendar_import(
     job.progress_percentage = 100;
     job.message = format!("Imported {} calendar events", ingested);
     job.result = Some(json!({ "total": total, "ingested": ingested }));
+    mark_terminal(&mut job);
     let _ = tracker.save(&job).await;
 }
 
@@ -905,6 +938,7 @@ async fn run_apple_calendar_import(
     let mut job = Job::new(progress_id, JobType::Other("apple-calendar".into()));
     job.status = JobStatus::Failed;
     job.message = "Apple import is only available on macOS".into();
+    mark_terminal(&mut job);
     let _ = tracker.save(&job).await;
 }
 
@@ -960,6 +994,7 @@ async fn run_apple_contacts_import(
             let mut job = Job::new(progress_id.clone(), JobType::Other("apple-contacts".into()));
             job.status = JobStatus::Failed;
             job.message = format!("Failed to extract contacts: {}", e);
+            mark_terminal(&mut job);
             let _ = tracker.save(&job).await;
             return;
         }
@@ -967,6 +1002,7 @@ async fn run_apple_contacts_import(
             let mut job = Job::new(progress_id.clone(), JobType::Other("apple-contacts".into()));
             job.status = JobStatus::Failed;
             job.message = format!("Extraction task panicked: {}", e);
+            mark_terminal(&mut job);
             let _ = tracker.save(&job).await;
             return;
         }
@@ -978,6 +1014,7 @@ async fn run_apple_contacts_import(
         job.progress_percentage = 100;
         job.message = "No contacts found".into();
         job.result = Some(json!({ "total": 0, "ingested": 0 }));
+        mark_terminal(&mut job);
         let _ = tracker.save(&job).await;
         return;
     }
@@ -1042,6 +1079,7 @@ async fn run_apple_contacts_import(
     job.progress_percentage = 100;
     job.message = format!("Imported {} contacts", ingested);
     job.result = Some(json!({ "total": total, "ingested": ingested }));
+    mark_terminal(&mut job);
     let _ = tracker.save(&job).await;
 }
 
@@ -1055,6 +1093,7 @@ async fn run_apple_contacts_import(
     let mut job = Job::new(progress_id, JobType::Other("apple-contacts".into()));
     job.status = JobStatus::Failed;
     job.message = "Apple import is only available on macOS".into();
+    mark_terminal(&mut job);
     let _ = tracker.save(&job).await;
 }
 
@@ -1354,5 +1393,67 @@ mod reminders_final_job_tests {
         let job = build_reminders_final_job("p3".into(), 0, 0, None);
         assert!(matches!(job.status, JobStatus::Completed));
         assert_eq!(job.message, "Imported 0 reminders");
+    }
+}
+
+#[cfg(test)]
+mod mark_terminal_tests {
+    use super::mark_terminal;
+    use crate::ingestion::progress::IngestionProgress;
+    use fold_db::progress::{Job, JobStatus, JobType};
+
+    #[test]
+    fn stamps_completed_at_on_completed_job() {
+        let mut job = Job::new("pid-ok".into(), JobType::Other("apple-notes".into()));
+        let started = job.created_at;
+        assert!(
+            job.completed_at.is_none(),
+            "Job::new must leave completed_at unset"
+        );
+
+        job.status = JobStatus::Completed;
+        mark_terminal(&mut job);
+
+        let completed = job
+            .completed_at
+            .expect("mark_terminal must populate completed_at on Completed jobs");
+        assert!(
+            completed >= started,
+            "completed_at ({}) must be >= started_at ({})",
+            completed,
+            started,
+        );
+        assert_eq!(
+            job.updated_at, completed,
+            "mark_terminal stamps updated_at to the same instant",
+        );
+
+        let progress: IngestionProgress = job.into();
+        assert!(progress.is_complete);
+        assert!(
+            progress.completed_at.is_some(),
+            "is_complete:true must imply completed_at:Some — that's the whole bug",
+        );
+        assert!(progress.completed_at.unwrap() >= progress.started_at);
+    }
+
+    #[test]
+    fn stamps_completed_at_on_failed_job() {
+        let mut job = Job::new("pid-fail".into(), JobType::Other("apple-notes".into()));
+        let started = job.created_at;
+
+        job.status = JobStatus::Failed;
+        job.message = "Failed to extract notes: boom".into();
+        mark_terminal(&mut job);
+
+        let completed = job
+            .completed_at
+            .expect("mark_terminal must populate completed_at on Failed jobs too");
+        assert!(completed >= started);
+
+        let progress: IngestionProgress = job.into();
+        assert!(progress.is_complete);
+        assert!(progress.is_failed);
+        assert!(progress.completed_at.is_some());
     }
 }
