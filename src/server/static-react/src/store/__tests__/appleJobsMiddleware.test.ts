@@ -6,7 +6,12 @@ import {
   it,
   vi,
 } from "vitest";
-import { combineReducers, configureStore } from "@reduxjs/toolkit";
+import {
+  combineReducers,
+  configureStore,
+  type Action,
+  type Middleware,
+} from "@reduxjs/toolkit";
 
 vi.mock("../../api/clients", () => ({
   ingestionClient: {
@@ -295,6 +300,73 @@ describe("appleJobsMiddleware", () => {
     await ADVANCE(2000);
     expect(getJob(store, "notes").progress).toBe(60);
     expect(observed.length).toBeGreaterThan(subscriberFiresAfterFirstTick);
+  });
+
+  // Post-completion contract for the dogfood-2026-05-05 follow-up:
+  // once a job has settled into a terminal state (`done` / `error`),
+  // nothing the listener middleware does on its own — including a
+  // re-arming `appleJobStarted` for a *different* key — may flip the
+  // settled job back to `idle`. The only legal route to `idle` is the
+  // explicit `appleJobReset` dispatch from the Reset All button.
+  //
+  // Concretely, the existing `appleJobCompleted` / `appleJobFailed`
+  // tests prove the slot reaches the right terminal state. This test
+  // proves the middleware never tries to clear that state behind the
+  // user's back, regardless of polling activity on neighbouring keys.
+  it("never auto-dispatches appleJobReset; settled jobs stay settled while other keys poll", async () => {
+    const recorded: Action[] = [];
+    const recorder: Middleware = () => (next) => (action) => {
+      recorded.push(action as Action);
+      return next(action);
+    };
+
+    const store = configureStore({
+      reducer: combineReducers({ ingestion: ingestionReducer }),
+      middleware: (getDefault) =>
+        getDefault({ serializableCheck: false })
+          .concat(appleJobsListener.middleware)
+          .concat(recorder),
+    });
+
+    // Photos completes terminally on the first tick.
+    mockedGetJobProgress.mockImplementation(async (id: string) => {
+      if (id === "photos-1") {
+        return ok({
+          progress_percentage: 100,
+          status_message: "✓ Imported 50 photos",
+          is_complete: true,
+          results: { total: 50, ingested: 47 },
+        });
+      }
+      // Notes keeps polling indefinitely so the listener stays active.
+      return ok({
+        progress_percentage: 25,
+        status_message: "working",
+        is_complete: false,
+      });
+    });
+
+    store.dispatch(appleJobStarted({ key: "photos", progressId: "photos-1" }));
+    store.dispatch(appleJobStarted({ key: "notes", progressId: "notes-1" }));
+
+    await ADVANCE(2000); // photos completes; notes ticks.
+    await ADVANCE(2000); // notes ticks again.
+    await ADVANCE(2000); // and again.
+
+    const photos = getJob(store, "photos");
+    expect(photos.status).toBe("done");
+    expect(photos.result).toEqual({ total: 50, ingested: 47 });
+
+    const notes = getJob(store, "notes");
+    expect(notes.status).toBe("running");
+
+    // The listener may dispatch Started / Progressed / Completed /
+    // Failed. It MUST NOT dispatch Reset on its own — that's reserved
+    // for explicit user intent (Reset All button).
+    const resetActions = recorded.filter(
+      (a) => a.type === appleJobReset.type,
+    );
+    expect(resetActions).toHaveLength(0);
   });
 
   it("treats success:false as transient and keeps polling without dispatching failure", async () => {

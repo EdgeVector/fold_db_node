@@ -341,4 +341,170 @@ describe('AppleImportTab', () => {
       expect(appleJobs[key].result).toBeNull()
     }
   })
+
+  // Follow-up to the dogfood-2026-05-05 observation: after the imports
+  // had actually completed in the backend, the Redux store was observed
+  // with all five `appleJobs` entries reset to fresh `idle` state. PR
+  // #892 closed the click-time idle window (the most likely cause), but
+  // the post-completion contract — "once a job is `done`, no React
+  // mount/unmount cycle and no listener-middleware activity drops it
+  // back to `idle`" — needs its own pin. Without this assertion any
+  // future `useEffect(() => () => imports[k].reset())` cleanup or
+  // listener side-effect that quietly fires `appleJobReset` would
+  // silently regress the persistence promise from PR #884.
+  it('completed jobs survive AppleImportTab unmount/remount without regressing to idle', async () => {
+    mockGetAppleImportStatus.mockResolvedValue({
+      success: true,
+      data: { available: true },
+    })
+    // No new polls should fire during this test — the store is pre-loaded
+    // at `done`, and the listener middleware only arms on `appleJobStarted`.
+    mockGetJobProgress.mockReturnValue(new Promise(() => {}))
+
+    const store = buildStore()
+    for (const key of ALL_KEYS) {
+      store.dispatch(appleJobStarted({ key, progressId: `${key}-final` }))
+      store.dispatch(
+        appleJobCompleted({
+          key,
+          result: { total: 50, ingested: 47 },
+          message: '✓ Imported 47 of 50',
+        }),
+      )
+    }
+
+    const first = render(
+      <Provider store={store}>
+        <AppleImportTab onResult={vi.fn()} />
+      </Provider>,
+    )
+    await waitFor(() => {
+      expect(screen.getByText('Import All (5)')).toBeTruthy()
+    })
+
+    // Simulate navigating to another tab — AppleImportTab unmounts.
+    first.unmount()
+
+    // Bump fake-timer time forward to simulate "minutes later" idle.
+    // No action should have been dispatched on its own; the only mutation
+    // surface is `appleJobReset` (button click) or middleware reactions
+    // to `appleJobStarted`, neither of which happens here.
+    vi.advanceTimersByTime(5 * 60_000)
+    await Promise.resolve()
+
+    // Sanity: state still reads `done` for every source while unmounted.
+    {
+      const { appleJobs } = store.getState().ingestion
+      for (const key of ALL_KEYS) {
+        expect(appleJobs[key].status).toBe('done')
+        expect(appleJobs[key].progressId).toBe(`${key}-final`)
+        expect(appleJobs[key].result).toEqual({ total: 50, ingested: 47 })
+      }
+    }
+
+    // Navigate back — AppleImportTab remounts, reads from the same store.
+    render(
+      <Provider store={store}>
+        <AppleImportTab onResult={vi.fn()} />
+      </Provider>,
+    )
+    await waitFor(() => {
+      expect(screen.getByText('Import All (5)')).toBeTruthy()
+    })
+
+    // Final assertion: the post-completion contract holds across the
+    // unmount/remount cycle. No path resets a `done` job to `idle` on
+    // its own.
+    const { appleJobs } = store.getState().ingestion
+    for (const key of ALL_KEYS) {
+      expect(appleJobs[key].status).toBe('done')
+      expect(appleJobs[key].progressId).toBe(`${key}-final`)
+      expect(appleJobs[key].message).toBe('✓ Imported 47 of 50')
+      expect(appleJobs[key].result).toEqual({ total: 50, ingested: 47 })
+    }
+  })
+
+  // Variant of the above where completion arrives WHILE the component
+  // is unmounted — the close-as-possible deterministic mirror of the
+  // dogfood scenario (user navigates to Browse, imports finish in the
+  // background via the listener middleware's poll loop, user navigates
+  // back). The middleware lives at the store level and keeps polling
+  // regardless of mount state, so the completion dispatch must land in
+  // the store and persist into the remount.
+  it('completion arriving while unmounted lands as `done` and persists into remount', async () => {
+    mockGetAppleImportStatus.mockResolvedValue({
+      success: true,
+      data: { available: true },
+    })
+    // First poll tick returns is_complete=true so the listener fork
+    // resolves cleanly into `appleJobCompleted` for every key.
+    mockGetJobProgress.mockResolvedValue({
+      success: true,
+      data: {
+        progress_percentage: 100,
+        status_message: '✓ Imported 12 reminders',
+        is_complete: true,
+        results: { total: 12, ingested: 12 },
+      },
+    })
+
+    const store = buildStore()
+    const first = render(
+      <Provider store={store}>
+        <AppleImportTab onResult={vi.fn()} />
+      </Provider>,
+    )
+    // Wait for initial mount/load before dispatching state.
+    await waitFor(() => {
+      expect(screen.getByText('Import All (5)')).toBeTruthy()
+    })
+
+    // Pre-load: every source is `running` with a real progressId, as it
+    // would be a few seconds after Import All while the user navigates
+    // away. The listener middleware is armed because we dispatched
+    // appleJobStarted directly.
+    act(() => {
+      for (const key of ALL_KEYS) {
+        store.dispatch(appleJobStarted({ key, progressId: `${key}-live` }))
+      }
+    })
+    await waitFor(() => {
+      expect(screen.getByText('Importing...')).toBeTruthy()
+    })
+
+    // Navigate away mid-flight.
+    first.unmount()
+
+    // Advance past one poll interval so the listener fork ticks while
+    // unmounted. With is_complete=true on the first tick, every key
+    // should land at `done` without anyone in the React tree mediating.
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(2_000)
+    })
+
+    {
+      const { appleJobs } = store.getState().ingestion
+      for (const key of ALL_KEYS) {
+        expect(appleJobs[key].status).toBe('done')
+        expect(appleJobs[key].result).toEqual({ total: 12, ingested: 12 })
+      }
+    }
+
+    // Navigate back. The remount must observe `done`, never `idle`.
+    render(
+      <Provider store={store}>
+        <AppleImportTab onResult={vi.fn()} />
+      </Provider>,
+    )
+    await waitFor(() => {
+      expect(screen.getByText('Import All (5)')).toBeTruthy()
+    })
+
+    const { appleJobs } = store.getState().ingestion
+    for (const key of ALL_KEYS) {
+      expect(appleJobs[key].status).toBe('done')
+      expect(appleJobs[key].result).toEqual({ total: 12, ingested: 12 })
+      expect(appleJobs[key].message).toBe('✓ Imported 12 reminders')
+    }
+  })
 })
