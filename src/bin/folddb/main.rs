@@ -127,7 +127,9 @@ async fn main() {
                      `folddb setup` from an interactive terminal."
                 )
             };
-            CliError::new("Node not configured").with_hint(hint).exit(json_mode);
+            CliError::new("Node not configured")
+                .with_hint(hint)
+                .exit(json_mode);
         }
         config = match commands::setup::run_setup_wizard().await {
             Ok(c) => c,
