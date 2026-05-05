@@ -92,7 +92,10 @@ mod tests {
             "state": "Approved",
         })];
         let out = render_table(&rows, false);
-        assert!(out.contains("Journal Entries"), "missing display name: {out}");
+        assert!(
+            out.contains("Journal Entries"),
+            "missing display name: {out}"
+        );
         assert!(
             !out.contains("00f503fe"),
             "hash should not appear without --show-hash: {out}"
@@ -106,7 +109,10 @@ mod tests {
             "state": "Available",
         })];
         let out = render_table(&rows, false);
-        assert!(out.contains("TriggerFiring"), "missing fallback name: {out}");
+        assert!(
+            out.contains("TriggerFiring"),
+            "missing fallback name: {out}"
+        );
     }
 
     #[test]
