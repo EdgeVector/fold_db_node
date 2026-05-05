@@ -1406,7 +1406,10 @@ mod mark_terminal_tests {
     fn stamps_completed_at_on_completed_job() {
         let mut job = Job::new("pid-ok".into(), JobType::Other("apple-notes".into()));
         let started = job.created_at;
-        assert!(job.completed_at.is_none(), "Job::new must leave completed_at unset");
+        assert!(
+            job.completed_at.is_none(),
+            "Job::new must leave completed_at unset"
+        );
 
         job.status = JobStatus::Completed;
         mark_terminal(&mut job);
