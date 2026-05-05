@@ -63,7 +63,6 @@ export function AppContent() {
     aiConfigured,
     aiProvider,
     showSetupBanner,
-    dismissSetup,
   } = useAuthInitialization()
 
   // Tab routing / URL hash sync
@@ -271,20 +270,12 @@ export function AppContent() {
           <span className="text-gruvbox-blue text-sm">
             Configure AI to get started — FoldDB needs Anthropic or local Ollama for ingestion and search.
           </span>
-          <div className="flex items-center gap-3">
-            <button
-              onClick={() => navigateToSettings('ai')}
-              className="bg-gruvbox-blue text-surface text-sm px-4 py-1.5 border-none cursor-pointer hover:bg-gruvbox-green transition-colors"
-            >
-              Configure AI
-            </button>
-            <button
-              onClick={dismissSetup}
-              className="text-gruvbox-blue text-sm bg-transparent border-none cursor-pointer hover:text-gruvbox-bright transition-colors"
-            >
-              Dismiss
-            </button>
-          </div>
+          <button
+            onClick={() => navigateToSettings('ai')}
+            className="bg-gruvbox-blue text-surface text-sm px-4 py-1.5 border-none cursor-pointer hover:bg-gruvbox-green transition-colors"
+          >
+            Configure AI
+          </button>
         </div>
       )}
 
