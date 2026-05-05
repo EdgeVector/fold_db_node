@@ -11,8 +11,10 @@
 use actix_web::dev::ServerHandle;
 use actix_web::{web, App, HttpServer};
 use schema_service_core::state::SchemaServiceState;
+use schema_service_core::Embedder;
 use schema_service_server_http::configure_routes;
 use std::net::TcpListener;
+use std::sync::Arc;
 use tempfile::TempDir;
 
 #[allow(dead_code)]
@@ -28,7 +30,11 @@ pub struct SpawnedSchemaService {
 /// register their own schemas via the API.
 #[allow(dead_code)]
 pub async fn spawn_schema_service() -> SpawnedSchemaService {
-    spawn_inner(false).await
+    spawn_inner(
+        false,
+        Arc::new(::schema_service_core::embedder::MockEmbeddingModel),
+    )
+    .await
 }
 
 /// Spawn an in-process schema service pre-seeded with the Phase 1
@@ -36,10 +42,42 @@ pub async fn spawn_schema_service() -> SpawnedSchemaService {
 /// `SchemaServiceServer::new_with_builtins` does at production startup.
 #[allow(dead_code)]
 pub async fn spawn_schema_service_with_builtins() -> SpawnedSchemaService {
-    spawn_inner(true).await
+    spawn_inner(
+        true,
+        Arc::new(::schema_service_core::embedder::MockEmbeddingModel),
+    )
+    .await
 }
 
-async fn spawn_inner(seed_builtins: bool) -> SpawnedSchemaService {
+/// Spawn an in-process schema service backed by fold_db's real
+/// `FastEmbedModel` (AllMiniLML6V2). Used by tests that need actual
+/// semantic similarity, not the byte-hash mock. The model downloads
+/// on first run, so callers should `#[ignore]` these tests and gate
+/// nightly invocations behind the FastEmbed runner.
+#[allow(dead_code)]
+pub async fn spawn_schema_service_with_fastembed() -> SpawnedSchemaService {
+    use fold_db::db_operations::native_index::FastEmbedModel;
+    spawn_inner(false, Arc::new(FastEmbedAdapter(FastEmbedModel::new()))).await
+}
+
+/// Wraps fold_db's `FastEmbedModel` so it satisfies
+/// `schema_service_core::Embedder`. The production equivalent lives
+/// in `schema_service_server_shared::FoldDbFastEmbedder`; we inline it
+/// here to keep fold_db_node off that dependency. Mirrors the shim
+/// in `tests/schema_service_semantic_match_test.rs`.
+#[allow(dead_code)]
+struct FastEmbedAdapter(fold_db::db_operations::native_index::FastEmbedModel);
+
+impl Embedder for FastEmbedAdapter {
+    fn embed_text(&self, text: &str) -> Result<Vec<f32>, schema_service_core::EmbedError> {
+        use fold_db::db_operations::native_index::Embedder as _;
+        self.0
+            .embed_text(text)
+            .map_err(|e| schema_service_core::EmbedError::EmbedFailed(e.to_string()))
+    }
+}
+
+async fn spawn_inner(seed_builtins: bool, embedder: Arc<dyn Embedder>) -> SpawnedSchemaService {
     let temp_dir = TempDir::new().expect("create tempdir for schema service");
     let db_path = temp_dir
         .path()
@@ -47,11 +85,7 @@ async fn spawn_inner(seed_builtins: bool) -> SpawnedSchemaService {
         .to_string_lossy()
         .to_string();
 
-    let state = SchemaServiceState::new(
-        db_path,
-        ::std::sync::Arc::new(::schema_service_core::embedder::MockEmbeddingModel),
-    )
-    .expect("create SchemaServiceState");
+    let state = SchemaServiceState::new(db_path, embedder).expect("create SchemaServiceState");
     if seed_builtins {
         schema_service_core::builtin_schemas::seed(&state)
             .await
