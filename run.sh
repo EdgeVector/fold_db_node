@@ -183,6 +183,60 @@ check_schema_service() {
     fi
 }
 
+# Resolve the absolute path to a sibling `schema_service` checkout.
+# Priority:
+#   1. $FOLDDB_SCHEMA_SERVICE_DIR (escape hatch — tested first).
+#   2. Sibling of the main worktree. `git rev-parse --git-common-dir` returns
+#      the original .git directory even from a linked worktree, so its parent
+#      is the main repo root regardless of where this script runs from. This
+#      is what makes --local-schema work from ~/.cline/worktrees/<id>/...
+#   3. $HOME/code/edgevector/schema_service (canonical layout fallback).
+# On miss, prints an actionable message naming each path tried and returns 1.
+resolve_schema_service_dir() {
+    if [ -n "$FOLDDB_SCHEMA_SERVICE_DIR" ]; then
+        if [ -d "$FOLDDB_SCHEMA_SERVICE_DIR" ]; then
+            ( cd "$FOLDDB_SCHEMA_SERVICE_DIR" && pwd )
+            return 0
+        fi
+        echo "ERROR: FOLDDB_SCHEMA_SERVICE_DIR='$FOLDDB_SCHEMA_SERVICE_DIR' but that directory does not exist." >&2
+        echo "       Either fix the path or unset FOLDDB_SCHEMA_SERVICE_DIR to fall back to auto-detection." >&2
+        return 1
+    fi
+
+    local common_dir main_repo candidate
+    common_dir="$(git rev-parse --git-common-dir 2>/dev/null || true)"
+    if [ -n "$common_dir" ] && [ -d "$common_dir" ]; then
+        main_repo="$(cd "$common_dir/.." && pwd)"
+        candidate="$main_repo/../schema_service"
+        if [ -d "$candidate" ]; then
+            ( cd "$candidate" && pwd )
+            return 0
+        fi
+    fi
+
+    candidate="$HOME/code/edgevector/schema_service"
+    if [ -d "$candidate" ]; then
+        ( cd "$candidate" && pwd )
+        return 0
+    fi
+
+    echo "ERROR: --local-schema requires a sibling 'schema_service' git checkout, but none was found." >&2
+    echo "       Tried (in order):" >&2
+    echo "         1. \$FOLDDB_SCHEMA_SERVICE_DIR (unset)" >&2
+    if [ -n "$common_dir" ]; then
+        echo "         2. <main-worktree>/../schema_service (resolved to '$main_repo/../schema_service')" >&2
+    else
+        echo "         2. <main-worktree>/../schema_service (skipped — not a git checkout)" >&2
+    fi
+    echo "         3. \$HOME/code/edgevector/schema_service" >&2
+    echo "" >&2
+    echo "       Fix one of:" >&2
+    echo "         - git clone https://github.com/EdgeVector/schema_service.git \$HOME/code/edgevector/schema_service" >&2
+    echo "         - export FOLDDB_SCHEMA_SERVICE_DIR=/path/to/your/schema_service checkout" >&2
+    echo "         - drop --local-schema to use the configured remote schema service" >&2
+    return 1
+}
+
 start_local_schema_service() {
     # Schema service auto-detects its AI provider:
     #   - ANTHROPIC_API_KEY set → Anthropic (fast, accurate classification via Haiku)
@@ -237,7 +291,7 @@ start_local_schema_service() {
     # local dev). Pre-build synchronously so the 30s liveness loop below
     # doesn't race a cold cargo build.
     local schema_service_dir home_abs schema_db_path schema_log
-    schema_service_dir="$(cd ../schema_service && pwd)"
+    schema_service_dir="$(resolve_schema_service_dir)" || exit 1
     home_abs="$(cd "$FOLDDB_HOME" && pwd)"
     schema_db_path="$home_abs/schema_registry"
     schema_log="$home_abs/schema_service.log"
