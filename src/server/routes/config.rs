@@ -184,7 +184,19 @@ pub async fn apply_setup(
     if let Some(ref storage) = req.storage {
         match storage {
             StorageSetup::Local { path } => {
-                config.database = DatabaseConfig::local(std::path::PathBuf::from(path));
+                // Expand `~` / `~/...` so the path doesn't get persisted as a
+                // literal tilde and turn into `<cwd>/~/.folddb/data/` at Sled
+                // open time (see DatabaseSetupScreen which sends `~/.folddb/data`).
+                let resolved = match crate::server::routes::filesystem::expand_tilde(path) {
+                    Ok(p) => p,
+                    Err(msg) => {
+                        return HttpResponse::BadRequest().json(SetupResponse {
+                            success: false,
+                            message: msg,
+                        });
+                    }
+                };
+                config.database = DatabaseConfig::local(resolved);
                 changes.push("storage (local)");
             }
             StorageSetup::Exemem { api_url, api_key } => {
@@ -195,8 +207,20 @@ pub async fn apply_setup(
                     user_hash: None,
                     p2p_sync: None,
                 };
-                config.database =
-                    DatabaseConfig::with_cloud_sync(config.database.path.clone(), cloud_sync);
+                // Normalize the existing on-disk path too — a previous Local
+                // setup may have persisted a literal `~`-prefixed string.
+                let existing_path = config.database.path.to_string_lossy().to_string();
+                let resolved = match crate::server::routes::filesystem::expand_tilde(&existing_path)
+                {
+                    Ok(p) => p,
+                    Err(msg) => {
+                        return HttpResponse::BadRequest().json(SetupResponse {
+                            success: false,
+                            message: msg,
+                        });
+                    }
+                };
+                config.database = DatabaseConfig::with_cloud_sync(resolved, cloud_sync);
                 changes.push("storage (exemem)");
                 // api_url is persisted via the DatabaseConfig -> node_config.json
                 // write below. No separate Sled copy.
@@ -370,4 +394,96 @@ pub async fn mark_onboarding_complete() -> impl Responder {
     }
 
     HttpResponse::Ok().json(json!({ "ok": true }))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::fold_node::config::NodeConfig;
+    use crate::server::http_server::AppState;
+    use crate::server::node_manager::{NodeManager, NodeManagerConfig};
+    use std::sync::Arc;
+
+    /// Reuses the crate-wide env mutex so tests that mutate `HOME` /
+    /// `FOLDDB_HOME` don't race with auth tests doing the same thing.
+    fn env_lock() -> std::sync::MutexGuard<'static, ()> {
+        crate::secure_store::test_master_key::lock()
+    }
+
+    /// Build an `AppState` whose `NodeConfig.source_path` points inside
+    /// `tmp` so `persist_node_config` writes there instead of the real
+    /// `$FOLDDB_HOME/config/node_config.json`.
+    fn test_app_state(tmp: &tempfile::TempDir) -> web::Data<AppState> {
+        std::fs::create_dir_all(tmp.path().join("config")).expect("create config dir");
+        let source_path = tmp.path().join("config").join("node_config.json");
+        let base_config = NodeConfig {
+            database: fold_db::storage::DatabaseConfig::local(tmp.path().join("data")),
+            storage_path: Some(tmp.path().join("data")),
+            network_listen_address: "/ip4/0.0.0.0/tcp/0".to_string(),
+            schema_service_url: Some("test://mock".to_string()),
+            config_dir: Some(tmp.path().join("config")),
+            seed_identity: None,
+            source_path: Some(source_path),
+        };
+        let node_manager = Arc::new(NodeManager::new(NodeManagerConfig {
+            base_config,
+            config_dir: tmp.path().join("config"),
+            upload_path: tmp.path().join("uploads"),
+        }));
+        web::Data::new(AppState { node_manager })
+    }
+
+    /// Regression test for the literal-`~` directory bug: the UI's default
+    /// "Local storage" path is `~/.folddb/data`, but `apply_setup` used to
+    /// pass that string straight into `PathBuf::from`, so Sled later
+    /// created `<cwd>/~/.folddb/data/`. After the fix, the path stored in
+    /// `NodeConfig.database.path` must be an absolute path under `$HOME`.
+    #[tokio::test]
+    #[allow(clippy::await_holding_lock)]
+    async fn apply_setup_local_expands_tilde() {
+        let _guard = env_lock();
+        let tmp = tempfile::tempdir().expect("tempdir");
+        // Treat the tempdir as HOME so the assertion is hermetic — we
+        // don't want the test's idea of "under $HOME" to depend on the
+        // CI runner's real home.
+        let original_home = std::env::var("HOME").ok();
+        std::env::set_var("HOME", tmp.path());
+
+        let state = test_app_state(&tmp);
+        let req = web::Json(SetupRequest {
+            storage: Some(StorageSetup::Local {
+                path: "~/.folddb/data".to_string(),
+            }),
+            schema_service_url: None,
+        });
+
+        let resp = apply_setup(state.clone(), req)
+            .await
+            .respond_to(&actix_web::test::TestRequest::post().to_http_request());
+        assert_eq!(resp.status(), actix_web::http::StatusCode::OK);
+
+        let resolved = state.node_manager.get_base_config().await.database.path;
+        assert!(
+            resolved.is_absolute(),
+            "stored database path must be absolute, got {:?}",
+            resolved
+        );
+        assert!(
+            resolved.starts_with(tmp.path()),
+            "stored database path must live under $HOME ({:?}), got {:?}",
+            tmp.path(),
+            resolved
+        );
+        assert!(
+            !resolved.to_string_lossy().contains('~'),
+            "stored database path must not contain a literal '~', got {:?}",
+            resolved
+        );
+        assert_eq!(resolved, tmp.path().join(".folddb/data"));
+
+        match original_home {
+            Some(h) => std::env::set_var("HOME", h),
+            None => std::env::remove_var("HOME"),
+        }
+    }
 }
