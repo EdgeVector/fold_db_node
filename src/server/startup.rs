@@ -36,8 +36,7 @@ use crate::server::node_manager::NodeManager;
 
 /// Newtype wrapper around the per-server config directory so Actix `web::Data`
 /// extractors are unambiguous (a bare `web::Data<PathBuf>` would collide with
-/// any other `PathBuf`-shaped state). Replaces the former `FOLD_CONFIG_DIR`
-/// env var.
+/// any other `PathBuf`-shaped state).
 pub struct ConfigDir(pub PathBuf);
 
 impl ConfigDir {
@@ -62,7 +61,6 @@ pub struct StartupCtx {
     /// Resolved Sled storage directory. Captured once at boot from
     /// `NodeConfig::get_storage_path()` so server-side callers don't
     /// async-acquire the manager's RwLock just to learn the path.
-    /// Replaces the former `FOLD_STORAGE_PATH` process-wide env var.
     pub storage_path: PathBuf,
     /// `Some((api_url, api_key))` if a previous run wrote a bootstrap
     /// marker before crashing mid-download. Captured at boot so workers
@@ -81,9 +79,8 @@ pub struct StartupCtx {
     pub apple_sync_config: web::Data<SyncConfigState>,
     pub batch_controllers: web::Data<BatchControllerMap>,
     pub llm_query: web::Data<LlmQueryState>,
-    /// Per-server config directory (formerly `FOLD_CONFIG_DIR`). Threaded
-    /// to ingestion routes via `web::Data` so two nodes in one test process
-    /// don't share a process-wide env slot.
+    /// Per-server config directory. Threaded to ingestion routes via
+    /// `web::Data` so two nodes in one test process don't share state.
     pub config_dir: web::Data<ConfigDir>,
 }
 
