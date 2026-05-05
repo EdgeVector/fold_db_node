@@ -16,6 +16,7 @@ import {
   appleJobFailed,
   appleJobReset,
   appleJobStarted,
+  appleJobStarting,
   selectAppleJob,
   type AppleSourceKey,
   type ImportResult,
@@ -412,6 +413,12 @@ function useSourceImport(sourceKey: AppleSourceKey, importFn: () => Promise<Impo
   const job = useAppSelector(selectAppleJob(sourceKey))
 
   const start = useCallback(async () => {
+    // Optimistic running marker BEFORE the POST resolves. Without
+    // this the UI sat at `idle` (or whatever the previous run left
+    // behind) for as long as the start POST was in flight, which
+    // under backend load can be tens of seconds. See appleJobStarting
+    // in ingestionSlice.ts for the dogfood-2026-05-05 repro.
+    dispatch(appleJobStarting({ key: sourceKey }))
     try {
       const resp = await importFn()
       if (resp.success && resp.data?.progress_id) {
@@ -489,12 +496,17 @@ export default function AppleImportTab({ onResult: _onResult }: AppleImportTabPr
   const canImportAll = enabledSources.length > 0 && !anyRunning
 
   const handleImportAll = () => {
+    // Call start() directly. start() flips the job to `running` /
+    // `Starting...` synchronously via appleJobStarting BEFORE the
+    // POST is awaited, so there is never a window where the job is
+    // visibly idle between user click and POST response. The earlier
+    // `reset() → setTimeout(() → start())` hop produced exactly that
+    // window and was the root of the dogfood-2026-05-05 idle-reset
+    // observation.
     for (const source of enabledSources) {
       const imp = imports[source.key]
-      if (imp.status === 'idle' || imp.status === 'done' || imp.status === 'error') {
-        imp.reset()
-        // Small delay to ensure reset state propagates before start
-        setTimeout(() => imp.start(), 0)
+      if (imp.status !== 'running') {
+        imp.start()
       }
     }
   }
