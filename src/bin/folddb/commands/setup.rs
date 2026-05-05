@@ -396,6 +396,7 @@ pub async fn run_setup_wizard() -> Result<NodeConfig, CliError> {
         schema_service_url: Some(default_schema_service_url()),
         config_dir: None,
         seed_identity: None,
+        source_path: None,
     };
 
     // Persist config
