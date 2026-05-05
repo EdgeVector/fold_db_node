@@ -33,5 +33,7 @@ pub fn observability_log_path() -> PathBuf {
         return PathBuf::from(p);
     }
     let home = std::env::var("HOME").unwrap_or_else(|_| ".".to_string());
-    PathBuf::from(home).join(".folddb").join("observability.jsonl")
+    PathBuf::from(home)
+        .join(".folddb")
+        .join("observability.jsonl")
 }
