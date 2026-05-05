@@ -83,6 +83,25 @@ describe('pollRestoreStatus', () => {
   });
 });
 
+describe('DatabaseSetupScreen storage choice', () => {
+  it('local storage card commits with a single click — no two-step confirm', async () => {
+    const { applySetup } = await import('../../api/clients/systemClient');
+    (applySetup as ReturnType<typeof vi.fn>).mockClear();
+    (applySetup as ReturnType<typeof vi.fn>).mockResolvedValue({ success: true });
+
+    const onComplete = vi.fn();
+    render(<DatabaseSetupScreen onComplete={onComplete} />);
+
+    fireEvent.click(screen.getByRole('button', { name: /Local Storage/i }));
+
+    await waitFor(() => expect(onComplete).toHaveBeenCalledTimes(1));
+    expect(applySetup).toHaveBeenCalledTimes(1);
+    expect(applySetup).toHaveBeenCalledWith({
+      storage: { type: 'local', path: '~/.folddb/data' },
+    });
+  });
+});
+
 describe('DatabaseSetupScreen restore flow', () => {
   it('polls restore/status after POST /api/auth/restore and calls onComplete', async () => {
     global.fetch = makeFetchMock({
