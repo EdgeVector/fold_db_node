@@ -24,10 +24,10 @@ use fold_db::schema::types::{KeyValue, Query};
 use serde_json::json;
 use std::collections::HashMap;
 
-use common::schema_service::{spawn_schema_service, SpawnedSchemaService};
+use common::schema_service::{spawn_schema_service_with_fastembed, SpawnedSchemaService};
 
 async fn spawn_local_schema_service() -> SpawnedSchemaService {
-    spawn_schema_service().await
+    spawn_schema_service_with_fastembed().await
 }
 
 // -- The test -----------------------------------------------------------------
@@ -57,6 +57,21 @@ async fn test_semantic_field_matching_full_pipeline() {
         .with_schema_service_url(&schema_url);
     let node = FoldNode::new(config).await.unwrap();
 
+    // Realistic field descriptions modelled on what an LLM emits during
+    // schema proposal. The synthetic `"{field} field"` auto-fill is too thin
+    // for FastEmbed's hybrid embed format ("the {field} of the {context}:
+    // {description}") — every pair collapses toward the shared
+    // descriptive_name scaffold, putting creator↔artist below the 0.84
+    // SEMANTIC_RENAME_THRESHOLD and medium↔artist above it. Realistic
+    // descriptions restore calibrated discrimination (creator↔artist ≈0.95,
+    // medium↔artist ≈0.68). See commit 43e7ada.
+    let artist_desc = "The person or group who created the artwork";
+    let creator_desc = "The person or group who created the work";
+    let title_desc = "The name or title of the artwork";
+    let year_desc = "The calendar year in which the artwork was created";
+    let medium_desc =
+        "The materials and technique used to make the artwork (oil on canvas, watercolor, sculpture)";
+
     // 3. Submit Schema A: ["artist", "title", "year"]
     let schema_a_def: fold_db::schema::types::Schema = serde_json::from_value(json!({
         "name": "ArtworkSchemaA",
@@ -68,6 +83,11 @@ async fn test_semantic_field_matching_full_pipeline() {
             "artist": ["word"],
             "title": ["word"],
             "year": ["number"]
+        },
+        "field_descriptions": {
+            "artist": artist_desc,
+            "title": title_desc,
+            "year": year_desc,
         },
         "field_data_classifications": {
             "artist": { "sensitivity_level": 0, "data_domain": "general" },
@@ -132,6 +152,12 @@ async fn test_semantic_field_matching_full_pipeline() {
             "year": ["number"],
             "medium": ["word"]
         },
+        "field_descriptions": {
+            "creator": creator_desc,
+            "title": title_desc,
+            "year": year_desc,
+            "medium": medium_desc,
+        },
         "field_data_classifications": {
             "creator": { "sensitivity_level": 0, "data_domain": "general" },
             "title": { "sensitivity_level": 0, "data_domain": "general" },
@@ -189,10 +215,10 @@ async fn test_semantic_field_matching_full_pipeline() {
             .unwrap();
         db.schema_manager().approve(&schema_b_name).await.unwrap();
         if let Some(ref old_name) = resp_b.replaced_schema {
-            let _ = db
-                .schema_manager()
+            db.schema_manager()
                 .block_and_supersede(old_name, &schema_b_name)
-                .await;
+                .await
+                .unwrap();
         }
     }
 
@@ -350,15 +376,20 @@ async fn test_semantic_field_matching_full_pipeline() {
         }
     }
 
-    // 11. Verify schema states
-    let all_schemas = processor
-        .list_schemas()
-        .await
-        .expect("failed to list schemas");
+    // 11. Verify schema states. `processor.list_schemas()` filters blocked
+    //     schemas out, so use `schema_manager().get_schemas_with_states()`
+    //     to see the full picture (mirrors `schema_expansion_fresh_db_test`).
+    let all_schemas = {
+        let db = node.get_fold_db().unwrap();
+        db.schema_manager().get_schemas_with_states().unwrap()
+    };
 
     let active: Vec<_> = all_schemas
         .iter()
-        .filter(|s| s.state != fold_db::schema::SchemaState::Blocked)
+        .filter(|s| {
+            s.state != fold_db::schema::SchemaState::Blocked
+                && s.schema.name != fold_db::triggers::TRIGGER_FIRING_SCHEMA_NAME
+        })
         .collect();
     let blocked: Vec<_> = all_schemas
         .iter()
@@ -379,7 +410,7 @@ async fn test_semantic_field_matching_full_pipeline() {
     assert_eq!(
         active.len(),
         1,
-        "Should have exactly 1 active schema after expansion"
+        "Should have exactly 1 active user schema after expansion"
     );
     assert_eq!(
         blocked.len(),
