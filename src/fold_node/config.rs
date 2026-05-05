@@ -46,6 +46,13 @@ pub struct NodeConfig {
     /// carry secrets.
     #[serde(skip)]
     pub seed_identity: Option<NodeIdentity>,
+
+    /// Path the config was loaded from. Populated by [`load_node_config`]
+    /// so [`save_node_config`] writes back to the same file the daemon was
+    /// launched against (e.g. `--config /custom/path.json`). Never
+    /// serialized — it's a runtime hand-off, not a persisted setting.
+    #[serde(skip)]
+    pub source_path: Option<PathBuf>,
 }
 
 fn default_network_listen_address() -> String {
@@ -61,6 +68,7 @@ impl Default for NodeConfig {
             schema_service_url: None,
             config_dir: None,
             seed_identity: None,
+            source_path: None,
         }
     }
 }
@@ -75,6 +83,7 @@ impl NodeConfig {
             schema_service_url: None,
             config_dir: None,
             seed_identity: None,
+            source_path: None,
         }
     }
 
@@ -161,16 +170,16 @@ pub fn load_node_config(
                 .unwrap_or_else(|_| "config/node_config.json".to_string())
         });
 
-    if let Ok(config_str) = fs::read_to_string(&config_path) {
+    let mut config = if let Ok(config_str) = fs::read_to_string(&config_path) {
         match serde_json::from_str::<NodeConfig>(&config_str) {
-            Ok(cfg) => Ok(cfg),
+            Ok(cfg) => cfg,
             Err(e) => {
                 tracing::error!(
                 target: "fold_node::http_server",
                         "Failed to parse node configuration: {}",
                         e
                     );
-                Err(std::io::Error::new(std::io::ErrorKind::InvalidData, e))
+                return Err(std::io::Error::new(std::io::ErrorKind::InvalidData, e));
             }
         }
     } else {
@@ -179,27 +188,38 @@ pub fn load_node_config(
         if let Some(p) = port {
             config.network_listen_address = format!("/ip4/0.0.0.0/tcp/{}", p);
         }
-        Ok(config)
-    }
+        config
+    };
+
+    config.source_path = Some(PathBuf::from(&config_path));
+    Ok(config)
 }
 
-/// Persist a [`NodeConfig`] to the same path [`load_node_config`] reads from.
+/// Persist a [`NodeConfig`] to the same path [`load_node_config`] read from.
 ///
-/// Path resolution: `NODE_CONFIG` env var, else `$FOLDDB_HOME/config/node_config.json`,
-/// else `config/node_config.json`. Creates the parent directory if missing.
+/// Path resolution: `config.source_path` (set by [`load_node_config`] so a
+/// daemon launched with `--config /custom/path.json` round-trips back to
+/// the same file), else `NODE_CONFIG` env var, else
+/// `$FOLDDB_HOME/config/node_config.json`, else `config/node_config.json`.
+/// Creates the parent directory if missing.
 pub fn save_node_config(config: &NodeConfig) -> Result<(), String> {
     use std::fs;
 
-    let config_path = std::env::var("NODE_CONFIG").unwrap_or_else(|_| {
-        crate::utils::paths::folddb_home()
-            .map(|h| {
-                h.join("config")
-                    .join("node_config.json")
-                    .to_string_lossy()
-                    .to_string()
-            })
-            .unwrap_or_else(|_| "config/node_config.json".to_string())
-    });
+    let config_path = config
+        .source_path
+        .as_ref()
+        .map(|p| p.to_string_lossy().to_string())
+        .or_else(|| std::env::var("NODE_CONFIG").ok())
+        .unwrap_or_else(|| {
+            crate::utils::paths::folddb_home()
+                .map(|h| {
+                    h.join("config")
+                        .join("node_config.json")
+                        .to_string_lossy()
+                        .to_string()
+                })
+                .unwrap_or_else(|_| "config/node_config.json".to_string())
+        });
 
     if let Some(parent) = std::path::Path::new(&config_path).parent() {
         fs::create_dir_all(parent)
@@ -213,4 +233,119 @@ pub fn save_node_config(config: &NodeConfig) -> Result<(), String> {
         .map_err(|e| format!("Failed to write config file: {}", e))?;
 
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::sync::Mutex;
+
+    /// `NODE_CONFIG` is process-wide; tests that mutate it serialize on
+    /// this lock. `FOLDDB_HOME` is intentionally NOT touched here — it has
+    /// its own per-module locks (`server::startup`, `handlers::auth`) that
+    /// can't be reached across module-private boundaries, and contention
+    /// with those tests was the cause of an earlier flake. The
+    /// explicit-path arm exercises the bug without touching FOLDDB_HOME at
+    /// all (source_path wins regardless), and the no-arg arm uses
+    /// NODE_CONFIG (next priority below the explicit path) to anchor the
+    /// resolution.
+    static NODE_CONFIG_LOCK: Mutex<()> = Mutex::new(());
+
+    struct NodeConfigEnvGuard {
+        prev: Option<String>,
+    }
+
+    impl NodeConfigEnvGuard {
+        fn capture() -> Self {
+            Self {
+                prev: std::env::var("NODE_CONFIG").ok(),
+            }
+        }
+    }
+
+    impl Drop for NodeConfigEnvGuard {
+        fn drop(&mut self) {
+            match self.prev.take() {
+                Some(v) => std::env::set_var("NODE_CONFIG", v),
+                None => std::env::remove_var("NODE_CONFIG"),
+            }
+        }
+    }
+
+    /// The bug this PR fixes: a daemon launched with `--config /custom.json`
+    /// would have its UI-driven saves silently routed to
+    /// `$FOLDDB_HOME/config/node_config.json` instead. This test seeds an
+    /// explicit path, mutates the loaded config, saves, and asserts the
+    /// explicit file actually changed — pre-fix it would have stayed in its
+    /// seeded state.
+    #[test]
+    fn save_round_trips_to_explicit_load_path() {
+        let _guard = NODE_CONFIG_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+        let _env = NodeConfigEnvGuard::capture();
+        // Clear NODE_CONFIG so the only viable resolution is `source_path`
+        // — if that field is ignored, save would fall through to the
+        // FOLDDB_HOME/cwd chain and the explicit file would stay unchanged.
+        std::env::remove_var("NODE_CONFIG");
+
+        let custom_dir = tempfile::tempdir().expect("custom config tempdir");
+        let custom_path = custom_dir.path().join("daemon.json");
+
+        std::fs::write(
+            &custom_path,
+            serde_json::to_string_pretty(&NodeConfig::default()).unwrap(),
+        )
+        .expect("seed custom config");
+
+        let mut cfg = load_node_config(Some(custom_path.to_str().unwrap()), None)
+            .expect("load from explicit path");
+        assert_eq!(
+            cfg.source_path.as_deref(),
+            Some(custom_path.as_path()),
+            "load must remember the explicit path",
+        );
+
+        cfg.network_listen_address = "/ip4/0.0.0.0/tcp/4242".to_string();
+        save_node_config(&cfg).expect("save");
+
+        let written = std::fs::read_to_string(&custom_path).expect("read back custom");
+        let reread: NodeConfig = serde_json::from_str(&written).expect("parse custom");
+        assert_eq!(
+            reread.network_listen_address, "/ip4/0.0.0.0/tcp/4242",
+            "save must persist back to the path we loaded from",
+        );
+    }
+
+    /// Regression for the no-arg load path: `load_node_config(None, ...)`
+    /// must populate `source_path` from whatever the resolution chain
+    /// picked, and `save_node_config` must round-trip to that same file.
+    /// Anchored on `NODE_CONFIG` (the next-priority arm) so the test
+    /// doesn't need to mutate `FOLDDB_HOME`.
+    #[test]
+    fn save_round_trips_to_default_load_path() {
+        let _guard = NODE_CONFIG_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+        let _env = NodeConfigEnvGuard::capture();
+
+        let dir = tempfile::tempdir().expect("config tempdir");
+        let path = dir.path().join("node_config.json");
+        std::fs::write(
+            &path,
+            serde_json::to_string_pretty(&NodeConfig::default()).unwrap(),
+        )
+        .expect("seed default config");
+        std::env::set_var("NODE_CONFIG", &path);
+
+        let mut cfg = load_node_config(None, None).expect("load via NODE_CONFIG");
+        assert_eq!(
+            cfg.source_path.as_deref(),
+            Some(path.as_path()),
+            "no-arg load must capture the resolved path on source_path",
+        );
+
+        cfg.network_listen_address = "/ip4/0.0.0.0/tcp/9999".to_string();
+        save_node_config(&cfg).expect("save");
+
+        let written = std::fs::read_to_string(&path).expect("read back default");
+        let reread: NodeConfig = serde_json::from_str(&written).expect("parse default");
+        assert_eq!(reread.network_listen_address, "/ip4/0.0.0.0/tcp/9999");
+    }
 }

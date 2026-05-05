@@ -152,6 +152,7 @@ fn try_register_and_configure(
                 schema_service_url: Some(fold_db_node::endpoints::schema_service_url()),
                 config_dir: None,
                 seed_identity: None,
+                source_path: None,
             };
 
             let config_json = serde_json::to_string_pretty(&config)
@@ -185,6 +186,7 @@ fn try_register_and_configure(
                 schema_service_url: Some(fold_db_node::endpoints::schema_service_url()),
                 config_dir: None,
                 seed_identity: None,
+                source_path: None,
             };
 
             let config_json = serde_json::to_string_pretty(&config)
