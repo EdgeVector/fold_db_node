@@ -81,32 +81,111 @@ pub fn signer_from_identity(
 /// When `os-keychain` is enabled, the master key is fetched once per
 /// call — callers that open the store repeatedly should cache the
 /// handle if that's a concern.
+///
+/// If the tree already holds an `ENC:` blob, master-key resolution refuses
+/// to silently generate a fresh keychain master key (which would orphan the
+/// existing identity and silently rotate the node's user_hash across daemon
+/// restarts). In that case the caller gets a structured error and can either
+/// run from a context with keychain access or set `FOLDDB_MASTER_KEY` to
+/// override.
 pub fn open(pool: Arc<SledPool>) -> Result<IdentityStore, String> {
-    // Touch the tree so any IO / migration runs up-front rather than
-    // surprising the first reader.
-    {
-        let guard = pool
-            .acquire_arc()
-            .map_err(|e| format!("Failed to acquire Sled pool: {e}"))?;
-        guard
-            .db()
-            .open_tree(TREE_NAME)
-            .map_err(|e| format!("Failed to open identity tree: {e}"))?;
-    }
-    let key = resolve_master_key()?;
+    let has_encrypted_identity = peek_encrypted_identity(&pool)?;
+    let key = resolve_master_key(has_encrypted_identity)?;
     Ok(IdentityStore {
         pool,
         master_key: key,
     })
 }
 
+/// Open the identity tree and check whether `KEY_PRIVATE` already holds an
+/// encrypted (`ENC:` prefixed) blob. Used by [`open`] to decide whether
+/// silent master-key creation is safe.
+fn peek_encrypted_identity(pool: &Arc<SledPool>) -> Result<bool, String> {
+    let guard = pool
+        .acquire_arc()
+        .map_err(|e| format!("Failed to acquire Sled pool: {e}"))?;
+    let tree = guard
+        .db()
+        .open_tree(TREE_NAME)
+        .map_err(|e| format!("Failed to open identity tree: {e}"))?;
+    let stored = tree
+        .get(KEY_PRIVATE)
+        .map_err(|e| format!("Failed to read identity tree: {e}"))?;
+    Ok(stored
+        .as_ref()
+        .and_then(|v| std::str::from_utf8(v).ok())
+        .map(|s| s.starts_with(ENCRYPTED_PREFIX))
+        .unwrap_or(false))
+}
+
+/// Read a 32-byte master key from the `FOLDDB_MASTER_KEY` env var (64 hex
+/// chars). Provides a manual escape hatch for headless / sandboxed contexts
+/// where the OS keychain isn't reachable but the user knows the right key.
+fn master_key_from_env() -> Result<Option<[u8; 32]>, String> {
+    let raw = match std::env::var("FOLDDB_MASTER_KEY") {
+        Ok(v) => v,
+        Err(_) => return Ok(None),
+    };
+    let trimmed = raw.trim();
+    let bytes =
+        hex::decode(trimmed).map_err(|e| format!("FOLDDB_MASTER_KEY must be 64 hex chars: {e}"))?;
+    if bytes.len() != 32 {
+        return Err(format!(
+            "FOLDDB_MASTER_KEY must decode to 32 bytes, got {}",
+            bytes.len()
+        ));
+    }
+    let mut key = [0u8; 32];
+    key.copy_from_slice(&bytes);
+    Ok(Some(key))
+}
+
 #[cfg(feature = "os-keychain")]
-fn resolve_master_key() -> Result<Option<[u8; 32]>, String> {
-    crate::secure_store::get_or_create_master_key().map(Some)
+fn resolve_master_key(has_encrypted_identity: bool) -> Result<Option<[u8; 32]>, String> {
+    if let Some(k) = master_key_from_env()? {
+        return Ok(Some(k));
+    }
+    if has_encrypted_identity {
+        // Existing encrypted blob on disk — refuse to silently mint a fresh
+        // master key. That used to silently rotate user_hash across daemon
+        // restarts whenever the keychain reported NoEntry (sandboxed launchd,
+        // unsigned-binary access denial, etc), orphaning every previously
+        // ingested record.
+        match crate::secure_store::try_get_master_key()? {
+            Some(k) => Ok(Some(k)),
+            None => Err(
+                "Encrypted node identity exists on disk, but no master key was \
+                 found in the OS keychain. Refusing to regenerate — that would \
+                 silently rotate your user_hash and orphan all previously \
+                 ingested data. Run from the Tauri app where the keychain is \
+                 reachable, or set FOLDDB_MASTER_KEY=<64-hex-bytes> to \
+                 provide the master key explicitly."
+                    .to_string(),
+            ),
+        }
+    } else {
+        crate::secure_store::get_or_create_master_key().map(Some)
+    }
 }
 
 #[cfg(not(feature = "os-keychain"))]
-fn resolve_master_key() -> Result<Option<[u8; 32]>, String> {
+fn resolve_master_key(has_encrypted_identity: bool) -> Result<Option<[u8; 32]>, String> {
+    if let Some(k) = master_key_from_env()? {
+        return Ok(Some(k));
+    }
+    if has_encrypted_identity {
+        // The tree was sealed by a build with `os-keychain` on, but this
+        // build can't reach the keychain at all. Returning Ok(None) here
+        // would let the next `set` write a plaintext value over the
+        // encrypted one and silently rotate the identity.
+        return Err(
+            "Encrypted node identity exists on disk, but this binary was built \
+             without the os-keychain feature. Run from a build that has \
+             keychain access (the Tauri app), or set \
+             FOLDDB_MASTER_KEY=<64-hex-bytes> to decrypt explicitly."
+                .to_string(),
+        );
+    }
     // Dev mode: plaintext. Same SSH-like model the rest of the node
     // uses when the keychain feature is off.
     Ok(None)
@@ -276,8 +355,21 @@ mod tests {
         assert_eq!(a.public_key, b.public_key, "public key mismatch");
     }
 
+    /// Every identity test acquires this lock before touching the store.
+    /// `FOLDDB_MASTER_KEY` is process-wide state and a parallel test that
+    /// sets/unsets it can flip another test's tree between plaintext and
+    /// ENC:-prefixed encoding mid-run, which produces wildly confusing
+    /// "encrypted blob exists but no master key" failures. Serializing
+    /// the test module avoids that.
+    fn env_lock() -> std::sync::MutexGuard<'static, ()> {
+        static LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
+        LOCK.lock().unwrap_or_else(|p| p.into_inner())
+    }
+
     #[test]
     fn empty_pool_has_no_identity() {
+        let _guard = env_lock();
+        std::env::remove_var("FOLDDB_MASTER_KEY");
         let (pool, _tmp) = temp_pool();
         let store = open(pool).unwrap();
         assert!(store.get().unwrap().is_none());
@@ -285,6 +377,8 @@ mod tests {
 
     #[test]
     fn set_then_get_roundtrips() {
+        let _guard = env_lock();
+        std::env::remove_var("FOLDDB_MASTER_KEY");
         let (pool, _tmp) = temp_pool();
         let store = open(pool).unwrap();
         let id = NodeIdentity {
@@ -298,6 +392,8 @@ mod tests {
 
     #[test]
     fn load_or_generate_generates_first_then_loads() {
+        let _guard = env_lock();
+        std::env::remove_var("FOLDDB_MASTER_KEY");
         let (pool, _tmp) = temp_pool();
         let first = load_or_generate(Arc::clone(&pool)).unwrap();
         let second = load_or_generate(pool).unwrap();
@@ -306,6 +402,8 @@ mod tests {
 
     #[test]
     fn save_standalone_roundtrips_via_fresh_pool() {
+        let _guard = env_lock();
+        std::env::remove_var("FOLDDB_MASTER_KEY");
         let tmp = tempfile::tempdir().unwrap();
         let id = NodeIdentity {
             private_key: "priv".to_string(),
@@ -321,6 +419,7 @@ mod tests {
 
     #[test]
     fn identity_from_keypair_matches_direct_base64() {
+        // No identity-store interaction — no env_lock needed.
         let keypair = fold_db::security::Ed25519KeyPair::generate().unwrap();
         let id = identity_from_keypair(&keypair);
         assert_eq!(id.private_key, keypair.secret_key_base64());
@@ -329,6 +428,8 @@ mod tests {
 
     #[test]
     fn clear_removes_identity() {
+        let _guard = env_lock();
+        std::env::remove_var("FOLDDB_MASTER_KEY");
         let (pool, _tmp) = temp_pool();
         let store = open(pool).unwrap();
         store
@@ -340,5 +441,133 @@ mod tests {
         assert!(store.get().unwrap().is_some());
         store.clear().unwrap();
         assert!(store.get().unwrap().is_none());
+    }
+
+    fn write_raw_encrypted_blob(pool: &Arc<SledPool>, public_key: &str) {
+        let guard = pool.acquire_arc().unwrap();
+        let tree = guard.db().open_tree(TREE_NAME).unwrap();
+        let fake_blob = format!("{ENCRYPTED_PREFIX}fakebase64payload");
+        tree.insert(KEY_PRIVATE, fake_blob.as_bytes()).unwrap();
+        tree.insert(KEY_PUBLIC, public_key.as_bytes()).unwrap();
+    }
+
+    fn read_raw_pubkey(pool: &Arc<SledPool>) -> Option<Vec<u8>> {
+        let guard = pool.acquire_arc().unwrap();
+        let tree = guard.db().open_tree(TREE_NAME).unwrap();
+        tree.get(KEY_PUBLIC).unwrap().map(|v| v.to_vec())
+    }
+
+    /// Regression test for the P0 silent identity-rotation bug. If an
+    /// encrypted blob is on disk and the master key is unreachable
+    /// (no os-keychain feature, or keychain returns NoEntry under
+    /// sandboxed launchd), `open()` MUST fail rather than fall through
+    /// to a path that would generate a fresh keypair and stamp it over
+    /// the existing one — that's what orphaned every previously-ingested
+    /// record across `folddb daemon stop && folddb daemon start`.
+    #[test]
+    fn refuses_to_open_when_encrypted_blob_present_and_no_master_key() {
+        let _guard = env_lock();
+        std::env::remove_var("FOLDDB_MASTER_KEY");
+
+        let (pool, _tmp) = temp_pool();
+        write_raw_encrypted_blob(&pool, "original-pub");
+
+        let err = match open(Arc::clone(&pool)) {
+            Ok(_) => panic!("open must fail when encrypted blob present and no master key"),
+            Err(e) => e,
+        };
+        assert!(
+            err.contains("Encrypted node identity exists on disk"),
+            "got: {err}"
+        );
+
+        // Critical invariant: failure path MUST NOT have rewritten the tree.
+        // Any rewrite here is the silent-rotation bug.
+        assert_eq!(
+            read_raw_pubkey(&pool).as_deref(),
+            Some(b"original-pub" as &[u8]),
+            "open() failure path must not rotate the persisted public key"
+        );
+    }
+
+    /// `load_or_generate` is the path the live daemon takes on every boot.
+    /// It must surface the same error as `open()` rather than silently
+    /// generating a fresh keypair, otherwise the daemon's restart cycle
+    /// keeps stamping new identities into the tree.
+    #[test]
+    fn load_or_generate_does_not_silently_replace_unreadable_identity() {
+        let _guard = env_lock();
+        std::env::remove_var("FOLDDB_MASTER_KEY");
+
+        let (pool, _tmp) = temp_pool();
+        write_raw_encrypted_blob(&pool, "preserved-pub");
+
+        let err = match load_or_generate(Arc::clone(&pool)) {
+            Ok(id) => panic!(
+                "load_or_generate must fail; instead returned identity with pub {}",
+                id.public_key
+            ),
+            Err(e) => e,
+        };
+        assert!(
+            err.contains("Encrypted node identity exists on disk"),
+            "got: {err}"
+        );
+        assert_eq!(
+            read_raw_pubkey(&pool).as_deref(),
+            Some(b"preserved-pub" as &[u8]),
+            "load_or_generate failure path must not rotate the persisted public key"
+        );
+    }
+
+    /// FOLDDB_MASTER_KEY is the documented escape hatch for headless
+    /// contexts where the OS keychain isn't reachable. With it set,
+    /// `open()` succeeds even when an `ENC:` blob is present.
+    #[test]
+    fn foldb_master_key_env_var_unblocks_open() {
+        let _guard = env_lock();
+        let key_hex = "0".repeat(64); // 32 zero bytes
+        std::env::set_var("FOLDDB_MASTER_KEY", &key_hex);
+
+        let (pool, _tmp) = temp_pool();
+        write_raw_encrypted_blob(&pool, "any-pub");
+
+        let result = open(Arc::clone(&pool));
+        std::env::remove_var("FOLDDB_MASTER_KEY");
+        assert!(
+            result.is_ok(),
+            "open should succeed when FOLDDB_MASTER_KEY is set; got err: {:?}",
+            result.err()
+        );
+    }
+
+    /// Daemon-restart simulation: write identity, drop the store, reopen
+    /// against the same pool, verify the identity round-trips byte-for-byte.
+    /// This is the closest unit-level analogue to the prompt's acceptance
+    /// criterion ("`folddb daemon stop && folddb daemon start` preserves
+    /// the user_hash"). See the tests/cli_integration_test.rs daemon
+    /// fixture for the heavier process-spawning variant.
+    #[test]
+    fn identity_survives_store_drop_and_reopen() {
+        // Lock for the env_lock-tests, so a parallel test can't have
+        // FOLDDB_MASTER_KEY set across our load_or_generate calls — that
+        // would silently switch storage between plaintext and ENC: blobs.
+        let _guard = env_lock();
+        std::env::remove_var("FOLDDB_MASTER_KEY");
+
+        let (pool, _tmp) = temp_pool();
+        let original = load_or_generate(Arc::clone(&pool)).unwrap();
+        // Drop the first store handle (simulates daemon shutdown).
+        // `pool` survives — same Sled directory, fresh handle.
+        let reopened = load_or_generate(Arc::clone(&pool)).unwrap();
+        assert_identity_eq(&original, &reopened);
+
+        // Repeated re-opens must remain stable. Catches any bug that
+        // rotates identity on the Nth boot rather than the second.
+        for i in 0..5 {
+            let again = load_or_generate(Arc::clone(&pool))
+                .unwrap_or_else(|e| panic!("reopen #{i} failed: {e}"));
+            assert_identity_eq(&original, &again);
+        }
     }
 }

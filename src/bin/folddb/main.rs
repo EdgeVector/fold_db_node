@@ -99,10 +99,28 @@ async fn main() {
     // against a different $FOLDDB_HOME than the daemon). Without this
     // check, any CLI call with --config or NODE_CONFIG re-enters the
     // interactive wizard, which explodes in non-TTY contexts (CI, cron).
+    //
+    // Errors from `read_identity_pubkey` (e.g. encrypted blob on disk we
+    // can't decrypt) MUST exit cleanly. The previous "swallow Err -> trigger
+    // wizard" path was the silent identity-rotation gateway: the wizard
+    // would generate a fresh keypair and stamp it over the unreadable one,
+    // orphaning every previously-ingested record.
     let data_path = config.get_storage_path();
     let port = commands::daemon::default_port();
-    let identity_public_key =
-        read_identity_pubkey(&data_path).or(fetch_pubkey_from_daemon(port).await);
+    let identity_public_key = match read_identity_pubkey(&data_path) {
+        Ok(opt) => opt.or(fetch_pubkey_from_daemon(port).await),
+        Err(e) => {
+            CliError::new(format!("Cannot read existing node identity: {e}"))
+                .with_hint(
+                    "An identity exists on disk but this binary cannot decrypt it. \
+                     Run from the Tauri app where the OS keychain is reachable, or \
+                     export FOLDDB_MASTER_KEY=<64-hex-bytes> if you saved it. \
+                     Do NOT run `folddb setup` — that would silently rotate the \
+                     identity and orphan all ingested data.",
+                )
+                .exit(json_mode);
+        }
+    };
 
     // If identity is still missing, run the setup wizard (interactive only).
     let needs_setup = identity_public_key.is_none();
@@ -216,7 +234,7 @@ async fn main() {
         .unwrap_or_else(|| {
             identity_public_key
                 .clone()
-                .or_else(|| read_identity_pubkey(&data_path))
+                .or_else(|| read_identity_pubkey(&data_path).ok().flatten())
                 .map(|pk| user_hash_from_pubkey(&pk))
                 .unwrap_or_else(|| {
                     CliError::new("No public key configured — cannot derive user hash")
@@ -1178,14 +1196,44 @@ fn show_recovery_phrase(config: &NodeConfig) -> Result<commands::CommandOutput, 
 }
 
 /// Read the node's public key from the Sled identity tree at this
-/// node's data path, if present. Returns `None` if the tree is empty
-/// or unreadable (missing FOLDDB_HOME, locked pool, etc.) — callers
-/// fall back to the daemon / setup wizard paths.
-fn read_identity_pubkey(data_path: &std::path::Path) -> Option<String> {
-    fold_db_node::identity::load_standalone(data_path)
-        .ok()
-        .flatten()
-        .map(|id| id.public_key)
+/// node's data path.
+///
+/// `Ok(None)` means "no identity has been persisted yet" — callers fall
+/// back to the daemon / setup wizard paths. Sled lock contention (the
+/// daemon already holds the file lock) ALSO returns `Ok(None)` — that's
+/// expected when the CLI runs alongside a live daemon, and the caller's
+/// `fetch_pubkey_from_daemon` fallback handles it.
+///
+/// `Err` is reserved for the decryption-failure case: an identity
+/// exists on disk but this binary can't read it. Callers MUST surface
+/// that — the setup wizard would otherwise silently rotate the identity
+/// and orphan every previously-ingested record.
+fn read_identity_pubkey(data_path: &std::path::Path) -> Result<Option<String>, String> {
+    match fold_db_node::identity::load_standalone(data_path) {
+        Ok(opt) => Ok(opt.map(|id| id.public_key)),
+        Err(e) if is_decrypt_error(&e) => Err(e),
+        // Sled lock busy / IO / "tree not found" / etc — the legacy fall-through
+        // path. The caller's daemon-HTTP probe is the canonical recovery for
+        // these.
+        Err(_) => Ok(None),
+    }
+}
+
+/// Heuristic: was this `load_standalone` failure a decryption / master-key
+/// problem (the silent-rotation gateway), or just transient Sled IO (which
+/// the daemon owns the canonical answer for)?
+///
+/// We only ever construct these specific error strings from
+/// [`fold_db_node::identity::open`] / [`fold_db_node::secure_store`],
+/// so substring matching is sufficient. Callers stay safe even when this
+/// returns false on an unrecognized decrypt error: `load_or_generate` and
+/// `FoldNode::resolve_identity` enforce the same invariant downstream and
+/// also refuse to silently rotate.
+fn is_decrypt_error(msg: &str) -> bool {
+    msg.contains("Encrypted node identity")
+        || msg.contains("keychain master key")
+        || msg.contains("Failed to decrypt private key")
+        || msg.contains("FOLDDB_MASTER_KEY")
 }
 
 /// Ask a running daemon for the node's public key via `/api/system/auto-identity`.
@@ -1238,7 +1286,7 @@ mod tests {
     fn read_identity_pubkey_missing_store_returns_none() {
         let dir = tempfile::tempdir().expect("tempdir");
         // No Sled tree has been written at this path yet.
-        assert!(super::read_identity_pubkey(dir.path()).is_none());
+        assert_eq!(super::read_identity_pubkey(dir.path()).unwrap(), None);
     }
 
     #[test]
@@ -1250,7 +1298,7 @@ mod tests {
         };
         fold_db_node::identity::save_standalone(dir.path(), &id).expect("save");
         assert_eq!(
-            super::read_identity_pubkey(dir.path()).as_deref(),
+            super::read_identity_pubkey(dir.path()).unwrap().as_deref(),
             Some("pk-from-sled")
         );
     }
