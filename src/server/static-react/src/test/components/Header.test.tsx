@@ -3,6 +3,15 @@ import { describe, it, expect, vi } from 'vitest'
 import Header from '../../components/Header'
 import { renderWithRedux } from '../utils/testUtilities'
 import ingestionReducer from '../../store/ingestionSlice'
+import { systemClient } from '../../api/clients/systemClient'
+
+vi.mock('../../api/clients/systemClient', () => ({
+  systemClient: {
+    getDatabaseConfig: vi.fn().mockResolvedValue({ data: null }),
+    getSystemStatus: vi.fn().mockResolvedValue({ data: null }),
+    getNodePublicKey: vi.fn().mockResolvedValue({ data: null }),
+  },
+}))
 
 // Header uses selectIngestionConfig, so include the ingestion reducer
 const extraReducers = { ingestion: ingestionReducer }
@@ -103,15 +112,42 @@ describe('Header Component', () => {
     expect(mockSettingsClick).toHaveBeenCalledTimes(1)
   })
 
-  it('shows user info when authenticated', () => {
+  it('shows pub key chip once /api/system/public-key resolves', async () => {
+    // Stale Redux user.id must NEVER leak into the chip — only the public
+    // key from the live API call. Regression guard for the dogfood
+    // "test_use... → LD/WctGK... → 6b65a887..." flicker.
+    vi.mocked(systemClient.getNodePublicKey).mockResolvedValueOnce({
+      data: { success: true, public_key: 'LD/WctGKabcdefghijklmnop=', message: '' },
+    } as Awaited<ReturnType<typeof systemClient.getNodePublicKey>>)
+
     const authenticatedState = {
-      auth: createAuthState({ isAuthenticated: true, user: { id: 'testuser123456' } })
+      auth: createAuthState({ isAuthenticated: true, user: { id: 'test_user_should_not_leak' } })
     }
     renderWithRedux(<Header onSettingsClick={vi.fn()} onAiSettingsClick={vi.fn()} onCloudSettingsClick={vi.fn()} />, {
       preloadedState: authenticatedState, extraReducers
     })
 
-    // Node ID is truncated to first 8 chars with copy-on-click
-    expect(screen.getByText('testuser...')).toBeInTheDocument()
+    // public_key truncated to first 8 chars + ellipsis
+    expect(await screen.findByText('LD/WctGK...')).toBeInTheDocument()
+    // The stale user.id must not appear in any form
+    expect(screen.queryByText('test_use...')).not.toBeInTheDocument()
+  })
+
+  it('hides identity chip until public-key resolves', () => {
+    // No mockResolvedValueOnce: getNodePublicKey returns the default
+    // { data: null }, so nodePublicKey stays null and the chip must not render.
+    const authenticatedState = {
+      auth: createAuthState({ isAuthenticated: true, user: { id: 'test_user' } })
+    }
+    renderWithRedux(<Header onSettingsClick={vi.fn()} onAiSettingsClick={vi.fn()} onCloudSettingsClick={vi.fn()} />, {
+      preloadedState: authenticatedState, extraReducers
+    })
+
+    // No truncated chip text of any kind on first paint. Match the
+    // identity chip specifically by its "Pub Key: ..." title — bare
+    // queryByText(/\.\.\.$/) would false-match the storage chip's
+    // loading placeholder ("...").
+    expect(screen.queryByText(/^test_use\.\.\./)).not.toBeInTheDocument()
+    expect(screen.queryByTitle(/^Pub Key:/)).not.toBeInTheDocument()
   })
 })
