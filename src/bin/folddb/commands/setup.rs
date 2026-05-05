@@ -134,12 +134,17 @@ pub fn derive_recovery_phrase(private_key_base64: &str) -> Result<Vec<String>, C
         .decode(private_key_base64)
         .map_err(|e| CliError::new(format!("Failed to decode private key: {}", e)))?;
 
-    // Use first 32 bytes as entropy for BIP39 (24 words = 256 bits)
-    let entropy = if key_bytes.len() >= 32 {
-        &key_bytes[..32]
-    } else {
-        return Err(CliError::new("Private key too short for recovery phrase"));
-    };
+    // BIP39 entropy is exactly the 32-byte Ed25519 seed. Reject any other
+    // length so a future change in fold_db's secret-key encoding (e.g. the
+    // 64-byte RFC 8032 seed||public form) trips this check instead of
+    // silently shifting which bytes feed the mnemonic.
+    if key_bytes.len() != 32 {
+        return Err(CliError::new(format!(
+            "Ed25519 secret key must decode to 32 bytes for BIP39 entropy; got {}",
+            key_bytes.len()
+        )));
+    }
+    let entropy = &key_bytes[..32];
 
     let mnemonic = bip39::Mnemonic::from_entropy(entropy)
         .map_err(|e| CliError::new(format!("Failed to generate mnemonic: {}", e)))?;
@@ -560,6 +565,43 @@ mod tests {
         assert!(
             !fold_db_node::ingestion::anthropic_key_store::has_key(tmp.path()),
             "Ollama path must not touch the Anthropic key store"
+        );
+    }
+
+    /// A change here means the BIP39 mnemonic derived from a given 32-byte
+    /// Ed25519 seed has shifted — and that would silently rotate every
+    /// existing user's recovery phrase. If you're updating this vector,
+    /// you've broken recovery for prior installs.
+    #[test]
+    fn derive_recovery_phrase_is_stable_for_fixed_seed() {
+        let seed = [0x42u8; 32];
+        let seed_b64 = base64::engine::general_purpose::STANDARD.encode(seed);
+
+        let words = derive_recovery_phrase(&seed_b64).expect("derive recovery phrase");
+        assert_eq!(words.len(), 24, "BIP39 256-bit entropy yields 24 words");
+
+        let expected: Vec<&str> = bip39::Mnemonic::from_entropy(&seed)
+            .expect("mnemonic from fixed entropy")
+            .words()
+            .collect();
+        let got: Vec<&str> = words.iter().map(|s| s.as_str()).collect();
+        assert_eq!(
+            got, expected,
+            "recovery phrase drifted from canonical 32-byte BIP39 derivation"
+        );
+    }
+
+    #[test]
+    fn derive_recovery_phrase_rejects_non_32_byte_key() {
+        // 33 bytes — the regression we're guarding against. Previously the
+        // code silently truncated to the first 32 bytes; now it must fail.
+        let oversized = vec![0u8; 33];
+        let oversized_b64 = base64::engine::general_purpose::STANDARD.encode(&oversized);
+        let err = derive_recovery_phrase(&oversized_b64).expect_err("must reject 33-byte key");
+        let msg = format!("{}", err);
+        assert!(
+            msg.contains("must decode to 32 bytes") && msg.contains("got 33"),
+            "expected structured length error, got: {msg}"
         );
     }
 }
