@@ -64,11 +64,24 @@ pub fn save(config_dir: &Path, api_key: &str) -> Result<(), String> {
 }
 
 /// Remove the on-disk key file. No-op if it doesn't exist.
+///
+/// Cleans both `anthropic.key.json` and `anthropic.key.enc` so a user who
+/// toggles the `os-keychain` feature between writes can't end up with the
+/// inactive variant orphaned next to the active one — mirrors
+/// [`crate::keychain::delete_credentials`].
 pub fn delete(config_dir: &Path) -> Result<(), String> {
     let path = key_path(config_dir);
     if path.exists() {
         std::fs::remove_file(&path)
             .map_err(|e| format!("Failed to delete anthropic key at {}: {e}", path.display()))?;
+    }
+    let alt_path = config_dir.join(if cfg!(feature = "os-keychain") {
+        "anthropic.key.json"
+    } else {
+        "anthropic.key.enc"
+    });
+    if alt_path.exists() {
+        let _ = std::fs::remove_file(&alt_path);
     }
     Ok(())
 }
@@ -120,6 +133,26 @@ mod tests {
         delete(tmp.path()).unwrap();
         assert!(!has_key(tmp.path()));
         assert_eq!(load(tmp.path()).unwrap(), None);
+    }
+
+    /// Toggling the `os-keychain` feature between two writes can leave the
+    /// inactive variant sitting next to the active one. `delete` must clean
+    /// both so the next `load` can't read a stale value.
+    #[cfg(not(feature = "os-keychain"))]
+    #[test]
+    fn delete_cleans_alt_extension_after_feature_toggle() {
+        let tmp = tempfile::tempdir().unwrap();
+        save(tmp.path(), "sk-ant-toggle").unwrap();
+        let alt = tmp.path().join("anthropic.key.enc");
+        std::fs::write(&alt, b"stale-encrypted-bytes").unwrap();
+
+        delete(tmp.path()).unwrap();
+
+        assert!(
+            !key_path(tmp.path()).exists(),
+            "active-feature key file should be removed"
+        );
+        assert!(!alt.exists(), "alt-extension key file should be removed");
     }
 
     /// Defense-in-depth: anyone who finds the file on disk shouldn't be able
