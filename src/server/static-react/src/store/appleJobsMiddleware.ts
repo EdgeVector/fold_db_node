@@ -72,21 +72,25 @@ startAppleListening({
         const progress = job.progress_percentage ?? 0;
         const message = job.status_message ?? job.message ?? "";
 
+        // Check is_failed BEFORE is_complete: when a job terminates in
+        // failure the backend stamps both flags (is_complete = "no longer
+        // running", is_failed = "ended in error"). Reading is_complete
+        // first would render the failed job as a green ✓.
+        if (job.is_failed) {
+          listenerApi.dispatch(
+            appleJobFailed({
+              key,
+              message: job.error_message ?? job.message ?? "Import failed",
+            }),
+          );
+          return;
+        }
         if (job.is_complete) {
           listenerApi.dispatch(
             appleJobCompleted({
               key,
               result: job.results ?? job.result ?? null,
               message,
-            }),
-          );
-          return;
-        }
-        if (job.is_failed) {
-          listenerApi.dispatch(
-            appleJobFailed({
-              key,
-              message: job.error_message ?? job.message ?? "Import failed",
             }),
           );
           return;
