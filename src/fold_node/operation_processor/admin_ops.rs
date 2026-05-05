@@ -249,10 +249,8 @@ impl OperationProcessor {
         use crate::ingestion::smart_folder;
         use crate::ingestion::IngestionRequest;
 
-        // Resolve `config_dir` from the per-node config (populated at boot
-        // by `NodeManager::create_node`). Required by `IngestionConfig::load`
-        // — there is no env-var fallback after the `FOLD_CONFIG_DIR`
-        // migration.
+        // Resolve `config_dir` from the per-node config (populated at boot by
+        // `NodeManager::create_node`). Required by `IngestionConfig::load`.
         let config_dir = self
             .node
             .config
@@ -378,9 +376,8 @@ impl OperationProcessor {
                 .map_err(|e| FoldDbError::Config(format!("Failed to derive E2E keys: {e}")))?
         };
 
-        // Read the storage path from the per-node config. The legacy
-        // env-var fallback (`FOLD_STORAGE_PATH`) is gone — `NodeManager` is
-        // now the single source of truth for this path.
+        // Read the storage path from the per-node config; `NodeManager` is the
+        // single source of truth.
         let data_dir = self.node.config.get_storage_path();
         let sync_setup = fold_db::sync::SyncSetup::from_exemem(
             api_url,

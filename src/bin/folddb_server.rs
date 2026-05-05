@@ -90,12 +90,6 @@ struct StartupInfo {
 /// per-server `config_dir` / `data_path`. Runs in both the no-config-file
 /// and config-file paths so they share dir-creation logic — the asymmetry
 /// between the two arms was the spot most likely to grow a bug.
-///
-/// `config_dir` and the storage path used to be propagated as process-wide
-/// env vars (`FOLD_CONFIG_DIR`, `FOLD_STORAGE_PATH`); after the
-/// StartupCtx-paths migration they are returned via `StartupInfo` and
-/// later threaded into `NodeManagerConfig`. No env mutation survives in
-/// the boot path.
 fn setup_config_environment(
     config: &mut NodeConfig,
     data_dir: Option<PathBuf>,
@@ -234,9 +228,6 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         Box::leak(Box::new(obs_guard));
 
     // Create NodeManager — nodes are created lazily per-user on first request.
-    // `upload_path` formerly came from the `FOLDDB_UPLOAD_PATH` env var and
-    // its hard-coded default; now it's resolved here and threaded through
-    // `StartupCtx::boot` instead.
     let upload_path = fold_db_node::utils::paths::folddb_home()
         .map(|h| h.join("data").join("uploads"))
         .unwrap_or_else(|_| PathBuf::from("data/uploads"));

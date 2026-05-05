@@ -1332,8 +1332,7 @@ async fn process_data_share(
                 .or_else(|| record.fields.get("file_hash").and_then(|v| v.as_str()))
                 .unwrap_or("shared_file");
 
-            // Use the boot-time `UploadStorage` threaded down from the
-            // route handler (formerly built per-call from `FOLDDB_UPLOAD_PATH`).
+            // Use the boot-time `UploadStorage` threaded down from the route handler.
             upload_storage
                 .save_file(file_name, &file_bytes, None)
                 .await
