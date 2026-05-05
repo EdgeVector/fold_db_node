@@ -409,13 +409,12 @@ mod tests {
     }
 
     // FOLDDB_HOME is a process-global env var; tests that read it must
-    // serialize on this mutex to avoid racing each other.
+    // serialize on this mutex to avoid racing each other. Aliased to the
+    // crate-wide [`crate::secure_store::test_master_key::ENV_LOCK`] so
+    // tests that touch FOLDDB_HOME don't race tests in `handlers::auth`,
+    // `server::routes::auth`, etc. that also set FOLDDB_HOME.
     fn folddb_home_lock() -> std::sync::MutexGuard<'static, ()> {
-        use std::sync::{Mutex, OnceLock};
-        static LOCK: OnceLock<Mutex<()>> = OnceLock::new();
-        LOCK.get_or_init(|| Mutex::new(()))
-            .lock()
-            .expect("env lock poisoned")
+        crate::secure_store::test_master_key::lock()
     }
 
     /// Happy path: a valid plaintext credentials file at

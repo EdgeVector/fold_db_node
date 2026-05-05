@@ -885,18 +885,23 @@ fn env_parse<T: std::str::FromStr>(name: &str, default: T) -> T {
 /// Shared lock for any test in this crate that mutates `ANTHROPIC_API_KEY`.
 /// `IngestionConfig::load` reads that var via `env::var`, which is
 /// process-global; without a single shared mutex, two tests on different
-/// threads can clobber each other's setup. Lives at module scope (not
-/// inside `mod tests`) so sibling test modules can reach it.
+/// threads can clobber each other's setup.
+///
+/// Aliased to [`crate::secure_store::test_master_key::ENV_LOCK`] so all
+/// tests in the crate that mutate process-wide env state (FOLDDB_HOME,
+/// FOLDDB_MASTER_KEY, ANTHROPIC_API_KEY, WEB_SEARCH_API_KEY, ...) share a
+/// single serialization domain. This is required because saving an
+/// Anthropic key reaches `secure_store::encrypt_and_write` which now
+/// consults `FOLDDB_MASTER_KEY` — if a sibling test cleared the env var
+/// between our lock and our sealed write, we'd get a "no master key"
+/// failure even though we're the test that owned the env-var state.
+///
+/// The returned guard also sets `FOLDDB_MASTER_KEY` to a deterministic
+/// test value for the lock's lifetime — every test that takes this lock
+/// goes through `encrypt_and_write` and needs a key to seal with.
 #[cfg(test)]
-pub(crate) static ANTHROPIC_API_KEY_ENV_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
-
-/// Acquire [`ANTHROPIC_API_KEY_ENV_LOCK`], swallowing poisoning so a panic
-/// in one env-var test doesn't cascade-fail every sibling.
-#[cfg(test)]
-pub(crate) fn anthropic_api_key_env_lock() -> std::sync::MutexGuard<'static, ()> {
-    ANTHROPIC_API_KEY_ENV_LOCK
-        .lock()
-        .unwrap_or_else(|e| e.into_inner())
+pub(crate) fn anthropic_api_key_env_lock() -> crate::secure_store::test_master_key::WithMasterKey {
+    crate::secure_store::test_master_key::with_set()
 }
 
 #[cfg(test)]

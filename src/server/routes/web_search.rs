@@ -98,6 +98,10 @@ mod tests {
 
     #[actix_web::test]
     async fn post_then_get_reflects_saved_key() {
+        // POST goes through `web_search_key_store::save -> sensitive_io ->
+        // secure_store::encrypt_and_write`, which now requires a master
+        // key. Acquire the global env-var lock + set FOLDDB_MASTER_KEY.
+        let _master = crate::secure_store::test_master_key::with_set();
         let tmp = TempDir::new().expect("tempdir");
         let app = test::init_service(
             App::new()
@@ -123,6 +127,7 @@ mod tests {
 
     #[actix_web::test]
     async fn post_empty_body_deletes_key() {
+        let _master = crate::secure_store::test_master_key::with_set();
         let tmp = TempDir::new().expect("tempdir");
         let app = test::init_service(
             App::new()

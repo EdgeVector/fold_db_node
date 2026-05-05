@@ -1354,14 +1354,15 @@ async fn bootstrap_from_cloud_inner(
 mod tests {
     use super::*;
 
-    /// Serializes tests that mutate `FOLDDB_HOME` (a process-global env var) so
-    /// they don't race each other.
+    /// Serializes tests that mutate `FOLDDB_HOME` *or* `FOLDDB_MASTER_KEY`
+    /// (both process-global env vars) so they don't race each other.
+    /// Shared with every other test in the crate via
+    /// [`crate::secure_store::test_master_key::lock`] — auth tests now
+    /// hit `keychain::store_credentials -> secure_store::encrypt_and_write`
+    /// which consults `FOLDDB_MASTER_KEY`, so the serialization domain
+    /// must include identity / anthropic-key / web-search-key / etc.
     fn env_lock() -> std::sync::MutexGuard<'static, ()> {
-        use std::sync::OnceLock;
-        static LOCK: OnceLock<Mutex<()>> = OnceLock::new();
-        LOCK.get_or_init(|| Mutex::new(()))
-            .lock()
-            .expect("env lock poisoned")
+        crate::secure_store::test_master_key::lock()
     }
 
     /// Dummy identity for tests that exercise the credential-cache fast
@@ -1379,9 +1380,20 @@ mod tests {
 
     /// Set FOLDDB_HOME to a temp dir, write credentials.json containing
     /// `api_key`, and return the temp dir guard.
+    ///
+    /// Caller must hold [`env_lock`] for the duration of the test — this
+    /// helper sets process-wide `FOLDDB_HOME` (and, under os-keychain,
+    /// `FOLDDB_MASTER_KEY`) so the encrypted credentials store has a key
+    /// to seal with. `secure_store::encrypt_and_write` no longer mints on
+    /// demand, so without the env var the call would error.
     fn setup_creds_in_temp_home(api_key: &str) -> tempfile::TempDir {
         let tmp = tempfile::tempdir().expect("tempdir");
         std::env::set_var("FOLDDB_HOME", tmp.path());
+        #[cfg(feature = "os-keychain")]
+        std::env::set_var(
+            "FOLDDB_MASTER_KEY",
+            crate::secure_store::test_master_key::TEST_KEY_HEX,
+        );
 
         let creds = crate::keychain::ExememCredentials {
             user_hash: "test-user".to_string(),

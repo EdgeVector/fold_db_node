@@ -118,31 +118,17 @@ fn peek_encrypted_identity(pool: &Arc<SledPool>) -> Result<bool, String> {
         .unwrap_or(false))
 }
 
-/// Read a 32-byte master key from the `FOLDDB_MASTER_KEY` env var (64 hex
-/// chars). Provides a manual escape hatch for headless / sandboxed contexts
-/// where the OS keychain isn't reachable but the user knows the right key.
-fn master_key_from_env() -> Result<Option<[u8; 32]>, String> {
-    let raw = match std::env::var("FOLDDB_MASTER_KEY") {
-        Ok(v) => v,
-        Err(_) => return Ok(None),
-    };
-    let trimmed = raw.trim();
-    let bytes =
-        hex::decode(trimmed).map_err(|e| format!("FOLDDB_MASTER_KEY must be 64 hex chars: {e}"))?;
-    if bytes.len() != 32 {
-        return Err(format!(
-            "FOLDDB_MASTER_KEY must decode to 32 bytes, got {}",
-            bytes.len()
-        ));
-    }
-    let mut key = [0u8; 32];
-    key.copy_from_slice(&bytes);
-    Ok(Some(key))
-}
-
+/// Resolve the master key used to encrypt/decrypt the identity tree.
+///
+/// Delegates to [`crate::secure_store::try_get_master_key`], which reads
+/// `FOLDDB_MASTER_KEY` first and falls back to the OS keychain (when
+/// `os-keychain` is enabled). The "refuse to silently rotate" rule is the
+/// same one [`crate::secure_store::get_master_key`] enforces for every
+/// other sensitive blob — identity just emits a more specific error
+/// message because losing the identity also rotates the node's user_hash.
 #[cfg(feature = "os-keychain")]
 fn resolve_master_key(has_encrypted_identity: bool) -> Result<Option<[u8; 32]>, String> {
-    if let Some(k) = master_key_from_env()? {
+    if let Some(k) = crate::secure_store::try_get_master_key()? {
         return Ok(Some(k));
     }
     if has_encrypted_identity {
@@ -151,26 +137,25 @@ fn resolve_master_key(has_encrypted_identity: bool) -> Result<Option<[u8; 32]>, 
         // restarts whenever the keychain reported NoEntry (sandboxed launchd,
         // unsigned-binary access denial, etc), orphaning every previously
         // ingested record.
-        match crate::secure_store::try_get_master_key()? {
-            Some(k) => Ok(Some(k)),
-            None => Err(
-                "Encrypted node identity exists on disk, but no master key was \
-                 found in the OS keychain. Refusing to regenerate — that would \
-                 silently rotate your user_hash and orphan all previously \
-                 ingested data. Run from the Tauri app where the keychain is \
-                 reachable, or set FOLDDB_MASTER_KEY=<64-hex-bytes> to \
-                 provide the master key explicitly."
-                    .to_string(),
-            ),
-        }
-    } else {
-        crate::secure_store::get_or_create_master_key().map(Some)
+        return Err(
+            "Encrypted node identity exists on disk, but no master key was \
+             found in the OS keychain. Refusing to regenerate — that would \
+             silently rotate your user_hash and orphan all previously \
+             ingested data. Run from the Tauri app where the keychain is \
+             reachable, or set FOLDDB_MASTER_KEY=<64-hex-bytes> to \
+             provide the master key explicitly."
+                .to_string(),
+        );
     }
+    // Fresh install — `load_or_generate` calls
+    // `secure_store::initialize_master_key` before `set()` so the new
+    // identity is encrypted from the start.
+    Ok(None)
 }
 
 #[cfg(not(feature = "os-keychain"))]
 fn resolve_master_key(has_encrypted_identity: bool) -> Result<Option<[u8; 32]>, String> {
-    if let Some(k) = master_key_from_env()? {
+    if let Some(k) = crate::secure_store::try_get_master_key()? {
         return Ok(Some(k));
     }
     if has_encrypted_identity {
@@ -330,11 +315,27 @@ pub fn load_standalone(data_path: &Path) -> Result<Option<NodeIdentity>, String>
 
 /// Load the identity, generating + persisting a new keypair if none
 /// exists. Used by the fresh-install startup path.
+///
+/// On a true first install with `os-keychain` enabled, the OS keychain has
+/// no master-key entry yet. The first `open()` therefore resolves
+/// `master_key` to `None`; without explicit priming, `set()` below would
+/// fall through to dev-mode plaintext storage and the keychain entry would
+/// only get written lazily on the next encrypted write — which is fragile
+/// and inconsistent with credentials/API-key callers that now refuse to
+/// mint. We call [`crate::secure_store::initialize_master_key`]
+/// explicitly here (idempotent, returns the existing key if one is already
+/// present) and reopen the store so the cached `master_key` reflects it.
 pub fn load_or_generate(pool: Arc<SledPool>) -> Result<NodeIdentity, String> {
-    let store = open(pool)?;
+    let store = open(Arc::clone(&pool))?;
     if let Some(id) = store.get()? {
         return Ok(id);
     }
+    drop(store);
+    #[cfg(feature = "os-keychain")]
+    {
+        crate::secure_store::initialize_master_key()?;
+    }
+    let store = open(pool)?;
     let id = generate_identity()?;
     store.set(&id)?;
     Ok(id)
@@ -359,11 +360,13 @@ mod tests {
     /// `FOLDDB_MASTER_KEY` is process-wide state and a parallel test that
     /// sets/unsets it can flip another test's tree between plaintext and
     /// ENC:-prefixed encoding mid-run, which produces wildly confusing
-    /// "encrypted blob exists but no master key" failures. Serializing
-    /// the test module avoids that.
+    /// "encrypted blob exists but no master key" failures.
+    ///
+    /// Shared with every other test in the crate that touches the env var
+    /// (anthropic_key_store, web_search_key_store, auth handlers, ingestion
+    /// config, etc.) — see [`crate::secure_store::test_master_key`].
     fn env_lock() -> std::sync::MutexGuard<'static, ()> {
-        static LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
-        LOCK.lock().unwrap_or_else(|p| p.into_inner())
+        crate::secure_store::test_master_key::lock()
     }
 
     #[test]

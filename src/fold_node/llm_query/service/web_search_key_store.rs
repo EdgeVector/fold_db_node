@@ -66,8 +66,16 @@ mod tests {
     use super::*;
     use tempfile::TempDir;
 
+    /// Tests that exercise the encrypted read/write path must hold the
+    /// global env-var lock and provide a `FOLDDB_MASTER_KEY` — see
+    /// [`crate::secure_store::test_master_key`] for the rationale.
+    fn with_master_key() -> crate::secure_store::test_master_key::WithMasterKey {
+        crate::secure_store::test_master_key::with_set()
+    }
+
     #[test]
     fn save_load_roundtrip() {
+        let _g = with_master_key();
         let dir = TempDir::new().expect("tempdir");
         assert!(!has_key(dir.path()));
         assert_eq!(load(dir.path()).unwrap(), None);
@@ -82,6 +90,7 @@ mod tests {
 
     #[test]
     fn save_overwrites_previous() {
+        let _g = with_master_key();
         let dir = TempDir::new().expect("tempdir");
         save(dir.path(), "first").unwrap();
         save(dir.path(), "second").unwrap();
@@ -90,6 +99,7 @@ mod tests {
 
     #[test]
     fn save_empty_deletes() {
+        let _g = with_master_key();
         let dir = TempDir::new().expect("tempdir");
         save(dir.path(), "abc").unwrap();
         assert!(has_key(dir.path()));
@@ -99,6 +109,7 @@ mod tests {
 
     #[test]
     fn save_trims_whitespace() {
+        let _g = with_master_key();
         let dir = TempDir::new().expect("tempdir");
         save(dir.path(), "  padded  ").unwrap();
         assert_eq!(load(dir.path()).unwrap().as_deref(), Some("padded"));
@@ -110,6 +121,11 @@ mod tests {
         delete(dir.path()).expect("delete on missing file should be a no-op");
     }
 
+    /// "Empty file means no key" only makes sense for the dev-mode
+    /// plaintext encoding. Under `os-keychain`, the on-disk format is an
+    /// AES-GCM envelope and an empty file is invalid ciphertext (rightly
+    /// surfaced as a decrypt error by `secure_store::read_and_decrypt`).
+    #[cfg(not(feature = "os-keychain"))]
     #[test]
     fn load_treats_empty_file_as_no_key() {
         let dir = TempDir::new().expect("tempdir");

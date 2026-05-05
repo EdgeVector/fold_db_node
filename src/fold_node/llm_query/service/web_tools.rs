@@ -13,13 +13,16 @@ use super::web_search_key_store;
 pub const WEB_SEARCH_API_KEY_ENV: &str = "WEB_SEARCH_API_KEY";
 
 /// Mutex serializing tests that mutate `WEB_SEARCH_API_KEY`. Test-visible only.
+///
+/// Aliased to [`crate::secure_store::test_master_key::ENV_LOCK`] so all
+/// tests in the crate that mutate process-wide env state share a single
+/// serialization domain. The web-search key store reaches
+/// `secure_store::encrypt_and_write`, which now requires a
+/// `FOLDDB_MASTER_KEY` — the returned guard sets it for the lock's
+/// lifetime so callers don't have to.
 #[cfg(test)]
-pub(crate) fn web_search_env_lock() -> std::sync::MutexGuard<'static, ()> {
-    use std::sync::{Mutex, OnceLock};
-    static LOCK: OnceLock<Mutex<()>> = OnceLock::new();
-    LOCK.get_or_init(|| Mutex::new(()))
-        .lock()
-        .unwrap_or_else(|p| p.into_inner())
+pub(crate) fn web_search_env_lock() -> crate::secure_store::test_master_key::WithMasterKey {
+    crate::secure_store::test_master_key::with_set()
 }
 
 /// Brave Search API endpoint.
@@ -472,6 +475,9 @@ mod tests {
     #[tokio::test]
     #[allow(clippy::await_holding_lock)]
     async fn test_web_search_resolve_prefers_saved_key_over_env() {
+        // The lock guard also sets `FOLDDB_MASTER_KEY` for its lifetime,
+        // which `web_search_key_store::save` needs because that path now
+        // goes through `secure_store::encrypt_and_write` (no silent mint).
         let _guard = web_search_env_lock();
         let dir = tempfile::tempdir().expect("tempdir");
         super::web_search_key_store::save(dir.path(), "stored-key").unwrap();
