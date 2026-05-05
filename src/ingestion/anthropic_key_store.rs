@@ -82,6 +82,14 @@ pub fn has_key(config_dir: &Path) -> bool {
 mod tests {
     use super::*;
 
+    /// `save` / `load` go through `sensitive_io` which (under os-keychain)
+    /// calls `secure_store::encrypt_and_write` — that now refuses to mint a
+    /// fresh master key on demand. Tests that exercise the encrypted path
+    /// must hold the global env-var lock and provide a `FOLDDB_MASTER_KEY`.
+    fn with_master_key() -> crate::secure_store::test_master_key::WithMasterKey {
+        crate::secure_store::test_master_key::with_set()
+    }
+
     #[test]
     fn load_returns_none_when_file_absent() {
         let tmp = tempfile::tempdir().unwrap();
@@ -91,6 +99,7 @@ mod tests {
 
     #[test]
     fn save_then_load_round_trips() {
+        let _g = with_master_key();
         let tmp = tempfile::tempdir().unwrap();
         save(tmp.path(), "sk-ant-roundtrip").unwrap();
         assert!(has_key(tmp.path()));
@@ -99,6 +108,7 @@ mod tests {
 
     #[test]
     fn save_overwrites_existing_key() {
+        let _g = with_master_key();
         let tmp = tempfile::tempdir().unwrap();
         save(tmp.path(), "first").unwrap();
         save(tmp.path(), "second").unwrap();
@@ -114,6 +124,7 @@ mod tests {
 
     #[test]
     fn delete_removes_file_and_is_noop_when_absent() {
+        let _g = with_master_key();
         let tmp = tempfile::tempdir().unwrap();
         delete(tmp.path()).unwrap(); // no-op
         save(tmp.path(), "sk-ant-delete-me").unwrap();
