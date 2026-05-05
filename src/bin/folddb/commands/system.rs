@@ -494,7 +494,10 @@ mod tests {
         let CommandOutput::Message(msg) = out else {
             panic!("expected Message");
         };
-        assert!(msg.contains("Set env = dev"), "unexpected setter output: {msg}");
+        assert!(
+            msg.contains("Set env = dev"),
+            "unexpected setter output: {msg}"
+        );
 
         let written = std::fs::read_to_string(&path).expect("read back config");
 
