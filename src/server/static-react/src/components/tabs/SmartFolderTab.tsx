@@ -7,6 +7,7 @@ import { defaultApiClient } from '../../api/core/client'
 import { useFolderAutocomplete } from '../../hooks/useFolderAutocomplete'
 import { useScanPolling } from '../../hooks/useScanPolling'
 import { useBatchMonitor } from '../../hooks/useBatchMonitor'
+import { useFilesProgress } from '../../hooks/useFilesProgress'
 import FolderInput from './smart-folder/FolderInput'
 import ScanResultsView from './smart-folder/ScanResultsView'
 import BatchProgressView from './smart-folder/BatchProgressView'
@@ -278,6 +279,11 @@ function SmartFolderTab({ onResult: onResultProp }: SmartFolderTabProps) {
   })
   batchStatusRef.current = batchStatus as { status?: string } | null
 
+  const { filesProgress, allFilesDone, hasFirstPoll } = useFilesProgress({
+    enabled: batchId,
+    fileProgressIds,
+  })
+
   const selectedOrgName = orgs.find(o => o.org_hash === selectedOrg)?.org_name
 
   // --- Render ---
@@ -343,6 +349,9 @@ function SmartFolderTab({ onResult: onResultProp }: SmartFolderTabProps) {
         <BatchProgressView
           batchStatus={batchStatus}
           batchReport={batchReport}
+          filesProgress={filesProgress}
+          allFilesDone={allFilesDone}
+          hasFirstPoll={hasFirstPoll}
           onResume={handleResume}
           onCancel={handleCancel}
           onBack={handleBack}
