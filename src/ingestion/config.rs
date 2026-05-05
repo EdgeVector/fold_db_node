@@ -169,8 +169,16 @@ impl OllamaConfig {
 }
 
 /// Configuration for the Anthropic AI provider.
+///
+/// `api_key` is never persisted as part of this struct any more — it lives in
+/// the sensitive-io-backed [`crate::ingestion::anthropic_key_store`]. The
+/// field is retained for in-memory use (resolved at load time, accepted on
+/// save requests) and to deserialize legacy `ingestion_config.json` files
+/// during one-time migration. `skip_serializing_if = "String::is_empty"`
+/// keeps fresh saves from re-introducing the key into the JSON file.
 #[derive(Debug, Clone, Serialize, Deserialize, utoipa::ToSchema)]
 pub struct AnthropicConfig {
+    #[serde(default, skip_serializing_if = "String::is_empty")]
     pub api_key: String,
     pub model: String,
     pub base_url: String,
@@ -484,17 +492,27 @@ impl IngestionConfig {
         Ok(config)
     }
 
-    /// Load config from the saved file and environment variables.
+    /// Load config from the saved file, the sensitive key store, and
+    /// environment variables.
     ///
-    /// Precedence (highest to lowest):
-    /// - Saved config file at `config_dir/ingestion_config.json` (UI choices,
-    ///   including `anthropic.api_key`)
-    /// - Env vars — used as bootstrap fill-ins when the saved file is missing
-    ///   the value (`ANTHROPIC_API_KEY` fills in only when the saved key is
-    ///   empty; other env vars only apply when there's no saved config at all)
-    /// - Compiled-in defaults
+    /// Precedence (highest to lowest) for the Anthropic API key:
+    /// - Sensitive store at `config_dir/anthropic.key.{json,enc}` — canonical
+    ///   home for the key, encrypted in release builds.
+    /// - Legacy plaintext `ingestion_config.json::anthropic.api_key` — read
+    ///   only on first load after upgrade; migrated into the store and the
+    ///   field cleared from disk so secrets never live in
+    ///   `ingestion_config.json` again.
+    /// - `ANTHROPIC_API_KEY` env var — bootstrap fill-in for CI / docker
+    ///   when neither store nor file has a key. A non-empty saved key
+    ///   always wins so a stale shell export can't silently revert a key
+    ///   typed in the UI.
     ///
-    /// Returns an error if the config file exists but cannot be read or parsed.
+    /// Other (non-secret) saved fields override defaults; the remaining env
+    /// vars only fire when there is no saved config at all.
+    ///
+    /// Returns an error if the config file exists but cannot be read or
+    /// parsed, if the sensitive store cannot be read or decrypted, or if
+    /// migration of a legacy key fails to write the store / rewrite the JSON.
     pub fn load(config_dir: &std::path::Path) -> Result<Self, crate::ingestion::IngestionError> {
         let mut config = IngestionConfig::default();
 
@@ -502,13 +520,13 @@ impl IngestionConfig {
         // File missing → silent fallback to defaults.
         // File exists but unreadable/unparseable → fail fast.
         let path = Self::config_file_path(config_dir);
-        let has_saved = if !path.exists() {
+        let (has_saved, mut legacy_saved_for_migration) = if !path.exists() {
             tracing::info!(
                 target: "fold_node::ingestion",
                 "No saved ingestion config at {}; using env vars/defaults",
                 path.display()
             );
-            false
+            (false, None)
         } else {
             let saved = Self::load_from_file(&path)?;
             tracing::info!(
@@ -520,23 +538,54 @@ impl IngestionConfig {
                     AIProvider::Anthropic => &saved.anthropic.model,
                 }
             );
-            config.provider = saved.provider;
-            config.ollama = saved.ollama;
-            config.anthropic = saved.anthropic;
-            config.vision_backend = saved.vision_backend;
-            config.overrides = saved.overrides;
-            true
+            config.provider = saved.provider.clone();
+            config.ollama = saved.ollama.clone();
+            config.anthropic = saved.anthropic.clone();
+            config.vision_backend = saved.vision_backend.clone();
+            config.overrides = saved.overrides.clone();
+            (true, Some(saved))
         };
 
-        // ANTHROPIC_API_KEY: the saved file is canonical (UI is the source of
-        // truth for the key), so env only fills in when the saved key is
-        // empty. This preserves CI / docker bootstrap, where the file starts
-        // empty and the env var seeds the first run, while preventing a stale
-        // `ANTHROPIC_API_KEY` exported by the launcher / shell rc from
-        // silently reverting a key the user just typed in the UI on every
-        // daemon restart. Empty strings still don't count as "set" so a
-        // parent shell exporting `ANTHROPIC_API_KEY=` can't clobber even an
-        // empty saved value with the same empty value.
+        // Sensitive store wins. Migrate the legacy plaintext field on first
+        // load after upgrade so subsequent reloads are no-ops.
+        let store_key = crate::ingestion::anthropic_key_store::load(config_dir)
+            .map_err(crate::ingestion::IngestionError::configuration_error)?;
+        match store_key {
+            Some(key) => {
+                config.anthropic.api_key = key;
+            }
+            None => {
+                // Store empty; honor the legacy plaintext field if present
+                // and migrate it. Empty plaintext = nothing to migrate.
+                if !config.anthropic.api_key.is_empty() {
+                    let legacy_key = config.anthropic.api_key.clone();
+                    crate::ingestion::anthropic_key_store::save(config_dir, &legacy_key)
+                        .map_err(crate::ingestion::IngestionError::configuration_error)?;
+                    if let Some(saved) = legacy_saved_for_migration.as_mut() {
+                        saved.anthropic.api_key = String::new();
+                        // Rewrite the JSON file without the api_key field;
+                        // skip_serializing_if keeps it out of the output.
+                        Self::write_saved_to_disk(&path, saved).map_err(|e| {
+                            crate::ingestion::IngestionError::configuration_error(format!(
+                                "Failed to migrate legacy api_key out of {}: {e}",
+                                path.display()
+                            ))
+                        })?;
+                    }
+                    tracing::info!(
+                        target: "fold_node::ingestion",
+                        "Migrated legacy plaintext anthropic.api_key from {} into sensitive store",
+                        path.display()
+                    );
+                    // config.anthropic.api_key already holds legacy_key.
+                }
+            }
+        }
+
+        // Env fallback only fires when neither store nor legacy file had a
+        // usable key. Empty strings still don't count as "set" so a parent
+        // shell exporting `ANTHROPIC_API_KEY=` can't clobber even an empty
+        // saved value with the same empty value.
         if config.anthropic.api_key.is_empty() {
             if let Ok(key) = env::var("ANTHROPIC_API_KEY") {
                 if !key.is_empty() {
@@ -633,9 +682,10 @@ impl IngestionConfig {
 
     /// Save provider/model settings to the config file.
     ///
-    /// If the incoming api_key is empty or redacted, the existing saved key is
-    /// preserved. If the file exists but cannot be read, returns an error rather
-    /// than silently clearing the key.
+    /// The Anthropic API key is routed into the sensitive store
+    /// ([`crate::ingestion::anthropic_key_store`]); `ingestion_config.json`
+    /// itself never contains the api_key on disk. If the incoming api_key is
+    /// empty or redacted, the existing key in the store is preserved.
     pub fn save_to_file(
         config_dir: &std::path::Path,
         config: &SavedConfig,
@@ -643,20 +693,17 @@ impl IngestionConfig {
         let config_path = Self::config_file_path(config_dir);
 
         let mut to_save = config.clone();
-        // Preserve API keys if not explicitly set (redacted or empty)
-        let existing = if config_path.exists() {
-            Self::load_from_file(&config_path)
-                .map_err(|e| format!("Failed to read existing config to preserve API key: {e}"))
-                .ok()
-        } else {
+
+        // Pull the api_key out of the JSON-bound payload before serializing.
+        // - Non-empty / non-redacted → write through to the sensitive store.
+        // - Empty / `***configured***` → leave the existing store value in place
+        //   (matches the original "preserve API key when empty/redacted" semantics).
+        let incoming_key = std::mem::take(&mut to_save.anthropic.api_key);
+        let key_to_persist = if incoming_key.is_empty() || incoming_key == "***configured***" {
             None
+        } else {
+            Some(incoming_key)
         };
-        if to_save.anthropic.api_key.is_empty() || to_save.anthropic.api_key == "***configured***" {
-            to_save.anthropic.api_key = existing
-                .as_ref()
-                .map(|e| e.anthropic.api_key.clone())
-                .unwrap_or_default();
-        }
 
         // Dual-write: project overrides[QueryChat] into the legacy `query`
         // field so an older binary (feature flag off) can still read the user's
@@ -668,6 +715,27 @@ impl IngestionConfig {
         }
         let content = serde_json::to_string_pretty(&to_save)?;
         std::fs::write(&config_path, content)?;
+
+        if let Some(key) = key_to_persist {
+            crate::ingestion::anthropic_key_store::save(config_dir, &key)?;
+        }
+
+        Ok(())
+    }
+
+    /// Internal helper used by the load-time legacy migration to rewrite
+    /// `ingestion_config.json` after stripping the api_key field. Mirrors the
+    /// JSON-only side of [`Self::save_to_file`] without touching the
+    /// sensitive store.
+    fn write_saved_to_disk(
+        path: &std::path::Path,
+        saved: &SavedConfig,
+    ) -> Result<(), Box<dyn std::error::Error>> {
+        if let Some(parent) = path.parent() {
+            std::fs::create_dir_all(parent)?;
+        }
+        let content = serde_json::to_string_pretty(saved)?;
+        std::fs::write(path, content)?;
         Ok(())
     }
 
@@ -1553,5 +1621,163 @@ mod tests {
             Some(v) => env::set_var("ANTHROPIC_API_KEY", v),
             None => env::remove_var("ANTHROPIC_API_KEY"),
         }
+    }
+
+    // ---- anthropic_key_store integration ----
+
+    /// Read `ingestion_config.json` directly off disk (bypassing
+    /// `load_from_file`'s normalization) so tests can assert on the raw
+    /// shape — i.e. whether the api_key field is present at all.
+    fn read_raw_saved_json(dir: &std::path::Path) -> serde_json::Value {
+        let path = dir.join("ingestion_config.json");
+        let s = std::fs::read_to_string(&path).expect("read ingestion_config.json");
+        serde_json::from_str(&s).expect("parse ingestion_config.json")
+    }
+
+    #[test]
+    fn save_to_file_routes_api_key_into_sensitive_store_not_json() {
+        // Fresh save: api_key ends up in anthropic_key_store, not in
+        // ingestion_config.json.
+        let _guard = anthropic_api_key_env_lock();
+        let tmp = tempfile::tempdir().expect("tempdir");
+
+        let saved = SavedConfig {
+            provider: AIProvider::Anthropic,
+            anthropic: AnthropicConfig {
+                api_key: "sk-ant-fresh-save".to_string(),
+                ..AnthropicConfig::default()
+            },
+            ..SavedConfig::default()
+        };
+        IngestionConfig::save_to_file(tmp.path(), &saved).expect("save");
+
+        // JSON does not carry the key.
+        let raw = read_raw_saved_json(tmp.path());
+        assert!(
+            raw["anthropic"].get("api_key").is_none(),
+            "ingestion_config.json must not contain api_key after save, got: {raw}"
+        );
+        // Sensitive store does.
+        assert_eq!(
+            crate::ingestion::anthropic_key_store::load(tmp.path()).unwrap(),
+            Some("sk-ant-fresh-save".to_string())
+        );
+
+        // Reload picks it up from the store.
+        env::remove_var("ANTHROPIC_API_KEY");
+        let loaded = IngestionConfig::load(tmp.path()).expect("load");
+        assert_eq!(loaded.anthropic.api_key, "sk-ant-fresh-save");
+    }
+
+    #[test]
+    fn save_to_file_with_empty_api_key_preserves_store() {
+        // Calling save with an empty incoming key (e.g. UI never typed one
+        // this round-trip) must not blow away the previously-saved key.
+        let _guard = anthropic_api_key_env_lock();
+        let tmp = tempfile::tempdir().expect("tempdir");
+
+        let mut saved = SavedConfig {
+            provider: AIProvider::Anthropic,
+            anthropic: AnthropicConfig {
+                api_key: "sk-ant-original".to_string(),
+                ..AnthropicConfig::default()
+            },
+            ..SavedConfig::default()
+        };
+        IngestionConfig::save_to_file(tmp.path(), &saved).expect("first save");
+
+        saved.anthropic.api_key = String::new();
+        IngestionConfig::save_to_file(tmp.path(), &saved).expect("second save with empty key");
+
+        assert_eq!(
+            crate::ingestion::anthropic_key_store::load(tmp.path()).unwrap(),
+            Some("sk-ant-original".to_string()),
+            "empty incoming key must not clobber the existing store"
+        );
+    }
+
+    #[test]
+    fn save_to_file_with_redacted_api_key_preserves_store() {
+        // The UI round-trips the redacted placeholder back to us when the
+        // user didn't change the key field. Treat it as a no-op for the key,
+        // matching the pre-store semantics.
+        let _guard = anthropic_api_key_env_lock();
+        let tmp = tempfile::tempdir().expect("tempdir");
+
+        let mut saved = SavedConfig {
+            provider: AIProvider::Anthropic,
+            anthropic: AnthropicConfig {
+                api_key: "sk-ant-original".to_string(),
+                ..AnthropicConfig::default()
+            },
+            ..SavedConfig::default()
+        };
+        IngestionConfig::save_to_file(tmp.path(), &saved).expect("first save");
+
+        saved.anthropic.api_key = "***configured***".to_string();
+        IngestionConfig::save_to_file(tmp.path(), &saved).expect("second save with redacted");
+
+        assert_eq!(
+            crate::ingestion::anthropic_key_store::load(tmp.path()).unwrap(),
+            Some("sk-ant-original".to_string()),
+            "redacted placeholder must not clobber the existing store"
+        );
+    }
+
+    #[test]
+    fn legacy_plaintext_api_key_migrates_into_store_on_load() {
+        // Existing on-disk shape (pre-migration): SavedConfig with a
+        // non-empty plaintext api_key serialized to JSON. First load() must
+        // migrate it into the sensitive store and strip the field from disk;
+        // second load() must be a no-op.
+        let _guard = anthropic_api_key_env_lock();
+        let tmp = tempfile::tempdir().expect("tempdir");
+        env::remove_var("ANTHROPIC_API_KEY");
+
+        // Author the legacy JSON directly so the test mirrors what real
+        // upgraders will have on disk: `api_key` *is* present in the file.
+        let path = tmp.path().join("ingestion_config.json");
+        let legacy = serde_json::json!({
+            "provider": "Anthropic",
+            "anthropic": {
+                "api_key": "sk-ant-legacy",
+                "model": "claude-haiku-4-5-20251001",
+                "base_url": "https://api.anthropic.com",
+            }
+        });
+        std::fs::write(&path, serde_json::to_string_pretty(&legacy).unwrap()).unwrap();
+        assert!(!crate::ingestion::anthropic_key_store::has_key(tmp.path()));
+
+        let loaded = IngestionConfig::load(tmp.path()).expect("first load");
+        assert_eq!(loaded.anthropic.api_key, "sk-ant-legacy");
+
+        // Store now holds the key; JSON file no longer has it.
+        assert_eq!(
+            crate::ingestion::anthropic_key_store::load(tmp.path()).unwrap(),
+            Some("sk-ant-legacy".to_string())
+        );
+        let raw = read_raw_saved_json(tmp.path());
+        assert!(
+            raw["anthropic"].get("api_key").is_none(),
+            "expected api_key field to be stripped from JSON after migration, got: {raw}"
+        );
+
+        // Second load is idempotent — store is the source.
+        let loaded_again = IngestionConfig::load(tmp.path()).expect("second load");
+        assert_eq!(loaded_again.anthropic.api_key, "sk-ant-legacy");
+    }
+
+    #[test]
+    fn load_with_no_legacy_no_store_no_env_yields_empty_key() {
+        // The "fresh install, no env var" path: no JSON file, no store, no
+        // env var — api_key must come back empty so downstream validation
+        // can surface a missing-key error.
+        let _guard = anthropic_api_key_env_lock();
+        let tmp = tempfile::tempdir().expect("tempdir");
+        env::remove_var("ANTHROPIC_API_KEY");
+
+        let loaded = IngestionConfig::load(tmp.path()).expect("load");
+        assert_eq!(loaded.anthropic.api_key, "");
+        assert!(!crate::ingestion::anthropic_key_store::has_key(tmp.path()));
     }
 }

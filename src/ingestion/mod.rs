@@ -4,6 +4,7 @@
 //! and optionally executes mutations to persist the data.
 
 pub mod ai;
+pub mod anthropic_key_store;
 pub mod apple_import;
 pub mod batch_controller;
 pub mod config;

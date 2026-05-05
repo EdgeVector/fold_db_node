@@ -513,9 +513,18 @@ export interface components {
             message: string;
             success: boolean;
         };
-        /** @description Configuration for the Anthropic AI provider. */
+        /**
+         * @description Configuration for the Anthropic AI provider.
+         *
+         *     `api_key` is never persisted as part of this struct any more — it lives in
+         *     the sensitive-io-backed [`crate::ingestion::anthropic_key_store`]. The
+         *     field is retained for in-memory use (resolved at load time, accepted on
+         *     save requests) and to deserialize legacy `ingestion_config.json` files
+         *     during one-time migration. `skip_serializing_if = "String::is_empty"`
+         *     keeps fresh saves from re-introducing the key into the JSON file.
+         */
         AnthropicConfig: {
-            api_key: string;
+            api_key?: string;
             base_url: string;
             model: string;
         };
