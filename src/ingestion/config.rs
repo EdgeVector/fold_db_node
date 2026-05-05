@@ -789,6 +789,23 @@ fn env_parse<T: std::str::FromStr>(name: &str, default: T) -> T {
         .unwrap_or(default)
 }
 
+/// Shared lock for any test in this crate that mutates `ANTHROPIC_API_KEY`.
+/// `IngestionConfig::load` reads that var via `env::var`, which is
+/// process-global; without a single shared mutex, two tests on different
+/// threads can clobber each other's setup. Lives at module scope (not
+/// inside `mod tests`) so sibling test modules can reach it.
+#[cfg(test)]
+pub(crate) static ANTHROPIC_API_KEY_ENV_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
+
+/// Acquire [`ANTHROPIC_API_KEY_ENV_LOCK`], swallowing poisoning so a panic
+/// in one env-var test doesn't cascade-fail every sibling.
+#[cfg(test)]
+pub(crate) fn anthropic_api_key_env_lock() -> std::sync::MutexGuard<'static, ()> {
+    ANTHROPIC_API_KEY_ENV_LOCK
+        .lock()
+        .unwrap_or_else(|e| e.into_inner())
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -1346,15 +1363,17 @@ mod tests {
         assert!(!back.query.is_set());
     }
 
-    // Env-var override tests mutate process-global state; serialize them so
-    // they don't race with each other or with tests in sibling modules that
-    // touch the same vars.
-    fn env_lock() -> std::sync::MutexGuard<'static, ()> {
-        use std::sync::{Mutex, OnceLock};
-        static LOCK: OnceLock<Mutex<()>> = OnceLock::new();
-        LOCK.get_or_init(|| Mutex::new(()))
-            .lock()
-            .expect("env lock poisoned")
+    // Env-var override tests mutate process-global state; serialize them via
+    // the crate-wide `anthropic_api_key_env_lock()` (module-scope, see above)
+    // so they don't race with each other or with tests in sibling modules
+    // (e.g. `server::routes::ingestion`) that touch the same vars.
+
+    fn write_saved_config_with_api_key(dir: &std::path::Path, api_key: &str) {
+        let path = dir.join("ingestion_config.json");
+        let mut saved = SavedConfig::default();
+        saved.anthropic.api_key = api_key.to_string();
+        let content = serde_json::to_string_pretty(&saved).unwrap();
+        std::fs::write(&path, content).unwrap();
     }
 
     #[test]
@@ -1362,7 +1381,7 @@ mod tests {
         // Headline: the saved file is canonical, so a stale `ANTHROPIC_API_KEY`
         // exported by the launcher / shell rc must not silently revert a key
         // the user just typed in the UI on the next daemon restart.
-        let _guard = env_lock();
+        let _guard = anthropic_api_key_env_lock();
         let tmp = tempfile::tempdir().expect("tempdir");
 
         let saved = SavedConfig {
@@ -1389,7 +1408,7 @@ mod tests {
     fn empty_anthropic_api_key_env_does_not_clobber_saved_key() {
         // Companion: a parent shell exporting `ANTHROPIC_API_KEY=` (set but
         // empty) likewise can't wipe the user's saved key.
-        let _guard = env_lock();
+        let _guard = anthropic_api_key_env_lock();
         let tmp = tempfile::tempdir().expect("tempdir");
 
         let saved = SavedConfig {
@@ -1417,7 +1436,7 @@ mod tests {
         // Bootstrap path: CI / docker / fresh-install runs where the saved
         // file is absent (or has an empty key) still let `ANTHROPIC_API_KEY`
         // seed the first run.
-        let _guard = env_lock();
+        let _guard = anthropic_api_key_env_lock();
         let tmp = tempfile::tempdir().expect("tempdir");
 
         let saved = SavedConfig {
@@ -1441,7 +1460,7 @@ mod tests {
     fn anthropic_api_key_unset_env_with_empty_saved_yields_empty() {
         // No saved key, no env → result is empty; downstream validation
         // catches the missing-key case.
-        let _guard = env_lock();
+        let _guard = anthropic_api_key_env_lock();
         let tmp = tempfile::tempdir().expect("tempdir");
 
         let saved = SavedConfig {
@@ -1464,7 +1483,7 @@ mod tests {
     fn anthropic_api_key_empty_env_with_empty_saved_yields_empty() {
         // Set-but-empty env behaves like unset (the empty-string filter still
         // applies, so we don't store "" as a "real" value).
-        let _guard = env_lock();
+        let _guard = anthropic_api_key_env_lock();
         let tmp = tempfile::tempdir().expect("tempdir");
 
         let saved = SavedConfig {
@@ -1489,7 +1508,7 @@ mod tests {
         // No saved config on disk → the OLLAMA_* / ANTHROPIC_MODEL env-var
         // overrides are eligible to fire. Empty strings must be ignored so
         // they can't replace a compiled-in default with "".
-        let _guard = env_lock();
+        let _guard = anthropic_api_key_env_lock();
         let tmp = tempfile::tempdir().expect("tempdir");
 
         std::env::set_var("OLLAMA_MODEL", "");
@@ -1504,5 +1523,35 @@ mod tests {
         assert_eq!(loaded.ollama.model, defaults.ollama.model);
         assert_eq!(loaded.ollama.base_url, defaults.ollama.base_url);
         assert_eq!(loaded.anthropic.model, defaults.anthropic.model);
+    }
+
+    #[test]
+    fn redacted_view_masks_saved_key_regardless_of_env_var_state() {
+        // Bug repro: the GET /api/ingestion/config response was showing
+        // api_key="" because empty ANTHROPIC_API_KEY was clobbering the
+        // saved value before redaction. With the fix, redacted() must
+        // return "***configured***" whenever a non-empty key is on disk.
+        let _guard = anthropic_api_key_env_lock();
+        let tmp = tempfile::tempdir().unwrap();
+        write_saved_config_with_api_key(tmp.path(), "sk-ant-on-disk");
+
+        let original_env = env::var("ANTHROPIC_API_KEY").ok();
+
+        for env_state in [None, Some(""), Some("sk-ant-from-env")] {
+            match env_state {
+                None => env::remove_var("ANTHROPIC_API_KEY"),
+                Some(v) => env::set_var("ANTHROPIC_API_KEY", v),
+            }
+            let redacted = IngestionConfig::load(tmp.path()).unwrap().redacted();
+            assert_eq!(
+                redacted.anthropic.api_key, "***configured***",
+                "expected redacted view to mask the key for env_state={env_state:?}"
+            );
+        }
+
+        match original_env {
+            Some(v) => env::set_var("ANTHROPIC_API_KEY", v),
+            None => env::remove_var("ANTHROPIC_API_KEY"),
+        }
     }
 }

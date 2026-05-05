@@ -828,6 +828,68 @@ mod tests {
         assert!(resp.status().is_success());
     }
 
+    /// Regression for the dogfood-reported bug where `GET /api/ingestion/config`
+    /// returned `api_key: ""` even with a real key on disk. Root cause was an
+    /// empty `ANTHROPIC_API_KEY` env var clobbering the saved value before
+    /// redaction. Asserts the redacted view round-trips for all three env
+    /// states (unset / set-empty / set-non-empty).
+    //
+    // `await_holding_lock`: the env-var mutex must be held across the
+    // `call_service` / `read_body_json` awaits — that's the whole point, since
+    // each iteration mutates a process-global env var that other test threads
+    // could otherwise observe mid-flight. `#[actix_web::test]` runs on a
+    // single-threaded current_thread runtime, so the `!Send` guard never
+    // crosses thread boundaries.
+    #[allow(clippy::await_holding_lock)]
+    #[actix_web::test]
+    async fn get_ingestion_config_returns_configured_token_when_disk_has_key() {
+        // Shared with ingestion::config tests — single lock per crate so two
+        // ANTHROPIC_API_KEY-mutating tests on different threads don't trample.
+        let _guard = crate::ingestion::config::anthropic_api_key_env_lock();
+
+        let tmp = tempfile::tempdir().expect("tempdir");
+        // Write a SavedConfig file with a real api_key on disk.
+        let saved = crate::ingestion::config::SavedConfig {
+            anthropic: crate::ingestion::config::AnthropicConfig {
+                api_key: "sk-ant-real-key-from-disk".to_string(),
+                ..Default::default()
+            },
+            ..Default::default()
+        };
+        let config_path = tmp.path().join("ingestion_config.json");
+        std::fs::write(&config_path, serde_json::to_string(&saved).unwrap()).unwrap();
+
+        let original_env = std::env::var("ANTHROPIC_API_KEY").ok();
+        let config_dir =
+            web::Data::new(crate::server::startup::ConfigDir(tmp.path().to_path_buf()));
+        let app = test::init_service(
+            App::new()
+                .app_data(config_dir.clone())
+                .route("/config", web::get().to(get_ingestion_config)),
+        )
+        .await;
+
+        for env_state in [None, Some(""), Some("sk-ant-from-env")] {
+            match env_state {
+                None => std::env::remove_var("ANTHROPIC_API_KEY"),
+                Some(v) => std::env::set_var("ANTHROPIC_API_KEY", v),
+            }
+            let req = test::TestRequest::get().uri("/config").to_request();
+            let resp = test::call_service(&app, req).await;
+            assert!(resp.status().is_success());
+            let body: serde_json::Value = test::read_body_json(resp).await;
+            assert_eq!(
+                body["anthropic"]["api_key"], "***configured***",
+                "expected redacted token for env_state={env_state:?}, got: {body}"
+            );
+        }
+
+        match original_env {
+            Some(v) => std::env::set_var("ANTHROPIC_API_KEY", v),
+            None => std::env::remove_var("ANTHROPIC_API_KEY"),
+        }
+    }
+
     #[tokio::test]
     async fn test_batch_folder_request_serialization() {
         let request = BatchFolderRequest {
