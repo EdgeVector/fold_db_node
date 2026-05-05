@@ -7,7 +7,7 @@ use std::path::{Path, PathBuf};
 ///
 /// Returns `Err` when the path starts with `~` but the `HOME` environment
 /// variable is not set.
-fn expand_tilde(raw: &str) -> Result<PathBuf, String> {
+pub(crate) fn expand_tilde(raw: &str) -> Result<PathBuf, String> {
     if raw == "~" || raw.starts_with("~/") {
         match std::env::var("HOME") {
             Ok(home) => {
