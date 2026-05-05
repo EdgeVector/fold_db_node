@@ -14,6 +14,14 @@ function HeaderProgress() {
   const [batchInfo, setBatchInfo] = useState<BatchStatusResponse | null>(null)
   const [isLoading, setIsLoading] = useState(true)
   const dismissTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null)
+  const prevBatchStatusRef = useRef<BatchStatusResponse['status'] | null>(null)
+  // IDs of in-flight per-file ingestion jobs that were live when the batch
+  // hit a terminal state. The Smart Folder batch can flip to Completed
+  // server-side while individual `IngestionProgress` rows still report
+  // `is_complete=false` (e.g. spend-limit pause, dropped task, slow cleanup).
+  // Without dismissing them, the jobs indicator below would render
+  // "ingesting X%" indefinitely after the batch ends.
+  const dismissedJobIdsRef = useRef<Set<string>>(new Set())
 
   useEffect(() => {
     return () => { if (dismissTimeoutRef.current) clearTimeout(dismissTimeoutRef.current) }
@@ -36,16 +44,18 @@ function HeaderProgress() {
 
       const results = await Promise.allSettled(promises)
 
+      let progressData: ProgressJob[] = []
       if (results[0].status === 'fulfilled') {
         const response = results[0].value as { data?: ProgressJob[] | { progress?: ProgressJob[] }; progress?: ProgressJob[] }
         const data = response.data
-        const progressData =
+        const raw =
           (data && typeof data === 'object' && !Array.isArray(data) ? data.progress : undefined) ??
           (Array.isArray(data) ? data : undefined) ??
           response.progress ??
           []
-        if (Array.isArray(progressData)) nextJobs = progressData
+        if (Array.isArray(raw)) progressData = raw
       }
+      nextJobs = progressData
       setJobs(nextJobs)
 
       if (results[1].status === 'fulfilled') {
@@ -56,18 +66,47 @@ function HeaderProgress() {
       if (results.length > 2 && results[2].status === 'fulfilled') {
         const batchResp = results[2].value as { success?: boolean; data?: BatchStatusResponse }
         if (batchResp.success && batchResp.data) {
-          nextBatch = batchResp.data
-          setBatchInfo(nextBatch)
           const s = batchResp.data.status
-          if (s === 'Completed' || s === 'Cancelled' || s === 'Failed') {
-            if (dismissTimeoutRef.current) clearTimeout(dismissTimeoutRef.current)
-            dismissTimeoutRef.current = setTimeout(() => setBatchInfo(null), 5000)
+          const wasActive =
+            prevBatchStatusRef.current === 'Running' ||
+            prevBatchStatusRef.current === 'Paused'
+          const isTerminal = s === 'Completed' || s === 'Cancelled' || s === 'Failed'
+          if (s === 'Running' && !wasActive) {
+            // New batch — start with a clean dismissal set.
+            dismissedJobIdsRef.current = new Set()
           }
+          if (wasActive && isTerminal) {
+            // Snapshot any still-running per-file jobs and dismiss them so
+            // the jobs indicator doesn't render their stale percentages.
+            for (const j of progressData) {
+              if (!j.is_complete && !j.is_failed) dismissedJobIdsRef.current.add(j.id)
+            }
+            // useBatchMonitor normally clears these, but it only runs while
+            // SmartFolderTab is mounted — defend against a navigated-away user.
+            localStorage.removeItem('activeBatchId')
+            localStorage.removeItem('activeBatchStatus')
+            if (dismissTimeoutRef.current) clearTimeout(dismissTimeoutRef.current)
+            setBatchInfo(null)
+            // Leave nextBatch as null so usePolling can drop to the idle interval.
+          } else {
+            nextBatch = batchResp.data
+            setBatchInfo(nextBatch)
+          }
+          prevBatchStatusRef.current = s
         } else {
           setBatchInfo(null)
+          prevBatchStatusRef.current = null
         }
+      } else if (results.length > 2) {
+        // Batch fetch was issued but rejected (404 after server GC, network).
+        // Clear so the chip doesn't stick on the last-seen Running snapshot.
+        setBatchInfo(null)
+        localStorage.removeItem('activeBatchId')
+        localStorage.removeItem('activeBatchStatus')
+        prevBatchStatusRef.current = null
       } else if (!activeBatchId) {
         setBatchInfo(null)
+        prevBatchStatusRef.current = null
       }
     } catch (error) {
       console.error('Failed to fetch progress:', error)
@@ -77,7 +116,10 @@ function HeaderProgress() {
       setIsLoading(false)
     }
 
-    const hasActiveJobs = nextJobs.some(j => !j.is_complete && !j.is_failed)
+    const dismissed = dismissedJobIdsRef.current
+    const hasActiveJobs = nextJobs.some(
+      j => !j.is_complete && !j.is_failed && !dismissed.has(j.id),
+    )
     const isIndexingActive = nextIndexing?.state === 'Indexing'
     const hasActiveBatch = !!nextBatch && (nextBatch.status === 'Running' || nextBatch.status === 'Paused')
     const idle = !hasActiveJobs && !isIndexingActive && !hasActiveBatch
@@ -92,7 +134,9 @@ function HeaderProgress() {
     maxFailures: Number.POSITIVE_INFINITY,
   })
 
-  const activeJobs = jobs.filter(j => !j.is_complete && !j.is_failed)
+  const activeJobs = jobs.filter(
+    j => !j.is_complete && !j.is_failed && !dismissedJobIdsRef.current.has(j.id),
+  )
   const isIndexingActive = indexingStatus?.state === 'Indexing'
   const hasBatch = batchInfo && (batchInfo.status === 'Running' || batchInfo.status === 'Paused')
 
