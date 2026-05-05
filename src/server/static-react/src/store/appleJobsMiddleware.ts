@@ -1,6 +1,7 @@
 import {
   createListenerMiddleware,
   type Action,
+  type ForkedTaskAPI,
   type ForkedTask,
 } from "@reduxjs/toolkit";
 import { ingestionClient } from "../api/clients";
@@ -39,6 +40,17 @@ const startAppleListening = appleJobsListener.startListening.withTypes<
 // survives component unmounts; nothing in the React tree owns a timer.
 const activeForks = new Map<AppleSourceKey, ForkedTask<void>>();
 
+// Last dispatched (progress, message) per key. Skipping a no-op
+// `appleJobProgressed` here avoids waking every selector subscribed to
+// the ingestion slice — the bulk of the SPA freeze during a 5-source
+// import was 5 redundant React commits per 2s window once the backend
+// settled into its slow phases (HEIC convert, schema embedding) where
+// progress and message rarely change between ticks.
+const lastDispatched = new Map<
+  AppleSourceKey,
+  { progress: number; message: string }
+>();
+
 const isCancelActionForKey = (action: Action, key: AppleSourceKey): boolean => {
   if (
     !appleJobReset.match(action) &&
@@ -48,6 +60,34 @@ const isCancelActionForKey = (action: Action, key: AppleSourceKey): boolean => {
     return false;
   }
   return action.payload.key === key;
+};
+
+// Wait until the document becomes visible. Used to gate the next poll
+// while the user is on another tab so we don't fire `getJobProgress`
+// every 2s into the void. Resolves immediately if not in a browser, if
+// already visible, or if the fork's signal aborts.
+const waitUntilVisible = (forkApi: ForkedTaskAPI): Promise<void> => {
+  if (typeof document === "undefined" || !document.hidden) {
+    return Promise.resolve();
+  }
+  return new Promise<void>((resolve) => {
+    const onVisibility = () => {
+      if (!document.hidden) {
+        cleanup();
+        resolve();
+      }
+    };
+    const onAbort = () => {
+      cleanup();
+      resolve();
+    };
+    const cleanup = () => {
+      document.removeEventListener("visibilitychange", onVisibility);
+      forkApi.signal.removeEventListener("abort", onAbort);
+    };
+    document.addEventListener("visibilitychange", onVisibility);
+    forkApi.signal.addEventListener("abort", onAbort);
+  });
 };
 
 startAppleListening({
@@ -60,10 +100,13 @@ startAppleListening({
       prior.cancel();
       activeForks.delete(key);
     }
+    lastDispatched.delete(key);
 
     const task = listenerApi.fork(async (forkApi) => {
       while (true) {
         await forkApi.delay(POLL_INTERVAL_MS);
+        await waitUntilVisible(forkApi);
+        if (forkApi.signal.aborted) return;
         const resp = await ingestionClient.getJobProgress(progressId);
         if (!resp.success || !resp.data) {
           continue;
@@ -95,6 +138,11 @@ startAppleListening({
           );
           return;
         }
+        const last = lastDispatched.get(key);
+        if (last && last.progress === progress && last.message === message) {
+          continue;
+        }
+        lastDispatched.set(key, { progress, message });
         listenerApi.dispatch(appleJobProgressed({ key, progress, message }));
       }
     });
@@ -113,6 +161,7 @@ startAppleListening({
       if (activeForks.get(key) === task) {
         activeForks.delete(key);
       }
+      lastDispatched.delete(key);
     }
   },
 });

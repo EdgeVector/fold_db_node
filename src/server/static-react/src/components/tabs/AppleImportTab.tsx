@@ -1,4 +1,4 @@
-import { useState, useEffect, useCallback } from 'react'
+import { memo, useState, useEffect, useCallback, useMemo } from 'react'
 import type { ChangeEvent, ComponentType, SVGProps } from 'react'
 import {
   ArrowPathIcon,
@@ -330,7 +330,7 @@ interface SourceCardProps {
   onPhotosLimitChange: (limit: number) => void
 }
 
-function SourceCard({ source, enabled, onToggle, status, progress, message, result, photosLimit, onPhotosLimitChange }: SourceCardProps) {
+const SourceCard = memo(function SourceCard({ source, enabled, onToggle, status, progress, message, result, photosLimit, onPhotosLimitChange }: SourceCardProps) {
   const isRunning = status === 'running'
   const isDone = status === 'done'
   const isError = status === 'error'
@@ -400,7 +400,7 @@ function SourceCard({ source, enabled, onToggle, status, progress, message, resu
       )}
     </div>
   )
-}
+})
 
 interface ImportFnResp {
   success: boolean
@@ -487,9 +487,20 @@ export default function AppleImportTab({ onResult: _onResult }: AppleImportTabPr
 
   const imports: Record<keyof EnabledSources, ReturnType<typeof useSourceImport>> = { notes, photos, calendar, reminders, contacts }
 
-  const toggleSource = (key: keyof EnabledSources) => (val: boolean) => {
-    setEnabled((prev) => ({ ...prev, [key]: val }))
-  }
+  // Stable per-source toggle callbacks. A fresh callback every render
+  // would defeat React.memo on SourceCard — every card would re-render
+  // on every progress tick because `onToggle` always changed identity.
+  const toggleHandlers = useMemo<Record<keyof EnabledSources, (val: boolean) => void>>(() => ({
+    notes: (val) => setEnabled((prev) => ({ ...prev, notes: val })),
+    photos: (val) => setEnabled((prev) => ({ ...prev, photos: val })),
+    calendar: (val) => setEnabled((prev) => ({ ...prev, calendar: val })),
+    reminders: (val) => setEnabled((prev) => ({ ...prev, reminders: val })),
+    contacts: (val) => setEnabled((prev) => ({ ...prev, contacts: val })),
+  }), [])
+
+  const handlePhotosLimitChange = useCallback((limit: number) => {
+    setPhotosLimit(limit)
+  }, [])
 
   const anyRunning = SOURCES.some((s) => imports[s.key].status === 'running')
   const enabledSources = SOURCES.filter((s) => enabled[s.key] && !s.comingSoon)
@@ -559,13 +570,13 @@ export default function AppleImportTab({ onResult: _onResult }: AppleImportTabPr
             key={source.key}
             source={source}
             enabled={enabled[source.key]}
-            onToggle={toggleSource(source.key)}
+            onToggle={toggleHandlers[source.key]}
             status={imports[source.key].status}
             progress={imports[source.key].progress}
             message={imports[source.key].message}
             result={imports[source.key].result}
             photosLimit={photosLimit}
-            onPhotosLimitChange={setPhotosLimit}
+            onPhotosLimitChange={handlePhotosLimitChange}
           />
         ))}
       </div>

@@ -252,6 +252,51 @@ describe("appleJobsMiddleware", () => {
     }
   });
 
+  it("skips redundant appleJobProgressed dispatches when progress and message are unchanged", async () => {
+    mockedGetJobProgress.mockResolvedValue(
+      ok({
+        progress_percentage: 30,
+        status_message: "still working",
+        is_complete: false,
+      }),
+    );
+
+    const store = buildStore();
+    const observed: string[] = [];
+    store.subscribe(() => {
+      observed.push(getJob(store, "notes").message);
+    });
+    store.dispatch(appleJobStarted({ key: "notes", progressId: "job-dedup" }));
+
+    // First tick: dispatches the new (30, "still working").
+    await ADVANCE(2000);
+    expect(getJob(store, "notes").progress).toBe(30);
+    const subscriberFiresAfterFirstTick = observed.length;
+
+    // Subsequent ticks return identical progress/message — nothing new
+    // for the UI to render. The middleware must NOT re-dispatch
+    // appleJobProgressed and so the store subscriber must not fire
+    // (state identity is unchanged).
+    await ADVANCE(2000);
+    await ADVANCE(2000);
+    await ADVANCE(2000);
+
+    expect(getJob(store, "notes").progress).toBe(30);
+    expect(observed.length).toBe(subscriberFiresAfterFirstTick);
+
+    // Backend finally produces a real change → dispatch must resume.
+    mockedGetJobProgress.mockResolvedValue(
+      ok({
+        progress_percentage: 60,
+        status_message: "more done",
+        is_complete: false,
+      }),
+    );
+    await ADVANCE(2000);
+    expect(getJob(store, "notes").progress).toBe(60);
+    expect(observed.length).toBeGreaterThan(subscriberFiresAfterFirstTick);
+  });
+
   it("treats success:false as transient and keeps polling without dispatching failure", async () => {
     mockedGetJobProgress
       .mockResolvedValueOnce(transientFailure())
