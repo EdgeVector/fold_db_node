@@ -487,9 +487,11 @@ impl IngestionConfig {
     /// Load config from the saved file and environment variables.
     ///
     /// Precedence (highest to lowest):
-    /// - `ANTHROPIC_API_KEY` env var (secrets never live in files)
-    /// - Saved config file at `config_dir/ingestion_config.json` (UI choices)
-    /// - Other env vars (only when no saved config)
+    /// - Saved config file at `config_dir/ingestion_config.json` (UI choices,
+    ///   including `anthropic.api_key`)
+    /// - Env vars — used as bootstrap fill-ins when the saved file is missing
+    ///   the value (`ANTHROPIC_API_KEY` fills in only when the saved key is
+    ///   empty; other env vars only apply when there's no saved config at all)
     /// - Compiled-in defaults
     ///
     /// Returns an error if the config file exists but cannot be read or parsed.
@@ -526,13 +528,20 @@ impl IngestionConfig {
             true
         };
 
-        // API keys: env vars always win — secrets shouldn't live in config files.
-        // Empty strings don't count as "set" — a parent process inheriting an
-        // unset-but-exported `ANTHROPIC_API_KEY=` would otherwise nuke the
-        // user's saved key on every daemon restart.
-        if let Ok(key) = env::var("ANTHROPIC_API_KEY") {
-            if !key.is_empty() {
-                config.anthropic.api_key = key;
+        // ANTHROPIC_API_KEY: the saved file is canonical (UI is the source of
+        // truth for the key), so env only fills in when the saved key is
+        // empty. This preserves CI / docker bootstrap, where the file starts
+        // empty and the env var seeds the first run, while preventing a stale
+        // `ANTHROPIC_API_KEY` exported by the launcher / shell rc from
+        // silently reverting a key the user just typed in the UI on every
+        // daemon restart. Empty strings still don't count as "set" so a
+        // parent shell exporting `ANTHROPIC_API_KEY=` can't clobber even an
+        // empty saved value with the same empty value.
+        if config.anthropic.api_key.is_empty() {
+            if let Ok(key) = env::var("ANTHROPIC_API_KEY") {
+                if !key.is_empty() {
+                    config.anthropic.api_key = key;
+                }
             }
         }
 
@@ -1349,10 +1358,37 @@ mod tests {
     }
 
     #[test]
+    fn nonempty_anthropic_api_key_env_does_not_override_saved_key() {
+        // Headline: the saved file is canonical, so a stale `ANTHROPIC_API_KEY`
+        // exported by the launcher / shell rc must not silently revert a key
+        // the user just typed in the UI on the next daemon restart.
+        let _guard = env_lock();
+        let tmp = tempfile::tempdir().expect("tempdir");
+
+        let saved = SavedConfig {
+            provider: AIProvider::Anthropic,
+            anthropic: AnthropicConfig {
+                api_key: "sk-ant-real-saved-key".to_string(),
+                ..AnthropicConfig::default()
+            },
+            ..SavedConfig::default()
+        };
+        IngestionConfig::save_to_file(tmp.path(), &saved).expect("save");
+
+        std::env::set_var("ANTHROPIC_API_KEY", "sk-ant-stale-env-value");
+        let loaded = IngestionConfig::load(tmp.path()).expect("load");
+        std::env::remove_var("ANTHROPIC_API_KEY");
+
+        assert_eq!(
+            loaded.anthropic.api_key, "sk-ant-real-saved-key",
+            "saved file must win over a non-empty ANTHROPIC_API_KEY env var"
+        );
+    }
+
+    #[test]
     fn empty_anthropic_api_key_env_does_not_clobber_saved_key() {
-        // Regression: a parent shell exporting `ANTHROPIC_API_KEY=` (set but
-        // empty) used to wipe the user's saved key on every daemon restart,
-        // because `env::var` returns Ok("") for set-but-empty.
+        // Companion: a parent shell exporting `ANTHROPIC_API_KEY=` (set but
+        // empty) likewise can't wipe the user's saved key.
         let _guard = env_lock();
         let tmp = tempfile::tempdir().expect("tempdir");
 
@@ -1377,27 +1413,75 @@ mod tests {
     }
 
     #[test]
-    fn nonempty_anthropic_api_key_env_still_overrides_saved_key() {
-        // Companion to the regression test above: confirm we didn't break the
-        // documented "env vars always win" path for actual values.
+    fn anthropic_api_key_env_fills_in_when_saved_key_empty() {
+        // Bootstrap path: CI / docker / fresh-install runs where the saved
+        // file is absent (or has an empty key) still let `ANTHROPIC_API_KEY`
+        // seed the first run.
         let _guard = env_lock();
         let tmp = tempfile::tempdir().expect("tempdir");
 
         let saved = SavedConfig {
             provider: AIProvider::Anthropic,
             anthropic: AnthropicConfig {
-                api_key: "sk-ant-saved".to_string(),
+                api_key: String::new(),
                 ..AnthropicConfig::default()
             },
             ..SavedConfig::default()
         };
         IngestionConfig::save_to_file(tmp.path(), &saved).expect("save");
 
-        std::env::set_var("ANTHROPIC_API_KEY", "sk-ant-from-env");
+        std::env::set_var("ANTHROPIC_API_KEY", "sk-ant-bootstrap");
         let loaded = IngestionConfig::load(tmp.path()).expect("load");
         std::env::remove_var("ANTHROPIC_API_KEY");
 
-        assert_eq!(loaded.anthropic.api_key, "sk-ant-from-env");
+        assert_eq!(loaded.anthropic.api_key, "sk-ant-bootstrap");
+    }
+
+    #[test]
+    fn anthropic_api_key_unset_env_with_empty_saved_yields_empty() {
+        // No saved key, no env → result is empty; downstream validation
+        // catches the missing-key case.
+        let _guard = env_lock();
+        let tmp = tempfile::tempdir().expect("tempdir");
+
+        let saved = SavedConfig {
+            provider: AIProvider::Anthropic,
+            anthropic: AnthropicConfig {
+                api_key: String::new(),
+                ..AnthropicConfig::default()
+            },
+            ..SavedConfig::default()
+        };
+        IngestionConfig::save_to_file(tmp.path(), &saved).expect("save");
+
+        std::env::remove_var("ANTHROPIC_API_KEY");
+        let loaded = IngestionConfig::load(tmp.path()).expect("load");
+
+        assert_eq!(loaded.anthropic.api_key, "");
+    }
+
+    #[test]
+    fn anthropic_api_key_empty_env_with_empty_saved_yields_empty() {
+        // Set-but-empty env behaves like unset (the empty-string filter still
+        // applies, so we don't store "" as a "real" value).
+        let _guard = env_lock();
+        let tmp = tempfile::tempdir().expect("tempdir");
+
+        let saved = SavedConfig {
+            provider: AIProvider::Anthropic,
+            anthropic: AnthropicConfig {
+                api_key: String::new(),
+                ..AnthropicConfig::default()
+            },
+            ..SavedConfig::default()
+        };
+        IngestionConfig::save_to_file(tmp.path(), &saved).expect("save");
+
+        std::env::set_var("ANTHROPIC_API_KEY", "");
+        let loaded = IngestionConfig::load(tmp.path()).expect("load");
+        std::env::remove_var("ANTHROPIC_API_KEY");
+
+        assert_eq!(loaded.anthropic.api_key, "");
     }
 
     #[test]
