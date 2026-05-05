@@ -221,10 +221,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     //
     // Phase 3 / T5 wires WEB here so `/api/logs/stream` can subscribe
     // to a tracing-native broadcast. RING handles `/api/logs`,
-    // RELOAD handles `PUT /api/logs/level`. Legacy
-    // `LoggingSystem::init_with_fallback` still runs inside
-    // `FoldHttpServer::new` so call sites that haven't migrated to
-    // `tracing::*` keep emitting through the bridge.
+    // RELOAD handles `PUT /api/logs/level`.
     let obs_guard =
         init_node_with_web("fold_db_node").map_err(|e| -> Box<dyn std::error::Error> {
             format!("Failed to initialize observability stack: {}", e).into()
