@@ -45,13 +45,13 @@ const idleAppleJobs = (): Record<AppleSourceKey, AppleJob> =>
 function createStore(preloadedIngestion = {}) {
   return configureStore({
     reducer: { ingestion: ingestionReducer },
-    preloadedState: { ingestion: { config: null, status: null, loading: false, error: null, saving: false, saveError: null, appleJobs: idleAppleJobs(), ...preloadedIngestion } },
+    preloadedState: { ingestion: { config: null, status: null, loading: false, error: null, saving: false, saveError: null, appleJobs: idleAppleJobs(), appleSyncConfig: null, appleSyncConfigLoaded: false, ...preloadedIngestion } },
   });
 }
 
 // Helper to build a RootState-shaped object for selector tests
 function stateWith(config: IngestionConfig | null): Pick<RootState, "ingestion"> {
-  return { ingestion: { config, status: null, loading: false, error: null, saving: false, saveError: null, appleJobs: idleAppleJobs() } } as Pick<RootState, "ingestion">;
+  return { ingestion: { config, status: null, loading: false, error: null, saving: false, saveError: null, appleJobs: idleAppleJobs(), appleSyncConfig: null, appleSyncConfigLoaded: false } } as Pick<RootState, "ingestion">;
 }
 
 const anthropicConfig: IngestionConfig = {
@@ -293,6 +293,8 @@ describe("ingestionSlice", () => {
             saving: false,
             saveError: null,
             appleJobs: idleAppleJobs(),
+            appleSyncConfig: null,
+            appleSyncConfigLoaded: false,
           },
         }) as Pick<RootState, "ingestion">;
 

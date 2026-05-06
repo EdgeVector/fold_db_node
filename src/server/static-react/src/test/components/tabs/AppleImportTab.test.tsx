@@ -28,6 +28,7 @@ const mockAppleImportCalendar = vi.fn()
 const mockAppleImportContacts = vi.fn()
 const mockGetJobProgress = vi.fn()
 const mockGetAppleSyncConfig = vi.fn()
+const mockUpdateAppleSyncConfig = vi.fn()
 
 vi.mock('../../../api/clients/ingestionClient', () => ({
   default: {
@@ -39,16 +40,35 @@ vi.mock('../../../api/clients/ingestionClient', () => ({
     appleImportContacts: (...args: unknown[]) => mockAppleImportContacts(...args),
     getJobProgress: (...args: unknown[]) => mockGetJobProgress(...args),
     getAppleSyncConfig: (...args: unknown[]) => mockGetAppleSyncConfig(...args),
+    updateAppleSyncConfig: (...args: unknown[]) => mockUpdateAppleSyncConfig(...args),
   },
 }))
 
-// The middleware imports from `../../api/clients`, so mock that path too —
-// otherwise it would fall back to the real network client during tests.
+// The middleware AND ingestionSlice's thunks import from `../../api/clients`,
+// so mock that path too — otherwise patchAppleSyncConfig (used by the
+// debounced toggle path) would fall back to the real network client.
 vi.mock('../../../api/clients', () => ({
   ingestionClient: {
     getJobProgress: (...args: unknown[]) => mockGetJobProgress(...args),
+    getAppleSyncConfig: (...args: unknown[]) => mockGetAppleSyncConfig(...args),
+    updateAppleSyncConfig: (...args: unknown[]) => mockUpdateAppleSyncConfig(...args),
   },
 }))
+
+// Realistic AppleSyncConfig mirroring the backend's default. Tests that need
+// to assert on toggle/photos-limit behaviour use this so the slice has a
+// canonical config to mutate — without it, `appleSyncConfigOptimisticPatch`
+// no-ops on null state and toggles silently fail to flip.
+const defaultSyncConfig = {
+  enabled: false,
+  schedule: 'daily' as const,
+  sources: { notes: true, photos: true, calendar: true, reminders: true, contacts: true },
+  photos_limit: 50,
+  last_sync: null,
+  last_error: null,
+  last_error_at: null,
+  next_sync: null,
+}
 
 function buildStore() {
   return configureStore({
@@ -72,8 +92,15 @@ describe('AppleImportTab', () => {
   beforeEach(() => {
     vi.clearAllMocks()
     vi.useFakeTimers()
-    // AutoSyncSettings calls this on mount — return null config so it renders nothing
-    mockGetAppleSyncConfig.mockResolvedValue({ success: true, data: null })
+    // AppleImportTab fetches the sync config on mount. Default to a real
+    // config so the slice has a canonical shape — the optimistic patch
+    // reducer no-ops on null, which would mask toggle behaviour. Tests
+    // that need a different shape can override per-test.
+    mockGetAppleSyncConfig.mockResolvedValue({ success: true, data: defaultSyncConfig })
+    mockUpdateAppleSyncConfig.mockImplementation(async (update: Record<string, unknown>) => ({
+      success: true,
+      data: { ...defaultSyncConfig, ...update },
+    }))
   })
 
   afterEach(() => {
@@ -223,6 +250,98 @@ describe('AppleImportTab', () => {
 
     await waitFor(() => {
       expect(mockAppleImportPhotos).toHaveBeenCalledWith(null, 100)
+    })
+  })
+
+  // Repro for the dogfood-2026-05-06 observation that Round-2 closes:
+  // toggle Contacts off, kick off Import All, navigate to Browse, navigate
+  // back — Contacts toggle was back to ON because the source toggles lived
+  // in component-local useState. After this fix the toggles read from the
+  // shared slice (#5 lifted them into appleSyncConfig), so Contacts stays
+  // off across the unmount/remount.
+  it('source toggles persist across AppleImportTab unmount/remount via the shared slice', async () => {
+    mockGetAppleImportStatus.mockResolvedValue({ success: true, data: { available: true } })
+    // updateAppleSyncConfig should be called once when the user toggles
+    // Contacts off (after the debounce window) — return a config with
+    // contacts: false so the slice reflects the canonical backend state.
+    const contactsOffConfig = { ...defaultSyncConfig, sources: { ...defaultSyncConfig.sources, contacts: false } }
+    mockUpdateAppleSyncConfig.mockResolvedValue({ success: true, data: contactsOffConfig })
+
+    const store = buildStore()
+    const first = render(
+      <Provider store={store}>
+        <AppleImportTab onResult={vi.fn()} />
+      </Provider>,
+    )
+
+    // Wait for the sync-config fetch to land so the toggles un-gate.
+    await waitFor(() => {
+      expect(screen.getByText('Import All (5)')).toBeTruthy()
+    })
+
+    // Toggle Contacts (last source in SOURCES order: Contacts is index 4).
+    const toggles = screen.getAllByRole('switch')
+    fireEvent.click(toggles[4])
+
+    // Optimistic patch fires synchronously — Contacts excluded from the count.
+    expect(screen.getByText('Import All (4)')).toBeTruthy()
+    expect(store.getState().ingestion.appleSyncConfig?.sources.contacts).toBe(false)
+
+    // Navigate away (unmount) BEFORE the debounce window closes — this is
+    // exactly the dogfood scenario, and the slice state has to survive.
+    first.unmount()
+
+    // Slice still has contacts:false even though the component is gone.
+    expect(store.getState().ingestion.appleSyncConfig?.sources.contacts).toBe(false)
+
+    // Navigate back: remount into the same store. The toggle reflects the
+    // slice, not a fresh useState default — Contacts STAYS off.
+    render(
+      <Provider store={store}>
+        <AppleImportTab onResult={vi.fn()} />
+      </Provider>,
+    )
+    await waitFor(() => {
+      expect(screen.getByText('Import All (4)')).toBeTruthy()
+    })
+
+    // The slice already has the config loaded — getAppleSyncConfig should
+    // NOT refetch on remount (the useEffect gate is `!syncConfigLoaded`).
+    expect(mockGetAppleSyncConfig).toHaveBeenCalledTimes(1)
+  })
+
+  it('photos limit edits persist across AppleImportTab unmount/remount', async () => {
+    mockGetAppleImportStatus.mockResolvedValue({ success: true, data: { available: true } })
+    mockUpdateAppleSyncConfig.mockResolvedValue({
+      success: true,
+      data: { ...defaultSyncConfig, photos_limit: 250 },
+    })
+
+    const store = buildStore()
+    const first = render(
+      <Provider store={store}>
+        <AppleImportTab onResult={vi.fn()} />
+      </Provider>,
+    )
+
+    await waitFor(() => {
+      expect(screen.getByDisplayValue('50')).toBeTruthy()
+    })
+
+    fireEvent.change(screen.getByDisplayValue('50'), { target: { value: '250' } })
+    expect(store.getState().ingestion.appleSyncConfig?.photos_limit).toBe(250)
+
+    first.unmount()
+    expect(store.getState().ingestion.appleSyncConfig?.photos_limit).toBe(250)
+
+    render(
+      <Provider store={store}>
+        <AppleImportTab onResult={vi.fn()} />
+      </Provider>,
+    )
+    await waitFor(() => {
+      // Limit input now shows the persisted value, not the 50 default.
+      expect(screen.getByDisplayValue('250')).toBeTruthy()
     })
   })
 

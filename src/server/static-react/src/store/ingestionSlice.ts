@@ -1,10 +1,18 @@
-import { createSlice, createAsyncThunk, type PayloadAction } from "@reduxjs/toolkit";
+import {
+  createSlice,
+  createAsyncThunk,
+  type Action,
+  type PayloadAction,
+  type ThunkAction,
+} from "@reduxjs/toolkit";
 import { ingestionClient } from "../api/clients";
 import type {
+  AppleSyncConfig,
+  EnabledSources,
   IngestionConfig,
   IngestionStatus,
 } from "../api/clients/ingestionClient";
-import type { RootState } from "./store";
+import type { AppDispatch, RootState } from "./store";
 
 export type AppleSourceKey =
   | "notes"
@@ -66,6 +74,12 @@ interface IngestionState {
   saving: boolean;
   saveError: string | null;
   appleJobs: Record<AppleSourceKey, AppleJob>;
+  // Backend-authoritative AppleSyncConfig. Both the Auto-Sync settings and
+  // the per-source Import-All cards read `sources` and `photos_limit` from
+  // here so the two surfaces stay in lockstep — toggling Notes off in one
+  // place reflects in the other. `null` until the first fetch resolves.
+  appleSyncConfig: AppleSyncConfig | null;
+  appleSyncConfigLoaded: boolean;
 }
 
 const initialState: IngestionState = {
@@ -76,6 +90,8 @@ const initialState: IngestionState = {
   saving: false,
   saveError: null,
   appleJobs: makeInitialAppleJobs(),
+  appleSyncConfig: null,
+  appleSyncConfigLoaded: false,
 };
 
 export const fetchIngestionConfig = createAsyncThunk(
@@ -196,6 +212,130 @@ export const reconcileAppleJobs = createAsyncThunk(
   },
 );
 
+export const fetchAppleSyncConfig = createAsyncThunk(
+  "ingestion/fetchAppleSyncConfig",
+  async (_, { rejectWithValue }) => {
+    try {
+      const response = await ingestionClient.getAppleSyncConfig();
+      if (response.success && response.data) {
+        return response.data;
+      }
+      return rejectWithValue("Failed to fetch Apple sync config");
+    } catch (error) {
+      return rejectWithValue(
+        error instanceof Error ? error.message : String(error),
+      );
+    }
+  },
+);
+
+export const patchAppleSyncConfig = createAsyncThunk(
+  "ingestion/patchAppleSyncConfig",
+  async (update: Partial<AppleSyncConfig>, { rejectWithValue }) => {
+    try {
+      const response = await ingestionClient.updateAppleSyncConfig(update);
+      if (response.success && response.data) {
+        return response.data;
+      }
+      return rejectWithValue("Failed to update Apple sync config");
+    } catch (error) {
+      return rejectWithValue(
+        error instanceof Error ? error.message : String(error),
+      );
+    }
+  },
+);
+
+// AppleSyncConfig patch type — like Partial<AppleSyncConfig> except
+// `sources` is itself partial, so a single-source toggle is expressible
+// as `{ sources: { notes: false } }` instead of forcing the caller to
+// re-spread the whole EnabledSources object every time.
+export type AppleSyncConfigPatch =
+  Omit<Partial<AppleSyncConfig>, "sources"> & {
+    sources?: Partial<EnabledSources>;
+  };
+
+// Debounce wrapper around `patchAppleSyncConfig`. The reducer applies the
+// optimistic patch synchronously so the toggle UI flips on click; the API
+// call is deferred and coalesced so a flurry of toggles or photos-limit
+// keystrokes turns into a single PATCH carrying the merged delta. Without
+// this the photos-limit `<input type=number>` would PATCH on every digit.
+//
+// Why getState() instead of buffering the raw patches: two consecutive
+// toggles produce two partial-sources patches (`{notes:false}` then
+// `{photos:false}`). We need to send the BACKEND a complete EnabledSources
+// object (the route at apple_import.rs replaces the whole `sources` field
+// — it doesn't merge). Reading getState() at flush time gives us the
+// canonical post-optimistic state, so we emit a faithful snapshot of
+// every dirty top-level field instead of trying to merge partial patches.
+const APPLE_SYNC_DEBOUNCE_MS = 500;
+let appleSyncDebounceTimer: ReturnType<typeof setTimeout> | null = null;
+const appleSyncDirtyFields = new Set<keyof AppleSyncConfig>();
+
+// Thunks below are typed with ThunkAction (rather than annotating dispatch as
+// `AppDispatch` directly) so they cross store boundaries cleanly. Test stores
+// built with bare `combineReducers` have a Dispatch that doesn't carry the
+// thunk overloads of the production AppDispatch — the explicit ThunkAction
+// return type makes the type compatible with both.
+type AppleSyncThunk = ThunkAction<void, RootState, unknown, Action>;
+
+function flushDirtyFields(dispatch: AppDispatch, getState: () => RootState) {
+  if (appleSyncDirtyFields.size === 0) return;
+  const cfg = getState().ingestion.appleSyncConfig;
+  if (!cfg) {
+    appleSyncDirtyFields.clear();
+    return;
+  }
+  const payload: Partial<AppleSyncConfig> = {};
+  for (const field of appleSyncDirtyFields) {
+    // Field-by-field copy keeps the type discriminations sound; a generic
+    // `payload[field] = cfg[field]` trips TS variance.
+    if (field === "enabled") payload.enabled = cfg.enabled;
+    else if (field === "schedule") payload.schedule = cfg.schedule;
+    else if (field === "sources") payload.sources = cfg.sources;
+    else if (field === "photos_limit") payload.photos_limit = cfg.photos_limit;
+    // last_sync / next_sync / last_error / last_error_at are sidecar
+    // fields the backend owns — we never PATCH them outbound, so skip.
+  }
+  appleSyncDirtyFields.clear();
+  if (Object.keys(payload).length > 0) {
+    dispatch(patchAppleSyncConfig(payload));
+  }
+}
+
+export const flushAppleSyncDebouncedPatch =
+  (): AppleSyncThunk => (dispatch, getState) => {
+    if (appleSyncDebounceTimer === null) return;
+    clearTimeout(appleSyncDebounceTimer);
+    appleSyncDebounceTimer = null;
+    flushDirtyFields(dispatch as AppDispatch, getState);
+  };
+
+const PATCHABLE_FIELDS: ReadonlyArray<keyof AppleSyncConfig> = [
+  "enabled",
+  "schedule",
+  "sources",
+  "photos_limit",
+];
+
+export const debouncedPatchAppleSyncConfig =
+  (patch: AppleSyncConfigPatch): AppleSyncThunk =>
+  (dispatch, getState) => {
+    dispatch(appleSyncConfigOptimisticPatch(patch));
+    for (const field of PATCHABLE_FIELDS) {
+      if (patch[field] !== undefined) {
+        appleSyncDirtyFields.add(field);
+      }
+    }
+    if (appleSyncDebounceTimer !== null) {
+      clearTimeout(appleSyncDebounceTimer);
+    }
+    appleSyncDebounceTimer = setTimeout(() => {
+      appleSyncDebounceTimer = null;
+      flushDirtyFields(dispatch as AppDispatch, getState);
+    }, APPLE_SYNC_DEBOUNCE_MS);
+  };
+
 export const saveIngestionConfig = createAsyncThunk(
   "ingestion/saveConfig",
   async (config: IngestionConfig, { dispatch, rejectWithValue }) => {
@@ -306,6 +446,37 @@ const ingestionSlice = createSlice({
     appleJobReset(state, action: PayloadAction<{ key: AppleSourceKey }>) {
       state.appleJobs[action.payload.key] = makeIdleAppleJob();
     },
+    /**
+     * Apply a partial AppleSyncConfig patch to local state without
+     * waiting for the backend. Drives the snappy toggle/limit feedback
+     * for the per-source cards and the Auto-Sync panel; the backend
+     * PATCH is fired (debounced) by `debouncedPatchAppleSyncConfig` and
+     * its `fulfilled` reducer reconciles to the canonical server state.
+     *
+     * No-op when no config has been loaded yet — without a base shape
+     * there is nothing to merge into. Toggles in that window are
+     * disabled by the UI, so this branch should not fire in practice.
+     */
+    appleSyncConfigOptimisticPatch(
+      state,
+      action: PayloadAction<AppleSyncConfigPatch>,
+    ) {
+      const cfg = state.appleSyncConfig;
+      if (!cfg) return;
+      const patch = action.payload;
+      if (patch.enabled !== undefined) cfg.enabled = patch.enabled;
+      if (patch.schedule !== undefined) cfg.schedule = patch.schedule;
+      if (patch.sources) cfg.sources = { ...cfg.sources, ...patch.sources };
+      if (patch.photos_limit !== undefined) {
+        cfg.photos_limit = patch.photos_limit;
+      }
+      if (patch.last_sync !== undefined) cfg.last_sync = patch.last_sync;
+      if (patch.next_sync !== undefined) cfg.next_sync = patch.next_sync;
+      if (patch.last_error !== undefined) cfg.last_error = patch.last_error;
+      if (patch.last_error_at !== undefined) {
+        cfg.last_error_at = patch.last_error_at;
+      }
+    },
   },
   extraReducers: (builder) => {
     builder
@@ -336,6 +507,17 @@ const ingestionSlice = createSlice({
       .addCase(saveIngestionConfig.rejected, (state, action) => {
         state.saving = false;
         state.saveError = (action.payload as string) ?? "Unknown error";
+      })
+      .addCase(fetchAppleSyncConfig.fulfilled, (state, action) => {
+        state.appleSyncConfig = action.payload;
+        state.appleSyncConfigLoaded = true;
+      })
+      .addCase(fetchAppleSyncConfig.rejected, (state) => {
+        state.appleSyncConfigLoaded = true;
+      })
+      .addCase(patchAppleSyncConfig.fulfilled, (state, action) => {
+        state.appleSyncConfig = action.payload;
+        state.appleSyncConfigLoaded = true;
       });
   },
 });
@@ -384,6 +566,26 @@ export const selectAppleJob =
   (state: RootState): AppleJob =>
     state.ingestion.appleJobs[key];
 
+export const selectAppleSyncConfig = (state: RootState): AppleSyncConfig | null =>
+  state.ingestion.appleSyncConfig;
+
+export const selectAppleSyncConfigLoaded = (state: RootState): boolean =>
+  state.ingestion.appleSyncConfigLoaded;
+
+const DEFAULT_ENABLED_SOURCES: EnabledSources = {
+  notes: true,
+  photos: true,
+  calendar: true,
+  reminders: true,
+  contacts: true,
+};
+
+export const selectAppleEnabledSources = (state: RootState): EnabledSources =>
+  state.ingestion.appleSyncConfig?.sources ?? DEFAULT_ENABLED_SOURCES;
+
+export const selectApplePhotosLimit = (state: RootState): number =>
+  state.ingestion.appleSyncConfig?.photos_limit ?? 50;
+
 export const {
   appleJobStarting,
   appleJobStarted,
@@ -391,6 +593,7 @@ export const {
   appleJobCompleted,
   appleJobFailed,
   appleJobReset,
+  appleSyncConfigOptimisticPatch,
 } = ingestionSlice.actions;
 
 export default ingestionSlice.reducer;
