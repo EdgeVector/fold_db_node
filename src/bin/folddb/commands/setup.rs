@@ -355,8 +355,8 @@ async fn post_bootstrap(
     body: &BootstrapRequestBody,
 ) -> Result<BootstrapResponseBody, CliError> {
     let url = format!("http://127.0.0.1:{}/api/setup/bootstrap", port);
-    // loopback: CLI -> local daemon /api/setup/bootstrap; trace propagation
-    // is unnecessary on this path (the server is the trace-root for setup).
+    // trace-egress: loopback — CLI → local daemon /api/setup/bootstrap; the
+    // server is the trace-root for setup, so no W3C propagation needed.
     let client = reqwest::Client::builder()
         .timeout(std::time::Duration::from_secs(60))
         .build()
