@@ -286,15 +286,24 @@ pub struct DatabaseStatusResponse {
     pub onboarding_complete: bool,
 }
 
-/// Get database initialization status
+/// Get database initialization status.
 ///
-/// Returns whether the database has been initialized and whether a saved config
-/// exists. For returning users with a saved config, this endpoint auto-initializes
-/// the node and returns `initialized: true`. For fresh installs, returns
-/// `initialized: false` so the frontend can show the setup screen.
+/// Pure observer — no side effects. Returns three independent on-disk /
+/// in-memory facts and lets the frontend decide which screen to show:
 ///
-/// This endpoint does NOT require a node to exist — it's safe to call before
-/// the database is initialized.
+/// - `initialized` — whether a node has been activated in this process
+///   (i.e. the `NodeManager` cache holds a live `FoldNode`).
+/// - `has_saved_config` — whether a `node_config.json` exists on disk.
+/// - `onboarding_complete` — whether the data dir has the marker file
+///   written by the bootstrap flow.
+///
+/// **Does not** auto-initialize, mint identities, or open Sled. A stale
+/// `node_config.json` left over from a wiped data dir used to trip the
+/// auto-init branch here, which silently provisioned a "ghost node" with
+/// no name, no recovery phrase, and no Exemem registration — bypassing
+/// the onboarding wizard entirely. Provisioning now lives only behind
+/// `POST /api/setup/bootstrap`; this endpoint reports state and nothing
+/// else. Safe to call before the database is initialized.
 #[utoipa::path(
     get,
     path = "/api/system/database-status",
@@ -316,38 +325,10 @@ pub async fn get_database_status(state: web::Data<AppState>) -> impl Responder {
     });
     let has_saved_config = Path::new(&config_path).exists();
 
-    let initialized = if state.node_manager.has_active_node().await {
-        true
-    } else if has_saved_config {
-        // For returning users, try to auto-initialize. The public key lives
-        // in the Sled `node_identity` tree (not on NodeConfig) — read it
-        // via the shared pool.
-        let pool = state.node_manager.get_or_init_sled_pool().await;
-        match crate::identity::load(pool).ok().flatten() {
-            Some(id) if !id.public_key.is_empty() => {
-                let user_hash = user_hash_from_pubkey(&id.public_key);
-                state
-                    .node_manager
-                    .get_node(&user_hash)
-                    .await
-                    .inspect_err(|e| {
-                        tracing::warn!(
-                        target: "fold_node::http_server",
-                                        "Auto-initialization failed for returning user: {}",
-                                        e
-                                    );
-                    })
-                    .is_ok()
-            }
-            _ => false,
-        }
-    } else {
-        false
-    };
+    let initialized = state.node_manager.has_active_node().await;
 
-    // Check for onboarding marker file in the data directory.
-    // This file is created when the user completes the onboarding wizard,
-    // and is wiped when --empty-db removes the data directory.
+    // Onboarding marker lives in the data directory so `--empty-db`
+    // (which removes the data directory) also resets onboarding state.
     let onboarding_complete = crate::utils::paths::folddb_home()
         .map(|h| h.join("data").join(".onboarding_complete").exists())
         .unwrap_or(false);
@@ -517,5 +498,95 @@ mod tests {
             serde_json::from_slice(&body_bytes).expect("response body is JSON");
         assert_eq!(body["error"], "node_not_provisioned");
         assert_eq!(body["next"], "POST /api/setup/bootstrap");
+    }
+
+    /// Regression test for the "ghost node" bug: hitting
+    /// `GET /api/system/database-status` with a stale `node_config.json`
+    /// on disk but an empty Sled identity tree must NOT auto-provision a
+    /// fresh keypair. Before the fix, the auto-init branch in this
+    /// handler called `identity::load` + `get_node`, which silently minted
+    /// an identity (no name, no recovery phrase, no Exemem registration)
+    /// and reported `initialized: true`, bypassing the onboarding wizard.
+    /// After the fix, the endpoint is a pure observer:
+    ///   - `initialized` reflects only the in-process node cache
+    ///   - `has_saved_config` reflects on-disk config presence
+    ///   - `onboarding_complete` reflects the marker file
+    /// and the data directory stays untouched.
+    #[tokio::test]
+    #[allow(clippy::await_holding_lock)]
+    async fn database_status_does_not_auto_provision_on_stale_config() {
+        let _guard = env_lock();
+        let tmp = tempfile::tempdir().expect("tempdir");
+
+        // Pin FOLDDB_HOME so the marker probe inside the handler reads
+        // `tmp/data/.onboarding_complete` (which doesn't exist) instead
+        // of the developer's real `~/.folddb`.
+        let original_folddb_home = std::env::var("FOLDDB_HOME").ok();
+        std::env::set_var("FOLDDB_HOME", tmp.path());
+        // Make `NODE_CONFIG` resolution fall through to the FOLDDB_HOME
+        // branch so a hand-set env var on the runner can't affect the test.
+        let original_node_config = std::env::var("NODE_CONFIG").ok();
+        std::env::remove_var("NODE_CONFIG");
+
+        // Write a stub `node_config.json` so `has_saved_config` is true —
+        // this is the exact precondition that used to trigger the
+        // auto-init branch.
+        let config_path = tmp.path().join("config").join("node_config.json");
+        std::fs::create_dir_all(config_path.parent().unwrap()).expect("create config dir");
+        std::fs::write(&config_path, b"{}").expect("write stub config");
+
+        // No data dir, no Sled tree, no marker file. AppState's
+        // NodeManager has never created a node, so `has_active_node()`
+        // returns false.
+        let state = test_app_state(&tmp);
+        let data_dir = tmp.path().join("data");
+        assert!(
+            !data_dir.exists(),
+            "precondition: data dir must not exist before the call"
+        );
+
+        let resp = get_database_status(state.clone())
+            .await
+            .respond_to(&actix_web::test::TestRequest::get().to_http_request());
+        assert_eq!(resp.status(), actix_web::http::StatusCode::OK);
+
+        let body_bytes = match actix_web::body::to_bytes(resp.into_body()).await {
+            Ok(b) => b,
+            Err(_) => panic!("failed to read database-status response body"),
+        };
+        let body: serde_json::Value =
+            serde_json::from_slice(&body_bytes).expect("response body is JSON");
+        assert_eq!(
+            body["initialized"], false,
+            "stale config alone must NOT report initialized — that's the ghost-node bug"
+        );
+        assert_eq!(
+            body["has_saved_config"], true,
+            "stub node_config.json on disk must surface as has_saved_config: true"
+        );
+        assert_eq!(
+            body["onboarding_complete"], false,
+            "no marker file => onboarding_complete must be false"
+        );
+
+        // Strongest side-effect assertion: the handler never opened Sled,
+        // never touched the identity tree, never created the data dir.
+        assert!(
+            !data_dir.exists(),
+            "get_database_status must be a pure observer — data dir must not be created"
+        );
+        // And the in-process node cache must still be empty.
+        assert!(
+            !state.node_manager.has_active_node().await,
+            "get_database_status must not activate a node"
+        );
+
+        match original_folddb_home {
+            Some(v) => std::env::set_var("FOLDDB_HOME", v),
+            None => std::env::remove_var("FOLDDB_HOME"),
+        }
+        if let Some(v) = original_node_config {
+            std::env::set_var("NODE_CONFIG", v);
+        }
     }
 }
