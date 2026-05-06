@@ -173,7 +173,8 @@ impl AppleSyncConfig {
         }
         let json = serde_json::to_string_pretty(self)
             .map_err(|e| format!("Failed to serialize sync config: {e}"))?;
-        std::fs::write(&path, json).map_err(|e| format!("Failed to write sync config: {e}"))?;
+        crate::utils::fs_atomic::write_atomic(&path, json.as_bytes(), None)
+            .map_err(|e| format!("Failed to write sync config: {e}"))?;
         Ok(())
     }
 }
@@ -181,6 +182,13 @@ impl AppleSyncConfig {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::sync::Mutex;
+
+    /// `NODE_CONFIG` is process-wide; the atomic-write tests below mutate
+    /// it to redirect `AppleSyncConfig::config_path()` at a tempdir, so
+    /// they serialize on this lock to keep parallel test runs from
+    /// clobbering each other.
+    static NODE_CONFIG_LOCK: Mutex<()> = Mutex::new(());
 
     #[test]
     fn test_default_config() {
@@ -448,6 +456,79 @@ mod tests {
 
     /// Configs persisted before `last_error` existed must deserialize
     /// cleanly with `None` rather than erroring out on missing fields.
+    /// `save()` must route through the atomic-write helper: after success
+    /// there must be no `<path>.tmp` sibling left on disk, and the file
+    /// must parse cleanly via `load()`. Regression guard for the "plain
+    /// fs::write leaves half-written JSON on power loss / OOM-kill"
+    /// failure mode that the helper closes.
+    #[test]
+    fn save_uses_atomic_write_no_stale_tmpfile() {
+        let _guard = NODE_CONFIG_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+        let prev = std::env::var("NODE_CONFIG").ok();
+
+        let dir = tempfile::tempdir().expect("tempdir");
+        let node_config = dir.path().join("node_config.json");
+        std::env::set_var("NODE_CONFIG", &node_config);
+
+        let cfg = AppleSyncConfig {
+            enabled: true,
+            schedule: SyncSchedule::Custom { hours: 6 },
+            ..AppleSyncConfig::default()
+        };
+        cfg.save().expect("save");
+
+        let path = dir.path().join("apple_sync_config.json");
+        let tmp_sibling = path.with_file_name("apple_sync_config.json.tmp");
+        assert!(path.exists(), "final config must exist at {path:?}");
+        assert!(
+            !tmp_sibling.exists(),
+            "atomic write must not leave a tmpfile at {tmp_sibling:?}",
+        );
+
+        let reread = AppleSyncConfig::load();
+        assert!(reread.enabled);
+        assert_eq!(reread.schedule, SyncSchedule::Custom { hours: 6 });
+
+        match prev {
+            Some(v) => std::env::set_var("NODE_CONFIG", v),
+            None => std::env::remove_var("NODE_CONFIG"),
+        }
+    }
+
+    /// A leftover `<path>.tmp` from a previous crash must not block the
+    /// next `save()` — the helper opens the tmpfile with `truncate(true)`,
+    /// so a stale staged file from an OOM-kill mid-write is silently
+    /// overwritten on retry.
+    #[test]
+    fn save_recovers_from_stale_tmpfile() {
+        let _guard = NODE_CONFIG_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+        let prev = std::env::var("NODE_CONFIG").ok();
+
+        let dir = tempfile::tempdir().expect("tempdir");
+        let node_config = dir.path().join("node_config.json");
+        std::env::set_var("NODE_CONFIG", &node_config);
+
+        let final_path = dir.path().join("apple_sync_config.json");
+        let tmp_sibling = final_path.with_file_name("apple_sync_config.json.tmp");
+        std::fs::write(&tmp_sibling, b"garbage from a prior crash").expect("seed stale tmp");
+
+        AppleSyncConfig::default().save().expect("save");
+
+        assert!(final_path.exists(), "final config must exist");
+        assert!(
+            !tmp_sibling.exists(),
+            "stale tmpfile must be replaced by the rename",
+        );
+        // Sanity: contents are real JSON, not the "garbage" bytes from the stale tmp.
+        let on_disk = std::fs::read_to_string(&final_path).expect("read");
+        let _: AppleSyncConfig = serde_json::from_str(&on_disk).expect("parse");
+
+        match prev {
+            Some(v) => std::env::set_var("NODE_CONFIG", v),
+            None => std::env::remove_var("NODE_CONFIG"),
+        }
+    }
+
     #[test]
     fn test_legacy_config_without_last_error_fields() {
         let legacy = r#"{
