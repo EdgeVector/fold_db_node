@@ -146,15 +146,21 @@ pub fn identity_from_phrase(words: &str) -> Result<crate::identity::NodeIdentity
 
 /// Derive a 24-word BIP39 recovery phrase from an Ed25519 private key.
 ///
-/// Uses the first 32 bytes of the secret-key as entropy. Returns
-/// `Err` if the decoded private key is shorter than 32 bytes.
+/// The decoded private key is used directly as BIP39 entropy. Returns
+/// `Err` if it is not exactly 32 bytes (the Ed25519 seed length) — any
+/// other length means the secret-key encoding has shifted (e.g. to the
+/// 64-byte RFC 8032 seed||public form) and silently slicing would
+/// rotate every existing user's recovery phrase.
 pub fn derive_recovery_phrase(private_key_b64: &str) -> Result<Vec<String>, String> {
     let key_bytes = base64::engine::general_purpose::STANDARD
         .decode(private_key_b64)
         .map_err(|e| format!("Failed to decode private key: {}", e))?;
 
-    if key_bytes.len() < 32 {
-        return Err("Private key too short for recovery phrase".to_string());
+    if key_bytes.len() != 32 {
+        return Err(format!(
+            "Ed25519 secret key must decode to 32 bytes for BIP39 entropy; got {}",
+            key_bytes.len()
+        ));
     }
     let entropy = &key_bytes[..32];
 
@@ -206,5 +212,58 @@ mod tests {
     fn derive_recovery_phrase_rejects_short_key() {
         let short_b64 = base64::engine::general_purpose::STANDARD.encode([0u8; 16]);
         assert!(derive_recovery_phrase(&short_b64).is_err());
+    }
+
+    /// A change here means the BIP39 mnemonic derived from a given 32-byte
+    /// Ed25519 seed has shifted — and that would silently rotate every
+    /// existing user's recovery phrase. If you're updating this vector,
+    /// you've broken recovery for prior installs.
+    #[test]
+    fn derive_recovery_phrase_is_stable_for_fixed_seed() {
+        let seed = [0x42u8; 32];
+        let seed_b64 = base64::engine::general_purpose::STANDARD.encode(seed);
+
+        let words = derive_recovery_phrase(&seed_b64).expect("derive recovery phrase");
+        assert_eq!(words.len(), 24, "BIP39 256-bit entropy yields 24 words");
+
+        let expected: Vec<&str> = bip39::Mnemonic::from_entropy(&seed)
+            .expect("mnemonic from fixed entropy")
+            .words()
+            .collect();
+        let got: Vec<&str> = words.iter().map(|s| s.as_str()).collect();
+        assert_eq!(
+            got, expected,
+            "recovery phrase drifted from canonical 32-byte BIP39 derivation"
+        );
+    }
+
+    #[test]
+    fn derive_recovery_phrase_rejects_non_32_byte_key() {
+        // 33 bytes — the regression we're guarding against. Previously the
+        // code silently truncated to the first 32 bytes; now it must fail.
+        let oversized = vec![0u8; 33];
+        let oversized_b64 = base64::engine::general_purpose::STANDARD.encode(&oversized);
+        let err = derive_recovery_phrase(&oversized_b64).expect_err("must reject 33-byte key");
+        assert!(
+            err.contains("32 bytes") && err.contains("got 33"),
+            "expected structured length error, got: {err}"
+        );
+    }
+
+    /// Round-trip: derive a phrase from a freshly generated keypair, then
+    /// reconstruct via [`identity_from_phrase`]. Both helpers exist to
+    /// provide this property together; if either drifts, this catches it.
+    #[test]
+    fn derive_then_identity_from_phrase_round_trips() {
+        let key_pair = Ed25519KeyPair::generate().expect("generate keypair");
+        let original_priv = key_pair.secret_key_base64();
+        let original_pub = key_pair.public_key_base64();
+
+        let words = derive_recovery_phrase(&original_priv).expect("derive recovery phrase");
+        let phrase = words.join(" ");
+        let restored = identity_from_phrase(&phrase).expect("reconstruct from phrase");
+
+        assert_eq!(restored.private_key, original_priv);
+        assert_eq!(restored.public_key, original_pub);
     }
 }
