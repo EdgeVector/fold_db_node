@@ -212,6 +212,11 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         println!();
     }
 
+    // Hold Sled storage internals at INFO+ before the upstream subscriber
+    // captures `RUST_LOG`. Operators debugging Sled itself opt back in via
+    // `FOLDDB_LOG_SLED=<level>`. See `fold_db_node::log_filter`.
+    fold_db_node::log_filter::apply_default_filters();
+
     // Initialize observability stack: FMT (file) + RELOAD + RING + WEB
     // + OTel. The guard MUST be held for the lifetime of the process —
     // dropping it stops the FMT worker mid-flush and may lose

@@ -6,6 +6,7 @@ pub mod handlers;
 pub mod identity;
 pub mod ingestion;
 pub mod keychain;
+pub mod log_filter;
 pub mod memory;
 pub mod observability_setup;
 #[cfg(feature = "os-keychain")]
