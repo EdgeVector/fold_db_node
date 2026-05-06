@@ -720,6 +720,184 @@ fn cli_reports_missing_daemon_when_port_explicit() {
 // and the request was well-formed; a 404 would reproduce the bug.
 // ---------------------------------------------------------------------------
 // ---------------------------------------------------------------------------
+// `folddb setup --non-interactive` exercises the REST bootstrap path
+//
+// Spins up a fresh daemon with no pre-seeded identity, runs setup
+// non-interactively, and verifies the wizard:
+//   - POSTs to /api/setup/bootstrap (server mints identity, writes Sled,
+//     drops the marker)
+//   - Surfaces the 24-word recovery phrase on stderr
+//   - A second `setup` invocation fails with the 410 "already bootstrapped"
+//     hint — the wizard is one-shot.
+// ---------------------------------------------------------------------------
+
+/// Spin up a folddb_server WITHOUT pre-seeded identity and a unique
+/// FOLDDB_HOME tempdir. Returns the (port, tempdir, server child).
+///
+/// Distinct from `DaemonFixture` because this fixture's daemon must be
+/// fresh — the bootstrap endpoint self-disables once it has run, so a
+/// shared fixture cannot exercise the setup path.
+fn start_daemon_without_identity() -> (u16, TempDir, Child) {
+    let tmpdir = TempDir::new().expect("create temp dir");
+    fs::create_dir_all(tmpdir.path().join("config")).expect("config dir");
+    fs::create_dir_all(tmpdir.path().join("data")).expect("data dir");
+
+    let listener = std::net::TcpListener::bind("127.0.0.1:0").expect("bind random port");
+    let port = listener.local_addr().unwrap().port();
+    drop(listener);
+
+    let server_bin = assert_cmd::cargo::cargo_bin("folddb_server");
+    let log_path = tmpdir.path().join("server.log");
+
+    #[allow(clippy::zombie_processes)] // Caller cleans up.
+    let server = std::process::Command::new(server_bin)
+        .arg("--port")
+        .arg(port.to_string())
+        .arg("--schema-service-url")
+        .arg("test://mock")
+        .env("FOLDDB_HOME", tmpdir.path())
+        .env_remove("NODE_CONFIG")
+        .stdout(Stdio::from(
+            fs::File::create(&log_path).expect("create log"),
+        ))
+        .stderr(Stdio::from(
+            fs::File::create(tmpdir.path().join("server_err.log")).expect("create err log"),
+        ))
+        .spawn()
+        .expect("start folddb_server");
+
+    let client = reqwest::blocking::Client::builder()
+        .timeout(std::time::Duration::from_secs(2))
+        .build()
+        .unwrap();
+    let health_url = format!("http://127.0.0.1:{}/api/health", port);
+    for _ in 0..30 {
+        if client
+            .get(&health_url)
+            .send()
+            .ok()
+            .map(|r| r.status().is_success())
+            .unwrap_or(false)
+        {
+            return (port, tmpdir, server);
+        }
+        std::thread::sleep(std::time::Duration::from_secs(1));
+    }
+    let logs = fs::read_to_string(&log_path).unwrap_or_default();
+    panic!(
+        "fresh daemon failed to come up on port {} within 30s.\nLogs:\n{}",
+        port, logs
+    );
+}
+
+/// Defer guard: kill the daemon even if assertions panic.
+struct DaemonGuard(Child);
+impl Drop for DaemonGuard {
+    fn drop(&mut self) {
+        let _ = self.0.kill();
+        let _ = self.0.wait();
+    }
+}
+
+#[test]
+fn setup_non_interactive_via_rest_succeeds() {
+    let (port, tmpdir, server) = start_daemon_without_identity();
+    let _guard = DaemonGuard(server);
+    let mut cmd = Command::cargo_bin("folddb").expect("find folddb binary");
+    cmd.arg("setup")
+        .arg("--non-interactive")
+        .arg("--name")
+        .arg("Bootstrap Smoke")
+        .arg("--no-cloud")
+        .env("FOLDDB_PORT", port.to_string())
+        .env("FOLDDB_HOME", tmpdir.path())
+        .env_remove("NODE_CONFIG");
+
+    let output = cmd.output().expect("run folddb setup");
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(
+        output.status.success(),
+        "setup --non-interactive failed.\nstdout: {}\nstderr: {}",
+        stdout,
+        stderr
+    );
+    // Recovery phrase block — server returns 24 words on fresh-mint and the
+    // wizard prints them with the labelled banner.
+    assert!(
+        stderr.contains("RECOVERY PHRASE"),
+        "expected recovery phrase banner on stderr; got: {}",
+        stderr
+    );
+    // Marker must be present after a successful bootstrap.
+    let marker = tmpdir.path().join("data").join(".onboarding_complete");
+    assert!(
+        marker.exists(),
+        "onboarding marker missing at {}",
+        marker.display()
+    );
+    // node_config.json was written by the server.
+    let cfg = tmpdir.path().join("config").join("node_config.json");
+    assert!(
+        cfg.exists(),
+        "node_config.json missing at {}",
+        cfg.display()
+    );
+
+    // Second invocation must hit the 410 self-disable guard with a clear hint.
+    let mut second = Command::cargo_bin("folddb").expect("find folddb binary");
+    second
+        .arg("setup")
+        .arg("--non-interactive")
+        .arg("--name")
+        .arg("Bootstrap Smoke")
+        .arg("--no-cloud")
+        .env("FOLDDB_PORT", port.to_string())
+        .env("FOLDDB_HOME", tmpdir.path())
+        .env_remove("NODE_CONFIG");
+    let second_out = second.output().expect("run second folddb setup");
+    assert!(
+        !second_out.status.success(),
+        "second setup must fail (one-shot)"
+    );
+    let combined = format!(
+        "{}{}",
+        String::from_utf8_lossy(&second_out.stdout),
+        String::from_utf8_lossy(&second_out.stderr)
+    );
+    assert!(
+        combined.contains("already bootstrapped") || combined.contains("one-shot"),
+        "second invocation should mention one-shot bootstrap; got: {}",
+        combined
+    );
+}
+
+#[test]
+fn setup_non_interactive_requires_name() {
+    // When --non-interactive is set but --name is missing, the CLI should
+    // refuse before touching the daemon. No daemon needed for this test.
+    let tmpdir = TempDir::new().expect("create temp dir");
+    let mut cmd = Command::cargo_bin("folddb").expect("find folddb binary");
+    cmd.arg("setup")
+        .arg("--non-interactive")
+        .env("FOLDDB_PORT", "59998")
+        .env("FOLDDB_HOME", tmpdir.path())
+        .env_remove("NODE_CONFIG");
+    let output = cmd.output().expect("run folddb setup");
+    assert!(!output.status.success());
+    let combined = format!(
+        "{}{}",
+        String::from_utf8_lossy(&output.stdout),
+        String::from_utf8_lossy(&output.stderr)
+    );
+    assert!(
+        combined.contains("--name"),
+        "expected --name hint, got: {}",
+        combined
+    );
+}
+
+// ---------------------------------------------------------------------------
 // Trigger commands
 //
 // Smoke tests for `folddb trigger log`. The TriggerFiring schema is registered
