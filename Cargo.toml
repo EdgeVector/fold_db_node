@@ -104,6 +104,13 @@ async-trait = "0.1"
 # observability subscriber itself is composed upstream via
 # `observability::init_node_with_web`; do not re-add layer composition here.
 tracing-subscriber = { version = "0.3", features = ["env-filter", "registry"] }
+# `log` + `tracing-log` are needed by `src/log_filter.rs` to install a
+# sled-aware `log::Log` bridge before the upstream subscriber boots —
+# Sled emits via `log::*`, and tracing-log normalizes its target to "log",
+# so EnvFilter alone can't suppress sled DEBUG. Both crates are already
+# transitive deps; declared here so the direct use is explicit.
+log = "0.4"
+tracing-log = "0.2"
 opentelemetry_sdk = "0.27"
 
 # Approximate nearest neighbor index for the face fingerprint cache.
