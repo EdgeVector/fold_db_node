@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState, type ReactNode } from 'react'
+import { useCallback, useEffect, useRef, useState, type ReactNode } from 'react'
 import { systemClient, type LogEntry } from '../api/clients/systemClient'
 
 type LogEntryWithId = LogEntry & { id?: string }
@@ -11,10 +11,30 @@ type LogItem = LogEntryWithId | string
 const dedupKey = (e: LogEntryWithId): string =>
   `${e.timestamp}|${e.level}|${e.event_type}|${e.message}`
 
+// Coalesce SSE arrivals into one React commit per FLUSH_MS window. During
+// the post-completion ingestion burst the backend produced ~80
+// observability events/sec, and the prior path called setLogs() once per
+// event — 80 React commits/sec, each running an O(n) `prev.some(dedupKey)`
+// scan over an unbounded buffer. Quadratic main-thread work plus 80 commits
+// /sec was the source of the renderer freeze.
+const FLUSH_MS = 100
+// Cap the buffer so the dedup-by-Set ref + render reconciliation costs
+// don't grow unbounded over a long-lived session. 1000 lines covers ≥ 10s
+// at peak burst rate, which is plenty for "what just happened".
+const MAX_LOGS = 1000
+
 function LogSidebar() {
   const [logs, setLogs] = useState<LogItem[]>([])
   const [isCollapsed, setIsCollapsed] = useState(true)
   const logContainerRef = useRef<HTMLDivElement | null>(null)
+
+  // SSE arrivals queue here and drain into `logs` state on a FLUSH_MS
+  // timer. ingestEntry() does the dedup synchronously against seenKeysRef
+  // so duplicate events never reach state in the first place — replaces
+  // the per-setLogs `prev.some(...)` scan that turned quadratic.
+  const pendingRef = useRef<LogEntryWithId[]>([])
+  const flushTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
+  const seenKeysRef = useRef<Set<string>>(new Set())
 
   const formatLog = (entry: LogItem): string => {
     if (typeof entry === 'string') return entry
@@ -44,45 +64,81 @@ function LogSidebar() {
   }
 
   const handleCopy = () => navigator.clipboard.writeText(logs.map(formatLog).join('\n')).catch(() => { /* clipboard not available */ })
-  const handleClear = () => setLogs([])
+  const handleClear = useCallback(() => {
+    pendingRef.current = []
+    seenKeysRef.current = new Set()
+    setLogs([])
+  }, [])
+
+  // O(1) admission: dedup against seenKeysRef, then queue for the next
+  // flush. Returns true if the entry was new.
+  const ingestEntry = useCallback((entry: LogEntryWithId): boolean => {
+    const key = dedupKey(entry)
+    if (seenKeysRef.current.has(key)) return false
+    seenKeysRef.current.add(key)
+    pendingRef.current.push(entry)
+    return true
+  }, [])
+
+  const scheduleFlush = useCallback(() => {
+    if (flushTimerRef.current !== null) return
+    flushTimerRef.current = setTimeout(() => {
+      flushTimerRef.current = null
+      if (pendingRef.current.length === 0) return
+      const incoming = pendingRef.current
+      pendingRef.current = []
+      setLogs(prev => {
+        const merged = prev.length === 0 ? incoming.slice() : [...prev, ...incoming]
+        if (merged.length <= MAX_LOGS) return merged
+        // Drop the oldest entries and forget their dedup keys so the
+        // index doesn't grow unboundedly over a long-lived session.
+        const overflow = merged.length - MAX_LOGS
+        for (let i = 0; i < overflow; i++) {
+          const e = merged[i]
+          if (typeof e !== 'string') seenKeysRef.current.delete(dedupKey(e))
+        }
+        return merged.slice(overflow)
+      })
+    }, FLUSH_MS)
+  }, [])
 
   useEffect(() => {
     let cancelled = false
 
-    // Initial buffer fetch. Merge rather than replace — the SSE
-    // subscription below opens synchronously, and any event that lands
-    // before this fetch resolves would be clobbered by a naive `setLogs`.
+    // Initial buffer fetch. Stays a separate setLogs so older entries
+    // land at the front of the array even if SSE has already populated
+    // pendingRef with newer events that arrived between mount and this
+    // resolving.
     systemClient.getLogs().then(r => {
       if (cancelled || !r.success || !r.data) return
       const fetched = Array.isArray(r.data.logs) ? (r.data.logs as LogEntryWithId[]) : []
-      setLogs(prev => {
-        const seen = new Set<string>()
-        for (const e of prev) if (typeof e !== 'string') seen.add(dedupKey(e))
-        const dedupedFetch = fetched.filter(l => !seen.has(dedupKey(l)))
-        return [...dedupedFetch, ...prev]
-      })
+      const fresh: LogEntryWithId[] = []
+      for (const e of fetched) {
+        const key = dedupKey(e)
+        if (seenKeysRef.current.has(key)) continue
+        seenKeysRef.current.add(key)
+        fresh.push(e)
+      }
+      if (fresh.length === 0) return
+      setLogs(prev => [...fresh, ...prev])
     }).catch(() => { /* leave logs empty; SSE/poll will populate */ })
 
     const eventSource = systemClient.createLogStream(
       (message) => {
         if (cancelled) return
-        setLogs(prev => {
-          let entry: LogEntryWithId
-          try {
-            entry = JSON.parse(message) as LogEntryWithId
-          } catch {
-            entry = {
-              id: `stream-${Date.now()}`,
-              timestamp: Date.now(),
-              level: 'INFO',
-              event_type: 'stream',
-              message,
-            }
+        let entry: LogEntryWithId
+        try {
+          entry = JSON.parse(message) as LogEntryWithId
+        } catch {
+          entry = {
+            id: `stream-${Date.now()}`,
+            timestamp: Date.now(),
+            level: 'INFO',
+            event_type: 'stream',
+            message,
           }
-          const key = dedupKey(entry)
-          if (prev.some(e => typeof e !== 'string' && dedupKey(e) === key)) return prev
-          return [...prev, entry]
-        })
+        }
+        if (ingestEntry(entry)) scheduleFlush()
       },
       () => {}
     )
@@ -95,28 +151,44 @@ function LogSidebar() {
       if (cancelled) return
       if (eventSource.readyState === EventSource.OPEN) return
       if (typeof document !== 'undefined' && document.hidden) return
+      // Find the latest timestamp seen across both committed logs and the
+      // pending buffer so the `since` cursor doesn't double-fetch entries
+      // that haven't flushed yet.
       const cur = await new Promise<LogItem[]>(resolve => {
         setLogs(c => { resolve(c); return c })
       })
-      const last = cur[cur.length - 1]
-      const since = (last && typeof last !== 'string') ? last.timestamp : undefined
+      let since: number | undefined
+      const lastCommitted = cur[cur.length - 1]
+      if (lastCommitted && typeof lastCommitted !== 'string') since = lastCommitted.timestamp
+      const pending = pendingRef.current
+      const lastPending = pending[pending.length - 1]
+      if (lastPending && (since === undefined || lastPending.timestamp > since)) {
+        since = lastPending.timestamp
+      }
       try {
         const r = await systemClient.getLogs(since)
         if (cancelled || !r.success || !r.data?.logs?.length) return
-        setLogs(c => {
-          const seen = new Set<string>()
-          for (const e of c) if (typeof e !== 'string') seen.add(dedupKey(e))
-          const newLogs = (r.data!.logs as LogEntryWithId[]).filter(l => !seen.has(dedupKey(l)))
-          return [...c, ...newLogs]
-        })
+        let added = false
+        for (const entry of r.data.logs as LogEntryWithId[]) {
+          if (ingestEntry(entry)) added = true
+        }
+        if (added) scheduleFlush()
       } catch {
         /* next interval will retry */
       }
     }
     const pollInterval = setInterval(() => { void pollFallback() }, 5000)
 
-    return () => { cancelled = true; eventSource.close(); clearInterval(pollInterval) }
-  }, [])
+    return () => {
+      cancelled = true
+      eventSource.close()
+      clearInterval(pollInterval)
+      if (flushTimerRef.current) {
+        clearTimeout(flushTimerRef.current)
+        flushTimerRef.current = null
+      }
+    }
+  }, [ingestEntry, scheduleFlush])
 
   useEffect(() => {
     if (logContainerRef.current) logContainerRef.current.scrollTop = logContainerRef.current.scrollHeight

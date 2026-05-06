@@ -61,6 +61,17 @@ const expand = async () => {
   await act(async () => { expandBtn.click() })
 }
 
+// SSE arrivals are coalesced into one React commit per FLUSH_MS window
+// (100ms). Tests must drain that window before asserting committed
+// entries. 200ms covers the flush regardless of microtask ordering.
+const flush = async () => {
+  await act(async () => {
+    vi.advanceTimersByTime(200)
+    await Promise.resolve()
+    await Promise.resolve()
+  })
+}
+
 describe('LogSidebar — RING/WEB id-mismatch dedup', () => {
   it('deduplicates the same event arriving from SSE then poll with a different id', async () => {
     // Initial fetch: empty buffer.
@@ -71,12 +82,14 @@ describe('LogSidebar — RING/WEB id-mismatch dedup', () => {
     // SSE delivers an event (WEB layer id).
     const webEvent = mkEntry({ id: 'web-uuid', timestamp: 1, message: 'hi', event_type: 'svc' })
     await act(async () => { onMessageHandler!(JSON.stringify(webEvent)) })
+    await flush()
 
     // Poll fires after 2s — RING returns the SAME logical event with a
     // different id (RING layer uuid).
     const ringEvent = { ...webEvent, id: 'ring-uuid' }
     getLogsMock.mockResolvedValueOnce({ success: true, data: { logs: [ringEvent] } })
     await act(async () => { vi.advanceTimersByTime(2000); await Promise.resolve(); await Promise.resolve() })
+    await flush()
 
     expect(screen.getByText('1 entries')).toBeInTheDocument()
   })
@@ -93,6 +106,7 @@ describe('LogSidebar — RING/WEB id-mismatch dedup', () => {
     // Event arrives via SSE before initial fetch resolves.
     const webEvent = mkEntry({ id: 'web-1', timestamp: 5, message: 'mid-flight', event_type: 'svc' })
     await act(async () => { onMessageHandler!(JSON.stringify(webEvent)) })
+    await flush()
     expect(screen.getByText('1 entries')).toBeInTheDocument()
 
     // Initial fetch now resolves with two RING entries — one for the
@@ -104,6 +118,7 @@ describe('LogSidebar — RING/WEB id-mismatch dedup', () => {
       resolveInitial({ success: true, data: { logs: [olderRing, ringSame] } })
       await Promise.resolve()
     })
+    await flush()
 
     // Final state: olderRing + the SSE event (deduped against ringSame).
     await waitFor(() => expect(screen.getByText('2 entries')).toBeInTheDocument())
@@ -120,7 +135,60 @@ describe('LogSidebar — RING/WEB id-mismatch dedup', () => {
     const b = mkEntry({ id: 'b', timestamp: 100, message: 'two', event_type: 'svc' })
     await act(async () => { onMessageHandler!(JSON.stringify(a)) })
     await act(async () => { onMessageHandler!(JSON.stringify(b)) })
+    await flush()
 
     expect(screen.getByText('2 entries')).toBeInTheDocument()
+  })
+
+  it('coalesces a burst of SSE events into one React commit', async () => {
+    // 50 distinct events arriving in the same JS tick should produce
+    // exactly one setLogs commit once the flush timer fires. This pins
+    // the post-completion ingestion-burst behavior: prior to coalescing,
+    // each SSE event triggered its own commit.
+    render(<LogSidebar />)
+    await expand()
+    await act(async () => { await Promise.resolve() })
+
+    await act(async () => {
+      for (let i = 0; i < 50; i++) {
+        onMessageHandler!(JSON.stringify(mkEntry({
+          id: `burst-${i}`,
+          timestamp: 1000 + i,
+          message: `m${i}`,
+          event_type: 'svc',
+        })))
+      }
+    })
+
+    // Buffer hasn't flushed yet — count is still 0.
+    expect(screen.getByText('0 entries')).toBeInTheDocument()
+
+    await flush()
+
+    expect(screen.getByText('50 entries')).toBeInTheDocument()
+  })
+
+  it('caps the buffer at MAX_LOGS, evicting the oldest entries', async () => {
+    render(<LogSidebar />)
+    await expand()
+    await act(async () => { await Promise.resolve() })
+
+    // Push 1100 events and flush. Final state should be the most recent 1000.
+    await act(async () => {
+      for (let i = 0; i < 1100; i++) {
+        onMessageHandler!(JSON.stringify(mkEntry({
+          id: `cap-${i}`,
+          timestamp: 1000 + i,
+          message: `m${i}`,
+          event_type: 'svc',
+        })))
+      }
+    })
+    await flush()
+
+    expect(screen.getByText('1000 entries')).toBeInTheDocument()
+    // Oldest (m0) is evicted; newest (m1099) is present.
+    expect(screen.queryByText('m0')).not.toBeInTheDocument()
+    expect(screen.getByText('m1099')).toBeInTheDocument()
   })
 })
