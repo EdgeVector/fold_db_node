@@ -3,6 +3,8 @@
 use super::{get_schema_manager, schema_err, IngestionService};
 use crate::fold_node::FoldNode;
 use crate::ingestion::{AISchemaResponse, IngestionError, IngestionResult};
+use fold_db::schema::types::SchemaType;
+use fold_db::schema::SchemaCore;
 use serde_json::Value;
 use std::collections::HashMap;
 
@@ -354,6 +356,17 @@ impl IngestionService {
             };
         }
 
+        // Reject expansions whose field_mappers cross schema_type boundaries.
+        // Apply must run BEFORE approve, since approve invokes
+        // `apply_field_mappers` which would copy the source field's
+        // `molecule_uuid` onto the target field — a `MoleculeHash` value
+        // becomes unreadable when the target field is a HashRange (different
+        // on-disk shape). Pre-fix this surfaced as
+        // `FieldBase: skipping molecule ref … invalid type: string,
+        // expected struct AtomEntry` and the new field silently returned
+        // empty data on every read.
+        validate_field_mapper_compatibility(&schema_response.name, schema_manager.as_ref()).await?;
+
         // Approve BEFORE blocking old schema — approval triggers apply_field_mappers
         // which needs to read the old schema's molecule UUIDs. If we block first,
         // the superseded_by redirect could cause circular resolution.
@@ -463,13 +476,298 @@ impl IngestionService {
     }
 }
 
+/// Reject schema-expansion proposals whose `field_mappers` carry molecule
+/// UUIDs across incompatible `schema_type` boundaries.
+///
+/// `apply_field_mappers` (invoked by `SchemaCore::approve`) copies the source
+/// field's `molecule_uuid` onto the target field unconditionally. If the
+/// source schema's `schema_type` differs from the target's — e.g. expanding
+/// a `Hash` schema into a `HashRange` schema — the on-disk molecule shape no
+/// longer matches what the target field tries to deserialize. Reads then fail
+/// with `invalid type: string, expected struct AtomEntry`, which the upstream
+/// `refresh_field_from_db` swallows as a WARN, leaving the field's molecule
+/// `None` and silently returning empty data on every subsequent query.
+///
+/// Reject loud here so the schema-service mis-classification surfaces to the
+/// caller (`IngestionError::SchemaCreationError`), rather than letting the
+/// ingestion appear to succeed while shedding data. Same-type expansion
+/// continues to work — the source field's molecule is reused as designed.
+pub(super) async fn validate_field_mapper_compatibility(
+    new_schema_name: &str,
+    schema_manager: &SchemaCore,
+) -> IngestionResult<()> {
+    let new_schema = schema_manager
+        .get_schema(new_schema_name)
+        .await
+        .map_err(schema_err)?
+        .ok_or_else(|| {
+            IngestionError::SchemaCreationError(format!(
+                "Schema '{}' not found in cache after load_schema_from_json",
+                new_schema_name
+            ))
+        })?;
+
+    let Some(field_mappers) = new_schema.field_mappers.as_ref() else {
+        return Ok(());
+    };
+
+    if field_mappers.is_empty() {
+        return Ok(());
+    }
+
+    // Resolve each unique source schema once.
+    let mut source_types: HashMap<String, SchemaType> = HashMap::new();
+    let mut incompatibilities: Vec<String> = Vec::new();
+
+    for (target_field, mapper) in field_mappers {
+        let src_name = mapper.source_schema().to_string();
+        if !source_types.contains_key(&src_name) {
+            match schema_manager.get_schema(&src_name).await {
+                Ok(Some(src_schema)) => {
+                    source_types.insert(src_name.clone(), src_schema.schema_type.clone());
+                }
+                Ok(None) => {
+                    // Source schema isn't registered locally — `apply_field_mappers`
+                    // already warns and skips this entry, so no carry-over occurs
+                    // and there's nothing to corrupt. Leave it be.
+                    continue;
+                }
+                Err(e) => {
+                    return Err(schema_err(e));
+                }
+            }
+        }
+        if let Some(src_type) = source_types.get(&src_name) {
+            if *src_type != new_schema.schema_type {
+                incompatibilities.push(format!(
+                    "field '{}' inherits from '{}.{}' (schema_type={:?}) but target schema \
+                     '{}' has schema_type={:?}",
+                    target_field,
+                    src_name,
+                    mapper.source_field(),
+                    src_type,
+                    new_schema_name,
+                    new_schema.schema_type,
+                ));
+            }
+        }
+    }
+
+    if !incompatibilities.is_empty() {
+        return Err(IngestionError::SchemaCreationError(format!(
+            "Schema expansion rejected: cross-schema_type field_mapper(s) would corrupt \
+             molecule storage on read. Incompatibilities: [{}]. The schema service must \
+             not propose expansion across {{Single, Hash, Range, HashRange}} boundaries — \
+             each schema_type stores molecules in a different on-disk shape.",
+            incompatibilities.join("; "),
+        )));
+    }
+
+    Ok(())
+}
+
 #[cfg(test)]
 mod tests {
-    use super::backfill_field_data_classifications;
+    use super::{backfill_field_data_classifications, validate_field_mapper_compatibility};
     use serde_json::json;
+
+    /// Build a serde_json schema definition for the regression tests below.
+    /// `field_mappers` is `Some({target: "<src>.<src_field>"})` to mark fields
+    /// inherited from another schema during expansion.
+    fn make_schema_json(
+        name: &str,
+        schema_type: &str,
+        key: serde_json::Value,
+        fields: &[&str],
+        field_mappers: Option<serde_json::Value>,
+    ) -> serde_json::Value {
+        let field_descriptions: serde_json::Map<String, serde_json::Value> = fields
+            .iter()
+            .map(|f| {
+                (
+                    (*f).to_string(),
+                    serde_json::Value::String(format!("{} desc", f)),
+                )
+            })
+            .collect();
+        let field_data_classifications: serde_json::Map<String, serde_json::Value> = fields
+            .iter()
+            .map(|f| ((*f).to_string(), default_dc()))
+            .collect();
+        let mut obj = json!({
+            "name": name,
+            "descriptive_name": name,
+            "schema_type": schema_type,
+            "key": key,
+            "fields": fields,
+            "field_descriptions": field_descriptions,
+            "field_data_classifications": field_data_classifications,
+            "identity_hash": name,
+            "source": "user",
+        });
+        if let Some(fm) = field_mappers {
+            obj.as_object_mut()
+                .unwrap()
+                .insert("field_mappers".to_string(), fm);
+        }
+        obj
+    }
 
     fn default_dc() -> serde_json::Value {
         json!({"sensitivity_level": 1, "data_domain": "general"})
+    }
+
+    /// Regression: pre-fix a `Hash` → `HashRange` schema expansion via
+    /// `field_mappers` corrupted molecule reads with
+    /// `invalid type: string, expected struct AtomEntry`. The validator
+    /// must reject that proposal loudly so the bug surfaces instead of
+    /// being swallowed by `FieldBase::refresh_field_from_db`.
+    #[tokio::test]
+    async fn rejects_hash_to_hashrange_field_mapper_carry_over() {
+        let core = fold_db::schema::SchemaCore::new_for_testing()
+            .await
+            .expect("schema core init");
+
+        // Source: Hash schema (HashField → MoleculeHash on disk)
+        let src = make_schema_json(
+            "RecipesV1",
+            "Hash",
+            json!({"hash_field": "source_file", "range_field": null}),
+            &["source_file", "content", "file_type"],
+            None,
+        );
+        core.load_schema_from_json(&serde_json::to_string(&src).unwrap())
+            .await
+            .expect("load source schema");
+
+        // Target: HashRange schema (HashRangeField → MoleculeHashRange on disk)
+        // with field_mappers carrying over `content`/`file_type`/`source_file`
+        // from the Hash schema. Inheriting molecule_uuids across these two
+        // shapes is the bug — same on-disk key, different deserialization
+        // expectation.
+        let tgt = make_schema_json(
+            "RecipesV2",
+            "HashRange",
+            json!({"hash_field": "recipe", "range_field": "day"}),
+            &[
+                "recipe",
+                "day",
+                "meal",
+                "content",
+                "file_type",
+                "source_file",
+            ],
+            Some(json!({
+                "content": "RecipesV1.content",
+                "file_type": "RecipesV1.file_type",
+                "source_file": "RecipesV1.source_file",
+            })),
+        );
+        core.load_schema_from_json(&serde_json::to_string(&tgt).unwrap())
+            .await
+            .expect("load target schema");
+
+        let err = validate_field_mapper_compatibility("RecipesV2", &core)
+            .await
+            .expect_err("cross-schema_type expansion must be rejected");
+
+        let msg = err.to_string();
+        assert!(
+            msg.contains("Schema expansion rejected"),
+            "error must explain the rejection: {msg}"
+        );
+        assert!(
+            msg.contains("RecipesV1") && msg.contains("RecipesV2"),
+            "error must name both schemas: {msg}"
+        );
+        assert!(
+            msg.contains("Hash") && msg.contains("HashRange"),
+            "error must identify the incompatible schema_types: {msg}"
+        );
+    }
+
+    /// Same-type expansion (Hash → Hash, just with extra fields) must still
+    /// pass — the molecule_uuid carry-over is well-defined when shapes match.
+    #[tokio::test]
+    async fn accepts_same_schema_type_field_mapper_carry_over() {
+        let core = fold_db::schema::SchemaCore::new_for_testing()
+            .await
+            .expect("schema core init");
+
+        let src = make_schema_json(
+            "ContactsV1",
+            "Hash",
+            json!({"hash_field": "id", "range_field": null}),
+            &["id", "name", "email"],
+            None,
+        );
+        core.load_schema_from_json(&serde_json::to_string(&src).unwrap())
+            .await
+            .expect("load source schema");
+
+        let tgt = make_schema_json(
+            "ContactsV2",
+            "Hash",
+            json!({"hash_field": "id", "range_field": null}),
+            &["id", "name", "email", "phone"],
+            Some(json!({
+                "id": "ContactsV1.id",
+                "name": "ContactsV1.name",
+                "email": "ContactsV1.email",
+            })),
+        );
+        core.load_schema_from_json(&serde_json::to_string(&tgt).unwrap())
+            .await
+            .expect("load target schema");
+
+        validate_field_mapper_compatibility("ContactsV2", &core)
+            .await
+            .expect("same schema_type expansion must validate");
+    }
+
+    /// No field_mappers at all — the canonical first-ingestion path. Must
+    /// be a no-op and never error.
+    #[tokio::test]
+    async fn accepts_schema_without_field_mappers() {
+        let core = fold_db::schema::SchemaCore::new_for_testing()
+            .await
+            .expect("schema core init");
+
+        let s = make_schema_json("Quotes", "Single", json!(null), &["author", "text"], None);
+        core.load_schema_from_json(&serde_json::to_string(&s).unwrap())
+            .await
+            .expect("load schema");
+
+        validate_field_mapper_compatibility("Quotes", &core)
+            .await
+            .expect("schema without field_mappers must validate");
+    }
+
+    /// The source schema referenced by a mapper isn't loaded locally.
+    /// `apply_field_mappers` already warns and skips this case (no carry-over
+    /// happens), so the validator must accept it — there's nothing to corrupt.
+    #[tokio::test]
+    async fn accepts_field_mapper_with_missing_source_schema() {
+        let core = fold_db::schema::SchemaCore::new_for_testing()
+            .await
+            .expect("schema core init");
+
+        let tgt = make_schema_json(
+            "OrphanedExpansion",
+            "HashRange",
+            json!({"hash_field": "h", "range_field": "r"}),
+            &["h", "r", "v"],
+            Some(json!({
+                "v": "NonExistent.v",
+            })),
+        );
+        core.load_schema_from_json(&serde_json::to_string(&tgt).unwrap())
+            .await
+            .expect("load target schema");
+
+        validate_field_mapper_compatibility("OrphanedExpansion", &core)
+            .await
+            .expect("missing source must be skipped, not rejected");
     }
 
     #[test]
