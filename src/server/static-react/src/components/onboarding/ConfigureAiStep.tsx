@@ -1,35 +1,33 @@
 import { useState, useEffect, useCallback, useRef } from 'react'
 import { ingestionClient } from '../../api/clients'
 import type { OllamaModel } from '../../api/clients/ingestionClient'
-import { useAppDispatch } from '../../store/hooks'
-import { fetchIngestionConfig } from '../../store/ingestionSlice'
 
 const ANTHROPIC_MODELS = [
   { value: 'claude-haiku-4-5-20251001', label: 'Claude Haiku 4.5 (recommended)' },
   { value: 'claude-sonnet-4-20250514', label: 'Claude Sonnet 4' },
 ]
 
+export type AiProvider = 'Anthropic' | 'Ollama' | 'skip'
+
+export interface AiStepFields {
+  provider: AiProvider
+  anthropicApiKey: string
+  anthropicModel: string
+  ollamaUrl: string
+  ollamaModel: string
+}
+
 interface ConfigureAiStepProps {
+  fields: AiStepFields
+  onChange: (next: Partial<AiStepFields>) => void
   onNext: () => void
   onSkip: () => void
 }
 
-type Provider = 'Anthropic' | 'Ollama'
-
-export default function ConfigureAiStep({ onNext, onSkip }: ConfigureAiStepProps) {
-  const dispatch = useAppDispatch()
-  const [provider, setProvider] = useState<Provider>('Anthropic')
-  const [ollamaModel, setOllamaModel] = useState('')
-  const [ollamaUrl, setOllamaUrl] = useState('http://localhost:11434')
-  const [anthropicApiKey, setAnthropicApiKey] = useState('')
-  const [anthropicModel, setAnthropicModel] = useState('claude-haiku-4-5-20251001')
+export default function ConfigureAiStep({ fields, onChange, onNext, onSkip }: ConfigureAiStepProps) {
   const [ollamaModels, setOllamaModels] = useState<OllamaModel[]>([])
   const [ollamaModelsLoading, setOllamaModelsLoading] = useState(false)
   const [ollamaModelsError, setOllamaModelsError] = useState<string | null>(null)
-  const [loading, setLoading] = useState(true)
-  const [saving, setSaving] = useState(false)
-  const [saveResult, setSaveResult] = useState<'error' | null>(null)
-  const [alreadyConfigured, setAlreadyConfigured] = useState(false)
   const ollamaFetchTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null)
 
   useEffect(() => {
@@ -56,10 +54,9 @@ export default function ConfigureAiStep({ onNext, onSkip }: ConfigureAiStepProps
         setOllamaModelsError('No models found. Run: ollama pull <model>')
       } else {
         setOllamaModelsError(null)
-        setOllamaModel(prev => {
-          if (!prev || !models.some(m => m.name === prev)) return models[0].name
-          return prev
-        })
+        if (!fields.ollamaModel || !models.some(m => m.name === fields.ollamaModel)) {
+          onChange({ ollamaModel: models[0].name })
+        }
       }
     } catch (err) {
       setOllamaModels([])
@@ -68,78 +65,22 @@ export default function ConfigureAiStep({ onNext, onSkip }: ConfigureAiStepProps
     } finally {
       setOllamaModelsLoading(false)
     }
-  }, [])
+    // fields.ollamaModel deliberately excluded — including it re-fires the
+    // fetch every keystroke when the user picks a different model.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [onChange])
 
   useEffect(() => {
-    if (provider !== 'Ollama') return
+    if (fields.provider !== 'Ollama') return
     if (ollamaFetchTimeoutRef.current) clearTimeout(ollamaFetchTimeoutRef.current)
-    ollamaFetchTimeoutRef.current = setTimeout(() => fetchOllamaModels(ollamaUrl), 500)
+    ollamaFetchTimeoutRef.current = setTimeout(() => fetchOllamaModels(fields.ollamaUrl), 500)
     return () => { if (ollamaFetchTimeoutRef.current) clearTimeout(ollamaFetchTimeoutRef.current) }
-  }, [provider, ollamaUrl, fetchOllamaModels])
+  }, [fields.provider, fields.ollamaUrl, fetchOllamaModels])
 
-  useEffect(() => {
-    let cancelled = false
-    ingestionClient.getConfig().then(response => {
-      if (cancelled) return
-      if (response.success && response.data) {
-        const cfg = response.data as {
-          provider?: Provider
-          ollama?: { model?: string; base_url?: string }
-          anthropic?: { model?: string; api_key?: string }
-        }
-        setProvider(cfg.provider || 'Anthropic')
-        if (cfg.ollama?.model) setOllamaModel(cfg.ollama.model)
-        if (cfg.ollama?.base_url) setOllamaUrl(cfg.ollama.base_url)
-        if (cfg.anthropic?.model) setAnthropicModel(cfg.anthropic.model)
-        if (cfg.anthropic?.api_key && cfg.anthropic.api_key.includes('configured')) {
-          setAlreadyConfigured(true)
-        }
-      }
-      setLoading(false)
-    }).catch(() => {
-      if (!cancelled) setLoading(false)
-    })
-    return () => { cancelled = true }
-  }, [])
-
-  const handleSave = async () => {
-    setSaving(true)
-    setSaveResult(null)
-    const config = {
-      provider,
-      ollama: {
-        model: provider === 'Ollama' ? (ollamaModel || (ollamaModels[0]?.name ?? '')) : '',
-        base_url: ollamaUrl,
-      },
-      anthropic: {
-        api_key: provider === 'Anthropic' ? anthropicApiKey : '',
-        model: provider === 'Anthropic' ? anthropicModel : '',
-        base_url: 'https://api.anthropic.com',
-      },
-    }
-    try {
-      const response = await ingestionClient.saveConfig(config)
-      if (response.success) {
-        dispatch(fetchIngestionConfig())
-        onNext()
-        return
-      } else {
-        setSaveResult('error')
-      }
-    } catch {
-      setSaveResult('error')
-    } finally {
-      setSaving(false)
-    }
-  }
-
-  if (loading) {
-    return <p className="text-secondary text-center py-6">Loading configuration...</p>
-  }
-
-  const currentModel = provider === 'Anthropic' ? anthropicModel : ollamaModel
-  const canSave = saving
-    || (provider === 'Anthropic' && !anthropicApiKey && !alreadyConfigured)
+  const currentModel =
+    fields.provider === 'Anthropic' ? fields.anthropicModel : fields.ollamaModel
+  const canSave =
+    fields.provider === 'Anthropic' && !fields.anthropicApiKey.trim()
 
   return (
     <div>
@@ -149,18 +90,11 @@ export default function ConfigureAiStep({ onNext, onSkip }: ConfigureAiStepProps
       </h2>
       <p className="text-primary">FoldDB uses AI for data ingestion and search.</p>
 
-      {alreadyConfigured && (
-        <div className="card-success p-3 mt-3">
-          <p><span className="badge badge-success">CONFIGURED</span></p>
-          <p className="text-primary mt-1">AI provider is already set up. Update below or skip.</p>
-        </div>
-      )}
-
       <div className="mt-4">
         <p className="label">Provider</p>
         <select
-          value={provider}
-          onChange={e => setProvider(e.target.value as Provider)}
+          value={fields.provider}
+          onChange={e => onChange({ provider: e.target.value as AiProvider })}
           className="select"
           data-testid="provider-select"
         >
@@ -171,10 +105,10 @@ export default function ConfigureAiStep({ onNext, onSkip }: ConfigureAiStepProps
 
       <div className="mt-3">
         <p className="label">Model</p>
-        {provider === 'Anthropic' ? (
+        {fields.provider === 'Anthropic' ? (
           <select
-            value={anthropicModel}
-            onChange={e => setAnthropicModel(e.target.value)}
+            value={fields.anthropicModel}
+            onChange={e => onChange({ anthropicModel: e.target.value })}
             className="select"
             data-testid="model-select"
           >
@@ -184,8 +118,8 @@ export default function ConfigureAiStep({ onNext, onSkip }: ConfigureAiStepProps
           <div className="input flex items-center text-secondary">Loading models...</div>
         ) : ollamaModels.length > 0 ? (
           <select
-            value={ollamaModel}
-            onChange={e => setOllamaModel(e.target.value)}
+            value={fields.ollamaModel}
+            onChange={e => onChange({ ollamaModel: e.target.value })}
             className="select"
             data-testid="model-select"
           >
@@ -196,26 +130,26 @@ export default function ConfigureAiStep({ onNext, onSkip }: ConfigureAiStepProps
         ) : (
           <input
             type="text"
-            value={ollamaModel}
-            onChange={e => setOllamaModel(e.target.value)}
+            value={fields.ollamaModel}
+            onChange={e => onChange({ ollamaModel: e.target.value })}
             placeholder="e.g. llama3"
             className="input"
             data-testid="model-select"
           />
         )}
-        {provider === 'Ollama' && ollamaModelsError && (
+        {fields.provider === 'Ollama' && ollamaModelsError && (
           <p className="text-gruvbox-red text-xs mt-1">{ollamaModelsError}</p>
         )}
       </div>
 
-      {provider === 'Anthropic' && (
+      {fields.provider === 'Anthropic' && (
         <div className="mt-3">
           <p className="label">API Key</p>
           <input
             type="password"
-            value={anthropicApiKey}
-            onChange={e => setAnthropicApiKey(e.target.value)}
-            placeholder={alreadyConfigured ? '***configured***' : 'sk-ant-...'}
+            value={fields.anthropicApiKey}
+            onChange={e => onChange({ anthropicApiKey: e.target.value })}
+            placeholder="sk-ant-..."
             className="input"
             data-testid="api-key-input"
           />
@@ -232,14 +166,14 @@ export default function ConfigureAiStep({ onNext, onSkip }: ConfigureAiStepProps
         </div>
       )}
 
-      {provider === 'Ollama' && (
+      {fields.provider === 'Ollama' && (
         <>
           <div className="mt-3">
             <p className="label">Ollama URL</p>
             <input
               type="text"
-              value={ollamaUrl}
-              onChange={e => setOllamaUrl(e.target.value)}
+              value={fields.ollamaUrl}
+              onChange={e => onChange({ ollamaUrl: e.target.value })}
               placeholder="http://localhost:11434"
               className="input"
             />
@@ -255,17 +189,13 @@ export default function ConfigureAiStep({ onNext, onSkip }: ConfigureAiStepProps
         </>
       )}
 
-      {saveResult === 'error' && (
-        <p className="text-gruvbox-red mt-2">Failed to save. Please try again.</p>
-      )}
-
       <div className="flex gap-2 mt-4">
         <button
-          onClick={handleSave}
+          onClick={onNext}
           disabled={canSave}
           className="btn-primary flex-1 text-center"
         >
-          {saving ? 'Saving...' : 'Save & Continue'}
+          Save & Continue
         </button>
         <button onClick={onSkip} className="btn-secondary flex-1 text-center">
           Skip

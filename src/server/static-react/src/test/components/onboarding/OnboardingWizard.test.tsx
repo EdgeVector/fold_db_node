@@ -1,13 +1,25 @@
 import React from 'react';
-import { screen, fireEvent } from '@testing-library/react';
+import { screen, fireEvent, waitFor } from '@testing-library/react';
 import { vi, describe, it, expect, beforeEach, afterEach } from 'vitest';
 import OnboardingWizard, { ONBOARDING_STORAGE_KEY } from '../../../components/onboarding/OnboardingWizard';
 import { renderWithRedux } from '../../utils/testUtilities';
+import { systemClient } from '../../../api/clients/systemClient';
 
 type StepMockProps = { onNext: () => void; onSkip: () => void };
 type AllSetMockProps = { onFinish: () => void; completedSteps?: { size?: number } };
+type CloudStepMockProps = {
+  onEnableCloud: () => void;
+  onRestore: () => void;
+  onSkip: () => void;
+  submitting: boolean;
+  error: string | null;
+};
+type RecoveryViewMockProps = { words: string[]; onContinue: () => void };
 
-// Mock child step components to isolate wizard logic
+// Mock child step components to isolate wizard logic. The wizard now passes
+// controlled-input props (fields/onChange); the mocks ignore those and just
+// expose Next/Skip buttons. CloudBackupStep is special — it triggers the
+// bootstrap submission via three distinct callbacks.
 vi.mock('../../../components/onboarding/IdentityStep', () => ({
   default: ({ onNext, onSkip }: StepMockProps) => (
     <div data-testid="identity-step">
@@ -39,11 +51,23 @@ vi.mock('../../../components/onboarding/AppleDataStep', () => ({
 }));
 
 vi.mock('../../../components/onboarding/CloudBackupStep', () => ({
-  default: ({ onNext, onSkip }: StepMockProps) => (
+  default: ({ onEnableCloud, onRestore, onSkip, submitting, error }: CloudStepMockProps) => (
     <div data-testid="cloud-step">
       Cloud Backup Step
-      <button data-testid="cloud-next" onClick={onNext}>Next</button>
+      <span data-testid="cloud-submitting">{submitting ? 'yes' : 'no'}</span>
+      {error ? <span data-testid="cloud-error">{error}</span> : null}
+      <button data-testid="cloud-enable" onClick={onEnableCloud}>Enable</button>
+      <button data-testid="cloud-restore" onClick={onRestore}>Restore</button>
       <button data-testid="cloud-skip" onClick={onSkip}>Skip</button>
+    </div>
+  ),
+}));
+
+vi.mock('../../../components/onboarding/RecoveryPhraseView', () => ({
+  default: ({ words, onContinue }: RecoveryViewMockProps) => (
+    <div data-testid="recovery-step">
+      <span data-testid="recovery-word-count">{words.length}</span>
+      <button data-testid="recovery-continue" onClick={onContinue}>Continue</button>
     </div>
   ),
 }));
@@ -68,16 +92,37 @@ vi.mock('../../../components/onboarding/AllSetStep', () => ({
   ),
 }));
 
+const FRESH_BOOTSTRAP = {
+  success: true,
+  status: 200,
+  data: {
+    public_key: 'pk',
+    user_hash: 'uh',
+    recovery_phrase: Array.from({ length: 24 }, (_, i) => `word${i + 1}`),
+  },
+};
+
+const RESTORE_BOOTSTRAP = {
+  success: true,
+  status: 200,
+  data: { public_key: 'pk', user_hash: 'uh' },
+};
+
 describe('OnboardingWizard', () => {
   let onComplete: () => void;
+  let bootstrapSpy: ReturnType<typeof vi.spyOn>;
 
   beforeEach(() => {
     onComplete = vi.fn();
     localStorage.clear();
+    bootstrapSpy = vi
+      .spyOn(systemClient, 'bootstrap')
+      .mockResolvedValue(FRESH_BOOTSTRAP as never);
   });
 
   afterEach(() => {
     localStorage.clear();
+    vi.restoreAllMocks();
   });
 
   const renderWizard = () => {
@@ -100,79 +145,100 @@ describe('OnboardingWizard', () => {
     expect(screen.getByText('All Set')).toBeTruthy();
   });
 
-  it('navigates through all steps via Next buttons', () => {
+  it('collapses onboarding to a single bootstrap POST and renders the recovery phrase', async () => {
     renderWizard();
 
-    // Step 1: Identity -> AI Setup
     fireEvent.click(screen.getByTestId('identity-next'));
     expect(screen.getByTestId('ai-step')).toBeTruthy();
 
-    // Step 2: AI Setup -> Apple Data
     fireEvent.click(screen.getByTestId('ai-next'));
-    expect(screen.getByTestId('apple-step')).toBeTruthy();
-
-    // Step 3: Apple Data -> Cloud Backup
-    fireEvent.click(screen.getByTestId('apple-next'));
     expect(screen.getByTestId('cloud-step')).toBeTruthy();
 
-    // Step 4: Cloud Backup -> Discovery
-    fireEvent.click(screen.getByTestId('cloud-next'));
+    fireEvent.click(screen.getByTestId('cloud-enable'));
+
+    await waitFor(() => {
+      expect(bootstrapSpy).toHaveBeenCalledTimes(1);
+    });
+    expect(bootstrapSpy.mock.calls[0][0]).toMatchObject({
+      enable_cloud: true,
+      recovery_phrase: null,
+    });
+
+    expect(screen.getByTestId('recovery-step')).toBeTruthy();
+    expect(screen.getByTestId('recovery-word-count').textContent).toBe('24');
+
+    fireEvent.click(screen.getByTestId('recovery-continue'));
+    expect(screen.getByTestId('apple-step')).toBeTruthy();
+
+    fireEvent.click(screen.getByTestId('apple-next'));
     expect(screen.getByTestId('discovery-step')).toBeTruthy();
 
-    // Step 5: Discovery -> All Set
     fireEvent.click(screen.getByTestId('discovery-next'));
     expect(screen.getByTestId('allset-step')).toBeTruthy();
   });
 
-  it('allows skipping steps', () => {
+  it('skip on cloud step still POSTs once with enable_cloud=false', async () => {
     renderWizard();
 
-    // Skip Identity step
-    fireEvent.click(screen.getByTestId('identity-skip'));
-    expect(screen.getByTestId('ai-step')).toBeTruthy();
-
-    // Skip AI step
-    fireEvent.click(screen.getByTestId('ai-skip'));
-    expect(screen.getByTestId('apple-step')).toBeTruthy();
-
-    // Skip Apple step
-    fireEvent.click(screen.getByTestId('apple-skip'));
-    expect(screen.getByTestId('cloud-step')).toBeTruthy();
-  });
-
-  it('tracks completed steps vs skipped', () => {
-    renderWizard();
-
-    // Complete Identity step
-    fireEvent.click(screen.getByTestId('identity-next'));
-    // Complete AI step (Next)
-    fireEvent.click(screen.getByTestId('ai-next'));
-    // Skip Apple step
-    fireEvent.click(screen.getByTestId('apple-skip'));
-    // Complete Cloud step
-    fireEvent.click(screen.getByTestId('cloud-next'));
-    // Skip Discovery
-    fireEvent.click(screen.getByTestId('discovery-skip'));
-
-    // AllSet step should show 3 completed (identity + welcome + cloud-backup)
-    expect(screen.getByTestId('allset-step')).toBeTruthy();
-    expect(screen.getByTestId('completed-count').textContent).toBe('3');
-  });
-
-  it('calls onComplete and saves to localStorage on finish', () => {
-    renderWizard();
-
-    // Navigate to All Set by skipping everything
     fireEvent.click(screen.getByTestId('identity-skip'));
     fireEvent.click(screen.getByTestId('ai-skip'));
-    fireEvent.click(screen.getByTestId('apple-skip'));
     fireEvent.click(screen.getByTestId('cloud-skip'));
-    fireEvent.click(screen.getByTestId('discovery-skip'));
 
-    // Click finish
-    fireEvent.click(screen.getByTestId('allset-finish'));
+    await waitFor(() => {
+      expect(bootstrapSpy).toHaveBeenCalledTimes(1);
+    });
+    expect(bootstrapSpy.mock.calls[0][0]).toMatchObject({
+      enable_cloud: false,
+      invite_code: null,
+      recovery_phrase: null,
+    });
+
+    expect(screen.getByTestId('recovery-step')).toBeTruthy();
+  });
+
+  it('restore path skips the recovery phrase view (no fresh-mint phrase in response)', async () => {
+    bootstrapSpy.mockResolvedValueOnce(RESTORE_BOOTSTRAP as never);
+    renderWizard();
+
+    fireEvent.click(screen.getByTestId('identity-next'));
+    fireEvent.click(screen.getByTestId('ai-next'));
+    fireEvent.click(screen.getByTestId('cloud-restore'));
+
+    await waitFor(() => {
+      expect(bootstrapSpy).toHaveBeenCalledTimes(1);
+    });
+    expect(bootstrapSpy.mock.calls[0][0]).toMatchObject({
+      enable_cloud: true,
+    });
+    expect(screen.queryByTestId('recovery-step')).toBeNull();
+    expect(screen.getByTestId('apple-step')).toBeTruthy();
+  });
+
+  it('surfaces bootstrap failure inline without advancing', async () => {
+    bootstrapSpy.mockRejectedValueOnce(new Error('boom'));
+    renderWizard();
+
+    fireEvent.click(screen.getByTestId('identity-next'));
+    fireEvent.click(screen.getByTestId('ai-next'));
+    fireEvent.click(screen.getByTestId('cloud-enable'));
+
+    await waitFor(() => {
+      expect(screen.getByTestId('cloud-error')).toBeTruthy();
+    });
+    expect(screen.queryByTestId('recovery-step')).toBeNull();
+    expect(screen.queryByTestId('apple-step')).toBeNull();
+  });
+
+  it('calls onComplete and writes localStorage on finish — bootstrap writes the marker, no extra call', () => {
+    renderWizard();
+
+    // Use the global "Skip setup entirely" link to bail without finishing.
+    // The wizard never calls /system/onboarding-complete; the bootstrap
+    // marker is the source of truth.
+    fireEvent.click(screen.getByText('Skip setup entirely'));
     expect(onComplete).toHaveBeenCalledOnce();
     expect(localStorage.getItem(ONBOARDING_STORAGE_KEY)).toBe('1');
+    expect(bootstrapSpy).not.toHaveBeenCalled();
   });
 
   it('exports ONBOARDING_STORAGE_KEY constant', () => {
@@ -180,47 +246,19 @@ describe('OnboardingWizard', () => {
   });
 
   describe('cloud-already-active gate', () => {
-    it('skips CloudBackupStep and goes directly to Discovery when exemem_api_key is set', () => {
+    it('skips CloudBackupStep and goes directly to Apple when exemem_api_key is set', () => {
       localStorage.setItem('exemem_api_key', 'test-api-key-abc123');
       renderWizard();
 
       // Cloud Backup should not appear in the progress indicator.
       expect(screen.queryByText('Cloud Backup')).toBeNull();
 
-      // Navigate: identity -> welcome -> apple-data -> (skip cloud) -> discovery.
+      // Navigate: identity -> ai -> apple-data (cloud step bypassed).
       fireEvent.click(screen.getByTestId('identity-next'));
       fireEvent.click(screen.getByTestId('ai-next'));
-      fireEvent.click(screen.getByTestId('apple-next'));
-
-      // We should land on Discovery, NOT Cloud Backup.
-      expect(screen.queryByTestId('cloud-step')).toBeNull();
-      expect(screen.getByTestId('discovery-step')).toBeTruthy();
-    });
-
-    it('also skips cloud step when apple-data is skipped', () => {
-      localStorage.setItem('exemem_api_key', 'test-api-key-abc123');
-      renderWizard();
-
-      fireEvent.click(screen.getByTestId('identity-skip'));
-      fireEvent.click(screen.getByTestId('ai-skip'));
-      fireEvent.click(screen.getByTestId('apple-skip'));
 
       expect(screen.queryByTestId('cloud-step')).toBeNull();
-      expect(screen.getByTestId('discovery-step')).toBeTruthy();
-    });
-
-    it('marks cloud-backup completed when skipped via gate', () => {
-      localStorage.setItem('exemem_api_key', 'test-api-key-abc123');
-      renderWizard();
-
-      fireEvent.click(screen.getByTestId('identity-next'));
-      fireEvent.click(screen.getByTestId('ai-next'));
-      fireEvent.click(screen.getByTestId('apple-next'));
-      fireEvent.click(screen.getByTestId('discovery-next'));
-
-      // identity + welcome + apple-data + cloud-backup (gated) + discovery = 5
-      expect(screen.getByTestId('allset-step')).toBeTruthy();
-      expect(screen.getByTestId('completed-count').textContent).toBe('5');
+      expect(screen.getByTestId('apple-step')).toBeTruthy();
     });
 
     it('renders CloudBackupStep normally when exemem_api_key is not set', () => {
@@ -233,11 +271,10 @@ describe('OnboardingWizard', () => {
 
       fireEvent.click(screen.getByTestId('identity-next'));
       fireEvent.click(screen.getByTestId('ai-next'));
-      fireEvent.click(screen.getByTestId('apple-next'));
 
-      // We should land on Cloud Backup, not Discovery.
+      // We should land on Cloud Backup, not Apple Data.
       expect(screen.getByTestId('cloud-step')).toBeTruthy();
-      expect(screen.queryByTestId('discovery-step')).toBeNull();
+      expect(screen.queryByTestId('apple-step')).toBeNull();
     });
   });
 });

@@ -80,6 +80,7 @@ const API_ENDPOINTS_MANUAL = {
   UPDATE_DATABASE_CONFIG: "/system/database-config",
   GET_DATABASE_STATUS: "/system/database-status",
   MARK_ONBOARDING_COMPLETE: "/system/onboarding-complete",
+  SETUP_BOOTSTRAP: "/setup/bootstrap",
   INGESTION_UPLOAD: "/ingestion/upload",
   GET_MOLECULE_HISTORY: (uuid: string) => `/history/${uuid}`,
   GET_ATOM_CONTENT: (uuid: string) => `/atom/${uuid}`,

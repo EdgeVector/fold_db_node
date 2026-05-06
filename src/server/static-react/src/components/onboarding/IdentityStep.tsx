@@ -1,51 +1,21 @@
-import { useState, useEffect } from 'react'
-import { getIdentityCard, setIdentityCard, type IdentityCard } from '../../api/clients/trustClient'
-
 interface IdentityStepProps {
+  displayName: string
+  contactHint: string
+  birthday: string
+  onChange: (fields: { displayName?: string; contactHint?: string; birthday?: string }) => void
   onNext: () => void
   onSkip: () => void
 }
 
-export default function IdentityStep({ onNext, onSkip }: IdentityStepProps) {
-  const [displayName, setDisplayName] = useState('')
-  const [contactHint, setContactHint] = useState('')
-  const [birthday, setBirthday] = useState('')
-  const [loading, setLoading] = useState(false)
-  const [error, setError] = useState<string | null>(null)
-  const [existingCard, setExistingCard] = useState<IdentityCard | null>(null)
-
-  useEffect(() => {
-    getIdentityCard().then((resp) => {
-      if (resp.success && resp.data?.identity_card) {
-        const card = resp.data.identity_card
-        setExistingCard(card)
-        setDisplayName(card.display_name)
-        setContactHint(card.contact_hint || '')
-        setBirthday(card.birthday || '')
-      }
-    }).catch(() => {})
-  }, [])
-
-  const handleSave = async () => {
-    if (!displayName.trim()) {
-      setError('Display name is required')
-      return
-    }
-    setLoading(true)
-    setError(null)
-    try {
-      const resp = await setIdentityCard(displayName.trim(), contactHint.trim() || null, birthday.trim() || null)
-      if (resp.success) {
-        onNext()
-      } else {
-        setError(resp.error || 'Failed to save identity')
-      }
-    } catch (e) {
-      setError(e instanceof Error ? e.message : String(e))
-    } finally {
-      setLoading(false)
-    }
-  }
+export default function IdentityStep({
+  displayName,
+  contactHint,
+  birthday,
+  onChange,
+  onNext,
+  onSkip,
+}: IdentityStepProps) {
+  const canContinue = displayName.trim().length > 0
 
   return (
     <div>
@@ -66,10 +36,9 @@ export default function IdentityStep({ onNext, onSkip }: IdentityStepProps) {
         <input
           type="text"
           value={displayName}
-          onChange={(e) => setDisplayName(e.target.value)}
+          onChange={(e) => onChange({ displayName: e.target.value })}
           placeholder="Your name"
           className="input w-full"
-          disabled={loading}
         />
       </div>
 
@@ -78,10 +47,9 @@ export default function IdentityStep({ onNext, onSkip }: IdentityStepProps) {
         <input
           type="text"
           value={contactHint}
-          onChange={(e) => setContactHint(e.target.value)}
+          onChange={(e) => onChange({ contactHint: e.target.value })}
           placeholder="Email, phone, or handle for verification"
           className="input w-full"
-          disabled={loading}
         />
         <p className="text-xs text-tertiary mt-1">
           Helps others verify it&apos;s really you when they receive your trust invite.
@@ -93,25 +61,22 @@ export default function IdentityStep({ onNext, onSkip }: IdentityStepProps) {
         <input
           type="text"
           value={birthday}
-          onChange={(e) => setBirthday(e.target.value)}
+          onChange={(e) => onChange({ birthday: e.target.value })}
           placeholder="03-15"
           className="input w-full"
-          disabled={loading}
         />
         <p className="text-xs text-tertiary mt-1">
           For peer verification when connecting.
         </p>
       </div>
 
-      {error && <p className="text-gruvbox-red text-sm mt-3">{error}</p>}
-
       <div className="flex gap-2 mt-4">
         <button
-          onClick={handleSave}
-          disabled={loading || !displayName.trim()}
+          onClick={onNext}
+          disabled={!canContinue}
           className="btn-primary flex-1 text-center"
         >
-          {loading ? 'Saving...' : (existingCard ? 'Update & Continue' : 'Save & Continue')}
+          Save & Continue
         </button>
         <button onClick={onSkip} className="btn-secondary flex-1 text-center">
           Skip
