@@ -80,11 +80,6 @@ const API_ENDPOINTS_MANUAL = {
   UPDATE_DATABASE_CONFIG: "/system/database-config",
   GET_DATABASE_STATUS: "/system/database-status",
   MARK_ONBOARDING_COMPLETE: "/system/onboarding-complete",
-  // Sample-data probe used by SmartFolderTab's "Try sample data" shortcut.
-  // Backend resolves FOLDDB_SAMPLE_DATA_DIR > <CWD>/sample_data >
-  // <exe_dir>/sample_data > <exe_dir>/../share/folddb/sample_data, so the
-  // button works for brew-installed users (CWD != repo root) too.
-  GET_SAMPLE_DATA_AVAILABILITY: "/system/sample-data-availability",
   INGESTION_UPLOAD: "/ingestion/upload",
   GET_MOLECULE_HISTORY: (uuid: string) => `/history/${uuid}`,
   GET_ATOM_CONTENT: (uuid: string) => `/atom/${uuid}`,

@@ -168,20 +168,7 @@ jobs:
           cp target/${{ matrix.target }}/release/folddb dist/
           cp target/${{ matrix.target }}/release/folddb_server dist/
           cp target/${{ matrix.target }}/release/folddb_mcp dist/
-          cp -R sample_data dist/sample_data
           tar -czf ${{ matrix.name }}.tar.gz -C dist .
-
-      # Hard gate: the brew-installed "Try sample data" button (PR #901)
-      # only works if the bottle ships sample_data/ next to the binaries —
-      # the path resolver in src/server/routes/system.rs walks
-      # <exe_dir>/../share/folddb/sample_data, which the formula's
-      # `pkgshare.install "sample_data"` populates from this tarball entry.
-      # A future refactor that drops the cp above would silently break
-      # first-run onboarding for every brew user; assert here instead.
-      - name: Verify tarball contains sample_data
-        run: |
-          tar tzf ${{ matrix.name }}.tar.gz | grep -q '^\./sample_data/README\.md$' \
-            || (echo "sample_data/README.md missing from ${{ matrix.name }}.tar.gz" >&2; exit 1)
 
       - name: Upload artifact
         uses: actions/upload-artifact@v4
@@ -326,7 +313,6 @@ jobs:
             def install
               bin.install "folddb"
               bin.install "folddb_server"
-              pkgshare.install "sample_data"
             end
 
             def caveats

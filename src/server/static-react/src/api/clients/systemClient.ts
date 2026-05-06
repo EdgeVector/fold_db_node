@@ -129,13 +129,6 @@ export interface DatabaseStatusResponse {
   onboarding_complete: boolean;
 }
 
-// Wire shape of GET /api/system/sample-data-availability. `path` is omitted
-// when `available` is false, mirroring serde's skip_serializing_if.
-export interface SampleDataAvailability {
-  available: boolean;
-  path?: string;
-}
-
 export interface SyncTriggerResponse {
   success: boolean;
   message: string;
@@ -378,25 +371,6 @@ export class UnifiedSystemClient {
     });
   }
 
-  // Probe whether the bundled `sample_data/` directory ships alongside the
-  // running daemon. Backend handles all path resolution (env override > CWD
-  // > exe-relative); the UI just gates on `available`.
-  async getSampleDataAvailability(): Promise<
-    EnhancedApiResponse<SampleDataAvailability>
-  > {
-    return this.client.get<SampleDataAvailability>(
-      API_ENDPOINTS.GET_SAMPLE_DATA_AVAILABILITY,
-      {
-        requiresAuth: false,
-        timeout: API_TIMEOUTS.QUICK,
-        retries: API_RETRIES.STANDARD,
-        cacheable: true,
-        cacheTtl: API_CACHE_TTL.SYSTEM_STATUS,
-        cacheKey: "sample_data_availability",
-      },
-    );
-  }
-
   // Mark onboarding as complete (writes marker file on backend)
   async markOnboardingComplete(): Promise<EnhancedApiResponse<{ ok: boolean }>> {
     return this.client.post<{ ok: boolean }>(
@@ -459,8 +433,6 @@ export const getDatabaseStatus =
 export const applySetup = systemClient.applySetup.bind(systemClient);
 export const markOnboardingComplete =
   systemClient.markOnboardingComplete.bind(systemClient);
-export const getSampleDataAvailability =
-  systemClient.getSampleDataAvailability.bind(systemClient);
 export const migrateToCloud = systemClient.migrateToCloud.bind(systemClient);
 export const createLogStream = systemClient.createLogStream.bind(systemClient);
 export const validateResetRequest =

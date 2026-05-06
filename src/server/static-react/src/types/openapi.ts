@@ -434,28 +434,6 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
-    "/api/system/sample-data-availability": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        /**
-         * Probe whether the bundled `sample_data/` directory ships alongside the
-         * @description running binary so the UI can show the "Try sample data" onboarding
-         *     shortcut. Unauthenticated — purely environment introspection, no node
-         *     or user state involved.
-         */
-        get: operations["sample_data_availability"];
-        put?: never;
-        post?: never;
-        delete?: never;
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
     "/api/system/status": {
         parameters: {
             query?: never;
@@ -1269,20 +1247,6 @@ export interface components {
         RunQueryRequest: {
             query: string;
             session_id?: string | null;
-        };
-        /**
-         * @description Wire shape of `GET /api/system/sample-data-availability`. UI gates the
-         *     "Try sample data" shortcut on `available`, and feeds `path` directly to
-         *     the scan endpoint so it works regardless of the daemon's CWD (relevant
-         *     to brew-installed users, who launch from `~` rather than the repo root).
-         */
-        SampleDataAvailability: {
-            available: boolean;
-            /**
-             * @description Absolute, canonicalized path to the resolved `sample_data/` directory.
-             *     `None` when no candidate matched.
-             */
-            path?: string | null;
         };
         /**
          * @description Request body for `POST /api/web_search/key`. An empty `api_key` deletes the
@@ -2127,26 +2091,6 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["AdminJobResponse"];
-                };
-            };
-        };
-    };
-    sample_data_availability: {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        requestBody?: never;
-        responses: {
-            /** @description Sample data availability probe */
-            200: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["SampleDataAvailability"];
                 };
             };
         };
