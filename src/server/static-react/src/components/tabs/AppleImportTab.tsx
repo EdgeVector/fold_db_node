@@ -393,9 +393,9 @@ const SourceCard = memo(function SourceCard({ source, enabled, onToggle, status,
       )}
 
       {isError && (
-        <div className="flex items-center gap-2 mt-1">
-          <span className="text-gruvbox-red text-xs">&#10007;</span>
-          <span className="text-xs text-gruvbox-red">{message}</span>
+        <div className="flex items-start gap-2 mt-1">
+          <span className="text-gruvbox-red text-xs leading-snug">&#10007;</span>
+          <span className="text-xs text-gruvbox-red break-words leading-snug">{message}</span>
         </div>
       )}
     </div>
