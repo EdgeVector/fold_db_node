@@ -110,6 +110,19 @@ fn try_parse_twitter_date(value: &str) -> Option<NaiveDateTime> {
     NaiveDateTime::parse_from_str(&without_dow_tz, "%b %d %H:%M:%S %Y").ok()
 }
 
+/// Short human-readable label for a JSON value's type — used in error
+/// messages so operators can tell at a glance what shape the data was in.
+fn type_label(val: &Value) -> &'static str {
+    match val {
+        Value::Null => "null",
+        Value::Bool(_) => "boolean",
+        Value::Number(_) => "number",
+        Value::String(_) => "string",
+        Value::Array(_) => "array",
+        Value::Object(_) => "object",
+    }
+}
+
 // ---- Key extraction ----
 
 /// Extract key values from JSON data based on schema key fields.
@@ -146,20 +159,31 @@ pub(crate) async fn extract_key_values_from_data(
                             keys_and_values.insert(key_name.to_string(), val.to_string());
                         }
                         Some(val) => {
-                            tracing::warn!(
-                            target: "fold_node::ingestion",
-                                                "{} '{}' in schema '{}' has unsupported type (not string or number): {:?}",
-                                                key_name, field, schema_name, val
-                                            );
+                            // Schema declared this key but the data has it as a
+                            // non-scalar (e.g., array, object, null). We can't
+                            // build a usable key from that and silently making
+                            // one up creates duplicate records on re-ingest, so
+                            // reject the record. The most common cause is an AI
+                            // mis-classification — the file probably belongs in
+                            // a different schema.
+                            return Err(crate::ingestion::IngestionError::InvalidInput(
+                                format!(
+                                    "{} '{}' in schema '{}' has unsupported type (expected string or number, got: {}). \
+                                     The record's data is missing a usable value for the schema's declared key field — \
+                                     this usually means the AI routed the file to the wrong schema.",
+                                    key_name, field, schema_name, type_label(val)
+                                ),
+                            ));
                         }
                         None => {
-                            tracing::warn!(
-                            target: "fold_node::ingestion",
-                                                "{} '{}' not found in data for schema '{}'",
-                                                key_name,
-                                                field,
-                                                schema_name
-                                            );
+                            return Err(crate::ingestion::IngestionError::InvalidInput(
+                                format!(
+                                    "{} '{}' not found in data for schema '{}'. \
+                                     The record's data is missing the schema's declared key field — \
+                                     this usually means the AI routed the file to the wrong schema.",
+                                    key_name, field, schema_name
+                                ),
+                            ));
                         }
                     }
                 }
@@ -339,6 +363,145 @@ mod tests {
 
         // Missing parent
         assert_eq!(extract_nested_field_value(&fields, "arrival.airport"), None);
+    }
+
+    /// When a schema's declared `hash_field` isn't present in the record's
+    /// data, `extract_key_values_from_data` MUST reject the record rather than
+    /// silently letting downstream code fall back to a non-deterministic
+    /// content-hash key. The fallback created duplicate records on re-ingest
+    /// (each LLM run produces slightly different mapped fields → different
+    /// content hash → new record); rejection forces the file to surface as
+    /// failed so the user can re-route it.
+    #[tokio::test]
+    async fn test_extract_rejects_when_declared_hash_field_missing_from_data() {
+        use fold_db::schema::SchemaCore;
+        use fold_db::test_helpers::TestSchemaBuilder;
+        use std::sync::Arc;
+
+        let core = Arc::new(SchemaCore::new_for_testing().await.expect("init core"));
+        let schema_json = TestSchemaBuilder::new("Contacts")
+            .fields(&["name", "phone"])
+            .hash_key("email")
+            .build_json();
+        core.load_schema_from_json(&schema_json)
+            .await
+            .expect("load Contacts schema");
+
+        // Data is missing the declared `email` hash field — mirrors the
+        // dogfood repro where a calendar event got mis-classified into a
+        // Contacts-shaped schema.
+        let mut data = HashMap::new();
+        data.insert("name".to_string(), serde_json::json!("Alice"));
+        data.insert("phone".to_string(), serde_json::json!("555-0101"));
+
+        let result = extract_key_values_from_data(&data, "Contacts", &core).await;
+
+        let err = result.expect_err("missing declared hash_field must error, not warn-and-skip");
+        let msg = err.to_string();
+        assert!(
+            msg.contains("hash_field 'email'") && msg.contains("Contacts"),
+            "error must name the missing field and schema; got: {msg}"
+        );
+    }
+
+    /// Symmetric case for `range_field`: the dogfood repro also paired
+    /// `range_field 'completion_date' not found in data` with the same
+    /// silent-fallback bug, so both directions must reject.
+    #[tokio::test]
+    async fn test_extract_rejects_when_declared_range_field_missing_from_data() {
+        use fold_db::schema::SchemaCore;
+        use fold_db::test_helpers::TestSchemaBuilder;
+        use std::sync::Arc;
+
+        let core = Arc::new(SchemaCore::new_for_testing().await.expect("init core"));
+        let schema_json = TestSchemaBuilder::new("Tasks")
+            .fields(&["title"])
+            .hash_key("title")
+            .range_key("completion_date")
+            .build_json();
+        core.load_schema_from_json(&schema_json)
+            .await
+            .expect("load Tasks schema");
+
+        let mut data = HashMap::new();
+        data.insert("title".to_string(), serde_json::json!("Buy groceries"));
+        // completion_date intentionally absent
+
+        let result = extract_key_values_from_data(&data, "Tasks", &core).await;
+
+        let err = result.expect_err("missing declared range_field must error, not warn-and-skip");
+        let msg = err.to_string();
+        assert!(
+            msg.contains("range_field 'completion_date'") && msg.contains("Tasks"),
+            "error must name the missing field and schema; got: {msg}"
+        );
+    }
+
+    /// A declared key field whose value is a non-scalar (e.g., the AI
+    /// extracted an object or an array for what should be a hash) is just as
+    /// unusable as a missing field — and the silent fallback would still
+    /// produce drifting content hashes — so reject it the same way.
+    #[tokio::test]
+    async fn test_extract_rejects_when_declared_key_field_has_unsupported_type() {
+        use fold_db::schema::SchemaCore;
+        use fold_db::test_helpers::TestSchemaBuilder;
+        use std::sync::Arc;
+
+        let core = Arc::new(SchemaCore::new_for_testing().await.expect("init core"));
+        let schema_json = TestSchemaBuilder::new("Contacts")
+            .fields(&["name"])
+            .hash_key("email")
+            .build_json();
+        core.load_schema_from_json(&schema_json)
+            .await
+            .expect("load Contacts schema");
+
+        let mut data = HashMap::new();
+        data.insert("name".to_string(), serde_json::json!("Alice"));
+        data.insert(
+            "email".to_string(),
+            serde_json::json!(["alice@example.com", "alice@work.example.com"]),
+        );
+
+        let result = extract_key_values_from_data(&data, "Contacts", &core).await;
+
+        let err = result.expect_err("non-scalar key field must error");
+        let msg = err.to_string();
+        assert!(
+            msg.contains("unsupported type") && msg.contains("array"),
+            "error must label the offending JSON type; got: {msg}"
+        );
+    }
+
+    /// Sanity: when the declared key fields ARE present and scalar, extraction
+    /// still succeeds — guards against the rejection path being too eager.
+    #[tokio::test]
+    async fn test_extract_succeeds_when_declared_keys_present() {
+        use fold_db::schema::SchemaCore;
+        use fold_db::test_helpers::TestSchemaBuilder;
+        use std::sync::Arc;
+
+        let core = Arc::new(SchemaCore::new_for_testing().await.expect("init core"));
+        let schema_json = TestSchemaBuilder::new("Contacts")
+            .fields(&["name"])
+            .hash_key("email")
+            .build_json();
+        core.load_schema_from_json(&schema_json)
+            .await
+            .expect("load Contacts schema");
+
+        let mut data = HashMap::new();
+        data.insert("name".to_string(), serde_json::json!("Alice"));
+        data.insert("email".to_string(), serde_json::json!("alice@example.com"));
+
+        let keys = extract_key_values_from_data(&data, "Contacts", &core)
+            .await
+            .expect("happy path must succeed");
+
+        assert_eq!(
+            keys.get("hash_field").map(String::as_str),
+            Some("alice@example.com")
+        );
     }
 
     #[test]
