@@ -112,6 +112,20 @@ impl StartupCtx {
         // Eager pool init — fixes the bootstrap-resume `None` pool race.
         let sled_pool = node_manager.get_or_init_sled_pool().await;
 
+        // Idempotent migration for buggy installs from the pre-bootstrap-endpoint
+        // CLI wizard: re-encrypt plaintext identities under the keychain master
+        // key and synthesize a missing onboarding marker if an identity exists.
+        // After one boot the conditions stop matching; safe to run every boot.
+        if let Err(e) = migrate_legacy_identity_state(&sled_pool) {
+            // Don't block boot — surface the error so it's visible in logs and
+            // the admin can decide. Worst case the user re-runs onboarding.
+            tracing::warn!(
+                target: "fold_node::http_server",
+                error = %e,
+                "Legacy identity-state migration failed (non-fatal)"
+            );
+        }
+
         // Capture the bootstrap marker after the pool is live so the resume
         // worker can use the captured pool unconditionally.
         let bootstrap_pending = crate::handlers::auth::check_bootstrap_pending();
@@ -340,6 +354,82 @@ async fn token_refresh(ctx: Arc<StartupCtx>) {
     }
 }
 
+/// Idempotent boot-time migration for installs created by the pre-bootstrap
+/// CLI wizard, which (a) stored the identity plaintext (the master key was
+/// never minted because IdentityStore::open was never called from the
+/// in-process pool) and (b) sometimes failed to write `.onboarding_complete`
+/// on the cloud-disabled path.
+///
+/// Conservative by design: never rotates the identity, never grants
+/// "setup complete" to a never-set-up node. Sub-step 1 only runs when the
+/// `os-keychain` feature is on AND the stored value lacks the `ENC:` prefix;
+/// sub-step 2 only runs when an identity exists AND the marker is absent.
+/// After one boot, neither condition matches and the function no-ops.
+fn migrate_legacy_identity_state(pool: &Arc<SledPool>) -> Result<(), String> {
+    let raw = crate::identity::peek_raw_identity_value(pool)?;
+    let Some(raw_value) = raw else {
+        // No identity persisted yet — bootstrap will be the first writer.
+        // Nothing to migrate; nothing to back-fill.
+        return Ok(());
+    };
+
+    // ---- Sub-step 1: re-encrypt plaintext identity ----
+    #[cfg(feature = "os-keychain")]
+    {
+        if !raw_value.starts_with("ENC:") {
+            // Mint the master key explicitly first — upstream's
+            // resolve_master_key returns Ok(None) on the no-encrypted-blob
+            // path, so without this call set() would re-write plaintext.
+            // initialize_master_key is idempotent.
+            crate::secure_store::initialize_master_key()?;
+            // identity::open() now resolves the master key (FOLDDB_MASTER_KEY
+            // first, then the keychain we just minted into) and returns a
+            // store that encrypts on `set`. The on-disk value flips from
+            // plaintext to ENC:<base64> blob with the SAME identity bytes —
+            // open() returns the plaintext as-is, set() re-writes encrypted.
+            let store = crate::identity::open(Arc::clone(pool))?;
+            if let Some(id) = store.get()? {
+                store.set(&id)?;
+                tracing::info!(
+                    target: "fold_node::http_server",
+                    "Migrated plaintext identity to encrypted (legacy CLI-wizard install)"
+                );
+            }
+        }
+    }
+    #[cfg(not(feature = "os-keychain"))]
+    {
+        // Without the keychain feature there's nothing to encrypt under.
+        // The plaintext form is the on-disk format for this build, so nothing
+        // to do for sub-step 1.
+        let _ = raw_value;
+    }
+
+    // ---- Sub-step 2: synthesize missing marker ----
+    let marker_path = match crate::utils::paths::folddb_home() {
+        Ok(home) => home.join("data").join(".onboarding_complete"),
+        Err(e) => {
+            // FOLDDB_HOME is unreachable — nothing we can do, but identity
+            // re-encryption above already succeeded so we don't fail boot.
+            return Err(format!("Cannot resolve FOLDDB_HOME for marker: {e}"));
+        }
+    };
+    if !marker_path.exists() {
+        if let Some(parent) = marker_path.parent() {
+            std::fs::create_dir_all(parent)
+                .map_err(|e| format!("Cannot create data dir for marker: {e}"))?;
+        }
+        crate::sensitive_io::write_sensitive(&marker_path, b"1")
+            .map_err(|e| format!("Cannot write synthesized marker: {e}"))?;
+        tracing::info!(
+            target: "fold_node::http_server",
+            "Synthesized missing onboarding marker (identity exists)"
+        );
+    }
+
+    Ok(())
+}
+
 async fn apple_sync(ctx: Arc<StartupCtx>) {
     crate::server::routes::apple_import::run_sync_scheduler(
         ctx.apple_sync_config.get_ref().clone(),
@@ -498,6 +588,197 @@ mod tests {
         LOCK.get_or_init(|| Mutex::new(()))
             .lock()
             .expect("schema-preload env lock poisoned")
+    }
+
+    /// D5 sub-step 2: when an identity already lives in the Sled tree but
+    /// the `.onboarding_complete` marker is missing (the bug where the CLI
+    /// wizard skipped writing the marker on the cloud-disabled path), the
+    /// boot-time migration must synthesize the marker so subsequent boots
+    /// don't drop the user back into the onboarding wizard.
+    ///
+    /// This test does NOT require the os-keychain feature — sub-step 2
+    /// runs unconditionally once an identity is detected.
+    #[tokio::test]
+    #[allow(clippy::await_holding_lock)]
+    async fn migration_synthesizes_missing_marker() {
+        let _guard = folddb_home_lock();
+        // A 32-zero-byte master key keeps the os-keychain build path off
+        // the OS keychain in CI. No effect when the feature is disabled.
+        std::env::set_var("FOLDDB_MASTER_KEY", "0".repeat(64));
+        let tmp = tempfile::tempdir().expect("tempdir");
+        std::env::set_var("FOLDDB_HOME", tmp.path());
+
+        let data_dir = tmp.path().join("data");
+        std::fs::create_dir_all(&data_dir).unwrap();
+
+        // Persist an identity directly into the Sled tree, mirroring what
+        // the legacy CLI wizard wrote (modulo encryption — the tree opens
+        // either form transparently).
+        let pool = Arc::new(SledPool::new(data_dir.clone()));
+        let id = crate::identity::generate_identity().expect("gen identity");
+        crate::identity::save(Arc::clone(&pool), &id).expect("save identity");
+
+        let marker = data_dir.join(".onboarding_complete");
+        assert!(!marker.exists(), "precondition: marker absent");
+
+        super::migrate_legacy_identity_state(&pool).expect("migration");
+
+        assert!(
+            marker.exists(),
+            "migration must synthesize the marker when identity exists"
+        );
+
+        std::env::remove_var("FOLDDB_MASTER_KEY");
+        std::env::remove_var("FOLDDB_HOME");
+    }
+
+    /// D5 idempotency: a second migration run must be a no-op. Running this
+    /// every boot is safe only because both sub-steps' triggering conditions
+    /// stop matching after the first successful migration.
+    #[tokio::test]
+    #[allow(clippy::await_holding_lock)]
+    async fn migration_is_idempotent() {
+        let _guard = folddb_home_lock();
+        std::env::set_var("FOLDDB_MASTER_KEY", "0".repeat(64));
+        let tmp = tempfile::tempdir().expect("tempdir");
+        std::env::set_var("FOLDDB_HOME", tmp.path());
+
+        let data_dir = tmp.path().join("data");
+        std::fs::create_dir_all(&data_dir).unwrap();
+        let pool = Arc::new(SledPool::new(data_dir.clone()));
+        let id = crate::identity::generate_identity().expect("gen identity");
+        crate::identity::save(Arc::clone(&pool), &id).expect("save");
+
+        super::migrate_legacy_identity_state(&pool).expect("first run");
+        let raw_after_first = crate::identity::peek_raw_identity_value(&pool)
+            .expect("peek")
+            .expect("identity present");
+        let marker_mtime_after_first = std::fs::metadata(data_dir.join(".onboarding_complete"))
+            .expect("marker present")
+            .modified()
+            .expect("mtime");
+
+        super::migrate_legacy_identity_state(&pool).expect("second run");
+        let raw_after_second = crate::identity::peek_raw_identity_value(&pool)
+            .expect("peek")
+            .expect("identity present");
+
+        assert_eq!(
+            raw_after_first, raw_after_second,
+            "idempotent run must not rewrite the identity tree"
+        );
+        let marker_mtime_after_second = std::fs::metadata(data_dir.join(".onboarding_complete"))
+            .expect("marker present")
+            .modified()
+            .expect("mtime");
+        assert_eq!(
+            marker_mtime_after_first, marker_mtime_after_second,
+            "second run must not touch the marker file"
+        );
+
+        std::env::remove_var("FOLDDB_MASTER_KEY");
+        std::env::remove_var("FOLDDB_HOME");
+    }
+
+    /// D5 conservatism: when no identity exists, the migration must NOT
+    /// create a marker. Synthesizing one here would let a never-set-up
+    /// node be treated as initialized.
+    #[tokio::test]
+    #[allow(clippy::await_holding_lock)]
+    async fn migration_no_op_on_empty_pool() {
+        let _guard = folddb_home_lock();
+        std::env::set_var("FOLDDB_MASTER_KEY", "0".repeat(64));
+        let tmp = tempfile::tempdir().expect("tempdir");
+        std::env::set_var("FOLDDB_HOME", tmp.path());
+
+        let data_dir = tmp.path().join("data");
+        std::fs::create_dir_all(&data_dir).unwrap();
+        let pool = Arc::new(SledPool::new(data_dir.clone()));
+
+        super::migrate_legacy_identity_state(&pool).expect("migration");
+
+        let marker = data_dir.join(".onboarding_complete");
+        assert!(
+            !marker.exists(),
+            "migration must NOT create a marker for a never-set-up node"
+        );
+
+        std::env::remove_var("FOLDDB_MASTER_KEY");
+        std::env::remove_var("FOLDDB_HOME");
+    }
+
+    /// D5 sub-step 1: a plaintext identity (legacy CLI wizard) must be
+    /// re-encrypted under the keychain master key after one boot. Identity
+    /// bytes must round-trip exactly — the migration is structural, not
+    /// rotational.
+    ///
+    /// Gated on os-keychain because that's the only build that has the
+    /// encrypted-vs-plaintext distinction. FOLDDB_MASTER_KEY supplies the
+    /// key so CI can run without a real keychain.
+    #[cfg(feature = "os-keychain")]
+    #[tokio::test]
+    #[allow(clippy::await_holding_lock)]
+    async fn migration_reencrypts_plaintext_identity_under_master_key() {
+        let _guard = folddb_home_lock();
+        std::env::set_var("FOLDDB_MASTER_KEY", "0".repeat(64));
+        let tmp = tempfile::tempdir().expect("tempdir");
+        std::env::set_var("FOLDDB_HOME", tmp.path());
+
+        let data_dir = tmp.path().join("data");
+        std::fs::create_dir_all(&data_dir).unwrap();
+
+        // Write a plaintext identity directly to the tree. Mirrors what
+        // the legacy CLI wizard produced (master key never minted because
+        // the tree was opened standalone with no keychain access in the
+        // wizard's process).
+        let pool = Arc::new(SledPool::new(data_dir.clone()));
+        let id = crate::identity::generate_identity().expect("gen identity");
+        {
+            let guard = pool.acquire_arc().expect("acquire pool");
+            let tree = guard.db().open_tree("node_identity").expect("open tree");
+            tree.insert(b"private_key", id.private_key.as_bytes())
+                .expect("insert priv");
+            tree.insert(b"public_key", id.public_key.as_bytes())
+                .expect("insert pub");
+        }
+
+        // Precondition: stored value is plaintext (no ENC: prefix).
+        let raw_before = crate::identity::peek_raw_identity_value(&pool)
+            .expect("peek")
+            .expect("identity present");
+        assert!(
+            !raw_before.starts_with("ENC:"),
+            "precondition: stored identity must be plaintext"
+        );
+
+        super::migrate_legacy_identity_state(&pool).expect("migration");
+
+        // Postcondition 1: stored value is now ENC:-prefixed.
+        let raw_after = crate::identity::peek_raw_identity_value(&pool)
+            .expect("peek")
+            .expect("identity present");
+        assert!(
+            raw_after.starts_with("ENC:"),
+            "post: stored identity must be encrypted; got: {}",
+            raw_after.chars().take(20).collect::<String>()
+        );
+
+        // Postcondition 2: identity bytes round-trip — migration is
+        // structural, not rotational.
+        let loaded = crate::identity::load(Arc::clone(&pool))
+            .expect("load")
+            .expect("identity present");
+        assert_eq!(
+            loaded.private_key, id.private_key,
+            "private key must round-trip"
+        );
+        assert_eq!(
+            loaded.public_key, id.public_key,
+            "public key must round-trip"
+        );
+
+        std::env::remove_var("FOLDDB_MASTER_KEY");
+        std::env::remove_var("FOLDDB_HOME");
     }
 
     /// Regression for the boot-blocking schema preload. A slow schema service

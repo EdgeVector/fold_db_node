@@ -16,6 +16,7 @@ pub mod query;
 pub mod remote;
 pub mod schema;
 pub mod security;
+pub mod setup;
 pub mod sharing;
 pub mod smart_folder;
 pub mod snapshot;
