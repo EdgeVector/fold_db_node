@@ -1,218 +1,183 @@
+//! CLI setup wizard — a thin REST client around `POST /api/setup/bootstrap`.
+//!
+//! The CLI collects user prompts (interactively or via `--non-interactive`
+//! flags) and forwards them to the daemon. Identity minting, encrypted Sled
+//! writes, Exemem registration, and the `node_config.json` write all happen
+//! on the server. This wrapper exists only to drive the prompts and surface
+//! the recovery phrase in the terminal — keeping a single canonical bootstrap
+//! path (the one /api/setup/bootstrap defines) means brew users and Tauri
+//! users get identical behavior, and the master-key-never-minted bug from
+//! the legacy in-process flow can't come back.
+//!
+//! The shared signing / registration helpers live in
+//! [`fold_db_node::handlers::setup`]; thin `CliError`-friendly re-exports
+//! below keep `cloud enable` and `restore` working without touching them.
+use crate::commands::daemon;
 use crate::error::CliError;
-use base64::Engine;
 use dialoguer::{Confirm, Input};
-use fold_db::security::{Ed25519KeyPair, KeyUtils};
-use fold_db::storage::{CloudSyncConfig, DatabaseConfig};
 use fold_db_node::fold_node::config::NodeConfig;
-use fold_db_node::identity;
+use fold_db_node::handlers::setup as shared;
 use fold_db_node::trust::identity_card::IdentityCard;
-use serde::Deserialize;
-use std::fs;
-use std::path::PathBuf;
+use serde::{Deserialize, Serialize};
 
-fn default_schema_service_url() -> String {
-    fold_db_node::endpoints::schema_service_url()
-}
+/// Re-export so existing call sites (`cloud enable`, `restore`) keep their
+/// import paths.
+pub use shared::ExememRegisterResponse;
 
-/// Response from the Exemem CLI registration endpoint.
-#[derive(Deserialize)]
-pub struct ExememRegisterResponse {
-    pub ok: bool,
-    #[serde(default)]
-    pub user_hash: Option<String>,
-    #[serde(default)]
-    pub api_key: Option<String>,
-    #[serde(default)]
-    pub message: Option<String>,
-}
+// ---------------------------------------------------------------------------
+// Thin CliError wrappers around the shared handlers::setup helpers.
+// ---------------------------------------------------------------------------
 
-fn hex_encode(bytes: &[u8]) -> String {
-    bytes.iter().map(|b| format!("{:02x}", b)).collect()
-}
-
-/// Sign the canonical CLI-register payload `"{public_key_hex}:{timestamp}"` with the
-/// node's base64-encoded Ed25519 private key. Returns the base64 signature.
-///
-/// Must stay in sync with:
-/// - `fold_db_node/src/server/routes/auth.rs::sign_payload`
-/// - `exemem-infra/lambdas/auth_service/src/cli/types.rs::verify_ed25519_signature`
-pub fn sign_cli_register_payload(
-    private_key_b64: &str,
-    public_key_hex: &str,
-    timestamp: i64,
-) -> Result<String, CliError> {
-    let key_bytes = base64::engine::general_purpose::STANDARD
-        .decode(private_key_b64)
-        .map_err(|e| CliError::new(format!("Failed to decode private key: {}", e)))?;
-    let key_pair = Ed25519KeyPair::from_secret_key(&key_bytes)
-        .map_err(|e| CliError::new(format!("Failed to create key pair: {}", e)))?;
-    let payload = format!("{}:{}", public_key_hex, timestamp);
-    let signature = key_pair.sign(payload.as_bytes());
-    Ok(KeyUtils::signature_to_base64(&signature))
-}
-
-/// Register the node's public key with the Exemem API.
-///
-/// The request is signed with the node's private key so the server can verify
-/// key ownership and allow idempotent re-registration.
 pub fn register_with_exemem(
     api_url: &str,
     public_key_hex: &str,
     private_key_b64: &str,
 ) -> Result<ExememRegisterResponse, CliError> {
-    register_with_exemem_and_invite(api_url, public_key_hex, private_key_b64, None)
+    shared::register_with_exemem_and_invite(api_url, public_key_hex, private_key_b64, None)
+        .map_err(CliError::new)
 }
 
-/// Register with Exemem, optionally passing an invite code.
-///
-/// Always sends a signed request — the caller must provide the node's
-/// base64-encoded Ed25519 private key so the payload can be signed.
 pub fn register_with_exemem_and_invite(
     api_url: &str,
     public_key_hex: &str,
     private_key_b64: &str,
     invite_code: Option<&str>,
 ) -> Result<ExememRegisterResponse, CliError> {
-    let url = format!("{}/api/auth/cli/register", api_url.trim_end_matches('/'));
-    let timestamp = chrono::Utc::now().timestamp();
-    let signature = sign_cli_register_payload(private_key_b64, public_key_hex, timestamp)?;
-    let mut body = serde_json::json!({
-        "public_key": public_key_hex,
-        "timestamp": timestamp,
-        "signature": signature,
-    });
-    if let Some(code) = invite_code {
-        body["invite_code"] = serde_json::Value::String(code.to_string());
-    }
-
-    let result = std::thread::spawn(move || {
-        let client = reqwest::blocking::Client::new();
-        client
-            .post(&url)
-            .json(&body)
-            .timeout(std::time::Duration::from_secs(30))
-            .send()
-    })
-    .join()
-    .map_err(|_| CliError::new("Registration request thread panicked".to_string()))?
-    .map_err(|e| CliError::new(format!("Failed to reach Exemem API: {}", e)))?;
-
-    let status = result.status();
-    let body_text = result
-        .text()
-        .map_err(|e| CliError::new(format!("Failed to read response body: {}", e)))?;
-
-    if !status.is_success() {
-        let msg = serde_json::from_str::<serde_json::Value>(&body_text)
-            .ok()
-            .and_then(|v| v.get("message").and_then(|m| m.as_str()).map(String::from))
-            .unwrap_or(body_text);
-        return Err(CliError::new(format!(
-            "Exemem registration failed (HTTP {}): {}",
-            status, msg
-        )));
-    }
-
-    let resp: ExememRegisterResponse = serde_json::from_str(&body_text)
-        .map_err(|e| CliError::new(format!("Failed to parse registration response: {}", e)))?;
-
-    if !resp.ok {
-        let msg = resp.message.unwrap_or_else(|| "Unknown error".to_string());
-        return Err(CliError::new(format!(
-            "Exemem registration failed: {}",
-            msg
-        )));
-    }
-
-    Ok(resp)
+    shared::register_with_exemem_and_invite(api_url, public_key_hex, private_key_b64, invite_code)
+        .map_err(CliError::new)
 }
 
-/// Derive BIP39 recovery phrase from an Ed25519 private key.
 pub fn derive_recovery_phrase(private_key_base64: &str) -> Result<Vec<String>, CliError> {
-    use base64::Engine;
-    let key_bytes = base64::engine::general_purpose::STANDARD
-        .decode(private_key_base64)
-        .map_err(|e| CliError::new(format!("Failed to decode private key: {}", e)))?;
-
-    // BIP39 entropy is exactly the 32-byte Ed25519 seed. Reject any other
-    // length so a future change in fold_db's secret-key encoding (e.g. the
-    // 64-byte RFC 8032 seed||public form) trips this check instead of
-    // silently shifting which bytes feed the mnemonic.
-    if key_bytes.len() != 32 {
-        return Err(CliError::new(format!(
-            "Ed25519 secret key must decode to 32 bytes for BIP39 entropy; got {}",
-            key_bytes.len()
-        )));
-    }
-    let entropy = &key_bytes[..32];
-
-    let mnemonic = bip39::Mnemonic::from_entropy(entropy)
-        .map_err(|e| CliError::new(format!("Failed to generate mnemonic: {}", e)))?;
-
-    Ok(mnemonic.words().map(|w| w.to_string()).collect())
+    shared::derive_recovery_phrase(private_key_base64).map_err(CliError::new)
 }
 
-/// Open the node, save the identity card to the synced user-profile store,
-/// and drop the handle. The daemon will reopen the same Sled dir later.
-async fn save_identity_card_via_local_node(card: IdentityCard) -> Result<(), CliError> {
-    let home = fold_db_node::utils::paths::folddb_home()
-        .map_err(|e| CliError::new(format!("Cannot resolve FOLDDB_HOME: {}", e)))?;
-    let data_dir = home.join("data");
-    std::fs::create_dir_all(&data_dir)
-        .map_err(|e| CliError::new(format!("Cannot create data dir: {}", e)))?;
+// ---------------------------------------------------------------------------
+// Non-interactive flag bag.
+// ---------------------------------------------------------------------------
 
-    // Reuse the identity the CLI just wrote to disk so the node opens with
-    // the right pubkey/pool.
-    let config_path = home.join("config").join("node_config.json");
+/// Pre-supplied answers for `folddb setup --non-interactive` (CI / scripting).
+///
+/// `name` is the only mandatory field. `invite_code` non-empty implies cloud
+/// is enabled unless `no_cloud` is set; if both `invite_code` is empty and
+/// `no_cloud` is false, we still bootstrap local-only (no cloud).
+#[derive(Debug, Clone)]
+pub struct NonInteractiveSetupArgs {
+    pub name: String,
+    pub email: Option<String>,
+    pub birthday: Option<String>,
+    pub invite_code: Option<String>,
+    pub no_cloud: bool,
+    /// One of `"anthropic"`, `"ollama"`, `"skip"`, or `None` (skip).
+    pub ai_provider: Option<String>,
+    pub anthropic_api_key: Option<String>,
+    pub ollama_url: Option<String>,
+    pub ollama_model: Option<String>,
+}
+
+// ---------------------------------------------------------------------------
+// Wire types — kept private so callers go through `run_setup_wizard`.
+// ---------------------------------------------------------------------------
+
+#[derive(Debug, Serialize)]
+struct BootstrapRequestBody {
+    name: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    email: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    birthday: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    ai_provider: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    anthropic_api_key: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    ollama_url: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    ollama_model: Option<String>,
+    enable_cloud: bool,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    invite_code: Option<String>,
+}
+
+#[derive(Deserialize)]
+struct BootstrapResponseBody {
+    #[serde(default)]
+    recovery_phrase: Option<Vec<String>>,
+}
+
+// ---------------------------------------------------------------------------
+// Public entry point.
+// ---------------------------------------------------------------------------
+
+/// Run the setup wizard against the local daemon's `/api/setup/bootstrap`
+/// endpoint. Starts the daemon if it isn't already running.
+///
+/// `dev` mirrors the global `--dev` flag and is forwarded to `daemon::start`.
+/// `non_interactive` provides pre-filled answers; when `None`, the wizard
+/// prompts via `dialoguer` (same UX as before this rewrite).
+pub async fn run_setup_wizard(
+    dev: bool,
+    non_interactive: Option<NonInteractiveSetupArgs>,
+) -> Result<NodeConfig, CliError> {
+    let port = ensure_daemon_for_setup(dev).await?;
+
+    let body = match non_interactive {
+        Some(args) => build_request_from_args(args)?,
+        None => build_request_interactive()?,
+    };
+
+    let resp = post_bootstrap(port, &body).await?;
+    if let Some(words) = resp.recovery_phrase.as_ref() {
+        print_recovery_phrase(words);
+    }
+
+    // The server wrote node_config.json; reload it so main.rs can keep going.
+    let config_path = fold_db_node::utils::paths::folddb_home()
+        .map_err(|e| CliError::new(format!("Cannot resolve FOLDDB_HOME: {}", e)))?
+        .join("config")
+        .join("node_config.json");
     let config = fold_db_node::fold_node::load_node_config(
         Some(config_path.to_string_lossy().as_ref()),
         None,
     )
-    .map_err(|e| CliError::new(format!("Cannot load node config: {}", e)))?;
+    .map_err(|e| CliError::new(format!("Bootstrap succeeded but reloading config failed: {}", e)))?;
 
-    let node = fold_db_node::fold_node::FoldNode::new(config)
-        .await
-        .map_err(|e| CliError::new(format!("Cannot open node for setup: {}", e)))?;
-    let db = node
-        .get_fold_db()
-        .map_err(|e| CliError::new(format!("Cannot access FoldDB: {}", e)))?;
-    card.save(&db)
-        .await
-        .map_err(|e| CliError::new(format!("Failed to save identity card: {}", e)))?;
-    Ok(())
+    eprintln!(
+        "Config saved to {}",
+        config_path.display()
+    );
+    eprintln!();
+
+    Ok(config)
 }
 
-/// Run the interactive setup wizard.
+// ---------------------------------------------------------------------------
+// Daemon orchestration.
+// ---------------------------------------------------------------------------
+
+/// Make sure a daemon is reachable on the resolved port, spawning one if not.
 ///
-/// Returns a fully populated `NodeConfig` with identity keys embedded.
-pub async fn run_setup_wizard() -> Result<NodeConfig, CliError> {
+/// This is the only path in the CLI that's allowed to auto-spawn a daemon —
+/// see the safety note on `daemon::ensure_running`. The setup wizard runs
+/// only when there is no identity yet, so there's nothing to corrupt.
+async fn ensure_daemon_for_setup(dev: bool) -> Result<u16, CliError> {
+    let port = daemon::default_port();
+    if daemon::check_daemon_health(port).await {
+        return Ok(port);
+    }
+    // Suppress the browser open — the CLI is driving setup, not the web UI.
+    let _ = daemon::start(port, dev, /* no_open */ true).await?;
+    Ok(port)
+}
+
+// ---------------------------------------------------------------------------
+// Prompt collection.
+// ---------------------------------------------------------------------------
+
+fn build_request_interactive() -> Result<BootstrapRequestBody, CliError> {
     eprintln!();
     eprintln!("Welcome to FoldDB!");
     eprintln!();
 
-    // --- Generate or reuse identity ---
-    let data_path = fold_db_node::utils::paths::folddb_home()
-        .map(|h| h.join("data"))
-        .unwrap_or_else(|_| PathBuf::from("data"));
-    let identity = match identity::load_standalone(&data_path)
-        .map_err(|e| CliError::new(format!("Failed to read identity: {e}")))?
-    {
-        Some(existing) => {
-            eprintln!("Found existing identity. Resuming setup...");
-            eprintln!();
-            existing
-        }
-        None => {
-            eprint!("Generating node identity...");
-            let fresh = identity::generate_identity()
-                .map_err(|e| CliError::new(format!("Failed to generate keypair: {e}")))?;
-            eprintln!(" done.");
-            eprintln!();
-            fresh
-        }
-    };
-
-    // --- Identity card: name, email, birthday ---
     let name: String = Input::new()
         .with_prompt("Your name")
         .interact_text()
@@ -250,12 +215,6 @@ pub async fn run_setup_wizard() -> Result<NodeConfig, CliError> {
     eprintln!("your recovery phrase.");
     eprintln!();
 
-    // Save identity card via a short-lived FoldNode. The daemon will
-    // re-open the same Sled data dir later and pick up the saved card.
-    let card = IdentityCard::new(name, email, birthday);
-    save_identity_card_via_local_node(card).await?;
-
-    // --- AI setup ---
     eprintln!("Configure AI for data ingestion:");
     let ai_providers = &["Anthropic (cloud)", "Ollama (local)", "Skip for now"];
     let ai_idx = dialoguer::Select::new()
@@ -265,25 +224,18 @@ pub async fn run_setup_wizard() -> Result<NodeConfig, CliError> {
         .interact()
         .map_err(|e| CliError::new(format!("Input cancelled: {}", e)))?;
 
-    // Captured separately so the API key never lands in `ingestion_config.json`.
-    // It's persisted via `anthropic_key_store::save` (encrypted under
-    // `os-keychain`, 0o600 plaintext otherwise) below.
+    let mut ai_provider: Option<String> = None;
     let mut anthropic_api_key: Option<String> = None;
-    let ai_config = match ai_idx {
+    let mut ollama_url: Option<String> = None;
+    let mut ollama_model: Option<String> = None;
+    match ai_idx {
         0 => {
-            let api_key: String = Input::new()
+            let key: String = Input::new()
                 .with_prompt("Anthropic API key")
                 .interact_text()
                 .map_err(|e| CliError::new(format!("Input cancelled: {}", e)))?;
-            anthropic_api_key = Some(api_key);
-            Some(serde_json::json!({
-                "provider": "Anthropic",
-                "anthropic": {
-                    // Ingestion default — see fold_db_node/src/ingestion/config.rs
-                    "model": "claude-haiku-4-5-20251001",
-                    "base_url": "https://api.anthropic.com"
-                }
-            }))
+            ai_provider = Some("anthropic".to_string());
+            anthropic_api_key = Some(key);
         }
         1 => {
             let url: String = Input::new()
@@ -296,312 +248,273 @@ pub async fn run_setup_wizard() -> Result<NodeConfig, CliError> {
                 .default("llama3.2".to_string())
                 .interact_text()
                 .map_err(|e| CliError::new(format!("Input cancelled: {}", e)))?;
-            Some(serde_json::json!({
-                "provider": "Ollama",
-                "ollama": {
-                    "model": model,
-                    "base_url": url
-                }
-            }))
+            ai_provider = Some("ollama".to_string());
+            ollama_url = Some(url);
+            ollama_model = Some(model);
         }
-        _ => None,
-    };
+        _ => {}
+    }
     eprintln!();
 
-    // --- Cloud backup ---
     let enable_cloud = Confirm::new()
         .with_prompt("Enable cloud backup?")
         .default(false)
         .interact()
         .map_err(|e| CliError::new(format!("Input cancelled: {}", e)))?;
 
-    let default_path = fold_db_node::utils::paths::folddb_home()
-        .map(|h| h.join("data"))
-        .unwrap_or_else(|_| PathBuf::from("data"));
-
-    let database = if enable_cloud {
-        let invite_code: String = Input::new()
+    let invite_code = if enable_cloud {
+        let code: String = Input::new()
             .with_prompt("Invite code")
             .interact_text()
             .map_err(|e| CliError::new(format!("Input cancelled: {}", e)))?;
-
-        let api_url = fold_db_node::endpoints::exemem_api_url();
-        let pub_key_bytes = base64::engine::general_purpose::STANDARD
-            .decode(&identity.public_key)
-            .map_err(|e| CliError::new(format!("Failed to decode public key: {}", e)))?;
-        let public_key_hex = hex_encode(&pub_key_bytes);
-
-        eprintln!();
-        eprint!("Registering with Exemem...");
-        let resp = register_with_exemem_and_invite(
-            &api_url,
-            &public_key_hex,
-            &identity.private_key,
-            Some(&invite_code),
-        )?;
-        eprintln!(" done.");
-
-        let api_key = resp
-            .api_key
-            .ok_or_else(|| CliError::new("Registration response missing api_key".to_string()))?;
-
-        // Show recovery phrase
-        eprintln!();
-        eprintln!("Cloud backup enabled!");
-        eprintln!();
-
-        match derive_recovery_phrase(&identity.private_key) {
-            Ok(words) => {
-                eprintln!("\x1b[33m  RECOVERY PHRASE (save these 24 words):\x1b[0m");
-                eprintln!();
-                for (i, word) in words.iter().enumerate() {
-                    eprint!("  {:2}. {:<12}", i + 1, word);
-                    if (i + 1) % 4 == 0 {
-                        eprintln!();
-                    }
-                }
-                eprintln!();
-                eprintln!("  If you lose this device, these words are the");
-                eprintln!("  ONLY way to recover your data.");
-                eprintln!();
-            }
-            Err(e) => {
-                eprintln!("Warning: Could not generate recovery phrase: {}", e);
-            }
-        }
-
-        DatabaseConfig::with_cloud_sync(
-            default_path,
-            CloudSyncConfig {
-                api_url,
-                api_key,
-                session_token: None,
-                user_hash: resp.user_hash,
-                p2p_sync: None,
-            },
-        )
+        Some(code)
     } else {
-        DatabaseConfig::local(default_path)
+        None
     };
 
-    // --- Persist identity into the Sled node_identity tree ---
-    identity::save_standalone(&database.path, &identity)
-        .map_err(|e| CliError::new(format!("Failed to persist node identity: {}", e)))?;
-
-    let config_dir = fold_db_node::utils::paths::folddb_home()
-        .map(|h| h.join("config"))
-        .unwrap_or_else(|_| PathBuf::from("config"));
-    if !config_dir.exists() {
-        fs::create_dir_all(&config_dir)
-            .map_err(|e| CliError::new(format!("Failed to create config dir: {}", e)))?;
-    }
-
-    // --- Build NodeConfig (no identity fields — identity lives in Sled) ---
-    let storage_path = Some(database.path.clone());
-    let config = NodeConfig {
-        database,
-        storage_path,
-        network_listen_address: "/ip4/0.0.0.0/tcp/0".to_string(),
-        schema_service_url: Some(default_schema_service_url()),
-        env: None,
-        config_dir: None,
-        seed_identity: None,
-        source_path: None,
-    };
-
-    // Persist config
-    let config_json = serde_json::to_string_pretty(&config)
-        .map_err(|e| CliError::new(format!("Failed to serialize config: {}", e)))?;
-    fs::write(config_dir.join("node_config.json"), &config_json)
-        .map_err(|e| CliError::new(format!("Failed to write node_config.json: {}", e)))?;
-
-    if ai_config.is_some() || anthropic_api_key.is_some() {
-        persist_ai_config(
-            &config_dir,
-            ai_config.as_ref(),
-            anthropic_api_key.as_deref(),
-        )?;
-        if ai_config.is_some() {
-            eprintln!("AI config saved.");
-        }
-    }
-
-    // Mark onboarding complete — must match the path the server checks:
-    // FOLDDB_HOME/data/.onboarding_complete (lives in data dir so --empty-db resets it).
-    // Routed through sensitive_io: the marker's presence reveals that a
-    // credentialed setup ran (PR #885 reasoning).
-    let marker_path = fold_db_node::utils::paths::folddb_home()
-        .map(|h| h.join("data").join(".onboarding_complete"))
-        .unwrap_or_else(|_| PathBuf::from(".onboarding_complete"));
-    let _ = fold_db_node::sensitive_io::write_sensitive(&marker_path, b"1");
-
-    eprintln!(
-        "Config saved to {}",
-        config_dir.join("node_config.json").display()
-    );
-    eprintln!();
-
-    Ok(config)
+    Ok(BootstrapRequestBody {
+        name,
+        email,
+        birthday,
+        ai_provider,
+        anthropic_api_key,
+        ollama_url,
+        ollama_model,
+        enable_cloud,
+        invite_code,
+    })
 }
 
-/// Persist the ingestion-config JSON and the Anthropic API key separately.
-///
-/// The JSON file (`ingestion_config.json`) holds non-sensitive provider
-/// settings only. The Anthropic API key — if provided — is routed through
-/// [`fold_db_node::ingestion::anthropic_key_store::save`], which encrypts
-/// under `os-keychain` and writes 0o600 plaintext otherwise. Never write
-/// the key into `ingestion_config.json`.
-fn persist_ai_config(
-    config_dir: &std::path::Path,
-    ai_config: Option<&serde_json::Value>,
-    anthropic_api_key: Option<&str>,
-) -> Result<(), CliError> {
-    if let Some(ai) = ai_config {
-        let ai_config_path = config_dir.join("ingestion_config.json");
-        let ai_json = serde_json::to_string_pretty(ai)
-            .map_err(|e| CliError::new(format!("Failed to serialize AI config: {}", e)))?;
-        fs::write(&ai_config_path, ai_json)
-            .map_err(|e| CliError::new(format!("Failed to write AI config: {}", e)))?;
+fn build_request_from_args(args: NonInteractiveSetupArgs) -> Result<BootstrapRequestBody, CliError> {
+    let name = args.name.trim().to_string();
+    if name.is_empty() {
+        return Err(CliError::new("--name is required in non-interactive mode"));
     }
-    if let Some(key) = anthropic_api_key {
-        fold_db_node::ingestion::anthropic_key_store::save(config_dir, key)
-            .map_err(|e| CliError::new(format!("Failed to persist Anthropic API key: {}", e)))?;
+    if let Some(b) = args.birthday.as_deref() {
+        IdentityCard::validate_birthday(b).map_err(CliError::new)?;
     }
-    Ok(())
+    let invite_present = args
+        .invite_code
+        .as_deref()
+        .map(|s| !s.is_empty())
+        .unwrap_or(false);
+    let enable_cloud = invite_present && !args.no_cloud;
+    if enable_cloud && args.invite_code.as_deref().unwrap_or("").is_empty() {
+        return Err(CliError::new(
+            "--invite-code is required when cloud backup is enabled",
+        ));
+    }
+
+    let ai_provider = args.ai_provider.as_deref().map(|s| s.to_lowercase());
+    if let Some(provider) = ai_provider.as_deref() {
+        match provider {
+            "anthropic" => {
+                if args
+                    .anthropic_api_key
+                    .as_deref()
+                    .unwrap_or("")
+                    .is_empty()
+                {
+                    return Err(CliError::new(
+                        "--anthropic-api-key is required when --ai-provider=anthropic",
+                    ));
+                }
+            }
+            "ollama" | "skip" | "none" | "" => {}
+            other => {
+                return Err(CliError::new(format!(
+                    "Unknown --ai-provider {other:?}; expected anthropic, ollama, or skip"
+                )));
+            }
+        }
+    }
+
+    Ok(BootstrapRequestBody {
+        name,
+        email: args.email.filter(|s| !s.is_empty()),
+        birthday: args.birthday.filter(|s| !s.is_empty()),
+        ai_provider,
+        anthropic_api_key: args.anthropic_api_key.filter(|s| !s.is_empty()),
+        ollama_url: args.ollama_url.filter(|s| !s.is_empty()),
+        ollama_model: args.ollama_model.filter(|s| !s.is_empty()),
+        enable_cloud,
+        invite_code: if enable_cloud {
+            args.invite_code
+        } else {
+            None
+        },
+    })
+}
+
+// ---------------------------------------------------------------------------
+// HTTP roundtrip.
+// ---------------------------------------------------------------------------
+
+async fn post_bootstrap(
+    port: u16,
+    body: &BootstrapRequestBody,
+) -> Result<BootstrapResponseBody, CliError> {
+    let url = format!("http://127.0.0.1:{}/api/setup/bootstrap", port);
+    // loopback: CLI -> local daemon /api/setup/bootstrap; trace propagation
+    // is unnecessary on this path (the server is the trace-root for setup).
+    let client = reqwest::Client::builder()
+        .timeout(std::time::Duration::from_secs(60))
+        .build()
+        .map_err(|e| CliError::new(format!("Failed to build HTTP client: {}", e)))?;
+
+    eprint!("Bootstrapping node...");
+    let resp = client
+        .post(&url)
+        .json(body)
+        .send()
+        .await
+        .map_err(|e| CliError::new(format!("Failed to reach local daemon: {}", e)))?;
+
+    let status = resp.status();
+    let text = resp
+        .text()
+        .await
+        .map_err(|e| CliError::new(format!("Failed to read bootstrap response: {}", e)))?;
+
+    if status == reqwest::StatusCode::GONE {
+        return Err(CliError::new(
+            "This node is already bootstrapped — `folddb setup` is one-shot.",
+        )
+        .with_hint(
+            "Use `folddb restore` to recover from a 24-word phrase, or remove the data dir to start fresh.",
+        ));
+    }
+
+    if !status.is_success() {
+        let msg = serde_json::from_str::<serde_json::Value>(&text)
+            .ok()
+            .and_then(|v| v.get("message").and_then(|m| m.as_str()).map(String::from))
+            .unwrap_or(text);
+        return Err(CliError::new(format!(
+            "Bootstrap failed (HTTP {}): {}",
+            status, msg
+        )));
+    }
+
+    eprintln!(" done.");
+    let parsed: BootstrapResponseBody = serde_json::from_str(&text)
+        .map_err(|e| CliError::new(format!("Failed to parse bootstrap response: {}", e)))?;
+    Ok(parsed)
+}
+
+// ---------------------------------------------------------------------------
+// Recovery phrase display — same layout as before the REST rewrite.
+// ---------------------------------------------------------------------------
+
+fn print_recovery_phrase(words: &[String]) {
+    eprintln!();
+    eprintln!("\x1b[33m  RECOVERY PHRASE (save these 24 words):\x1b[0m");
+    eprintln!();
+    for (i, word) in words.iter().enumerate() {
+        eprint!("  {:2}. {:<12}", i + 1, word);
+        if (i + 1) % 4 == 0 {
+            eprintln!();
+        }
+    }
+    eprintln!();
+    eprintln!("  If you lose this device, these words are the");
+    eprintln!("  ONLY way to recover your data.");
+    eprintln!();
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
-    use fold_db::security::KeyUtils;
 
+    /// `--no-cloud` overrides a present invite code: the request must go
+    /// out as `enable_cloud: false` and the invite must be dropped, not
+    /// shadow-leaked into the body.
     #[test]
-    fn sign_cli_register_payload_round_trips() {
-        // Generate a fresh keypair.
-        let key_pair = Ed25519KeyPair::generate().expect("generate keypair");
-        let private_key_b64 = key_pair.secret_key_base64();
-        let public_key_b64 = key_pair.public_key_base64();
+    fn build_request_from_args_no_cloud_flag_disables_cloud() {
+        let args = NonInteractiveSetupArgs {
+            name: "Tom".into(),
+            email: Some("tom@example.com".into()),
+            birthday: None,
+            invite_code: Some("INVITE123".into()),
+            no_cloud: true,
+            ai_provider: None,
+            anthropic_api_key: None,
+            ollama_url: None,
+            ollama_model: None,
+        };
+        let body = build_request_from_args(args).expect("build body");
+        assert!(!body.enable_cloud);
+        assert!(body.invite_code.is_none());
+    }
 
-        // Decode public key to bytes, then hex-encode (matching the lambda).
-        let pub_key_bytes = base64::engine::general_purpose::STANDARD
-            .decode(&public_key_b64)
-            .expect("decode pub key");
-        let public_key_hex = hex_encode(&pub_key_bytes);
-
-        let timestamp: i64 = 1_700_000_000;
-        let sig_b64 = sign_cli_register_payload(&private_key_b64, &public_key_hex, timestamp)
-            .expect("sign payload");
-
-        // Decode the base64 signature and verify it against the canonical payload.
-        let signature = KeyUtils::signature_from_base64(&sig_b64).expect("signature from base64");
-
-        let payload = format!("{}:{}", public_key_hex, timestamp);
-        assert!(
-            key_pair.verify(payload.as_bytes(), &signature),
-            "signature should verify against canonical payload"
-        );
-
-        // Different payload must NOT verify.
-        let wrong_payload = format!("{}:{}", public_key_hex, timestamp + 1);
-        assert!(
-            !key_pair.verify(wrong_payload.as_bytes(), &signature),
-            "signature must not verify against altered payload"
-        );
+    /// Invite code present + no `--no-cloud` → cloud enabled and the invite
+    /// flows through to the request body.
+    #[test]
+    fn build_request_from_args_invite_enables_cloud() {
+        let args = NonInteractiveSetupArgs {
+            name: "Tom".into(),
+            email: None,
+            birthday: None,
+            invite_code: Some("INVITE123".into()),
+            no_cloud: false,
+            ai_provider: None,
+            anthropic_api_key: None,
+            ollama_url: None,
+            ollama_model: None,
+        };
+        let body = build_request_from_args(args).expect("build body");
+        assert!(body.enable_cloud);
+        assert_eq!(body.invite_code.as_deref(), Some("INVITE123"));
     }
 
     #[test]
-    fn sign_cli_register_payload_rejects_invalid_private_key() {
-        let err = sign_cli_register_payload("not-valid-base64!!!", "deadbeef", 123);
-        assert!(err.is_err());
-    }
-
-    /// The Anthropic API key must land in the encrypted/0o600 sensitive
-    /// store, never in `ingestion_config.json`. After persistence:
-    ///   - `ingestion_config.json` must exist and parse, with NO `api_key` field.
-    ///   - `anthropic_key_store::load` must return the key we passed in.
-    #[test]
-    fn persist_ai_config_writes_key_to_sensitive_store_not_json() {
-        let tmp = tempfile::tempdir().expect("tempdir");
-        let ai_json = serde_json::json!({
-            "provider": "Anthropic",
-            "anthropic": {
-                "model": "claude-haiku-4-5-20251001",
-                "base_url": "https://api.anthropic.com"
-            }
-        });
-        persist_ai_config(tmp.path(), Some(&ai_json), Some("sk-ant-from-setup"))
-            .expect("persist_ai_config");
-
-        let on_disk: serde_json::Value = serde_json::from_slice(
-            &fs::read(tmp.path().join("ingestion_config.json"))
-                .expect("ingestion_config.json must exist"),
-        )
-        .expect("ingestion_config.json must parse as JSON");
-        assert!(
-            on_disk
-                .get("anthropic")
-                .and_then(|a| a.get("api_key"))
-                .is_none(),
-            "api_key must NOT appear in ingestion_config.json on disk; got: {on_disk}"
-        );
-
-        let loaded = fold_db_node::ingestion::anthropic_key_store::load(tmp.path())
-            .expect("anthropic_key_store::load");
-        assert_eq!(loaded.as_deref(), Some("sk-ant-from-setup"));
-    }
-
-    /// Ollama / Skip paths don't supply an API key — persistence should
-    /// write only the JSON and leave the sensitive store untouched.
-    #[test]
-    fn persist_ai_config_without_anthropic_key_skips_store() {
-        let tmp = tempfile::tempdir().expect("tempdir");
-        let ai_json = serde_json::json!({
-            "provider": "Ollama",
-            "ollama": { "model": "llama3.2", "base_url": "http://localhost:11434" }
-        });
-        persist_ai_config(tmp.path(), Some(&ai_json), None).expect("persist_ai_config");
-
-        assert!(tmp.path().join("ingestion_config.json").exists());
-        assert!(
-            !fold_db_node::ingestion::anthropic_key_store::has_key(tmp.path()),
-            "Ollama path must not touch the Anthropic key store"
-        );
-    }
-
-    /// A change here means the BIP39 mnemonic derived from a given 32-byte
-    /// Ed25519 seed has shifted — and that would silently rotate every
-    /// existing user's recovery phrase. If you're updating this vector,
-    /// you've broken recovery for prior installs.
-    #[test]
-    fn derive_recovery_phrase_is_stable_for_fixed_seed() {
-        let seed = [0x42u8; 32];
-        let seed_b64 = base64::engine::general_purpose::STANDARD.encode(seed);
-
-        let words = derive_recovery_phrase(&seed_b64).expect("derive recovery phrase");
-        assert_eq!(words.len(), 24, "BIP39 256-bit entropy yields 24 words");
-
-        let expected: Vec<&str> = bip39::Mnemonic::from_entropy(&seed)
-            .expect("mnemonic from fixed entropy")
-            .words()
-            .collect();
-        let got: Vec<&str> = words.iter().map(|s| s.as_str()).collect();
-        assert_eq!(
-            got, expected,
-            "recovery phrase drifted from canonical 32-byte BIP39 derivation"
-        );
+    fn build_request_from_args_blank_name_rejected() {
+        let args = NonInteractiveSetupArgs {
+            name: "   ".into(),
+            email: None,
+            birthday: None,
+            invite_code: None,
+            no_cloud: false,
+            ai_provider: None,
+            anthropic_api_key: None,
+            ollama_url: None,
+            ollama_model: None,
+        };
+        assert!(build_request_from_args(args).is_err());
     }
 
     #[test]
-    fn derive_recovery_phrase_rejects_non_32_byte_key() {
-        // 33 bytes — the regression we're guarding against. Previously the
-        // code silently truncated to the first 32 bytes; now it must fail.
-        let oversized = vec![0u8; 33];
-        let oversized_b64 = base64::engine::general_purpose::STANDARD.encode(&oversized);
-        let err = derive_recovery_phrase(&oversized_b64).expect_err("must reject 33-byte key");
-        let msg = format!("{}", err);
-        assert!(
-            msg.contains("must decode to 32 bytes") && msg.contains("got 33"),
-            "expected structured length error, got: {msg}"
-        );
+    fn build_request_from_args_anthropic_requires_key() {
+        let args = NonInteractiveSetupArgs {
+            name: "Tom".into(),
+            email: None,
+            birthday: None,
+            invite_code: None,
+            no_cloud: false,
+            ai_provider: Some("anthropic".into()),
+            anthropic_api_key: None,
+            ollama_url: None,
+            ollama_model: None,
+        };
+        let err = build_request_from_args(args).expect_err("missing key must error");
+        assert!(format!("{}", err).contains("anthropic-api-key"));
+    }
+
+    /// Bad birthday rejected at the CLI layer too — saves a daemon round
+    /// trip and matches the interactive validator's behaviour.
+    #[test]
+    fn build_request_from_args_invalid_birthday_rejected() {
+        let args = NonInteractiveSetupArgs {
+            name: "Tom".into(),
+            email: None,
+            birthday: Some("99-99".into()),
+            invite_code: None,
+            no_cloud: false,
+            ai_provider: None,
+            anthropic_api_key: None,
+            ollama_url: None,
+            ollama_model: None,
+        };
+        assert!(build_request_from_args(args).is_err());
     }
 }

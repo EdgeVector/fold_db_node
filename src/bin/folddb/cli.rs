@@ -149,6 +149,45 @@ pub enum Command {
     /// Restore node from a 24-word recovery phrase
     Restore,
 
+    /// Run the first-time setup wizard.
+    ///
+    /// Pass `--non-interactive` along with `--name` (and optionally
+    /// `--email`, `--invite-code`, etc.) to bootstrap headlessly for CI or
+    /// scripting. Without flags, this opens the same interactive prompts a
+    /// fresh `folddb <any command>` invocation would.
+    Setup {
+        /// Skip prompts. Requires `--name`; pre-fill the rest with the flags below.
+        #[arg(long)]
+        non_interactive: bool,
+        /// Display name for the identity card.
+        #[arg(long)]
+        name: Option<String>,
+        /// Optional contact email for the identity card.
+        #[arg(long)]
+        email: Option<String>,
+        /// Optional birthday (`MM-DD`).
+        #[arg(long)]
+        birthday: Option<String>,
+        /// Exemem invite code. Presence enables cloud backup unless `--no-cloud` is set.
+        #[arg(long)]
+        invite_code: Option<String>,
+        /// Force local-only setup even when an invite code is supplied.
+        #[arg(long)]
+        no_cloud: bool,
+        /// AI provider for ingestion: `anthropic`, `ollama`, or `skip`.
+        #[arg(long)]
+        ai_provider: Option<String>,
+        /// Anthropic API key when `--ai-provider=anthropic`.
+        #[arg(long)]
+        anthropic_api_key: Option<String>,
+        /// Ollama base URL when `--ai-provider=ollama`.
+        #[arg(long)]
+        ollama_url: Option<String>,
+        /// Ollama model when `--ai-provider=ollama`.
+        #[arg(long)]
+        ollama_model: Option<String>,
+    },
+
     /// Reset the database (destructive)
     Reset {
         /// Skip interactive confirmation
@@ -862,6 +901,74 @@ mod tests {
     }
 
     #[test]
+    fn parse_setup_interactive_default() {
+        let cli = Cli::parse_from(["folddb", "setup"]);
+        match cli.command {
+            Command::Setup {
+                non_interactive,
+                name,
+                invite_code,
+                no_cloud,
+                ..
+            } => {
+                assert!(!non_interactive);
+                assert!(name.is_none());
+                assert!(invite_code.is_none());
+                assert!(!no_cloud);
+            }
+            _ => panic!("Expected Setup"),
+        }
+    }
+
+    #[test]
+    fn parse_setup_non_interactive_with_name_and_invite() {
+        let cli = Cli::parse_from([
+            "folddb",
+            "setup",
+            "--non-interactive",
+            "--name",
+            "Test User",
+            "--email",
+            "test@example.com",
+            "--invite-code",
+            "INV-123",
+        ]);
+        match cli.command {
+            Command::Setup {
+                non_interactive,
+                name,
+                email,
+                invite_code,
+                no_cloud,
+                ..
+            } => {
+                assert!(non_interactive);
+                assert_eq!(name.as_deref(), Some("Test User"));
+                assert_eq!(email.as_deref(), Some("test@example.com"));
+                assert_eq!(invite_code.as_deref(), Some("INV-123"));
+                assert!(!no_cloud);
+            }
+            _ => panic!("Expected Setup"),
+        }
+    }
+
+    #[test]
+    fn parse_setup_no_cloud_flag() {
+        let cli = Cli::parse_from([
+            "folddb",
+            "setup",
+            "--non-interactive",
+            "--name",
+            "X",
+            "--no-cloud",
+        ]);
+        match cli.command {
+            Command::Setup { no_cloud, .. } => assert!(no_cloud),
+            _ => panic!("Expected Setup"),
+        }
+    }
+
+    #[test]
     fn parse_json_flag() {
         let cli = Cli::parse_from(["folddb", "--json", "status"]);
         assert!(cli.json);
@@ -1142,6 +1249,15 @@ mod tests {
             vec!["folddb", "recovery-phrase"],
             vec!["folddb", "restore"],
             vec!["folddb", "reset"],
+            vec!["folddb", "setup"],
+            vec![
+                "folddb",
+                "setup",
+                "--non-interactive",
+                "--name",
+                "Test",
+                "--no-cloud",
+            ],
             vec!["folddb", "completions", "bash"],
         ];
 

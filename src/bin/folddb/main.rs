@@ -77,6 +77,47 @@ async fn main() {
             }
             return;
         }
+        Command::Setup {
+            non_interactive,
+            name,
+            email,
+            birthday,
+            invite_code,
+            no_cloud,
+            ai_provider,
+            anthropic_api_key,
+            ollama_url,
+            ollama_model,
+        } => {
+            let args = if *non_interactive {
+                let name = name.clone().unwrap_or_default();
+                if name.trim().is_empty() {
+                    CliError::new("--name is required with --non-interactive")
+                        .exit(json_mode);
+                }
+                Some(commands::setup::NonInteractiveSetupArgs {
+                    name,
+                    email: email.clone(),
+                    birthday: birthday.clone(),
+                    invite_code: invite_code.clone(),
+                    no_cloud: *no_cloud,
+                    ai_provider: ai_provider.clone(),
+                    anthropic_api_key: anthropic_api_key.clone(),
+                    ollama_url: ollama_url.clone(),
+                    ollama_model: ollama_model.clone(),
+                })
+            } else {
+                None
+            };
+            match commands::setup::run_setup_wizard(dev, args).await {
+                Ok(_) => output::render(
+                    &commands::CommandOutput::Message("Setup complete.".to_string()),
+                    mode,
+                ),
+                Err(e) => e.exit(json_mode),
+            }
+            return;
+        }
         _ => {}
     }
 
@@ -149,7 +190,7 @@ async fn main() {
                 .with_hint(hint)
                 .exit(json_mode);
         }
-        config = match commands::setup::run_setup_wizard().await {
+        config = match commands::setup::run_setup_wizard(dev, None).await {
             Ok(c) => c,
             Err(e) => e.exit(false),
         };
@@ -483,7 +524,10 @@ async fn dispatch_http(
                 "Database reset complete".to_string(),
             ))
         }
-        Command::Daemon { .. } | Command::Completions { .. } | Command::Restore => {
+        Command::Daemon { .. }
+        | Command::Completions { .. }
+        | Command::Restore
+        | Command::Setup { .. } => {
             unreachable!()
         }
     }
