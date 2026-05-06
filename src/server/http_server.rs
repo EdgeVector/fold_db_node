@@ -536,6 +536,10 @@ impl FoldHttpServer {
         .route(
             "/system/list-directory",
             web::post().to(filesystem_routes::list_directory),
+        )
+        .route(
+            "/system/sample-data-availability",
+            web::get().to(system_routes::sample_data_availability),
         );
     }
 
