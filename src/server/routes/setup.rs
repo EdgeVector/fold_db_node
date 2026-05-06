@@ -191,18 +191,52 @@ async fn run_bootstrap(
     marker_path: &std::path::Path,
     req: BootstrapRequest,
 ) -> Result<BootstrapResponse, BootstrapError> {
-    // ---- (2) Identity: derive from phrase or generate fresh ----
+    // ---- (2-3) Identity: derive from phrase or generate fresh, then
+    //            persist ENC:-prefixed under the keychain master key when
+    //            `os-keychain` is on. Both branches MUST mint the master
+    //            key before the first identity write — without that, the
+    //            initial blob is plaintext and only re-encrypted on the
+    //            next daemon restart, which in the Tauri model is hours
+    //            away (the daemon lives the user's whole session).
+    //            From here on, any failure must clear the identity tree.
     let is_fresh_mint = req.recovery_phrase.is_none();
-    let id = match req.recovery_phrase.as_deref() {
-        Some(words) => identity_from_phrase(words).map_err(BootstrapError::Internal)?,
-        None => identity::generate_identity().map_err(BootstrapError::Internal)?,
-    };
-
-    // ---- (3) Persist identity (encrypted under master key when feature on) ----
-    // From here on, any failure must clear the identity tree.
     let pool = state.node_manager.get_or_init_sled_pool().await;
-    identity::save(Arc::clone(&pool), &id)
-        .map_err(|e| BootstrapError::Internal(format!("Failed to persist identity: {e}")))?;
+    let id = match req.recovery_phrase.as_deref() {
+        Some(words) => {
+            // Restore path: derive deterministically from the phrase, then
+            // mint the keychain master key (idempotent — returns the
+            // existing key if one is already present) before saving so the
+            // very first on-disk write is `ENC:`-prefixed.
+            let id = identity_from_phrase(words).map_err(BootstrapError::Internal)?;
+            #[cfg(feature = "os-keychain")]
+            crate::secure_store::initialize_master_key().map_err(|e| {
+                BootstrapError::Internal(format!("Failed to initialize master key: {e}"))
+            })?;
+            identity::save(Arc::clone(&pool), &id).map_err(|e| {
+                BootstrapError::Internal(format!("Failed to persist identity: {e}"))
+            })?;
+            id
+        }
+        None => {
+            // Fresh-mint path: `provision` is the bootstrap-only mint+save
+            // that calls `secure_store::initialize_master_key` before
+            // writing, so the first persisted blob is encrypted from the
+            // start. Precondition: the 410-on-marker check at the top of
+            // the route guarantees no prior bootstrap completed; the marker
+            // is written after every persisted artifact, so an empty
+            // identity tree is the expected state here.
+            debug_assert!(
+                identity::peek_raw_identity_value(&pool)
+                    .ok()
+                    .flatten()
+                    .is_none(),
+                "bootstrap precondition: missing .onboarding_complete marker implies empty identity tree"
+            );
+            identity::provision(Arc::clone(&pool)).map_err(|e| {
+                BootstrapError::Internal(format!("Failed to provision identity: {e}"))
+            })?
+        }
+    };
 
     // Helper closure for rollback. Captures everything the route persisted
     // so the route can call it from any failure point.
@@ -588,6 +622,111 @@ mod tests {
         assert_eq!(
             resolved,
             tmp.path().join("data").join(".onboarding_complete")
+        );
+
+        std::env::remove_var("FOLDDB_HOME");
+    }
+
+    /// Regression for the P0 fresh-install plaintext-at-rest bug. On a fresh
+    /// install with `os-keychain` enabled, the bootstrap handler MUST persist
+    /// the node identity `ENC:`-prefixed on the very first write — relying on
+    /// the boot-time legacy migration to re-encrypt on the next daemon restart
+    /// leaves hours of plaintext-at-rest in the Tauri single-session model,
+    /// defeating the whole keychain feature.
+    ///
+    /// Gated on `os-keychain` because the encrypted-vs-plaintext distinction
+    /// only exists in that build. `FOLDDB_MASTER_KEY` is the documented
+    /// keychain-free escape hatch (see `secure_store::test_master_key`) so
+    /// this can run in CI without prompting Apple's Keychain.
+    #[cfg(feature = "os-keychain")]
+    #[actix_web::test]
+    #[allow(clippy::await_holding_lock)]
+    async fn bootstrap_persists_encrypted_identity_fresh_mint() {
+        let _g = crate::secure_store::test_master_key::with_set();
+        let tmp = tempfile::tempdir().unwrap();
+        std::env::set_var("FOLDDB_HOME", tmp.path());
+
+        let (state, config_dir) = build_app_state(tmp.path());
+        let body = web::Json(BootstrapRequest {
+            name: "test".into(),
+            email: None,
+            birthday: None,
+            ai_provider: None,
+            anthropic_api_key: None,
+            ollama_url: None,
+            ollama_model: None,
+            enable_cloud: false,
+            invite_code: None,
+            recovery_phrase: None,
+        });
+        let resp = bootstrap(state.clone(), config_dir, body)
+            .await
+            .respond_to(&actix_web::test::TestRequest::default().to_http_request());
+        assert_eq!(resp.status(), 200, "bootstrap must succeed");
+
+        // Read the raw on-disk blob from the same pool the handler used.
+        let pool = state.node_manager.get_or_init_sled_pool().await;
+        let raw = crate::identity::peek_raw_identity_value(&pool)
+            .expect("peek raw identity")
+            .expect("identity must be persisted after bootstrap");
+        assert!(
+            raw.starts_with("ENC:"),
+            "fresh-mint bootstrap must persist encrypted identity on first write; \
+             got prefix: {:?}",
+            raw.chars().take(10).collect::<String>()
+        );
+
+        std::env::remove_var("FOLDDB_HOME");
+    }
+
+    /// Same property for the recovery-phrase restore branch. Deriving
+    /// deterministically from a BIP39 phrase must still produce an
+    /// `ENC:`-prefixed on-disk blob on the first write — restored
+    /// identities sit on disk for the user's whole session and shouldn't
+    /// be plaintext until the next reboot.
+    #[cfg(feature = "os-keychain")]
+    #[actix_web::test]
+    #[allow(clippy::await_holding_lock)]
+    async fn bootstrap_persists_encrypted_identity_from_recovery_phrase() {
+        let _g = crate::secure_store::test_master_key::with_set();
+        let tmp = tempfile::tempdir().unwrap();
+        std::env::set_var("FOLDDB_HOME", tmp.path());
+
+        // Generate a phrase by round-tripping through derive_recovery_phrase
+        // so the test doesn't hardcode any 24-word sequence.
+        let kp = fold_db::security::Ed25519KeyPair::generate().unwrap();
+        let id = crate::identity::identity_from_keypair(&kp);
+        let phrase = derive_recovery_phrase(&id.private_key)
+            .expect("derive phrase")
+            .join(" ");
+
+        let (state, config_dir) = build_app_state(tmp.path());
+        let body = web::Json(BootstrapRequest {
+            name: "test".into(),
+            email: None,
+            birthday: None,
+            ai_provider: None,
+            anthropic_api_key: None,
+            ollama_url: None,
+            ollama_model: None,
+            enable_cloud: false,
+            invite_code: None,
+            recovery_phrase: Some(phrase),
+        });
+        let resp = bootstrap(state.clone(), config_dir, body)
+            .await
+            .respond_to(&actix_web::test::TestRequest::default().to_http_request());
+        assert_eq!(resp.status(), 200, "bootstrap must succeed");
+
+        let pool = state.node_manager.get_or_init_sled_pool().await;
+        let raw = crate::identity::peek_raw_identity_value(&pool)
+            .expect("peek raw identity")
+            .expect("identity must be persisted after bootstrap");
+        assert!(
+            raw.starts_with("ENC:"),
+            "restore-from-phrase bootstrap must persist encrypted identity on first write; \
+             got prefix: {:?}",
+            raw.chars().take(10).collect::<String>()
         );
 
         std::env::remove_var("FOLDDB_HOME");
