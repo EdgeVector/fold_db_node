@@ -139,12 +139,14 @@ pub async fn run_setup_wizard(
         Some(config_path.to_string_lossy().as_ref()),
         None,
     )
-    .map_err(|e| CliError::new(format!("Bootstrap succeeded but reloading config failed: {}", e)))?;
+    .map_err(|e| {
+        CliError::new(format!(
+            "Bootstrap succeeded but reloading config failed: {}",
+            e
+        ))
+    })?;
 
-    eprintln!(
-        "Config saved to {}",
-        config_path.display()
-    );
+    eprintln!("Config saved to {}", config_path.display());
     eprintln!();
 
     Ok(config)
@@ -285,7 +287,9 @@ fn build_request_interactive() -> Result<BootstrapRequestBody, CliError> {
     })
 }
 
-fn build_request_from_args(args: NonInteractiveSetupArgs) -> Result<BootstrapRequestBody, CliError> {
+fn build_request_from_args(
+    args: NonInteractiveSetupArgs,
+) -> Result<BootstrapRequestBody, CliError> {
     let name = args.name.trim().to_string();
     if name.is_empty() {
         return Err(CliError::new("--name is required in non-interactive mode"));
@@ -309,12 +313,7 @@ fn build_request_from_args(args: NonInteractiveSetupArgs) -> Result<BootstrapReq
     if let Some(provider) = ai_provider.as_deref() {
         match provider {
             "anthropic" => {
-                if args
-                    .anthropic_api_key
-                    .as_deref()
-                    .unwrap_or("")
-                    .is_empty()
-                {
+                if args.anthropic_api_key.as_deref().unwrap_or("").is_empty() {
                     return Err(CliError::new(
                         "--anthropic-api-key is required when --ai-provider=anthropic",
                     ));
@@ -338,11 +337,7 @@ fn build_request_from_args(args: NonInteractiveSetupArgs) -> Result<BootstrapReq
         ollama_url: args.ollama_url.filter(|s| !s.is_empty()),
         ollama_model: args.ollama_model.filter(|s| !s.is_empty()),
         enable_cloud,
-        invite_code: if enable_cloud {
-            args.invite_code
-        } else {
-            None
-        },
+        invite_code: if enable_cloud { args.invite_code } else { None },
     })
 }
 

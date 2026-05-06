@@ -838,7 +838,11 @@ fn setup_non_interactive_via_rest_succeeds() {
     );
     // node_config.json was written by the server.
     let cfg = tmpdir.path().join("config").join("node_config.json");
-    assert!(cfg.exists(), "node_config.json missing at {}", cfg.display());
+    assert!(
+        cfg.exists(),
+        "node_config.json missing at {}",
+        cfg.display()
+    );
 
     // Second invocation must hit the 410 self-disable guard with a clear hint.
     let mut second = Command::cargo_bin("folddb").expect("find folddb binary");

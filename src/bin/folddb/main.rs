@@ -92,8 +92,7 @@ async fn main() {
             let args = if *non_interactive {
                 let name = name.clone().unwrap_or_default();
                 if name.trim().is_empty() {
-                    CliError::new("--name is required with --non-interactive")
-                        .exit(json_mode);
+                    CliError::new("--name is required with --non-interactive").exit(json_mode);
                 }
                 Some(commands::setup::NonInteractiveSetupArgs {
                     name,
