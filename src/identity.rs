@@ -101,6 +101,17 @@ pub fn open(pool: Arc<SledPool>) -> Result<IdentityStore, String> {
 /// encrypted (`ENC:` prefixed) blob. Used by [`open`] to decide whether
 /// silent master-key creation is safe.
 fn peek_encrypted_identity(pool: &Arc<SledPool>) -> Result<bool, String> {
+    Ok(peek_raw_identity_value(pool)?
+        .map(|s| s.starts_with(ENCRYPTED_PREFIX))
+        .unwrap_or(false))
+}
+
+/// Read the raw stored UTF-8 value of `KEY_PRIVATE` without decrypting.
+///
+/// Used by the boot-time legacy-install migration to detect plaintext
+/// identities written by older CLI installs and re-encrypt them under
+/// the keychain master key. Returns `None` if no identity is persisted.
+pub fn peek_raw_identity_value(pool: &Arc<SledPool>) -> Result<Option<String>, String> {
     let guard = pool
         .acquire_arc()
         .map_err(|e| format!("Failed to acquire Sled pool: {e}"))?;
@@ -111,11 +122,12 @@ fn peek_encrypted_identity(pool: &Arc<SledPool>) -> Result<bool, String> {
     let stored = tree
         .get(KEY_PRIVATE)
         .map_err(|e| format!("Failed to read identity tree: {e}"))?;
-    Ok(stored
-        .as_ref()
-        .and_then(|v| std::str::from_utf8(v).ok())
-        .map(|s| s.starts_with(ENCRYPTED_PREFIX))
-        .unwrap_or(false))
+    let Some(bytes) = stored else {
+        return Ok(None);
+    };
+    let s = std::str::from_utf8(&bytes)
+        .map_err(|e| format!("Identity private key is not valid UTF-8: {e}"))?;
+    Ok(Some(s.to_string()))
 }
 
 /// Resolve the master key used to encrypt/decrypt the identity tree.

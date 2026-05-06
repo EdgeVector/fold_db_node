@@ -17,6 +17,18 @@ use tokio::task::JoinSet;
 /// gets 9101..=9199 via run.sh's auto-slot logic.
 const DEFAULT_DEV_HTTP_PORT: u16 = 9101;
 
+/// Construct the HTTP bind address from `port`. Always loopback — see the
+/// `Trust boundary: loopback owner context` section in CLAUDE.md and the
+/// `auth model` decision (D1) for the canonical /api/setup/bootstrap path:
+/// the bootstrap handler self-disables on a marker file, with no token
+/// authentication, so loopback isolation is the only thing keeping a
+/// hostile process on another machine from rotating the node's identity.
+/// If you change this to `0.0.0.0` you MUST also add per-request caller
+/// authentication and gate the bootstrap handler on it.
+fn bind_address_for(port: u16) -> String {
+    format!("127.0.0.1:{}", port)
+}
+
 /// Command line options for the HTTP server binary.
 ///
 /// The HTTP server is now stateless - it accepts any user_hash from the
@@ -254,7 +266,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     ctx.spawn_workers(&mut tasks);
 
     // Phase 3: bind and serve.
-    let bind_address = format!("127.0.0.1:{}", http_port);
+    let bind_address = bind_address_for(http_port);
     let http_server = FoldHttpServer::new(ctx, &bind_address);
     http_server
         .run()
@@ -309,6 +321,46 @@ mod tests {
     fn demo_flag_default_false() {
         let cli = Cli::parse_from(["test"]);
         assert!(!cli.demo);
+    }
+
+    /// The bootstrap auth model in `src/server/routes/setup.rs` rests on
+    /// the daemon binding loopback only — there's no token check on
+    /// `/api/setup/bootstrap`, just a one-shot marker file. If the daemon
+    /// ever binds 0.0.0.0 (or any non-loopback IP), a hostile process on
+    /// another machine could POST /api/setup/bootstrap before the user
+    /// finishes onboarding and rotate the node's identity. This test
+    /// guards against the bind helper drifting away from that invariant.
+    #[test]
+    fn bind_address_is_loopback() {
+        use std::net::SocketAddr;
+        let addr = super::bind_address_for(super::DEFAULT_DEV_HTTP_PORT);
+        let parsed: SocketAddr = addr
+            .parse()
+            .expect("bind address must be a valid SocketAddr");
+        assert!(
+            parsed.ip().is_loopback(),
+            "bind address must be loopback, got {} — see the loopback-trust comment on bind_address_for",
+            parsed
+        );
+        assert_eq!(parsed.port(), super::DEFAULT_DEV_HTTP_PORT);
+    }
+
+    /// Same invariant for non-default ports — port choice cannot become
+    /// a backdoor for binding off-loopback.
+    #[test]
+    fn bind_address_is_loopback_for_arbitrary_ports() {
+        use std::net::SocketAddr;
+        for port in [80u16, 1024, 9001, 9101, 65535] {
+            let parsed: SocketAddr = super::bind_address_for(port)
+                .parse()
+                .expect("bind address must parse");
+            assert!(
+                parsed.ip().is_loopback(),
+                "bind address must be loopback for port {}, got {}",
+                port,
+                parsed
+            );
+        }
     }
 
     #[test]

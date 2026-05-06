@@ -6,7 +6,7 @@ use super::routes::{
     admin as admin_routes, auth as auth_routes, config as config_routes,
     discovery as discovery_routes, feed as feed_routes, filesystem as filesystem_routes,
     query as query_routes, schema as schema_routes, security as security_routes,
-    system as system_routes,
+    setup as setup_routes, system as system_routes,
 };
 use super::static_assets::Asset;
 use crate::fold_node::llm_query;
@@ -196,6 +196,7 @@ impl FoldHttpServer {
                 .configure(Self::configure_feed_routes)
                 .configure(Self::configure_remote_routes)
                 .configure(Self::configure_auth_routes)
+                .configure(Self::configure_setup_routes)
                 .configure(Self::configure_sync_routes)
                 .configure(Self::configure_snapshot_routes)
                 .configure(Self::configure_org_routes)
@@ -986,6 +987,13 @@ impl FoldHttpServer {
                     web::post().to(org_routes::decline_invite),
                 ),
         );
+    }
+
+    /// Register the canonical first-launch endpoint. The handler self-disables
+    /// once `.onboarding_complete` exists, so registration is unconditional —
+    /// keeps the route table identical between fresh and provisioned nodes.
+    fn configure_setup_routes(cfg: &mut web::ServiceConfig) {
+        cfg.route("/setup/bootstrap", web::post().to(setup_routes::bootstrap));
     }
 
     fn configure_auth_routes(cfg: &mut web::ServiceConfig) {
