@@ -15,7 +15,6 @@ use utoipa::OpenApi;
         crate::server::routes::security::get_system_public_key,
         crate::server::routes::system::get_system_status,
         crate::server::routes::system::get_node_public_key,
-        crate::server::routes::system::sample_data_availability,
         crate::server::routes::admin::reset_database,
         crate::server::routes::config::get_database_config,
         crate::server::routes::config::update_database_config,
@@ -112,7 +111,6 @@ use utoipa::OpenApi;
             crate::handlers::query::IndexSearchResponse,
             crate::handlers::mutation::SingleMutationResponse,
             crate::handlers::system::NodeKeyResponse,
-            crate::server::routes::system::SampleDataAvailability,
             crate::server::routes::web_search::WebSearchKeyStatus,
             crate::server::routes::web_search::SaveWebSearchKeyRequest
         )

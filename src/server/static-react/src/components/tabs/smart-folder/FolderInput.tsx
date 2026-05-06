@@ -1,7 +1,6 @@
 import * as React from 'react'
-import { useEffect, useState } from 'react'
+import { useState } from 'react'
 import DirectoryBrowserModal from './DirectoryBrowserModal'
-import { systemClient } from '../../../api/clients/systemClient'
 import type { useFolderAutocomplete } from '../../../hooks/useFolderAutocomplete'
 
 /**
@@ -58,28 +57,6 @@ export default function FolderInput({
 
   const [, setPickerError] = useState<unknown>(null)
   const [showBrowser, setShowBrowser] = useState(false)
-  // `null` until the backend probe resolves; `string` when available;
-  // `''` when explicitly unavailable. Brew-installed users sit at CWD=~,
-  // so the in-tree dev gate (`import.meta.env.DEV`) was hiding the
-  // shortcut for them — we now ask the daemon, which knows the bottle path.
-  const [sampleDataPath, setSampleDataPath] = useState<string | null>(null)
-
-  useEffect(() => {
-    let cancelled = false
-    systemClient
-      .getSampleDataAvailability()
-      .then((resp) => {
-        if (cancelled) return
-        const available = resp.data?.available && typeof resp.data?.path === 'string'
-        setSampleDataPath(available ? (resp.data!.path as string) : '')
-      })
-      .catch(() => {
-        if (!cancelled) setSampleDataPath('')
-      })
-    return () => {
-      cancelled = true
-    }
-  }, [])
 
   const openFolderPicker = async () => {
     if (isTauri) {
@@ -157,9 +134,9 @@ export default function FolderInput({
       {isScanning && !scanProgress && (
         <p className="text-xs text-secondary">Starting scan...</p>
       )}
-      {sampleDataPath && (
+      {import.meta.env.DEV && (
         <button
-          onClick={() => onFolderPathChange(sampleDataPath)}
+          onClick={() => onFolderPathChange('sample_data')}
           className="text-xs text-secondary hover:text-primary underline"
           disabled={isScanning}
         >
