@@ -73,9 +73,15 @@ pub async fn get_database_config(state: web::Data<AppState>) -> impl Responder {
     )
 )]
 pub async fn auto_identity(state: web::Data<AppState>) -> impl Responder {
-    // Ensure the node identity exists (generates one on first call)
+    // Read the node identity (does NOT mint — only the
+    // POST /api/setup/bootstrap route may do that). When the tree is
+    // empty, surface the canonical 503 so the UI / CLI knows to route
+    // the user through bootstrap instead of treating it as a 500.
     let public_key = match state.node_manager.ensure_default_identity().await {
         Ok(pk) => pk,
+        Err(crate::server::NodeManagerError::NotProvisioned) => {
+            return crate::utils::http_errors::node_not_provisioned_response();
+        }
         Err(e) => {
             return HttpResponse::InternalServerError().json(json!({
                 "ok": false,
@@ -479,5 +485,37 @@ mod tests {
             Some(h) => std::env::set_var("HOME", h),
             None => std::env::remove_var("HOME"),
         }
+    }
+
+    /// Bootstrap-collapse step 2: hitting GET /api/system/auto-identity
+    /// before the user has gone through POST /api/setup/bootstrap MUST
+    /// return the canonical 503 instead of silently minting a fresh
+    /// identity (the old `load_or_generate` behavior). The body shape
+    /// is fixed at `{error: "node_not_provisioned", next: "POST /api/setup/bootstrap"}`
+    /// — clients pivot off both fields.
+    #[tokio::test]
+    #[allow(clippy::await_holding_lock)]
+    async fn auto_identity_returns_503_when_not_provisioned() {
+        let _guard = env_lock();
+        let tmp = tempfile::tempdir().expect("tempdir");
+
+        let state = test_app_state(&tmp);
+        let resp = auto_identity(state)
+            .await
+            .respond_to(&actix_web::test::TestRequest::get().to_http_request());
+
+        assert_eq!(
+            resp.status(),
+            actix_web::http::StatusCode::SERVICE_UNAVAILABLE,
+            "auto_identity must surface NotProvisioned as 503"
+        );
+        let body_bytes = match actix_web::body::to_bytes(resp.into_body()).await {
+            Ok(b) => b,
+            Err(_) => panic!("failed to read auto_identity response body"),
+        };
+        let body: serde_json::Value =
+            serde_json::from_slice(&body_bytes).expect("response body is JSON");
+        assert_eq!(body["error"], "node_not_provisioned");
+        assert_eq!(body["next"], "POST /api/setup/bootstrap");
     }
 }

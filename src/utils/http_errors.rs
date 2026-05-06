@@ -1,6 +1,24 @@
 use actix_web::{error::JsonPayloadError, HttpRequest, HttpResponse};
 use serde_json::json;
 
+/// Canonical `503 node_not_provisioned` response.
+///
+/// Returned whenever a request reaches a handler that needs the local
+/// node identity but the bootstrap flow has not yet run (the
+/// `node_identity` Sled tree is empty). The UI / CLI use the `next`
+/// hint to route the user back through `POST /api/setup/bootstrap`
+/// instead of treating this as a generic 500.
+///
+/// The body shape is part of the API contract — keep it stable across
+/// every call site (currently `routes::common::get_node_for_user` and
+/// `routes::config::auto_identity`).
+pub fn node_not_provisioned_response() -> HttpResponse {
+    HttpResponse::ServiceUnavailable().json(json!({
+        "error": "node_not_provisioned",
+        "next": "POST /api/setup/bootstrap",
+    }))
+}
+
 /// Custom error handler for JSON deserialization errors.
 ///
 /// This function is registered with Actix Web to handle errors that occur

@@ -28,6 +28,15 @@ pub enum NodeManagerError {
     SecurityError(String),
     #[error("Node creation error: {0}")]
     NodeCreationError(String),
+    /// The Sled `node_identity` tree is empty and no seed identity was
+    /// supplied — the node has not gone through the bootstrap flow yet.
+    /// HTTP layer surfaces this as `503 node_not_provisioned` with a
+    /// pointer to `POST /api/setup/bootstrap`. See [`crate::identity`]
+    /// for the rationale: only the bootstrap route may mint identities,
+    /// every other caller must propagate this error rather than silently
+    /// generate a fresh keypair on a stale config.
+    #[error("Node is not provisioned. POST /api/setup/bootstrap to provision.")]
+    NotProvisioned,
 }
 
 /// Configuration for creating nodes
@@ -142,9 +151,25 @@ impl NodeManager {
         // E2E seed available for FoldDB initialization. This is the single
         // identity read per create_node — the same pool threads through to
         // FoldDB below, so no double file-lock holder.
+        //
+        // Read-only (`identity::load`): runtime callers must NOT mint. If
+        // the tree is empty we fall back to `node_config.seed_identity`
+        // (set by tests / setup paths via `with_seed_identity`) and persist
+        // it; otherwise return `NotProvisioned` so the HTTP layer can emit
+        // `503 node_not_provisioned`. Silent generation here is what
+        // produced ghost identities on a stale node_config.json.
         let id = Arc::new(
-            identity::load_or_generate(Arc::clone(&pool))
-                .map_err(NodeManagerError::SecurityError)?,
+            match identity::load(Arc::clone(&pool)).map_err(NodeManagerError::SecurityError)? {
+                Some(id) => id,
+                None => match node_config.seed_identity.clone() {
+                    Some(seed) => {
+                        identity::save(Arc::clone(&pool), &seed)
+                            .map_err(NodeManagerError::SecurityError)?;
+                        seed
+                    }
+                    None => return Err(NodeManagerError::NotProvisioned),
+                },
+            },
         );
         let seed = FoldNode::extract_ed25519_seed(&id.private_key).map_err(|e| {
             NodeManagerError::ConfigurationError(format!("Failed to extract seed: {}", e))
@@ -282,14 +307,19 @@ impl NodeManager {
 
     /// Ensure a default identity exists and return its public key.
     ///
-    /// Reads (or creates + persists) the keypair from the Sled identity
-    /// tree, then eagerly builds the node so (a) the first authenticated
-    /// request doesn't block on Sled open, and (b) `get_sled_pool()`
-    /// immediately returns the live pool — callers like `restore_from_phrase`
-    /// rely on the pool being `Some` right after this call.
+    /// Reads the persisted keypair from the Sled identity tree (no
+    /// minting — see [`crate::identity::provision`]) and eagerly builds
+    /// the node so (a) the first authenticated request doesn't block on
+    /// Sled open, and (b) `get_sled_pool()` immediately returns the live
+    /// pool — callers like `restore_from_phrase` rely on the pool being
+    /// `Some` right after this call. Returns [`NodeManagerError::NotProvisioned`]
+    /// when the tree is empty so the caller can surface a 503 instead of
+    /// silently rotating identity.
     pub async fn ensure_default_identity(&self) -> Result<String, NodeManagerError> {
         let pool = self.get_or_init_sled_pool().await;
-        let id = identity::load_or_generate(pool).map_err(NodeManagerError::SecurityError)?;
+        let id = identity::load(pool)
+            .map_err(NodeManagerError::SecurityError)?
+            .ok_or(NodeManagerError::NotProvisioned)?;
         let user_hash = user_hash_from_pubkey(&id.public_key);
         let _ = self.get_node(&user_hash).await;
         Ok(id.public_key)
@@ -486,6 +516,46 @@ mod tests {
             .expect("create_node must not fail on Sled flock race");
 
         assert!(!Arc::ptr_eq(&first, &second));
+    }
+
+    /// Bootstrap-collapse step 2: when the Sled identity tree is empty
+    /// AND no `seed_identity` is supplied, [`NodeManager::create_node`]
+    /// (and therefore [`NodeManager::get_node`]) must surface
+    /// [`NodeManagerError::NotProvisioned`] instead of silently minting
+    /// a fresh keypair. The HTTP layer maps this to `503` so the UI / CLI
+    /// can route the user to `POST /api/setup/bootstrap`.
+    #[tokio::test]
+    async fn get_node_returns_not_provisioned_when_pool_empty_and_no_seed() {
+        let tmp = tempfile::TempDir::new().unwrap();
+        // Build a NodeManagerConfig WITHOUT `with_seed_identity` — mirrors
+        // the production state where bootstrap has not yet run.
+        let base_config =
+            NodeConfig::new(tmp.path().to_path_buf()).with_schema_service_url("test://mock");
+        let manager = NodeManager::new(NodeManagerConfig {
+            base_config,
+            config_dir: tmp.path().join("config"),
+            upload_path: tmp.path().join("uploads"),
+        });
+
+        // FoldNode doesn't implement Debug, so unpack with a match instead
+        // of expect_err.
+        match manager.get_node("test_user").await {
+            Ok(_) => panic!("get_node must refuse without provisioned identity"),
+            Err(NodeManagerError::NotProvisioned) => {}
+            Err(other) => panic!("expected NotProvisioned from get_node, got: {other:?}"),
+        }
+
+        // Same contract for ensure_default_identity — the auth path's
+        // entry point also has to refuse rather than mint.
+        match manager.ensure_default_identity().await {
+            Ok(_) => {
+                panic!("ensure_default_identity must refuse without provisioned identity")
+            }
+            Err(NodeManagerError::NotProvisioned) => {}
+            Err(other) => {
+                panic!("expected NotProvisioned from ensure_default_identity, got: {other:?}")
+            }
+        }
     }
 
     /// Changing the storage path must drop the cached pool so the new path
