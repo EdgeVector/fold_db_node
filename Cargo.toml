@@ -191,3 +191,9 @@ path = "src/bin/folddb/main.rs"
 [[bin]]
 name = "folddb_mcp"
 path = "src/bin/folddb_mcp/main.rs"
+
+[package.metadata.cargo-machete]
+# kamadak-exif exposes itself under the lib name `exif` (used in
+# src/ingestion/file_handling/json_processor.rs); cargo-machete matches by
+# package name and misses the rename.
+ignored = ["kamadak-exif"]
