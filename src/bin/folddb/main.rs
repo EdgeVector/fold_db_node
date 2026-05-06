@@ -1263,7 +1263,7 @@ fn read_identity_pubkey(data_path: &std::path::Path) -> Result<Option<String>, S
 /// We only ever construct these specific error strings from
 /// [`fold_db_node::identity::open`] / [`fold_db_node::secure_store`],
 /// so substring matching is sufficient. Callers stay safe even when this
-/// returns false on an unrecognized decrypt error: `load_or_generate` and
+/// returns false on an unrecognized decrypt error: `identity::open` and
 /// `FoldNode::resolve_identity` enforce the same invariant downstream and
 /// also refuse to silently rotate.
 fn is_decrypt_error(msg: &str) -> bool {

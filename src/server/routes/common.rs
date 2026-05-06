@@ -53,11 +53,23 @@ pub fn require_user_context() -> Result<String, HttpResponse> {
 ///
 /// This is the key function for lazy per-user node initialization.
 /// Nodes are created on first request and cached for subsequent requests.
+///
+/// Returns the canonical `503 node_not_provisioned` body when the node
+/// has not been bootstrapped yet — the UI / CLI use that to route the
+/// user to `POST /api/setup/bootstrap` instead of treating it as a 500.
 async fn get_node_for_user(
     state: &web::Data<AppState>,
     user_id: &str,
 ) -> Result<Arc<FoldNode>, HttpResponse> {
     state.node_manager.get_node(user_id).await.map_err(|e| {
+        if matches!(e, crate::server::NodeManagerError::NotProvisioned) {
+            tracing::warn!(
+                target: "fold_node::http_server",
+                user_id = %user_id,
+                "Request reached require_node before /api/setup/bootstrap was completed"
+            );
+            return crate::utils::http_errors::node_not_provisioned_response();
+        }
         tracing::error!(
             target: "fold_node::http_server",
             "Failed to get node for user {}: {}",

@@ -159,7 +159,7 @@ fn resolve_master_key(has_encrypted_identity: bool) -> Result<Option<[u8; 32]>, 
                 .to_string(),
         );
     }
-    // Fresh install — `load_or_generate` calls
+    // Fresh install — `provision` calls
     // `secure_store::initialize_master_key` before `set()` so the new
     // identity is encrypted from the start.
     Ok(None)
@@ -326,7 +326,16 @@ pub fn load_standalone(data_path: &Path) -> Result<Option<NodeIdentity>, String>
 }
 
 /// Load the identity, generating + persisting a new keypair if none
-/// exists. Used by the fresh-install startup path.
+/// exists. **Bootstrap-only — every other caller MUST use [`load`].**
+///
+/// This is the one sanctioned mint-on-empty path. The
+/// `POST /api/setup/bootstrap` route owns first-launch identity creation
+/// and may invoke `provision` (or call [`generate_identity`] +
+/// [`save`] explicitly). Runtime route handlers and `NodeManager`
+/// must call [`load`] and surface a `NotProvisioned` error to the caller
+/// when the tree is empty — silently minting from a request handler is
+/// what produces ghost identities on a stale `node_config.json` and
+/// orphans every previously-ingested record. Use [`load`] in normal flow.
 ///
 /// On a true first install with `os-keychain` enabled, the OS keychain has
 /// no master-key entry yet. The first `open()` therefore resolves
@@ -337,7 +346,7 @@ pub fn load_standalone(data_path: &Path) -> Result<Option<NodeIdentity>, String>
 /// mint. We call [`crate::secure_store::initialize_master_key`]
 /// explicitly here (idempotent, returns the existing key if one is already
 /// present) and reopen the store so the cached `master_key` reflects it.
-pub fn load_or_generate(pool: Arc<SledPool>) -> Result<NodeIdentity, String> {
+pub fn provision(pool: Arc<SledPool>) -> Result<NodeIdentity, String> {
     let store = open(Arc::clone(&pool))?;
     if let Some(id) = store.get()? {
         return Ok(id);
@@ -406,13 +415,28 @@ mod tests {
     }
 
     #[test]
-    fn load_or_generate_generates_first_then_loads() {
+    fn provision_generates_first_then_loads() {
         let _guard = env_lock();
         std::env::remove_var("FOLDDB_MASTER_KEY");
         let (pool, _tmp) = temp_pool();
-        let first = load_or_generate(Arc::clone(&pool)).unwrap();
-        let second = load_or_generate(pool).unwrap();
+        let first = provision(Arc::clone(&pool)).unwrap();
+        let second = provision(pool).unwrap();
         assert_identity_eq(&first, &second);
+    }
+
+    /// `load` must NEVER mint — that's [`provision`]'s job.
+    /// Regression for the bootstrap-collapse refactor: any caller that
+    /// previously used `load_or_generate` from the runtime path is now
+    /// expected to call `load` and propagate `NotProvisioned` upward,
+    /// not silently mint a ghost identity from a stale node_config.json.
+    #[test]
+    fn load_does_not_mint_on_empty_pool() {
+        let _guard = env_lock();
+        std::env::remove_var("FOLDDB_MASTER_KEY");
+        let (pool, _tmp) = temp_pool();
+        assert!(load(Arc::clone(&pool)).unwrap().is_none());
+        // Persisted state must remain empty after the read.
+        assert!(peek_raw_identity_value(&pool).unwrap().is_none());
     }
 
     #[test]
@@ -505,21 +529,21 @@ mod tests {
         );
     }
 
-    /// `load_or_generate` is the path the live daemon takes on every boot.
-    /// It must surface the same error as `open()` rather than silently
-    /// generating a fresh keypair, otherwise the daemon's restart cycle
-    /// keeps stamping new identities into the tree.
+    /// `provision` is the path the bootstrap route takes on first
+    /// install. It must surface the same error as `open()` rather than
+    /// silently generating a fresh keypair, otherwise a re-run of the
+    /// bootstrap route would stamp a new identity over an existing one.
     #[test]
-    fn load_or_generate_does_not_silently_replace_unreadable_identity() {
+    fn provision_does_not_silently_replace_unreadable_identity() {
         let _guard = env_lock();
         std::env::remove_var("FOLDDB_MASTER_KEY");
 
         let (pool, _tmp) = temp_pool();
         write_raw_encrypted_blob(&pool, "preserved-pub");
 
-        let err = match load_or_generate(Arc::clone(&pool)) {
+        let err = match provision(Arc::clone(&pool)) {
             Ok(id) => panic!(
-                "load_or_generate must fail; instead returned identity with pub {}",
+                "provision must fail; instead returned identity with pub {}",
                 id.public_key
             ),
             Err(e) => e,
@@ -531,7 +555,7 @@ mod tests {
         assert_eq!(
             read_raw_pubkey(&pool).as_deref(),
             Some(b"preserved-pub" as &[u8]),
-            "load_or_generate failure path must not rotate the persisted public key"
+            "provision failure path must not rotate the persisted public key"
         );
     }
 
@@ -562,26 +586,104 @@ mod tests {
     /// criterion ("`folddb daemon stop && folddb daemon start` preserves
     /// the user_hash"). See the tests/cli_integration_test.rs daemon
     /// fixture for the heavier process-spawning variant.
+    /// Bootstrap-collapse step 2 lock-down: the only place in the crate
+    /// allowed to call `identity::provision` (the mint-on-empty path) is
+    /// the bootstrap route, [`crate::server::routes::setup`]. Any other
+    /// runtime caller is a regression — it would let a stale
+    /// `node_config.json` mint a ghost identity and orphan all
+    /// previously-ingested data.
+    ///
+    /// Self-references inside `src/identity.rs` (the function definition
+    /// and these tests) are excluded by file path. Doc-comment mentions
+    /// of the symbol elsewhere are excluded by skipping `///` lines.
+    #[test]
+    fn provision_only_called_from_setup_route() {
+        use std::path::Path;
+
+        let crate_root = Path::new(env!("CARGO_MANIFEST_DIR"));
+        let scan_roots = [crate_root.join("src"), crate_root.join("tests")];
+        let identity_self = crate_root.join("src").join("identity.rs");
+        let allowed_callers = [crate_root
+            .join("src")
+            .join("server")
+            .join("routes")
+            .join("setup.rs")];
+
+        let mut violations: Vec<String> = Vec::new();
+        for root in &scan_roots {
+            if !root.exists() {
+                continue;
+            }
+            walk_rust_files(root, &mut |path| {
+                if path == identity_self {
+                    return;
+                }
+                let Ok(contents) = std::fs::read_to_string(path) else {
+                    return;
+                };
+                for (lineno, line) in contents.lines().enumerate() {
+                    let trimmed = line.trim_start();
+                    // Doc / line comments mentioning the API are not call sites.
+                    if trimmed.starts_with("//") {
+                        continue;
+                    }
+                    if line.contains("identity::provision")
+                        && !allowed_callers.iter().any(|allowed| allowed == path)
+                    {
+                        violations.push(format!(
+                            "{}:{}: {}",
+                            path.strip_prefix(crate_root).unwrap_or(path).display(),
+                            lineno + 1,
+                            line.trim()
+                        ));
+                    }
+                }
+            });
+        }
+
+        assert!(
+            violations.is_empty(),
+            "identity::provision must only be called from src/server/routes/setup.rs (the \
+             bootstrap route). Found {} unauthorized call site(s):\n{}",
+            violations.len(),
+            violations.join("\n")
+        );
+    }
+
+    fn walk_rust_files(dir: &std::path::Path, visit: &mut dyn FnMut(&std::path::Path)) {
+        let Ok(entries) = std::fs::read_dir(dir) else {
+            return;
+        };
+        for entry in entries.flatten() {
+            let path = entry.path();
+            if path.is_dir() {
+                walk_rust_files(&path, visit);
+            } else if path.extension().and_then(|e| e.to_str()) == Some("rs") {
+                visit(&path);
+            }
+        }
+    }
+
     #[test]
     fn identity_survives_store_drop_and_reopen() {
         // Lock for the env_lock-tests, so a parallel test can't have
-        // FOLDDB_MASTER_KEY set across our load_or_generate calls — that
-        // would silently switch storage between plaintext and ENC: blobs.
+        // FOLDDB_MASTER_KEY set across our provision calls — that would
+        // silently switch storage between plaintext and ENC: blobs.
         let _guard = env_lock();
         std::env::remove_var("FOLDDB_MASTER_KEY");
 
         let (pool, _tmp) = temp_pool();
-        let original = load_or_generate(Arc::clone(&pool)).unwrap();
+        let original = provision(Arc::clone(&pool)).unwrap();
         // Drop the first store handle (simulates daemon shutdown).
         // `pool` survives — same Sled directory, fresh handle.
-        let reopened = load_or_generate(Arc::clone(&pool)).unwrap();
+        let reopened = provision(Arc::clone(&pool)).unwrap();
         assert_identity_eq(&original, &reopened);
 
         // Repeated re-opens must remain stable. Catches any bug that
         // rotates identity on the Nth boot rather than the second.
         for i in 0..5 {
-            let again = load_or_generate(Arc::clone(&pool))
-                .unwrap_or_else(|e| panic!("reopen #{i} failed: {e}"));
+            let again =
+                provision(Arc::clone(&pool)).unwrap_or_else(|e| panic!("reopen #{i} failed: {e}"));
             assert_identity_eq(&original, &again);
         }
     }

@@ -354,10 +354,11 @@ pub(crate) async fn signed_register(
     node_manager: &Arc<NodeManager>,
     invite_code: Option<&str>,
 ) -> Result<serde_json::Value, String> {
-    // Get the node's keys from the Sled identity store (works even during
-    // onboarding before user context). `ensure_default_identity` guarantees
-    // the pool + tree exist; the subsequent `identity::load` never hits
-    // a cold path.
+    // Reads (does NOT mint) the node's keys from the Sled identity store
+    // — only `POST /api/setup/bootstrap` may provision. This call surfaces
+    // `NodeManagerError::NotProvisioned` as a string upward, which the
+    // caller routes wrap as 5xx; canonical 503 plumbing lives in the
+    // /api/system/auto-identity and require_node paths.
     let public_key_b64 = node_manager
         .ensure_default_identity()
         .await
