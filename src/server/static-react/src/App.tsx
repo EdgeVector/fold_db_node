@@ -42,6 +42,10 @@ import { useDatabaseInit } from './hooks/useDatabaseInit'
 import { useResultHandler } from './hooks/useResultHandler'
 import { useAppDispatch } from './store/hooks'
 import { reconcileAppleJobs } from './store/ingestionSlice'
+import {
+  NODE_NOT_PROVISIONED_EVENT,
+  installNodeProvisioningHandler,
+} from './api/clients/nodeProvisioning'
 
 function isIngestionResult(results: unknown): boolean {
   const r = results as { success?: boolean; data?: unknown } | null | undefined
@@ -92,6 +96,17 @@ export function AppContent() {
   useEffect(() => {
     dispatch(reconcileAppleJobs())
   }, [dispatch])
+
+  // Any backend route can return `503 { error: "node_not_provisioned" }`
+  // once the rename-to-provision follow-up lands; the canonical recovery
+  // is to drop the user back into the onboarding wizard so they can run
+  // the single bootstrap call. Installation is idempotent.
+  useEffect(() => {
+    installNodeProvisioningHandler()
+    const handler = () => setShowOnboarding(true)
+    window.addEventListener(NODE_NOT_PROVISIONED_EVENT, handler)
+    return () => window.removeEventListener(NODE_NOT_PROVISIONED_EVENT, handler)
+  }, [setShowOnboarding])
 
   // Per-session dismissal of the cloud-LLM data warning banner.
   // sessionStorage on purpose: each app launch re-warns once, so the

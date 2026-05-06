@@ -1,11 +1,15 @@
 import { useState, useCallback, useMemo } from 'react'
-import { markOnboardingComplete } from '../../api/clients/systemClient'
+import { useAppDispatch } from '../../store/hooks'
+import { fetchIngestionConfig, fetchIngestionStatus } from '../../store/ingestionSlice'
+import { systemClient, type BootstrapRequest, type BootstrapResponse } from '../../api/clients/systemClient'
+import { isApiError } from '../../api/core/errors'
 import IdentityStep from './IdentityStep'
-import ConfigureAiStep from './ConfigureAiStep'
+import ConfigureAiStep, { type AiStepFields } from './ConfigureAiStep'
 import AppleDataStep from './AppleDataStep'
-import CloudBackupStep from './CloudBackupStep'
+import CloudBackupStep, { type CloudStepFields } from './CloudBackupStep'
 import DiscoveryStep from './DiscoveryStep'
 import AllSetStep from './AllSetStep'
+import RecoveryPhraseView from './RecoveryPhraseView'
 
 interface StepDef {
   id: StepId
@@ -13,13 +17,24 @@ interface StepDef {
   number: number
 }
 
-type StepId = 'identity' | 'welcome' | 'apple-data' | 'cloud-backup' | 'discovery' | 'all-set'
+type StepId =
+  | 'identity'
+  | 'welcome'
+  | 'cloud-backup'
+  | 'recovery-phrase'
+  | 'apple-data'
+  | 'discovery'
+  | 'all-set'
 
+// User-visible progress indicator. The `recovery-phrase` view is a
+// transient sub-screen of the cloud-backup step (after a successful
+// bootstrap response carrying a fresh-mint phrase) and intentionally
+// doesn't get its own dot.
 const STEPS: StepDef[] = [
   { id: 'identity', label: 'Identity', number: 1 },
   { id: 'welcome', label: 'AI Setup', number: 2 },
-  { id: 'apple-data', label: 'Apple Data', number: 3 },
-  { id: 'cloud-backup', label: 'Cloud Backup', number: 4 },
+  { id: 'cloud-backup', label: 'Cloud Backup', number: 3 },
+  { id: 'apple-data', label: 'Apple Data', number: 4 },
   { id: 'discovery', label: 'Community', number: 5 },
   { id: 'all-set', label: 'All Set', number: 6 },
 ]
@@ -37,11 +52,13 @@ interface ProgressIndicatorProps {
 }
 
 function ProgressIndicator({ currentStep, steps }: ProgressIndicatorProps) {
+  // The recovery-phrase view shares the cloud-backup dot.
+  const indicatorStep: StepId = currentStep === 'recovery-phrase' ? 'cloud-backup' : currentStep
   return (
     <div className="flex items-start justify-center gap-1 mb-6">
       {steps.map((step, i) => {
-        const isCurrent = step.id === currentStep
-        const isPast = steps.findIndex(s => s.id === currentStep) > i
+        const isCurrent = step.id === indicatorStep
+        const isPast = steps.findIndex(s => s.id === indicatorStep) > i
         return (
           <div key={step.id} className="flex items-start gap-1">
             <div className="flex flex-col items-center">
@@ -77,6 +94,7 @@ interface OnboardingWizardProps {
 }
 
 export default function OnboardingWizard({ onComplete }: OnboardingWizardProps) {
+  const dispatch = useAppDispatch()
   const [currentStep, setCurrentStep] = useState<StepId>('identity')
   const [completedSteps, setCompletedSteps] = useState<Set<StepId>>(new Set())
   const cloudActive = useMemo(() => isCloudAlreadyActive(), [])
@@ -84,6 +102,29 @@ export default function OnboardingWizard({ onComplete }: OnboardingWizardProps) 
     () => STEPS.filter(s => !(s.id === 'cloud-backup' && cloudActive)),
     [cloudActive]
   )
+
+  // Aggregated form state. One bootstrap POST consumes all of this at the
+  // end of the cloud-backup step.
+  const [identityFields, setIdentityFields] = useState({
+    displayName: '',
+    contactHint: '',
+    birthday: '',
+  })
+  const [aiFields, setAiFields] = useState<AiStepFields>({
+    provider: 'Anthropic',
+    anthropicApiKey: '',
+    anthropicModel: 'claude-haiku-4-5-20251001',
+    ollamaUrl: 'http://localhost:11434',
+    ollamaModel: '',
+  })
+  const [cloudFields, setCloudFields] = useState<CloudStepFields>({
+    inviteCode: '',
+    recoveryPhrase: '',
+  })
+
+  const [submitting, setSubmitting] = useState(false)
+  const [submitError, setSubmitError] = useState<string | null>(null)
+  const [recoveryWords, setRecoveryWords] = useState<string[] | null>(null)
 
   const markCompleted = useCallback((stepId: StepId) => {
     setCompletedSteps(prev => new Set([...prev, stepId]))
@@ -93,11 +134,89 @@ export default function OnboardingWizard({ onComplete }: OnboardingWizardProps) 
     setCurrentStep(stepId)
   }, [])
 
+  const buildBootstrapRequest = useCallback(({
+    enableCloud,
+    useRecoveryPhrase,
+  }: {
+    enableCloud: boolean
+    useRecoveryPhrase: boolean
+  }): BootstrapRequest => {
+    // Default the display name when the user skipped the identity step. The
+    // backend requires a non-empty `name`, so silently filling in a
+    // placeholder is preferable to blocking submission.
+    const name = identityFields.displayName.trim() || 'FoldDB User'
+
+    let aiProvider: BootstrapRequest['ai_provider']
+    if (aiFields.provider === 'Anthropic') aiProvider = 'anthropic'
+    else if (aiFields.provider === 'Ollama') aiProvider = 'ollama'
+    else aiProvider = 'skip'
+
+    return {
+      name,
+      email: identityFields.contactHint.trim() || null,
+      birthday: identityFields.birthday.trim() || null,
+      ai_provider: aiProvider,
+      anthropic_api_key:
+        aiFields.provider === 'Anthropic' ? aiFields.anthropicApiKey || null : null,
+      ollama_url: aiFields.provider === 'Ollama' ? aiFields.ollamaUrl || null : null,
+      ollama_model: aiFields.provider === 'Ollama' ? aiFields.ollamaModel || null : null,
+      enable_cloud: enableCloud,
+      invite_code: enableCloud ? cloudFields.inviteCode.trim() : null,
+      recovery_phrase: useRecoveryPhrase
+        ? cloudFields.recoveryPhrase.trim().toLowerCase()
+        : null,
+    }
+  }, [identityFields, aiFields, cloudFields])
+
+  const submitBootstrap = useCallback(async (opts: {
+    enableCloud: boolean
+    useRecoveryPhrase: boolean
+  }) => {
+    setSubmitting(true)
+    setSubmitError(null)
+    try {
+      const req = buildBootstrapRequest(opts)
+      const resp = await systemClient.bootstrap(req)
+      const data: BootstrapResponse | undefined = resp.data
+      if (!resp.success || !data) {
+        throw new Error('Bootstrap response missing data')
+      }
+
+      if (data.cloud?.enabled) {
+        // Persist `exemem_api_key` so the rest of the UI (and a future page
+        // refresh) sees cloud as already active. The bootstrap handler
+        // saved the canonical credentials in the OS keychain; localStorage
+        // here is the UI-side flag the gating reads.
+        localStorage.setItem('exemem_user_hash', data.cloud.exemem_user_hash)
+      }
+
+      // Refresh AI store now that the backend has saved the config.
+      dispatch(fetchIngestionConfig())
+      dispatch(fetchIngestionStatus())
+
+      markCompleted('cloud-backup')
+
+      if (data.recovery_phrase && data.recovery_phrase.length > 0) {
+        setRecoveryWords(data.recovery_phrase)
+        goToStep('recovery-phrase')
+      } else {
+        // Restore path — no fresh-mint phrase to display.
+        goToStep('apple-data')
+      }
+    } catch (e) {
+      const message = isApiError(e)
+        ? (e.toUserMessage() || e.message)
+        : e instanceof Error
+          ? e.message
+          : String(e)
+      setSubmitError(message)
+    } finally {
+      setSubmitting(false)
+    }
+  }, [buildBootstrapRequest, dispatch, markCompleted, goToStep])
+
   const handleFinish = useCallback(() => {
     localStorage.setItem(ONBOARDING_STORAGE_KEY, '1')
-    markOnboardingComplete().catch(() => {
-      // Best-effort — localStorage is the fallback
-    })
     onComplete()
   }, [onComplete])
 
@@ -106,6 +225,10 @@ export default function OnboardingWizard({ onComplete }: OnboardingWizardProps) 
       case 'identity':
         return (
           <IdentityStep
+            displayName={identityFields.displayName}
+            contactHint={identityFields.contactHint}
+            birthday={identityFields.birthday}
+            onChange={(next) => setIdentityFields(prev => ({ ...prev, ...next }))}
             onNext={() => {
               markCompleted('identity')
               goToStep('welcome')
@@ -116,34 +239,21 @@ export default function OnboardingWizard({ onComplete }: OnboardingWizardProps) 
       case 'welcome':
         return (
           <ConfigureAiStep
+            fields={aiFields}
+            onChange={(next) => setAiFields(prev => ({ ...prev, ...next }))}
             onNext={() => {
               markCompleted('welcome')
-              goToStep('apple-data')
+              goToStep(cloudActive ? 'apple-data' : 'cloud-backup')
             }}
-            onSkip={() => goToStep('apple-data')}
+            onSkip={() => goToStep(cloudActive ? 'apple-data' : 'cloud-backup')}
           />
         )
-      case 'apple-data': {
-        const afterApple = () => {
-          if (cloudActive) {
-            markCompleted('cloud-backup')
-            goToStep('discovery')
-          } else {
-            goToStep('cloud-backup')
-          }
-        }
-        return (
-          <AppleDataStep
-            onNext={() => {
-              markCompleted('apple-data')
-              afterApple()
-            }}
-            onSkip={afterApple}
-          />
-        )
-      }
       case 'cloud-backup':
         if (cloudActive) {
+          // Already-active gate stays here for parity with the previous
+          // behavior, but the bootstrap runs only on a fresh node — so this
+          // branch now only fires when the user re-enters the wizard with
+          // an existing cloud session. Skip straight through.
           return (
             <div data-testid="cloud-already-active" className="text-center">
               <h2 className="text-lg font-bold text-primary mb-2">Cloud backup is already active</h2>
@@ -154,7 +264,7 @@ export default function OnboardingWizard({ onComplete }: OnboardingWizardProps) 
                 className="btn btn-primary"
                 onClick={() => {
                   markCompleted('cloud-backup')
-                  goToStep('discovery')
+                  goToStep('apple-data')
                 }}
               >
                 Next
@@ -164,8 +274,31 @@ export default function OnboardingWizard({ onComplete }: OnboardingWizardProps) 
         }
         return (
           <CloudBackupStep
+            fields={cloudFields}
+            onChange={(next) => setCloudFields(prev => ({ ...prev, ...next }))}
+            onEnableCloud={() => submitBootstrap({ enableCloud: true, useRecoveryPhrase: false })}
+            onRestore={() => submitBootstrap({ enableCloud: true, useRecoveryPhrase: true })}
+            onSkip={() => submitBootstrap({ enableCloud: false, useRecoveryPhrase: false })}
+            submitting={submitting}
+            error={submitError}
+          />
+        )
+      case 'recovery-phrase':
+        if (!recoveryWords) {
+          // Defensive: should never render without words. Bounce to apple.
+          return null
+        }
+        return (
+          <RecoveryPhraseView
+            words={recoveryWords}
+            onContinue={() => goToStep('apple-data')}
+          />
+        )
+      case 'apple-data':
+        return (
+          <AppleDataStep
             onNext={() => {
-              markCompleted('cloud-backup')
+              markCompleted('apple-data')
               goToStep('discovery')
             }}
             onSkip={() => goToStep('discovery')}
@@ -209,7 +342,7 @@ export default function OnboardingWizard({ onComplete }: OnboardingWizardProps) 
           {renderStep()}
         </div>
 
-        {currentStep !== 'all-set' && (
+        {currentStep !== 'all-set' && currentStep !== 'recovery-phrase' && (
           <div className="text-center mt-4">
             <button
               onClick={handleFinish}

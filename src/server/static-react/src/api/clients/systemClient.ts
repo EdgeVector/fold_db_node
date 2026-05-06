@@ -129,6 +129,35 @@ export interface DatabaseStatusResponse {
   onboarding_complete: boolean;
 }
 
+// Mirror of `BootstrapRequest` in src/server/routes/setup.rs.
+export interface BootstrapRequest {
+  name: string;
+  email?: string | null;
+  birthday?: string | null;
+  ai_provider?: "anthropic" | "ollama" | "skip" | "" | null;
+  anthropic_api_key?: string | null;
+  ollama_url?: string | null;
+  ollama_model?: string | null;
+  enable_cloud?: boolean;
+  invite_code?: string | null;
+  // 24-word phrase joined with spaces. When set, identity is derived from the
+  // phrase instead of minted fresh.
+  recovery_phrase?: string | null;
+}
+
+export interface BootstrapCloudInfo {
+  enabled: boolean;
+  exemem_user_hash: string;
+}
+
+export interface BootstrapResponse {
+  public_key: string;
+  user_hash: string;
+  // Present on fresh-mint; absent when the request supplied a recovery phrase.
+  recovery_phrase?: string[];
+  cloud?: BootstrapCloudInfo;
+}
+
 export interface SyncTriggerResponse {
   success: boolean;
   message: string;
@@ -371,6 +400,24 @@ export class UnifiedSystemClient {
     });
   }
 
+  // POST /api/setup/bootstrap — single-call provisioning for fresh installs
+  // and recovery-phrase restores. See src/server/routes/setup.rs for the
+  // canonical handler.
+  async bootstrap(
+    req: BootstrapRequest,
+  ): Promise<EnhancedApiResponse<BootstrapResponse>> {
+    return this.client.post<BootstrapResponse>(
+      API_ENDPOINTS.SETUP_BOOTSTRAP,
+      req,
+      {
+        requiresAuth: false,
+        timeout: API_TIMEOUTS.BATCH,
+        retries: API_RETRIES.NONE,
+        cacheable: false,
+      },
+    );
+  }
+
   // Mark onboarding as complete (writes marker file on backend)
   async markOnboardingComplete(): Promise<EnhancedApiResponse<{ ok: boolean }>> {
     return this.client.post<{ ok: boolean }>(
@@ -433,6 +480,7 @@ export const getDatabaseStatus =
 export const applySetup = systemClient.applySetup.bind(systemClient);
 export const markOnboardingComplete =
   systemClient.markOnboardingComplete.bind(systemClient);
+export const bootstrap = systemClient.bootstrap.bind(systemClient);
 export const migrateToCloud = systemClient.migrateToCloud.bind(systemClient);
 export const createLogStream = systemClient.createLogStream.bind(systemClient);
 export const validateResetRequest =
