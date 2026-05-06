@@ -58,6 +58,10 @@ yarn-error.log
 *.pdb
 *_output.txt
 *_output_*.txt
+# Local cargo/CI output captured by devs
+*.out
+# Stray gh CLI artifacts
+pr_info.json
 
 # Rust analyzer
 rust-project.json
