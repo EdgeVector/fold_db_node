@@ -16,6 +16,8 @@ import {
 vi.mock("../../api/clients", () => ({
   ingestionClient: {
     getJobProgress: vi.fn(),
+    getAppleSyncConfig: vi.fn(),
+    updateAppleSyncConfig: vi.fn(),
   },
 }));
 
@@ -27,13 +29,44 @@ import ingestionReducer, {
   appleJobCompleted,
   appleJobFailed,
   appleJobReset,
+  appleSyncConfigOptimisticPatch,
+  debouncedPatchAppleSyncConfig,
+  fetchAppleSyncConfig,
+  flushAppleSyncDebouncedPatch,
   makeIdleAppleJob,
   reconcileAppleJobs,
+  selectAppleEnabledSources,
+  selectApplePhotosLimit,
   selectAppleJob,
+  selectAppleSyncConfig,
+  selectAppleSyncConfigLoaded,
   type AppleSourceKey,
 } from "../ingestionSlice";
+import type { AppleSyncConfig } from "../../api/clients/ingestionClient";
+import type { RootState } from "../store";
 
 const mockedGetJobProgress = vi.mocked(ingestionClient.getJobProgress);
+const mockedGetAppleSyncConfig = vi.mocked(ingestionClient.getAppleSyncConfig);
+const mockedUpdateAppleSyncConfig = vi.mocked(
+  ingestionClient.updateAppleSyncConfig,
+);
+
+type SyncConfigResponse = Awaited<
+  ReturnType<typeof ingestionClient.getAppleSyncConfig>
+>;
+const okSyncConfig = (data: AppleSyncConfig): SyncConfigResponse =>
+  ({ status: 200, success: true, data }) as unknown as SyncConfigResponse;
+
+const baseSyncConfig: AppleSyncConfig = {
+  enabled: false,
+  schedule: "daily",
+  sources: { notes: true, photos: true, calendar: true, reminders: true, contacts: true },
+  photos_limit: 50,
+  last_sync: null,
+  next_sync: null,
+  last_error: null,
+  last_error_at: null,
+};
 
 type ProgressShape = {
   progress_percentage?: number;
@@ -70,6 +103,13 @@ function buildStore() {
     reducer: combineReducers({ ingestion: ingestionReducer }),
   });
 }
+
+// Custom-typed dispatch for tests that send our ThunkAction-typed thunks
+// (debouncedPatchAppleSyncConfig, flushAppleSyncDebouncedPatch). The
+// production AppDispatch carries thunk overloads; the test store's dispatch
+// type loses them via `combineReducers`, so we cast through AppDispatch.
+const thunkDispatch = (store: ReturnType<typeof buildStore>) =>
+  store.dispatch as unknown as import("../store").AppDispatch;
 
 describe("ingestionSlice — appleJobs", () => {
   describe("initial state", () => {
@@ -563,5 +603,246 @@ describe("reconcileAppleJobs", () => {
     const { appleJobs } = store.getState().ingestion;
     expect(appleJobs.contacts.status).toBe("running");
     expect(appleJobs.notes.status).toBe("done");
+  });
+});
+
+describe("ingestionSlice — appleSyncConfig", () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    vi.useFakeTimers();
+  });
+  afterEach(() => {
+    vi.useRealTimers();
+    // Drain any debounce timer the previous test left armed so module-level
+    // state can't leak across tests.
+    const buster = buildStore();
+    thunkDispatch(buster)(flushAppleSyncDebouncedPatch());
+  });
+
+  describe("initial state and selectors", () => {
+    it("starts with no sync config and reports not-loaded", () => {
+      const store = buildStore();
+      const state = store.getState() as RootState;
+      expect(selectAppleSyncConfig(state)).toBeNull();
+      expect(selectAppleSyncConfigLoaded(state)).toBe(false);
+    });
+
+    it("falls back to all-enabled sources and 50-photo limit when no config loaded", () => {
+      const store = buildStore();
+      const state = store.getState() as RootState;
+      expect(selectAppleEnabledSources(state)).toEqual({
+        notes: true,
+        photos: true,
+        calendar: true,
+        reminders: true,
+        contacts: true,
+      });
+      expect(selectApplePhotosLimit(state)).toBe(50);
+    });
+
+    it("reads sources/photos_limit from a loaded config", () => {
+      const store = buildStore();
+      store.dispatch(
+        appleSyncConfigOptimisticPatch({}),
+      );
+      // Seed via fulfilled action so the slice transitions to loaded.
+      store.dispatch({
+        type: fetchAppleSyncConfig.fulfilled.type,
+        payload: {
+          ...baseSyncConfig,
+          sources: { ...baseSyncConfig.sources, contacts: false },
+          photos_limit: 17,
+        },
+      });
+      const state = store.getState() as RootState;
+      expect(selectAppleEnabledSources(state).contacts).toBe(false);
+      expect(selectApplePhotosLimit(state)).toBe(17);
+      expect(selectAppleSyncConfigLoaded(state)).toBe(true);
+    });
+  });
+
+  describe("fetchAppleSyncConfig", () => {
+    it("populates appleSyncConfig and flips loaded on success", async () => {
+      mockedGetAppleSyncConfig.mockResolvedValueOnce(
+        okSyncConfig(baseSyncConfig),
+      );
+
+      const store = buildStore();
+      await store.dispatch(fetchAppleSyncConfig());
+
+      const state = store.getState() as RootState;
+      expect(state.ingestion.appleSyncConfig).toEqual(baseSyncConfig);
+      expect(state.ingestion.appleSyncConfigLoaded).toBe(true);
+    });
+
+    it("flips loaded even on failure so the UI un-gates without a working config", async () => {
+      mockedGetAppleSyncConfig.mockResolvedValueOnce({
+        status: 500,
+        success: false,
+      } as unknown as Awaited<ReturnType<typeof ingestionClient.getAppleSyncConfig>>);
+
+      const store = buildStore();
+      await store.dispatch(fetchAppleSyncConfig());
+
+      const state = store.getState() as RootState;
+      // Without this guard the SourceCard toggles would stay disabled
+      // forever after a failed fetch — verify the rejected reducer
+      // un-gates by setting loaded=true while leaving config null.
+      expect(state.ingestion.appleSyncConfig).toBeNull();
+      expect(state.ingestion.appleSyncConfigLoaded).toBe(true);
+    });
+  });
+
+  describe("appleSyncConfigOptimisticPatch", () => {
+    it("merges partial sources without clobbering other source keys", () => {
+      const store = buildStore();
+      store.dispatch({
+        type: fetchAppleSyncConfig.fulfilled.type,
+        payload: baseSyncConfig,
+      });
+
+      store.dispatch(
+        appleSyncConfigOptimisticPatch({ sources: { contacts: false } }),
+      );
+
+      const cfg = store.getState().ingestion.appleSyncConfig;
+      expect(cfg?.sources).toEqual({
+        notes: true,
+        photos: true,
+        calendar: true,
+        reminders: true,
+        contacts: false,
+      });
+    });
+
+    it("updates photos_limit independently of sources", () => {
+      const store = buildStore();
+      store.dispatch({
+        type: fetchAppleSyncConfig.fulfilled.type,
+        payload: baseSyncConfig,
+      });
+
+      store.dispatch(
+        appleSyncConfigOptimisticPatch({ photos_limit: 250 }),
+      );
+
+      const cfg = store.getState().ingestion.appleSyncConfig;
+      expect(cfg?.photos_limit).toBe(250);
+      expect(cfg?.sources).toEqual(baseSyncConfig.sources);
+    });
+
+    it("no-ops when no config has been loaded yet", () => {
+      const store = buildStore();
+      store.dispatch(
+        appleSyncConfigOptimisticPatch({ sources: { notes: false } }),
+      );
+      // Without a base config there is nothing to merge into; the
+      // reducer leaves state untouched. Callers gate this in the UI by
+      // disabling toggles until appleSyncConfigLoaded.
+      expect(store.getState().ingestion.appleSyncConfig).toBeNull();
+    });
+  });
+
+  describe("debouncedPatchAppleSyncConfig", () => {
+    it("applies the optimistic patch immediately and the API call after the debounce", async () => {
+      mockedUpdateAppleSyncConfig.mockResolvedValue(
+        okSyncConfig({ ...baseSyncConfig, sources: { ...baseSyncConfig.sources, contacts: false } }),
+      );
+
+      const store = buildStore();
+      store.dispatch({
+        type: fetchAppleSyncConfig.fulfilled.type,
+        payload: baseSyncConfig,
+      });
+
+      thunkDispatch(store)(
+        debouncedPatchAppleSyncConfig({ sources: { contacts: false } }),
+      );
+
+      // Optimistic: state already shows contacts off.
+      expect(
+        store.getState().ingestion.appleSyncConfig?.sources.contacts,
+      ).toBe(false);
+      // API not called yet — debounce window is still open.
+      expect(mockedUpdateAppleSyncConfig).not.toHaveBeenCalled();
+
+      await vi.advanceTimersByTimeAsync(500);
+
+      expect(mockedUpdateAppleSyncConfig).toHaveBeenCalledTimes(1);
+      // The PATCH carries the FULL EnabledSources, not the partial — the
+      // route at apple_import.rs replaces the whole `sources` field, so
+      // sending only `{ contacts: false }` would erase the other four.
+      expect(mockedUpdateAppleSyncConfig).toHaveBeenCalledWith({
+        sources: {
+          notes: true,
+          photos: true,
+          calendar: true,
+          reminders: true,
+          contacts: false,
+        },
+      });
+    });
+
+    it("coalesces a flurry of toggles into a single PATCH carrying every change", async () => {
+      mockedUpdateAppleSyncConfig.mockResolvedValue(okSyncConfig(baseSyncConfig));
+
+      const store = buildStore();
+      store.dispatch({
+        type: fetchAppleSyncConfig.fulfilled.type,
+        payload: baseSyncConfig,
+      });
+
+      // Three quick toggles — the debounce timer resets on each one, so
+      // only ONE PATCH should fire and it should carry all three changes.
+      const dispatchT = thunkDispatch(store);
+      dispatchT(debouncedPatchAppleSyncConfig({ sources: { notes: false } }));
+      vi.advanceTimersByTime(100);
+      dispatchT(debouncedPatchAppleSyncConfig({ sources: { photos: false } }));
+      vi.advanceTimersByTime(100);
+      dispatchT(debouncedPatchAppleSyncConfig({ photos_limit: 200 }));
+
+      expect(mockedUpdateAppleSyncConfig).not.toHaveBeenCalled();
+
+      await vi.advanceTimersByTimeAsync(500);
+
+      expect(mockedUpdateAppleSyncConfig).toHaveBeenCalledTimes(1);
+      const callArg = mockedUpdateAppleSyncConfig.mock.calls[0][0];
+      expect(callArg).toEqual({
+        sources: {
+          notes: false,
+          photos: false,
+          calendar: true,
+          reminders: true,
+          contacts: true,
+        },
+        photos_limit: 200,
+      });
+    });
+
+    it("flushAppleSyncDebouncedPatch sends the queued PATCH immediately", async () => {
+      mockedUpdateAppleSyncConfig.mockResolvedValue(okSyncConfig(baseSyncConfig));
+
+      const store = buildStore();
+      store.dispatch({
+        type: fetchAppleSyncConfig.fulfilled.type,
+        payload: baseSyncConfig,
+      });
+
+      const dispatchT = thunkDispatch(store);
+      dispatchT(debouncedPatchAppleSyncConfig({ sources: { contacts: false } }));
+      // Imagine the user clicks "Import All" right after toggling — the
+      // pending patch must land BEFORE the imports start so the run uses
+      // the latest sources, not the pre-toggle ones.
+      dispatchT(flushAppleSyncDebouncedPatch());
+
+      // No timer advance needed — flush ran synchronously.
+      expect(mockedUpdateAppleSyncConfig).toHaveBeenCalledTimes(1);
+    });
+
+    it("flushAppleSyncDebouncedPatch is a no-op when nothing is queued", () => {
+      const store = buildStore();
+      thunkDispatch(store)(flushAppleSyncDebouncedPatch());
+      expect(mockedUpdateAppleSyncConfig).not.toHaveBeenCalled();
+    });
   });
 });

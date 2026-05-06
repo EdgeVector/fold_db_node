@@ -10,94 +10,99 @@ import {
 } from '@heroicons/react/24/outline'
 import type { OperationResultPayload } from '../../types/api'
 import ingestionClient from '../../api/clients/ingestionClient'
-import type { AppleSyncConfig, EnabledSources } from '../../api/clients/ingestionClient'
+import type { EnabledSources } from '../../api/clients/ingestionClient'
 import { useAppDispatch, useAppSelector } from '../../store/hooks'
 import {
   appleJobFailed,
   appleJobReset,
   appleJobStarted,
   appleJobStarting,
+  appleSyncConfigOptimisticPatch,
+  debouncedPatchAppleSyncConfig,
+  fetchAppleSyncConfig,
+  flushAppleSyncDebouncedPatch,
+  selectAppleEnabledSources,
   selectAppleJob,
+  selectApplePhotosLimit,
+  selectAppleSyncConfig,
+  selectAppleSyncConfigLoaded,
   type AppleSourceKey,
   type ImportResult,
 } from '../../store/ingestionSlice'
 
 function AutoSyncSettings() {
-  const [config, setConfig] = useState<AppleSyncConfig | null>(null)
-  const [loading, setLoading] = useState(true)
-  const [saving, setSaving] = useState(false)
+  const dispatch = useAppDispatch()
+  const config = useAppSelector(selectAppleSyncConfig)
+  const loaded = useAppSelector(selectAppleSyncConfigLoaded)
   const [customHours, setCustomHours] = useState(12)
 
+  // Seed customHours from the loaded config the first time it lands so the
+  // input shows whatever the backend persisted. Tracking this in component
+  // state (instead of deriving from config) keeps the input editable while
+  // the user is mid-typing without forcing a slice round-trip per keystroke.
   useEffect(() => {
-    ingestionClient.getAppleSyncConfig().then((resp) => {
-      if (resp.success && resp.data) {
-        setConfig(resp.data)
-        if (typeof resp.data.schedule === 'object' && resp.data.schedule?.custom) {
-          setCustomHours(resp.data.schedule.custom.hours)
-        }
-      }
-      setLoading(false)
-    }).catch(() => { setLoading(false) })
-  }, [])
+    if (config && typeof config.schedule === 'object' && config.schedule?.custom) {
+      setCustomHours(config.schedule.custom.hours)
+    }
+  }, [config])
 
   useEffect(() => {
     if (!config?.enabled) return
     const timer = setInterval(async () => {
       const resp = await ingestionClient.getAppleNextSync()
       if (resp.success && resp.data) {
-        const data = resp.data
-        setConfig((prev) =>
-          prev
-            ? {
-                ...prev,
-                next_sync: data.next_sync,
-                last_sync: data.last_sync,
-                last_error: data.last_error,
-                last_error_at: data.last_error_at,
-              }
-            : prev,
+        const { next_sync, last_sync, last_error, last_error_at } = resp.data
+        // Status-only patch: do NOT go through the API-debouncer; this is
+        // an inbound update that just refreshes the sidecar fields.
+        dispatch(
+          appleSyncConfigOptimisticPatch({
+            next_sync,
+            last_sync,
+            last_error,
+            last_error_at,
+          }),
         )
       }
     }, 30000)
     return () => clearInterval(timer)
-  }, [config?.enabled])
+  }, [config?.enabled, dispatch])
 
-  const updateConfig = async (update: Partial<AppleSyncConfig>) => {
-    setSaving(true)
-    const resp = await ingestionClient.updateAppleSyncConfig(update)
-    if (resp.success && resp.data) {
-      setConfig(resp.data)
-    }
-    setSaving(false)
+  const handleToggle = () => {
+    if (!config) return
+    dispatch(debouncedPatchAppleSyncConfig({ enabled: !config.enabled }))
   }
-
-  const handleToggle = () => updateConfig({ enabled: !config?.enabled })
 
   const handleScheduleChange = (e: ChangeEvent<HTMLSelectElement>) => {
     const val = e.target.value
     if (val === 'custom') {
-      updateConfig({ schedule: { custom: { hours: customHours } } })
+      dispatch(
+        debouncedPatchAppleSyncConfig({ schedule: { custom: { hours: customHours } } }),
+      )
     } else {
-      updateConfig({ schedule: val as 'daily' | 'weekly' })
+      dispatch(
+        debouncedPatchAppleSyncConfig({ schedule: val as 'daily' | 'weekly' }),
+      )
     }
   }
 
   const handleCustomHoursChange = (e: ChangeEvent<HTMLInputElement>) => {
     const hours = parseInt(e.target.value) || 1
     setCustomHours(hours)
-    updateConfig({ schedule: { custom: { hours } } })
+    dispatch(debouncedPatchAppleSyncConfig({ schedule: { custom: { hours } } }))
   }
 
   const handleSourceToggle = (source: keyof EnabledSources) => {
     if (!config) return
-    updateConfig({
-      sources: { ...config.sources, [source]: !config.sources[source] },
-    })
+    dispatch(
+      debouncedPatchAppleSyncConfig({
+        sources: { ...config.sources, [source]: !config.sources[source] },
+      }),
+    )
   }
 
   const handlePhotosLimitChange = (e: ChangeEvent<HTMLInputElement>) => {
     const limit = parseInt(e.target.value) || 50
-    updateConfig({ photos_limit: limit })
+    dispatch(debouncedPatchAppleSyncConfig({ photos_limit: limit }))
   }
 
   const getScheduleValue = () => {
@@ -113,7 +118,7 @@ function AutoSyncSettings() {
     return d.toLocaleString()
   }
 
-  if (loading) {
+  if (!loaded) {
     return (
       <div className="bg-surface border border-border rounded-lg p-4 mb-4">
         <p className="text-xs text-secondary">Loading sync settings...</p>
@@ -132,7 +137,6 @@ function AutoSyncSettings() {
         </div>
         <button
           onClick={handleToggle}
-          disabled={saving}
           className={`relative inline-flex h-6 w-11 items-center rounded-full transition-colors ${
             config.enabled ? 'bg-accent' : 'bg-surface-secondary border border-border'
           }`}
@@ -322,6 +326,7 @@ interface SourceCardProps {
   source: SourceDef
   enabled: boolean
   onToggle: (val: boolean) => void
+  toggleDisabled: boolean
   status: ImportStatus
   progress: number
   message: string
@@ -330,7 +335,7 @@ interface SourceCardProps {
   onPhotosLimitChange: (limit: number) => void
 }
 
-const SourceCard = memo(function SourceCard({ source, enabled, onToggle, status, progress, message, result, photosLimit, onPhotosLimitChange }: SourceCardProps) {
+const SourceCard = memo(function SourceCard({ source, enabled, onToggle, toggleDisabled, status, progress, message, result, photosLimit, onPhotosLimitChange }: SourceCardProps) {
   const isRunning = status === 'running'
   const isDone = status === 'done'
   const isError = status === 'error'
@@ -352,7 +357,7 @@ const SourceCard = memo(function SourceCard({ source, enabled, onToggle, status,
         <SourceToggle
           checked={enabled}
           onChange={onToggle}
-          disabled={source.comingSoon || isRunning}
+          disabled={source.comingSoon || isRunning || toggleDisabled}
         />
       </div>
 
@@ -457,9 +462,11 @@ interface AppleImportTabProps {
 }
 
 export default function AppleImportTab({ onResult: _onResult }: AppleImportTabProps) {
+  const dispatch = useAppDispatch()
   const [available, setAvailable] = useState<boolean | null>(null) // null = loading, true/false
-  const [enabled, setEnabled] = useState<EnabledSources>({ notes: true, photos: true, calendar: true, reminders: true, contacts: true })
-  const [photosLimit, setPhotosLimit] = useState(50)
+  const enabled = useAppSelector(selectAppleEnabledSources)
+  const photosLimit = useAppSelector(selectApplePhotosLimit)
+  const syncConfigLoaded = useAppSelector(selectAppleSyncConfigLoaded)
 
   useEffect(() => {
     ingestionClient.getAppleImportStatus().then((resp) => {
@@ -468,6 +475,16 @@ export default function AppleImportTab({ onResult: _onResult }: AppleImportTabPr
       setAvailable(false)
     })
   }, [])
+
+  // Hydrate the shared sync config the first time the tab mounts. Subsequent
+  // mounts reuse the slice copy — this is what makes the toggles persist
+  // across navigation away and back. AutoSyncSettings reads the same slice
+  // so the two surfaces never disagree.
+  useEffect(() => {
+    if (!syncConfigLoaded) {
+      dispatch(fetchAppleSyncConfig())
+    }
+  }, [dispatch, syncConfigLoaded])
 
   const notes = useSourceImport('notes', useCallback(
     () => ingestionClient.appleImportNotes() as unknown as Promise<ImportFnResp>, []
@@ -490,23 +507,38 @@ export default function AppleImportTab({ onResult: _onResult }: AppleImportTabPr
   // Stable per-source toggle callbacks. A fresh callback every render
   // would defeat React.memo on SourceCard — every card would re-render
   // on every progress tick because `onToggle` always changed identity.
+  // Each handler dispatches a debounced patch to the slice; the optimistic
+  // reducer flips the toggle synchronously so the UI is snappy, the
+  // backend PATCH coalesces with any neighboring toggle within 500ms.
   const toggleHandlers = useMemo<Record<keyof EnabledSources, (val: boolean) => void>>(() => ({
-    notes: (val) => setEnabled((prev) => ({ ...prev, notes: val })),
-    photos: (val) => setEnabled((prev) => ({ ...prev, photos: val })),
-    calendar: (val) => setEnabled((prev) => ({ ...prev, calendar: val })),
-    reminders: (val) => setEnabled((prev) => ({ ...prev, reminders: val })),
-    contacts: (val) => setEnabled((prev) => ({ ...prev, contacts: val })),
-  }), [])
+    notes: (val) => dispatch(debouncedPatchAppleSyncConfig({ sources: { notes: val } })),
+    photos: (val) => dispatch(debouncedPatchAppleSyncConfig({ sources: { photos: val } })),
+    calendar: (val) => dispatch(debouncedPatchAppleSyncConfig({ sources: { calendar: val } })),
+    reminders: (val) => dispatch(debouncedPatchAppleSyncConfig({ sources: { reminders: val } })),
+    contacts: (val) => dispatch(debouncedPatchAppleSyncConfig({ sources: { contacts: val } })),
+  }), [dispatch])
 
   const handlePhotosLimitChange = useCallback((limit: number) => {
-    setPhotosLimit(limit)
-  }, [])
+    dispatch(debouncedPatchAppleSyncConfig({ photos_limit: limit }))
+  }, [dispatch])
+
+  // If the user kicks off "Import All" while a debounced patch is still
+  // queued, flush it now — otherwise the latest toggle/limit edit could
+  // miss the backend by ~500ms and the import would run with stale config.
+  const flushPendingPatch = useCallback(() => {
+    dispatch(flushAppleSyncDebouncedPatch())
+  }, [dispatch])
 
   const anyRunning = SOURCES.some((s) => imports[s.key].status === 'running')
   const enabledSources = SOURCES.filter((s) => enabled[s.key] && !s.comingSoon)
-  const canImportAll = enabledSources.length > 0 && !anyRunning
+  const canImportAll = enabledSources.length > 0 && !anyRunning && syncConfigLoaded
 
   const handleImportAll = () => {
+    // If a debounced toggle/limit edit is still queued, flush it BEFORE
+    // we start the imports — without this the user could click "Import
+    // All" within 500ms of toggling Contacts off, the import would run
+    // with the pre-toggle state, and Contacts would still get imported.
+    flushPendingPatch()
     // Call start() directly. start() flips the job to `running` /
     // `Starting...` synchronously via appleJobStarting BEFORE the
     // POST is awaited, so there is never a window where the job is
@@ -571,6 +603,7 @@ export default function AppleImportTab({ onResult: _onResult }: AppleImportTabPr
             source={source}
             enabled={enabled[source.key]}
             onToggle={toggleHandlers[source.key]}
+            toggleDisabled={!syncConfigLoaded}
             status={imports[source.key].status}
             progress={imports[source.key].progress}
             message={imports[source.key].message}
