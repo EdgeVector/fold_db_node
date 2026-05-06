@@ -498,7 +498,10 @@ mod tests {
             .await
             .expect("happy path must succeed");
 
-        assert_eq!(keys.get("hash_field").map(String::as_str), Some("alice@example.com"));
+        assert_eq!(
+            keys.get("hash_field").map(String::as_str),
+            Some("alice@example.com")
+        );
     }
 
     #[test]
