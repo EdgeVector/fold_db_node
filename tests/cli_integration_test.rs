@@ -44,27 +44,25 @@ impl DaemonFixture {
                 "require_tls": false,
                 "encrypt_at_rest": false
             },
-            "schema_service_url": "test://mock",
-            "public_key": keypair.public_key_base64(),
-            "private_key": keypair.secret_key_base64()
+            "schema_service_url": "test://mock"
         });
 
         let config_path = tmpdir.path().join("node_config.json");
         fs::write(&config_path, serde_json::to_string_pretty(&config).unwrap())
             .expect("write config");
 
-        // Write identity file so CLI doesn't trigger setup wizard
-        let identity_dir = tmpdir.path().join("config");
-        fs::create_dir_all(&identity_dir).expect("create identity dir");
-        let identity = serde_json::json!({
-            "private_key": keypair.secret_key_base64(),
-            "public_key": keypair.public_key_base64(),
-        });
-        fs::write(
-            identity_dir.join("node_identity.json"),
-            serde_json::to_string_pretty(&identity).unwrap(),
+        // Seed the node identity into the Sled `node_identity` tree before
+        // the daemon boots. After #908 the daemon no longer mints on an
+        // empty tree and `/api/system/auto-identity` returns
+        // `503 node_not_provisioned`; without this the CLI's identity
+        // probe in `cli()` exits before any test command dispatches.
+        // `save_standalone` releases the file lock on drop so the daemon
+        // can take it next.
+        fold_db_node::identity::save_standalone(
+            &db_path,
+            &fold_db_node::identity::identity_from_keypair(&keypair),
         )
-        .expect("write identity");
+        .expect("seed identity");
 
         // Find a random available port
         let listener = std::net::TcpListener::bind("127.0.0.1:0").expect("bind random port");
