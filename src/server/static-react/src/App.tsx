@@ -42,6 +42,7 @@ import { useDatabaseInit } from './hooks/useDatabaseInit'
 import { useResultHandler } from './hooks/useResultHandler'
 import { useAppDispatch } from './store/hooks'
 import { reconcileAppleJobs } from './store/ingestionSlice'
+import { NODE_NOT_PROVISIONED_ERROR } from './store/authSlice'
 import {
   NODE_NOT_PROVISIONED_EVENT,
   installNodeProvisioningHandler,
@@ -219,8 +220,25 @@ export function AppContent() {
     }
   }
 
+  // The node hasn't been bootstrapped yet (autoLogin hit
+  // `503 node_not_provisioned`), or the user has explicitly chosen to
+  // (re-)run the wizard via Settings. Either way the wizard takes
+  // precedence over the auth-error / spinner / db-setup branches: its
+  // submitBootstrap re-runs autoLogin on success, so keeping the wizard
+  // mounted across that retry preserves its in-progress form state.
+  const provisioningRequired = authError === NODE_NOT_PROVISIONED_ERROR
+  if (provisioningRequired || showOnboarding) {
+    return (
+      <OnboardingWizard
+        onComplete={() => setShowOnboarding(false)}
+      />
+    )
+  }
+
   // Bootstrap failed to reach the FoldDB node (e.g. backend not running).
-  // Replace the infinite spinner with an actionable error card.
+  // Replace the infinite spinner with an actionable error card. The
+  // node_not_provisioned case is handled above — this branch only fires
+  // for genuine connectivity / 5xx failures.
   if (!isAuthenticated && !isAuthLoading && authError) {
     return (
       <div className="h-screen flex items-center justify-center bg-surface-secondary px-6">
@@ -271,15 +289,6 @@ export function AppContent() {
   // Show database setup screen for fresh installs (no saved config, not initialized)
   if (dbStatus && !dbStatus.initialized && !dbStatus.has_saved_config) {
     return <DatabaseSetupScreen onComplete={recheckDbStatus} />
-  }
-
-  // Show onboarding wizard on first run (after DB is initialized)
-  if (showOnboarding && dbStatus?.initialized) {
-    return (
-      <OnboardingWizard
-        onComplete={() => setShowOnboarding(false)}
-      />
-    )
   }
 
   return (

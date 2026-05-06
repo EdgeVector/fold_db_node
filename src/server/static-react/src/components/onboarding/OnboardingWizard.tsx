@@ -1,6 +1,7 @@
 import { useState, useCallback, useMemo } from 'react'
-import { useAppDispatch } from '../../store/hooks'
+import { useAppDispatch, useAppSelector } from '../../store/hooks'
 import { fetchIngestionConfig, fetchIngestionStatus } from '../../store/ingestionSlice'
+import { autoLogin, NODE_NOT_PROVISIONED_ERROR } from '../../store/authSlice'
 import { systemClient, type BootstrapRequest, type BootstrapResponse } from '../../api/clients/systemClient'
 import { isApiError } from '../../api/core/errors'
 import IdentityStep from './IdentityStep'
@@ -95,6 +96,12 @@ interface OnboardingWizardProps {
 
 export default function OnboardingWizard({ onComplete }: OnboardingWizardProps) {
   const dispatch = useAppDispatch()
+  // The wizard is the *only* path forward when autoLogin returned
+  // 503 node_not_provisioned, so the "Skip setup entirely" escape hatch
+  // would just dead-end the user. Hide it in that case.
+  const provisioningRequired = useAppSelector(
+    (s) => s.auth.error === NODE_NOT_PROVISIONED_ERROR,
+  )
   const [currentStep, setCurrentStep] = useState<StepId>('identity')
   const [completedSteps, setCompletedSteps] = useState<Set<StepId>>(new Set())
   const cloudActive = useMemo(() => isCloudAlreadyActive(), [])
@@ -193,6 +200,11 @@ export default function OnboardingWizard({ onComplete }: OnboardingWizardProps) 
       // Refresh AI store now that the backend has saved the config.
       dispatch(fetchIngestionConfig())
       dispatch(fetchIngestionStatus())
+      // Re-run autoLogin so a node that started with `node_not_provisioned`
+      // becomes authenticated now that bootstrap has provisioned it. Without
+      // this, the user would finish the wizard but App.tsx would still see
+      // `auth.error === 'node_not_provisioned'` and re-render the wizard.
+      dispatch(autoLogin())
 
       markCompleted('cloud-backup')
 
@@ -342,7 +354,7 @@ export default function OnboardingWizard({ onComplete }: OnboardingWizardProps) 
           {renderStep()}
         </div>
 
-        {currentStep !== 'all-set' && currentStep !== 'recovery-phrase' && (
+        {currentStep !== 'all-set' && currentStep !== 'recovery-phrase' && !provisioningRequired && (
           <div className="text-center mt-4">
             <button
               onClick={handleFinish}

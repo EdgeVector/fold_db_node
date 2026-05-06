@@ -3,7 +3,28 @@ import {
   getAutoIdentity,
 } from "../api/clients/systemClient";
 import { getNodePublicKey } from "../api/clients/systemClient";
+import { isApiError } from "../api/core/errors";
 import { BROWSER_CONFIG } from "../constants/config";
+
+// Sentinel value placed into `auth.error` when /api/system/auto-identity
+// returns 503 { error: "node_not_provisioned" }. App.tsx tests for this
+// exact string to route the user into the bootstrap wizard instead of the
+// generic "can't reach the node" error screen.
+export const NODE_NOT_PROVISIONED_ERROR = "node_not_provisioned";
+
+export function isNodeNotProvisionedError(err: unknown): boolean {
+  if (!isApiError(err) || err.status !== 503) return false;
+  if (err.code === NODE_NOT_PROVISIONED_ERROR) return true;
+  if (err.message === NODE_NOT_PROVISIONED_ERROR) return true;
+  const body = err.response as { error?: unknown; code?: unknown } | undefined;
+  if (body && typeof body === "object") {
+    if (body.error === NODE_NOT_PROVISIONED_ERROR) return true;
+    if (body.code === NODE_NOT_PROVISIONED_ERROR) return true;
+  }
+  const details = err.details as { error?: unknown } | undefined;
+  if (details && details.error === NODE_NOT_PROVISIONED_ERROR) return true;
+  return false;
+}
 
 export interface KeyAuthenticationState {
   isAuthenticated: boolean;
@@ -45,6 +66,9 @@ export const autoLogin = createAsyncThunk(
       }
       return rejectWithValue("Auto-identity endpoint returned no data");
     } catch (err) {
+      if (isNodeNotProvisionedError(err)) {
+        return rejectWithValue(NODE_NOT_PROVISIONED_ERROR);
+      }
       return rejectWithValue(
         err instanceof Error ? err.message : "Failed to auto-login",
       );

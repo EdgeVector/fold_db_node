@@ -704,6 +704,73 @@ describe('App Component', () => {
       });
     });
 
+    describe('Provisioning / auth-error branching', () => {
+      // The two render branches that were silently swapped before this test
+      // existed: a 503 `node_not_provisioned` MUST land on the wizard, not on
+      // the dead-end "Can't reach the FoldDB node" error screen, and a
+      // generic auth failure MUST still surface that error screen with the
+      // Retry button. PRs #903–#911 broke the first branch by routing
+      // node_not_provisioned through the same generic-error path.
+      it('renders the OnboardingWizard when auth.error === node_not_provisioned (empty-db user)', async () => {
+        // Don't pre-mark onboarding as complete for this branch — the whole
+        // point is that a fresh empty-db user lands here without prior state.
+        localStorage.removeItem('folddb_onboarding_complete');
+
+        const store = createAppTestStore({
+          auth: {
+            isAuthenticated: false,
+            systemPublicKey: null,
+            systemKeyId: null,
+            isLoading: false,
+            // Sentinel set by the autoLogin thunk when /api/system/auto-identity
+            // returns 503 { error: "node_not_provisioned" }.
+            error: 'node_not_provisioned',
+          },
+          schemas: {
+            schemas: {},
+            loading: { fetch: false },
+            errors: { fetch: null },
+          },
+        });
+
+        renderWithRedux(<AppContent />, { store });
+
+        await waitFor(() => {
+          expect(screen.getByTestId('onboarding-wizard')).toBeInTheDocument();
+        });
+        // Critical: the dead-end error screen MUST NOT render — that's the
+        // exact regression we're guarding against.
+        expect(screen.queryByText(/Can't reach the FoldDB node/i)).not.toBeInTheDocument();
+      });
+
+      it('renders the auth-error screen for a generic 5xx (not node_not_provisioned)', async () => {
+        const store = createAppTestStore({
+          auth: {
+            isAuthenticated: false,
+            systemPublicKey: null,
+            systemKeyId: null,
+            isLoading: false,
+            error: 'Internal server error',
+          },
+          schemas: {
+            schemas: {},
+            loading: { fetch: false },
+            errors: { fetch: null },
+          },
+        });
+
+        renderWithRedux(<AppContent />, { store });
+
+        await waitFor(() => {
+          expect(screen.getByText(/Can't reach the FoldDB node/i)).toBeInTheDocument();
+        });
+        // The wizard MUST NOT render for a non-provisioning failure.
+        expect(screen.queryByTestId('onboarding-wizard')).not.toBeInTheDocument();
+        // Retry button is the only path forward.
+        expect(screen.getByRole('button', { name: /retry/i })).toBeInTheDocument();
+      });
+    });
+
     describe('State Management', () => {
       it('maintains results state independently of tab changes', async () => {
         const store = createAppTestStore({
