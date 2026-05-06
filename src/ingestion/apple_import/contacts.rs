@@ -21,15 +21,27 @@
 //! - Emails and phones are each emitted as comma-joined lists. Downstream
 //!   fingerprint extraction for emails/phones will re-tokenize as needed; the
 //!   core schema only needs the text.
-//! - First-run without Automation permission is reported back through
-//!   `IngestionError::Extraction` (see `run_osascript`'s timeout/permission
-//!   path in `mod.rs`).
+//! - First-run without Automation permission is detected by
+//!   `preflight_permission` (a fast `count people` probe with a 5-second
+//!   budget) before the long extract starts, and is reported back as
+//!   `IngestionError::Extraction` with an actionable Privacy & Security
+//!   → Automation hint. Without this probe the missing-permission case
+//!   would sit inside the extract's wallclock timeout (now 30 seconds for
+//!   Contacts; see `CONTACTS_OSASCRIPT_TIMEOUT`).
 
 use regex::Regex;
 use serde_json::{json, Value};
 
-use super::{content_hash, run_osascript};
+use super::{content_hash, preflight_permission, run_osascript_with_timeout};
 use crate::ingestion::IngestionError;
+
+/// Wallclock budget for the Contacts extract. The script iterates
+/// `every person` once and reads scalar fields per record — bounded by
+/// local address book size, with no iCloud round-trips for the values
+/// we ask for. 30s is generous for that workload, and short enough that
+/// a missing-permission case (the actual cause of a "hang") surfaces
+/// fast instead of holding the worker for the legacy 5-minute default.
+const CONTACTS_OSASCRIPT_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(30);
 
 /// A single contact extracted from Apple Contacts.
 pub struct Contact {
@@ -47,8 +59,9 @@ pub struct Contact {
 /// no-name placeholders that have no searchable content and would only pollute
 /// the molecule store with empty-key rows.
 pub fn extract() -> Result<Vec<Contact>, IngestionError> {
+    preflight_permission("Contacts.app")?;
     let script = build_script();
-    let raw = run_osascript(&script, "Contacts.app")?;
+    let raw = run_osascript_with_timeout(&script, "Contacts.app", CONTACTS_OSASCRIPT_TIMEOUT)?;
     parse_output(&raw)
 }
 

@@ -32,10 +32,32 @@ pub fn is_available() -> bool {
 #[cfg(target_os = "macos")]
 const OSASCRIPT_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(300);
 
+/// Wallclock budget for the TCC permission pre-flight probe. The probes
+/// only read aggregate counts (`count people`, `count of lists`, etc.) so
+/// they don't paginate or trigger iCloud resolution; if the probe doesn't
+/// return within this window the calling process is missing Automation
+/// access (or the target app is wedged on something we can't unblock).
+#[cfg(target_os = "macos")]
+const TCC_PROBE_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(5);
+
 /// Run an AppleScript via osascript and return stdout.
 ///
-/// Kills the process after `OSASCRIPT_TIMEOUT` to prevent indefinite hangs
-/// (iCloud sync, missing Automation permission, unresponsive target app).
+/// Convenience wrapper around [`run_osascript_with_timeout`] using the
+/// default [`OSASCRIPT_TIMEOUT`]. Callers that know the operation should
+/// be quick (e.g. Contacts extraction, which is bounded by local address
+/// book size) should call [`run_osascript_with_timeout`] directly with a
+/// tighter budget so a missing permission surfaces in seconds rather than
+/// holding the worker for 5 minutes.
+#[cfg(target_os = "macos")]
+pub fn run_osascript(script: &str, app_label: &str) -> Result<String, IngestionError> {
+    run_osascript_with_timeout(script, app_label, OSASCRIPT_TIMEOUT)
+}
+
+/// Run an AppleScript via osascript with a caller-supplied wallclock
+/// `timeout` and return stdout.
+///
+/// Kills the process after `timeout` to prevent indefinite hangs (iCloud
+/// sync, missing Automation permission, unresponsive target app).
 ///
 /// `app_label` names the target macOS app (e.g. "Reminders.app") so the
 /// timeout error can point the user at the correct System Settings pane.
@@ -45,7 +67,11 @@ const OSASCRIPT_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(30
 /// failure mode on Sonoma+ for apps that aren't already running
 /// (Calendar, Contacts, Photos). Apps already running are a no-op.
 #[cfg(target_os = "macos")]
-pub fn run_osascript(script: &str, app_label: &str) -> Result<String, IngestionError> {
+pub fn run_osascript_with_timeout(
+    script: &str,
+    app_label: &str,
+    timeout: std::time::Duration,
+) -> Result<String, IngestionError> {
     ensure_app_launched(app_label);
 
     let child = std::process::Command::new("osascript")
@@ -64,7 +90,7 @@ pub fn run_osascript(script: &str, app_label: &str) -> Result<String, IngestionE
         let _ = tx.send(result);
     });
 
-    match rx.recv_timeout(OSASCRIPT_TIMEOUT) {
+    match rx.recv_timeout(timeout) {
         Ok(Ok(output)) => {
             if !output.status.success() {
                 let stderr_str = String::from_utf8_lossy(&output.stderr);
@@ -90,10 +116,57 @@ pub fn run_osascript(script: &str, app_label: &str) -> Result<String, IngestionE
                  unresponsive, syncing with iCloud, or missing Automation permission. \
                  Grant access in System Settings → Privacy & Security → Automation \
                  (and Full Disk Access for Photos.app).",
-                OSASCRIPT_TIMEOUT.as_secs(),
+                timeout.as_secs(),
                 app_label,
             )))
         }
+    }
+}
+
+/// Tiny side-effect-free AppleScript that confirms the calling process
+/// has Automation access for `app_label`. Returns `None` for apps without
+/// a registered probe (the caller falls through and runs the full extract
+/// directly).
+///
+/// Probes operate on aggregate counts only so they finish in milliseconds
+/// even on populated stores — the slow case (iCloud collection resolution)
+/// only kicks in when the script enumerates records, which `count` does
+/// not do.
+#[cfg(target_os = "macos")]
+fn tcc_probe_script(app_label: &str) -> Option<&'static str> {
+    match app_label {
+        "Contacts.app" => Some(r#"tell application "Contacts" to count people"#),
+        _ => None,
+    }
+}
+
+/// Verify that the calling process has Automation access for `app_label`
+/// before running a long extract. Returns `Ok(())` when the probe succeeds
+/// (or when no probe is registered for the app), and an
+/// `IngestionError::Extraction` with an actionable Privacy & Security →
+/// Automation hint when the probe errors or times out.
+///
+/// Without this, a missing-permission run sits inside the long extract's
+/// timeout (`OSASCRIPT_TIMEOUT` = 5 min) before surfacing — the probe
+/// fails fast (within `TCC_PROBE_TIMEOUT`) so the user gets the same
+/// actionable message in seconds.
+#[cfg(target_os = "macos")]
+pub fn preflight_permission(app_label: &str) -> Result<(), IngestionError> {
+    let Some(script) = tcc_probe_script(app_label) else {
+        return Ok(());
+    };
+    // Re-use the standard runner so the kill-on-timeout and Launch Services
+    // pre-launch logic stays in one place. The probe's tight `TCC_PROBE_TIMEOUT`
+    // is what makes this fast; the runner itself is generic.
+    match run_osascript_with_timeout(script, app_label, TCC_PROBE_TIMEOUT) {
+        Ok(_) => Ok(()),
+        Err(IngestionError::Extraction(inner)) => Err(IngestionError::Extraction(format!(
+            "{} access not granted (probe: {}). Grant access in System Settings → \
+             Privacy & Security → Automation, then retry.",
+            app_label.strip_suffix(".app").unwrap_or(app_label),
+            inner
+        ))),
+        Err(other) => Err(other),
     }
 }
 
@@ -144,6 +217,72 @@ mod tests {
     fn app_name_from_label_passes_through_bare_names() {
         assert_eq!(app_name_from_label("Calendar"), "Calendar");
         assert_eq!(app_name_from_label(""), "");
+    }
+
+    #[test]
+    fn tcc_probe_script_registered_for_contacts() {
+        let probe = tcc_probe_script("Contacts.app").expect("contacts probe registered");
+        // The probe MUST be a `count`-style aggregate read so it doesn't
+        // paginate or trigger iCloud resolution — otherwise it stops being
+        // a fast pre-flight and becomes the same hang it's meant to detect.
+        assert!(probe.contains("count"));
+        assert!(probe.contains(r#"tell application "Contacts""#));
+    }
+
+    #[test]
+    fn tcc_probe_script_unregistered_apps_return_none() {
+        // Registering a probe for an app means the caller wants
+        // preflight_permission to gate that app's extract. Apps without
+        // a probe pass through silently — verify a few unrelated labels
+        // don't accidentally pick up a probe.
+        assert!(tcc_probe_script("Notes.app").is_none());
+        assert!(tcc_probe_script("Calendar.app").is_none());
+        assert!(tcc_probe_script("Photos.app").is_none());
+        assert!(tcc_probe_script("Reminders.app").is_none());
+        assert!(tcc_probe_script("UnregisteredApp.app").is_none());
+    }
+
+    #[test]
+    fn preflight_permission_passes_through_for_unregistered_app() {
+        // No probe → fast Ok(()), no osascript call. This guards against
+        // someone adding a default-error fallback that would break Notes /
+        // Calendar / etc.
+        let result = preflight_permission("UnregisteredApp.app");
+        assert!(result.is_ok());
+    }
+
+    #[test]
+    fn run_osascript_with_timeout_kills_long_running_script() {
+        // Use a no-op `delay` script that comfortably outlives the
+        // sub-second timeout. The runner must kill the process and surface
+        // the timeout message — not block until the script's own delay
+        // expires (which would defeat the per-call timeout knob).
+        let start = std::time::Instant::now();
+        let result = run_osascript_with_timeout(
+            "delay 30",
+            "Contacts.app",
+            std::time::Duration::from_millis(500),
+        );
+        let elapsed = start.elapsed();
+
+        let err = result.expect_err("script should time out");
+        let msg = err.to_string();
+        assert!(
+            msg.contains("timed out"),
+            "expected timeout message, got: {msg}"
+        );
+        assert!(
+            msg.contains("Contacts.app"),
+            "timeout message must name the app for the user-facing hint, got: {msg}"
+        );
+        // Generous upper bound: the runner spawn + kill + Launch Services
+        // pre-launch can reasonably take a few seconds on a loaded macOS
+        // box, but it must not block on the full 30-second `delay`.
+        assert!(
+            elapsed < std::time::Duration::from_secs(10),
+            "runner blocked on script's own delay instead of enforcing timeout: {:?}",
+            elapsed
+        );
     }
 }
 
