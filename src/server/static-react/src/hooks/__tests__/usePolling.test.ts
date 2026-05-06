@@ -184,6 +184,72 @@ describe('usePolling', () => {
     expect(pollFn).toHaveBeenCalledTimes(2)
   })
 
+  it('resumes polling once the tab becomes visible after a hidden mount', async () => {
+    // Regression: PR #879 introduced an early-return in tick() that
+    // returned without rescheduling when document.hidden was true at
+    // mount, so the entire poll loop was stranded — a backend job that
+    // completed while hidden never updated the UI, even after the user
+    // came back to the tab.
+    setHidden(true)
+    const pollFn = vi.fn().mockResolvedValue(undefined)
+
+    renderHook(() =>
+      usePolling({ key: 'k', pollFn, intervalMs: 1000, maxFailures: 3 }),
+    )
+
+    await act(async () => { await vi.advanceTimersByTimeAsync(5000) })
+    expect(pollFn).toHaveBeenCalledTimes(0)
+
+    await act(async () => { setHidden(false) })
+    await act(async () => { await vi.advanceTimersByTimeAsync(0) })
+    expect(pollFn).toHaveBeenCalledTimes(1)
+  })
+
+  it('captures a completed backend job once visibility returns', async () => {
+    // Tab hidden the entire time the scan runs; first poll after the
+    // user returns picks up { stop: true } and halts cleanly.
+    setHidden(true)
+    const pollFn = vi.fn().mockResolvedValueOnce({ stop: true })
+
+    renderHook(() =>
+      usePolling({ key: 'scan-1', pollFn, intervalMs: 1000, maxFailures: 3 }),
+    )
+
+    await act(async () => { await vi.advanceTimersByTimeAsync(30_000) })
+    expect(pollFn).toHaveBeenCalledTimes(0)
+
+    await act(async () => { setHidden(false) })
+    await act(async () => { await vi.advanceTimersByTimeAsync(0) })
+    expect(pollFn).toHaveBeenCalledTimes(1)
+
+    await act(async () => { await vi.advanceTimersByTimeAsync(10_000) })
+    expect(pollFn).toHaveBeenCalledTimes(1)
+  })
+
+  it('catches up via interval reschedule when no visibilitychange fires', async () => {
+    // Defense in depth: even if the visibilitychange event is missed,
+    // the next scheduled tick (≤ intervalMs away) discovers visibility
+    // and runs pollFn.
+    setHidden(true)
+    const pollFn = vi.fn().mockResolvedValue(undefined)
+
+    renderHook(() =>
+      usePolling({ key: 'k', pollFn, intervalMs: 1000, maxFailures: 3 }),
+    )
+
+    await act(async () => { await vi.advanceTimersByTimeAsync(5000) })
+    expect(pollFn).toHaveBeenCalledTimes(0)
+
+    // Flip document.hidden=false WITHOUT dispatching visibilitychange.
+    Object.defineProperty(document, 'hidden', {
+      configurable: true,
+      get: () => false,
+    })
+
+    await act(async () => { await vi.advanceTimersByTimeAsync(1000) })
+    expect(pollFn).toHaveBeenCalledTimes(1)
+  })
+
   it('does not poll when key is null', async () => {
     const pollFn = vi.fn().mockResolvedValue(undefined)
     renderHook(() =>

@@ -83,7 +83,18 @@ export function usePolling({
     const tick = async () => {
       timer = null
       if (cancelled || stopped) return
-      if (isHidden()) return // resume from visibilitychange
+
+      // Skip pollFn while hidden but keep the loop alive: re-arm the
+      // timer so polling resumes within `intervalMs` of the tab going
+      // visible again, even if a `visibilitychange` event is missed
+      // (Chrome can drop one when the tab was hidden before the
+      // listener attached, or when an extension-driven session never
+      // surfaces the tab). The visibility listener still snaps to an
+      // immediate tick on hidden→visible for snappiness.
+      if (isHidden()) {
+        timer = setTimeout(tick, intervalMs)
+        return
+      }
 
       try {
         const result = await pollFnRef.current()
@@ -109,20 +120,14 @@ export function usePolling({
     }
 
     const onVisibility = () => {
-      if (cancelled || stopped) return
-      if (document.hidden) {
-        clearTimer()
-      } else if (!timer) {
-        tick()
-      }
-    }
-
-    if (isHidden()) {
-      // Defer first tick until the tab is visible; we'll be woken up by
-      // the visibilitychange listener below.
-    } else {
+      if (cancelled || stopped || document.hidden) return
+      // hidden→visible: cancel any pending hidden-mode reschedule and
+      // tick immediately instead of waiting up to intervalMs.
+      clearTimer()
       tick()
     }
+
+    tick()
 
     if (pauseWhenHidden && hasDoc) {
       document.addEventListener('visibilitychange', onVisibility)
