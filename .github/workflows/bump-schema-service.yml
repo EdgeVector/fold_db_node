@@ -109,8 +109,17 @@ jobs:
       - name: Apply bumps
         id: bump
         run: |
+          BRANCH="bot/bump-schema-service"
           FD="${{ steps.target.outputs.fd_rev }}"
           SS="${{ steps.target.outputs.ss_sha }}"
+          # Always base the bot branch on the LATEST origin/main HEAD,
+          # not on whatever the existing bot branch currently points
+          # at. The remote bot branch can be stale (e.g. its previous
+          # PR merged via squash, leaving the branch behind unrelated
+          # PRs that landed since). Force-pushing from a stale base
+          # would silently revert those landed PRs.
+          git fetch origin main
+          git checkout -B "$BRANCH" origin/main
           # Update fold_db rev (lockstep with schema_service's pin).
           # Both `fold_db` and `observability` lines pin the same rev.
           sed -i -E 's|(EdgeVector/fold_db\.git", *rev *= *")[0-9a-f]{40}|\1'"$FD"'|g' Cargo.toml
@@ -141,7 +150,7 @@ jobs:
           BRANCH="bot/bump-schema-service"
           FD_SHORT="${{ steps.target.outputs.fd_rev }}"; FD_SHORT="${FD_SHORT:0:8}"
           SS_SHORT="${{ steps.target.outputs.ss_sha }}"; SS_SHORT="${SS_SHORT:0:8}"
-          git checkout -B "$BRANCH"
+          # Branch was already created off origin/main in the bump step.
           git add Cargo.toml Cargo.lock
           git commit -m "chore: bump schema_service to ${SS_SHORT}, fold_db to ${FD_SHORT} (auto)"
           # Graceful handling of merge-queue branch lock: if a previous
@@ -161,11 +170,26 @@ jobs:
               cat /tmp/push.err >&2
               exit 1
           fi
-          if ! gh pr view "$BRANCH" >/dev/null 2>&1; then
+          # `gh pr view <branch>` resolves to ANY PR for that branch,
+          # including merged ones — so it would silently suppress
+          # `gh pr create` whenever a previous cascade cycle's PR has
+          # already merged from this same branch. Filter explicitly to
+          # open PRs to detect "needs a fresh PR" correctly.
+          EXISTING_PR=$(gh pr list --head "$BRANCH" --state open --json number --jq '.[0].number // empty')
+          if [ -z "$EXISTING_PR" ]; then
             gh pr create --base main --head "$BRANCH" \
               --title "chore: bump schema_service ${SS_SHORT} + fold_db ${FD_SHORT} (auto)" \
               --body "Automated cascade bump.\n- schema_service main → ${SS_SHORT}\n- fold_db rev → ${FD_SHORT} (mirrored from schema_service's Cargo.toml; dual-fold_db defense)"
+            PR_NUM=$(gh pr list --head "$BRANCH" --state open --json number --jq '.[0].number // empty')
+            if [ -z "$PR_NUM" ]; then
+              echo "::error::gh pr create returned success but no open PR is visible for $BRANCH"
+              exit 1
+            fi
+            echo "Opened PR #${PR_NUM} for ${BRANCH} (fd=${FD_SHORT} ss=${SS_SHORT})" | tee -a "$GITHUB_STEP_SUMMARY"
+          else
+            PR_NUM="$EXISTING_PR"
+            echo "Updated open PR #${PR_NUM} for ${BRANCH} (fd=${FD_SHORT} ss=${SS_SHORT})" | tee -a "$GITHUB_STEP_SUMMARY"
           fi
           # auto-merge.yml handles the actual auto-merge enable on
           # opened/synchronize. Calling here too is defensive.
-          gh pr merge --auto "$BRANCH" || echo "auto-merge already enabled or PR already merged (no-op)"
+          gh pr merge --auto "$PR_NUM" || echo "auto-merge already enabled or PR already merged (no-op)"
