@@ -593,7 +593,10 @@ impl OperationProcessor {
 
         if let Some(ref kf) = key_field_name {
             if let Some(field) = schema.runtime_fields.get_mut(kf) {
-                field.refresh_from_db(db.db_ops()).await;
+                field
+                    .refresh_from_db(db.db_ops())
+                    .await
+                    .map_err(FoldDbError::Schema)?;
                 all_keys = field.get_all_keys();
             }
         }
@@ -602,7 +605,10 @@ impl OperationProcessor {
         // with the most keys (the key field may not be loaded yet after expansion).
         if all_keys.is_empty() {
             for field in schema.runtime_fields.values_mut() {
-                field.refresh_from_db(db.db_ops()).await;
+                field
+                    .refresh_from_db(db.db_ops())
+                    .await
+                    .map_err(FoldDbError::Schema)?;
                 let keys = field.get_all_keys();
                 if keys.len() > all_keys.len() {
                     all_keys = keys;

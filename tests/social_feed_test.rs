@@ -123,7 +123,10 @@ async fn set_authors(node: &FoldNode, schema_name: &str, entries: &[(&str, &Ed25
 
     let mut modified: Vec<(String, MoleculeData)> = Vec::new();
     for field in schema.runtime_fields.values_mut() {
-        field.refresh_from_db(db.db_ops()).await;
+        field
+            .refresh_from_db(db.db_ops())
+            .await
+            .expect("refresh_from_db");
 
         let FieldVariant::Range(rf) = field else {
             panic!("set_authors only supports Range fields");

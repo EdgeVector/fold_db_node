@@ -484,14 +484,15 @@ impl IngestionService {
 /// source schema's `schema_type` differs from the target's — e.g. expanding
 /// a `Hash` schema into a `HashRange` schema — the on-disk molecule shape no
 /// longer matches what the target field tries to deserialize. Reads then fail
-/// with `invalid type: string, expected struct AtomEntry`, which the upstream
-/// `refresh_field_from_db` swallows as a WARN, leaving the field's molecule
-/// `None` and silently returning empty data on every subsequent query.
+/// with `invalid type: string, expected struct AtomEntry`. Since the upstream
+/// fold_db `refresh_field_from_db` fail-loud refactor, that deserialize
+/// failure now propagates as `SchemaError::InvalidData` — but rejecting the
+/// proposal at the ingestion boundary still gives the better user-facing
+/// error (`IngestionError::SchemaCreationError`) and stops the corruption
+/// from being persisted in the first place.
 ///
-/// Reject loud here so the schema-service mis-classification surfaces to the
-/// caller (`IngestionError::SchemaCreationError`), rather than letting the
-/// ingestion appear to succeed while shedding data. Same-type expansion
-/// continues to work — the source field's molecule is reused as designed.
+/// Same-type expansion continues to work — the source field's molecule is
+/// reused as designed.
 pub(super) async fn validate_field_mapper_compatibility(
     new_schema_name: &str,
     schema_manager: &SchemaCore,
@@ -620,8 +621,10 @@ mod tests {
     /// Regression: pre-fix a `Hash` → `HashRange` schema expansion via
     /// `field_mappers` corrupted molecule reads with
     /// `invalid type: string, expected struct AtomEntry`. The validator
-    /// must reject that proposal loudly so the bug surfaces instead of
-    /// being swallowed by `FieldBase::refresh_field_from_db`.
+    /// must reject that proposal at the ingestion boundary so the bug
+    /// surfaces with a clear `IngestionError::SchemaCreationError`
+    /// rather than as a downstream `SchemaError::InvalidData` from the
+    /// (now fail-loud) `FieldBase::refresh_field_from_db`.
     #[tokio::test]
     async fn rejects_hash_to_hashrange_field_mapper_carry_over() {
         let core = fold_db::schema::SchemaCore::new_for_testing()
