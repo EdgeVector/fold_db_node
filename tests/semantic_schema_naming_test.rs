@@ -33,7 +33,14 @@ fn is_hash_name(name: &str) -> bool {
     name.len() == 64 && name.chars().all(|c| c.is_ascii_hexdigit())
 }
 
-/// Ingest a single file and return (schema_name, success).
+/// Ingest a single file and return the AI-suggested human-readable schema
+/// name (`descriptive_name`).
+///
+/// `IngestionResponse.schema_used` is the schema's identity hash — schema
+/// service intentionally uses the hash as the canonical id so that
+/// "same fields = same schema" works for dedup. The AI's semantic
+/// suggestion lives in `descriptive_name`. Tests asserting on AI naming
+/// quality must read that field, not the canonical id.
 async fn ingest_file(
     file_path: &Path,
     source_name: &str,
@@ -67,17 +74,33 @@ async fn ingest_file(
     })
     .await;
 
-    match result {
-        Ok(resp) if resp.success => resp.schema_used,
+    let schema_id = match result {
+        Ok(resp) if resp.success => resp.schema_used?,
         Ok(resp) => {
             eprintln!("  Ingestion failed for {}: {:?}", source_name, resp.errors);
-            None
+            return None;
         }
         Err(e) => {
             eprintln!("  Ingestion error for {}: {}", source_name, e);
-            None
+            return None;
         }
+    };
+
+    let processor = OperationProcessor::new(std::sync::Arc::new(node.clone()));
+    let descriptive = processor
+        .get_schema(&schema_id)
+        .await
+        .ok()
+        .flatten()
+        .and_then(|s| s.schema.descriptive_name);
+
+    if descriptive.is_none() {
+        eprintln!(
+            "  Schema '{}' has no descriptive_name (AI did not provide one)",
+            &schema_id[..16.min(schema_id.len())]
+        );
     }
+    descriptive
 }
 
 // -- Tests --------------------------------------------------------------------
