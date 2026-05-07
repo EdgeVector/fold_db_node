@@ -69,6 +69,13 @@ export function usePolling({
     let failCount = 0
     let timer: ReturnType<typeof setTimeout> | null = null
     let lastIdle = false
+    // Bootstrap: the first tick after a key change MUST run pollFn even
+    // when the tab is hidden, so a job that completed before the user
+    // returned to the tab (or before the tab was ever surfaced — e.g.
+    // claude-in-chrome sessions where document.hidden stays true) is
+    // captured and a `{stop:true}` poller halts cleanly. Subsequent
+    // hidden ticks continue to skip pollFn (PR #902 perf benefit).
+    let didBootstrap = false
 
     const hasDoc = typeof document !== 'undefined'
     const isHidden = () => pauseWhenHidden && hasDoc && document.hidden
@@ -91,10 +98,11 @@ export function usePolling({
       // listener attached, or when an extension-driven session never
       // surfaces the tab). The visibility listener still snaps to an
       // immediate tick on hidden→visible for snappiness.
-      if (isHidden()) {
+      if (isHidden() && didBootstrap) {
         timer = setTimeout(tick, intervalMs)
         return
       }
+      didBootstrap = true
 
       try {
         const result = await pollFnRef.current()
