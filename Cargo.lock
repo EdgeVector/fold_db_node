@@ -1002,15 +1002,6 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "1d07550c9036bf2ae0c684c4297d503f838287c83c53686d05370d0e139ae570"
 
 [[package]]
-name = "colored"
-version = "3.1.1"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "faf9468729b8cbcea668e36183cb69d317348c2e08e994829fb56ebfdfbaac34"
-dependencies = [
- "windows-sys 0.61.2",
-]
-
-[[package]]
 name = "combine"
 version = "4.6.7"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -2077,7 +2068,7 @@ checksum = "3f9eec918d3f24069decb9af1554cad7c880e2da24a9afd88aca000531ab82c1"
 [[package]]
 name = "fold_db"
 version = "0.3.0"
-source = "git+https://github.com/EdgeVector/fold_db.git?rev=25605233194a16220a1d4ae560190eba1db6b89b#25605233194a16220a1d4ae560190eba1db6b89b"
+source = "git+https://github.com/EdgeVector/fold_db.git?rev=ca2e3bb7dd707a8bf5c612c34b5876a9d199ff73#ca2e3bb7dd707a8bf5c612c34b5876a9d199ff73"
 dependencies = [
  "aes-gcm",
  "async-trait",
@@ -2085,14 +2076,11 @@ dependencies = [
  "chrono",
  "chrono-tz",
  "clap",
- "clap_complete",
- "colored",
  "croner",
  "ed25519-compact",
  "ed25519-dalek",
  "fastembed",
  "futures",
- "futures-util",
  "hkdf",
  "hmac",
  "image",
@@ -2100,9 +2088,7 @@ dependencies = [
  "once_cell",
  "ort",
  "rand 0.8.5",
- "regex",
  "reqwest 0.11.27",
- "ring",
  "seahash",
  "serde",
  "serde_json",
@@ -2111,8 +2097,6 @@ dependencies = [
  "tempfile",
  "thiserror 1.0.69",
  "tokio",
- "tokio-stream",
- "toml",
  "tracing",
  "ts-rs",
  "ureq 2.12.1",
@@ -3996,7 +3980,7 @@ dependencies = [
 [[package]]
 name = "observability"
 version = "0.1.0"
-source = "git+https://github.com/EdgeVector/fold_db.git?rev=25605233194a16220a1d4ae560190eba1db6b89b#25605233194a16220a1d4ae560190eba1db6b89b"
+source = "git+https://github.com/EdgeVector/fold_db.git?rev=ca2e3bb7dd707a8bf5c612c34b5876a9d199ff73#ca2e3bb7dd707a8bf5c612c34b5876a9d199ff73"
 dependencies = [
  "http 1.4.0",
  "once_cell",
@@ -5376,11 +5360,10 @@ dependencies = [
 [[package]]
 name = "schema_service_client"
 version = "0.1.0"
-source = "git+https://github.com/EdgeVector/schema_service.git?rev=49f4b703adff69b7043db41d48dd59a4993db635#49f4b703adff69b7043db41d48dd59a4993db635"
+source = "git+https://github.com/EdgeVector/schema_service.git?rev=5180469c190e3ed350aaf80e1ec1133802528240#5180469c190e3ed350aaf80e1ec1133802528240"
 dependencies = [
  "fold_db",
  "futures",
- "log",
  "observability",
  "reqwest 0.11.27",
  "schema_service_core",
@@ -5393,7 +5376,7 @@ dependencies = [
 [[package]]
 name = "schema_service_core"
 version = "0.1.0"
-source = "git+https://github.com/EdgeVector/schema_service.git?rev=49f4b703adff69b7043db41d48dd59a4993db635#49f4b703adff69b7043db41d48dd59a4993db635"
+source = "git+https://github.com/EdgeVector/schema_service.git?rev=5180469c190e3ed350aaf80e1ec1133802528240#5180469c190e3ed350aaf80e1ec1133802528240"
 dependencies = [
  "async-trait",
  "chrono",
@@ -5418,7 +5401,7 @@ dependencies = [
 [[package]]
 name = "schema_service_server_http"
 version = "0.1.0"
-source = "git+https://github.com/EdgeVector/schema_service.git?rev=49f4b703adff69b7043db41d48dd59a4993db635#49f4b703adff69b7043db41d48dd59a4993db635"
+source = "git+https://github.com/EdgeVector/schema_service.git?rev=5180469c190e3ed350aaf80e1ec1133802528240#5180469c190e3ed350aaf80e1ec1133802528240"
 dependencies = [
  "actix-cors",
  "actix-web",
@@ -5426,13 +5409,11 @@ dependencies = [
  "fold_db",
  "futures-util",
  "http 1.4.0",
- "log",
  "observability",
  "opentelemetry",
  "schema_service_client",
  "schema_service_core",
  "schema_service_server_shared",
- "serde",
  "tokio",
  "tracing",
  "tracing-actix-web",
@@ -5442,14 +5423,13 @@ dependencies = [
 [[package]]
 name = "schema_service_server_shared"
 version = "0.1.0"
-source = "git+https://github.com/EdgeVector/schema_service.git?rev=49f4b703adff69b7043db41d48dd59a4993db635#49f4b703adff69b7043db41d48dd59a4993db635"
+source = "git+https://github.com/EdgeVector/schema_service.git?rev=5180469c190e3ed350aaf80e1ec1133802528240#5180469c190e3ed350aaf80e1ec1133802528240"
 dependencies = [
  "actix-web",
  "chrono",
  "fold_db",
  "schema_service_core",
  "serde",
- "serde_json",
  "tracing",
 ]
 
@@ -7168,9 +7148,8 @@ dependencies = [
 [[package]]
 name = "wasm_compiler"
 version = "0.1.0"
-source = "git+https://github.com/EdgeVector/schema_service.git?rev=49f4b703adff69b7043db41d48dd59a4993db635#49f4b703adff69b7043db41d48dd59a4993db635"
+source = "git+https://github.com/EdgeVector/schema_service.git?rev=5180469c190e3ed350aaf80e1ec1133802528240#5180469c190e3ed350aaf80e1ec1133802528240"
 dependencies = [
- "log",
  "serde",
  "tempfile",
  "thiserror 1.0.69",
