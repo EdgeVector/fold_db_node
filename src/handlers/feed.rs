@@ -93,9 +93,11 @@ pub async fn get_feed(
             };
 
             // Refresh each field's molecule from DB so we can read per-entry
-            // writer_pubkey below.
+            // writer_pubkey below. A deserialize failure here means the
+            // on-disk molecule shape doesn't match the field's expected
+            // type — fail loud rather than silently serving an empty feed.
             for field in schema.runtime_fields.values_mut() {
-                field.refresh_from_db(db.db_ops()).await;
+                field.refresh_from_db(db.db_ops()).await?;
             }
 
             let all_fields: Vec<String> = schema.fields.clone().unwrap_or_default();
