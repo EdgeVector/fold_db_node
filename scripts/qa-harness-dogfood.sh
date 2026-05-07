@@ -186,9 +186,49 @@ boot_stack() {
 
   log "[$label] backend=$backend_port schema=$schema_port vite=$vite_port home=$folddb_home"
 
-  # Wait for backend + vite liveness
+  # Wait for backend HTTP listener via the unauthenticated /api/health probe.
+  # /api/system/auto-identity is no longer suitable as a liveness check: PR
+  # #908 (refactor(identity): load_or_generate -> provision) made it return
+  # 503 NotProvisioned until /api/setup/bootstrap has run. /api/health is
+  # carried outside the auth middleware (see http_server.rs
+  # configure_health_route) and answers 200 the moment actix binds.
+  if ! wait_http "http://localhost:$backend_port/api/health" 60 "[$label] backend listener"; then
+    printf 'backend listener (/api/health) not reachable on port %s within 60s\n' "$backend_port" > "$fail_reason_file"
+    return 1
+  fi
+
+  # Bootstrap the node identity. Same PR #908 contract: /api/setup/bootstrap
+  # is now the canonical mint path, and the rest of this harness depends on
+  # an identity existing (fetch_user_hash and the org-sync leg's auto-identity
+  # check both call /api/system/auto-identity directly). Mirrors the retry
+  # shape from scripts/test-sample-ingestion.sh (see PR #924) so port-bind
+  # races on a freshly-bound listener don't flake the harness.
+  local bs_resp_file="$REPORT_DIR/bootstrap-$label.json"
+  local bs_body
+  bs_body="$(jq -cn --arg n "qa-dogfood-$label" '{name:$n}')"
+  local bs_attempt bs_code
+  for bs_attempt in 1 2 3; do
+    bs_code="$(curl -sS -o "$bs_resp_file" -w '%{http_code}' \
+      -X POST "http://localhost:$backend_port/api/setup/bootstrap" \
+      -H 'Content-Type: application/json' --data "$bs_body" 2>/dev/null || echo 000)"
+    if [ "$bs_code" = "200" ]; then
+      break
+    fi
+    if [ "$bs_attempt" -eq 3 ]; then
+      log "[$label] FAIL: /api/setup/bootstrap returned HTTP $bs_code after 3 attempts"
+      tail -c 400 "$bs_resp_file" 2>/dev/null | sed 's/^/    /' | tee -a "$LOG_FILE"
+      printf '/api/setup/bootstrap returned HTTP %s after 3 attempts (see %s)\n' \
+        "$bs_code" "$bs_resp_file" > "$fail_reason_file"
+      return 1
+    fi
+    sleep 1
+  done
+  log "[$label] bootstrap ok (HTTP $bs_code)"
+
+  # Confirm the provisioned identity is now queryable. With bootstrap done,
+  # auto-identity returns 200 and fetch_user_hash below can extract user_hash.
   if ! wait_http "http://localhost:$backend_port/api/system/auto-identity" 60 "[$label] backend"; then
-    printf 'backend not reachable on port %s within 60s\n' "$backend_port" > "$fail_reason_file"
+    printf 'backend (auto-identity) not reachable on port %s within 60s after bootstrap\n' "$backend_port" > "$fail_reason_file"
     return 1
   fi
   if ! wait_http "http://localhost:$vite_port/" 60 "[$label] vite"; then
