@@ -111,6 +111,28 @@ fi
 curl -s -X POST "http://localhost:$BP/api/ingestion/config" \
   -H "Content-Type: application/json" -d "$CONFIG" >/dev/null
 
+# Bootstrap the node identity. PR #908 (refactor: load_or_generate ->
+# provision) made /api/setup/bootstrap the only path that mints an
+# identity; /api/system/auto-identity now returns 503 NotProvisioned
+# until bootstrap has run. BootstrapRequest only requires `name`.
+mkdir -p "$WORK_DIR/data"
+echo "Bootstrapping node..."
+for attempt in 1 2 3; do
+  BS_CODE=$(curl -s -o "$WORK_DIR/bootstrap.json" -w '%{http_code}' \
+    -X POST "http://localhost:$BP/api/setup/bootstrap" \
+    -H "Content-Type: application/json" \
+    -d '{"name":"sample-ingest-test"}')
+  if [ "$BS_CODE" = "200" ]; then
+    break
+  fi
+  if [ "$attempt" -eq 3 ]; then
+    echo "ERROR: bootstrap failed (HTTP $BS_CODE) after 3 attempts"
+    cat "$WORK_DIR/bootstrap.json" 2>/dev/null || true
+    exit 1
+  fi
+  sleep 0.5
+done
+
 UH=$(curl -s "http://localhost:$BP/api/system/auto-identity" | python3 -c "import sys,json; print(json.load(sys.stdin)['user_hash'])")
 echo "User hash: $UH"
 
