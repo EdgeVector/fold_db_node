@@ -95,7 +95,7 @@ pub async fn get_feed(
             // Refresh each field's molecule from DB so we can read per-entry
             // writer_pubkey below.
             for field in schema.runtime_fields.values_mut() {
-                field.refresh_from_db(db.db_ops()).await;
+                field.refresh_from_db(db.db_ops()).await.typed_handler_err()?;
             }
 
             let all_fields: Vec<String> = schema.fields.clone().unwrap_or_default();
