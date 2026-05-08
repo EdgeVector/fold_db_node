@@ -12,9 +12,6 @@
 //! `DISCOVERY_SERVICE_URL`) for ad-hoc testing.
 
 mod gen {
-    // `region` constants are exposed for downstream tooling and aren't
-    // referenced inside fold_db_node itself.
-    #![allow(dead_code)]
     include!(concat!(env!("OUT_DIR"), "/environments_generated.rs"));
 }
 

@@ -90,6 +90,9 @@ mod tests {
     }
 
     fn data_error_missing_field() -> serde_json::Error {
+        // The `folder_path` field is never read — its purpose is to make
+        // serde produce a "missing field `folder_path`" error that the
+        // assertion below pattern-matches. Don't rename or remove.
         #[derive(Debug, Deserialize)]
         #[allow(dead_code)]
         struct ScanRequest {

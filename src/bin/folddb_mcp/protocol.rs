@@ -8,8 +8,6 @@ use crate::tools;
 
 #[derive(Deserialize, Debug)]
 pub struct JsonRpcRequest {
-    #[allow(dead_code)]
-    pub jsonrpc: String,
     pub id: Option<Value>,
     pub method: String,
     pub params: Option<Value>,
