@@ -8,6 +8,24 @@ mod output;
 mod restore;
 mod update_check;
 
+#[cfg(test)]
+mod test_locks {
+    use std::sync::{Mutex, OnceLock};
+
+    /// Binary-crate-wide lock for tests that mutate `FOLDDB_HOME` (a
+    /// process-global env var). Shared so test modules in `main.rs` and
+    /// `restore.rs` serialize on the same mutex when they both need to
+    /// pin a tempdir as the home directory. Tests run in their own
+    /// process (separate from the lib crate's test binary), so a
+    /// per-binary `OnceLock<Mutex>` is sufficient.
+    pub(crate) fn folddb_home_lock() -> std::sync::MutexGuard<'static, ()> {
+        static LOCK: OnceLock<Mutex<()>> = OnceLock::new();
+        LOCK.get_or_init(|| Mutex::new(()))
+            .lock()
+            .unwrap_or_else(|p| p.into_inner())
+    }
+}
+
 use base64::Engine;
 use clap::Parser;
 use cli::{Cli, Command, DaemonCommand};
@@ -1022,6 +1040,26 @@ fn persist_cloud_enable_state(
     Ok(())
 }
 
+/// Strip `database.cloud_sync` from a `node_config.json` and rewrite it
+/// atomically. Pulled out of `cloud_disable` so the file-rewrite path is
+/// reachable from tests without going through the interactive prompt.
+fn strip_cloud_sync_in_config_file(path: &std::path::Path) -> Result<(), CliError> {
+    let contents = std::fs::read_to_string(path)
+        .map_err(|e| CliError::new(format!("Failed to read config: {}", e)))?;
+    let mut cfg: serde_json::Value = serde_json::from_str(&contents)
+        .map_err(|e| CliError::new(format!("Failed to parse config: {}", e)))?;
+
+    if let Some(db) = cfg.get_mut("database") {
+        if let Some(obj) = db.as_object_mut() {
+            obj.remove("cloud_sync");
+        }
+    }
+
+    let updated = serde_json::to_string_pretty(&cfg).unwrap();
+    fold_db_node::sensitive_io::write_atomic_0600(path, updated.as_bytes())
+        .map_err(|e| CliError::new(format!("Failed to write config: {}", e)))
+}
+
 /// Disable cloud backup — remove cloud_sync from config.
 fn cloud_disable(config_path: Option<&str>) -> Option<Result<commands::CommandOutput, CliError>> {
     let confirmed = match dialoguer::Confirm::new()
@@ -1043,24 +1081,8 @@ fn cloud_disable(config_path: Option<&str>) -> Option<Result<commands::CommandOu
         Ok(p) => p,
         Err(e) => return Some(Err(e)),
     };
-    let contents = match std::fs::read_to_string(&path) {
-        Ok(c) => c,
-        Err(e) => return Some(Err(CliError::new(format!("Failed to read config: {}", e)))),
-    };
-    let mut cfg: serde_json::Value = match serde_json::from_str(&contents) {
-        Ok(v) => v,
-        Err(e) => return Some(Err(CliError::new(format!("Failed to parse config: {}", e)))),
-    };
-
-    if let Some(db) = cfg.get_mut("database") {
-        if let Some(obj) = db.as_object_mut() {
-            obj.remove("cloud_sync");
-        }
-    }
-
-    let updated = serde_json::to_string_pretty(&cfg).unwrap();
-    if let Err(e) = std::fs::write(&path, updated) {
-        return Some(Err(CliError::new(format!("Failed to write config: {}", e))));
+    if let Err(e) = strip_cloud_sync_in_config_file(std::path::Path::new(&path)) {
+        return Some(Err(e));
     }
 
     let mut msg = "Cloud backup disabled. Your local data is preserved.\nNote: data already synced to Exemem servers is not deleted.".to_string();
@@ -1384,16 +1406,11 @@ mod tests {
     }
 
     /// FOLDDB_HOME is a process-global env var. Tests that mutate it must
-    /// serialize on this mutex. Binary tests run in their own process
-    /// (independent of the lib crate's test binary), so a process-local
-    /// `OnceLock<Mutex>` is sufficient — no need to share with the lib's
-    /// `secure_store::test_master_key::ENV_LOCK`.
+    /// serialize on this mutex, which is shared with `restore.rs`'s tests
+    /// via [`crate::test_locks::folddb_home_lock`]. Binary tests run in
+    /// their own process (independent of the lib crate's test binary).
     fn folddb_home_lock() -> std::sync::MutexGuard<'static, ()> {
-        use std::sync::{Mutex, OnceLock};
-        static LOCK: OnceLock<Mutex<()>> = OnceLock::new();
-        LOCK.get_or_init(|| Mutex::new(()))
-            .lock()
-            .unwrap_or_else(|p| p.into_inner())
+        crate::test_locks::folddb_home_lock()
     }
 
     /// `persist_cloud_enable_state` must split the registration result so
@@ -1477,5 +1494,52 @@ mod tests {
         );
 
         std::env::remove_var("FOLDDB_HOME");
+    }
+
+    /// `cloud_disable` rewrites `node_config.json` to drop the cloud_sync
+    /// block. This test exercises the non-interactive helper directly
+    /// (`cloud_disable` itself wraps it in a dialoguer prompt) to lock in
+    /// that the rewrite (a) strips the cloud_sync field and (b) goes
+    /// through the atomic-write helper. Atomicity invariants are covered
+    /// in `sensitive_io`.
+    #[test]
+    fn strip_cloud_sync_in_config_file_atomically_rewrites_node_config() {
+        let tmp = tempfile::tempdir().expect("tempdir");
+        let path = tmp.path().join("node_config.json");
+        let initial = serde_json::json!({
+            "database": {
+                "path": tmp.path().join("data").to_string_lossy(),
+                "cloud_sync": {
+                    "api_url": "https://api.example.test",
+                    "api_key": "secret-cloud-api-key",
+                }
+            },
+            "network_listen_address": "/ip4/0.0.0.0/tcp/0"
+        });
+        std::fs::write(&path, serde_json::to_string_pretty(&initial).unwrap())
+            .expect("seed node_config.json");
+
+        super::strip_cloud_sync_in_config_file(&path).expect("strip cloud_sync");
+
+        let on_disk: serde_json::Value =
+            serde_json::from_slice(&std::fs::read(&path).expect("read rewritten config"))
+                .expect("parse rewritten config");
+        let db = on_disk
+            .get("database")
+            .expect("database object must survive");
+        assert!(
+            db.get("cloud_sync").is_none(),
+            "cloud_sync MUST be removed; got: {db}"
+        );
+        assert_eq!(
+            db.get("path"),
+            initial.get("database").and_then(|d| d.get("path")),
+            "non-cloud database fields must round-trip"
+        );
+        assert_eq!(
+            on_disk.get("network_listen_address"),
+            initial.get("network_listen_address"),
+            "top-level fields outside database must round-trip"
+        );
     }
 }
