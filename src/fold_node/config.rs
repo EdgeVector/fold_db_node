@@ -240,10 +240,9 @@ pub fn save_node_config(config: &NodeConfig) -> Result<(), String> {
     let config_json = serde_json::to_string_pretty(config)
         .map_err(|e| format!("Failed to serialize config: {}", e))?;
 
-    crate::utils::fs_atomic::write_atomic(
+    crate::sensitive_io::write_atomic_0600(
         std::path::Path::new(&config_path),
         config_json.as_bytes(),
-        None,
     )
     .map_err(|e| format!("Failed to write config file: {}", e))?;
 
@@ -362,5 +361,34 @@ mod tests {
         let written = std::fs::read_to_string(&path).expect("read back default");
         let reread: NodeConfig = serde_json::from_str(&written).expect("parse default");
         assert_eq!(reread.network_listen_address, "/ip4/0.0.0.0/tcp/9999");
+    }
+
+    /// `save_node_config` routes through `sensitive_io::write_atomic_0600`,
+    /// so the persisted `node_config.json` must end up owner-only on Unix.
+    /// Guards against the callsite drifting back to a umask-default helper
+    /// that would leave the file group/world-readable.
+    #[cfg(unix)]
+    #[test]
+    fn save_writes_node_config_with_0600_permissions() {
+        use std::os::unix::fs::PermissionsExt;
+        let _guard = NODE_CONFIG_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+        let _env = NodeConfigEnvGuard::capture();
+        std::env::remove_var("NODE_CONFIG");
+
+        let dir = tempfile::tempdir().expect("tempdir");
+        let path = dir.path().join("node_config.json");
+        let cfg = NodeConfig {
+            source_path: Some(path.clone()),
+            ..NodeConfig::default()
+        };
+
+        save_node_config(&cfg).expect("save");
+
+        let mode = std::fs::metadata(&path)
+            .expect("stat node_config")
+            .permissions()
+            .mode()
+            & 0o777;
+        assert_eq!(mode, 0o600, "expected 0o600, got {mode:o}");
     }
 }

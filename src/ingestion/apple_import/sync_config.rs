@@ -173,7 +173,7 @@ impl AppleSyncConfig {
         }
         let json = serde_json::to_string_pretty(self)
             .map_err(|e| format!("Failed to serialize sync config: {e}"))?;
-        crate::utils::fs_atomic::write_atomic(&path, json.as_bytes(), None)
+        crate::sensitive_io::write_atomic_0600(&path, json.as_bytes())
             .map_err(|e| format!("Failed to write sync config: {e}"))?;
         Ok(())
     }
@@ -522,6 +522,37 @@ mod tests {
         // Sanity: contents are real JSON, not the "garbage" bytes from the stale tmp.
         let on_disk = std::fs::read_to_string(&final_path).expect("read");
         let _: AppleSyncConfig = serde_json::from_str(&on_disk).expect("parse");
+
+        match prev {
+            Some(v) => std::env::set_var("NODE_CONFIG", v),
+            None => std::env::remove_var("NODE_CONFIG"),
+        }
+    }
+
+    /// `save()` routes through `sensitive_io::write_atomic_0600`, so the
+    /// persisted `apple_sync_config.json` must end up owner-only on Unix.
+    /// Guards against the callsite drifting back to a umask-default helper
+    /// that would leave the user's sync settings group/world-readable.
+    #[cfg(unix)]
+    #[test]
+    fn save_writes_sync_config_with_0600_permissions() {
+        use std::os::unix::fs::PermissionsExt;
+        let _guard = NODE_CONFIG_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+        let prev = std::env::var("NODE_CONFIG").ok();
+
+        let dir = tempfile::tempdir().expect("tempdir");
+        let node_config = dir.path().join("node_config.json");
+        std::env::set_var("NODE_CONFIG", &node_config);
+
+        AppleSyncConfig::default().save().expect("save");
+
+        let path = dir.path().join("apple_sync_config.json");
+        let mode = std::fs::metadata(&path)
+            .expect("stat apple_sync_config")
+            .permissions()
+            .mode()
+            & 0o777;
+        assert_eq!(mode, 0o600, "expected 0o600, got {mode:o}");
 
         match prev {
             Some(v) => std::env::set_var("NODE_CONFIG", v),

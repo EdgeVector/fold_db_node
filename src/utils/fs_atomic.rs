@@ -7,8 +7,13 @@
 //! responsible for ensuring the parent directory exists.
 //!
 //! [`crate::sensitive_io::write_atomic_0600`] delegates here with
-//! `mode = Some(0o600)`; plaintext config writers pass `mode = None` so
-//! the umask applies (typically 0o644).
+//! `mode = Some(0o600)` and is the entry point for every production
+//! caller — credentials AND user-private JSON config (node config,
+//! ingestion config, Apple sync settings, bootstrap status). Callers
+//! that genuinely need umask-default permissions (e.g. a future
+//! world-readable lockfile) can call [`write_atomic`] directly with
+//! `mode = None`; the umask-honoring path stays exercised by the
+//! `write_atomic_without_mode_honors_umask` test below.
 
 use std::ffi::OsString;
 use std::fs;

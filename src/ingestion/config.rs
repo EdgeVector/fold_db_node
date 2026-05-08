@@ -720,7 +720,7 @@ impl IngestionConfig {
             std::fs::create_dir_all(parent)?;
         }
         let content = serde_json::to_string_pretty(&to_save)?;
-        crate::utils::fs_atomic::write_atomic(&config_path, content.as_bytes(), None)
+        crate::sensitive_io::write_atomic_0600(&config_path, content.as_bytes())
             .map_err(|e| -> Box<dyn std::error::Error> { e.into() })?;
 
         if let Some(key) = key_to_persist {
@@ -742,7 +742,7 @@ impl IngestionConfig {
             std::fs::create_dir_all(parent)?;
         }
         let content = serde_json::to_string_pretty(saved)?;
-        crate::utils::fs_atomic::write_atomic(path, content.as_bytes(), None)
+        crate::sensitive_io::write_atomic_0600(path, content.as_bytes())
             .map_err(|e| -> Box<dyn std::error::Error> { e.into() })?;
         Ok(())
     }
@@ -1854,5 +1854,65 @@ mod tests {
         let loaded = IngestionConfig::load(tmp.path()).expect("load");
         assert_eq!(loaded.anthropic.api_key, "");
         assert!(!crate::ingestion::anthropic_key_store::has_key(tmp.path()));
+    }
+
+    /// `save_to_file` routes through `sensitive_io::write_atomic_0600`, so
+    /// the persisted `ingestion_config.json` must end up owner-only on Unix.
+    /// Guards against the callsite drifting back to a umask-default helper
+    /// that would leave config (and any incidental in-flight fields) group/
+    /// world-readable.
+    #[cfg(unix)]
+    #[test]
+    fn save_to_file_writes_ingestion_config_with_0600_permissions() {
+        use std::os::unix::fs::PermissionsExt;
+        let _guard = anthropic_api_key_env_lock();
+        let tmp = tempfile::tempdir().expect("tempdir");
+
+        let saved = SavedConfig::default();
+        IngestionConfig::save_to_file(tmp.path(), &saved).expect("save");
+
+        let path = tmp.path().join("ingestion_config.json");
+        let mode = std::fs::metadata(&path)
+            .expect("stat ingestion_config")
+            .permissions()
+            .mode()
+            & 0o777;
+        assert_eq!(mode, 0o600, "expected 0o600, got {mode:o}");
+    }
+
+    /// `write_saved_to_disk` (the load-time legacy-migration helper) also
+    /// routes through `sensitive_io::write_atomic_0600`. Drive the path by
+    /// seeding a legacy plaintext `ingestion_config.json` chmod'd to 0o644,
+    /// then calling `load()` — the migration's rewrite must tighten the
+    /// file to 0o600 even though the seed was looser.
+    #[cfg(unix)]
+    #[test]
+    fn legacy_migration_rewrites_ingestion_config_with_0600_permissions() {
+        use std::os::unix::fs::PermissionsExt;
+        let _guard = anthropic_api_key_env_lock();
+        let tmp = tempfile::tempdir().expect("tempdir");
+        env::remove_var("ANTHROPIC_API_KEY");
+
+        let path = tmp.path().join("ingestion_config.json");
+        let legacy = serde_json::json!({
+            "provider": "Anthropic",
+            "anthropic": {
+                "api_key": "sk-ant-legacy-perm-test",
+                "model": "claude-haiku-4-5-20251001",
+                "base_url": "https://api.anthropic.com",
+            }
+        });
+        std::fs::write(&path, serde_json::to_string_pretty(&legacy).unwrap()).unwrap();
+        // Force seed to 0o644 so the umask of the test runner can't make
+        // this assertion vacuously true on a tight-umask CI box.
+        std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o644)).unwrap();
+
+        IngestionConfig::load(tmp.path()).expect("load triggers migration rewrite");
+
+        let mode = std::fs::metadata(&path).unwrap().permissions().mode() & 0o777;
+        assert_eq!(
+            mode, 0o600,
+            "post-migration file must be 0o600, got {mode:o}",
+        );
     }
 }
