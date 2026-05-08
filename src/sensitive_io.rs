@@ -71,7 +71,7 @@ pub fn read_sensitive(path: &Path) -> Result<Vec<u8>, String> {
 /// should be reading. If a future caller genuinely needs a looser mode
 /// (e.g. a world-readable lockfile), call [`crate::utils::fs_atomic::write_atomic`]
 /// directly with `mode = None` rather than weakening this helper.
-pub(crate) fn write_atomic_0600(path: &Path, data: &[u8]) -> Result<(), String> {
+pub fn write_atomic_0600(path: &Path, data: &[u8]) -> Result<(), String> {
     crate::utils::fs_atomic::write_atomic(path, data, Some(0o600))
 }
 

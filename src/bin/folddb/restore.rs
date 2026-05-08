@@ -135,31 +135,7 @@ fn try_register_and_configure(
                 }
             };
 
-            let data_path = data_path();
-            let config = fold_db_node::fold_node::config::NodeConfig {
-                database: fold_db::storage::DatabaseConfig::with_cloud_sync(
-                    data_path.clone(),
-                    fold_db::storage::CloudSyncConfig {
-                        api_url: api_url.clone(),
-                        api_key: api_key.clone(),
-                        session_token: None,
-                        user_hash: resp.user_hash,
-                        p2p_sync: None,
-                    },
-                ),
-                storage_path: Some(data_path),
-                network_listen_address: "/ip4/0.0.0.0/tcp/0".to_string(),
-                schema_service_url: Some(fold_db_node::endpoints::schema_service_url()),
-                env: None,
-                config_dir: None,
-                seed_identity: None,
-                source_path: None,
-            };
-
-            let config_json = serde_json::to_string_pretty(&config)
-                .map_err(|e| CliError::new(format!("Failed to serialize config: {}", e)))?;
-            std::fs::write(config_path, config_json)
-                .map_err(|e| CliError::new(format!("Failed to write config: {}", e)))?;
+            save_restored_cloud_config(config_path, &api_url, &api_key, resp.user_hash)?;
 
             fold_db_node::server::routes::auth::write_bootstrap_marker(&api_url, &api_key)
                 .map_err(|e| CliError::new(format!("Failed to write bootstrap marker: {}", e)))?;
@@ -179,22 +155,7 @@ fn try_register_and_configure(
         Err(e) => {
             eprintln!(" failed: {} (will use local-only mode).", e);
 
-            let data_path = data_path();
-            let config = fold_db_node::fold_node::config::NodeConfig {
-                database: fold_db::storage::DatabaseConfig::local(data_path.clone()),
-                storage_path: Some(data_path),
-                network_listen_address: "/ip4/0.0.0.0/tcp/0".to_string(),
-                schema_service_url: Some(fold_db_node::endpoints::schema_service_url()),
-                env: None,
-                config_dir: None,
-                seed_identity: None,
-                source_path: None,
-            };
-
-            let config_json = serde_json::to_string_pretty(&config)
-                .map_err(|e| CliError::new(format!("Failed to serialize config: {}", e)))?;
-            std::fs::write(config_path, config_json)
-                .map_err(|e| CliError::new(format!("Failed to write config: {}", e)))?;
+            save_restored_local_config(config_path)?;
 
             let _ = public_key_b64;
 
@@ -206,6 +167,64 @@ fn try_register_and_configure(
     }
 }
 
+/// Build the cloud-backed `NodeConfig` for a successful restore + register
+/// flow and persist it via [`save_node_config`]. Extracted so the file
+/// write is reachable from tests without going through `register_with_exemem`.
+///
+/// [`save_node_config`]: fold_db_node::fold_node::config::save_node_config
+fn save_restored_cloud_config(
+    config_path: &Path,
+    api_url: &str,
+    api_key: &str,
+    user_hash: Option<String>,
+) -> Result<(), CliError> {
+    let data_path = data_path();
+    let config = fold_db_node::fold_node::config::NodeConfig {
+        database: fold_db::storage::DatabaseConfig::with_cloud_sync(
+            data_path.clone(),
+            fold_db::storage::CloudSyncConfig {
+                api_url: api_url.to_string(),
+                api_key: api_key.to_string(),
+                session_token: None,
+                user_hash,
+                p2p_sync: None,
+            },
+        ),
+        storage_path: Some(data_path),
+        network_listen_address: "/ip4/0.0.0.0/tcp/0".to_string(),
+        schema_service_url: Some(fold_db_node::endpoints::schema_service_url()),
+        env: None,
+        config_dir: None,
+        seed_identity: None,
+        source_path: Some(config_path.to_path_buf()),
+    };
+
+    fold_db_node::fold_node::config::save_node_config(&config)
+        .map_err(|e| CliError::new(format!("Failed to write config: {}", e)))
+}
+
+/// Build the local-only `NodeConfig` for the registration-failed fallback
+/// branch and persist it via [`save_node_config`]. Same testability rationale
+/// as [`save_restored_cloud_config`].
+///
+/// [`save_node_config`]: fold_db_node::fold_node::config::save_node_config
+fn save_restored_local_config(config_path: &Path) -> Result<(), CliError> {
+    let data_path = data_path();
+    let config = fold_db_node::fold_node::config::NodeConfig {
+        database: fold_db::storage::DatabaseConfig::local(data_path.clone()),
+        storage_path: Some(data_path),
+        network_listen_address: "/ip4/0.0.0.0/tcp/0".to_string(),
+        schema_service_url: Some(fold_db_node::endpoints::schema_service_url()),
+        env: None,
+        config_dir: None,
+        seed_identity: None,
+        source_path: Some(config_path.to_path_buf()),
+    };
+
+    fold_db_node::fold_node::config::save_node_config(&config)
+        .map_err(|e| CliError::new(format!("Failed to write config: {}", e)))
+}
+
 /// Write the onboarding_complete marker so the UI doesn't re-prompt for setup.
 ///
 /// Routed through sensitive_io because the marker's presence reveals that a
@@ -214,5 +233,88 @@ fn mark_onboarding_complete() {
     if let Ok(home) = fold_db_node::utils::paths::folddb_home() {
         let marker = home.join("data").join(".onboarding_complete");
         let _ = fold_db_node::sensitive_io::write_sensitive(&marker, b"1");
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// `save_restored_cloud_config` is the post-registration save in the
+    /// successful-cloud branch of `try_register_and_configure`. The atomic
+    /// write happens via `save_node_config` -> `write_atomic_0600`; this
+    /// test exercises the helper directly so a regression where the
+    /// helper bypasses `save_node_config` would fail.
+    #[test]
+    fn save_restored_cloud_config_writes_expected_node_config() {
+        let _g = crate::test_locks::folddb_home_lock();
+        let tmp = tempfile::tempdir().expect("tempdir");
+        std::env::set_var("FOLDDB_HOME", tmp.path());
+
+        let config_dir = tmp.path().join("config");
+        std::fs::create_dir_all(&config_dir).expect("create config dir");
+        let config_path = config_dir.join("node_config.json");
+
+        save_restored_cloud_config(
+            &config_path,
+            "https://api.example.test",
+            "secret-cloud-api-key",
+            Some("user-hash-abc".to_string()),
+        )
+        .expect("save_restored_cloud_config");
+
+        assert!(
+            config_path.exists(),
+            "node_config.json must exist after save_restored_cloud_config"
+        );
+        let on_disk: serde_json::Value =
+            serde_json::from_slice(&std::fs::read(&config_path).expect("read node_config.json"))
+                .expect("parse node_config.json");
+        let cloud = on_disk
+            .get("database")
+            .and_then(|d| d.get("cloud_sync"))
+            .expect("cloud_sync present after save_restored_cloud_config");
+        // api_url is the only cloud_sync field that round-trips through
+        // node_config.json — api_key, session_token, user_hash are stripped
+        // by `CloudSyncConfig`'s `skip_serializing` markers (see PR #932).
+        assert_eq!(
+            cloud.get("api_url").and_then(|v| v.as_str()),
+            Some("https://api.example.test"),
+        );
+
+        std::env::remove_var("FOLDDB_HOME");
+    }
+
+    /// `save_restored_local_config` is the registration-failed fallback
+    /// branch. Same shape as the cloud test but the on-disk database
+    /// must be local-only (no cloud_sync field).
+    #[test]
+    fn save_restored_local_config_writes_local_only_node_config() {
+        let _g = crate::test_locks::folddb_home_lock();
+        let tmp = tempfile::tempdir().expect("tempdir");
+        std::env::set_var("FOLDDB_HOME", tmp.path());
+
+        let config_dir = tmp.path().join("config");
+        std::fs::create_dir_all(&config_dir).expect("create config dir");
+        let config_path = config_dir.join("node_config.json");
+
+        save_restored_local_config(&config_path).expect("save_restored_local_config");
+
+        assert!(
+            config_path.exists(),
+            "node_config.json must exist after save_restored_local_config"
+        );
+        let on_disk: serde_json::Value =
+            serde_json::from_slice(&std::fs::read(&config_path).expect("read node_config.json"))
+                .expect("parse node_config.json");
+        let db = on_disk
+            .get("database")
+            .expect("database object must be present");
+        assert!(
+            db.get("cloud_sync").is_none(),
+            "local-only fallback must not write a cloud_sync block; got: {db}"
+        );
+
+        std::env::remove_var("FOLDDB_HOME");
     }
 }

@@ -477,7 +477,7 @@ fn write_ingestion_config(
     let path = config_dir.join("ingestion_config.json");
     let json = serde_json::to_string_pretty(cfg)
         .map_err(|e| BootstrapError::Internal(format!("Failed to serialize AI config: {e}")))?;
-    std::fs::write(&path, json)
+    crate::sensitive_io::write_atomic_0600(&path, json.as_bytes())
         .map_err(|e| BootstrapError::Internal(format!("Failed to write AI config: {e}")))
 }
 
@@ -730,5 +730,34 @@ mod tests {
         );
 
         std::env::remove_var("FOLDDB_HOME");
+    }
+
+    /// `write_ingestion_config` must route through the atomic-write helper so
+    /// a power loss between serialize and rename can't leave a half-written
+    /// `ingestion_config.json` that blocks the next boot. This test calls the
+    /// function directly with a tempdir and asserts the file exists with the
+    /// expected JSON. The atomicity invariants (no `.tmp` leftover, mode
+    /// 0o600) are covered by the `sensitive_io::write_atomic_0600` tests.
+    #[test]
+    fn write_ingestion_config_persists_expected_json() {
+        let tmp = tempfile::tempdir().expect("tempdir");
+        let cfg = serde_json::json!({
+            "providers": [
+                { "name": "anthropic", "api_key_ref": "exemem-credentials" }
+            ],
+            "default_provider": "anthropic"
+        });
+
+        write_ingestion_config(tmp.path(), &cfg).expect("write_ingestion_config");
+
+        let path = tmp.path().join("ingestion_config.json");
+        assert!(
+            path.exists(),
+            "ingestion_config.json must exist after write"
+        );
+        let on_disk: serde_json::Value =
+            serde_json::from_slice(&std::fs::read(&path).expect("read ingestion_config.json"))
+                .expect("parse ingestion_config.json");
+        assert_eq!(on_disk, cfg, "round-trip JSON must match input");
     }
 }
