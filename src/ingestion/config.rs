@@ -716,17 +716,25 @@ impl IngestionConfig {
         // QueryChat override during a rollback.
         to_save.prepare_for_save();
 
-        if let Some(parent) = config_path.parent() {
-            std::fs::create_dir_all(parent)?;
-        }
-        let content = serde_json::to_string_pretty(&to_save)?;
-        crate::sensitive_io::write_atomic_0600(&config_path, content.as_bytes())
-            .map_err(|e| -> Box<dyn std::error::Error> { e.into() })?;
+        Self::write_pretty_json_atomic_0600(&config_path, &to_save)?;
 
         if let Some(key) = key_to_persist {
             crate::ingestion::anthropic_key_store::save(config_dir, &key)?;
         }
 
+        Ok(())
+    }
+
+    fn write_pretty_json_atomic_0600<T: Serialize>(
+        path: &std::path::Path,
+        value: &T,
+    ) -> Result<(), Box<dyn std::error::Error>> {
+        if let Some(parent) = path.parent() {
+            std::fs::create_dir_all(parent)?;
+        }
+        let content = serde_json::to_string_pretty(value)?;
+        crate::sensitive_io::write_atomic_0600(path, content.as_bytes())
+            .map_err(|e| -> Box<dyn std::error::Error> { e.into() })?;
         Ok(())
     }
 
@@ -738,13 +746,7 @@ impl IngestionConfig {
         path: &std::path::Path,
         saved: &SavedConfig,
     ) -> Result<(), Box<dyn std::error::Error>> {
-        if let Some(parent) = path.parent() {
-            std::fs::create_dir_all(parent)?;
-        }
-        let content = serde_json::to_string_pretty(saved)?;
-        crate::sensitive_io::write_atomic_0600(path, content.as_bytes())
-            .map_err(|e| -> Box<dyn std::error::Error> { e.into() })?;
-        Ok(())
+        Self::write_pretty_json_atomic_0600(path, saved)
     }
 
     /// Clear `saved.anthropic.api_key` and rewrite `ingestion_config.json`
