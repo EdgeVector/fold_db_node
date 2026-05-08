@@ -67,28 +67,34 @@ impl Environment {
     }
 }
 
+fn service_url(env_var: &str, dev: &'static str, prod: &'static str) -> String {
+    std::env::var(env_var).unwrap_or_else(|_| match Environment::from_env() {
+        Environment::Dev => dev.to_string(),
+        Environment::Prod => prod.to_string(),
+    })
+}
+
 /// Schema service URL.
 pub fn schema_service_url() -> String {
-    std::env::var("FOLD_SCHEMA_SERVICE_URL").unwrap_or_else(|_| match Environment::from_env() {
-        Environment::Dev => gen::DEV_SCHEMA_SERVICE.to_string(),
-        Environment::Prod => gen::PROD_SCHEMA_SERVICE.to_string(),
-    })
+    service_url(
+        "FOLD_SCHEMA_SERVICE_URL",
+        gen::DEV_SCHEMA_SERVICE,
+        gen::PROD_SCHEMA_SERVICE,
+    )
 }
 
 /// Exemem API URL (auth, sync, etc.).
 pub fn exemem_api_url() -> String {
-    std::env::var("EXEMEM_API_URL").unwrap_or_else(|_| match Environment::from_env() {
-        Environment::Dev => gen::DEV_EXEMEM_API.to_string(),
-        Environment::Prod => gen::PROD_EXEMEM_API.to_string(),
-    })
+    service_url("EXEMEM_API_URL", gen::DEV_EXEMEM_API, gen::PROD_EXEMEM_API)
 }
 
 /// Discovery service URL.
 pub fn discovery_service_url() -> String {
-    std::env::var("DISCOVERY_SERVICE_URL").unwrap_or_else(|_| match Environment::from_env() {
-        Environment::Dev => gen::DEV_DISCOVERY.to_string(),
-        Environment::Prod => gen::PROD_DISCOVERY.to_string(),
-    })
+    service_url(
+        "DISCOVERY_SERVICE_URL",
+        gen::DEV_DISCOVERY,
+        gen::PROD_DISCOVERY,
+    )
 }
 
 /// Schema service URL for a specific environment, ignoring `EXEMEM_ENV`.
