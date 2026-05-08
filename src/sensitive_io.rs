@@ -10,6 +10,15 @@
 //! final path. AES-GCM auth-tag failures from a torn write would force the
 //! user to re-enter the credential, so the rename atomicity is what protects
 //! them.
+//!
+//! [`write_atomic_0600`] is also used for non-credential JSON config that
+//! happens to be user-private — node config, ingestion config, Apple sync
+//! settings, bootstrap status. Those callers want the atomicity (a half-
+//! written `node_config.json` blocks startup); 0o600 is the right default
+//! for user-private state so we use the same helper rather than introduce a
+//! second variant. The helper applies the mode pre-rename so it survives
+//! the rename, and the test in [`crate::utils::fs_atomic`] guards against
+//! the umask-default arm regressing into 0o600.
 
 use std::fs;
 use std::io::{Seek, SeekFrom, Write};
@@ -47,6 +56,21 @@ pub fn read_sensitive(path: &Path) -> Result<Vec<u8>, String> {
 /// Thin wrapper over [`crate::utils::fs_atomic::write_atomic`] that pins the
 /// Unix mode at 0o600 for sensitive files. Callers are responsible for
 /// ensuring the parent directory exists.
+///
+/// Used for two flavors of caller, both wanting the same on-disk shape:
+/// 1. **Credential / key material** — encrypted-or-plaintext sensitive blobs
+///    routed via [`write_sensitive`].
+/// 2. **User-private JSON config** — node config, ingestion config, Apple
+///    sync settings, bootstrap status. These are never encrypted, but
+///    they're owner-only state that benefits from the same atomicity
+///    (tmpfile + fsync + rename) so a power loss can't leave a torn JSON
+///    that blocks the next boot.
+///
+/// 0o600 is the correct default for both: credentials must not leak, and
+/// "owner-only" is harmless for config that nothing else on the system
+/// should be reading. If a future caller genuinely needs a looser mode
+/// (e.g. a world-readable lockfile), call [`crate::utils::fs_atomic::write_atomic`]
+/// directly with `mode = None` rather than weakening this helper.
 pub(crate) fn write_atomic_0600(path: &Path, data: &[u8]) -> Result<(), String> {
     crate::utils::fs_atomic::write_atomic(path, data, Some(0o600))
 }
