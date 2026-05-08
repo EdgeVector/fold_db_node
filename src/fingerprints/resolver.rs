@@ -76,7 +76,7 @@ use std::sync::Arc;
 use crate::fingerprints::canonical_names;
 use crate::fingerprints::keys::edge_kind;
 use crate::fingerprints::schemas::{
-    EDGE, EDGE_BY_FINGERPRINT, FINGERPRINT, MENTION_BY_FINGERPRINT, PERSONA,
+    EDGE, EDGE_BY_FINGERPRINT, FINGERPRINT, MENTION_BY_FINGERPRINT,
 };
 use crate::fold_node::{FoldNode, OperationProcessor};
 
@@ -503,15 +503,6 @@ fn extract_field_as_f32(fields: &Value, field_name: &str) -> FoldDbResult<f32> {
             ))
         })
 }
-
-// Quiet the unused-import warning for the PERSONA constant. It is
-// referenced indirectly by callers that look up the canonical Persona
-// name, but this module itself does not query the Persona schema —
-// it takes a PersonaSpec constructed by the caller. Re-exporting the
-// constant here keeps the import graph stable without needing a
-// downstream `use` in every consumer.
-#[allow(dead_code)]
-const _PERSONA: &str = PERSONA;
 
 #[cfg(test)]
 mod tests {
