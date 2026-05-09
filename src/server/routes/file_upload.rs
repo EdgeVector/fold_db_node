@@ -551,6 +551,7 @@ pub async fn upload_file(
         image_descriptive_name,
         org_hash: None,
         image_bytes,
+        forced_schema_descriptive_name: None,
     };
 
     let service = match get_ingestion_service(ingestion_service.get_ref()).await {

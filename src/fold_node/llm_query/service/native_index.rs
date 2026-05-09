@@ -936,6 +936,7 @@ impl LlmQueryService {
                     image_descriptive_name: None,
                     org_hash: None,
                     image_bytes: None,
+                    forced_schema_descriptive_name: None,
                 };
 
                 let config_dir = node

@@ -90,6 +90,7 @@ async fn test_ingest_tweets_js() {
         image_descriptive_name: None,
         org_hash: None,
         image_bytes: None,
+        forced_schema_descriptive_name: None,
     };
 
     // 7. Run ingestion within user context

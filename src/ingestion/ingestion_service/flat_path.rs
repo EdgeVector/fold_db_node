@@ -41,12 +41,24 @@ impl IngestionService {
                 "Analyzing data with AI to determine schema...".to_string(),
             )
             .await;
-        let mut ai_response = self.get_ai_recommendation(flattened_data).await?;
 
-        // If the AI didn't provide field_descriptions, do a second AI call
-        // focused just on generating descriptions from the JSON structure.
-        self.fill_missing_field_descriptions(&mut ai_response, flattened_data)
-            .await?;
+        // Forced-schema path: skip the LLM entirely and synthesize a
+        // deterministic schema definition from the data sample. Used by
+        // known-source ingestion (Apple Notes, Calendar, Contacts,
+        // Reminders) to consolidate every batch into one canonical schema
+        // regardless of LLM non-determinism.
+        let mut ai_response =
+            if let Some(forced_name) = request.forced_schema_descriptive_name.as_deref() {
+                super::build_forced_schema_response(flattened_data, forced_name)
+            } else {
+                let mut resp = self.get_ai_recommendation(flattened_data).await?;
+                // If the AI didn't provide field_descriptions, do a second AI
+                // call focused just on generating descriptions from the JSON
+                // structure.
+                self.fill_missing_field_descriptions(&mut resp, flattened_data)
+                    .await?;
+                resp
+            };
 
         if is_image {
             super::apply_image_schema_override(

@@ -105,6 +105,14 @@ pub struct IngestionRequest {
     #[serde(skip)]
     #[cfg_attr(feature = "ts-bindings", ts(skip))]
     pub image_bytes: Option<Vec<u8>>,
+    /// When set, ingestion skips the LLM schema classifier and pins the
+    /// records to a canonical schema with this descriptive_name. The schema
+    /// definition is synthesized deterministically from the data sample's
+    /// fields. Used by known-source ingestion paths (Apple Notes, Calendar,
+    /// Contacts, Reminders) where every record must land in one schema
+    /// regardless of LLM non-determinism.
+    #[serde(default)]
+    pub forced_schema_descriptive_name: Option<String>,
 }
 
 /// Response from the ingestion process
