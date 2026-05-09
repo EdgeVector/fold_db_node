@@ -11,20 +11,8 @@ use fold_db_node::fold_node::OperationProcessor;
 use std::sync::Arc;
 use tempfile::TempDir;
 
-async fn setup_node() -> (FoldNode, TempDir) {
-    let temp_dir = TempDir::new().expect("Failed to create temp dir");
-    let temp_db_path = temp_dir.path().to_str().unwrap();
-
-    let keypair = fold_db::security::Ed25519KeyPair::generate().unwrap();
-    let config = NodeConfig::new(temp_db_path.into())
-        .with_schema_service_url("test://mock")
-        .with_seed_identity(fold_db_node::identity::identity_from_keypair(&keypair));
-    let node = FoldNode::new(config)
-        .await
-        .expect("Failed to create FoldNode");
-
-    (node, temp_dir)
-}
+mod common;
+use common::setup_node;
 
 async fn load_schema(node: &FoldNode, schema_filename: &str) {
     let schema_path = std::env::current_dir()

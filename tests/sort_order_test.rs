@@ -1,28 +1,13 @@
 use fold_db::schema::types::key_value::KeyValue;
 use fold_db::schema::types::operations::{Query, SortOrder};
 use fold_db::MutationType;
-use fold_db_node::fold_node::config::NodeConfig;
 use fold_db_node::fold_node::FoldNode;
 use fold_db_node::fold_node::OperationProcessor;
 use serde_json::json;
 use std::collections::HashMap;
-use tempfile::TempDir;
 
-/// Helper: create a FoldNode backed by a temp directory.
-async fn setup_node() -> (FoldNode, TempDir) {
-    let temp_dir = TempDir::new().expect("Failed to create temp dir");
-    let temp_db_path = temp_dir.path().to_str().unwrap();
-
-    let keypair = fold_db::security::Ed25519KeyPair::generate().unwrap();
-    let config = NodeConfig::new(temp_db_path.into())
-        .with_schema_service_url("test://mock")
-        .with_seed_identity(fold_db_node::identity::identity_from_keypair(&keypair));
-    let node = FoldNode::new(config)
-        .await
-        .expect("Failed to create FoldNode");
-
-    (node, temp_dir)
-}
+mod common;
+use common::setup_node;
 
 /// Helper: load a schema from tests/schemas_for_testing/<filename>.
 async fn load_schema(node: &FoldNode, schema_filename: &str) {
