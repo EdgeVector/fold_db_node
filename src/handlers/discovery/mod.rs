@@ -719,9 +719,7 @@ pub async fn my_pseudonyms(node: &FoldNode, master_key: &[u8]) -> HandlerResult<
 
 /// Clear all discovery opt-ins. Used by the E2E test framework for cleanup.
 pub async fn opt_out_all(node: &FoldNode) -> HandlerResult<serde_json::Value> {
-    let db = node
-        .get_fold_db()
-        .map_err(|e| HandlerError::Internal(format!("{e}")))?;
+    let db = get_db_guard(node)?;
     let store = get_metadata_store(&db);
     let configs = config::list_opt_ins(&*store)
         .await
@@ -756,9 +754,7 @@ pub async fn respond_to_request(
 
     // If accepting, require identity card and validate role upfront
     let identity_card = if req.action == "accept" {
-        let db = node
-            .get_fold_db()
-            .map_err(|e| HandlerError::Internal(format!("FoldDB not available: {e}")))?;
+        let db = get_db_guard(node)?;
         let card = IdentityCard::load(&db)
             .await
             .handler_err("load identity card")?

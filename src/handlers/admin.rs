@@ -13,7 +13,7 @@
 use crate::discovery::connection::get_pseudonym_public_key_b64;
 use crate::fold_node::node::FoldNode;
 use crate::handlers::response::{
-    require_non_empty, ApiResponse, HandlerError, HandlerResult, IntoHandlerError,
+    get_db_guard, require_non_empty, ApiResponse, HandlerError, HandlerResult, IntoHandlerError,
 };
 use crate::trust::contact_book::{Contact, ContactBook, TrustDirection};
 use chrono::Utc;
@@ -101,9 +101,7 @@ pub async fn upsert_contact(
         roles,
     };
 
-    let db = node
-        .get_fold_db()
-        .map_err(|e| HandlerError::Internal(format!("FoldDB not available: {e}")))?;
+    let db = get_db_guard(node)?;
     let mut book = ContactBook::load(&db)
         .await
         .handler_err("load contact book")?;
