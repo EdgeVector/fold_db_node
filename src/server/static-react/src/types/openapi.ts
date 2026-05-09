@@ -902,6 +902,15 @@ export interface components {
             data: unknown;
             /** @description SHA256 hash of the original source file content (hex string) */
             file_hash?: string | null;
+            /**
+             * @description When set, ingestion skips the LLM schema classifier and pins the
+             *     records to a canonical schema with this descriptive_name. The schema
+             *     definition is synthesized deterministically from the data sample's
+             *     fields. Used by known-source ingestion paths (Apple Notes, Calendar,
+             *     Contacts, Reminders) where every record must land in one schema
+             *     regardless of LLM non-determinism.
+             */
+            forced_schema_descriptive_name?: string | null;
             /** @description Descriptive name from image vision model (schema metadata, not record data) */
             image_descriptive_name?: string | null;
             /**
