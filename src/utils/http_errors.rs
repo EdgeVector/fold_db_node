@@ -72,6 +72,10 @@ mod tests {
     }
 
     fn data_error_missing_field() -> serde_json::Error {
+        // `folder_path` is intentionally unread; we define it so serde
+        // produces a `Category::Data` "missing field" error when given
+        // `{"path":"/x"}` — that's the exact failure mode the
+        // `missing_field_maps_to_invalid_request_body` test asserts on.
         #[derive(Debug, Deserialize)]
         #[allow(dead_code)]
         struct ScanRequest {

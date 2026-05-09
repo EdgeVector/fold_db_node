@@ -8,6 +8,10 @@ use crate::tools;
 
 #[derive(Deserialize, Debug)]
 pub struct JsonRpcRequest {
+    // Never read after deserialization, but must remain a required field
+    // so serde rejects incoming bytes that omit `"jsonrpc"` per the
+    // JSON-RPC 2.0 spec. Removing it would silently accept non-spec
+    // requests. Consumer: serde_json::from_str at main.rs:56.
     #[allow(dead_code)]
     pub jsonrpc: String,
     pub id: Option<Value>,
