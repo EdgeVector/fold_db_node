@@ -423,6 +423,10 @@ impl FoldHttpServer {
             web::get().to(apple_import_routes::apple_import_status),
         )
         .route(
+            "/ingestion/apple-import/permissions",
+            web::get().to(apple_import_routes::apple_import_permissions),
+        )
+        .route(
             "/ingestion/apple-import/notes",
             web::post().to(apple_import_routes::apple_import_notes),
         )
