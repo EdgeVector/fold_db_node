@@ -300,8 +300,12 @@ start_local_schema_service() {
     echo "Building schema_service binary from $schema_service_dir..."
     ( cd "$schema_service_dir" && cargo build -p schema_service_server_http --bin schema_service )
 
+    # Exec the freshly built binary directly. Using `cargo run` here would
+    # re-emit "Finished"/"Running" lines plus any compiler warnings into
+    # $schema_log, which the in-app LogSidebar then renders as if it were
+    # runtime output.
     pushd "$schema_service_dir" > /dev/null
-    nohup env $schema_env cargo run -p schema_service_server_http --bin schema_service -- --port "$SCHEMA_PORT" --db-path "$schema_db_path" > "$schema_log" 2>&1 &
+    nohup env $schema_env ./target/debug/schema_service --port "$SCHEMA_PORT" --db-path "$schema_db_path" > "$schema_log" 2>&1 &
     SCHEMA_SERVICE_PID=$!
     popd > /dev/null
     echo "$SCHEMA_SERVICE_PID" > "$FOLDDB_HOME/schema.pid"
@@ -415,12 +419,21 @@ start_http_server() {
         return 1
     fi
 
-    echo "Starting the HTTP server on port $HTTP_PORT..."
+    # Build first with output going to stderr — visible to the user but kept
+    # OUT of server.log. Then exec the freshly built binary so server.log
+    # only carries runtime tracing, which is what the in-app LogSidebar
+    # consumes. `cargo run` here would re-emit "Compiling/Finished/Running"
+    # plus any compiler warnings into the redirected stdout/stderr, polluting
+    # the log.
+    echo "Building folddb_server..."
     if [ -n "$features" ]; then
-        FOLDDB_HOME="$FOLDDB_HOME" RUST_LOG=debug nohup cargo run --features "$features" --bin folddb_server -- --port "$HTTP_PORT" --schema-service-url "$schema_url" $extra_args > "$FOLDDB_HOME/server.log" 2>&1 &
+        cargo build --features "$features" --bin folddb_server >&2
     else
-        FOLDDB_HOME="$FOLDDB_HOME" RUST_LOG=debug nohup cargo run --bin folddb_server -- --port "$HTTP_PORT" --schema-service-url "$schema_url" $extra_args > "$FOLDDB_HOME/server.log" 2>&1 &
+        cargo build --bin folddb_server >&2
     fi
+
+    echo "Starting the HTTP server on port $HTTP_PORT..."
+    FOLDDB_HOME="$FOLDDB_HOME" RUST_LOG=debug nohup ./target/debug/folddb_server --port "$HTTP_PORT" --schema-service-url "$schema_url" $extra_args > "$FOLDDB_HOME/server.log" 2>&1 &
     SERVER_PID=$!
     echo "$SERVER_PID" > "$FOLDDB_HOME/folddb.pid"
 
