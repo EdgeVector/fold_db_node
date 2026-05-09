@@ -372,7 +372,7 @@ export interface paths {
          * @description This endpoint initiates S3 sync setup for the local Sled database:
          *     1. Returns immediately with a job ID for progress tracking
          *     2. The background job snapshots local data and uploads encrypted blobs to S3
-         *     3. Progress can be monitored via /api/ingestion/progress/{job_id}
+         *     3. Progress can be monitored via /api/ingestion/progress/{id}
          */
         post: operations["migrate_to_cloud"];
         delete?: never;
@@ -416,7 +416,7 @@ export interface paths {
          * @description This endpoint initiates a database reset as a background job:
          *     1. Returns immediately with a job ID for progress tracking
          *     2. The background job clears all data for the current user
-         *     3. Progress can be monitored via /api/ingestion/progress/{job_id}
+         *     3. Progress can be monitored via /api/ingestion/progress/{id}
          *
          *     This is a destructive operation that cannot be undone.
          *
