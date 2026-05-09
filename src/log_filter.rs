@@ -1,31 +1,62 @@
-//! Tame Sled storage internals in the node's structured log file.
+//! Tame chatty channels in the node's structured log file.
 //!
 //! Upstream `observability::init_node_with_web` reads `RUST_LOG` and
 //! installs a generic `tracing_log::LogTracer` bridge. With
 //! `RUST_LOG=debug` (set by `run.sh --local`, or by operators chasing an
-//! ingestion bug), Sled's `log::*!` calls inside `sled::pagecache::iobuf`
-//! / `sled::tree` / `sled::iter` flood `~/.folddb/observability.jsonl`
-//! with `advancing offset` / `wrote lsns` / `mark_interval` /
-//! `freeing segment` / `make_stable` events — a single 50-file Smart
-//! Folder run produced 231,872 lines (~91% Sled internals) on
-//! 2026-05-05 (231k total, 208k DEBUG, 14 WARN).
+//! ingestion bug), two volume sinks dominate `$FOLDDB_HOME/observability.jsonl`:
 //!
-//! `EnvFilter` can't catch them: tracing-log's bridge stamps every
-//! bridged event with `metadata.target() == "log"` (the original target
-//! lives in the `log.target` field), so a `RUST_LOG=...,sled=info`
-//! directive never matches — the filter only sees `target="log"`.
+//! 1. **Sled** internals (`log::*!` from `sled::pagecache::iobuf` /
+//!    `sled::tree` / `sled::iter`). A 50-file Smart Folder run on
+//!    2026-05-05 produced 231,872 lines, ~91% sled.
+//! 2. **fold_db** ingestion hot path — `tracing::debug!` from
+//!    `fold_db::fold_db_core::mutation_manager` (~60% of volume) and
+//!    `fold_db::db_operations::atom_store` (~12%) on a routine import
+//!    (132 Apple Notes + 5 photos + smart-folder of 3 files), measured
+//!    2026-05-09 against `~/.folddb/observability.jsonl` (~25 MB / 10
+//!    minutes, no rotation).
 //!
-//! We solve this on the fold_db_node side by installing our own
-//! `log::Log` implementation **before** upstream's `LogTracer::init()`.
-//! `log::set_boxed_logger` is single-init: first installer wins, the
-//! upstream call returns `SetLoggerError` and the upstream code already
-//! swallows it. Our wrapper delegates to a real `tracing_log::LogTracer`
-//! for everything except sled-prefixed targets, which we cap at
-//! `FOLDDB_LOG_SLED` (default `info`).
+//! Both are noise for typical debugging — they describe sled-level page
+//! flushes and per-mutation batch progress that a developer rarely cares
+//! about until they're explicitly working on storage internals or batch
+//! mutation bugs. The upstream observability crate writes a plain
+//! append-only file with no rotation knob, so until rotation lands
+//! upstream, the practical lever is to keep these channels off the
+//! firehose by default.
 //!
-//! Operators debugging Sled itself opt back in with
-//! `FOLDDB_LOG_SLED=debug` (or any tracing level — `trace`, `debug`,
-//! `info`, `warn`, `error`).
+//! ## How
+//!
+//! Two mechanisms, both invoked by [`apply_default_filters`] before
+//! upstream init:
+//!
+//! - **Sled (log-bridge target)** — `EnvFilter` can't filter sled
+//!   directly: tracing-log's bridge stamps every bridged event with
+//!   `metadata.target() == "log"` (the original target lives in the
+//!   `log.target` field), so a `RUST_LOG=...,sled=info` directive never
+//!   matches. We install our own `log::Log` implementation **before**
+//!   upstream's `LogTracer::init()`. `log::set_boxed_logger` is
+//!   single-init: first installer wins, the upstream call returns
+//!   `SetLoggerError` and the upstream code already swallows it. The
+//!   wrapper delegates to a real `tracing_log::LogTracer` for everything
+//!   except sled-prefixed targets, which we cap at `FOLDDB_LOG_SLED`
+//!   (default `info`).
+//! - **Native tracing targets** — for events emitted via `tracing::*!`
+//!   directly (no bridge), `EnvFilter` matches their module path. We
+//!   append per-target directives to `RUST_LOG` so the upstream
+//!   subscriber sees them when it builds its `EnvFilter`. See
+//!   [`NATIVE_DEFAULT_CAPS`] for the list and the env vars that opt back
+//!   in.
+//!
+//! ## Opt back in
+//!
+//! Each cap has an env-var override so operators chasing a bug in that
+//! channel can restore verbose output without rebuilding:
+//!
+//! - `FOLDDB_LOG_SLED=debug`
+//! - `FOLDDB_LOG_MUTATION_MANAGER=debug`
+//! - `FOLDDB_LOG_ATOM_STORE=debug`
+//!
+//! Each accepts any tracing level (`trace`, `debug`, `info`, `warn`,
+//! `error`) — invalid values fall back to the default cap.
 
 use std::env;
 
@@ -48,6 +79,34 @@ const RUST_LOG_ENV: &str = "RUST_LOG";
 /// `info`, so this matches the implicit baseline for everything else.
 const DEFAULT_SLED_LEVEL: Level = Level::Info;
 
+/// Native `tracing::*` targets capped by default with an opt-in env var.
+///
+/// Each tuple is `(target_path, env_var, default_level)`. `target_path`
+/// is the dotted module path the `tracing` macros stamp into
+/// `metadata.target()`; the upstream `EnvFilter` matches it as a prefix,
+/// so capping `fold_db::fold_db_core::mutation_manager` also caps any
+/// future submodule under it. Operators set the env var to any tracing
+/// level (`trace` / `debug` / `info` / `warn` / `error`) to override.
+///
+/// Volume rationale (measured 2026-05-09 against a fresh node doing
+/// routine ingestion of 132 Apple Notes + 5 photos + smart-folder of 3
+/// small files, ~25 MB / 10 min observability.jsonl): mutation_manager
+/// dominated ~60% of lines, atom_store another ~12%. Capping both at
+/// INFO drops the line rate by ~70% during ingestion without hiding
+/// anything WARN+ — which is what the file is for.
+const NATIVE_DEFAULT_CAPS: &[(&str, &str, Level)] = &[
+    (
+        "fold_db::fold_db_core::mutation_manager",
+        "FOLDDB_LOG_MUTATION_MANAGER",
+        Level::Info,
+    ),
+    (
+        "fold_db::db_operations::atom_store",
+        "FOLDDB_LOG_ATOM_STORE",
+        Level::Info,
+    ),
+];
+
 /// Apply node-side default tracing filters before the upstream
 /// `observability::init_node_with_web` initializes its subscriber stack.
 ///
@@ -58,22 +117,42 @@ const DEFAULT_SLED_LEVEL: Level = Level::Info;
 ///    a no-op (`SetLoggerError` swallowed), and the sled filter never
 ///    takes effect.
 /// 2. Upstream's `EnvFilter::try_from_default_env()` snapshots `RUST_LOG`
-///    when the subscriber is built; we mutate `RUST_LOG` here as a
-///    belt-and-suspenders measure for any sled events that are emitted
+///    when the subscriber is built; we mutate `RUST_LOG` here so the
+///    native-tracing caps in [`NATIVE_DEFAULT_CAPS`] take effect, and as
+///    a belt-and-suspenders measure for any sled events that are emitted
 ///    via `tracing::*` directly rather than the `log::*` bridge.
 ///
-/// Idempotent at the env-var level (the augment is no-op when the
+/// Idempotent at the env-var level (the augment is no-op when a
 /// directive is already present); idempotent at the logger level
 /// because the second `set_boxed_logger` call is silently dropped.
 pub fn apply_default_filters() {
     let sled_level =
         parse_level(env::var(FOLDDB_LOG_SLED_ENV).ok().as_deref()).unwrap_or(DEFAULT_SLED_LEVEL);
     install_sled_aware_log_bridge(sled_level);
-    let augmented = augment_rust_log(
-        env::var(RUST_LOG_ENV).ok().as_deref(),
-        level_to_filter_str(sled_level),
-    );
-    env::set_var(RUST_LOG_ENV, augmented);
+
+    let mut accumulated = env::var(RUST_LOG_ENV).ok();
+    for directive in default_directives_from_env(sled_level) {
+        accumulated = Some(augment_rust_log(accumulated.as_deref(), &directive));
+    }
+    if let Some(value) = accumulated {
+        env::set_var(RUST_LOG_ENV, value);
+    }
+}
+
+/// Resolve all default directives that should be appended to `RUST_LOG`,
+/// in declaration order. Reads each cap's opt-in env var; falls back to
+/// the compile-time default when unset or unparseable.
+///
+/// Returned strings are full `target=level` directives ready for
+/// `EnvFilter` consumption (e.g. `sled=info`, `fold_db::...=info`).
+fn default_directives_from_env(sled_level: Level) -> Vec<String> {
+    let mut out = Vec::with_capacity(1 + NATIVE_DEFAULT_CAPS.len());
+    out.push(format!("sled={}", level_to_filter_str(sled_level)));
+    for (target, env_var, default_level) in NATIVE_DEFAULT_CAPS {
+        let level = parse_level(env::var(env_var).ok().as_deref()).unwrap_or(*default_level);
+        out.push(format!("{target}={}", level_to_filter_str(level)));
+    }
+    out
 }
 
 /// Install the sled-aware `log::Log` bridge. Swallows `SetLoggerError`:
@@ -136,16 +215,19 @@ impl Log for SledFilteringLogger {
 }
 
 /// Pure builder for the augmented `RUST_LOG` string. Split out so unit
-/// tests don't have to mutate process env.
-fn augment_rust_log(current: Option<&str>, sled_level: &str) -> String {
+/// tests don't have to mutate process env. `directive` is a full
+/// `target=level` form (`sled=info`, `fold_db::...=info`); the helper
+/// is idempotent — appending a directive already present in `current`
+/// is a no-op so repeated `apply_default_filters` calls don't keep
+/// growing `RUST_LOG`.
+fn augment_rust_log(current: Option<&str>, directive: &str) -> String {
     let base = current.unwrap_or("info");
-    let suffix = format!("sled={sled_level}");
-    if base.split(',').any(|d| d.trim() == suffix) {
+    if base.split(',').any(|d| d.trim() == directive) {
         base.to_string()
     } else if base.is_empty() {
-        suffix
+        directive.to_string()
     } else {
-        format!("{base},{suffix}")
+        format!("{base},{directive}")
     }
 }
 
@@ -184,25 +266,26 @@ mod tests {
 
     #[test]
     fn augments_debug_with_sled_info_by_default() {
-        let augmented = augment_rust_log(Some("debug"), "info");
+        let augmented = augment_rust_log(Some("debug"), "sled=info");
         assert_eq!(augmented, "debug,sled=info");
     }
 
     #[test]
     fn augments_with_explicit_sled_level() {
-        let augmented = augment_rust_log(Some("debug"), "trace");
+        let augmented = augment_rust_log(Some("debug"), "sled=trace");
         assert_eq!(augmented, "debug,sled=trace");
     }
 
     #[test]
     fn synthesizes_baseline_when_rust_log_unset() {
-        let augmented = augment_rust_log(None, "info");
+        let augmented = augment_rust_log(None, "sled=info");
         assert_eq!(augmented, "info,sled=info");
     }
 
     #[test]
     fn preserves_existing_directives() {
-        let augmented = augment_rust_log(Some("info,fold_db_node=trace,actix_web=warn"), "info");
+        let augmented =
+            augment_rust_log(Some("info,fold_db_node=trace,actix_web=warn"), "sled=info");
         assert_eq!(
             augmented,
             "info,fold_db_node=trace,actix_web=warn,sled=info"
@@ -211,9 +294,55 @@ mod tests {
 
     #[test]
     fn idempotent_when_directive_already_present() {
-        let once = augment_rust_log(Some("debug"), "info");
-        let twice = augment_rust_log(Some(&once), "info");
+        let once = augment_rust_log(Some("debug"), "sled=info");
+        let twice = augment_rust_log(Some(&once), "sled=info");
         assert_eq!(once, twice);
+    }
+
+    /// Native-tracing directives use full module paths with `::`. The
+    /// helper has no special-case for sled — it appends any well-formed
+    /// `target=level` directive — so this is mostly a regression test
+    /// against future "treat sled as special" refactors.
+    #[test]
+    fn appends_native_tracing_directive_with_module_path() {
+        let augmented = augment_rust_log(
+            Some("debug,sled=info"),
+            "fold_db::fold_db_core::mutation_manager=info",
+        );
+        assert_eq!(
+            augmented,
+            "debug,sled=info,fold_db::fold_db_core::mutation_manager=info",
+        );
+    }
+
+    /// Building blocks used by the real `apply_default_filters`. We
+    /// can't drive `apply_default_filters` itself from a unit test (see
+    /// note further down on process-global env mutation), but we can
+    /// verify the directive list it would produce.
+    #[test]
+    fn default_directives_include_all_caps_at_default_levels() {
+        // No env-var overrides: callers consult their own real env, so
+        // we don't unset overrides here — instead we cover that path in
+        // the override test below by setting then restoring the var.
+        let directives = default_directives_from_env(Level::Info);
+        // sled is first by construction.
+        assert_eq!(directives.first().unwrap(), "sled=info");
+        // Each native cap appears as `target=<default>` somewhere in
+        // the list. Exact contents depend on the operator's env, so we
+        // assert the default-named directives are present rather than
+        // demanding exact list equality.
+        for (target, env_var, default_level) in NATIVE_DEFAULT_CAPS {
+            // Skip caps whose env var the test runner happens to set —
+            // they'll legitimately render with a non-default level.
+            if std::env::var(env_var).is_ok() {
+                continue;
+            }
+            let expected = format!("{target}={}", level_to_filter_str(*default_level));
+            assert!(
+                directives.iter().any(|d| d == &expected),
+                "expected directive {expected:?} in {directives:?}",
+            );
+        }
     }
 
     #[test]

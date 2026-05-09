@@ -533,7 +533,13 @@ start_http_server() {
     fi
 
     echo "Starting the HTTP server on port $HTTP_PORT..."
-    FOLDDB_HOME="$FOLDDB_HOME" RUST_LOG=debug nohup ./target/debug/folddb_server --port "$HTTP_PORT" --schema-service-url "$schema_url" $extra_args > "$FOLDDB_HOME/server.log" 2>&1 &
+    # Default RUST_LOG to debug for local dev so operators see the full
+    # picture, but honor an operator-supplied value (e.g.
+    # `RUST_LOG=trace ./run.sh ...` or a stricter setting). The binary
+    # additionally caps a handful of chatty channels (sled,
+    # fold_db::fold_db_core::mutation_manager, fold_db::db_operations::atom_store)
+    # at INFO unless overridden via FOLDDB_LOG_* — see src/log_filter.rs.
+    FOLDDB_HOME="$FOLDDB_HOME" RUST_LOG="${RUST_LOG:-debug}" nohup ./target/debug/folddb_server --port "$HTTP_PORT" --schema-service-url "$schema_url" $extra_args > "$FOLDDB_HOME/server.log" 2>&1 &
     SERVER_PID=$!
     echo "$SERVER_PID" > "$FOLDDB_HOME/folddb.pid"
 
