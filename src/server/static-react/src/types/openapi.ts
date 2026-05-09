@@ -1272,6 +1272,15 @@ export interface components {
          */
         SavedConfig: {
             anthropic?: components["schemas"]["AnthropicConfig"];
+            /**
+             * @description Explicit user choice for whether ingestion is on. `Some(false)` is the
+             *     "skip" state from onboarding — durable proof that the user opted out,
+             *     so a stale `ANTHROPIC_API_KEY` / `INGESTION_ENABLED` shell export can't
+             *     silently flip ingestion back on. `None` means no choice was expressed
+             *     yet (fresh install, or a config from before this field existed) and
+             *     the env-var fallback in [`IngestionConfig::load`] continues to apply.
+             */
+            enabled?: boolean | null;
             ollama?: components["schemas"]["OllamaConfig"];
             /** @description Per-role overrides. The new canonical shape (2026-04-22+). */
             overrides?: {

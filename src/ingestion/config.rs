@@ -520,6 +520,7 @@ impl IngestionConfig {
         // File missing → silent fallback to defaults.
         // File exists but unreadable/unparseable → fail fast.
         let path = Self::config_file_path(config_dir);
+        let mut saved_enabled: Option<bool> = None;
         let (has_saved, mut legacy_saved_for_migration) = if !path.exists() {
             tracing::info!(
                 target: "fold_node::ingestion",
@@ -531,18 +532,20 @@ impl IngestionConfig {
             let saved = Self::load_from_file(&path)?;
             tracing::info!(
                 target: "fold_node::ingestion",
-                "Loaded saved ingestion config: provider={:?}, model={}",
+                "Loaded saved ingestion config: provider={:?}, model={}, enabled={:?}",
                 saved.provider,
                 match saved.provider {
                     AIProvider::Ollama => &saved.ollama.model,
                     AIProvider::Anthropic => &saved.anthropic.model,
-                }
+                },
+                saved.enabled,
             );
             config.provider = saved.provider.clone();
             config.ollama = saved.ollama.clone();
             config.anthropic = saved.anthropic.clone();
             config.vision_backend = saved.vision_backend.clone();
             config.overrides = saved.overrides.clone();
+            saved_enabled = saved.enabled;
             (true, Some(saved))
         };
 
@@ -592,7 +595,15 @@ impl IngestionConfig {
         // usable key. Empty strings still don't count as "set" so a parent
         // shell exporting `ANTHROPIC_API_KEY=` can't clobber even an empty
         // saved value with the same empty value.
-        if config.anthropic.api_key.is_empty() {
+        //
+        // Suppressed when the user explicitly chose to skip AI provider setup
+        // (saved.enabled == Some(false)). Pre-populating provider credentials
+        // for an opted-out user is the privacy/consent bug this code path was
+        // re-checked to fix — see the bootstrap "skip" arm in
+        // server::routes::setup. A future explicit opt-in (Some(true)) is
+        // still allowed to pick up the env var as a bootstrap fill-in.
+        let user_skipped_ai = saved_enabled == Some(false);
+        if !user_skipped_ai && config.anthropic.api_key.is_empty() {
             if let Ok(key) = env::var("ANTHROPIC_API_KEY") {
                 if !key.is_empty() {
                     config.anthropic.api_key = key;
@@ -664,7 +675,13 @@ impl IngestionConfig {
 
         // Runtime settings: env vars override defaults; ingestion is enabled by default
         // when INGESTION_ENABLED is unset (matches original behavior).
-        config.enabled = env_bool("INGESTION_ENABLED", true);
+        //
+        // A saved file with an explicit `enabled` value wins outright. The
+        // headline case is the user choosing "skip" during onboarding —
+        // `INGESTION_ENABLED=true` (or unset, which defaults to true) must
+        // not silently flip ingestion back on. The env var is a bootstrap
+        // fallback for installs that have never expressed a choice.
+        config.enabled = saved_enabled.unwrap_or_else(|| env_bool("INGESTION_ENABLED", true));
         config.max_retries = env_parse("INGESTION_MAX_RETRIES", config.max_retries);
         config.timeout_seconds = env_parse("INGESTION_TIMEOUT_SECONDS", config.timeout_seconds);
         config.auto_execute_mutations =
@@ -835,6 +852,14 @@ pub struct SavedConfig {
     /// Persisted so the UI can surface the chosen backend.
     #[serde(default)]
     pub vision_backend: VisionBackend,
+    /// Explicit user choice for whether ingestion is on. `Some(false)` is the
+    /// "skip" state from onboarding — durable proof that the user opted out,
+    /// so a stale `ANTHROPIC_API_KEY` / `INGESTION_ENABLED` shell export can't
+    /// silently flip ingestion back on. `None` means no choice was expressed
+    /// yet (fresh install, or a config from before this field existed) and
+    /// the env-var fallback in [`IngestionConfig::load`] continues to apply.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub enabled: Option<bool>,
     /// Legacy — pre-overrides schema. Read on load, migrated into `overrides`.
     /// Also written on save (dual-write) until two releases after PR 4 ships.
     #[serde(default, skip_serializing_if = "UseCaseOverride::is_not_set")]
@@ -1625,6 +1650,172 @@ mod tests {
         assert_eq!(loaded.ollama.model, defaults.ollama.model);
         assert_eq!(loaded.ollama.base_url, defaults.ollama.base_url);
         assert_eq!(loaded.anthropic.model, defaults.anthropic.model);
+    }
+
+    // ---- saved enabled=Some(false) beats env-var fallback ----
+    //
+    // The headline privacy invariant: when a user picks "skip" during
+    // onboarding, `setup::run_bootstrap_post_identity` writes a saved file
+    // with `enabled: false`. Subsequent loads must honor that choice even
+    // when `ANTHROPIC_API_KEY` and/or `INGESTION_ENABLED` are exported in
+    // the daemon's environment — otherwise the user's explicit opt-out is
+    // silently overridden by an unrelated shell config.
+
+    /// Helper: write `ingestion_config.json` shaped like the bootstrap
+    /// "skip" arm produces. Bypasses `save_to_file` so the test mirrors the
+    /// raw on-disk shape that the route's `serde_json::json!` writes.
+    fn write_skip_config(dir: &std::path::Path) {
+        let path = dir.join("ingestion_config.json");
+        let cfg = serde_json::json!({
+            "provider": "Anthropic",
+            "enabled": false,
+        });
+        std::fs::write(&path, serde_json::to_string_pretty(&cfg).unwrap()).unwrap();
+    }
+
+    #[test]
+    fn saved_enabled_false_beats_ingestion_enabled_env_var() {
+        // The literal bug from the dogfood report: `INGESTION_ENABLED` is
+        // unset (so the env_bool default of `true` would apply) and the
+        // user picked "skip" — the load result must still be enabled=false.
+        let _guard = anthropic_api_key_env_lock();
+        let tmp = tempfile::tempdir().unwrap();
+        write_skip_config(tmp.path());
+
+        env::remove_var("INGESTION_ENABLED");
+        env::remove_var("ANTHROPIC_API_KEY");
+        let loaded = IngestionConfig::load(tmp.path()).expect("load");
+        assert!(
+            !loaded.enabled,
+            "saved enabled=false must win over INGESTION_ENABLED default of true"
+        );
+
+        // Also exercise the explicit-true case — env can't flip skip back on.
+        env::set_var("INGESTION_ENABLED", "true");
+        let loaded = IngestionConfig::load(tmp.path()).expect("load");
+        env::remove_var("INGESTION_ENABLED");
+        assert!(
+            !loaded.enabled,
+            "saved enabled=false must win over INGESTION_ENABLED=true"
+        );
+    }
+
+    #[test]
+    fn saved_enabled_false_suppresses_anthropic_api_key_env_fallback() {
+        // Privacy/consent: if the user opted out, an exported
+        // ANTHROPIC_API_KEY (e.g. from `~/.zshrc`) must NOT silently
+        // pre-populate the in-memory config — the surface area for
+        // accidentally calling Anthropic with the user's personal key is
+        // exactly what "skip" was supposed to close.
+        let _guard = anthropic_api_key_env_lock();
+        let tmp = tempfile::tempdir().unwrap();
+        write_skip_config(tmp.path());
+
+        env::set_var("ANTHROPIC_API_KEY", "sk-ant-from-shell");
+        let loaded = IngestionConfig::load(tmp.path()).expect("load");
+        env::remove_var("ANTHROPIC_API_KEY");
+
+        assert_eq!(
+            loaded.anthropic.api_key, "",
+            "skip state must suppress ANTHROPIC_API_KEY env fallback"
+        );
+        assert!(!loaded.enabled, "skip state stays disabled");
+        assert!(
+            !loaded.is_ready(),
+            "is_ready must be false when the user chose skip"
+        );
+    }
+
+    #[test]
+    fn redacted_view_does_not_advertise_configured_after_skip() {
+        // /api/ingestion/config consumers see the redacted view. After skip,
+        // the api_key field must NOT show "***configured***" — that placeholder
+        // would mislead the user into believing AI was wired up despite their
+        // explicit opt-out.
+        let _guard = anthropic_api_key_env_lock();
+        let tmp = tempfile::tempdir().unwrap();
+        write_skip_config(tmp.path());
+
+        env::set_var("ANTHROPIC_API_KEY", "sk-ant-from-shell");
+        let redacted = IngestionConfig::load(tmp.path()).unwrap().redacted();
+        env::remove_var("ANTHROPIC_API_KEY");
+
+        assert_eq!(
+            redacted.anthropic.api_key, "",
+            "redacted view must not surface a configured marker after skip"
+        );
+    }
+
+    #[test]
+    fn saved_enabled_true_beats_ingestion_enabled_env_var() {
+        // Symmetric guard: a saved explicit `true` must win over an env
+        // var that says `false`. Without this, a stale `INGESTION_ENABLED=false`
+        // exported by some launcher could quietly disable a user who
+        // configured AI through the UI.
+        let _guard = anthropic_api_key_env_lock();
+        let tmp = tempfile::tempdir().unwrap();
+        let path = tmp.path().join("ingestion_config.json");
+        let cfg = serde_json::json!({
+            "provider": "Anthropic",
+            "enabled": true,
+        });
+        std::fs::write(&path, serde_json::to_string_pretty(&cfg).unwrap()).unwrap();
+
+        env::set_var("INGESTION_ENABLED", "false");
+        let loaded = IngestionConfig::load(tmp.path()).expect("load");
+        env::remove_var("INGESTION_ENABLED");
+
+        assert!(loaded.enabled, "saved enabled=true must win over env=false");
+    }
+
+    #[test]
+    fn missing_saved_enabled_falls_through_to_env_var_default() {
+        // Backwards-compat: a saved file from before this field existed
+        // (or any UI save that doesn't include it) deserializes with
+        // `enabled: None`. The env-var fallback must continue to apply for
+        // those — flipping precedence on legacy installs would be a
+        // surprise behavior change, and the privacy invariant only
+        // depends on the explicit `Some(false)` case.
+        let _guard = anthropic_api_key_env_lock();
+        let tmp = tempfile::tempdir().unwrap();
+        let path = tmp.path().join("ingestion_config.json");
+        // No `enabled` field — mirrors a legacy file or a UI save predating
+        // the bug fix.
+        let cfg = serde_json::json!({ "provider": "Anthropic" });
+        std::fs::write(&path, serde_json::to_string_pretty(&cfg).unwrap()).unwrap();
+
+        env::set_var("INGESTION_ENABLED", "false");
+        let loaded = IngestionConfig::load(tmp.path()).expect("load");
+        env::remove_var("INGESTION_ENABLED");
+        assert!(
+            !loaded.enabled,
+            "with saved.enabled=None, INGESTION_ENABLED=false must apply"
+        );
+
+        env::remove_var("INGESTION_ENABLED");
+        let loaded = IngestionConfig::load(tmp.path()).expect("load");
+        assert!(
+            loaded.enabled,
+            "with saved.enabled=None and INGESTION_ENABLED unset, default true applies"
+        );
+    }
+
+    #[test]
+    fn missing_saved_file_still_fills_api_key_from_env() {
+        // Fresh-install / CI / docker invariant: with no saved file at all,
+        // the env-var fallback continues to work. The privacy fix is
+        // narrowly about the explicit-skip case, not about removing the
+        // CI bootstrap path.
+        let _guard = anthropic_api_key_env_lock();
+        let tmp = tempfile::tempdir().expect("tempdir");
+
+        env::set_var("ANTHROPIC_API_KEY", "sk-ant-bootstrap");
+        let loaded = IngestionConfig::load(tmp.path()).expect("load");
+        env::remove_var("ANTHROPIC_API_KEY");
+
+        assert_eq!(loaded.anthropic.api_key, "sk-ant-bootstrap");
+        // No saved enabled value → env_bool default of true applies.
+        assert!(loaded.enabled);
     }
 
     #[test]
