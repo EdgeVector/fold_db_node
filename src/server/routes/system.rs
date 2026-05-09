@@ -19,6 +19,17 @@ pub fn mark_server_start() {
     let _ = SERVER_START.set(Instant::now());
 }
 
+/// Seconds since `mark_server_start()` was called. Returns `0` when the server
+/// hasn't recorded a start time yet (e.g. tests that exercise handlers without
+/// booting `FoldHttpServer`). Both `/api/health` and `/api/system/status` read
+/// from this single source so the two endpoints can't drift.
+pub fn server_uptime_secs() -> u64 {
+    SERVER_START
+        .get()
+        .map(|t| t.elapsed().as_secs())
+        .unwrap_or(0)
+}
+
 /// Unauthenticated liveness endpoint. Returns `{ok, version, uptime_s}` with
 /// no middleware gating. Use this — not `/api/system/status` — for uptime
 /// monitors, load balancers, and `curl`-style probes. `/api/system/status`
@@ -32,10 +43,7 @@ pub fn mark_server_start() {
     )
 )]
 pub async fn health_check() -> impl Responder {
-    let uptime_s = SERVER_START
-        .get()
-        .map(|t| t.elapsed().as_secs())
-        .unwrap_or(0);
+    let uptime_s = server_uptime_secs();
     // Use FOLDDB_BUILD_VERSION (stamped from GITHUB_REF_NAME / git describe
     // in build.rs) for parity with `folddb --version`. CARGO_PKG_VERSION
     // reads the workspace manifest, which drifts: v0.3.6 tarballs reported
@@ -131,6 +139,23 @@ mod tests {
             let req = test::TestRequest::get().to_http_request();
             let resp = get_system_status(state).await.respond_to(&req);
             assert_eq!(resp.status(), 200);
+
+            // Regression guard: `uptime` must be seconds-since-start, NOT
+            // a Unix epoch timestamp. The pre-fix handler returned
+            // `SystemTime::now() - UNIX_EPOCH` (~1.78e9), which any UI
+            // rendering "uptime" displayed as ~56 years. A fresh test process
+            // has been alive for at most a few seconds, so this bound stays
+            // generous while still tripping immediately if epoch leaks back.
+            let body = resp.into_body();
+            let bytes = actix_web::body::to_bytes(body).await.unwrap_or_default();
+            let response: serde_json::Value = serde_json::from_slice(&bytes).unwrap_or_default();
+            let uptime = response["uptime"]
+                .as_u64()
+                .expect("uptime must be a u64");
+            assert!(
+                uptime < 1_000_000,
+                "uptime must be seconds-since-start, not epoch; got {uptime}"
+            );
         })
         .await;
     }
