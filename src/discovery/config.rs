@@ -95,6 +95,12 @@ pub async fn load_opt_in(
 }
 
 /// List all opted-in schemas.
+///
+/// Propagates deserialize errors rather than silently skipping corrupt rows —
+/// a corrupt opt-in is a bug we want to surface (per project standard
+/// "no silent failures"), not hide. Silently skipping an opt-in means the
+/// node stops publishing for that schema while the user still believes
+/// they're sharing it.
 pub async fn list_opt_ins(store: &dyn KvStore) -> Result<Vec<DiscoveryOptIn>, String> {
     let results = store
         .scan_prefix(CONFIG_PREFIX.as_bytes())
@@ -103,10 +109,9 @@ pub async fn list_opt_ins(store: &dyn KvStore) -> Result<Vec<DiscoveryOptIn>, St
 
     let mut configs = Vec::with_capacity(results.len());
     for (_key, value) in results {
-        match serde_json::from_slice::<DiscoveryOptIn>(&value) {
-            Ok(config) => configs.push(config),
-            Err(e) => tracing::warn!("Failed to deserialize discovery config: {}", e),
-        }
+        let config: DiscoveryOptIn = serde_json::from_slice(&value)
+            .map_err(|e| format!("Failed to deserialize discovery config: {}", e))?;
+        configs.push(config);
     }
     Ok(configs)
 }
