@@ -1,6 +1,8 @@
 use fold_db::schema::types::{KeyConfig, KeyValue, Mutation, MutationType};
 use fold_db_node::fold_node::config::NodeConfig;
+use fold_db_node::fold_node::FoldNode;
 use std::collections::HashMap;
+use tempfile::TempDir;
 
 pub mod schema_service;
 
@@ -12,6 +14,22 @@ pub fn create_test_node_config() -> NodeConfig {
     // Isolate the config directory so tests don't read the host machine's
     // saved UI state. Threaded onto NodeConfig.config_dir explicitly.
     NodeConfig::new(path.clone()).with_config_dir(path.join("config"))
+}
+
+#[allow(dead_code)]
+pub async fn setup_node() -> (FoldNode, TempDir) {
+    let temp_dir = TempDir::new().expect("Failed to create temp dir");
+    let temp_db_path = temp_dir.path().to_str().unwrap();
+
+    let keypair = fold_db::security::Ed25519KeyPair::generate().unwrap();
+    let config = NodeConfig::new(temp_db_path.into())
+        .with_schema_service_url("test://mock")
+        .with_seed_identity(fold_db_node::identity::identity_from_keypair(&keypair));
+    let node = FoldNode::new(config)
+        .await
+        .expect("Failed to create FoldNode");
+
+    (node, temp_dir)
 }
 
 /// Generate a valid Ed25519 keypair for tests, returned as base64 strings
