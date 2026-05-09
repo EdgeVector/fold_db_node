@@ -706,10 +706,7 @@ fn embedding_key_hash(key: &fold_db::schema::types::KeyValue) -> String {
 /// Skipped silently when the metadata doesn't pin a specific text fragment
 /// (legacy entries, face matches, missing `fragment_idx`) — those keep
 /// `value: null`. Lookup failures log a warn and leave the value null.
-async fn hydrate_fragment_text(
-    db: &fold_db::fold_db_core::FoldDB,
-    results: &mut [IndexResult],
-) {
+async fn hydrate_fragment_text(db: &fold_db::fold_db_core::FoldDB, results: &mut [IndexResult]) {
     let manager = match db.db_ops().native_index_manager() {
         Some(m) => m,
         None => return,

@@ -310,14 +310,7 @@ async fn test_value_contains_matched_fragment_text() {
     let processor = OperationProcessor::new(std::sync::Arc::new(node));
 
     let body = "Pancakes are best with maple syrup and butter on a Sunday morning.";
-    insert_post(
-        &processor,
-        "2024-01-01",
-        "Breakfast notes",
-        body,
-        "Alice",
-    )
-    .await;
+    insert_post(&processor, "2024-01-01", "Breakfast notes", body, "Alice").await;
 
     let results = processor
         .native_index_search("pancakes maple syrup", false)
