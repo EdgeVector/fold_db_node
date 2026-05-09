@@ -27,7 +27,7 @@ use crate::fold_node::FoldNode;
 use crate::handlers::fingerprints::import_identity_card::{
     import_identity_card, ImportIdentityCardRequest, IncomingIdentityCard,
 };
-use crate::handlers::response::{ApiResponse, HandlerError, HandlerResult};
+use crate::handlers::response::{get_db_guard, ApiResponse, HandlerError, HandlerResult};
 
 /// Shape returned by the list endpoint. Mirrors `LocalReceivedCard`
 /// 1:1 so the frontend can swap it directly into a row without a
@@ -244,9 +244,7 @@ pub async fn dismiss_received_card(
 fn load_metadata_store(
     node: &Arc<FoldNode>,
 ) -> Result<Arc<dyn fold_db::storage::traits::KvStore>, HandlerError> {
-    let db = node
-        .get_fold_db()
-        .map_err(|e| HandlerError::Internal(format!("failed to open db: {e}")))?;
+    let db = get_db_guard(node)?;
     Ok(db.get_db_ops().raw_metadata_store())
 }
 

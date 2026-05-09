@@ -1,4 +1,5 @@
 use crate::fold_node::OperationProcessor;
+use crate::handlers::response::get_db_guard;
 use crate::handlers::{ApiResponse, IntoHandlerError, IntoTypedHandlerError};
 use crate::server::http_server::AppState;
 use crate::server::routes::{handler_result_to_response, node_or_return};
@@ -100,9 +101,7 @@ async fn validate_contact_for_messaging(
 ) -> Result<ContactMessagingInfo, crate::handlers::HandlerError> {
     use crate::trust::contact_book::ContactBook;
 
-    let db = node.get_fold_db().map_err(|e| {
-        crate::handlers::HandlerError::Internal(format!("FoldDB not available: {e}"))
-    })?;
+    let db = get_db_guard(node)?;
     let book = ContactBook::load(&db).await.handler_err("load contacts")?;
     let contact = book
         .get(contact_public_key)

@@ -34,7 +34,7 @@
 
 use crate::fold_node::FoldNode;
 use crate::handlers::fingerprints::ingest::DetectedFaceDto;
-use crate::handlers::response::{ApiResponse, HandlerError, HandlerResult};
+use crate::handlers::response::{get_db_guard, ApiResponse, HandlerError, HandlerResult};
 use base64::{engine::general_purpose::STANDARD as BASE64_STANDARD, Engine as _};
 use serde::{Deserialize, Serialize};
 use std::sync::Arc;
@@ -84,9 +84,7 @@ pub async fn detect_faces(
         ));
     }
 
-    let db = node
-        .get_fold_db()
-        .map_err(|e| HandlerError::Internal(format!("failed to acquire FoldDB: {}", e)))?;
+    let db = get_db_guard(&node)?;
     let db_ops = db.get_db_ops();
     let native_idx = db_ops
         .native_index_manager()

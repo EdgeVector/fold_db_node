@@ -25,7 +25,7 @@ use crate::fingerprints::schemas::{
 };
 use crate::fingerprints::writer::write_records;
 use crate::fold_node::FoldNode;
-use crate::handlers::response::{ApiResponse, HandlerError, HandlerResult};
+use crate::handlers::response::{get_db_guard, ApiResponse, HandlerError, HandlerResult};
 use crate::trust::contact_book::ContactBook;
 use chrono::Utc;
 use regex::Regex;
@@ -46,9 +46,7 @@ pub struct ImportContactsResponse {
 }
 
 pub async fn import_contacts(node: Arc<FoldNode>) -> HandlerResult<ImportContactsResponse> {
-    let db = node
-        .get_fold_db()
-        .map_err(|e| HandlerError::Internal(format!("FoldDB not available: {}", e)))?;
+    let db = get_db_guard(&node)?;
     let book = ContactBook::load(&db)
         .await
         .map_err(|e| HandlerError::Internal(format!("failed to load contact book: {}", e)))?;
