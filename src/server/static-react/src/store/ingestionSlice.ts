@@ -139,76 +139,179 @@ interface JobProgressShape {
   result?: ImportResult;
 }
 
+// The /api/ingestion/progress LIST response carries `job_type` so the UI
+// can route apple-* jobs back to their source card. The IngestionProgress
+// type in the client doesn't model that field today; this local extension
+// keeps the cast narrow while we read it.
+interface ProgressListItem extends JobProgressShape {
+  id: string;
+  job_type?: string;
+}
+
+const APPLE_JOB_TYPE_TO_KEY: Record<string, AppleSourceKey> = {
+  "apple-notes": "notes",
+  "apple-photos": "photos",
+  "apple-calendar": "calendar",
+  "apple-reminders": "reminders",
+  "apple-contacts": "contacts",
+};
+
+// The backend wraps the list in `{ progress: [...] }` post-2026-04 but
+// older deployments return a bare array; tolerate both. Anything else
+// produces an empty list — reconcile is best-effort.
+const extractProgressList = (raw: unknown): ProgressListItem[] => {
+  if (Array.isArray(raw)) return raw as ProgressListItem[];
+  if (raw && typeof raw === "object") {
+    const inner = (raw as { progress?: unknown }).progress;
+    if (Array.isArray(inner)) return inner as ProgressListItem[];
+  }
+  return [];
+};
+
+// Plain Dispatch<Action> is intentionally narrower than AppDispatch — the
+// thunk's `dispatch` arg is typed `unknown`-bound (createAsyncThunk doesn't
+// thread RootState through), and we only emit plain action creators here,
+// so the loose signature avoids the cross-store ThunkDispatch mismatch.
+type AnyDispatch = (action: Action) => void;
+
+const settleAppleJobFromProgress = (
+  dispatch: AnyDispatch,
+  key: AppleSourceKey,
+  progressId: string,
+  data: JobProgressShape,
+) => {
+  const progress = data.progress_percentage ?? 0;
+  const message = data.status_message ?? data.message ?? "";
+
+  // Check is_failed BEFORE is_complete: a terminally-failed job has both
+  // flags set on the wire (see fold_db::progress::Job). Reading
+  // is_complete first would reconcile failures into the `done` state.
+  if (data.is_failed) {
+    dispatch(
+      appleJobFailed({
+        key,
+        message: data.error_message ?? data.message ?? "Import failed",
+      }),
+    );
+    return;
+  }
+  if (data.is_complete) {
+    dispatch(
+      appleJobCompleted({
+        key,
+        result: data.results ?? data.result ?? null,
+        message,
+      }),
+    );
+    return;
+  }
+  // Re-arm the listener's poll loop. appleJobStarted first (it clobbers
+  // progress/message back to "Starting..."), then appleJobProgressed so
+  // the UI doesn't briefly snap to 5% before the next poll tick.
+  dispatch(appleJobStarted({ key, progressId }));
+  dispatch(appleJobProgressed({ key, progress, message }));
+};
+
 /**
- * On app mount, walk every Apple job currently `running` in the store and
- * ask the backend for its current state. Without this, a job that finished
- * while the user was on another tab can stay stuck at "running 87%" forever
- * because the listener middleware only re-arms on a fresh `appleJobStarted`.
+ * Walk every Apple job state on app mount and bring it into agreement with
+ * the backend.
  *
- * For still-running jobs we re-dispatch `appleJobStarted` so the listener
- * forks a fresh poll loop (the middleware cancels any prior fork for the
- * same key — see appleJobsMiddleware.ts).
+ * Two paths run in parallel:
+ *
+ * 1. Per-id probe — for any slice entry whose status is `running` and which
+ *    already carries a `progressId`, fetch /ingestion/progress/{id} and
+ *    settle to done / error / re-armed running.
+ *
+ * 2. List adoption — fetch /ingestion/progress (the user's full job list)
+ *    and adopt apple-* job_types into source cards that are otherwise idle
+ *    or stuck "running but progressId=null". This is what recovers the
+ *    page-reload case: the slice resets to all-idle on reload, but the
+ *    backend's job is still alive (or already failed). Without this,
+ *    reload after a stuck-at-Starting import would never settle.
+ *
+ * Path (2) also closes the orphan-progressId case from
+ * dogfood-2026-05-10: if `appleJobStarting` fired but `appleJobStarted`
+ * never did (e.g. tab was closed mid-await), the next mount still walks
+ * the user back into the right state by matching on job_type.
  */
 export const reconcileAppleJobs = createAsyncThunk(
   "ingestion/reconcileAppleJobs",
   async (_, { dispatch, getState }) => {
-    // getState() is typed `unknown` here on purpose — the thunk doesn't
-    // bind a RootState generic so it stays dispatchable from test stores
-    // that use a slice-only reducer. Accessing only the ingestion slice
-    // is the entire surface, so the local cast is narrow and safe.
+    // getState() is typed via RootState here — accessing only the
+    // ingestion slice keeps the cast narrow and safe across test stores
+    // that use a slice-only reducer.
     const { appleJobs } = (getState() as RootState).ingestion;
-    const running = (
-      Object.entries(appleJobs) as [AppleSourceKey, AppleJob][]
-    ).filter(
-      ([, job]) => job.status === "running" && job.progressId !== null,
-    );
+    const knownProgressIds = new Set<string>();
+    const orphans: AppleSourceKey[] = []; // running, but no progressId yet
+    const idleKeys: AppleSourceKey[] = [];
 
-    await Promise.all(
-      running.map(async ([key, job]) => {
-        const progressId = job.progressId as string;
-        try {
-          const resp = await ingestionClient.getJobProgress(progressId);
-          if (!resp.success || !resp.data) return;
-          const data = resp.data as JobProgressShape;
-          const progress = data.progress_percentage ?? 0;
-          const message = data.status_message ?? data.message ?? "";
+    const perIdProbes: Array<Promise<void>> = [];
+    for (const [key, job] of Object.entries(appleJobs) as [
+      AppleSourceKey,
+      AppleJob,
+    ][]) {
+      if (job.status === "running" && job.progressId !== null) {
+        const progressId = job.progressId;
+        knownProgressIds.add(progressId);
+        perIdProbes.push(
+          (async () => {
+            try {
+              const resp = await ingestionClient.getJobProgress(progressId);
+              if (!resp.success || !resp.data) return;
+              settleAppleJobFromProgress(
+                dispatch,
+                key,
+                progressId,
+                resp.data as JobProgressShape,
+              );
+            } catch {
+              // One failed probe must not kill the others. We only mark a
+              // job failed when the backend explicitly says so — never on
+              // a transient network error.
+            }
+          })(),
+        );
+      } else if (job.status === "running" && job.progressId === null) {
+        orphans.push(key);
+      } else if (job.status === "idle") {
+        idleKeys.push(key);
+      }
+    }
 
-          // Check is_failed BEFORE is_complete: when a job terminates in
-          // failure the backend stamps both flags. Reading is_complete
-          // first would reconcile a failed job into the `done` state.
-          if (data.is_failed) {
-            dispatch(
-              appleJobFailed({
-                key,
-                message:
-                  data.error_message ?? data.message ?? "Import failed",
-              }),
-            );
-            return;
-          }
-          if (data.is_complete) {
-            dispatch(
-              appleJobCompleted({
-                key,
-                result: data.results ?? data.result ?? null,
-                message,
-              }),
-            );
-            return;
-          }
-          // Re-arm the listener's poll loop. appleJobStarted first (it
-          // clobbers progress/message back to "Starting..."), then
-          // appleJobProgressed to immediately reflect the latest backend
-          // state — avoids a visible snap to 5% before the next poll tick.
-          dispatch(appleJobStarted({ key, progressId }));
-          dispatch(appleJobProgressed({ key, progress, message }));
-        } catch {
-          // Swallow individual fetch errors — one failed reconcile
-          // shouldn't kill the others. Don't surface as appleJobFailed;
-          // we only mark a job failed when the backend explicitly says so.
+    const listProbe = (async () => {
+      try {
+        const resp = await ingestionClient.getAllProgress();
+        if (!resp.success || !resp.data) return;
+        const items = extractProgressList(resp.data);
+
+        // Pick the most recent unsettled apple-* job per source key. The
+        // server returns newest-first, so we keep the first match per key
+        // and skip everything we've already probed via the per-id path.
+        const byKey = new Map<AppleSourceKey, ProgressListItem>();
+        for (const item of items) {
+          if (!item.id || !item.job_type) continue;
+          if (knownProgressIds.has(item.id)) continue;
+          const key = APPLE_JOB_TYPE_TO_KEY[item.job_type];
+          if (!key) continue;
+          if (byKey.has(key)) continue;
+          byKey.set(key, item);
         }
-      }),
-    );
+
+        for (const [key, item] of byKey) {
+          // Only adopt into idle slots and orphan running-but-null slots.
+          // A slot already carrying a progressId is owned by the per-id
+          // probe; touching it here would race the listener.
+          if (!idleKeys.includes(key) && !orphans.includes(key)) continue;
+          settleAppleJobFromProgress(dispatch, key, item.id, item);
+        }
+      } catch {
+        // List probe failure is non-fatal — leave any existing slice
+        // entries untouched. Worst case the user sees the pre-reload
+        // state until they retry.
+      }
+    })();
+
+    await Promise.all([...perIdProbes, listProbe]);
   },
 );
 
