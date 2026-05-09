@@ -20,6 +20,10 @@ use x25519_dalek::{PublicKey, StaticSecret};
 const CONN_REQ_PREFIX: &str = "discovery:conn_req:";
 const CONN_SENT_PREFIX: &str = "discovery:conn_sent:";
 
+fn serialize_to_vec<T: serde::Serialize>(value: &T, what: &str) -> Result<Vec<u8>, String> {
+    serde_json::to_vec(value).map_err(|e| format!("Failed to serialize {what}: {e}"))
+}
+
 /// Derive an X25519 key pair for a specific pseudonym.
 /// This produces a unique key pair per pseudonym, preserving unlinkability.
 pub fn derive_pseudonym_keypair(master_key: &[u8], pseudonym: &Uuid) -> (StaticSecret, PublicKey) {
@@ -107,8 +111,7 @@ pub fn encrypt_connection_message(
         .map_err(|e| format!("HKDF expand failed: {}", e))?;
 
     // Encrypt payload
-    let plaintext =
-        serde_json::to_vec(payload).map_err(|e| format!("Failed to serialize payload: {}", e))?;
+    let plaintext = serialize_to_vec(payload, "payload")?;
 
     let cipher =
         Aes256Gcm::new_from_slice(&aes_key).map_err(|e| format!("Invalid AES key: {}", e))?;
@@ -191,8 +194,7 @@ pub fn encrypt_message<T: Serialize>(
     hk.expand(b"connection-request-aes", &mut aes_key)
         .map_err(|e| format!("HKDF expand failed: {}", e))?;
 
-    let plaintext =
-        serde_json::to_vec(payload).map_err(|e| format!("Failed to serialize payload: {}", e))?;
+    let plaintext = serialize_to_vec(payload, "payload")?;
 
     let cipher =
         Aes256Gcm::new_from_slice(&aes_key).map_err(|e| format!("Invalid AES key: {}", e))?;
@@ -360,8 +362,7 @@ pub async fn save_received_request(
     request: &LocalConnectionRequest,
 ) -> Result<(), String> {
     let key = format!("{}{}", CONN_REQ_PREFIX, request.request_id);
-    let value =
-        serde_json::to_vec(request).map_err(|e| format!("Failed to serialize request: {}", e))?;
+    let value = serialize_to_vec(request, "request")?;
     store
         .put(key.as_bytes(), value)
         .await
@@ -410,8 +411,7 @@ pub async fn update_request_status(
     request.status = status.to_string();
     request.responded_at = Some(chrono::Utc::now().to_rfc3339());
 
-    let updated =
-        serde_json::to_vec(&request).map_err(|e| format!("Failed to serialize request: {}", e))?;
+    let updated = serialize_to_vec(&request, "request")?;
     store
         .put(key.as_bytes(), updated)
         .await
