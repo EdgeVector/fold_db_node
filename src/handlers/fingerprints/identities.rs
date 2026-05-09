@@ -36,7 +36,7 @@ use serde_json::Value;
 use crate::fingerprints::canonical_names;
 use crate::fingerprints::schemas::{IDENTITY, IDENTITY_RECEIPT};
 use crate::fold_node::FoldNode;
-use crate::handlers::response::{ApiResponse, HandlerError, HandlerResult};
+use crate::handlers::response::{ApiResponse, HandlerError, HandlerResult, IntoHandlerError};
 
 /// One row in the audit list. Shape mirrors Identity 1:1 plus the
 /// joined IdentityReceipt fields so the UI can render a single flat
@@ -110,7 +110,7 @@ pub async fn list_identities(node: Arc<FoldNode>) -> HandlerResult<ListIdentitie
     let identity_records = processor
         .execute_query_json(identity_query)
         .await
-        .map_err(|e| HandlerError::Internal(format!("identity scan failed: {}", e)))?;
+        .handler_err("scan identities")?;
 
     // 2. Full scan of IdentityReceipt records. Build a lookup
     //    keyed by identity_id so the join is O(n) not O(n*m).
@@ -131,7 +131,7 @@ pub async fn list_identities(node: Arc<FoldNode>) -> HandlerResult<ListIdentitie
     let receipt_records = processor
         .execute_query_json(receipt_query)
         .await
-        .map_err(|e| HandlerError::Internal(format!("receipt scan failed: {}", e)))?;
+        .handler_err("scan identity receipts")?;
 
     let mut receipts_by_identity: HashMap<String, ReceiptFields> = HashMap::new();
     for record in &receipt_records {

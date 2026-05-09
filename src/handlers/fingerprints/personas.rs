@@ -27,7 +27,9 @@ use crate::fingerprints::canonical_names;
 use crate::fingerprints::resolver::{PersonaResolver, PersonaSpec, ResolveDiagnostics};
 use crate::fingerprints::schemas::{EDGE, FINGERPRINT, MENTION, MENTION_BY_FINGERPRINT, PERSONA};
 use crate::fold_node::FoldNode;
-use crate::handlers::response::{require_non_empty, ApiResponse, HandlerError, HandlerResult};
+use crate::handlers::response::{
+    require_non_empty, ApiResponse, HandlerError, HandlerResult, IntoHandlerError,
+};
 use fold_db::schema::types::key_value::KeyValue;
 use fold_db::schema::types::operations::{MutationType, Query};
 use serde::{Deserialize, Serialize};
@@ -198,7 +200,7 @@ pub async fn list_personas(node: Arc<FoldNode>) -> HandlerResult<ListPersonasRes
     let records = processor
         .execute_query_json(query)
         .await
-        .map_err(|e| HandlerError::Internal(format!("persona list query failed: {}", e)))?;
+        .handler_err("query persona list")?;
 
     let resolver = PersonaResolver::new(node.clone());
     let mut personas = Vec::with_capacity(records.len());
@@ -211,7 +213,7 @@ pub async fn list_personas(node: Arc<FoldNode>) -> HandlerResult<ListPersonasRes
         let result = resolver
             .resolve(&spec)
             .await
-            .map_err(|e| HandlerError::Internal(format!("persona resolve failed: {}", e)))?;
+            .handler_err("resolve persona")?;
 
         let summary = PersonaSummary {
             id: spec.persona_id.clone(),
@@ -289,7 +291,7 @@ pub async fn delete_persona(
     let records = processor
         .execute_query_json(query)
         .await
-        .map_err(|e| HandlerError::Internal(format!("persona lookup failed: {}", e)))?;
+        .handler_err("look up persona")?;
     let record = records
         .first()
         .ok_or_else(|| HandlerError::NotFound(format!("persona '{}' not found", persona_id)))?;
@@ -360,7 +362,7 @@ pub async fn get_persona(
     let records = processor
         .execute_query_json(query)
         .await
-        .map_err(|e| HandlerError::Internal(format!("persona query failed: {}", e)))?;
+        .handler_err("query persona")?;
 
     let record = records
         .first()
@@ -375,7 +377,7 @@ pub async fn get_persona(
     let result = resolver
         .resolve(&spec)
         .await
-        .map_err(|e| HandlerError::Internal(format!("persona resolve failed: {}", e)))?;
+        .handler_err("resolve persona")?;
 
     let aliases = string_array_field(fields, "aliases");
     let mut fp_ids: Vec<String> = result.fingerprint_ids().iter().cloned().collect();
@@ -922,7 +924,7 @@ pub async fn apply_persona_patch(
     let records = processor
         .execute_query_json(query)
         .await
-        .map_err(|e| HandlerError::Internal(format!("persona query failed: {}", e)))?;
+        .handler_err("query persona")?;
     let record = records
         .first()
         .ok_or_else(|| HandlerError::NotFound(format!("persona '{}' not found", persona_id)))?;
@@ -1421,7 +1423,7 @@ async fn fetch_persona_fields(
     let records = processor
         .execute_query_json(query)
         .await
-        .map_err(|e| HandlerError::Internal(format!("persona query failed: {}", e)))?;
+        .handler_err("query persona")?;
     let record = records
         .first()
         .ok_or_else(|| HandlerError::NotFound(format!("persona '{}' not found", persona_id)))?;

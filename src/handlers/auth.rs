@@ -102,8 +102,7 @@ pub async fn delete_account(
     // Step 1: revoke the Exemem account. Uses the same signed CLI register
     // pattern as auth refresh — but here we send a DELETE.
     let pool = node_manager.get_or_init_sled_pool().await;
-    let identity = crate::identity::load(Arc::clone(&pool))
-        .map_err(|e| HandlerError::Internal(format!("read identity: {e}")))?;
+    let identity = crate::identity::load(Arc::clone(&pool)).handler_err("read identity")?;
 
     if identity.is_some() {
         match revoke_exemem_account().await {

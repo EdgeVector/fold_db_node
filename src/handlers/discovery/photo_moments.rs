@@ -129,7 +129,7 @@ pub async fn moment_opt_in(
     let contact_book = op
         .load_contact_book()
         .await
-        .map_err(|e| HandlerError::Internal(format!("load contact book: {}", e)))?;
+        .handler_err("load contact book")?;
     match authorize_moment_peer(&contact_book, &req.peer_pseudonym) {
         MomentPeerAuthz::Authorized => {}
         MomentPeerAuthz::UnknownPeer => {

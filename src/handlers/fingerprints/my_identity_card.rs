@@ -37,7 +37,7 @@ use crate::fingerprints::canonical_names;
 use crate::fingerprints::keys::identity_id;
 use crate::fingerprints::schemas::IDENTITY;
 use crate::fold_node::FoldNode;
-use crate::handlers::response::{ApiResponse, HandlerError, HandlerResult};
+use crate::handlers::response::{ApiResponse, HandlerError, HandlerResult, IntoHandlerError};
 
 /// Payload returned by `GET /my-identity-card`. Mirrors the Identity
 /// schema 1:1 minus the `id` field (which is always `id_<pub_key>`
@@ -86,7 +86,7 @@ pub async fn get_my_identity_card(node: Arc<FoldNode>) -> HandlerResult<MyIdenti
     let records = processor
         .execute_query_json(query)
         .await
-        .map_err(|e| HandlerError::Internal(format!("identity query failed: {}", e)))?;
+        .handler_err("query identity")?;
 
     let record = records.first().ok_or_else(|| {
         HandlerError::NotFound(

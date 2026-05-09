@@ -55,7 +55,9 @@ use crate::fingerprints::schemas::{IDENTITY, PERSONA};
 use crate::fingerprints::self_identity::IdentityCardPayload;
 use crate::fold_node::FoldNode;
 use crate::handlers::fingerprints::my_identity_card::MyIdentityCardResponse;
-use crate::handlers::response::{require_non_empty, ApiResponse, HandlerError, HandlerResult};
+use crate::handlers::response::{
+    require_non_empty, ApiResponse, HandlerError, HandlerResult, IntoHandlerError,
+};
 
 /// Request body for the reissue endpoint. Both fields are optional
 /// — the handler enforces "at least one op" up front.
@@ -160,7 +162,7 @@ pub async fn reissue_identity_card(
     let records = processor
         .execute_query_json(query)
         .await
-        .map_err(|e| HandlerError::Internal(format!("identity query failed: {}", e)))?;
+        .handler_err("query identity")?;
     let record = records.first().ok_or_else(|| {
         HandlerError::NotFound(
             "self-Identity not yet issued — complete the setup wizard first".to_string(),
@@ -244,7 +246,7 @@ pub async fn reissue_identity_card(
             MutationType::Update,
         )
         .await
-        .map_err(|e| HandlerError::Internal(format!("failed to update Identity record: {}", e)))?;
+        .handler_err("update Identity record")?;
 
     // 4. Update the Me persona's name. We do this only when the
     //    display_name actually changed — otherwise there's nothing
@@ -283,7 +285,7 @@ fn new_signature_to_response(sig_bytes: [u8; 64]) -> String {
 
 fn load_signing_key(node: &Arc<FoldNode>) -> Result<SigningKey, HandlerError> {
     let seed = FoldNode::extract_ed25519_seed(node.get_node_private_key())
-        .map_err(|e| HandlerError::Internal(format!("failed to load node signing key: {}", e)))?;
+        .handler_err("load node signing key")?;
     Ok(SigningKey::from_bytes(&seed))
 }
 
@@ -323,7 +325,7 @@ async fn update_me_persona_name(
     let records = processor
         .execute_query_json(query)
         .await
-        .map_err(|e| HandlerError::Internal(format!("persona query failed: {}", e)))?;
+        .handler_err("query persona")?;
 
     let me = records.iter().find(|r| {
         r.get("fields")
@@ -362,7 +364,7 @@ async fn update_me_persona_name(
             MutationType::Update,
         )
         .await
-        .map_err(|e| HandlerError::Internal(format!("failed to update Me persona: {}", e)))?;
+        .handler_err("update Me persona")?;
     Ok(())
 }
 

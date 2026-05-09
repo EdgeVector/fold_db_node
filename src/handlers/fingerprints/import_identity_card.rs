@@ -76,7 +76,7 @@ use crate::fold_node::FoldNode;
 use crate::handlers::fingerprints::personas::{
     apply_persona_patch, PersonaDetailResponse, PersonaPatch,
 };
-use crate::handlers::response::{ApiResponse, HandlerError, HandlerResult};
+use crate::handlers::response::{ApiResponse, HandlerError, HandlerResult, IntoHandlerError};
 
 /// Incoming card body. Shape mirrors `MyIdentityCardResponse` so a
 /// node can paste the JSON from another node's `/my-identity-card`
@@ -382,7 +382,7 @@ async fn identity_exists(node: &Arc<FoldNode>, identity_id: &str) -> Result<bool
     let records = processor
         .execute_query_json(query)
         .await
-        .map_err(|e| HandlerError::Internal(format!("identity probe query failed: {}", e)))?;
+        .handler_err("probe for existing identity")?;
     Ok(!records.is_empty())
 }
 
