@@ -34,7 +34,9 @@
 
 use crate::fold_node::FoldNode;
 use crate::handlers::fingerprints::ingest::DetectedFaceDto;
-use crate::handlers::response::{get_db_guard, ApiResponse, HandlerError, HandlerResult};
+use crate::handlers::response::{
+    get_db_guard, ApiResponse, HandlerError, HandlerResult, IntoHandlerError,
+};
 use base64::{engine::general_purpose::STANDARD as BASE64_STANDARD, Engine as _};
 use serde::{Deserialize, Serialize};
 use std::sync::Arc;
@@ -98,7 +100,7 @@ pub async fn detect_faces(
 
     let embeddings = native_idx
         .detect_faces(&image_bytes)
-        .map_err(|e| HandlerError::Internal(format!("face detection failed: {}", e)))?;
+        .handler_err("detect faces")?;
 
     let faces: Vec<DetectedFaceDto> = embeddings
         .into_iter()

@@ -23,7 +23,7 @@
 use crate::fingerprints::canonical_names;
 use crate::fingerprints::schemas::INGESTION_ERROR;
 use crate::fold_node::FoldNode;
-use crate::handlers::response::{ApiResponse, HandlerError, HandlerResult};
+use crate::handlers::response::{ApiResponse, HandlerError, HandlerResult, IntoHandlerError};
 use fold_db::schema::types::key_value::KeyValue;
 use fold_db::schema::types::operations::{MutationType, Query};
 use serde::{Deserialize, Serialize};
@@ -92,7 +92,7 @@ pub async fn list_ingestion_errors(
     let records = processor
         .execute_query_json(query)
         .await
-        .map_err(|e| HandlerError::Internal(format!("ingestion-error query failed: {}", e)))?;
+        .handler_err("query ingestion errors")?;
 
     let mut errors: Vec<IngestionErrorView> = Vec::with_capacity(records.len());
     for record in records {
@@ -158,7 +158,7 @@ pub async fn resolve_ingestion_error(
     let records = processor
         .execute_query_json(query)
         .await
-        .map_err(|e| HandlerError::Internal(format!("ingestion-error query failed: {}", e)))?;
+        .handler_err("query ingestion errors")?;
     let record = records.first().ok_or_else(|| {
         HandlerError::NotFound(format!("ingestion error '{}' not found", error_id))
     })?;

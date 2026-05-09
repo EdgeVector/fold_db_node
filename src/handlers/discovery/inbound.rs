@@ -330,7 +330,7 @@ async fn dispatch_decrypted_message(
             };
             connection::save_received_request(store, &local_req)
                 .await
-                .map_err(|e| HandlerError::Internal(format!("save received request: {e}")))?;
+                .handler_err("save received request")?;
             Ok(DispatchOutcome::Handled)
         }
         "accept" => {
@@ -349,7 +349,7 @@ async fn dispatch_decrypted_message(
                 "accepted",
             )
             .await
-            .map_err(|e| HandlerError::Internal(format!("update sent request: {e}")))?;
+            .handler_err("update sent request to accepted")?;
 
             // Use the preferred_role from the original sent request, falling
             // back to "acquaintance" if unset or if the sent request wasn't found.
@@ -384,7 +384,7 @@ async fn dispatch_decrypted_message(
                 "declined",
             )
             .await
-            .map_err(|e| HandlerError::Internal(format!("update sent request: {e}")))?;
+            .handler_err("update sent request to declined")?;
             Ok(DispatchOutcome::Handled)
         }
         "query_request" => {
@@ -479,7 +479,7 @@ async fn dispatch_decrypted_message(
             let schema_states = db
                 .schema_manager()
                 .get_schema_states()
-                .map_err(|e| HandlerError::Internal(format!("get schema states: {e}")))?;
+                .handler_err("get schema states")?;
             match validate_data_share_schemas(&schema_states, &payload) {
                 DataShareSchemaCheck::AllApproved => {}
                 DataShareSchemaCheck::UnknownOrUnapproved { schema_name } => {
@@ -699,7 +699,7 @@ async fn handle_incoming_query(
 
     // Encryption failure is a transient crypto error — propagate for retry.
     let encrypted = connection::encrypt_message(&reply_pk_bytes, &response)
-        .map_err(|e| HandlerError::Internal(format!("encrypt query response: {e}")))?;
+        .handler_err("encrypt query response")?;
 
     // Parse-permanent: sender pseudonym malformed UUID. Not recoverable.
     let sender_pseudonym: uuid::Uuid = match payload.sender_pseudonym.parse() {
@@ -715,7 +715,7 @@ async fn handle_incoming_query(
     publisher
         .connect(sender_pseudonym, encrypted_b64, Some(our_pseudonym))
         .await
-        .map_err(|e| HandlerError::Internal(format!("send query response: {e}")))?;
+        .handler_err("send query response")?;
     Ok(DispatchOutcome::Handled)
 }
 
@@ -739,7 +739,7 @@ async fn handle_incoming_query_response(
     // transient and propagates.
     let existing = async_query::get_async_query(store, &payload.request_id)
         .await
-        .map_err(|e| HandlerError::Internal(format!("load async query: {e}")))?;
+        .handler_err("load async query")?;
     if existing.is_none() {
         tracing::warn!(
             "Query response for unknown request {} (pruned or never sent from this node)",
@@ -752,10 +752,7 @@ async fn handle_incoming_query_response(
 
     let results = if payload.success {
         match payload.results.as_ref() {
-            Some(r) => Some(
-                serde_json::to_value(r)
-                    .map_err(|e| HandlerError::Internal(format!("serialize query results: {e}")))?,
-            ),
+            Some(r) => Some(serde_json::to_value(r).handler_err("serialize query results")?),
             None => None,
         }
     } else {
@@ -769,7 +766,7 @@ async fn handle_incoming_query_response(
         payload.error.clone(),
     )
     .await
-    .map_err(|e| HandlerError::Internal(format!("update async query result: {e}")))?;
+    .handler_err("update async query result")?;
     Ok(DispatchOutcome::Handled)
 }
 
@@ -824,7 +821,7 @@ async fn handle_incoming_identity_card(
     };
     received_card::save_received_card(store, &row)
         .await
-        .map_err(|e| HandlerError::Internal(format!("save received card: {e}")))?;
+        .handler_err("save received identity card")?;
     tracing::info!(
         "fingerprints.inbound: stored identity_card_send (msg_id={}) from pubkey='{}' as pending",
         payload.message_id,
@@ -850,14 +847,12 @@ async fn handle_incoming_schema_list_request(
     );
 
     let op = OperationProcessor::from_ref(node);
-    let db = op
-        .get_db_public()
-        .map_err(|e| HandlerError::Internal(format!("get db for schema list: {e}")))?;
+    let db = op.get_db_public().handler_err("get db for schema list")?;
 
     let all_schemas = db
         .schema_manager()
         .get_schemas()
-        .map_err(|e| HandlerError::Internal(format!("get schemas: {e}")))?;
+        .handler_err("get schemas")?;
     let schemas: Vec<SchemaInfo> = all_schemas
         .values()
         .map(|s| SchemaInfo {
@@ -892,7 +887,7 @@ async fn handle_incoming_schema_list_request(
     };
 
     let encrypted = connection::encrypt_message(&reply_pk_bytes, &response)
-        .map_err(|e| HandlerError::Internal(format!("encrypt schema list response: {e}")))?;
+        .handler_err("encrypt schema list response")?;
 
     let sender_pseudonym: uuid::Uuid = match payload.sender_pseudonym.parse() {
         Ok(u) => u,
@@ -907,7 +902,7 @@ async fn handle_incoming_schema_list_request(
     publisher
         .connect(sender_pseudonym, encrypted_b64, Some(our_pseudonym))
         .await
-        .map_err(|e| HandlerError::Internal(format!("send schema list response: {e}")))?;
+        .handler_err("send schema list response")?;
     Ok(DispatchOutcome::Handled)
 }
 
@@ -927,7 +922,7 @@ async fn handle_incoming_schema_list_response(
 
     let existing = async_query::get_async_query(store, &payload.request_id)
         .await
-        .map_err(|e| HandlerError::Internal(format!("load async query: {e}")))?;
+        .handler_err("load async query")?;
     if existing.is_none() {
         tracing::warn!(
             "Schema list response for unknown request {} (pruned or never sent from this node)",
@@ -941,11 +936,10 @@ async fn handle_incoming_schema_list_response(
         });
     }
 
-    let results = serde_json::to_value(&payload.schemas)
-        .map_err(|e| HandlerError::Internal(format!("serialize schema list: {e}")))?;
+    let results = serde_json::to_value(&payload.schemas).handler_err("serialize schema list")?;
     async_query::update_async_query_result(store, &payload.request_id, Some(results), None)
         .await
-        .map_err(|e| HandlerError::Internal(format!("update schema list result: {e}")))?;
+        .handler_err("update schema list result")?;
     Ok(DispatchOutcome::Handled)
 }
 
@@ -1090,7 +1084,7 @@ async fn handle_incoming_referral_query(
     };
 
     let encrypted = connection::encrypt_message(&reply_pk_bytes, &response)
-        .map_err(|e| HandlerError::Internal(format!("encrypt referral response: {e}")))?;
+        .handler_err("encrypt referral response")?;
 
     let encrypted_b64 = B64.encode(&encrypted);
 
@@ -1106,7 +1100,7 @@ async fn handle_incoming_referral_query(
     publisher
         .connect(sender_uuid, encrypted_b64, Some(our_pseudonym))
         .await
-        .map_err(|e| HandlerError::Internal(format!("send referral response: {e}")))?;
+        .handler_err("send referral response")?;
     tracing::info!(
         "Sent referral response for query {} (known as {})",
         payload.query_id,
@@ -1130,7 +1124,7 @@ async fn handle_incoming_referral_response(
     let entries = store
         .scan_prefix(b"discovery:conn_req:")
         .await
-        .map_err(|e| HandlerError::Internal(format!("scan connection requests: {e}")))?;
+        .handler_err("scan connection requests")?;
 
     let mut found_key: Option<Vec<u8>> = None;
     let mut found_req: Option<LocalConnectionRequest> = None;
@@ -1196,7 +1190,7 @@ async fn handle_incoming_referral_response(
     store
         .put(&sled_key, updated)
         .await
-        .map_err(|e| HandlerError::Internal(format!("save vouched connection request: {e}")))?;
+        .handler_err("save vouched connection request")?;
     tracing::info!(
         "Added vouch for referral query {} (known as '{}')",
         payload.query_id,
@@ -1399,7 +1393,7 @@ async fn process_data_share(
             })?,
         )
         .await
-        .map_err(|e| HandlerError::Internal(format!("store data share notification: {e}")))?;
+        .handler_err("store data share notification")?;
 
     tracing::info!(
         "Received {} records from {} (schemas: {})",

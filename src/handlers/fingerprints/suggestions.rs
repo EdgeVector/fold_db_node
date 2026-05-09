@@ -24,7 +24,7 @@ use crate::fold_node::{FoldNode, OperationProcessor};
 use crate::handlers::fingerprints::personas::{
     get_persona, FingerprintView, PersonaDetailResponse,
 };
-use crate::handlers::response::{ApiResponse, HandlerError, HandlerResult};
+use crate::handlers::response::{ApiResponse, HandlerError, HandlerResult, IntoHandlerError};
 use fold_db::schema::types::field::HashRangeFilter;
 use fold_db::schema::types::key_value::KeyValue;
 use fold_db::schema::types::operations::{MutationType, Query};
@@ -279,7 +279,7 @@ async fn load_all_fingerprint_ids(
     let records = processor
         .execute_query_json(query)
         .await
-        .map_err(|e| HandlerError::Internal(format!("fingerprint scan failed: {}", e)))?;
+        .handler_err("scan fingerprints")?;
     let mut ids: Vec<String> = Vec::with_capacity(records.len());
     for record in records {
         if let Some(fields) = record.get("fields") {
@@ -312,7 +312,7 @@ async fn load_persona_seed_sets(
     let records = processor
         .execute_query_json(query)
         .await
-        .map_err(|e| HandlerError::Internal(format!("persona scan failed: {}", e)))?;
+        .handler_err("scan personas")?;
     let mut sets: Vec<HashSet<String>> = Vec::new();
     for record in records {
         let Some(fields) = record.get("fields") else {
@@ -397,7 +397,7 @@ async fn edge_ids_touching(
     let results = processor
         .execute_query_json(query)
         .await
-        .map_err(|e| HandlerError::Internal(format!("edge-by-fp query failed: {}", e)))?;
+        .handler_err("query edges by fingerprint")?;
     Ok(results
         .into_iter()
         .filter_map(|r| {
@@ -436,7 +436,7 @@ async fn fetch_edge_endpoints(
     let records = processor
         .execute_query_json(query)
         .await
-        .map_err(|e| HandlerError::Internal(format!("edge fetch failed: {}", e)))?;
+        .handler_err("fetch edge endpoints")?;
     let Some(record) = records.first() else {
         return Ok(None);
     };
@@ -492,7 +492,7 @@ async fn count_component_mentions(
         let results = processor
             .execute_query_json(query)
             .await
-            .map_err(|e| HandlerError::Internal(format!("mention-by-fp query failed: {}", e)))?;
+            .handler_err("query mentions by fingerprint")?;
         for r in results {
             if let Some(id) = r
                 .get("fields")

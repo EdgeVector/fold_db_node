@@ -45,7 +45,7 @@ pub(crate) async fn try_acquire_connect_sentinel(
     if let Some(existing) = store
         .get(key.as_bytes())
         .await
-        .map_err(|e| HandlerError::Internal(format!("sentinel read: {e}")))?
+        .handler_err("read connect_in_flight sentinel")?
     {
         let existing_ts = std::str::from_utf8(&existing)
             .ok()
@@ -61,7 +61,7 @@ pub(crate) async fn try_acquire_connect_sentinel(
     store
         .put(key.as_bytes(), now_ts.to_string().into_bytes())
         .await
-        .map_err(|e| HandlerError::Internal(format!("sentinel write: {e}")))?;
+        .handler_err("write connect_in_flight sentinel")?;
     Ok(SentinelAcquire::Acquired)
 }
 

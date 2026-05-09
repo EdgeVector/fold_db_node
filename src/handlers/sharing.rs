@@ -252,7 +252,7 @@ pub async fn generate_invite(
     })?;
     let messaging_pk_bytes = B64
         .decode(messaging_pk_b64)
-        .map_err(|e| HandlerError::Internal(format!("Invalid messaging public key: {e}")))?;
+        .handler_err("decode messaging public key")?;
     if messaging_pk_bytes.len() != 32 {
         return Err(HandlerError::Internal(
             "Messaging public key must be 32 bytes".to_string(),
@@ -386,7 +386,7 @@ pub async fn generate_and_send_invite(
     })?;
     let messaging_pk_bytes = B64
         .decode(messaging_pk_b64)
-        .map_err(|e| HandlerError::Internal(format!("Invalid messaging public key: {e}")))?;
+        .handler_err("decode messaging public key")?;
     if messaging_pk_bytes.len() != 32 {
         return Err(HandlerError::Internal(
             "Messaging public key must be 32 bytes".to_string(),
@@ -412,7 +412,7 @@ pub async fn generate_and_send_invite(
     // keys so compromise of one transient does not reveal the secret.
     let encrypted_secret =
         crate::discovery::connection::encrypt_message(&target_pk, &rule.share_e2e_secret)
-            .map_err(|e| HandlerError::Internal(format!("encrypt share secret: {e}")))?;
+            .handler_err("encrypt share secret")?;
 
     let share_invite_payload = ShareInvitePayload {
         message_type: "share_invite".to_string(),
@@ -425,7 +425,7 @@ pub async fn generate_and_send_invite(
 
     // Wrap in the envelope encrypted to the recipient's messaging pubkey.
     let envelope = crate::discovery::connection::encrypt_message(&target_pk, &share_invite_payload)
-        .map_err(|e| HandlerError::Internal(format!("encrypt envelope: {e}")))?;
+        .handler_err("encrypt share invite envelope")?;
 
     // Sender pseudonym (for the bulletin board "from" field) — same derivation
     // as used by `send_data_share`.

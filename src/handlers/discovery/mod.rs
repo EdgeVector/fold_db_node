@@ -680,7 +680,7 @@ async fn connect_inner(
     };
 
     let encrypted = connection::encrypt_connection_message(&target_pk, &payload)
-        .map_err(|e| HandlerError::Internal(format!("Encryption failed: {}", e)))?;
+        .handler_err("encrypt connection message")?;
 
     let encrypted_b64 = B64.encode(&encrypted);
 
@@ -819,7 +819,7 @@ pub async fn respond_to_request(
         // Build and send encrypted acceptance message with identity card
         let reply_pk_bytes = B64
             .decode(&updated.reply_public_key)
-            .map_err(|e| HandlerError::Internal(format!("Invalid reply public key: {}", e)))?;
+            .handler_err("decode reply public key")?;
         if reply_pk_bytes.len() != 32 {
             return Err(HandlerError::Internal(
                 "Reply public key must be 32 bytes".to_string(),
@@ -863,7 +863,7 @@ pub async fn respond_to_request(
         };
 
         let encrypted = connection::encrypt_connection_message(&reply_pk, &response_payload)
-            .map_err(|e| HandlerError::Internal(format!("Encryption failed: {}", e)))?;
+            .handler_err("encrypt acceptance reply")?;
         let encrypted_b64 = B64.encode(&encrypted);
 
         let sender_pseudonym: uuid::Uuid = updated
@@ -1058,7 +1058,7 @@ pub async fn similar_profiles(
     if enabled_categories.is_empty() {
         let configs = crate::discovery::config::list_opt_ins(&*metadata_store)
             .await
-            .map_err(|e| HandlerError::Internal(format!("load opt-in configs: {}", e)))?;
+            .handler_err("load opt-in configs")?;
         let mut seen = std::collections::HashSet::new();
         for c in &configs {
             if seen.insert(c.category.clone()) {
@@ -1366,7 +1366,7 @@ pub async fn send_data_share(
 
     // 5. Encrypt with recipient's messaging public key
     let encrypted = connection::encrypt_message(&target_pk, &payload)
-        .map_err(|e| HandlerError::Internal(format!("Encryption failed: {}", e)))?;
+        .handler_err("encrypt data-share message")?;
 
     let encrypted_b64 = B64.encode(&encrypted);
 

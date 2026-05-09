@@ -152,7 +152,7 @@ pub async fn my_messaging_keys(
 
     let pseudonyms = crate::handlers::discovery::util::collect_our_pseudonyms(node, master_key)
         .await
-        .map_err(|e| HandlerError::Internal(format!("collect pseudonyms: {e}")))?;
+        .handler_err("collect pseudonyms")?;
 
     let keys = pseudonyms
         .into_iter()

@@ -25,7 +25,7 @@ use crate::fingerprints::schemas::{
 };
 use crate::fingerprints::writer::write_records;
 use crate::fold_node::FoldNode;
-use crate::handlers::response::{get_db_guard, ApiResponse, HandlerError, HandlerResult};
+use crate::handlers::response::{get_db_guard, ApiResponse, HandlerResult, IntoHandlerError};
 use crate::trust::contact_book::ContactBook;
 use chrono::Utc;
 use regex::Regex;
@@ -49,7 +49,7 @@ pub async fn import_contacts(node: Arc<FoldNode>) -> HandlerResult<ImportContact
     let db = get_db_guard(&node)?;
     let book = ContactBook::load(&db)
         .await
-        .map_err(|e| HandlerError::Internal(format!("failed to load contact book: {}", e)))?;
+        .handler_err("load contact book")?;
 
     let contacts: Vec<_> = book.active_contacts().into_iter().cloned().collect();
     let now = Utc::now().to_rfc3339();
@@ -185,7 +185,7 @@ pub async fn import_contacts(node: Arc<FoldNode>) -> HandlerResult<ImportContact
 
     let outcome = write_records(node.clone(), &all_records)
         .await
-        .map_err(|e| HandlerError::Internal(format!("contact import write failed: {}", e)))?;
+        .handler_err("write contact import records")?;
 
     tracing::info!(
         "fingerprints.import_contacts: {} contacts → {} fingerprints, {} edges, {} records written",
