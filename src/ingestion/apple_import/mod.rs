@@ -132,10 +132,22 @@ pub fn run_osascript_with_timeout(
 /// even on populated stores — the slow case (iCloud collection resolution)
 /// only kicks in when the script enumerates records, which `count` does
 /// not do.
+///
+/// Photos.app is included because the import path also reaches it via
+/// AppleScript (`tell application "Photos" to export ...`), so an
+/// Automation-permission gap surfaces here just like the other apps. A
+/// missing-Full-Disk-Access library will still slip past this probe and
+/// fail later in the export step — but that's strictly better than the
+/// pre-fix wallclock hang, and matches the granularity the rest of the
+/// pre-flight provides.
 #[cfg(target_os = "macos")]
-fn tcc_probe_script(app_label: &str) -> Option<&'static str> {
+pub(crate) fn tcc_probe_script(app_label: &str) -> Option<&'static str> {
     match app_label {
         "Contacts.app" => Some(r#"tell application "Contacts" to count people"#),
+        "Notes.app" => Some(r#"tell application "Notes" to count notes"#),
+        "Calendar.app" => Some(r#"tell application "Calendar" to count calendars"#),
+        "Reminders.app" => Some(r#"tell application "Reminders" to count lists"#),
+        "Photos.app" => Some(r#"tell application "Photos" to count albums"#),
         _ => None,
     }
 }
@@ -168,6 +180,37 @@ pub fn preflight_permission(app_label: &str) -> Result<(), IngestionError> {
         ))),
         Err(other) => Err(other),
     }
+}
+
+/// Wallclock budget for the HTTP pre-flight probe path. Tighter than
+/// [`TCC_PROBE_TIMEOUT`] because the onboarding wizard fires all five
+/// probes in parallel from a single browser request — the user's
+/// perceived latency is `max(per_probe)`, so we want it short enough
+/// that "Checking permissions..." doesn't itself feel like the hang
+/// we're trying to eliminate.
+#[cfg(target_os = "macos")]
+const HTTP_PROBE_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(2);
+
+/// Lightweight permission probe used by the HTTP pre-flight endpoint.
+///
+/// Runs the same fast TCC probe as [`preflight_permission`] but collapses
+/// every outcome into a `bool` — `true` when the probe succeeds, `false`
+/// when osascript errors or times out. Apps without a registered probe
+/// also return `true`: the assumption is the caller will fall through
+/// and surface any later osascript failure in the import job's progress
+/// stream. Caller-facing semantics: "we have no reason to block the
+/// user from clicking Import yet."
+///
+/// Unlike `preflight_permission`, this does NOT format an error message,
+/// which is the right shape for a pre-flight that needs to render a
+/// per-source `{contacts: bool, notes: bool, ...}` object without
+/// stringly-typed shoehorning.
+#[cfg(target_os = "macos")]
+pub fn probe_permission(app_label: &str) -> bool {
+    let Some(script) = tcc_probe_script(app_label) else {
+        return true;
+    };
+    run_osascript_with_timeout(script, app_label, HTTP_PROBE_TIMEOUT).is_ok()
 }
 
 /// Pre-launch the target macOS app via Launch Services so the subsequent
@@ -220,13 +263,36 @@ mod tests {
     }
 
     #[test]
-    fn tcc_probe_script_registered_for_contacts() {
-        let probe = tcc_probe_script("Contacts.app").expect("contacts probe registered");
-        // The probe MUST be a `count`-style aggregate read so it doesn't
-        // paginate or trigger iCloud resolution — otherwise it stops being
-        // a fast pre-flight and becomes the same hang it's meant to detect.
-        assert!(probe.contains("count"));
-        assert!(probe.contains(r#"tell application "Contacts""#));
+    fn tcc_probe_script_registered_for_each_automation_app() {
+        // The HTTP pre-flight endpoint relies on the probe set covering
+        // every Apple data source the onboarding wizard offers. If an app
+        // is missing here, the wizard has no way to detect its missing
+        // permission before kicking off a 30s-osascript-hang import.
+        for (app_label, expected_app) in [
+            ("Contacts.app", "Contacts"),
+            ("Notes.app", "Notes"),
+            ("Calendar.app", "Calendar"),
+            ("Reminders.app", "Reminders"),
+            ("Photos.app", "Photos"),
+        ] {
+            let probe = tcc_probe_script(app_label)
+                .unwrap_or_else(|| panic!("{} probe registered", app_label));
+            // The probe MUST be a `count`-style aggregate read so it doesn't
+            // paginate or trigger iCloud resolution — otherwise it stops being
+            // a fast pre-flight and becomes the same hang it's meant to detect.
+            assert!(
+                probe.contains("count"),
+                "{} probe must use count-style aggregate read, got: {}",
+                app_label,
+                probe,
+            );
+            assert!(
+                probe.contains(&format!(r#"tell application "{}""#, expected_app)),
+                "{} probe must address its app, got: {}",
+                app_label,
+                probe,
+            );
+        }
     }
 
     #[test]
@@ -235,20 +301,27 @@ mod tests {
         // preflight_permission to gate that app's extract. Apps without
         // a probe pass through silently — verify a few unrelated labels
         // don't accidentally pick up a probe.
-        assert!(tcc_probe_script("Notes.app").is_none());
-        assert!(tcc_probe_script("Calendar.app").is_none());
-        assert!(tcc_probe_script("Photos.app").is_none());
-        assert!(tcc_probe_script("Reminders.app").is_none());
         assert!(tcc_probe_script("UnregisteredApp.app").is_none());
+        assert!(tcc_probe_script("").is_none());
     }
 
     #[test]
     fn preflight_permission_passes_through_for_unregistered_app() {
         // No probe → fast Ok(()), no osascript call. This guards against
-        // someone adding a default-error fallback that would break Notes /
-        // Calendar / etc.
+        // someone adding a default-error fallback that would break Photos /
+        // any other source whose pre-flight check isn't an Automation probe.
         let result = preflight_permission("UnregisteredApp.app");
         assert!(result.is_ok());
+    }
+
+    #[test]
+    fn probe_permission_returns_true_for_unregistered_app() {
+        // The HTTP pre-flight endpoint feeds the result of probe_permission
+        // straight into the per-source bool returned to the wizard. An
+        // unregistered app must NOT be reported as missing permission —
+        // that would surface a false-positive "Grant Access" banner the
+        // user can do nothing about.
+        assert!(probe_permission("UnregisteredApp.app"));
     }
 
     #[test]

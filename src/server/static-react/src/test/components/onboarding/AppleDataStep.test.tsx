@@ -1,9 +1,13 @@
 import React from 'react';
 import { screen, fireEvent, waitFor } from '@testing-library/react';
-import { vi, describe, it, expect, beforeEach } from 'vitest';
+import { vi, describe, it, expect, beforeEach, afterEach } from 'vitest';
 import AppleDataStep from '../../../components/onboarding/AppleDataStep';
 import { renderWithRedux } from '../../utils/testUtilities';
 
+// Default to "all permissions granted" so the silent-failure regression
+// tests below exercise the import path the same way they did before the
+// pre-flight wiring landed. Tests that exercise the missing-permission
+// path override this in their own block.
 vi.mock('../../../api/clients/ingestionClient', () => {
   const reject = (msg: string) => () => Promise.reject(new Error(msg));
   return {
@@ -11,6 +15,16 @@ vi.mock('../../../api/clients/ingestionClient', () => {
       getAppleImportStatus: vi.fn().mockResolvedValue({
         success: true,
         data: { available: true },
+      }),
+      getAppleImportPermissions: vi.fn().mockResolvedValue({
+        success: true,
+        data: {
+          contacts: true,
+          notes: true,
+          calendar: true,
+          reminders: true,
+          photos: true,
+        },
       }),
       appleImportNotes: vi.fn(reject('notes backend down')),
       appleImportReminders: vi.fn(reject('reminders backend down')),
@@ -21,6 +35,8 @@ vi.mock('../../../api/clients/ingestionClient', () => {
     },
   };
 });
+
+import ingestionClient from '../../../api/clients/ingestionClient';
 
 describe('AppleDataStep — silent-failure regression (all sources fail)', () => {
   let onNext: () => void;
@@ -94,5 +110,185 @@ describe('AppleDataStep — silent-failure regression (all sources fail)', () =>
     });
     expect(screen.queryByRole('button', { name: /^Continue$/ })).toBeNull();
     expect(onNext).not.toHaveBeenCalled();
+  });
+});
+
+describe('AppleDataStep — Apple permissions pre-flight', () => {
+  let onNext: () => void;
+  let onSkip: () => void;
+  let openSpy: ReturnType<typeof vi.spyOn>;
+
+  beforeEach(() => {
+    onNext = vi.fn();
+    onSkip = vi.fn();
+    openSpy = vi.spyOn(window, 'open').mockImplementation(() => null);
+    // Reset the permissions mock to "all granted" between tests; individual
+    // tests override before render. Without this each test would inherit
+    // the previous one's stub and silently regress permission gating.
+    (ingestionClient.getAppleImportPermissions as ReturnType<typeof vi.fn>)
+      .mockReset()
+      .mockResolvedValue({
+        success: true,
+        data: {
+          contacts: true,
+          notes: true,
+          calendar: true,
+          reminders: true,
+          photos: true,
+        },
+      });
+  });
+
+  afterEach(() => {
+    openSpy.mockRestore();
+  });
+
+  const renderStep = () =>
+    renderWithRedux(<AppleDataStep onNext={onNext} onSkip={onSkip} />);
+
+  it('does NOT render the banner when every selected source has permission', async () => {
+    renderStep();
+    // Wait for the toggle list to appear (post-status, post-permissions).
+    await screen.findByRole('button', { name: /Import Selected/i });
+    expect(screen.queryByTestId('apple-permissions-banner')).toBeNull();
+  });
+
+  it('renders the banner naming the missing source(s) when a probe returns false', async () => {
+    (ingestionClient.getAppleImportPermissions as ReturnType<typeof vi.fn>)
+      .mockReset()
+      .mockResolvedValue({
+        success: true,
+        data: {
+          contacts: false,
+          notes: true,
+          calendar: true,
+          reminders: true,
+          photos: true,
+        },
+      });
+
+    renderStep();
+    const banner = await screen.findByTestId('apple-permissions-banner');
+    expect(banner.textContent).toContain('Apple Contacts');
+    expect(banner.textContent).toContain('System Settings');
+    expect(banner.textContent).toContain('Automation');
+  });
+
+  it('the banner only counts SELECTED sources — deselecting the missing source dismisses it', async () => {
+    (ingestionClient.getAppleImportPermissions as ReturnType<typeof vi.fn>)
+      .mockReset()
+      .mockResolvedValue({
+        success: true,
+        data: {
+          contacts: false,
+          notes: true,
+          calendar: true,
+          reminders: true,
+          photos: true,
+        },
+      });
+
+    renderStep();
+    await screen.findByTestId('apple-permissions-banner');
+
+    // Find the Contacts toggle and uncheck it. Without the SELECTED check,
+    // a stale `permissions` map would keep showing the banner even after
+    // the user opted out — that's the regression to guard.
+    const contactsToggle = screen.getByLabelText(/Apple Contacts/i) as HTMLInputElement;
+    fireEvent.click(contactsToggle);
+
+    await waitFor(() => {
+      expect(screen.queryByTestId('apple-permissions-banner')).toBeNull();
+    });
+  });
+
+  it('clicking "Open System Settings" launches the Privacy_Automation deep link', async () => {
+    (ingestionClient.getAppleImportPermissions as ReturnType<typeof vi.fn>)
+      .mockReset()
+      .mockResolvedValue({
+        success: true,
+        data: {
+          contacts: false,
+          notes: true,
+          calendar: true,
+          reminders: true,
+          photos: true,
+        },
+      });
+
+    renderStep();
+    await screen.findByTestId('apple-permissions-banner');
+
+    fireEvent.click(screen.getByRole('button', { name: /Open System Settings/i }));
+    expect(openSpy).toHaveBeenCalledWith(
+      expect.stringContaining('x-apple.systempreferences:com.apple.preference.security?Privacy_Automation'),
+      expect.anything(),
+    );
+  });
+
+  it('"Import Selected" re-checks permissions and bails BEFORE spawning any imports if anything is still missing', async () => {
+    (ingestionClient.getAppleImportPermissions as ReturnType<typeof vi.fn>)
+      .mockReset()
+      .mockResolvedValue({
+        success: true,
+        data: {
+          contacts: false,
+          notes: true,
+          calendar: true,
+          reminders: true,
+          photos: true,
+        },
+      });
+
+    renderStep();
+    await screen.findByTestId('apple-permissions-banner');
+
+    fireEvent.click(screen.getByRole('button', { name: /Import Selected/i }));
+
+    // The pre-flight should have re-fired and the import path must NOT have
+    // been entered. Specifically: no progress card, no failure card, no
+    // background imports kicked off.
+    await waitFor(() => {
+      expect(
+        (ingestionClient.getAppleImportPermissions as ReturnType<typeof vi.fn>).mock.calls
+          .length,
+      ).toBeGreaterThanOrEqual(2); // mount + click
+    });
+    expect(screen.queryByTestId('apple-import-failures')).toBeNull();
+    expect(ingestionClient.appleImportContacts).not.toHaveBeenCalled();
+    expect(ingestionClient.appleImportNotes).not.toHaveBeenCalled();
+  });
+
+  it('after the user grants access and clicks Refresh, the banner disappears', async () => {
+    const mock = ingestionClient.getAppleImportPermissions as ReturnType<typeof vi.fn>;
+    mock.mockReset()
+      .mockResolvedValueOnce({
+        success: true,
+        data: {
+          contacts: false,
+          notes: true,
+          calendar: true,
+          reminders: true,
+          photos: true,
+        },
+      })
+      .mockResolvedValueOnce({
+        success: true,
+        data: {
+          contacts: true,
+          notes: true,
+          calendar: true,
+          reminders: true,
+          photos: true,
+        },
+      });
+
+    renderStep();
+    await screen.findByTestId('apple-permissions-banner');
+
+    fireEvent.click(screen.getByTestId('apple-permissions-refresh'));
+    await waitFor(() => {
+      expect(screen.queryByTestId('apple-permissions-banner')).toBeNull();
+    });
   });
 });
