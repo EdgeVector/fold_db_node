@@ -229,6 +229,41 @@ describe('OnboardingWizard', () => {
     expect(screen.queryByTestId('apple-step')).toBeNull();
   });
 
+  it('writes localStorage marker as soon as bootstrap succeeds (before user reaches All Set)', async () => {
+    renderWizard();
+
+    fireEvent.click(screen.getByTestId('identity-next'));
+    fireEvent.click(screen.getByTestId('ai-next'));
+    fireEvent.click(screen.getByTestId('cloud-skip'));
+
+    await waitFor(() => {
+      expect(bootstrapSpy).toHaveBeenCalledTimes(1);
+    });
+    // Marker is set immediately on bootstrap success — the user does not
+    // need to walk all the way to AllSetStep + click Finish for a reload
+    // to skip the wizard.
+    await waitFor(() => {
+      expect(localStorage.getItem(ONBOARDING_STORAGE_KEY)).toBe('1');
+    });
+    // Still on the recovery view — onComplete has NOT been called.
+    expect(screen.getByTestId('recovery-step')).toBeTruthy();
+    expect(onComplete).not.toHaveBeenCalled();
+  });
+
+  it('does not write localStorage marker if bootstrap fails', async () => {
+    bootstrapSpy.mockRejectedValueOnce(new Error('boom'));
+    renderWizard();
+
+    fireEvent.click(screen.getByTestId('identity-next'));
+    fireEvent.click(screen.getByTestId('ai-next'));
+    fireEvent.click(screen.getByTestId('cloud-enable'));
+
+    await waitFor(() => {
+      expect(screen.getByTestId('cloud-error')).toBeTruthy();
+    });
+    expect(localStorage.getItem(ONBOARDING_STORAGE_KEY)).toBeNull();
+  });
+
   it('calls onComplete and writes localStorage on finish — bootstrap writes the marker, no extra call', () => {
     renderWizard();
 

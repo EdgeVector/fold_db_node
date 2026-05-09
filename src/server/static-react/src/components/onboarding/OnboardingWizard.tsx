@@ -206,6 +206,12 @@ export default function OnboardingWizard({ onComplete }: OnboardingWizardProps) 
       // `auth.error === 'node_not_provisioned'` and re-render the wizard.
       dispatch(autoLogin())
 
+      // The node is now provisioned with an identity card. Set the
+      // localStorage marker so a reload after a partial wizard exit
+      // (e.g. closing the tab after Cloud Backup but before "All Set")
+      // doesn't re-fire the wizard.
+      localStorage.setItem(ONBOARDING_STORAGE_KEY, '1')
+
       markCompleted('cloud-backup')
 
       if (data.recovery_phrase && data.recovery_phrase.length > 0) {
