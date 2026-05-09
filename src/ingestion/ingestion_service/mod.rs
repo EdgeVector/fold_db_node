@@ -36,6 +36,119 @@ pub(crate) fn schema_err(e: impl std::fmt::Display) -> IngestionError {
     IngestionError::SchemaCreationError(e.to_string())
 }
 
+/// Build a deterministic [`AISchemaResponse`] for a forced-schema ingestion.
+///
+/// Bypasses the LLM classifier entirely. The returned response describes a
+/// `Hash` schema whose:
+///   * `descriptive_name` is the caller-supplied canonical name (e.g.
+///     `"Apple Notes"`),
+///   * `fields` is the alphabetically-sorted set of top-level keys present
+///     in the first object of the sample data, minus `content_hash` (which
+///     ingestion injects after AI analysis and must not appear in the
+///     schema's `fields` list — see `inject_content_hash`),
+///   * `key.hash_field` is `content_hash` when the records carry one,
+///     otherwise the first sorted field. Apple-source records always emit
+///     `content_hash`, so the key is stable and unique per record.
+///
+/// `mutation_mappers` is empty — every JSON field maps identity to a schema
+/// field. The downstream `filter_mappers_by_schema` + auto-fill in
+/// `generate_mutations_for_item` handle the rest.
+///
+/// Determinism matters: the schema service dedups by
+/// `(descriptive_name, fields)`, so every batch must produce byte-identical
+/// schema definitions for the records to consolidate into one schema.
+pub(crate) fn build_forced_schema_response(
+    sample_data: &Value,
+    descriptive_name: &str,
+) -> AISchemaResponse {
+    let representative = match sample_data {
+        Value::Array(arr) => arr.first(),
+        v @ Value::Object(_) => Some(v),
+        _ => None,
+    };
+
+    let mut field_names: Vec<String> = representative
+        .and_then(|v| v.as_object())
+        .map(|obj| obj.keys().cloned().collect())
+        .unwrap_or_default();
+    // content_hash is injected post-AI by `inject_content_hashes` for key
+    // disambiguation; it must not be declared as a schema field or the
+    // schema service rejects mutations referencing it. Strip it here so the
+    // schema definition matches what would have been generated pre-injection.
+    field_names.retain(|f| f != "content_hash");
+    field_names.sort();
+
+    let hash_field = if representative
+        .and_then(|v| v.as_object())
+        .map(|obj| obj.contains_key("content_hash"))
+        .unwrap_or(false)
+    {
+        "content_hash".to_string()
+    } else {
+        field_names
+            .first()
+            .cloned()
+            .unwrap_or_else(|| "id".to_string())
+    };
+
+    let mut field_classifications = serde_json::Map::new();
+    let mut field_descriptions = serde_json::Map::new();
+    let mut field_data_classifications = serde_json::Map::new();
+    for f in &field_names {
+        field_classifications.insert(f.clone(), serde_json::json!(["word"]));
+        field_descriptions.insert(
+            f.clone(),
+            serde_json::Value::String(format!("{} field", f.replace('_', " "))),
+        );
+        // Pre-populate with the same sensitivity/domain defaults that
+        // `backfill_field_data_classifications` would apply; without these,
+        // the schema service falls back to a per-field classifier (Ollama)
+        // that may not be reachable, and registration fails with HTTP 400.
+        field_data_classifications.insert(
+            f.clone(),
+            serde_json::json!({
+                "sensitivity_level": 1,
+                "data_domain": "general"
+            }),
+        );
+    }
+    // hash_field must appear in the schema's fields list and have a
+    // classification entry, otherwise the loader rejects the schema as
+    // having an unclassified key field.
+    if !field_names.iter().any(|f| f == &hash_field) {
+        field_names.push(hash_field.clone());
+        field_names.sort();
+        field_classifications.insert(hash_field.clone(), serde_json::json!(["word"]));
+        field_descriptions.insert(
+            hash_field.clone(),
+            serde_json::Value::String(format!("{} field", hash_field.replace('_', " "))),
+        );
+        field_data_classifications.insert(
+            hash_field.clone(),
+            serde_json::json!({
+                "sensitivity_level": 1,
+                "data_domain": "general"
+            }),
+        );
+    }
+
+    let new_schemas = serde_json::json!({
+        "name": descriptive_name,
+        "descriptive_name": descriptive_name,
+        "schema_type": "Hash",
+        "key": { "hash_field": hash_field },
+        "fields": field_names,
+        "field_classifications": field_classifications,
+        "field_descriptions": field_descriptions,
+        "field_data_classifications": field_data_classifications,
+    });
+
+    AISchemaResponse {
+        new_schemas: Some(new_schemas),
+        mutation_mappers: HashMap::new(),
+    }
+}
+
 /// Apply image-specific overrides to an AI schema response.
 ///
 /// Images use `Hash(source_file_name)` so each image file gets a unique key.
@@ -214,7 +327,10 @@ impl IngestionService {
 
         let mut tracker = PhaseTracker::new(progress_service, progress_id);
 
-        if !self.config.is_ready() {
+        // Forced-schema callers (Apple Notes, Calendar, Contacts, Reminders)
+        // never invoke the LLM, so the AI provider's readiness is irrelevant.
+        // Honor the request even when no provider is configured.
+        if !self.config.is_ready() && request.forced_schema_descriptive_name.is_none() {
             tracker
                 .fail("Ingestion module is not properly configured or disabled".to_string())
                 .await;
@@ -252,8 +368,12 @@ impl IngestionService {
         // flat/decomposed path handlers. Injecting before AI would cause the model
         // to treat content_hash as a user data field and include it in the schema.
 
-        // Decide code path based on data shape
-        let has_nested_children = self.check_has_nested_children(&flattened_data);
+        // Decide code path based on data shape. Forced-schema callers always
+        // take the flat path — the canonical schema is by definition flat,
+        // and recursive decomposition would invent extra schemas the caller
+        // explicitly opted out of.
+        let has_nested_children = request.forced_schema_descriptive_name.is_none()
+            && self.check_has_nested_children(&flattened_data);
 
         // Phases 3-6: Delegate to path-specific handler
         let (
@@ -934,6 +1054,58 @@ mod tests {
             response.mutation_mappers.contains_key("source_file_name"),
             "source_file_name must be in mutation_mappers"
         );
+    }
+
+    #[test]
+    fn forced_schema_response_is_deterministic_for_apple_notes_records() {
+        // Two batches with identical record shape must produce byte-identical
+        // schema definitions. The schema service dedups by
+        // (descriptive_name, fields), so any drift between calls causes
+        // ingestion to fragment across schemas — exactly the bug we're
+        // closing here.
+        let batch_a = json!([{
+            "title": "Note A",
+            "body": "body a",
+            "created_at": "2026-05-01",
+            "modified_at": "2026-05-02",
+            "content_hash": "deadbeefcafebabe",
+            "source": "apple_notes",
+        }]);
+        let batch_b = json!([{
+            "title": "Note B",
+            "body": "body b",
+            "created_at": "2026-05-03",
+            "modified_at": "2026-05-04",
+            "content_hash": "feedfacefeedface",
+            "source": "apple_notes",
+        }]);
+
+        let resp_a = build_forced_schema_response(&batch_a, "Apple Notes");
+        let resp_b = build_forced_schema_response(&batch_b, "Apple Notes");
+
+        assert_eq!(
+            resp_a.new_schemas, resp_b.new_schemas,
+            "forced-schema response must be byte-identical across batches"
+        );
+        assert!(resp_a.mutation_mappers.is_empty());
+
+        let schema = resp_a.new_schemas.expect("new_schemas present");
+        assert_eq!(schema["descriptive_name"], json!("Apple Notes"));
+        assert_eq!(schema["schema_type"], json!("Hash"));
+        assert_eq!(schema["key"]["hash_field"], json!("content_hash"));
+        // content_hash is injected post-AI for key disambiguation; it must
+        // also be in the schema's fields list because hash_field demands a
+        // matching field declaration.
+        let fields = schema["fields"].as_array().expect("fields array");
+        let field_names: Vec<&str> = fields.iter().filter_map(|v| v.as_str()).collect();
+        assert!(field_names.contains(&"content_hash"));
+        assert!(field_names.contains(&"title"));
+        assert!(field_names.contains(&"body"));
+        assert!(field_names.contains(&"source"));
+        // Sorted alphabetically — the determinism contract.
+        let mut sorted = field_names.clone();
+        sorted.sort();
+        assert_eq!(field_names, sorted);
     }
 
     #[test]

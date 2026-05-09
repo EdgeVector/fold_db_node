@@ -144,6 +144,7 @@ async fn test_smart_folder_tweets_ingest_and_query() {
         image_descriptive_name: None,
         org_hash: None,
         image_bytes: None,
+        forced_schema_descriptive_name: None,
     };
 
     let pid = progress_id.clone();

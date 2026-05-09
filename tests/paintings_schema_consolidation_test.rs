@@ -138,6 +138,7 @@ async fn test_paintings_use_single_schema() {
             image_descriptive_name: Some("Painting".to_string()),
             org_hash: None,
             image_bytes: None,
+            forced_schema_descriptive_name: None,
         };
 
         let svc = ingestion_service.clone();

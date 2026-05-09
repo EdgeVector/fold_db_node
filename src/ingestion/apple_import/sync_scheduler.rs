@@ -173,6 +173,7 @@ async fn sync_notes(
             image_descriptive_name: None,
             org_hash: None,
             image_bytes: None,
+            forced_schema_descriptive_name: Some("Apple Notes".to_string()),
         };
 
         if let Err(e) =
@@ -248,6 +249,7 @@ async fn sync_reminders(
         image_descriptive_name: None,
         org_hash: None,
         image_bytes: None,
+        forced_schema_descriptive_name: Some("Apple Reminders".to_string()),
     };
 
     if let Err(e) =
@@ -392,6 +394,7 @@ async fn sync_photos(
                     image_descriptive_name: descriptive_name,
                     org_hash: None,
                     image_bytes: Some(raw_bytes),
+                    forced_schema_descriptive_name: None,
                 };
 
                 if let Err(e) = crate::handlers::ingestion::process_json(
@@ -487,6 +490,7 @@ async fn sync_calendar(
             image_descriptive_name: None,
             org_hash: None,
             image_bytes: None,
+            forced_schema_descriptive_name: Some("Apple Calendar".to_string()),
         };
 
         if let Err(e) = crate::handlers::ingestion::process_json(
@@ -570,6 +574,7 @@ async fn sync_contacts(
             image_descriptive_name: None,
             org_hash: None,
             image_bytes: None,
+            forced_schema_descriptive_name: Some("Apple Contacts".to_string()),
         };
 
         if let Err(e) = crate::handlers::ingestion::process_json(

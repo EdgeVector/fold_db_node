@@ -234,6 +234,10 @@ async fn run_apple_notes_import(
             image_descriptive_name: None,
             org_hash: None,
             image_bytes: None,
+            // Pin every batch to the canonical "Apple Notes" schema so
+            // 132 notes don't fragment across 3+ schemas via LLM
+            // non-determinism. See dogfood repro on 2026-05-09.
+            forced_schema_descriptive_name: Some("Apple Notes".to_string()),
         };
 
         match crate::handlers::ingestion::process_json(
@@ -403,6 +407,9 @@ async fn run_apple_reminders_import(
         image_descriptive_name: None,
         org_hash: None,
         image_bytes: None,
+        // Pin reminders to a canonical schema; same fragmentation risk as
+        // Apple Notes whenever the LLM is asked to classify N batches.
+        forced_schema_descriptive_name: Some("Apple Reminders".to_string()),
     };
 
     let (ingested, ingest_error) = match crate::handlers::ingestion::process_json(
@@ -672,6 +679,9 @@ async fn run_apple_photos_import(
                     image_descriptive_name: descriptive_name,
                     org_hash: None,
                     image_bytes: Some(raw_bytes),
+                    // Photos route through the existing image schema-override
+                    // path; no canonical schema name to pin.
+                    forced_schema_descriptive_name: None,
                 };
 
                 match crate::handlers::ingestion::process_json(
@@ -888,6 +898,7 @@ async fn run_apple_calendar_import(
             image_descriptive_name: None,
             org_hash: None,
             image_bytes: None,
+            forced_schema_descriptive_name: Some("Apple Calendar".to_string()),
         };
 
         match crate::handlers::ingestion::process_json(
@@ -1044,6 +1055,7 @@ async fn run_apple_contacts_import(
             image_descriptive_name: None,
             org_hash: None,
             image_bytes: None,
+            forced_schema_descriptive_name: Some("Apple Contacts".to_string()),
         };
 
         match crate::handlers::ingestion::process_json(

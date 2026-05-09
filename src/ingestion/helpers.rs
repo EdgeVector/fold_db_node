@@ -295,6 +295,7 @@ pub async fn process_single_file_via_smart_folder(
         image_descriptive_name,
         org_hash: org_hash.map(|s| s.to_string()),
         image_bytes,
+        forced_schema_descriptive_name: None,
     };
 
     service

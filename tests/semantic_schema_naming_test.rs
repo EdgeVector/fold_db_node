@@ -64,6 +64,7 @@ async fn ingest_file(
         image_descriptive_name: None,
         org_hash: None,
         image_bytes: None,
+        forced_schema_descriptive_name: None,
     };
 
     let pid = progress_id.clone();

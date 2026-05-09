@@ -289,6 +289,7 @@ impl OperationProcessor {
             image_descriptive_name: None,
             org_hash,
             image_bytes: None,
+            forced_schema_descriptive_name: None,
         };
 
         let progress_tracker = match external_tracker {
