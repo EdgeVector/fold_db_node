@@ -38,13 +38,14 @@ pub async fn get_system_status(
     user_hash: &str,
     node: &FoldNode,
 ) -> HandlerResult<SystemStatusResponse> {
+    // Read seconds-since-start, NOT epoch. The previous `SystemTime::now() -
+    // UNIX_EPOCH` here served Unix timestamps as "uptime" (~1.78e9 = ~56yr in
+    // the UI). Sourced from the same `SERVER_START` clock `/api/health` uses
+    // so the two endpoints can't disagree.
     Ok(ApiResponse::success_with_user(
         SystemStatusResponse {
             status: "running".to_string(),
-            uptime: std::time::SystemTime::now()
-                .duration_since(std::time::UNIX_EPOCH)
-                .unwrap_or_default()
-                .as_secs(),
+            uptime: crate::server::routes::system::server_uptime_secs(),
             version: env!("FOLDDB_BUILD_VERSION").to_string(),
             schema_service_url: node.schema_service_url(),
         },
