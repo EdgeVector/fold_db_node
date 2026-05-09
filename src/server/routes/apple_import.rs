@@ -128,18 +128,23 @@ where
     }))
 }
 
-#[derive(Deserialize)]
+#[derive(Deserialize, Default)]
 pub struct AppleNotesRequest {
     pub folder: Option<String>,
 }
 
 /// POST /api/ingestion/apple-import/notes
+///
+/// Body is optional. Callers can POST with no Content-Type and no body to take
+/// the defaults (whole-library import); `Option<web::Json<_>>` falls back to
+/// the default struct on missing Content-Type or empty body.
 pub async fn apple_import_notes(
-    request: web::Json<AppleNotesRequest>,
+    request: Option<web::Json<AppleNotesRequest>>,
     state: web::Data<AppState>,
     ingestion_service: web::Data<IngestionServiceState>,
     progress_tracker: web::Data<ProgressTracker>,
 ) -> impl Responder {
+    let request = request.map(web::Json::into_inner).unwrap_or_default();
     let AppleImportContext {
         user_id,
         node_arc,
@@ -292,18 +297,21 @@ async fn run_apple_notes_import(
     let _ = tracker.save(&job).await;
 }
 
-#[derive(Deserialize)]
+#[derive(Deserialize, Default)]
 pub struct AppleRemindersRequest {
     pub list: Option<String>,
 }
 
 /// POST /api/ingestion/apple-import/reminders
+///
+/// Body is optional — see [`apple_import_notes`] for the rationale.
 pub async fn apple_import_reminders(
-    request: web::Json<AppleRemindersRequest>,
+    request: Option<web::Json<AppleRemindersRequest>>,
     state: web::Data<AppState>,
     ingestion_service: web::Data<IngestionServiceState>,
     progress_tracker: web::Data<ProgressTracker>,
 ) -> impl Responder {
+    let request = request.map(web::Json::into_inner).unwrap_or_default();
     let AppleImportContext {
         user_id,
         node_arc,
@@ -478,21 +486,25 @@ async fn run_apple_reminders_import(
     let _ = tracker.save(&job).await;
 }
 
-#[derive(Deserialize)]
+#[derive(Deserialize, Default)]
 pub struct ApplePhotosRequest {
     pub album: Option<String>,
     pub limit: Option<usize>,
 }
 
 /// POST /api/ingestion/apple-import/photos
+///
+/// Body is optional — see [`apple_import_notes`] for the rationale. When
+/// provided, `limit` overrides the 50-photo default.
 // TODO: Apple Photos ingestion does not yet run face detection — face extraction in the generic ingestion path is a separate workstream that requires ONNX inline.
 pub async fn apple_import_photos(
-    request: web::Json<ApplePhotosRequest>,
+    request: Option<web::Json<ApplePhotosRequest>>,
     state: web::Data<AppState>,
     ingestion_service: web::Data<IngestionServiceState>,
     progress_tracker: web::Data<ProgressTracker>,
     upload_storage: web::Data<fold_db::storage::UploadStorage>,
 ) -> impl Responder {
+    let request = request.map(web::Json::into_inner).unwrap_or_default();
     let AppleImportContext {
         user_id,
         node_arc,
@@ -748,18 +760,21 @@ async fn run_apple_photos_import(
     let _ = tracker.save(&job).await;
 }
 
-#[derive(Deserialize)]
+#[derive(Deserialize, Default)]
 pub struct AppleCalendarRequest {
     pub calendar: Option<String>,
 }
 
 /// POST /api/ingestion/apple-import/calendar
+///
+/// Body is optional — see [`apple_import_notes`] for the rationale.
 pub async fn apple_import_calendar(
-    request: web::Json<AppleCalendarRequest>,
+    request: Option<web::Json<AppleCalendarRequest>>,
     state: web::Data<AppState>,
     ingestion_service: web::Data<IngestionServiceState>,
     progress_tracker: web::Data<ProgressTracker>,
 ) -> impl Responder {
+    let request = request.map(web::Json::into_inner).unwrap_or_default();
     let AppleImportContext {
         user_id,
         node_arc,
@@ -910,12 +925,14 @@ async fn run_apple_calendar_import(
     let _ = tracker.save(&job).await;
 }
 
-#[derive(Deserialize)]
+#[derive(Deserialize, Default)]
 pub struct AppleContactsRequest {}
 
 /// POST /api/ingestion/apple-import/contacts
+///
+/// Body is optional — see [`apple_import_notes`] for the rationale.
 pub async fn apple_import_contacts(
-    _request: web::Json<AppleContactsRequest>,
+    _request: Option<web::Json<AppleContactsRequest>>,
     state: web::Data<AppState>,
     ingestion_service: web::Data<IngestionServiceState>,
     progress_tracker: web::Data<ProgressTracker>,
@@ -1343,5 +1360,92 @@ mod mark_terminal_tests {
         assert!(progress.is_complete);
         assert!(progress.is_failed);
         assert!(progress.completed_at.is_some());
+    }
+}
+
+#[cfg(test)]
+mod optional_body_tests {
+    //! Regression for the dogfood bug repro on 2026-05-09:
+    //!
+    //!   curl -X POST -H "X-User-Hash: $H" \
+    //!     http://localhost:9101/api/ingestion/apple-import/contacts
+    //!   → 400 {"error":"Invalid request payload","detail":"Content type error"}
+    //!
+    //! All five `apple-import/{notes,reminders,calendar,contacts,photos}`
+    //! handlers used `web::Json<T>` which rejects requests without
+    //! `Content-Type: application/json` even though every request struct's
+    //! fields are optional. Switching to `Option<web::Json<T>>` makes a
+    //! missing/empty body fall back to `T::default()`.
+    //!
+    //! These tests pin the extractor pattern (the actual fix) without
+    //! standing up the full handler dependency graph (AppState, NodeManager,
+    //! IngestionService, ProgressTracker). If anyone reverts the signature
+    //! to bare `web::Json<T>`, the no-body case below 400s and the test
+    //! fails.
+    use super::{AppleContactsRequest, ApplePhotosRequest};
+    use actix_web::{test, web, App, HttpResponse, Responder};
+    use serde_json::json;
+
+    async fn contacts_stub(req: Option<web::Json<AppleContactsRequest>>) -> impl Responder {
+        let _ = req.map(web::Json::into_inner).unwrap_or_default();
+        HttpResponse::Accepted().json(json!({
+            "success": true,
+            "progress_id": "test-progress-id",
+        }))
+    }
+
+    async fn photos_stub(req: Option<web::Json<ApplePhotosRequest>>) -> impl Responder {
+        let req = req.map(web::Json::into_inner).unwrap_or_default();
+        HttpResponse::Ok().json(json!({
+            "album": req.album,
+            "limit": req.limit,
+        }))
+    }
+
+    /// The exact repro from dogfood 2026-05-09: no Content-Type, no body.
+    #[actix_web::test]
+    async fn empty_post_returns_progress_id_not_content_type_error() {
+        let app =
+            test::init_service(App::new().route("/contacts", web::post().to(contacts_stub))).await;
+
+        let req = test::TestRequest::post().uri("/contacts").to_request();
+        let resp = test::call_service(&app, req).await;
+        assert_eq!(
+            resp.status(),
+            202,
+            "no-body POST must reach the handler — got {} (a 400 here means \
+             web::Json<T> snuck back into the signature)",
+            resp.status(),
+        );
+
+        let body: serde_json::Value = test::read_body_json(resp).await;
+        assert_eq!(body["success"], true);
+        assert!(
+            body["progress_id"].is_string(),
+            "response must include a progress_id string, got {body}"
+        );
+    }
+
+    /// Photos accepts a `limit` field; verify a real body still deserializes.
+    #[actix_web::test]
+    async fn populated_body_still_parses() {
+        let app =
+            test::init_service(App::new().route("/photos", web::post().to(photos_stub))).await;
+
+        let req = test::TestRequest::post()
+            .uri("/photos")
+            .insert_header(("content-type", "application/json"))
+            .set_payload(r#"{"limit": 25, "album": "Travel"}"#)
+            .to_request();
+        let resp = test::call_service(&app, req).await;
+        assert!(
+            resp.status().is_success(),
+            "real body should parse, got {}",
+            resp.status(),
+        );
+
+        let body: serde_json::Value = test::read_body_json(resp).await;
+        assert_eq!(body["limit"], 25);
+        assert_eq!(body["album"], "Travel");
     }
 }
