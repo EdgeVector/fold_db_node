@@ -16,6 +16,7 @@ import {
 vi.mock("../../api/clients", () => ({
   ingestionClient: {
     getJobProgress: vi.fn(),
+    getAllProgress: vi.fn(),
     getAppleSyncConfig: vi.fn(),
     updateAppleSyncConfig: vi.fn(),
   },
@@ -46,10 +47,33 @@ import type { AppleSyncConfig } from "../../api/clients/ingestionClient";
 import type { RootState } from "../store";
 
 const mockedGetJobProgress = vi.mocked(ingestionClient.getJobProgress);
+const mockedGetAllProgress = vi.mocked(ingestionClient.getAllProgress);
 const mockedGetAppleSyncConfig = vi.mocked(ingestionClient.getAppleSyncConfig);
 const mockedUpdateAppleSyncConfig = vi.mocked(
   ingestionClient.updateAppleSyncConfig,
 );
+
+type GetAllProgressResponse = Awaited<
+  ReturnType<typeof ingestionClient.getAllProgress>
+>;
+const okList = (
+  items: Array<ProgressShape & { id?: string; job_type?: string }>,
+): GetAllProgressResponse =>
+  ({
+    status: 200,
+    success: true,
+    data: { progress: items },
+  }) as unknown as GetAllProgressResponse;
+const okListBareArray = (
+  items: Array<ProgressShape & { id?: string; job_type?: string }>,
+): GetAllProgressResponse =>
+  ({
+    status: 200,
+    success: true,
+    data: items,
+  }) as unknown as GetAllProgressResponse;
+const emptyList = (): GetAllProgressResponse =>
+  okList([]);
 
 type SyncConfigResponse = Awaited<
   ReturnType<typeof ingestionClient.getAppleSyncConfig>
@@ -441,6 +465,9 @@ describe("ingestionSlice — appleJobs", () => {
 describe("reconcileAppleJobs", () => {
   beforeEach(() => {
     vi.clearAllMocks();
+    // The list-probe runs unconditionally. Tests that don't care about
+    // it default to an empty list; tests that DO care override.
+    mockedGetAllProgress.mockResolvedValue(emptyList());
   });
   afterEach(() => {
     vi.restoreAllMocks();
@@ -603,6 +630,179 @@ describe("reconcileAppleJobs", () => {
     const { appleJobs } = store.getState().ingestion;
     expect(appleJobs.contacts.status).toBe("running");
     expect(appleJobs.notes.status).toBe("done");
+  });
+
+  // Reload-recovery contract (dogfood-2026-05-10): when the slice has
+  // been wiped (page reload) but the backend's progress list still
+  // reports an apple-* job, reconcile must adopt it into the matching
+  // source card. is_failed jobs settle to error; running jobs re-arm
+  // the listener via appleJobStarted.
+  it("recovers an apple-* job from the progress list into an idle slice", async () => {
+    const { store, recorded } = buildStoreWithRecorder();
+    recorded.length = 0;
+
+    mockedGetAllProgress.mockResolvedValueOnce(
+      okList([
+        {
+          id: "orphan-contacts-1",
+          job_type: "apple-contacts",
+          progress_percentage: 5,
+          status_message: "Failed: missing Automation permission",
+          is_complete: true,
+          is_failed: true,
+          error_message:
+            "Failed to extract contacts: missing Automation permission",
+        },
+      ]),
+    );
+
+    await store.dispatch(reconcileAppleJobs());
+
+    const job = store.getState().ingestion.appleJobs.contacts;
+    expect(job.status).toBe("error");
+    expect(job.message).toBe(
+      "Failed to extract contacts: missing Automation permission",
+    );
+    // Only the list endpoint was hit — there were no in-slice jobs to
+    // probe by id.
+    expect(mockedGetJobProgress).not.toHaveBeenCalled();
+    expect(mockedGetAllProgress).toHaveBeenCalledTimes(1);
+  });
+
+  it("re-arms a still-running apple-* job adopted from the list", async () => {
+    const { store, recorded } = buildStoreWithRecorder();
+    recorded.length = 0;
+
+    mockedGetAllProgress.mockResolvedValueOnce(
+      okList([
+        {
+          id: "live-photos-1",
+          job_type: "apple-photos",
+          progress_percentage: 30,
+          status_message: "Working...",
+          is_complete: false,
+          is_failed: false,
+        },
+      ]),
+    );
+
+    await store.dispatch(reconcileAppleJobs());
+
+    const job = store.getState().ingestion.appleJobs.photos;
+    expect(job.status).toBe("running");
+    expect(job.progressId).toBe("live-photos-1");
+    expect(job.progress).toBe(30);
+    expect(job.message).toBe("Working...");
+
+    const startedActions = recorded.filter(
+      (a) => a.type === appleJobStarted.type,
+    );
+    expect(startedActions).toHaveLength(1);
+  });
+
+  // The other root cause of "stuck at Starting...": appleJobStarting
+  // fired, but appleJobStarted never did (e.g. the user closed the tab
+  // mid-await). The slot sits at running/progressId=null. Reload should
+  // adopt the matching apple-* job from the list and settle the slot.
+  it("adopts a list job into a running-but-progressId-null orphan slot", async () => {
+    const { store } = buildStoreWithRecorder();
+    store.dispatch(appleJobStarting({ key: "contacts" }));
+    expect(
+      store.getState().ingestion.appleJobs.contacts.progressId,
+    ).toBeNull();
+
+    mockedGetAllProgress.mockResolvedValueOnce(
+      okList([
+        {
+          id: "orphan-contacts-2",
+          job_type: "apple-contacts",
+          progress_percentage: 100,
+          status_message: "Imported 87 contacts",
+          is_complete: true,
+          is_failed: false,
+          results: { total: 87, ingested: 87 },
+        },
+      ]),
+    );
+
+    await store.dispatch(reconcileAppleJobs());
+
+    const job = store.getState().ingestion.appleJobs.contacts;
+    expect(job.status).toBe("done");
+    expect(job.result).toEqual({ total: 87, ingested: 87 });
+    expect(job.message).toBe("Imported 87 contacts");
+  });
+
+  it("ignores list jobs that match a slot already polling by id", async () => {
+    const { store } = buildStoreWithRecorder();
+    store.dispatch(
+      appleJobStarted({ key: "notes", progressId: "owned-by-slice" }),
+    );
+
+    mockedGetJobProgress.mockResolvedValueOnce(
+      ok({
+        progress_percentage: 80,
+        status_message: "Almost there",
+        is_complete: false,
+        is_failed: false,
+      }),
+    );
+    mockedGetAllProgress.mockResolvedValueOnce(
+      okList([
+        // Same source key, different progress_id from the slice. Must NOT
+        // win — the slice's own progressId is the source of truth and the
+        // listener is already polling it.
+        {
+          id: "stale-list-id",
+          job_type: "apple-notes",
+          is_failed: true,
+          error_message: "stale ghost result",
+        },
+      ]),
+    );
+
+    await store.dispatch(reconcileAppleJobs());
+
+    const job = store.getState().ingestion.appleJobs.notes;
+    expect(job.status).toBe("running");
+    expect(job.progressId).toBe("owned-by-slice");
+    expect(job.message).toBe("Almost there");
+  });
+
+  it("tolerates a bare-array list payload (legacy server shape)", async () => {
+    const { store } = buildStoreWithRecorder();
+
+    mockedGetAllProgress.mockResolvedValueOnce(
+      okListBareArray([
+        {
+          id: "bare-array-1",
+          job_type: "apple-calendar",
+          is_failed: true,
+          error_message: "denied",
+        },
+      ]),
+    );
+
+    await store.dispatch(reconcileAppleJobs());
+
+    const job = store.getState().ingestion.appleJobs.calendar;
+    expect(job.status).toBe("error");
+    expect(job.message).toBe("denied");
+  });
+
+  it("does not crash when the list endpoint fails", async () => {
+    const { store } = buildStoreWithRecorder();
+
+    mockedGetAllProgress.mockRejectedValueOnce(new Error("network down"));
+
+    // Should resolve, not throw.
+    await store.dispatch(reconcileAppleJobs());
+
+    APPLE_KEYS.forEach((key) => {
+      expect(store.getState().ingestion.appleJobs[key]).toEqual(
+        makeIdleAppleJob(),
+      );
+    });
   });
 });
 
