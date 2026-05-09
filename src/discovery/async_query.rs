@@ -167,18 +167,22 @@ pub async fn save_async_query(store: &dyn KvStore, query: &LocalAsyncQuery) -> R
 }
 
 /// List all async queries.
+///
+/// Propagates deserialize errors rather than silently skipping corrupt rows —
+/// a corrupt query row is a bug we want to surface (per project standard
+/// "no silent failures"), not hide. Silently dropping a row means the UI
+/// shows fewer pending queries than actually exist.
 pub async fn list_async_queries(store: &dyn KvStore) -> Result<Vec<LocalAsyncQuery>, String> {
     let entries = store
         .scan_prefix(ASYNC_QUERY_PREFIX.as_bytes())
         .await
         .map_err(|e| format!("Failed to scan async queries: {}", e))?;
 
-    let mut queries = Vec::new();
+    let mut queries = Vec::with_capacity(entries.len());
     for (_key, value) in entries {
-        match serde_json::from_slice(&value) {
-            Ok(q) => queries.push(q),
-            Err(e) => tracing::warn!("Failed to deserialize async query: {}", e),
-        }
+        let query: LocalAsyncQuery = serde_json::from_slice(&value)
+            .map_err(|e| format!("Failed to deserialize async query: {}", e))?;
+        queries.push(query);
     }
 
     queries.sort_by(|a: &LocalAsyncQuery, b: &LocalAsyncQuery| b.created_at.cmp(&a.created_at));
@@ -288,6 +292,45 @@ mod tests {
         let parsed: QueryResponsePayload = serde_json::from_str(&json).unwrap();
         assert!(parsed.success);
         assert_eq!(parsed.results.unwrap().len(), 1);
+    }
+
+    #[tokio::test]
+    async fn list_async_queries_propagates_deserialize_error() {
+        // A corrupt row under the async-query prefix must surface as a
+        // loud error, not get silently dropped. Per project standard
+        // "no silent failures", and so the UI doesn't hide a pending
+        // query behind a non-fatal warn log.
+        use fold_db::storage::inmemory_backend::InMemoryKvStore;
+        let store = InMemoryKvStore::new();
+
+        // A valid row alongside the corrupt one to prove the corrupt
+        // row is what triggers the error (not just an empty store).
+        let good = LocalAsyncQuery {
+            request_id: "good".to_string(),
+            contact_public_key: "pk".to_string(),
+            contact_display_name: "Alice".to_string(),
+            schema_name: Some("notes".to_string()),
+            fields: vec![],
+            query_type: "query".to_string(),
+            status: "pending".to_string(),
+            created_at: "2026-04-01T00:00:00Z".to_string(),
+            completed_at: None,
+            results: None,
+            error: None,
+        };
+        save_async_query(&store, &good).await.unwrap();
+        let bad_key = format!("{}corrupt", ASYNC_QUERY_PREFIX);
+        store
+            .put(bad_key.as_bytes(), b"not valid json".to_vec())
+            .await
+            .unwrap();
+
+        let result = list_async_queries(&store).await;
+        assert!(
+            result.is_err(),
+            "corrupt row must surface as an error, got {:?}",
+            result
+        );
     }
 
     #[test]

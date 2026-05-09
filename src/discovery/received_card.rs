@@ -94,18 +94,22 @@ pub async fn save_received_card(
 }
 
 /// List every received card, newest-first by `received_at`.
+///
+/// Propagates deserialize errors rather than silently skipping corrupt rows —
+/// a corrupt card is a bug we want to surface (per project standard
+/// "no silent failures"), not hide. Silently dropping a row means the UI
+/// hides a card the user actually received.
 pub async fn list_received_cards(store: &dyn KvStore) -> Result<Vec<LocalReceivedCard>, String> {
     let entries = store
         .scan_prefix(RECEIVED_CARD_PREFIX.as_bytes())
         .await
         .map_err(|e| format!("Failed to scan received cards: {}", e))?;
 
-    let mut rows: Vec<LocalReceivedCard> = Vec::new();
+    let mut rows: Vec<LocalReceivedCard> = Vec::with_capacity(entries.len());
     for (_key, value) in entries {
-        match serde_json::from_slice(&value) {
-            Ok(r) => rows.push(r),
-            Err(e) => tracing::warn!("Failed to deserialize received card: {}", e),
-        }
+        let row: LocalReceivedCard = serde_json::from_slice(&value)
+            .map_err(|e| format!("Failed to deserialize received card: {}", e))?;
+        rows.push(row);
     }
     rows.sort_by(|a, b| b.received_at.cmp(&a.received_at));
     Ok(rows)
@@ -200,5 +204,33 @@ mod tests {
         // the stored rows become orphaned. Tie the constant to a
         // literal check so that kind of drift shows up loudly.
         assert_eq!(RECEIVED_CARD_PREFIX, "received_card:");
+    }
+
+    #[tokio::test]
+    async fn list_propagates_deserialize_error() {
+        // A corrupt row under the received-card prefix must surface as a
+        // loud error, not get silently dropped. Per project standard
+        // "no silent failures", and so the UI doesn't hide a card the
+        // user actually received behind a non-fatal warn log.
+        use fold_db::storage::inmemory_backend::InMemoryKvStore;
+        let store = InMemoryKvStore::new();
+
+        // A valid row alongside the corrupt one to prove the corrupt
+        // row is what triggers the error (not just an empty store).
+        save_received_card(&store, &row("good", "2026-04-01T00:00:00Z"))
+            .await
+            .unwrap();
+        let bad_key = format!("{}corrupt", RECEIVED_CARD_PREFIX);
+        store
+            .put(bad_key.as_bytes(), b"not valid json".to_vec())
+            .await
+            .unwrap();
+
+        let result = list_received_cards(&store).await;
+        assert!(
+            result.is_err(),
+            "corrupt row must surface as an error, got {:?}",
+            result
+        );
     }
 }

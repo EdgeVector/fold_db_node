@@ -163,6 +163,36 @@ async fn test_list_opt_ins() {
 }
 
 #[tokio::test]
+async fn list_opt_ins_propagates_deserialize_error() {
+    // A corrupt row under the discovery-config prefix must surface as a
+    // loud error, not get silently dropped. Per project standard
+    // "no silent failures", and so the node doesn't stop publishing for
+    // a schema while the user still believes they're sharing it.
+    let store = make_store().await;
+
+    // A valid opt-in alongside the corrupt one to prove the corrupt
+    // row is what triggers the error (not just an empty store).
+    save_opt_in(
+        &*store,
+        &DiscoveryOptIn::new("good".to_string(), "cat".to_string()),
+    )
+    .await
+    .unwrap();
+    // The CONFIG_PREFIX constant is private; mirror it here.
+    store
+        .put(b"discovery:config:corrupt", b"not valid json".to_vec())
+        .await
+        .unwrap();
+
+    let result = list_opt_ins(&*store).await;
+    assert!(
+        result.is_err(),
+        "corrupt row must surface as an error, got {:?}",
+        result
+    );
+}
+
+#[tokio::test]
 async fn test_upsert_opt_in() {
     let store = make_store().await;
 
