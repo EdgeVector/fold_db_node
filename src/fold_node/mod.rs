@@ -11,6 +11,7 @@
 
 pub mod config;
 pub mod llm_query;
+pub mod migrations;
 pub mod node;
 mod operation_processor;
 pub mod response_types;

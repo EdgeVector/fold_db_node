@@ -194,6 +194,9 @@ impl StartupCtx {
 
         let ctx = Arc::clone(self);
         tasks.spawn(apple_sync(ctx).in_current_span());
+
+        let ctx = Arc::clone(self);
+        tasks.spawn(apple_consolidation_migration(ctx).in_current_span());
     }
 }
 
@@ -439,6 +442,87 @@ async fn apple_sync(ctx: Arc<StartupCtx>) {
         ctx.upload_storage.clone(),
     )
     .await
+}
+
+/// One-shot consolidation of pre-PR-#946 Apple-source records that fragmented
+/// across LLM-classified schemas. Idempotent (marker file under config_dir).
+/// Skips when no identity is registered (fresh install) or the ingestion
+/// service was not constructible.
+async fn apple_consolidation_migration(ctx: Arc<StartupCtx>) {
+    let identity_present = matches!(
+        crate::identity::peek_raw_identity_value(&ctx.sled_pool),
+        Ok(Some(_))
+    );
+    if !identity_present {
+        return;
+    }
+
+    let public_key = match ctx.node_manager.ensure_default_identity().await {
+        Ok(pk) => pk,
+        Err(e) => {
+            tracing::debug!(
+                target: "fold_node::migrations",
+                error = %e,
+                "apple-consolidation: ensure_default_identity failed; skipping"
+            );
+            return;
+        }
+    };
+    let user_hash = crate::utils::crypto::user_hash_from_pubkey(&public_key);
+
+    let node = match ctx.node_manager.get_node(&user_hash).await {
+        Ok(n) => n,
+        Err(e) => {
+            tracing::warn!(
+                target: "fold_node::migrations",
+                error = %e,
+                "apple-consolidation: get_node failed; skipping"
+            );
+            return;
+        }
+    };
+
+    let ingestion = ctx.ingestion.read().await.as_ref().map(Arc::clone);
+    let Some(ingestion) = ingestion else {
+        tracing::debug!(
+            target: "fold_node::migrations",
+            "apple-consolidation: ingestion service unavailable; skipping"
+        );
+        return;
+    };
+
+    let config_dir = ctx.config_dir.0.clone();
+    match crate::fold_node::migrations::apple_consolidation::run_if_needed(
+        &node,
+        &ingestion,
+        &config_dir,
+    )
+    .await
+    {
+        Ok(o) if o.skipped => {}
+        Ok(o) if o.migrated == 0 => {
+            tracing::debug!(
+                target: "fold_node::migrations",
+                schemas_scanned = o.schemas_scanned,
+                "apple-consolidation: no fragmented records found"
+            );
+        }
+        Ok(o) => {
+            tracing::info!(
+                target: "fold_node::migrations",
+                migrated = o.migrated,
+                schemas_scanned = o.schemas_scanned,
+                "apple-consolidation: completed"
+            );
+        }
+        Err(e) => {
+            tracing::warn!(
+                target: "fold_node::migrations",
+                error = %e,
+                "apple-consolidation: migration failed (non-fatal; will retry next boot)"
+            );
+        }
+    }
 }
 
 #[cfg(test)]
