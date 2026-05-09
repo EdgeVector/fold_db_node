@@ -30,16 +30,11 @@ fn credentials_path() -> Result<PathBuf, String> {
     Ok(folddb_home()?.join(CREDENTIALS_FILE))
 }
 
-// ============================================================
-// os-keychain ENABLED — encrypt credentials via OS keychain
-// ============================================================
-
-#[cfg(feature = "os-keychain")]
 pub fn store_credentials(creds: &ExememCredentials) -> Result<(), String> {
     let path = credentials_path()?;
     let json = serde_json::to_string_pretty(creds)
         .map_err(|e| format!("Failed to serialize credentials: {}", e))?;
-    crate::secure_store::encrypt_and_write(&path, json.as_bytes())
+    crate::sensitive_io::write_sensitive(&path, json.as_bytes())
 }
 
 #[cfg(feature = "os-keychain")]
@@ -54,24 +49,6 @@ pub fn load_credentials() -> Result<Option<ExememCredentials>, String> {
     let creds: ExememCredentials = serde_json::from_str(&json)
         .map_err(|e| format!("Failed to deserialize credentials: {}", e))?;
     Ok(Some(creds))
-}
-
-// ============================================================
-// os-keychain DISABLED — plaintext JSON (dev mode)
-// ============================================================
-
-#[cfg(not(feature = "os-keychain"))]
-pub fn store_credentials(creds: &ExememCredentials) -> Result<(), String> {
-    let path = credentials_path()?;
-    if let Some(parent) = path.parent() {
-        std::fs::create_dir_all(parent)
-            .map_err(|e| format!("Failed to create credentials directory: {}", e))?;
-    }
-
-    let json = serde_json::to_string_pretty(creds)
-        .map_err(|e| format!("Failed to serialize credentials: {}", e))?;
-
-    crate::sensitive_io::write_atomic_0600(&path, json.as_bytes())
 }
 
 #[cfg(not(feature = "os-keychain"))]

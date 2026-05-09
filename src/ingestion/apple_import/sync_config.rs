@@ -167,13 +167,9 @@ impl AppleSyncConfig {
     /// Persist to disk.
     pub fn save(&self) -> Result<(), String> {
         let path = Self::config_path();
-        if let Some(parent) = path.parent() {
-            std::fs::create_dir_all(parent)
-                .map_err(|e| format!("Failed to create config dir: {e}"))?;
-        }
         let json = serde_json::to_string_pretty(self)
             .map_err(|e| format!("Failed to serialize sync config: {e}"))?;
-        crate::sensitive_io::write_atomic_0600(&path, json.as_bytes())
+        crate::sensitive_io::write_sensitive(&path, json.as_bytes())
             .map_err(|e| format!("Failed to write sync config: {e}"))?;
         Ok(())
     }
