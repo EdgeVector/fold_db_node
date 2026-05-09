@@ -78,11 +78,46 @@ cleanup_processes() {
     echo "Cleaned up existing processes."
 }
 
-# Reap slot files in ~/.folddb-slots/ whose owning run.sh PID is dead. For each
-# dead slot, kill any lingering server children we can identify (via PID files
-# in the slot's home, plus a port-listener fallback) and remove the slot file.
-# Runs at startup so successive invocations clean up after predecessors that
-# were SIGKILL'd or whose parent agent crashed before the EXIT trap could fire.
+# Pull the --port value out of a folddb_server argv string. Echoes the port
+# number, or nothing if --port wasn't present. Tolerates `--port N` and
+# `--port=N`. Word-matches `--port` so it doesn't also match `--schema-port`.
+parse_folddb_port() {
+    local cmd="$1"
+    echo "$cmd" | awk '
+        {
+            for (i = 1; i <= NF; i++) {
+                if ($i == "--port" && i < NF) { print $(i+1); exit }
+                if (match($i, /^--port=[0-9]+$/)) { print substr($i, 8); exit }
+            }
+        }
+    '
+}
+
+# Find the PID of a folddb_server owned by the current user whose argv carries
+# `--port <target_port>`. Echoes the PID, or nothing if no match.
+folddb_server_pid_for_port() {
+    local target_port="$1" pid cmd port
+    while IFS= read -r pid; do
+        [ -z "$pid" ] && continue
+        cmd="$(ps -p "$pid" -o command= 2>/dev/null || true)"
+        [ -z "$cmd" ] && continue
+        port="$(parse_folddb_port "$cmd")"
+        if [ "$port" = "$target_port" ]; then
+            echo "$pid"
+            return 0
+        fi
+    done < <(pgrep -u "$(id -un)" -f folddb_server 2>/dev/null || true)
+    return 0
+}
+
+# Reap slot files in ~/.folddb-slots/ that no longer correspond to an active
+# session. A slot is stale when EITHER the owning run.sh PID is dead OR the
+# slot's home directory has been deleted (worktree GC'd while the server kept
+# running — child was nohup'd). For each stale slot kill any lingering server
+# children we can identify, then remove the slot file. Runs at startup so
+# successive invocations clean up after predecessors that were SIGKILL'd, whose
+# parent agent crashed before the EXIT trap could fire, or whose worktree was
+# rm -rf'd before the server was.
 sweep_dead_slots() {
     local slot_dir="$HOME/.folddb-slots"
     [ -d "$slot_dir" ] || return 0
@@ -94,14 +129,43 @@ sweep_dead_slots() {
         owner_pid="$(grep -oE '"pid":[[:space:]]*[0-9]+' "$slot_file" 2>/dev/null | grep -oE '[0-9]+$' || true)"
         slot_home="$(grep -oE '"home":[[:space:]]*"[^"]*"' "$slot_file" 2>/dev/null | sed -E 's/.*"home":[[:space:]]*"([^"]*)".*/\1/' || true)"
         slot_port="$(grep -oE '"port":[[:space:]]*[0-9]+' "$slot_file" 2>/dev/null | grep -oE '[0-9]+$' || true)"
-        # Active session — leave alone.
-        [ -n "$owner_pid" ] && kill -0 "$owner_pid" 2>/dev/null && continue
-        # Owner is dead (or pid field missing). Kill any server children we can
-        # find via the slot's home PID files.
+
+        local owner_alive=false
+        if [ -n "$owner_pid" ] && kill -0 "$owner_pid" 2>/dev/null; then
+            owner_alive=true
+        fi
+        local home_present=false
         if [ -n "$slot_home" ] && [ -d "$slot_home" ]; then
+            home_present=true
+        fi
+
+        # Active session: owner run.sh alive AND home dir still there.
+        if [ "$owner_alive" = true ] && [ "$home_present" = true ]; then
+            continue
+        fi
+        # Inconclusive: owner alive but home parse failed (no slot_home in
+        # JSON). Treat as active to avoid killing a session we can't classify.
+        if [ "$owner_alive" = true ] && [ -z "$slot_home" ]; then
+            continue
+        fi
+
+        if [ "$home_present" = true ]; then
+            # Home alive, owner dead — kill children via slot's PID files.
             kill_pid_file "$slot_home/folddb.pid"
             kill_pid_file "$slot_home/schema.pid"
             kill_pid_file "$slot_home/vite.pid"
+        elif [ -n "$slot_port" ]; then
+            # Worktree GC'd while server lived. The slot's `pid` field is
+            # the run.sh's, not the server's, so look up folddb_server by
+            # --port argv match and kill it directly.
+            local server_pid
+            server_pid="$(folddb_server_pid_for_port "$slot_port")"
+            if [ -n "$server_pid" ]; then
+                echo "Cleaning up stale folddb_server (port=$slot_port pid=$server_pid, worktree gone)"
+                kill -TERM "$server_pid" 2>/dev/null || true
+                sleep 2
+                kill -KILL "$server_pid" 2>/dev/null || true
+            fi
         fi
         # Belt-and-braces: kill anything still listening on the slot's port —
         # catches the case where slot_home was deleted before the server was.
@@ -118,6 +182,41 @@ sweep_dead_slots() {
         cleaned=$((cleaned + 1))
     done
     [ $cleaned -gt 0 ] && echo "Reaped $cleaned stale slot file(s) from crashed prior session(s)."
+    return 0
+}
+
+# Scan ps for current-uid folddb_server processes whose `--port` falls in the
+# auto-slot range (9101..=9199) but is not claimed by any current slot file in
+# ~/.folddb-slots/. Catches orphans whose slot file was already cleaned (e.g.
+# tmp purge) but whose process was never killed because the EXIT trap didn't
+# fire. The prod Tauri bundle owns 9001..=9010 and is intentionally excluded.
+# Batches the kill: TERM all, sleep 2, KILL stragglers — so cost is constant
+# in the number of orphans rather than 2s per orphan.
+sweep_orphan_servers() {
+    local slot_dir="$HOME/.folddb-slots"
+    local stale_pids=()
+    while IFS= read -r pid; do
+        [ -z "$pid" ] && continue
+        local cmd port
+        cmd="$(ps -p "$pid" -o command= 2>/dev/null || true)"
+        [ -z "$cmd" ] && continue
+        port="$(parse_folddb_port "$cmd")"
+        [ -z "$port" ] && continue
+        # Stay in the dev auto-slot range — never touch the prod Tauri bundle.
+        [ "$port" -ge 9101 ] && [ "$port" -le 9199 ] || continue
+        # Slot file claims this port → currently-active worktree's server.
+        [ -f "$slot_dir/$port.json" ] && continue
+        echo "Cleaning up stale folddb_server (port=$port pid=$pid, no slot file)"
+        kill -TERM "$pid" 2>/dev/null || true
+        stale_pids+=("$pid")
+    done < <(pgrep -u "$(id -un)" -f folddb_server 2>/dev/null || true)
+    if [ ${#stale_pids[@]} -gt 0 ]; then
+        sleep 2
+        local pid
+        for pid in "${stale_pids[@]}"; do
+            kill -KILL "$pid" 2>/dev/null || true
+        done
+    fi
     return 0
 }
 
@@ -141,6 +240,7 @@ trap on_exit EXIT
 
 # Reap slot/server state from prior sessions before we pick our own slot.
 sweep_dead_slots
+sweep_orphan_servers
 
 reset_db() {
     echo "Resetting database from test_db template..."
