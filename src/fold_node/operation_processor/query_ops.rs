@@ -674,7 +674,103 @@ impl OperationProcessor {
             });
         }
 
+        // fold_db's EmbeddingIndex::search() hardcodes `value: Value::Null`
+        // for every match, but the StoredEmbedding Sled record carries the
+        // original `fragment_text` that produced the embedding. Re-read it
+        // here so the HTTP search response surfaces a useful snippet — the
+        // frontend (NativeIndexTab grouping, WordGraphTab labels) is
+        // unusable when every result's `value` is null.
+        hydrate_fragment_text(&db, &mut results).await;
+
         Ok(results)
+    }
+}
+
+/// Storage-key format from fold_db's `EmbeddingEntry::key_hash`. Kept in
+/// lockstep here so we can read back the persisted `fragment_text` without
+/// depending on a fold_db API that doesn't yet exist. If fold_db ever
+/// surfaces fragment text directly through `IndexResult`, delete this and
+/// the [`hydrate_fragment_text`] caller above.
+fn embedding_key_hash(key: &fold_db::schema::types::KeyValue) -> String {
+    match (&key.hash, &key.range) {
+        (Some(h), Some(r)) => format!("{}_{}", h, r),
+        (Some(h), None) => h.clone(),
+        (None, Some(r)) => format!("_{}", r),
+        (None, None) => "empty".to_string(),
+    }
+}
+
+/// Populate `IndexResult.value` with `fragment_text` looked up from the
+/// embedding KV store at `emb:{schema}:{key_hash}:{field}:{fragment_idx}`.
+///
+/// Skipped silently when the metadata doesn't pin a specific text fragment
+/// (legacy entries, face matches, missing `fragment_idx`) — those keep
+/// `value: null`. Lookup failures log a warn and leave the value null.
+async fn hydrate_fragment_text(
+    db: &fold_db::fold_db_core::FoldDB,
+    results: &mut [IndexResult],
+) {
+    let manager = match db.db_ops().native_index_manager() {
+        Some(m) => m,
+        None => return,
+    };
+    let store = manager.store();
+
+    #[derive(serde::Deserialize)]
+    struct StoredFragment {
+        #[serde(default)]
+        fragment_text: Option<String>,
+    }
+
+    for r in results.iter_mut() {
+        let meta = match r.metadata.as_ref() {
+            Some(m) => m,
+            None => continue,
+        };
+        // Only text fragments carry meaningful snippets. Face matches are
+        // images; legacy entries lack a per-fragment index.
+        if meta.get("match_type").and_then(|v| v.as_str()) != Some("semantic") {
+            continue;
+        }
+        let fragment_idx = match meta.get("fragment_idx").and_then(|v| v.as_u64()) {
+            Some(i) => i,
+            None => continue,
+        };
+
+        let storage_key = format!(
+            "emb:{}:{}:{}:{}",
+            r.schema_name,
+            embedding_key_hash(&r.key_value),
+            r.field,
+            fragment_idx,
+        );
+
+        match store.get(storage_key.as_bytes()).await {
+            Ok(Some(bytes)) => match serde_json::from_slice::<StoredFragment>(&bytes) {
+                Ok(stored) => {
+                    if let Some(text) = stored.fragment_text {
+                        r.value = Value::String(text);
+                    }
+                }
+                Err(e) => tracing::warn!(
+                    target: "fold_node::native_index",
+                    storage_key = %storage_key,
+                    error = %e,
+                    "hydrate_fragment_text: failed to deserialize StoredEmbedding",
+                ),
+            },
+            Ok(None) => {
+                // Embedding entry was deleted between the in-memory search
+                // and this lookup. Leave value null; caller can fall back
+                // on `field` + `key_value` for display.
+            }
+            Err(e) => tracing::warn!(
+                target: "fold_node::native_index",
+                storage_key = %storage_key,
+                error = %e,
+                "hydrate_fragment_text: KV lookup failed",
+            ),
+        }
     }
 }
 

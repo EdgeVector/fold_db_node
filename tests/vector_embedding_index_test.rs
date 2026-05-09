@@ -299,3 +299,64 @@ async fn test_search_spans_multiple_schemas() {
         "Results should include Message records"
     );
 }
+
+/// `IndexResult.value` must surface the matched fragment text. A regression
+/// in 2026-05 had every `/api/native-index/search` result return `value:
+/// null`, which broke NativeIndexTab grouping and WordGraphTab labels.
+#[tokio::test(flavor = "multi_thread")]
+async fn test_value_contains_matched_fragment_text() {
+    let (node, _tmp) = setup_node().await;
+    load_schema(&node, "BlogPost.json").await;
+    let processor = OperationProcessor::new(std::sync::Arc::new(node));
+
+    let body = "Pancakes are best with maple syrup and butter on a Sunday morning.";
+    insert_post(
+        &processor,
+        "2024-01-01",
+        "Breakfast notes",
+        body,
+        "Alice",
+    )
+    .await;
+
+    let results = processor
+        .native_index_search("pancakes maple syrup", false)
+        .await
+        .expect("Search failed");
+
+    assert!(!results.is_empty(), "Should find at least one result");
+
+    // At least one result on the matched semantic fragment must carry a
+    // non-null string `value`. Other results (legacy entries, face matches)
+    // are allowed to keep `value: null`, but a per-fragment text match
+    // must hydrate.
+    let hydrated: Vec<&serde_json::Value> = results
+        .iter()
+        .filter(|r| {
+            r.metadata
+                .as_ref()
+                .and_then(|m| m.get("match_type"))
+                .and_then(|v| v.as_str())
+                == Some("semantic")
+                && r.metadata
+                    .as_ref()
+                    .and_then(|m| m.get("fragment_idx"))
+                    .is_some()
+        })
+        .map(|r| &r.value)
+        .filter(|v| !v.is_null())
+        .collect();
+
+    assert!(
+        !hydrated.is_empty(),
+        "At least one semantic fragment result must have a non-null value: {:?}",
+        results
+            .iter()
+            .map(|r| (r.field.clone(), r.value.clone(), r.metadata.clone()))
+            .collect::<Vec<_>>(),
+    );
+    assert!(
+        hydrated.iter().all(|v| v.is_string()),
+        "Hydrated values must be strings (fragment text)"
+    );
+}
