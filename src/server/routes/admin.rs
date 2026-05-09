@@ -149,7 +149,7 @@ pub struct ResetDatabaseRequest {
 /// This endpoint initiates a database reset as a background job:
 /// 1. Returns immediately with a job ID for progress tracking
 /// 2. The background job clears all data for the current user
-/// 3. Progress can be monitored via /api/ingestion/progress/{job_id}
+/// 3. Progress can be monitored via /api/ingestion/progress/{id}
 ///
 /// This is a destructive operation that cannot be undone.
 ///
@@ -243,7 +243,7 @@ pub async fn reset_database(
 
     HttpResponse::Accepted().json(AdminJobResponse::started(
         job_id,
-        "Database reset started. Monitor progress via /api/ingestion/progress endpoint.",
+        "Database reset started. Monitor progress via /api/ingestion/progress/{id}.",
     ))
 }
 
@@ -259,7 +259,7 @@ pub struct MigrateToCloudRequest {
 /// This endpoint initiates S3 sync setup for the local Sled database:
 /// 1. Returns immediately with a job ID for progress tracking
 /// 2. The background job snapshots local data and uploads encrypted blobs to S3
-/// 3. Progress can be monitored via /api/ingestion/progress/{job_id}
+/// 3. Progress can be monitored via /api/ingestion/progress/{id}
 #[utoipa::path(
     post,
     path = "/api/system/migrate-to-cloud",
@@ -343,7 +343,7 @@ pub async fn migrate_to_cloud(
 
     HttpResponse::Accepted().json(AdminJobResponse::started(
         job_id,
-        "Cloud migration started. Monitor progress via /api/ingestion/progress endpoint.",
+        "Cloud migration started. Monitor progress via /api/ingestion/progress/{id}.",
     ))
 }
 
