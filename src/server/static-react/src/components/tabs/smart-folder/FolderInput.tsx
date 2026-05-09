@@ -94,7 +94,7 @@ export default function FolderInput({
             disabled={isScanning}
             autoComplete="off"
           />
-          {showSuggestions && suggestions.length > 0 && (
+          {!isScanning && showSuggestions && suggestions.length > 0 && (
             <ul
               ref={suggestionsRef as unknown as React.RefObject<HTMLUListElement>}
               className="absolute z-50 left-0 right-0 top-full mt-1 border border-border rounded-lg bg-surface shadow-lg max-h-48 overflow-y-auto"
