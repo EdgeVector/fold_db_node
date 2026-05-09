@@ -12,3 +12,6 @@ pub mod sent_invites;
 pub mod sharing_audit;
 pub mod sharing_roles;
 pub mod trust_invite;
+
+#[cfg(test)]
+mod test_utils;
