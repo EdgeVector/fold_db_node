@@ -414,7 +414,20 @@ async fn run_bootstrap_post_identity(
                 });
                 write_ingestion_config(config_dir.as_path(), &cfg)?;
             }
-            "" | "skip" | "none" => {}
+            "" | "skip" | "none" => {
+                // Persist the user's explicit opt-out as a saved file with
+                // `enabled: false`. Without this, a stale `ANTHROPIC_API_KEY`
+                // shell export plus the default `INGESTION_ENABLED=true`
+                // env-var fallback in `IngestionConfig::load` would silently
+                // re-enable ingestion on the next boot, defeating the user's
+                // explicit choice. See `IngestionConfig::load` for the
+                // precedence rule (saved enabled wins over env var).
+                let cfg = serde_json::json!({
+                    "provider": "Anthropic",
+                    "enabled": false,
+                });
+                write_ingestion_config(config_dir.as_path(), &cfg)?;
+            }
             other => {
                 return Err(BootstrapError::Internal(format!(
                     "Unknown ai_provider {other:?}; expected anthropic, ollama, or skip"
@@ -727,6 +740,81 @@ mod tests {
             "restore-from-phrase bootstrap must persist encrypted identity on first write; \
              got prefix: {:?}",
             raw.chars().take(10).collect::<String>()
+        );
+
+        std::env::remove_var("FOLDDB_HOME");
+    }
+
+    /// Privacy/consent regression: when the user picks "skip" in the AI
+    /// provider step of onboarding, the skip arm of bootstrap MUST persist a
+    /// saved `ingestion_config.json` with an explicit `enabled: false`.
+    /// Without that, `IngestionConfig::load` falls through to the
+    /// `INGESTION_ENABLED` env-var default of `true` and the user's explicit
+    /// opt-out is silently overridden — see the matching precedence tests
+    /// in `ingestion::config`. This test exercises the route end-to-end
+    /// through `bootstrap` so the wiring (route → run_bootstrap →
+    /// run_bootstrap_post_identity → skip arm → write_ingestion_config)
+    /// stays in lockstep.
+    #[actix_web::test]
+    #[allow(clippy::await_holding_lock)]
+    async fn bootstrap_skip_writes_disabled_ingestion_config() {
+        let _g = crate::secure_store::test_master_key::with_set();
+        let tmp = tempfile::tempdir().unwrap();
+        std::env::set_var("FOLDDB_HOME", tmp.path());
+
+        let (state, config_dir) = build_app_state(tmp.path());
+        let body = web::Json(BootstrapRequest {
+            name: "test".into(),
+            email: None,
+            birthday: None,
+            ai_provider: Some("skip".to_string()),
+            anthropic_api_key: None,
+            ollama_url: None,
+            ollama_model: None,
+            enable_cloud: false,
+            invite_code: None,
+            recovery_phrase: None,
+        });
+        let resp = bootstrap(state, config_dir.clone(), body)
+            .await
+            .respond_to(&actix_web::test::TestRequest::default().to_http_request());
+        assert_eq!(resp.status(), 200, "bootstrap with skip must succeed");
+
+        // The saved config must encode the user's explicit opt-out so the
+        // env-var fallback in `IngestionConfig::load` doesn't override it.
+        let cfg_path = config_dir.as_path().join("ingestion_config.json");
+        assert!(
+            cfg_path.exists(),
+            "skip arm must persist ingestion_config.json (got missing file)"
+        );
+        let saved: crate::ingestion::config::SavedConfig =
+            serde_json::from_slice(&std::fs::read(&cfg_path).expect("read ingestion_config.json"))
+                .expect("parse SavedConfig");
+        assert_eq!(
+            saved.enabled,
+            Some(false),
+            "skip arm must persist enabled=false; got {:?}",
+            saved.enabled
+        );
+
+        // End-to-end: even with `ANTHROPIC_API_KEY` set, the load result
+        // must report disabled+unconfigured. This mirrors the real-world
+        // shell where a developer's `~/.zshrc` exports the var.
+        std::env::set_var("ANTHROPIC_API_KEY", "sk-ant-stale-shell-export");
+        let loaded =
+            crate::ingestion::config::IngestionConfig::load(config_dir.as_path()).expect("load");
+        std::env::remove_var("ANTHROPIC_API_KEY");
+        assert!(
+            !loaded.enabled,
+            "post-skip load must report enabled=false even with ANTHROPIC_API_KEY set"
+        );
+        assert!(
+            !loaded.is_ready(),
+            "post-skip load must report not-configured (is_ready=false)"
+        );
+        assert_eq!(
+            loaded.anthropic.api_key, "",
+            "post-skip load must not pre-populate the api_key from env"
         );
 
         std::env::remove_var("FOLDDB_HOME");
