@@ -83,18 +83,8 @@ impl IdentityCard {
 
 #[cfg(test)]
 mod tests {
+    use super::super::test_utils::setup_db;
     use super::*;
-
-    async fn setup_db() -> (std::sync::Arc<FoldDB>, tempfile::TempDir) {
-        let tmp = tempfile::tempdir().unwrap();
-        let keypair = fold_db::security::Ed25519KeyPair::generate().unwrap();
-        let config = crate::fold_node::NodeConfig::new(tmp.path().to_path_buf())
-            .with_schema_service_url("test://mock")
-            .with_seed_identity(crate::identity::identity_from_keypair(&keypair));
-        let node = crate::fold_node::FoldNode::new(config).await.unwrap();
-        let db = node.get_fold_db().unwrap();
-        (db, tmp)
-    }
 
     #[tokio::test]
     async fn save_then_load_roundtrips() {
