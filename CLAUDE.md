@@ -135,6 +135,16 @@ When you touch any `tracing::*!`, `tokio::spawn`, `reqwest::Client::new()`, or s
 
 The cloud-stack cleanup (2026-04-28) removed OTLP / Honeycomb / SpanMetrics. Do NOT add `opentelemetry-otlp` / `opentelemetry-proto` deps or set `OBS_OTLP_ENDPOINT`. Sentry stays (off-by-default; activates if `OBS_SENTRY_DSN` is set).
 
+### Volume control (`$FOLDDB_HOME/observability.jsonl`)
+
+The upstream observability crate writes a single append-only JSONL file with no rotation. Until rotation lands upstream, `src/log_filter.rs` keeps the firehose tractable by capping the noisiest channels at INFO before upstream `init_node_with_web` reads `RUST_LOG`:
+
+- `sled` (and any submodule) — `FOLDDB_LOG_SLED=<level>` overrides
+- `fold_db::fold_db_core::mutation_manager` — `FOLDDB_LOG_MUTATION_MANAGER=<level>` overrides
+- `fold_db::db_operations::atom_store` — `FOLDDB_LOG_ATOM_STORE=<level>` overrides
+
+Defaults are INFO. Each accepts any tracing level (`trace`/`debug`/`info`/`warn`/`error`); invalid values fall back to the default cap. Operators chasing a bug in one of those channels set the matching `FOLDDB_LOG_*` var to `debug` (or `trace`) — no rebuild needed. To add another cap, append to `NATIVE_DEFAULT_CAPS` in `src/log_filter.rs`.
+
 ## Trust boundary: loopback owner context
 
 **Intentional invariant (as of 2026-04-13)**: `src/handlers/query.rs` and `src/handlers/mutation.rs` hardcode the HTTP caller as the node's own pubkey (`caller_pub_key = node.get_node_public_key()`). This gives every local HTTP request owner context via `build_access_context`'s owner short-circuit, so trust-tier enforcement is effectively disabled for anything reaching `http://localhost:9001`.
