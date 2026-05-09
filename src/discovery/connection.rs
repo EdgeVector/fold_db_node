@@ -24,6 +24,13 @@ fn serialize_to_vec<T: serde::Serialize>(value: &T, what: &str) -> Result<Vec<u8
     serde_json::to_vec(value).map_err(|e| format!("Failed to serialize {what}: {e}"))
 }
 
+fn deserialize_from_slice<T: serde::de::DeserializeOwned>(
+    bytes: &[u8],
+    what: &str,
+) -> Result<T, String> {
+    serde_json::from_slice(bytes).map_err(|e| format!("Failed to deserialize {what}: {e}"))
+}
+
 /// Derive an X25519 key pair for a specific pseudonym.
 /// This produces a unique key pair per pseudonym, preserving unlinkability.
 pub fn derive_pseudonym_keypair(master_key: &[u8], pseudonym: &Uuid) -> (StaticSecret, PublicKey) {
@@ -171,7 +178,7 @@ pub fn decrypt_connection_message(
         .decrypt(nonce, ciphertext)
         .map_err(|_| "Decryption failed (wrong key or tampered message)".to_string())?;
 
-    serde_json::from_slice(&plaintext).map_err(|e| format!("Failed to deserialize payload: {}", e))
+    deserialize_from_slice(&plaintext, "payload")
 }
 
 /// Encrypt any serializable payload for a target's X25519 public key.
@@ -250,7 +257,7 @@ pub fn decrypt_message_raw(
         .decrypt(nonce, ciphertext)
         .map_err(|_| "Decryption failed (wrong key or tampered message)".to_string())?;
 
-    serde_json::from_slice(&plaintext).map_err(|e| format!("Failed to deserialize payload: {}", e))
+    deserialize_from_slice(&plaintext, "payload")
 }
 
 /// Referral query — "do you know this pseudonym?"
@@ -405,8 +412,7 @@ pub async fn update_request_status(
         .map_err(|e| format!("Failed to get request: {}", e))?
         .ok_or_else(|| format!("Request {} not found", request_id))?;
 
-    let mut request: LocalConnectionRequest = serde_json::from_slice(&value)
-        .map_err(|e| format!("Failed to deserialize request: {}", e))?;
+    let mut request: LocalConnectionRequest = deserialize_from_slice(&value, "request")?;
 
     request.status = status.to_string();
     request.responded_at = Some(chrono::Utc::now().to_rfc3339());
