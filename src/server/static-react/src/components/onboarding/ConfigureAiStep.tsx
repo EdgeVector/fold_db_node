@@ -183,8 +183,21 @@ export default function ConfigureAiStep({ fields, onChange, onNext, onSkip }: Co
           </div>
           <div className="card p-3 mt-3">
             <p className="font-bold text-primary">Setup</p>
-            <p className="text-secondary">Make sure Ollama is running:</p>
-            <p className="text-gruvbox-yellow mt-1">$ ollama pull {currentModel}</p>
+            {ollamaModelsLoading ? (
+              <p className="text-secondary">Checking your local Ollama instance...</p>
+            ) : ollamaModels.length > 0 ? (
+              <p className="text-secondary" data-testid="ollama-setup-detected">
+                Model detected on local Ollama
+                {fields.ollamaModel ? `: ${fields.ollamaModel}` : ''}.
+              </p>
+            ) : (
+              <>
+                <p className="text-secondary">Make sure Ollama is running, then pull a model:</p>
+                <p className="text-gruvbox-yellow mt-1" data-testid="ollama-setup-pull">
+                  $ ollama pull {currentModel || 'llama3.1:8b'}
+                </p>
+              </>
+            )}
           </div>
         </>
       )}
