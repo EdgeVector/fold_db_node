@@ -1,4 +1,4 @@
-import React from 'react';
+import React, { act } from 'react';
 import { screen, fireEvent, waitFor } from '@testing-library/react';
 import { vi, describe, it, expect, beforeEach } from 'vitest';
 import App, { AppContent } from '../../App';
@@ -741,6 +741,45 @@ describe('App Component', () => {
         // Critical: the dead-end error screen MUST NOT render — that's the
         // exact regression we're guarding against.
         expect(screen.queryByText(/Can't reach the FoldDB node/i)).not.toBeInTheDocument();
+      });
+
+      it('keeps the wizard mounted when authError clears mid-bootstrap', async () => {
+        // Regression for the empty-db unmount: submitBootstrap re-fires
+        // autoLogin on success, which clears authError. Before this fix,
+        // provisioningRequired flipped false and the wizard unmounted
+        // before Apple Data / Community / All Set could render — Skip on
+        // Cloud Backup silently dumped the user into the main app.
+        localStorage.removeItem('folddb_onboarding_complete');
+
+        const store = createAppTestStore({
+          auth: {
+            isAuthenticated: false,
+            systemPublicKey: null,
+            systemKeyId: null,
+            isLoading: false,
+            error: 'node_not_provisioned',
+          },
+          schemas: {
+            schemas: {},
+            loading: { fetch: false },
+            errors: { fetch: null },
+          },
+        });
+
+        renderWithRedux(<AppContent />, { store });
+
+        await waitFor(() => {
+          expect(screen.getByTestId('onboarding-wizard')).toBeInTheDocument();
+        });
+
+        // Simulate the post-bootstrap autoLogin clearing the error. The
+        // wizard must remain mounted via the showOnboarding flag that
+        // App.tsx mirrors from provisioningRequired on the way in.
+        act(() => {
+          store.dispatch({ type: 'auth/clearError' });
+        });
+
+        expect(screen.getByTestId('onboarding-wizard')).toBeInTheDocument();
       });
 
       it('renders the auth-error screen for a generic 5xx (not node_not_provisioned)', async () => {

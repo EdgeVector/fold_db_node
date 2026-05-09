@@ -109,6 +109,17 @@ export function AppContent() {
     return () => window.removeEventListener(NODE_NOT_PROVISIONED_EVENT, handler)
   }, [setShowOnboarding])
 
+  // Mirror provisioningRequired → showOnboarding so the wizard stays
+  // mounted across the bootstrap → autoLogin transition. submitBootstrap
+  // clears authError on success, which flips provisioningRequired false;
+  // without this, the wizard would unmount mid-flow before the user sees
+  // Apple Data / Community / All Set. handleFinish is then the only path
+  // that takes the wizard down.
+  const provisioningRequired = authError === NODE_NOT_PROVISIONED_ERROR
+  useEffect(() => {
+    if (provisioningRequired) setShowOnboarding(true)
+  }, [provisioningRequired, setShowOnboarding])
+
   // Per-session dismissal of the cloud-LLM data warning banner.
   // sessionStorage on purpose: each app launch re-warns once, so the
   // banner can't be permanently hidden while sensitive data still
@@ -223,10 +234,7 @@ export function AppContent() {
   // The node hasn't been bootstrapped yet (autoLogin hit
   // `503 node_not_provisioned`), or the user has explicitly chosen to
   // (re-)run the wizard via Settings. Either way the wizard takes
-  // precedence over the auth-error / spinner / db-setup branches: its
-  // submitBootstrap re-runs autoLogin on success, so keeping the wizard
-  // mounted across that retry preserves its in-progress form state.
-  const provisioningRequired = authError === NODE_NOT_PROVISIONED_ERROR
+  // precedence over the auth-error / spinner / db-setup branches.
   if (provisioningRequired || showOnboarding) {
     return (
       <OnboardingWizard
