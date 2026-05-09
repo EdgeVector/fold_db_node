@@ -46,14 +46,29 @@ export function useScanPolling({
     const resp = await ingestionClient.getJobProgress(scanProgressId)
     if (!resp.success || !resp.data) throw new Error('poll failed')
     setScanProgress(resp.data)
-    if (resp.data.is_complete && !resp.data.is_failed) {
-      const result = await ingestionClient.getScanResult(scanProgressId)
-      if (result.success && result.data) onCompleteRef.current(result.data)
-      setScanProgress(null)
-      return { stop: true }
-    } else if (resp.data.is_failed) {
+    if (resp.data.is_failed) {
       onFailRef.current(resp.data.error_message || 'Scan failed')
       setScanProgress(null)
+      return { stop: true }
+    }
+    if (resp.data.is_complete) {
+      // Always tear down progress state up-front. The result fetch below is
+      // best-effort; either onComplete or onFail will fire to clear the
+      // parent's scanProgressId / isScanning so the UI can never be stuck in
+      // "Finalizing..." just because /scan/{id} failed.
+      setScanProgress(null)
+      let result
+      try {
+        result = await ingestionClient.getScanResult(scanProgressId)
+      } catch {
+        onFailRef.current('Scan completed but result fetch failed; please retry')
+        return { stop: true }
+      }
+      if (result.success && result.data) {
+        onCompleteRef.current(result.data)
+      } else {
+        onFailRef.current(result.error || 'Scan completed but result fetch failed; please retry')
+      }
       return { stop: true }
     }
     return undefined

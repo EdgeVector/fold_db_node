@@ -1,7 +1,9 @@
 import * as React from 'react'
-import { useState } from 'react'
+import { useEffect, useState } from 'react'
 import DirectoryBrowserModal from './DirectoryBrowserModal'
 import type { useFolderAutocomplete } from '../../../hooks/useFolderAutocomplete'
+
+const STALE_SCAN_MS = 15000
 
 /**
  * Tauri capabilities required in src-tauri/capabilities/default.json:
@@ -57,6 +59,24 @@ export default function FolderInput({
 
   const [, setPickerError] = useState<unknown>(null)
   const [showBrowser, setShowBrowser] = useState(false)
+  const [staleScan, setStaleScan] = useState(false)
+
+  // Defense-in-depth: if the scan stays in the same state for too long
+  // (no progress update OR no progress object at all), surface a recovery
+  // affordance so the user isn't left staring at a frozen spinner. Resets
+  // whenever the progress payload changes identity or scanning ends.
+  const progressKey = scanProgress
+    ? `${scanProgress.progress_percentage ?? ''}|${scanProgress.status_message ?? ''}`
+    : ''
+  useEffect(() => {
+    if (!isScanning) {
+      setStaleScan(false)
+      return
+    }
+    setStaleScan(false)
+    const timer = setTimeout(() => setStaleScan(true), STALE_SCAN_MS)
+    return () => clearTimeout(timer)
+  }, [isScanning, progressKey])
 
   const openFolderPicker = async () => {
     if (isTauri) {
@@ -133,6 +153,19 @@ export default function FolderInput({
       )}
       {isScanning && !scanProgress && (
         <p className="text-xs text-secondary">Starting scan...</p>
+      )}
+      {isScanning && staleScan && (
+        <div className="rounded-md border border-warning/40 bg-warning/10 px-3 py-2 text-xs text-secondary flex items-center justify-between gap-3">
+          <span>
+            Lost track of scan{scanProgress?.status_message ? ` (${scanProgress.status_message})` : ''}. The job may have stalled.
+          </span>
+          <button
+            onClick={onCancelScan}
+            className="btn-secondary text-xs px-2 py-0.5"
+          >
+            Cancel and retry
+          </button>
+        </div>
       )}
       {import.meta.env.DEV && (
         <button
