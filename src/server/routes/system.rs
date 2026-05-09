@@ -149,9 +149,7 @@ mod tests {
             let body = resp.into_body();
             let bytes = actix_web::body::to_bytes(body).await.unwrap_or_default();
             let response: serde_json::Value = serde_json::from_slice(&bytes).unwrap_or_default();
-            let uptime = response["uptime"]
-                .as_u64()
-                .expect("uptime must be a u64");
+            let uptime = response["uptime"].as_u64().expect("uptime must be a u64");
             assert!(
                 uptime < 1_000_000,
                 "uptime must be seconds-since-start, not epoch; got {uptime}"
