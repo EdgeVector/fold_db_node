@@ -228,7 +228,15 @@ export interface paths {
         };
         get?: never;
         put?: never;
-        /** Execute a query. */
+        /**
+         * Execute a query.
+         * @description Body is a [`Query`]-shaped JSON object with two optional pagination
+         *     siblings: `limit` (default 100, max 1000) and `offset` (default 0). They
+         *     are stripped from the body before deserialising into `Query`, which has
+         *     `#[serde(deny_unknown_fields)]` and no native pagination fields. The
+         *     response carries `total_count`, `returned_count`, `limit`, `offset`, and
+         *     `has_more` so callers can detect truncation.
+         */
         post: operations["execute_query"];
         delete?: never;
         options?: never;
@@ -1234,10 +1242,31 @@ export interface components {
             query: unknown;
             reasoning: string;
         };
-        /** @description Response for query execution */
+        /**
+         * @description Response for query execution. Includes pagination metadata so callers
+         *     can detect truncation: `total_count` is the size of the post-filter
+         *     result set fold_db_node observed, `returned_count` is `results.len()`
+         *     after applying the caller's `offset`/`limit`, and `has_more` is true
+         *     when more records exist beyond the returned page.
+         */
         QueryResponse: {
-            /** @description Query results */
+            /** @description True when more records exist beyond the returned page. */
+            has_more: boolean;
+            /** @description Page size applied (defaults to `DEFAULT_QUERY_LIMIT`). */
+            limit: number;
+            /** @description Page offset applied (defaults to 0). */
+            offset: number;
+            /** @description Query results (page). */
             results: unknown;
+            /** @description Number of records actually returned in `results`. */
+            returned_count: number;
+            /**
+             * @description Total records matching the query before `offset`/`limit` are
+             *     applied. Capped at `INTERNAL_FETCH_CAP` for unfiltered queries —
+             *     when `has_more` is true and `total_count` equals that cap, there
+             *     may be additional records that fold_db_node did not load.
+             */
+            total_count: number;
         };
         /** @description Field storing a range of values. */
         RangeField: components["schemas"]["FieldCommon"] & {
@@ -1756,12 +1785,14 @@ export interface operations {
             };
         };
         responses: {
-            /** @description Array of query result records */
+            /** @description Page of query results plus pagination metadata */
             200: {
                 headers: {
                     [name: string]: unknown;
                 };
-                content?: never;
+                content: {
+                    "application/json": components["schemas"]["QueryResponse"];
+                };
             };
             /** @description Bad request */
             400: {

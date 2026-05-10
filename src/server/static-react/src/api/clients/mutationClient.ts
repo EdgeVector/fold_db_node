@@ -13,14 +13,6 @@ export interface MutationResponse {
   metadata?: Record<string, unknown>;
 }
 
-export interface QueryResponse {
-  success: boolean;
-  data?: unknown[];
-  totalCount?: number;
-  hasMore?: boolean;
-  metadata?: Record<string, unknown>;
-}
-
 // Unified Mutation API Client Implementation
 export class UnifiedMutationClient implements MutationApiClient {
   private readonly client: ApiClient;
