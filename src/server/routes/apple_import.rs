@@ -255,6 +255,61 @@ async fn emit_batch_progress(
     let _ = tracker.save(&job).await;
 }
 
+/// Run `work` while emitting a 2s heartbeat that re-saves the same 5%-progress
+/// job with `(Ns)` appended so a polling client sees the import is alive.
+///
+/// Each Apple data extractor runs `osascript` end-to-end inside a
+/// `tokio::task::spawn_blocking`. That call returns nothing until the whole
+/// library has been pulled (5+ minutes for 100+ records, capped at the
+/// `OSASCRIPT_TIMEOUT`), so without a heartbeat the UI is stuck on the
+/// initial "5% — Extracting…" frame for the full extraction wallclock.
+///
+/// The percentage stays at 5; only `message` and `updated_at` change so the
+/// UI keeps the "still in extraction" semantic but sees fresh activity.
+/// The 2s cadence keeps tracker save load negligible (~150 saves across the
+/// 5-minute timeout ceiling).
+#[cfg(any(target_os = "macos", test))]
+async fn with_extraction_heartbeat<F, T>(
+    tracker: &ProgressTracker,
+    progress_id: &str,
+    job_kind: &str,
+    base_message: &str,
+    work: F,
+) -> T
+where
+    F: std::future::Future<Output = T>,
+{
+    let started = tokio::time::Instant::now();
+    let pid = progress_id.to_string();
+    let kind = job_kind.to_string();
+    let msg = base_message.to_string();
+    let tracker_clone = tracker.clone();
+
+    let heartbeat = tokio::spawn(
+        async move {
+            let mut tick = tokio::time::interval(std::time::Duration::from_secs(2));
+            // `interval` fires immediately on the first `tick().await`; skip
+            // that one so the first heartbeat lands at +2s, not +0s with an
+            // "(0s)" suffix that's noisier than helpful.
+            tick.tick().await;
+            loop {
+                tick.tick().await;
+                let elapsed = started.elapsed().as_secs();
+                let mut job = Job::new(pid.clone(), JobType::Other(kind.clone()));
+                job.status = JobStatus::Running;
+                job.progress_percentage = 5;
+                job.message = format!("{} ({}s)", msg, elapsed);
+                let _ = tracker_clone.save(&job).await;
+            }
+        }
+        .instrument(tracing::Span::current()),
+    );
+
+    let result = work.await;
+    heartbeat.abort();
+    result
+}
+
 #[derive(Deserialize, Default)]
 pub struct AppleNotesRequest {
     pub folder: Option<String>,
@@ -308,7 +363,14 @@ async fn run_apple_notes_import(
 ) {
     use crate::ingestion::apple_import::notes;
 
-    let notes_result = tokio::task::spawn_blocking(move || notes::extract(folder.as_deref())).await;
+    let notes_result = with_extraction_heartbeat(
+        &tracker,
+        &progress_id,
+        "apple-notes",
+        "Extracting notes from Apple Notes...",
+        tokio::task::spawn_blocking(move || notes::extract(folder.as_deref())),
+    )
+    .await;
 
     let notes = match notes_result {
         Ok(Ok(n)) => n,
@@ -475,8 +537,14 @@ async fn run_apple_reminders_import(
 ) {
     use crate::ingestion::apple_import::reminders;
 
-    let reminders_result =
-        tokio::task::spawn_blocking(move || reminders::extract(list.as_deref())).await;
+    let reminders_result = with_extraction_heartbeat(
+        &tracker,
+        &progress_id,
+        "apple-reminders",
+        "Extracting reminders...",
+        tokio::task::spawn_blocking(move || reminders::extract(list.as_deref())),
+    )
+    .await;
 
     let rems = match reminders_result {
         Ok(Ok(r)) => r,
@@ -697,8 +765,14 @@ async fn run_apple_photos_import(
     use crate::ingestion::apple_import::photos;
     use crate::ingestion::helpers::store_file_content_addressed;
 
-    let photos_result =
-        tokio::task::spawn_blocking(move || photos::export(album.as_deref(), limit)).await;
+    let photos_result = with_extraction_heartbeat(
+        &tracker,
+        &progress_id,
+        "apple-photos",
+        "Exporting photos from Apple Photos...",
+        tokio::task::spawn_blocking(move || photos::export(album.as_deref(), limit)),
+    )
+    .await;
 
     let paths = match photos_result {
         Ok(Ok(p)) => p,
@@ -950,8 +1024,14 @@ async fn run_apple_calendar_import(
 ) {
     use crate::ingestion::apple_import::calendar as cal;
 
-    let events_result =
-        tokio::task::spawn_blocking(move || cal::extract(calendar.as_deref())).await;
+    let events_result = with_extraction_heartbeat(
+        &tracker,
+        &progress_id,
+        "apple-calendar",
+        "Extracting events from Apple Calendar...",
+        tokio::task::spawn_blocking(move || cal::extract(calendar.as_deref())),
+    )
+    .await;
 
     let events = match events_result {
         Ok(Ok(e)) => e,
@@ -1113,7 +1193,14 @@ async fn run_apple_contacts_import(
 ) {
     use crate::ingestion::apple_import::contacts as ctc;
 
-    let extract_result = tokio::task::spawn_blocking(ctc::extract).await;
+    let extract_result = with_extraction_heartbeat(
+        &tracker,
+        &progress_id,
+        "apple-contacts",
+        "Extracting contacts from Apple Contacts...",
+        tokio::task::spawn_blocking(ctc::extract),
+    )
+    .await;
 
     let contacts = match extract_result {
         Ok(Ok(c)) => c,
@@ -1522,6 +1609,119 @@ mod mark_terminal_tests {
         assert!(progress.is_complete);
         assert!(progress.is_failed);
         assert!(progress.completed_at.is_some());
+    }
+}
+
+#[cfg(test)]
+mod with_extraction_heartbeat_tests {
+    use super::with_extraction_heartbeat;
+    use async_trait::async_trait;
+    use fold_db::progress::{Job, ProgressStore, ProgressTracker};
+    use std::sync::{Arc, Mutex};
+
+    struct RecordingStore {
+        saves: Mutex<Vec<Job>>,
+    }
+
+    #[async_trait]
+    impl ProgressStore for RecordingStore {
+        async fn save(&self, job: &Job) -> Result<(), String> {
+            self.saves.lock().unwrap().push(job.clone());
+            Ok(())
+        }
+        async fn load(&self, _id: &str) -> Result<Option<Job>, String> {
+            Ok(None)
+        }
+        async fn list_by_user(&self, _user_id: &str) -> Result<Vec<Job>, String> {
+            Ok(vec![])
+        }
+    }
+
+    #[tokio::test]
+    async fn ticks_emit_distinct_elapsed_messages_during_long_extraction() {
+        let store = Arc::new(RecordingStore {
+            saves: Mutex::new(Vec::new()),
+        });
+        let tracker: ProgressTracker = store.clone();
+
+        // Simulate a 5-second extraction. With a 2s tick (and the immediate
+        // first fire skipped), heartbeat saves land at +2s and +4s.
+        with_extraction_heartbeat(
+            &tracker,
+            "test-pid",
+            "apple-notes",
+            "Extracting notes from Apple Notes...",
+            tokio::time::sleep(std::time::Duration::from_millis(5000)),
+        )
+        .await;
+
+        let saves = store.saves.lock().unwrap();
+        let messages: Vec<String> = saves.iter().map(|j| j.message.clone()).collect();
+        let distinct: std::collections::HashSet<&String> = messages.iter().collect();
+        assert!(
+            distinct.len() >= 2,
+            "expected >=2 distinct heartbeat messages during a 5s extraction, got: {:?}",
+            messages,
+        );
+        for m in &messages {
+            assert!(
+                m.starts_with("Extracting notes from Apple Notes... ("),
+                "heartbeat message should include base + elapsed marker, got: {}",
+                m,
+            );
+            assert!(
+                m.ends_with("s)"),
+                "elapsed marker should end with 's)', got: {}",
+                m
+            );
+        }
+        // The whole point: percentage stays at 5 throughout — the heartbeat
+        // doesn't advance progress, only refreshes the message + updated_at
+        // so polling clients see the import is alive.
+        for j in saves.iter() {
+            assert_eq!(
+                j.progress_percentage, 5,
+                "heartbeat must not change progress_percentage from 5",
+            );
+            assert!(
+                matches!(j.job_type, fold_db::progress::JobType::Other(ref s) if s == "apple-notes"),
+                "heartbeat must preserve the original job_kind",
+            );
+        }
+    }
+
+    #[tokio::test]
+    async fn no_ticks_for_subsecond_work_and_helper_returns_value() {
+        // Work returns in 100ms — well under the 2s tick interval. We expect
+        // zero heartbeat saves, the helper to return the work's value, and
+        // no leaked task ticking afterward.
+        let store = Arc::new(RecordingStore {
+            saves: Mutex::new(Vec::new()),
+        });
+        let tracker: ProgressTracker = store.clone();
+
+        let result = with_extraction_heartbeat(
+            &tracker,
+            "fast-pid",
+            "apple-reminders",
+            "Extracting reminders...",
+            async {
+                tokio::time::sleep(std::time::Duration::from_millis(100)).await;
+                42_u32
+            },
+        )
+        .await;
+        assert_eq!(result, 42);
+
+        // Wait past two tick windows. If the heartbeat task hadn't been
+        // aborted, we'd see saves accumulating here.
+        tokio::time::sleep(std::time::Duration::from_millis(2500)).await;
+        let saves_count = store.saves.lock().unwrap().len();
+        assert_eq!(
+            saves_count, 0,
+            "expected no heartbeat saves for sub-tick work; helper must abort cleanly, got {} saves",
+            saves_count,
+        );
     }
 }
 
