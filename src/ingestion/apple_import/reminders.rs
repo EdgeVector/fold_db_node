@@ -17,10 +17,9 @@
 //! Dropping 83 completed + per-property iteration, the 12-reminder dogfood
 //! case went from > 5 min (timeout) to ~12 s.
 
-use regex::Regex;
 use serde_json::{json, Value};
 
-use super::{content_hash, preflight_permission, run_osascript};
+use super::{content_hash, parse_records, run_extract};
 use crate::ingestion::IngestionError;
 
 /// A single reminder extracted from Apple Reminders.
@@ -40,13 +39,7 @@ pub struct Reminder {
 /// module used to hit. Re-importing completed reminders is not something the
 /// UI currently offers; a future param can restore them if needed.
 pub fn extract(list: Option<&str>) -> Result<Vec<Reminder>, IngestionError> {
-    // Fast-fail on missing Automation access (~5s) before the long
-    // extract burns the full `OSASCRIPT_TIMEOUT`. Same shape as
-    // contacts.rs.
-    preflight_permission("Reminders.app")?;
-    let script = build_script(list);
-    let raw = run_osascript(&script, "Reminders.app")?;
-    parse_output(&raw)
+    run_extract("Reminders.app", &build_script(list), parse_output)
 }
 
 /// Convert extracted reminders into JSON records ready for ingestion.
@@ -123,26 +116,20 @@ end tell"#
 }
 
 pub fn parse_output(raw: &str) -> Result<Vec<Reminder>, IngestionError> {
-    let re = Regex::new(
-        r"<<<REM_START>>>(.*?)<<<SEP>>>(.*?)<<<SEP>>>(.*?)<<<SEP>>>(.*?)<<<SEP>>>(.*?)<<<REM_END>>>"
-    )
-    .map_err(|e| IngestionError::Extraction(format!("Regex error: {}", e)))?;
-
-    let mut reminders = Vec::new();
-    for cap in re.captures_iter(raw) {
-        let completed_str = cap[3].trim().to_lowercase();
-        let completed = completed_str == "true";
-        let priority: i64 = cap[5].trim().parse().unwrap_or(0);
-
-        reminders.push(Reminder {
-            name: cap[1].trim().to_string(),
-            list: cap[2].trim().to_string(),
+    parse_records(raw, "REM", |fields| {
+        if fields.len() != 5 {
+            return None;
+        }
+        let completed = fields[2].trim().eq_ignore_ascii_case("true");
+        let priority: i64 = fields[4].trim().parse().unwrap_or(0);
+        Some(Reminder {
+            name: fields[0].trim().to_string(),
+            list: fields[1].trim().to_string(),
             completed,
-            due_date: cap[4].trim().to_string(),
+            due_date: fields[3].trim().to_string(),
             priority,
-        });
-    }
-    Ok(reminders)
+        })
+    })
 }
 
 #[cfg(test)]
