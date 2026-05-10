@@ -34,24 +34,30 @@ mod tests {
     #[test]
     fn notes_parse_and_convert_roundtrip() {
         let raw = concat!(
-            "<<<NOTE_START>>>Shopping List<<<SEP>>>Milk, eggs, bread, cheese, and more items<<<SEP>>>2026-03-01 08:00:00<<<SEP>>>2026-03-01 09:30:00<<<NOTE_END>>>",
-            "<<<NOTE_START>>>Meeting Notes<<<SEP>>>Discussed roadmap for Q2 with the team<<<SEP>>>2026-03-02 14:00:00<<<SEP>>>2026-03-02 15:00:00<<<NOTE_END>>>"
+            "<<<NOTE_START>>>x-coredata://AC8E/ICNote/p1<<<SEP>>>Shopping List<<<SEP>>>Milk, eggs, bread, cheese, and more items<<<SEP>>>2026-03-01 08:00:00<<<SEP>>>2026-03-01 09:30:00<<<NOTE_END>>>",
+            "<<<NOTE_START>>>x-coredata://AC8E/ICNote/p2<<<SEP>>>Meeting Notes<<<SEP>>>Discussed roadmap for Q2 with the team<<<SEP>>>2026-03-02 14:00:00<<<SEP>>>2026-03-02 15:00:00<<<NOTE_END>>>"
         );
 
         let parsed = notes::parse_output(raw).unwrap();
         assert_eq!(parsed.len(), 2);
+        assert_eq!(parsed[0].id, "x-coredata://AC8E/ICNote/p1");
         assert_eq!(parsed[0].title, "Shopping List");
+        assert_eq!(parsed[1].id, "x-coredata://AC8E/ICNote/p2");
         assert_eq!(parsed[1].title, "Meeting Notes");
 
         let records = notes::to_json_records(&parsed);
         assert_eq!(records.len(), 2);
         for r in &records {
+            assert_has_string(r, "apple_note_id");
             assert_has_string(r, "title");
             assert_has_string(r, "body");
             assert_has_string(r, "created_at");
             assert_has_string(r, "modified_at");
-            assert_has_string(r, "content_hash");
             assert_eq!(r["source"], "apple_notes");
+            // content_hash is no longer pre-computed by the extractor;
+            // the ingestion service injects it post-AI for mutation-key
+            // disambiguation. The schema's hash_field is apple_note_id.
+            assert!(r.get("content_hash").is_none());
         }
     }
 
@@ -406,8 +412,11 @@ mod tests {
     }
 
     #[test]
-    fn notes_dedup_same_data_twice_produces_same_hashes() {
-        let raw = "<<<NOTE_START>>>Shopping List<<<SEP>>>Milk, eggs, bread, cheese, and more items<<<SEP>>>2026-03-01 08:00:00<<<SEP>>>2026-03-01 09:30:00<<<NOTE_END>>>";
+    fn notes_dedup_same_data_twice_produces_same_apple_note_id() {
+        // Importing the same osascript payload twice must produce records
+        // that share the same primary key (apple_note_id), so a re-import
+        // updates rather than duplicates the stored row.
+        let raw = "<<<NOTE_START>>>x-coredata://AC8E/ICNote/p1<<<SEP>>>Shopping List<<<SEP>>>Milk, eggs, bread, cheese, and more items<<<SEP>>>2026-03-01 08:00:00<<<SEP>>>2026-03-01 09:30:00<<<NOTE_END>>>";
 
         let parsed1 = notes::parse_output(raw).unwrap();
         let parsed2 = notes::parse_output(raw).unwrap();
@@ -415,8 +424,8 @@ mod tests {
         let records2 = notes::to_json_records(&parsed2);
 
         assert_eq!(
-            records1[0]["content_hash"], records2[0]["content_hash"],
-            "importing same note twice must produce identical content_hash"
+            records1[0]["apple_note_id"], records2[0]["apple_note_id"],
+            "importing same note twice must produce identical apple_note_id"
         );
     }
 
@@ -451,16 +460,22 @@ mod tests {
     }
 
     #[test]
-    fn notes_dedup_different_metadata_same_body_produces_same_hash() {
-        // Two notes with different titles/dates but same body should have same hash
-        // because notes hash on body content only
+    fn notes_distinct_apple_ids_yield_distinct_records_even_with_identical_bodies() {
+        // Regression: prior to the apple_note_id switch, two notes with
+        // identical bodies content-hashed to the same key and the second
+        // silently overwrote the first ("imported 132, stored 121").
+        // The Apple-native id is what now keys each record — different ids
+        // must always survive as distinct records, even when every other
+        // field matches.
         let note_a = notes::Note {
+            id: "x-coredata://AC8E/ICNote/p1".to_string(),
             title: "Title A".to_string(),
             body: "Identical body content here".to_string(),
             created_at: "2026-01-01".to_string(),
             modified_at: "2026-01-02".to_string(),
         };
         let note_b = notes::Note {
+            id: "x-coredata://AC8E/ICNote/p2".to_string(),
             title: "Title B".to_string(),
             body: "Identical body content here".to_string(),
             created_at: "2026-03-01".to_string(),
@@ -470,10 +485,11 @@ mod tests {
         let records_a = notes::to_json_records(&[note_a]);
         let records_b = notes::to_json_records(&[note_b]);
 
-        assert_eq!(
-            records_a[0]["content_hash"], records_b[0]["content_hash"],
-            "notes with same body should have same content_hash regardless of title/dates"
+        assert_ne!(
+            records_a[0]["apple_note_id"], records_b[0]["apple_note_id"],
+            "distinct Apple ids must remain distinct in the ingestion payload"
         );
+        assert_eq!(records_a[0]["body"], records_b[0]["body"]);
     }
 
     #[test]
@@ -581,8 +597,8 @@ mod tests {
         let mut raw = String::new();
         for i in 0..25 {
             raw.push_str(&format!(
-                "<<<NOTE_START>>>Note {}<<<SEP>>>Body of note {} with enough text to pass<<<SEP>>>2026-03-{:02} 10:00:00<<<SEP>>>2026-03-{:02} 11:00:00<<<NOTE_END>>>",
-                i, i, (i % 28) + 1, (i % 28) + 1
+                "<<<NOTE_START>>>x-coredata://AC8E/ICNote/p{}<<<SEP>>>Note {}<<<SEP>>>Body of note {} with enough text to pass<<<SEP>>>2026-03-{:02} 10:00:00<<<SEP>>>2026-03-{:02} 11:00:00<<<NOTE_END>>>",
+                i, i, i, (i % 28) + 1, (i % 28) + 1
             ));
         }
 
@@ -592,12 +608,18 @@ mod tests {
         let records = notes::to_json_records(&parsed);
         assert_eq!(records.len(), 25);
 
-        // All hashes should be unique (different bodies)
-        let hashes: HashSet<&str> = records
+        // All apple_note_ids should be unique — that's what the schema's
+        // hash_field uses as the primary key, so any duplicate would
+        // silently lose a record on ingest.
+        let ids: HashSet<&str> = records
             .iter()
-            .map(|r| r["content_hash"].as_str().unwrap())
+            .map(|r| r["apple_note_id"].as_str().unwrap())
             .collect();
-        assert_eq!(hashes.len(), 25, "all 25 notes should have unique hashes");
+        assert_eq!(
+            ids.len(),
+            25,
+            "all 25 notes should have unique apple_note_ids"
+        );
     }
 
     #[test]
@@ -692,9 +714,10 @@ mod tests {
     #[test]
     fn notes_parse_mixed_valid_and_invalid() {
         // One valid note surrounded by garbage
-        let raw = "garbage<<<NOTE_START>>>Valid Note<<<SEP>>>This is valid body content here<<<SEP>>>2026-01-01<<<SEP>>>2026-01-02<<<NOTE_END>>>more garbage";
+        let raw = "garbage<<<NOTE_START>>>x-coredata://AC8E/ICNote/p7<<<SEP>>>Valid Note<<<SEP>>>This is valid body content here<<<SEP>>>2026-01-01<<<SEP>>>2026-01-02<<<NOTE_END>>>more garbage";
         let parsed = notes::parse_output(raw).unwrap();
         assert_eq!(parsed.len(), 1);
+        assert_eq!(parsed[0].id, "x-coredata://AC8E/ICNote/p7");
         assert_eq!(parsed[0].title, "Valid Note");
     }
 
@@ -818,12 +841,13 @@ mod tests {
     }
 
     // =========================================================================
-    // 12. Notes — content hash uses body only
+    // 12. Notes — primary key is the Apple-native note id, not a body hash
     // =========================================================================
 
     #[test]
-    fn notes_hash_uses_body_only() {
+    fn notes_primary_key_is_apple_note_id() {
         let note = notes::Note {
+            id: "x-coredata://AC8E/ICNote/p42".to_string(),
             title: "Any Title".to_string(),
             body: "This is the body text".to_string(),
             created_at: "2026-01-01".to_string(),
@@ -831,8 +855,15 @@ mod tests {
         };
 
         let records = notes::to_json_records(&[note]);
-        let expected_hash = content_hash("This is the body text");
-        assert_eq!(records[0]["content_hash"].as_str().unwrap(), expected_hash);
+        assert_eq!(
+            records[0]["apple_note_id"].as_str().unwrap(),
+            "x-coredata://AC8E/ICNote/p42",
+            "apple_note_id is the schema's hash_field — it must round-trip verbatim"
+        );
+        // content_hash is no longer pre-computed in the record; the
+        // ingestion service injects it post-AI for the mutation-key
+        // disambiguation path (`inject_content_hashes`).
+        assert!(records[0].get("content_hash").is_none());
     }
 
     // =========================================================================

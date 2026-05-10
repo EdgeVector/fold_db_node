@@ -221,6 +221,11 @@ fn run_osascript(
 // ---------------------------------------------------------------------------
 
 struct Note {
+    /// Apple-native stable id (`x-coredata://…/ICNote/pN`). Pinned as the
+    /// schema's `hash_field` so two notes with identical bodies don't
+    /// collide on the storage key — see `apple_import::notes` for the
+    /// server-side path.
+    id: String,
     title: String,
     body: String,
     created_at: String,
@@ -244,10 +249,11 @@ fn build_notes_script(folder: Option<&str>) -> String {
     repeat with n in noteList
         set noteBody to plaintext of n
         if length of noteBody > 20 then
+            set noteId to (id of n) as string
             set noteTitle to name of n
             set noteCreated to (creation date of n) as string
             set noteModified to (modification date of n) as string
-            set output to output & "<<<NOTE_START>>>" & noteTitle & "<<<SEP>>>" & noteBody & "<<<SEP>>>" & noteCreated & "<<<SEP>>>" & noteModified & "<<<NOTE_END>>>"
+            set output to output & "<<<NOTE_START>>>" & noteId & "<<<SEP>>>" & noteTitle & "<<<SEP>>>" & noteBody & "<<<SEP>>>" & noteCreated & "<<<SEP>>>" & noteModified & "<<<NOTE_END>>>"
         end if
     end repeat
     return output
@@ -257,17 +263,18 @@ end tell"#
 
 fn parse_notes_output(raw: &str) -> Result<Vec<Note>, CliError> {
     let re = Regex::new(
-        r"<<<NOTE_START>>>(.*?)<<<SEP>>>(.*?)<<<SEP>>>(.*?)<<<SEP>>>(.*?)<<<NOTE_END>>>",
+        r"<<<NOTE_START>>>(.*?)<<<SEP>>>(.*?)<<<SEP>>>(.*?)<<<SEP>>>(.*?)<<<SEP>>>(.*?)<<<NOTE_END>>>",
     )
     .map_err(|e| CliError::new(format!("Regex error: {}", e)))?;
 
     let mut notes = Vec::new();
     for cap in re.captures_iter(raw) {
         notes.push(Note {
-            title: cap[1].trim().to_string(),
-            body: cap[2].trim().to_string(),
-            created_at: cap[3].trim().to_string(),
-            modified_at: cap[4].trim().to_string(),
+            id: cap[1].trim().to_string(),
+            title: cap[2].trim().to_string(),
+            body: cap[3].trim().to_string(),
+            created_at: cap[4].trim().to_string(),
+            modified_at: cap[5].trim().to_string(),
         });
     }
     Ok(notes)
@@ -299,20 +306,28 @@ pub async fn ingest_notes(
 
     let mut all_results = Vec::new();
     for chunk in notes.chunks(batch_size) {
+        // Skip notes whose AppleScript id came back empty — the schema's
+        // hash_field is apple_note_id and an empty id would silently
+        // collapse those records onto a single storage key (the exact
+        // collision class this whole pathway exists to prevent).
         let records: Vec<Value> = chunk
             .iter()
+            .filter(|n| !n.id.is_empty())
             .map(|n| {
                 json!({
+                    "apple_note_id": n.id,
                     "title": n.title,
                     "body": n.body,
                     "created_at": n.created_at,
                     "modified_at": n.modified_at,
-                    "content_hash": content_hash(&n.body),
                     "source": "apple_notes",
                 })
             })
             .collect();
 
+        if records.is_empty() {
+            continue;
+        }
         let result = client.ingest_process(&records).await?;
         all_results.push(result);
     }
@@ -535,9 +550,10 @@ mod tests {
 
     #[test]
     fn parse_notes_basic() {
-        let raw = "<<<NOTE_START>>>My Title<<<SEP>>>This is the body of the note<<<SEP>>>2024-01-15<<<SEP>>>2024-01-16<<<NOTE_END>>>";
+        let raw = "<<<NOTE_START>>>x-coredata://AC8E/ICNote/p137<<<SEP>>>My Title<<<SEP>>>This is the body of the note<<<SEP>>>2024-01-15<<<SEP>>>2024-01-16<<<NOTE_END>>>";
         let notes = parse_notes_output(raw).unwrap();
         assert_eq!(notes.len(), 1);
+        assert_eq!(notes[0].id, "x-coredata://AC8E/ICNote/p137");
         assert_eq!(notes[0].title, "My Title");
     }
 

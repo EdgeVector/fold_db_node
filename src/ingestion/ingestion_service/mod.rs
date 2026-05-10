@@ -1057,26 +1057,32 @@ mod tests {
     }
 
     #[test]
-    fn forced_schema_response_is_deterministic_for_apple_notes_records() {
-        // Two batches with identical record shape must produce byte-identical
-        // schema definitions. The schema service dedups by
-        // (descriptive_name, fields), so any drift between calls causes
-        // ingestion to fragment across schemas — exactly the bug we're
-        // closing here.
+    fn forced_schema_response_uses_apple_note_id_as_hash_field_for_apple_notes() {
+        // The Apple Notes extractor emits `apple_note_id` (the AppleScript
+        // `id of note` — a stable x-coredata://… string) on every record,
+        // and does NOT emit a precomputed content_hash. Under that
+        // contract, the forced-schema builder must:
+        //
+        //   * pick apple_note_id as hash_field (it sorts first
+        //     alphabetically among the record's keys, and the
+        //     "prefer content_hash" branch doesn't fire because the
+        //     record doesn't carry it),
+        //   * produce byte-identical schema defs across batches
+        //     (the determinism contract the schema service relies on).
         let batch_a = json!([{
+            "apple_note_id": "x-coredata://AC8E/ICNote/p1",
             "title": "Note A",
             "body": "body a",
             "created_at": "2026-05-01",
             "modified_at": "2026-05-02",
-            "content_hash": "deadbeefcafebabe",
             "source": "apple_notes",
         }]);
         let batch_b = json!([{
+            "apple_note_id": "x-coredata://AC8E/ICNote/p2",
             "title": "Note B",
             "body": "body b",
             "created_at": "2026-05-03",
             "modified_at": "2026-05-04",
-            "content_hash": "feedfacefeedface",
             "source": "apple_notes",
         }]);
 
@@ -1092,16 +1098,21 @@ mod tests {
         let schema = resp_a.new_schemas.expect("new_schemas present");
         assert_eq!(schema["descriptive_name"], json!("Apple Notes"));
         assert_eq!(schema["schema_type"], json!("Hash"));
-        assert_eq!(schema["key"]["hash_field"], json!("content_hash"));
-        // content_hash is injected post-AI for key disambiguation; it must
-        // also be in the schema's fields list because hash_field demands a
-        // matching field declaration.
+        assert_eq!(
+            schema["key"]["hash_field"],
+            json!("apple_note_id"),
+            "hash_field must be the stable Apple id, not a content hash"
+        );
         let fields = schema["fields"].as_array().expect("fields array");
         let field_names: Vec<&str> = fields.iter().filter_map(|v| v.as_str()).collect();
-        assert!(field_names.contains(&"content_hash"));
+        assert!(field_names.contains(&"apple_note_id"));
         assert!(field_names.contains(&"title"));
         assert!(field_names.contains(&"body"));
         assert!(field_names.contains(&"source"));
+        // content_hash is never declared on the schema — it's injected
+        // post-AI by `inject_content_hashes` only for the legacy
+        // mutation-key disambiguation path, not as a schema field.
+        assert!(!field_names.contains(&"content_hash"));
         // Sorted alphabetically — the determinism contract.
         let mut sorted = field_names.clone();
         sorted.sort();
