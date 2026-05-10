@@ -206,6 +206,39 @@ where
     }))
 }
 
+/// Map ingested-record count to a percentage in [10, 100].
+///
+/// Apple-import handlers emit 10% post-extraction and want the in-flight
+/// ingestion loop to fill the remaining 90 percentage points monotonically.
+/// Saturates at 100 if `ingested >= total`; tolerates `total == 0`.
+#[cfg(any(target_os = "macos", test))]
+fn ingestion_progress_pct(ingested: usize, total: usize) -> u8 {
+    let total = (total.max(1)) as u64;
+    let ingested = (ingested as u64).min(total);
+    let pct: u64 = 10 + (ingested * 90) / total;
+    pct.min(100) as u8
+}
+
+/// Emit a per-batch progress update during an Apple import ingestion loop.
+///
+/// Centralizes the Notes/Reminders/Contacts/Calendar emission shape so they
+/// stay aligned and so the percentage math is unit-tested in one place.
+#[cfg(target_os = "macos")]
+async fn emit_batch_progress(
+    tracker: &ProgressTracker,
+    progress_id: &str,
+    job_kind: &str,
+    ingested: usize,
+    total: usize,
+    item_label: &str,
+) {
+    let mut job = Job::new(progress_id.to_string(), JobType::Other(job_kind.to_string()));
+    job.status = JobStatus::Running;
+    job.progress_percentage = ingestion_progress_pct(ingested, total);
+    job.message = format!("Ingested {}/{} {}...", ingested, total, item_label);
+    let _ = tracker.save(&job).await;
+}
+
 #[derive(Deserialize, Default)]
 pub struct AppleNotesRequest {
     pub folder: Option<String>,
@@ -297,7 +330,7 @@ async fn run_apple_notes_import(
 
     let mut job = Job::new(progress_id.clone(), JobType::Other("apple-notes".into()));
     job.status = JobStatus::Running;
-    job.progress_percentage = 30;
+    job.progress_percentage = 10;
     job.message = format!("Extracted {} notes, ingesting...", total);
     let _ = tracker.save(&job).await;
 
@@ -343,12 +376,7 @@ async fn run_apple_notes_import(
             }
         }
 
-        let pct = 30 + ((i + 1) * 70 / total.div_ceil(batch_size)).min(70);
-        let mut job = Job::new(progress_id.clone(), JobType::Other("apple-notes".into()));
-        job.status = JobStatus::Running;
-        job.progress_percentage = pct as u8;
-        job.message = format!("Ingested {}/{} notes...", ingested, total);
-        let _ = tracker.save(&job).await;
+        emit_batch_progress(&tracker, &progress_id, "apple-notes", ingested, total, "notes").await;
     }
 
     let mut job = Job::new(progress_id.clone(), JobType::Other("apple-notes".into()));
@@ -477,46 +505,65 @@ async fn run_apple_reminders_import(
         JobType::Other("apple-reminders".into()),
     );
     job.status = JobStatus::Running;
-    job.progress_percentage = 40;
+    job.progress_percentage = 10;
     job.message = format!("Extracted {} reminders, ingesting...", total);
     let _ = tracker.save(&job).await;
 
+    let batch_size = 10;
+    let mut ingested = 0;
+    let mut ingest_error: Option<String> = None;
     let node = node_arc.as_ref();
-    let request = IngestionRequest {
-        data: serde_json::Value::Array(records),
-        auto_execute: true,
-        pub_key: "default".to_string(),
-        source_file_name: None,
-        progress_id: None,
-        file_hash: None,
-        source_folder: None,
-        image_descriptive_name: None,
-        org_hash: None,
-        image_bytes: None,
-        // Pin reminders to a canonical schema; same fragmentation risk as
-        // Apple Notes whenever the LLM is asked to classify N batches.
-        forced_schema_descriptive_name: Some("Apple Reminders".to_string()),
-    };
 
-    let (ingested, ingest_error) = match crate::handlers::ingestion::process_json(
-        request,
-        &fold_db::user_context::get_current_user_id().unwrap_or_default(),
-        &tracker,
-        node,
-        service,
-    )
-    .await
-    {
-        Ok(_) => (total, None),
-        Err(e) => {
-            tracing::warn!(
-            target: "fold_node::ingestion",
-                "Apple Reminders ingestion failed: {}",
-                e
-            );
-            (0, Some(e.to_string()))
+    for (i, chunk) in records.chunks(batch_size).enumerate() {
+        let request = IngestionRequest {
+            data: serde_json::Value::Array(chunk.to_vec()),
+            auto_execute: true,
+            pub_key: "default".to_string(),
+            source_file_name: None,
+            progress_id: None,
+            file_hash: None,
+            source_folder: None,
+            image_descriptive_name: None,
+            org_hash: None,
+            image_bytes: None,
+            // Pin reminders to a canonical schema; same fragmentation risk as
+            // Apple Notes whenever the LLM is asked to classify N batches.
+            forced_schema_descriptive_name: Some("Apple Reminders".to_string()),
+        };
+
+        match crate::handlers::ingestion::process_json(
+            request,
+            &fold_db::user_context::get_current_user_id().unwrap_or_default(),
+            &tracker,
+            node,
+            service.clone(),
+        )
+        .await
+        {
+            Ok(_) => ingested += chunk.len(),
+            Err(e) => {
+                tracing::warn!(
+                target: "fold_node::ingestion",
+                        "Apple Reminders batch {} failed: {}",
+                        i,
+                        e
+                    );
+                if ingest_error.is_none() {
+                    ingest_error = Some(e.to_string());
+                }
+            }
         }
-    };
+
+        emit_batch_progress(
+            &tracker,
+            &progress_id,
+            "apple-reminders",
+            ingested,
+            total,
+            "reminders",
+        )
+        .await;
+    }
 
     let mut job = build_reminders_final_job(progress_id.clone(), total, ingested, ingest_error);
     mark_terminal(&mut job);
@@ -928,7 +975,7 @@ async fn run_apple_calendar_import(
 
     let mut job = Job::new(progress_id.clone(), JobType::Other("apple-calendar".into()));
     job.status = JobStatus::Running;
-    job.progress_percentage = 30;
+    job.progress_percentage = 10;
     job.message = format!("Extracted {} events, ingesting...", total);
     let _ = tracker.save(&job).await;
 
@@ -971,12 +1018,15 @@ async fn run_apple_calendar_import(
             }
         }
 
-        let pct = 30 + ((i + 1) * 70 / total.div_ceil(batch_size)).min(70);
-        let mut job = Job::new(progress_id.clone(), JobType::Other("apple-calendar".into()));
-        job.status = JobStatus::Running;
-        job.progress_percentage = pct as u8;
-        job.message = format!("Ingested {}/{} events...", ingested, total);
-        let _ = tracker.save(&job).await;
+        emit_batch_progress(
+            &tracker,
+            &progress_id,
+            "apple-calendar",
+            ingested,
+            total,
+            "events",
+        )
+        .await;
     }
 
     let mut job = Job::new(progress_id.clone(), JobType::Other("apple-calendar".into()));
@@ -1087,7 +1137,7 @@ async fn run_apple_contacts_import(
 
     let mut job = Job::new(progress_id.clone(), JobType::Other("apple-contacts".into()));
     job.status = JobStatus::Running;
-    job.progress_percentage = 30;
+    job.progress_percentage = 10;
     job.message = format!("Extracted {} contacts, ingesting...", total);
     let _ = tracker.save(&job).await;
 
@@ -1130,12 +1180,15 @@ async fn run_apple_contacts_import(
             }
         }
 
-        let pct = 30 + ((i + 1) * 70 / total.div_ceil(batch_size)).min(70);
-        let mut job = Job::new(progress_id.clone(), JobType::Other("apple-contacts".into()));
-        job.status = JobStatus::Running;
-        job.progress_percentage = pct as u8;
-        job.message = format!("Ingested {}/{} contacts...", ingested, total);
-        let _ = tracker.save(&job).await;
+        emit_batch_progress(
+            &tracker,
+            &progress_id,
+            "apple-contacts",
+            ingested,
+            total,
+            "contacts",
+        )
+        .await;
     }
 
     let mut job = Job::new(progress_id.clone(), JobType::Other("apple-contacts".into()));
@@ -1438,6 +1491,64 @@ mod mark_terminal_tests {
         assert!(progress.is_complete);
         assert!(progress.is_failed);
         assert!(progress.completed_at.is_some());
+    }
+}
+
+#[cfg(test)]
+mod ingestion_progress_pct_tests {
+    //! Pin the per-batch progress percentages emitted by Notes/Reminders/
+    //! Contacts/Calendar imports during their ingestion loop. The dogfood run
+    //! on 2026-05-10 polled `/api/ingestion/progress/{id}` 8 times during a
+    //! 132-note import and saw 5% on every poll until the final 100% — the
+    //! ingestion loop's per-batch updates have to surface ≥5 distinct
+    //! percentage points between extraction-complete (10%) and finished
+    //! (100%) so progress visibly advances.
+    use super::ingestion_progress_pct;
+
+    #[test]
+    fn monotonic_and_distinct_for_132_notes_in_batches_of_10() {
+        // Mirrors the dogfood scenario: 132 notes ingested in chunks of 10.
+        let total: usize = 132;
+        let batch_size: usize = 10;
+        let mut last = 10u8;
+        let mut distinct = std::collections::BTreeSet::new();
+        distinct.insert(10u8); // post-extract baseline emitted before the loop
+        let mut ingested = 0;
+        for _ in 0..total.div_ceil(batch_size) {
+            ingested = (ingested + batch_size).min(total);
+            let p = ingestion_progress_pct(ingested, total);
+            assert!(p >= last, "progress went backwards: {last} -> {p}");
+            last = p;
+            distinct.insert(p);
+        }
+        assert_eq!(last, 100, "final batch should land at 100%");
+        assert!(
+            distinct.len() >= 5,
+            "expected >=5 distinct percentage values across the loop, got {distinct:?}",
+        );
+    }
+
+    #[test]
+    fn handles_edge_cases() {
+        assert_eq!(ingestion_progress_pct(0, 0), 10, "empty list stays at 10%");
+        assert_eq!(ingestion_progress_pct(0, 50), 10, "0 of N starts at 10%");
+        assert_eq!(ingestion_progress_pct(50, 50), 100, "all-of-N is 100%");
+        assert_eq!(
+            ingestion_progress_pct(100, 50),
+            100,
+            "ingested>total saturates at 100",
+        );
+    }
+
+    #[test]
+    fn small_imports_still_move_off_10_percent() {
+        // 10-item import in 1 batch — the loop fires once and lands at 100%.
+        let p = ingestion_progress_pct(10, 10);
+        assert_eq!(p, 100);
+        // 5-item import: emit at half should land between 10 and 100 exclusive
+        // so the bar never sits exactly at 10% during real progress.
+        let p = ingestion_progress_pct(3, 5);
+        assert!(p > 10 && p < 100, "expected 10 < p < 100, got {p}");
     }
 }
 
