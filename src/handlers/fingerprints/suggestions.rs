@@ -17,7 +17,6 @@
 //! - `POST /api/fingerprints/suggestions/accept` — promote a candidate
 //!   into a real Persona record and return its `PersonaDetailResponse`
 
-use crate::fingerprints::canonical_names;
 use crate::fingerprints::keys::edge_kind;
 use crate::fingerprints::schemas::{EDGE, EDGE_BY_FINGERPRINT, FINGERPRINT, PERSONA};
 use crate::fold_node::{FoldNode, OperationProcessor};
@@ -184,12 +183,7 @@ pub async fn accept_suggested_persona(
         ));
     }
 
-    let persona_canonical = canonical_names::lookup(PERSONA).map_err(|e| {
-        HandlerError::Internal(format!(
-            "fingerprints: canonical_names not initialized for '{}': {}",
-            PERSONA, e
-        ))
-    })?;
+    let persona_canonical = super::canonical_lookup(PERSONA)?;
 
     let processor = OperationProcessor::new(node.clone());
     let now = chrono::Utc::now().to_rfc3339();
@@ -261,12 +255,7 @@ struct Component {
 async fn load_all_fingerprint_ids(
     processor: &OperationProcessor,
 ) -> Result<Vec<String>, HandlerError> {
-    let canonical = canonical_names::lookup(FINGERPRINT).map_err(|e| {
-        HandlerError::Internal(format!(
-            "fingerprints: canonical_names not initialized for '{}': {}",
-            FINGERPRINT, e
-        ))
-    })?;
+    let canonical = super::canonical_lookup(FINGERPRINT)?;
     let query = Query {
         schema_name: canonical,
         fields: vec!["id".to_string()],
@@ -294,12 +283,7 @@ async fn load_all_fingerprint_ids(
 async fn load_persona_seed_sets(
     processor: &OperationProcessor,
 ) -> Result<Vec<HashSet<String>>, HandlerError> {
-    let canonical = canonical_names::lookup(PERSONA).map_err(|e| {
-        HandlerError::Internal(format!(
-            "fingerprints: canonical_names not initialized for '{}': {}",
-            PERSONA, e
-        ))
-    })?;
+    let canonical = super::canonical_lookup(PERSONA)?;
     let query = Query {
         schema_name: canonical,
         fields: vec!["seed_fingerprint_ids".to_string()],
@@ -379,12 +363,7 @@ async fn edge_ids_touching(
     processor: &OperationProcessor,
     fp_id: &str,
 ) -> Result<Vec<String>, HandlerError> {
-    let canonical = canonical_names::lookup(EDGE_BY_FINGERPRINT).map_err(|e| {
-        HandlerError::Internal(format!(
-            "fingerprints: canonical_names not initialized for '{}': {}",
-            EDGE_BY_FINGERPRINT, e
-        ))
-    })?;
+    let canonical = super::canonical_lookup(EDGE_BY_FINGERPRINT)?;
     let query = Query {
         schema_name: canonical,
         fields: vec!["edge_id".to_string()],
@@ -413,12 +392,7 @@ async fn fetch_edge_endpoints(
     processor: &OperationProcessor,
     edge_id: &str,
 ) -> Result<Option<(String, String, String, f32)>, HandlerError> {
-    let canonical = canonical_names::lookup(EDGE).map_err(|e| {
-        HandlerError::Internal(format!(
-            "fingerprints: canonical_names not initialized for '{}': {}",
-            EDGE, e
-        ))
-    })?;
+    let canonical = super::canonical_lookup(EDGE)?;
     let query = Query {
         schema_name: canonical,
         fields: vec![
@@ -470,14 +444,7 @@ async fn count_component_mentions(
     processor: &OperationProcessor,
     component: &Component,
 ) -> Result<usize, HandlerError> {
-    let canonical = canonical_names::lookup(crate::fingerprints::schemas::MENTION_BY_FINGERPRINT)
-        .map_err(|e| {
-        HandlerError::Internal(format!(
-            "fingerprints: canonical_names not initialized for '{}': {}",
-            crate::fingerprints::schemas::MENTION_BY_FINGERPRINT,
-            e
-        ))
-    })?;
+    let canonical = super::canonical_lookup(crate::fingerprints::schemas::MENTION_BY_FINGERPRINT)?;
     let mut seen: HashSet<String> = HashSet::new();
     for fp_id in &component.fingerprint_ids {
         let query = Query {

@@ -33,10 +33,9 @@ use fold_db::schema::types::operations::Query;
 use serde::Serialize;
 use serde_json::Value;
 
-use crate::fingerprints::canonical_names;
 use crate::fingerprints::schemas::{IDENTITY, IDENTITY_RECEIPT};
 use crate::fold_node::FoldNode;
-use crate::handlers::response::{ApiResponse, HandlerError, HandlerResult, IntoHandlerError};
+use crate::handlers::response::{ApiResponse, HandlerResult, IntoHandlerError};
 
 /// One row in the audit list. Shape mirrors Identity 1:1 plus the
 /// joined IdentityReceipt fields so the UI can render a single flat
@@ -75,18 +74,8 @@ pub struct ListIdentitiesResponse {
 /// list sorted newest-first by `received_at`. Never errors on
 /// empty data.
 pub async fn list_identities(node: Arc<FoldNode>) -> HandlerResult<ListIdentitiesResponse> {
-    let identity_canonical = canonical_names::lookup(IDENTITY).map_err(|e| {
-        HandlerError::Internal(format!(
-            "fingerprints: canonical_names not initialized for '{}': {}",
-            IDENTITY, e
-        ))
-    })?;
-    let receipt_canonical = canonical_names::lookup(IDENTITY_RECEIPT).map_err(|e| {
-        HandlerError::Internal(format!(
-            "fingerprints: canonical_names not initialized for '{}': {}",
-            IDENTITY_RECEIPT, e
-        ))
-    })?;
+    let identity_canonical = super::canonical_lookup(IDENTITY)?;
+    let receipt_canonical = super::canonical_lookup(IDENTITY_RECEIPT)?;
 
     let processor = crate::fold_node::OperationProcessor::new(node.clone());
     let self_pub_key = node.get_node_public_key().to_string();

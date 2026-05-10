@@ -66,3 +66,17 @@ pub use suggestions::{
     accept_suggested_persona, list_suggested_personas, AcceptSuggestedRequest,
     ListSuggestedResponse, SuggestedPersonaView,
 };
+
+/// Resolve a descriptive schema name to its canonical form, or convert the
+/// `canonical_names` initialization error into a 500 with the standard
+/// "fingerprints: canonical_names not initialized for 'X': <e>" message.
+pub(crate) fn canonical_lookup(
+    name: &str,
+) -> Result<String, crate::handlers::response::HandlerError> {
+    crate::fingerprints::canonical_names::lookup(name).map_err(|e| {
+        crate::handlers::response::HandlerError::Internal(format!(
+            "fingerprints: canonical_names not initialized for '{}': {}",
+            name, e
+        ))
+    })
+}
