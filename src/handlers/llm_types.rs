@@ -23,6 +23,10 @@ pub struct AiNativeIndexHandlerResponse {
     pub raw_results: Vec<Value>,
     pub query: String,
     pub session_id: String,
+    /// Count of post-filter hits dropped because `raw_results` was capped.
+    /// Absent when no truncation happened.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub truncated_count: Option<usize>,
 }
 
 /// Request for agent query

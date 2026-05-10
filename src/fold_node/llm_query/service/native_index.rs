@@ -13,6 +13,45 @@ use std::time::Duration;
 
 use super::LlmQueryService;
 
+/// Hits with `value == null` AND `metadata.score` below this threshold
+/// are dropped before AI interpretation. Indexed-but-empty fragments at
+/// low semantic match (e.g. Photography `camera_make` / `image_type` on
+/// records that don't carry those fields) are pure noise — the AI has
+/// nothing to summarize and they crowd out the high-signal hits.
+pub(crate) const NULL_VALUE_DROP_SCORE_THRESHOLD: f64 = 0.45;
+
+/// Cap on the number of hydrated results forwarded to the AI for
+/// interpretation. Beyond this, the long tail rarely helps the answer
+/// and burns tokens. The handler reports any drop via `truncated_count`.
+pub(crate) const MAX_RAW_RESULTS_TO_AI: usize = 25;
+
+/// Drop hits where `value` is null AND `metadata.score < threshold`.
+/// Returns the number of entries removed.
+///
+/// Score lives in `metadata` as `{"score": f64, "match_type": ...}` —
+/// see `fold_db::db_operations::native_index::embedding_index`.
+/// A missing or non-numeric score is treated as below the threshold so
+/// metadata-less null-value rows are dropped too.
+pub(crate) fn drop_null_value_low_score_hits(
+    results: &mut Vec<fold_db::db_operations::IndexResult>,
+    threshold: f64,
+) -> usize {
+    let before = results.len();
+    results.retain(|r| {
+        if !r.value.is_null() {
+            return true;
+        }
+        let score = r
+            .metadata
+            .as_ref()
+            .and_then(|m| m.get("score"))
+            .and_then(|s| s.as_f64())
+            .unwrap_or(0.0);
+        score >= threshold
+    });
+    before - results.len()
+}
+
 /// Expand `~` or `~/...` to the user's home directory.
 fn expand_home_path(path: &str) -> std::path::PathBuf {
     if path.starts_with("~/") {
@@ -1445,6 +1484,70 @@ mod tests {
             metadata: None,
             molecule_versions: None,
         }
+    }
+
+    fn make_scored(value: serde_json::Value, score: f64) -> IndexResult {
+        IndexResult {
+            schema_name: "Photography".to_string(),
+            schema_display_name: None,
+            field: "camera_make".to_string(),
+            key_value: KeyValue::new(Some("k".into()), None),
+            value,
+            metadata: Some(serde_json::json!({"score": score, "match_type": "semantic"})),
+            molecule_versions: None,
+        }
+    }
+
+    #[test]
+    fn drops_null_value_low_score_keeps_high_score_and_non_null() {
+        // Mix mirroring the dogfood reproducer: high-score real-data hits,
+        // plus a long tail of null-value Photography metadata fragments at
+        // the score range (0.30–0.55) that crowds out the AI prompt.
+        let mut results = vec![
+            make_scored(serde_json::json!("Apple Crumble"), 0.85), // keep: real value
+            make_scored(serde_json::Value::Null, 0.55),            // keep: null but ≥ threshold
+            make_scored(serde_json::Value::Null, 0.44),            // drop: null + below
+            make_scored(serde_json::Value::Null, 0.30),            // drop: null + far below
+            make_scored(serde_json::json!(""), 0.30),              // keep: empty string ≠ null
+            // metadata absent → score treated as 0.0 → drop because value is null
+            IndexResult {
+                schema_name: "Photography".into(),
+                schema_display_name: None,
+                field: "image_type".into(),
+                key_value: KeyValue::new(Some("k".into()), None),
+                value: serde_json::Value::Null,
+                metadata: None,
+                molecule_versions: None,
+            },
+        ];
+
+        let dropped = drop_null_value_low_score_hits(&mut results, 0.45);
+
+        assert_eq!(dropped, 3, "should drop the three null+sub-threshold rows");
+        assert_eq!(results.len(), 3);
+        // Order is preserved; check the survivors keep their identifying values.
+        assert_eq!(results[0].value, serde_json::json!("Apple Crumble"));
+        assert!(results[1].value.is_null());
+        assert_eq!(results[2].value, serde_json::json!(""));
+    }
+
+    #[test]
+    fn drop_filter_is_noop_when_no_hits_qualify() {
+        let mut results = vec![
+            make_scored(serde_json::json!("populated"), 0.10), // value present → keep
+            make_scored(serde_json::Value::Null, 0.90),        // null but high score → keep
+        ];
+        let dropped = drop_null_value_low_score_hits(&mut results, 0.45);
+        assert_eq!(dropped, 0);
+        assert_eq!(results.len(), 2);
+    }
+
+    #[test]
+    fn drop_filter_handles_empty_input() {
+        let mut results: Vec<IndexResult> = Vec::new();
+        let dropped = drop_null_value_low_score_hits(&mut results, 0.45);
+        assert_eq!(dropped, 0);
+        assert!(results.is_empty());
     }
 
     #[test]
