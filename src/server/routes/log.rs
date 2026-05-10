@@ -3,6 +3,7 @@
 //!
 //! - `GET /api/logs`         → [`observability::layers::ring::RingHandle::query`]
 //! - `GET /api/logs/stream`  → [`observability::layers::web::WebHandle::subscribe`]
+//! - `GET /api/logs/level`   → mirror of the directive last applied to the RELOAD handle
 //! - `PUT /api/logs/level`   → [`observability::layers::reload::ReloadHandle::update`]
 //!
 //! The legacy `/api/logs/config`, `/api/logs/config/reload`, and
@@ -11,6 +12,12 @@
 //! are now expressed as `RUST_LOG=fold_node::schema=debug,...` env-filter
 //! syntax — the dashboard owns the merged directive and sends it via
 //! `PUT /api/logs/level`.
+//!
+//! `LogLevelDirective` is a server-side mirror of the active directive.
+//! Upstream `ReloadHandle` doesn't expose a getter, so `update_feature_level`
+//! writes the applied directive into this `Arc<RwLock<String>>` on success
+//! and `get_log_level` reads it back. Initialized from `RUST_LOG` (matching
+//! `observability::default_env_filter`) at server start.
 
 use actix_web::{web, HttpResponse, Responder};
 use futures_util::stream::StreamExt;
@@ -19,8 +26,11 @@ use observability::layers::ring::RingHandle;
 use observability::layers::web::WebHandle;
 use serde::{Deserialize, Serialize};
 use serde_json::json;
-use std::sync::Arc;
+use std::sync::{Arc, RwLock};
 use tokio_stream::wrappers::BroadcastStream;
+
+/// Server-side mirror of the active `EnvFilter` directive.
+pub type LogLevelDirective = Arc<RwLock<String>>;
 
 const LOG_LEVELS: &[&str] = &["TRACE", "DEBUG", "INFO", "WARN", "ERROR"];
 
@@ -151,6 +161,7 @@ pub async fn stream_logs(web_handle: web::Data<Option<WebHandle>>) -> impl Respo
 pub async fn update_feature_level(
     level_update: web::Json<LogLevelUpdate>,
     reload: web::Data<Option<Arc<ReloadHandle>>>,
+    current: web::Data<LogLevelDirective>,
 ) -> impl Responder {
     if !LOG_LEVELS.contains(&level_update.level.as_str()) {
         return HttpResponse::BadRequest().json(json!({
@@ -171,15 +182,52 @@ pub async fn update_feature_level(
     );
 
     match handle.update(&directive) {
-        Ok(()) => HttpResponse::Ok().json(json!({
-            "success": true,
-            "message": format!("Updated {} log level to {}", level_update.feature, level_update.level),
-            "directive": directive,
-        })),
+        Ok(()) => {
+            // Mirror the applied directive so `GET /api/logs/level` can
+            // report it without round-tripping through tracing internals.
+            *current.write().expect("LogLevelDirective lock poisoned") = directive.clone();
+            HttpResponse::Ok().json(json!({
+                "success": true,
+                "message": format!("Updated {} log level to {}", level_update.feature, level_update.level),
+                "directive": directive,
+            }))
+        }
         Err(e) => HttpResponse::BadRequest().json(json!({
             "error": format!("Failed to apply directive '{}': {}", directive, e)
         })),
     }
+}
+
+/// Read the currently-active `EnvFilter` directive.
+///
+/// Mirrors what `PUT /api/logs/level` last applied (or, if nothing has
+/// been applied yet, the value of `RUST_LOG` at process start —
+/// `"info"` if unset). Returns `503` when the RELOAD handle is unavailable
+/// to match the PUT endpoint's failure shape.
+#[utoipa::path(
+    get,
+    path = "/api/logs/level",
+    tag = "logs",
+    responses(
+        (status = 200, description = "Current EnvFilter directive", body = serde_json::Value),
+        (status = 503, description = "Reload handle unavailable")
+    )
+)]
+pub async fn get_log_level(
+    reload: web::Data<Option<Arc<ReloadHandle>>>,
+    current: web::Data<LogLevelDirective>,
+) -> impl Responder {
+    if reload.as_ref().as_ref().is_none() {
+        return HttpResponse::ServiceUnavailable().json(json!({
+            "error": "observability reload handle not initialized"
+        }));
+    }
+
+    let level = current
+        .read()
+        .expect("LogLevelDirective lock poisoned")
+        .clone();
+    HttpResponse::Ok().json(json!({ "level": level }))
 }
 
 #[cfg(test)]
@@ -244,12 +292,17 @@ mod tests {
     /// handle.
     #[actix_web::test]
     async fn update_feature_level_rejects_invalid_level() {
+        // Keep `_layer` alive in the test scope so the reload handle's weak
+        // ref to the inner subscriber stays live for the request.
         let (_layer, handle) = build_reload_layer::<Registry>(EnvFilter::new("info"));
         let reload_data: web::Data<Option<Arc<ReloadHandle>>> =
             web::Data::new(Some(Arc::new(handle)));
+        let current_data: web::Data<LogLevelDirective> =
+            web::Data::new(Arc::new(RwLock::new("info".to_string())));
         let app = test::init_service(
             App::new()
                 .app_data(reload_data)
+                .app_data(current_data)
                 .route("/api/logs/level", web::put().to(update_feature_level)),
         )
         .await;
@@ -269,9 +322,12 @@ mod tests {
         let (_layer, handle) = build_reload_layer::<Registry>(EnvFilter::new("info"));
         let reload_data: web::Data<Option<Arc<ReloadHandle>>> =
             web::Data::new(Some(Arc::new(handle)));
+        let current_data: web::Data<LogLevelDirective> =
+            web::Data::new(Arc::new(RwLock::new("info".to_string())));
         let app = test::init_service(
             App::new()
                 .app_data(reload_data)
+                .app_data(current_data)
                 .route("/api/logs/level", web::put().to(update_feature_level)),
         )
         .await;
@@ -283,6 +339,108 @@ mod tests {
         let body: serde_json::Value = test::call_and_read_body_json(&app, req).await;
         assert_eq!(body["success"], true);
         assert_eq!(body["directive"], "schema=debug,info");
+    }
+
+    /// `GET /api/logs/level` returns 503 when the RELOAD handle is unset.
+    #[actix_web::test]
+    async fn get_log_level_503_without_reload() {
+        let reload_data: web::Data<Option<Arc<ReloadHandle>>> = web::Data::new(None);
+        let current_data: web::Data<LogLevelDirective> =
+            web::Data::new(Arc::new(RwLock::new("info".to_string())));
+        let app = test::init_service(
+            App::new()
+                .app_data(reload_data)
+                .app_data(current_data)
+                .route("/api/logs/level", web::get().to(get_log_level)),
+        )
+        .await;
+
+        let req = test::TestRequest::get().uri("/api/logs/level").to_request();
+        let resp = test::call_service(&app, req).await;
+        assert_eq!(resp.status(), StatusCode::SERVICE_UNAVAILABLE);
+    }
+
+    /// `GET /api/logs/level` returns the directive cache's current contents
+    /// when no PUT has happened yet.
+    #[actix_web::test]
+    async fn get_log_level_returns_initial_directive() {
+        let (_layer, handle) = build_reload_layer::<Registry>(EnvFilter::new("info"));
+        let reload_data: web::Data<Option<Arc<ReloadHandle>>> =
+            web::Data::new(Some(Arc::new(handle)));
+        let current_data: web::Data<LogLevelDirective> =
+            web::Data::new(Arc::new(RwLock::new("info".to_string())));
+        let app = test::init_service(
+            App::new()
+                .app_data(reload_data)
+                .app_data(current_data)
+                .route("/api/logs/level", web::get().to(get_log_level)),
+        )
+        .await;
+
+        let req = test::TestRequest::get().uri("/api/logs/level").to_request();
+        let body: serde_json::Value = test::call_and_read_body_json(&app, req).await;
+        assert_eq!(body["level"], "info");
+    }
+
+    /// `GET /api/logs/level` returns the directive that the most recent
+    /// successful `PUT /api/logs/level` applied. This is the contract the
+    /// dashboard relies on to read back what it just wrote.
+    #[actix_web::test]
+    async fn get_log_level_reflects_last_put() {
+        let (_layer, handle) = build_reload_layer::<Registry>(EnvFilter::new("info"));
+        let reload_data: web::Data<Option<Arc<ReloadHandle>>> =
+            web::Data::new(Some(Arc::new(handle)));
+        let current_data: web::Data<LogLevelDirective> =
+            web::Data::new(Arc::new(RwLock::new("info".to_string())));
+        let app = test::init_service(
+            App::new()
+                .app_data(reload_data)
+                .app_data(current_data)
+                .route("/api/logs/level", web::put().to(update_feature_level))
+                .route("/api/logs/level", web::get().to(get_log_level)),
+        )
+        .await;
+
+        let put_req = test::TestRequest::put()
+            .uri("/api/logs/level")
+            .set_json(json!({"feature": "Schema", "level": "DEBUG"}))
+            .to_request();
+        let put_body: serde_json::Value = test::call_and_read_body_json(&app, put_req).await;
+        assert_eq!(put_body["success"], true);
+
+        let get_req = test::TestRequest::get().uri("/api/logs/level").to_request();
+        let get_body: serde_json::Value = test::call_and_read_body_json(&app, get_req).await;
+        assert_eq!(get_body["level"], "schema=debug,info");
+    }
+
+    /// A failed PUT (invalid level) must NOT corrupt the directive cache.
+    /// The mirror only advances when `ReloadHandle::update` returns Ok.
+    #[actix_web::test]
+    async fn get_log_level_unchanged_after_rejected_put() {
+        let (_layer, handle) = build_reload_layer::<Registry>(EnvFilter::new("info"));
+        let reload_data: web::Data<Option<Arc<ReloadHandle>>> =
+            web::Data::new(Some(Arc::new(handle)));
+        let current_data: web::Data<LogLevelDirective> =
+            web::Data::new(Arc::new(RwLock::new("info".to_string())));
+        let app = test::init_service(
+            App::new()
+                .app_data(reload_data)
+                .app_data(current_data)
+                .route("/api/logs/level", web::put().to(update_feature_level))
+                .route("/api/logs/level", web::get().to(get_log_level)),
+        )
+        .await;
+
+        let put_req = test::TestRequest::put()
+            .uri("/api/logs/level")
+            .set_json(json!({"feature": "Schema", "level": "BOGUS"}))
+            .to_request();
+        let resp = test::call_service(&app, put_req).await;
+        assert_eq!(resp.status(), StatusCode::BAD_REQUEST);
+
+        let get_req = test::TestRequest::get().uri("/api/logs/level").to_request();
+        let body: serde_json::Value = test::call_and_read_body_json(&app, get_req).await;
+        assert_eq!(body["level"], "info");
     }
 
     /// `GET /api/logs/stream` returns 503 when the WEB handle is unset.

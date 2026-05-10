@@ -141,7 +141,14 @@ export interface paths {
             path?: never;
             cookie?: never;
         };
-        get?: never;
+        /**
+         * Read the currently-active `EnvFilter` directive.
+         * @description Mirrors what `PUT /api/logs/level` last applied (or, if nothing has
+         *     been applied yet, the value of `RUST_LOG` at process start —
+         *     `"info"` if unset). Returns `503` when the RELOAD handle is unavailable
+         *     to match the PUT endpoint's failure shape.
+         */
+        get: operations["get_log_level"];
         /**
          * Update feature-specific log level at runtime.
          * @description Translated to the RELOAD handle's `EnvFilter` directive vocabulary:
@@ -1638,6 +1645,33 @@ export interface operations {
                 content: {
                     "application/json": unknown;
                 };
+            };
+        };
+    };
+    get_log_level: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Current EnvFilter directive */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": unknown;
+                };
+            };
+            /** @description Reload handle unavailable */
+            503: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
             };
         };
     };

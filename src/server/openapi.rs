@@ -21,6 +21,7 @@ use utoipa::OpenApi;
         crate::server::routes::admin::migrate_to_cloud,
         crate::server::routes::log::list_logs,
         crate::server::routes::log::stream_logs,
+        crate::server::routes::log::get_log_level,
         crate::server::routes::log::update_feature_level,
         crate::server::routes::ingestion::process_json,
         crate::server::routes::ingestion::get_status,
