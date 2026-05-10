@@ -66,6 +66,16 @@ pub fn run_osascript(script: &str, app_label: &str) -> Result<String, IngestionE
 /// AppleScript's auto-launch of `tell application "X"` fails — a common
 /// failure mode on Sonoma+ for apps that aren't already running
 /// (Calendar, Contacts, Photos). Apps already running are a no-op.
+///
+/// Recovers transparently from AppleScript error -609 ("Connection is
+/// invalid"): the Apple Events session to the target app was never
+/// established or got torn down. This shows up on fresh-install nodes
+/// when Calendar.app's Launch Services launch returns before its
+/// scripting interface is up. We re-launch via Apple Events (which
+/// blocks on the app being responsive in a way `open -a` doesn't),
+/// wait briefly, and retry once. If the second attempt still hits -609,
+/// the surfaced error swaps the cryptic "Connection is invalid"
+/// stderr for an actionable "Open <App> manually" hint.
 #[cfg(target_os = "macos")]
 pub fn run_osascript_with_timeout(
     script: &str,
@@ -74,6 +84,39 @@ pub fn run_osascript_with_timeout(
 ) -> Result<String, IngestionError> {
     ensure_app_launched(app_label);
 
+    match run_osascript_once(script, app_label, timeout) {
+        Err(IngestionError::Extraction(msg)) if is_invalid_connection_error(&msg) => {
+            tracing::warn!(
+                app = app_label,
+                "AppleScript -609 (Connection is invalid); retrying after Apple Events launch"
+            );
+            revive_app_via_apple_events(app_label);
+            match run_osascript_once(script, app_label, timeout) {
+                Err(IngestionError::Extraction(msg2)) if is_invalid_connection_error(&msg2) => {
+                    let app_name = app_name_from_label(app_label);
+                    Err(IngestionError::Extraction(format!(
+                        "{} could not be reached. Open {} manually, wait for it to load, \
+                         then retry.",
+                        app_name, app_name,
+                    )))
+                }
+                other => other,
+            }
+        }
+        other => other,
+    }
+}
+
+/// Single osascript invocation with a wallclock timeout — the inner loop
+/// `run_osascript_with_timeout` calls (twice on -609 recovery). Kept
+/// private so callers can't accidentally bypass the -609 retry that
+/// makes Calendar's fresh-launch case work.
+#[cfg(target_os = "macos")]
+fn run_osascript_once(
+    script: &str,
+    app_label: &str,
+    timeout: std::time::Duration,
+) -> Result<String, IngestionError> {
     let child = std::process::Command::new("osascript")
         .arg("-e")
         .arg(script)
@@ -121,6 +164,35 @@ pub fn run_osascript_with_timeout(
             )))
         }
     }
+}
+
+/// Recognise osascript's `-609 Connection is invalid` failure marker in
+/// the wrapped runner error. Pure on the input string so the detection
+/// rule is testable without spawning osascript.
+#[cfg(target_os = "macos")]
+fn is_invalid_connection_error(msg: &str) -> bool {
+    msg.contains("(-609)")
+}
+
+/// Re-launch the target app via Apple Events and wait briefly for the
+/// scripting connection to come up. Unlike Launch Services (`open -a`),
+/// `tell application "X" to launch` rides the Apple Events bus directly,
+/// which is what gets blocked on the connection actually being live.
+///
+/// Errors are swallowed: the immediate caller will retry the real
+/// script next, and surface a clean user-facing error if that also
+/// fails. Doubling up on errors here would obscure the real cause.
+#[cfg(target_os = "macos")]
+fn revive_app_via_apple_events(app_label: &str) {
+    let app_name = app_name_from_label(app_label);
+    let launch_script = format!(r#"tell application "{}" to launch"#, app_name);
+    let _ = std::process::Command::new("osascript")
+        .arg("-e")
+        .arg(&launch_script)
+        .stdout(std::process::Stdio::null())
+        .stderr(std::process::Stdio::null())
+        .status();
+    std::thread::sleep(std::time::Duration::from_millis(1500));
 }
 
 /// Tiny side-effect-free AppleScript that confirms the calling process
@@ -322,6 +394,68 @@ mod tests {
         // that would surface a false-positive "Grant Access" banner the
         // user can do nothing about.
         assert!(probe_permission("UnregisteredApp.app"));
+    }
+
+    #[test]
+    fn is_invalid_connection_error_detects_dash_609() {
+        // Real-world stderr observed on a fresh-install dogfood node where
+        // Calendar.app's AppleScript bridge wasn't ready when the extract
+        // fired:
+        //   312:319: execution error: Calendar got an error: Connection is
+        //   invalid. (-609)
+        // The marker the detector keys off is the bare error code in
+        // parens — specific enough that a benign extract output can't
+        // accidentally trip the retry path.
+        assert!(is_invalid_connection_error(
+            "AppleScript error (Calendar.app): 312:319: execution error: \
+             Calendar got an error: Connection is invalid. (-609)"
+        ));
+        assert!(is_invalid_connection_error("anything (-609) anywhere"));
+
+        // Other AppleScript errors must NOT be retried via the -609 path —
+        // their failure modes need different recovery (or none at all).
+        assert!(!is_invalid_connection_error(
+            "AppleScript error: Application isn't running. (-600)"
+        ));
+        assert!(!is_invalid_connection_error(
+            "osascript timed out after 5 seconds talking to Calendar.app"
+        ));
+        assert!(!is_invalid_connection_error(""));
+    }
+
+    #[test]
+    fn run_osascript_with_timeout_recovers_from_dash_609_or_surfaces_clean_message() {
+        // Simulate a -609 failure with `error number -609`. The runner's
+        // retry path will re-launch Calendar via Apple Events, sleep,
+        // and rerun the same script — which still fails with -609.
+        // The runner must:
+        //   1. swap the cryptic "Connection is invalid" stderr for an
+        //      actionable "Open Calendar manually" hint, and
+        //   2. NOT leak the -609 / "Connection is invalid" wording to the
+        //      user (that's the whole reason we wrap it).
+        let result = run_osascript_with_timeout(
+            "error number -609",
+            "Calendar.app",
+            std::time::Duration::from_secs(10),
+        );
+        let err = result.expect_err("script unconditionally errors with -609");
+        let msg = err.to_string();
+        assert!(
+            !msg.contains("Connection is invalid"),
+            "user-facing message must NOT echo the cryptic AppleScript wording: {msg}"
+        );
+        assert!(
+            !msg.contains("(-609)"),
+            "user-facing message must NOT echo the raw error code: {msg}"
+        );
+        assert!(
+            msg.contains("Calendar could not be reached"),
+            "user-facing message must name the app and the reachability problem: {msg}"
+        );
+        assert!(
+            msg.contains("Open Calendar manually"),
+            "user-facing message must give the user an actionable next step: {msg}"
+        );
     }
 
     #[test]
