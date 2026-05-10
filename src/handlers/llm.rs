@@ -301,10 +301,11 @@ pub async fn ai_native_index_query(
     // Drop indexed-but-empty fragments at low semantic match — see
     // `drop_null_value_low_score_hits` in native_index.rs for the rationale.
     let pre_filter = hydrated_results.len();
-    let dropped = crate::fold_node::llm_query::service::native_index::drop_null_value_low_score_hits(
-        &mut hydrated_results,
-        crate::fold_node::llm_query::service::native_index::NULL_VALUE_DROP_SCORE_THRESHOLD,
-    );
+    let dropped =
+        crate::fold_node::llm_query::service::native_index::drop_null_value_low_score_hits(
+            &mut hydrated_results,
+            crate::fold_node::llm_query::service::native_index::NULL_VALUE_DROP_SCORE_THRESHOLD,
+        );
 
     // Cap the slice forwarded to the AI; `truncated_count` lets the caller
     // know how much of the long tail was held back.
