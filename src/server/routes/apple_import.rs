@@ -232,7 +232,10 @@ async fn emit_batch_progress(
     total: usize,
     item_label: &str,
 ) {
-    let mut job = Job::new(progress_id.to_string(), JobType::Other(job_kind.to_string()));
+    let mut job = Job::new(
+        progress_id.to_string(),
+        JobType::Other(job_kind.to_string()),
+    );
     job.status = JobStatus::Running;
     job.progress_percentage = ingestion_progress_pct(ingested, total);
     job.message = format!("Ingested {}/{} {}...", ingested, total, item_label);
@@ -376,7 +379,15 @@ async fn run_apple_notes_import(
             }
         }
 
-        emit_batch_progress(&tracker, &progress_id, "apple-notes", ingested, total, "notes").await;
+        emit_batch_progress(
+            &tracker,
+            &progress_id,
+            "apple-notes",
+            ingested,
+            total,
+            "notes",
+        )
+        .await;
     }
 
     let mut job = Job::new(progress_id.clone(), JobType::Other("apple-notes".into()));
