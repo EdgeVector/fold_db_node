@@ -52,5 +52,6 @@ pub mod trust;
 pub use caller::current_caller_pubkey;
 pub(crate) use response::handler_response;
 pub use response::{
-    get_db_guard, ApiResponse, HandlerError, HandlerResult, IntoHandlerError, IntoTypedHandlerError,
+    get_db_guard, ApiResponse, HandlerError, HandlerResult, IntoHandlerError, IntoHandlerErrorMsg,
+    IntoTypedHandlerError,
 };

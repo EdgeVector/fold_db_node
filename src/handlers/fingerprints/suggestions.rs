@@ -23,7 +23,9 @@ use crate::fold_node::{FoldNode, OperationProcessor};
 use crate::handlers::fingerprints::personas::{
     get_persona, FingerprintView, PersonaDetailResponse,
 };
-use crate::handlers::response::{ApiResponse, HandlerError, HandlerResult, IntoHandlerError};
+use crate::handlers::response::{
+    ApiResponse, HandlerError, HandlerResult, IntoHandlerError, IntoHandlerErrorMsg,
+};
 use fold_db::schema::types::field::HashRangeFilter;
 use fold_db::schema::types::key_value::KeyValue;
 use fold_db::schema::types::operations::{MutationType, Query};
@@ -228,12 +230,10 @@ pub async fn accept_suggested_persona(
             MutationType::Create,
         )
         .await
-        .map_err(|e| {
-            HandlerError::Internal(format!(
-                "failed to create accepted persona '{}': {}",
-                persona_id, e
-            ))
-        })?;
+        .handler_err_msg(&format!(
+            "failed to create accepted persona '{}'",
+            persona_id
+        ))?;
 
     tracing::info!(
         "fingerprints.handler: accepted suggested persona '{}' with {} seeds",

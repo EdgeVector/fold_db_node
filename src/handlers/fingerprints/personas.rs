@@ -28,6 +28,7 @@ use crate::fingerprints::schemas::{EDGE, FINGERPRINT, MENTION, MENTION_BY_FINGER
 use crate::fold_node::FoldNode;
 use crate::handlers::response::{
     require_non_empty, ApiResponse, HandlerError, HandlerResult, IntoHandlerError,
+    IntoHandlerErrorMsg,
 };
 use fold_db::schema::types::key_value::KeyValue;
 use fold_db::schema::types::operations::{MutationType, Query};
@@ -306,9 +307,7 @@ pub async fn delete_persona(
             MutationType::Delete,
         )
         .await
-        .map_err(|e| {
-            HandlerError::Internal(format!("failed to delete persona '{}': {}", persona_id, e))
-        })?;
+        .handler_err_msg(&format!("failed to delete persona '{}'", persona_id))?;
 
     tracing::info!(
         "fingerprints.handler: deleted persona '{}' (underlying fingerprints/edges/mentions untouched)",
@@ -460,9 +459,10 @@ async fn fetch_fingerprint_views(
             sort_order: None,
             value_filters: None,
         };
-        let records = processor.execute_query_json(query).await.map_err(|e| {
-            HandlerError::Internal(format!("fingerprint '{}' query failed: {}", id, e))
-        })?;
+        let records = processor
+            .execute_query_json(query)
+            .await
+            .handler_err_msg(&format!("fingerprint '{}' query failed", id))?;
         let Some(record) = records.first() else {
             tracing::warn!(
                 "fingerprints.handler: fingerprint '{}' not found during enrichment",
@@ -532,12 +532,10 @@ async fn fetch_sample_mention_for_fingerprint(
     let junction_records = processor
         .execute_query_json(junction_query)
         .await
-        .map_err(|e| {
-            HandlerError::Internal(format!(
-                "sample-mention junction query failed for '{}': {}",
-                fingerprint_id, e
-            ))
-        })?;
+        .handler_err_msg(&format!(
+            "sample-mention junction query failed for '{}'",
+            fingerprint_id
+        ))?;
 
     let Some(first) = junction_records.first() else {
         return Ok(None);
@@ -597,7 +595,7 @@ async fn fetch_edge_views(
         let records = processor
             .execute_query_json(query)
             .await
-            .map_err(|e| HandlerError::Internal(format!("edge '{}' query failed: {}", id, e)))?;
+            .handler_err_msg(&format!("edge '{}' query failed", id))?;
         let Some(record) = records.first() else {
             tracing::warn!(
                 "fingerprints.handler: edge '{}' not found during enrichment",
@@ -654,7 +652,7 @@ async fn fetch_mention_views(
         let records = processor
             .execute_query_json(query)
             .await
-            .map_err(|e| HandlerError::Internal(format!("mention '{}' query failed: {}", id, e)))?;
+            .handler_err_msg(&format!("mention '{}' query failed", id))?;
         let Some(record) = records.first() else {
             tracing::warn!(
                 "fingerprints.handler: mention '{}' not found during enrichment",
@@ -1006,9 +1004,7 @@ pub async fn apply_persona_patch(
     processor
         .execute_mutation(persona_canonical, payload, key_value, MutationType::Update)
         .await
-        .map_err(|e| {
-            HandlerError::Internal(format!("failed to update persona '{}': {}", persona_id, e))
-        })?;
+        .handler_err_msg(&format!("failed to update persona '{}'", persona_id))?;
 
     tracing::info!(
         "fingerprints.handler: applied patch to persona '{}' \
@@ -1326,12 +1322,10 @@ pub async fn merge_personas(
             MutationType::Update,
         )
         .await
-        .map_err(|e| {
-            HandlerError::Internal(format!(
-                "failed to write merged survivor persona '{}': {}",
-                survivor_id, e
-            ))
-        })?;
+        .handler_err_msg(&format!(
+            "failed to write merged survivor persona '{}'",
+            survivor_id
+        ))?;
 
     let absorbed_key = KeyValue::new(Some(absorbed_id.clone()), None);
     processor
@@ -1342,12 +1336,10 @@ pub async fn merge_personas(
             MutationType::Delete,
         )
         .await
-        .map_err(|e| {
-            HandlerError::Internal(format!(
-                "survivor merged but failed to delete absorbed persona '{}': {}",
-                absorbed_id, e
-            ))
-        })?;
+        .handler_err_msg(&format!(
+            "survivor merged but failed to delete absorbed persona '{}'",
+            absorbed_id
+        ))?;
 
     tracing::info!(
         "fingerprints.handler: merged persona '{}' into '{}'",

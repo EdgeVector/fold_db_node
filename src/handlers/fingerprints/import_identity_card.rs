@@ -75,7 +75,9 @@ use crate::fold_node::FoldNode;
 use crate::handlers::fingerprints::personas::{
     apply_persona_patch, PersonaDetailResponse, PersonaPatch,
 };
-use crate::handlers::response::{ApiResponse, HandlerError, HandlerResult, IntoHandlerError};
+use crate::handlers::response::{
+    ApiResponse, HandlerError, HandlerResult, IntoHandlerError, IntoHandlerErrorMsg,
+};
 
 /// Incoming card body. Shape mirrors `MyIdentityCardResponse` so a
 /// node can paste the JSON from another node's `/my-identity-card`
@@ -150,12 +152,9 @@ pub async fn import_identity_card(
                 &now,
             ));
         }
-        write_records(node.clone(), &records).await.map_err(|e| {
-            HandlerError::Internal(format!(
-                "import_identity_card: failed to persist Identity/IdentityReceipt: {}",
-                e
-            ))
-        })?;
+        write_records(node.clone(), &records)
+            .await
+            .handler_err_msg("import_identity_card: failed to persist Identity/IdentityReceipt")?;
         tracing::info!(
             "fingerprints.handler: imported Identity Card for pub_key='{}' (display_name='{}', face={})",
             req.card.pub_key,
