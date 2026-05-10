@@ -1,6 +1,6 @@
 //! LLM service for query analysis and summarization.
 
-mod native_index;
+pub(crate) mod native_index;
 mod parsers;
 mod prompts;
 pub mod web_search_key_store;

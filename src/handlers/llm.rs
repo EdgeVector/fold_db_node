@@ -296,12 +296,35 @@ pub async fn ai_native_index_query(
     // Step 2: Hydrate results by fetching actual field values.
     // Loopback owner context — see trust-boundary note in CLAUDE.md.
     let owner_ctx = fold_db::access::AccessContext::owner(node.get_node_public_key().to_string());
-    let hydrated_results = hydrate_index_results(search_results, &db_guard, &owner_ctx).await;
+    let mut hydrated_results = hydrate_index_results(search_results, &db_guard, &owner_ctx).await;
+
+    // Drop indexed-but-empty fragments at low semantic match — see
+    // `drop_null_value_low_score_hits` in native_index.rs for the rationale.
+    let pre_filter = hydrated_results.len();
+    let dropped = crate::fold_node::llm_query::service::native_index::drop_null_value_low_score_hits(
+        &mut hydrated_results,
+        crate::fold_node::llm_query::service::native_index::NULL_VALUE_DROP_SCORE_THRESHOLD,
+    );
+
+    // Cap the slice forwarded to the AI; `truncated_count` lets the caller
+    // know how much of the long tail was held back.
+    let max_to_ai = crate::fold_node::llm_query::service::native_index::MAX_RAW_RESULTS_TO_AI;
+    let truncated_count = if hydrated_results.len() > max_to_ai {
+        let extra = hydrated_results.len() - max_to_ai;
+        hydrated_results.truncate(max_to_ai);
+        Some(extra)
+    } else {
+        None
+    };
 
     tracing::info!(
             target: "fold_node::query",
-        "AI Native Index Query: hydration complete, {} results ready for AI interpretation",
-        hydrated_results.len()
+        "AI Native Index Query: hydration complete, {} results after filter (dropped {} null+low-score from {}); forwarding {} to AI ({} truncated)",
+        hydrated_results.len(),
+        dropped,
+        pre_filter,
+        hydrated_results.len(),
+        truncated_count.unwrap_or(0)
     );
 
     // Step 3: Send hydrated results to AI for interpretation
@@ -355,6 +378,7 @@ pub async fn ai_native_index_query(
             raw_results: results_as_json,
             query: request.query,
             session_id,
+            truncated_count,
         },
         user_hash,
     ))
