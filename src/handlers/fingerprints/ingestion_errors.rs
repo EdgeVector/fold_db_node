@@ -22,7 +22,9 @@
 
 use crate::fingerprints::schemas::INGESTION_ERROR;
 use crate::fold_node::FoldNode;
-use crate::handlers::response::{ApiResponse, HandlerError, HandlerResult, IntoHandlerError};
+use crate::handlers::response::{
+    ApiResponse, HandlerError, HandlerResult, IntoHandlerError, IntoHandlerErrorMsg,
+};
 use fold_db::schema::types::key_value::KeyValue;
 use fold_db::schema::types::operations::{MutationType, Query};
 use serde::{Deserialize, Serialize};
@@ -172,12 +174,7 @@ pub async fn resolve_ingestion_error(
     processor
         .execute_mutation(canonical, payload, key_value, MutationType::Update)
         .await
-        .map_err(|e| {
-            HandlerError::Internal(format!(
-                "failed to update ingestion error '{}': {}",
-                error_id, e
-            ))
-        })?;
+        .handler_err_msg(&format!("failed to update ingestion error '{}'", error_id))?;
 
     tracing::info!(
         "fingerprints.handler: ingestion error '{}' resolved={}",

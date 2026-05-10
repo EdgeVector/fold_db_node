@@ -56,6 +56,7 @@ use crate::fold_node::FoldNode;
 use crate::handlers::fingerprints::my_identity_card::MyIdentityCardResponse;
 use crate::handlers::response::{
     require_non_empty, ApiResponse, HandlerError, HandlerResult, IntoHandlerError,
+    IntoHandlerErrorMsg,
 };
 
 /// Request body for the reissue endpoint. Both fields are optional
@@ -243,12 +244,7 @@ pub async fn reissue_identity_card(
     if request.display_name.is_some() {
         update_me_persona_name(&processor, &persona_canonical, &new_display_name)
             .await
-            .map_err(|e| {
-                HandlerError::Internal(format!(
-                    "Identity card updated but failed to sync Me persona name: {}",
-                    e
-                ))
-            })?;
+            .handler_err_msg("Identity card updated but failed to sync Me persona name")?;
     }
 
     tracing::info!(

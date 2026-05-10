@@ -229,6 +229,25 @@ impl<T, E: fmt::Display> IntoHandlerError<T> for Result<T, E> {
     }
 }
 
+/// Like `.handler_err()` but uses the supplied message verbatim — does NOT
+/// prepend "Failed to ". Use when the existing message has different
+/// capitalization, embeds a runtime ID inside the prefix, or otherwise
+/// doesn't fit the `"Failed to {verb}: {e}"` shape produced by `handler_err`.
+///
+/// ```ignore
+/// .handler_err_msg(&format!("fingerprint '{}' query failed", id))?
+/// // → HandlerError::Internal("fingerprint '<id>' query failed: <e>")
+/// ```
+pub trait IntoHandlerErrorMsg<T> {
+    fn handler_err_msg(self, msg: &str) -> Result<T, HandlerError>;
+}
+
+impl<T, E: fmt::Display> IntoHandlerErrorMsg<T> for Result<T, E> {
+    fn handler_err_msg(self, msg: &str) -> Result<T, HandlerError> {
+        self.map_err(|e| HandlerError::Internal(format!("{}: {}", msg, e)))
+    }
+}
+
 /// Extension trait for converting FoldDbError results using the typed From conversion.
 ///
 /// Unlike `.handler_err()` which wraps every error as Internal(500), this preserves
