@@ -27,6 +27,56 @@ The app/node layer for FoldDB — HTTP server, CLI, React UI, ingestion pipeline
 | GET | `/api/native-index/search` | Full-text keyword search |
 | POST | `/api/ingestion/process` | Ingest a file via AI pipeline |
 
+All endpoints (except `/api/health` and `/api/system/auto-identity`) require an `X-User-Hash` header. In local/desktop mode, fetch yours with `curl http://localhost:9101/api/system/auto-identity` and use the `user_hash` field — same identity the React UI auto-binds to.
+
+For the full machine-readable spec, see `target/openapi.json` (regenerated via `cargo run --bin openapi_dump -- --out target/openapi.json` — don't redirect stderr into it, warnings will corrupt the JSON).
+
+### API examples
+
+#### `POST /api/query` — structured field read
+
+`Query` is a JSON object (Rust source: `fold_db::schema::types::operations::Query`, `#[serde(deny_unknown_fields)]`). Required: `schema_name`, `fields`. Everything else is optional.
+
+```bash
+curl -sS -X POST http://localhost:9101/api/query \
+  -H "Content-Type: application/json" \
+  -H "X-User-Hash: $(curl -sS http://localhost:9101/api/system/auto-identity | jq -r .user_hash)" \
+  -d '{
+    "schema_name": "Apple Notes",
+    "fields": ["title", "body", "modified_at"],
+    "sort_order": "desc"
+  }'
+```
+
+Field reference:
+
+| Field | Type | Notes |
+|-------|------|-------|
+| `schema_name` | string | Schema to read from. Discover the exact name with `GET /api/schemas` — the LLM classifier picks the name at ingestion time, so e.g. Apple Photos may land in `Photography`. Task `67b1a` will echo the chosen name back on the ingestion result. |
+| `fields` | string[] | Field names to return. Use `GET /api/schemas` to list fields. |
+| `sort_order` | `"asc"` \| `"desc"` | Sorts by the schema's range key. String, not an array. Omit to leave order unspecified. |
+| `filter` | object | Key-level filter for HashRange schemas only — externally-tagged `HashRangeFilter` enum. Examples: `{"HashKey": "<hash>"}`, `{"RangePrefix": "2026-"}`, `{"RangeRange": {"start": "a", "end": "z"}}`. For text-substring matching on values, use `/api/native-index/search` instead. |
+| `value_filters` | array | Post-fetch numeric filters, AND'd together. Each entry is a single-key map: `{"GreaterThan": {"field": "score", "value": 0.5}}`, `{"LessThan": ...}`, `{"Equals": ...}`, `{"Between": {"field": "x", "min": 0.0, "max": 1.0}}`. |
+| `as_of` | string (RFC 3339) | Time-travel read. Omit or `null` for current. |
+| `rehydrate_depth` | integer | Reference-following depth. Omit or `null` for default. |
+
+Unknown fields error loudly — `{"type":"list_schemas"}` returns `unknown field 'type'`. Use `GET /api/schemas` to list schemas.
+
+#### `GET /api/native-index/search` — full-text keyword search
+
+```bash
+curl -sS -G "http://localhost:9101/api/native-index/search" \
+  --data-urlencode "term=quantum mechanics" \
+  -H "X-User-Hash: $(curl -sS http://localhost:9101/api/system/auto-identity | jq -r .user_hash)"
+```
+
+Query params:
+
+| Param | Required | Notes |
+|-------|----------|-------|
+| `term` | yes | Search term. Note: `term`, not `q`. Empty/whitespace returns 400. |
+| `include_internal` | no | `true`/`1`/`yes` to include bookkeeping schemas (`Mention`, `ExtractionStatus`, `IngestionError`, etc.). Defaults to `false`. |
+
 ## Local Development
 
 ```bash
