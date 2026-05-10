@@ -63,7 +63,6 @@ use fold_db::schema::types::operations::Query;
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
 
-use crate::fingerprints::canonical_names;
 use crate::fingerprints::keys::{
     edge_id, edge_kind, fingerprint_id_for_face_embedding, fingerprint_id_from_bytes, identity_id,
     kind,
@@ -363,12 +362,7 @@ fn build_face_fingerprint_and_edge_records(
 // ── Identity-exists probe ──────────────────────────────────────────
 
 async fn identity_exists(node: &Arc<FoldNode>, identity_id: &str) -> Result<bool, HandlerError> {
-    let canonical = canonical_names::lookup(IDENTITY).map_err(|e| {
-        HandlerError::Internal(format!(
-            "fingerprints: canonical_names not initialized for '{}': {}",
-            IDENTITY, e
-        ))
-    })?;
+    let canonical = super::canonical_lookup(IDENTITY)?;
     let processor = crate::fold_node::OperationProcessor::new(node.clone());
     let query = Query {
         schema_name: canonical,

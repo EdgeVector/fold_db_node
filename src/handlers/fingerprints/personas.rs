@@ -23,7 +23,6 @@
 //! (subsystem startup hasn't run), every call fails loudly with a
 //! clear error.
 
-use crate::fingerprints::canonical_names;
 use crate::fingerprints::resolver::{PersonaResolver, PersonaSpec, ResolveDiagnostics};
 use crate::fingerprints::schemas::{EDGE, FINGERPRINT, MENTION, MENTION_BY_FINGERPRINT, PERSONA};
 use crate::fold_node::FoldNode;
@@ -178,12 +177,7 @@ pub struct MentionView {
 /// could cache counts or stream them.
 pub async fn list_personas(node: Arc<FoldNode>) -> HandlerResult<ListPersonasResponse> {
     let started = std::time::Instant::now();
-    let persona_canonical = canonical_names::lookup(PERSONA).map_err(|e| {
-        HandlerError::Internal(format!(
-            "fingerprints: canonical_names not initialized for '{}': {}",
-            PERSONA, e
-        ))
-    })?;
+    let persona_canonical = super::canonical_lookup(PERSONA)?;
 
     let processor = crate::fold_node::OperationProcessor::new(node.clone());
 
@@ -266,12 +260,7 @@ pub async fn delete_persona(
     node: Arc<FoldNode>,
     persona_id: String,
 ) -> HandlerResult<serde_json::Value> {
-    let persona_canonical = canonical_names::lookup(PERSONA).map_err(|e| {
-        HandlerError::Internal(format!(
-            "fingerprints: canonical_names not initialized for '{}': {}",
-            PERSONA, e
-        ))
-    })?;
+    let persona_canonical = super::canonical_lookup(PERSONA)?;
 
     let processor = crate::fold_node::OperationProcessor::new(node.clone());
 
@@ -338,12 +327,7 @@ pub async fn get_persona(
     persona_id: String,
 ) -> HandlerResult<PersonaDetailResponse> {
     let started = std::time::Instant::now();
-    let persona_canonical = canonical_names::lookup(PERSONA).map_err(|e| {
-        HandlerError::Internal(format!(
-            "fingerprints: canonical_names not initialized for '{}': {}",
-            PERSONA, e
-        ))
-    })?;
+    let persona_canonical = super::canonical_lookup(PERSONA)?;
 
     let processor = crate::fold_node::OperationProcessor::new(node.clone());
 
@@ -456,12 +440,7 @@ async fn fetch_fingerprint_views(
     processor: &crate::fold_node::OperationProcessor,
     ids: &[String],
 ) -> Result<Vec<FingerprintView>, HandlerError> {
-    let canonical = canonical_names::lookup(FINGERPRINT).map_err(|e| {
-        HandlerError::Internal(format!(
-            "fingerprints: canonical_names not initialized for '{}': {}",
-            FINGERPRINT, e
-        ))
-    })?;
+    let canonical = super::canonical_lookup(FINGERPRINT)?;
     let mut out = Vec::with_capacity(ids.len());
     for id in ids {
         let query = Query {
@@ -538,12 +517,7 @@ async fn fetch_sample_mention_for_fingerprint(
     processor: &crate::fold_node::OperationProcessor,
     fingerprint_id: &str,
 ) -> Result<Option<MentionView>, HandlerError> {
-    let junction_canonical = canonical_names::lookup(MENTION_BY_FINGERPRINT).map_err(|e| {
-        HandlerError::Internal(format!(
-            "fingerprints: canonical_names not initialized for '{}': {}",
-            MENTION_BY_FINGERPRINT, e
-        ))
-    })?;
+    let junction_canonical = super::canonical_lookup(MENTION_BY_FINGERPRINT)?;
     let junction_query = Query {
         schema_name: junction_canonical,
         fields: vec!["mention_id".to_string()],
@@ -599,12 +573,7 @@ async fn fetch_edge_views(
     processor: &crate::fold_node::OperationProcessor,
     ids: &[String],
 ) -> Result<Vec<EdgeView>, HandlerError> {
-    let canonical = canonical_names::lookup(EDGE).map_err(|e| {
-        HandlerError::Internal(format!(
-            "fingerprints: canonical_names not initialized for '{}': {}",
-            EDGE, e
-        ))
-    })?;
+    let canonical = super::canonical_lookup(EDGE)?;
     let mut out = Vec::with_capacity(ids.len());
     for id in ids {
         let query = Query {
@@ -660,12 +629,7 @@ async fn fetch_mention_views(
     processor: &crate::fold_node::OperationProcessor,
     ids: &[String],
 ) -> Result<Vec<MentionView>, HandlerError> {
-    let canonical = canonical_names::lookup(MENTION).map_err(|e| {
-        HandlerError::Internal(format!(
-            "fingerprints: canonical_names not initialized for '{}': {}",
-            MENTION, e
-        ))
-    })?;
+    let canonical = super::canonical_lookup(MENTION)?;
     let mut out = Vec::with_capacity(ids.len());
     for id in ids {
         let query = Query {
@@ -900,12 +864,7 @@ pub async fn apply_persona_patch(
         }
     }
 
-    let persona_canonical = canonical_names::lookup(PERSONA).map_err(|e| {
-        HandlerError::Internal(format!(
-            "fingerprints: canonical_names not initialized for '{}': {}",
-            PERSONA, e
-        ))
-    })?;
+    let persona_canonical = super::canonical_lookup(PERSONA)?;
 
     let processor = crate::fold_node::OperationProcessor::new(node.clone());
 
@@ -1247,12 +1206,7 @@ pub async fn merge_personas(
         ));
     }
 
-    let persona_canonical = canonical_names::lookup(PERSONA).map_err(|e| {
-        HandlerError::Internal(format!(
-            "fingerprints: canonical_names not initialized for '{}': {}",
-            PERSONA, e
-        ))
-    })?;
+    let persona_canonical = super::canonical_lookup(PERSONA)?;
     let processor = crate::fold_node::OperationProcessor::new(node.clone());
 
     // Load both personas up front. Fail fast on NotFound so we

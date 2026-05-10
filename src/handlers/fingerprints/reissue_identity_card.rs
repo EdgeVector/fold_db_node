@@ -49,7 +49,6 @@ use fold_db::schema::types::operations::{MutationType, Query};
 use serde::Deserialize;
 use serde_json::{json, Value};
 
-use crate::fingerprints::canonical_names;
 use crate::fingerprints::keys::identity_id;
 use crate::fingerprints::schemas::{IDENTITY, PERSONA};
 use crate::fingerprints::self_identity::IdentityCardPayload;
@@ -124,18 +123,8 @@ pub async fn reissue_identity_card(
         require_non_empty(name, "display_name must not be empty")?;
     }
 
-    let identity_canonical = canonical_names::lookup(IDENTITY).map_err(|e| {
-        HandlerError::Internal(format!(
-            "fingerprints: canonical_names not initialized for '{}': {}",
-            IDENTITY, e
-        ))
-    })?;
-    let persona_canonical = canonical_names::lookup(PERSONA).map_err(|e| {
-        HandlerError::Internal(format!(
-            "fingerprints: canonical_names not initialized for '{}': {}",
-            PERSONA, e
-        ))
-    })?;
+    let identity_canonical = super::canonical_lookup(IDENTITY)?;
+    let persona_canonical = super::canonical_lookup(PERSONA)?;
 
     let pub_key = node.get_node_public_key().to_string();
     let self_id = identity_id(&pub_key);

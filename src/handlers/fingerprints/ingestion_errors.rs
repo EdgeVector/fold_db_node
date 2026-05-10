@@ -20,7 +20,6 @@
 //! `canonical_names::lookup` before every query, so HTTP callers never
 //! need to know the runtime hash.
 
-use crate::fingerprints::canonical_names;
 use crate::fingerprints::schemas::INGESTION_ERROR;
 use crate::fold_node::FoldNode;
 use crate::handlers::response::{ApiResponse, HandlerError, HandlerResult, IntoHandlerError};
@@ -70,12 +69,7 @@ pub async fn list_ingestion_errors(
     include_resolved: bool,
 ) -> HandlerResult<ListIngestionErrorsResponse> {
     let started = std::time::Instant::now();
-    let canonical = canonical_names::lookup(INGESTION_ERROR).map_err(|e| {
-        HandlerError::Internal(format!(
-            "fingerprints: canonical_names not initialized for '{}': {}",
-            INGESTION_ERROR, e
-        ))
-    })?;
+    let canonical = super::canonical_lookup(INGESTION_ERROR)?;
 
     let processor = crate::fold_node::OperationProcessor::new(node.clone());
 
@@ -134,12 +128,7 @@ pub async fn resolve_ingestion_error(
     error_id: String,
     resolved: bool,
 ) -> HandlerResult<IngestionErrorView> {
-    let canonical = canonical_names::lookup(INGESTION_ERROR).map_err(|e| {
-        HandlerError::Internal(format!(
-            "fingerprints: canonical_names not initialized for '{}': {}",
-            INGESTION_ERROR, e
-        ))
-    })?;
+    let canonical = super::canonical_lookup(INGESTION_ERROR)?;
 
     let processor = crate::fold_node::OperationProcessor::new(node.clone());
 

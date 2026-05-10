@@ -33,7 +33,6 @@ use fold_db::schema::types::operations::Query;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
-use crate::fingerprints::canonical_names;
 use crate::fingerprints::keys::identity_id;
 use crate::fingerprints::schemas::IDENTITY;
 use crate::fold_node::FoldNode;
@@ -63,12 +62,7 @@ pub struct MyIdentityCardResponse {
 
 /// Fetch the node owner's self-Identity card.
 pub async fn get_my_identity_card(node: Arc<FoldNode>) -> HandlerResult<MyIdentityCardResponse> {
-    let canonical = canonical_names::lookup(IDENTITY).map_err(|e| {
-        HandlerError::Internal(format!(
-            "fingerprints: canonical_names not initialized for '{}': {}",
-            IDENTITY, e
-        ))
-    })?;
+    let canonical = super::canonical_lookup(IDENTITY)?;
 
     let pub_key = node.get_node_public_key().to_string();
     let self_id = identity_id(&pub_key);
