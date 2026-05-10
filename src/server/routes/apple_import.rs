@@ -395,7 +395,7 @@ async fn run_apple_notes_import(
         job.status = JobStatus::Completed;
         job.progress_percentage = 100;
         job.message = "No notes found".into();
-        job.result = Some(json!({ "total": 0, "ingested": 0 }));
+        job.result = Some(json!({ "source": "apple-notes", "total": 0, "ingested": 0 }));
         mark_terminal(&mut job);
         let _ = tracker.save(&job).await;
         return;
@@ -467,7 +467,7 @@ async fn run_apple_notes_import(
     job.status = JobStatus::Completed;
     job.progress_percentage = 100;
     job.message = format!("Imported {} notes", ingested);
-    job.result = Some(json!({ "total": total, "ingested": ingested }));
+    job.result = Some(json!({ "source": "apple-notes", "total": total, "ingested": ingested }));
     mark_terminal(&mut job);
     let _ = tracker.save(&job).await;
 }
@@ -578,7 +578,7 @@ async fn run_apple_reminders_import(
         job.status = JobStatus::Completed;
         job.progress_percentage = 100;
         job.message = "No reminders found".into();
-        job.result = Some(json!({ "total": 0, "ingested": 0 }));
+        job.result = Some(json!({ "source": "apple-reminders", "total": 0, "ingested": 0 }));
         mark_terminal(&mut job);
         let _ = tracker.save(&job).await;
         return;
@@ -678,7 +678,7 @@ fn build_reminders_final_job(
         job.status = JobStatus::Completed;
         job.message = format!("Imported {} reminders", ingested);
     }
-    job.result = Some(json!({ "total": total, "ingested": ingested }));
+    job.result = Some(json!({ "source": "apple-reminders", "total": total, "ingested": ingested }));
     job
 }
 
@@ -797,7 +797,7 @@ async fn run_apple_photos_import(
         job.status = JobStatus::Completed;
         job.progress_percentage = 100;
         job.message = "No photos found".into();
-        job.result = Some(json!({ "total": 0, "ingested": 0 }));
+        job.result = Some(json!({ "source": "apple-photos", "total": 0, "ingested": 0 }));
         mark_terminal(&mut job);
         let _ = tracker.save(&job).await;
         return;
@@ -952,7 +952,7 @@ async fn run_apple_photos_import(
     job.status = JobStatus::Completed;
     job.progress_percentage = 100;
     job.message = format!("Imported {} photos", ingested);
-    job.result = Some(json!({ "total": total, "ingested": ingested }));
+    job.result = Some(json!({ "source": "apple-photos", "total": total, "ingested": ingested }));
     mark_terminal(&mut job);
     let _ = tracker.save(&job).await;
 }
@@ -1059,7 +1059,7 @@ async fn run_apple_calendar_import(
         job.status = JobStatus::Completed;
         job.progress_percentage = 100;
         job.message = "No calendar events found".into();
-        job.result = Some(json!({ "total": 0, "ingested": 0 }));
+        job.result = Some(json!({ "source": "apple-calendar", "total": 0, "ingested": 0 }));
         mark_terminal(&mut job);
         let _ = tracker.save(&job).await;
         return;
@@ -1128,7 +1128,7 @@ async fn run_apple_calendar_import(
     job.status = JobStatus::Completed;
     job.progress_percentage = 100;
     job.message = format!("Imported {} calendar events", ingested);
-    job.result = Some(json!({ "total": total, "ingested": ingested }));
+    job.result = Some(json!({ "source": "apple-calendar", "total": total, "ingested": ingested }));
     mark_terminal(&mut job);
     let _ = tracker.save(&job).await;
 }
@@ -1225,7 +1225,7 @@ async fn run_apple_contacts_import(
         job.status = JobStatus::Completed;
         job.progress_percentage = 100;
         job.message = "No contacts found".into();
-        job.result = Some(json!({ "total": 0, "ingested": 0 }));
+        job.result = Some(json!({ "source": "apple-contacts", "total": 0, "ingested": 0 }));
         mark_terminal(&mut job);
         let _ = tracker.save(&job).await;
         return;
@@ -1294,7 +1294,7 @@ async fn run_apple_contacts_import(
     job.status = JobStatus::Completed;
     job.progress_percentage = 100;
     job.message = format!("Imported {} contacts", ingested);
-    job.result = Some(json!({ "total": total, "ingested": ingested }));
+    job.result = Some(json!({ "source": "apple-contacts", "total": total, "ingested": ingested }));
     mark_terminal(&mut job);
     let _ = tracker.save(&job).await;
 }
@@ -1495,6 +1495,7 @@ mod reminders_final_job_tests {
         assert_eq!(job.progress_percentage, 100);
         assert!(matches!(job.job_type, JobType::Other(ref s) if s == "apple-reminders"));
         let result = job.result.expect("result present");
+        assert_eq!(result["source"], "apple-reminders");
         assert_eq!(result["total"], 10);
         assert_eq!(result["ingested"], 10);
     }
@@ -1521,8 +1522,31 @@ mod reminders_final_job_tests {
             "job.error must surface the failure so error_message in the API response is non-null",
         );
         let result = job.result.expect("result present");
+        assert_eq!(result["source"], "apple-reminders");
         assert_eq!(result["total"], 42);
         assert_eq!(result["ingested"], 0);
+    }
+
+    #[test]
+    fn results_flow_through_to_ingestion_progress_payload() {
+        // Pins the bug fix: every apple-import handler writes a structured
+        // `{source, total, ingested}` JSON to `Job.result` on success, and the
+        // `IngestionProgress::From<Job>` mapping must surface it on the wire
+        // so the React UI doesn't fall back to parsing `status_message`. The
+        // pre-fix mapping tried to deserialize `Job.result` into the typed
+        // `IngestionResults` struct and silently nulled the field whenever
+        // the shape didn't match the file-ingest case.
+        use crate::ingestion::progress::IngestionProgress;
+        let job = build_reminders_final_job("p4".into(), 7, 7, None);
+        let progress: IngestionProgress = job.into();
+        assert!(progress.is_complete);
+        assert!(!progress.is_failed);
+        let results = progress
+            .results
+            .expect("apple-import progress.results must be non-null on success");
+        assert_eq!(results["source"], "apple-reminders");
+        assert_eq!(results["total"], 7);
+        assert_eq!(results["ingested"], 7);
     }
 
     #[test]

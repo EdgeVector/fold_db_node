@@ -259,6 +259,85 @@ describe('AppleDataStep — Apple permissions pre-flight', () => {
     expect(ingestionClient.appleImportNotes).not.toHaveBeenCalled();
   });
 
+  it('renders the imported count from the structured results payload, not by parsing status_message', async () => {
+    // Pins the bug fix on the React side: when the backend completes an
+    // apple-import job it now publishes `results: {source, total, ingested}`
+    // on the progress payload. The wizard must read that structured field
+    // (and not regex `"Imported {N} notes"` out of `status_message`).
+    const ingestionMock = ingestionClient as unknown as {
+      appleImportNotes: ReturnType<typeof vi.fn>;
+      appleImportReminders: ReturnType<typeof vi.fn>;
+      appleImportPhotos: ReturnType<typeof vi.fn>;
+      appleImportCalendar: ReturnType<typeof vi.fn>;
+      appleImportContacts: ReturnType<typeof vi.fn>;
+      getJobProgress: ReturnType<typeof vi.fn>;
+    };
+    ingestionMock.appleImportNotes
+      .mockReset()
+      .mockResolvedValue({ success: true, data: { progress_id: 'pid-notes' } });
+    ingestionMock.appleImportReminders
+      .mockReset()
+      .mockResolvedValue({ success: true, data: { progress_id: 'pid-reminders' } });
+    ingestionMock.appleImportPhotos
+      .mockReset()
+      .mockResolvedValue({ success: true, data: { progress_id: 'pid-photos' } });
+    ingestionMock.appleImportCalendar
+      .mockReset()
+      .mockResolvedValue({ success: true, data: { progress_id: 'pid-calendar' } });
+    ingestionMock.appleImportContacts
+      .mockReset()
+      .mockResolvedValue({ success: true, data: { progress_id: 'pid-contacts' } });
+
+    const completedFor = (source: string, total: number, ingested: number) => ({
+      success: true,
+      data: {
+        progress_percentage: 100,
+        status_message: `Imported ${ingested} ${source.replace('apple-', '')}`,
+        is_complete: true,
+        is_failed: false,
+        results: { source, total, ingested },
+      },
+    });
+
+    ingestionMock.getJobProgress
+      .mockReset()
+      .mockImplementation((pid: string) => {
+        switch (pid) {
+          case 'pid-notes':
+            return Promise.resolve(completedFor('apple-notes', 132, 132));
+          case 'pid-reminders':
+            return Promise.resolve(completedFor('apple-reminders', 4, 4));
+          case 'pid-photos':
+            return Promise.resolve(completedFor('apple-photos', 50, 50));
+          case 'pid-calendar':
+            return Promise.resolve(completedFor('apple-calendar', 12, 12));
+          case 'pid-contacts':
+            return Promise.resolve(completedFor('apple-contacts', 220, 219));
+          default:
+            return Promise.resolve({ success: false });
+        }
+      });
+
+    renderStep();
+    fireEvent.click(await screen.findByRole('button', { name: /Import Selected/i }));
+
+    await waitFor(() => {
+      const counts = screen.getAllByTestId('apple-import-count');
+      expect(counts.length).toBe(5);
+    });
+
+    const counts = screen.getAllByTestId('apple-import-count').map((n) => n.textContent);
+    expect(counts).toEqual(
+      expect.arrayContaining([
+        expect.stringContaining('132 imported of 132'),
+        expect.stringContaining('4 imported of 4'),
+        expect.stringContaining('50 imported of 50'),
+        expect.stringContaining('12 imported of 12'),
+        expect.stringContaining('219 imported of 220'),
+      ]),
+    );
+  });
+
   it('after the user grants access and clicks Refresh, the banner disappears', async () => {
     const mock = ingestionClient.getAppleImportPermissions as ReturnType<typeof vi.fn>;
     mock.mockReset()

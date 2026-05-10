@@ -167,6 +167,12 @@ export type BatchStatusResponse = components["schemas"]["BatchStatusResponse"];
 export type FailedFile = components["schemas"]["FailedFile"];
 
 // Progress tracking types
+//
+// `results` is intentionally an opaque JSON object: a single progress channel
+// carries jobs from several pipelines (file-ingest emits `IngestionResults`,
+// apple-import emits `AppleImportResults`, smart-folder scan emits its full
+// scan response). Callers narrow with a type guard or by inspecting
+// `job_type`. See src/ingestion/progress.rs for the Rust-side contract.
 export interface IngestionProgress {
   id: string;
   current_step: string;
@@ -177,7 +183,7 @@ export interface IngestionProgress {
   error_message?: string;
   started_at: string;
   completed_at?: string;
-  results?: IngestionResults;
+  results?: Record<string, unknown> | null;
 }
 
 export interface SchemaWriteRecord {
@@ -191,6 +197,20 @@ export interface IngestionResults {
   mutations_generated: number;
   mutations_executed: number;
   schemas_written?: SchemaWriteRecord[];
+}
+
+/// Apple-import handlers (notes / reminders / photos / calendar / contacts)
+/// publish this shape on `IngestionProgress.results` when the import job
+/// completes successfully.
+export interface AppleImportResults {
+  source:
+    | "apple-notes"
+    | "apple-reminders"
+    | "apple-photos"
+    | "apple-calendar"
+    | "apple-contacts";
+  total: number;
+  ingested: number;
 }
 
 export interface FileUploadResponse {
