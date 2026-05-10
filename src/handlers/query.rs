@@ -68,6 +68,10 @@ handler_response! {
 /// The caller's public key resolves trust distances across domains; fields
 /// the caller lacks access to are filtered from results.
 ///
+/// `query.schema_name` may be either the canonical hash or the schema's
+/// `descriptive_name` (e.g. "Apple Reminders"). See
+/// [`crate::handlers::schema_resolution`].
+///
 /// Pagination: `limit` (clamped to `MAX_QUERY_LIMIT`, default
 /// `DEFAULT_QUERY_LIMIT`) and `offset` are applied here, after fold_db
 /// returns. When the caller passes no `filter`, fold_db's default would
@@ -83,6 +87,10 @@ pub async fn execute_query(
 ) -> HandlerResult<QueryResponse> {
     let processor = OperationProcessor::from_ref(node);
     let caller_pub_key = current_caller_pubkey(node);
+
+    query.schema_name =
+        crate::handlers::schema_resolution::resolve_schema_name(&processor, &query.schema_name)
+            .await?;
 
     let limit = limit.unwrap_or(DEFAULT_QUERY_LIMIT).min(MAX_QUERY_LIMIT);
     let offset = offset.unwrap_or(0);

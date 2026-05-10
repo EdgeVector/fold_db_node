@@ -67,7 +67,12 @@ pub async fn get_feed(
 
     // Determine which schemas to query
     let schema_names: Vec<String> = match &request.schema_name {
-        Some(name) if !name.is_empty() => vec![name.clone()],
+        Some(name) if !name.is_empty() => {
+            // Accept either canonical hash or descriptive_name
+            let canonical =
+                crate::handlers::schema_resolution::resolve_schema_name(&processor, name).await?;
+            vec![canonical]
+        }
         _ => {
             // Query all registered schemas
             let schemas = processor.list_schemas().await.typed_handler_err()?;
