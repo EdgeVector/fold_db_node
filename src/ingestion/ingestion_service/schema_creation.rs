@@ -8,6 +8,42 @@ use fold_db::schema::SchemaCore;
 use serde_json::Value;
 use std::collections::HashMap;
 
+/// If the AI declared a `key.hash_field` or `key.range_field` that isn't in
+/// the schema's `fields` list, log loudly and clear the whole key so the
+/// existing default-key path picks the first field as hash key.
+///
+/// Without this, the schema gets registered with a key whose target field has
+/// no `runtime_fields` entry. Every subsequent ingestion's
+/// `extract_key_values_from_data` finds nothing for that key, and the
+/// mutation_generator's content-hash fallback writes records under per-record
+/// hashes — for a contact-card text file (name/email/phone, no `id`) the AI
+/// often invents an `id` key, and the resulting record either fails outright
+/// (HashRange) or scatters under unrelated keys (Hash).
+fn reset_key_if_field_missing(schema: &mut fold_db::schema::types::Schema) {
+    let Some(key) = schema.key.as_ref() else {
+        return;
+    };
+    let fields = schema.fields.as_deref().unwrap_or(&[]);
+    let invalid = [
+        ("hash_field", key.hash_field.as_deref()),
+        ("range_field", key.range_field.as_deref()),
+    ]
+    .into_iter()
+    .find_map(|(label, name)| match name {
+        Some(n) if !fields.iter().any(|f| f == n) => Some((label, n.to_string())),
+        _ => None,
+    });
+    if let Some((label, name)) = invalid {
+        tracing::warn!(
+            target: "fold_node::ingestion",
+            "AI declared {} '{}' that is not in schema.fields {:?} — resetting key; \
+             default-key path will use the first field as hash key",
+            label, name, fields
+        );
+        schema.key = None;
+    }
+}
+
 /// Default-fill `field_data_classifications` for any field listed in
 /// `fields` that doesn't already have an entry. Schemas registered before
 /// PR #361 (and any with corrupt persistence) reach the local node missing
@@ -112,6 +148,13 @@ impl IngestionService {
             "Deserialized schema with {} field classifications from AI",
             schema.field_classifications.len()
         );
+
+        // Reject AI-invented key fields before any other backfill — if the AI
+        // chose `id` (or any name) that isn't actually one of the schema's
+        // fields, clear the key so the default-key path below picks a field
+        // that exists. Otherwise the schema registers with an unreachable
+        // key and every record gets scattered under content-hash fallbacks.
+        reset_key_if_field_missing(&mut schema);
 
         // Safety net: generate default field_descriptions for any fields missing them.
         // The AI prompt and validation retry loop should produce these, but if all
@@ -569,7 +612,10 @@ pub(super) async fn validate_field_mapper_compatibility(
 
 #[cfg(test)]
 mod tests {
-    use super::{backfill_field_data_classifications, validate_field_mapper_compatibility};
+    use super::{
+        backfill_field_data_classifications, reset_key_if_field_missing,
+        validate_field_mapper_compatibility,
+    };
     use serde_json::json;
 
     /// Build a serde_json schema definition for the regression tests below.
@@ -855,5 +901,105 @@ mod tests {
         // No fields → nothing to classify; the map shouldn't get inserted just
         // to stay empty.
         assert!(v.get("field_data_classifications").is_none());
+    }
+
+    /// Regression for the contact-card smart-folder bug. The AI declared a
+    /// `Contact Cards` schema with `hash_field = "id"` but no `id` in the
+    /// fields list (and no `id` value in the source text). The reset must
+    /// clear `schema.key` so the existing default-key path picks the first
+    /// field as hash key.
+    #[test]
+    fn reset_key_clears_when_hash_field_not_in_fields() {
+        let schema_json = make_schema_json(
+            "Contact Cards",
+            "Hash",
+            json!({"hash_field": "id", "range_field": null}),
+            &["name", "email", "phone", "address"],
+            None,
+        );
+        let mut schema: fold_db::schema::types::Schema =
+            serde_json::from_value(schema_json).expect("deserialize schema");
+        assert!(schema.key.is_some(), "precondition: AI provided a key");
+
+        reset_key_if_field_missing(&mut schema);
+
+        assert!(
+            schema.key.is_none(),
+            "key with hash_field absent from fields must be reset"
+        );
+    }
+
+    #[test]
+    fn reset_key_clears_when_range_field_not_in_fields() {
+        // Symmetric case: hash is valid, but range_field references a
+        // field that doesn't exist. The fix clears the whole key rather
+        // than partial repair — simpler and matches the existing
+        // default-key path that produces a Hash-style {first_field, None}.
+        let schema_json = make_schema_json(
+            "Contact Cards",
+            "HashRange",
+            json!({"hash_field": "name", "range_field": "id"}),
+            &["name", "email", "phone", "address"],
+            None,
+        );
+        let mut schema: fold_db::schema::types::Schema =
+            serde_json::from_value(schema_json).expect("deserialize schema");
+
+        reset_key_if_field_missing(&mut schema);
+
+        assert!(schema.key.is_none());
+    }
+
+    #[test]
+    fn reset_key_preserves_valid_hash_key() {
+        let schema_json = make_schema_json(
+            "Recipes",
+            "Hash",
+            json!({"hash_field": "source_file", "range_field": null}),
+            &["source_file", "content"],
+            None,
+        );
+        let mut schema: fold_db::schema::types::Schema =
+            serde_json::from_value(schema_json).expect("deserialize schema");
+
+        reset_key_if_field_missing(&mut schema);
+
+        let key = schema.key.as_ref().expect("valid key must be preserved");
+        assert_eq!(key.hash_field.as_deref(), Some("source_file"));
+        assert!(key.range_field.is_none());
+    }
+
+    #[test]
+    fn reset_key_preserves_valid_hashrange_key() {
+        let schema_json = make_schema_json(
+            "Journal",
+            "HashRange",
+            json!({"hash_field": "title", "range_field": "date"}),
+            &["title", "date", "body"],
+            None,
+        );
+        let mut schema: fold_db::schema::types::Schema =
+            serde_json::from_value(schema_json).expect("deserialize schema");
+
+        reset_key_if_field_missing(&mut schema);
+
+        let key = schema.key.as_ref().expect("valid HashRange key preserved");
+        assert_eq!(key.hash_field.as_deref(), Some("title"));
+        assert_eq!(key.range_field.as_deref(), Some("date"));
+    }
+
+    #[test]
+    fn reset_key_no_op_when_key_absent() {
+        // The AI sometimes omits `key` entirely; the existing default-key
+        // path covers this case downstream. Validator must not panic or
+        // synthesize anything.
+        let schema_json = make_schema_json("Notes", "Hash", json!(null), &["title", "body"], None);
+        let mut schema: fold_db::schema::types::Schema =
+            serde_json::from_value(schema_json).expect("deserialize schema");
+        assert!(schema.key.is_none());
+
+        reset_key_if_field_missing(&mut schema);
+
+        assert!(schema.key.is_none());
     }
 }
