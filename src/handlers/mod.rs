@@ -42,6 +42,7 @@ pub mod mutation;
 pub mod org;
 pub mod query;
 pub mod response;
+pub mod schema_resolution;
 pub mod setup;
 pub mod sharing;
 pub mod snapshot;

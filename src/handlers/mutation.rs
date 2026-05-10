@@ -48,6 +48,9 @@ pub async fn execute_mutation(
 
 /// Execute a single mutation from components (used by HTTP server).
 /// Access control: checks write permissions via the caller's trust distances.
+///
+/// `schema` may be either the canonical hash or the schema's
+/// `descriptive_name` — see [`crate::handlers::schema_resolution`].
 pub async fn execute_mutation_from_components(
     schema: String,
     fields_and_values: HashMap<String, Value>,
@@ -58,6 +61,9 @@ pub async fn execute_mutation_from_components(
 ) -> HandlerResult<SingleMutationResponse> {
     let processor = OperationProcessor::from_ref(node);
     let caller_pub_key = current_caller_pubkey(node);
+
+    let schema =
+        crate::handlers::schema_resolution::resolve_schema_name(&processor, &schema).await?;
 
     let mutation = Mutation::new(
         schema,
