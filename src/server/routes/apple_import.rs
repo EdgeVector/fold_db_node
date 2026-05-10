@@ -194,6 +194,22 @@ fn mark_failed(job: &mut Job, msg: String) {
     job.message = msg;
 }
 
+/// Mark an Apple-import job as unavailable on non-macOS platforms.
+///
+/// Body shared by every `run_apple_*_import` non-macOS stub — the only
+/// per-kind variation is the `JobType` label.
+#[cfg(not(target_os = "macos"))]
+async fn mark_apple_import_unavailable_on_non_macos(
+    progress_id: String,
+    tracker: ProgressTracker,
+    job_kind: &'static str,
+) {
+    let mut job = Job::new(progress_id, JobType::Other(job_kind.into()));
+    mark_failed(&mut job, "Apple import is only available on macOS".into());
+    mark_terminal(&mut job);
+    let _ = tracker.save(&job).await;
+}
+
 /// Spawn `work` on the runtime under the caller's user context and return the
 /// standard `202 Accepted { success, progress_id }` response that every Apple
 /// import handler emits.
@@ -646,10 +662,7 @@ async fn run_apple_notes_import(
     _node_arc: std::sync::Arc<crate::fold_node::FoldNode>,
     _service: std::sync::Arc<crate::ingestion::ingestion_service::IngestionService>,
 ) {
-    let mut job = Job::new(progress_id, JobType::Other("apple-notes".into()));
-    mark_failed(&mut job, "Apple import is only available on macOS".into());
-    mark_terminal(&mut job);
-    let _ = tracker.save(&job).await;
+    mark_apple_import_unavailable_on_non_macos(progress_id, tracker, "apple-notes").await;
 }
 
 #[derive(Deserialize, Default)]
@@ -747,10 +760,7 @@ async fn run_apple_reminders_import(
     _node_arc: std::sync::Arc<crate::fold_node::FoldNode>,
     _service: std::sync::Arc<crate::ingestion::ingestion_service::IngestionService>,
 ) {
-    let mut job = Job::new(progress_id, JobType::Other("apple-reminders".into()));
-    mark_failed(&mut job, "Apple import is only available on macOS".into());
-    mark_terminal(&mut job);
-    let _ = tracker.save(&job).await;
+    mark_apple_import_unavailable_on_non_macos(progress_id, tracker, "apple-reminders").await;
 }
 
 #[derive(Deserialize, Default)]
@@ -1024,10 +1034,7 @@ async fn run_apple_photos_import(
     _service: std::sync::Arc<crate::ingestion::ingestion_service::IngestionService>,
     _upload_storage: fold_db::storage::UploadStorage,
 ) {
-    let mut job = Job::new(progress_id, JobType::Other("apple-photos".into()));
-    mark_failed(&mut job, "Apple import is only available on macOS".into());
-    mark_terminal(&mut job);
-    let _ = tracker.save(&job).await;
+    mark_apple_import_unavailable_on_non_macos(progress_id, tracker, "apple-photos").await;
 }
 
 #[derive(Deserialize, Default)]
@@ -1100,10 +1107,7 @@ async fn run_apple_calendar_import(
     _node_arc: std::sync::Arc<crate::fold_node::FoldNode>,
     _service: std::sync::Arc<crate::ingestion::ingestion_service::IngestionService>,
 ) {
-    let mut job = Job::new(progress_id, JobType::Other("apple-calendar".into()));
-    mark_failed(&mut job, "Apple import is only available on macOS".into());
-    mark_terminal(&mut job);
-    let _ = tracker.save(&job).await;
+    mark_apple_import_unavailable_on_non_macos(progress_id, tracker, "apple-calendar").await;
 }
 
 #[derive(Deserialize, Default)]
@@ -1170,10 +1174,7 @@ async fn run_apple_contacts_import(
     _node_arc: std::sync::Arc<crate::fold_node::FoldNode>,
     _service: std::sync::Arc<crate::ingestion::ingestion_service::IngestionService>,
 ) {
-    let mut job = Job::new(progress_id, JobType::Other("apple-contacts".into()));
-    mark_failed(&mut job, "Apple import is only available on macOS".into());
-    mark_terminal(&mut job);
-    let _ = tracker.save(&job).await;
+    mark_apple_import_unavailable_on_non_macos(progress_id, tracker, "apple-contacts").await;
 }
 
 // ── Auto-Sync Config Routes ─────────────────────────────────────────
