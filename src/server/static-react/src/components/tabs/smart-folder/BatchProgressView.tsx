@@ -1,18 +1,8 @@
 import { useState, useEffect } from 'react'
 import IngestionReport from '../../IngestionReport'
 import { fmtCost } from '../../../utils/formatCost'
-import type { BatchStatusResponse } from '../../../api/clients/ingestionClient'
+import type { BatchStatusResponse, FailedFile } from '../../../api/clients/ingestionClient'
 import type { FileProgress } from '../../../hooks/useFilesProgress'
-
-interface FailedFile {
-  name: string
-  error: string
-}
-
-interface BatchStatusLike extends BatchStatusResponse {
-  failed_files?: FailedFile[]
-  is_local_provider?: boolean
-}
 
 interface FailedFilesBadgeProps {
   count: number
@@ -122,7 +112,7 @@ function FilesProgressList({ files }: FilesProgressListProps) {
 }
 
 interface BatchProgressViewProps {
-  batchStatus: BatchStatusLike | null | undefined
+  batchStatus: BatchStatusResponse | null | undefined
   batchReport: unknown
   filesProgress: FileProgress[]
   allFilesDone: boolean

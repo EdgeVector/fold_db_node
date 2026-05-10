@@ -27,6 +27,7 @@ use utoipa::OpenApi;
         crate::server::routes::ingestion::validate_json,
         crate::server::routes::ingestion::get_ingestion_config,
         crate::server::routes::ingestion::save_ingestion_config,
+        crate::server::routes::ingestion::get_batch_status,
         crate::server::routes::web_search::get_web_search_key_status,
         crate::server::routes::web_search::save_web_search_key,
         crate::fold_node::llm_query::routes::chat
@@ -89,6 +90,9 @@ use utoipa::OpenApi;
             crate::ingestion::IngestionRequest,
             crate::ingestion::IngestionResponse,
             crate::ingestion::IngestionStatus,
+            crate::ingestion::batch_controller::BatchStatus,
+            crate::ingestion::batch_controller::BatchStatusResponse,
+            crate::ingestion::batch_controller::FailedFile,
             crate::ingestion::progress::SchemaWriteRecord,
             crate::handlers::ingestion::ProcessJsonResponse,
             crate::server::routes::log::LogLevelUpdate,
