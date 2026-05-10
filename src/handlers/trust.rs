@@ -576,7 +576,7 @@ pub async fn share_trust_invite(
     let invite_id = publisher
         .store_trust_invite(invite_token)
         .await
-        .map_err(HandlerError::Internal)?;
+        .handler_err("store trust invite")?;
     Ok(ApiResponse::success_with_user(
         serde_json::json!({
             "invite_id": invite_id,
@@ -620,7 +620,7 @@ pub async fn send_verified_invite(
     let invite_id = publisher
         .send_verified_invite(invite_token, recipient_email, &sender_name)
         .await
-        .map_err(HandlerError::Internal)?;
+        .handler_err("send verified invite")?;
     Ok(ApiResponse::success_with_user(
         serde_json::json!({"ok": true, "invite_id": invite_id}),
         user_hash,

@@ -27,7 +27,9 @@ use crate::fold_node::FoldNode;
 use crate::handlers::fingerprints::import_identity_card::{
     import_identity_card, ImportIdentityCardRequest, IncomingIdentityCard,
 };
-use crate::handlers::response::{get_db_guard, ApiResponse, HandlerError, HandlerResult};
+use crate::handlers::response::{
+    get_db_guard, ApiResponse, HandlerError, HandlerResult, IntoHandlerError,
+};
 
 /// Shape returned by the list endpoint. Mirrors `LocalReceivedCard`
 /// 1:1 so the frontend can swap it directly into a row without a
@@ -114,7 +116,7 @@ pub async fn list_received_cards(node: Arc<FoldNode>) -> HandlerResult<ListRecei
     let store = load_metadata_store(&node)?;
     let rows = received_card::list_received_cards(&*store)
         .await
-        .map_err(HandlerError::Internal)?;
+        .handler_err("list received cards")?;
     let views = rows.into_iter().map(ReceivedCardView::from).collect();
     Ok(ApiResponse::success(ListReceivedCardsResponse {
         received_cards: views,
@@ -135,7 +137,7 @@ pub async fn accept_received_card(
 
     let row = received_card::get_received_card(&*store, &message_id)
         .await
-        .map_err(HandlerError::Internal)?
+        .handler_err("get received card")?
         .ok_or_else(|| {
             HandlerError::NotFound(format!("received card '{}' not found", message_id))
         })?;
@@ -190,7 +192,7 @@ pub async fn accept_received_card(
                 None,
             )
             .await
-            .map_err(HandlerError::Internal)?;
+            .handler_err("mark received card accepted")?;
             Ok(ApiResponse::success(AcceptReceivedCardResponse {
                 received_card: updated.into(),
                 identity_id,
@@ -225,7 +227,7 @@ pub async fn dismiss_received_card(
     let store = load_metadata_store(&node)?;
     let existing = received_card::get_received_card(&*store, &message_id)
         .await
-        .map_err(HandlerError::Internal)?
+        .handler_err("get received card")?
         .ok_or_else(|| {
             HandlerError::NotFound(format!("received card '{}' not found", message_id))
         })?;
@@ -237,7 +239,7 @@ pub async fn dismiss_received_card(
     let updated =
         received_card::resolve_received_card(&*store, &message_id, "dismissed", None, None)
             .await
-            .map_err(HandlerError::Internal)?;
+            .handler_err("dismiss received card")?;
     Ok(ApiResponse::success(updated.into()))
 }
 
