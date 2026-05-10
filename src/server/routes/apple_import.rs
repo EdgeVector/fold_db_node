@@ -181,6 +181,19 @@ fn mark_terminal(job: &mut Job) {
     job.completed_at = Some(now);
 }
 
+/// Mark `job` as failed, populating BOTH `message` and `error`.
+///
+/// `IngestionProgress::From<Job>` ships `error` to the API response's
+/// `error_message` field; the previous pattern only set `message`, leaving
+/// `error_message` null on every Apple-import failure. We deliberately avoid
+/// [`Job::fail`] because it prepends `"Failed: "` to `message`, which would
+/// alter the user-visible `status_message` text.
+fn mark_failed(job: &mut Job, msg: String) {
+    job.status = JobStatus::Failed;
+    job.error = Some(msg.clone());
+    job.message = msg;
+}
+
 /// Spawn `work` on the runtime under the caller's user context and return the
 /// standard `202 Accepted { success, progress_id }` response that every Apple
 /// import handler emits.
@@ -301,16 +314,14 @@ async fn run_apple_notes_import(
         Ok(Ok(n)) => n,
         Ok(Err(e)) => {
             let mut job = Job::new(progress_id.clone(), JobType::Other("apple-notes".into()));
-            job.status = JobStatus::Failed;
-            job.message = format!("Failed to extract notes: {}", e);
+            mark_failed(&mut job, format!("Failed to extract notes: {}", e));
             mark_terminal(&mut job);
             let _ = tracker.save(&job).await;
             return;
         }
         Err(e) => {
             let mut job = Job::new(progress_id.clone(), JobType::Other("apple-notes".into()));
-            job.status = JobStatus::Failed;
-            job.message = format!("Extraction task panicked: {}", e);
+            mark_failed(&mut job, format!("Extraction task panicked: {}", e));
             mark_terminal(&mut job);
             let _ = tracker.save(&job).await;
             return;
@@ -408,8 +419,7 @@ async fn run_apple_notes_import(
     _service: std::sync::Arc<crate::ingestion::ingestion_service::IngestionService>,
 ) {
     let mut job = Job::new(progress_id, JobType::Other("apple-notes".into()));
-    job.status = JobStatus::Failed;
-    job.message = "Apple import is only available on macOS".into();
+    mark_failed(&mut job, "Apple import is only available on macOS".into());
     mark_terminal(&mut job);
     let _ = tracker.save(&job).await;
 }
@@ -475,8 +485,7 @@ async fn run_apple_reminders_import(
                 progress_id.clone(),
                 JobType::Other("apple-reminders".into()),
             );
-            job.status = JobStatus::Failed;
-            job.message = format!("Failed to extract reminders: {}", e);
+            mark_failed(&mut job, format!("Failed to extract reminders: {}", e));
             mark_terminal(&mut job);
             let _ = tracker.save(&job).await;
             return;
@@ -486,8 +495,7 @@ async fn run_apple_reminders_import(
                 progress_id.clone(),
                 JobType::Other("apple-reminders".into()),
             );
-            job.status = JobStatus::Failed;
-            job.message = format!("Extraction task panicked: {}", e);
+            mark_failed(&mut job, format!("Extraction task panicked: {}", e));
             mark_terminal(&mut job);
             let _ = tracker.save(&job).await;
             return;
@@ -597,8 +605,7 @@ fn build_reminders_final_job(
     let mut job = Job::new(progress_id, JobType::Other("apple-reminders".into()));
     job.progress_percentage = 100;
     if let Some(err) = ingest_error {
-        job.status = JobStatus::Failed;
-        job.message = format!("Reminders ingestion failed: {}", err);
+        mark_failed(&mut job, format!("Reminders ingestion failed: {}", err));
     } else {
         job.status = JobStatus::Completed;
         job.message = format!("Imported {} reminders", ingested);
@@ -616,8 +623,7 @@ async fn run_apple_reminders_import(
     _service: std::sync::Arc<crate::ingestion::ingestion_service::IngestionService>,
 ) {
     let mut job = Job::new(progress_id, JobType::Other("apple-reminders".into()));
-    job.status = JobStatus::Failed;
-    job.message = "Apple import is only available on macOS".into();
+    mark_failed(&mut job, "Apple import is only available on macOS".into());
     mark_terminal(&mut job);
     let _ = tracker.save(&job).await;
 }
@@ -698,16 +704,14 @@ async fn run_apple_photos_import(
         Ok(Ok(p)) => p,
         Ok(Err(e)) => {
             let mut job = Job::new(progress_id.clone(), JobType::Other("apple-photos".into()));
-            job.status = JobStatus::Failed;
-            job.message = format!("Failed to export photos: {}", e);
+            mark_failed(&mut job, format!("Failed to export photos: {}", e));
             mark_terminal(&mut job);
             let _ = tracker.save(&job).await;
             return;
         }
         Err(e) => {
             let mut job = Job::new(progress_id.clone(), JobType::Other("apple-photos".into()));
-            job.status = JobStatus::Failed;
-            job.message = format!("Export task panicked: {}", e);
+            mark_failed(&mut job, format!("Export task panicked: {}", e));
             mark_terminal(&mut job);
             let _ = tracker.save(&job).await;
             return;
@@ -890,8 +894,7 @@ async fn run_apple_photos_import(
     _upload_storage: fold_db::storage::UploadStorage,
 ) {
     let mut job = Job::new(progress_id, JobType::Other("apple-photos".into()));
-    job.status = JobStatus::Failed;
-    job.message = "Apple import is only available on macOS".into();
+    mark_failed(&mut job, "Apple import is only available on macOS".into());
     mark_terminal(&mut job);
     let _ = tracker.save(&job).await;
 }
@@ -954,16 +957,17 @@ async fn run_apple_calendar_import(
         Ok(Ok(e)) => e,
         Ok(Err(e)) => {
             let mut job = Job::new(progress_id.clone(), JobType::Other("apple-calendar".into()));
-            job.status = JobStatus::Failed;
-            job.message = format!("Failed to extract calendar events: {}", e);
+            mark_failed(
+                &mut job,
+                format!("Failed to extract calendar events: {}", e),
+            );
             mark_terminal(&mut job);
             let _ = tracker.save(&job).await;
             return;
         }
         Err(e) => {
             let mut job = Job::new(progress_id.clone(), JobType::Other("apple-calendar".into()));
-            job.status = JobStatus::Failed;
-            job.message = format!("Extraction task panicked: {}", e);
+            mark_failed(&mut job, format!("Extraction task panicked: {}", e));
             mark_terminal(&mut job);
             let _ = tracker.save(&job).await;
             return;
@@ -1058,8 +1062,7 @@ async fn run_apple_calendar_import(
     _service: std::sync::Arc<crate::ingestion::ingestion_service::IngestionService>,
 ) {
     let mut job = Job::new(progress_id, JobType::Other("apple-calendar".into()));
-    job.status = JobStatus::Failed;
-    job.message = "Apple import is only available on macOS".into();
+    mark_failed(&mut job, "Apple import is only available on macOS".into());
     mark_terminal(&mut job);
     let _ = tracker.save(&job).await;
 }
@@ -1116,16 +1119,14 @@ async fn run_apple_contacts_import(
         Ok(Ok(c)) => c,
         Ok(Err(e)) => {
             let mut job = Job::new(progress_id.clone(), JobType::Other("apple-contacts".into()));
-            job.status = JobStatus::Failed;
-            job.message = format!("Failed to extract contacts: {}", e);
+            mark_failed(&mut job, format!("Failed to extract contacts: {}", e));
             mark_terminal(&mut job);
             let _ = tracker.save(&job).await;
             return;
         }
         Err(e) => {
             let mut job = Job::new(progress_id.clone(), JobType::Other("apple-contacts".into()));
-            job.status = JobStatus::Failed;
-            job.message = format!("Extraction task panicked: {}", e);
+            mark_failed(&mut job, format!("Extraction task panicked: {}", e));
             mark_terminal(&mut job);
             let _ = tracker.save(&job).await;
             return;
@@ -1219,8 +1220,7 @@ async fn run_apple_contacts_import(
     _service: std::sync::Arc<crate::ingestion::ingestion_service::IngestionService>,
 ) {
     let mut job = Job::new(progress_id, JobType::Other("apple-contacts".into()));
-    job.status = JobStatus::Failed;
-    job.message = "Apple import is only available on macOS".into();
+    mark_failed(&mut job, "Apple import is only available on macOS".into());
     mark_terminal(&mut job);
     let _ = tracker.save(&job).await;
 }
@@ -1428,6 +1428,11 @@ mod reminders_final_job_tests {
             "error should appear in job.message, got: {}",
             job.message,
         );
+        assert_eq!(
+            job.error.as_deref(),
+            Some("Reminders ingestion failed: schema service unreachable"),
+            "job.error must surface the failure so error_message in the API response is non-null",
+        );
         let result = job.result.expect("result present");
         assert_eq!(result["total"], 42);
         assert_eq!(result["ingested"], 0);
@@ -1440,6 +1445,21 @@ mod reminders_final_job_tests {
         let job = build_reminders_final_job("p3".into(), 0, 0, None);
         assert!(matches!(job.status, JobStatus::Completed));
         assert_eq!(job.message, "Imported 0 reminders");
+    }
+}
+
+#[cfg(test)]
+mod mark_failed_tests {
+    use super::mark_failed;
+    use fold_db::progress::{Job, JobStatus, JobType};
+
+    #[test]
+    fn populates_both_message_and_error() {
+        let mut job = Job::new("p".into(), JobType::Other("apple-notes".into()));
+        mark_failed(&mut job, "boom".to_string());
+        assert!(matches!(job.status, JobStatus::Failed));
+        assert_eq!(job.message, "boom");
+        assert_eq!(job.error.as_deref(), Some("boom"));
     }
 }
 
