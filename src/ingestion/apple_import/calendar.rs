@@ -3,7 +3,7 @@
 use regex::Regex;
 use serde_json::{json, Value};
 
-use super::{content_hash, run_osascript};
+use super::{content_hash, preflight_permission, run_osascript};
 use crate::ingestion::IngestionError;
 
 /// A single event extracted from Apple Calendar.
@@ -30,6 +30,12 @@ pub struct CalendarEvent {
 
 /// Extract all events (or events from a specific calendar) from Apple Calendar.
 pub fn extract(calendar: Option<&str>) -> Result<Vec<CalendarEvent>, IngestionError> {
+    // Fail fast (within `TCC_PROBE_TIMEOUT`, ~5s) when Automation access
+    // for Calendar.app is missing — without this, the long extract sits
+    // inside `OSASCRIPT_TIMEOUT` (5 min) before the user sees the
+    // "Grant access in System Settings → Privacy & Security → Automation"
+    // hint. Same shape as contacts.rs.
+    preflight_permission("Calendar.app")?;
     let script = build_script(calendar);
     let raw = run_osascript(&script, "Calendar.app")?;
     parse_output(&raw)
