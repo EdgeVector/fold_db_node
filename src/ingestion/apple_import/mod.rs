@@ -469,6 +469,46 @@ mod tests {
     }
 
     #[test]
+    fn preflight_permission_runs_registered_probe_and_wraps_errors() {
+        // Sibling to the unregistered-pass-through test: for every Apple
+        // app the wizard offers, preflight_permission must actually invoke
+        // the runner. We can't directly observe "runner was invoked", but
+        // we can observe the result shape: either Ok (TCC granted on this
+        // host, e.g. a dev workstation) or an Extraction error whose
+        // message names the app stem and points at System Settings →
+        // Privacy & Security → Automation. The wrapped formatting is the
+        // contract `extract()` callers depend on for actionable errors.
+        for (app_label, expected_stem) in [
+            ("Contacts.app", "Contacts"),
+            ("Notes.app", "Notes"),
+            ("Calendar.app", "Calendar"),
+            ("Reminders.app", "Reminders"),
+            ("Photos.app", "Photos"),
+        ] {
+            match preflight_permission(app_label) {
+                Ok(()) => {}
+                Err(IngestionError::Extraction(msg)) => {
+                    assert!(
+                        msg.contains(expected_stem),
+                        "{app_label} error must name the app stem for triage: {msg}"
+                    );
+                    assert!(
+                        msg.contains("Privacy & Security"),
+                        "{app_label} error must point at System Settings: {msg}"
+                    );
+                    assert!(
+                        msg.contains("Automation"),
+                        "{app_label} error must mention the Automation pane: {msg}"
+                    );
+                }
+                Err(other) => {
+                    panic!("{app_label} returned unexpected error variant: {other:?}")
+                }
+            }
+        }
+    }
+
+    #[test]
     fn probe_permission_returns_true_for_unregistered_app() {
         // The HTTP pre-flight endpoint feeds the result of probe_permission
         // straight into the per-source bool returned to the wizard. An

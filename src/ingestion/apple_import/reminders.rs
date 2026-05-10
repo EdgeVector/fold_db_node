@@ -20,7 +20,7 @@
 use regex::Regex;
 use serde_json::{json, Value};
 
-use super::{content_hash, run_osascript};
+use super::{content_hash, preflight_permission, run_osascript};
 use crate::ingestion::IngestionError;
 
 /// A single reminder extracted from Apple Reminders.
@@ -40,6 +40,10 @@ pub struct Reminder {
 /// module used to hit. Re-importing completed reminders is not something the
 /// UI currently offers; a future param can restore them if needed.
 pub fn extract(list: Option<&str>) -> Result<Vec<Reminder>, IngestionError> {
+    // Fast-fail on missing Automation access (~5s) before the long
+    // extract burns the full `OSASCRIPT_TIMEOUT`. Same shape as
+    // contacts.rs.
+    preflight_permission("Reminders.app")?;
     let script = build_script(list);
     let raw = run_osascript(&script, "Reminders.app")?;
     parse_output(&raw)

@@ -2,7 +2,7 @@
 
 use std::path::{Path, PathBuf};
 
-use super::run_osascript;
+use super::{preflight_permission, run_osascript};
 use crate::ingestion::IngestionError;
 
 /// Temporary directory where Photos.app exports originals.
@@ -12,6 +12,13 @@ const EXPORT_DIR: &str = "/tmp/folddb_photos";
 ///
 /// HEIC/HEIF files are automatically converted to JPEG via macOS `sips`.
 pub fn export(album: Option<&str>, limit: usize) -> Result<Vec<PathBuf>, IngestionError> {
+    // Fast-fail on missing Automation access (~5s) before the long
+    // export burns the full `OSASCRIPT_TIMEOUT`. The probe checks
+    // Automation only — a missing-Full-Disk-Access library will still
+    // slip past and surface in the export step itself, but that's
+    // strictly better than the pre-fix wallclock hang.
+    preflight_permission("Photos.app")?;
+
     let export_dir = Path::new(EXPORT_DIR);
 
     // Clean and recreate export directory

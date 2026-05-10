@@ -3,7 +3,7 @@
 use regex::Regex;
 use serde_json::{json, Value};
 
-use super::{content_hash, run_osascript};
+use super::{content_hash, preflight_permission, run_osascript};
 use crate::ingestion::IngestionError;
 
 /// A single note extracted from Apple Notes.
@@ -18,6 +18,10 @@ pub struct Note {
 ///
 /// Returns a list of parsed [`Note`] structs.
 pub fn extract(folder: Option<&str>) -> Result<Vec<Note>, IngestionError> {
+    // Fast-fail on missing Automation access (~5s) before the long
+    // extract burns the full `OSASCRIPT_TIMEOUT`. Same shape as
+    // contacts.rs.
+    preflight_permission("Notes.app")?;
     let script = build_script(folder);
     let raw = run_osascript(&script, "Notes.app")?;
     parse_output(&raw)
