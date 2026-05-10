@@ -32,7 +32,7 @@
 use regex::Regex;
 use serde_json::{json, Value};
 
-use super::{content_hash, preflight_permission, run_osascript_with_timeout};
+use super::{content_hash, preflight_permission, run_osascript_after_preflight};
 use crate::ingestion::IngestionError;
 
 /// Wallclock budget for the Contacts extract. The script iterates
@@ -59,9 +59,14 @@ pub struct Contact {
 /// no-name placeholders that have no searchable content and would only pollute
 /// the molecule store with empty-key rows.
 pub fn extract() -> Result<Vec<Contact>, IngestionError> {
+    // `preflight_permission` succeeded, so by the time the long extract
+    // runs we know TCC Automation permission for Contacts is granted. Use
+    // the "after preflight" runner so a timeout here doesn't falsely blame
+    // permission — it points at app responsiveness instead, which matches
+    // the real failure mode (Contacts.app cold-start with iCloud sync).
     preflight_permission("Contacts.app")?;
     let script = build_script();
-    let raw = run_osascript_with_timeout(&script, "Contacts.app", CONTACTS_OSASCRIPT_TIMEOUT)?;
+    let raw = run_osascript_after_preflight(&script, "Contacts.app", CONTACTS_OSASCRIPT_TIMEOUT)?;
     parse_output(&raw)
 }
 

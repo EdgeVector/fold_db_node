@@ -40,6 +40,25 @@ const OSASCRIPT_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(30
 #[cfg(target_os = "macos")]
 const TCC_PROBE_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(5);
 
+/// Whether the caller has just verified TCC Automation permission for the
+/// target app via [`preflight_permission`] (or an equivalent probe).
+///
+/// This only affects the formatting of the timeout error message. When
+/// `Passed`, the "missing Automation permission" hint is omitted because
+/// it is provably wrong: the probe just succeeded moments ago, so the
+/// timeout has to be something else (iCloud sync, wedged app, etc.).
+///
+/// Re-probing at the failure site is intentionally NOT used here: if the
+/// app is wedged, the re-probe would itself time out and falsely report
+/// the permission as missing — which is exactly the misleading error
+/// this enum exists to prevent.
+#[cfg(target_os = "macos")]
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum TccPreflight {
+    Unknown,
+    Passed,
+}
+
 /// Run an AppleScript via osascript and return stdout.
 ///
 /// Convenience wrapper around [`run_osascript_with_timeout`] using the
@@ -54,7 +73,10 @@ pub fn run_osascript(script: &str, app_label: &str) -> Result<String, IngestionE
 }
 
 /// Run an AppleScript via osascript with a caller-supplied wallclock
-/// `timeout` and return stdout.
+/// `timeout` and return stdout. The on-timeout error message defaults to
+/// the "permission may be missing" hint; callers that have just verified
+/// TCC permission should use [`run_osascript_after_preflight`] to suppress
+/// that misleading hint.
 ///
 /// Kills the process after `timeout` to prevent indefinite hangs (iCloud
 /// sync, missing Automation permission, unresponsive target app).
@@ -82,16 +104,41 @@ pub fn run_osascript_with_timeout(
     app_label: &str,
     timeout: std::time::Duration,
 ) -> Result<String, IngestionError> {
+    run_osascript_inner(script, app_label, timeout, TccPreflight::Unknown)
+}
+
+/// Same as [`run_osascript_with_timeout`] but assumes the caller has just
+/// verified TCC Automation permission for `app_label` via a successful
+/// [`preflight_permission`] call. On timeout, the error message will skip
+/// the "missing Automation permission" hint and point at app
+/// responsiveness (iCloud sync, wedged app) instead — because the
+/// permission cause is provably wrong by the time this runner is called.
+#[cfg(target_os = "macos")]
+pub fn run_osascript_after_preflight(
+    script: &str,
+    app_label: &str,
+    timeout: std::time::Duration,
+) -> Result<String, IngestionError> {
+    run_osascript_inner(script, app_label, timeout, TccPreflight::Passed)
+}
+
+#[cfg(target_os = "macos")]
+fn run_osascript_inner(
+    script: &str,
+    app_label: &str,
+    timeout: std::time::Duration,
+    preflight: TccPreflight,
+) -> Result<String, IngestionError> {
     ensure_app_launched(app_label);
 
-    match run_osascript_once(script, app_label, timeout) {
+    match run_osascript_once(script, app_label, timeout, preflight) {
         Err(IngestionError::Extraction(msg)) if is_invalid_connection_error(&msg) => {
             tracing::warn!(
                 app = app_label,
                 "AppleScript -609 (Connection is invalid); retrying after Apple Events launch"
             );
             revive_app_via_apple_events(app_label);
-            match run_osascript_once(script, app_label, timeout) {
+            match run_osascript_once(script, app_label, timeout, preflight) {
                 Err(IngestionError::Extraction(msg2)) if is_invalid_connection_error(&msg2) => {
                     let app_name = app_name_from_label(app_label);
                     Err(IngestionError::Extraction(format!(
@@ -108,14 +155,18 @@ pub fn run_osascript_with_timeout(
 }
 
 /// Single osascript invocation with a wallclock timeout — the inner loop
-/// `run_osascript_with_timeout` calls (twice on -609 recovery). Kept
-/// private so callers can't accidentally bypass the -609 retry that
-/// makes Calendar's fresh-launch case work.
+/// `run_osascript_inner` calls (twice on -609 recovery). Kept private so
+/// callers can't accidentally bypass the -609 retry that makes Calendar's
+/// fresh-launch case work.
+///
+/// `preflight` only affects the on-timeout error message — see
+/// [`format_timeout_message`].
 #[cfg(target_os = "macos")]
 fn run_osascript_once(
     script: &str,
     app_label: &str,
     timeout: std::time::Duration,
+    preflight: TccPreflight,
 ) -> Result<String, IngestionError> {
     let child = std::process::Command::new("osascript")
         .arg("-e")
@@ -154,13 +205,8 @@ fn run_osascript_once(
                 .arg("-9")
                 .arg(child_id.to_string())
                 .status();
-            Err(IngestionError::Extraction(format!(
-                "osascript timed out after {} seconds talking to {}. The app may be \
-                 unresponsive, syncing with iCloud, or missing Automation permission. \
-                 Grant access in System Settings → Privacy & Security → Automation \
-                 (and Full Disk Access for Photos.app).",
-                timeout.as_secs(),
-                app_label,
+            Err(IngestionError::Extraction(format_timeout_message(
+                timeout, app_label, preflight,
             )))
         }
     }
@@ -193,6 +239,42 @@ fn revive_app_via_apple_events(app_label: &str) {
         .stderr(std::process::Stdio::null())
         .status();
     std::thread::sleep(std::time::Duration::from_millis(1500));
+}
+
+/// Format the user-facing message for an osascript timeout, branching on
+/// whether the caller already verified TCC Automation permission.
+///
+/// `Passed` callers (the run-after-preflight path) get a message that
+/// names app unresponsiveness as the likely cause, with an actionable
+/// "open the app and wait" recovery step. `Unknown` callers get the
+/// classic permission-or-unresponsive hint, which is correct when we
+/// genuinely don't know which side the timeout came from.
+#[cfg(target_os = "macos")]
+fn format_timeout_message(
+    timeout: std::time::Duration,
+    app_label: &str,
+    preflight: TccPreflight,
+) -> String {
+    match preflight {
+        TccPreflight::Passed => format!(
+            "osascript timed out after {} seconds talking to {}. The TCC \
+             permission probe just before this run reported access was \
+             granted, so the most likely cause is the app being unresponsive \
+             (often iCloud sync on a fresh install). Try `open -a {}` and \
+             wait for sync to settle, then retry the import.",
+            timeout.as_secs(),
+            app_label,
+            app_label.strip_suffix(".app").unwrap_or(app_label),
+        ),
+        TccPreflight::Unknown => format!(
+            "osascript timed out after {} seconds talking to {}. The app may be \
+             unresponsive, syncing with iCloud, or missing Automation permission. \
+             Grant access in System Settings → Privacy & Security → Automation \
+             (and Full Disk Access for Photos.app).",
+            timeout.as_secs(),
+            app_label,
+        ),
+    }
 }
 
 /// Tiny side-effect-free AppleScript that confirms the calling process
@@ -455,6 +537,71 @@ mod tests {
         assert!(
             msg.contains("Open Calendar manually"),
             "user-facing message must give the user an actionable next step: {msg}"
+        );
+    }
+
+    #[test]
+    fn format_timeout_message_passed_preflight_does_not_blame_permission() {
+        // Reproduces the dogfood failure: HTTP TCC probe reported
+        // contacts: true, then the long extract timed out. The user-visible
+        // message must NOT send the user back to System Settings — TCC was
+        // just verified, so that lead is provably wrong and wastes the
+        // user's time. Instead, point at app responsiveness, which is the
+        // real failure mode (Contacts.app cold-start with iCloud sync).
+        let msg = format_timeout_message(
+            std::time::Duration::from_secs(30),
+            "Contacts.app",
+            TccPreflight::Passed,
+        );
+        assert!(
+            msg.contains("30 seconds"),
+            "message must report the actual timeout for triage: {msg}"
+        );
+        assert!(
+            msg.contains("Contacts.app"),
+            "message must name the app for triage: {msg}"
+        );
+        assert!(
+            !msg.contains("Automation permission"),
+            "Passed preflight means we KNOW permission is granted — the message must \
+             not blame Automation permission and waste a System Settings round-trip: {msg}"
+        );
+        assert!(
+            !msg.contains("Privacy & Security"),
+            "Same reason: no permission-pane breadcrumb when preflight already passed: {msg}"
+        );
+        assert!(
+            msg.contains("open -a Contacts"),
+            "message should give a concrete recovery step the user can run: {msg}"
+        );
+    }
+
+    #[test]
+    fn format_timeout_message_unknown_preflight_keeps_permission_hint() {
+        // Pre-existing behaviour — when the caller hasn't verified TCC
+        // (e.g. notes/calendar/reminders/photos extracts that don't run
+        // a preflight), we genuinely don't know which side the timeout
+        // came from, so the permission hint is the right safety net.
+        let msg = format_timeout_message(
+            std::time::Duration::from_secs(300),
+            "Notes.app",
+            TccPreflight::Unknown,
+        );
+        assert!(
+            msg.contains("300 seconds"),
+            "message must report the actual timeout: {msg}"
+        );
+        assert!(
+            msg.contains("Notes.app"),
+            "message must name the app: {msg}"
+        );
+        assert!(
+            msg.contains("Automation permission"),
+            "Unknown preflight must keep the permission hint as a possibility: {msg}"
+        );
+        assert!(
+            msg.contains("Privacy & Security"),
+            "Unknown preflight must point at the System Settings pane: {msg}"
         );
     }
 
