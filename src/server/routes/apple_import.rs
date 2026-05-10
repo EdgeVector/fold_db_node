@@ -310,6 +310,270 @@ where
     result
 }
 
+/// Per-source configuration for [`run_record_batch_import`].
+///
+/// Notes / Reminders / Calendar / Contacts share the same shape:
+/// extract via `osascript` on a blocking thread (wrapped in
+/// [`with_extraction_heartbeat`]), emit a `Running 10%` "Extracted N
+/// {label}, ingesting..." job, feed records into the ingestion pipeline in
+/// batches of 10, then emit a terminal job. The per-source variations are
+/// nouns in messages, the canonical schema name pinned via
+/// `forced_schema_descriptive_name`, and (for Reminders) whether to fail
+/// the job on a partial-batch error.
+#[cfg(target_os = "macos")]
+struct BatchImportConfig {
+    /// `JobType::Other(job_kind.into())` value. e.g. `"apple-notes"`.
+    job_kind: &'static str,
+    /// Display name of the Apple app. Drives both
+    /// `forced_schema_descriptive_name` (so 132 records don't fragment
+    /// across 3+ schemas via LLM non-determinism — see PR #946) and the
+    /// `tracing::warn!` prefix on a failed batch. e.g. `"Apple Notes"`.
+    app_name: &'static str,
+    /// Base extraction message — passed to [`with_extraction_heartbeat`]
+    /// as the prefix it appends `(Ns)` to. Should match the
+    /// `initial_message` passed to [`init_apple_import_job`] in the route
+    /// handler.
+    base_message: &'static str,
+    /// Noun used in mid-progress messages: "Extracted N {progress_label},
+    /// ingesting..." and the per-batch label fed to
+    /// [`emit_batch_progress`]. Calendar is the odd one out: progress
+    /// messages say "events" while the terminal/empty/extract-failed
+    /// messages say "calendar events".
+    progress_label: &'static str,
+    /// Noun used in "Failed to extract {terminal_label}: ...", "No
+    /// {terminal_label} found", and "Imported N {terminal_label}".
+    terminal_label: &'static str,
+    /// Per-batch-error policy for the ingestion loop.
+    error_policy: BatchErrorPolicy,
+}
+
+/// Per-batch-error policy for [`run_record_batch_import`].
+#[cfg(target_os = "macos")]
+enum BatchErrorPolicy {
+    /// Notes / Calendar / Contacts: each failed batch is `tracing::warn!`-ed
+    /// and skipped, then the job is marked `Completed` with the running
+    /// `ingested` count. Partial success is the expected shape.
+    LogAndContinue,
+    /// Reminders: same per-batch warn-log, but the first error is captured
+    /// and the terminal job goes through [`build_reminders_final_job`] so a
+    /// total failure surfaces as `Failed` with `error_message` populated
+    /// (PR #970), rather than a green `Imported 0 reminders` checkmark.
+    LogAndCaptureFirstError,
+}
+
+#[cfg(target_os = "macos")]
+const APPLE_NOTES_IMPORT_CFG: BatchImportConfig = BatchImportConfig {
+    job_kind: "apple-notes",
+    app_name: "Apple Notes",
+    base_message: "Extracting notes from Apple Notes...",
+    progress_label: "notes",
+    terminal_label: "notes",
+    error_policy: BatchErrorPolicy::LogAndContinue,
+};
+
+#[cfg(target_os = "macos")]
+const APPLE_REMINDERS_IMPORT_CFG: BatchImportConfig = BatchImportConfig {
+    job_kind: "apple-reminders",
+    app_name: "Apple Reminders",
+    base_message: "Extracting reminders...",
+    progress_label: "reminders",
+    terminal_label: "reminders",
+    error_policy: BatchErrorPolicy::LogAndCaptureFirstError,
+};
+
+#[cfg(target_os = "macos")]
+const APPLE_CALENDAR_IMPORT_CFG: BatchImportConfig = BatchImportConfig {
+    job_kind: "apple-calendar",
+    app_name: "Apple Calendar",
+    base_message: "Extracting events from Apple Calendar...",
+    progress_label: "events",
+    terminal_label: "calendar events",
+    error_policy: BatchErrorPolicy::LogAndContinue,
+};
+
+#[cfg(target_os = "macos")]
+const APPLE_CONTACTS_IMPORT_CFG: BatchImportConfig = BatchImportConfig {
+    job_kind: "apple-contacts",
+    app_name: "Apple Contacts",
+    base_message: "Extracting contacts from Apple Contacts...",
+    progress_label: "contacts",
+    terminal_label: "contacts",
+    error_policy: BatchErrorPolicy::LogAndContinue,
+};
+
+/// Generic record-batch import driver shared by Notes / Reminders /
+/// Calendar / Contacts.
+///
+/// Replaces ~115 lines of identical scaffolding per source: the
+/// heartbeat-wrapped extract on a blocking thread, the three-armed
+/// extract-error match, the empty-result early-return, the post-extract
+/// `Running 10%` job, the chunked ingest loop with `forced_schema_descriptive_name`
+/// pinned to `cfg.app_name` and per-batch progress emission, and the
+/// terminal `Completed` (or Reminders `Failed`) job.
+///
+/// `extract` runs on a blocking thread (osascript is blocking) inside
+/// [`with_extraction_heartbeat`] so the UI sees `(Ns)` ticks instead of
+/// hanging at 5%. `to_json` converts the typed records into the
+/// `serde_json::Value` array the ingestion pipeline expects.
+///
+/// Photos uses a different shape entirely (file-by-file with
+/// content-addressed storage, image enrichment, and visibility
+/// classification) and stays separate.
+#[cfg(target_os = "macos")]
+async fn run_record_batch_import<T, E, J, ExtractErr>(
+    progress_id: String,
+    tracker: ProgressTracker,
+    node_arc: std::sync::Arc<crate::fold_node::FoldNode>,
+    service: std::sync::Arc<IngestionService>,
+    cfg: &BatchImportConfig,
+    extract: E,
+    to_json: J,
+) where
+    T: Send + 'static,
+    E: FnOnce() -> Result<Vec<T>, ExtractErr> + Send + 'static,
+    ExtractErr: std::fmt::Display + Send + 'static,
+    J: FnOnce(&[T]) -> Vec<serde_json::Value> + Send,
+{
+    let extract_result = with_extraction_heartbeat(
+        &tracker,
+        &progress_id,
+        cfg.job_kind,
+        cfg.base_message,
+        tokio::task::spawn_blocking(extract),
+    )
+    .await;
+
+    let items = match extract_result {
+        Ok(Ok(it)) => it,
+        Ok(Err(e)) => {
+            let mut job = Job::new(progress_id.clone(), JobType::Other(cfg.job_kind.into()));
+            mark_failed(
+                &mut job,
+                format!("Failed to extract {}: {}", cfg.terminal_label, e),
+            );
+            mark_terminal(&mut job);
+            let _ = tracker.save(&job).await;
+            return;
+        }
+        Err(e) => {
+            let mut job = Job::new(progress_id.clone(), JobType::Other(cfg.job_kind.into()));
+            mark_failed(&mut job, format!("Extraction task panicked: {}", e));
+            mark_terminal(&mut job);
+            let _ = tracker.save(&job).await;
+            return;
+        }
+    };
+
+    if items.is_empty() {
+        let mut job = Job::new(progress_id.clone(), JobType::Other(cfg.job_kind.into()));
+        job.status = JobStatus::Completed;
+        job.progress_percentage = 100;
+        job.message = format!("No {} found", cfg.terminal_label);
+        job.result = Some(json!({
+            "source": cfg.job_kind,
+            "total": 0,
+            "ingested": 0,
+        }));
+        mark_terminal(&mut job);
+        let _ = tracker.save(&job).await;
+        return;
+    }
+
+    let total = items.len();
+    let records = to_json(&items);
+
+    let mut job = Job::new(progress_id.clone(), JobType::Other(cfg.job_kind.into()));
+    job.status = JobStatus::Running;
+    job.progress_percentage = 10;
+    job.message = format!("Extracted {} {}, ingesting...", total, cfg.progress_label);
+    let _ = tracker.save(&job).await;
+
+    let batch_size = 10;
+    let mut ingested = 0usize;
+    let mut ingest_error: Option<String> = None;
+    let node = node_arc.as_ref();
+    // run_with_user pins the task-local user id for the duration of this task,
+    // so reading once outside the loop is equivalent to per-iteration reads.
+    let user_id = fold_db::user_context::get_current_user_id().unwrap_or_default();
+
+    for (i, chunk) in records.chunks(batch_size).enumerate() {
+        let request = IngestionRequest {
+            data: serde_json::Value::Array(chunk.to_vec()),
+            auto_execute: true,
+            pub_key: "default".to_string(),
+            source_file_name: None,
+            progress_id: None,
+            file_hash: None,
+            source_folder: None,
+            image_descriptive_name: None,
+            org_hash: None,
+            image_bytes: None,
+            forced_schema_descriptive_name: Some(cfg.app_name.to_string()),
+        };
+
+        match crate::handlers::ingestion::process_json(
+            request,
+            &user_id,
+            &tracker,
+            node,
+            service.clone(),
+        )
+        .await
+        {
+            Ok(_) => ingested += chunk.len(),
+            Err(e) => {
+                tracing::warn!(
+                    target: "fold_node::ingestion",
+                    "{} batch {} failed: {}",
+                    cfg.app_name,
+                    i,
+                    e,
+                );
+                if matches!(cfg.error_policy, BatchErrorPolicy::LogAndCaptureFirstError)
+                    && ingest_error.is_none()
+                {
+                    ingest_error = Some(e.to_string());
+                }
+            }
+        }
+
+        emit_batch_progress(
+            &tracker,
+            &progress_id,
+            cfg.job_kind,
+            ingested,
+            total,
+            cfg.progress_label,
+        )
+        .await;
+    }
+
+    // Reminders routes through `build_reminders_final_job` so a total failure
+    // surfaces as Failed/error_message instead of a green Completed/0 — see
+    // PR #970. Notes/Calendar/Contacts treat partial success as Completed.
+    let mut job = match cfg.error_policy {
+        BatchErrorPolicy::LogAndContinue => {
+            let mut j = Job::new(progress_id.clone(), JobType::Other(cfg.job_kind.into()));
+            j.status = JobStatus::Completed;
+            j.progress_percentage = 100;
+            j.message = format!("Imported {} {}", ingested, cfg.terminal_label);
+            j.result = Some(json!({
+                "source": cfg.job_kind,
+                "total": total,
+                "ingested": ingested,
+            }));
+            j
+        }
+        BatchErrorPolicy::LogAndCaptureFirstError => {
+            // Caller must use APPLE_REMINDERS_IMPORT_CFG here — the helper
+            // hardcodes the "apple-reminders" job kind.
+            build_reminders_final_job(progress_id.clone(), total, ingested, ingest_error)
+        }
+    };
+    mark_terminal(&mut job);
+    let _ = tracker.save(&job).await;
+}
+
 #[derive(Deserialize, Default)]
 pub struct AppleNotesRequest {
     pub folder: Option<String>,
@@ -362,114 +626,16 @@ async fn run_apple_notes_import(
     service: std::sync::Arc<crate::ingestion::ingestion_service::IngestionService>,
 ) {
     use crate::ingestion::apple_import::notes;
-
-    let notes_result = with_extraction_heartbeat(
-        &tracker,
-        &progress_id,
-        "apple-notes",
-        "Extracting notes from Apple Notes...",
-        tokio::task::spawn_blocking(move || notes::extract(folder.as_deref())),
+    run_record_batch_import(
+        progress_id,
+        tracker,
+        node_arc,
+        service,
+        &APPLE_NOTES_IMPORT_CFG,
+        move || notes::extract(folder.as_deref()),
+        notes::to_json_records,
     )
     .await;
-
-    let notes = match notes_result {
-        Ok(Ok(n)) => n,
-        Ok(Err(e)) => {
-            let mut job = Job::new(progress_id.clone(), JobType::Other("apple-notes".into()));
-            mark_failed(&mut job, format!("Failed to extract notes: {}", e));
-            mark_terminal(&mut job);
-            let _ = tracker.save(&job).await;
-            return;
-        }
-        Err(e) => {
-            let mut job = Job::new(progress_id.clone(), JobType::Other("apple-notes".into()));
-            mark_failed(&mut job, format!("Extraction task panicked: {}", e));
-            mark_terminal(&mut job);
-            let _ = tracker.save(&job).await;
-            return;
-        }
-    };
-
-    if notes.is_empty() {
-        let mut job = Job::new(progress_id.clone(), JobType::Other("apple-notes".into()));
-        job.status = JobStatus::Completed;
-        job.progress_percentage = 100;
-        job.message = "No notes found".into();
-        job.result = Some(json!({ "source": "apple-notes", "total": 0, "ingested": 0 }));
-        mark_terminal(&mut job);
-        let _ = tracker.save(&job).await;
-        return;
-    }
-
-    let total = notes.len();
-    let records = notes::to_json_records(&notes);
-
-    let mut job = Job::new(progress_id.clone(), JobType::Other("apple-notes".into()));
-    job.status = JobStatus::Running;
-    job.progress_percentage = 10;
-    job.message = format!("Extracted {} notes, ingesting...", total);
-    let _ = tracker.save(&job).await;
-
-    let batch_size = 10;
-    let mut ingested = 0;
-    let node = node_arc.as_ref();
-
-    for (i, chunk) in records.chunks(batch_size).enumerate() {
-        let request = IngestionRequest {
-            data: serde_json::Value::Array(chunk.to_vec()),
-            auto_execute: true,
-            pub_key: "default".to_string(),
-            source_file_name: None,
-            progress_id: None,
-            file_hash: None,
-            source_folder: None,
-            image_descriptive_name: None,
-            org_hash: None,
-            image_bytes: None,
-            // Pin every batch to the canonical "Apple Notes" schema so
-            // 132 notes don't fragment across 3+ schemas via LLM
-            // non-determinism. See dogfood repro on 2026-05-09.
-            forced_schema_descriptive_name: Some("Apple Notes".to_string()),
-        };
-
-        match crate::handlers::ingestion::process_json(
-            request,
-            &fold_db::user_context::get_current_user_id().unwrap_or_default(),
-            &tracker,
-            node,
-            service.clone(),
-        )
-        .await
-        {
-            Ok(_) => ingested += chunk.len(),
-            Err(e) => {
-                tracing::warn!(
-                target: "fold_node::ingestion",
-                        "Apple Notes batch {} failed: {}",
-                        i,
-                        e
-                    );
-            }
-        }
-
-        emit_batch_progress(
-            &tracker,
-            &progress_id,
-            "apple-notes",
-            ingested,
-            total,
-            "notes",
-        )
-        .await;
-    }
-
-    let mut job = Job::new(progress_id.clone(), JobType::Other("apple-notes".into()));
-    job.status = JobStatus::Completed;
-    job.progress_percentage = 100;
-    job.message = format!("Imported {} notes", ingested);
-    job.result = Some(json!({ "source": "apple-notes", "total": total, "ingested": ingested }));
-    mark_terminal(&mut job);
-    let _ = tracker.save(&job).await;
 }
 
 #[cfg(not(target_os = "macos"))]
@@ -536,125 +702,16 @@ async fn run_apple_reminders_import(
     service: std::sync::Arc<crate::ingestion::ingestion_service::IngestionService>,
 ) {
     use crate::ingestion::apple_import::reminders;
-
-    let reminders_result = with_extraction_heartbeat(
-        &tracker,
-        &progress_id,
-        "apple-reminders",
-        "Extracting reminders...",
-        tokio::task::spawn_blocking(move || reminders::extract(list.as_deref())),
+    run_record_batch_import(
+        progress_id,
+        tracker,
+        node_arc,
+        service,
+        &APPLE_REMINDERS_IMPORT_CFG,
+        move || reminders::extract(list.as_deref()),
+        reminders::to_json_records,
     )
     .await;
-
-    let rems = match reminders_result {
-        Ok(Ok(r)) => r,
-        Ok(Err(e)) => {
-            let mut job = Job::new(
-                progress_id.clone(),
-                JobType::Other("apple-reminders".into()),
-            );
-            mark_failed(&mut job, format!("Failed to extract reminders: {}", e));
-            mark_terminal(&mut job);
-            let _ = tracker.save(&job).await;
-            return;
-        }
-        Err(e) => {
-            let mut job = Job::new(
-                progress_id.clone(),
-                JobType::Other("apple-reminders".into()),
-            );
-            mark_failed(&mut job, format!("Extraction task panicked: {}", e));
-            mark_terminal(&mut job);
-            let _ = tracker.save(&job).await;
-            return;
-        }
-    };
-
-    if rems.is_empty() {
-        let mut job = Job::new(
-            progress_id.clone(),
-            JobType::Other("apple-reminders".into()),
-        );
-        job.status = JobStatus::Completed;
-        job.progress_percentage = 100;
-        job.message = "No reminders found".into();
-        job.result = Some(json!({ "source": "apple-reminders", "total": 0, "ingested": 0 }));
-        mark_terminal(&mut job);
-        let _ = tracker.save(&job).await;
-        return;
-    }
-
-    let total = rems.len();
-    let records = reminders::to_json_records(&rems);
-
-    let mut job = Job::new(
-        progress_id.clone(),
-        JobType::Other("apple-reminders".into()),
-    );
-    job.status = JobStatus::Running;
-    job.progress_percentage = 10;
-    job.message = format!("Extracted {} reminders, ingesting...", total);
-    let _ = tracker.save(&job).await;
-
-    let batch_size = 10;
-    let mut ingested = 0;
-    let mut ingest_error: Option<String> = None;
-    let node = node_arc.as_ref();
-
-    for (i, chunk) in records.chunks(batch_size).enumerate() {
-        let request = IngestionRequest {
-            data: serde_json::Value::Array(chunk.to_vec()),
-            auto_execute: true,
-            pub_key: "default".to_string(),
-            source_file_name: None,
-            progress_id: None,
-            file_hash: None,
-            source_folder: None,
-            image_descriptive_name: None,
-            org_hash: None,
-            image_bytes: None,
-            // Pin reminders to a canonical schema; same fragmentation risk as
-            // Apple Notes whenever the LLM is asked to classify N batches.
-            forced_schema_descriptive_name: Some("Apple Reminders".to_string()),
-        };
-
-        match crate::handlers::ingestion::process_json(
-            request,
-            &fold_db::user_context::get_current_user_id().unwrap_or_default(),
-            &tracker,
-            node,
-            service.clone(),
-        )
-        .await
-        {
-            Ok(_) => ingested += chunk.len(),
-            Err(e) => {
-                tracing::warn!(
-                target: "fold_node::ingestion",
-                        "Apple Reminders batch {} failed: {}",
-                        i,
-                        e
-                    );
-                if ingest_error.is_none() {
-                    ingest_error = Some(e.to_string());
-                }
-            }
-        }
-
-        emit_batch_progress(
-            &tracker,
-            &progress_id,
-            "apple-reminders",
-            ingested,
-            total,
-            "reminders",
-        )
-        .await;
-    }
-
-    let mut job = build_reminders_final_job(progress_id.clone(), total, ingested, ingest_error);
-    mark_terminal(&mut job);
-    let _ = tracker.save(&job).await;
 }
 
 /// Build the terminal job for an Apple Reminders import.
@@ -1023,114 +1080,16 @@ async fn run_apple_calendar_import(
     service: std::sync::Arc<crate::ingestion::ingestion_service::IngestionService>,
 ) {
     use crate::ingestion::apple_import::calendar as cal;
-
-    let events_result = with_extraction_heartbeat(
-        &tracker,
-        &progress_id,
-        "apple-calendar",
-        "Extracting events from Apple Calendar...",
-        tokio::task::spawn_blocking(move || cal::extract(calendar.as_deref())),
+    run_record_batch_import(
+        progress_id,
+        tracker,
+        node_arc,
+        service,
+        &APPLE_CALENDAR_IMPORT_CFG,
+        move || cal::extract(calendar.as_deref()),
+        cal::to_json_records,
     )
     .await;
-
-    let events = match events_result {
-        Ok(Ok(e)) => e,
-        Ok(Err(e)) => {
-            let mut job = Job::new(progress_id.clone(), JobType::Other("apple-calendar".into()));
-            mark_failed(
-                &mut job,
-                format!("Failed to extract calendar events: {}", e),
-            );
-            mark_terminal(&mut job);
-            let _ = tracker.save(&job).await;
-            return;
-        }
-        Err(e) => {
-            let mut job = Job::new(progress_id.clone(), JobType::Other("apple-calendar".into()));
-            mark_failed(&mut job, format!("Extraction task panicked: {}", e));
-            mark_terminal(&mut job);
-            let _ = tracker.save(&job).await;
-            return;
-        }
-    };
-
-    if events.is_empty() {
-        let mut job = Job::new(progress_id.clone(), JobType::Other("apple-calendar".into()));
-        job.status = JobStatus::Completed;
-        job.progress_percentage = 100;
-        job.message = "No calendar events found".into();
-        job.result = Some(json!({ "source": "apple-calendar", "total": 0, "ingested": 0 }));
-        mark_terminal(&mut job);
-        let _ = tracker.save(&job).await;
-        return;
-    }
-
-    let total = events.len();
-    let records = cal::to_json_records(&events);
-
-    let mut job = Job::new(progress_id.clone(), JobType::Other("apple-calendar".into()));
-    job.status = JobStatus::Running;
-    job.progress_percentage = 10;
-    job.message = format!("Extracted {} events, ingesting...", total);
-    let _ = tracker.save(&job).await;
-
-    let batch_size = 10;
-    let mut ingested = 0;
-    let node = node_arc.as_ref();
-
-    for (i, chunk) in records.chunks(batch_size).enumerate() {
-        let request = IngestionRequest {
-            data: serde_json::Value::Array(chunk.to_vec()),
-            auto_execute: true,
-            pub_key: "default".to_string(),
-            source_file_name: None,
-            progress_id: None,
-            file_hash: None,
-            source_folder: None,
-            image_descriptive_name: None,
-            org_hash: None,
-            image_bytes: None,
-            forced_schema_descriptive_name: Some("Apple Calendar".to_string()),
-        };
-
-        match crate::handlers::ingestion::process_json(
-            request,
-            &fold_db::user_context::get_current_user_id().unwrap_or_default(),
-            &tracker,
-            node,
-            service.clone(),
-        )
-        .await
-        {
-            Ok(_) => ingested += chunk.len(),
-            Err(e) => {
-                tracing::warn!(
-                target: "fold_node::ingestion",
-                        "Apple Calendar batch {} failed: {}",
-                        i,
-                        e
-                    );
-            }
-        }
-
-        emit_batch_progress(
-            &tracker,
-            &progress_id,
-            "apple-calendar",
-            ingested,
-            total,
-            "events",
-        )
-        .await;
-    }
-
-    let mut job = Job::new(progress_id.clone(), JobType::Other("apple-calendar".into()));
-    job.status = JobStatus::Completed;
-    job.progress_percentage = 100;
-    job.message = format!("Imported {} calendar events", ingested);
-    job.result = Some(json!({ "source": "apple-calendar", "total": total, "ingested": ingested }));
-    mark_terminal(&mut job);
-    let _ = tracker.save(&job).await;
 }
 
 #[cfg(not(target_os = "macos"))]
@@ -1192,111 +1151,16 @@ async fn run_apple_contacts_import(
     service: std::sync::Arc<crate::ingestion::ingestion_service::IngestionService>,
 ) {
     use crate::ingestion::apple_import::contacts as ctc;
-
-    let extract_result = with_extraction_heartbeat(
-        &tracker,
-        &progress_id,
-        "apple-contacts",
-        "Extracting contacts from Apple Contacts...",
-        tokio::task::spawn_blocking(ctc::extract),
+    run_record_batch_import(
+        progress_id,
+        tracker,
+        node_arc,
+        service,
+        &APPLE_CONTACTS_IMPORT_CFG,
+        ctc::extract,
+        ctc::to_json_records,
     )
     .await;
-
-    let contacts = match extract_result {
-        Ok(Ok(c)) => c,
-        Ok(Err(e)) => {
-            let mut job = Job::new(progress_id.clone(), JobType::Other("apple-contacts".into()));
-            mark_failed(&mut job, format!("Failed to extract contacts: {}", e));
-            mark_terminal(&mut job);
-            let _ = tracker.save(&job).await;
-            return;
-        }
-        Err(e) => {
-            let mut job = Job::new(progress_id.clone(), JobType::Other("apple-contacts".into()));
-            mark_failed(&mut job, format!("Extraction task panicked: {}", e));
-            mark_terminal(&mut job);
-            let _ = tracker.save(&job).await;
-            return;
-        }
-    };
-
-    if contacts.is_empty() {
-        let mut job = Job::new(progress_id.clone(), JobType::Other("apple-contacts".into()));
-        job.status = JobStatus::Completed;
-        job.progress_percentage = 100;
-        job.message = "No contacts found".into();
-        job.result = Some(json!({ "source": "apple-contacts", "total": 0, "ingested": 0 }));
-        mark_terminal(&mut job);
-        let _ = tracker.save(&job).await;
-        return;
-    }
-
-    let total = contacts.len();
-    let records = ctc::to_json_records(&contacts);
-
-    let mut job = Job::new(progress_id.clone(), JobType::Other("apple-contacts".into()));
-    job.status = JobStatus::Running;
-    job.progress_percentage = 10;
-    job.message = format!("Extracted {} contacts, ingesting...", total);
-    let _ = tracker.save(&job).await;
-
-    let batch_size = 10;
-    let mut ingested = 0;
-    let node = node_arc.as_ref();
-
-    for (i, chunk) in records.chunks(batch_size).enumerate() {
-        let request = IngestionRequest {
-            data: serde_json::Value::Array(chunk.to_vec()),
-            auto_execute: true,
-            pub_key: "default".to_string(),
-            source_file_name: None,
-            progress_id: None,
-            file_hash: None,
-            source_folder: None,
-            image_descriptive_name: None,
-            org_hash: None,
-            image_bytes: None,
-            forced_schema_descriptive_name: Some("Apple Contacts".to_string()),
-        };
-
-        match crate::handlers::ingestion::process_json(
-            request,
-            &fold_db::user_context::get_current_user_id().unwrap_or_default(),
-            &tracker,
-            node,
-            service.clone(),
-        )
-        .await
-        {
-            Ok(_) => ingested += chunk.len(),
-            Err(e) => {
-                tracing::warn!(
-                target: "fold_node::ingestion",
-                        "Apple Contacts batch {} failed: {}",
-                        i,
-                        e
-                    );
-            }
-        }
-
-        emit_batch_progress(
-            &tracker,
-            &progress_id,
-            "apple-contacts",
-            ingested,
-            total,
-            "contacts",
-        )
-        .await;
-    }
-
-    let mut job = Job::new(progress_id.clone(), JobType::Other("apple-contacts".into()));
-    job.status = JobStatus::Completed;
-    job.progress_percentage = 100;
-    job.message = format!("Imported {} contacts", ingested);
-    job.result = Some(json!({ "source": "apple-contacts", "total": total, "ingested": ingested }));
-    mark_terminal(&mut job);
-    let _ = tracker.save(&job).await;
 }
 
 #[cfg(not(target_os = "macos"))]
@@ -1932,5 +1796,90 @@ mod permissions_endpoint_tests {
                 body,
             );
         }
+    }
+}
+
+/// Pin the per-source configs feeding [`run_record_batch_import`].
+///
+/// These tests don't exercise the helper end-to-end (that needs a real
+/// `ProgressTracker` / `FoldNode` / `IngestionService`); per-source
+/// behavior is covered by the `apple_import` integration tests via the
+/// HTTP route handlers. What we DO want pinned here is that no future
+/// edit silently drifts a label, schema name, or error policy — those
+/// values are observable through the user-facing job message stream.
+#[cfg(all(test, target_os = "macos"))]
+mod batch_import_config_tests {
+    use super::{
+        BatchErrorPolicy, APPLE_CALENDAR_IMPORT_CFG, APPLE_CONTACTS_IMPORT_CFG,
+        APPLE_NOTES_IMPORT_CFG, APPLE_REMINDERS_IMPORT_CFG,
+    };
+
+    #[test]
+    fn calendar_uses_distinct_progress_and_terminal_labels() {
+        // "Imported N calendar events" / "No calendar events found" but
+        // "Extracted N events, ingesting..." — preserve the asymmetry.
+        assert_eq!(APPLE_CALENDAR_IMPORT_CFG.progress_label, "events");
+        assert_eq!(APPLE_CALENDAR_IMPORT_CFG.terminal_label, "calendar events");
+    }
+
+    #[test]
+    fn other_sources_share_progress_and_terminal_labels() {
+        for cfg in [
+            &APPLE_NOTES_IMPORT_CFG,
+            &APPLE_REMINDERS_IMPORT_CFG,
+            &APPLE_CONTACTS_IMPORT_CFG,
+        ] {
+            assert_eq!(
+                cfg.progress_label, cfg.terminal_label,
+                "{}: progress and terminal labels should match",
+                cfg.job_kind,
+            );
+        }
+    }
+
+    #[test]
+    fn only_reminders_captures_first_ingest_error() {
+        assert!(matches!(
+            APPLE_REMINDERS_IMPORT_CFG.error_policy,
+            BatchErrorPolicy::LogAndCaptureFirstError
+        ));
+        for cfg in [
+            &APPLE_NOTES_IMPORT_CFG,
+            &APPLE_CALENDAR_IMPORT_CFG,
+            &APPLE_CONTACTS_IMPORT_CFG,
+        ] {
+            assert!(
+                matches!(cfg.error_policy, BatchErrorPolicy::LogAndContinue),
+                "{}: should use LogAndContinue policy",
+                cfg.job_kind,
+            );
+        }
+    }
+
+    #[test]
+    fn app_name_drives_forced_schema_and_warn_label() {
+        // The string in `app_name` is observable in two places: as the
+        // value of `forced_schema_descriptive_name` (visible in the
+        // ingestion DB) and as the prefix in the `tracing::warn!` output
+        // ("Apple Notes batch 3 failed: ..."). Lock both shapes.
+        let pairs = [
+            (&APPLE_NOTES_IMPORT_CFG, "Apple Notes"),
+            (&APPLE_REMINDERS_IMPORT_CFG, "Apple Reminders"),
+            (&APPLE_CALENDAR_IMPORT_CFG, "Apple Calendar"),
+            (&APPLE_CONTACTS_IMPORT_CFG, "Apple Contacts"),
+        ];
+        for (cfg, expected) in pairs {
+            assert_eq!(cfg.app_name, expected, "{}: app_name", cfg.job_kind);
+        }
+    }
+
+    #[test]
+    fn job_kinds_match_route_handler_strings() {
+        // Drift here flips JobType::Other on the progress stream and
+        // breaks any UI / poller filtering by job kind.
+        assert_eq!(APPLE_NOTES_IMPORT_CFG.job_kind, "apple-notes");
+        assert_eq!(APPLE_REMINDERS_IMPORT_CFG.job_kind, "apple-reminders");
+        assert_eq!(APPLE_CALENDAR_IMPORT_CFG.job_kind, "apple-calendar");
+        assert_eq!(APPLE_CONTACTS_IMPORT_CFG.job_kind, "apple-contacts");
     }
 }
