@@ -20,6 +20,8 @@ pub mod sync_scheduler;
 #[cfg(target_os = "macos")]
 use crate::ingestion::IngestionError;
 #[cfg(target_os = "macos")]
+use regex::Regex;
+#[cfg(target_os = "macos")]
 use sha2::{Digest, Sha256};
 
 /// Check whether we're running on macOS (Apple import requires osascript).
@@ -334,6 +336,72 @@ pub fn preflight_permission(app_label: &str) -> Result<(), IngestionError> {
         ))),
         Err(other) => Err(other),
     }
+}
+
+/// Run the standard "preflight Automation permission, run AppleScript,
+/// parse the framed output" pipeline shared by Notes/Calendar/Reminders.
+///
+/// Saves the four-line preamble that every extractor used to repeat
+/// (preflight → build_script → run_osascript → parse_output). Contacts
+/// uses [`run_extract_with_timeout`] because it pairs a tighter timeout
+/// with the `run_osascript_after_preflight` runner so a timeout doesn't
+/// blame Automation permission after a successful probe.
+#[cfg(target_os = "macos")]
+pub(crate) fn run_extract<T>(
+    app_label: &str,
+    script: &str,
+    parse: impl FnOnce(&str) -> Result<Vec<T>, IngestionError>,
+) -> Result<Vec<T>, IngestionError> {
+    preflight_permission(app_label)?;
+    let raw = run_osascript(script, app_label)?;
+    parse(&raw)
+}
+
+/// Same as [`run_extract`] but uses [`run_osascript_after_preflight`]
+/// with a caller-supplied wallclock `timeout`. Used by Contacts so a
+/// post-preflight timeout points at app responsiveness instead of
+/// re-blaming the permission we just verified.
+#[cfg(target_os = "macos")]
+pub(crate) fn run_extract_with_timeout<T>(
+    app_label: &str,
+    script: &str,
+    timeout: std::time::Duration,
+    parse: impl FnOnce(&str) -> Result<Vec<T>, IngestionError>,
+) -> Result<Vec<T>, IngestionError> {
+    preflight_permission(app_label)?;
+    let raw = run_osascript_after_preflight(script, app_label, timeout)?;
+    parse(&raw)
+}
+
+/// Iterate `<<<{marker}_START>>>…<<<{marker}_END>>>` records in `raw`,
+/// splitting each on `<<<SEP>>>`, and let the caller turn the field
+/// slice into a record (or `None` to skip). The record-boundary regex
+/// is compiled once per call.
+///
+/// Why record-boundary-then-split: a single multi-capture regex with
+/// non-greedy `.*?` captures can match across the boundary between two
+/// records when one record has more or fewer SEPs than expected (see
+/// the calendar.rs comment for the original observation). Splitting
+/// per-record keeps the parser correct under malformed input.
+#[cfg(target_os = "macos")]
+pub(crate) fn parse_records<T>(
+    raw: &str,
+    record_marker: &str,
+    mut parse_record: impl FnMut(&[&str]) -> Option<T>,
+) -> Result<Vec<T>, IngestionError> {
+    let pattern = format!("<<<{record_marker}_START>>>(.*?)<<<{record_marker}_END>>>");
+    let re = Regex::new(&pattern)
+        .map_err(|e| IngestionError::Extraction(format!("Regex error: {}", e)))?;
+
+    let mut out = Vec::new();
+    for cap in re.captures_iter(raw) {
+        let body = cap.get(1).map(|m| m.as_str()).unwrap_or("");
+        let fields: Vec<&str> = body.split("<<<SEP>>>").collect();
+        if let Some(v) = parse_record(&fields) {
+            out.push(v);
+        }
+    }
+    Ok(out)
 }
 
 /// Wallclock budget for the HTTP pre-flight probe path. Tighter than
@@ -677,6 +745,71 @@ mod tests {
             "runner blocked on script's own delay instead of enforcing timeout: {:?}",
             elapsed
         );
+    }
+
+    #[test]
+    fn parse_records_iterates_record_boundaries_and_splits_on_sep() {
+        // Two well-formed records, each with three fields. The helper must
+        // hand each field slice to the closure in order.
+        let raw = "<<<X_START>>>a<<<SEP>>>b<<<SEP>>>c<<<X_END>>>\
+                   <<<X_START>>>d<<<SEP>>>e<<<SEP>>>f<<<X_END>>>";
+        let out = parse_records(raw, "X", |fields| {
+            assert_eq!(fields.len(), 3);
+            Some(format!("{}|{}|{}", fields[0], fields[1], fields[2]))
+        })
+        .unwrap();
+        assert_eq!(out, vec!["a|b|c".to_string(), "d|e|f".to_string()]);
+    }
+
+    #[test]
+    fn parse_records_skips_records_when_closure_returns_none() {
+        // Closures that opt to skip a record (malformed field count, empty
+        // key, etc.) are exactly how the per-extractor parsers express their
+        // skip rule. The helper must drop those records without aborting.
+        let raw = "<<<R_START>>>keep<<<SEP>>>1<<<R_END>>>\
+                   <<<R_START>>>drop<<<SEP>>>1<<<R_END>>>\
+                   <<<R_START>>>keep<<<SEP>>>2<<<R_END>>>";
+        let out = parse_records(raw, "R", |fields| {
+            if fields[0] == "drop" {
+                return None;
+            }
+            Some(fields[1].to_string())
+        })
+        .unwrap();
+        assert_eq!(out, vec!["1".to_string(), "2".to_string()]);
+    }
+
+    #[test]
+    fn parse_records_returns_empty_for_empty_or_unmatched_input() {
+        // No records at all → empty vec, never an error. The closure must
+        // not be invoked when the regex finds no boundaries.
+        let mut invoked = 0;
+        let out = parse_records::<()>("", "X", |_| {
+            invoked += 1;
+            None
+        })
+        .unwrap();
+        assert!(out.is_empty());
+        assert_eq!(invoked, 0);
+
+        let out2 = parse_records::<()>("nothing useful here", "X", |_| {
+            invoked += 1;
+            None
+        })
+        .unwrap();
+        assert!(out2.is_empty());
+        assert_eq!(invoked, 0);
+    }
+
+    #[test]
+    fn parse_records_passes_variable_field_counts_to_closure() {
+        // Calendar's parser tolerates 8 (legacy) or 9 (with attendees) fields.
+        // The helper hands the actual `fields.len()` to the closure so that
+        // tolerance lives at the call site, not in the helper.
+        let raw = "<<<E_START>>>a<<<SEP>>>b<<<E_END>>>\
+                   <<<E_START>>>x<<<SEP>>>y<<<SEP>>>z<<<E_END>>>";
+        let lengths: Vec<usize> = parse_records(raw, "E", |fields| Some(fields.len())).unwrap();
+        assert_eq!(lengths, vec![2, 3]);
     }
 }
 

@@ -29,10 +29,9 @@
 //!   would sit inside the extract's wallclock timeout (now 30 seconds for
 //!   Contacts; see `CONTACTS_OSASCRIPT_TIMEOUT`).
 
-use regex::Regex;
 use serde_json::{json, Value};
 
-use super::{content_hash, preflight_permission, run_osascript_after_preflight};
+use super::{content_hash, parse_records, run_extract_with_timeout};
 use crate::ingestion::IngestionError;
 
 /// Wallclock budget for the Contacts extract. The script iterates
@@ -59,15 +58,17 @@ pub struct Contact {
 /// no-name placeholders that have no searchable content and would only pollute
 /// the molecule store with empty-key rows.
 pub fn extract() -> Result<Vec<Contact>, IngestionError> {
-    // `preflight_permission` succeeded, so by the time the long extract
-    // runs we know TCC Automation permission for Contacts is granted. Use
-    // the "after preflight" runner so a timeout here doesn't falsely blame
-    // permission — it points at app responsiveness instead, which matches
-    // the real failure mode (Contacts.app cold-start with iCloud sync).
-    preflight_permission("Contacts.app")?;
-    let script = build_script();
-    let raw = run_osascript_after_preflight(&script, "Contacts.app", CONTACTS_OSASCRIPT_TIMEOUT)?;
-    parse_output(&raw)
+    // `run_extract_with_timeout` runs preflight first, then the
+    // "after preflight" osascript runner — so a timeout here doesn't
+    // falsely blame Automation permission, it points at app
+    // responsiveness instead (the real failure mode on a Contacts.app
+    // cold-start with iCloud sync).
+    run_extract_with_timeout(
+        "Contacts.app",
+        &build_script(),
+        CONTACTS_OSASCRIPT_TIMEOUT,
+        parse_output,
+    )
 }
 
 /// Convert extracted contacts into JSON records ready for ingestion.
@@ -170,38 +171,27 @@ end tell"#
 }
 
 pub fn parse_output(raw: &str) -> Result<Vec<Contact>, IngestionError> {
-    // Scan record boundaries first, then split each record on `<<<SEP>>>`.
-    // Splitting per-record keeps us agnostic to future field additions and
-    // avoids the multi-field-regex cross-record match bug documented in the
-    // calendar parser.
-    let record_re = Regex::new(r"<<<CON_START>>>(.*?)<<<CON_END>>>")
-        .map_err(|e| IngestionError::Extraction(format!("Regex error: {}", e)))?;
-
-    let mut contacts = Vec::new();
-    for cap in record_re.captures_iter(raw) {
-        let body = cap.get(1).map(|m| m.as_str()).unwrap_or("");
-        let fields: Vec<&str> = body.split("<<<SEP>>>").collect();
+    parse_records(raw, "CON", |fields| {
         if fields.len() != 6 {
             tracing::warn!(
                 "apple_contacts.parse_output: skipping malformed record with {} fields",
                 fields.len()
             );
-            continue;
+            return None;
         }
         let full_name = fields[0].trim().to_string();
         if full_name.is_empty() {
-            continue;
+            return None;
         }
-        contacts.push(Contact {
+        Some(Contact {
             full_name,
             organization: fields[1].trim().to_string(),
             emails: parse_multi(fields[2].trim()),
             phones: parse_multi(fields[3].trim()),
             birthday: fields[4].trim().to_string(),
             note: fields[5].trim().to_string(),
-        });
-    }
-    Ok(contacts)
+        })
+    })
 }
 
 /// Parse a comma-separated list of values. Empty input → empty vec. Empty

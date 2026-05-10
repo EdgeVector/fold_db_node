@@ -1,9 +1,8 @@
 //! Extract calendar events from Apple Calendar via osascript.
 
-use regex::Regex;
 use serde_json::{json, Value};
 
-use super::{content_hash, preflight_permission, run_osascript};
+use super::{content_hash, parse_records, run_extract};
 use crate::ingestion::IngestionError;
 
 /// A single event extracted from Apple Calendar.
@@ -30,15 +29,7 @@ pub struct CalendarEvent {
 
 /// Extract all events (or events from a specific calendar) from Apple Calendar.
 pub fn extract(calendar: Option<&str>) -> Result<Vec<CalendarEvent>, IngestionError> {
-    // Fail fast (within `TCC_PROBE_TIMEOUT`, ~5s) when Automation access
-    // for Calendar.app is missing — without this, the long extract sits
-    // inside `OSASCRIPT_TIMEOUT` (5 min) before the user sees the
-    // "Grant access in System Settings → Privacy & Security → Automation"
-    // hint. Same shape as contacts.rs.
-    preflight_permission("Calendar.app")?;
-    let script = build_script(calendar);
-    let raw = run_osascript(&script, "Calendar.app")?;
-    parse_output(&raw)
+    run_extract("Calendar.app", &build_script(calendar), parse_output)
 }
 
 /// Convert extracted calendar events into JSON records ready for ingestion.
@@ -162,41 +153,26 @@ fn event_body_block(cal_name_var: &str) -> String {
 }
 
 pub fn parse_output(raw: &str) -> Result<Vec<CalendarEvent>, IngestionError> {
-    // The AppleScript emits one `<<<EVT_START>>>…<<<EVT_END>>>` block
-    // per event. We scan for full records first, then split each
-    // record on `<<<SEP>>>` to get its fields. This avoids a subtle
-    // bug with a single multi-field regex: with non-greedy `.*?`
-    // captures, a 9-SEP regex will happily match across the
-    // boundary between two 8-SEP records in the legacy format.
-    //
-    // Splitting per-record keeps us correctly agnostic to field
-    // count — 8 fields means legacy (attendees: empty), 9 fields
-    // means the new attendees-aware format.
-    let record_re = Regex::new(r"<<<EVT_START>>>(.*?)<<<EVT_END>>>")
-        .map_err(|e| IngestionError::Extraction(format!("Regex error: {}", e)))?;
-
-    let mut events = Vec::new();
-    for cap in record_re.captures_iter(raw) {
-        let body = cap.get(1).map(|m| m.as_str()).unwrap_or("");
-        let fields: Vec<&str> = body.split("<<<SEP>>>").collect();
-        // Accept 8 (legacy) or 9 (with attendees) fields. Anything
-        // else is a malformed record; skip silently because callers
-        // must never abort ingestion on one bad row.
+    // 8 fields = legacy format (no attendees). 9 fields = current format
+    // (attendees as a comma-joined string in the trailing field). Other
+    // counts are malformed; warn and drop because ingestion must not
+    // abort on one bad row.
+    parse_records(raw, "EVT", |fields| {
         if fields.len() < 8 || fields.len() > 9 {
             tracing::warn!(
                 "apple_calendar.parse_output: skipping malformed record with {} fields",
                 fields.len()
             );
-            continue;
+            return None;
         }
-        let all_day = fields[6].trim().to_lowercase() == "true";
-        let recurring = fields[7].trim().to_lowercase() == "true";
+        let all_day = fields[6].trim().eq_ignore_ascii_case("true");
+        let recurring = fields[7].trim().eq_ignore_ascii_case("true");
         let attendees = if fields.len() == 9 {
             parse_attendees(fields[8].trim())
         } else {
             Vec::new()
         };
-        events.push(CalendarEvent {
+        Some(CalendarEvent {
             summary: fields[0].trim().to_string(),
             start_time: fields[1].trim().to_string(),
             end_time: fields[2].trim().to_string(),
@@ -206,9 +182,8 @@ pub fn parse_output(raw: &str) -> Result<Vec<CalendarEvent>, IngestionError> {
             all_day,
             recurring,
             attendees,
-        });
-    }
-    Ok(events)
+        })
+    })
 }
 
 /// Parse the comma-separated attendee email list emitted by the
