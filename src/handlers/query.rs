@@ -10,14 +10,48 @@ use crate::handlers::handler_response;
 use crate::handlers::response::{
     get_db_guard, ApiResponse, HandlerError, HandlerResult, IntoHandlerError, IntoTypedHandlerError,
 };
+use fold_db::schema::types::field::HashRangeFilter;
 use fold_db::schema::types::operations::Query;
 use serde::{Deserialize, Serialize};
 
+/// Default `limit` applied when the request body omits one. Matches the
+/// historical implicit cap of 100 records for unfiltered queries, so existing
+/// callers see no behaviour change beyond gaining `total_count`/`has_more`.
+pub const DEFAULT_QUERY_LIMIT: usize = 100;
+
+/// Hard cap on a single page. Prevents a hostile client from asking for an
+/// unbounded response.
+pub const MAX_QUERY_LIMIT: usize = 1000;
+
+/// Internal fetch cap used to override fold_db's default `SampleN(100)` when
+/// the caller passes no filter. Lets us compute an accurate `total_count` for
+/// typical user databases while bounding memory use. If a schema has more
+/// records than this cap, `has_more` is `true` and `total_count` reports the
+/// cap (a counts cache would be the next step — out of scope here).
+pub const INTERNAL_FETCH_CAP: usize = 10_000;
+
 handler_response! {
-    /// Response for query execution
+    /// Response for query execution. Includes pagination metadata so callers
+    /// can detect truncation: `total_count` is the size of the post-filter
+    /// result set fold_db_node observed, `returned_count` is `results.len()`
+    /// after applying the caller's `offset`/`limit`, and `has_more` is true
+    /// when more records exist beyond the returned page.
     pub struct QueryResponse {
-        /// Query results
+        /// Query results (page).
         pub results: serde_json::Value,
+        /// Total records matching the query before `offset`/`limit` are
+        /// applied. Capped at `INTERNAL_FETCH_CAP` for unfiltered queries —
+        /// when `has_more` is true and `total_count` equals that cap, there
+        /// may be additional records that fold_db_node did not load.
+        pub total_count: usize,
+        /// Number of records actually returned in `results`.
+        pub returned_count: usize,
+        /// Page size applied (defaults to `DEFAULT_QUERY_LIMIT`).
+        pub limit: usize,
+        /// Page offset applied (defaults to 0).
+        pub offset: usize,
+        /// True when more records exist beyond the returned page.
+        pub has_more: bool,
     }
 }
 
@@ -30,25 +64,50 @@ handler_response! {
 }
 
 /// Execute a query with access control.
-/// The caller's public key is used to resolve trust distances across domains.
-/// Fields where the caller lacks access are filtered from results.
+///
+/// The caller's public key resolves trust distances across domains; fields
+/// the caller lacks access to are filtered from results.
+///
+/// Pagination: `limit` (clamped to `MAX_QUERY_LIMIT`, default
+/// `DEFAULT_QUERY_LIMIT`) and `offset` are applied here, after fold_db
+/// returns. When the caller passes no `filter`, fold_db's default would
+/// silently truncate at 100 records (`HashRangeFilter::SampleN(100)` in
+/// `apply_*_filter`); we override that with `SampleN(INTERNAL_FETCH_CAP)`
+/// so `total_count` is accurate up to the cap.
 pub async fn execute_query(
-    query: Query,
+    mut query: Query,
+    limit: Option<usize>,
+    offset: Option<usize>,
     user_hash: &str,
     node: &FoldNode,
 ) -> HandlerResult<QueryResponse> {
     let processor = OperationProcessor::from_ref(node);
     let caller_pub_key = current_caller_pubkey(node);
 
-    let results = processor
+    let limit = limit.unwrap_or(DEFAULT_QUERY_LIMIT).min(MAX_QUERY_LIMIT);
+    let offset = offset.unwrap_or(0);
+
+    if query.filter.is_none() {
+        query.filter = Some(HashRangeFilter::SampleN(INTERNAL_FETCH_CAP));
+    }
+
+    let all_results = processor
         .execute_query_json_with_access(query, &caller_pub_key)
         .await
         .typed_handler_err()?;
-    let results_json = serde_json::Value::Array(results);
+    let total_count = all_results.len();
+    let page: Vec<serde_json::Value> = all_results.into_iter().skip(offset).take(limit).collect();
+    let returned_count = page.len();
+    let has_more = offset.saturating_add(returned_count) < total_count;
 
     Ok(ApiResponse::success_with_user(
         QueryResponse {
-            results: results_json,
+            results: serde_json::Value::Array(page),
+            total_count,
+            returned_count,
+            limit,
+            offset,
+            has_more,
         },
         user_hash,
     ))
@@ -273,8 +332,16 @@ mod tests {
     fn test_query_response_serialization() {
         let response = QueryResponse {
             results: serde_json::json!([]),
+            total_count: 0,
+            returned_count: 0,
+            limit: DEFAULT_QUERY_LIMIT,
+            offset: 0,
+            has_more: false,
         };
         let json = serde_json::to_string(&response).unwrap();
         assert!(json.contains("results"));
+        assert!(json.contains("total_count"));
+        assert!(json.contains("returned_count"));
+        assert!(json.contains("has_more"));
     }
 }

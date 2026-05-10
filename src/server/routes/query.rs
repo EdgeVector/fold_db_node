@@ -1,4 +1,8 @@
 use crate::handlers::query as query_handlers;
+// Imported so the bare `QueryResponse` token in the `#[utoipa::path]`
+// annotation resolves to the same type registered via `components(schemas(...))`.
+#[allow(unused_imports)]
+use crate::handlers::query::QueryResponse;
 use crate::server::http_server::AppState;
 use crate::server::routes::{
     handler_error_to_response, handler_result_to_response, node_or_return,
@@ -14,30 +18,64 @@ pub struct MutationResponse {
 }
 
 /// Execute a query.
+///
+/// Body is a [`Query`]-shaped JSON object with two optional pagination
+/// siblings: `limit` (default 100, max 1000) and `offset` (default 0). They
+/// are stripped from the body before deserialising into `Query`, which has
+/// `#[serde(deny_unknown_fields)]` and no native pagination fields. The
+/// response carries `total_count`, `returned_count`, `limit`, `offset`, and
+/// `has_more` so callers can detect truncation.
 #[utoipa::path(
     post,
     path = "/api/query",
     tag = "query",
     request_body = serde_json::Value,
     responses(
-        (status = 200, description = "Array of query result records"),
+        (status = 200, description = "Page of query results plus pagination metadata", body = QueryResponse),
         (status = 400, description = "Bad request"),
         (status = 500, description = "Server error")
     )
 )]
-pub async fn execute_query(query: web::Json<Query>, state: web::Data<AppState>) -> impl Responder {
-    let query_inner = query.into_inner();
+pub async fn execute_query(body: web::Json<Value>, state: web::Data<AppState>) -> impl Responder {
+    let mut body = body.into_inner();
+    let (limit, offset) = match body.as_object_mut() {
+        Some(obj) => (
+            obj.remove("limit")
+                .and_then(|v| v.as_u64())
+                .map(|n| n as usize),
+            obj.remove("offset")
+                .and_then(|v| v.as_u64())
+                .map(|n| n as usize),
+        ),
+        None => (None, None),
+    };
+
+    let query_inner: Query = match serde_json::from_value(body) {
+        Ok(q) => q,
+        Err(e) => {
+            tracing::warn!(
+                target: "fold_node::http_server",
+                "execute_query: failed to parse query body: {}",
+                e
+            );
+            return HttpResponse::BadRequest()
+                .json(json!({"error": format!("Invalid query body: {}", e)}));
+        }
+    };
+
     tracing::info!(
             target: "fold_node::http_server",
-        "execute_query: schema={}, fields={:?}, filter={:?}",
+        "execute_query: schema={}, fields={:?}, filter={:?}, limit={:?}, offset={:?}",
         query_inner.schema_name,
         query_inner.fields,
-        query_inner.filter
+        query_inner.filter,
+        limit,
+        offset,
     );
 
     let (user_hash, node) = node_or_return!(state);
 
-    match query_handlers::execute_query(query_inner, &user_hash, &node).await {
+    match query_handlers::execute_query(query_inner, limit, offset, &user_hash, &node).await {
         Ok(response) => HttpResponse::Ok().json(response),
         Err(e) => {
             tracing::error!(
