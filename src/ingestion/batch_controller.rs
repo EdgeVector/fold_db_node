@@ -10,7 +10,7 @@ use std::sync::Arc;
 use tokio::sync::{Mutex, Notify};
 
 /// Status of a batch ingestion run.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, utoipa::ToSchema)]
 pub enum BatchStatus {
     Running,
     Paused,
@@ -47,7 +47,7 @@ pub struct InFlightFile {
 }
 
 /// A file that failed during batch processing.
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, utoipa::ToSchema)]
 pub struct FailedFile {
     pub name: String,
     pub error: String,
@@ -190,7 +190,14 @@ pub fn create_batch_controller_map() -> BatchControllerMap {
 }
 
 /// Serialisable snapshot of batch state for the status endpoint.
-#[derive(Debug, Serialize, Deserialize)]
+///
+/// **Canonical contract for `GET /api/ingestion/batch/{batch_id}`.** This Rust
+/// struct is the single source of truth — `openapi.ts` is generated from the
+/// `ToSchema` derive below, and the React `BatchStatusResponse` type aliases
+/// the OpenAPI component. Field names here flow unchanged through serde JSON,
+/// the OpenAPI schema, and the frontend client. Don't rename a field on one
+/// side; rename it here and regenerate `openapi.ts`.
+#[derive(Debug, Serialize, Deserialize, utoipa::ToSchema)]
 pub struct BatchStatusResponse {
     pub batch_id: String,
     pub status: BatchStatus,

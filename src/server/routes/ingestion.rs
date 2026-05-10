@@ -693,7 +693,25 @@ pub async fn batch_folder_ingest(
     })
 }
 
-/// Get batch status
+/// Get batch status.
+///
+/// Response shape is defined by [`BatchStatusResponse`] in
+/// `src/ingestion/batch_controller.rs` — that struct is the single source of
+/// truth. Field names (`status`, `files_total`, `files_completed`,
+/// `files_failed`, `files_remaining`, `in_flight_count`, `failed_files`,
+/// `is_local_provider`, …) flow unchanged through serde JSON, the OpenAPI
+/// schema (via the `ToSchema` derive), and the React client. The integration
+/// test `tests/batch_status_response_shape.rs` pins the exact JSON keys.
+#[utoipa::path(
+    get,
+    path = "/api/ingestion/batch/{batch_id}",
+    tag = "ingestion",
+    params(("batch_id" = String, Path, description = "Batch identifier")),
+    responses(
+        (status = 200, description = "Current batch state", body = BatchStatusResponse),
+        (status = 404, description = "Batch not found"),
+    )
+)]
 pub async fn get_batch_status(
     path: web::Path<String>,
     batch_controller_map: web::Data<BatchControllerMap>,

@@ -160,22 +160,11 @@ export interface SmartFolderIngestResponse {
   message: string;
 }
 
-// Batch status types
-export interface BatchStatusResponse {
-  batch_id: string;
-  status: "Running" | "Paused" | "Completed" | "Cancelled" | "Failed";
-  spend_limit: number | null;
-  accumulated_cost: number;
-  files_total: number;
-  files_completed: number;
-  files_failed: number;
-  files_remaining: number;
-  estimated_remaining_cost: number;
-  in_flight_count: number;
-  current_file_name: string | null;
-  current_file_step: string | null;
-  current_file_progress: number | null;
-}
+// Batch status types — Phase 4 alias over the OpenAPI source-of-truth so the
+// shape stays in lockstep with the Rust `BatchStatusResponse` struct in
+// `src/ingestion/batch_controller.rs`.
+export type BatchStatusResponse = components["schemas"]["BatchStatusResponse"];
+export type FailedFile = components["schemas"]["FailedFile"];
 
 // Progress tracking types
 export interface IngestionProgress {

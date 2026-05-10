@@ -21,6 +21,32 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/ingestion/batch/{batch_id}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Get batch status.
+         * @description Response shape is defined by [`BatchStatusResponse`] in
+         *     `src/ingestion/batch_controller.rs` — that struct is the single source of
+         *     truth. Field names (`status`, `files_total`, `files_completed`,
+         *     `files_failed`, `files_remaining`, `in_flight_count`, `failed_files`,
+         *     `is_local_provider`, …) flow unchanged through serde JSON, the OpenAPI
+         *     schema (via the `ToSchema` derive), and the React client. The integration
+         *     test `tests/batch_status_response_shape.rs` pins the exact JSON keys.
+         */
+        get: operations["get_batch_status"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/ingestion/config": {
         parameters: {
             query?: never;
@@ -553,6 +579,49 @@ export interface components {
             written_at?: number;
         };
         /**
+         * @description Status of a batch ingestion run.
+         * @enum {string}
+         */
+        BatchStatus: "Running" | "Paused" | "Completed" | "Cancelled" | "Failed";
+        /**
+         * @description Serialisable snapshot of batch state for the status endpoint.
+         *
+         *     **Canonical contract for `GET /api/ingestion/batch/{batch_id}`.** This Rust
+         *     struct is the single source of truth — `openapi.ts` is generated from the
+         *     `ToSchema` derive below, and the React `BatchStatusResponse` type aliases
+         *     the OpenAPI component. Field names here flow unchanged through serde JSON,
+         *     the OpenAPI schema, and the frontend client. Don't rename a field on one
+         *     side; rename it here and regenerate `openapi.ts`.
+         */
+        BatchStatusResponse: {
+            /** Format: double */
+            accumulated_cost: number;
+            batch_id: string;
+            /** @description Name of a file currently being processed (first in-flight, for backward compat). */
+            current_file_name?: string | null;
+            /**
+             * Format: int32
+             * @description Progress percentage (0-100) for the active file.
+             */
+            current_file_progress?: number | null;
+            /** @description Current processing step message for the active file. */
+            current_file_step?: string | null;
+            /** Format: double */
+            estimated_remaining_cost: number;
+            failed_files: components["schemas"]["FailedFile"][];
+            files_completed: number;
+            files_failed: number;
+            files_remaining: number;
+            files_total: number;
+            /** @description Number of files currently being processed concurrently. */
+            in_flight_count: number;
+            /** @description Whether the AI provider is local (e.g. Ollama) and therefore free. */
+            is_local_provider: boolean;
+            /** Format: double */
+            spend_limit?: number | null;
+            status: components["schemas"]["BatchStatus"];
+        };
+        /**
          * @description A cryptographic capability constraint on a field.
          *     Binds a public key to a quota-limited access grant.
          */
@@ -740,6 +809,11 @@ export interface components {
          * @enum {string}
          */
         DeclarativeSchemaType: "Single" | "Hash" | "Range" | "HashRange";
+        /** @description A file that failed during batch processing. */
+        FailedFile: {
+            error: string;
+            name: string;
+        };
         /**
          * @description Per-field access policy combining trust tier and capability checks.
          *     Attached to `FieldCommon`. If `None`, field uses default (owner-only).
@@ -1447,6 +1521,36 @@ export interface operations {
             };
             /** @description Server error */
             500: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+        };
+    };
+    get_batch_status: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description Batch identifier */
+                batch_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Current batch state */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["BatchStatusResponse"];
+                };
+            };
+            /** @description Batch not found */
+            404: {
                 headers: {
                     [name: string]: unknown;
                 };
