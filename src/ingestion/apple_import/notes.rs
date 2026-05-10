@@ -1,9 +1,8 @@
 //! Extract notes from Apple Notes via osascript.
 
-use regex::Regex;
 use serde_json::{json, Value};
 
-use super::{content_hash, preflight_permission, run_osascript};
+use super::{content_hash, parse_records, run_extract};
 use crate::ingestion::IngestionError;
 
 /// A single note extracted from Apple Notes.
@@ -18,13 +17,7 @@ pub struct Note {
 ///
 /// Returns a list of parsed [`Note`] structs.
 pub fn extract(folder: Option<&str>) -> Result<Vec<Note>, IngestionError> {
-    // Fast-fail on missing Automation access (~5s) before the long
-    // extract burns the full `OSASCRIPT_TIMEOUT`. Same shape as
-    // contacts.rs.
-    preflight_permission("Notes.app")?;
-    let script = build_script(folder);
-    let raw = run_osascript(&script, "Notes.app")?;
-    parse_output(&raw)
+    run_extract("Notes.app", &build_script(folder), parse_output)
 }
 
 /// Convert extracted notes into JSON records ready for ingestion.
@@ -74,21 +67,17 @@ end tell"#
 }
 
 pub fn parse_output(raw: &str) -> Result<Vec<Note>, IngestionError> {
-    let re = Regex::new(
-        r"<<<NOTE_START>>>(.*?)<<<SEP>>>(.*?)<<<SEP>>>(.*?)<<<SEP>>>(.*?)<<<NOTE_END>>>",
-    )
-    .map_err(|e| IngestionError::Extraction(format!("Regex error: {}", e)))?;
-
-    let mut notes = Vec::new();
-    for cap in re.captures_iter(raw) {
-        notes.push(Note {
-            title: cap[1].trim().to_string(),
-            body: cap[2].trim().to_string(),
-            created_at: cap[3].trim().to_string(),
-            modified_at: cap[4].trim().to_string(),
-        });
-    }
-    Ok(notes)
+    parse_records(raw, "NOTE", |fields| {
+        if fields.len() != 4 {
+            return None;
+        }
+        Some(Note {
+            title: fields[0].trim().to_string(),
+            body: fields[1].trim().to_string(),
+            created_at: fields[2].trim().to_string(),
+            modified_at: fields[3].trim().to_string(),
+        })
+    })
 }
 
 #[cfg(test)]
