@@ -1600,7 +1600,9 @@ mod tests {
             "answer must be non-empty so the UI has something to render"
         );
         assert!(
-            outcome.answer.contains("couldn't reach a final answer in 3 steps"),
+            outcome
+                .answer
+                .contains("couldn't reach a final answer in 3 steps"),
             "partial-progress message should report the iteration cap; got: {}",
             outcome.answer
         );
@@ -1610,9 +1612,16 @@ mod tests {
             "agent should have made one tool call per iteration before stopping"
         );
         assert!(
-            outcome.tool_calls.iter().all(|tc| tc.tool == "list_schemas"),
+            outcome
+                .tool_calls
+                .iter()
+                .all(|tc| tc.tool == "list_schemas"),
             "scripted backend pinned the agent on list_schemas; got: {:?}",
-            outcome.tool_calls.iter().map(|tc| &tc.tool).collect::<Vec<_>>()
+            outcome
+                .tool_calls
+                .iter()
+                .map(|tc| &tc.tool)
+                .collect::<Vec<_>>()
         );
     }
 
@@ -1647,7 +1656,11 @@ mod tests {
             "normal completion must not set stopped_reason; got {:?}",
             outcome.stopped_reason
         );
-        assert_eq!(outcome.tool_calls.len(), 1, "one list_schemas call is enough");
+        assert_eq!(
+            outcome.tool_calls.len(),
+            1,
+            "one list_schemas call is enough"
+        );
         assert_eq!(outcome.tool_calls[0].tool, "list_schemas");
         assert!(
             outcome.answer.contains("0 reminders"),
