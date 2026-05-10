@@ -258,7 +258,9 @@ async fn test_agent_scan_ingest_and_query() {
             .await;
 
         match result {
-            Ok((answer, tool_calls)) => {
+            Ok(outcome) => {
+                let answer = outcome.answer;
+                let tool_calls = outcome.tool_calls;
                 eprintln!("  Tool calls made: {}", tool_calls.len());
                 for tc in &tool_calls {
                     let result_preview = tc.result.to_string();
@@ -370,7 +372,9 @@ async fn test_agent_scan_ingest_and_query() {
         .await;
 
     match followup_result {
-        Ok((answer, tool_calls)) => {
+        Ok(outcome) => {
+            let answer = outcome.answer;
+            let tool_calls = outcome.tool_calls;
             eprintln!("  Multi-turn follow-up succeeded");
             eprintln!("  Tool calls: {}", tool_calls.len());
             let preview = if answer.len() > 300 {

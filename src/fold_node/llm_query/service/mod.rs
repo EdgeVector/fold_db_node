@@ -41,6 +41,16 @@ impl LlmQueryService {
         })
     }
 
+    /// Construct a service with an arbitrary backend. Used by tests to inject
+    /// scripted-response mocks instead of an LLM provider.
+    #[cfg(test)]
+    pub(crate) fn with_backend(backend: Arc<dyn AiBackend>, config_dir: PathBuf) -> Self {
+        Self {
+            backend,
+            config_dir,
+        }
+    }
+
     /// Per-server config directory (e.g. `~/.folddb/config`).
     pub(crate) fn config_dir(&self) -> &std::path::Path {
         &self.config_dir
@@ -143,10 +153,10 @@ impl LlmQueryService {
         prompt.push_str("## Available Tools\n\n");
 
         prompt.push_str("### query\n");
-        prompt.push_str("Query data from a schema.\n");
+        prompt.push_str("Fetch RECORDS from a schema. This tool returns rows, not aggregates — there is no `count` or `sum` field. For counts, use **count_records** or **list_schemas** instead.\n");
         prompt.push_str("Parameters:\n");
         prompt.push_str("- schema_name (string, required): Name of the schema to query\n");
-        prompt.push_str("- fields (array of strings, optional): Fields to return. If omitted, returns all fields. IMPORTANT: Always specify only the fields you need — large text fields like 'markdown' or 'body' can be very large and cause context overflow.\n");
+        prompt.push_str("- fields (array of strings, optional): Subset of record fields to return. If omitted, returns all fields. Pass field names that exist on the schema (see the Schemas section below). IMPORTANT: never pass synthetic names like \"count\", \"total\", or \"_id\" — they will be interpreted as record fields and silently return nothing. Always specify only the fields you need; large text fields like 'markdown' or 'body' can cause context overflow.\n");
         prompt.push_str("- filter (object, optional): Filter to apply. Examples:\n");
         prompt.push_str("  - {\"HashKey\": \"value\"} - exact match on hash key\n");
         prompt.push_str("  - {\"RangePrefix\": \"prefix\"} - prefix match on range key\n");
@@ -167,9 +177,16 @@ impl LlmQueryService {
 
         prompt.push_str("### list_schemas\n");
         prompt.push_str("List all available schemas. Each entry includes a `record_count` field with the exact number of records stored in that schema.\n");
-        prompt.push_str("**Use this for inventory questions** (\"how much data do I have\", \"what's in my database\", \"summarize what's been ingested\") — one call returns counts for every schema, so you do not need to issue per-schema queries to answer.\n");
+        prompt.push_str("**Use this for inventory and \"how many\" questions across all schemas** (\"how much data do I have\", \"what's in my database\", \"summarize what's been ingested\", \"how many records in each schema\") — one call returns counts for every schema, so you do not need to issue per-schema queries to answer.\n");
         prompt.push_str("Parameters: none\n");
         prompt.push_str("Example: {\"tool\": \"list_schemas\", \"params\": {}}\n\n");
+
+        prompt.push_str("### count_records\n");
+        prompt.push_str("Return the exact number of records stored in ONE schema. **This is the right tool for \"how many\" / \"count\" / \"total\" / \"do I have any\" questions about a single schema** (e.g. \"How many reminders do I have?\", \"How many photos?\"). Do NOT use the `query` tool with `fields:[\"count\"]` — `query` returns records, not aggregates.\n");
+        prompt.push_str("Parameters:\n");
+        prompt.push_str("- schema_name (string, required): Schema ID to count (e.g. \"Reminder\"). If you do not yet know the schema ID, call **list_schemas** first.\n");
+        prompt.push_str("Returns: {\"schema_name\": \"...\", \"record_count\": <integer>}.\n");
+        prompt.push_str("Example: {\"tool\": \"count_records\", \"params\": {\"schema_name\": \"Reminder\"}}\n\n");
 
         prompt.push_str("### list_orgs\n");
         prompt.push_str("List organizations this node belongs to.\n");
@@ -435,7 +452,9 @@ impl LlmQueryService {
         prompt.push_str("3. **For questions requiring external/real-world information** (vacation planning, restaurant recommendations, travel logistics, current events, prices), use the **web_search** tool. Follow up with **fetch_url** on the most relevant results for detailed information.\n");
         prompt.push_str("4. **For tasks that create structured data** (planning, organizing, comparing, building lists), use **web_search** to research first, then use **ingest_json** to store the results in the database. The data will be schema-validated and queryable in the dashboard.\n");
         prompt.push_str("5. **For tasks that modify existing data** (change a budget, update a date, swap a hotel, fix a value), first **query** the schema to find the record's key, then use **update_record** to change specific fields. Do NOT re-ingest the entire record — just update the fields that changed.\n");
-        prompt.push_str("6. **For inventory questions** (\"how much data do I have\", \"summarize what's been ingested\", \"how many records in each schema\"), call **list_schemas** once and report each schema's `record_count` directly. Do NOT issue an unfiltered `query` per schema and do NOT report \"Unknown\" — `record_count` is the authoritative number for every active schema.\n");
+        prompt.push_str("6. **For \"how many\" / \"count\" / \"total\" / \"do I have any\" questions**, never call `query` — `query` returns records, not aggregates, so passing `fields:[\"count\"]` will return zero records and burn iterations. Instead:\n");
+        prompt.push_str("   - One specific schema (e.g. \"How many reminders do I have?\") → call **count_records** with `schema_name`. If you don't know the schema ID yet, call **list_schemas** once first to discover it, then either read `record_count` directly from that response or call **count_records**.\n");
+        prompt.push_str("   - Inventory across all schemas (\"how much data do I have\", \"summarize what's been ingested\") → call **list_schemas** once and report each schema's `record_count` directly. Do NOT issue an unfiltered `query` per schema and do NOT report \"Unknown\" — `record_count` is the authoritative number for every active schema.\n");
         prompt.push_str("7. Use other tools to gather additional information as needed\n");
         prompt.push_str(
             "8. When you have enough information to answer, provide your final response\n",

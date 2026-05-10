@@ -208,7 +208,7 @@ async fn test_smart_folder_tweets_ingest_and_query() {
         "At least one schema should exist after ingestion"
     );
 
-    let (answer, tool_calls) = query_service
+    let outcome = query_service
         .run_agent_query(
             "What are my tweets about? Give me a summary of the topics.",
             &schemas,
@@ -221,6 +221,8 @@ async fn test_smart_folder_tweets_ingest_and_query() {
         )
         .await
         .expect("AI query should succeed");
+    let answer = outcome.answer;
+    let tool_calls = outcome.tool_calls;
 
     eprintln!("Tool calls: {}", tool_calls.len());
     for tc in &tool_calls {

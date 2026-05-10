@@ -346,7 +346,7 @@ impl OperationProcessor {
         // can't collide with any persisted ai_conversations record.
         let synthetic_session_id = format!("admin-{}", uuid::Uuid::new_v4());
 
-        service
+        let outcome = service
             .run_agent_query(
                 user_query,
                 &schemas,
@@ -358,7 +358,8 @@ impl OperationProcessor {
                 &synthetic_session_id,
             )
             .await
-            .map_err(FoldDbError::Other)
+            .map_err(FoldDbError::Other)?;
+        Ok((outcome.answer, outcome.tool_calls))
     }
 
     // --- Cloud Migration Operations ---

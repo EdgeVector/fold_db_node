@@ -48,6 +48,13 @@ export interface AgentQueryResponse {
   answer: string;
   tool_calls: ToolCallRecord[];
   session_id: string;
+  /**
+   * Set when the agent stopped without producing a normal final answer.
+   * Currently the only value is `"max_iterations"` — the loop hit
+   * `max_iterations` while still issuing tool calls. When present,
+   * `answer` is a partial-progress message rather than a real answer.
+   */
+  stopped_reason?: string;
 }
 
 export const llmQueryClient = {

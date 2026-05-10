@@ -1,7 +1,7 @@
 //! Native index search, interpretation, and alternative query suggestion.
 
 use super::super::conversation_store::AI_CONVERSATIONS_SCHEMA;
-use super::super::types::{QueryPlan, ToolCallRecord};
+use super::super::types::{AgentOutcome, QueryPlan, ToolCallRecord};
 use fold_db::schema::types::field_value_type::FieldValueType;
 use fold_db::schema::types::key_config::KeyConfig;
 use fold_db::schema::types::operations::Query;
@@ -346,6 +346,23 @@ impl LlmQueryService {
                     entries.push(entry);
                 }
                 Ok(Value::Array(entries))
+            }
+
+            "count_records" => {
+                let schema_name = params
+                    .get("schema_name")
+                    .and_then(|s| s.as_str())
+                    .ok_or("count_records tool requires 'schema_name' parameter")?;
+
+                let count = processor
+                    .count_schema_records(schema_name)
+                    .await
+                    .map_err(|e| format!("count_schema_records failed: {}", e))?;
+
+                Ok(serde_json::json!({
+                    "schema_name": schema_name,
+                    "record_count": count,
+                }))
             }
 
             "list_orgs" => {
@@ -1087,7 +1104,7 @@ impl LlmQueryService {
         prior_history: &[super::super::types::Message],
         progress_tracker: Option<&crate::ingestion::ProgressTracker>,
         current_session_id: &str,
-    ) -> Result<(String, Vec<ToolCallRecord>), String> {
+    ) -> Result<AgentOutcome, String> {
         // Create an agent progress job so the frontend can track what's happening
         let agent_job_id = format!("agent-{}", uuid::Uuid::new_v4());
         if let Some(tracker) = progress_tracker {
@@ -1148,7 +1165,7 @@ impl LlmQueryService {
         progress_tracker: Option<&crate::ingestion::ProgressTracker>,
         agent_job_id: &str,
         current_session_id: &str,
-    ) -> Result<(String, Vec<ToolCallRecord>), String> {
+    ) -> Result<AgentOutcome, String> {
         let mut tool_calls: Vec<ToolCallRecord> = Vec::new();
 
         // Build prior conversation history into a context string
@@ -1186,11 +1203,16 @@ impl LlmQueryService {
         let mut consecutive_empty_errors: u32 = 0;
         const MAX_CONSECUTIVE_EMPTY: u32 = 2;
 
+        // Last non-empty raw LLM response — included in the partial-progress
+        // message when we hit `max_iterations` so the caller has *something*
+        // to show the user instead of "Internal error".
+        let mut last_response: Option<String> = None;
+
         for iteration in 0..max_iterations {
             // Build the full prompt with conversation history
             // Repeat the current date at the end so it's fresh context when generating the answer
             let full_prompt = format!(
-                "{}\n\n{}\n\nUser Query: {}\n\nReminder: Today is {}. Dates before today are in the past. Dates after today are in the future.\n\nRespond with a JSON object. Either:\n- {{\"tool\": \"tool_name\", \"params\": {{...}}}} to use a tool\n- {{\"answer\": \"your final response\"}} when you have the answer",
+                "{}\n\n{}\n\nUser Query: {}\n\nReminder: Today is {}. Dates before today are in the past. Dates after today are in the future.\n\nIf the user asked a \"how many / count / total\" question, do NOT call `query` with `fields:[\"count\"]` — that returns records, not aggregates. Use `count_records` for one schema, or `list_schemas` to read `record_count` for every schema in one call.\n\nRespond with a JSON object. Either:\n- {{\"tool\": \"tool_name\", \"params\": {{...}}}} to use a tool\n- {{\"answer\": \"your final response\"}} when you have the answer",
                 system_prompt,
                 conversation_context,
                 user_query,
@@ -1214,6 +1236,10 @@ impl LlmQueryService {
                 "Agent: LLM response: {}",
                 &response[..response.len().min(200)]
             );
+
+            if !response.trim().is_empty() {
+                last_response = Some(response.clone());
+            }
 
             // Parse the response — empty responses now return Err
             let action = match self.parse_agent_response(&response) {
@@ -1275,7 +1301,11 @@ impl LlmQueryService {
                             let _ = tracker.save(&job).await;
                         }
                     }
-                    return Ok((answer, tool_calls));
+                    return Ok(AgentOutcome {
+                        answer,
+                        tool_calls,
+                        stopped_reason: None,
+                    });
                 }
                 super::super::types::AgentAction::ToolCall { tool, params } => {
                     tracing::info!("Agent: Calling tool '{}' with params: {}", tool, params);
@@ -1288,6 +1318,7 @@ impl LlmQueryService {
                         "query" => "Querying database...",
                         "scan_folder" => "Scanning folder...",
                         "list_schemas" => "Listing schemas...",
+                        "count_records" => "Counting records...",
                         "list_orgs" => "Listing organizations...",
                         "create_view" => "Registering WASM view with schema service...",
                         "update_record" => "Updating record...",
@@ -1353,7 +1384,17 @@ impl LlmQueryService {
             }
         }
 
-        // Mark agent job as failed on max iterations
+        // Hitting `max_iterations` is no longer an error — we surface a
+        // structured partial-progress outcome (`stopped_reason =
+        // max_iterations`) so the caller can show the user something useful
+        // instead of "Internal error". Reproducer that motivated this:
+        // "How many reminders do I have?" against Ollama llama3.1:8b would
+        // loop on `query` with `fields:["count"]` and bottom out in HTTP 500.
+        tracing::warn!(
+            "Agent: reached max_iterations ({}) with {} tool calls — returning partial outcome",
+            max_iterations,
+            tool_calls.len()
+        );
         if let Some(tracker) = progress_tracker {
             if let Ok(Some(mut job)) = tracker.load(agent_job_id).await {
                 job.fail("Reached maximum iterations without a final answer".to_string());
@@ -1361,10 +1402,30 @@ impl LlmQueryService {
             }
         }
 
-        Err(format!(
-            "Agent reached maximum iterations ({}) without providing a final answer",
-            max_iterations
-        ))
+        let last_partial = last_response
+            .as_deref()
+            .map(|r| r.trim())
+            .filter(|r| !r.is_empty())
+            .map(|r| {
+                let truncated: String = r.chars().take(500).collect();
+                if r.len() > truncated.len() {
+                    format!(" Last partial reasoning: {}…", truncated)
+                } else {
+                    format!(" Last partial reasoning: {}", truncated)
+                }
+            })
+            .unwrap_or_default();
+
+        let answer = format!(
+            "Sorry, I couldn't reach a final answer in {} steps.{}",
+            max_iterations, last_partial
+        );
+
+        Ok(AgentOutcome {
+            answer,
+            tool_calls,
+            stopped_reason: Some("max_iterations".to_string()),
+        })
     }
 }
 
@@ -1445,5 +1506,166 @@ mod tests {
         ];
         drop_current_session_hits(&mut results, "session-current");
         assert_eq!(results.len(), 2);
+    }
+
+    // ── Agent-loop tests with a scripted mock backend ──────────────────
+    //
+    // These tests exercise `run_agent_query` end-to-end without an LLM
+    // provider. They cover:
+    //   1. `max_iterations` returns Ok with `stopped_reason` instead of an
+    //      Err — the regression that produced HTTP 500 "Internal error" on
+    //      the dogfood "How many reminders do I have?" repro.
+    //   2. A single `list_schemas` tool call is enough to satisfy a count
+    //      question, validating the prompt + tool plumbing for fix (B).
+
+    use crate::fold_node::config::NodeConfig;
+    use crate::fold_node::FoldNode;
+    use crate::ingestion::ai::client::AiBackend;
+    use crate::ingestion::IngestionResult;
+    use async_trait::async_trait;
+    use std::sync::Arc;
+    use std::sync::Mutex;
+
+    /// Backend that returns a queue of pre-scripted responses. After the
+    /// queue is exhausted, it keeps returning the last response (so a
+    /// max-iterations test can pin the agent on a tool call indefinitely).
+    struct ScriptedBackend {
+        responses: Mutex<Vec<String>>,
+    }
+
+    impl ScriptedBackend {
+        fn new(responses: Vec<&str>) -> Arc<Self> {
+            Arc::new(Self {
+                responses: Mutex::new(responses.into_iter().map(String::from).collect()),
+            })
+        }
+    }
+
+    #[async_trait]
+    impl AiBackend for ScriptedBackend {
+        async fn call(&self, _prompt: &str) -> IngestionResult<String> {
+            let mut q = self.responses.lock().unwrap();
+            // Pop from the front; if empty, repeat the most recent response.
+            // Repeating lets `max_iterations` tests sit on a perpetual tool
+            // call without exhausting the script.
+            let next = if q.is_empty() {
+                "{\"tool\":\"list_schemas\",\"params\":{}}".to_string()
+            } else {
+                q.remove(0)
+            };
+            Ok(next)
+        }
+    }
+
+    async fn setup_node_for_agent() -> (FoldNode, tempfile::TempDir) {
+        let temp = tempfile::tempdir().unwrap();
+        let keypair = fold_db::security::Ed25519KeyPair::generate().unwrap();
+        let config = NodeConfig::new(temp.path().to_path_buf())
+            .with_schema_service_url("test://mock")
+            .with_seed_identity(crate::identity::identity_from_keypair(&keypair));
+        let node = FoldNode::new(config).await.unwrap();
+        (node, temp)
+    }
+
+    #[tokio::test]
+    async fn max_iterations_returns_ok_with_stopped_reason() {
+        // Scripted backend that always emits a tool call → never an answer.
+        // This forces the agent loop to bottom out on `max_iterations`.
+        let backend = ScriptedBackend::new(vec![]); // queue empty → repeats default tool call
+        let service = LlmQueryService::with_backend(backend, std::path::PathBuf::new());
+
+        let (node, _temp) = setup_node_for_agent().await;
+
+        let outcome = service
+            .run_agent_query(
+                "How many reminders do I have?",
+                &[],
+                &node,
+                "test-user",
+                3,
+                &[],
+                None,
+                "test-session",
+            )
+            .await
+            .expect("max_iterations must yield Ok, not Err");
+
+        assert_eq!(
+            outcome.stopped_reason.as_deref(),
+            Some("max_iterations"),
+            "stopped_reason should signal max_iterations was hit"
+        );
+        assert!(
+            !outcome.answer.trim().is_empty(),
+            "answer must be non-empty so the UI has something to render"
+        );
+        assert!(
+            outcome
+                .answer
+                .contains("couldn't reach a final answer in 3 steps"),
+            "partial-progress message should report the iteration cap; got: {}",
+            outcome.answer
+        );
+        assert_eq!(
+            outcome.tool_calls.len(),
+            3,
+            "agent should have made one tool call per iteration before stopping"
+        );
+        assert!(
+            outcome
+                .tool_calls
+                .iter()
+                .all(|tc| tc.tool == "list_schemas"),
+            "scripted backend pinned the agent on list_schemas; got: {:?}",
+            outcome
+                .tool_calls
+                .iter()
+                .map(|tc| &tc.tool)
+                .collect::<Vec<_>>()
+        );
+    }
+
+    #[tokio::test]
+    async fn count_question_resolves_via_list_schemas_in_one_tool_call() {
+        // Mock the LLM the way fix (B) intends the prompt to steer it:
+        // (1) call list_schemas, (2) answer with the count.
+        let backend = ScriptedBackend::new(vec![
+            "{\"tool\":\"list_schemas\",\"params\":{}}",
+            "{\"answer\":\"You have 0 reminders in your database.\"}",
+        ]);
+        let service = LlmQueryService::with_backend(backend, std::path::PathBuf::new());
+
+        let (node, _temp) = setup_node_for_agent().await;
+
+        let outcome = service
+            .run_agent_query(
+                "How many reminders do I have?",
+                &[],
+                &node,
+                "test-user",
+                4,
+                &[],
+                None,
+                "test-session",
+            )
+            .await
+            .expect("agent should produce a normal final answer");
+
+        assert!(
+            outcome.stopped_reason.is_none(),
+            "normal completion must not set stopped_reason; got {:?}",
+            outcome.stopped_reason
+        );
+        assert_eq!(
+            outcome.tool_calls.len(),
+            1,
+            "one list_schemas call is enough"
+        );
+        assert_eq!(outcome.tool_calls[0].tool, "list_schemas");
+        assert!(
+            outcome.answer.contains("0 reminders"),
+            "answer should report the count derived from list_schemas; got: {}",
+            outcome.answer
+        );
     }
 }
