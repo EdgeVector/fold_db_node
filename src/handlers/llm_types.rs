@@ -40,4 +40,9 @@ pub struct AgentQueryHandlerResponse {
     pub answer: String,
     pub tool_calls: Vec<crate::fold_node::llm_query::types::ToolCallRecord>,
     pub session_id: String,
+    /// Set when the agent stopped without a normal final answer
+    /// (currently: `Some("max_iterations")`). When present, `answer`
+    /// is a partial-progress message instead of a real answer.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub stopped_reason: Option<String>,
 }

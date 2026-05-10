@@ -95,6 +95,23 @@ pub struct AgentQueryResponse {
     pub tool_calls: Vec<ToolCallRecord>,
     /// Session ID for follow-up queries
     pub session_id: String,
+    /// Set when the agent stopped without a normal final answer.
+    /// Currently the only value is "max_iterations" — the loop hit
+    /// `max_iterations` while still producing tool calls. The `answer`
+    /// is then a partial-progress message, not a real answer.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub stopped_reason: Option<String>,
+}
+
+/// Outcome of running the agent loop. The HTTP layer maps this onto
+/// `AgentQueryResponse`. When `stopped_reason` is `Some(_)` the agent
+/// did not produce a normal final answer — the answer field carries a
+/// partial-progress message instead.
+#[derive(Debug, Clone)]
+pub struct AgentOutcome {
+    pub answer: String,
+    pub tool_calls: Vec<ToolCallRecord>,
+    pub stopped_reason: Option<String>,
 }
 
 /// Record of a single tool call made by the agent

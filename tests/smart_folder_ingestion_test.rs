@@ -365,7 +365,9 @@ async fn test_smart_folder_ingest_and_query() {
             .await;
 
         match result {
-            Ok((answer, tool_calls)) => {
+            Ok(outcome) => {
+                let answer = outcome.answer;
+                let tool_calls = outcome.tool_calls;
                 eprintln!("  Tool calls: {}", tool_calls.len());
                 for tc in &tool_calls {
                     eprintln!("    - {} -> {}", tc.tool, tc.result);

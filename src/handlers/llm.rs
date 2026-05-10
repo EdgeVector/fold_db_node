@@ -431,6 +431,7 @@ pub async fn agent_query(
                 answer: EMPTY_STORE_AGENT_ANSWER.to_string(),
                 tool_calls: Vec::new(),
                 session_id,
+                stopped_reason: None,
             },
             user_hash,
         ));
@@ -461,7 +462,7 @@ pub async fn agent_query(
     }
 
     // Run the agent with prior conversation context
-    let (answer, tool_calls) = service
+    let outcome = service
         .run_agent_query(
             &request.query,
             &schemas,
@@ -474,6 +475,11 @@ pub async fn agent_query(
         )
         .await
         .handler_err("run agent query")?;
+    let crate::fold_node::llm_query::types::AgentOutcome {
+        answer,
+        tool_calls,
+        stopped_reason,
+    } = outcome;
 
     // Store conversation in session (user message + tool call summary + assistant answer)
     warn_session_err(
@@ -537,6 +543,7 @@ pub async fn agent_query(
             answer,
             tool_calls,
             session_id,
+            stopped_reason,
         },
         user_hash,
     ))
