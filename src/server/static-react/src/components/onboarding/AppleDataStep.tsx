@@ -45,11 +45,18 @@ interface ImportProgressProps {
   progressId: string
 }
 
+interface AppleImportPayload {
+  source?: string
+  total?: number
+  ingested?: number
+}
+
 function ImportProgress({ sourceId, progressId }: ImportProgressProps) {
   const [progress, setProgress] = useState(0)
   const [message, setMessage] = useState('Starting...')
   const [done, setDone] = useState(false)
   const [failed, setFailed] = useState(false)
+  const [results, setResults] = useState<AppleImportPayload | null>(null)
   const pollRef = useRef<ReturnType<typeof setInterval> | null>(null)
 
   useEffect(() => {
@@ -64,6 +71,14 @@ function ImportProgress({ sourceId, progressId }: ImportProgressProps) {
           setMessage(job.status_message || job.message || '')
           if (job.is_complete) {
             setDone(true)
+            // Backend publishes `{source, total, ingested}` on successful
+            // apple-import completions (see src/ingestion/progress.rs). Falling
+            // back to status_message would mean parsing "Imported N notes" by
+            // string, which is exactly the brittle UI path this field exists
+            // to retire.
+            if (job.results && typeof job.results === 'object') {
+              setResults(job.results as AppleImportPayload)
+            }
             if (pollRef.current) clearInterval(pollRef.current)
           } else if (job.is_failed) {
             setFailed(true)
@@ -82,6 +97,7 @@ function ImportProgress({ sourceId, progressId }: ImportProgressProps) {
   }, [progressId])
 
   const source = SOURCES.find(s => s.id === sourceId)
+  const importedCount = results?.ingested
 
   return (
     <div className="flex items-center gap-3 py-2">
@@ -90,6 +106,11 @@ function ImportProgress({ sourceId, progressId }: ImportProgressProps) {
         <div className="flex items-center gap-2 mb-1">
           <span className="text-xs text-primary">{source?.label}</span>
           {done && <span className="text-gruvbox-green text-xs">Done</span>}
+          {done && typeof importedCount === 'number' && (
+            <span className="text-xs text-secondary" data-testid="apple-import-count">
+              ({importedCount} imported{typeof results?.total === 'number' ? ` of ${results.total}` : ''})
+            </span>
+          )}
           {failed && <span className="text-gruvbox-red text-xs">Failed</span>}
         </div>
         {!done && !failed && (

@@ -22,6 +22,7 @@ export type AppleSourceKey =
   | "contacts";
 
 export interface ImportResult {
+  source?: string;
   total?: number;
   ingested?: number;
 }

@@ -45,6 +45,16 @@ pub struct IngestionResults {
 }
 
 /// Helper struct to map generic Job to IngestionProgress shape for API compatibility
+///
+/// `results` is intentionally `Option<serde_json::Value>` rather than the typed
+/// `IngestionResults` because a single progress channel carries jobs from
+/// several pipelines (file ingest, apple-import, smart-folder scan, agent
+/// runs). Each pipeline writes its own structured payload to `Job.result` —
+/// the file-ingest path serialises [`IngestionResults`], apple-import emits
+/// `{source, total, ingested}`, smart-folder emits the full scan response.
+/// Forcing one typed shape on the wire would either drop everything that
+/// doesn't match it (the bug this comment guards against — see commit
+/// history) or require a tagged-enum migration across every consumer.
 #[derive(Debug, Clone, Serialize, Deserialize, ToSchema)]
 pub struct IngestionProgress {
     pub id: String,
@@ -56,7 +66,7 @@ pub struct IngestionProgress {
     pub is_complete: bool,
     pub is_failed: bool,
     pub error_message: Option<String>,
-    pub results: Option<IngestionResults>,
+    pub results: Option<serde_json::Value>,
     pub started_at: u64,
     pub completed_at: Option<u64>,
 }
@@ -88,7 +98,7 @@ impl From<Job> for IngestionProgress {
             is_complete: matches!(job.status, JobStatus::Completed | JobStatus::Failed),
             is_failed: matches!(job.status, JobStatus::Failed),
             error_message: job.error,
-            results: job.result.and_then(|r| serde_json::from_value(r).ok()),
+            results: job.result,
             started_at: job.created_at,
             completed_at: job.completed_at,
         }
