@@ -428,6 +428,13 @@ pub(crate) async fn merge_cloud_members_into(
         }
     };
 
+    apply_cloud_roster_to_org(org, cloud_members);
+}
+
+/// Pure roster-merge: append placeholder `OrgMemberInfo` entries for any
+/// cloud roster member not already present locally. Skips declined invites;
+/// counts active + pending (invite sent).
+fn apply_cloud_roster_to_org(org: &mut OrgMembership, roster: Vec<serde_json::Value>) {
     let known_user_hashes: std::collections::HashSet<String> = org
         .members
         .iter()
@@ -435,14 +442,13 @@ pub(crate) async fn merge_cloud_members_into(
         .map(|m| crate::utils::crypto::user_hash_from_pubkey(&m.node_public_key))
         .collect();
 
-    for entry in cloud_members {
+    for entry in roster {
         let Some(cloud_user_hash) = entry.get("user_hash").and_then(|v| v.as_str()) else {
             continue;
         };
         if cloud_user_hash.is_empty() || known_user_hashes.contains(cloud_user_hash) {
             continue;
         }
-        // Skip declined invites; count active + pending (invite sent).
         let status = entry
             .get("status")
             .and_then(|v| v.as_str())
@@ -674,42 +680,6 @@ mod tests {
         assert_eq!(req.display_name, "Alice");
     }
 
-    /// Pure unit test of the cloud-merge logic: simulate a cloud roster and
-    /// verify the reconciliation rules without hitting the network. This is
-    /// the core of the 500b9 fix — Alice's local org membership list only
-    /// contains herself, but a cloud poll reveals Bob has joined.
-    fn apply_cloud_roster(org: &mut OrgMembership, roster: Vec<serde_json::Value>) {
-        let known_user_hashes: std::collections::HashSet<String> = org
-            .members
-            .iter()
-            .filter(|m| !m.node_public_key.is_empty())
-            .map(|m| crate::utils::crypto::user_hash_from_pubkey(&m.node_public_key))
-            .collect();
-
-        for entry in roster {
-            let Some(cloud_user_hash) = entry.get("user_hash").and_then(|v| v.as_str()) else {
-                continue;
-            };
-            if cloud_user_hash.is_empty() || known_user_hashes.contains(cloud_user_hash) {
-                continue;
-            }
-            let status = entry
-                .get("status")
-                .and_then(|v| v.as_str())
-                .unwrap_or("active");
-            if status == "declined" {
-                continue;
-            }
-            let short = &cloud_user_hash[..8.min(cloud_user_hash.len())];
-            org.members.push(OrgMemberInfo {
-                node_public_key: String::new(),
-                display_name: format!("user-{short}"),
-                added_at: 0,
-                added_by: String::new(),
-            });
-        }
-    }
-
     fn make_alice_only_org() -> OrgMembership {
         use base64::Engine;
         let alice_pk = base64::engine::general_purpose::STANDARD.encode([0x01u8; 32]);
@@ -738,7 +708,7 @@ mod tests {
             crate::utils::crypto::user_hash_from_pubkey(&org.members[0].node_public_key);
         let bob_user_hash = "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb".to_string();
 
-        apply_cloud_roster(
+        apply_cloud_roster_to_org(
             &mut org,
             vec![
                 serde_json::json!({"user_hash": alice_user_hash, "role": "Admin", "status": "active"}),
@@ -762,7 +732,7 @@ mod tests {
         let alice_user_hash =
             crate::utils::crypto::user_hash_from_pubkey(&org.members[0].node_public_key);
 
-        apply_cloud_roster(
+        apply_cloud_roster_to_org(
             &mut org,
             vec![serde_json::json!({
                 "user_hash": alice_user_hash,
@@ -783,7 +753,7 @@ mod tests {
         let mut org = make_alice_only_org();
         let declined_hash = "cccccccccccccccccccccccccccccccc".to_string();
 
-        apply_cloud_roster(
+        apply_cloud_roster_to_org(
             &mut org,
             vec![serde_json::json!({
                 "user_hash": declined_hash,
@@ -800,7 +770,7 @@ mod tests {
         let mut org = make_alice_only_org();
         let pending_hash = "dddddddddddddddddddddddddddddddd".to_string();
 
-        apply_cloud_roster(
+        apply_cloud_roster_to_org(
             &mut org,
             vec![serde_json::json!({
                 "user_hash": pending_hash,
