@@ -143,8 +143,13 @@ impl BatchController {
     }
 
     /// Record that a file finished processing with the given actual cost.
+    ///
+    /// Local providers (e.g. Ollama) are free, so the supplied `cost` is
+    /// ignored and `accumulated_cost` stays at 0.0.
     pub fn record_completed(&mut self, progress_id: &str, cost: f64) {
-        self.accumulated_cost += cost;
+        if !self.is_local_provider {
+            self.accumulated_cost += cost;
+        }
         self.files_completed += 1;
         self.remove_in_flight(progress_id);
     }
@@ -166,8 +171,14 @@ impl BatchController {
     }
 
     /// Estimated cost of remaining (pending) files.
+    ///
+    /// Returns 0.0 for local providers since their per-file cost is zero.
     pub fn estimated_remaining_cost(&self) -> f64 {
-        self.pending_files.iter().map(|f| f.estimated_cost).sum()
+        if self.is_local_provider {
+            0.0
+        } else {
+            self.pending_files.iter().map(|f| f.estimated_cost).sum()
+        }
     }
 
     /// Number of files still pending.
@@ -242,5 +253,59 @@ impl BatchStatusResponse {
             current_file_progress: None,
             is_local_provider: ctrl.is_local_provider,
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::path::PathBuf;
+
+    fn make_pending(progress_id: &str, cost: f64) -> PendingFile {
+        PendingFile {
+            path: PathBuf::from(format!("/tmp/{}.txt", progress_id)),
+            progress_id: progress_id.to_string(),
+            estimated_cost: cost,
+        }
+    }
+
+    /// Drain pending files the way the coordinator does, calling
+    /// `record_completed` for each.
+    fn drain_completed(ctrl: &mut BatchController) {
+        while let Some(file) = ctrl.pop_next_file() {
+            ctrl.record_completed(&file.progress_id, file.estimated_cost);
+        }
+    }
+
+    #[test]
+    fn local_provider_keeps_accumulated_cost_at_zero() {
+        let pending = vec![
+            make_pending("a", 0.005),
+            make_pending("b", 0.011),
+            make_pending("c", 0.020),
+        ];
+        let mut ctrl = BatchController::new("batch-local".into(), None, pending, true);
+
+        drain_completed(&mut ctrl);
+
+        assert_eq!(ctrl.accumulated_cost, 0.0);
+        assert_eq!(ctrl.estimated_remaining_cost(), 0.0);
+        assert_eq!(ctrl.files_completed, 3);
+
+        let snap = BatchStatusResponse::from_controller(&ctrl);
+        assert_eq!(snap.accumulated_cost, 0.0);
+        assert_eq!(snap.estimated_remaining_cost, 0.0);
+        assert!(snap.is_local_provider);
+    }
+
+    #[test]
+    fn cloud_provider_still_accumulates_cost() {
+        let pending = vec![make_pending("a", 0.01), make_pending("b", 0.02)];
+        let mut ctrl = BatchController::new("batch-cloud".into(), None, pending, false);
+
+        drain_completed(&mut ctrl);
+
+        assert!((ctrl.accumulated_cost - 0.03).abs() < f64::EPSILON);
+        assert_eq!(ctrl.estimated_remaining_cost(), 0.0);
     }
 }
