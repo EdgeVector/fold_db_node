@@ -14,7 +14,7 @@ export ANTHROPIC_API_KEY=your_key_here
 
 ### 2. Start the server
 
-From the `fold_db/` directory:
+From the `fold_db_node/` directory:
 
 ```bash
 # Recommended: local storage + production schema service
@@ -24,23 +24,48 @@ From the `fold_db/` directory:
 ./run.sh --local --local-schema
 ```
 
-The `--local-schema` flag starts a local schema service on port 9002 (built from this repo, no separate setup needed).
+The `--local-schema` flag starts a local schema service on port **9102** (built from the sibling `schema_service` checkout — see fold_db_node `CLAUDE.md` "Schema service" for details).
+
+> **Ports auto-slot.** When multiple agents run in parallel, `run.sh` walks the backend port forward in 9101..=9199, the schema port forward from 9102, and the Vite port forward in 5173..=5299. The canonical reference for what your running instance picked is `~/.folddb-slots/<backend_port>.json` — fields: `port` (backend HTTP), `schema_port` (schema service), `vite_port` (frontend). The examples below use the dev defaults (9101 / 9102 / 5173). Substitute your slot-file values if `run.sh` reported different numbers.
 
 ### 3. Scan the sample data
 
-Open http://localhost:5173, go to the Smart Folder tab, and click **"Try sample data"** to auto-fill the path, then click **Scan**.
+Open the frontend (default http://localhost:5173 — use the `vite_port` from `~/.folddb-slots/<backend_port>.json` if it slotted elsewhere, e.g. 5179 or the first free port in 5173..=5299), go to the Smart Folder tab, and click **"Try sample data"** to auto-fill the path, then click **Scan**.
+
+> **Dev-only button.** The **"Try sample data"** shortcut is gated by `import.meta.env.DEV` (see `src/server/static-react/src/components/tabs/smart-folder/FolderInput.tsx`) and only appears in `npm run dev` / `./run.sh` builds. It is intentionally NOT bundled into the production Tauri release per the repo policy against shipping sample/fixture data to prod. In a release build, type the folder path manually.
 
 Or via API:
 ```bash
-curl -X POST http://localhost:9001/api/ingestion/smart-folder/scan \
+# Substitute the backend port from ~/.folddb-slots/<port>.json if run.sh slotted elsewhere
+BACKEND_PORT=9101
+UH=test_user
+curl -X POST http://localhost:$BACKEND_PORT/api/ingestion/smart-folder/scan \
   -H "Content-Type: application/json" \
-  -H "X-User-Hash: test_user" \
+  -H "X-User-Hash: $UH" \
   -d '{"folder_path": "sample_data", "max_files": 100}'
 ```
 
 ### 4. Ingest
 
 Review the scan results and click **Proceed** to ingest the recommended files.
+
+### 5. Query an ingested schema
+
+After ingestion completes, query the data via `/api/query`. The example below reads back the `Journal Entries` schema created by ingesting `sample_data/journal/*.txt`:
+
+```bash
+curl -X POST http://localhost:$BACKEND_PORT/api/query \
+  -H "Content-Type: application/json" -H "X-User-Hash: $UH" \
+  -d '{"schema_name":"Journal Entries","fields":["title","body"]}'
+```
+
+> **The LLM picks the schema name.** The classifier may name the resulting schema differently from the source folder — e.g. ingesting `taxes_2024/` has produced a `W2 Tax Forms` schema rather than `Taxes 2024`. To discover the actual names after ingestion, list them:
+>
+> ```bash
+> curl -s http://localhost:$BACKEND_PORT/api/schemas -H "X-User-Hash: $UH"
+> ```
+>
+> Then pass whichever `schema_name` you find into `/api/query`.
 
 ## Directory Structure
 
@@ -149,10 +174,10 @@ Aspirational behavior — not yet implemented:
 
 ## Dependencies
 
-All dependencies are included in the fold_db repo:
+All dependencies are wired up by `run.sh`:
 - **Rust backend** — built by `run.sh`
 - **React frontend** — `npm install` handled by `run.sh`
-- **Local schema service** — built from `src/bin/schema_service.rs` (use `--local-schema` flag)
+- **Local schema service** — built from the sibling `schema_service` checkout when you pass `--local-schema`; orchestrated automatically (see fold_db_node `CLAUDE.md` "Schema service")
 - **Sample files** — all images are valid 64x64 JPEG/PNG, all PDFs contain readable text
 
-The only external requirement is an **Anthropic API key** for AI-powered classification and ingestion.
+The only external requirement is an **Anthropic API key** for AI-powered classification and ingestion. Without `ANTHROPIC_API_KEY` set in the shell that runs `./run.sh`, scan + ingest will fail; everything else (build, query, the dev UI) still works.
