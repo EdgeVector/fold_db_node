@@ -22,7 +22,7 @@ use fold_db::error::{FoldDbError, FoldDbResult};
 use actix_cors::Cors;
 
 use actix_web::{web, App, HttpRequest, HttpResponse, HttpServer as ActixHttpServer};
-use std::sync::Arc;
+use std::sync::{Arc, RwLock};
 use tracing_actix_web::TracingLogger;
 
 /// HTTP server for the Fold node.
@@ -100,6 +100,14 @@ impl FoldHttpServer {
         let obs_ring_data = web::Data::new(self.ctx.obs.as_ref().map(|h| h.ring.clone()));
         let obs_web_data = web::Data::new(self.ctx.obs.as_ref().map(|h| h.web.clone()));
         let obs_reload_data = web::Data::new(self.ctx.obs.as_ref().map(|h| h.reload.clone()));
+        // Server-side mirror of the active EnvFilter directive. Seeded from
+        // `RUST_LOG` to match `observability::default_env_filter` so
+        // `GET /api/logs/level` reports the value that was actually applied
+        // at boot when no PUT has happened yet. PUT updates this on success.
+        let obs_log_directive_data: web::Data<log_routes::LogLevelDirective> =
+            web::Data::new(Arc::new(RwLock::new(
+                std::env::var("RUST_LOG").unwrap_or_else(|_| "info".to_string()),
+            )));
 
         let app_state = self.ctx.app_state.clone();
         let llm_query_state = self.ctx.llm_query.clone();
@@ -155,6 +163,7 @@ impl FoldHttpServer {
                 .app_data(obs_ring_data.clone())
                 .app_data(obs_web_data.clone())
                 .app_data(obs_reload_data.clone())
+                .app_data(obs_log_directive_data.clone())
                 .app_data(json_config)
                 .configure(Self::configure_api)
                 // Serve embedded static assets (React build)
@@ -463,6 +472,7 @@ impl FoldHttpServer {
     fn configure_log_routes(cfg: &mut web::ServiceConfig) {
         cfg.route("/logs", web::get().to(log_routes::list_logs))
             .route("/logs/stream", web::get().to(log_routes::stream_logs))
+            .route("/logs/level", web::get().to(log_routes::get_log_level))
             .route(
                 "/logs/level",
                 web::put().to(log_routes::update_feature_level),
