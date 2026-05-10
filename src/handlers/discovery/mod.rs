@@ -341,7 +341,7 @@ pub async fn opt_out(
 
     let tracked = publisher::list_uploaded_pseudonyms(&*store, Some(&req.schema_name))
         .await
-        .map_err(HandlerError::Internal)?;
+        .handler_err("list uploaded pseudonyms")?;
 
     let pseudonyms: Vec<uuid::Uuid> = if tracked.is_empty() {
         discovery_publisher
@@ -367,7 +367,7 @@ pub async fn opt_out(
         // deletion. No-op when we came in via the fallback path.
         publisher::clear_uploaded(&*store, Some(&req.schema_name))
             .await
-            .map_err(HandlerError::Internal)?;
+            .handler_err("clear uploaded pseudonym tracking")?;
     }
 
     let configs = config::list_opt_ins(&*store)
