@@ -605,17 +605,22 @@ async fn sync_contacts(
 // ── Non-macOS stubs ──────────────────────────────────────────────────
 
 #[cfg(not(target_os = "macos"))]
+fn warn_sync_unavailable_on_non_macos(kind: &'static str) -> Result<(), String> {
+    tracing::warn!(
+        target: "fold_node::ingestion",
+        "Auto-sync {kind}: not available on this platform"
+    );
+    Ok(())
+}
+
+#[cfg(not(target_os = "macos"))]
 async fn sync_notes(
     _user_id: &str,
     _node_arc: Arc<crate::fold_node::FoldNode>,
     _service: Arc<IngestionService>,
     _tracker: ProgressTracker,
 ) -> Result<(), String> {
-    tracing::warn!(
-            target: "fold_node::ingestion",
-        "Auto-sync notes: not available on this platform"
-    );
-    Ok(())
+    warn_sync_unavailable_on_non_macos("notes")
 }
 
 #[cfg(not(target_os = "macos"))]
@@ -625,11 +630,7 @@ async fn sync_reminders(
     _service: Arc<IngestionService>,
     _tracker: ProgressTracker,
 ) -> Result<(), String> {
-    tracing::warn!(
-            target: "fold_node::ingestion",
-        "Auto-sync reminders: not available on this platform"
-    );
-    Ok(())
+    warn_sync_unavailable_on_non_macos("reminders")
 }
 
 #[cfg(not(target_os = "macos"))]
@@ -641,11 +642,7 @@ async fn sync_photos(
     _limit: usize,
     _upload_storage: fold_db::storage::UploadStorage,
 ) -> Result<(), String> {
-    tracing::warn!(
-            target: "fold_node::ingestion",
-        "Auto-sync photos: not available on this platform"
-    );
-    Ok(())
+    warn_sync_unavailable_on_non_macos("photos")
 }
 
 #[cfg(not(target_os = "macos"))]
@@ -655,11 +652,7 @@ async fn sync_calendar(
     _service: Arc<IngestionService>,
     _tracker: ProgressTracker,
 ) -> Result<(), String> {
-    tracing::warn!(
-            target: "fold_node::ingestion",
-        "Auto-sync calendar: not available on this platform"
-    );
-    Ok(())
+    warn_sync_unavailable_on_non_macos("calendar")
 }
 
 #[cfg(not(target_os = "macos"))]
@@ -669,9 +662,5 @@ async fn sync_contacts(
     _service: Arc<IngestionService>,
     _tracker: ProgressTracker,
 ) -> Result<(), String> {
-    tracing::warn!(
-            target: "fold_node::ingestion",
-        "Auto-sync contacts: not available on this platform"
-    );
-    Ok(())
+    warn_sync_unavailable_on_non_macos("contacts")
 }
