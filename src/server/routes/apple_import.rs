@@ -233,11 +233,18 @@ async fn init_apple_import_job(
     let progress_id = uuid::Uuid::new_v4().to_string();
     let tracker = progress_tracker.get_ref().clone();
 
+    // By the time this row hits the tracker, preflight is done and the
+    // background task is about to spawn — so the user-perceptible state is
+    // already "extracting". Stamping `Extracting` here means the very first
+    // poll the UI sees is consistent with the "Extracting ..." message text,
+    // and matches the heartbeat ticks that follow. Stamping `ValidatingConfig`
+    // (the prior behavior) showed a 2s mismatched-step window before the
+    // first heartbeat fired.
     let mut job = Job::new(progress_id.clone(), JobType::Other(job_type.into()));
     job = job.with_user(user_id.clone());
     job.message = initial_message.into();
     job.progress_percentage = 5;
-    set_step(&mut job, IngestionStep::ValidatingConfig);
+    set_step(&mut job, IngestionStep::Extracting);
     tracker.save_or_warn(&job).await;
 
     Ok(AppleImportContext {
@@ -355,6 +362,32 @@ async fn emit_batch_progress(
     tracker.save_or_warn(&job).await;
 }
 
+/// Compose the heartbeat status message. After `EXTRACTION_HINT_THRESHOLD_SECS`,
+/// append an indeterminate-progress hint so the user understands the bar is
+/// intentionally parked at 5% while we wait on the AppleScript bridge — not
+/// that the import is stalled. Pure function so the threshold behavior is
+/// unit-testable without driving the heartbeat loop.
+#[cfg(any(target_os = "macos", test))]
+fn extraction_heartbeat_message(base: &str, elapsed_secs: u64) -> String {
+    if elapsed_secs >= EXTRACTION_HINT_THRESHOLD_SECS {
+        format!(
+            "{} ({}s) — waiting on Apple's osascript bridge; large libraries can take a few minutes",
+            base, elapsed_secs,
+        )
+    } else {
+        format!("{} ({}s)", base, elapsed_secs)
+    }
+}
+
+/// Elapsed-time threshold (seconds) after which the heartbeat appends the
+/// "waiting on Apple's osascript bridge" hint to its status message. The
+/// dogfood 2026-05-11 run saw Notes complete extraction by ~10s and Calendar
+/// take 200s+; 15s splits those two regimes cleanly — fast imports never see
+/// the hint, slow imports get it well before the user starts wondering
+/// whether the job is hung.
+#[cfg(any(target_os = "macos", test))]
+const EXTRACTION_HINT_THRESHOLD_SECS: u64 = 15;
+
 /// Run `work` while emitting a 2s heartbeat that re-saves the same 5%-progress
 /// job with `(Ns)` appended so a polling client sees the import is alive.
 ///
@@ -364,8 +397,14 @@ async fn emit_batch_progress(
 /// `OSASCRIPT_TIMEOUT`), so without a heartbeat the UI is stuck on the
 /// initial "5% — Extracting…" frame for the full extraction wallclock.
 ///
-/// The percentage stays at 5; only `message` and `updated_at` change so the
-/// UI keeps the "still in extraction" semantic but sees fresh activity.
+/// The percentage stays at 5; only `message`, `step`, and `updated_at` change
+/// so the UI keeps the "still in extraction" semantic but sees fresh activity.
+/// `step` is `IngestionStep::Extracting` (NOT `FlatteningData`, which is the
+/// *next* phase — see the 2026-05-11 dogfood where `current_step:
+/// FlatteningData` shipped alongside a status message saying "Extracting…"
+/// and falsely implied the import was past extraction). After
+/// `EXTRACTION_HINT_THRESHOLD_SECS` the message also carries an
+/// indeterminate-progress hint so the parked bar doesn't read as stalled.
 /// The 2s cadence keeps tracker save load negligible (~150 saves across the
 /// 5-minute timeout ceiling).
 #[cfg(any(target_os = "macos", test))]
@@ -398,8 +437,8 @@ where
                 let mut job = Job::new(pid.clone(), JobType::Other(kind.clone()));
                 job.status = JobStatus::Running;
                 job.progress_percentage = 5;
-                job.message = format!("{} ({}s)", msg, elapsed);
-                set_step(&mut job, IngestionStep::FlatteningData);
+                job.message = extraction_heartbeat_message(&msg, elapsed);
+                set_step(&mut job, IngestionStep::Extracting);
                 tracker_clone.save_or_warn(&job).await;
             }
         }
@@ -1835,6 +1874,63 @@ mod with_extraction_heartbeat_tests {
                 matches!(j.job_type, fold_db::progress::JobType::Other(ref s) if s == "apple-notes"),
                 "heartbeat must preserve the original job_kind",
             );
+            // Step must be `Extracting`, not the previous `FlatteningData`
+            // mis-stamp — that mis-stamp is the 2026-05-11 dogfood symptom
+            // this test is here to lock down.
+            let step = j
+                .metadata
+                .get("step")
+                .and_then(|v| v.as_str())
+                .unwrap_or_default();
+            assert_eq!(
+                step, "Extracting",
+                "heartbeat must stamp step=Extracting, not the next-phase \
+                 mis-stamp the dogfood caught — got: {}",
+                step,
+            );
+        }
+    }
+
+    #[test]
+    fn message_includes_indeterminate_hint_only_past_threshold() {
+        use super::{extraction_heartbeat_message, EXTRACTION_HINT_THRESHOLD_SECS};
+        let base = "Extracting notes from Apple Notes...";
+
+        // Below threshold: short form, no hint. Otherwise every fast import
+        // would clutter the UI with "waiting on Apple" copy that never applied.
+        let short = extraction_heartbeat_message(base, EXTRACTION_HINT_THRESHOLD_SECS - 1);
+        assert!(
+            short.ends_with("s)"),
+            "below-threshold message must keep the bare elapsed marker, got: {}",
+            short,
+        );
+        assert!(
+            !short.contains("osascript"),
+            "below-threshold message must NOT carry the indeterminate hint, got: {}",
+            short,
+        );
+
+        // At/above threshold: long form makes it unmistakable that the bar
+        // is parked because we're blocked on Apple's IPC, not because the
+        // job is hung. This is the line the user needed to see at 200+s
+        // staring at the Calendar import dogfood on 2026-05-11.
+        for elapsed in [
+            EXTRACTION_HINT_THRESHOLD_SECS,
+            EXTRACTION_HINT_THRESHOLD_SECS + 1,
+            120,
+            300,
+        ] {
+            let long = extraction_heartbeat_message(base, elapsed);
+            assert!(
+                long.contains("waiting on Apple"),
+                "at/above-threshold message must explain the parked bar, got: {}",
+                long,
+            );
+            assert!(
+                long.contains(&format!("({}s)", elapsed)),
+                "message must still carry the elapsed counter, got: {}",
+                long,
+            );
         }
     }
 
@@ -2299,7 +2395,7 @@ mod step_metadata_tests {
         // progress.rs has drifted and the UI would silently regress.
         for step in [
             IngestionStep::ValidatingConfig,
-            IngestionStep::FlatteningData,
+            IngestionStep::Extracting,
             IngestionStep::GettingAIRecommendation,
             IngestionStep::ExecutingMutations,
             IngestionStep::Completed,
@@ -2328,22 +2424,25 @@ mod step_metadata_tests {
 
         let mut ladder: Vec<(IngestionStep, u8)> = Vec::new();
 
-        // 1. init_apple_import_job
+        // 1. init_apple_import_job — preflight is done by the time this row
+        //    is committed, and the spawn_blocking task starts in the next
+        //    instruction, so the user-visible state is already Extracting.
         let mut j = make_job(NOTES_JOB_KIND);
         j.status = JobStatus::Running;
         j.progress_percentage = 5;
-        set_step(&mut j, IngestionStep::ValidatingConfig);
+        set_step(&mut j, IngestionStep::Extracting);
         ladder.push((job_step(j.clone()), j.progress_percentage));
 
         // 2. heartbeat ticks during AppleScript. Percentage stays at 5
         //    (that's the documented contract — the AppleScript export is
-        //    one opaque call) but step moves to FlatteningData so the API
-        //    doesn't look frozen on ValidatingConfig.
+        //    one opaque call) but the dedicated `Extracting` step makes
+        //    `current_step` truthful instead of the previous mis-stamp
+        //    onto `FlatteningData` (the *next* phase).
         for _ in 0..3 {
             let mut j = make_job(NOTES_JOB_KIND);
             j.status = JobStatus::Running;
             j.progress_percentage = 5;
-            set_step(&mut j, IngestionStep::FlatteningData);
+            set_step(&mut j, IngestionStep::Extracting);
             ladder.push((job_step(j.clone()), j.progress_percentage));
         }
 
