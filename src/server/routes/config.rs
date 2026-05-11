@@ -379,6 +379,7 @@ pub async fn mark_onboarding_complete() -> impl Responder {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use super::super::FOLDDB_HOME_VAR;
     use crate::fold_node::config::NodeConfig;
     use crate::server::http_server::AppState;
     use crate::server::node_manager::{NodeManager, NodeManagerConfig};
@@ -521,8 +522,8 @@ mod tests {
         // Pin FOLDDB_HOME so the marker probe inside the handler reads
         // `tmp/data/.onboarding_complete` (which doesn't exist) instead
         // of the developer's real `~/.folddb`.
-        let original_folddb_home = std::env::var("FOLDDB_HOME").ok();
-        std::env::set_var("FOLDDB_HOME", tmp.path());
+        let original_folddb_home = std::env::var(FOLDDB_HOME_VAR).ok();
+        std::env::set_var(FOLDDB_HOME_VAR, tmp.path());
         // Make `NODE_CONFIG` resolution fall through to the FOLDDB_HOME
         // branch so a hand-set env var on the runner can't affect the test.
         let original_node_config = std::env::var("NODE_CONFIG").ok();
@@ -582,8 +583,8 @@ mod tests {
         );
 
         match original_folddb_home {
-            Some(v) => std::env::set_var("FOLDDB_HOME", v),
-            None => std::env::remove_var("FOLDDB_HOME"),
+            Some(v) => std::env::set_var(FOLDDB_HOME_VAR, v),
+            None => std::env::remove_var(FOLDDB_HOME_VAR),
         }
         if let Some(v) = original_node_config {
             std::env::set_var("NODE_CONFIG", v);

@@ -503,6 +503,7 @@ fn marker_path() -> Result<PathBuf, String> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use super::super::FOLDDB_HOME_VAR;
     use crate::fold_node::config::NodeConfig;
     use crate::server::node_manager::{NodeManager, NodeManagerConfig};
 
@@ -537,7 +538,7 @@ mod tests {
     async fn returns_410_when_marker_exists() {
         let _g = home_lock();
         let tmp = tempfile::tempdir().unwrap();
-        std::env::set_var("FOLDDB_HOME", tmp.path());
+        std::env::set_var(FOLDDB_HOME_VAR, tmp.path());
 
         let data_dir = tmp.path().join("data");
         std::fs::create_dir_all(&data_dir).unwrap();
@@ -561,7 +562,7 @@ mod tests {
             .respond_to(&actix_web::test::TestRequest::default().to_http_request());
         assert_eq!(resp.status(), 410);
 
-        std::env::remove_var("FOLDDB_HOME");
+        std::env::remove_var(FOLDDB_HOME_VAR);
     }
 
     /// Cloud=true without invite_code is a 400.
@@ -570,7 +571,7 @@ mod tests {
     async fn requires_invite_code_when_cloud_enabled() {
         let _g = home_lock();
         let tmp = tempfile::tempdir().unwrap();
-        std::env::set_var("FOLDDB_HOME", tmp.path());
+        std::env::set_var(FOLDDB_HOME_VAR, tmp.path());
 
         let (state, config_dir) = build_app_state(tmp.path());
         let body = web::Json(BootstrapRequest {
@@ -590,7 +591,7 @@ mod tests {
             .respond_to(&actix_web::test::TestRequest::default().to_http_request());
         assert_eq!(resp.status(), 400);
 
-        std::env::remove_var("FOLDDB_HOME");
+        std::env::remove_var(FOLDDB_HOME_VAR);
     }
 
     /// Bad birthday format is a 400 — caught up-front so we don't half-write
@@ -600,7 +601,7 @@ mod tests {
     async fn rejects_invalid_birthday() {
         let _g = home_lock();
         let tmp = tempfile::tempdir().unwrap();
-        std::env::set_var("FOLDDB_HOME", tmp.path());
+        std::env::set_var(FOLDDB_HOME_VAR, tmp.path());
 
         let (state, config_dir) = build_app_state(tmp.path());
         let body = web::Json(BootstrapRequest {
@@ -620,7 +621,7 @@ mod tests {
             .respond_to(&actix_web::test::TestRequest::default().to_http_request());
         assert_eq!(resp.status(), 400);
 
-        std::env::remove_var("FOLDDB_HOME");
+        std::env::remove_var(FOLDDB_HOME_VAR);
     }
 
     /// Marker resolution honours `FOLDDB_HOME`. Ensures `data/.onboarding_complete`
@@ -629,7 +630,7 @@ mod tests {
     fn marker_path_uses_folddb_home() {
         let _g = home_lock();
         let tmp = tempfile::tempdir().unwrap();
-        std::env::set_var("FOLDDB_HOME", tmp.path());
+        std::env::set_var(FOLDDB_HOME_VAR, tmp.path());
 
         let resolved = marker_path().expect("marker path");
         assert_eq!(
@@ -637,7 +638,7 @@ mod tests {
             tmp.path().join("data").join(".onboarding_complete")
         );
 
-        std::env::remove_var("FOLDDB_HOME");
+        std::env::remove_var(FOLDDB_HOME_VAR);
     }
 
     /// Regression for the P0 fresh-install plaintext-at-rest bug. On a fresh
@@ -657,7 +658,7 @@ mod tests {
     async fn bootstrap_persists_encrypted_identity_fresh_mint() {
         let _g = crate::secure_store::test_master_key::with_set();
         let tmp = tempfile::tempdir().unwrap();
-        std::env::set_var("FOLDDB_HOME", tmp.path());
+        std::env::set_var(FOLDDB_HOME_VAR, tmp.path());
 
         let (state, config_dir) = build_app_state(tmp.path());
         let body = web::Json(BootstrapRequest {
@@ -689,7 +690,7 @@ mod tests {
             raw.chars().take(10).collect::<String>()
         );
 
-        std::env::remove_var("FOLDDB_HOME");
+        std::env::remove_var(FOLDDB_HOME_VAR);
     }
 
     /// Same property for the recovery-phrase restore branch. Deriving
@@ -703,7 +704,7 @@ mod tests {
     async fn bootstrap_persists_encrypted_identity_from_recovery_phrase() {
         let _g = crate::secure_store::test_master_key::with_set();
         let tmp = tempfile::tempdir().unwrap();
-        std::env::set_var("FOLDDB_HOME", tmp.path());
+        std::env::set_var(FOLDDB_HOME_VAR, tmp.path());
 
         // Generate a phrase by round-tripping through derive_recovery_phrase
         // so the test doesn't hardcode any 24-word sequence.
@@ -742,7 +743,7 @@ mod tests {
             raw.chars().take(10).collect::<String>()
         );
 
-        std::env::remove_var("FOLDDB_HOME");
+        std::env::remove_var(FOLDDB_HOME_VAR);
     }
 
     /// Privacy/consent regression: when the user picks "skip" in the AI
@@ -760,7 +761,7 @@ mod tests {
     async fn bootstrap_skip_writes_disabled_ingestion_config() {
         let _g = crate::secure_store::test_master_key::with_set();
         let tmp = tempfile::tempdir().unwrap();
-        std::env::set_var("FOLDDB_HOME", tmp.path());
+        std::env::set_var(FOLDDB_HOME_VAR, tmp.path());
 
         let (state, config_dir) = build_app_state(tmp.path());
         let body = web::Json(BootstrapRequest {
@@ -817,7 +818,7 @@ mod tests {
             "post-skip load must not pre-populate the api_key from env"
         );
 
-        std::env::remove_var("FOLDDB_HOME");
+        std::env::remove_var(FOLDDB_HOME_VAR);
     }
 
     /// `write_ingestion_config` must route through the atomic-write helper so

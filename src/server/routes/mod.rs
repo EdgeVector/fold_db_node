@@ -32,3 +32,6 @@ pub use common::{
     handler_error_to_response, handler_result_to_response, require_node, require_user_context,
 };
 pub(crate) use common::{node_or_return, user_context_or_return};
+
+#[cfg(test)]
+pub(crate) const FOLDDB_HOME_VAR: &str = "FOLDDB_HOME";

@@ -176,6 +176,7 @@ mod tests {
     //! Integration tests exercising the route wrappers. Business-logic unit
     //! tests live in `handlers::auth`.
     use super::*;
+    use super::super::FOLDDB_HOME_VAR;
     use crate::handlers::auth::{bootstrap_status_path, write_bootstrap_status};
 
     /// Aliased to [`crate::secure_store::test_master_key::lock`] so route
@@ -188,7 +189,7 @@ mod tests {
 
     fn setup_empty_home() -> tempfile::TempDir {
         let tmp = tempfile::tempdir().expect("tempdir");
-        std::env::set_var("FOLDDB_HOME", tmp.path());
+        std::env::set_var(FOLDDB_HOME_VAR, tmp.path());
         std::fs::create_dir_all(tmp.path().join("data")).expect("create data dir");
         tmp
     }
@@ -244,7 +245,7 @@ mod tests {
         if let Some(p) = bootstrap_status_path() {
             let _ = std::fs::remove_file(p);
         }
-        std::env::remove_var("FOLDDB_HOME");
+        std::env::remove_var(FOLDDB_HOME_VAR);
     }
 
     // ------------------------------------------------------------------
@@ -310,7 +311,7 @@ mod tests {
         );
 
         std::env::remove_var("EXEMEM_API_URL");
-        std::env::remove_var("FOLDDB_HOME");
+        std::env::remove_var(FOLDDB_HOME_VAR);
     }
 
     // ------------------------------------------------------------------
@@ -367,7 +368,7 @@ mod tests {
         );
 
         std::env::remove_var("EXEMEM_API_URL");
-        std::env::remove_var("FOLDDB_HOME");
+        std::env::remove_var(FOLDDB_HOME_VAR);
     }
 
     #[tokio::test]
@@ -392,7 +393,7 @@ mod tests {
             body["error"]
         );
 
-        std::env::remove_var("FOLDDB_HOME");
+        std::env::remove_var(FOLDDB_HOME_VAR);
     }
 
     #[tokio::test]
@@ -416,6 +417,6 @@ mod tests {
             body["error"]
         );
 
-        std::env::remove_var("FOLDDB_HOME");
+        std::env::remove_var(FOLDDB_HOME_VAR);
     }
 }
