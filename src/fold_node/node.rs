@@ -64,6 +64,16 @@ pub struct FoldNode {
     /// E2E encryption keys (content encryption + index blinding).
     /// Stored for future passkey integration where the key may need to be refreshed.
     pub(super) e2e_keys: fold_db::crypto::E2eKeys,
+    /// Per-process cache of schemas already registered with the schema service.
+    /// Keyed by `identity_hash` (itself a SHA256 of descriptive_name + sorted
+    /// field list, see [`fold_db::schema::types::Schema::compute_identity_hash`]),
+    /// so different fields produce a different key and re-register correctly.
+    /// Shared across `FoldNode` clones via `Arc`.
+    pub(super) schema_registration_cache: Arc<
+        parking_lot::Mutex<
+            std::collections::HashMap<String, schema_service_core::types::AddSchemaResponse>,
+        >,
+    >,
 }
 
 impl FoldNode {
@@ -195,6 +205,9 @@ impl FoldNode {
             security_manager,
             identity,
             e2e_keys,
+            schema_registration_cache: Arc::new(parking_lot::Mutex::new(
+                std::collections::HashMap::new(),
+            )),
         };
 
         Self::log_schema_service(&config);
@@ -418,14 +431,44 @@ impl FoldNode {
     }
 
     /// Add a new schema to the schema service.
+    ///
+    /// Short-circuits on a per-process cache keyed by `identity_hash` so a
+    /// repeated batch of mutations (e.g. importing 132 Apple Notes that all
+    /// resolve to one "Apple Notes" schema) doesn't pay the HTTP round-trip
+    /// 132 times to learn what the first call already learned. The schema
+    /// service stays the persistent source of truth; this cache is in-process
+    /// only and rebuilds on restart.
     pub async fn add_schema_to_service(
         &self,
         schema: &fold_db::schema::types::Schema,
     ) -> FoldDbResult<schema_service_core::types::AddSchemaResponse> {
+        let cache_key = schema.get_identity_hash().cloned();
+        if let Some(ref key) = cache_key {
+            if let Some(cached) = self.schema_registration_cache.lock().get(key).cloned() {
+                return Ok(cached);
+            }
+        }
+
         let url = self.require_real_schema_service()?;
-        crate::fold_node::SchemaServiceClient::new(&url)
+        let response = crate::fold_node::SchemaServiceClient::new(&url)
             .add_schema(schema, std::collections::HashMap::new())
-            .await
+            .await?;
+
+        if let Some(key) = cache_key {
+            // Clear `replaced_schema` before caching: it signals a one-time
+            // expansion event the caller has already handled (loaded the old
+            // schema, applied field_mappers, blocked-and-superseded). On any
+            // future call with the same (descriptive_name, fields), the
+            // schema service itself would return `replaced_schema: None`
+            // because no replacement happens — so the cache mirrors that.
+            let mut cached_response = response.clone();
+            cached_response.replaced_schema = None;
+            self.schema_registration_cache
+                .lock()
+                .insert(key, cached_response);
+        }
+
+        Ok(response)
     }
 
     /// Batch check whether proposed schemas can reuse existing ones.
