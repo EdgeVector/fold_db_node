@@ -597,4 +597,103 @@ mod tests {
             Some("User Profile Information")
         ));
     }
+
+    /// Helper: load a schema whose canonical `name` differs from its
+    /// `descriptive_name`, mirroring how the schema service canonicalizes
+    /// user-ingested schemas (e.g. canonical = hex hash, descriptive = "Apple Notes").
+    async fn load_named_schema(
+        node: &FoldNode,
+        canonical: &str,
+        descriptive: &str,
+    ) -> DeclarativeSchemaDefinition {
+        let mut schema = make_child_schema(canonical, "title");
+        schema.descriptive_name = Some(descriptive.to_string());
+        load_and_approve_schema(node, schema.clone()).await;
+        schema
+    }
+
+    #[tokio::test]
+    async fn get_schema_accepts_canonical_name() {
+        let (processor, node) = setup_processor().await;
+        load_named_schema(&node, "sh_canonical_apple_notes", "Apple Notes").await;
+
+        let result = processor
+            .get_schema("sh_canonical_apple_notes")
+            .await
+            .unwrap();
+        assert!(result.is_some(), "canonical lookup should hit");
+        let schema = result.unwrap();
+        assert_eq!(schema.schema.name, "sh_canonical_apple_notes");
+        assert_eq!(
+            schema.schema.descriptive_name.as_deref(),
+            Some("Apple Notes")
+        );
+    }
+
+    #[tokio::test]
+    async fn get_schema_accepts_descriptive_name() {
+        let (processor, node) = setup_processor().await;
+        load_named_schema(&node, "sh_canonical_apple_notes", "Apple Notes").await;
+
+        let result = processor.get_schema("Apple Notes").await.unwrap();
+        assert!(
+            result.is_some(),
+            "descriptive_name lookup should fall back to the canonical schema"
+        );
+        let schema = result.unwrap();
+        assert_eq!(schema.schema.name, "sh_canonical_apple_notes");
+        assert_eq!(
+            schema.schema.descriptive_name.as_deref(),
+            Some("Apple Notes")
+        );
+    }
+
+    #[tokio::test]
+    async fn get_schema_unknown_returns_none() {
+        let (processor, node) = setup_processor().await;
+        load_named_schema(&node, "sh_canonical_apple_notes", "Apple Notes").await;
+
+        let result = processor.get_schema("Not A Real Schema").await.unwrap();
+        assert!(result.is_none(), "unknown name should return None");
+    }
+
+    #[tokio::test]
+    async fn resolve_schema_name_returns_canonical_for_both_inputs() {
+        let (processor, node) = setup_processor().await;
+        load_named_schema(&node, "sh_canonical_journal", "Journal Entries").await;
+
+        let by_canonical = processor
+            .resolve_schema_name("sh_canonical_journal")
+            .await
+            .unwrap();
+        assert_eq!(by_canonical.as_deref(), Some("sh_canonical_journal"));
+
+        let by_descriptive = processor
+            .resolve_schema_name("Journal Entries")
+            .await
+            .unwrap();
+        assert_eq!(by_descriptive.as_deref(), Some("sh_canonical_journal"));
+
+        let missing = processor
+            .resolve_schema_name("Nope Not Here")
+            .await
+            .unwrap();
+        assert!(missing.is_none());
+    }
+
+    #[tokio::test]
+    async fn approve_schema_accepts_descriptive_name() {
+        let (processor, node) = setup_processor().await;
+        load_named_schema(&node, "sh_canonical_journal", "Journal Entries").await;
+
+        processor.approve_schema("Journal Entries").await.unwrap();
+
+        let db = node.get_fold_db().unwrap();
+        let states = db.schema_manager().get_schema_states().unwrap();
+        assert_eq!(
+            states.get("sh_canonical_journal").copied(),
+            Some(SchemaState::Approved),
+            "approve via descriptive_name must flip the canonical schema's state"
+        );
+    }
 }

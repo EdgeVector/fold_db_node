@@ -550,19 +550,23 @@ impl OperationProcessor {
         }
     }
 
-    /// List keys for a schema with pagination.
-    /// Returns (paginated_keys, total_count).
+    /// List keys for a schema with pagination. Accepts canonical name or
+    /// `descriptive_name`. Returns (paginated_keys, total_count).
     pub async fn list_schema_keys(
         &self,
         schema_name: &str,
         offset: usize,
         limit: usize,
     ) -> FoldDbResult<(Vec<KeyValue>, usize)> {
+        let canonical = self
+            .resolve_schema_name(schema_name)
+            .await?
+            .ok_or_else(|| FoldDbError::Database(format!("Schema '{}' not found", schema_name)))?;
         let db = self.get_db()?;
 
         let mut schema = db
             .schema_manager()
-            .get_schema(schema_name)
+            .get_schema(&canonical)
             .await?
             .ok_or_else(|| FoldDbError::Database(format!("Schema '{}' not found", schema_name)))?;
 
