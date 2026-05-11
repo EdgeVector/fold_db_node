@@ -13,6 +13,24 @@ pub use fold_db::progress::{
     ProgressTracker as IngestionProgressStore,
 };
 
+/// Extension method on `ProgressTracker` that saves a job and logs a warning
+/// on failure instead of silently swallowing the error.
+///
+/// Job-progress write failures (Sled-lock contention, disk-full, permission)
+/// would otherwise vanish, leaving the job stuck with nothing in
+/// `observability.jsonl` to grep for.
+pub trait ProgressTrackerExt {
+    fn save_or_warn(&self, job: &Job) -> impl std::future::Future<Output = ()> + Send;
+}
+
+impl ProgressTrackerExt for ProgressTracker {
+    async fn save_or_warn(&self, job: &Job) {
+        if let Err(e) = self.save(job).await {
+            tracing::warn!("Failed to save progress: {}", e);
+        }
+    }
+}
+
 /// Steps in the ingestion process
 #[derive(Debug, Clone, Serialize, Deserialize, ToSchema, PartialEq)]
 pub enum IngestionStep {
@@ -216,9 +234,7 @@ impl ProgressService {
     }
 
     async fn save_job(&self, job: &Job) {
-        if let Err(e) = self.tracker.save(job).await {
-            tracing::warn!("Failed to save progress: {}", e);
-        }
+        self.tracker.save_or_warn(job).await;
     }
 
     fn step_to_percentage(step: &IngestionStep) -> u8 {

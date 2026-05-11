@@ -44,7 +44,7 @@ pub use error::IngestionError;
 pub use metrics::{AiMetricsStore, RoleMetricsSnapshot};
 pub use progress::{
     create_progress_tracker, IngestionProgress, IngestionResults, IngestionStep, ProgressService,
-    ProgressTracker, SchemaWriteRecord,
+    ProgressTracker, ProgressTrackerExt, SchemaWriteRecord,
 };
 pub use roles::Role;
 pub use structure_analyzer::StructureAnalyzer;

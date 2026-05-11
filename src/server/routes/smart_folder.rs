@@ -8,7 +8,7 @@ use crate::ingestion::progress::ProgressService;
 use crate::ingestion::service_state::{get_ingestion_service, IngestionServiceState};
 use crate::ingestion::smart_folder;
 use crate::ingestion::smart_folder::batch::spawn_batch_coordinator;
-use crate::ingestion::ProgressTracker;
+use crate::ingestion::{ProgressTracker, ProgressTrackerExt};
 use crate::server::http_server::AppState;
 use crate::server::routes::ingestion::{folder_error_to_response, ingestion_context_or_return};
 use crate::server::routes::{require_node, user_context_or_return};
@@ -135,7 +135,7 @@ pub async fn smart_folder_scan(
                             fold_db::user_context::run_with_user(&uid, async move {
                                 if let Ok(Some(mut job)) = tracker_inner.load(&pid_inner).await {
                                     job.update_progress(pct, msg);
-                                    let _ = tracker_inner.save(&job).await;
+                                    tracker_inner.save_or_warn(&job).await;
                                 }
                             })
                             .await
@@ -168,7 +168,7 @@ pub async fn smart_folder_scan(
                             job.fail(e.to_string());
                         }
                     }
-                    let _ = tracker.save(&job).await;
+                    tracker.save_or_warn(&job).await;
                 }
             })
             .await
