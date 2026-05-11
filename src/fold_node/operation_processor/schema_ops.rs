@@ -11,14 +11,39 @@ impl OperationProcessor {
         Ok(db.schema_manager().get_active_schemas_with_states()?)
     }
 
-    /// Get a specific schema by name with its state.
+    /// Resolve a user-supplied schema identifier to its canonical (runtime) name.
+    ///
+    /// Accepts either the canonical name (identity_hash, or a non-canonicalized
+    /// schema's own `name`) or the human-readable `descriptive_name`. The
+    /// descriptive_name fallback iterates the in-memory schema cache, so this
+    /// is O(n) over a HashMap clone — not a disk scan.
+    pub async fn resolve_schema_name(&self, name: &str) -> FoldDbResult<Option<String>> {
+        let db = self.get_db()?;
+        let mgr = db.schema_manager();
+
+        if mgr.get_schema_metadata(name)?.is_some() {
+            return Ok(Some(name.to_string()));
+        }
+
+        let schemas = mgr.get_schemas()?;
+        Ok(schemas
+            .into_values()
+            .find(|s| s.descriptive_name.as_deref() == Some(name))
+            .map(|s| s.name))
+    }
+
+    /// Get a specific schema by name with its state. Accepts either the
+    /// canonical name (identity_hash) or the schema's `descriptive_name`.
     pub async fn get_schema(&self, name: &str) -> FoldDbResult<Option<SchemaWithState>> {
+        let Some(canonical) = self.resolve_schema_name(name).await? else {
+            return Ok(None);
+        };
         let db = self.get_db()?;
         let mgr = &db.schema_manager();
-        match mgr.get_schema_metadata(name)? {
+        match mgr.get_schema_metadata(&canonical)? {
             Some(schema) => {
                 let states = mgr.get_schema_states()?;
-                let state = states.get(name).copied().unwrap_or_default();
+                let state = states.get(&canonical).copied().unwrap_or_default();
                 Ok(Some(SchemaWithState::new(schema, state)))
             }
             None => Ok(None),
@@ -26,20 +51,25 @@ impl OperationProcessor {
     }
 
     /// Approve a schema and apply classification-based default access policies.
+    /// Accepts canonical name or `descriptive_name`.
     pub async fn approve_schema(&self, schema_name: &str) -> FoldDbResult<()> {
+        let canonical = self
+            .resolve_schema_name(schema_name)
+            .await?
+            .ok_or_else(|| FoldDbError::Schema(SchemaError::NotFound(schema_name.to_string())))?;
         let db = self.get_db()?;
-        db.schema_manager().approve(schema_name).await?;
+        db.schema_manager().approve(&canonical).await?;
         drop(db); // Release lock before apply_classification_defaults acquires it
 
         // Auto-apply access policies based on data classification
-        match self.apply_classification_defaults(schema_name).await {
+        match self.apply_classification_defaults(&canonical).await {
             Ok(applied) => {
                 if applied > 0 {
                     tracing::info!(
                     target: "fold_node::schema",
                                 "Applied access policies to {} fields in '{}'",
                                 applied,
-                                schema_name
+                                canonical
                             );
                 }
             }
@@ -47,7 +77,7 @@ impl OperationProcessor {
                 tracing::warn!(
                 target: "fold_node::schema",
                         "Failed to apply classification defaults to '{}': {}",
-                        schema_name,
+                        canonical,
                         e
                     );
             }
@@ -55,10 +85,14 @@ impl OperationProcessor {
         Ok(())
     }
 
-    /// Block a schema.
+    /// Block a schema. Accepts canonical name or `descriptive_name`.
     pub async fn block_schema(&self, schema_name: &str) -> FoldDbResult<()> {
+        let canonical = self
+            .resolve_schema_name(schema_name)
+            .await?
+            .ok_or_else(|| FoldDbError::Schema(SchemaError::NotFound(schema_name.to_string())))?;
         let db = self.get_db()?;
-        Ok(db.schema_manager().block_schema(schema_name).await?)
+        Ok(db.schema_manager().block_schema(&canonical).await?)
     }
 
     /// Tag an existing schema with an org_hash, or clear it with `None`.
@@ -75,10 +109,14 @@ impl OperationProcessor {
         schema_name: &str,
         org_hash: Option<String>,
     ) -> FoldDbResult<()> {
+        let canonical = self
+            .resolve_schema_name(schema_name)
+            .await?
+            .ok_or_else(|| FoldDbError::Schema(SchemaError::NotFound(schema_name.to_string())))?;
         let db = self.get_db()?;
         let mgr = db.schema_manager();
         let mut schema = mgr
-            .get_schema_metadata(schema_name)?
+            .get_schema_metadata(&canonical)?
             .ok_or_else(|| FoldDbError::Schema(SchemaError::NotFound(schema_name.to_string())))?;
 
         schema.org_hash = org_hash.clone();
