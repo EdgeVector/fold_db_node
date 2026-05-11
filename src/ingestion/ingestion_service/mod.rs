@@ -399,6 +399,16 @@ impl IngestionService {
         // Finalize: record file dedup + complete progress
         self.record_file_ingested(&request, node).await;
 
+        // Resolve canonical (identity_hash) schema names to user-facing
+        // `descriptive_name`s so the caller can paste any value from
+        // `schemas_used` / `schema_name` straight into `POST /api/query`.
+        // The forced-schema path already registers schemas under their
+        // descriptive_name, so this is a no-op there.
+        let schema_manager = get_schema_manager(node).await?;
+        let schema_name = resolve_descriptive_name(&schema_manager, &schema_name);
+        let schemas_written =
+            schemas_written_with_descriptive_names(&schema_manager, schemas_written);
+
         let schemas_used = collect_schemas_used(&schema_name, &schemas_written);
         let results = IngestionResults {
             schema_name: schema_name.clone(),
@@ -1036,6 +1046,40 @@ pub(crate) fn collect_schemas_used(
     out
 }
 
+/// Resolve an internal schema name (typically the identity_hash that the
+/// schema is registered under) to the human-readable `descriptive_name` the
+/// user picks when they `POST /api/query`.
+///
+/// Idempotent: if `name` is already a descriptive_name (the forced-schema
+/// path registers schemas under their descriptive_name directly) or refers
+/// to a schema with no descriptive_name set, the input is returned unchanged.
+/// Empty inputs are also returned as-is so this composes with
+/// [`collect_schemas_used`], which filters empties downstream.
+pub(crate) fn resolve_descriptive_name(schema_manager: &SchemaCore, name: &str) -> String {
+    if name.is_empty() {
+        return name.to_string();
+    }
+    match schema_manager.get_schema_metadata(name) {
+        Ok(Some(schema)) => schema.descriptive_name.unwrap_or_else(|| name.to_string()),
+        _ => name.to_string(),
+    }
+}
+
+/// Rewrite every `SchemaWriteRecord.schema_name` to its `descriptive_name`
+/// counterpart. See [`resolve_descriptive_name`] for the idempotency contract.
+pub(crate) fn schemas_written_with_descriptive_names(
+    schema_manager: &SchemaCore,
+    schemas_written: Vec<SchemaWriteRecord>,
+) -> Vec<SchemaWriteRecord> {
+    schemas_written
+        .into_iter()
+        .map(|record| SchemaWriteRecord {
+            schema_name: resolve_descriptive_name(schema_manager, &record.schema_name),
+            keys_written: record.keys_written,
+        })
+        .collect()
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -1178,6 +1222,161 @@ mod tests {
         // Empty everything: no phantom entry.
         let names = collect_schemas_used("", &[]);
         assert!(names.is_empty());
+    }
+
+    /// Build a schema JSON whose canonical `name` is `identity_hash`
+    /// (the registry key) while its `descriptive_name` is the
+    /// human-readable label — mirrors what the LLM-classifier path
+    /// produces.
+    fn make_schema_with_descriptive(name: &str, descriptive_name: &str) -> serde_json::Value {
+        let fields = ["title"];
+        let field_descriptions: serde_json::Map<String, serde_json::Value> = fields
+            .iter()
+            .map(|f| {
+                (
+                    (*f).to_string(),
+                    serde_json::Value::String(format!("{} desc", f)),
+                )
+            })
+            .collect();
+        let field_data_classifications: serde_json::Map<String, serde_json::Value> = fields
+            .iter()
+            .map(|f| {
+                (
+                    (*f).to_string(),
+                    json!({"sensitivity_level": 1, "data_domain": "general"}),
+                )
+            })
+            .collect();
+        json!({
+            "name": name,
+            "descriptive_name": descriptive_name,
+            "schema_type": "Hash",
+            "key": {"hash_field": "title", "range_field": null},
+            "fields": fields,
+            "field_descriptions": field_descriptions,
+            "field_data_classifications": field_data_classifications,
+            "identity_hash": name,
+            "source": "user",
+        })
+    }
+
+    #[tokio::test]
+    async fn resolve_descriptive_name_returns_descriptive_for_registered_hash() {
+        // LLM-classifier path: schema is registered under its identity_hash
+        // (the canonical name). The caller wants the descriptive_name back so
+        // they can paste it into POST /api/query.
+        let core = fold_db::schema::SchemaCore::new_for_testing()
+            .await
+            .expect("schema core init");
+
+        let identity_hash = "04a67000adbb91bf49952fb9a87491a7909bcfa6873c3da01f53e89164d2c8e1";
+        let schema = make_schema_with_descriptive(identity_hash, "Photography");
+        core.load_schema_from_json(&serde_json::to_string(&schema).unwrap())
+            .await
+            .expect("load schema");
+
+        assert_eq!(
+            resolve_descriptive_name(&core, identity_hash),
+            "Photography".to_string()
+        );
+    }
+
+    #[tokio::test]
+    async fn resolve_descriptive_name_is_idempotent_for_forced_path() {
+        // Forced-schema path: Apple Notes/Calendar/etc. — the schema is
+        // registered with the descriptive_name in BOTH `name` and
+        // `descriptive_name`. Passing the descriptive_name back through the
+        // resolver must be a no-op (defense in depth in case the upstream
+        // pipeline already produced the user-facing name).
+        let core = fold_db::schema::SchemaCore::new_for_testing()
+            .await
+            .expect("schema core init");
+
+        let schema = make_schema_with_descriptive("Apple Notes", "Apple Notes");
+        core.load_schema_from_json(&serde_json::to_string(&schema).unwrap())
+            .await
+            .expect("load schema");
+
+        assert_eq!(
+            resolve_descriptive_name(&core, "Apple Notes"),
+            "Apple Notes".to_string()
+        );
+    }
+
+    #[tokio::test]
+    async fn resolve_descriptive_name_echoes_unknown_inputs() {
+        // Defense in depth: a name we've never registered (e.g. the resolver
+        // races a schema-deletion, or test fixtures forgot to load the
+        // schema) must not crash or return empty — it must echo. The
+        // ingestion response then just carries the raw value, no worse than
+        // pre-fix behavior.
+        let core = fold_db::schema::SchemaCore::new_for_testing()
+            .await
+            .expect("schema core init");
+
+        assert_eq!(
+            resolve_descriptive_name(&core, "Apple Notes"),
+            "Apple Notes".to_string()
+        );
+        assert_eq!(
+            resolve_descriptive_name(
+                &core,
+                "04a67000adbb91bf49952fb9a87491a7909bcfa6873c3da01f53e89164d2c8e1"
+            ),
+            "04a67000adbb91bf49952fb9a87491a7909bcfa6873c3da01f53e89164d2c8e1".to_string()
+        );
+        assert_eq!(resolve_descriptive_name(&core, ""), "".to_string());
+    }
+
+    #[tokio::test]
+    async fn schemas_written_with_descriptive_names_rewrites_each_record() {
+        // Decomposed path: a single ingestion can write into N child schemas.
+        // Each record's canonical name must be rewritten to descriptive,
+        // with `keys_written` preserved verbatim. Unknown names echo so a
+        // partially-loaded fixture doesn't drop entries.
+        let core = fold_db::schema::SchemaCore::new_for_testing()
+            .await
+            .expect("schema core init");
+
+        let photography_hash = "04a67000adbb91bf49952fb9a87491a7909bcfa6873c3da01f53e89164d2c8e1";
+        let pet_hash = "099dde46e9d7d6c4d5b3a2c1f0e9d8c7b6a5949382716050f4e3d2c1b0a09988";
+        core.load_schema_from_json(
+            &serde_json::to_string(&make_schema_with_descriptive(
+                photography_hash,
+                "Photography",
+            ))
+            .unwrap(),
+        )
+        .await
+        .expect("load photography");
+        core.load_schema_from_json(
+            &serde_json::to_string(&make_schema_with_descriptive(pet_hash, "Pet Profiles"))
+                .unwrap(),
+        )
+        .await
+        .expect("load pet profiles");
+
+        let written = vec![
+            SchemaWriteRecord {
+                schema_name: photography_hash.to_string(),
+                keys_written: vec![],
+            },
+            SchemaWriteRecord {
+                schema_name: pet_hash.to_string(),
+                keys_written: vec![],
+            },
+            SchemaWriteRecord {
+                schema_name: "unknown-schema".to_string(),
+                keys_written: vec![],
+            },
+        ];
+
+        let out = schemas_written_with_descriptive_names(&core, written);
+        assert_eq!(out.len(), 3);
+        assert_eq!(out[0].schema_name, "Photography");
+        assert_eq!(out[1].schema_name, "Pet Profiles");
+        assert_eq!(out[2].schema_name, "unknown-schema");
     }
 
     #[test]
