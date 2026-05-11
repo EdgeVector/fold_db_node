@@ -108,84 +108,6 @@ pub async fn apple_import_status() -> impl Responder {
     }))
 }
 
-/// GET /api/ingestion/apple-import/permissions
-///
-/// Pre-flight TCC permission probes for the five Apple sources surfaced
-/// in the onboarding wizard. Returns
-/// `{contacts, notes, calendar, reminders, photos: bool}` where `true`
-/// means the calling process can talk to that app via AppleScript.
-///
-/// Why this endpoint exists: prior to it, the onboarding "Apple Data"
-/// step would POST all five imports concurrently, and Contacts (the only
-/// source already wired to `preflight_permission`) would surface the
-/// missing-permission error after a 30s wallclock wait. The other four
-/// sources had no preflight at all and hung for the full 5-minute
-/// `OSASCRIPT_TIMEOUT` if the corresponding TCC grant was missing. This
-/// endpoint lets the wizard render an actionable "Grant Apple permissions"
-/// banner with a deep link to System Settings → Privacy & Security →
-/// Automation BEFORE the user clicks Import.
-///
-/// On non-macOS hosts, `apple_import::is_available()` is `false` and we
-/// return all five probes as `true` — no Apple permission to grant means
-/// no banner, which lets the wizard fall through to the existing
-/// "Apple Import is only available on macOS" panel without an extra
-/// false-negative banner first.
-///
-/// Probes run **in parallel** via `tokio::spawn_blocking` so the user's
-/// perceived latency is `max(per_probe)` rather than `sum`. Each probe
-/// is bounded by `HTTP_PROBE_TIMEOUT` (2s) inside `probe_permission`.
-pub async fn apple_import_permissions() -> impl Responder {
-    if !apple_import::is_available() {
-        return HttpResponse::Ok().json(json!({
-            "contacts": true,
-            "notes": true,
-            "calendar": true,
-            "reminders": true,
-            "photos": true,
-        }));
-    }
-
-    #[cfg(target_os = "macos")]
-    {
-        // Probes are blocking osascript invocations — `spawn_blocking` keeps
-        // the actix worker free while we run them in parallel. `try_join!`
-        // resolves when all five complete; per-probe timeouts inside
-        // `probe_permission` cap the wallclock at ~`HTTP_PROBE_TIMEOUT`.
-        let probe = |label: &'static str| {
-            tokio::task::spawn_blocking(move || apple_import::probe_permission(label))
-        };
-
-        let (contacts, notes, calendar, reminders, photos) = tokio::join!(
-            probe("Contacts.app"),
-            probe("Notes.app"),
-            probe("Calendar.app"),
-            probe("Reminders.app"),
-            probe("Photos.app"),
-        );
-
-        // `spawn_blocking` JoinErrors only happen on runtime shutdown or
-        // panic — both are "unknown permission state, fall back to true"
-        // because reporting `false` here would gate the user out of an
-        // import path that might actually work. The import handler still
-        // surfaces real osascript failures via the job progress stream.
-        HttpResponse::Ok().json(json!({
-            "contacts": contacts.unwrap_or(true),
-            "notes": notes.unwrap_or(true),
-            "calendar": calendar.unwrap_or(true),
-            "reminders": reminders.unwrap_or(true),
-            "photos": photos.unwrap_or(true),
-        }))
-    }
-
-    #[cfg(not(target_os = "macos"))]
-    {
-        // Belt-and-suspenders: `is_available()` already returned `false` on
-        // non-macOS, but the explicit branch keeps the macOS-only `tokio::join!`
-        // out of the cross-platform compile path.
-        unreachable!("non-macOS path returned above via apple_import::is_available()")
-    }
-}
-
 /// Context shared by every Apple import handler.
 ///
 /// Constructed by [`init_apple_import_job`] after all preflight checks pass
@@ -2222,47 +2144,6 @@ mod optional_body_tests {
                 "{} should 400 on unknown field, got {}",
                 path,
                 resp.status(),
-            );
-        }
-    }
-}
-
-#[cfg(test)]
-mod permissions_endpoint_tests {
-    use super::apple_import_permissions;
-    use actix_web::{http::StatusCode, test, web, App};
-
-    /// `GET /api/ingestion/apple-import/permissions` returns 200 with all
-    /// five expected per-source bool keys regardless of the underlying
-    /// platform. The wizard relies on every key being present — an
-    /// `undefined` lookup would render as "permission missing" because of
-    /// the `=== false` check in the frontend.
-    ///
-    /// On non-macOS hosts the handler short-circuits to all-`true` (no
-    /// Apple permission to grant); on macOS the probes run and may report
-    /// `false`. Either way the JSON shape is the same — that's what the
-    /// onboarding wizard is coupled to, so that's what this test pins.
-    #[actix_web::test]
-    async fn permissions_endpoint_returns_all_five_source_keys() {
-        let app = test::init_service(App::new().route(
-            "/api/ingestion/apple-import/permissions",
-            web::get().to(apple_import_permissions),
-        ))
-        .await;
-
-        let req = test::TestRequest::get()
-            .uri("/api/ingestion/apple-import/permissions")
-            .to_request();
-        let resp = test::call_service(&app, req).await;
-        assert_eq!(resp.status(), StatusCode::OK);
-
-        let body: serde_json::Value = test::read_body_json(resp).await;
-        for key in ["contacts", "notes", "calendar", "reminders", "photos"] {
-            assert!(
-                body.get(key).and_then(|v| v.as_bool()).is_some(),
-                "permissions response must include `{}` as a bool, got: {}",
-                key,
-                body,
             );
         }
     }
