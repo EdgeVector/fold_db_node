@@ -502,8 +502,8 @@ fn marker_path() -> Result<PathBuf, String> {
 
 #[cfg(test)]
 mod tests {
-    use super::*;
     use super::super::FOLDDB_HOME_VAR;
+    use super::*;
     use crate::fold_node::config::NodeConfig;
     use crate::server::node_manager::{NodeManager, NodeManagerConfig};
 

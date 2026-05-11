@@ -378,8 +378,8 @@ pub async fn mark_onboarding_complete() -> impl Responder {
 
 #[cfg(test)]
 mod tests {
-    use super::*;
     use super::super::FOLDDB_HOME_VAR;
+    use super::*;
     use crate::fold_node::config::NodeConfig;
     use crate::server::http_server::AppState;
     use crate::server::node_manager::{NodeManager, NodeManagerConfig};

@@ -175,8 +175,8 @@ pub async fn restore_status() -> HttpResponse {
 mod tests {
     //! Integration tests exercising the route wrappers. Business-logic unit
     //! tests live in `handlers::auth`.
-    use super::*;
     use super::super::FOLDDB_HOME_VAR;
+    use super::*;
     use crate::handlers::auth::{bootstrap_status_path, write_bootstrap_status};
 
     /// Aliased to [`crate::secure_store::test_master_key::lock`] so route
