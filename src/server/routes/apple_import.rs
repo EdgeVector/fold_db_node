@@ -2133,11 +2133,14 @@ mod batch_import_config_tests {
 /// `IngestionProgress::From<Job>` always fell back to ValidatingConfig.
 #[cfg(test)]
 mod step_metadata_tests {
-    use super::{
-        build_reminders_final_job, ingestion_progress_pct, set_step, APPLE_NOTES_IMPORT_CFG,
-    };
+    use super::{build_reminders_final_job, ingestion_progress_pct, set_step};
     use crate::ingestion::progress::{IngestionProgress, IngestionStep};
     use fold_db::progress::{Job, JobStatus, JobType};
+
+    // APPLE_NOTES_IMPORT_CFG is macOS-gated, but the behavior under test
+    // (step metadata round-tripping) is platform-agnostic. Hardcode the
+    // job_kind string so this module compiles on Linux CI runners too.
+    const NOTES_JOB_KIND: &str = "apple-notes";
 
     fn job_step(job: Job) -> IngestionStep {
         let progress: IngestionProgress = job.into();
@@ -2191,12 +2194,11 @@ mod step_metadata_tests {
         // looked frozen at (ValidatingConfig, 5%) until the very end.
         let total = 132usize;
         let batch_size = 10usize;
-        let cfg = &APPLE_NOTES_IMPORT_CFG;
 
         let mut ladder: Vec<(IngestionStep, u8)> = Vec::new();
 
         // 1. init_apple_import_job
-        let mut j = make_job(cfg.job_kind);
+        let mut j = make_job(NOTES_JOB_KIND);
         j.status = JobStatus::Running;
         j.progress_percentage = 5;
         set_step(&mut j, IngestionStep::ValidatingConfig);
@@ -2207,7 +2209,7 @@ mod step_metadata_tests {
         //    one opaque call) but step moves to FlatteningData so the API
         //    doesn't look frozen on ValidatingConfig.
         for _ in 0..3 {
-            let mut j = make_job(cfg.job_kind);
+            let mut j = make_job(NOTES_JOB_KIND);
             j.status = JobStatus::Running;
             j.progress_percentage = 5;
             set_step(&mut j, IngestionStep::FlatteningData);
@@ -2215,7 +2217,7 @@ mod step_metadata_tests {
         }
 
         // 3. post-extract, pre-batch
-        let mut j = make_job(cfg.job_kind);
+        let mut j = make_job(NOTES_JOB_KIND);
         j.status = JobStatus::Running;
         j.progress_percentage = 10;
         set_step(&mut j, IngestionStep::GettingAIRecommendation);
@@ -2225,7 +2227,7 @@ mod step_metadata_tests {
         let total_batches = total.div_ceil(batch_size);
         for i in 0..total_batches {
             let ingested = ((i + 1) * batch_size).min(total);
-            let mut j = make_job(cfg.job_kind);
+            let mut j = make_job(NOTES_JOB_KIND);
             j.status = JobStatus::Running;
             j.progress_percentage = ingestion_progress_pct(ingested, total);
             set_step(&mut j, IngestionStep::ExecutingMutations);
@@ -2233,7 +2235,7 @@ mod step_metadata_tests {
         }
 
         // 5. terminal Completed
-        let mut j = make_job(cfg.job_kind);
+        let mut j = make_job(NOTES_JOB_KIND);
         j.status = JobStatus::Completed;
         j.progress_percentage = 100;
         set_step(&mut j, IngestionStep::Completed);
