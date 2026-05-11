@@ -1,3 +1,4 @@
+use crate::fold_node::OperationProcessor;
 use crate::handlers::query as query_handlers;
 // Imported so the bare `QueryResponse` token in the `#[utoipa::path]`
 // annotation resolves to the same type registered via `components(schemas(...))`.
@@ -9,8 +10,56 @@ use crate::server::routes::{
 };
 use actix_web::{web, HttpResponse, Responder};
 use fold_db::schema::types::operations::{Operation, Query};
+use fold_db::schema::types::Schema;
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
+
+/// Collect every queryable field name the user could already see via
+/// `GET /api/schema/{name}` — plain fields, transform-field keys, and
+/// reference-field keys. This is the same surface the 400 response
+/// advertises in `available_fields`, so the error message can't leak any
+/// field name the caller doesn't already have access to.
+fn queryable_field_names(schema: &Schema) -> Vec<String> {
+    let mut names: Vec<String> = Vec::new();
+    if let Some(plain) = schema.fields.as_ref() {
+        names.extend(plain.iter().cloned());
+    }
+    if let Some(transforms) = schema.transform_fields.as_ref() {
+        names.extend(transforms.keys().cloned());
+    }
+    names.extend(schema.ref_fields.keys().cloned());
+    names.sort();
+    names.dedup();
+    names
+}
+
+/// Diff `requested` against the schema's queryable surface. Returns the
+/// (unknown, available) pair when at least one requested field isn't on
+/// the schema; `None` when every requested name is legal.
+///
+/// An empty `requested` list is treated as "all fields" (used by view
+/// queries) and short-circuits to `None`.
+fn find_unknown_fields(
+    schema: &Schema,
+    requested: &[String],
+) -> Option<(Vec<String>, Vec<String>)> {
+    if requested.is_empty() {
+        return None;
+    }
+    let available = queryable_field_names(schema);
+    let available_set: std::collections::HashSet<&str> =
+        available.iter().map(String::as_str).collect();
+    let unknown: Vec<String> = requested
+        .iter()
+        .filter(|f| !available_set.contains(f.as_str()))
+        .cloned()
+        .collect();
+    if unknown.is_empty() {
+        None
+    } else {
+        Some((unknown, available))
+    }
+}
 
 #[derive(Debug, Clone, Serialize, Deserialize, utoipa::ToSchema)]
 pub struct MutationResponse {
@@ -74,6 +123,50 @@ pub async fn execute_query(body: web::Json<Value>, state: web::Data<AppState>) -
     );
 
     let (user_hash, node) = node_or_return!(state);
+
+    // Loud unknown-field validation: today the resolver silently drops fields
+    // that aren't on the schema, so a typo (`title` vs `summary`) is
+    // indistinguishable from "schema is empty". When the target resolves to a
+    // known schema, diff the requested fields against its public surface and
+    // 400 with the legal field list. Targets that don't resolve as schemas
+    // (views, unknown names) fall through so the resolver's own 404 still
+    // wins.
+    let processor = OperationProcessor::from_ref(&node);
+    if let Ok(Some(schema_with_state)) = processor.get_schema(&query_inner.schema_name).await {
+        if let Some((unknown, available)) =
+            find_unknown_fields(&schema_with_state.schema, &query_inner.fields)
+        {
+            let quoted_unknown = unknown
+                .iter()
+                .map(|f| format!("'{}'", f))
+                .collect::<Vec<_>>()
+                .join(", ");
+            let plural = if unknown.len() == 1 { "" } else { "s" };
+            let available_summary = if available.is_empty() {
+                "<none>".to_string()
+            } else {
+                available.join(", ")
+            };
+            let message = format!(
+                "Field{plural} {quoted_unknown} not on schema '{}'. Available: {}",
+                query_inner.schema_name, available_summary,
+            );
+            tracing::info!(
+                target: "fold_node::http_server",
+                schema = %query_inner.schema_name,
+                unknown_fields = ?unknown,
+                "execute_query: rejecting unknown fields"
+            );
+            return HttpResponse::BadRequest().json(json!({
+                "ok": false,
+                "error": "unknown_fields",
+                "message": message,
+                "schema_name": query_inner.schema_name,
+                "unknown_fields": unknown,
+                "available_fields": available,
+            }));
+        }
+    }
 
     match query_handlers::execute_query(query_inner, limit, offset, &user_hash, &node).await {
         Ok(response) => HttpResponse::Ok().json(response),
@@ -355,4 +448,243 @@ pub async fn resolve_conflict(
     handler_result_to_response(
         query_handlers::resolve_conflict(&conflict_id, &user_hash, &node).await,
     )
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::server::routes::common::test_helpers::create_test_state;
+    use actix_web::body::MessageBody;
+    use actix_web::http::StatusCode;
+    use actix_web::test as actix_test;
+    use fold_db::schema::types::declarative_schemas::DeclarativeSchemaDefinition;
+    use fold_db::schema::types::key_config::KeyConfig;
+    use fold_db::schema::types::schema::DeclarativeSchemaType;
+    use fold_db::schema::SchemaState;
+    use std::collections::HashMap;
+    use tempfile::tempdir;
+
+    fn schema_with_fields(name: &str, fields: Vec<String>) -> Schema {
+        DeclarativeSchemaDefinition::new(
+            name.to_string(),
+            DeclarativeSchemaType::Single,
+            None,
+            Some(fields),
+            None,
+            None,
+        )
+    }
+
+    #[test]
+    fn queryable_field_names_unions_fields_transforms_and_refs() {
+        let mut schema =
+            schema_with_fields("S", vec!["summary".to_string(), "start_time".to_string()]);
+        let mut transforms = HashMap::new();
+        transforms.insert("computed".to_string(), "expr".to_string());
+        schema.transform_fields = Some(transforms);
+        schema
+            .ref_fields
+            .insert("author".to_string(), "Person".to_string());
+
+        let names = queryable_field_names(&schema);
+        assert_eq!(
+            names,
+            vec![
+                "author".to_string(),
+                "computed".to_string(),
+                "start_time".to_string(),
+                "summary".to_string(),
+            ]
+        );
+    }
+
+    #[test]
+    fn find_unknown_fields_short_circuits_on_empty_request() {
+        let schema = schema_with_fields("S", vec!["a".to_string()]);
+        assert!(find_unknown_fields(&schema, &[]).is_none());
+    }
+
+    #[test]
+    fn find_unknown_fields_returns_none_when_all_known() {
+        let schema = schema_with_fields("S", vec!["a".to_string(), "b".to_string()]);
+        assert!(find_unknown_fields(&schema, &["a".to_string()]).is_none());
+        assert!(find_unknown_fields(&schema, &["a".to_string(), "b".to_string()]).is_none());
+    }
+
+    #[test]
+    fn find_unknown_fields_enumerates_only_unknowns_on_mixed_request() {
+        let schema = schema_with_fields(
+            "AppleCalendar",
+            vec!["summary".to_string(), "start_time".to_string()],
+        );
+        let (unknown, available) = find_unknown_fields(
+            &schema,
+            &[
+                "summary".to_string(),
+                "title".to_string(),
+                "start".to_string(),
+            ],
+        )
+        .expect("should report unknowns");
+        assert_eq!(unknown, vec!["title".to_string(), "start".to_string()]);
+        assert_eq!(
+            available,
+            vec!["start_time".to_string(), "summary".to_string()]
+        );
+    }
+
+    /// Drain an actix-web response body to a JSON value. Test-only.
+    async fn body_json<B: MessageBody + 'static>(
+        resp: actix_web::HttpResponse<B>,
+    ) -> serde_json::Value {
+        let body = resp.into_body();
+        let bytes = actix_web::body::to_bytes(body).await.unwrap_or_default();
+        serde_json::from_slice(&bytes).unwrap_or(serde_json::Value::Null)
+    }
+
+    async fn load_apple_calendar_schema(state: &web::Data<AppState>) {
+        let node = state.node_manager.get_node("test_user").await.unwrap();
+        let mut schema = DeclarativeSchemaDefinition::new(
+            "AppleCalendar".to_string(),
+            DeclarativeSchemaType::HashRange,
+            Some(KeyConfig {
+                hash_field: Some("summary".to_string()),
+                range_field: Some("start_time".to_string()),
+            }),
+            Some(vec![
+                "summary".to_string(),
+                "start_time".to_string(),
+                "end_time".to_string(),
+                "location".to_string(),
+            ]),
+            None,
+            None,
+        );
+        schema.populate_runtime_fields().unwrap();
+        let db = node.get_fold_db().unwrap();
+        db.schema_manager()
+            .load_schema_internal(schema)
+            .await
+            .unwrap();
+        db.schema_manager()
+            .set_schema_state("AppleCalendar", SchemaState::Approved)
+            .await
+            .unwrap();
+    }
+
+    #[tokio::test]
+    async fn execute_query_rejects_unknown_field_with_400_payload() {
+        let temp_dir = tempdir().unwrap();
+        let state = create_test_state(&temp_dir).await;
+        load_apple_calendar_schema(&state).await;
+
+        fold_db::user_context::run_with_user("test_user", async move {
+            let query = Query::new(
+                "AppleCalendar".to_string(),
+                vec!["title".to_string(), "start".to_string(), "end".to_string()],
+            );
+            let req = actix_test::TestRequest::default().to_http_request();
+            let body = serde_json::to_value(&query).unwrap();
+            let resp = execute_query(web::Json(body), state).await.respond_to(&req);
+            assert_eq!(resp.status(), StatusCode::BAD_REQUEST);
+
+            let body = body_json(resp).await;
+            assert_eq!(body["ok"], serde_json::json!(false));
+            assert_eq!(body["error"], serde_json::json!("unknown_fields"));
+            assert_eq!(body["schema_name"], serde_json::json!("AppleCalendar"));
+            let unknown: Vec<String> = serde_json::from_value(body["unknown_fields"].clone())
+                .expect("unknown_fields should be a string array");
+            assert_eq!(
+                unknown,
+                vec!["title".to_string(), "start".to_string(), "end".to_string()]
+            );
+            let available: Vec<String> = serde_json::from_value(body["available_fields"].clone())
+                .expect("available_fields should be a string array");
+            assert!(available.contains(&"summary".to_string()));
+            assert!(available.contains(&"start_time".to_string()));
+            let message = body["message"].as_str().unwrap_or_default();
+            assert!(
+                message.contains("AppleCalendar") && message.contains("summary"),
+                "message should name schema and list available fields: {}",
+                message
+            );
+        })
+        .await;
+    }
+
+    #[tokio::test]
+    async fn execute_query_rejects_mixed_request_without_partial_success() {
+        let temp_dir = tempdir().unwrap();
+        let state = create_test_state(&temp_dir).await;
+        load_apple_calendar_schema(&state).await;
+
+        fold_db::user_context::run_with_user("test_user", async move {
+            let query = Query::new(
+                "AppleCalendar".to_string(),
+                vec!["summary".to_string(), "title".to_string()],
+            );
+            let req = actix_test::TestRequest::default().to_http_request();
+            let body = serde_json::to_value(&query).unwrap();
+            let resp = execute_query(web::Json(body), state).await.respond_to(&req);
+            assert_eq!(resp.status(), StatusCode::BAD_REQUEST);
+
+            let body = body_json(resp).await;
+            assert_eq!(body["error"], serde_json::json!("unknown_fields"));
+            let unknown: Vec<String> = serde_json::from_value(body["unknown_fields"].clone())
+                .expect("unknown_fields should be a string array");
+            assert_eq!(unknown, vec!["title".to_string()]);
+        })
+        .await;
+    }
+
+    #[tokio::test]
+    async fn execute_query_accepts_valid_fields() {
+        let temp_dir = tempdir().unwrap();
+        let state = create_test_state(&temp_dir).await;
+        load_apple_calendar_schema(&state).await;
+
+        fold_db::user_context::run_with_user("test_user", async move {
+            let query = Query::new(
+                "AppleCalendar".to_string(),
+                vec!["summary".to_string(), "start_time".to_string()],
+            );
+            let req = actix_test::TestRequest::default().to_http_request();
+            let body = serde_json::to_value(&query).unwrap();
+            let resp = execute_query(web::Json(body), state).await.respond_to(&req);
+            assert_eq!(
+                resp.status(),
+                StatusCode::OK,
+                "valid field names should not trigger the unknown-fields gate"
+            );
+        })
+        .await;
+    }
+
+    #[tokio::test]
+    async fn execute_query_does_not_block_when_schema_unresolved() {
+        let temp_dir = tempdir().unwrap();
+        let state = create_test_state(&temp_dir).await;
+        // Intentionally do not load AppleCalendar. The unknown-fields gate
+        // must let this through so the resolver's own "not found as schema
+        // or view" path wins. The resolver currently surfaces that as a 400
+        // with the resolver's own error string — our gate must NOT shadow
+        // that with an unknown_fields payload.
+
+        fold_db::user_context::run_with_user("test_user", async move {
+            let query = Query::new("MissingSchema".to_string(), vec!["whatever".to_string()]);
+            let req = actix_test::TestRequest::default().to_http_request();
+            let body = serde_json::to_value(&query).unwrap();
+            let resp = execute_query(web::Json(body), state).await.respond_to(&req);
+            let status = resp.status();
+            let body = body_json(resp).await;
+            assert_ne!(
+                body["error"].as_str().unwrap_or_default(),
+                "unknown_fields",
+                "missing schema must not be reported as unknown_fields (status was {}, body {})",
+                status,
+                body
+            );
+        })
+        .await;
+    }
 }
