@@ -130,8 +130,14 @@ sweep_dead_slots() {
         slot_home="$(grep -oE '"home":[[:space:]]*"[^"]*"' "$slot_file" 2>/dev/null | sed -E 's/.*"home":[[:space:]]*"([^"]*)".*/\1/' || true)"
         slot_port="$(grep -oE '"port":[[:space:]]*[0-9]+' "$slot_file" 2>/dev/null | grep -oE '[0-9]+$' || true)"
 
+        # Owner is "alive" only if (a) the PID exists AND (b) its argv still
+        # references run.sh or folddb_server. The argv check guards against
+        # PID reuse: when a run.sh dies ungracefully and the OS recycles its
+        # PID for an unrelated process, the slot would otherwise stay orphaned
+        # forever because every sweep sees the alive PID and skips it.
         local owner_alive=false
-        if [ -n "$owner_pid" ] && kill -0 "$owner_pid" 2>/dev/null; then
+        if [ -n "$owner_pid" ] && kill -0 "$owner_pid" 2>/dev/null \
+           && ps -p "$owner_pid" -o command= 2>/dev/null | grep -qE 'run\.sh|folddb_server'; then
             owner_alive=true
         fi
         local home_present=false
