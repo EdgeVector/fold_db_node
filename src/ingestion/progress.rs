@@ -20,10 +20,7 @@ pub use fold_db::progress::{
 /// would otherwise vanish, leaving the job stuck with nothing in
 /// `observability.jsonl` to grep for.
 pub trait ProgressTrackerExt {
-    fn save_or_warn(
-        &self,
-        job: &Job,
-    ) -> impl std::future::Future<Output = ()> + Send;
+    fn save_or_warn(&self, job: &Job) -> impl std::future::Future<Output = ()> + Send;
 }
 
 impl ProgressTrackerExt for ProgressTracker {
