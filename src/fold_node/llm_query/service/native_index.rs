@@ -2,6 +2,7 @@
 
 use super::super::conversation_store::AI_CONVERSATIONS_SCHEMA;
 use super::super::types::{AgentOutcome, QueryPlan, ToolCallRecord};
+use crate::ingestion::ProgressTrackerExt;
 use fold_db::schema::types::field_value_type::FieldValueType;
 use fold_db::schema::types::key_config::KeyConfig;
 use fold_db::schema::types::operations::Query;
@@ -105,7 +106,7 @@ async fn update_agent_progress(
     if let Some(tracker) = tracker {
         if let Ok(Some(mut job)) = tracker.load(job_id).await {
             job.update_progress(pct, message);
-            let _ = tracker.save(&job).await;
+            tracker.save_or_warn(&job).await;
         }
     }
 }
@@ -1155,7 +1156,7 @@ impl LlmQueryService {
             )
             .with_user(user_id);
             job.update_progress(5, "Thinking...".to_string());
-            let _ = tracker.save(&job).await;
+            tracker.save_or_warn(&job).await;
         }
 
         match tokio::time::timeout(
@@ -1182,7 +1183,7 @@ impl LlmQueryService {
                 if let Some(tracker) = progress_tracker {
                     if let Ok(Some(mut job)) = tracker.load(&agent_job_id).await {
                         job.fail("Agent query timed out".to_string());
-                        let _ = tracker.save(&job).await;
+                        tracker.save_or_warn(&job).await;
                     }
                 }
                 Err(format!(
@@ -1298,7 +1299,7 @@ impl LlmQueryService {
                         if let Some(tracker) = progress_tracker {
                             if let Ok(Some(mut job)) = tracker.load(agent_job_id).await {
                                 job.fail("LLM backend returning empty responses".to_string());
-                                let _ = tracker.save(&job).await;
+                                tracker.save_or_warn(&job).await;
                             }
                         }
                         return Err(
@@ -1337,7 +1338,7 @@ impl LlmQueryService {
                     if let Some(tracker) = progress_tracker {
                         if let Ok(Some(mut job)) = tracker.load(agent_job_id).await {
                             job.complete(None);
-                            let _ = tracker.save(&job).await;
+                            tracker.save_or_warn(&job).await;
                         }
                     }
                     return Ok(AgentOutcome {
@@ -1437,7 +1438,7 @@ impl LlmQueryService {
         if let Some(tracker) = progress_tracker {
             if let Ok(Some(mut job)) = tracker.load(agent_job_id).await {
                 job.fail("Reached maximum iterations without a final answer".to_string());
-                let _ = tracker.save(&job).await;
+                tracker.save_or_warn(&job).await;
             }
         }
 
