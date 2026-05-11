@@ -2255,12 +2255,7 @@ mod step_metadata_tests {
         // At least one mid-flight save must have a percentage strictly
         // greater than 5 — that's the bar moving past the "is the job
         // hung?" threshold the user was staring at.
-        let max_mid_pct = ladder
-            .iter()
-            .skip(1)
-            .map(|(_, p)| *p)
-            .max()
-            .unwrap_or(0);
+        let max_mid_pct = ladder.iter().skip(1).map(|(_, p)| *p).max().unwrap_or(0);
         assert!(
             max_mid_pct > 5,
             "no save in the 132-note ladder advanced past 5%: {:?}",
@@ -2297,7 +2292,9 @@ mod step_metadata_tests {
         assert_eq!(progress.current_step, IngestionStep::Failed);
         assert!(progress.is_failed);
         assert!(
-            progress.status_message.contains("schema service unreachable"),
+            progress
+                .status_message
+                .contains("schema service unreachable"),
             "error hint must reach status_message — got: {}",
             progress.status_message,
         );
