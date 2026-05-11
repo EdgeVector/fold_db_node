@@ -35,6 +35,14 @@ impl ProgressTrackerExt for ProgressTracker {
 #[derive(Debug, Clone, Serialize, Deserialize, ToSchema, PartialEq)]
 pub enum IngestionStep {
     ValidatingConfig,
+    /// Pulling data out of an external source (Apple osascript bridge, etc).
+    /// Distinct from `FlatteningData` (which is the next phase, run on data
+    /// we already have in-process) — Apple imports stamp this during the
+    /// opaque-wait window where the percentage bar intentionally parks at 5%
+    /// while waiting on the AppleScript runtime. Without a dedicated variant,
+    /// callers had to misuse `FlatteningData` (already wrong: that's the
+    /// *next* phase) or `ValidatingConfig` (frozen-at-5% dogfood symptom).
+    Extracting,
     FlatteningData,
     GettingAIRecommendation,
     SettingUpSchema,
@@ -246,6 +254,7 @@ impl ProgressService {
     fn step_to_percentage(step: &IngestionStep) -> u8 {
         match step {
             IngestionStep::ValidatingConfig => 5,
+            IngestionStep::Extracting => 5,
             IngestionStep::FlatteningData => 25,
             IngestionStep::GettingAIRecommendation => 40,
             IngestionStep::SettingUpSchema => 55,
