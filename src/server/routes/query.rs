@@ -61,6 +61,53 @@ fn find_unknown_fields(
     }
 }
 
+/// Collect every writable field name on `schema`. Mirror of
+/// [`queryable_field_names`] for the mutation side, but tighter:
+/// `transform_fields` are computed at read time and rejected as mutation
+/// targets; only plain `fields` and `ref_fields` keys (which a caller can
+/// legitimately mutate, even though the value shape is a reference object)
+/// are included. Value-shape validation for refs is intentionally out of
+/// scope here — this gate only refuses unknown field NAMES, not bad shapes.
+fn mutation_writable_field_names(schema: &Schema) -> Vec<String> {
+    let mut names: Vec<String> = Vec::new();
+    if let Some(plain) = schema.fields.as_ref() {
+        names.extend(plain.iter().cloned());
+    }
+    names.extend(schema.ref_fields.keys().cloned());
+    names.sort();
+    names.dedup();
+    names
+}
+
+/// Diff the keys of `fields_and_values` against the schema's writable
+/// surface. Same return contract as [`find_unknown_fields`]: `Some` when
+/// at least one key is unknown, `None` when every key is legal or the
+/// map is empty (no field names to check).
+fn mutation_unknown_fields(
+    schema: &Schema,
+    fields_and_values: &std::collections::HashMap<String, Value>,
+) -> Option<(Vec<String>, Vec<String>)> {
+    if fields_and_values.is_empty() {
+        return None;
+    }
+    let available = mutation_writable_field_names(schema);
+    let available_set: std::collections::HashSet<&str> =
+        available.iter().map(String::as_str).collect();
+    let mut unknown: Vec<String> = fields_and_values
+        .keys()
+        .filter(|f| !available_set.contains(f.as_str()))
+        .cloned()
+        .collect();
+    if unknown.is_empty() {
+        None
+    } else {
+        // HashMap iteration order is non-deterministic; sort so the error
+        // payload is stable across runs (and so tests can pin order).
+        unknown.sort();
+        Some((unknown, available))
+    }
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize, utoipa::ToSchema)]
 pub struct MutationResponse {
     pub mutation_id: String,
@@ -224,6 +271,52 @@ pub async fn execute_mutation(
         };
 
     let (user_hash, node) = node_or_return!(state);
+
+    // Loud unknown-field validation, parallel to execute_query above. Without
+    // this gate the mutation pipeline silently writes unknown field names into
+    // the molecule — a typo in `fields_and_values` is indistinguishable from
+    // a successful write and the data is lost. When the target resolves to a
+    // known schema, diff the supplied field keys against its writable surface
+    // (plain fields + ref_fields keys; transform_fields are computed and not
+    // writable) and 400 with the legal field list. Targets that don't resolve
+    // as schemas fall through so the resolver's own error wins, matching the
+    // query-side contract.
+    let processor = OperationProcessor::from_ref(&node);
+    if let Ok(Some(schema_with_state)) = processor.get_schema(&schema).await {
+        if let Some((unknown, available)) =
+            mutation_unknown_fields(&schema_with_state.schema, &fields_and_values)
+        {
+            let quoted_unknown = unknown
+                .iter()
+                .map(|f| format!("'{}'", f))
+                .collect::<Vec<_>>()
+                .join(", ");
+            let plural = if unknown.len() == 1 { "" } else { "s" };
+            let available_summary = if available.is_empty() {
+                "<none>".to_string()
+            } else {
+                available.join(", ")
+            };
+            let message = format!(
+                "Field{plural} {quoted_unknown} not writable on schema '{}'. Available: {}",
+                schema, available_summary,
+            );
+            tracing::info!(
+                target: "fold_node::http_server",
+                schema = %schema,
+                unknown_fields = ?unknown,
+                "execute_mutation: rejecting unknown fields"
+            );
+            return HttpResponse::BadRequest().json(json!({
+                "ok": false,
+                "error": "unknown_fields",
+                "message": message,
+                "schema_name": schema,
+                "unknown_fields": unknown,
+                "available_fields": available,
+            }));
+        }
+    }
 
     match crate::handlers::mutation::execute_mutation_from_components(
         schema,
@@ -681,6 +774,233 @@ mod tests {
                 body["error"].as_str().unwrap_or_default(),
                 "unknown_fields",
                 "missing schema must not be reported as unknown_fields (status was {}, body {})",
+                status,
+                body
+            );
+        })
+        .await;
+    }
+
+    // ----- mutation_writable_field_names / mutation_unknown_fields -----
+
+    #[test]
+    fn mutation_writable_field_names_excludes_transform_fields() {
+        let mut schema =
+            schema_with_fields("S", vec!["summary".to_string(), "start_time".to_string()]);
+        let mut transforms = HashMap::new();
+        transforms.insert("computed".to_string(), "expr".to_string());
+        schema.transform_fields = Some(transforms);
+        schema
+            .ref_fields
+            .insert("author".to_string(), "Person".to_string());
+
+        let names = mutation_writable_field_names(&schema);
+        // 'computed' is a transform_field — must NOT appear in the writable
+        // surface even though it's queryable.
+        assert_eq!(
+            names,
+            vec![
+                "author".to_string(),
+                "start_time".to_string(),
+                "summary".to_string(),
+            ]
+        );
+    }
+
+    #[test]
+    fn mutation_unknown_fields_short_circuits_on_empty_map() {
+        let schema = schema_with_fields("S", vec!["a".to_string()]);
+        assert!(mutation_unknown_fields(&schema, &HashMap::new()).is_none());
+    }
+
+    #[test]
+    fn mutation_unknown_fields_returns_none_when_all_known() {
+        let schema = schema_with_fields("S", vec!["a".to_string(), "b".to_string()]);
+        let mut m = HashMap::new();
+        m.insert("a".to_string(), serde_json::json!(1));
+        m.insert("b".to_string(), serde_json::json!(2));
+        assert!(mutation_unknown_fields(&schema, &m).is_none());
+    }
+
+    #[test]
+    fn mutation_unknown_fields_enumerates_only_unknowns_sorted() {
+        let schema = schema_with_fields(
+            "AppleCalendar",
+            vec!["summary".to_string(), "start_time".to_string()],
+        );
+        let mut m = HashMap::new();
+        m.insert("summary".to_string(), serde_json::json!("hi"));
+        m.insert("title".to_string(), serde_json::json!("typo"));
+        m.insert("start".to_string(), serde_json::json!("typo"));
+        let (unknown, available) =
+            mutation_unknown_fields(&schema, &m).expect("should report unknowns");
+        // HashMap iteration is non-deterministic; the helper sorts so the
+        // 400 payload is stable.
+        assert_eq!(unknown, vec!["start".to_string(), "title".to_string()]);
+        assert_eq!(
+            available,
+            vec!["start_time".to_string(), "summary".to_string()]
+        );
+    }
+
+    #[test]
+    fn mutation_unknown_fields_rejects_transform_field_as_writable() {
+        let mut schema = schema_with_fields("S", vec!["plain".to_string()]);
+        let mut transforms = HashMap::new();
+        transforms.insert("computed".to_string(), "expr".to_string());
+        schema.transform_fields = Some(transforms);
+
+        let mut m = HashMap::new();
+        m.insert("computed".to_string(), serde_json::json!("x"));
+        let (unknown, available) =
+            mutation_unknown_fields(&schema, &m).expect("transform_field must be unwritable");
+        assert_eq!(unknown, vec!["computed".to_string()]);
+        assert_eq!(available, vec!["plain".to_string()]);
+    }
+
+    // ----- execute_mutation integration tests -----
+
+    fn mutation_body(
+        schema: &str,
+        mutation_type: &str,
+        fields_and_values: serde_json::Value,
+    ) -> serde_json::Value {
+        serde_json::json!({
+            "type": "mutation",
+            "schema": schema,
+            "fields_and_values": fields_and_values,
+            "key_value": { "hash_key": null, "range_key": null },
+            "mutation_type": mutation_type,
+        })
+    }
+
+    #[tokio::test]
+    async fn execute_mutation_rejects_unknown_field_with_400_payload() {
+        let temp_dir = tempdir().unwrap();
+        let state = create_test_state(&temp_dir).await;
+        load_apple_calendar_schema(&state).await;
+
+        fold_db::user_context::run_with_user("test_user", async move {
+            let body = mutation_body(
+                "AppleCalendar",
+                "create",
+                serde_json::json!({
+                    "title": "Standup",
+                    "start": "2026-05-12T09:00:00Z",
+                }),
+            );
+            let req = actix_test::TestRequest::default().to_http_request();
+            let resp = execute_mutation(web::Json(body), state)
+                .await
+                .respond_to(&req);
+            assert_eq!(resp.status(), StatusCode::BAD_REQUEST);
+
+            let body = body_json(resp).await;
+            assert_eq!(body["ok"], serde_json::json!(false));
+            assert_eq!(body["error"], serde_json::json!("unknown_fields"));
+            assert_eq!(body["schema_name"], serde_json::json!("AppleCalendar"));
+            let mut unknown: Vec<String> = serde_json::from_value(body["unknown_fields"].clone())
+                .expect("unknown_fields should be a string array");
+            unknown.sort();
+            assert_eq!(unknown, vec!["start".to_string(), "title".to_string()]);
+            let available: Vec<String> = serde_json::from_value(body["available_fields"].clone())
+                .expect("available_fields should be a string array");
+            assert!(available.contains(&"summary".to_string()));
+            assert!(available.contains(&"start_time".to_string()));
+            let message = body["message"].as_str().unwrap_or_default();
+            assert!(
+                message.contains("AppleCalendar") && message.contains("summary"),
+                "message should name schema and list available fields: {}",
+                message
+            );
+        })
+        .await;
+    }
+
+    #[tokio::test]
+    async fn execute_mutation_rejects_mixed_request_only_unknowns_listed() {
+        let temp_dir = tempdir().unwrap();
+        let state = create_test_state(&temp_dir).await;
+        load_apple_calendar_schema(&state).await;
+
+        fold_db::user_context::run_with_user("test_user", async move {
+            let body = mutation_body(
+                "AppleCalendar",
+                "create",
+                serde_json::json!({
+                    "summary": "Standup",
+                    "title": "typo",
+                }),
+            );
+            let req = actix_test::TestRequest::default().to_http_request();
+            let resp = execute_mutation(web::Json(body), state)
+                .await
+                .respond_to(&req);
+            assert_eq!(resp.status(), StatusCode::BAD_REQUEST);
+
+            let body = body_json(resp).await;
+            assert_eq!(body["error"], serde_json::json!("unknown_fields"));
+            let unknown: Vec<String> = serde_json::from_value(body["unknown_fields"].clone())
+                .expect("unknown_fields should be a string array");
+            // Only the unknown name appears; the legal key isn't echoed
+            // back in the error.
+            assert_eq!(unknown, vec!["title".to_string()]);
+        })
+        .await;
+    }
+
+    #[tokio::test]
+    async fn execute_mutation_does_not_block_when_schema_unresolved() {
+        let temp_dir = tempdir().unwrap();
+        let state = create_test_state(&temp_dir).await;
+        // Intentionally do not load AppleCalendar. The gate must NOT shadow
+        // the downstream "schema not found" error with an unknown_fields
+        // payload — same contract as the query side.
+
+        fold_db::user_context::run_with_user("test_user", async move {
+            let body = mutation_body(
+                "MissingSchema",
+                "create",
+                serde_json::json!({ "whatever": "x" }),
+            );
+            let req = actix_test::TestRequest::default().to_http_request();
+            let resp = execute_mutation(web::Json(body), state)
+                .await
+                .respond_to(&req);
+            let status = resp.status();
+            let body = body_json(resp).await;
+            assert_ne!(
+                body["error"].as_str().unwrap_or_default(),
+                "unknown_fields",
+                "missing schema must not be reported as unknown_fields (status was {}, body {})",
+                status,
+                body
+            );
+        })
+        .await;
+    }
+
+    #[tokio::test]
+    async fn execute_mutation_empty_fields_falls_through() {
+        let temp_dir = tempdir().unwrap();
+        let state = create_test_state(&temp_dir).await;
+        load_apple_calendar_schema(&state).await;
+
+        // An empty fields_and_values map has no names to check, so the gate
+        // must short-circuit and let the downstream handler decide (e.g. a
+        // Delete operation legitimately carries no fields).
+        fold_db::user_context::run_with_user("test_user", async move {
+            let body = mutation_body("AppleCalendar", "delete", serde_json::json!({}));
+            let req = actix_test::TestRequest::default().to_http_request();
+            let resp = execute_mutation(web::Json(body), state)
+                .await
+                .respond_to(&req);
+            let status = resp.status();
+            let body = body_json(resp).await;
+            assert_ne!(
+                body["error"].as_str().unwrap_or_default(),
+                "unknown_fields",
+                "empty fields_and_values must not trigger unknown_fields (status was {}, body {})",
                 status,
                 body
             );
