@@ -250,8 +250,13 @@ export class ErrorFactory {
       // Ignore JSON parsing errors
     }
 
-    const message = (typeof errorData.error === 'string' ? errorData.error :
-                     typeof errorData.message === 'string' ? errorData.message :
+    // Prefer the human-readable `message` over the machine `error` code so
+    // structured 400 payloads like `{error: "unknown_fields", message: "Field
+    // 'title' not on schema 'Apple Calendar'. Available: …"}` surface their
+    // descriptive message in the UI instead of just the code. Fall back to
+    // `error` (legacy shape) and finally `HTTP <status>`.
+    const message = (typeof errorData.message === 'string' ? errorData.message :
+                     typeof errorData.error === 'string' ? errorData.error :
                      `HTTP ${response.status}`);
     
     // Check for specific error types
