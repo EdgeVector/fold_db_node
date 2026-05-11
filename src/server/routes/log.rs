@@ -22,7 +22,7 @@
 use actix_web::{web, HttpResponse, Responder};
 use futures_util::stream::StreamExt;
 use observability::layers::reload::ReloadHandle;
-use observability::layers::ring::RingHandle;
+use observability::layers::ring::{LogLevel, RingHandle};
 use observability::layers::web::WebHandle;
 use serde::{Deserialize, Serialize};
 use serde_json::json;
@@ -33,6 +33,31 @@ use tokio_stream::wrappers::BroadcastStream;
 pub type LogLevelDirective = Arc<RwLock<String>>;
 
 const LOG_LEVELS: &[&str] = &["TRACE", "DEBUG", "INFO", "WARN", "ERROR"];
+
+/// Parse a case-insensitive level string into the observability `LogLevel`.
+/// Returns `None` for anything outside `LOG_LEVELS`.
+fn parse_log_level(s: &str) -> Option<LogLevel> {
+    match s.to_uppercase().as_str() {
+        "TRACE" => Some(LogLevel::Trace),
+        "DEBUG" => Some(LogLevel::Debug),
+        "INFO" => Some(LogLevel::Info),
+        "WARN" => Some(LogLevel::Warn),
+        "ERROR" => Some(LogLevel::Error),
+        _ => None,
+    }
+}
+
+/// Severity rank used to compare `LogEntry.level` against a requested minimum.
+/// `observability::LogLevel` is `Copy + Eq` but not `Ord`, so we rank locally.
+fn level_rank(l: LogLevel) -> u8 {
+    match l {
+        LogLevel::Trace => 0,
+        LogLevel::Debug => 1,
+        LogLevel::Info => 2,
+        LogLevel::Warn => 3,
+        LogLevel::Error => 4,
+    }
+}
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct LogListResponse {
@@ -51,6 +76,10 @@ pub struct LogLevelUpdate {
 pub struct ListLogsQuery {
     pub since: Option<i64>,
     pub limit: Option<usize>,
+    /// Minimum severity to include — case-insensitive (`"warn"` == `"WARN"`).
+    /// Matches the conventional log-level semantics: `level=warn` returns
+    /// `WARN` + `ERROR` (everything at or above the requested severity).
+    pub level: Option<String>,
 }
 
 /// Default cap on `/api/logs` results when the caller doesn't supply one.
@@ -69,7 +98,8 @@ const DEFAULT_LOG_LIMIT: usize = 1000;
     tag = "logs",
     params(
         ("since" = Option<i64>, Query, description = "Filter to entries with timestamp >= this value (ms since epoch)"),
-        ("limit" = Option<usize>, Query, description = "Cap result count (default 1000)")
+        ("limit" = Option<usize>, Query, description = "Cap result count (default 1000)"),
+        ("level" = Option<String>, Query, description = "Minimum severity (TRACE/DEBUG/INFO/WARN/ERROR, case-insensitive); returns entries at or above this level")
     ),
     responses((status = 200, description = "List logs", body = serde_json::Value))
 )]
@@ -83,8 +113,48 @@ pub async fn list_logs(
         }));
     };
 
+    // Validate `level=` up front so a typo doesn't silently widen the result
+    // set to "everything". Mirrors the PUT /api/logs/level error shape so the
+    // dashboard can render both consistently.
+    let min_level = match query.level.as_deref() {
+        None => None,
+        Some(raw) => match parse_log_level(raw) {
+            Some(l) => Some(l),
+            None => {
+                return HttpResponse::BadRequest().json(json!({
+                    "error": format!(
+                        "Invalid log level: '{}'. Expected one of: {}",
+                        raw,
+                        LOG_LEVELS.join(", ")
+                    )
+                }));
+            }
+        },
+    };
+
     let limit = query.limit.or(Some(DEFAULT_LOG_LIMIT));
-    let logs = handle.query(limit, query.since);
+    // When level filtering is in play, pull the buffer without an upstream
+    // limit so the most-recent N at the *requested severity* survives the
+    // limit slice. With no level filter the historical behavior (limit
+    // applied at the ring) is preserved.
+    let logs = match min_level {
+        None => handle.query(limit, query.since),
+        Some(min) => {
+            let min_rank = level_rank(min);
+            let all = handle.query(None, query.since);
+            let mut filtered: Vec<_> = all
+                .into_iter()
+                .filter(|e| level_rank(e.level) >= min_rank)
+                .collect();
+            if let Some(n) = limit {
+                if filtered.len() > n {
+                    let drop = filtered.len() - n;
+                    filtered.drain(0..drop);
+                }
+            }
+            filtered
+        }
+    };
     let count = logs.len();
     let logs_json = match serde_json::to_value(&logs) {
         Ok(v) => v,
@@ -163,9 +233,14 @@ pub async fn update_feature_level(
     reload: web::Data<Option<Arc<ReloadHandle>>>,
     current: web::Data<LogLevelDirective>,
 ) -> impl Responder {
-    if !LOG_LEVELS.contains(&level_update.level.as_str()) {
+    let normalized = level_update.level.to_uppercase();
+    if !LOG_LEVELS.contains(&normalized.as_str()) {
         return HttpResponse::BadRequest().json(json!({
-            "error": format!("Invalid log level: {}", level_update.level)
+            "error": format!(
+                "Invalid log level: '{}'. Expected one of: {}",
+                level_update.level,
+                LOG_LEVELS.join(", ")
+            )
         }));
     }
 
@@ -178,7 +253,7 @@ pub async fn update_feature_level(
     let directive = format!(
         "{}={},info",
         level_update.feature.to_lowercase(),
-        level_update.level.to_lowercase()
+        normalized.to_lowercase()
     );
 
     match handle.update(&directive) {
@@ -188,8 +263,18 @@ pub async fn update_feature_level(
             *current.write().expect("LogLevelDirective lock poisoned") = directive.clone();
             HttpResponse::Ok().json(json!({
                 "success": true,
-                "message": format!("Updated {} log level to {}", level_update.feature, level_update.level),
+                "message": format!("Updated {} log level to {}", level_update.feature, normalized),
                 "directive": directive,
+                // Heads-up for the dashboard: each call REPLACES the full
+                // filter (see this module's `update_feature_level` doc
+                // comment). Ambient `RUST_LOG` caps (e.g. `sled=info`) and
+                // any previously-applied per-feature overrides are not
+                // preserved across this call — only the directive in the
+                // `directive` field is now active. Render this as a warning
+                // if you want the user to know caps were dropped; the
+                // dashboard should resend the merged view if it wants
+                // stacked levels.
+                "note": "This call replaced the full EnvFilter directive; prior caps (e.g. RUST_LOG defaults like sled=info) and other per-feature overrides are not preserved. See the 'directive' field for the now-active filter.",
             }))
         }
         Err(e) => HttpResponse::BadRequest().json(json!({
@@ -289,7 +374,7 @@ mod tests {
     }
 
     /// `PUT /api/logs/level` rejects unknown levels before reaching the
-    /// handle.
+    /// handle and includes the legal-values list in the error.
     #[actix_web::test]
     async fn update_feature_level_rejects_invalid_level() {
         // Keep `_layer` alive in the test scope so the reload handle's weak
@@ -309,10 +394,62 @@ mod tests {
 
         let req = test::TestRequest::put()
             .uri("/api/logs/level")
-            .set_json(json!({"feature": "Schema", "level": "BOGUS"}))
+            .set_json(json!({"feature": "Schema", "level": "FOO"}))
             .to_request();
         let resp = test::call_service(&app, req).await;
         assert_eq!(resp.status(), StatusCode::BAD_REQUEST);
+        let body: serde_json::Value = test::read_body_json(resp).await;
+        let err = body["error"].as_str().unwrap_or_default();
+        assert!(
+            err.contains("'FOO'"),
+            "error should quote the bad input: {err}"
+        );
+        for legal in ["TRACE", "DEBUG", "INFO", "WARN", "ERROR"] {
+            assert!(
+                err.contains(legal),
+                "error should list legal value {legal}: {err}",
+            );
+        }
+    }
+
+    /// `PUT /api/logs/level` accepts lowercase and mixed-case level strings
+    /// (`"debug"`, `"Warn"`, …) by normalizing to upper-case before
+    /// validation. The directive sent to the reload handle stays lowercase
+    /// because that's the `EnvFilter` directive vocabulary.
+    #[actix_web::test]
+    async fn update_feature_level_accepts_case_insensitive_level() {
+        let (_layer, handle) = build_reload_layer::<Registry>(EnvFilter::new("info"));
+        let reload_data: web::Data<Option<Arc<ReloadHandle>>> =
+            web::Data::new(Some(Arc::new(handle)));
+        let current_data: web::Data<LogLevelDirective> =
+            web::Data::new(Arc::new(RwLock::new("info".to_string())));
+        let app = test::init_service(
+            App::new()
+                .app_data(reload_data)
+                .app_data(current_data)
+                .route("/api/logs/level", web::put().to(update_feature_level)),
+        )
+        .await;
+
+        for raw_level in ["debug", "Debug", "DEBUG"] {
+            let req = test::TestRequest::put()
+                .uri("/api/logs/level")
+                .set_json(json!({"feature": "Schema", "level": raw_level}))
+                .to_request();
+            let resp = test::call_service(&app, req).await;
+            assert_eq!(
+                resp.status(),
+                StatusCode::OK,
+                "level={raw_level} should be accepted",
+            );
+            let body: serde_json::Value = test::read_body_json(resp).await;
+            assert_eq!(body["success"], true);
+            assert_eq!(body["directive"], "schema=debug,info");
+            assert!(
+                body["note"].as_str().is_some(),
+                "success body must carry the wholesale-replace note",
+            );
+        }
     }
 
     /// `PUT /api/logs/level` translates `{feature, level}` into a
@@ -441,6 +578,100 @@ mod tests {
         let get_req = test::TestRequest::get().uri("/api/logs/level").to_request();
         let body: serde_json::Value = test::call_and_read_body_json(&app, get_req).await;
         assert_eq!(body["level"], "info");
+    }
+
+    /// `GET /api/logs?level=warn` returns only WARN+ entries (greater-or-equal
+    /// severity is the conventional meaning of "log level"). Prior to this
+    /// PR the `level=` query param was silently dropped and the dashboard's
+    /// filter UI was a no-op.
+    #[actix_web::test]
+    async fn list_logs_filters_by_minimum_level() {
+        let (ring_layer, ring) = build_ring_layer(32);
+        let subscriber = Registry::default().with(ring_layer);
+
+        tracing::subscriber::with_default(subscriber, || {
+            tracing::debug!(target: "lvl_test", "a debug");
+            tracing::info!(target: "lvl_test", "an info");
+            tracing::warn!(target: "lvl_test", "a warn");
+            tracing::error!(target: "lvl_test", "an error");
+        });
+
+        let ring_data: web::Data<Option<RingHandle>> = web::Data::new(Some(ring));
+        let app = test::init_service(
+            App::new()
+                .app_data(ring_data)
+                .route("/api/logs", web::get().to(list_logs)),
+        )
+        .await;
+
+        let req = test::TestRequest::get()
+            .uri("/api/logs?level=warn&limit=100")
+            .to_request();
+        let body: serde_json::Value = test::call_and_read_body_json(&app, req).await;
+        let logs = body["logs"].as_array().expect("logs array");
+        let levels: Vec<&str> = logs
+            .iter()
+            .map(|e| e["level"].as_str().unwrap_or(""))
+            .collect();
+        assert_eq!(
+            levels,
+            vec!["WARN", "ERROR"],
+            "level=warn must return WARN and above, got {levels:?}",
+        );
+        assert_eq!(body["count"], 2);
+    }
+
+    /// `GET /api/logs?level=invalid` returns 400 rather than silently
+    /// returning unfiltered results. The error lists legal values.
+    #[actix_web::test]
+    async fn list_logs_rejects_invalid_level_query() {
+        let (_ring_layer, ring) = build_ring_layer(4);
+        let ring_data: web::Data<Option<RingHandle>> = web::Data::new(Some(ring));
+        let app = test::init_service(
+            App::new()
+                .app_data(ring_data)
+                .route("/api/logs", web::get().to(list_logs)),
+        )
+        .await;
+
+        let req = test::TestRequest::get()
+            .uri("/api/logs?level=invalid")
+            .to_request();
+        let resp = test::call_service(&app, req).await;
+        assert_eq!(resp.status(), StatusCode::BAD_REQUEST);
+        let body: serde_json::Value = test::read_body_json(resp).await;
+        let err = body["error"].as_str().unwrap_or_default();
+        assert!(err.contains("'invalid'"), "should quote bad input: {err}");
+        assert!(err.contains("WARN"), "should list legal values: {err}");
+    }
+
+    /// `GET /api/logs?level=warn` is case-insensitive — `WARN`, `warn`, `Warn`
+    /// all behave the same and return WARN+ERROR.
+    #[actix_web::test]
+    async fn list_logs_level_is_case_insensitive() {
+        let (ring_layer, ring) = build_ring_layer(8);
+        let subscriber = Registry::default().with(ring_layer);
+        tracing::subscriber::with_default(subscriber, || {
+            tracing::info!(target: "case_test", "i");
+            tracing::warn!(target: "case_test", "w");
+            tracing::error!(target: "case_test", "e");
+        });
+
+        let ring_data: web::Data<Option<RingHandle>> = web::Data::new(Some(ring));
+        let app = test::init_service(
+            App::new()
+                .app_data(ring_data)
+                .route("/api/logs", web::get().to(list_logs)),
+        )
+        .await;
+
+        for raw in ["warn", "Warn", "WARN"] {
+            let req = test::TestRequest::get()
+                .uri(&format!("/api/logs?level={raw}"))
+                .to_request();
+            let body: serde_json::Value = test::call_and_read_body_json(&app, req).await;
+            assert_eq!(body["count"], 2, "level={raw} should match WARN+ERROR");
+        }
     }
 
     /// `GET /api/logs/stream` returns 503 when the WEB handle is unset.
